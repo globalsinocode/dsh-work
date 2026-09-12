@@ -16,12 +16,22 @@ export function parseSkillSource(input: string): SkillSource | null {
       if (rest.length !== 1 || !rest[0]!.startsWith('https://')) return invalid('curl 仅支持 HTTPS 下载及 -L/-f/-s/-S 参数，不支持凭据、请求头或输出路径')
       return parseUrl(rest[0]!)
     }
-    if (!/^skills(?:@\d+\.\d+\.\d+)?$/.test(tokens[1] ?? '') || tokens[2] !== 'add') return invalid('npx 当前仅支持 skills[@版本] add owner/repo [--skill 名称]')
-    if (tokens.length !== 4 && !(tokens.length === 6 && tokens[4] === '--skill')) return invalid('请仅提供一个仓库和可选的 --skill 名称')
+    // `\@` is a harmless shell escape sometimes preserved when commands are
+    // pasted into the browser. We parse it deterministically and never invoke
+    // npm or a shell.
+    const installer = (tokens[1] ?? '').replace('\\@', '@')
+    if (!/^skills(?:@(?:latest|\d+\.\d+\.\d+))?$/.test(installer) || tokens[2] !== 'add') return invalid('npx 当前仅支持 skills、skills@latest 或 skills@x.y.z add owner/repo [--skill 名称]')
     const source = tokens[3]!
+    if (!source) return invalid('请提供 GitHub 仓库')
     const parsed = parseUrl(source.startsWith('https://') ? source : `https://github.com/${source}`)
     if (!parsed.repository) return invalid('npx skills add 当前仅支持 GitHub 仓库')
-    return { ...parsed, ...(tokens[5] ? { selected: tokens[5] } : {}) }
+    const optionTokens = tokens.slice(4)
+    let selected: string | undefined
+    if (optionTokens.length === 2 && optionTokens[0] === '--skill') selected = optionTokens[1]
+    else if (optionTokens.length === 1 && optionTokens[0]!.startsWith('--skill=')) selected = optionTokens[0]!.slice('--skill='.length)
+    else if (optionTokens.length !== 0) return invalid('请仅提供一个仓库和可选的 --skill 名称或 --skill=名称')
+    if (selected !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(selected)) return invalid('Skill 名称格式无效')
+    return { ...parsed, ...(selected ? { selected } : {}) }
   }
   const urls = text.match(/https?:\/\/[^\s<>"'，。]+/g) ?? []
   if (!urls.length) return null

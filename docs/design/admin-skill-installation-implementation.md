@@ -12,7 +12,7 @@
 
 - 公共 HTTPS ZIP 或单个 SKILL.md 链接；默认允许 GitHub、API、codeload、raw、objects 与 release-assets 域名。其他域名由 `DSH_WORK_SKILL_SOURCE_HOSTS` 精确加入白名单，仍不能访问私网。
 - `https://github.com/owner/repo/tree/ref/skill-directory`，或仓库链接。仓库解析为固定提交后获取制品；多个 Skill 时必须提供目录或指定名称。
-- `npx skills add owner/repo --skill name`，可使用 `skills@x.y.z`。仅解析此安装器和参数，通过平台 GitHub 适配器获取内容，不运行 npm 包或 Shell。
+- `npx skills add owner/repo --skill name`，支持 `skills@latest`、`skills@x.y.z` 和 `--skill=name`；粘贴文本中保留的 `skills\@latest` 也会按同一格式解析。平台仅解析此安装器和参数，通过 GitHub 适配器获取内容，不运行 npm 包或 Shell。
 - `curl -L https://.../skill.zip`，支持 `-L/-f/-s/-S` 及列出的组合参数。不会执行粘贴的命令。
 
 不支持私有凭据、带鉴权/任意查询参数的直接来源、任意安装器、管道、重定向写盘、命令组合或变量展开。无来源时由 DSH 引导补充，不生成 Skill。来源域名与每次重定向均校验，DNS 结果固定到实际连接，拒绝私网和保留地址；IPv6 下载目前关闭。
