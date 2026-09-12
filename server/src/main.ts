@@ -49,6 +49,8 @@ import { PostgresWorkspaceActivityService } from './modules/workbench/applicatio
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
+import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
+import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
@@ -105,7 +107,7 @@ async function start() {
     const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
     dshInstallation = await resolveDshRuntimeInstallation({ projectRoot })
     await preflightDshRuntime(dshInstallation)
-    const runtime = new DshAcpRuntimeAdapter({
+    const runtime: DshAcpRuntimeAdapter = new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
       dshRepository: dshInstallation.home,
@@ -115,6 +117,7 @@ async function start() {
       launchMode: dshInstallation.launchMode,
       process: dshInstallation.process,
       permissionDecision: async () => 'allow_once',
+      prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
     })
     const conversations = new PostgresConversationRepository(database)
     const authorization = new PostgresAuthorizationService(database)
@@ -148,6 +151,9 @@ async function start() {
       knowledge,
       authorization,
     )
+    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools)
+    skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
+    registerAssistantRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()
     if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
       console.warn('service restart recovery completed', restartRecovery)
@@ -169,6 +175,7 @@ async function start() {
     registerWorkbenchAgentRoutes(router, agents, authorization)
   } else {
     registerUnavailableWorkbenchCommandRoutes(router)
+    registerAssistantRoutes(router)
   }
   registerWorkbenchRoutes(router, new WorkbenchQueryService(repository))
   registerAdminRoutes(router, new AdminQueryService(repository))

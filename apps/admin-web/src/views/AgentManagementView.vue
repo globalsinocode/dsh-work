@@ -205,6 +205,7 @@ onMounted(() => contentStore.load())
           <el-option label="已停用" value="disabled" />
         </el-select>
         <span class="filter-bar__meta">{{ filteredAgents.length }} 个 Agent</span>
+        <el-button @click="$router.push('/assistant?context=agents')">交给管理助手</el-button>
         <el-button v-if="authStore.canManage" class="create-button" type="primary" :icon="Plus" data-action="create-agent" @click="openCreate">创建 Agent</el-button>
       </div>
     </section>

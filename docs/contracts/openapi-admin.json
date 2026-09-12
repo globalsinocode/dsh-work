@@ -5,254 +5,1550 @@
     "version": "0.7.1-identity-owned-authorization",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
-  "servers": [{ "url": "/api/admin/v1" }],
-  "security": [{ "adminSession": [] }],
+  "servers": [
+    {
+      "url": "/api/admin/v1"
+    }
+  ],
+  "security": [
+    {
+      "adminSession": []
+    }
+  ],
   "paths": {
-    "/session": { "get": { "operationId": "getAdminSession", "summary": "获取管理员身份、角色和权限", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/session": {
+      "get": {
+        "operationId": "getAdminSession",
+        "summary": "获取管理员身份、角色和权限",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/agents": {
-      "get": { "operationId": "listAgents", "summary": "查询 Agent", "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
+      "get": {
+        "operationId": "listAgents",
+        "summary": "查询 Agent",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
       "post": {
         "operationId": "createAgent",
         "summary": "创建 Agent；创建者自动成为负责人",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAgentInput" } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "422": { "$ref": "#/components/responses/Error" } }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/agents/draft": {
-      "patch": { "operationId": "updateAgentDraft", "summary": "更新草稿；编辑已发布 Agent 时创建下一版本草稿", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateAgentInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "patch": {
+        "operationId": "updateAgentDraft",
+        "summary": "更新草稿；编辑已发布 Agent 时创建下一版本草稿",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/agents/test": {
-      "post": { "operationId": "testAgent", "summary": "校验当前 Agent 草稿并持久化测试证据", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "post": {
+        "operationId": "testAgent",
+        "summary": "校验当前 Agent 草稿并持久化测试证据",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/agents/status": {
-      "patch": { "operationId": "setAgentStatus", "summary": "发布、启用或停用 Agent；发布要求当前配置测试通过", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "patch": {
+        "operationId": "setAgentStatus",
+        "summary": "发布、启用或停用 Agent；发布要求当前配置测试通过",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/agents/rollback": {
-      "post": { "operationId": "rollbackAgent", "summary": "将活动版本指针回滚到指定已发布版本", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "post": {
+        "operationId": "rollbackAgent",
+        "summary": "将活动版本指针回滚到指定已发布版本",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/agents/{agentId}": {
-      "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
       "patch": {
         "operationId": "setAgentWorkspaceJoin",
         "summary": "平台治理开关：允许或禁止该 Agent 加入团队空间；关闭后不再出现在团队空间「添加 Agent」候选",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetAgentWorkspaceJoinInput" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAgentWorkspaceJoinInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/agents/{agentId}/workspaces": {
-      "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
-      "get": { "operationId": "listAgentJoinedWorkspaces", "summary": "查询该 Agent 只读的「已加入空间」清单，用于评估停用影响", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "operationId": "listAgentJoinedWorkspaces",
+        "summary": "查询该 Agent 只读的「已加入空间」清单，用于评估停用影响",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/agent-versions": {
-      "get": { "operationId": "listAgentVersions", "summary": "查询不可变 Agent 版本历史", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listAgentVersions",
+        "summary": "查询不可变 Agent 版本历史",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/agent-release-records": {
-      "get": { "operationId": "listAgentReleaseRecords", "summary": "查询 Agent 发布、启停和回滚记录", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listAgentReleaseRecords",
+        "summary": "查询 Agent 发布、启停和回滚记录",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/skills": {
-      "get": { "operationId": "listSkills", "summary": "查询 Skill", "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
-      "post": { "operationId": "createSkill", "summary": "创建 Skill 草稿，标识由系统自动生成", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateSkillInput" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" } } },
-      "patch": { "operationId": "updateSkill", "summary": "更新草稿；编辑已发布 Skill 时创建下一版本草稿", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateSkillInput" } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listSkills",
+        "summary": "查询 Skill",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSkill",
+        "summary": "创建 Skill 草稿，标识由系统自动生成",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSkillInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateSkill",
+        "summary": "更新草稿；编辑已发布 Skill 时创建下一版本草稿",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSkillInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
-    "/skills/test": { "post": { "operationId": "testSkill", "summary": "校验当前 Skill 草稿并持久化配置指纹证据", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/skills/status": { "patch": { "operationId": "setSkillStatus", "summary": "发布、启用或停用 Skill；发布要求当前配置测试通过", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } } },
-    "/skills/rollback": { "post": { "operationId": "rollbackSkill", "summary": "将活动版本指针回滚到指定已发布 Skill Version", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/skill-versions": { "get": { "operationId": "listSkillVersions", "summary": "查询不可变 Skill 版本历史", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/skill-release-records": { "get": { "operationId": "listSkillReleaseRecords", "summary": "查询 Skill 发布、启停和回滚记录", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/skills/test": {
+      "post": {
+        "operationId": "testSkill",
+        "summary": "校验当前 Skill 草稿并持久化配置指纹证据",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/skills/status": {
+      "patch": {
+        "operationId": "setSkillStatus",
+        "summary": "发布、启用或停用 Skill；发布要求当前配置测试通过",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/skills/rollback": {
+      "post": {
+        "operationId": "rollbackSkill",
+        "summary": "将活动版本指针回滚到指定已发布 Skill Version",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/skill-versions": {
+      "get": {
+        "operationId": "listSkillVersions",
+        "summary": "查询不可变 Skill 版本历史",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/skill-release-records": {
+      "get": {
+        "operationId": "listSkillReleaseRecords",
+        "summary": "查询 Skill 发布、启停和回滚记录",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/tools": {
-      "get": { "operationId": "listTools", "summary": "查询平台预置工具；一期只读", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listTools",
+        "summary": "查询平台预置工具；一期只读",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/tools/status": {
-      "patch": { "operationId": "setToolStatus", "summary": "启用或停用平台预置 Tool；连接器异常时禁止启用", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "patch": {
+        "operationId": "setToolStatus",
+        "summary": "启用或停用平台预置 Tool；连接器异常时禁止启用",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/tools/permissions": {
-      "patch": { "operationId": "updateToolPermissions", "summary": "更新 Tool 授权角色、数据范围和审批策略", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "patch": {
+        "operationId": "updateToolPermissions",
+        "summary": "更新 Tool 授权角色、数据范围和审批策略",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/connectors": {
-      "get": { "operationId": "listConnectors", "summary": "查询平台预置连接器；一期只读", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listConnectors",
+        "summary": "查询平台预置连接器；一期只读",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/connectors/check": {
-      "post": { "operationId": "checkConnector", "summary": "执行连接器健康检查并联动 Tool 可用状态", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "post": {
+        "operationId": "checkConnector",
+        "summary": "执行连接器健康检查并联动 Tool 可用状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/runtimes": {
-      "get": { "operationId": "listRuntimes", "summary": "查询 Runtime 实例和健康状态", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listRuntimes",
+        "summary": "查询 Runtime 实例和健康状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/runtimes/check": {
-      "post": { "operationId": "checkRuntime", "summary": "执行真实 Runtime Adapter 健康检查并回写心跳和版本", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+      "post": {
+        "operationId": "checkRuntime",
+        "summary": "执行真实 Runtime Adapter 健康检查并回写心跳和版本",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/runtimes/configuration": {
-      "get": { "operationId": "getRuntimeConfiguration", "summary": "获取当前 Runtime 调度策略和配置版本", "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
-      "patch": { "operationId": "updateRuntimeConfiguration", "summary": "更新并发、Attempt 超时与接收任务/排空/停用状态", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } }
+      "get": {
+        "operationId": "getRuntimeConfiguration",
+        "summary": "获取当前 Runtime 调度策略和配置版本",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateRuntimeConfiguration",
+        "summary": "更新并发、Attempt 超时与接收任务/排空/停用状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/sessions": {
-      "get": { "operationId": "listSessions", "summary": "按治理条件查询 Session 摘要，不建设独立全量消息浏览器", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listSessions",
+        "summary": "按治理条件查询 Session 摘要，不建设独立全量消息浏览器",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/workspaces": {
-      "get": { "operationId": "listWorkspaces", "summary": "查询团队工作空间", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listWorkspaces",
+        "summary": "查询团队工作空间",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/grant-sources/unresolved": {
-      "get": { "operationId": "listUnresolvedGrantSources", "summary": "授权来源对账清单：列出 legacy_unresolved 来源及按 agent_versions 推断的可能归属 Agent（仅提示不自动回填）", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listUnresolvedGrantSources",
+        "summary": "授权来源对账清单：列出 legacy_unresolved 来源及按 agent_versions 推断的可能归属 Agent（仅提示不自动回填）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
     "/grant-sources/reconcile": {
       "post": {
         "operationId": "reconcileGrantSources",
         "summary": "对账完成：把 legacy_unresolved 来源改写为 manual 并记审计；撤销行保留不物理删除",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReconcileGrantSourcesInput" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileGrantSourcesInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
-    "/model-usage": { "get": { "operationId": "getModelUsage", "summary": "查询包含员工归属的 Token 和延迟明细", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/model-usage": {
+      "get": {
+        "operationId": "getModelUsage",
+        "summary": "查询包含员工归属的 Token 和延迟明细",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/model-providers": {
-      "get": { "operationId": "listModelProviders", "summary": "查询 Provider、模型和密钥引用状态，不返回密钥正文", "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
-      "post": { "operationId": "createModelProvider", "summary": "创建平台级模型 Provider", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listModelProviders",
+        "summary": "查询 Provider、模型和密钥引用状态，不返回密钥正文",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createModelProvider",
+        "summary": "创建平台级模型 Provider",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
-    "/model-providers/status": { "patch": { "operationId": "setModelProviderStatus", "summary": "启用或停用 Provider", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/model-providers/credential-reference": { "patch": { "operationId": "updateModelCredentialReference", "summary": "登记外部密钥引用和状态；请求不得包含密钥正文", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/provider-models": { "post": { "operationId": "createProviderModel", "summary": "向 Provider 注册可治理模型", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/model-providers/status": {
+      "patch": {
+        "operationId": "setModelProviderStatus",
+        "summary": "启用或停用 Provider",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/model-providers/credential-reference": {
+      "patch": {
+        "operationId": "updateModelCredentialReference",
+        "summary": "登记外部密钥引用和状态；请求不得包含密钥正文",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/provider-models": {
+      "post": {
+        "operationId": "createProviderModel",
+        "summary": "向 Provider 注册可治理模型",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/model-routes": {
-      "get": { "operationId": "listModelRoutes", "summary": "查询平台模型路由", "responses": { "200": { "$ref": "#/components/responses/Ok" } } },
-      "post": { "operationId": "createModelRoute", "summary": "创建平台模型路由；Agent 不配置模型策略", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+      "get": {
+        "operationId": "listModelRoutes",
+        "summary": "查询平台模型路由",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createModelRoute",
+        "summary": "创建平台模型路由；Agent 不配置模型策略",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
     },
-    "/model-routes/resolve": { "post": { "operationId": "resolveModelRoute", "summary": "诊断路由解析并返回不含密钥的快照", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/audit-events": { "get": { "operationId": "listOperationalEvents", "summary": "查询管理、安全、运行、模型、工具和成果的脱敏统一事件", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/operations/summary": { "get": { "operationId": "getOperationsSummary", "summary": "查询近 24 小时运行、Token、工具、成果与需关注事件汇总", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/model-routes/resolve": {
+      "post": {
+        "operationId": "resolveModelRoute",
+        "summary": "诊断路由解析并返回不含密钥的快照",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/audit-events": {
+      "get": {
+        "operationId": "listOperationalEvents",
+        "summary": "查询管理、安全、运行、模型、工具和成果的脱敏统一事件",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/operations/summary": {
+      "get": {
+        "operationId": "getOperationsSummary",
+        "summary": "查询近 24 小时运行、Token、工具、成果与需关注事件汇总",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
     "/operations/runs/{runId}": {
-      "parameters": [{ "$ref": "#/components/parameters/RunId" }],
-      "get": { "operationId": "getRunOperations", "summary": "按 Run 下钻运行、模型、工具和成果安全时间线", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "404": { "$ref": "#/components/responses/Error" } } }
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getRunOperations",
+        "summary": "按 Run 下钻运行、模型、工具和成果安全时间线",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
-    "/identity/users": { "get": { "operationId": "listIdentityUsers", "summary": "分页查询从 AI Hub 同步的员工及其本地角色、数据范围和 Session 摘要", "parameters": [{ "name": "query", "in": "query", "schema": { "type": "string", "maxLength": 100 } }, { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["active", "disabled"] } }, { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } }, { "name": "page_size", "in": "query", "schema": { "type": "integer", "minimum": 10, "maximum": 100, "default": 20 } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/identity/users/{userId}/roles": { "parameters": [{ "$ref": "#/components/parameters/UserId" }], "post": { "operationId": "grantIdentityUserRole", "summary": "由平台管理员为员工分配 dsh-work 本地角色", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/users/{userId}/roles/{roleId}": { "parameters": [{ "$ref": "#/components/parameters/UserId" }, { "$ref": "#/components/parameters/RoleId" }], "delete": { "operationId": "revokeIdentityUserRole", "summary": "由平台管理员移除员工的本地角色；禁止移除最后一个平台管理员", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/users/{userId}/scopes": { "parameters": [{ "$ref": "#/components/parameters/UserId" }], "patch": { "operationId": "replaceIdentityUserScopes", "summary": "由平台管理员替换员工在 dsh-work 中的直接数据范围", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/users/{userId}/sessions/revoke": { "parameters": [{ "$ref": "#/components/parameters/UserId" }], "post": { "operationId": "revokeIdentityUserSessions", "summary": "由平台管理员撤销员工全部 dsh-work 登录 Session", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/roles": { "get": { "operationId": "listIdentityRoles", "summary": "查询 dsh-work 本地角色、权限和数据范围", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }, "post": { "operationId": "createIdentityRole", "summary": "由平台管理员创建 dsh-work 本地角色", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/roles/{roleId}": { "parameters": [{ "$ref": "#/components/parameters/RoleId" }], "patch": { "operationId": "updateIdentityRole", "summary": "由平台管理员更新本地角色的状态、权限和数据范围", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
-    "/identity/permissions": { "get": { "operationId": "listLocalPermissionCatalog", "summary": "查询 dsh-work 本地功能权限目录", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
-    "/identity/directory-sync": { "get": { "operationId": "getIdentityDirectorySyncState", "summary": "查询 AI Hub 员工目录同步状态", "responses": { "200": { "$ref": "#/components/responses/Ok" } } }, "post": { "operationId": "synchronizeIdentityDirectory", "summary": "由平台管理员使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权", "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
-    "/health": { "get": { "operationId": "getPlatformHealth", "summary": "查询服务端、PostgreSQL 和 Runtime 当前状态", "responses": { "200": { "$ref": "#/components/responses/Ok" } } } }
+    "/identity/users": {
+      "get": {
+        "operationId": "listIdentityUsers",
+        "summary": "分页查询从 AI Hub 同步的员工及其本地角色、数据范围和 Session 摘要",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "disabled"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/roles": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/UserId"
+        }
+      ],
+      "post": {
+        "operationId": "grantIdentityUserRole",
+        "summary": "由平台管理员为员工分配 dsh-work 本地角色",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/roles/{roleId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/UserId"
+        },
+        {
+          "$ref": "#/components/parameters/RoleId"
+        }
+      ],
+      "delete": {
+        "operationId": "revokeIdentityUserRole",
+        "summary": "由平台管理员移除员工的本地角色；禁止移除最后一个平台管理员",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/scopes": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/UserId"
+        }
+      ],
+      "patch": {
+        "operationId": "replaceIdentityUserScopes",
+        "summary": "由平台管理员替换员工在 dsh-work 中的直接数据范围",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/sessions/revoke": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/UserId"
+        }
+      ],
+      "post": {
+        "operationId": "revokeIdentityUserSessions",
+        "summary": "由平台管理员撤销员工全部 dsh-work 登录 Session",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/roles": {
+      "get": {
+        "operationId": "listIdentityRoles",
+        "summary": "查询 dsh-work 本地角色、权限和数据范围",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createIdentityRole",
+        "summary": "由平台管理员创建 dsh-work 本地角色",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/roles/{roleId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RoleId"
+        }
+      ],
+      "patch": {
+        "operationId": "updateIdentityRole",
+        "summary": "由平台管理员更新本地角色的状态、权限和数据范围",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/identity/permissions": {
+      "get": {
+        "operationId": "listLocalPermissionCatalog",
+        "summary": "查询 dsh-work 本地功能权限目录",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/identity/directory-sync": {
+      "get": {
+        "operationId": "getIdentityDirectorySyncState",
+        "summary": "查询 AI Hub 员工目录同步状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "synchronizeIdentityDirectory",
+        "summary": "由平台管理员使用应用服务凭据增量或全量同步 AI Hub 员工资料，不修改本地授权",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getPlatformHealth",
+        "summary": "查询服务端、PostgreSQL 和 Runtime 当前状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/assistant/sessions": {
+      "get": {
+        "operationId": "listAdminConversations",
+        "summary": "查询当前管理员自己的持久化对话历史",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        }
+      }
+    },
+    "/assistant/sessions/{id}": {
+      "get": {
+        "operationId": "getAdminConversation",
+        "summary": "恢复消息、运行与安装状态；前端轮询此接口",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/assistant/messages": {
+      "post": {
+        "operationId": "sendAdminAssistantMessage",
+        "summary": "通过既有 Run/Attempt 和 DSH 解析已有 Skill 来源",
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantMessageInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/assistant/runs/{id}/confirm": {
+      "post": {
+        "operationId": "confirmSkillInstallation",
+        "summary": "管理员确认包摘要，幂等保存待验证版本；不自动发布",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillInstallationConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/assistant/runs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelSkillInstallation",
+        "summary": "取消运行或未确认安装；已安装版本保持不变",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/assistant/runs/{id}/retry": {
+      "post": {
+        "operationId": "retryAdminAssistantRun",
+        "summary": "失败或取消后新增 Attempt，沿用同一 Run",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "没有管理权限或不拥有此对话"
+          },
+          "503": {
+            "description": "未配置数据库或 DSH 安装助手不可用"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
   },
   "components": {
-    "securitySchemes": { "adminSession": { "type": "apiKey", "in": "cookie", "name": "dsh_work_admin_session", "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。" } },
+    "securitySchemes": {
+      "adminSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_admin_session",
+        "description": "AI Hub OIDC 回调后由 dsh-work 设置的不透明 HttpOnly Session Cookie；生产名称使用 __Host- 前缀。"
+      }
+    },
     "parameters": {
-      "AgentId": { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
-      "RunId": { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } },
-      "UserId": { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } },
-      "RoleId": { "name": "roleId", "in": "path", "required": true, "schema": { "type": "string" } }
+      "AgentId": {
+        "name": "agentId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RoleId": {
+        "name": "roleId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
     },
     "requestBodies": {
-      "Agent": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentInput" } } } }
+      "Agent": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AgentInput"
+            }
+          }
+        }
+      }
     },
     "responses": {
-      "Ok": { "description": "成功", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } },
-      "Error": { "description": "失败", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+      "Ok": {
+        "description": "成功",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Envelope"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "失败",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
     },
     "schemas": {
       "AgentConfiguration": {
         "type": "object",
-        "required": ["name", "description", "owner", "department", "visibility", "welcomeMessage", "examplePrompts", "roleIds", "dataScopes", "systemPrompt", "maxTokens", "timeoutSeconds", "skills", "tools", "changeSummary"],
+        "required": [
+          "name",
+          "description",
+          "owner",
+          "department",
+          "visibility",
+          "welcomeMessage",
+          "examplePrompts",
+          "roleIds",
+          "dataScopes",
+          "systemPrompt",
+          "maxTokens",
+          "timeoutSeconds",
+          "skills",
+          "tools",
+          "changeSummary"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
-          "description": { "type": "string", "minLength": 1, "maxLength": 500 },
-          "owner": { "type": "string", "description": "兼容字段；服务端以创建人或既有负责人为准" },
-          "department": { "type": "string", "description": "兼容字段；服务端以负责人部门为准" },
-          "visibility": { "type": "string", "description": "展示摘要；授权以 roleIds 为准" },
-          "welcomeMessage": { "type": "string", "maxLength": 500 },
-          "examplePrompts": { "type": "array", "items": { "type": "string" } },
-          "systemPrompt": { "type": "string", "minLength": 20, "maxLength": 20000 },
-          "skills": { "type": "array", "items": { "type": "string", "description": "Skill 标识@版本" }, "uniqueItems": true },
-          "tools": { "type": "array", "items": { "type": "string", "description": "工具标识@版本" }, "uniqueItems": true },
-          "roleIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "dataScopes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-          "maxTokens": { "type": "integer", "minimum": 1 },
-          "timeoutSeconds": { "type": "integer", "minimum": 1 },
-          "changeSummary": { "type": "string" }
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "owner": {
+            "type": "string",
+            "description": "兼容字段；服务端以创建人或既有负责人为准"
+          },
+          "department": {
+            "type": "string",
+            "description": "兼容字段；服务端以负责人部门为准"
+          },
+          "visibility": {
+            "type": "string",
+            "description": "展示摘要；授权以 roleIds 为准"
+          },
+          "welcomeMessage": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "examplePrompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "systemPrompt": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 20000
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Skill 标识@版本"
+            },
+            "uniqueItems": true
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "工具标识@版本"
+            },
+            "uniqueItems": true
+          },
+          "roleIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "changeSummary": {
+            "type": "string"
+          }
         }
       },
       "CreateAgentInput": {
         "unevaluatedProperties": false,
         "allOf": [
-          { "$ref": "#/components/schemas/AgentConfiguration" },
-          { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,47}$" } } }
+          {
+            "$ref": "#/components/schemas/AgentConfiguration"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{2,47}$"
+              }
+            }
+          }
         ]
       },
       "UpdateAgentInput": {
         "unevaluatedProperties": false,
         "allOf": [
-          { "$ref": "#/components/schemas/AgentConfiguration" },
-          { "type": "object", "required": ["agentId"], "properties": { "agentId": { "type": "string" } } }
+          {
+            "$ref": "#/components/schemas/AgentConfiguration"
+          },
+          {
+            "type": "object",
+            "required": [
+              "agentId"
+            ],
+            "properties": {
+              "agentId": {
+                "type": "string"
+              }
+            }
+          }
         ]
       },
       "SetAgentWorkspaceJoinInput": {
         "type": "object",
         "unevaluatedProperties": false,
-        "required": ["allowWorkspaceJoin"],
+        "required": [
+          "allowWorkspaceJoin"
+        ],
         "properties": {
-          "allowWorkspaceJoin": { "type": "boolean", "description": "true 允许加入团队空间（默认）；false 后不再出现在团队空间「添加 Agent」候选，也不能被加入" }
+          "allowWorkspaceJoin": {
+            "type": "boolean",
+            "description": "true 允许加入团队空间（默认）；false 后不再出现在团队空间「添加 Agent」候选，也不能被加入"
+          }
         }
       },
       "ReconcileGrantSourcesInput": {
         "type": "object",
         "unevaluatedProperties": false,
-        "required": ["sourceIds"],
+        "required": [
+          "sourceIds"
+        ],
         "properties": {
           "sourceIds": {
             "type": "array",
             "minItems": 1,
             "maxItems": 200,
             "uniqueItems": true,
-            "items": { "type": "string", "description": "workspace_grant_sources.id；必须是 active 的 legacy_unresolved 来源" }
+            "items": {
+              "type": "string",
+              "description": "workspace_grant_sources.id；必须是 active 的 legacy_unresolved 来源"
+            }
           }
         }
       },
       "SkillConfiguration": {
         "type": "object",
-        "required": ["name", "category", "description", "instructions", "toolIds", "testPrompt"],
+        "required": [
+          "name",
+          "category",
+          "description",
+          "instructions",
+          "toolIds",
+          "testPrompt"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 2, "maxLength": 40 },
-          "category": { "type": "string", "minLength": 1, "maxLength": 40 },
-          "description": { "type": "string", "minLength": 10, "maxLength": 200 },
-          "instructions": { "type": "string", "minLength": 20, "maxLength": 10000 },
-          "toolIds": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true },
-          "testPrompt": { "type": "string", "minLength": 4, "maxLength": 500 }
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 40
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "description": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 200
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 10000
+          },
+          "toolIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "testPrompt": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 500
+          }
         }
       },
       "CreateSkillInput": {
         "unevaluatedProperties": false,
-        "allOf": [{ "$ref": "#/components/schemas/SkillConfiguration" }]
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SkillConfiguration"
+          }
+        ]
       },
       "UpdateSkillInput": {
         "unevaluatedProperties": false,
         "allOf": [
-          { "$ref": "#/components/schemas/SkillConfiguration" },
-          { "type": "object", "required": ["skillId"], "properties": { "skillId": { "type": "string" } } }
+          {
+            "$ref": "#/components/schemas/SkillConfiguration"
+          },
+          {
+            "type": "object",
+            "required": [
+              "skillId"
+            ],
+            "properties": {
+              "skillId": {
+                "type": "string"
+              }
+            }
+          }
         ]
       },
       "Envelope": {
         "type": "object",
-        "required": ["data", "meta"],
-        "properties": { "data": {}, "meta": { "$ref": "#/components/schemas/Meta" } }
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {},
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        }
       },
       "ErrorEnvelope": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message", "object", "suggestion", "traceId"],
+            "required": [
+              "code",
+              "message",
+              "object",
+              "suggestion",
+              "traceId"
+            ],
             "properties": {
-              "code": { "type": "string" },
-              "message": { "type": "string" },
-              "object": { "type": "string" },
-              "suggestion": { "type": "string" },
-              "traceId": { "type": "string" }
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string"
+              },
+              "suggestion": {
+                "type": "string"
+              },
+              "traceId": {
+                "type": "string"
+              }
             }
           }
         }
       },
       "Meta": {
         "type": "object",
-        "required": ["requestId", "timestamp"],
-        "properties": { "requestId": { "type": "string" }, "timestamp": { "type": "string", "format": "date-time" }, "nextCursor": { "type": ["string", "null"] } }
+        "required": [
+          "requestId",
+          "timestamp"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AssistantMessageInput": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "message",
+          "requestId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "pattern": "^admin-session-[a-f0-9-]{36}$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 80
+          }
+        }
+      },
+      "SkillInstallationConfirmation": {
+        "type": "object",
+        "required": [
+          "sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "AdminAssistantConversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "messages",
+          "runs",
+          "installations"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "role",
+                "text",
+                "runId"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "role": {
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": [
+                    "queued",
+                    "running",
+                    "cancel_requested",
+                    "succeeded",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "installations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "resolvedUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "resolvedRef": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "installed",
+                    "cancelled"
+                  ]
+                },
+                "skillId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "package": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "description": "平台校验后的 name、description、instructions、version、toolIds、sha256、archiveSha256 与 files（path/size/sha256），不传资源正文。"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },

@@ -1,4 +1,5 @@
 import process from 'node:process'
+import { request } from 'node:http'
 import { appendFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 
@@ -13,17 +14,21 @@ const pathArguments = new Map([
  * Missing or malformed policy data intentionally produces an empty allow-list.
  */
 export function apply(ctx) {
+  registerInstallationTool(ctx)
   const allowedTools = parseAllowedTools(process.env.DSH_ALLOWED_TOOLS_JSON)
   const workspaceRoot = parseWorkspaceRoot(process.env.DSH_WORKSPACE_ROOT)
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
   const approvalLog = parseApprovalLog(process.env.DSH_TOOL_APPROVAL_LOG)
 
+  const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
+  let calls = 0
   const denialReason = execution => validateExecution(execution, allowedTools, workspaceRoot)
 
   ctx.on('tools/pre-execute', async (execution, next) => {
     const denial = denialReason(execution)
     if (denial !== undefined) return { kind: 'deny', reason: denial }
 
+    if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
     const downstream = await next()
     if (downstream.kind === 'deny') return downstream
     const requiresApproval = downstream.kind === 'ask' || approvalMode !== 'never'
@@ -149,4 +154,32 @@ function isWithin(root, candidate) {
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+// Public DSH tools registry contract, shared by both locked ACP profiles.
+// Only this Attempt's immutable source is accessible; the model cannot supply
+// another URL, approve installation or execute an arbitrary command.
+function registerInstallationTool(ctx) {
+  const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET
+  if (!socketPath) return
+  ctx.tools.register({
+    name: 'prepare_skill_installation',
+    description: 'Fetch and validate the existing Skill source supplied by the administrator. Returns the authoritative preview. Never saves or publishes a Skill; the administrator must confirm in the application.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    isConcurrencySafe: () => false,
+    async execute(_args, execution) {
+      return new Promise((resolve, reject) => {
+        const req = request({ socketPath, path: '/prepare-skill', method: 'POST', signal: execution.signal }, response => {
+          let body = ''
+          response.setEncoding('utf8')
+          response.on('data', chunk => { body += chunk })
+          response.on('end', () => resolve(body))
+          response.on('error', reject)
+        })
+        req.on('error', reject)
+        req.end()
+      })
+    },
+  })
 }

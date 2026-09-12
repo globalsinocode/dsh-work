@@ -268,6 +268,7 @@ export interface AgentReleaseRecord {
 }
 
 export interface SkillDefinition {
+  packageSha256?: string
   id: string
   name: string
   version: string

@@ -46,13 +46,17 @@
     "test:m5:file-versions:integration": "node --experimental-strip-types --test src/http/team-workspace-file-versions-api.integration.test.ts",
     "test:m5:lifecycle:integration": "node --experimental-strip-types --test src/http/team-workspace-lifecycle-api.integration.test.ts",
     "test:m5:activity:integration": "node --experimental-strip-types --test src/http/team-workspace-activity-api.integration.test.ts",
-    "test:m5:usage:integration": "node --experimental-strip-types --test src/http/team-workspace-usage-api.integration.test.ts"
+    "test:m5:usage:integration": "node --experimental-strip-types --test src/http/team-workspace-usage-api.integration.test.ts",
+    "test:skill-install": "node --experimental-strip-types --test src/modules/skill/skill-package.test.ts",
+    "test:skill-install:integration": "node --experimental-strip-types --test src/infrastructure/postgres/admin-skill-installation.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
     "typescript": "~5.9.3"
   },
   "dependencies": {
-    "postgres": "^3.4.9"
+    "fflate": "^0.8.3",
+    "postgres": "^3.4.9",
+    "yaml": "^2.9.0"
   }
 }

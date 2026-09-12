@@ -9,6 +9,10 @@
 | 启动开发、选择测试、准备验收 | [开发与测试](testing/development.md) |
 | 理解业务、权限和系统边界 | [架构总览](architecture/overview.md) |
 | 理解数据关系与迁移约束 | [数据模型](data-model.md) |
+| 规划统一的 Skill、Agent 和运维对话入口 | [管理助手交互方案（前端待确认）](product/admin-assistant-plan.md) |
+| 设计已有 Skill 的受控 Python 执行、依赖、权限与成果交付 | [Skill Python 脚本执行方案（待实施）](product/skill-python-execution-plan.md) |
+| 了解当前对话安装能力及验收边界 | [对话安装实现](product/admin-skill-installation-implementation.md) |
+| 规划 Skill ZIP 上传、管理助手安装及手工创建模式退出 | [Skill 安装产品方案与实施计划（待实施）](product/skill-installation-plan.md) |
 | 规划团队工作空间功能、权限、页面入口与分批实施 | [团队工作空间产品方案与实施计划](product/team-workspace-plan.md) |
 | 团队工作空间的批次拆分、现状核查与遗留清理 | [批次 4（空间用量）](product/team-workspace-batch-4-tasks.md)、[TW-09 现状核查](product/team-workspace-tw09-survey.md)、[遗留清理与工程卫生](product/team-workspace-cleanup-tasks.md) |
 | 修改内部接口与事件 | [内部端口与契约](contracts/internal-ports.md) |

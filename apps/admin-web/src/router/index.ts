@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/', redirect: '/overview' },
     { path: '/admin', redirect: '/overview' },
     { path: '/admin/overview', redirect: '/overview' },
+    { path: '/admin/assistant', redirect: '/assistant' },
     { path: '/admin/agents', redirect: '/agents' },
     { path: '/admin/capabilities', redirect: '/capabilities' },
     { path: '/admin/runtimes', redirect: '/runtimes' },
@@ -38,6 +39,12 @@ const router = createRouter({
       name: 'overview',
       component: () => import('@/views/AdminOverviewView.vue'),
       meta: { title: '运营概览', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/assistant',
+      name: 'assistant',
+      component: () => import('@/views/AdminAssistantView.vue'),
+      meta: { title: '管理助手', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/agents',

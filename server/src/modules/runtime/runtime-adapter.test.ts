@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
-import { DshAcpRuntimeAdapter, renderSystemPrompt } from './dsh-acp-runtime-adapter.ts'
+import { DshAcpRuntimeAdapter, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
@@ -29,6 +29,31 @@ describe('Runtime Manifest compiler', () => {
     const second = compileRuntimeManifest(reordered)
     assert.equal(first.canonicalJson, second.canonicalJson)
     assert.equal(first.sha256, second.sha256)
+  })
+
+  it('applies the installed resource budget per Skill rather than across all Skills', () => {
+    const input = manifest('run-multiple-skills', 'attempt-1')
+    const content = 'x'.repeat(600 * 1024)
+    input.skills = ['first', 'second'].map(id => ({ id, version: '1.0.0' }))
+    input.agent_configuration.skill_instructions = input.skills.map(skill => ({
+      ...skill, instructions: 'Read the packaged resource and summarize its exact contents.',
+      files: [{ path: 'reference.txt', content, size: content.length, sha256: createHash('sha256').update(content).digest('hex') }],
+    }))
+    assert.doesNotThrow(() => compileRuntimeManifest(input))
+    input.agent_configuration.skill_instructions[0]!.files!.push({ ...input.agent_configuration.skill_instructions[0]!.files![0]!, path: 'second.txt' })
+    assert.throws(() => compileRuntimeManifest(input), /单个 Skill 资源合计超过 1 MB/)
+  })
+
+  it('passes bounded persisted history as user context and retains the current message', () => {
+    const input = manifest('run-history', 'attempt-1')
+    input.input.conversation_history = [{ role: 'user', content: 'https://github.com/owner/repo' }, { role: 'assistant', content: '请指定 Skill 名称' }]
+    input.input.message = '选上一个仓库中的 wanted'
+    const rendered = renderUserPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /https:\/\/github.com\/owner\/repo/)
+    assert.match(rendered, /不是新的操作授权/)
+    assert.ok(rendered.endsWith(input.input.message))
+    input.input.conversation_history[0]!.content = 'x'.repeat(24001)
+    assert.throws(() => compileRuntimeManifest(input), /conversation_history/)
   })
 
   it('rejects writable or out-of-root input mounts', () => {
@@ -328,6 +353,9 @@ describe('DSH ACP Runtime Adapter', () => {
     const adapter = await createAdapter()
     const input = manifest('run-complete', 'attempt-1')
     input.input.file_mounts = [fileMount('/workspace/input/inventory.csv.txt', '物料,库存\nA-01,120')]
+    const resource = 'immutable-resource-marker'
+    input.skills = [{ id: 'skill-with-resources', version: '0.1.0' }]
+    input.agent_configuration.skill_instructions = [{ id: 'skill-with-resources', version: '0.1.0', instructions: 'Read references/value.txt.', files: [{ path: 'references/value.txt', content: resource, sha256: createHash('sha256').update(resource).digest('hex'), size: Buffer.byteLength(resource) }] }]
     const handle = await adapter.execute(input)
     const events: RuntimeEvent[] = []
     adapter.subscribe(input.run_id, event => { events.push(event) })
@@ -350,6 +378,11 @@ describe('DSH ACP Runtime Adapter', () => {
     const mountedPath = join(result.attemptDirectory, 'workspace/input/inventory.csv.txt')
     assert.equal(await readFile(mountedPath, 'utf8'), '物料,库存\nA-01,120')
     assert.equal((await stat(mountedPath)).mode & 0o777, 0o400)
+    const resourceDirectory = renderSystemPrompt(stored).match(/资源目录：(skills\/[^/]+\/)/)?.[1]
+    assert.ok(resourceDirectory)
+    const resourcePath = join(result.attemptDirectory, 'workspace', resourceDirectory, 'references/value.txt')
+    assert.equal(await readFile(resourcePath, 'utf8'), resource)
+    assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
   })
 
   it('routes permission requests through a fail-closed decision and audit events', async () => {

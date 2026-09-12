@@ -1,3 +1,4 @@
+import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
 import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.ts'
 
@@ -25,9 +26,23 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (skill.instructions.trim().length < 20) {
       throw new TypeError('agent_configuration.skill_instructions.instructions must be at least 20 characters')
     }
+    if ((skill.files?.length ?? 0) > MAX_SKILL_FILES) throw new TypeError('Skill 最多包含 64 个文件')
+    let skillBytes = 0
+    const paths = new Set<string>()
+    for (const file of skill.files ?? []) {
+      if (!file.path || /[\\:]/.test(file.path) || [...file.path].some(character => character.charCodeAt(0) < 32) || file.path.split('/').some(part => !part || part === '.' || part === '..') || paths.has(file.path)) throw new TypeError('Skill 文件路径无效')
+      paths.add(file.path)
+      if (sha256(file.content) !== file.sha256) throw new TypeError('Skill 文件摘要不匹配')
+      skillBytes += Buffer.byteLength(file.content)
+      if (skillBytes > MAX_SKILL_BYTES) throw new TypeError('单个 Skill 资源合计超过 1 MB')
+    }
     if (!skillReferences.has(`${skill.id}@${skill.version}`)) {
       throw new TypeError(`skill instruction is not declared in skills: ${skill.id}@${skill.version}`)
     }
+  }
+  const history = input.input.conversation_history ?? []
+  if (history.length > 12 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 24000) {
+    throw new TypeError('conversation_history exceeds the bounded conversation context')
   }
   if (input.input.message.trim().length === 0) throw new TypeError('input.message must not be blank')
   if (input.limits.timeout_seconds < 1 || input.limits.timeout_seconds > 3600) {

@@ -85,7 +85,25 @@ e2e/                       # Playwright 浏览器冒烟
 
 ## 本地启动
 
-在项目根目录执行以下命令，可分别启动后端、员工端和管理端：
+使用 Node.js 22.19+ 或 24+，以及根目录 `package.json` 指定版本的 pnpm，先在项目根目录安装依赖：
+
+```bash
+pnpm install --frozen-lockfile
+```
+
+### 无需 AI Hub 的本地原型模式
+
+只开发页面或体验业务原型时，无需启动 AI Hub、PostgreSQL 或 DSH，执行：
+
+```bash
+NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
+```
+
+该命令同时启动后端、员工端和管理端，并覆盖已有 `.env` 中的对应配置。原型模式使用内存数据和受控测试身份，重启可能丢失编辑结果，不提供持久化及真实 Agent 执行，不能用于生产。
+
+### 使用已有环境配置
+
+需要持久化、真实 Agent 执行或 AI Hub 登录时，按 [开发与测试](docs/testing/development.md) 配置环境后执行 `pnpm dev:all`。也可在不同终端分别启动后端、员工端和管理端：
 
 ```bash
 pnpm dev:server

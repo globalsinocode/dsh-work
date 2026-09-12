@@ -1,3 +1,4 @@
+import type { SkillPackage } from './skill-package.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type {
@@ -22,6 +23,7 @@ interface SkillRow {
   description: string
   instructions: string
   owner: string
+  packageSha256?: string
   persistedStatus: PublishStatus
   activeVersionId: string | null
   draftVersionId: string | null
@@ -78,6 +80,7 @@ export interface RuntimeSkillConfiguration {
   version: string
   instructions: string
   tools: string[]
+  files?: SkillPackage['files']
 }
 
 export interface WorkbenchSkillDefinition {
@@ -96,6 +99,8 @@ interface WorkbenchSkillRow extends Omit<WorkbenchSkillDefinition, 'updatedAt'> 
 }
 
 export class PostgresSkillService {
+  private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string }>
+  setPackageTester(tester: NonNullable<PostgresSkillService['packageTester']>) { this.packageTester = tester }
   private readonly database: DatabaseClient
   private readonly operations?: PostgresOperationsService
   private readonly toolService?: PostgresToolConnectorService
@@ -228,6 +233,8 @@ export class PostgresSkillService {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readSkillRows(input.skillId)
     if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
+    const [packaged] = await this.database`select id from skill_versions where tenant_id = ${tenantId} and skill_id = ${input.skillId} and manifest ? 'package' limit 1`
+    if (packaged) throw new Error('安装包版本不可通过文本编辑，请通过新包安装更新')
     const configuration = normalizeConfiguration({ id: input.skillId, ...input })
     assertConfiguration(configuration)
     await this.toolService?.assertAvailableReferences(configuration.toolIds)
@@ -303,22 +310,30 @@ export class PostgresSkillService {
     if (prompt.length < 4) throw new Error('测试问题至少需要 4 个字符')
     const fingerprint = configurationFingerprint(skill)
     const testId = `skill-test-${randomUUID()}`
-    const summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
+    let summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
+    let status: 'passed' | 'failed' = 'passed'
+    if (skill.packageSha256) {
+      if (!this.packageTester) throw new Error('DSH Skill 试运行不可用')
+      const [version] = await this.database<{ manifest: { package: SkillPackage } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+      const result = await this.packageTester(actor.id, { id: skill.id, version: skill.version, instructions: skill.instructions, tools: skill.toolIds, files: version!.manifest.package.files }, prompt)
+      status = result.passed ? 'passed' : 'failed'
+      summary = `DSH 试运行${result.passed ? '完成' : '失败'}（${result.runId}）：\n${result.summary}`
+    }
     await this.database`
       insert into skill_test_runs (
         id, tenant_id, skill_id, skill_version_id, configuration_fingerprint,
         test_prompt, status, result_summary, tested_by
       ) values (
         ${testId}, ${tenantId}, ${skill.id}, ${skill.draftVersionId}, ${fingerprint},
-        ${prompt}, 'passed', ${summary}, ${actor.id}
+        ${prompt}, ${status}, ${summary}, ${actor.id}
       )
     `
-    await this.audit(actor.id, 'skill.test', skill.id, 'success', summary)
+    await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', skill.packageSha256 ? `DSH Skill 试运行 ${status}` : summary)
     return {
       id: testId,
       skillId: skill.id,
       version: skill.version,
-      status: 'passed',
+      status,
       resultSummary: summary,
       testedAt: new Date().toISOString(),
     }
@@ -424,13 +439,13 @@ export class PostgresSkillService {
     const resolved: RuntimeSkillConfiguration[] = []
     for (const reference of unique(references)) {
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ instructions: string; tools: string[] }[]>`
-        select instructions, tool_refs as tools from skill_versions
+      const [row] = await this.database<{ instructions: string; tools: string[]; manifest: { package?: SkillPackage } }[]>`
+        select instructions, tool_refs as tools, manifest from skill_versions
          where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
            and status = 'published'
       `
       if (!row) throw new Error(`Runtime 无法解析已锁定的 Skill Version：${reference}`)
-      resolved.push({ id, version, instructions: row.instructions, tools: row.tools })
+      resolved.push({ id, version, instructions: row.instructions, tools: row.tools, ...(row.manifest.package ? { files: row.manifest.package.files } : {}) })
     }
     return resolved
   }
@@ -508,7 +523,7 @@ export class PostgresSkillService {
              owner.display_name as owner, s.status as "persistedStatus",
              s.active_version_id as "activeVersionId", s.draft_version_id as "draftVersionId",
              sv.id as "versionId", sv.version, active.version as "activeVersion",
-             sv.tool_refs as "toolIds", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
+             sv.tool_refs as "toolIds", sv.manifest #>> '{package,sha256}' as "packageSha256", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
         from skills s
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
         join skill_versions sv on sv.tenant_id = s.tenant_id
@@ -572,7 +587,6 @@ function assertConfiguration(input: SkillConfiguration) {
   if (!input.category || input.category.length > 40) throw new Error('Skill 分类不能为空且不能超过 40 个字符')
   if (input.description.length < 10 || input.description.length > 200) throw new Error('Skill 说明长度为 10～200 个字符')
   if (input.instructions.length < 20 || input.instructions.length > 10000) throw new Error('执行指令长度为 20～10000 个字符')
-  if (!input.toolIds.length) throw new Error('必须引用至少一个工具')
   if (input.testPrompt.length < 4 || input.testPrompt.length > 500) throw new Error('典型测试问题长度为 4～500 个字符')
 }
 
@@ -588,6 +602,7 @@ function toSkillDefinition(row: SkillRow): SkillDefinition {
     description: row.description,
     instructions: row.instructions,
     toolIds: row.toolIds,
+    ...(row.packageSha256 ? { packageSha256: row.packageSha256 } : {}),
     testPrompt: row.testPrompt,
     updatedAt: formatDateTime(row.updatedAt),
   }

@@ -21,6 +21,8 @@ export type RuntimeEventType =
 
 export interface RuntimeManifest {
   manifest_version: '1.0'
+  purpose?: 'admin-skill-install' | 'admin-skill-test'
+  installation_source?: string
   run_id: string
   attempt_id: string
   session_id: string
@@ -32,6 +34,7 @@ export interface RuntimeManifest {
       id: string
       version: string
       instructions: string
+      files?: Array<{ path: string; content: string; sha256: string; size: number }>
     }>
   }
   user_context: {
@@ -51,6 +54,7 @@ export interface RuntimeManifest {
   model_route_id?: string | null
   input: {
     message: string
+    conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
     file_mounts: FileMount[]
   }
   limits: {

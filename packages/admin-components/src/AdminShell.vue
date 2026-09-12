@@ -29,12 +29,15 @@ const props = defineProps<{
   canReadAdmin: boolean
   canReadAudit: boolean
   identityAdministrationAvailable: boolean
+  conversationItems?: Array<{ id: string; title: string }>
+  selectedConversationId?: string
 }>()
 
 const emit = defineEmits<{
   navigate: [path: string]
   openWorkbench: []
   logout: []
+  selectConversation: [id: string]
 }>()
 const mobileOpen = ref(false)
 const collapsedGroups = ref<Record<string, boolean>>({})
@@ -50,7 +53,10 @@ interface NavigationItem {
 const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
   {
     label: '概览',
-    items: [{ label: '运营概览', path: '/overview', icon: DataAnalysis, permission: 'admin' }],
+    items: [
+      { label: '管理助手', path: '/assistant', icon: ChatDotRound, permission: 'admin' },
+      { label: '运营概览', path: '/overview', icon: DataAnalysis, permission: 'admin' },
+    ],
   },
   {
     label: 'Agent 治理',
@@ -115,6 +121,11 @@ function navigate(path: string) {
   emit('navigate', path)
 }
 
+function openConversation(id: string) {
+  mobileOpen.value = false
+  emit('selectConversation', id)
+}
+
 function onRoleCommand(command: string | number | object) {
   const value = String(command)
   if (value === 'workbench') emit('openWorkbench')
@@ -162,6 +173,20 @@ watch(
             </button>
           </div>
         </section>
+        <section v-if="canReadAdmin && conversationItems" class="admin-nav-group" aria-label="对话记录">
+          <button class="admin-nav-group__label" type="button" :aria-expanded="!collapsedGroups['对话记录']" aria-controls="admin-conversation-records" @click="toggleGroup('对话记录')">
+            <span>对话记录</span>
+            <el-icon :class="{ 'is-open': !collapsedGroups['对话记录'] }"><ArrowRight /></el-icon>
+          </button>
+          <div id="admin-conversation-records" v-show="!collapsedGroups['对话记录']" class="admin-nav-group__items">
+            <div class="admin-conversation-list">
+              <button v-for="conversation in conversationItems" :key="conversation.id" class="admin-nav-item admin-conversation-item" :class="{ 'admin-nav-item--active': currentPath === '/assistant' && conversation.id === selectedConversationId }" :aria-current="currentPath === '/assistant' && conversation.id === selectedConversationId ? 'page' : undefined" :title="conversation.title" type="button" @click="openConversation(conversation.id)">
+                <el-icon><ChatDotRound /></el-icon><span>{{ conversation.title }}</span>
+              </button>
+              <p v-if="!conversationItems.length" class="admin-conversation-note">暂无对话记录</p>
+            </div>
+          </div>
+        </section>
       </nav>
     </aside>
 
@@ -201,6 +226,8 @@ watch(
 .brand-context { flex: 0 0 auto; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .admin-sidebar__nav { min-height: 0; flex: 1; padding: 12px 0; overflow: auto; }
 .admin-nav-group { margin-bottom: 4px; }
+.admin-conversation-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-conversation-note { margin: calc(var(--spacing-card) / 2) var(--spacing-section); color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .admin-nav-group__label { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 8px 20px 4px; border: 0; color: var(--color-text-muted); background: transparent; cursor: pointer; font-size: var(--font-size-badge); font-weight: var(--font-weight-title); letter-spacing: .04em; text-transform: uppercase; }
 .admin-nav-group__label:hover { color: var(--color-text-secondary); }
 .admin-nav-group__label:focus-visible, .admin-nav-item:focus-visible, .header-user-button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }

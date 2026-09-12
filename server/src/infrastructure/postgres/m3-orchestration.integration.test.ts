@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
+import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -80,6 +81,39 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')
   assert.equal(usageRecord.department, '供应链中心')
+})
+
+test('compilation failure converges the Run instead of leaving it queued without an Attempt', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '启动失败收敛' })
+  const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
+  const resource = (content: string) => ({ path: 'reference.txt', content, size: content.length, sha256: createHash('sha256').update(content).digest('hex') })
+  const snapshot: RuntimeAgentSnapshot = {
+    versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
+    skills: ['first@1.0.0', 'second@1.0.0'],
+    skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
+    tools: [], runtimeTools: [], approvalMode: 'risk_based', roleIds: [], dataScopes: [], maxTokens: 12000, timeoutSeconds: 300,
+  }
+  snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
+  const failing = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
+    getRuntimeSnapshot: async () => snapshot,
+  } as unknown as PostgresAgentService)
+  const request = { userId: 'U00001', sessionId: session.id, prompt: '编译前置策略无效', idempotencyKey: randomUUID() }
+  await assert.rejects(failing.startRun(request), /单个 Skill 资源合计超过 1 MB/)
+  const [run] = await database<{ id: string; status: string; attempt: string | null }[]>`
+    select id, status, current_attempt_id as attempt from runs where session_id = ${session.id}
+  `
+  assert.equal(run?.status, 'failed')
+  assert.equal(run?.attempt, null)
+  assert.equal((await failing.startRun(request))?.id, run?.id)
+  assert.equal((await failing.startRun(request))?.status, 'failed')
+  snapshot.skillInstructions[0]!.files = [resource('x'.repeat(600 * 1024))]
+  const combined = await failing.startRun({ ...request, idempotencyKey: randomUUID() })
+  assert.ok(combined)
+  await waitForTask(combined.id, 'succeeded')
+  const attempt = await runs.getAttempt('tenant-dsh-work', combined.currentAttemptId!)
+  const manifest = attempt!.manifest as unknown as RuntimeManifest
+  assert.equal(manifest.agent_configuration.skill_instructions.length, 2)
+  assert.equal(manifest.agent_configuration.skill_instructions.reduce((total, skill) => total + skill.files![0]!.content.length, 0), 1200 * 1024)
 })
 
 test('cancel and retry keep one Run and create a new immutable Attempt', async () => {

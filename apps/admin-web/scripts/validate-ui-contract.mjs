@@ -45,6 +45,7 @@ requireFragments('../../packages/admin-components/src/AdminShell.vue', [
   'admin-topbar',
   'navigationGroups',
   '运营概览',
+  '管理助手',
   'Agent 治理',
   '组织与权限',
   '工具权限',
@@ -74,6 +75,7 @@ if (!(securityGroupIndex < runtimeNavigationIndex && runtimeNavigationIndex < au
 
 requireFragments('src/router/index.ts', [
   "meta: { title: '运营概览'",
+  "meta: { title: '管理助手'",
   "meta: { title: 'Agent 管理'",
   "meta: { title: 'Skill 与工具'",
   "meta: { title: '模型用量'",
@@ -119,14 +121,13 @@ for (const name of listViews) {
 }
 
 requireFragments('src/views/AgentManagementView.vue', ['data-action="view-agent"', 'data-action="publish-agent"'])
-requireFragments('src/components/SkillEditorDialog.vue', ['标识由系统自动生成'])
-forbidFragments('src/components/SkillEditorDialog.vue', ['label="Skill 标识"', 'prop="id"'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
   'data-action="view-tool"',
   'data-action="view-connector"',
   '工具目录',
   '连接器状态',
+  '新增 Skill',
 ])
 forbidFragments('src/views/CapabilityManagementView.vue', [
   'data-action="edit-tool"',
@@ -135,6 +136,8 @@ forbidFragments('src/views/CapabilityManagementView.vue', [
   'data-action="create-connectors"',
   '一期由实施团队预置',
   '一期由实施团队配置',
+  'SkillEditorDialog',
+  'data-action="create-skills"',
 ])
 requireFragments('src/views/ModelUsageView.vue', [
   'data-action="view-model-usage"',

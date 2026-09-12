@@ -135,7 +135,7 @@ export class PostgresConversationRepository {
     }
   }
 
-  async requireSession(sessionId: string, userId: string) {
+  async requireSession(sessionId: string, userId: string, audience: 'workbench' | 'admin' = 'workbench') {
     const [row] = await this.database<SessionRow[]>`
       select s.id, s.workspace_id as "workspaceId", s.agent_version_id as "agentVersionId",
              s.selected_skill_version_id as "selectedSkillVersionId",
@@ -145,7 +145,7 @@ export class PostgresConversationRepository {
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
        where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.created_by = ${userId}
-         and s.status = 'active'
+         and s.status = 'active' and s.audience = ${audience}
     `
     if (!row) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
     return { ...row, createdAt: row.createdAt.toISOString() }
@@ -260,7 +260,7 @@ export class PostgresConversationRepository {
         ) latest on true
        where s.tenant_id = ${tenantId}
          and s.workspace_id = ${input.workspaceId}
-         and s.status = 'active'
+         and s.status = 'active' and s.audience = 'workbench'
          and s.created_by = ${input.actorUserId}
          and ${pattern === null ? this.database`true` : this.database`s.title ilike ${pattern} escape '\\'`}
          and ${cursor === null
@@ -323,7 +323,7 @@ export class PostgresConversationRepository {
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
        where r.tenant_id = ${tenantId} and r.requested_by = ${userId}
-         and s.status = 'active'
+         and s.status = 'active' and s.audience = 'workbench'
        order by r.created_at desc
        limit 50
     `
@@ -347,7 +347,7 @@ export class PostgresConversationRepository {
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
        where r.tenant_id = ${tenantId} and r.id = ${runId} and r.requested_by = ${userId}
-         and s.status = 'active'
+         and s.status = 'active' and s.audience = 'workbench'
     `
     return row ? this.mapTask(row) : null
   }

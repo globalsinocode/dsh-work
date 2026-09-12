@@ -1,3 +1,4 @@
+import { request } from 'node:http'
 import { createInterface } from 'node:readline'
 
 interface JsonRpcMessage {
@@ -86,6 +87,16 @@ lines.on('line', (line) => {
           toolCall: { toolCallId: 'mock-tool-call', title: 'Mock read-only tool' },
         },
       })
+      return
+    }
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET) {
+      const req = request({ socketPath: process.env.DSH_PLATFORM_TOOL_SOCKET, path: '/prepare-skill', method: 'POST' }, response => {
+        let body = ''
+        response.on('data', chunk => { body += String(chunk) })
+        response.on('end', () => { pending.answer = body; finishPrompt(pending, 'end_turn') })
+      })
+      req.on('error', () => failPrompt(pending, 'Platform tool unavailable', 'tool'))
+      req.end()
       return
     }
     finishPrompt(pending, 'end_turn')

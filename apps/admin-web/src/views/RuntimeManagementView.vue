@@ -181,6 +181,7 @@ onMounted(() => contentStore.load())
           <el-option label="已停用" value="disabled" />
         </el-select>
         <span class="filter-bar__meta">{{ filteredRuntimes.length }} 个 Runtime</span>
+        <el-button @click="$router.push('/assistant?context=operations')">交给管理助手</el-button>
         <el-button :icon="Refresh" :loading="contentStore.loading" data-action="refresh-runtimes" @click="refresh">刷新状态</el-button>
       </div>
     </section>

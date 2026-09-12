@@ -19,6 +19,8 @@ function fixture(t) {
     // 文档（如 docs/product/team-workspace-plan.md）会链接到员工端与共享包的具体文件，
     // 夹具必须提供这些路径，否则 project 检查会把真实存在的链接报成悬空。
     'apps/workbench-web/src/stores/content.ts', 'apps/workbench-web/src/stores/tasks.ts',
+    'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/stores/admin-assistant.ts',
+    'apps/admin-web/src/components/SkillInstallationPanel.vue', 'apps/admin-web/src/components/SkillPackagePreview.vue',
     'apps/workbench-web/src/views/WorkspacesView.vue', 'apps/workbench-web/src/views/WorkspaceDetailView.vue',
     'packages/workbench-components/src/WorkspaceInfoPanel.vue', 'packages/design-tokens/src/tokens.css',
   ]) {

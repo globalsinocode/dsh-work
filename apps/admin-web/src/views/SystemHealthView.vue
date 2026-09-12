@@ -40,6 +40,7 @@ onMounted(() => contentStore.load())
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
+        <el-button @click="$router.push('/assistant?context=operations')">交给管理助手</el-button>
         <el-button class="refresh-button" :icon="Refresh" :loading="contentStore.loading" data-action="refresh-health" @click="refresh">立即刷新</el-button>
       </div>
     </section>

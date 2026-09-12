@@ -12,6 +12,7 @@ const originalEnvironment = {
   workspaceRoot: process.env.DSH_WORKSPACE_ROOT,
   approvalMode: process.env.DSH_TOOL_APPROVAL_MODE,
   approvalLog: process.env.DSH_TOOL_APPROVAL_LOG,
+  maximumCalls: process.env.DSH_MAX_TOOL_CALLS,
 }
 
 afterEach(() => {
@@ -19,6 +20,7 @@ afterEach(() => {
   restoreEnvironment('DSH_WORKSPACE_ROOT', originalEnvironment.workspaceRoot)
   restoreEnvironment('DSH_TOOL_APPROVAL_MODE', originalEnvironment.approvalMode)
   restoreEnvironment('DSH_TOOL_APPROVAL_LOG', originalEnvironment.approvalLog)
+  restoreEnvironment('DSH_MAX_TOOL_CALLS', originalEnvironment.maximumCalls)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -99,6 +101,20 @@ test('DSH tool policy asks before every governed tool call unless approval is di
     ),
     { kind: 'deny', reason: 'dsh-work 无法记录工具审批关联，已拒绝执行' },
   )
+})
+
+test('DSH tool policy enforces the immutable Attempt tool-call budget', async () => {
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
+  process.env.DSH_WORKSPACE_ROOT = await mkdtemp(join(tmpdir(), 'dsh-tool-budget-'))
+  process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+  process.env.DSH_MAX_TOOL_CALLS = '1'
+  const { preExecute } = capturePolicy()
+  const execution = { name: 'read', arguments: { file_path: 'value.txt' } }
+  const next = async () => ({ kind: 'allow' })
+  assert.equal((await preExecute(execution, next)).kind, 'allow')
+  assert.equal((await preExecute(execution, next)).kind, 'deny')
+  process.env.DSH_MAX_TOOL_CALLS = 'invalid'
+  assert.equal((await capturePolicy().preExecute(execution, next)).kind, 'deny')
 })
 
 function capturePolicy() {

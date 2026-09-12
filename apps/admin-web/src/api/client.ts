@@ -1,3 +1,4 @@
+import type { AdminConversation } from '../types/assistant'
 import type {
   AdminSession,
   AdminTaskSummary,
@@ -102,6 +103,12 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
+  getAssistantConversations: () => request<Array<{ id: string; title: string }>>('/assistant/sessions'),
+  getAssistantConversation: (id: string) => request<AdminConversation>(`/assistant/sessions/${encodeURIComponent(id)}`),
+  sendAssistantMessage: (input: { sessionId: string; message: string; requestId: string }) => request<AdminConversation>('/assistant/messages', { method: 'POST', body: JSON.stringify(input) }),
+  confirmSkillInstallation: (runId: string, sha256: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/confirm`, { method: 'POST', body: JSON.stringify({ sha256 }) }),
+  cancelAssistantRun: (runId: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }),
+  retryAssistantRun: (runId: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }),
   getSession: () => request<AdminSession>('/session'),
   getTasks: () => request<AdminTaskSummary[]>('/tasks'),
   getRuntimes: () => request<RuntimeDefinition[]>('/runtimes'),

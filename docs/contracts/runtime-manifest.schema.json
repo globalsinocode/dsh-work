@@ -23,27 +23,95 @@
     "created_at"
   ],
   "properties": {
-    "manifest_version": { "const": "1.0" },
-    "run_id": { "type": "string", "minLength": 1 },
-    "attempt_id": { "type": "string", "minLength": 1 },
-    "session_id": { "type": "string", "minLength": 1 },
-    "workspace_id": { "type": "string", "minLength": 1, "description": "当前对话所属的个人或团队工作空间 ID；所有对话均必须设置。" },
-    "agent_version_id": { "type": ["string", "null"], "description": "直接使用平台默认助手时可为 null。" },
+    "manifest_version": {
+      "const": "1.0"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspace_id": {
+      "type": "string",
+      "description": "员工运行必须归属工作空间；admin purpose 使用空字符串且不绑定员工 Agent。"
+    },
+    "agent_version_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "直接使用平台默认助手时可为 null。"
+    },
     "agent_configuration": {
       "type": "object",
-      "required": ["system_prompt", "skill_instructions"],
+      "required": [
+        "system_prompt",
+        "skill_instructions"
+      ],
       "properties": {
-        "system_prompt": { "type": "string", "minLength": 20, "description": "当前 Agent Version 锁定的 System Prompt。" },
+        "system_prompt": {
+          "type": "string",
+          "minLength": 20,
+          "description": "当前 Agent Version 锁定的 System Prompt。"
+        },
         "skill_instructions": {
           "type": "array",
           "description": "Agent 引用的已发布 Skill Version 指令快照，随 Attempt Manifest 固化。",
           "items": {
             "type": "object",
-            "required": ["id", "version", "instructions"],
+            "required": [
+              "id",
+              "version",
+              "instructions"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "version": { "type": "string" },
-              "instructions": { "type": "string", "minLength": 20 }
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string",
+                "minLength": 20
+              },
+              "files": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "content",
+                    "sha256",
+                    "size"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
             },
             "additionalProperties": false
           }
@@ -53,93 +121,308 @@
     },
     "user_context": {
       "type": "object",
-      "required": ["user_id", "tenant_id", "role_ids"],
+      "required": [
+        "user_id",
+        "tenant_id",
+        "role_ids"
+      ],
       "properties": {
-        "user_id": { "type": "string" },
-        "tenant_id": { "type": "string" },
-        "role_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        "user_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "role_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
       },
       "additionalProperties": false
     },
     "permission_policy": {
       "type": "object",
-      "required": ["approval_mode", "network_policy", "write_policy"],
+      "required": [
+        "approval_mode",
+        "network_policy",
+        "write_policy"
+      ],
       "properties": {
         "approval_mode": {
-          "enum": ["always", "risk_based", "never"],
+          "enum": [
+            "always",
+            "risk_based",
+            "never"
+          ],
           "description": "always 与 risk_based 进入服务端确认策略；never 表示工具已通过角色、范围和 Allowlist 校验后无需额外审批。"
         },
-        "network_policy": { "enum": ["deny", "allowlist"] },
-        "write_policy": { "enum": ["deny", "workspace_only", "approved_targets"] }
+        "network_policy": {
+          "enum": [
+            "deny",
+            "allowlist"
+          ]
+        },
+        "write_policy": {
+          "enum": [
+            "deny",
+            "workspace_only",
+            "approved_targets"
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "skills": { "type": "array", "items": { "$ref": "#/$defs/capabilityRef" }, "uniqueItems": true },
-    "tools": { "type": "array", "items": { "$ref": "#/$defs/capabilityRef" }, "uniqueItems": true },
-    "data_scopes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "skills": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capabilityRef"
+      },
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capabilityRef"
+      },
+      "uniqueItems": true
+    },
+    "data_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "knowledge_context": {
       "type": "array",
       "maxItems": 3,
       "description": "控制面按用户、角色和工作空间过滤后固化的版本化知识片段。",
       "items": {
         "type": "object",
-        "required": ["documentId", "title", "version", "effectiveDate", "dataScope", "contentChecksum", "excerpt"],
+        "required": [
+          "documentId",
+          "title",
+          "version",
+          "effectiveDate",
+          "dataScope",
+          "contentChecksum",
+          "excerpt"
+        ],
         "properties": {
-          "documentId": { "type": "string" },
-          "title": { "type": "string" },
-          "version": { "type": "string" },
-          "effectiveDate": { "type": "string", "format": "date" },
-          "dataScope": { "type": "string" },
-          "contentChecksum": { "type": "string", "pattern": "^[a-f0-9]{32,64}$" },
-          "excerpt": { "type": "string", "minLength": 1, "maxLength": 4000 }
+          "documentId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "effectiveDate": {
+            "type": "string",
+            "format": "date"
+          },
+          "dataScope": {
+            "type": "string"
+          },
+          "contentChecksum": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32,64}$"
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
         },
         "additionalProperties": false
       }
     },
-    "model_route_id": { "type": ["string", "null"], "description": "由平台模型网关按企业策略选择，不属于 Agent 创建表单。" },
+    "model_route_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "由平台模型网关按企业策略选择，不属于 Agent 创建表单。"
+    },
     "input": {
       "type": "object",
-      "required": ["message", "file_mounts"],
+      "required": [
+        "message",
+        "file_mounts"
+      ],
       "properties": {
-        "message": { "type": "string", "minLength": 1 },
-        "file_mounts": { "type": "array", "items": { "$ref": "#/$defs/fileMount" } }
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file_mounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fileMount"
+          }
+        },
+        "conversation_history": {
+          "type": "array",
+          "maxItems": 12,
+          "description": "同一授权会话的最近消息，内容合计最多 24000 字符；历史不构成新操作授权。",
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "content"
+            ],
+            "properties": {
+              "role": {
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 24000
+              }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     },
     "limits": {
       "type": "object",
-      "required": ["timeout_seconds", "max_output_bytes", "max_tool_calls"],
+      "required": [
+        "timeout_seconds",
+        "max_output_bytes",
+        "max_tool_calls"
+      ],
       "properties": {
-        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
-        "max_output_bytes": { "type": "integer", "minimum": 1024 },
-        "max_tool_calls": { "type": "integer", "minimum": 0, "maximum": 1000 }
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "max_tool_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
       },
       "additionalProperties": false
     },
-    "created_at": { "type": "string", "format": "date-time" },
-    "trace_id": { "type": "string" }
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "admin-skill-install",
+        "admin-skill-test"
+      ]
+    },
+    "installation_source": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "平台确定性解析后的已有来源 JSON；不是模型可覆盖的参数。"
+    }
   },
   "$defs": {
     "capabilityRef": {
       "type": "object",
-      "required": ["id", "version"],
-      "properties": { "id": { "type": "string" }, "version": { "type": "string" } },
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
     },
     "fileMount": {
       "type": "object",
-      "required": ["file_id", "mount_path", "access", "source_name", "media_type", "content_sha256", "content"],
+      "required": [
+        "file_id",
+        "mount_path",
+        "access",
+        "source_name",
+        "media_type",
+        "content_sha256",
+        "content"
+      ],
       "properties": {
-        "file_id": { "type": "string" },
-        "mount_path": { "type": "string", "pattern": "^/workspace/input/[A-Za-z0-9._-]+\\.txt$" },
-        "access": { "const": "read_only" },
-        "source_name": { "type": "string", "minLength": 1 },
-        "media_type": { "type": "string", "minLength": 1 },
-        "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-        "content": { "type": "string", "minLength": 1, "maxLength": 512000 }
+        "file_id": {
+          "type": "string"
+        },
+        "mount_path": {
+          "type": "string",
+          "pattern": "^/workspace/input/[A-Za-z0-9._-]+\\.txt$"
+        },
+        "access": {
+          "const": "read_only"
+        },
+        "source_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512000
+        }
       },
       "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "purpose"
+        ]
+      },
+      "then": {
+        "properties": {
+          "workspace_id": {
+            "const": ""
+          },
+          "agent_version_id": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "workspace_id": {
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
 }
