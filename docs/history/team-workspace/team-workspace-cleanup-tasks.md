@@ -62,13 +62,13 @@
 
 1. **本地 Playwright 解锁**：`playwright.config.ts` 的 baseURL/health URL 用 `127.0.0.1`，而 OIDC 允许来源来自 `AI_HUB_WORKBENCH_PORTAL_URL=http://localhost:4174`（回调 `http://localhost:4190/auth/workbench/callback`）。改为 `localhost` 后跑 `pnpm test:e2e`；若仍失败，如实记录**卡在哪一步、需要什么外部登记**（AI Hub 应用回调白名单等），不得把环境限制写成代码缺陷。
 2. **前端测试抖动**：`apps/workbench-web/vitest.config.ts` 无 `testTimeout`（默认 5s），高负载下 `WorkspaceMemberDialog.test.ts` 出现 `Test timed out in 5000ms`。提高超时（`testTimeout`/`hookTimeout`）并说明理由；如能在不改断言语义的前提下减少时序依赖（例如条件等待）更好。
-3. **文档索引**：把 `team-workspace-batch-4-tasks.md`、`team-workspace-tw09-survey.md` 登记进 `docs/README.md` 的索引表。**注意**：`docs/README.md` 当前被另一条并行工作流改动（新增两行指向其未跟踪文档），**不得把它的改动带进本任务的提交**——由父代理在提交时用路径级 stash 处理，实现代理**不要**改这个文件。
+3. **文档索引**：把 `team-workspace-batch-4-tasks.md`、`team-workspace-tw09-survey.md` 登记进 `docs/index/README.md` 的索引表。**注意**：`docs/index/README.md` 当前被另一条并行工作流改动（新增两行指向其未跟踪文档），**不得把它的改动带进本任务的提交**——由父代理在提交时用路径级 stash 处理，实现代理**不要**改这个文件。
 
 ## 6. 贯穿约束
 
 - **个人空间零改动（AC-23）**；不新增第二套 Agent 执行逻辑（AGENTS.md）。
 - 新增拒绝统一类型化（`authorizationDenied`/`requestInvalid`），不新增按文案分类。
-- API 变更同步 `docs/contracts/openapi-workbench.json` 并跑 `pnpm verify`。
+- API 变更同步 `docs/development/openapi-workbench.json` 并跑 `pnpm verify`。
 - 集成套件用 `createThrowawayDatabase()`；`DSH_WORK_TEST_DATABASE_URL='postgres://dsh_work:change-me@127.0.0.1:15433/postgres'`。
 - 每个子任务：实现（TDD 先红后绿）→ 削弱反证 → 汇总后统一走规格 + 质量两轮评审。
 
@@ -117,7 +117,7 @@
 - **回归（父代理复跑）**：`m4:team-auth` 20/20、`m5:revocation:integration` 29/29、`m5:members` 37/37、`m5:agent-members` 20/20、`m5:sessions` 6/6、`m5:shared-files` 15/15、`m5:security:integration` 4/4、`m4:authorization` 2/2、`m4:audit` 4/4、`m4:error:integration` 2/2。
 - **错误体差异（规格评审 F3，显式接受）**：类型化 403 走 `router.ts` 的 identity-access 分支，`suggestion` 文案由旧 403 分支的「确认当前账号、工作空间成员关系和数据范围…」变为「请联系业务应用管理员…」（**19 处**），其中三处原本落 500 的 message 也从 envelope 的「{对象}操作未完成」变为真实拒绝原文、一处 409 的 message 本来就是原文故不变。§4 的冻结口径只要求「消息 → 状态 + code」不变，故不构成契约违反；这三处的 message 变化正是「误分类被修正」的体现，前端 `feedback.ts` 会把新 suggestion 渲染成「下一步：…」，属改善。
 - **残余文案分类项（规格评审 F7，记录不修）**：`postgres-authorization-service.ts:661` 的「工具不存在、未发布、不可用或不符合一期只读策略」语义上是授权拒绝，但先命中 `/不存在/` 落 **404**；按「只改当前落 403 的」规则保持裸 Error。另有大量允许清单之外的裸 Error 403 分类点（成员/技能/运行服务），不在本包范围。
-- **提交卫生（两轮评审共同指出，F8/F1）**：`postgres-conversation-repository.ts` 与 `docs/README.md` 的改动与并行工作流**交织在同一文件**（前者含对方的 `s.audience` 过滤与 `requireSession(..., audience)` 形参、依赖 0027；后者一个 hunk 内同时有双方的行），因此**不能整文件暂存**——本包提交时对这两个文件用 hunk 级 patch，只纳入本包的行（提交信息也不把对方的 `audience` 改动算作 5-T4 的改动范围）。
+- **提交卫生（两轮评审共同指出，F8/F1）**：`postgres-conversation-repository.ts` 与 `docs/index/README.md` 的改动与并行工作流**交织在同一文件**（前者含对方的 `s.audience` 过滤与 `requireSession(..., audience)` 形参、依赖 0027；后者一个 hunk 内同时有双方的行），因此**不能整文件暂存**——本包提交时对这两个文件用 hunk 级 patch，只纳入本包的行（提交信息也不把对方的 `audience` 改动算作 5-T4 的改动范围）。
 - **未覆盖**：`content-service` 的 `updateWorkspace` 后置不变量分支无法稳定构造（同文件其余 4 条已实测）；`storeSessionFile` 的会话拒绝与 conversation-repo 同文案同类，未单独加 HTTP 用例。
 
 ### 5-T5 工程卫生 ✅ 已完成
@@ -131,6 +131,6 @@
 
 - **提交 `8af73f9`**（`feat(server),feat(workbench-web),test(scripts),docs: 遗留清理与工程卫生（5-T1…5-T5）`）已推送 `main`，CI `M6 quality gate`（run `34681996343`）**通过**。
 - **干净工作树最终验收**（`git worktree` 于该提交，排除并行工作流在途文件）：`pnpm verify` 5 组通过、`pnpm typecheck` 三工程通过、**28 个服务端集成套件全绿**（含 `workspace:upgrade` **4/4**、`usage` 16/16、`activity` 22/22、`members` 37/37、`agent-members` 20/20、`revocation` 29/29）、前端 **workbench 24 files/269 + admin 6 files/18**、eslint 全量 0 错、架构与两端 UI 契约通过。
-- **提交卫生**：`docs/README.md` 与 `postgres-conversation-repository.ts` 与并行工作流交织，用 **hunk 级 patch** 只纳入本包的行（对方的 `sessions.audience` 改动与其 0027/0029 迁移**不在本提交内**，工作树里原样保留）。
+- **提交卫生**：`docs/index/README.md` 与 `postgres-conversation-repository.ts` 与并行工作流交织，用 **hunk 级 patch** 只纳入本包的行（对方的 `sessions.audience` 改动与其 0027/0029 迁移**不在本提交内**，工作树里原样保留）。
 - **仍开放（不在本包）**：归档空间 pending 撤权事件无归宿、清扫器关闭竞态；授权服务允许清单之外仍有裸 Error 依赖文案分类（含 `postgres-authorization-service.ts:661` 的「工具不存在、未发布…」语义上是拒绝却落 404）；TW-09 其余四项（产品决定不做）；发布与部署；A/B/C/D 四账户人工验收；TW-07 的 AC-29 规模基线重测。
 - **并行工作流需要自行处理的两件事（会挂共享门禁）**：① `0027_admin_skill_installation.sql` 与 `0029_admin_session_workspace_constraint.sql` 都**不可重放**（`add column audience` 缺 `if not exists`），且都会 `alter column workspace_id drop not null`（破坏 0013 基线检查与 AC-27 断言），两者还互相依赖（只隔离 0027 会 `column "audience" does not exist`）——他们若这样提交，`team-workspace-upgrade.integration.test.ts` 会红。② 他们的 WIP 前端用例（`AdminAssistantView.test.ts`/`App.test.ts`）当前有断言失败。

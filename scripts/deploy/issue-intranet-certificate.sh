@@ -38,7 +38,7 @@ is_private_ipv4() {
 
 is_valid_dns_name() {
   local name=$1 label old_ifs
-  [[ ${#name} -le 253 && "${name}" != *[A-Z]* && "${name}" != .* && "${name}" != *. ]] \
+  [[ ${#name} -le 253 && "${name}" != *[[:upper:]]* && "${name}" != .* && "${name}" != *. ]] \
     || return 1
   [[ "${name}" =~ ^[a-z0-9.-]+$ && "${name}" == *.* ]] || return 1
   old_ifs=${IFS}

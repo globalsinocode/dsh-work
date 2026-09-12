@@ -66,7 +66,7 @@ flowchart TB
   Gateways --> Enterprise[模型、企业系统与文件存储]
 ```
 
-两个 Vue 应用独立构建并使用两个 API Audience；服务端长期保持模块化单体。每个 Attempt 默认使用独立 DSH Worker 子进程，模块边界不等同于微服务边界。完整设计见 [产品与系统架构总览](docs/architecture/overview.md)。
+两个 Vue 应用独立构建并使用两个 API Audience；服务端长期保持模块化单体。每个 Attempt 默认使用独立 DSH Worker 子进程，模块边界不等同于微服务边界。完整设计见 [产品与系统架构总览](docs/development/overview.md)。
 
 ## 仓库结构
 
@@ -78,7 +78,7 @@ packages/                  # Design Token 与共享无状态组件
 server/                    # Node.js / TypeScript 模块化单体
 ├── migrations/            # PostgreSQL 显式迁移
 └── src/modules/           # 领域、应用与适配器模块
-docs/                      # 架构、契约、开发测试和部署
+docs/                      # index、development、release、design、history
 scripts/                   # 功能分组校验、Runtime 探针、CI 与发布部署
 e2e/                       # Playwright 浏览器冒烟
 ```
@@ -103,7 +103,7 @@ NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_W
 
 ### 使用已有环境配置
 
-需要持久化、真实 Agent 执行或 AI Hub 登录时，按 [开发与测试](docs/testing/development.md) 配置环境后执行 `pnpm dev:all`。也可在不同终端分别启动后端、员工端和管理端：
+需要持久化、真实 Agent 执行或 AI Hub 登录时，按 [开发与测试](docs/development/development.md) 配置环境后执行 `pnpm dev:all`。也可在不同终端分别启动后端、员工端和管理端：
 
 ```bash
 pnpm dev:server
@@ -119,11 +119,11 @@ pnpm dev:admin
 
 ## 文档
 
-- [文档导航与维护规则](docs/README.md)
-- [产品与系统架构总览](docs/architecture/overview.md)
-- [开发与测试](docs/testing/development.md)
-- [Mac mini 部署手册](docs/deployment/mac-mini-deployment-runbook.md)
-- [数据模型](docs/data-model.md)
-- [内部端口契约](docs/contracts/internal-ports.md)
+- [文档导航与维护规则](docs/index/README.md)
+- [产品与系统架构总览](docs/development/overview.md)
+- [开发与测试](docs/development/development.md)
+- [Mac mini 部署手册](docs/release/mac-mini-deployment-runbook.md)
+- [数据模型](docs/design/data-model.md)
+- [内部端口契约](docs/development/internal-ports.md)
 
 开发启动和验证命令见开发与测试；接口、配置及部署操作统一在 `docs/` 维护。

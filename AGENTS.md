@@ -1,6 +1,6 @@
 # 项目工作规范
 
-开始开发前阅读 [架构总览](docs/architecture/overview.md)、[内部端口与契约](docs/contracts/internal-ports.md) 和 [开发与测试](docs/testing/development.md)。
+开始开发前阅读 [架构总览](docs/development/overview.md)、[内部端口与契约](docs/development/internal-ports.md) 和 [开发与测试](docs/development/development.md)。
 
 ## Agent 执行统一使用 DSH
 

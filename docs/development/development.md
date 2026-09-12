@@ -26,8 +26,8 @@ NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_W
 
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
-3. 按 [Runtime 指南](../deployment/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；需要真实员工与权限管理时按 [身份指南](../deployment/ai-hub-sso-integration.md) 切换 `oidc`。身份管理路由只在 OIDC 与数据库都启用时注册。
+3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
+4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；需要真实员工与权限管理时按 [身份指南](../release/ai-hub-sso-integration.md) 切换 `oidc`。身份管理路由只在 OIDC 与数据库都启用时注册。
 5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 本地完整模式与生产部署使用两套环境文件，且允许 DSH Runtime 目标不同：
@@ -76,7 +76,7 @@ NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_W
 | `release/` | 构建发布包与生成 Manifest |
 | `deploy/` | 预检、发布、回滚、备份恢复、证书、网络端点和 launchd 管理 |
 
-按功能维护脚本，不再随里程碑新增 `verify-mN` 文件。发布与部署命令仍由 [部署手册](../deployment/mac-mini-deployment-runbook.md) 统一说明。`render-endpoint-compose.sh` 负责加载环境并验证 Compose，`.mjs` 负责生成配置；旧证书入口 `issue-intranet-ip-certificate.sh` 是兼容转发，两处均保留。
+按功能维护脚本，不再随里程碑新增 `verify-mN` 文件。发布与部署命令仍由 [部署手册](../release/mac-mini-deployment-runbook.md) 统一说明。`render-endpoint-compose.sh` 负责加载环境并验证 Compose，`.mjs` 负责生成配置；证书签发统一使用 `issue-intranet-certificate.sh`。
 
 PostgreSQL 集成测试必须显式指定专用可丢弃测试库，禁止使用开发业务库或生产库：
 
@@ -115,4 +115,4 @@ Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验�
 | 网络与运行故障 | 真实断网、代理/Provider 故障、Worker 与服务重启、宿主机恢复；故障注入单测不替代现场演练 |
 | 运维 | TLS、密钥、磁盘/证书/身份依赖告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
 
-主分支要求 `M6 quality gate`。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../deployment/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
+主分支要求 `M6 quality gate`。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。

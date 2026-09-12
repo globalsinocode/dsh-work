@@ -98,8 +98,8 @@
   本任务需复测该路径（个人／团队、冷／热）并确认查询次数与延迟在预算内，同时判断
   `listArtifacts` 是否需要服务端分页（当前无 LIMIT）。
 - 产出一份可复核的基线记录；不预设物化方案。
-- **交付物**：`docs/baselines/team-workspace-1b-statistics.md`（机器生成、可复跑）+
-  `docs/baselines/team-workspace-1b-statistics-findings.md`（结论与待办）；工具
+- **交付物**：`docs/history/team-workspace-1b-statistics.md`（机器生成、可复跑）+
+  `docs/history/team-workspace-1b-statistics-findings.md`（结论与待办）；工具
   `scripts/bench/team-workspace-statistics.ts`，入口 `pnpm bench:team-workspace-statistics`。
 - **实测结论**（计数单位是 **SQL 语句数**，非网络往返；测量层次为服务层，不含路由授权与序列化）：
   - 会话列表、文件列表、成果列表均已达标：`listWorkspaceSessions` 一律 **1** 条语句

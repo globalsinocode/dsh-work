@@ -1,4 +1,6 @@
-# 团队工作空间实施交接文档
+# 团队工作空间实施交接文档（历史快照）
+
+**归档说明：** 本文保留 2026-09-11 至 2026-09-12 期间的交接上下文，便于追溯阶段性判断与评审结论；不再作为当前事实入口。当前状态以 [现行方案](../../design/team-workspace-plan.md) 第 10 节和本目录 [归档索引](README.md) 为准。
 
 **交接时间：** 2026-09-11  
 **分支：** `main`（已推送至 `24774e6`：1A、1B 与批次 3 的 TW-06、TW-07、TW-08 后端均已合入；TW-08 前端 3-T8 未开始）  
@@ -8,11 +10,11 @@
 
 | 文档 | 角色 |
 | --- | --- |
-| `docs/product/team-workspace-plan.md` | 唯一方案入口：范围、TW-01~09 产品规则、权限矩阵、批次与退出条件、验收矩阵 AC-01~29 |
-| `docs/product/team-workspace-design.md` | 批次 0 UI 增量设计（第 6 节已确认决策；2A／2B 章节已删除） |
-| `docs/product/team-workspace-batch-1a-convergence.md` | 1A 四项技术收敛草案 + 已确认决策（授权来源模型、负责人约束、收权机制、Agent 允许范围） |
-| `docs/product/team-workspace-batch-1b-tasks.md` | 1B 五任务拆分与现状核查；T2 已随范围收敛标记取消 |
-| `docs/product/team-workspace-batch-3-tasks.md` | 批次 3（TW-06／TW-07／TW-08）任务拆分、事件源结论、交付记录与验收锚点 |
+| `docs/design/team-workspace-plan.md` | 唯一方案入口：范围、TW-01~09 产品规则、权限矩阵、批次与退出条件、验收矩阵 AC-01~29 |
+| `docs/design/team-workspace-design.md` | 批次 0 UI 增量设计（第 6 节已确认决策；2A／2B 章节已删除） |
+| `docs/history/team-workspace/team-workspace-batch-1a-convergence.md` | 1A 四项技术收敛草案 + 已确认决策（授权来源模型、负责人约束、收权机制、Agent 允许范围） |
+| `docs/history/team-workspace/team-workspace-batch-1b-tasks.md` | 1B 五任务拆分与现状核查；T2 已随范围收敛标记取消 |
+| `docs/history/team-workspace/team-workspace-batch-3-tasks.md` | 批次 3（TW-06／TW-07／TW-08）任务拆分、事件源结论、交付记录与验收锚点 |
 
 ## 2. 进度快照
 
@@ -168,7 +170,7 @@ WIP 首次运行是 **16 个用例 8 失败**，修复分两类：
 
 ### 6.3 T5 交付记录（2026-09-11）
 
-**交付物**：`docs/baselines/team-workspace-1b-statistics.md`（由 `scripts/bench/team-workspace-statistics.ts` 在一次性库上生成，入口 `pnpm bench:team-workspace-statistics`）+ `docs/baselines/team-workspace-1b-statistics-findings.md`（口径、结论与待办）。
+**交付物**：`docs/history/team-workspace-1b-statistics.md`（由 `scripts/bench/team-workspace-statistics.ts` 在一次性库上生成，入口 `pnpm bench:team-workspace-statistics`）+ `docs/history/team-workspace-1b-statistics-findings.md`（口径、结论与待办）。
 
 **口径**：计数单位是 **SQL 语句数**（postgres.js `debug` 每语句一次；`prepare: false` 下带参语句约两次线级往返），连接池 `pg_type` 探测已排除；测量层次是服务层，不含路由层 `authorizeWorkbench` 与序列化。
 
@@ -209,7 +211,7 @@ WIP 首次运行是 **16 个用例 8 失败**，修复分两类：
 - **会话删除（已定）**：`DELETE /sessions/:sessionId` 属执行轨，归档空间拒绝（删除会销毁只读保留的历史内容）；`POST /runs/:runId/cancel` 仍允许（在途收敛，且 3-T2 才会做「运行中禁止归档」）。
 - **修复轮验证（2026-09-11）**：独立验证确认 8 项修复功能全部成立、无功能/安全回归（真实 HTTP 探针逐项复核了状态码与文案）。同时抓出**两个回归断言不具鉴别力**并已修：① 归档 `removable` 的断言原先用「普通成员看他人上传的文件」，即使归档判断被删也照样通过——改用**本有权移除的视角**（负责人）断言；② 缓存状态轨的修复**完全没有测试守护**（把修订号查询改回状态无关，团队授权套件仍 17/17 全绿，但探针能复现归档后被预热缓存放行）——已补「先预热读取轨 → 归档 → 默认执行轨必须拒绝」的判别性用例，并反证（削弱实现即变红）。另修三处文档/分类问题：AC-23 的个人空间例外原先写成「团队专用接口统一 403」，实际只有团队会话分页改了（其余仍 422）；OpenAPI `/files` 描述重复了同一句；身份校验拒绝在 `identity/session-repository.ts` 仍有一处纯 Error（映射 404），已类型化为 403。
 - **符合性评审修复（2026-09-11）**：① `GET /workspaces/:id/files` 路由闸门原在执行轨，归档现任成员被 403、服务层读轨不可达——已改为同轨，并补 HTTP 级用例（服务层直调测试曾给假绿）；② `POST /sessions/:sessionId/files` 不校验 workspace 状态，归档空间上传返回 201——已补 `requireActiveWorkspace`；③ 团队会话接口对「不存在空间」返回 422、存在空间 403，可枚举——已统一为同一 typed 拒绝，并把不变量（活跃/归档/不存在三者同状态码）固化进测试；④ 身份校验与空间访问拒绝改为 `authorizationDenied(...)`，消除「含『不存在』被归 404」的错分。
-- **契约**：`docs/contracts/openapi-workbench.json` 为运行详情、SSE、团队会话列表、共享文件列表补充 3-T1 读取轨说明；`pnpm verify` 通过。
+- **契约**：`docs/development/openapi-workbench.json` 为运行详情、SSE、团队会话列表、共享文件列表补充 3-T1 读取轨说明；`pnpm verify` 通过。
 
 ## 7. TW-06 归档语义与生命周期（批次 3 第一部分，已合入 main）
 
@@ -246,12 +248,12 @@ WIP 首次运行是 **16 个用例 8 失败**，修复分两类：
 
 ## 10. TW-07 / TW-08（批次 3 第二、三部分）
 
-详细交付记录在 `docs/product/team-workspace-batch-3-tasks.md`（3-T6 / 3-T7 两节），此处只留接手所需的要点与坐标。
+详细交付记录在 `docs/design/team-workspace-batch-3-tasks.md`（3-T6 / 3-T7 两节），此处只留接手所需的要点与坐标。
 
 **TW-07 文件更新与版本（3-T6，✅ 后端已合入 `main`，`624acc4`）**
 - 迁移 `0025_workspace_file_versions.sql`：`workspace_files`（逻辑文件）+ `workspace_file_versions`（版本），`file_objects` 保持不可变（AC-13）；既有团队共享文件回填为 v1，个人空间文件与会话附件不回填。
 - 服务与路由：`listWorkspaceFiles` 按逻辑文件聚合、`GET/POST …/files/:logicalFileId/versions`、按版本下载走既有 `readFile` 读取轨；版本号在逻辑文件行锁内按 `max(version_no)+1` 分配，失败版本保留记录但不上移 `latest_version_no`。
-- 前端版本 UI 未做（属批次 3 剩余工作）。AC-29 的规模基线**未在本任务重测**，`docs/baselines/team-workspace-1b-statistics-findings.md` §8 已标注 1B 的文件列表查询形状在 TW-07 之后过时。
+- 前端版本 UI 未做（属批次 3 剩余工作）。AC-29 的规模基线**未在本任务重测**，`docs/history/team-workspace-1b-statistics-findings.md` §8 已标注 1B 的文件列表查询形状在 TW-07 之后过时。
 
 **TW-08 团队动态与通知（3-T7，✅ 后端已完成、两轮评审已修）**
 - 迁移 `0026_workspace_activity.sql`：`workspace_activity_events`（12 种 kind 的闭合集合、`(tenant_id, workspace_id, dedupe_key)` 唯一、feed 索引）+ `workspace_notification_states`（`last_read_at`/`muted_at`）；纯新增、可重复执行、**不回填历史**。

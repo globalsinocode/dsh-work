@@ -61,7 +61,7 @@
   - 新增 `postgres-workspace-usage-service.ts`（或等价命名，**不要塞进已经过大的 `postgres-content-service.ts`**）：先按读轨解析空间（拒绝个人空间 422、非成员 403），再 `requireTeamRole(['owner','admin'], { purpose: 'read' })`，并把角色不足的**裸 Error 翻译成类型化 403**（`requireTeamRole` 角色不足时抛的是普通 Error，若不翻译会被路由器分类成 **500**——本项目反复踩过的坑）。
   - 聚合：一次查询返回按日分桶（`generate_series` 零填充 + 左连接该空间在窗口内的用量事件），totals 在服务端由日序列求和得出（避免第二次往返）；窗口按 `model_usage_events.occurred_at` 过滤，空间过滤走 `sessions.workspace_id`。
   - 事件来源是每次 attempt 一行（`usage-<attemptId>`），`status ∈ ('success','failed')`；不要虚构 `blocked` 桶。
-  - 新增路由 `workspace-usage-routes.ts` 并接线 `main.ts`；`docs/contracts/openapi-workbench.json` 同步新增路径与 schema（含 403/422 说明）。
+  - 新增路由 `workspace-usage-routes.ts` 并接线 `main.ts`；`docs/development/openapi-workbench.json` 同步新增路径与 schema（含 403/422 说明）。
   - **无迁移**。
 - **验收**：AC-30。
 - **测试**：新增 `server/src/http/team-workspace-usage-api.integration.test.ts`（`createThrowawayDatabase()`），登记为 `test:m5:usage:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml` 三处）。判别性用例至少覆盖：负责人/管理员可读；**普通成员与只读成员 403 且为类型化（不是 500）**；非成员与不存在空间拒绝逐字一致（不可枚举）；个人空间 422；归档空间负责人/管理员仍可读；`range` 缺省/`7d`/`30d`/非法值；totals 与 daily 的数值正确（造多天、多状态、`estimated` 混排数据）；**只统计本空间会话**（另一空间的 Run 不得计入）；无消耗的日子零填充且天数正确；跨空间会话归属隔离。
@@ -110,7 +110,7 @@
 ## 6. 交付记录（2026-09-12）
 
 **4-T1 后端**
-- 新增 `server/src/modules/workbench/application/postgres-workspace-usage-service.ts`（授权门禁 + 单条零填充聚合）、`server/src/http/workbench/workspace-usage-routes.ts`（`GET /api/workbench/v1/workspaces/:workspaceId/usage`）、`server/src/http/team-workspace-usage-api.integration.test.ts`（**13** 个集成用例）；`server/src/main.ts` 接线；三处登记 `test:m5:usage:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml`）；`docs/contracts/openapi-workbench.json` 新增路径与 `WorkspaceUsageView`/`Totals`/`DailyPoint` schema。**无迁移、无 schema 变更**。
+- 新增 `server/src/modules/workbench/application/postgres-workspace-usage-service.ts`（授权门禁 + 单条零填充聚合）、`server/src/http/workbench/workspace-usage-routes.ts`（`GET /api/workbench/v1/workspaces/:workspaceId/usage`）、`server/src/http/team-workspace-usage-api.integration.test.ts`（**13** 个集成用例）；`server/src/main.ts` 接线；三处登记 `test:m5:usage:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml`）；`docs/development/openapi-workbench.json` 新增路径与 `WorkspaceUsageView`/`Totals`/`DailyPoint` schema。**无迁移、无 schema 变更**。
 - 授权顺序：`range` 解析 → 拒绝空白 id 与 `standalone` 哨兵（先于任何空间解析，读接口不得写库）→ `resolveReadableWorkspace`（读轨、归档可读、非成员/不存在同一 403）→ 个人空间 422 → `requireTeamRole(['owner','admin'], { purpose: 'read' })`。
 - 聚合：`with workspace_usage_events as (按空间 + 窗口过滤) → daily as (按日聚合) → left join generate_series(日序列)`；totals 由日序列求和，无第二次往返；`totalTokens = input + output`。
 - **实现代理的反证**：移除角色翻译（member/viewer 实测落 500）、移除空间过滤（跨空间混入 2≠1）、去掉零填充（daily.length 0≠7）、`estimated` 过滤置空（0≠2）。
@@ -138,7 +138,7 @@
 - **fix round 后的复审（两位评审都在最终提交上复跑）**：规格符合性评审修订为 **符合**（首轮 3 suspicion + 4 nit 全部修复或如实豁免，无新增回归）；对抗性质量评审的 P1 在最终版本上复测通过（usage 套件 2003ms → 802ms，逐日数值一致）。`standalone` 无写副作用、`callCount === success + failed`、前端同名场景零请求、类型化 403 承重——均由评审用独立探针复核。
 - **接受的一条低风险观察（不改）**：`assertUsageRole` 把 `requireTeamRole` 抛出的任何 403 都重打成「仅负责人或管理员可以查看空间用量」（该文案由集成用例钉住）。理论上「两次查询之间成员被移除」的竞争拒绝也会显示成角色不足；但 `assertReadableTeamWorkspace` 已先解析成员资格，实际不可达，且 status/code 仍为 403 `permission_denied`。若改回按消息区分两类拒绝，反而要重新引入文案匹配（正是 S2 修掉的坏味道），故保留现状并记录。
 - **提交与 CI（2026-09-12）**：`de7d247`（`feat(server),feat(workbench-web),docs: 空间用量（TW-09 / 批次 4）`）已推送 `main`，CI `M6 quality gate`（run `34676010309`）通过。
-- **工作树提醒**：本批提交全部按路径暂存；工作树另有**与本批无关**的改动——`docs/README.md`(M) 与未跟踪的 `docs/product/skill-installation-plan.md`（Skill 安装产品方案，属另一条工作流），未纳入本批提交，也未删除。
+- **工作树提醒**：本批提交全部按路径暂存；工作树另有**与本批无关**的改动——`docs/index/README.md`(M) 与未跟踪的 `docs/design/skill-installation-plan.md`（Skill 安装产品方案，属另一条工作流），未纳入本批提交，也未删除。
 
 ## 8. 已知项（记录，不阻断）
 
@@ -205,4 +205,4 @@ node --experimental-strip-types scripts/runtime/team-workspace-e2e.ts
 - `estimatedCount` 在真实 DSH 下恒为 0（运行时会回报 token），「估算值」提示在本环境不会出现；该分支由集成套件的 `estimated` 行覆盖。
 - `resolveDshRuntimeInstallation` 会把生成的 ACP 覆盖层写到 `<repo>/.runtime/dsh-config/`（gitignore、既有行为），不在 `mkdtemp` 临时根内；attempts/storage/session 快照仍在临时根内。
 - `scripts/` 不参与 `pnpm typecheck`（只有 lint 覆盖），与本脚本「环境验证」的定位一致。
-- **与 4-T3 无关但需知会**：`pnpm test:scripts` 在当前工作树上失败，原因是**并行的那条工作流**新增的未跟踪文档 `docs/product/skill-installation-plan.md`、`docs/product/admin-assistant-plan.md` 里的链接指向尚未落盘的文件（`scripts/checks/checks.test.mjs` 的文档链接白名单检查）；只叠加本任务两个文件时 `test:scripts` 20/20 通过。
+- **与 4-T3 无关但需知会**：`pnpm test:scripts` 在当前工作树上失败，原因是**并行的那条工作流**新增的未跟踪文档 `docs/design/skill-installation-plan.md`、`docs/design/admin-assistant-plan.md` 里的链接指向尚未落盘的文件（`scripts/checks/checks.test.mjs` 的文档链接白名单检查）；只叠加本任务两个文件时 `test:scripts` 20/20 通过。

@@ -11,7 +11,6 @@ deployment_scripts=(
   scripts/deploy/install-launchd.sh
   scripts/deploy/install-release-watcher.sh
   scripts/deploy/issue-intranet-certificate.sh
-  scripts/deploy/issue-intranet-ip-certificate.sh
   scripts/deploy/preflight.sh
   scripts/deploy/render-endpoint-compose.sh
   scripts/deploy/release.sh
@@ -33,7 +32,7 @@ cleanup() {
 trap cleanup EXIT
 bash scripts/deploy/init-intranet-ca.sh \
   --ca-dir "${certificate_fixture}/ca" >/dev/null 2>&1
-bash scripts/deploy/issue-intranet-ip-certificate.sh \
+bash scripts/deploy/issue-intranet-certificate.sh \
   --ca-dir "${certificate_fixture}/ca" \
   --ip 192.168.50.20 \
   --ip 192.168.50.21 \
@@ -90,8 +89,8 @@ grep -F 'release.immutable !== true' scripts/deploy/watch-release.sh >/dev/null
 grep -F 'release.author?.login !== "github-actions[bot]"' scripts/deploy/watch-release.sh >/dev/null
 grep -F 'release_version_script="${automation_root}/release-version.sh"' scripts/deploy/watch-release.sh >/dev/null
 grep -F 'release-version.sh.new' scripts/deploy/install-release-watcher.sh >/dev/null
-grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"' docs/deployment/mac-mini-deployment-runbook.md >/dev/null
-grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/install-release-watcher.sh" "${DWP_ROOT}"' docs/deployment/mac-mini-deployment-runbook.md >/dev/null
+grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/release.sh" "${DWP_VERSION}" "${DWP_ROOT}"' docs/release/mac-mini-deployment-runbook.md >/dev/null
+grep -F 'bash "${DWP_BUNDLE}/scripts/deploy/install-release-watcher.sh" "${DWP_ROOT}"' docs/release/mac-mini-deployment-runbook.md >/dev/null
 grep -F 'PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin' deploy/runtime.env.example >/dev/null
 grep -F -- '--deny-self-hosted-runners' scripts/deploy/release.sh >/dev/null
 grep -F '/releases/latest' scripts/deploy/watch-release.sh >/dev/null

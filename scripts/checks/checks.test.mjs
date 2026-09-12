@@ -16,7 +16,7 @@ function fixture(t) {
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',
-    // 文档（如 docs/product/team-workspace-plan.md）会链接到员工端与共享包的具体文件，
+    // 文档（如 docs/design/team-workspace-plan.md）会链接到员工端与共享包的具体文件，
     // 夹具必须提供这些路径，否则 project 检查会把真实存在的链接报成悬空。
     'apps/workbench-web/src/stores/content.ts', 'apps/workbench-web/src/stores/tasks.ts',
     'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/stores/admin-assistant.ts',
@@ -42,16 +42,16 @@ test('current project passes every static group', () => {
 
 test('contract checks reject missing API paths and required error fields', t => {
   const root = fixture(t)
-  editJson(root, 'docs/contracts/openapi-admin.json', api => { delete api.paths['/agents/rollback'] })
-  editJson(root, 'docs/contracts/openapi-workbench.json', api => { api.components.schemas.ErrorEnvelope.properties.error.required = [] })
+  editJson(root, 'docs/development/openapi-admin.json', api => { delete api.paths['/agents/rollback'] })
+  editJson(root, 'docs/development/openapi-workbench.json', api => { api.components.schemas.ErrorEnvelope.properties.error.required = [] })
   assert.match(failures(root, 'contracts'), /缺少路径 \/agents\/rollback/)
   assert.match(failures(root, 'contracts'), /错误契约缺少 traceId/)
 })
 
 test('missing or malformed contracts report failures instead of passing', t => {
   const root = fixture(t)
-  rmSync(join(root, 'docs/contracts/run-event.schema.json'))
-  writeFileSync(join(root, 'docs/contracts/runtime-manifest.schema.json'), '{')
+  rmSync(join(root, 'docs/development/run-event.schema.json'))
+  writeFileSync(join(root, 'docs/development/runtime-manifest.schema.json'), '{')
   assert.match(failures(root, 'contracts'), /run-event.schema.json 无法读取/)
   assert.match(failures(root, 'contracts'), /runtime-manifest.schema.json 不是有效 JSON/)
 })

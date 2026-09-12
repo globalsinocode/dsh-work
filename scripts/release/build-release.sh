@@ -78,7 +78,6 @@ deployment_scripts=(
   install-launchd.sh
   install-release-watcher.sh
   issue-intranet-certificate.sh
-  issue-intranet-ip-certificate.sh
   preflight.sh
   release-version.sh
   render-endpoint-compose.mjs

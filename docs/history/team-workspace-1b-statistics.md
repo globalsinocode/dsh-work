@@ -4,7 +4,7 @@
 **数据规模参数：** 成员 40 · 会话 200 · 共享文件 200 · 热点会话 Run 60 · 团队空间 5（**含个人空间共 6 个可见空间**）· 测量视角成员 1 · 并发 10
 
 > 本文件由 `scripts/bench/team-workspace-statistics.ts` 在一次性库上生成；
-> 复跑：`DSH_WORK_TEST_DATABASE_URL=… pnpm bench:team-workspace-statistics --members=40 --sessions=200 --files=200 --spaces=5 --runs=60 --concurrency=10 --out docs/baselines/team-workspace-1b-statistics.md`。
+> 复跑：`DSH_WORK_TEST_DATABASE_URL=… pnpm bench:team-workspace-statistics --members=40 --sessions=200 --files=200 --spaces=5 --runs=60 --concurrency=10 --out docs/history/team-workspace-1b-statistics.md`。
 > 绝对延迟随机器变化，应关注**往返次数**、**相对量级**与**随数据量的增长趋势**。
 
 ## 1. 实际数据量

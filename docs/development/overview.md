@@ -220,7 +220,7 @@ flowchart LR
 | File/Artifact Version | 输入与交付成果 | 存储键不使用用户文件名；版本不可覆盖；下载再次鉴权 |
 | Audit/Operational Event | 安全与运营事实 | 结构化、可追踪、脱敏；不保存业务正文和凭据 |
 
-详细逻辑关系见 [数据模型](../data-model.md)，物理约束见 `server/migrations/`。
+详细逻辑关系见 [数据模型](../design/data-model.md)，物理约束见 `server/migrations/`。
 
 ## 8. 代码与模块映射
 
@@ -256,8 +256,8 @@ flowchart LR
 ## 10. 当前边界与独立开发
 
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；默认非生产 `prototype` 模式无需启动 AI Hub。
-- Skill 已有文本版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接与命令安装迁入独立「管理助手」页面；管理助手同时覆盖 Agent 管理和平台运维的交互预览，详见 [管理助手方案](../product/admin-assistant-plan.md)。前端交互已确认，管理助手的 Skill 安装已复用 Run/Attempt 与 DSH 接入真实获取、预览和确认保存；资源随版本存储并只读挂载。ZIP 页仍为交互预览，Agent 管理与运维对话尚未接入。实现边界见 [对话安装实现](../product/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../product/skill-installation-plan.md)。
-- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../product/skill-python-execution-plan.md)（待实施）：DSH 调用平台 Python 工具，每次调用独立临时容器；不新增 Agent Loop。安装、依赖、显式授权、试运行和成果发布分别治理，当前实现仍不支持脚本。
+- Skill 已有文本版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接与命令安装迁入独立「管理助手」页面；管理助手同时覆盖 Agent 管理和平台运维的交互预览，详见 [管理助手方案](../design/admin-assistant-plan.md)。前端交互已确认，管理助手的 Skill 安装已复用 Run/Attempt 与 DSH 接入真实获取、预览和确认保存；资源随版本存储并只读挂载。ZIP 页仍为交互预览，Agent 管理与运维对话尚未接入。实现边界见 [对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
+- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)（待实施）：DSH 调用平台 Python 工具，每次调用独立临时容器；不新增 Agent Loop。安装、依赖、显式授权、试运行和成果发布分别治理，当前实现仍不支持脚本。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 生产依赖 AI Hub 的 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
 - 业务角色在本地，但 AI Hub 账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
@@ -265,7 +265,7 @@ flowchart LR
 - `/health` 的 SSO 字段表示配置模式，不是身份服务可用性检测；接口契约与真实双系统故障行为需独立验证。
 - 企业只读 Connector、真实知识源、恶意文件扫描、数据出口、目标容量和备份恢复，均需针对部署环境提供证据。合成数据、历史测试与发布成功不能代替业务验收。
 
-开发模式、自动化和上线前验证入口见 [开发与测试](../testing/development.md)；身份协议与生命周期见 [AI Hub 接入](../deployment/ai-hub-sso-integration.md)。
+开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
 
 ## 11. 生产演进原则
 
@@ -280,10 +280,10 @@ flowchart LR
 
 ## 12. 相关文档
 
-- [文档导航](../README.md)
-- [开发与测试](../testing/development.md)
-- [数据模型](../data-model.md)
-- [内部端口与契约](../contracts/internal-ports.md)
-- [AI Hub 身份接入](../deployment/ai-hub-sso-integration.md)
-- [DSH Runtime](../deployment/dsh-runtime-delivery.md)
-- [Mac mini 部署手册](../deployment/mac-mini-deployment-runbook.md)
+- [文档导航](../index/README.md)
+- [开发与测试](development.md)
+- [数据模型](../design/data-model.md)
+- [内部端口与契约](internal-ports.md)
+- [AI Hub 身份接入](../release/ai-hub-sso-integration.md)
+- [DSH Runtime](../release/dsh-runtime-delivery.md)
+- [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md)

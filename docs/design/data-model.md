@@ -1,6 +1,6 @@
 # 数据模型
 
-PostgreSQL 是产品事实来源。本文解释关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../server/migrations/) 为准，不维护另一份 DDL 副本。
+PostgreSQL 是产品事实来源。本文解释关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../../server/migrations/) 为准，不维护另一份 DDL 副本。
 
 ## 领域关系
 
@@ -47,15 +47,15 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败 Run �
 
 ## 迁移入口
 
-- [基础模型](../server/migrations/0001_m2_platform.sql) 与后续运行、能力和文件迁移。
-- [对象授权](../server/migrations/0010_m4_authorization.sql)、[个人空间](../server/migrations/0013_m5_personal_workspaces.sql)。
-- [服务端 Session](../server/migrations/0014_m6_ai_hub_sso.sql)、[本地授权](../server/migrations/0016_identity_owned_authorization.sql)、[业务员工](../server/migrations/0017_business_user_directory.sql)、[升级对账](../server/migrations/0018_fail_closed_directory_reconciliation.sql)。
-- [多入口 OIDC 事务](../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../server/migrations/0025_workspace_file_versions.sql)。
+- [基础模型](../../server/migrations/0001_m2_platform.sql) 与后续运行、能力和文件迁移。
+- [对象授权](../../server/migrations/0010_m4_authorization.sql)、[个人空间](../../server/migrations/0013_m5_personal_workspaces.sql)。
+- [服务端 Session](../../server/migrations/0014_m6_ai_hub_sso.sql)、[本地授权](../../server/migrations/0016_identity_owned_authorization.sql)、[业务员工](../../server/migrations/0017_business_user_directory.sql)、[升级对账](../../server/migrations/0018_fail_closed_directory_reconciliation.sql)。
+- [多入口 OIDC 事务](../../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../../server/migrations/0025_workspace_file_versions.sql)。
 
-新增变更使用新的顺序迁移，保留已应用迁移。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](deployment/mac-mini-deployment-runbook.md)。
+新增变更使用新的顺序迁移，保留已应用迁移。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 
 ## 数据保留与安全
 
 模型隐藏推理和密钥不进入数据库、日志或 SSE。消息正文与运营审计分开管理；管理端治理摘要不等于开放全量业务消息读取。文件进入 Runtime 前执行权限、类型和路径校验，企业扫描、保留期、备份与清理策略需要按环境落实。
 
-完整契约见 [内部端口与契约](contracts/internal-ports.md)，回归和真实验收要求见 [开发与测试](testing/development.md)。
+完整契约见 [内部端口与契约](../development/internal-ports.md)，回归和真实验收要求见 [开发与测试](../development/development.md)。

@@ -60,7 +60,7 @@
 - **恢复语义**：仅清 `archived_at` 并置 `status='active'`，不触碰 `workspace_members`；已移除成员保持移除，授权不扩大。归档空间仍可执行紧急撤权（`DELETE /members/:userId`）与负责人转交（3-T1 治理例外，未改动）。
 - **测试**：新增 `server/src/http/team-workspace-lifecycle-api.integration.test.ts`（**18 个用例**，`createThrowawayDatabase()`），登记为 `test:m5:lifecycle:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml`）。
 - **反证声明的更正（规格评审 P1 / 质量评审 F1）**：初版曾声称「去掉 `createRun`/`createAttempt`/`claimAttempt` 的空间行锁…对应用例均变红」——**该声明不成立**：两轮评审各自实测「削掉三处 `for update of w`、保留归档状态判断」后套件仍 14/14 全绿，说明原有用例只证明「状态判断存在」，不证明「行锁存在」，即一个带 TOCTOU 的错误实现能通过 CI。现补两条**能区分有锁/无锁**的用例：① 外部事务持有空间行锁时开跑不得推进（无锁则会立即完成）；② 转交 + 移除成员并发无死锁。两条均反证过（削弱实现即变红）。运行中拦截、当前负责人解析的反证仍然有效。
-- **契约**：`docs/contracts/openapi-workbench.json` 补 `status` 筛选参数与两个新端点（含 409 说明）。
+- **契约**：`docs/development/openapi-workbench.json` 补 `status` 筛选参数与两个新端点（含 409 说明）。
 - **未做/超出本任务**：`PATCH /workspaces/:id`（名称/说明保存）仍缺，属 3-T3 依赖的 1A 遗留；前端归档体验为 3-T3；无新增迁移（复用 `0001` 的 `status`/`archived_at` 与 `audit_events`）。
 
 ### 3-T3 前端归档体验 ✅ 已完成（2026-09-11）
@@ -164,7 +164,7 @@
   - `removeWorkspaceFile`：按逻辑文件移除（兼容传版本对象 ID），置 `workspace_files.status='removed'` 并把该逻辑文件**全部版本对象**标记 `removed_at`（阻止新引用）；版本行、对象、解析结果与 `run_input_files` 引用全部保留（AC-13）。个人空间上传/移除拒绝改为类型化 422。
   - `listWorkspaces` 的团队文件摘要同样按逻辑文件聚合（个人空间分支保持原查询，AC-23）。
   - 类型化错误：403 `authorizationDenied`、422 `requestInvalid`（含解析失败与个人空间拒绝）、409 `WorkspaceStateConflictError`（已移除文件再加版本、版本号竞态），不靠文案分类。
-- **路由与契约**：`GET/POST /workspaces/:workspaceId/files/:logicalFileId/versions`、`GET /workspaces/:workspaceId/files/:logicalFileId/versions/:versionNo/download`；上传执行轨（归档 403），两个读取端点 `allowArchived: true`；`docs/contracts/openapi-workbench.json` 同步三条路径、头部参数与 409/422/413 说明，并更新列表描述。
+- **路由与契约**：`GET/POST /workspaces/:workspaceId/files/:logicalFileId/versions`、`GET /workspaces/:workspaceId/files/:logicalFileId/versions/:versionNo/download`；上传执行轨（归档 403），两个读取端点 `allowArchived: true`；`docs/development/openapi-workbench.json` 同步三条路径、头部参数与 409/422/413 说明，并更新列表描述。
 - **测试**：新增 `server/src/http/team-workspace-file-versions-api.integration.test.ts`（**18 个用例**，`createThrowawayDatabase()`，自行构造 0001~0024 基线后应用 0025 验证回填）；登记为 `test:m5:file-versions:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml`）。既有 `team-workspace-shared-files-api` 的 `seedFile` 夹具补建逻辑文件+v1（既有 15 条断言不变、全绿）；`team-workspace-upgrade` 的 0022 回滚用例补 drop 0025 对象以覆盖新迁移回滚。
 - **反证（削弱实现即变红）**：① 去掉版本分配 `for update` → 行锁判别用例与三路并发用例均红（并发用例实测出现 `WorkspaceStateConflictError`，只 2/3 成功）；② 失败版本也前移 `latest_version_no` → 失败版本用例红；③ 回填去掉 `workspace_type='team'` → 回填用例红（个人文件被计入）；④ 列表去掉版本关联去重 → 去重用例红；⑤ 列表退回按 `latest_version_no` 关联 → 「历史解析从未成功的文件仍可见」用例红（该回归由父代理复查发现并修复）；⑥ 去掉 `assertCanWriteWorkspaceFiles` → 只读成员上传用例红。均已还原。
 - **符合性/质量评审修复（2026-09-11）**：① **只读成员可上传**（P1，违反 §5/AC-08）：新版本上传与新建共享文件都补 `assertCanWriteWorkspaceFiles`（viewer → 403），OpenAPI 去掉「（所有成员）」的错误口径；② 移除鉴权与列表口径不一致（列表按「最高解析成功版本」判 removable、移除按「最高版本」判权，导致按钮可点却 403）→ 统一为同一排序；③ 列表过滤由 `= 'clean'` 恢复为 `<> 'blocked'`，避免 `pending`/`failed` 的回填文件从列表与空间摘要消失（TW-05 可见态回归）；④ 版本列表的 `current` 改为与展示版本一致、`canDownload` 计入 `removed_at`；⑤ 畸形 `X-File-Name`/`X-File-Note` 百分号编码与安全检查未通过原先落 **500**，改为类型化 422；契约里不可达的 413 改为 422 并说明；⑥ 更正本交付记录（列表口径、反证项、用例数）。
@@ -176,7 +176,7 @@
   - **同名过度承诺的用例改名**：原「UniqueViolation 走 409」用例实际从未触发唯一约束（行锁保证串行），已改名为它真正验证的行为（版本号按 max 分配 + 已移除文件的类型化 409），并在注释中说明唯一冲突分支只是行锁失效时的兜底。
 - **第二轮验证追加修复（2026-09-11）**：① **新建共享文件的同类 TOCTOU**：`storeWorkspaceFile` 原先只在事务外校验，请求在途时被归档/撤权仍会落库（验证实测 `AFTER_RELEASE=resolved`）；现与上传新版本、移除一致，在事务内先取空间行锁并复核「活跃 + 成员 + 非只读」。② **只读成员不得移除**（验证 D1，既有行为与设计/方案冲突）：`removable` 加 `role !== 'viewer'`，移除路径对 viewer 走既有拒绝文案；注意这修的是 HEAD 就存在的行为（历史上传人被降级为只读后仍可移除），与「上传」口径终于一致。③ 迁移重放不再产生**孤儿逻辑文件**（回填排除已有版本行的对象，验证 P3-1）。④ 契约与记录的 3 处口径修正（新上传接口摘要不再写「所有成员」、DELETE 说明补「降级为只读同样不可移除」、用例数订正）。⑤ 补两条缺失锚点：**扫描中（pending）文件仍在列表与空间摘要可见**（过滤只隐藏 `blocked`，验证 P3-4）、**移除必须取得空间行锁**（验证代理推翻了我此前「该用例无法构造」的判断——移除不插入 `file_objects`，不触发外键的 KEY SHARE，因此可用外部持锁构造判别性用例；已补回并反证）。⑥ 未提供说明时 `note` 保持 `null` 而不是 `''`。
 - **已知潜在（记录，不阻断）**：若某个**被展示版本**的对象是 `blocked`（当前同步扫描不会落库这类对象），外层 `scan_status <> 'blocked'` 会把**整个逻辑文件**从列表挤掉，连更低的可用版本一起消失；`listWorkspaceFileVersions` 也不过滤扫描态。当前不可达，属 TW-05 预留异步扫描态后的潜在回归。
-- **未做/超出本任务**：前端版本 UI（TW-07 前端为后续任务，本任务只保证类型可编译）；AC-29 的既定规模查询计划/延迟基线未在本任务重测（无 TW-07 专项预算），且 `docs/baselines/team-workspace-1b-statistics-findings.md` §8 已标注 1B 基线的文件列表查询形状在 TW-07 之后过时；未新增会话级 pin 表（沿用文档决定）。
+- **未做/超出本任务**：前端版本 UI（TW-07 前端为后续任务，本任务只保证类型可编译）；AC-29 的既定规模查询计划/延迟基线未在本任务重测（无 TW-07 专项预算），且 `docs/history/team-workspace-1b-statistics-findings.md` §8 已标注 1B 基线的文件列表查询形状在 TW-07 之后过时；未新增会话级 pin 表（沿用文档决定）。
 
 ### 3-T7 团队动态与通知（TW-08 后端）✅ 已完成（2026-09-12，两轮评审已修并入 main）
 - 成员变动、文件上传/移除等事件的动态投影与站内通知；幂等去重、按权限过滤、归档空间不泄露正文；P1。
@@ -226,10 +226,10 @@
 - **服务层 `postgres-workspace-activity-service.ts`**：`listActivity`／`getActivityItem`／`getNotifications`／`markNotificationsRead`／`setNotificationsMuted`。每个公开方法**先重新解析读取轨**（`workspaces.resolveReadableWorkspace`，每次查库、不缓存成员资格）：归档团队空间可读、个人空间 422「仅支持团队工作空间查看团队动态」、非成员与不存在空间返回**完全一致**的 403（不可枚举）；空 `workspaceId` 在解析前就 422，避免 `resolveReadableWorkspace` 的空值回退把「查看者自己的个人空间」当默认值创建出来。
 - **游标与精度（实现代理实测发现）**：分页为 `(occurred_at desc, id desc)` 的 keyset；服务端把游标编成 `base64url(JSON{t,i})`。**关键点**：`occurred_at` 作为 JS `Date` 只有毫秒精度，而 DDL 是微秒精度的 `timestamptz`，直接把 `Date` 传回驱动做游标会让同一毫秒内的行重复或漏掉——因此查询额外取 `occurred_at::text`（DB 侧全精度文本）作为游标令牌，回传时写成 `((${token}::text)::timestamptz)` 双重转换：先按字符串发送（否则 postgres.js 会把 `timestamptz` 参数折成毫秒），再在库内解析。`limit` 默认 20、必须在 1..100 的十进制整数，否则类型化 422（评审 F6：`Number()` 会放行 `0x10`/`1e2`，已在路由层按形状拒绝）；多取一行判断 `nextCursor`。**畸形游标**（base64/JSON 合法但 `t` 不是时间戳、空串、含 NUL）由形状校验 + SQLSTATE 翻译统一落类型化 422，绝不落 500（评审 F1/D1，见下）。
 - **未读与静音语义**：未读 = `occurred_at > last_read_at`（无状态行则全部未读）；`markNotificationsRead` 用 upsert 把 `last_read_at` 推进到 `now()`；`muted_at` 非空时 `unreadCount` 报 0 但**动态 feed 照常返回**（对齐 TW-08「关闭提醒仍可在动态里看到」），静音不清空已读位置。
-- **路由与契约**：`GET /workspaces/:id/activity`、`GET /workspaces/:id/activity/:activityId`、`GET /workspaces/:id/notifications`、`POST /workspaces/:id/notifications/read|mute|unmute`（6 条，`workspace-activity-routes.ts`，`main.ts` 接线）。**全部为读取轨（`allowArchived: true`）**；写路径只有「某人自己的已读/静音状态」，不触碰空间业务数据，因此归档空间仍可用。`docs/contracts/openapi-workbench.json` 同步 6 条路径与 4 个 schema（含 limit/cursor、422/403 说明）。
+- **路由与契约**：`GET /workspaces/:id/activity`、`GET /workspaces/:id/activity/:activityId`、`GET /workspaces/:id/notifications`、`POST /workspaces/:id/notifications/read|mute|unmute`（6 条，`workspace-activity-routes.ts`，`main.ts` 接线）。**全部为读取轨（`allowArchived: true`）**；写路径只有「某人自己的已读/静音状态」，不触碰空间业务数据，因此归档空间仍可用。`docs/development/openapi-workbench.json` 同步 6 条路径与 4 个 schema（含 limit/cursor、422/403 说明）。
 - **测试**：新增 `server/src/http/team-workspace-activity-api.integration.test.ts`（**评审修复后 21 个用例**，`createThrowawayDatabase()`），登记为 `test:m5:activity:integration`（`server/package.json`、根 `package.json`、`.github/workflows/ci.yml` 三处，已进 CI 质量门）。覆盖：0026 可重复执行且不回填（AC-17）、成员增/删/退/改角色/转交与重复无变化的去重、**并发改角色的 from/to 链路完整**、被拒绝的变更不产生动态、Agent 增删、文件上传/新版本/移除且不泄露文件名与正文、会话附件不进入动态、归档/恢复及「归档→恢复→归档」两条、非成员与不存在空间拒绝一致（不可枚举）、归档空间可读、keyset 分页无重复无遗漏、**同一毫秒内两条动态的微秒游标**、**构造型畸形游标一律 422（不落 500）**、**limit 只接受 1..100 十进制整数**、失权成员不能再用旧 id 读取、未读计数与标记已读、**标记已读的 last_read_at 单调不回拨**、静音与恢复计数、个人空间 422 且不产生任何动态（AC-23）。
 - **本机验证**：`pnpm verify`、`pnpm typecheck`、`pnpm lint` 通过；`test:m5:activity:integration` **21/21（连续三次稳定）**。
-- **明确不做**：前端「最近动态」摘要与「查看全部」抽屉（3-T8）；邮件/短信/外部聊天；历史动态回填；普通消息、未共享对话活动与 Run 执行细节进入动态；AC-29 规模基线未重测（沿用 `docs/baselines/team-workspace-1b-statistics-findings.md` §8 对既有文件列表查询形状的过时告警）。
+- **明确不做**：前端「最近动态」摘要与「查看全部」抽屉（3-T8）；邮件/短信/外部聊天；历史动态回填；普通消息、未共享对话活动与 Run 执行细节进入动态；AC-29 规模基线未重测（沿用 `docs/history/team-workspace-1b-statistics-findings.md` §8 对既有文件列表查询形状的过时告警）。
 
 **两轮评审与修复（2026-09-12）**：
 

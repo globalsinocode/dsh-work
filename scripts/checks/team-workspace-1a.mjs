@@ -13,9 +13,9 @@ const workbenchRequired = [
 
 export function checkTeamWorkspace1a(check) {
   // 退出条件 1：两名员工和一个 Agent 可协作 —— 员工/Agent 成员管理与名册可读。
-  const workbench = check.json('docs/contracts/openapi-workbench.json')
+  const workbench = check.json('docs/development/openapi-workbench.json')
   for (const path of workbenchRequired) {
-    check.assert(Boolean(workbench?.paths?.[path]), `docs/contracts/openapi-workbench.json 缺少路径 ${path}`)
+    check.assert(Boolean(workbench?.paths?.[path]), `docs/development/openapi-workbench.json 缺少路径 ${path}`)
   }
   for (const method of ['get', 'post']) {
     check.assert(

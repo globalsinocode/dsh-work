@@ -16,10 +16,10 @@ const integrationScripts = [
 
 export function checkProject(check) {
   check.files([
-    'README.md', 'docs/README.md', 'docs/architecture/overview.md', 'docs/data-model.md',
-    'docs/contracts/internal-ports.md', 'docs/testing/development.md',
-    'docs/deployment/ai-hub-sso-integration.md', 'docs/deployment/dsh-runtime-delivery.md',
-    'docs/deployment/mac-mini-deployment-runbook.md',
+    'README.md', 'docs/index/README.md', 'docs/development/overview.md', 'docs/design/data-model.md',
+    'docs/development/internal-ports.md', 'docs/development/development.md',
+    'docs/release/ai-hub-sso-integration.md', 'docs/release/dsh-runtime-delivery.md',
+    'docs/release/mac-mini-deployment-runbook.md',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts',
     'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',
   ])

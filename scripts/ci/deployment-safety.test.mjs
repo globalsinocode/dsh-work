@@ -293,13 +293,13 @@ async function verifyNativeCertificateIssuance(fixture) {
   const ca = spawnSync('/bin/bash', [join(projectRoot, 'scripts/deploy/init-intranet-ca.sh'),
     '--ca-dir', join(fixture, 'ca')], { encoding: 'utf8', env })
   assert.equal(ca.status, 0, ca.stderr)
-  for (const [script, args, name] of [
-    ['issue-intranet-ip-certificate.sh', ['--ip', '192.168.33.20'], 'single'],
-    ['issue-intranet-certificate.sh', ['--ip', '192.168.33.20', '--ip', '192.168.101.20',
+  for (const [args, name] of [
+    [['--ip', '192.168.33.20'], 'single'],
+    [['--ip', '192.168.33.20', '--ip', '192.168.101.20',
       '--dns', 'work.example.com'], 'multi'],
   ]) {
     const output = join(fixture, name)
-    const issued = spawnSync('/bin/bash', [join(projectRoot, 'scripts/deploy', script),
+    const issued = spawnSync('/bin/bash', [join(projectRoot, 'scripts/deploy/issue-intranet-certificate.sh'),
       '--ca-dir', join(fixture, 'ca'), '--output-dir', output, ...args], { encoding: 'utf8', env })
     assert.equal(issued.status, 0, issued.stderr)
     const verified = spawnSync('/usr/bin/openssl', ['verify', '-CAfile', join(output, 'root-ca.crt'),

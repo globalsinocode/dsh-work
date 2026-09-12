@@ -1,13 +1,13 @@
 # 团队工作空间产品方案与实施计划
 
-**状态：** 产品与实施方案草案，业务功能尚未按本方案实施；新增界面待按现有页面基准完成设计确认。  
-**更新日期：** 2026-09-09  
+**状态：** 现行方案与交付记录。团队工作空间相关能力已完成主要实现；发布、部署与 A/B/C/D 四账户人工验收尚未执行。
+**更新日期：** 2026-09-12
 **适用范围：** 员工端团队工作空间、相关管理端授权入口、平台业务 API 与持久化。  
 **界面约束：** 沿用现有页面风格和布局。此前独立交互稿已被否决，不作为实施或验收依据。
 
 **范围约束：** 个人工作空间保持现状，不更新页面、交互、Agent／Skill 使用方式、授权规则和业务数据；共享模块中的新增行为仅在团队空间分支生效。个人空间只做兼容回归验证。
 
-本文是团队工作空间增强的唯一方案入口，统一维护功能范围、权限规则、实施顺序与验收要求。当前架构、接口和数据结构分别以[架构总览](../architecture/overview.md)、[内部端口与契约](../contracts/internal-ports.md)和[数据模型](../data-model.md)为准。本文提出的新增接口能力和数据对象均为规划，不表示已经存在。
+本文是团队工作空间增强的唯一方案入口，统一维护功能范围、权限规则、实施顺序与验收要求。当前架构、接口和数据结构分别以[架构总览](../development/overview.md)、[内部端口与契约](../development/internal-ports.md)和[数据模型](data-model.md)为准。本文同时保留规划口径与实际交付状态；当前实现与遗留事项以第 10 节为准，详细批次记录归档在 [历史文档目录](../history/team-workspace/README.md)。
 
 ## 1. 产品目标与交付边界
 
@@ -181,7 +181,7 @@
 
 ### TW-09 协作效率增强 · P2
 
-**范围决定（2026-09-12，产品确认）：只做「空间用量」**，其余四项**明确不做**（不排期、不预留入口）。现状核查（五条候选的数据面/迁移需求/前置与代价）见 `team-workspace-tw09-survey.md`，实施拆分见 `team-workspace-batch-4-tasks.md`。
+**范围决定（2026-09-12，产品确认）：只做「空间用量」**，其余四项**明确不做**（不排期、不预留入口）。现状核查（五条候选的数据面/迁移需求/前置与代价）见 [TW-09 现状核查](../history/team-workspace/team-workspace-tw09-survey.md)，实施拆分见 [批次 4 记录](../history/team-workspace/team-workspace-batch-4-tasks.md)。
 
 - ~~成果评论与 @成员~~：**不做**。现状核查发现它缺少载体——团队成果发布（2B）已放弃，`listArtifacts` 只返回作者本人会话的成果，方案 §4 也写明「不新增跨成员可见的成果列表」。
 - ~~个人收藏和空间置顶~~：**不做**。
@@ -350,7 +350,7 @@
 | AC-29 | 可见统计 / 性能 | 不同成员与角色下数量与列表一致；文件与成员关联无重复计数；缓存收权失效；记录既定数据规模下查询计划、延迟与并发结果并满足实施前确定的预算 |
 | AC-30 | TW-09（空间用量） | 仅负责人与管理员可读空间用量（现任成员但角色不足为类型化 403，非成员与不存在空间拒绝一致不可枚举，个人空间 422，归档空间仍可读）；按日零填充的 7/30 天 token 与调用次数正确，只统计本空间会话的用量事件，不展示金额，估算值明示；普通成员/只读成员与个人空间在前端不渲染且零请求 |
 
-工程验证按[开发与测试](../testing/development.md)执行：
+工程验证按[开发与测试](../development/development.md)执行：
 
 - 文档、架构与契约：`pnpm verify`、`pnpm check:architecture`。
 - 页面与类型：`pnpm typecheck`、`pnpm lint`、`pnpm test:m5:frontend`、`pnpm test:m5:api`。
@@ -395,18 +395,18 @@
 
 本方案交付时仅完成产品与实施文档，不表示新增功能已经实现，也不表示现有页面已按本方案完成设计确认。后续按批次更新本节，避免另建重复的完成清单。
 
-**批次进度（截至 2026-09-11）：**
+**批次进度（截至 2026-09-12）：**
 
 | 批次 | 状态 | 说明 |
 | --- | --- | --- |
-| 0 产品与设计收敛 | ✅ 完成、已确认 | 本方案 + `team-workspace-design.md`（§6 已确认 5 项决策）+ `team-workspace-batch-1a-convergence.md` |
+| 0 产品与设计收敛 | ✅ 完成、已确认 | 本方案 + `team-workspace-design.md`（§6 已确认 5 项决策）+ [1A 收敛记录](../history/team-workspace/team-workspace-batch-1a-convergence.md) |
 | 1A 成员与授权基础 | ✅ 完成（含两轮外部审查修复） | T1 迁移 → T2 授权层 → T3 员工成员 API → T4 Agent 成员 API → T5 收权链路 → T6 前端成员管理 → T7 对账与迁移验证；三条退出条件由 `pnpm verify` 的 `team-workspace-1a` 组门禁保护 |
-| 1B 团队资料与本人对话 | ✅ 完成 | TW-03 本人历史列表、团队 Session 分页、文件下载/搜索/逻辑移除、文件与结果读取收权、可见统计性能基线；T2（来源限制采集）随 2A／2B 取消；真实 DSH 双账户端到端跑通一次（`team-workspace-batch-1b-tasks.md` §2.1） |
+| 1B 团队资料与本人对话 | ✅ 完成 | TW-03 本人历史列表、团队 Session 分页、文件下载/搜索/逻辑移除、文件与结果读取收权、可见统计性能基线；T2（来源限制采集）随 2A／2B 取消；真实 DSH 双账户端到端跑通一次（[1B 记录](../history/team-workspace/team-workspace-batch-1b-tasks.md) §2.1） |
 | 2A 共享与派生基础 | ❌ 已放弃 | 产品确认取消；原 P0 范围收敛为 1A＋1B |
 | 2B 团队成果沉淀 | ❌ 已放弃 | 产品确认取消；不再交付团队成果发布与读取 |
-| 3 持续使用完善 | ✅ **全部交付**：TW-06 ✅；TW-07 ✅ 端到端（后端 3-T6 + 前端版本 UI 3-T9）；TW-08 ✅（后端 3-T7 `24774e6` + 前端 3-T8）；每个任务均经规格 + 质量两轮评审 | 3-T1…3-T9 见 `team-workspace-batch-3-tasks.md`；归档语义＝只读保留（§6.4/§6.5） |
-| 4 协作效率增强（TW-09） | ✅ **已交付**：仅「空间用量」（4-T1 后端 + 4-T2 前端，各两轮评审已修） | 方案 §7 TW-09 其余四项经产品决定不做；拆分/口径/交付记录见 `team-workspace-batch-4-tasks.md`，现状核查见 `team-workspace-tw09-survey.md` |
-| 5 遗留清理与工程卫生 | ✅ **已交付**：Agent 不可用第三态、名册 `department`、迁移 `0028` 两个索引、授权拒绝类型化、Playwright 本机解锁与前端超时 | 任务书/逐项交付记录见 `team-workspace-cleanup-tasks.md` |
+| 3 持续使用完善 | ✅ **全部交付**：TW-06 ✅；TW-07 ✅ 端到端（后端 3-T6 + 前端版本 UI 3-T9）；TW-08 ✅（后端 3-T7 `24774e6` + 前端 3-T8）；每个任务均经规格 + 质量两轮评审 | 3-T1…3-T9 见 [批次 3 记录](../history/team-workspace/team-workspace-batch-3-tasks.md)；归档语义＝只读保留（§6.4/§6.5） |
+| 4 协作效率增强（TW-09） | ✅ **已交付**：仅「空间用量」（4-T1 后端 + 4-T2 前端，各两轮评审已修） | 方案 §7 TW-09 其余四项经产品决定不做；拆分/口径/交付记录见 [批次 4 记录](../history/team-workspace/team-workspace-batch-4-tasks.md)，现状核查见 [TW-09 现状核查](../history/team-workspace/team-workspace-tw09-survey.md) |
+| 5 遗留清理与工程卫生 | ✅ **已交付**：Agent 不可用第三态、名册 `department`、迁移 `0028` 两个索引、授权拒绝类型化、Playwright 本机解锁与前端超时 | 任务书/逐项交付记录见 [清理记录](../history/team-workspace/team-workspace-cleanup-tasks.md) |
 
 **交付项状态：**
 
@@ -419,11 +419,11 @@
 | 提交、CI、发布与部署 | 🟡 批次 1A／1B 与批次 3 的 TW-06、TW-07、TW-08（后端 `24774e6`、前端 `54fde3e`）与 TW-07 前端版本 UI（`6b7ee4b`）均已合并进 `main` 并推送，CI 质量门（含团队集成套件与浏览器冒烟）通过；未执行发布与部署 |
 | 空间生命周期与归档（TW-06） | ✅ 已交付：授权读/执行双轨、归档与恢复 API、归档前端体验、集成与真实 DSH 验证；归档语义＝只读保留（§6.4/§6.5），AC-23 例外经产品确认（团队会话分页在个人空间上 422→403） |
 | 文件更新与版本（TW-07）／团队动态与通知（TW-08） | TW-07 ✅ 端到端已交付（3-T6 后端：迁移 0025、逻辑文件/版本、新版本上传、历史版本下载与追溯；3-T9 前端：文件行版本显示、上传新版本、版本列表（含失败版本）与历史下载、按版本引用）；TW-08 后端 ✅ 已交付（3-T7：迁移 0026、`workspace_activity_events`/`workspace_notification_states`、成员/Agent/文件/归档事件写入点、动态与通知读取路由、21 个集成用例；两轮评审修复）；前端 ✅ 已交付（3-T8：右栏「最近动态」摘要 + 「查看全部」抽屉、未读徽标与按空间静音、归档仍可读且保留已读/静音、个人空间零请求；两轮评审共 2×P1 + 9×P2 + 1×P3 已修并逐条反证） |
-| 空间用量（TW-09 / 批次 4） | ✅ 已交付：仅负责人/管理员可见、只展示 token 与调用次数（不展示金额）、归档可读、个人空间 422 且前端零请求、无新迁移；AC-30 已入验收矩阵。两轮评审发现（1×P1 聚合查询全表扫描、3×P2、1 时间语义观察、4 nit）已全部修复或记录，见 `team-workspace-batch-4-tasks.md` §7 |
+| 空间用量（TW-09 / 批次 4） | ✅ 已交付：仅负责人/管理员可见、只展示 token 与调用次数（不展示金额）、归档可读、个人空间 422 且前端零请求、无新迁移；AC-30 已入验收矩阵。两轮评审发现（1×P1 聚合查询全表扫描、3×P2、1 时间语义观察、4 nit）已全部修复或记录，见 [批次 4 记录](../history/team-workspace/team-workspace-batch-4-tasks.md) §7 |
 
 **1A 已知遗留（2026-09-12 复核后）**（不阻断该批退出条件，转后续批次或专项）：
-- **已由清理包关闭（5-T1…5-T4，2026-09-12）**：Agent「不可用」第三态与具体原因（5-T1，含前端三态红点与 tooltip）；员工名册返回 `department`（5-T2）；`listActiveRuns*` 的 `(tenant_id, status)` 部分索引（5-T3 迁移 `0028`）；`model_usage_events` 每 attempt 唯一索引（5-T3 同迁移）；授权服务内**当前落 403** 的裸 Error 已全部类型化（5-T4，15 处行为不变 + 4 处误分类修为 403）。任务书与交付记录见 `team-workspace-cleanup-tasks.md`。
+- **已由清理包关闭（5-T1…5-T4，2026-09-12）**：Agent「不可用」第三态与具体原因（5-T1，含前端三态红点与 tooltip）；员工名册返回 `department`（5-T2）；`listActiveRuns*` 的 `(tenant_id, status)` 部分索引（5-T3 迁移 `0028`）；`model_usage_events` 每 attempt 唯一索引（5-T3 同迁移）；授权服务内**当前落 403** 的裸 Error 已全部类型化（5-T4，15 处行为不变 + 4 处误分类修为 403）。任务书与交付记录见 [清理记录](../history/team-workspace/team-workspace-cleanup-tasks.md)。
 - **已由批次 3 修掉的两项**：`GET /workspaces` 的 `owner`/`status`（3-T2）、缺 `PATCH /workspaces/:id`（3-T3）。
 - **仍开放**：归档空间 pending 撤权事件无归宿、清扫器关闭竞态；授权服务允许清单之外仍有裸 Error 依赖文案分类（含 `postgres-authorization-service.ts` 的「工具不存在、未发布、不可用或不符合一期只读策略」语义上是拒绝却落 404），以及成员/技能/运行服务里的同类点位。
 
-**批次 3 之后仍开放的事项**：TW-09 仅「空间用量」已交付（批次 4）；**1A 遗留清理与工程卫生已交付（5-T1…5-T5，`team-workspace-cleanup-tasks.md`）**；**TW-07／TW-08／空间用量的真实 DSH 端到端已补齐并多次实跑通过（4-T3，`team-workspace-batch-4-tasks.md` §10/§11）**；其余四项经产品决定不做；发布与部署未执行；A/B/C/D 四账户人工验收未执行；TW-07 的 AC-29 规模基线未在版本化后重测（`docs/baselines/team-workspace-1b-statistics-findings.md` §8 已标注 1B 的文件列表查询形状过时）；两项小技术债记录在 `team-workspace-batch-3-tasks.md`（小字对比度、服务端更新说明截断的潜在代理对问题）。
+**批次 3 之后仍开放的事项**：TW-09 仅「空间用量」已交付（批次 4）；**1A 遗留清理与工程卫生已交付（5-T1…5-T5，见 [清理记录](../history/team-workspace/team-workspace-cleanup-tasks.md)）**；**TW-07／TW-08／空间用量的真实 DSH 端到端已补齐并多次实跑通过（4-T3，见 [批次 4 记录](../history/team-workspace/team-workspace-batch-4-tasks.md) §10/§11）**；其余四项经产品决定不做；发布与部署未执行；A/B/C/D 四账户人工验收未执行；TW-07 的 AC-29 规模基线未在版本化后重测（`docs/history/team-workspace-1b-statistics-findings.md` §8 已标注 1B 的文件列表查询形状过时）；两项小技术债记录在 [批次 3 记录](../history/team-workspace/team-workspace-batch-3-tasks.md)（小字对比度、服务端更新说明截断的潜在代理对问题）。

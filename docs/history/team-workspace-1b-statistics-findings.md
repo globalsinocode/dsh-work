@@ -9,7 +9,7 @@
 ```bash
 DSH_WORK_TEST_DATABASE_URL='postgres://dsh_work:change-me@127.0.0.1:15433/postgres' \
   pnpm bench:team-workspace-statistics --members=40 --sessions=200 --files=200 \
-  --spaces=5 --runs=60 --concurrency=10 --out docs/baselines/team-workspace-1b-statistics.md
+  --spaces=5 --runs=60 --concurrency=10 --out docs/history/team-workspace-1b-statistics.md
 ```
 
 ## 2. 指标口径（解读前必读）

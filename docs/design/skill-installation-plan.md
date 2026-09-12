@@ -2,7 +2,7 @@
 
 **状态：** 前端交互已确认；本轮已接入管理助手对话安装，详见 [实际实现与验收](admin-skill-installation-implementation.md)。ZIP 实装、升级及旧入口整体退出仍待后续批次。
 **方案范围：** 管理端 Skill 安装、版本与发布；统一助手的 Agent 管理与运维交互见 [管理助手方案](admin-assistant-plan.md)。
-**架构约束：** [Agent 执行引擎统一](../architecture/overview.md#35-agent-执行引擎统一)、[内部端口与契约](../contracts/internal-ports.md)。
+**架构约束：** [Agent 执行引擎统一](../development/overview.md#35-agent-执行引擎统一)、[内部端口与契约](../development/internal-ports.md)。
 
 ## 1. 已确认的产品决策
 
@@ -129,4 +129,4 @@ Python 脚本支持采用独立的 [受控执行方案](skill-python-execution-p
 7. 旧创建/编辑入口及对应文本写入路径删除；迁移后历史 Skill 可读、可运行，草稿可处理。
 8. 外部链接、受支持的 `npx` 和 `curl` 输入可追溯到已有 Skill 的固定制品；不支持的命令不执行并给出替代入口。缺少来源或用户要求编写新 Skill 时，不创建包或版本；包缺文件时不由助手补写。
 
-开发验证遵循 [开发与测试](../testing/development.md)：按改动执行类型、UI、API、Runtime、授权及生命周期测试；数据库使用专用可丢弃测试库。新增安装测试接入项目门禁，浏览器检查覆盖上述交互，真实 DSH 验证单独记录。最终分别报告本地检查、真实运行、提交、CI 和部署事实。
+开发验证遵循 [开发与测试](../development/development.md)：按改动执行类型、UI、API、Runtime、授权及生命周期测试；数据库使用专用可丢弃测试库。新增安装测试接入项目门禁，浏览器检查覆盖上述交互，真实 DSH 验证单独记录。最终分别报告本地检查、真实运行、提交、CI 和部署事实。

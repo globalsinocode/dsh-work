@@ -2,7 +2,7 @@
 
 **状态：** 方案设计完成，待实施；本文不代表脚本安装、隔离执行或目标服务器验收已完成。
 **范围：** 将已有 Skill 中的 Python 脚本接入统一 DSH 链路，覆盖安装、依赖、权限、试运行、发布、执行、成果和运维。
-**关联：** [Skill 安装方案](skill-installation-plan.md)、[当前安装实现](admin-skill-installation-implementation.md)、[架构总览](../architecture/overview.md)、[内部端口](../contracts/internal-ports.md)。
+**关联：** [Skill 安装方案](skill-installation-plan.md)、[当前安装实现](admin-skill-installation-implementation.md)、[架构总览](../development/overview.md)、[内部端口](../development/internal-ports.md)。
 
 ## 1. 目标与关键决策
 

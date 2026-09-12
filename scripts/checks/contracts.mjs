@@ -17,7 +17,7 @@ const requiredPaths = {
 
 export function checkContracts(check) {
   for (const [audience, paths] of Object.entries(requiredPaths)) {
-    const file = `docs/contracts/openapi-${audience}.json`
+    const file = `docs/development/openapi-${audience}.json`
     const api = check.json(file)
     check.assert(api?.openapi === '3.1.0', `${file} 必须使用 OpenAPI 3.1.0`)
     for (const path of paths) check.assert(Boolean(api?.paths?.[path]), `${file} 缺少路径 ${path}`)
@@ -26,8 +26,8 @@ export function checkContracts(check) {
       check.assert(Array.isArray(required) && required.includes(field), `${file} 错误契约缺少 ${field}`)
     }
   }
-  const manifest = check.json('docs/contracts/runtime-manifest.schema.json')
-  const events = check.json('docs/contracts/run-event.schema.json')
+  const manifest = check.json('docs/development/runtime-manifest.schema.json')
+  const events = check.json('docs/development/run-event.schema.json')
   for (const [schema, name] of [[manifest, 'runtime-manifest'], [events, 'run-event']]) {
     check.assert(schema?.$id === `https://dsh-work.local/schemas/${name}.schema.json`, `${name} 缺少稳定 $id`)
   }
@@ -36,7 +36,7 @@ export function checkContracts(check) {
     const required = manifest?.$defs?.fileMount?.required
     check.assert(Array.isArray(required) && required.includes(field), `FileMount 缺少必填字段 ${field}`)
   }
-  const fixtures = check.json('docs/testing/fixtures/mvp-fixtures.json')
+  const fixtures = check.json('docs/development/fixtures/mvp-fixtures.json')
   for (const collection of ['users', 'roles', 'workspaces', 'businessRecords', 'knowledgeDocuments', 'files']) {
     check.assert(Array.isArray(fixtures?.[collection]), `合成测试数据缺少数组 ${collection}`)
   }

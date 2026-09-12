@@ -84,7 +84,7 @@
 
 ## 5. 试点依据（使用频率与数据规模）
 
-- **使用频率/规模可以从现有数据算出**：`listWorkspaces` 已在算 `sessionCount`/`artifactCount`（`postgres-content-service.ts`），`runs` 有创建时间与 `requested_by`，`model_usage_events` 有 tokens；1B 还留下了可复跑的基线工具 `scripts/bench/team-workspace-statistics.ts` 与 `docs/baselines/team-workspace-1b-statistics*.md`。
+- **使用频率/规模可以从现有数据算出**：`listWorkspaces` 已在算 `sessionCount`/`artifactCount`（`postgres-content-service.ts`），`runs` 有创建时间与 `requested_by`，`model_usage_events` 有 tokens；1B 还留下了可复跑的基线工具 `scripts/bench/team-workspace-statistics.ts` 与 `docs/history/team-workspace-1b-statistics*.md`。
 - **「反馈」没有数据源**：全仓没有 feedback/埋点表（`grep feedback server/migrations/*.sql` 无命中），也没有前端反馈入口。方案要求的「团队使用频率、反馈及数据规模」里，只有前两项之一（频率）与第三项能自动产出。
 - 因此：要么产品提供试点反馈，要么明确「按父代理建议顺序先做」，不要把它当成已经有依据。
 
