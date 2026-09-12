@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ChatDotRound, Check, Cpu, Document, Grid, Right } from '@element-plus/icons-vue'
+import { ChatDotRound, Check, Cpu, Document, Grid, Right, VideoPause } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import SkillPackagePreview from '@/components/SkillPackagePreview.vue'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
@@ -13,6 +13,7 @@ const router = useRouter()
 const composer = ref<{ focus: () => void }>()
 const messageList = ref<HTMLElement>()
 const busy = computed(() => assistant.busyIds.includes(assistant.selectedId))
+const activeRun = computed(() => [...assistant.current.runs].reverse().find(run => ['queued', 'running', 'cancel_requested'].includes(run.status)))
 const statuses: Record<string, string> = { queued: '等待执行', running: '正在检查来源与包内容', cancel_requested: '正在取消', succeeded: '处理完成', failed: '处理失败', cancelled: '已取消' }
 const installationFor = (runId: string) => assistant.current.installations.find(item => item.runId === runId)
 watch(() => route.query.conversation, id => { if (typeof id === 'string') void assistant.select(id) }, { immediate: true })
@@ -37,6 +38,10 @@ async function send(event?: KeyboardEvent) {
   await nextTick()
   messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' })
 }
+async function stop() {
+  if (!activeRun.value || activeRun.value.status === 'cancel_requested') return
+  await assistant.cancel(activeRun.value.id)
+}
 </script>
 
 <template>
@@ -59,7 +64,7 @@ async function send(event?: KeyboardEvent) {
           <div v-else class="assistant-messages" role="log" aria-label="管理对话记录" aria-live="polite">
             <div v-for="run in assistant.current.runs" :key="run.id" class="assistant-run">
               <article v-for="message in assistant.current.messages.filter(item => item.runId === run.id)" :key="message.id" class="assistant-message" :class="message.role"><strong class="message-author">{{ message.role === 'user' ? '你' : '管理助手' }}</strong><p class="message-text">{{ message.text }}</p></article>
-              <div class="run-status" role="status"><el-tag :type="run.status === 'failed' ? 'danger' : 'info'">{{ statuses[run.status] }}</el-tag><span v-if="run.error">{{ run.error }}</span><el-button v-if="auth.canManage && ['queued', 'running'].includes(run.status)" link type="danger" :disabled="busy" @click="assistant.cancel(run.id)">停止处理</el-button><el-button v-if="auth.canManage && ['failed', 'cancelled'].includes(run.status)" link type="primary" :disabled="busy" @click="assistant.retry(run.id)">重试</el-button></div>
+              <div class="run-status" role="status"><el-tag :type="run.status === 'failed' ? 'danger' : 'info'">{{ statuses[run.status] }}</el-tag><span v-if="run.error">{{ run.error }}</span><el-button v-if="auth.canManage && ['failed', 'cancelled'].includes(run.status)" link type="primary" :disabled="busy" @click="assistant.retry(run.id)">重试</el-button></div>
               <div v-if="installationFor(run.id)" class="action-card">
                 <header><div><h3>{{ installationFor(run.id)!.status === 'installed' ? 'Skill 已安装' : installationFor(run.id)!.status === 'cancelled' ? '安装已取消' : '确认安装已有 Skill' }}</h3><p>安装结果以此操作卡片为准。保存为草稿，不自动发布或修改已有 Agent 引用。</p></div></header>
                 <SkillPackagePreview v-if="installationFor(run.id)!.package" :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" />
@@ -72,7 +77,7 @@ async function send(event?: KeyboardEvent) {
         <footer class="assistant-input-area">
           <template v-if="auth.canManage">
             <div class="source-shortcuts"><span>输入形式</span><el-button link type="primary" @click="prepare('https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines')">外部链接</el-button><el-button link type="primary" @click="prepare('npx skills add vercel-labs/agent-skills --skill web-design-guidelines')">npx</el-button><el-button link type="primary" @click="prepare('curl -L https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md')">curl</el-button></div>
-            <form class="assistant-composer" @submit.prevent="send()"><el-input ref="composer" v-model="assistant.current.draft" type="textarea" :rows="3" resize="none" maxlength="20000" aria-label="管理需求" placeholder="粘贴已有 Skill 的链接或受支持的安装命令…" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" /><div><small>Ctrl / ⌘ + Enter 发送</small><el-button type="primary" native-type="submit" :icon="Right" :loading="busy" :disabled="!assistant.current.draft.trim() || assistant.active">发送</el-button></div></form>
+            <form class="assistant-composer" @submit.prevent="send()"><el-input ref="composer" v-model="assistant.current.draft" type="textarea" :rows="3" resize="none" maxlength="20000" aria-label="管理需求" placeholder="粘贴已有 Skill 的链接或受支持的安装命令…" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send" /><div><small>Ctrl / ⌘ + Enter 发送</small><el-button v-if="activeRun" type="danger" native-type="button" :icon="VideoPause" :loading="busy || activeRun.status === 'cancel_requested'" :disabled="activeRun.status === 'cancel_requested'" :aria-label="activeRun.status === 'cancel_requested' ? '正在停止处理' : '停止处理'" @click="stop">{{ activeRun.status === 'cancel_requested' ? '正在停止' : '停止' }}</el-button><el-button v-else type="primary" native-type="submit" :icon="Right" :loading="busy" :disabled="!assistant.current.draft.trim()">发送</el-button></div></form>
           </template>
           <p v-else>当前为只读权限，可查看已有对话，不能发送安装请求或确认变更。</p>
         </footer>

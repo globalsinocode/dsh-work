@@ -64,6 +64,25 @@ describe('real Skill installation conversation', () => {
     expect(wrapper.text()).toContain('安装已取消')
     expect(button(wrapper, '确认安装')).toBeUndefined()
   })
+  it('replaces the running status link with a stop action in the send button', async () => {
+    const cancelled = conversationFixture(); cancelled.runs[0]!.status = 'cancelled'; cancelled.installations[0]!.status = 'cancelled'
+    const cancel = vi.spyOn(adminApi, 'cancelAssistantRun').mockResolvedValue(cancelled)
+    const send = vi.spyOn(adminApi, 'sendAssistantMessage')
+    const { wrapper, store } = await render(true, true)
+    store.current.runs[0]!.status = 'running'; await flushPromises()
+
+    expect(button(wrapper, '停止处理')).toBeUndefined()
+    const stop = button(wrapper, '停止')
+    expect(stop.attributes('type')).toBe('button')
+    expect(stop.attributes('aria-label')).toBe('停止处理')
+    expect(stop.attributes('disabled')).toBeUndefined()
+    await stop.trigger('click'); await flushPromises()
+
+    expect(cancel).toHaveBeenCalledWith('run-1')
+    expect(send).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('安装已取消')
+    expect(button(wrapper, '发送')).toBeDefined()
+  })
   it('prefills commands without sending or locally fabricating an installation', async () => {
     const send = vi.spyOn(adminApi, 'sendAssistantMessage')
     const { wrapper, store } = await render()
