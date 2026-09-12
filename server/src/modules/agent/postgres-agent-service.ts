@@ -535,7 +535,8 @@ export class PostgresAgentService {
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
               and av.visible_role_ids ? r.id
          )
-       order by a.updated_at desc
+       order by case when a.id = 'agent-dsh-work-assistant' then 0 else 1 end,
+                a.updated_at desc, a.id
     `
   }
 
@@ -543,16 +544,40 @@ export class PostgresAgentService {
     agentId: string | undefined,
     userId: string,
     sessionRoleIds?: string[],
+    additionalSkillReferences: string[] = [],
   ): Promise<string> {
     const agents = await this.listWorkbenchAgents(userId, sessionRoleIds)
-    const selected = agentId ? agents.find(agent => agent.id === agentId) : agents[0]
-    if (!selected) throw new Error(agentId ? 'Agent 不存在或当前用户不可用' : '当前用户没有可用 Agent')
-    const [row] = await this.database<{ activeVersionId: string }[]>`
-      select active_version_id as "activeVersionId" from agents
-       where tenant_id = ${tenantId} and id = ${selected.id}
-    `
-    if (!row?.activeVersionId) throw new Error('Agent 没有活动版本')
-    return row.activeVersionId
+    const candidates = agentId ? agents.filter(agent => agent.id === agentId) : agents
+    if (!candidates.length) throw new Error(agentId ? 'Agent 不存在或当前用户不可用' : '当前用户没有可用 Agent')
+    for (const candidate of candidates) {
+      const [row] = await this.database<{
+        activeVersionId: string
+        skills: string[]
+        tools: string[]
+        roleIds: string[]
+        dataScopes: string[]
+      }[]>`
+        select a.active_version_id as "activeVersionId", av.skill_refs as skills,
+               av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes"
+          from agents a
+          join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+         where a.tenant_id = ${tenantId} and a.id = ${candidate.id}
+      `
+      if (!row?.activeVersionId) continue
+      if (!additionalSkillReferences.length) return row.activeVersionId
+      try {
+        await this.assertCapabilityReferences(
+          mergeSkillReferences(row.skills, additionalSkillReferences),
+          row.tools,
+          row.roleIds,
+          row.dataScopes,
+        )
+        return row.activeVersionId
+      } catch (error) {
+        if (agentId) throw error
+      }
+    }
+    throw new Error('所选 Skill 必须由已配置所需工具的 Agent 运行；当前没有兼容 Agent，请联系管理员配置')
   }
 
   async listWorkspaceAgentCandidates(

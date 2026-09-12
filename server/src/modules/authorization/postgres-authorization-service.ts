@@ -5,6 +5,7 @@ import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from './authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
+const runtimeIntrinsicToolReferences = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
 
 interface IdentityRow {
   id: string
@@ -353,8 +354,10 @@ export class PostgresAuthorizationService {
   /**
    * Structural dependency validation shared by runtime authorization and the
    * team agent-member join/upgrade/enable flows (1A-T4): the agent version
-   * must be published and must explicitly authorize every tool its selected
-   * skills require — skills cannot widen the agent's tool allowlist. Returns
+   * must be published and must explicitly authorize every external tool its
+   * selected skills require — skills cannot widen the agent's tool allowlist.
+   * Runtime-owned activate/python dispatch is already bounded by the immutable
+   * Attempt manifest and does not require a duplicate Agent tool row. Returns
    * the loaded agent version and the resolved skill versions so callers can
    * build capability grant sources without duplicating the resolution logic.
    */
@@ -368,7 +371,7 @@ export class PostgresAuthorizationService {
     )
     const authorizedToolReferences = new Set(unique(agent.toolReferences))
     const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
-      .filter(reference => !authorizedToolReferences.has(reference))
+      .filter(reference => !runtimeIntrinsicToolReferences.has(reference) && !authorizedToolReferences.has(reference))
     if (missingSkillTools.length) {
       throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`)
     }

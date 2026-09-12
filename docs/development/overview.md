@@ -197,8 +197,8 @@ flowchart LR
 
 1. 用户通过对应 Portal 发起 AI Hub OIDC Authorization Code + PKCE 登录；
 2. 服务端校验 `state`、`nonce`、Issuer、Audience、签名和 Scope，建立加密的服务端 Session；
-3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；需要时从员工端 Skill 广场选择一个已发布 Skill；
-4. 服务端校验应用权限、Workspace 成员关系、Agent 可见性和有效数据范围；
+3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；需要时从员工端 Skill 广场选择一个已发布 Skill；个人空间未显式指定 Agent 时，服务端优先使用平台默认 Agent，并跳过无法满足所选 Skill 工具依赖的候选；
+4. 服务端在创建 Session 前校验应用权限、Workspace 成员关系、Agent 可见性、有效数据范围及 Agent/Skill 工具闭包；`activate_skill`、`python_execute` 由 Attempt Manifest 内建授权，其余工具必须由 Agent 显式授权；
 5. 创建 Run 和不可变 Attempt，固定 Agent/Skill/Tool/Model、文件、知识来源与权限快照；
 6. PostgreSQL 调度在 Runtime 容量内原子认领 Attempt；
 7. Runtime Adapter 写入 Manifest 和隔离输入，启动独立 DSH ACP Worker；

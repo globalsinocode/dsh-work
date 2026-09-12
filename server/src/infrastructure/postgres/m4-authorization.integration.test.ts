@@ -182,7 +182,10 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
   assert.ok(manifest?.data_scopes.includes('domain:supply-chain'))
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
-  assert.deepEqual(manifest?.tools, [{ id: 'read', version: '1.0.0' }])
+  assert.deepEqual(manifest?.tools, [
+    { id: 'read', version: '1.0.0' },
+    { id: 'activate_skill', version: '1.0.0' },
+  ])
 
   const [audit] = await database<{ blocked: number; success: number }[]>`
     select count(*) filter (where result = 'blocked')::integer as blocked,
@@ -192,6 +195,98 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   `
   assert.ok((audit?.blocked ?? 0) >= 3)
   assert.ok((audit?.success ?? 0) >= 1)
+})
+
+test('personal Skill sessions use a compatible stable default Agent and reject an incompatible fixed pairing before persistence', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  const agentId = `agent-incompatible-default-${suffix}`
+  const agentVersionId = `agent-version-incompatible-default-${suffix}`
+  await database.begin(async transaction => {
+    await transaction`
+      insert into agents (
+        id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
+        status, active_version_id, updated_at
+      ) values (
+        ${agentId}, 'tenant-dsh-work', '无读取能力的候选 Agent', '验证 Skill 与 Agent 的工具兼容选择。', '',
+        'U00008', 'U00008', 'published', null, now() + interval '1 hour'
+      )
+    `
+    await transaction`
+      insert into agent_versions (
+        id, tenant_id, agent_id, version, name, description, welcome_message,
+        example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+        timeout_seconds, skill_refs, tool_refs, status, created_by, published_at
+      ) values (
+        ${agentVersionId}, 'tenant-dsh-work', ${agentId}, '1.0.0', '无读取能力的候选 Agent',
+        '验证 Skill 与 Agent 的工具兼容选择。', '', '[]', '只处理不需要工具的文本任务。',
+        '["role-employee"]', '["enterprise:authorized"]', 12000, 300, '[]', '[]',
+        'published', 'U00008', now()
+      )
+    `
+    await transaction`update agents set active_version_id = ${agentVersionId} where id = ${agentId}`
+  })
+
+  const listed = await agents.listWorkbenchAgents('U00001')
+  assert.equal(listed[0]?.id, 'agent-dsh-work-assistant', '默认 Agent 不应随最近更新时间漂移')
+  assert.equal(
+    await agents.resolveWorkbenchAgentVersion(undefined, 'U00001', undefined, ['skill-document@1.0.0']),
+    'agent-version-dsh-work-assistant-1',
+  )
+  await assert.rejects(
+    agents.resolveWorkbenchAgentVersion(agentId, 'U00001', undefined, ['skill-document@1.0.0']),
+    /必须显式授权所选 Skill 依赖的工具：read@1.0.0/,
+  )
+
+  const title = `不兼容 Skill 会话-${suffix}`
+  await assert.rejects(
+    orchestration.createSession({
+      userId: 'U00001',
+      title,
+      agentVersionId,
+      selectedSkillVersionId: 'skill-version-document-1',
+      selectedSkillReference: 'skill-document@1.0.0',
+    }),
+    /必须显式授权所选 Skill 依赖的工具：read@1.0.0/,
+  )
+  const [persisted] = await database<{ count: number }[]>`
+    select count(*)::integer as count from sessions
+     where tenant_id = 'tenant-dsh-work' and title = ${title}
+  `
+  assert.equal(persisted?.count, 0)
+})
+
+test('Runtime-owned Skill tools do not require duplicate Agent tool authorization', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  const skillId = `skill-runtime-intrinsic-${suffix}`
+  const versionId = `skill-version-runtime-intrinsic-${suffix}`
+  await database.begin(async transaction => {
+    await transaction`
+      insert into skills (
+        id, tenant_id, key, name, category, description, owner_user_id, created_by,
+        status, active_version_id
+      ) values (
+        ${skillId}, 'tenant-dsh-work', ${skillId}, '内置工具 Skill', '测试', '验证 Runtime 内置工具授权。',
+        'U00008', 'U00008', 'published', null
+      )
+    `
+    await transaction`
+      insert into skill_versions (
+        id, tenant_id, skill_id, version, name, category, description, instructions,
+        manifest, tool_refs, test_prompt, status, created_by, published_at
+      ) values (
+        ${versionId}, 'tenant-dsh-work', ${skillId}, '1.0.0', '内置工具 Skill', '测试',
+        '验证 Runtime 内置工具授权。', '必须使用平台提供的按需激活与 Python 执行工具。', '{}',
+        '["activate_skill@1.0.0", "python_execute@1.0.0"]', '执行最小示例', 'published', 'U00008', now()
+      )
+    `
+    await transaction`update skills set active_version_id = ${versionId} where id = ${skillId}`
+  })
+
+  await assert.doesNotReject(authorization.authorizeRuntime({
+    userId: 'U00001',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    additionalSkillReferences: [`${skillId}@1.0.0`],
+  }))
 })
 
 // 5-T4：管理操作人校验与会话「不存在或不可访问」原先抛裸 Error，HTTP 层靠中文文案

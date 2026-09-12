@@ -653,14 +653,14 @@
                       "string",
                       "null"
                     ],
-                    "description": "个人空间按当前可用 Agent 解析版本；团队空间不允许通过原始 agentId 选择，必须使用 workspaceAgentMemberId。"
+                    "description": "个人空间显式指定时锁定该 Agent；省略时优先选择平台默认 Agent，并在选择 Skill 时自动跳过工具能力不兼容的 Agent。团队空间不允许通过原始 agentId 选择，必须使用 workspaceAgentMemberId。"
                   },
                   "skillId": {
                     "type": [
                       "string",
                       "null"
                     ],
-                    "description": "员工从 Skill 广场选择的 Skill；服务端锁定其当前已发布版本。"
+                    "description": "员工从 Skill 广场选择的 Skill；服务端锁定其当前已发布版本，并在创建对话前校验固定 Agent 是否显式授权 Skill 所需的外部工具。"
                   },
                   "workspaceAgentMemberId": {
                     "type": [

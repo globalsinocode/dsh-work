@@ -94,6 +94,9 @@ export function registerConversationRoutes(
     // association (pinned version); personal workspaces, non-members and
     // omitted workspaceIds keep the existing resolution path untouched
     // (AC-23).
+    const selectedSkillVersion = body.skillId && skills
+      ? await skills.resolveWorkbenchSkillVersion(body.skillId)
+      : undefined
     const workspaceType = await authorization?.resolveWorkspaceType(body.workspaceId, userId)
     const agentVersionId = workspaceType === 'team'
       ? await resolveTeamSessionAgentVersion(agentMembers, agents, body, userId, access?.roleIds ?? identity.roleIds)
@@ -101,16 +104,15 @@ export function registerConversationRoutes(
           body.agentId,
           userId,
           access?.roleIds ?? identity.roleIds,
+          selectedSkillVersion ? [selectedSkillVersion.reference] : [],
         )
-    const selectedSkillVersion = body.skillId && skills
-      ? await skills.resolveWorkbenchSkillVersion(body.skillId)
-      : undefined
     const session = await orchestration.createSession({
       userId,
       title: body.title,
       workspaceId: body.workspaceId,
       agentVersionId,
       selectedSkillVersionId: selectedSkillVersion?.id,
+      selectedSkillReference: selectedSkillVersion?.reference,
       authorizationContext,
     })
     return httpResult(201, envelope('workbench', session, 'postgres'))

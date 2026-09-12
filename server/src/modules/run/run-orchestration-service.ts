@@ -137,6 +137,7 @@ export class RunOrchestrationService {
     workspaceId?: string
     agentVersionId?: string
     selectedSkillVersionId?: string
+    selectedSkillReference?: string
     authorizationContext?: SessionAuthorizationContext
   }) {
     assertPrompt(input.title)
@@ -146,6 +147,7 @@ export class RunOrchestrationService {
         userId: input.userId,
         workspaceId,
         agentVersionId: input.agentVersionId,
+        additionalSkillReferences: input.selectedSkillReference ? [input.selectedSkillReference] : [],
         ...input.authorizationContext,
       })
     } else {
