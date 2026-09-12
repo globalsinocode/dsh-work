@@ -6,13 +6,15 @@ import type { RunOrchestrationService } from '../run/run-orchestration-service.t
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import { parseSkillPackage, type SkillPackage } from './skill-package.ts'
+import { parseSkillBundle, type SkillPackage } from './skill-package.ts'
+import { buildSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
 import { acquireSkillSource, continueSkillSource, parseSkillSource, type SkillSource } from './skill-source.ts'
 
 const tenant = 'tenant-dsh-work'
 interface InstallationRow {
   id: string; runId: string; source: SkillSource; resolvedUrl: string | null; resolvedRef: string | null
   package: SkillPackage | null; status: 'pending' | 'installed' | 'cancelled'; skillId: string | null; versionId: string | null
+  plan: SkillInstallationPlan | null; planSha256: string | null; compatibilityStatus: SkillInstallationPlan['compatibility']['status'] | null
 }
 export class AdminSkillInstallationService {
   private readonly db: DatabaseClient
@@ -20,8 +22,10 @@ export class AdminSkillInstallationService {
   private readonly authorization: PostgresAuthorizationService
   private readonly tools: PostgresToolConnectorService
   private readonly acquire: typeof acquireSkillSource
-  constructor(db: DatabaseClient, orchestration: RunOrchestrationService, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource) {
-    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire
+  private readonly pythonSandboxAvailable: boolean
+  private readonly pythonPackages: string[]
+  constructor(db: DatabaseClient, orchestration: RunOrchestrationService, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = []) {
+    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
@@ -34,8 +38,17 @@ export class AdminSkillInstallationService {
       const detail = await this.detail(userId, sessionId)
       const current = detail.runs.find(item => item.id === run.id)
       if (current && ['succeeded', 'failed', 'cancelled'].includes(current.status)) {
-        return { passed: current.status === 'succeeded' && detail.messages.some(message => message.role === 'assistant'),
-          summary: detail.messages.filter(message => message.role === 'assistant').map(message => message.text).join('\n').slice(0, 6000) || 'DSH 试运行未产生有效结果', runId: run.id }
+        const requiredSkillIds = [skill.id, ...flattenDependencies(skill).map(item => item.id)]
+        const activations = await this.db<{ skillId: string }[]>`select skill_id as "skillId" from skill_runtime_activations where tenant_id = ${tenant} and run_id = ${run.id} and skill_id in ${this.db(requiredSkillIds)}`
+        const activatedIds = new Set(activations.map(item => item.skillId))
+        const missingActivations = requiredSkillIds.filter(id => !activatedIds.has(id))
+        const pythonSkillIds = [skill, ...flattenDependencies(skill)].filter(item => item.files?.some(file => file.path.endsWith('.py'))).map(item => item.id)
+        const pythonExecutions = pythonSkillIds.length ? await this.db<{ skillId: string }[]>`select distinct skill_id as "skillId" from skill_python_executions where tenant_id = ${tenant} and run_id = ${run.id} and succeeded = true and skill_id in ${this.db(pythonSkillIds)}` : []
+        const executedPythonIds = new Set(pythonExecutions.map(item => item.skillId))
+        const missingPython = pythonSkillIds.filter(id => !executedPythonIds.has(id))
+        const assistantSummary = detail.messages.filter(message => message.role === 'assistant').map(message => message.text).join('\n').slice(0, 6000)
+        const passed = current.status === 'succeeded' && missingActivations.length === 0 && missingPython.length === 0 && Boolean(assistantSummary)
+        return { passed, summary: passed ? assistantSummary : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : current.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`, runId: run.id }
       }
       await delay(1000)
     }
@@ -114,19 +127,30 @@ export class AdminSkillInstallationService {
     const source = JSON.parse(manifest.installation_source) as SkillSource
     const existing = (await this.readInstallations(manifest.session_id)).find(row => row.runId === manifest.run_id)
     if (existing?.status === 'cancelled') throw new Error('本次安装已取消，请重新发送来源')
-    if (existing?.package) return preview(existing)
+    if (existing?.plan) return preview(existing)
     const acquired = await this.acquire(source, AbortSignal.any([signal, AbortSignal.timeout(60000)]))
     signal.throwIfAborted()
-    const pkg = parseSkillPackage(acquired.bytes, source.selected, source.directory)
-    await this.tools.assertAvailableReferences(pkg.toolIds)
+    const bundle = parseSkillBundle(acquired.bytes, source.selected, source.directory)
+    const unavailableTools: string[] = []
+    for (const reference of [...new Set(bundle.packages.flatMap(pkg => pkg.toolIds))]) {
+      if (reference === 'python_execute@1.0.0') continue
+      try { await this.tools.assertAvailableReferences([reference]) }
+      catch { unavailableTools.push(reference.split('@')[0]!) }
+    }
+    const plan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools })
+    const pkg = plan.packages.find(item => item.name === plan.rootName)!
     await this.authorization.requirePlatformAdmin(userId)
     await this.db.begin(async tx => {
       await this.requireActiveAttempt(manifest, tx, true)
       signal.throwIfAborted()
       await tx`
-        insert into skill_installations (id, tenant_id, run_id, created_by, source, resolved_url, resolved_ref, package)
-        values (${`installation-${randomUUID()}`}, ${tenant}, ${manifest.run_id}, ${userId}, ${tx.json(JSON.parse(JSON.stringify(source)))}, ${acquired.resolvedUrl}, ${acquired.resolvedRef}, ${tx.json(JSON.parse(JSON.stringify(pkg)))})
-        on conflict (tenant_id, run_id) do nothing
+        insert into skill_installations (id, tenant_id, run_id, created_by, source, resolved_url, resolved_ref, package, plan, plan_sha256, compatibility_status)
+        values (${`installation-${randomUUID()}`}, ${tenant}, ${manifest.run_id}, ${userId}, ${tx.json(JSON.parse(JSON.stringify(source)))}, ${acquired.resolvedUrl}, ${acquired.resolvedRef}, ${tx.json(JSON.parse(JSON.stringify(pkg)))}, ${tx.json(JSON.parse(JSON.stringify(plan)))}, ${plan.sha256}, ${plan.compatibility.status})
+        on conflict (tenant_id, run_id) do update set
+          source = excluded.source, resolved_url = excluded.resolved_url, resolved_ref = excluded.resolved_ref,
+          package = excluded.package, plan = excluded.plan, plan_sha256 = excluded.plan_sha256,
+          compatibility_status = excluded.compatibility_status, updated_at = now()
+        where skill_installations.status = 'pending' and skill_installations.plan is null
       `
     })
     const row = (await this.readInstallations(manifest.session_id)).find(row => row.runId === manifest.run_id)!
@@ -140,28 +164,39 @@ export class AdminSkillInstallationService {
     await this.db.begin(async tx => {
       await requireAdminInTransaction(tx, userId)
       const [run] = await tx<{ status: string }[]>`select status from runs where tenant_id = ${tenant} and id = ${runId} for update`
-      const [row] = await tx<{ id: string; package: SkillPackage; status: string }[]>`
-        select id, package, status from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and created_by = ${userId} for update
+      const [row] = await tx<{ id: string; package: SkillPackage; plan: SkillInstallationPlan; planSha256: string; status: string }[]>`
+        select id, package, plan, plan_sha256 as "planSha256", status from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and created_by = ${userId} for update
       `
-      if (!row || !row.package || row.package.sha256 !== sha256) throw new Error('安装预览不存在或已变化，请重新查看包信息')
+      if (!row || !row.package || !row.plan || row.planSha256 !== sha256 || row.plan.sha256 !== sha256 || installationPlanDigest(row.plan) !== sha256) throw new Error('安装计划不存在或已变化，请重新查看计划')
       if (row.status === 'installed') return
       if (row.status !== 'pending' || run?.status !== 'succeeded') throw new Error('安装已取消或助手尚未成功完成，请等待或重试')
-      await this.tools.assertAvailableReferences(row.package.toolIds)
-      const skillId = `skill-${randomUUID().slice(0, 12)}`, versionId = `skill-version-${randomUUID()}`, pkg = row.package
-      await tx`
-        insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
-        values (${skillId}, ${tenant}, ${skillId}, ${pkg.name}, '已安装 Skill', ${pkg.description}, ${userId}, ${userId}, 'draft')
-      `
-      await tx`
-        insert into skill_versions (id, tenant_id, skill_id, version, name, category, description, instructions, manifest, tool_refs, test_prompt, status, created_by, change_summary)
-        values (${versionId}, ${tenant}, ${skillId}, '0.1.0', ${pkg.name}, '已安装 Skill', ${pkg.description}, ${pkg.instructions},
-          ${tx.json(JSON.parse(JSON.stringify({ package: pkg, installationId: row.id })))}, ${tx.json(pkg.toolIds)}, '请按照 Skill 说明完成一个最小示例；有参考资料时实际读取并说明结果，缺少业务输入时明确指出。', 'draft', ${userId}, '通过管理助手安装已有 Skill 包，等待验证和发布')
-      `
-      await tx`update skills set draft_version_id = ${versionId} where tenant_id = ${tenant} and id = ${skillId}`
-      await tx`update skill_installations set status = 'installed', skill_id = ${skillId}, version_id = ${versionId}, updated_at = now() where id = ${row.id}`
+      if (row.plan.compatibility.status === 'incompatible') throw new Error(`安装计划不兼容：${row.plan.compatibility.issues.map(issue => issue.message).join('；')}`)
+      await this.tools.assertAvailableReferences(row.plan.summary.toolIds)
+      const identities = new Map(row.plan.packages.map(pkg => [pkg.name, { skillId: `skill-${randomUUID().slice(0, 12)}`, versionId: `skill-version-${randomUUID()}` }]))
+      for (const pkg of row.plan.packages) {
+        const identity = identities.get(pkg.name)!
+        const dependencies = row.plan.edges.filter(edge => edge.from === pkg.name).map(edge => `${identities.get(edge.to)!.skillId}@0.1.0`)
+        await tx`
+          insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
+          values (${identity.skillId}, ${tenant}, ${identity.skillId}, ${pkg.name}, '已安装 Skill', ${pkg.description}, ${userId}, ${userId}, 'draft')
+        `
+        await tx`
+          insert into skill_versions (id, tenant_id, skill_id, version, name, category, description, instructions, manifest, tool_refs, test_prompt, status, created_by, change_summary)
+          values (${identity.versionId}, ${tenant}, ${identity.skillId}, '0.1.0', ${pkg.name}, '已安装 Skill', ${pkg.description}, ${pkg.instructions},
+            ${tx.json(JSON.parse(JSON.stringify({ package: pkg, installationId: row.id, dependencies })))}, ${tx.json(pkg.toolIds)}, '请按照 Skill 说明完成一个最小示例；有参考资料时实际读取并说明结果，缺少业务输入时明确指出。', 'draft', ${userId}, '通过管理助手按确认的安装计划保存，等待严格试运行和发布')
+        `
+        await tx`update skills set draft_version_id = ${identity.versionId} where tenant_id = ${tenant} and id = ${identity.skillId}`
+      }
+      for (const edge of row.plan.edges) {
+        const from = identities.get(edge.from)!, to = identities.get(edge.to)!
+        await tx`insert into skill_version_dependencies (tenant_id, skill_version_id, dependency_skill_version_id, dependency_type, evidence)
+          values (${tenant}, ${from.versionId}, ${to.versionId}, 'skill', '安装计划解析的 Skill 激活依赖')`
+      }
+      const root = identities.get(row.plan.rootName)!
+      await tx`update skill_installations set status = 'installed', skill_id = ${root.skillId}, version_id = ${root.versionId}, updated_at = now() where id = ${row.id}`
       await tx`
         insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id, safe_context)
-        values (${`audit-${randomUUID()}`}, ${tenant}, 'user', ${userId}, 'skill.install', 'skill', ${skillId}, 'success', ${`trace-${runId}`}, ${tx.json({ package_sha256: pkg.sha256 })})
+        values (${`audit-${randomUUID()}`}, ${tenant}, 'user', ${userId}, 'skill.install', 'skill', ${root.skillId}, 'success', ${`trace-${runId}`}, ${tx.json({ plan_sha256: row.plan.sha256, package_count: row.plan.packages.length })})
       `
     })
     return this.detail(userId, owned.sessionId)
@@ -191,6 +226,18 @@ export class AdminSkillInstallationService {
     return this.detail(userId, run.sessionId)
   }
 
+  async recordActivation(manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) {
+    await this.requireActiveAttempt(manifest)
+    await this.db`insert into skill_runtime_activations (id, tenant_id, run_id, attempt_id, skill_id, skill_version, content_sha256)
+      values (${`skill-activation-${randomUUID()}`}, ${tenant}, ${manifest.run_id}, ${manifest.attempt_id}, ${skill.id}, ${skill.version}, ${contentSha256})
+      on conflict (tenant_id, attempt_id, skill_id, skill_version) do nothing`
+  }
+  async recordPythonExecution(manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) {
+    await this.requireActiveAttempt(manifest)
+    await this.db`insert into skill_python_executions (id, tenant_id, run_id, attempt_id, skill_id, entry_path, succeeded)
+      values (${`skill-python-${randomUUID()}`}, ${tenant}, ${manifest.run_id}, ${manifest.attempt_id}, ${skillId}, ${entry}, ${succeeded})`
+  }
+
   private async requireSession(userId: string, sessionId: string) {
     const [row] = await this.db<{ id: string; title: string }[]>`
       select id, title from sessions where tenant_id = ${tenant} and id = ${sessionId} and created_by = ${userId} and audience = 'admin' and status = 'active'
@@ -216,14 +263,19 @@ export class AdminSkillInstallationService {
   }
   private async readInstallations(sessionId: string) {
     return this.db<InstallationRow[]>`
-      select i.id, i.run_id as "runId", i.source, i.resolved_url as "resolvedUrl", i.resolved_ref as "resolvedRef", i.package, i.status, i.skill_id as "skillId", i.version_id as "versionId"
+      select i.id, i.run_id as "runId", i.source, i.resolved_url as "resolvedUrl", i.resolved_ref as "resolvedRef", i.package, i.plan, i.plan_sha256 as "planSha256", i.compatibility_status as "compatibilityStatus", i.status, i.skill_id as "skillId", i.version_id as "versionId"
       from skill_installations i join runs r on r.tenant_id = i.tenant_id and r.id = i.run_id where i.tenant_id = ${tenant} and r.session_id = ${sessionId}
     `
   }
 }
 function preview(row: InstallationRow) {
   return { id: row.id, runId: row.runId, source: row.source.url ?? '', resolvedUrl: row.resolvedUrl, resolvedRef: row.resolvedRef, status: row.status, skillId: row.skillId,
-    package: row.package ? { ...row.package, files: row.package.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })) } : null }
+    package: row.package ? withoutFileContents(row.package) : null,
+    planSha256: row.planSha256, compatibilityStatus: row.compatibilityStatus,
+    plan: row.plan ? { ...row.plan, packages: row.plan.packages.map(withoutFileContents) } : null }
+}
+function withoutFileContents(pkg: SkillPackage) {
+  return { ...pkg, files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })) }
 }
 async function requireAdminInTransaction(tx: DatabaseTransaction, userId: string) {
   const [actor] = await tx`
@@ -234,4 +286,7 @@ async function requireAdminInTransaction(tx: DatabaseTransaction, userId: string
     for share of u, ur, r
   `
   if (!actor) throw new Error('当前用户没有管理写权限')
+}
+function flattenDependencies(skill: RuntimeSkillConfiguration): RuntimeSkillConfiguration[] {
+  return (skill.dependencySkills ?? []).flatMap(item => [item, ...flattenDependencies(item)])
 }

@@ -1,4 +1,5 @@
 import process from 'node:process'
+import { Buffer } from 'node:buffer'
 import { request } from 'node:http'
 import { appendFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
@@ -14,7 +15,7 @@ const pathArguments = new Map([
  * Missing or malformed policy data intentionally produces an empty allow-list.
  */
 export function apply(ctx) {
-  registerInstallationTool(ctx)
+  registerPlatformTools(ctx)
   const allowedTools = parseAllowedTools(process.env.DSH_ALLOWED_TOOLS_JSON)
   const workspaceRoot = parseWorkspaceRoot(process.env.DSH_WORKSPACE_ROOT)
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
@@ -159,26 +160,58 @@ function isRecord(value) {
 // Public DSH tools registry contract, shared by both locked ACP profiles.
 // Only this Attempt's immutable source is accessible; the model cannot supply
 // another URL, approve installation or execute an arbitrary command.
-function registerInstallationTool(ctx) {
+function registerPlatformTools(ctx) {
   const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET
   if (!socketPath) return
-  ctx.tools.register({
+  registerPlatformTool(ctx, socketPath, {
     name: 'prepare_skill_installation',
-    description: 'Fetch and validate the existing Skill source supplied by the administrator. Returns the authoritative preview. Never saves or publishes a Skill; the administrator must confirm in the application.',
+    description: 'Fetch, validate and resolve the existing Skill source supplied by the administrator. Returns the authoritative installation plan. Never saves or publishes a Skill; the administrator must confirm in the application.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'activate_skill',
+    description: 'Activate one Skill from the immutable catalog attached to this Run. Returns its exact instructions and resource directory. It cannot download or change a Skill.',
+    parameters: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Exact Skill name from the current Run catalog.' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'python_execute',
+    description: 'Execute a declared Python entry point from an activated Skill in the platform sandbox. Arbitrary commands, package installation and network access are not allowed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        skill: { type: 'string' },
+        entry: { type: 'string' },
+        args: { type: 'array', items: { type: 'string' }, maxItems: 32 },
+      },
+      required: ['skill', 'entry'],
+      additionalProperties: false,
+    },
+  })
+}
+
+function registerPlatformTool(ctx, socketPath, definition) {
+  ctx.tools.register({
+    ...definition,
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     isConcurrencySafe: () => false,
-    async execute(_args, execution) {
+    async execute(args, execution) {
       return new Promise((resolve, reject) => {
-        const req = request({ socketPath, path: '/prepare-skill', method: 'POST', signal: execution.signal }, response => {
-          let body = ''
+        const body = JSON.stringify(args ?? {})
+        const req = request({ socketPath, path: `/tools/${definition.name}`, method: 'POST', signal: execution.signal,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+          let responseBody = ''
           response.setEncoding('utf8')
-          response.on('data', chunk => { body += chunk })
-          response.on('end', () => resolve(body))
+          response.on('data', chunk => { responseBody += chunk })
+          response.on('end', () => resolve(responseBody))
           response.on('error', reject)
         })
         req.on('error', reject)
-        req.end()
+        req.end(body)
       })
     },
   })

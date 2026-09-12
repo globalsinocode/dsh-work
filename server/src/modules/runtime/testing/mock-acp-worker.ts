@@ -90,13 +90,29 @@ lines.on('line', (line) => {
       return
     }
     if (process.env.DSH_PLATFORM_TOOL_SOCKET) {
-      const req = request({ socketPath: process.env.DSH_PLATFORM_TOOL_SOCKET, path: '/prepare-skill', method: 'POST' }, response => {
-        let body = ''
-        response.on('data', chunk => { body += String(chunk) })
-        response.on('end', () => { pending.answer = body; finishPrompt(pending, 'end_turn') })
-      })
-      req.on('error', () => failPrompt(pending, 'Platform tool unavailable', 'tool'))
-      req.end()
+      const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
+      const activating = allowedTools.includes('activate_skill')
+      const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''
+      void (async () => {
+        try {
+          if (activating) {
+            const activated = new Set<string>()
+            const activate = async (name: string): Promise<void> => {
+              if (activated.has(name)) return
+              activated.add(name)
+              const output = await callPlatformTool('activate_skill', { name })
+              pending.answer += `${pending.answer ? '\n' : ''}${output}`
+              const parsed = JSON.parse(output) as { id?: string; name?: string; dependencies?: string[]; pythonEntries?: string[] }
+              if (allowedTools.includes('python_execute') && parsed.pythonEntries?.[0]) {
+                pending.answer += `\n${await callPlatformTool('python_execute', { skill: parsed.id ?? parsed.name ?? name, entry: parsed.pythonEntries[0], args: [] })}`
+              }
+              for (const dependency of parsed.dependencies ?? []) await activate(dependency.split('@')[0]!)
+            }
+            await activate(skillName)
+          } else pending.answer = await callPlatformTool('prepare_skill_installation', {})
+          finishPrompt(pending, 'end_turn')
+        } catch { failPrompt(pending, 'Platform tool unavailable', 'tool') }
+      })()
       return
     }
     finishPrompt(pending, 'end_turn')
@@ -146,6 +162,22 @@ function failPrompt(pending: PendingPrompt, message: string, category: string): 
 
 function send(message: JsonRpcMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`)
+}
+
+function callPlatformTool(name: string, input: Record<string, unknown>): Promise<string> {
+  const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET!
+  const body = JSON.stringify(input)
+  return new Promise((resolve, reject) => {
+    const path = name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`
+    const req = request({ socketPath, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+      let output = ''
+      response.on('data', chunk => { output += String(chunk) })
+      response.on('end', () => resolve(output))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

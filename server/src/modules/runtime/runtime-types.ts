@@ -32,8 +32,12 @@ export interface RuntimeManifest {
     system_prompt: string
     skill_instructions: Array<{
       id: string
+      name?: string
+      description?: string
       version: string
       instructions: string
+      dependencies?: string[]
+      disable_model_invocation?: boolean
       files?: Array<{ path: string; content: string; sha256: string; size: number }>
     }>
   }

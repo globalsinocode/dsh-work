@@ -3,8 +3,10 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+export type PlatformToolHandler = (input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
+
 /** Per-Attempt local transport. No credentials, model calls or agent loop live here. */
-export async function createPlatformToolBridge(prepare: (signal: AbortSignal) => Promise<unknown>, limit: number) {
+export async function createPlatformToolBridge(handlers: Record<string, PlatformToolHandler>, limit: number) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-tool-'))
   const socket = join(directory, 'bridge.sock')
   const controller = new AbortController()
@@ -13,13 +15,17 @@ export async function createPlatformToolBridge(prepare: (signal: AbortSignal) =>
   const server = createServer((request, response) => {
     const task = (async () => {
       response.setHeader('Content-Type', 'application/json')
-      if (request.method !== 'POST' || request.url !== '/prepare-skill' || ++count > limit || controller.signal.aborted) {
+      const toolName = request.url === '/prepare-skill'
+        ? 'prepare_skill_installation'
+        : request.url?.match(/^\/tools\/([a-z0-9_]+)$/)?.[1]
+      const handler = toolName ? handlers[toolName] : undefined
+      if (request.method !== 'POST' || !handler || ++count > limit || controller.signal.aborted) {
         response.writeHead(403).end(JSON.stringify({ error: '工具未获授权或 Attempt 已结束' }))
         return
       }
-      request.resume()
       try {
-        const value = await prepare(controller.signal)
+        const input = await readBody(request)
+        const value = await handler(input, controller.signal)
         response.end(JSON.stringify(value))
       } catch (error) {
         response.writeHead(422).end(JSON.stringify({ error: error instanceof Error ? error.message : '包解析失败' }))
@@ -41,4 +47,16 @@ export async function createPlatformToolBridge(prepare: (signal: AbortSignal) =>
       await rm(directory, { recursive: true, force: true })
     },
   }
+}
+
+async function readBody(request: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
+  let body = ''
+  for await (const chunk of request) {
+    body += String(chunk)
+    if (Buffer.byteLength(body) > 65536) throw new Error('工具参数超过 64 KB')
+  }
+  if (!body) return {}
+  const parsed = JSON.parse(body) as unknown
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('工具参数必须是对象')
+  return parsed as Record<string, unknown>
 }

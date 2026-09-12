@@ -36,6 +36,7 @@ import { PostgresRunRepository } from './modules/run/postgres-run-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
+import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import {
   preflightDshRuntime,
   resolveDshRuntimeInstallation,
@@ -51,6 +52,7 @@ import { PostgresWorkspaceService } from './modules/workbench/application/postgr
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
+import { acquireSkillSource } from './modules/skill/skill-source.ts'
 import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
@@ -107,6 +109,8 @@ async function start() {
     const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
     dshInstallation = await resolveDshRuntimeInstallation({ projectRoot })
     await preflightDshRuntime(dshInstallation)
+    const pythonRunner = process.env.DSH_WORK_PYTHON_IMAGE ? new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE) : null
+    await pythonRunner?.preflight()
     const runtime: DshAcpRuntimeAdapter = new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -118,6 +122,9 @@ async function start() {
       process: dshInstallation.process,
       permissionDecision: async () => 'allow_once',
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
+      recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
+      recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
+      ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
     })
     const conversations = new PostgresConversationRepository(database)
     const authorization = new PostgresAuthorizationService(database)
@@ -151,7 +158,8 @@ async function start() {
       knowledge,
       authorization,
     )
-    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools)
+    const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
+    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
     registerAssistantRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()

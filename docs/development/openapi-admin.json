@@ -1417,13 +1417,14 @@
       "SkillInstallationConfirmation": {
         "type": "object",
         "required": [
-          "sha256"
+          "planSha256"
         ],
         "additionalProperties": false,
         "properties": {
-          "sha256": {
+          "planSha256": {
             "type": "string",
-            "pattern": "^[a-f0-9]{64}$"
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "管理员确认的完整安装计划摘要，不是单个 Skill 包摘要。"
           }
         }
       },
@@ -1543,7 +1544,33 @@
                     "object",
                     "null"
                   ],
-                  "description": "平台校验后的 name、description、instructions、version、toolIds、sha256、archiveSha256 与 files（path/size/sha256），不传资源正文。"
+                  "description": "根 Skill 的安全预览，不传资源正文。"
+                },
+                "plan": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "description": "平台生成的结构化安装计划，包含全部 Skill、依赖图、运行要求、兼容性与摘要。"
+                },
+                "planSha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "一次确认所绑定的完整安装计划摘要。"
+                },
+                "compatibilityStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "compatible",
+                    "needs_review",
+                    "incompatible",
+                    null
+                  ]
                 }
               }
             }

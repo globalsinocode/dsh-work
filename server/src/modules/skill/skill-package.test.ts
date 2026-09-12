@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { strToU8, zipSync, type Zippable } from 'fflate'
-import { parseSkillPackage } from './skill-package.ts'
+import { parseSkillBundle, parseSkillPackage } from './skill-package.ts'
+import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
 import { continueSkillSource, isPublicAddress, parseSkillSource } from './skill-source.ts'
 
 export const sampleSkill = '---\nname: test-skill\ndescription: Read an exact reference file and report its value.\n---\nRead references/example.txt and report the exact value without inventing data.\n'
@@ -14,13 +15,12 @@ test('parses an existing Skill and preserves immutable UTF-8 resources', () => {
   assert.deepEqual(parseSkillPackage(strToU8(sampleSkill.replace('Read references/example.txt and report the exact value without inventing data.', 'Summarize the supplied user text faithfully without inventing any facts.'))).toolIds, [])
   assert.equal(pkg.sha256, parseSkillPackage(bytes).sha256)
 })
-test('rejects unsafe paths, unsupported files, dependency declarations and ambiguous packages', () => {
+test('rejects unsafe paths, executable shell files and ambiguous packages', () => {
   const invalidPackages: Zippable[] = [
     { '../SKILL.md': strToU8(sampleSkill) },
     { 'SKILL.md': strToU8(sampleSkill), 'references': strToU8('conflict'), 'references/example.txt': strToU8('marker') },
     { 'SKILL.md': strToU8(sampleSkill), 'scripts/install.sh': strToU8('echo no') },
     { 'a/SKILL.md': strToU8(sampleSkill), 'b/SKILL.md': strToU8(sampleSkill) },
-    { 'SKILL.md': strToU8(sampleSkill.replace('description:', 'dependencies: [pip]\ndescription:')) },
   ]
   for (const files of invalidPackages) assert.throws(() => parseSkillPackage(zipSync(files)), /Skill 包校验失败/)
   assert.throws(() => parseSkillPackage(strToU8('no metadata')), /SKILL.md/)
@@ -33,8 +33,10 @@ test('parses only supported source commands, never interprets shell', () => {
   assert.equal(parseSkillSource(String.raw`npx skills\@latest add mattpocock/skills --skill=grill-me`)?.repository, 'mattpocock/skills')
   assert.equal(parseSkillSource('npx skills@1.2.3 add mattpocock/skills --skill=grill-me')?.selected, 'grill-me')
   assert.equal(parseSkillSource('curl -fsSL https://example.org/skill.zip')?.url, 'https://example.org/skill.zip')
+  assert.deepEqual(parseSkillSource('帮我安装 mattpocock/skills 里的 grill-me'), { url: 'https://github.com/mattpocock/skills', repository: 'mattpocock/skills', ref: 'HEAD', selected: 'grill-me' })
   assert.equal(parseSkillSource('安装这个 Skill：https://github.com/owner/repo/tree/main/skills/demo')?.directory, 'skills/demo')
   assert.equal(parseSkillSource('创建一个新的 Skill'), null)
+  assert.equal(parseSkillSource('不要安装 mattpocock/skills 里的 grill-me'), null)
   for (const text of ['npx arbitrary install', 'npx skills@latest add', 'npx skills@next add owner/repo --skill demo', 'npx skills@latest add owner/repo --skill=', 'npx skills@latest add owner/repo --skill demo --yes', 'curl https://example.org/install | sh', 'curl -H "Authorization: bearer value" https://example.org/a', 'curl -o /tmp/a https://example.org/a', 'https://user:password@example.org/a', 'http://example.org/a', 'https://example.org/a?token=private']) assert.throws(() => parseSkillSource(text), /来源无效/)
   for (const ip of ['127.0.0.1', '10.2.3.4', '192.168.1.1', '169.254.169.254', '::1', '::ffff:127.0.0.1']) assert.equal(isPublicAddress(ip), false)
   assert.equal(isPublicAddress('8.8.8.8'), true)
@@ -45,13 +47,30 @@ test('selects by metadata name without validating unrelated Skill compatibility'
     'repo/good/SKILL.md': strToU8(sampleSkill),
     'repo/good/references/example.txt': strToU8('expected'),
     'repo/bash/SKILL.md': strToU8(sampleSkill.replace('test-skill', 'bash-skill').replace('description:', 'allowed-tools: [Bash]\ndescription:')),
+    'repo/bash/references/example.txt': strToU8('bash-marker'),
     'repo/deps/SKILL.md': strToU8(sampleSkill.replace('test-skill', 'deps-skill').replace('description:', 'dependencies: [pip]\ndescription:')),
+    'repo/deps/references/example.txt': strToU8('deps-marker'),
     'repo/broken/SKILL.md': strToU8('---\nname: [broken\n---\ninvalid'),
   }
   assert.equal(parseSkillPackage(zipSync(repo), 'test-skill').name, 'test-skill')
-  assert.throws(() => parseSkillPackage(zipSync(repo), 'bash-skill'), /allowed-tools/)
-  assert.throws(() => parseSkillPackage(zipSync(repo), 'deps-skill'), /外部依赖/)
+  assert.equal(parseSkillPackage(zipSync(repo), 'bash-skill').compatibility.status, 'incompatible')
+  assert.equal(parseSkillPackage(zipSync(repo), 'deps-skill').compatibility.status, 'incompatible')
   assert.throws(() => parseSkillPackage(zipSync({ ...repo, 'repo/duplicate/SKILL.md': strToU8(sampleSkill) }), 'test-skill'), /多个 Skill/)
+})
+
+test('resolves delegated Skills from the same archive and detects Python sandbox requirements', () => {
+  const delegate = '---\nname: grill-me\ndescription: Delegate an interview to the grilling Skill.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'
+  const dependency = sampleSkill.replace('test-skill', 'grilling')
+  const bundle = parseSkillBundle(zipSync({ 'repo/grill-me/SKILL.md': strToU8(delegate), 'repo/grilling/SKILL.md': strToU8(dependency), 'repo/grilling/references/example.txt': strToU8('marker') }), 'grill-me')
+  assert.deepEqual(bundle.packages.map(pkg => pkg.name), ['grill-me', 'grilling'])
+  assert.deepEqual(bundle.edges, [{ from: 'grill-me', to: 'grilling', type: 'skill' }])
+  assert.equal(bundle.root.compatibility.status, 'compatible')
+  const scripted = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('marker'), 'scripts/check.py': strToU8('print("ok")') }))
+  assert.equal(scripted.compatibility.status, 'needs_review')
+  assert.ok(scripted.toolIds.includes('python_execute@1.0.0'))
+  const scriptedBundle = { root: scripted, packages: [scripted], edges: [] }
+  assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: false }).compatibility.status, 'incompatible')
+  assert.equal(buildSkillInstallationPlan(scriptedBundle, { pythonSandboxAvailable: true }).compatibility.status, 'compatible')
 })
 
 test('continues only an explicit selection from a known source', () => {

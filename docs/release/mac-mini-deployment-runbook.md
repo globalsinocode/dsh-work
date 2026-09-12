@@ -352,6 +352,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_RUNTIME_HOME`、`DSH_HOME` | 已安装 DSH 的 checkout 路径、其独立凭据/配置目录 |
 | `DSH_EXPECTED_VERSION`、`DSH_EXPECTED_COMMIT` | 生产主 Runtime Lock：`0.1.2-rc.1` 和 `76fda729799fe9b3848dbe2c211d4b231032b81e` |
 | `DSH_RUNTIME_COMPATIBILITY` | 必须保持未设置；这是本地开发专用开关 |
+| `DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES` | 未完成目标机镜像构建、摘要固定与隔离验收前保持未设置；启用时填写本机已有的摘要锁定镜像和镜像内已安装包名，运行时不会联网安装依赖 |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
 | `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | `oidc`、`true` |

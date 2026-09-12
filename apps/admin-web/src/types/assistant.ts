@@ -7,6 +7,22 @@ export interface InstalledSkillPackage {
   sha256: string
   archiveSha256: string
   files: Array<{ path: string; size: number; sha256: string }>
+  requirements: Array<{ type: 'skill' | 'tool' | 'python' | 'external'; name: string; status: 'resolved' | 'missing' | 'unsupported' | 'needs_review'; evidence: string }>
+  compatibility: SkillCompatibility
+  disableModelInvocation: boolean
+}
+export interface SkillCompatibility {
+  status: 'compatible' | 'needs_review' | 'incompatible'
+  issues: Array<{ code: string; severity: 'warning' | 'error'; message: string }>
+}
+export interface SkillInstallationPlan {
+  planVersion: '1.0'
+  rootName: string
+  packages: InstalledSkillPackage[]
+  edges: Array<{ from: string; to: string; type: 'skill' }>
+  compatibility: SkillCompatibility
+  summary: { packageCount: number; dependencyCount: number; toolIds: string[]; pythonFiles: number }
+  sha256: string
 }
 export interface SkillInstallation {
   id: string
@@ -17,6 +33,9 @@ export interface SkillInstallation {
   status: 'pending' | 'installed' | 'cancelled'
   skillId: string | null
   package: InstalledSkillPackage | null
+  plan: SkillInstallationPlan | null
+  planSha256: string | null
+  compatibilityStatus: SkillCompatibility['status'] | null
 }
 export interface AdminConversation {
   id: string

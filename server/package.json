@@ -34,7 +34,7 @@
     "test:m5:capacity:integration": "node --experimental-strip-types --test src/infrastructure/postgres/m5-capacity.integration.test.ts",
     "test:m5:workspace:integration": "node --experimental-strip-types --test src/infrastructure/postgres/team-workspace-migration.integration.test.ts",
     "test:m5:members:integration": "node --experimental-strip-types --test src/http/workspace-member-api.integration.test.ts",
-    "test:runtime": "node --experimental-strip-types --test src/modules/runtime/runtime-adapter.test.ts config/dsh/dsh-work-tool-policy.test.js",
+    "test:runtime": "node --experimental-strip-types --test src/modules/runtime/runtime-adapter.test.ts src/modules/runtime/python-skill-runner.test.ts config/dsh/dsh-work-tool-policy.test.js",
     "start": "node dist/main.js",
     "test:m5:agent-members:integration": "node --experimental-strip-types --test src/http/workspace-agent-member-api.integration.test.ts",
     "test:m5:revocation:integration": "node --experimental-strip-types --test src/infrastructure/postgres/m5-revocation-pipeline.integration.test.ts",

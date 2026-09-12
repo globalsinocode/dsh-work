@@ -12,6 +12,24 @@ export interface SkillPackage {
   files: Array<{ path: string; content: string; sha256: string; size: number }>
   sha256: string
   archiveSha256: string
+  requirements: SkillRequirement[]
+  compatibility: SkillCompatibility
+  disableModelInvocation: boolean
+}
+export interface SkillRequirement {
+  type: 'skill' | 'tool' | 'python' | 'external'
+  name: string
+  status: 'resolved' | 'missing' | 'unsupported' | 'needs_review'
+  evidence: string
+}
+export interface SkillCompatibility {
+  status: 'compatible' | 'needs_review' | 'incompatible'
+  issues: Array<{ code: string; severity: 'warning' | 'error'; message: string }>
+}
+export interface SkillBundle {
+  root: SkillPackage
+  packages: SkillPackage[]
+  edges: Array<{ from: string; to: string; type: 'skill' }>
 }
 export const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -49,8 +67,8 @@ export function parseSkillPackage(bytes: Uint8Array, selected?: string, director
   const packaged = selectedPaths.map(path => {
     const relative = path.slice(root.length)
     assertPackagePath(relative)
-    if (!/(?:\.(?:md|txt|json|ya?ml|csv|toml)|(?:^|\/)LICENSE(?:\.txt)?)$/i.test(relative)) {
-      fail(`暂不支持文件 ${relative}；当前支持说明、参考资料与文本模板，不执行脚本或安装依赖`)
+    if (!/(?:\.(?:md|txt|json|ya?ml|csv|toml|py)|(?:^|\/)LICENSE(?:\.txt)?)$/i.test(relative)) {
+      fail(`暂不支持文件 ${relative}；当前仅接受说明、配置、文本资源与 Python 源文件`)
     }
     total += files[path]!.length
     if (total > MAX_SKILL_BYTES) fail('Skill 解包文本总大小超过 1 MB')
@@ -64,7 +82,50 @@ export function parseSkillPackage(bytes: Uint8Array, selected?: string, director
   }
   const tools = new Set(metadata.toolIds)
   if (packaged.length > 1) tools.add('read@1.0.0')
-  return { ...metadata, toolIds: [...tools], files: packaged, archiveSha256: hash(bytes), sha256: hash(JSON.stringify(packaged)) }
+  const requirements = [...metadata.requirements]
+  if (packaged.some(file => file.path.endsWith('.py'))) {
+    requirements.push({ type: 'python', name: 'python-runtime', status: 'needs_review', evidence: '包中包含 Python 源文件' })
+    tools.add('python_execute@1.0.0')
+    for (const file of packaged.filter(item => /(?:^|\/)requirements(?:-[A-Za-z0-9._-]+)?\.txt$/i.test(item.path))) {
+      for (const line of file.content.split(/\r?\n/).map(value => value.trim()).filter(value => value && !value.startsWith('#'))) {
+        const requirement = line.split(/\s+#/, 1)[0]!
+        const safe = requirement.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9,._-]+\])?(?:\s*(?:===|==|~=|>=|<=|>|<|!=).+)?$/)
+        requirements.push({ type: 'external', name: safe ? `python-package:${safe[1]!.toLowerCase()}` : `unsupported-requirement:${requirement.slice(0, 100)}`, status: safe ? 'needs_review' : 'unsupported', evidence: file.path })
+      }
+    }
+    if (packaged.some(file => /(?:^|\/)pyproject\.toml$/i.test(file.path))) requirements.push({ type: 'external', name: 'pyproject-dependencies', status: 'needs_review', evidence: 'pyproject.toml 需要与固定镜像核对' })
+  }
+  const compatibility = compatibilityFor(requirements)
+  return { ...metadata, toolIds: [...tools], files: packaged, requirements, compatibility, archiveSha256: hash(bytes), sha256: hash(JSON.stringify(packaged)) }
+}
+
+/** Resolve same-archive Skill dependencies without executing package content. */
+export function parseSkillBundle(bytes: Uint8Array, selected?: string, directory?: string): SkillBundle {
+  const root = parseSkillPackage(bytes, selected, directory)
+  const packages = new Map<string, SkillPackage>([[root.name, root]])
+  const edges: SkillBundle['edges'] = []
+  const pending = [root]
+  while (pending.length) {
+    const current = pending.shift()!
+    for (const requirement of current.requirements.filter(item => item.type === 'skill')) {
+      let dependency: SkillPackage
+      try {
+        dependency = parseSkillPackage(bytes, requirement.name)
+      } catch {
+        requirement.status = 'missing'
+        continue
+      }
+      requirement.status = 'resolved'
+      edges.push({ from: current.name, to: dependency.name, type: 'skill' })
+      if (!packages.has(dependency.name)) {
+        if (packages.size >= 32) fail('一次安装计划最多包含 32 个 Skill')
+        packages.set(dependency.name, dependency)
+        pending.push(dependency)
+      }
+    }
+    current.compatibility = compatibilityFor(current.requirements)
+  }
+  return { root, packages: [...packages.values()], edges }
 }
 
 function readEntry(text: string) {
@@ -85,11 +146,59 @@ function parseEntry(text: string) {
   if (instructions.length < 20 || instructions.length > 100000) return fail('SKILL.md 正文必须为 20～100000 个字符')
   const declared = metadata['allowed-tools'] ?? []
   const toolNames = typeof declared === 'string' ? declared.split(/[\s,]+/).filter(Boolean) : declared
-  if (!Array.isArray(toolNames) || toolNames.some(value => typeof value !== 'string' || !['read', 'glob', 'grep'].includes(value))) return fail('allowed-tools 当前仅支持 read、glob、grep；其他工具需先适配')
-  if (metadata['dependencies'] || metadata['requires']) return fail('当前不支持自动安装外部依赖')
+  if (!Array.isArray(toolNames) || toolNames.some(value => typeof value !== 'string' || !value.trim())) return fail('allowed-tools 格式无效')
+  const requirements: SkillRequirement[] = []
+  const supportedTools: string[] = []
+  for (const value of toolNames as string[]) {
+    const normalized = value.trim().toLowerCase()
+    if (['read', 'glob', 'grep'].includes(normalized)) supportedTools.push(normalized)
+    else requirements.push({ type: 'tool', name: value.trim(), status: 'unsupported', evidence: 'allowed-tools 声明' })
+  }
+  const declaredDependencies = metadata['dependencies'] ?? metadata['requires']
+  if (declaredDependencies !== undefined) {
+    const values = typeof declaredDependencies === 'string' ? [declaredDependencies] : declaredDependencies
+    if (!Array.isArray(values) || values.some(value => typeof value !== 'string' || !value.trim())) return fail('dependencies/requires 格式无效')
+    if (values.length > 32) return fail('dependencies/requires 最多声明 32 项')
+    for (const value of values as string[]) requirements.push({ type: 'external', name: value.trim(), status: 'unsupported', evidence: 'SKILL.md 元数据声明' })
+  }
+  for (const dependency of inferSkillDependencies(instructions)) {
+    requirements.push({ type: 'skill', name: dependency, status: 'needs_review', evidence: 'SKILL.md 正文要求激活其他 Skill' })
+  }
+  const compatibilityNote = metadata['compatibility']
+  if (compatibilityNote !== undefined) {
+    if (typeof compatibilityNote !== 'string' || !compatibilityNote.trim() || compatibilityNote.length > 500) return fail('compatibility 格式无效')
+    requirements.push({ type: 'external', name: compatibilityNote.trim(), status: 'needs_review', evidence: 'SKILL.md compatibility 声明' })
+  }
+  const disableModelInvocation = metadata['disable-model-invocation'] ?? false
+  if (typeof disableModelInvocation !== 'boolean') return fail('disable-model-invocation 必须是布尔值')
   const version = metadata['version']
   if (version !== undefined && (typeof version !== 'string' || version.length > 80)) return fail('version 格式无效')
-  return { name: name.trim(), description: description.trim(), instructions, toolIds: [...new Set(toolNames as string[])].map(name => `${name}@1.0.0`), version: typeof version === 'string' ? version : null }
+  return { name: name.trim(), description: description.trim(), instructions, toolIds: [...new Set(supportedTools)].map(name => `${name}@1.0.0`), version: typeof version === 'string' ? version : null, requirements, disableModelInvocation }
+}
+
+function inferSkillDependencies(instructions: string): string[] {
+  const names = new Set<string>()
+  const patterns = [
+    /(?:call|use|activate)\s+(?:the\s+)?skill(?:\s+tool)?\s+(?:with\s+)?["'`]([a-z0-9][a-z0-9._-]{0,79})["'`]/gi,
+    /(?:activate_skill|skill)\s*\(\s*["'`]([a-z0-9][a-z0-9._-]{0,79})["'`]\s*\)/gi,
+  ]
+  for (const pattern of patterns) {
+    for (const match of instructions.matchAll(pattern)) if (match[1]) names.add(match[1])
+  }
+  return [...names]
+}
+
+function compatibilityFor(requirements: SkillRequirement[]): SkillCompatibility {
+  const issues = requirements.filter(item => item.status !== 'resolved').map(item => ({
+    code: `${item.type}_${item.status}`,
+    severity: (item.status === 'unsupported' || item.status === 'missing' ? 'error' : 'warning') as 'warning' | 'error',
+    message: item.status === 'missing'
+      ? `缺少依赖 Skill：${item.name}`
+      : item.status === 'unsupported'
+        ? `平台暂不支持依赖：${item.name}`
+        : `安装前需要检查运行能力：${item.name}`,
+  }))
+  return { status: issues.some(issue => issue.severity === 'error') ? 'incompatible' : issues.length ? 'needs_review' : 'compatible', issues }
 }
 
 export function assertPackagePath(path: string) {

@@ -30,8 +30,8 @@ describe('real Skill installation conversation', () => {
     expect(wrapper.text()).toContain('真实测试包')
     expect(wrapper.text()).toContain('纯指令 Skill，无工具依赖')
     expect(wrapper.text()).not.toContain('演示完成')
-    await button(wrapper, '确认安装').trigger('click'); await flushPromises()
-    expect(confirm).toHaveBeenCalledWith('run-1', 'a'.repeat(64))
+    await button(wrapper, '确认安装计划').trigger('click'); await flushPromises()
+    expect(confirm).toHaveBeenCalledWith('run-1', 'd'.repeat(64))
     expect(wrapper.text()).toContain('Skill 已安装')
   })
   it('preserves input and the idempotency key after an uncertain request failure', async () => {
@@ -48,9 +48,9 @@ describe('real Skill installation conversation', () => {
   it('does not allow confirmation while the run is active, or after write access is revoked', async () => {
     const { wrapper, store, auth } = await render(true, true)
     store.current.runs[0]!.status = 'running'; await flushPromises()
-    expect(button(wrapper, '确认安装').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '确认安装计划').attributes('disabled')).toBeDefined()
     auth.$patch({ permissions: ['admin:read'] }); await flushPromises()
-    expect(button(wrapper, '确认安装')).toBeUndefined()
+    expect(button(wrapper, '确认安装计划')).toBeUndefined()
     expect(wrapper.find('textarea').exists()).toBe(false)
     const confirm = vi.spyOn(adminApi, 'confirmSkillInstallation')
     await store.confirm('run-1', 'a'.repeat(64)); expect(confirm).not.toHaveBeenCalled()

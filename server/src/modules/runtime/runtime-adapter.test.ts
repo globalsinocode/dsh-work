@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -94,6 +94,17 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /inventory\.csv/)
     assert.match(rendered, /读取路径：input\/01-inventory-uat\.txt/)
     assert.match(rendered, /不得猜测文件名/)
+  })
+
+  it('renders only the progressive Skill catalog when activate_skill is available', () => {
+    const input = manifest('run-skill-catalog', 'attempt-1')
+    input.tools.push({ id: 'activate_skill', version: '1.0.0' })
+    input.agent_configuration.skill_instructions[0]!.name = 'inventory-analysis'
+    input.agent_configuration.skill_instructions[0]!.description = 'Analyze an authorized inventory snapshot.'
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /可用 Skill 目录/)
+    assert.match(rendered, /inventory-analysis/)
+    assert.doesNotMatch(rendered, /读取当前授权范围内的库存信息/)
   })
 })
 
@@ -361,7 +372,7 @@ describe('DSH ACP Runtime Adapter', () => {
     adapter.subscribe(input.run_id, event => { events.push(event) })
 
     const result = await handle.done
-    assert.equal(result.status, 'completed')
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
     assert.deepEqual(events.map(event => event.event_type), [
       'run.queued',
       'run.started',
@@ -378,9 +389,12 @@ describe('DSH ACP Runtime Adapter', () => {
     const mountedPath = join(result.attemptDirectory, 'workspace/input/inventory.csv.txt')
     assert.equal(await readFile(mountedPath, 'utf8'), '物料,库存\nA-01,120')
     assert.equal((await stat(mountedPath)).mode & 0o777, 0o400)
-    const resourceDirectory = renderSystemPrompt(stored).match(/资源目录：(skills\/[^/]+\/)/)?.[1]
+    const systemPrompt = renderSystemPrompt(stored)
+    assert.match(systemPrompt, /已启用 Skill（兼容模式）/)
+    assert.match(systemPrompt, /Read references\/value\.txt/)
+    const [resourceDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
     assert.ok(resourceDirectory)
-    const resourcePath = join(result.attemptDirectory, 'workspace', resourceDirectory, 'references/value.txt')
+    const resourcePath = join(result.attemptDirectory, 'workspace/skills', resourceDirectory, 'references/value.txt')
     assert.equal(await readFile(resourcePath, 'utf8'), resource)
     assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
   })

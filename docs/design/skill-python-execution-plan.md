@@ -1,6 +1,6 @@
 # Skill Python 脚本执行方案
 
-**状态：** 方案设计完成，待实施；本文不代表脚本安装、隔离执行或目标服务器验收已完成。
+**状态：** 核心门禁已实施：安装器可识别 UTF-8 `.py` 与常见 requirements、安装计划会校验固定 Python 环境、DSH 可通过 `python_execute` 在摘要锁定的无网络临时容器中执行已激活 Skill 的已登记脚本，严格试运行会核验调用证据。完整依赖环境注册表、原始 XLSX 输入、事务化 Artifact、配额/恢复与目标服务器验收仍待后续批次完成；当前实现不得视为完整生产脚本平台。
 **范围：** 将已有 Skill 中的 Python 脚本接入统一 DSH 链路，覆盖安装、依赖、权限、试运行、发布、执行、成果和运维。
 **关联：** [Skill 安装方案](skill-installation-plan.md)、[当前安装实现](admin-skill-installation-implementation.md)、[架构总览](../development/overview.md)、[内部端口](../development/internal-ports.md)。
 
@@ -35,16 +35,17 @@
 
 以下来自当前源码核查，与目标方案区分：
 
-| 当前实现 | 目标改动 |
+| 已实施基础 | 后续仍需补齐 |
 | --- | --- |
-| Skill 包解析拒绝 `.py`，文件总量 64 个/1 MB，版本 manifest 内联 UTF-8 文件 | 引入包格式 v2、Python 入口和运行配置；增量迁移，保留 v1 读取和摘要算法 |
-| 仅允许 read/glob/grep，普通 Agent 工具要求 `mode=read` | 新增 `python_execute` 固定版本和 `task_output` 执行效果分类，更新全部校验及界面 |
-| 平台工具桥接仅服务管理端安装，且不接受工具参数 | 扩展为绑定 Attempt 的工具分发，仅注册 manifest 允许的工具并校验各自 Schema |
-| Runtime Manifest 的 file_mounts 主要保存解析文本；资源写入 DSH 工作目录 | 新增原始文件版本引用和授权暂存流程，不能把抽取文本改名为 `.xlsx` |
-| Skill 包试运行已走 DSH，但成功判据主要是 Run 成功且有回答；Agent testAgent 仍是配置检查 | 增加真实 Python 调用证据、成果检查及人工验收指纹；Agent 配置检查仍明确标注其性质 |
-| 当前 Runtime 建立 output 目录，但没有通用脚本输出收集器 | 新增受控收集与事务化 Artifact 发布，复用现有归属与下载鉴权 |
+| Skill 包解析接受 UTF-8 `.py`、requirements 文本和 pyproject 声明提示，继续使用现有 64 文件/1 MB 受控包上限与版本 manifest | 引入包格式 v2、原始字节/blob 引用、显式入口配置和完整依赖锁；保留 v1 读取与历史摘要 |
+| `python_execute@1.0.0` 是 Runtime 内置工具；安装计划仅在摘要锁定镜像可用且声明包已配置时判为可运行 | 建立版本化环境注册表、依赖范围求解、健康状态、`task_output` 执行效果与管理界面 |
+| 平台工具桥按 Attempt 分发 manifest 允许的工具并接收限长 JSON 参数；`activate_skill` 和 `python_execute` 都经过当前 Attempt 校验 | 为每个工具补全独立 JSON Schema、数据库幂等调用记录、并发槽位、取消和重启恢复 |
+| Python Runner 使用无网络、只读根文件系统、cap-drop、no-new-privileges、PID/内存/CPU 限制的临时容器；只执行当前快照中的 `.py`，没有宿主 Python 回退 | 改为非 root 可信 launcher、容量受限 tmpfs、完整 seccomp/架构策略、子进程回收与目标 Mac mini 隔离验收 |
+| Runtime Manifest 仍以内联文本挂载会话输入；脚本可读取固定 `/input` 目录，但尚无原始二进制输入链路 | 新增原始文件版本引用和授权暂存流程，不能把抽取文本改名为 `.xlsx` |
+| Skill 严格试运行已要求 DSH 激活根 Skill/依赖；包含 Python 时还要求成功执行证据；Agent testAgent 仍是配置检查 | 增加入口级测试矩阵、成果内容/格式检查、管理员业务验收指纹；继续清楚区分 Agent 配置检查 |
+| Runner 只收集输出目录顶层普通文件的名称和大小，未发布为 Artifact | 新增容量受控收集协议、格式/恶意文件检查与事务化 Artifact 发布，复用现有归属和下载鉴权 |
 | 管理会话没有 Workspace | 管理测试文件/成果使用 owner-only 暂存对象，不写入员工 Workspace；必要下载走 Admin API |
-| 连接器检查主要判断 Runtime 目录和适配器状态 | 为 Python 环境增加实际容器自检、依赖检查、状态时效和调度健康 |
+| 服务启动时对配置的固定 Python 镜像执行 `docker image inspect`；失败即不启动，未配置时脚本型安装计划不兼容 | 增加周期性容器自检、依赖导入检查、状态时效与调度健康 |
 
 ## 3. 用户流程与交互
 

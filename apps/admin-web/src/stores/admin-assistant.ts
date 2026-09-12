@@ -95,7 +95,7 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     catch (cause) { if (epoch === generation) error.value = message(cause) }
     finally { if (epoch === generation) busyIds.value = busyIds.value.filter(value => value !== id) }
   }
-  async function confirm(runId: string, sha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, sha256)) }
+  async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256)) }
   async function cancel(runId: string) { await act(selectedId.value, () => adminApi.cancelAssistantRun(runId)) }
   async function retry(runId: string) { await act(selectedId.value, () => adminApi.retryAssistantRun(runId)) }
   return { conversations, selectedId, current, active, loading, error, busyIds, start, load, select, refresh, send, confirm, cancel, retry }

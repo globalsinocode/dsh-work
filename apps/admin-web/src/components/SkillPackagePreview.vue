@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { InstalledSkillPackage } from '@/types/assistant'
+import type { InstalledSkillPackage, SkillInstallationPlan } from '@/types/assistant'
 import { Document } from '@element-plus/icons-vue'
-defineProps<{ source: string; targetName?: string; package?: InstalledSkillPackage; resolvedRef?: string }>()
+defineProps<{ source: string; targetName?: string; package?: InstalledSkillPackage; plan?: SkillInstallationPlan | null; resolvedRef?: string }>()
 const sampleFiles = [
   { path: 'SKILL.md', description: '适用场景与执行说明' },
   { path: 'references/format.md', description: '文档整理规范' },
@@ -14,11 +14,15 @@ const sampleFiles = [
         <div class="package-details">
           <div class="package-title"><span class="package-icon"><el-icon><Document /></el-icon></span><div><h4>{{ package.name }}</h4><p>{{ package.description }}</p></div><el-tag type="info">{{ package.version ? `上游 ${package.version}` : '未声明上游版本' }}</el-tag></div>
           <dl class="package-metadata"><div><dt>安装来源</dt><dd>{{ source }}</dd></div><div v-if="resolvedRef"><dt>固定提交</dt><dd>{{ resolvedRef }}</dd></div><div><dt>内容摘要</dt><dd>{{ package.sha256 }}</dd></div><div><dt>安装目标</dt><dd>新增 Skill · 平台版本 0.1.0</dd></div></dl>
+          <el-alert v-if="plan" :title="plan.compatibility.status === 'compatible' ? '安装计划兼容' : plan.compatibility.status === 'needs_review' ? '安装计划需要复核' : '安装计划不兼容'" :type="plan.compatibility.status === 'compatible' ? 'success' : plan.compatibility.status === 'needs_review' ? 'warning' : 'error'" :closable="false" show-icon>
+            <template #default><p>计划安装 {{ plan.summary.packageCount }} 个 Skill，包含 {{ plan.summary.dependencyCount }} 条依赖关系；计划摘要 {{ plan.sha256 }}。</p><ul v-if="plan.compatibility.issues.length"><li v-for="issue in plan.compatibility.issues" :key="`${issue.code}-${issue.message}`">{{ issue.message }}</li></ul></template>
+          </el-alert>
+          <template v-if="plan?.edges.length"><h4 class="plan-heading">Skill 依赖图</h4><div v-for="edge in plan.edges" :key="`${edge.from}-${edge.to}`" class="dependency-edge"><strong>{{ edge.from }}</strong><span>依赖并按需激活</span><strong>{{ edge.to }}</strong></div></template>
           <h4>包内文件 <span class="muted">{{ package.files.length }} 个</span></h4>
           <el-table class="data-table" :data="package.files" empty-text="暂无文件"><el-table-column prop="path" label="文件" min-width="190" /><el-table-column prop="size" label="大小（字节）" width="125" /></el-table>
           <el-collapse><el-collapse-item title="查看执行说明" name="instructions"><pre class="package-instructions">{{ package.instructions }}</pre></el-collapse-item></el-collapse>
         </div>
-        <aside class="dependency-panel"><h4>工具与权限</h4><p v-if="!package.toolIds.length">纯指令 Skill，无工具依赖。</p><div v-for="tool in package.toolIds" :key="tool" class="dependency-title"><strong>{{ tool }}</strong><el-tag type="success" size="small">已匹配</el-tag></div><dl><div><dt>访问范围</dt><dd>当前任务授权文件与固定版本 Skill 资源</dd></div><div><dt>操作权限</dt><dd>只读，无脚本执行与外部联网权限</dd></div></dl><p class="dependency-note">平台工具校验后的真实预览。确认安装会保存待验证版本，不自动发布。</p></aside>
+        <aside class="dependency-panel"><h4>工具与运行能力</h4><p v-if="!plan?.summary.toolIds.length">纯指令 Skill，无工具依赖。</p><div v-for="tool in plan?.summary.toolIds ?? package.toolIds" :key="tool" class="dependency-title"><strong>{{ tool }}</strong><el-tag type="success" size="small">已匹配</el-tag></div><div v-for="requirement in package.requirements" :key="`${requirement.type}-${requirement.name}`" class="dependency-title"><strong>{{ requirement.name }}</strong><el-tag :type="requirement.status === 'resolved' ? 'success' : requirement.status === 'needs_review' ? 'warning' : 'danger'" size="small">{{ requirement.status }}</el-tag></div><dl><div><dt>访问范围</dt><dd>当前任务授权文件与固定版本 Skill 资源</dd></div><div><dt>执行方式</dt><dd>DSH 按需激活；Python 仅通过平台沙箱执行</dd></div></dl><p class="dependency-note">管理员确认的是完整计划。平台只保存草稿，严格试运行通过后才能发布。</p></aside>
       </div>
       <div v-else class="preview-layout">
         <div class="package-details">
@@ -46,6 +50,11 @@ p { color: var(--color-text-secondary); font-size: var(--font-size-caption); lin
 dt { color: var(--color-text-secondary); }
 dd { margin: 0; overflow-wrap: anywhere; }
 .package-details > h4 { margin-bottom: var(--spacing-card); }
+.plan-heading { margin-top: var(--spacing-section); }
+.dependency-edge { display: flex; align-items: center; flex-wrap: wrap; gap: calc(var(--spacing-card) / 2); margin-bottom: calc(var(--spacing-card) / 2); }
+.dependency-edge span { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
+.package-details :deep(.el-alert) { margin-bottom: var(--spacing-section); }
+.package-details :deep(.el-alert p) { margin: 0; }
 .muted { color: var(--color-text-secondary); font-size: var(--font-size-caption); font-weight: var(--font-weight-body); }
 .dependency-panel { padding: var(--spacing-card); border-radius: var(--radius-card); background: var(--color-bg-page); }
 .dependency-title { margin-top: var(--spacing-card); justify-content: space-between; flex-wrap: wrap; }

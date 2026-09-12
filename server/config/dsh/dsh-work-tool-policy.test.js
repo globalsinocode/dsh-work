@@ -13,6 +13,7 @@ const originalEnvironment = {
   approvalMode: process.env.DSH_TOOL_APPROVAL_MODE,
   approvalLog: process.env.DSH_TOOL_APPROVAL_LOG,
   maximumCalls: process.env.DSH_MAX_TOOL_CALLS,
+  platformSocket: process.env.DSH_PLATFORM_TOOL_SOCKET,
 }
 
 afterEach(() => {
@@ -21,6 +22,7 @@ afterEach(() => {
   restoreEnvironment('DSH_TOOL_APPROVAL_MODE', originalEnvironment.approvalMode)
   restoreEnvironment('DSH_TOOL_APPROVAL_LOG', originalEnvironment.approvalLog)
   restoreEnvironment('DSH_MAX_TOOL_CALLS', originalEnvironment.maximumCalls)
+  restoreEnvironment('DSH_PLATFORM_TOOL_SOCKET', originalEnvironment.platformSocket)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -117,9 +119,18 @@ test('DSH tool policy enforces the immutable Attempt tool-call budget', async ()
   assert.equal((await capturePolicy().preExecute(execution, next)).kind, 'deny')
 })
 
+test('DSH registers only the fixed platform Skill tool contracts when an Attempt bridge exists', () => {
+  process.env.DSH_PLATFORM_TOOL_SOCKET = '/tmp/attempt-only.sock'
+  const { registered } = capturePolicy()
+  assert.deepEqual(registered.map(tool => tool.name), ['prepare_skill_installation', 'activate_skill', 'python_execute'])
+  assert.deepEqual(registered.find(tool => tool.name === 'activate_skill').parameters.required, ['name'])
+  assert.equal(registered.find(tool => tool.name === 'python_execute').parameters.additionalProperties, false)
+})
+
 function capturePolicy() {
   let guard
   let preExecute
+  const registered = []
   apply({
     on: (event, candidate) => {
       assert.equal(event, 'tools/pre-execute')
@@ -127,6 +138,7 @@ function capturePolicy() {
       return () => undefined
     },
     tools: {
+      register: definition => { registered.push(definition) },
       guard: candidate => {
         guard = candidate
         return () => undefined
@@ -135,7 +147,7 @@ function capturePolicy() {
   })
   assert.ok(guard)
   assert.ok(preExecute)
-  return { guard, preExecute }
+  return { guard, preExecute, registered }
 }
 
 function restoreEnvironment(key, value) {

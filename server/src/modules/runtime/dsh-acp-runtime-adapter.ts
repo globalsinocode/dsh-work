@@ -36,6 +36,7 @@ interface ExecutionRecord {
   cancelCause?: RuntimeCancelCause | 'timeout' | 'shutdown'
   assistantText: string
   terminal: boolean
+  activatedSkills: Set<string>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
 }
 
@@ -55,6 +56,9 @@ export interface DshAcpRuntimeAdapterConfiguration {
     manifest: RuntimeManifest,
   ) => Promise<'allow_once' | 'reject_once'>
   prepareSkillInstallation?: (manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
+  executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
+  recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   now?: () => Date
 }
 
@@ -132,6 +136,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       resolveDone,
       assistantText: '',
       terminal: false,
+      activatedSkills: new Set(),
     }
     this.executions.set(manifest.run_id, record)
     this.emit(record, 'run.queued', '任务已进入 Runtime 队列', { manifest_sha256: compiled.sha256 })
@@ -244,11 +249,49 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       record.timeout = setTimeout(() => {
         void this.timeout(record)
       }, record.manifest.limits.timeout_seconds * 1000)
+      const platformTools: Record<string, import('./platform-tool-bridge.ts').PlatformToolHandler> = {}
       if (record.manifest.purpose === 'admin-skill-install') {
         const prepare = this.configuration.prepareSkillInstallation
         if (!prepare) throw new Error('安装助手不可用：未配置平台安装工具')
-        record.bridge = await createPlatformToolBridge(signal => prepare(record.manifest, signal), record.manifest.limits.max_tool_calls)
+        platformTools['prepare_skill_installation'] = (_input, signal) => prepare(record.manifest, signal)
       }
+      if (record.manifest.tools.some(tool => tool.id === 'activate_skill')) {
+        platformTools['activate_skill'] = async (input) => {
+          const requested = typeof input['name'] === 'string' ? input['name'].trim() : ''
+          const matches = record.manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === requested || skill.id === requested)
+          if (!requested || matches.length !== 1) throw new Error(`当前 Run 中没有唯一匹配的 Skill：${requested || '未提供名称'}`)
+          const skill = matches[0]!
+          const exactName = skill.name ?? skill.id
+          if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) throw new Error(`Skill ${exactName} 只允许用户显式激活`)
+          const contentSha256 = createHash('sha256').update(JSON.stringify({ instructions: skill.instructions, files: skill.files ?? [] })).digest('hex')
+          await this.configuration.recordSkillActivation?.(record.manifest, skill, contentSha256)
+          record.activatedSkills.add(skill.id)
+          return {
+            id: skill.id,
+            name: skill.name ?? skill.id,
+            version: skill.version,
+            instructions: skill.instructions,
+            resourceDirectory: skill.files?.length ? `skills/${safeSegment(skill.id)}/` : null,
+            dependencies: skill.dependencies ?? [],
+            pythonEntries: (skill.files ?? []).filter(file => file.path.endsWith('.py')).map(file => file.path),
+            contentSha256,
+          }
+        }
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'python_execute')) {
+        const executePython = this.configuration.executePython
+        if (!executePython) throw new Error('Python Skill 不可用：未配置平台脚本沙箱')
+        platformTools['python_execute'] = async (input, signal) => {
+          const requested = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
+          const skill = record.manifest.agent_configuration.skill_instructions.find(item => item.id === requested || (item.name ?? item.id) === requested)
+          if (!skill || !record.activatedSkills.has(skill.id)) throw new Error('执行 Python 前必须先激活对应 Skill')
+          const result = await executePython(input, record.manifest, workspaceDirectory, signal)
+          const succeeded = typeof result === 'object' && result !== null && 'exitCode' in result && (result as { exitCode: unknown }).exitCode === 0
+          await this.configuration.recordPythonExecution?.(record.manifest, skill.id, String(input['entry'] ?? ''), succeeded)
+          return result
+        }
+      }
+      if (Object.keys(platformTools).length) record.bridge = await createPlatformToolBridge(platformTools, record.manifest.limits.max_tool_calls)
       const client = AcpJsonRpcClient.launch(
         {
           ...this.configuration.process,
@@ -489,12 +532,20 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {
-    sections.push([
-      '# 已启用 Skill',
-      ...manifest.agent_configuration.skill_instructions.map(skill =>
-        `## ${skill.id}@${skill.version}\n${skill.files?.length ? `资源目录：skills/${safeSegment(skill.id)}/，以下说明中的相对路径均基于该目录。\n` : ''}${skill.instructions.trim()}`,
-      ),
-    ].join('\n\n'))
+    const progressive = manifest.tools.some(tool => tool.id === 'activate_skill')
+    sections.push(progressive ? [
+        '# 可用 Skill 目录',
+        '这里只提供目录信息。需要使用某个 Skill 时，先调用 activate_skill 获取当前 Run 锁定版本的完整说明；不要猜测 Skill 正文或直接扫描资源目录。激活后在本次 Attempt 中持续遵循返回的说明。',
+        ...manifest.agent_configuration.skill_instructions.filter(skill => !skill.disable_model_invocation).map(skill =>
+          `- ${skill.name ?? skill.id}（${skill.id}@${skill.version}）：${skill.description?.trim() || '由平台提供的已锁定 Skill'}`,
+        ),
+      ].join('\n\n')
+      : [
+        '# 已启用 Skill（兼容模式）',
+        ...manifest.agent_configuration.skill_instructions.map(skill =>
+          `## ${skill.id}@${skill.version}\n${skill.files?.length ? `资源目录：skills/${safeSegment(skill.id)}/，以下说明中的相对路径均基于该目录。\n` : ''}${skill.instructions.trim()}`,
+        ),
+      ].join('\n\n'))
   }
   if (manifest.knowledge_context.length > 0) {
     sections.push([

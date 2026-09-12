@@ -256,8 +256,8 @@ flowchart LR
 ## 10. 当前边界与独立开发
 
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；默认非生产 `prototype` 模式无需启动 AI Hub。
-- Skill 已有文本版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接与命令安装迁入独立「管理助手」页面；管理助手同时覆盖 Agent 管理和平台运维的交互预览，详见 [管理助手方案](../design/admin-assistant-plan.md)。前端交互已确认，管理助手的 Skill 安装已复用 Run/Attempt 与 DSH 接入真实获取、预览和确认保存；资源随版本存储并只读挂载。ZIP 页仍为交互预览，Agent 管理与运维对话尚未接入。实现边界见 [对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
-- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)（待实施）：DSH 调用平台 Python 工具，每次调用独立临时容器；不新增 Agent Loop。安装、依赖、显式授权、试运行和成果发布分别治理，当前实现仍不支持脚本。
+- Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。对话安装复用 Run/Attempt 与 DSH，平台生成结构化计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。ZIP 页仍为交互预览，Agent 管理与运维对话尚未接入。实现边界见 [对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
+- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 生产依赖 AI Hub 的 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
 - 业务角色在本地，但 AI Hub 账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。

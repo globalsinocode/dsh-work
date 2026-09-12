@@ -39,6 +39,7 @@ before(async () => {
   const runtime = new DshAcpRuntimeAdapter({ runtimeId: 'runtime-local-01', runtimeRoot, dshRepository: installation?.home ?? runtimeRoot,
     process: installation?.process ?? { command: process.execPath, args: ['--experimental-strip-types', resolve(import.meta.dirname, '../../modules/runtime/testing/mock-acp-worker.ts')], cwd: runtimeRoot },
     permissionDecision: async () => 'allow_once', prepareSkillInstallation: (manifest, signal) => service.prepare(manifest, signal),
+    recordSkillActivation: (manifest, skill, digest) => service.recordActivation(manifest, skill, digest),
   })
   const auth = new PostgresAuthorizationService(database.client)
   const operations = new PostgresOperationsService(database.client)
@@ -46,7 +47,7 @@ before(async () => {
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
   orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, undefined, undefined, auth)
-  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : async source => ({ bytes: source.repository === 'fixture/multiple' ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) }) : bytes, resolvedUrl: source.url, resolvedRef: null }))
+  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : async source => ({ bytes: source.repository === 'fixture/multiple' ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) }) : source.repository === 'fixture/delegated' ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') }) : bytes, resolvedUrl: source.url, resolvedRef: null }))
 })
 after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
 const source = real ? 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md' : 'https://example.org/skill.zip'
@@ -71,8 +72,9 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
   const pkg = detail.installations[0]!.package!
   assert.equal(detail.installations[0]?.status, 'pending')
   const [beforeCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
-  await assert.rejects(service.confirm(actor, runId, 'wrong-digest'), /预览/)
-  const results = await Promise.all([service.confirm(actor, runId, pkg.sha256), service.confirm(actor, runId, pkg.sha256)])
+  await assert.rejects(service.confirm(actor, runId, 'wrong-digest'), /计划/)
+  const planSha256 = detail.installations[0]!.planSha256!
+  const results = await Promise.all([service.confirm(actor, runId, planSha256), service.confirm(actor, runId, planSha256)])
   assert.equal(results[0]!.installations[0]?.skillId, results[1]!.installations[0]?.skillId)
   assert.equal(results[0]!.installations[0]?.status, 'installed')
   const [afterCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
@@ -109,6 +111,28 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     console.log(JSON.stringify({ realDsh: true, package: pkg.name, digest: pkg.sha256, toolCalls: completion.safeMetadata['tool_call_count'], installed: true }))
   }
 })
+test('one confirmed plan atomically installs, tests and publishes same-source Skill dependencies', { skip: real, timeout: 30000 }, async () => {
+  const { sessionId, runId } = await send('npx skills@latest add fixture/delegated --skill=grill-me')
+  const detail = await wait(sessionId)
+  const installation = detail.installations[0]!
+  assert.equal(installation.plan?.rootName, 'grill-me')
+  assert.deepEqual(installation.plan?.packages.map(item => item.name), ['grill-me', 'grilling'])
+  assert.deepEqual(installation.plan?.edges, [{ from: 'grill-me', to: 'grilling', type: 'skill' }])
+  assert.equal(installation.compatibilityStatus, 'compatible')
+  const [before] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
+  const installed = await service.confirm(actor, runId, installation.planSha256!)
+  const rootId = installed.installations[0]!.skillId!
+  const [after] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
+  assert.equal(after!.count, before!.count + 2)
+  const [dependencyCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skill_version_dependencies`
+  assert.ok(dependencyCount!.count >= 1)
+  const skills = new PostgresSkillService(database.client)
+  skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
+  assert.equal((await skills.testSkill({ skillId: rootId, actor })).status, 'passed')
+  await skills.setStatus({ skillId: rootId, actor, status: 'published' })
+  const resolved = await skills.resolveRuntimeSkills([`${rootId}@0.1.0`])
+  assert.deepEqual(resolved.map(item => item.name).sort(), ['grill-me', 'grilling'])
+})
 test('cancellation blocks confirmation, retries keep Run identity, and permission is rechecked', { skip: real }, async () => {
   const cancelled = await send('[hang] https://example.org/skill.zip')
   await service.cancel(actor, cancelled.runId)
@@ -118,23 +142,23 @@ test('cancellation blocks confirmation, retries keep Run identity, and permissio
   await wait(cancelled.sessionId)
   const [attemptCount] = await database.client<{ count: number }[]>`select count(*)::int as count from run_attempts where run_id = ${cancelled.runId}`
   assert.equal(attemptCount!.count, 2)
-  await assert.rejects(service.confirm(actor, cancelled.runId, 'x'), /预览|取消/)
+  await assert.rejects(service.confirm(actor, cancelled.runId, 'x'), /计划|取消/)
   const ready = await send()
   const detail = await wait(ready.sessionId)
-  const digest = detail.installations[0]!.package!.sha256
+  const digest = detail.installations[0]!.planSha256!
   await service.cancel(actor, ready.runId)
   await assert.rejects(service.confirm(actor, ready.runId, digest), /取消/)
   const permission = await send()
   const permitted = await wait(permission.sessionId)
   await database.client`update users set status = 'disabled' where id = ${actor}`
-  await assert.rejects(service.confirm(actor, permission.runId, permitted.installations[0]!.package!.sha256), /停用|权限/)
+  await assert.rejects(service.confirm(actor, permission.runId, permitted.installations[0]!.planSha256!), /停用|权限/)
   await database.client`update users set status = 'active' where id = ${actor}`
 })
 
 test('real DSH reads the exact immutable Skill resource through the governed read tool', { skip: !real, timeout: 210000 }, async () => {
   const { parseSkillPackage } = await import('../../modules/skill/skill-package.ts')
   const pkg = parseSkillPackage(bytes)
-  const result = await service.testPackage(actor, { id: 'skill-resource-probe', version: '0.1.0', instructions: pkg.instructions, tools: pkg.toolIds, files: pkg.files }, '请实际读取此 Skill 的 references/value.txt，逐字返回文件值；不要猜测。')
+  const result = await service.testPackage(actor, { id: 'skill-resource-probe', name: pkg.name, description: pkg.description, version: '0.1.0', instructions: pkg.instructions, tools: pkg.toolIds, files: pkg.files }, '请实际读取此 Skill 的 references/value.txt，逐字返回文件值；不要猜测。')
   if (!result.passed) console.log(JSON.stringify({ resourceFailure: (await runs.readEventsAfterEvent(tenant, result.runId)).slice(-5) }))
   assert.equal(result.passed, true, result.summary)
   assert.match(result.summary, /SKILL_RESOURCE_MARKER_7F31/)

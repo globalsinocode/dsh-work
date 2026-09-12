@@ -63,7 +63,7 @@
         },
         "skill_instructions": {
           "type": "array",
-          "description": "Agent 引用的已发布 Skill Version 指令快照，随 Attempt Manifest 固化。",
+          "description": "Agent 引用的已发布 Skill Version 固定快照。新 Run 只向 DSH 展示 name/description 目录，完整 instructions 由 activate_skill 按需返回。",
           "items": {
             "type": "object",
             "required": [
@@ -75,12 +75,27 @@
               "id": {
                 "type": "string"
               },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
               "version": {
                 "type": "string"
               },
               "instructions": {
                 "type": "string",
                 "minLength": 20
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "disable_model_invocation": {
+                "type": "boolean"
               },
               "files": {
                 "type": "array",

@@ -10,7 +10,7 @@
 | 理解业务、权限和系统边界 | [架构总览](../development/overview.md) |
 | 理解数据关系与迁移约束 | [数据模型](../design/data-model.md) |
 | 规划统一的 Skill、Agent 和运维对话入口 | [管理助手交互方案](../design/admin-assistant-plan.md) |
-| 设计已有 Skill 的受控 Python 执行、依赖、权限与成果交付 | [Skill Python 脚本执行方案（待实施）](../design/skill-python-execution-plan.md) |
+| 设计已有 Skill 的受控 Python 执行、依赖、权限与成果交付 | [Skill Python 脚本执行方案（核心门禁已实施）](../design/skill-python-execution-plan.md) |
 | 了解当前对话安装能力及验收边界 | [对话安装实现](../design/admin-skill-installation-implementation.md) |
 | 规划 Skill ZIP 上传、管理助手安装及手工创建模式退出 | [Skill 安装产品方案与实施计划](../design/skill-installation-plan.md) |
 | 团队工作空间现行方案与界面基线 | [团队工作空间产品方案与实施计划](../design/team-workspace-plan.md)、[团队工作空间增量界面设计](../design/team-workspace-design.md) |

@@ -77,10 +77,15 @@ export interface SkillTestResult {
 
 export interface RuntimeSkillConfiguration {
   id: string
+  name?: string
+  description?: string
   version: string
   instructions: string
   tools: string[]
   files?: SkillPackage['files']
+  dependencies?: string[]
+  dependencySkills?: RuntimeSkillConfiguration[]
+  disableModelInvocation?: boolean
 }
 
 export interface WorkbenchSkillDefinition {
@@ -314,8 +319,10 @@ export class PostgresSkillService {
     let status: 'passed' | 'failed' = 'passed'
     if (skill.packageSha256) {
       if (!this.packageTester) throw new Error('DSH Skill 试运行不可用')
-      const [version] = await this.database<{ manifest: { package: SkillPackage } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
-      const result = await this.packageTester(actor.id, { id: skill.id, version: skill.version, instructions: skill.instructions, tools: skill.toolIds, files: version!.manifest.package.files }, prompt)
+      const [version] = await this.database<{ manifest: { package: SkillPackage; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+      const dependencySkills = await this.resolveDraftRuntimeSkills(version!.manifest.dependencies ?? [])
+      await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
+      const result = await this.packageTester(actor.id, { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: skill.instructions, tools: skill.toolIds, files: version!.manifest.package.files, dependencies: version!.manifest.dependencies ?? [], dependencySkills }, prompt)
       status = result.passed ? 'passed' : 'failed'
       summary = `DSH 试运行${result.passed ? '完成' : '失败'}（${result.runId}）：\n${result.summary}`
     }
@@ -437,21 +444,57 @@ export class PostgresSkillService {
 
   async resolveRuntimeSkills(references: string[]): Promise<RuntimeSkillConfiguration[]> {
     const resolved: RuntimeSkillConfiguration[] = []
-    for (const reference of unique(references)) {
+    const pending = [...unique(references)]
+    const seen = new Set<string>()
+    while (pending.length) {
+      const reference = pending.shift()!
+      if (seen.has(reference)) continue
+      seen.add(reference)
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ instructions: string; tools: string[]; manifest: { package?: SkillPackage } }[]>`
-        select instructions, tool_refs as tools, manifest from skill_versions
+      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { package?: SkillPackage; dependencies?: string[] } }[]>`
+        select name, description, instructions, tool_refs as tools, manifest from skill_versions
          where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
            and status = 'published'
       `
       if (!row) throw new Error(`Runtime 无法解析已锁定的 Skill Version：${reference}`)
-      resolved.push({ id, version, instructions: row.instructions, tools: row.tools, ...(row.manifest.package ? { files: row.manifest.package.files } : {}) })
+      pending.push(...(row.manifest.dependencies ?? []))
+      resolved.push({ id, name: row.name, description: row.description, version, instructions: row.instructions, tools: row.tools,
+        ...(row.manifest.package ? { files: row.manifest.package.files, disableModelInvocation: row.manifest.package.disableModelInvocation } : {}), ...(row.manifest.dependencies?.length ? { dependencies: row.manifest.dependencies } : {}) })
     }
     return resolved
   }
 
+  private async resolveDraftRuntimeSkills(references: string[]): Promise<RuntimeSkillConfiguration[]> {
+    const result: RuntimeSkillConfiguration[] = []
+    for (const reference of references) {
+      const { id, version } = parseReference(reference)
+      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { package?: SkillPackage; dependencies?: string[] } }[]>`
+        select name, description, instructions, tool_refs as tools, manifest from skill_versions
+        where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version} and status = 'draft'`
+      if (!row) throw new Error(`依赖 Skill 草稿不存在：${reference}`)
+      result.push({ id, name: row.name, description: row.description, version, instructions: row.instructions, tools: row.tools,
+        files: row.manifest.package?.files, disableModelInvocation: row.manifest.package?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveDraftRuntimeSkills(row.manifest.dependencies ?? []) })
+    }
+    return result
+  }
+
+  private async readDependencyToolReferences(versionId: string): Promise<string[]> {
+    const rows = await this.database<{ tools: string[] }[]>`
+      with recursive dependency_graph as (
+        select d.dependency_skill_version_id as version_id from skill_version_dependencies d
+         where d.tenant_id = ${tenantId} and d.skill_version_id = ${versionId}
+        union
+        select d.dependency_skill_version_id from skill_version_dependencies d
+        join dependency_graph g on g.version_id = d.skill_version_id where d.tenant_id = ${tenantId}
+      )
+      select sv.tool_refs as tools from dependency_graph g
+      join skill_versions sv on sv.tenant_id = ${tenantId} and sv.id = g.version_id`
+    return unique(rows.flatMap(row => row.tools))
+  }
+
   private async publishDraft(current: SkillRow, actorId: string) {
-    await this.toolService?.assertAvailableReferences(current.toolIds)
+    const dependencyTools = current.draftVersionId ? await this.readDependencyToolReferences(current.draftVersionId) : []
+    await this.toolService?.assertAvailableReferences([...current.toolIds, ...dependencyTools])
     const release = await this.database.begin(async transaction => {
       const [locked] = await transaction<LockedSkillDraft[]>`
         select s.id, sv.id as "versionId", sv.name, sv.category, sv.description,
@@ -471,6 +514,29 @@ export class PostgresSkillService {
          order by created_at desc limit 1
       `
       if (!test) throw new Error('发布前必须使用当前配置完成一次服务端测试')
+
+      const dependencyVersions = await transaction<{ versionId: string; skillId: string }[]>`
+        with recursive dependency_graph as (
+          select d.dependency_skill_version_id as version_id
+            from skill_version_dependencies d
+           where d.tenant_id = ${tenantId} and d.skill_version_id = ${locked.versionId}
+          union
+          select d.dependency_skill_version_id
+            from skill_version_dependencies d
+            join dependency_graph g on g.version_id = d.skill_version_id
+           where d.tenant_id = ${tenantId}
+        )
+        select sv.id as "versionId", sv.skill_id as "skillId"
+          from dependency_graph g
+          join skill_versions sv on sv.tenant_id = ${tenantId} and sv.id = g.version_id
+         where sv.status = 'draft'
+      `
+      for (const dependency of dependencyVersions) {
+        await transaction`update skill_versions set status = 'published', published_at = now(), published_by = ${actorId}
+          where tenant_id = ${tenantId} and id = ${dependency.versionId} and status = 'draft'`
+        await transaction`update skills set active_version_id = ${dependency.versionId}, draft_version_id = null, status = 'published', updated_at = now()
+          where tenant_id = ${tenantId} and id = ${dependency.skillId} and draft_version_id = ${dependency.versionId}`
+      }
 
       const published = await transaction<{ id: string }[]>`
         update skill_versions set status = 'published', published_at = now(), published_by = ${actorId}
@@ -656,6 +722,10 @@ function nextVersion(current: string) {
 
 function unique(values: string[]) {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+}
+
+function flattenRuntimeDependencies(skill: RuntimeSkillConfiguration): RuntimeSkillConfiguration[] {
+  return (skill.dependencySkills ?? []).flatMap(item => [item, ...flattenRuntimeDependencies(item)])
 }
 
 function formatDateTime(value: Date) {

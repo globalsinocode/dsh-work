@@ -1,6 +1,6 @@
 # Skill 安装产品方案与实施计划
 
-**状态：** 前端交互已确认；本轮已接入管理助手对话安装，详见 [实际实现与验收](admin-skill-installation-implementation.md)。ZIP 实装、升级及旧入口整体退出仍待后续批次。
+**状态：** 前端交互已确认；管理助手已接入结构化计划、同源依赖原子安装、严格试运行和渐进式激活，详见 [实际实现与验收](admin-skill-installation-implementation.md)。ZIP 实装、升级及旧入口整体退出仍待后续批次。
 **方案范围：** 管理端 Skill 安装、版本与发布；统一助手的 Agent 管理与运维交互见 [管理助手方案](admin-assistant-plan.md)。
 **架构约束：** [Agent 执行引擎统一](../development/overview.md#35-agent-执行引擎统一)、[内部端口与契约](../development/internal-ports.md)。
 
@@ -81,7 +81,7 @@
 
 ## 5. 完整方案的包与执行支持规则
 
-Python 脚本支持采用独立的 [受控执行方案](skill-python-execution-plan.md)，状态为设计完成、待实施。目标是安全检查通过后完整保存受支持脚本包，依赖不足可保存草稿，但必须满足运行环境、显式工具授权及真实试运行后才可发布；当前安装器仍拒绝 `.py`。该专项细化本节脚本与依赖设计，不代表 ZIP、升级或旧入口退出已经完成。
+Python 脚本支持采用独立的 [受控执行方案](skill-python-execution-plan.md)。当前已实现 `.py` 保存、兼容性门禁、`python_execute` 平台工具、摘要锁定镜像、无网络临时容器和严格试运行证据；依赖镜像的构建、签名、漏洞治理仍属于部署运维。该专项不代表 ZIP、升级或旧入口退出已经完成。
 
 以下为实施前需要完成验证的设计项，不是已经验证的兼容承诺：
 

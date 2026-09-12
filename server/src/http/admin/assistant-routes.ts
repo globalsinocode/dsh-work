@@ -14,8 +14,8 @@ export function registerAssistantRoutes(router: Router, service?: AdminSkillInst
     return httpResult(202, envelope('admin', await available().send(requireRequestIdentity(context, 'admin').userId, input), 'postgres'))
   })
   router.post(`${base}/runs/:id/confirm`, async (request, context) => {
-    const input = await readJsonBody<{ sha256: string }>(request)
-    return envelope('admin', await available().confirm(requireRequestIdentity(context, 'admin').userId, context.params['id']!, input?.sha256), 'postgres')
+    const input = await readJsonBody<{ planSha256: string }>(request)
+    return envelope('admin', await available().confirm(requireRequestIdentity(context, 'admin').userId, context.params['id']!, input?.planSha256), 'postgres')
   })
   router.post(`${base}/runs/:id/cancel`, async (_request, context) => envelope('admin', await available().cancel(requireRequestIdentity(context, 'admin').userId, context.params['id']!), 'postgres'))
   router.post(`${base}/runs/:id/retry`, async (_request, context) => envelope('admin', await available().retry(requireRequestIdentity(context, 'admin').userId, context.params['id']!), 'postgres'))

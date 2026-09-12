@@ -618,7 +618,7 @@ export class PostgresAgentService {
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
-    const tools = unique(row.tools)
+    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => ['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))])
     const runtimeToolNames = this.toolService
       ? await this.toolService.resolveRuntimeToolNames(tools)
       : tools.map(reference => parseReference(reference).id)
@@ -629,7 +629,8 @@ export class PostgresAgentService {
     const approvalMode = this.toolService
       ? await this.toolService.resolveRuntimeApprovalMode(tools)
       : 'risk_based'
-    return { ...row, skills, tools, skillInstructions, runtimeTools, approvalMode }
+    const runtimeSkills = skillInstructions.map(skill => `${skill.id}@${skill.version}`)
+    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, approvalMode }
   }
 
   private async publishDraft(current: AgentRow, actor: { id: string; displayName: string; department: string }) {
@@ -693,7 +694,7 @@ export class PostgresAgentService {
     const runtimeSkills = await this.skillService.resolveRuntimeSkills(skills)
     const selectedTools = new Set(unique(tools))
     const missingTools = unique(runtimeSkills.flatMap(skill => skill.tools))
-      .filter(reference => !selectedTools.has(reference))
+      .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference) && !selectedTools.has(reference))
     if (missingTools.length) {
       throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingTools.join('、')}`)
     }

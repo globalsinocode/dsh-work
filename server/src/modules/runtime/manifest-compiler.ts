@@ -20,11 +20,18 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     throw new TypeError('agent_configuration.system_prompt must be at least 20 characters')
   }
   const skillReferences = new Set(input.skills.map(skill => `${skill.id}@${skill.version}`))
+  const skillNames = new Set<string>()
   for (const skill of input.agent_configuration.skill_instructions) {
     assertId('agent_configuration.skill_instructions.id', skill.id)
     assertId('agent_configuration.skill_instructions.version', skill.version)
     if (skill.instructions.trim().length < 20) {
       throw new TypeError('agent_configuration.skill_instructions.instructions must be at least 20 characters')
+    }
+    const catalogName = (skill.name ?? skill.id).trim()
+    if (!catalogName || catalogName.length > 80 || skillNames.has(catalogName)) throw new TypeError('Skill 目录名称为空、过长或重复')
+    skillNames.add(catalogName)
+    for (const dependency of skill.dependencies ?? []) {
+      if (!skillReferences.has(dependency)) throw new TypeError(`Skill 依赖未包含在当前 Run 固定快照中：${dependency}`)
     }
     if ((skill.files?.length ?? 0) > MAX_SKILL_FILES) throw new TypeError('Skill 最多包含 64 个文件')
     let skillBytes = 0

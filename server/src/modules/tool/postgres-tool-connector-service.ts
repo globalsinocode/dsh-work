@@ -6,6 +6,7 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import type { AgentRuntimePort, RuntimeManifest } from '../runtime/runtime-types.ts'
 
 const tenantId = 'tenant-dsh-work'
+const runtimeIntrinsicTools = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
 
 interface ToolRow {
   id: string
@@ -198,6 +199,7 @@ export class PostgresToolConnectorService {
 
   async assertAvailableReferences(references: string[]): Promise<void> {
     for (const reference of unique(references)) {
+      if (runtimeIntrinsicTools.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ id: string }[]>`
         select tv.id from tools t
@@ -218,6 +220,7 @@ export class PostgresToolConnectorService {
   ): Promise<void> {
     const scopeSet = new Set(agentDataScopes)
     for (const reference of unique(references)) {
+      if (runtimeIntrinsicTools.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ allowedRoleIds: string[]; dataScopes: string[] }[]>`
         select t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes"
@@ -242,6 +245,7 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const names: string[] = []
     for (const reference of unique(references)) {
+      if (runtimeIntrinsicTools.has(reference)) { names.push(parseReference(reference).id); continue }
       const { id } = parseReference(reference)
       const [row] = await this.database<{ name: string }[]>`
         select dsh_tool_name as name from tools
@@ -259,6 +263,7 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const policies: ToolDefinition['approvalPolicy'][] = []
     for (const reference of unique(references)) {
+      if (runtimeIntrinsicTools.has(reference)) { policies.push('sensitive'); continue }
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ approvalPolicy: ToolDefinition['approvalPolicy'] }[]>`
         select t.approval_policy as "approvalPolicy" from tools t

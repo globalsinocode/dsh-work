@@ -34,7 +34,13 @@ export function parseSkillSource(input: string): SkillSource | null {
     return { ...parsed, ...(selected ? { selected } : {}) }
   }
   const urls = text.match(/https?:\/\/[^\s<>"'，。]+/g) ?? []
-  if (!urls.length) return null
+  if (!urls.length) {
+    if (!/(?:安装|添加|引入)/.test(text) || /(?:不要|取消|停止).{0,8}(?:安装|添加|引入)/.test(text)) return null
+    const repositories = [...text.matchAll(/\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/g)].map(match => match[1]!)
+    if (repositories.length !== 1) return null
+    const selection = text.match(/(?:里的|中的|--skill(?:=|\s+))\s*([A-Za-z0-9][A-Za-z0-9._-]{0,79})/i)?.[1]
+    return { url: `https://github.com/${repositories[0]}`, repository: repositories[0], ref: 'HEAD', ...(selection ? { selected: selection } : {}) }
+  }
   if (urls.length !== 1) return invalid('一次只安装一个来源，请只提供一个链接')
   return parseUrl(urls[0]!)
 }
