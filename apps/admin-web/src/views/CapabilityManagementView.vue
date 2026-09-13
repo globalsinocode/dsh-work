@@ -36,6 +36,11 @@ const detailTargetId = ref('')
 const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
 const actionLoading = ref('')
 const healthRefreshing = ref(false)
+const skillActionFeedback = ref<{
+  type: 'info' | 'success' | 'warning' | 'error'
+  title: string
+  description: string
+} | null>(null)
 
 const selectedSkill = computed(() => contentStore.skills.find((item) => item.id === detailTargetId.value))
 const selectedSkillVersions = computed(() => contentStore.skillVersions.filter((item) => item.skillId === detailTargetId.value))
@@ -155,15 +160,52 @@ async function changeSkillStatus(skill: SkillDefinition) {
     )
     actionLoading.value = `skill:${skill.id}`
     if (skill.status === 'draft') {
+      skillActionFeedback.value = {
+        type: 'info',
+        title: `正在严格试运行“${skill.name}”`,
+        description: '平台已启动 DSH 试运行，将检查根 Skill、递归依赖的激活证据及 Python 沙箱执行结果。完成前请勿重复提交。',
+      }
       const test = await contentStore.testSkill(skill.id, skill.testPrompt)
       if (test.status !== 'passed') throw new Error(test.resultSummary)
-      if (skill.packageSha256) await ElMessageBox.confirm(test.resultSummary, '检查 Skill 真实试运行结果', { confirmButtonText: '确认结果并发布', cancelButtonText: '暂不发布', type: 'info' })
+      skillActionFeedback.value = {
+        type: 'warning',
+        title: `“${skill.name}”试运行通过，等待确认发布`,
+        description: test.resultSummary,
+      }
+      if (skill.packageSha256) {
+        try {
+          await ElMessageBox.confirm(test.resultSummary, '检查 Skill 真实试运行结果', { confirmButtonText: '确认结果并发布', cancelButtonText: '暂不发布', type: 'info' })
+        } catch (cause) {
+          if (cause === 'cancel' || cause === 'close') {
+            skillActionFeedback.value = {
+              type: 'warning',
+              title: `“${skill.name}”试运行已通过，尚未发布`,
+              description: '试运行证据已保存。需要发布时可再次点击“试运行并发布”，平台会重新验证当前版本。',
+            }
+            return
+          }
+          throw cause
+        }
+      }
     }
     const updated = await contentStore.setSkillStatus(skill.id, nextStatus)
     if (detailOpen.value && detailTargetId.value === skill.id) inspectSkill(updated)
-    ElMessage.success(skill.status === 'draft' ? (skill.packageSha256 ? '真实试运行已确认，Skill 已发布' : '服务端配置校验通过，Skill 已发布') : `Skill 已${action}`)
+    const successMessage = skill.status === 'draft' ? (skill.packageSha256 ? '真实试运行已确认，Skill 已发布' : '服务端配置校验通过，Skill 已发布') : `Skill 已${action}`
+    skillActionFeedback.value = {
+      type: 'success',
+      title: `“${skill.name}”${successMessage}`,
+      description: skill.status === 'draft' ? `v${updated.version} 已成为可供 Agent 固定引用的活动版本。` : '状态已更新，相关运行将按最新状态进行权限检查。',
+    }
+    ElMessage.success(successMessage)
   } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
+    if (cause instanceof Error) {
+      skillActionFeedback.value = {
+        type: 'error',
+        title: `“${skill.name}”${action}失败`,
+        description: `${cause.message} 请检查 Runtime、工具授权和 Skill 配置后重试。`,
+      }
+      ElMessage.error(cause.message)
+    }
   } finally {
     actionLoading.value = ''
   }
@@ -286,6 +328,17 @@ onMounted(() => contentStore.load())
   <div class="ops-page capabilities-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
     <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Skill、工具与连接器配置。" />
+    <el-alert
+      v-if="skillActionFeedback && activeTab === 'skills'"
+      class="skill-action-feedback"
+      :type="skillActionFeedback.type"
+      :title="skillActionFeedback.title"
+      :description="skillActionFeedback.description"
+      :closable="!actionLoading"
+      show-icon
+      data-testid="skill-action-feedback"
+      @close="skillActionFeedback = null"
+    />
 
     <section class="content-panel filter-panel capability-filters">
       <div class="status-tabs" role="tablist" aria-label="能力类型" @keydown="navigateTabs">
@@ -377,6 +430,8 @@ onMounted(() => contentStore.load())
 <style scoped>
 :global(body:has(#capability-tab-install[aria-selected="true"])) { min-width: 0; }
 .capability-filters { gap: 0; }
+.skill-action-feedback { margin-bottom: 14px; }
+.skill-action-feedback :deep(.el-alert__description) { line-height: 1.65; white-space: pre-wrap; }
 .capability-toolbar { justify-content: space-between; padding-top: 10px; }
 .capability-toolbar .el-input { width: 330px; }
 .capability-toolbar__legend { margin-left: auto; color: var(--color-text-muted); font-size: var(--font-size-badge); }

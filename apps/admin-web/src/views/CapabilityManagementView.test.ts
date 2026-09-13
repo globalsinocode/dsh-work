@@ -1,4 +1,4 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -26,7 +26,24 @@ async function render(canManage = true, initial = '/capabilities') {
   const wrapper = mount(CapabilityManagementView, { global: { plugins: [pinia, router, ElementPlus] } })
   wrappers.push(wrapper)
   await flushPromises()
-  return { wrapper, router, auth: useAuthStore() }
+  return { wrapper, router, auth: useAuthStore(), content }
+}
+
+function strictDraftSkill(): import('../types/domain').SkillDefinition {
+  return {
+    packageSha256: 'sha256-package',
+    id: 'skill-strict-test',
+    name: '严格试运行 Skill',
+    version: '0.1.0',
+    category: '测试',
+    owner: '平台管理员',
+    status: 'draft',
+    description: '用于验证严格试运行交互反馈。',
+    instructions: '先激活 Skill，然后按照测试输入完成验证并返回结果。',
+    toolIds: [],
+    testPrompt: '验证当前 Skill',
+    updatedAt: '2026-09-13 15:00',
+  }
 }
 
 describe('Skill installation sibling tab', () => {
@@ -72,5 +89,42 @@ describe('Skill installation sibling tab', () => {
     await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'End' })
     await flushPromises()
     expect(router.currentRoute.value.query.tab).toBe('connectors')
+  })
+
+  it('shows persistent progress and success feedback for a strict Skill test', async () => {
+    const { wrapper, content } = await render()
+    const skill = strictDraftSkill()
+    content.skills.push(skill)
+    await flushPromises()
+    let resolveTest!: (value: { id: string; skillId: string; version: string; status: 'passed'; resultSummary: string; testedAt: string }) => void
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(undefined as never)
+    vi.spyOn(content, 'testSkill').mockReturnValue(new Promise(resolve => { resolveTest = resolve }))
+    vi.spyOn(content, 'setSkillStatus').mockResolvedValue({ ...skill, status: 'published', activeVersion: skill.version })
+    await wrapper.get('[data-action="publish-skill"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('正在严格试运行')
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('DSH 试运行')
+
+    resolveTest({ id: 'test-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成：已激活 Skill。', testedAt: '2026-09-13 15:01' })
+    await flushPromises()
+
+    expect(content.setSkillStatus).toHaveBeenCalledWith(skill.id, 'published')
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('Skill 已发布')
+  })
+
+  it('keeps a visible result when the administrator postpones publication', async () => {
+    const { wrapper, content } = await render()
+    const skill = strictDraftSkill()
+    content.skills.push(skill)
+    await flushPromises()
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(undefined as never).mockRejectedValueOnce('cancel')
+    vi.spyOn(content, 'testSkill').mockResolvedValue({ id: 'test-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成。', testedAt: '2026-09-13 15:01' })
+    const publish = vi.spyOn(content, 'setSkillStatus')
+    await wrapper.get('[data-action="publish-skill"]').trigger('click')
+    await flushPromises()
+
+    expect(publish).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('试运行已通过，尚未发布')
   })
 })
