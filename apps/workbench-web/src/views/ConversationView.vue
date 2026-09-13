@@ -12,7 +12,6 @@ import {
   Lock,
   RefreshRight,
   Share,
-  VideoPause,
 } from '@element-plus/icons-vue'
 
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
@@ -30,6 +29,7 @@ const contentStore = useContentStore()
 const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
+const stopping = ref(false)
 
 const task = computed(() => taskStore.getTask(String(route.params.id)))
 /**
@@ -40,7 +40,9 @@ const workspaceArchived = computed(() => {
   const workspace = contentStore.workspaces.find(item => item.id === task.value?.workspaceId)
   return workspace?.type === 'team' && workspace.status === 'archived'
 })
-const canStop = computed(() => task.value && ['queued', 'running', 'awaiting_approval'].includes(task.value.status))
+const canStop = computed(() => Boolean(
+  task.value && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
+))
 const canRetry = computed(() => task.value && ['failed', 'cancelled'].includes(task.value.status)
   && (task.value.error?.retryable ?? true))
 const canFollowUp = computed(() => !workspaceArchived.value)
@@ -77,7 +79,7 @@ function onConversationScroll() {
 }
 
 async function stopCurrentRun() {
-  if (!task.value) return
+  if (!task.value || stopping.value) return
   try {
     await ElMessageBox.confirm(
       '停止后会终止本轮运行尝试，已有对话和执行记录仍会保留。',
@@ -88,10 +90,13 @@ async function stopCurrentRun() {
         type: 'warning',
       },
     )
+    stopping.value = true
     await taskStore.cancelTask(task.value.id)
     ElMessage.success('本轮执行已停止，对话记录已保留')
   } catch {
     // User cancelled the confirmation.
+  } finally {
+    stopping.value = false
   }
 }
 
@@ -189,13 +194,6 @@ watch(
           <el-button text :icon="DataLine" @click="detailsOpen = true">
             <span class="header-action-label">对话详情</span>
           </el-button>
-          <el-button
-            v-if="canStop"
-            text
-            :icon="VideoPause"
-            aria-label="停止本轮执行"
-            @click="stopCurrentRun"
-          />
           <el-button
             v-if="canRetry && !workspaceArchived"
             text
@@ -352,7 +350,14 @@ watch(
           <el-icon><ArrowDown /></el-icon>
         </button>
         <div class="conversation-composer-dock__inner">
-          <TaskComposer v-if="canFollowUp" compact @submit="submitFollowUp" />
+          <TaskComposer
+            v-if="canFollowUp"
+            compact
+            :running="canStop"
+            :stopping="stopping"
+            @submit="submitFollowUp"
+            @stop="stopCurrentRun"
+          />
           <p v-else data-testid="conversation-archived-notice" class="conversation-archived-notice">
             该空间已归档，仅保留有权限的只读查看与下载；无法续写或重试。
           </p>

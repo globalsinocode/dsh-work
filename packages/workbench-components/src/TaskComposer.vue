@@ -13,6 +13,7 @@ import {
   Paperclip,
   Plus,
   Search,
+  VideoPause,
 } from '@element-plus/icons-vue'
 
 const props = withDefaults(
@@ -24,6 +25,8 @@ const props = withDefaults(
     workspaceLocked?: boolean
     compact?: boolean
     submitting?: boolean
+    running?: boolean
+    stopping?: boolean
     selectedSkillName?: string
     /**
      * 团队空间尚未选中可用 Agent 成员时阻止提交（TW-02）：后端只接受带
@@ -39,6 +42,8 @@ const props = withDefaults(
     workspaceLocked: false,
     compact: false,
     submitting: false,
+    running: false,
+    stopping: false,
     selectedSkillName: '',
     blockedReason: '',
   },
@@ -46,6 +51,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   submit: [payload: { prompt: string; files: File[]; workspaceId: string }]
+  stop: []
   'clear-skill': []
 }>()
 
@@ -56,7 +62,12 @@ const fileInput = ref<HTMLInputElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 const isDragging = ref(false)
 
-const canSubmit = computed(() => prompt.value.trim().length > 0 && !props.submitting && !props.blockedReason)
+const canSubmit = computed(() => (
+  prompt.value.trim().length > 0
+  && !props.submitting
+  && !props.running
+  && !props.blockedReason
+))
 const workspaceLabel = computed(() => {
   const selected = props.workspaces.find(workspace => workspace.id === workspaceId.value)
   if (selected) return selected.name
@@ -144,7 +155,16 @@ function submit() {
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
+  if (props.running) return
   event.preventDefault()
+  submit()
+}
+
+function performPrimaryAction() {
+  if (props.running) {
+    if (!props.stopping) emit('stop')
+    return
+  }
   submit()
 }
 </script>
@@ -252,14 +272,17 @@ function onKeydown(event: KeyboardEvent) {
           </button>
           <button
             class="composer__send"
+            :class="{ 'composer__send--stop': running }"
             type="button"
-            aria-label="发送消息"
-            :aria-busy="submitting"
-            :disabled="!canSubmit"
-            @click="submit"
+            :aria-label="running ? (stopping ? '正在停止本轮执行' : '停止本轮执行') : '发送消息'"
+            :title="running ? (stopping ? '正在停止' : '停止本轮执行') : '发送消息'"
+            :aria-busy="running ? stopping : submitting"
+            :disabled="running ? stopping : !canSubmit"
+            @click="performPrimaryAction"
           >
-            <el-icon :class="{ 'is-loading': submitting }">
-              <Loading v-if="submitting" />
+            <el-icon :class="{ 'is-loading': submitting || stopping }">
+              <Loading v-if="submitting || stopping" />
+              <VideoPause v-else-if="running" />
               <ArrowUp v-else />
             </el-icon>
           </button>
@@ -573,6 +596,14 @@ function onKeydown(event: KeyboardEvent) {
 .composer__send:not(:disabled):hover {
   transform: translateY(-1px);
   background: #0f5f4c;
+}
+
+.composer__send--stop {
+  background: #a63d48;
+}
+
+.composer__send--stop:not(:disabled):hover {
+  background: #8f2f3a;
 }
 
 .composer__send:disabled {

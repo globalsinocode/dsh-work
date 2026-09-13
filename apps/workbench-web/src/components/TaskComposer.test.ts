@@ -21,6 +21,28 @@ describe('TaskComposer', () => {
     expect(submitting.get('[aria-label="发送消息"]').attributes('aria-busy')).toBe('true')
   })
 
+  it('turns the send control into the stop control while a run is active', async () => {
+    const wrapper = mountComposer({ initialPrompt: '保留这段草稿', running: true })
+    const stop = wrapper.get('[aria-label="停止本轮执行"]')
+
+    expect(stop.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[aria-label="发送消息"]').exists()).toBe(false)
+
+    await stop.trigger('click')
+
+    expect(wrapper.emitted('stop')).toEqual([[]])
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).toBe('保留这段草稿')
+  })
+
+  it('disables the merged control while cancellation is being submitted', () => {
+    const wrapper = mountComposer({ running: true, stopping: true })
+    const stop = wrapper.get('[aria-label="正在停止本轮执行"]')
+
+    expect(stop.attributes('disabled')).toBeDefined()
+    expect(stop.attributes('aria-busy')).toBe('true')
+  })
+
   it('submits a trimmed prompt with the locked workspace context and then clears input', async () => {
     const wrapper = mountComposer({
       initialWorkspaceId: 'ws-supply',

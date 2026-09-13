@@ -1,4 +1,4 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { TaskRun, Workspace } from '@/types/domain'
+import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
@@ -107,6 +108,22 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('task-composer-stub').exists()).toBe(true)
     expect(wrapper.find('[data-testid="conversation-archived-notice"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(true)
+  })
+
+  it('moves the active-run stop action into the composer send control', async () => {
+    const item = task({ status: 'running', error: undefined })
+    const { wrapper, taskStore } = await mountView({ item })
+    const cancelTask = vi.spyOn(taskStore, 'cancelTask').mockResolvedValue(item)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const composer = wrapper.getComponent(TaskComposer)
+
+    expect(wrapper.find('button[aria-label="停止本轮执行"]').exists()).toBe(false)
+    expect(composer.props('running')).toBe(true)
+
+    composer.vm.$emit('stop')
+    await flushPromises()
+
+    expect(cancelTask).toHaveBeenCalledWith('run-001')
   })
 
   it('never applies the archived gate to a personal workspace (AC-23)', async () => {
