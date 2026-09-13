@@ -381,7 +381,7 @@ export class PostgresSkillService {
       const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
       if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
-      const dependencySkills = await this.resolveDraftRuntimeSkills(version!.manifest.dependencies ?? [])
+      const dependencySkills = await this.resolveTestRuntimeSkills(version!.manifest.dependencies ?? [])
       await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
       const result = await this.packageTester(actor.id, { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, dependencies: version.manifest.dependencies ?? [], dependencySkills }, prompt)
       status = result.passed ? 'passed' : 'failed'
@@ -486,7 +486,7 @@ export class PostgresSkillService {
       const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
       if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
-      const dependencySkills = await this.resolveDraftRuntimeSkills(version.manifest.dependencies ?? [])
+      const dependencySkills = await this.resolveTestRuntimeSkills(version.manifest.dependencies ?? [])
       await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
       runtimeSkill = { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, dependencies: version.manifest.dependencies ?? [], dependencySkills }
     }
@@ -612,17 +612,18 @@ export class PostgresSkillService {
     return resolved
   }
 
-  private async resolveDraftRuntimeSkills(references: string[]): Promise<RuntimeSkillConfiguration[]> {
+  private async resolveTestRuntimeSkills(references: string[]): Promise<RuntimeSkillConfiguration[]> {
     const result: RuntimeSkillConfiguration[] = []
     for (const reference of references) {
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`
         select name, description, instructions, tool_refs as tools, manifest from skill_versions
-        where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version} and status = 'draft'`
-      if (!row) throw new Error(`依赖 Skill 草稿不存在：${reference}`)
+        where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
+          and status in ('draft', 'published')`
+      if (!row) throw new Error(`试运行无法解析锁定的依赖 Skill Version：${reference}`)
       const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
       result.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
-        artifact: row.manifest.artifact, files: row.manifest.artifact?.files, disableModelInvocation: row.manifest.artifact?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveDraftRuntimeSkills(row.manifest.dependencies ?? []) })
+        artifact: row.manifest.artifact, files: row.manifest.artifact?.files, disableModelInvocation: row.manifest.artifact?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveTestRuntimeSkills(row.manifest.dependencies ?? []) })
     }
     return result
   }

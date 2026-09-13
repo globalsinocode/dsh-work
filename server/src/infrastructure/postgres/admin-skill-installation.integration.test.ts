@@ -43,8 +43,8 @@ const conflictingBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the resu
 async function fixtureAcquire(source: SkillSource) {
   const fixture = source.repository === 'fixture/multiple'
     ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) })
-    : source.repository === 'fixture/delegated'
-      ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') })
+    : source.repository === 'fixture/delegated' || source.repository === 'fixture/delegated-updated'
+      ? zipSync({ 'repo/grill-me/SKILL.md': strToU8(`---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.${source.repository.endsWith('updated') ? '\nReturn a concise final answer.' : ''}\n`), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') })
       : source.repository === 'fixture/changed' ? changedBytes
         : source.repository === 'fixture/conflicting' ? conflictingBytes : bytes
   return { bytes: fixture, resolvedUrl: source.url, resolvedRef: null }
@@ -233,6 +233,20 @@ test('one confirmed plan atomically installs, tests and publishes same-source Sk
   await skills.setStatus({ skillId: rootId, actor, status: 'published' })
   const resolved = await skills.resolveRuntimeSkills([`${rootId}@0.1.0`])
   assert.deepEqual(resolved.map(item => item.name).sort(), ['grill-me', 'grilling'])
+
+  const updatedRequest = await send('npx skills@latest add fixture/delegated-updated --skill=grill-me')
+  const updatedDetail = await wait(updatedRequest.sessionId)
+  const updatedInstallation = updatedDetail.installations[0]!
+  const updated = await service.confirm(actor, updatedRequest.runId, updatedInstallation.planSha256!)
+  assert.equal(updated.installations[0]!.skillId, rootId)
+  assert.equal(updated.installations[0]!.resultType, 'updated')
+  const [lockedDependency] = await database.client<{ status: string }[]>`
+    select sv.status from skill_versions root
+    join skill_version_dependencies d on d.tenant_id = root.tenant_id and d.skill_version_id = root.id
+    join skill_versions sv on sv.tenant_id = d.tenant_id and sv.id = d.dependency_skill_version_id
+    where root.skill_id = ${rootId} and root.status = 'draft'`
+  assert.equal(lockedDependency?.status, 'published')
+  assert.equal((await skills.testSkill({ skillId: rootId, actor })).status, 'passed')
 })
 test('cancellation blocks confirmation, retries keep Run identity, and permission is rechecked', { skip: real }, async () => {
   const cancelled = await send('[hang] https://example.org/skill.zip')
