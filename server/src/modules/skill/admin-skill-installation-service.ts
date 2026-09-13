@@ -102,8 +102,8 @@ export class AdminSkillInstallationService {
         from skill_python_executions where tenant_id = ${tenant} and run_id = ${runId}
         order by created_at
     `
-    const events = await this.db<{ eventType: string; displayMessage: string | null; occurredAt: Date }[]>`
-      select event_type as "eventType", display_message as "displayMessage", occurred_at as "occurredAt"
+    const events = await this.db<{ eventType: string; occurredAt: Date }[]>`
+      select event_type as "eventType", occurred_at as "occurredAt"
         from run_events where tenant_id = ${tenant} and run_id = ${runId}
         order by stream_position, sequence
     `
@@ -128,7 +128,7 @@ export class AdminSkillInstallationService {
     const steps: SkillTestProgressStep[] = [
       { id: 'created', title: '创建严格试运行', description: `已锁定 ${skill.name ?? skill.id}@${skill.version}，Run ${runId}`, status: 'completed', occurredAt: attempt.createdAt.toISOString() },
       { id: 'scheduled', title: '等待 Runtime 调度', description: owned.status === 'queued' ? '正在等待可用的 DSH Worker' : 'Runtime 已接收本次试运行', status: owned.status === 'queued' ? 'running' : 'completed', occurredAt: attempt.startedAt?.toISOString() },
-      { id: 'worker', title: '启动 DSH Worker', description: workerStarted?.displayMessage ?? (owned.status === 'queued' ? '尚未启动' : '正在启动并加载固定 Runtime Manifest'), status: activeStatus(Boolean(workerStarted), owned.status === 'running'), occurredAt: workerStarted?.occurredAt.toISOString() },
+      { id: 'worker', title: '启动 DSH Worker', description: workerStarted ? 'Worker 已启动并加载固定运行清单' : owned.status === 'queued' ? '等待可用 Worker' : '正在启动 Worker', status: activeStatus(Boolean(workerStarted), owned.status === 'running'), occurredAt: workerStarted?.occurredAt.toISOString() },
       ...catalog.map((item, index) => {
         const activation = activations.find(row => row.skillId === item.id)
         return { id: `activation:${item.id}`, title: `${index === 0 ? '激活根 Skill' : '激活依赖 Skill'}：${item.name ?? item.id}`, description: activation ? `已校验 ${activation.skillId}@${activation.skillVersion} 的锁定内容摘要` : '等待 DSH 调用 activate_skill', status: activeStatus(Boolean(activation), owned.status === 'running' && (index === 0 || activatedIds.has(catalog[index - 1]!.id))), ...(activation ? { occurredAt: activation.createdAt.toISOString() } : {}) }

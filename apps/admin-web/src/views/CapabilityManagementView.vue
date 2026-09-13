@@ -321,13 +321,27 @@ function skillTestStepIcon(status: SkillTestRunProgress['steps'][number]['status
   return status === 'completed' ? Check : status === 'failed' ? Close : status === 'running' ? Loading : Clock
 }
 
-function compactResultSummary(summary: string) {
+function skillTestStepDescription(step: SkillTestRunProgress['steps'][number]) {
+  if (step.id === 'worker') {
+    if (step.status === 'completed') return 'Worker 已启动并加载固定运行清单'
+    if (step.status === 'failed') return 'Worker 启动失败'
+    return step.status === 'running' ? '正在启动 Worker' : '等待可用 Worker'
+  }
+  if (step.id === 'result') {
+    if (step.status === 'completed') return '全部发布条件均已通过'
+    if (step.status === 'failed') return '存在未通过的发布条件'
+    return step.status === 'running' ? '正在核验运行结果与执行证据' : '等待前置步骤完成'
+  }
+  return compactResultSummary(step.description, 120)
+}
+
+function compactResultSummary(summary: string, maxLength = 240) {
   const compact = summary
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/[`*_#>]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-  return compact.length > 240 ? `${compact.slice(0, 240)}…` : compact
+  return compact.length > maxLength ? `${compact.slice(0, maxLength)}…` : compact
 }
 
 async function rollbackSkill(version: SkillVersionRecord) {
@@ -546,7 +560,7 @@ onUnmounted(() => clearSkillTestPoll())
             <span class="skill-test-progress__icon"><el-icon :class="{ 'is-loading': step.status === 'running' }"><component :is="skillTestStepIcon(step.status)" /></el-icon></span>
             <div>
               <strong>{{ step.title }}</strong>
-              <p>{{ step.description }}</p>
+              <p>{{ skillTestStepDescription(step) }}</p>
               <time v-if="step.occurredAt">{{ new Date(step.occurredAt).toLocaleTimeString('zh-CN', { hour12: false }) }}</time>
             </div>
           </article>

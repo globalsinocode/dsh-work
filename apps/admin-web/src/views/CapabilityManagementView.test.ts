@@ -103,7 +103,7 @@ describe('Skill installation sibling tab', () => {
       runId: 'run-strict-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: '这是一段不应直接展示的 DSH 详细回复。', testedAt: '2026-09-13T15:01:00.000Z',
       steps: [
         { id: `activation:${skill.id}`, title: '激活根 Skill', description: '已验证锁定内容', status: 'completed' },
-        { id: 'result', title: '核验发布条件', description: '全部发布条件均已通过', status: 'completed' },
+        { id: 'result', title: '核验发布条件', description: '这是一段不应在进度步骤中展示的 DSH 完整业务回复。', status: 'completed' },
       ],
     })
     await wrapper.get('[data-action="publish-skill"]').trigger('click')
@@ -128,6 +128,8 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('.skill-test-dialog__result').text()).toContain('可以发布')
     expect(wrapper.get('.skill-test-dialog__result').text()).toContain('1 个 Skill 已验证，DSH 已返回有效结果')
     expect(wrapper.get('.skill-test-dialog').text()).not.toContain('不应直接展示的 DSH 详细回复')
+    expect(wrapper.get('.skill-test-dialog').text()).not.toContain('不应在进度步骤中展示的 DSH 完整业务回复')
+    expect(wrapper.get('.skill-test-progress').text()).toContain('全部发布条件均已通过')
     expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('请在试运行窗口确认结果后发布')
   })
 
