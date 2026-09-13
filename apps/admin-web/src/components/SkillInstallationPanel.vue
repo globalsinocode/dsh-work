@@ -21,6 +21,13 @@ const stageHeading = ref<HTMLElement>()
 const source = computed(() => selectedFile.value?.name ?? '')
 const activeStep = computed(() => ({ source: 0, preview: 1, complete: 3 })[stage.value])
 const canConfirm = computed(() => installation.value?.plan?.compatibility.status !== 'incompatible')
+const completeTitle = computed(() => installation.value?.resultType === 'duplicate' ? 'Skill 已存在，无需重复安装' : installation.value?.resultType === 'updated' ? 'Skill 新版本已保存' : 'Skill 已安装为草稿')
+const completeDescription = computed(() => installation.value?.resultType === 'duplicate'
+  ? '平台已找到内容一致的现有版本，本次没有创建重复 Skill 或版本。'
+  : '平台已保存确认的 Skill 包和安装计划。请返回 Skill 中心执行严格试运行，确认结果后发布。')
+const completeTag = computed(() => installation.value?.resultType === 'duplicate'
+  ? `已存在 · v${installation.value.installedVersion ?? ''}`
+  : `待验证 · v${installation.value?.installedVersion ?? '0.1.0'}`)
 
 function reset() {
   stage.value = 'source'
@@ -162,7 +169,7 @@ function failureMessage(cause: unknown, fallback: string) {
     </section>
 
     <section v-else class="installation-complete" role="status">
-      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">Skill 已安装为草稿</h3><p>平台已保存确认的 Skill 包和安装计划。请返回 Skill 中心执行严格试运行，确认结果后发布。</p><el-tag type="success" effect="plain">待验证 · v0.1.0</el-tag><div class="complete-actions"><el-button @click="reset">继续安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
+      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">{{ completeTitle }}</h3><p>{{ completeDescription }}</p><el-tag type="success" effect="plain">{{ completeTag }}</el-tag><div class="complete-actions"><el-button @click="reset">继续安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
     </section>
   </section>
 </template>

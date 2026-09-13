@@ -19,6 +19,7 @@ const packagePreview = {
 }
 const pending: SkillInstallation = {
   id: 'installation-1', runId: null, source: 'document-summary.zip', resolvedUrl: null, resolvedRef: null, status: 'pending', skillId: null,
+  resultType: null, installedVersion: null,
   package: packagePreview, planSha256: 'plan-sha', compatibilityStatus: 'compatible',
   plan: { planVersion: '1.0', rootName: packagePreview.name, packages: [packagePreview], edges: [], compatibility: packagePreview.compatibility, summary: { packageCount: 1, dependencyCount: 0, toolIds: packagePreview.toolIds, pythonFiles: 0 }, sha256: 'plan-sha' },
 }
@@ -60,7 +61,7 @@ describe('ZIP Skill installation', () => {
 
   it('uploads the selected ZIP, displays the parsed plan, and confirms the exact digest', async () => {
     const prepare = vi.spyOn(adminApi, 'prepareZipSkillInstallation').mockResolvedValue(pending)
-    const confirm = vi.spyOn(adminApi, 'confirmZipSkillInstallation').mockResolvedValue({ ...pending, status: 'installed', skillId: 'skill-1' })
+    const confirm = vi.spyOn(adminApi, 'confirmZipSkillInstallation').mockResolvedValue({ ...pending, status: 'installed', skillId: 'skill-1', resultType: 'created', installedVersion: '0.1.0' })
     const wrapper = render()
     await chooseFile(wrapper, 'document-summary.zip', 'zip-bytes')
     await button(wrapper, '解析安装包').trigger('click')
@@ -87,6 +88,20 @@ describe('ZIP Skill installation', () => {
     expect(wrapper.text()).toContain('broken.zip')
     expect(wrapper.get('[role="alert"]').text()).toContain('检查 SKILL.md 后重新上传')
     expect(wrapper.get('[role="alert"]').text()).toContain('trace-1')
+  })
+
+  it('shows an existing matching package as reused instead of a new draft', async () => {
+    vi.spyOn(adminApi, 'prepareZipSkillInstallation').mockResolvedValue(pending)
+    vi.spyOn(adminApi, 'confirmZipSkillInstallation').mockResolvedValue({ ...pending, status: 'installed', skillId: 'skill-existing', resultType: 'duplicate', installedVersion: '1.2.0' })
+    const wrapper = render()
+    await chooseFile(wrapper, 'document-summary.zip')
+    await button(wrapper, '解析安装包').trigger('click'); await flushPromises()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await button(wrapper, '确认安装').trigger('click'); await flushPromises()
+
+    expect(wrapper.text()).toContain('Skill 已存在，无需重复安装')
+    expect(wrapper.text()).toContain('没有创建重复 Skill 或版本')
+    expect(wrapper.text()).toContain('已存在 · v1.2.0')
   })
 
   it('blocks confirmation for an incompatible parsed plan and keeps the assistant entry', async () => {

@@ -8,7 +8,7 @@ defineProps<{ source: string; package: InstalledSkillPackage; plan?: SkillInstal
       <div class="preview-layout">
         <div class="package-details">
           <div class="package-title"><span class="package-icon"><el-icon><Document /></el-icon></span><div><h4>{{ package.name }}</h4><p>{{ package.description }}</p></div><el-tag type="info">{{ package.version ? `上游 ${package.version}` : '未声明上游版本' }}</el-tag></div>
-          <dl class="package-metadata"><div><dt>安装来源</dt><dd>{{ source }}</dd></div><div v-if="resolvedRef"><dt>固定提交</dt><dd>{{ resolvedRef }}</dd></div><div><dt>内容摘要</dt><dd>{{ package.sha256 }}</dd></div><div><dt>安装目标</dt><dd>新增 Skill · 平台版本 0.1.0</dd></div></dl>
+          <dl class="package-metadata"><div><dt>安装来源</dt><dd>{{ source }}</dd></div><div v-if="resolvedRef"><dt>固定提交</dt><dd>{{ resolvedRef }}</dd></div><div><dt>内容摘要</dt><dd>{{ package.sha256 }}</dd></div><div><dt>安装目标</dt><dd>确认时识别新增、升级或复用现有版本</dd></div></dl>
           <el-alert v-if="plan" :title="plan.compatibility.status === 'compatible' ? '安装计划兼容' : plan.compatibility.status === 'needs_review' ? '安装计划需要复核' : '安装计划不兼容'" :type="plan.compatibility.status === 'compatible' ? 'success' : plan.compatibility.status === 'needs_review' ? 'warning' : 'error'" :closable="false" show-icon>
             <template #default><p>计划安装 {{ plan.summary.packageCount }} 个 Skill，包含 {{ plan.summary.dependencyCount }} 条依赖关系；计划摘要 {{ plan.sha256 }}。</p><ul v-if="plan.compatibility.issues.length"><li v-for="issue in plan.compatibility.issues" :key="`${issue.code}-${issue.message}`">{{ issue.message }}</li></ul></template>
           </el-alert>

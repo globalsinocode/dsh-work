@@ -24,8 +24,8 @@ async function render(canManage = true, saved = false) {
 function button(wrapper: VueWrapper, label: string) { return wrapper.findAll('button').find(item => item.text() === label)! }
 describe('real Skill installation conversation', () => {
   it('loads server previews on refresh and confirms their exact digest', async () => {
-    const result = conversationFixture(); result.installations[0]!.status = 'installed'; result.installations[0]!.skillId = 'skill-1'
-    result.messages.push({ id: 'installation-result', role: 'assistant', text: 'Skill“真实测试包”已安装完成，并保存为 0.1.0 待验证草稿。\n下一步：前往 Skill 中心执行严格试运行，确认结果后发布。', runId: 'run-1' })
+    const result = conversationFixture(); result.installations[0]!.status = 'installed'; result.installations[0]!.skillId = 'skill-1'; result.installations[0]!.resultType = 'created'; result.installations[0]!.installedVersion = '0.1.0'
+    result.messages.push({ id: 'installation-result', role: 'assistant', text: 'Skill“真实测试包”已安装完成，并保存为 v0.1.0 待验证草稿。\n下一步：前往 Skill 中心执行严格试运行，确认结果后发布。', runId: 'run-1' })
     const confirm = vi.spyOn(adminApi, 'confirmSkillInstallation').mockResolvedValue(result)
     const { wrapper } = await render(true, true)
     expect(wrapper.text()).toContain('真实测试包')
@@ -34,7 +34,7 @@ describe('real Skill installation conversation', () => {
     await button(wrapper, '确认安装计划').trigger('click'); await flushPromises()
     expect(confirm).toHaveBeenCalledWith('run-1', 'd'.repeat(64))
     expect(wrapper.text()).toContain('Skill 已安装')
-    expect(wrapper.text()).toContain('已安装完成，并保存为 0.1.0 待验证草稿')
+    expect(wrapper.text()).toContain('已安装完成，并保存为 v0.1.0 待验证草稿')
     expect(wrapper.text()).toContain('前往 Skill 中心验证并发布')
     expect(wrapper.text()).toContain('查看已确认的安装计划')
   })
@@ -48,6 +48,32 @@ describe('real Skill installation conversation', () => {
     await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(send.mock.calls[0]![0].requestId).toBe(send.mock.calls[1]![0].requestId)
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+  })
+  it('reports a duplicate package as an assistant reply without claiming a new draft', async () => {
+    const result = conversationFixture()
+    Object.assign(result.installations[0]!, { status: 'installed', skillId: 'skill-existing', resultType: 'duplicate', installedVersion: '1.2.0' })
+    result.messages.push({ id: 'duplicate-result', role: 'assistant', text: 'Skill“真实测试包”已经安装，现有 v1.2.0 与本次包内容一致，本次未创建重复 Skill。\n无需重复安装。', runId: 'run-1' })
+    vi.spyOn(adminApi, 'confirmSkillInstallation').mockResolvedValue(result)
+    const { wrapper } = await render(true, true)
+
+    await button(wrapper, '确认安装计划').trigger('click'); await flushPromises()
+
+    expect(wrapper.text()).toContain('Skill 已存在，无需重复安装')
+    expect(wrapper.text()).toContain('本次未创建重复 Skill')
+    expect(wrapper.text()).toContain('现有版本 v1.2.0')
+    expect(wrapper.text()).not.toContain('v1.2.0 为待验证草稿')
+  })
+  it('refreshes the conversation after a confirmation failure and shows the persisted reply', async () => {
+    const failed = conversationFixture()
+    failed.messages.push({ id: 'failure-result', role: 'assistant', text: 'Skill 安装失败：已有内容不同的待验证草稿。\n本次未创建或覆盖 Skill。请根据提示处理后重试。', runId: 'run-1' })
+    vi.spyOn(adminApi, 'confirmSkillInstallation').mockRejectedValue(new Error('已有内容不同的待验证草稿'))
+    const { wrapper } = await render(true, true)
+    vi.mocked(adminApi.getAssistantConversation).mockResolvedValue(failed)
+
+    await button(wrapper, '确认安装计划').trigger('click'); await flushPromises()
+
+    expect(wrapper.text()).toContain('Skill 安装失败')
+    expect(wrapper.text()).toContain('本次未创建或覆盖 Skill')
   })
   it('does not allow confirmation while the run is active, or after write access is revoked', async () => {
     const { wrapper, store, auth } = await render(true, true)

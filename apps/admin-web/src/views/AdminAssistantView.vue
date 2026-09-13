@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import SkillPackagePreview from '@/components/SkillPackagePreview.vue'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
 import { useAuthStore } from '@/stores/auth'
+import type { SkillInstallation } from '@/types/assistant'
 
 const auth = useAuthStore()
 const assistant = useAdminAssistantStore()
@@ -17,6 +18,15 @@ const busy = computed(() => assistant.busyIds.includes(assistant.selectedId))
 const activeRun = computed(() => [...assistant.current.runs].reverse().find(run => ['queued', 'running', 'cancel_requested'].includes(run.status)))
 const statuses: Record<string, string> = { queued: '等待执行', running: '正在检查来源与包内容', cancel_requested: '正在取消', succeeded: '处理完成', failed: '处理失败', cancelled: '已取消' }
 const installationFor = (runId: string) => assistant.current.installations.find(item => item.runId === runId)
+function installedTitle(installation: SkillInstallation) {
+  if (installation.resultType === 'duplicate') return 'Skill 已存在，无需重复安装'
+  if (installation.resultType === 'updated') return `新版本 v${installation.installedVersion ?? ''} 已保存为待验证草稿`
+  return `安装完成，v${installation.installedVersion ?? '0.1.0'} 为待验证草稿`
+}
+function installedDescription(installation: SkillInstallation) {
+  if (installation.resultType === 'duplicate') return `平台复用了内容一致的现有版本 v${installation.installedVersion ?? ''}，没有创建重复 Skill 或版本。`
+  return '平台已保存完整 Skill 包。严格试运行并发布前，Agent 不会使用该版本。'
+}
 watch(() => route.query.conversation, id => { if (typeof id === 'string') void assistant.select(id) }, { immediate: true })
 watch(() => route.query.context, context => {
   if (context === 'skills' || context === 'agents' || context === 'operations') assistant.current.context = context
@@ -47,7 +57,10 @@ async function confirmInstallation(runId: string, planSha256: string) {
   await assistant.confirm(runId, planSha256)
   await nextTick()
   messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' })
-  if (installationFor(runId)?.status === 'installed') ElMessage.success('Skill 已安装为待验证草稿')
+  const installation = installationFor(runId)
+  if (installation?.status !== 'installed') return
+  if (installation.resultType === 'duplicate') ElMessage.info('Skill 已存在，本次未重复安装')
+  else ElMessage.success(installation.resultType === 'updated' ? `Skill 新版本 v${installation.installedVersion} 已保存` : 'Skill 已安装为待验证草稿')
 }
 </script>
 
@@ -73,8 +86,8 @@ async function confirmInstallation(runId: string, planSha256: string) {
               <article v-for="message in assistant.current.messages.filter(item => item.runId === run.id)" :key="message.id" class="assistant-message" :class="message.role"><strong class="message-author">{{ message.role === 'user' ? '你' : '管理助手' }}</strong><p class="message-text">{{ message.text }}</p></article>
               <div class="run-status" role="status"><el-tag :type="run.status === 'failed' ? 'danger' : 'info'">{{ statuses[run.status] }}</el-tag><span v-if="run.error">{{ run.error }}</span><el-button v-if="auth.canManage && ['failed', 'cancelled'].includes(run.status)" link type="primary" :disabled="busy" @click="assistant.retry(run.id)">重试</el-button></div>
               <div v-if="installationFor(run.id)" class="action-card">
-                <header><div><h3>{{ installationFor(run.id)!.status === 'installed' ? 'Skill 已安装' : installationFor(run.id)!.status === 'cancelled' ? '安装已取消' : '确认安装已有 Skill' }}</h3><p>安装结果以此操作卡片为准。保存为草稿，不自动发布或修改已有 Agent 引用。</p></div></header>
-                <div v-if="installationFor(run.id)!.status === 'installed'" class="action-result" role="status"><span class="result-icon"><el-icon><Check /></el-icon></span><div><strong>安装完成，当前版本为待验证草稿</strong><p>平台已保存 Skill 0.1.0 及完整包文件。发布前 Agent 不会使用该 Skill。</p></div><el-button type="primary" plain @click="router.push('/capabilities')">前往 Skill 中心验证并发布</el-button></div>
+                <header><div><h3>{{ installationFor(run.id)!.status === 'installed' ? installationFor(run.id)!.resultType === 'duplicate' ? 'Skill 已存在' : 'Skill 已安装' : installationFor(run.id)!.status === 'cancelled' ? '安装已取消' : '确认安装已有 Skill' }}</h3><p>安装结果以管理助手回复和此操作卡片为准，不自动发布或修改已有 Agent 引用。</p></div></header>
+                <div v-if="installationFor(run.id)!.status === 'installed'" class="action-result" role="status"><span class="result-icon"><el-icon><Check /></el-icon></span><div><strong>{{ installedTitle(installationFor(run.id)!) }}</strong><p>{{ installedDescription(installationFor(run.id)!) }}</p></div><el-button type="primary" plain @click="router.push('/capabilities')">{{ installationFor(run.id)!.resultType === 'duplicate' ? '前往 Skill 中心查看' : '前往 Skill 中心验证并发布' }}</el-button></div>
                 <SkillPackagePreview v-if="installationFor(run.id)!.status === 'pending' && installationFor(run.id)!.package" :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" />
                 <el-collapse v-else-if="installationFor(run.id)!.status === 'installed' && installationFor(run.id)!.package" class="installed-plan"><el-collapse-item title="查看已确认的安装计划" name="plan"><SkillPackagePreview :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" /></el-collapse-item></el-collapse>
                 <footer v-if="installationFor(run.id)!.status === 'pending' && auth.canManage"><span>一次确认根 Skill、全部依赖和权限摘要</span><el-button :disabled="busy" @click="assistant.cancel(run.id)">取消安装</el-button><el-button type="primary" :loading="busy" :disabled="run.status !== 'succeeded' || !installationFor(run.id)!.planSha256 || installationFor(run.id)!.compatibilityStatus === 'incompatible'" @click="confirmInstallation(run.id, installationFor(run.id)!.planSha256!)">确认安装计划</el-button></footer>

@@ -24,7 +24,7 @@ import { DshAcpRuntimeAdapter } from '../../modules/runtime/dsh-acp-runtime-adap
 import { resolveDshRuntimeInstallation } from '../../modules/runtime/dsh-runtime-installation.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { acquireSkillSource } from '../../modules/skill/skill-source.ts'
+import { acquireSkillSource, type SkillSource } from '../../modules/skill/skill-source.ts'
 import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from '../../modules/skill/skill-file-storage-migration.ts'
 import { parseSkillPackage } from '../../modules/skill/skill-package.ts'
@@ -38,6 +38,17 @@ let runtimeRoot: string, conversations: PostgresConversationRepository, runs: Po
 let artifactStore: FileSystemSkillArtifactStore
 const body = '---\nname: installation-test\ndescription: Read a reference file and return its exact contents.\n---\nUse the read tool to read references/value.txt and report exactly the value, never infer or fabricate it.\n'
 const bytes = zipSync({ 'SKILL.md': strToU8(body), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
+const changedBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the result as one concise line.\n`), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
+const conflictingBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the result as JSON.\n`), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
+async function fixtureAcquire(source: SkillSource) {
+  const fixture = source.repository === 'fixture/multiple'
+    ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) })
+    : source.repository === 'fixture/delegated'
+      ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') })
+      : source.repository === 'fixture/changed' ? changedBytes
+        : source.repository === 'fixture/conflicting' ? conflictingBytes : bytes
+  return { bytes: fixture, resolvedUrl: source.url, resolvedRef: null }
+}
 before(async () => {
   database = await createThrowawayDatabase({ namePrefix: 'dsh_skill_installation_test' })
   runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-install-test-'))
@@ -56,7 +67,7 @@ before(async () => {
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
   orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, undefined, undefined, auth)
-  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : async source => ({ bytes: source.repository === 'fixture/multiple' ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) }) : source.repository === 'fixture/delegated' ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') }) : bytes, resolvedUrl: source.url, resolvedRef: null }), false, [], artifactStore)
+  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
 })
 after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
 const source = real ? 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md' : 'https://example.org/skill.zip'
@@ -86,7 +97,7 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
   const results = await Promise.all([service.confirm(actor, runId, planSha256), service.confirm(actor, runId, planSha256)])
   assert.equal(results[0]!.installations[0]?.skillId, results[1]!.installations[0]?.skillId)
   assert.equal(results[0]!.installations[0]?.status, 'installed')
-  assert.equal(results[0]!.messages.filter(message => message.text.includes('已安装完成，并保存为 0.1.0 待验证草稿')).length, 1)
+  assert.equal(results[0]!.messages.filter(message => message.text.includes('已安装完成，并保存为 v0.1.0 待验证草稿')).length, 1)
   assert.match(results[0]!.messages.find(message => message.text.includes('已安装完成'))?.text ?? '', /Skill 标识：skill-/)
   const [afterCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
   assert.equal(afterCount!.count, beforeCount!.count + 1)
@@ -116,6 +127,34 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
         (select count(*)::int from run_attempts where manifest::text like '%SKILL_RESOURCE_MARKER_7F31%') as attempts
     `
     assert.deepEqual(storedBodies, { versions: 0, installations: 0, attempts: 0 })
+
+    const [beforeDuplicate] = await database.client<{ skills: number; versions: number }[]>`
+      select (select count(*)::int from skills) as skills, (select count(*)::int from skill_versions) as versions
+    `
+    const repeated = await send()
+    const repeatedPlan = await wait(repeated.sessionId)
+    const repeatedResult = await service.confirm(actor, repeated.runId, repeatedPlan.installations[0]!.planSha256!)
+    assert.equal(repeatedResult.installations[0]!.resultType, 'duplicate')
+    assert.equal(repeatedResult.installations[0]!.installedVersion, '0.1.0')
+    assert.match(repeatedResult.messages.find(message => message.text.includes('无需重复安装'))?.text ?? '', /未创建重复 Skill/)
+    const [afterDuplicate] = await database.client<{ skills: number; versions: number }[]>`
+      select (select count(*)::int from skills) as skills, (select count(*)::int from skill_versions) as versions
+    `
+    assert.deepEqual(afterDuplicate, beforeDuplicate)
+
+    const updateRequest = await send('npx skills@latest add fixture/changed --skill=installation-test')
+    const updatePlan = await wait(updateRequest.sessionId)
+    const updateResult = await service.confirm(actor, updateRequest.runId, updatePlan.installations[0]!.planSha256!)
+    assert.equal(updateResult.installations[0]!.skillId, skillId)
+    assert.equal(updateResult.installations[0]!.resultType, 'updated')
+    assert.equal(updateResult.installations[0]!.installedVersion, '0.2.0')
+    assert.match(updateResult.messages.find(message => message.text.includes('新版本 v0.2.0'))?.text ?? '', /严格试运行/)
+
+    const conflictRequest = await send('npx skills@latest add fixture/conflicting --skill=installation-test')
+    const conflictPlan = await wait(conflictRequest.sessionId)
+    await assert.rejects(service.confirm(actor, conflictRequest.runId, conflictPlan.installations[0]!.planSha256!), /已有内容不同的待验证草稿/)
+    const conflictResult = await service.detail(actor, conflictRequest.sessionId)
+    assert.match(conflictResult.messages.find(message => message.text.includes('安装失败'))?.text ?? '', /本次未创建或覆盖 Skill/)
   }
   const duplicate = await service.send(actor, { sessionId, requestId, message: source })
   assert.equal(duplicate.runs.length, 1)
@@ -153,10 +192,12 @@ test('ZIP upload reuses package parsing, compatibility planning, folder storage 
   ])
   assert.equal(first.status, 'installed')
   assert.equal(first.skillId, second.skillId)
+  assert.equal(first.resultType, 'duplicate')
+  assert.equal(first.installedVersion, '0.1.0')
   const [version] = await database.client<{ status: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
-    select status, manifest from skill_versions where skill_id = ${first.skillId!}
+    select status, manifest from skill_versions where skill_id = ${first.skillId!} and version = ${first.installedVersion!}
   `
-  assert.equal(version?.status, 'draft')
+  assert.equal(version?.status, 'published')
   assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
 })
 test('one confirmed plan atomically installs, tests and publishes same-source Skill dependencies', { skip: real, timeout: 30000 }, async () => {

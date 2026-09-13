@@ -32,6 +32,8 @@ export interface SkillInstallation {
   resolvedRef: string | null
   status: 'pending' | 'installed' | 'cancelled'
   skillId: string | null
+  resultType: 'created' | 'updated' | 'duplicate' | null
+  installedVersion: string | null
   package: InstalledSkillPackage | null
   plan: SkillInstallationPlan | null
   planSha256: string | null

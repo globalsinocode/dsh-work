@@ -92,7 +92,12 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     const epoch = generation
     busyIds.value.push(id); error.value = ''
     try { mergeIfCurrent(await perform(), epoch) }
-    catch (cause) { if (epoch === generation) error.value = message(cause) }
+    catch (cause) {
+      if (epoch !== generation) return
+      error.value = message(cause)
+      try { mergeIfCurrent(await adminApi.getAssistantConversation(id), epoch) }
+      catch { /* Keep the action error; polling can recover the conversation later. */ }
+    }
     finally { if (epoch === generation) busyIds.value = busyIds.value.filter(value => value !== id) }
   }
   async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256)) }
