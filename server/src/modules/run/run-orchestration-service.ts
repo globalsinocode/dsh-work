@@ -213,16 +213,20 @@ export class RunOrchestrationService {
       content: input.prompt.trim(),
       messageId: `message-user-${run.id}`,
     })
-    await this.failUndispatchedRun(run, () => this.dispatch(run, {
-      prompt: input.prompt,
-      workspaceId: session.workspaceId,
-      agentVersionId: session.agentVersionId,
-      userId: input.userId,
-      fileIds: input.fileIds ?? [],
-      preparedFiles,
-      authorization,
-      additionalSkillReferences,
-    }))
+    await this.failUndispatchedRun(run, async () => {
+      const history = await this.conversations.getConversationHistory(session.id, run.id)
+      await this.dispatch(run, {
+        prompt: input.prompt,
+        workspaceId: session.workspaceId,
+        agentVersionId: session.agentVersionId,
+        userId: input.userId,
+        fileIds: input.fileIds ?? [],
+        preparedFiles,
+        authorization,
+        additionalSkillReferences,
+        history,
+      })
+    })
     await this.operations?.appendAudit(input.userId, 'run.create', run.id, 'success', `trace-${run.id}`, '员工创建真实 Run')
     return this.runs.getRun(tenantId, run.id)
   }
@@ -341,6 +345,7 @@ export class RunOrchestrationService {
       ...authorizationContext,
     })
     const prompt = await this.conversations.getRunPrompt(run.id)
+    const history = await this.conversations.getConversationHistory(session.id, run.id)
     const fileIds = this.content ? await this.content.getRunInputFileIds(run.id) : []
     await this.dispatch(run, {
       prompt,
@@ -350,6 +355,7 @@ export class RunOrchestrationService {
       fileIds,
       authorization,
       additionalSkillReferences,
+      history,
     })
     await this.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.runs.getRun(tenantId, run.id)
@@ -407,6 +413,7 @@ export class RunOrchestrationService {
     preparedFiles?: PreparedRuntimeFile[]
     authorization?: RuntimeAuthorizationDecision
     additionalSkillReferences?: string[]
+    history?: RuntimeManifest['input']['conversation_history']
   }) {
     const route = await this.models.resolveRoute('default')
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
@@ -483,7 +490,11 @@ export class RunOrchestrationService {
         excerpt: document.excerpt,
       })),
       model_route_id: route.routeId,
-      input: { message: input.prompt.trim(), file_mounts: preparedFiles.map(file => file.mount) },
+      input: {
+        message: input.prompt.trim(),
+        file_mounts: preparedFiles.map(file => file.mount),
+        ...(input.history?.length ? { conversation_history: input.history } : {}),
+      },
       limits: {
         timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
         max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024),

@@ -7,6 +7,8 @@ import { PostgresWorkspaceService } from './postgres-workspace-service.ts'
 import { authorizationDenied } from '../../authorization/authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
+const conversationHistoryMessageLimit = 12
+const conversationHistoryCharacterLimit = 24_000
 
 interface SessionRow {
   id: string
@@ -58,6 +60,11 @@ interface MessageRow {
   content: string
   createdAt: Date
   runId: string | null
+}
+
+export interface ConversationHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
 }
 
 interface EventRow {
@@ -208,6 +215,35 @@ export class PostgresConversationRepository {
     `
     if (!row) throw new Error(`Run 没有关联的用户消息：${runId}`)
     return row.content
+  }
+
+  /**
+   * Returns the causal product-Session context that existed before a Run was
+   * created. The current Run is excluded so its prompt remains the single
+   * authoritative `input.message`, and a retry receives the same preceding
+   * conversation instead of later messages from the Session.
+   */
+  async getConversationHistory(sessionId: string, beforeRunId: string): Promise<ConversationHistoryMessage[]> {
+    const recent = await this.database<ConversationHistoryMessage[]>`
+      select m.role, m.content
+        from messages m
+        join runs current_run
+          on current_run.tenant_id = m.tenant_id and current_run.id = ${beforeRunId}
+       where m.tenant_id = ${tenantId}
+         and m.session_id = ${sessionId}
+         and current_run.session_id = ${sessionId}
+         and m.run_id is distinct from current_run.id
+         and m.created_at < current_run.created_at
+         and m.role in ('user', 'assistant')
+       order by m.created_at desc, m.id desc
+       limit ${conversationHistoryMessageLimit}
+    `
+    let remaining = conversationHistoryCharacterLimit
+    return recent.map(message => {
+      const content = remaining > 0 ? message.content.slice(-remaining) : ''
+      remaining -= content.length
+      return { role: message.role, content }
+    }).filter(message => message.content).reverse()
   }
 
   /**

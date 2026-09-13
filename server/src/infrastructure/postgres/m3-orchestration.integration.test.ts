@@ -83,6 +83,76 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.equal(usageRecord.department, '供应链中心')
 })
 
+test('a follow-up Run snapshots only the preceding messages from its product Session', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 连续对话上下文' })
+  const first = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '先提出需要确认的问题', idempotencyKey: randomUUID(),
+  })
+  assert.ok(first)
+  await waitForTask(first.id, 'succeeded')
+
+  const followUp = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '按序号列出刚才的问题', idempotencyKey: randomUUID(),
+  })
+  assert.ok(followUp)
+  await waitForTask(followUp.id, 'succeeded')
+  const attempt = await runs.getAttempt('tenant-dsh-work', followUp.currentAttemptId!)
+  const manifest = attempt!.manifest as unknown as RuntimeManifest
+
+  assert.deepEqual(manifest.input.conversation_history, [
+    { role: 'user', content: '先提出需要确认的问题' },
+    { role: 'assistant', content: 'M3 真实回答' },
+  ])
+  assert.equal(manifest.input.message, '按序号列出刚才的问题')
+
+  const isolatedSession = await orchestration.createSession({ userId: 'U00001', title: 'M3 上下文隔离' })
+  const isolated = await orchestration.startRun({
+    userId: 'U00001', sessionId: isolatedSession.id, prompt: '新会话第一条消息', idempotencyKey: randomUUID(),
+  })
+  assert.ok(isolated)
+  await waitForTask(isolated.id, 'succeeded')
+  const isolatedAttempt = await runs.getAttempt('tenant-dsh-work', isolated.currentAttemptId!)
+  assert.equal((isolatedAttempt!.manifest as unknown as RuntimeManifest).input.conversation_history, undefined)
+})
+
+test('conversation history keeps the newest messages within the Manifest limits', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 历史容量限制' })
+  const previous = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID(),
+  })
+  for (let index = 0; index < 13; index++) {
+    await conversations.appendMessage({
+      sessionId: session.id,
+      runId: previous.id,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `消息-${index}`,
+    })
+  }
+  const target = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID(),
+  })
+  const messageBounded = await conversations.getConversationHistory(session.id, target.id)
+  assert.equal(messageBounded.length, 12)
+  assert.equal(messageBounded[0]?.content, '消息-1')
+  assert.equal(messageBounded.at(-1)?.content, '消息-12')
+
+  await database`delete from messages where tenant_id = 'tenant-dsh-work' and session_id = ${session.id}`
+  for (let index = 0; index < 6; index++) {
+    await conversations.appendMessage({
+      sessionId: session.id,
+      runId: previous.id,
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      content: `${'x'.repeat(4_990)}消息-${index}`,
+    })
+  }
+  const characterTarget = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID(),
+  })
+  const characterBounded = await conversations.getConversationHistory(session.id, characterTarget.id)
+  assert.equal(characterBounded.reduce((total, message) => total + message.content.length, 0), 24_000)
+  assert.equal(characterBounded.at(-1)?.content.endsWith('消息-5'), true)
+})
+
 test('compilation failure converges the Run instead of leaving it queued without an Attempt', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '启动失败收敛' })
   const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
@@ -118,6 +188,11 @@ test('compilation failure converges the Run instead of leaving it queued without
 
 test('cancel and retry keep one Run and create a new immutable Attempt', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 取消重试' })
+  const contextRun = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '重试前的上下文', idempotencyKey: randomUUID(),
+  })
+  assert.ok(contextRun)
+  await waitForTask(contextRun.id, 'succeeded')
   const created = await orchestration.startRun({
     userId: 'U00001', sessionId: session.id, prompt: '等待取消', idempotencyKey: randomUUID(),
   })
@@ -132,6 +207,17 @@ test('cancel and retry keep one Run and create a new immutable Attempt', async (
      where tenant_id = 'tenant-dsh-work' and run_id = ${created.id}
   `
   assert.equal(count?.count, 2)
+  const attempts = await database<{ manifest: RuntimeManifest }[]>`
+    select manifest from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${created.id}
+     order by attempt_no
+  `
+  const expectedHistory = [
+    { role: 'user', content: '重试前的上下文' },
+    { role: 'assistant', content: 'M3 真实回答' },
+  ]
+  assert.deepEqual(attempts[0]?.manifest.input.conversation_history, expectedHistory)
+  assert.deepEqual(attempts[1]?.manifest.input.conversation_history, expectedHistory)
 })
 
 test('deleting a conversation archives it only after active Runs stop', async () => {
