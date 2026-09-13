@@ -285,6 +285,8 @@ export interface AgentReleaseRecord {
 
 export interface SkillDefinition {
   packageSha256?: string
+  installationRole?: 'standalone' | 'root' | 'dependency'
+  dependencies?: SkillDependencySummary[]
   id: string
   name: string
   version: string
@@ -297,6 +299,14 @@ export interface SkillDefinition {
   toolIds: string[]
   testPrompt: string
   updatedAt: string
+}
+
+export interface SkillDependencySummary {
+  id: string
+  name: string
+  version: string
+  status: PublishStatus
+  depth: number
 }
 
 export interface SkillVersionRecord {

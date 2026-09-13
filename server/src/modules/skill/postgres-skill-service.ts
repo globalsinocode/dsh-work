@@ -25,6 +25,10 @@ interface SkillRow {
   instructions: string
   owner: string
   packageSha256?: string
+  installationId: string | null
+  isInstallationRoot: boolean
+  installationRole: 'standalone' | 'root' | 'dependency'
+  dependencies: SkillDefinition['dependencies']
   artifact: SkillPackageArtifact | null
   strictTest: boolean
   persistedStatus: PublishStatus
@@ -68,6 +72,15 @@ interface VersionRow {
   sourceVersion: string | null
   summary: string
   artifact: SkillPackageArtifact | null
+}
+
+interface SkillDependencyRow {
+  parentVersionId: string
+  versionId: string
+  id: string
+  name: string
+  version: string
+  status: PublishStatus
 }
 
 export interface SkillTestResult {
@@ -162,6 +175,14 @@ export class PostgresSkillService {
         join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.active_version_id
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
        where s.tenant_id = ${tenantId} and s.status = 'published' and sv.status = 'published'
+         and (
+           not (sv.manifest ? 'installationId')
+           or exists (
+             select 1 from skill_installations installation
+              where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
+                and installation.status = 'installed'
+           )
+         )
        order by s.updated_at desc, sv.name asc
     `
     return rows.map(row => ({ ...row, updatedAt: formatDateTime(row.updatedAt) }))
@@ -174,6 +195,14 @@ export class PostgresSkillService {
         join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.active_version_id
        where s.tenant_id = ${tenantId} and s.id = ${skillId}
          and s.status = 'published' and sv.status = 'published'
+         and (
+           not (sv.manifest ? 'installationId')
+           or exists (
+             select 1 from skill_installations installation
+              where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
+                and installation.status = 'installed'
+           )
+         )
     `
     if (!row) throw new Error('Skill 不存在、未发布或已停用')
     return { id: row.id, reference: `${row.skillId}@${row.version}` }
@@ -742,6 +771,12 @@ export class PostgresSkillService {
              s.active_version_id as "activeVersionId", s.draft_version_id as "draftVersionId",
              sv.id as "versionId", sv.version, active.version as "activeVersion",
              sv.tool_refs as "toolIds", sv.package_sha256 as "packageSha256", sv.manifest->'artifact' as artifact,
+             sv.manifest->>'installationId' as "installationId",
+             exists (
+               select 1 from skill_installations installation
+                where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
+                  and installation.status = 'installed'
+             ) as "isInstallationRoot",
              (sv.manifest ? 'installationId') as "strictTest", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
         from skills s
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
@@ -752,6 +787,23 @@ export class PostgresSkillService {
        order by s.updated_at desc
     `
     for (const row of rows) if (row.artifact) row.instructions = (await this.requireArtifactStore().read(row.artifact)).instructions
+    const dependencyRows = await this.database<SkillDependencyRow[]>`
+      select d.skill_version_id as "parentVersionId", dependency.id as "versionId",
+             dependency.skill_id as id, dependency.name, dependency.version,
+             case when dependency_skill.status = 'disabled' then 'disabled' else dependency.status end as status
+        from skill_version_dependencies d
+        join skill_versions dependency on dependency.tenant_id = d.tenant_id and dependency.id = d.dependency_skill_version_id
+        join skills dependency_skill on dependency_skill.tenant_id = dependency.tenant_id and dependency_skill.id = dependency.skill_id
+       where d.tenant_id = ${tenantId}
+    `
+    const dependenciesByVersion = new Map<string, SkillDependencyRow[]>()
+    for (const dependency of dependencyRows) {
+      dependenciesByVersion.set(dependency.parentVersionId, [...(dependenciesByVersion.get(dependency.parentVersionId) ?? []), dependency])
+    }
+    for (const row of rows) {
+      row.installationRole = !row.installationId ? 'standalone' : row.isInstallationRoot ? 'root' : 'dependency'
+      row.dependencies = flattenDependencySummaries(row.versionId, dependenciesByVersion)
+    }
     return rows
   }
 
@@ -834,9 +886,28 @@ function toSkillDefinition(row: SkillRow): SkillDefinition {
     instructions: row.instructions,
     toolIds: row.toolIds,
     ...(row.packageSha256 ? { packageSha256: row.packageSha256 } : {}),
+    installationRole: row.installationRole,
+    ...(row.dependencies?.length ? { dependencies: row.dependencies } : {}),
     testPrompt: row.testPrompt,
     updatedAt: formatDateTime(row.updatedAt),
   }
+}
+
+function flattenDependencySummaries(
+  rootVersionId: string,
+  dependenciesByVersion: Map<string, SkillDependencyRow[]>,
+) {
+  const result: NonNullable<SkillDefinition['dependencies']> = []
+  const pending = (dependenciesByVersion.get(rootVersionId) ?? []).map(dependency => ({ dependency, depth: 1 }))
+  const seen = new Set<string>([rootVersionId])
+  while (pending.length) {
+    const { dependency, depth } = pending.shift()!
+    if (seen.has(dependency.versionId)) continue
+    seen.add(dependency.versionId)
+    result.push({ id: dependency.id, name: dependency.name, version: dependency.version, status: dependency.status, depth })
+    pending.push(...(dependenciesByVersion.get(dependency.versionId) ?? []).map(child => ({ dependency: child, depth: depth + 1 })))
+  }
+  return result
 }
 
 function toVersionRecord(row: VersionRow): SkillVersionRecord {

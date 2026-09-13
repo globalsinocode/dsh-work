@@ -44,7 +44,7 @@
     "/skills": {
       "get": {
         "operationId": "listAvailableSkills",
-        "summary": "查询当前员工可查看的已发布 Skill 广场目录",
+        "summary": "查询当前员工可查看的已发布 Skill 入口目录；依赖 Skill 仅在单独安装后展示",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

@@ -92,6 +92,36 @@ describe('Skill installation sibling tab', () => {
     expect(router.currentRoute.value.query.tab).toBe('connectors')
   })
 
+  it('groups dependency Skills under their installation entry', async () => {
+    const { wrapper, content } = await render()
+    const root = {
+      ...strictDraftSkill(),
+      id: 'skill-grill-me',
+      name: 'grill-me',
+      installationRole: 'root' as const,
+      dependencies: [{ id: 'skill-grilling', name: 'grilling', version: '0.1.0', status: 'published' as const, depth: 1 }],
+    }
+    const dependency = {
+      ...strictDraftSkill(),
+      id: 'skill-grilling',
+      name: 'grilling',
+      status: 'published' as const,
+      installationRole: 'dependency' as const,
+    }
+    content.skills.splice(0, content.skills.length, root, dependency)
+    await flushPromises()
+
+    expect(wrapper.get('#capability-tab-skills').text()).toContain('Skill 中心 1')
+    expect(wrapper.findAll('[data-action="view-skill"]')).toHaveLength(1)
+    expect(wrapper.get('.skill-primary-cell').text()).toContain('入口 Skill')
+    expect(wrapper.get('.skill-dependencies').text()).toContain('依赖 1')
+    expect(wrapper.get('.skill-dependency-chip').text()).toContain('grilling')
+
+    await wrapper.get('.skill-dependency-chip').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.el-drawer').text()).toContain('依赖 Skill（员工端不单独展示）')
+  })
+
   it('opens a progress dialog immediately and polls the real strict test run', async () => {
     const { wrapper, content } = await render()
     const skill = strictDraftSkill()

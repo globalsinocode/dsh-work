@@ -26,6 +26,7 @@
 - 包支持纯指令、UTF-8 文本资源和 `.py` 源文件：md、txt、json、yaml/yml、csv、toml、py、LICENSE。Shell、二进制制品、运行时动态安装依赖和未适配工具不会被静默忽略，而是拒绝解析或形成不兼容计划。
 - `allowed-tools` 已适配 read/glob/grep 的固定平台版本；纯指令包可以零工具。Python 包声明平台内置 `python_execute@1.0.0`，只有固定沙箱镜像可用时兼容。
 - 正文中明确要求调用另一个 Skill 时，平台解析同一制品中的目标 Skill，递归生成依赖图；缺失项和循环依赖阻止确认。单次计划最多包含 32 个 Skill。
+- 同一安装计划中的根 Skill 与依赖 Skill 均保存为不可变目录和独立版本，Skill 中心按“入口 Skill + 递归依赖”分组展示，不再把依赖节点铺成并列入口。员工端只返回曾作为安装根节点的已发布 Skill；依赖 Skill 在运行时随根 Skill 按锁定版本加载，只有管理员以后明确单独安装该依赖时，它才作为独立入口出现在员工端。
 - 下载上限 20 MB，整个 ZIP 解压上限 32 MB/2000 项，所选 Skill 上限 64 文件/1 MB。验证 UTF-8、路径、重复/冲突、ZIP 目录与本地文件名、CRC、大小、压缩格式；所选 Skill 目录不允许符号链接或特殊文件。仓库先按元数据 name 选择目标，再检查目标的工具与依赖兼容性；无关 Skill 的不兼容声明不阻断安装。运行时同样按单个 Skill 限制 64 文件/1 MB，多个合规 Skill 可组合使用。
 - Skill 内容统一保存为 `${DSH_WORK_DATA_ROOT}/skills/packages/<name>/<sha256>/` 下的不可变文件夹，包含 `SKILL.md`、参考资料和脚本。PostgreSQL 只保存相对目录引用、文件路径/大小/摘要、来源、计划、版本关系和业务状态，不保存文件正文或脚本源码。
 - 安装记录、Skill Version 和 Runtime Manifest 都只携带同一份文件夹引用及校验索引。员工执行和试运行先收到 Skill 名称、说明与版本目录，调用 `activate_skill` 后由 Runtime Adapter 校验摘要并将目录只读暂存到 Attempt 工作区。

@@ -193,7 +193,7 @@
     "/skills": {
       "get": {
         "operationId": "listSkills",
-        "summary": "查询 Skill",
+        "summary": "查询 Skill，并返回安装入口角色与当前版本的递归依赖摘要",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

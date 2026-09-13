@@ -21,8 +21,9 @@ const activeTab = computed<CapabilityTab>(() => {
   if (tab === 'install') return authStore.canManage ? 'install' : 'skills'
   return tab === 'tools' || tab === 'connectors' ? tab : 'skills'
 })
+const managedSkills = computed(() => contentStore.skills.filter(skill => skill.installationRole !== 'dependency'))
 const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }>>(() => [
-  { id: 'skills', label: 'Skill 中心', count: contentStore.skills.length },
+  { id: 'skills', label: 'Skill 中心', count: managedSkills.value.length },
   ...(authStore.canManage ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
   { id: 'tools', label: '工具目录', count: contentStore.tools.length },
   { id: 'connectors', label: '连接器状态', count: contentStore.connectors.length },
@@ -71,7 +72,7 @@ const selectedSkillReleases = computed(() => contentStore.skillReleaseRecords.fi
 
 const filteredSkills = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  return contentStore.skills.filter((item) => !keyword || `${item.name} ${item.description} ${item.owner} ${item.id}`.toLowerCase().includes(keyword))
+  return managedSkills.value.filter((item) => !keyword || `${item.name} ${item.description} ${item.owner} ${item.id} ${(item.dependencies ?? []).map(dependency => `${dependency.name} ${dependency.id}`).join(' ')}`.toLowerCase().includes(keyword))
 })
 const filteredTools = computed(() => {
   const keyword = query.value.trim().toLowerCase()
@@ -111,10 +112,17 @@ function inspectSkill(skill: SkillDefinition) {
     { label: '分类', value: skill.category },
     { label: '负责人', value: skill.owner },
     { label: '说明', value: skill.description },
+    ...(skill.installationRole === 'root' ? [{ label: '安装类型', value: '入口 Skill' }] : skill.installationRole === 'dependency' ? [{ label: '安装类型', value: '依赖 Skill（员工端不单独展示）' }] : []),
+    ...(skill.dependencies?.length ? [{ label: '依赖 Skill', value: skill.dependencies.map(item => `${item.name}@${item.version}`).join('、') }] : []),
     { label: '执行指令', value: skill.instructions },
     { label: '引用工具', value: toolNames(skill.toolIds) },
     { label: '典型问题', value: skill.testPrompt },
   ], 'skill', skill.id)
+}
+
+function inspectSkillDependency(skillId: string) {
+  const dependency = contentStore.skills.find(skill => skill.id === skillId)
+  if (dependency) inspectSkill(dependency)
 }
 
 function inspectTool(tool: ToolDefinition) {
@@ -492,7 +500,33 @@ onUnmounted(() => clearSkillTestPoll())
 
     <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="`capability-tab-${activeTab}`">
       <el-table v-if="activeTab === 'skills'" class="data-table" v-loading="contentStore.loading" :data="filteredSkills" empty-text="暂无匹配的 Skill">
-        <el-table-column label="Skill" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small></div></template></el-table-column>
+        <el-table-column label="Skill" min-width="360">
+          <template #default="scope">
+            <div class="primary-cell skill-primary-cell">
+              <div class="skill-primary-cell__name">
+                <strong>{{ scope.row.name }}</strong>
+                <span v-if="scope.row.installationRole === 'root'" class="skill-entry-label">入口 Skill</span>
+              </div>
+              <small>{{ scope.row.description }}</small>
+              <div v-if="scope.row.dependencies?.length" class="skill-dependencies" aria-label="依赖 Skill">
+                <span class="skill-dependencies__label">依赖 {{ scope.row.dependencies.length }}</span>
+                <button
+                  v-for="dependency in scope.row.dependencies"
+                  :key="`${dependency.id}@${dependency.version}`"
+                  type="button"
+                  class="skill-dependency-chip"
+                  :title="`查看 ${dependency.name}@${dependency.version}`"
+                  data-action="view-skill-dependency"
+                  @click="inspectSkillDependency(dependency.id)"
+                >
+                  <span>{{ dependency.name }}</span>
+                  <code>v{{ dependency.version }}</code>
+                  <StatusTag :status="dependency.status" />
+                </button>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="version" label="版本" width="125"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span><small v-if="scope.row.activeVersion && scope.row.activeVersion !== scope.row.version" class="active-version-hint">活动 v{{ scope.row.activeVersion }}</small></template></el-table-column>
         <el-table-column prop="category" label="分类" width="110" />
         <el-table-column label="工具" width="90"><template #default="scope">{{ scope.row.toolIds.length }} 个</template></el-table-column>
@@ -663,6 +697,16 @@ onUnmounted(() => clearSkillTestPoll())
 .primary-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
 .primary-cell small { max-width: 440px; margin-top: 4px; overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
 .primary-cell code { margin-top: 4px; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
+.skill-primary-cell { gap: 4px; padding: 3px 0; }
+.skill-primary-cell__name { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.skill-entry-label { flex: none; padding: 2px 6px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); font-weight: var(--font-weight-badge); }
+.skill-dependencies { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.skill-dependencies__label { color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.skill-dependency-chip { display: inline-flex; max-width: 230px; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-text-secondary); background: var(--color-bg-base); cursor: pointer; }
+.skill-dependency-chip:hover, .skill-dependency-chip:focus-visible { border-color: var(--color-primary); color: var(--color-primary); outline: none; }
+.skill-dependency-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-dependency-chip code { margin: 0; color: inherit; font-size: var(--font-size-micro); }
+.skill-dependency-chip :deep(.status-tag) { font-size: var(--font-size-micro); }
 .active-version-hint { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .mode-label { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); font-weight: var(--font-weight-badge); }
 .mode-label--write { color: var(--color-warning-strong); background: var(--color-warning-light); }
