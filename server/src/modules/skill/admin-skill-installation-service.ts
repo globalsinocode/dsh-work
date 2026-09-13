@@ -174,13 +174,17 @@ export class AdminSkillInstallationService {
     await this.db.begin(async tx => {
       await requireAdminInTransaction(tx, userId)
       const [run] = await tx<{ status: string }[]>`select status from runs where tenant_id = ${tenant} and id = ${runId} for update`
-      const [row] = await tx<{ id: string; package: SkillPackageArtifact; plan: SkillInstallationPlan; planSha256: string; status: string }[]>`
-        select id, package, plan, plan_sha256 as "planSha256", status from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and created_by = ${userId} for update
+      const [row] = await tx<{ id: string; package: SkillPackageArtifact; plan: SkillInstallationPlan; planSha256: string; status: string; skillId: string | null }[]>`
+        select id, package, plan, plan_sha256 as "planSha256", status, skill_id as "skillId" from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and created_by = ${userId} for update
       `
       if (!row || !row.package || !row.plan || row.planSha256 !== sha256 || row.plan.sha256 !== sha256 || installationPlanDigest(row.plan) !== sha256) throw new Error('安装计划不存在或已变化，请重新查看计划')
-      if (row.status === 'installed') return
+      if (row.status === 'installed') {
+        await this.recordInstallationReply(tx, owned.sessionId, runId, row.id, row.plan.rootName, row.skillId)
+        return
+      }
       if (row.status !== 'pending' || run?.status !== 'succeeded') throw new Error('安装已取消或助手尚未成功完成，请等待或重试')
-      await this.installPlan(tx, row, userId, `trace-${runId}`, '通过管理助手按确认的安装计划保存，等待严格试运行和发布')
+      const root = await this.installPlan(tx, row, userId, `trace-${runId}`, '通过管理助手按确认的安装计划保存，等待严格试运行和发布')
+      await this.recordInstallationReply(tx, owned.sessionId, runId, row.id, row.plan.rootName, root.skillId)
     })
     return this.detail(userId, owned.sessionId)
   }
@@ -328,6 +332,17 @@ export class AdminSkillInstallationService {
       insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id, safe_context)
       values (${`audit-${randomUUID()}`}, ${tenant}, 'user', ${userId}, 'skill.install', 'skill', ${root.skillId}, 'success', ${traceId}, ${tx.json({ plan_sha256: row.plan.sha256, package_count: row.plan.packages.length })})
     `
+    return root
+  }
+
+  private async recordInstallationReply(tx: DatabaseTransaction, sessionId: string, runId: string, installationId: string, skillName: string, skillId: string | null) {
+    const content = `Skill“${skillName}”已安装完成，并保存为 0.1.0 待验证草稿。${skillId ? `\nSkill 标识：${skillId}` : ''}\n下一步：前往 Skill 中心执行严格试运行，确认结果后发布；发布前 Agent 不会使用该 Skill。`
+    await tx`
+      insert into messages (id, tenant_id, session_id, run_id, role, content)
+      values (${`message-${installationId}-installed`}, ${tenant}, ${sessionId}, ${runId}, 'assistant', ${content})
+      on conflict (id) do nothing
+    `
+    await tx`update sessions set last_active_at = now() where tenant_id = ${tenant} and id = ${sessionId}`
   }
 
   private requireArtifactStore() {

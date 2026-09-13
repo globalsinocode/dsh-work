@@ -86,6 +86,8 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
   const results = await Promise.all([service.confirm(actor, runId, planSha256), service.confirm(actor, runId, planSha256)])
   assert.equal(results[0]!.installations[0]?.skillId, results[1]!.installations[0]?.skillId)
   assert.equal(results[0]!.installations[0]?.status, 'installed')
+  assert.equal(results[0]!.messages.filter(message => message.text.includes('已安装完成，并保存为 0.1.0 待验证草稿')).length, 1)
+  assert.match(results[0]!.messages.find(message => message.text.includes('已安装完成'))?.text ?? '', /Skill 标识：skill-/)
   const [afterCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
   assert.equal(afterCount!.count, beforeCount!.count + 1)
   const [version] = await database.client<{ status: string; instructions: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`select status, instructions, manifest from skill_versions where skill_id = ${results[0]!.installations[0]!.skillId!}`

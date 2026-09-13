@@ -25,6 +25,7 @@ function button(wrapper: VueWrapper, label: string) { return wrapper.findAll('bu
 describe('real Skill installation conversation', () => {
   it('loads server previews on refresh and confirms their exact digest', async () => {
     const result = conversationFixture(); result.installations[0]!.status = 'installed'; result.installations[0]!.skillId = 'skill-1'
+    result.messages.push({ id: 'installation-result', role: 'assistant', text: 'Skill“真实测试包”已安装完成，并保存为 0.1.0 待验证草稿。\n下一步：前往 Skill 中心执行严格试运行，确认结果后发布。', runId: 'run-1' })
     const confirm = vi.spyOn(adminApi, 'confirmSkillInstallation').mockResolvedValue(result)
     const { wrapper } = await render(true, true)
     expect(wrapper.text()).toContain('真实测试包')
@@ -33,6 +34,9 @@ describe('real Skill installation conversation', () => {
     await button(wrapper, '确认安装计划').trigger('click'); await flushPromises()
     expect(confirm).toHaveBeenCalledWith('run-1', 'd'.repeat(64))
     expect(wrapper.text()).toContain('Skill 已安装')
+    expect(wrapper.text()).toContain('已安装完成，并保存为 0.1.0 待验证草稿')
+    expect(wrapper.text()).toContain('前往 Skill 中心验证并发布')
+    expect(wrapper.text()).toContain('查看已确认的安装计划')
   })
   it('preserves input and the idempotency key after an uncertain request failure', async () => {
     const send = vi.spyOn(adminApi, 'sendAssistantMessage').mockRejectedValueOnce(new Error('连接中断')).mockImplementationOnce(async input => ({ ...conversationFixture(), id: input.sessionId }))

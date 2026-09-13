@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChatDotRound, Check, Cpu, Document, Grid, Right, VideoPause } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import SkillPackagePreview from '@/components/SkillPackagePreview.vue'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
@@ -42,6 +43,12 @@ async function stop() {
   if (!activeRun.value || activeRun.value.status === 'cancel_requested') return
   await assistant.cancel(activeRun.value.id)
 }
+async function confirmInstallation(runId: string, planSha256: string) {
+  await assistant.confirm(runId, planSha256)
+  await nextTick()
+  messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' })
+  if (installationFor(runId)?.status === 'installed') ElMessage.success('Skill 已安装为待验证草稿')
+}
 </script>
 
 <template>
@@ -67,9 +74,10 @@ async function stop() {
               <div class="run-status" role="status"><el-tag :type="run.status === 'failed' ? 'danger' : 'info'">{{ statuses[run.status] }}</el-tag><span v-if="run.error">{{ run.error }}</span><el-button v-if="auth.canManage && ['failed', 'cancelled'].includes(run.status)" link type="primary" :disabled="busy" @click="assistant.retry(run.id)">重试</el-button></div>
               <div v-if="installationFor(run.id)" class="action-card">
                 <header><div><h3>{{ installationFor(run.id)!.status === 'installed' ? 'Skill 已安装' : installationFor(run.id)!.status === 'cancelled' ? '安装已取消' : '确认安装已有 Skill' }}</h3><p>安装结果以此操作卡片为准。保存为草稿，不自动发布或修改已有 Agent 引用。</p></div></header>
-                <SkillPackagePreview v-if="installationFor(run.id)!.package" :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" />
-                <footer v-if="installationFor(run.id)!.status === 'pending' && auth.canManage"><span>一次确认根 Skill、全部依赖和权限摘要</span><el-button :disabled="busy" @click="assistant.cancel(run.id)">取消安装</el-button><el-button type="primary" :loading="busy" :disabled="run.status !== 'succeeded' || !installationFor(run.id)!.planSha256 || installationFor(run.id)!.compatibilityStatus === 'incompatible'" @click="assistant.confirm(run.id, installationFor(run.id)!.planSha256!)">确认安装计划</el-button></footer>
-                <div v-if="installationFor(run.id)!.status === 'installed'" class="action-result"><p>已保存 Skill 0.1.0 待验证版本，包内文件随版本保存。请前往 Skill 中心验证并发布。</p><el-button link type="primary" @click="router.push('/capabilities')">前往 Skill 中心</el-button></div>
+                <div v-if="installationFor(run.id)!.status === 'installed'" class="action-result" role="status"><span class="result-icon"><el-icon><Check /></el-icon></span><div><strong>安装完成，当前版本为待验证草稿</strong><p>平台已保存 Skill 0.1.0 及完整包文件。发布前 Agent 不会使用该 Skill。</p></div><el-button type="primary" plain @click="router.push('/capabilities')">前往 Skill 中心验证并发布</el-button></div>
+                <SkillPackagePreview v-if="installationFor(run.id)!.status === 'pending' && installationFor(run.id)!.package" :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" />
+                <el-collapse v-else-if="installationFor(run.id)!.status === 'installed' && installationFor(run.id)!.package" class="installed-plan"><el-collapse-item title="查看已确认的安装计划" name="plan"><SkillPackagePreview :source="installationFor(run.id)!.resolvedUrl ?? installationFor(run.id)!.source" :package="installationFor(run.id)!.package!" :plan="installationFor(run.id)!.plan" :resolved-ref="installationFor(run.id)!.resolvedRef ?? undefined" /></el-collapse-item></el-collapse>
+                <footer v-if="installationFor(run.id)!.status === 'pending' && auth.canManage"><span>一次确认根 Skill、全部依赖和权限摘要</span><el-button :disabled="busy" @click="assistant.cancel(run.id)">取消安装</el-button><el-button type="primary" :loading="busy" :disabled="run.status !== 'succeeded' || !installationFor(run.id)!.planSha256 || installationFor(run.id)!.compatibilityStatus === 'incompatible'" @click="confirmInstallation(run.id, installationFor(run.id)!.planSha256!)">确认安装计划</el-button></footer>
               </div>
             </div>
           </div>
@@ -124,6 +132,10 @@ async function stop() {
 .action-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-card); margin-bottom: var(--spacing-card); }
 .action-card h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-title); }
 .action-card header p, .action-result p { margin: calc(var(--spacing-card) / 2) 0 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.7; }
+.action-result { display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-card); padding: var(--spacing-card); border-radius: var(--radius-button); background: var(--color-success-light); }
+.action-result > div { flex: 1; min-width: 220px; }
+.result-icon { display: grid; place-items: center; flex: 0 0 auto; width: calc(var(--spacing-section) * 2); height: calc(var(--spacing-section) * 2); border-radius: 50%; color: var(--color-success-strong); background: var(--color-bg-base); font-size: var(--font-size-heading); }
+.installed-plan { margin-top: var(--spacing-card); }
 .action-card footer { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: calc(var(--spacing-card) / 2); border-top: 1px solid var(--color-border); padding-top: var(--spacing-card); margin-top: var(--spacing-card); }
 .action-card footer span { margin-right: auto; color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .action-card footer .el-button + .el-button { margin-left: 0; }
