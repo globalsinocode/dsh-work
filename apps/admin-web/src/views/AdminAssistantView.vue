@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChatDotRound, Check, Cpu, Document, Grid, Right, VideoPause } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import AssistantMessageContent from '@/components/AssistantMessageContent.vue'
+import { AssistantMessageContent } from '@dsh-work/ui-core'
 import SkillPackagePreview from '@/components/SkillPackagePreview.vue'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
 import { useAuthStore } from '@/stores/auth'

@@ -1,4 +1,5 @@
 export { default as AppLogo } from './components/AppLogo.vue'
+export { default as AssistantMessageContent } from './components/AssistantMessageContent.vue'
 export { default as ArtifactCard } from './components/ArtifactCard.vue'
 export { default as MetricCard } from './components/MetricCard.vue'
 export { default as RunTimeline } from './components/RunTimeline.vue'

@@ -15,7 +15,7 @@ import {
   VideoPause,
 } from '@element-plus/icons-vue'
 
-import { RunTimeline, StatusTag } from '@dsh-work/ui-core'
+import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, TaskSource } from '@/types/domain'
@@ -239,7 +239,7 @@ watch(
               </div>
 
               <div class="assistant-answer">
-                <p>{{ message.content }}</p>
+                <AssistantMessageContent :text="message.content" />
 
                 <div
                   v-if="message.id === lastAssistantMessageId && task.artifacts.length"
@@ -530,7 +530,7 @@ watch(
 }
 
 .conversation-message + .conversation-message {
-  margin-top: 38px;
+  margin-top: 30px;
 }
 
 .conversation-message--user {
@@ -599,17 +599,20 @@ watch(
   font-size: var(--dsh-font-size-micro);
 }
 
-.assistant-answer,
 .working-answer {
   margin: 13px 0 0 34px;
 }
 
-.assistant-answer > p {
-  margin: 0;
+.assistant-answer {
+  margin: 12px 0 0 34px;
+  padding: 16px 18px 12px;
+  border: 1px solid #e8ebe8;
+  border-radius: 14px;
+  background: #fcfdfc;
+}
+
+.assistant-answer :deep(.assistant-message-content) {
   color: #303430;
-  font-size: var(--dsh-font-size-body);
-  line-height: 1.9;
-  white-space: pre-wrap;
 }
 
 .assistant-actions {
@@ -617,7 +620,9 @@ watch(
   align-items: center;
   gap: 2px;
   min-height: 31px;
-  margin-top: 13px;
+  margin-top: 15px;
+  padding-top: 8px;
+  border-top: 1px solid #edf0ed;
   color: #888d88;
 }
 
@@ -1057,9 +1062,12 @@ watch(
     margin-left: 0;
   }
 
-  .assistant-answer > p {
+  .assistant-answer {
+    padding: 14px 14px 10px;
+  }
+
+  .assistant-answer :deep(.assistant-message-content) {
     font-size: var(--dsh-font-size-caption);
-    line-height: 1.8;
   }
 
   .conversation-notice {

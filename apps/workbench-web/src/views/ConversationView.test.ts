@@ -119,4 +119,27 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('task-composer-stub').exists()).toBe(true)
     expect(wrapper.find('[data-testid="conversation-archived-notice"]').exists()).toBe(false)
   })
+
+  it('renders assistant Markdown as structured content and keeps user input plain', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        messages: [
+          { id: 'message-user', role: 'user', content: '**不要加粗**', createdAt: '2026-09-10 10:00' },
+          {
+            id: 'message-assistant',
+            role: 'assistant',
+            content: ['## 无法安装的原因', '', '**运行时未授权工具**', '', '```text', 'Error: tool is not authorized', '```'].join('\n'),
+            createdAt: '2026-09-10 10:01',
+          },
+        ],
+      }),
+    })
+
+    expect(wrapper.get('.user-message p').text()).toBe('**不要加粗**')
+    expect(wrapper.find('.user-message strong').exists()).toBe(false)
+    expect(wrapper.get('.assistant-answer h4').text()).toBe('无法安装的原因')
+    expect(wrapper.get('.assistant-answer strong').text()).toBe('运行时未授权工具')
+    expect(wrapper.get('.assistant-answer pre code').text()).toBe('Error: tool is not authorized')
+    expect(wrapper.get('.assistant-answer').text()).not.toContain('```')
+  })
 })
