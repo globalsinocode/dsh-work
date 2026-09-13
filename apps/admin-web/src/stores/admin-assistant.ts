@@ -87,20 +87,26 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
       return result
     })
   }
-  async function act(id: string, perform: () => Promise<AdminConversation>) {
+  async function act(id: string, perform: () => Promise<AdminConversation>, replyOnFailure = false) {
     if (!auth.canManage || busyIds.value.includes(id)) return
     const epoch = generation
+    const messageIds = new Set(conversations.value.find(item => item.id === id)?.messages.map(item => item.id) ?? [])
     busyIds.value.push(id); error.value = ''
     try { mergeIfCurrent(await perform(), epoch) }
     catch (cause) {
       if (epoch !== generation) return
-      error.value = message(cause)
-      try { mergeIfCurrent(await adminApi.getAssistantConversation(id), epoch) }
+      let hasConversationReply = false
+      try {
+        const refreshed = await adminApi.getAssistantConversation(id)
+        hasConversationReply = refreshed.messages.some(item => item.role === 'assistant' && !messageIds.has(item.id))
+        mergeIfCurrent(refreshed, epoch)
+      }
       catch { /* Keep the action error; polling can recover the conversation later. */ }
+      if (!replyOnFailure || !hasConversationReply) error.value = message(cause)
     }
     finally { if (epoch === generation) busyIds.value = busyIds.value.filter(value => value !== id) }
   }
-  async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256)) }
+  async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256), true) }
   async function cancel(runId: string) { await act(selectedId.value, () => adminApi.cancelAssistantRun(runId)) }
   async function retry(runId: string) { await act(selectedId.value, () => adminApi.retryAssistantRun(runId)) }
   return { conversations, selectedId, current, active, loading, error, busyIds, start, load, select, refresh, send, confirm, cancel, retry }

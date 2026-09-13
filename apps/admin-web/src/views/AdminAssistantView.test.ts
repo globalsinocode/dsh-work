@@ -74,6 +74,7 @@ describe('real Skill installation conversation', () => {
 
     expect(wrapper.text()).toContain('Skill 安装失败')
     expect(wrapper.text()).toContain('本次未创建或覆盖 Skill')
+    expect(wrapper.find('.assistant-page > .el-alert').exists()).toBe(false)
   })
   it('does not allow confirmation while the run is active, or after write access is revoked', async () => {
     const { wrapper, store, auth } = await render(true, true)

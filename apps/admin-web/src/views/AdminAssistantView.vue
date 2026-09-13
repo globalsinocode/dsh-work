@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChatDotRound, Check, Cpu, Document, Grid, Right, VideoPause } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
+import AssistantMessageContent from '@/components/AssistantMessageContent.vue'
 import SkillPackagePreview from '@/components/SkillPackagePreview.vue'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
 import { useAuthStore } from '@/stores/auth'
@@ -57,10 +57,6 @@ async function confirmInstallation(runId: string, planSha256: string) {
   await assistant.confirm(runId, planSha256)
   await nextTick()
   messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' })
-  const installation = installationFor(runId)
-  if (installation?.status !== 'installed') return
-  if (installation.resultType === 'duplicate') ElMessage.info('Skill 已存在，本次未重复安装')
-  else ElMessage.success(installation.resultType === 'updated' ? `Skill 新版本 v${installation.installedVersion} 已保存` : 'Skill 已安装为待验证草稿')
 }
 </script>
 
@@ -83,7 +79,7 @@ async function confirmInstallation(runId: string, planSha256: string) {
           </div>
           <div v-else class="assistant-messages" role="log" aria-label="管理对话记录" aria-live="polite">
             <div v-for="run in assistant.current.runs" :key="run.id" class="assistant-run">
-              <article v-for="message in assistant.current.messages.filter(item => item.runId === run.id)" :key="message.id" class="assistant-message" :class="message.role"><strong class="message-author">{{ message.role === 'user' ? '你' : '管理助手' }}</strong><p class="message-text">{{ message.text }}</p></article>
+              <article v-for="message in assistant.current.messages.filter(item => item.runId === run.id)" :key="message.id" class="assistant-message" :class="message.role"><strong class="message-author">{{ message.role === 'user' ? '你' : '管理助手' }}</strong><AssistantMessageContent :text="message.text" /></article>
               <div class="run-status" role="status"><el-tag :type="run.status === 'failed' ? 'danger' : 'info'">{{ statuses[run.status] }}</el-tag><span v-if="run.error">{{ run.error }}</span><el-button v-if="auth.canManage && ['failed', 'cancelled'].includes(run.status)" link type="primary" :disabled="busy" @click="assistant.retry(run.id)">重试</el-button></div>
               <div v-if="installationFor(run.id)" class="action-card">
                 <header><div><h3>{{ installationFor(run.id)!.status === 'installed' ? installationFor(run.id)!.resultType === 'duplicate' ? 'Skill 已存在' : 'Skill 已安装' : installationFor(run.id)!.status === 'cancelled' ? '安装已取消' : '确认安装已有 Skill' }}</h3><p>安装结果以管理助手回复和此操作卡片为准，不自动发布或修改已有 Agent 引用。</p></div></header>
@@ -132,10 +128,10 @@ async function confirmInstallation(runId: string, planSha256: string) {
 .assistant-run { display: flex; flex-direction: column; gap: var(--spacing-card); }
 .run-status { display: flex; align-items: center; gap: var(--spacing-card); flex-wrap: wrap; color: var(--color-text-secondary); }
 .capability-card:disabled { cursor: default; opacity: .65; }
-.assistant-message { min-width: 0; }
+.assistant-message { min-width: 0; max-width: min(920px, 92%); padding: var(--spacing-card); border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-page); }
 .assistant-message.user { align-self: flex-end; max-width: 85%; padding: var(--spacing-card); border-radius: var(--radius-card); background: var(--color-primary-light); }
-.message-author { color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.message-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: calc(var(--spacing-card) / 2) 0; line-height: 1.8; }
+.assistant-message.assistant { align-self: flex-start; }
+.message-author { display: block; margin-bottom: calc(var(--spacing-card) / 2); color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .query-results { border: 1px solid var(--color-border); border-radius: var(--radius-card); padding: var(--spacing-card); }
 .result-label { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .query-results dl { margin: 0; }
