@@ -2,6 +2,8 @@ import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { adminApi } from '@/api/client'
+import type { SkillInstallation } from '@/types/assistant'
 import SkillInstallationPanel from './SkillInstallationPanel.vue'
 
 const wrappers: VueWrapper[] = []
@@ -9,6 +11,17 @@ afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount())
   vi.restoreAllMocks()
 })
+
+const packagePreview = {
+  name: 'document-summary', description: '整理文档并输出摘要', instructions: 'Read the input and summarize it.', version: '1.2.0', toolIds: ['read@1.0.0'],
+  sha256: 'package-sha', archiveSha256: 'archive-sha', files: [{ path: 'SKILL.md', size: 120, sha256: 'file-sha' }], requirements: [],
+  compatibility: { status: 'compatible' as const, issues: [] }, disableModelInvocation: false,
+}
+const pending: SkillInstallation = {
+  id: 'installation-1', runId: null, source: 'document-summary.zip', resolvedUrl: null, resolvedRef: null, status: 'pending', skillId: null,
+  package: packagePreview, planSha256: 'plan-sha', compatibilityStatus: 'compatible',
+  plan: { planVersion: '1.0', rootName: packagePreview.name, packages: [packagePreview], edges: [], compatibility: packagePreview.compatibility, summary: { packageCount: 1, dependencyCount: 0, toolIds: packagePreview.toolIds, pythonFiles: 0 }, sha256: 'plan-sha' },
+}
 
 function render() {
   const wrapper = mount(SkillInstallationPanel, { global: { plugins: [ElementPlus] } })
@@ -29,58 +42,65 @@ async function chooseFile(wrapper: VueWrapper, name: string, content = 'sample')
   await flushPromises()
 }
 
-describe('Skill installation interaction preview', () => {
-  it('validates file selection locally, supports replacement and removal, and never uploads', async () => {
-    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'))
-    const request = vi.spyOn(XMLHttpRequest.prototype, 'send')
+describe('ZIP Skill installation', () => {
+  it('validates the local file before uploading it', async () => {
+    const prepare = vi.spyOn(adminApi, 'prepareZipSkillInstallation')
     const wrapper = render()
-    expect(button(wrapper, '预览安装流程').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '解析安装包').attributes('disabled')).toBeDefined()
     await chooseFile(wrapper, 'instructions.txt')
     expect(wrapper.get('[role="alert"]').text()).toContain('ZIP')
     await chooseFile(wrapper, 'empty.zip', '')
     expect(wrapper.get('[role="alert"]').text()).toContain('文件为空')
-    await chooseFile(wrapper, 'first.zip')
-    await chooseFile(wrapper, 'second.zip')
-    expect(wrapper.text()).not.toContain('first.zip')
-    expect(wrapper.text()).toContain('second.zip')
-    expect(wrapper.text()).toContain('尚未上传或解析')
+    await chooseFile(wrapper, 'skill.zip')
+    expect(wrapper.text()).toContain('等待解析')
     await button(wrapper, '移除').trigger('click')
-    expect(button(wrapper, '预览安装流程').attributes('disabled')).toBeDefined()
-    expect(fetch).not.toHaveBeenCalled()
-    expect(request).not.toHaveBeenCalled()
+    expect(button(wrapper, '解析安装包').attributes('disabled')).toBeDefined()
+    expect(prepare).not.toHaveBeenCalled()
   })
 
-  it('requires confirmation, resets it after revising the source, and distinguishes demo completion', async () => {
+  it('uploads the selected ZIP, displays the parsed plan, and confirms the exact digest', async () => {
+    const prepare = vi.spyOn(adminApi, 'prepareZipSkillInstallation').mockResolvedValue(pending)
+    const confirm = vi.spyOn(adminApi, 'confirmZipSkillInstallation').mockResolvedValue({ ...pending, status: 'installed', skillId: 'skill-1' })
     const wrapper = render()
-    await button(wrapper, '使用示例包').trigger('click')
-    expect(wrapper.text()).toContain('并非从所选文件或链接中解析')
-    expect(button(wrapper, '确认安装（演示）').attributes('disabled')).toBeDefined()
+    await chooseFile(wrapper, 'document-summary.zip', 'zip-bytes')
+    await button(wrapper, '解析安装包').trigger('click')
+    await flushPromises()
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ name: 'document-summary.zip' }))
+    expect(wrapper.text()).toContain('document-summary')
+    expect(wrapper.text()).toContain('真实安装计划')
+    expect(wrapper.text()).toContain('plan-sha')
+    expect(button(wrapper, '确认安装').attributes('disabled')).toBeDefined()
     await wrapper.get('input[type="checkbox"]').setValue(true)
+    await button(wrapper, '确认安装').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith('installation-1', 'plan-sha')
+    expect(wrapper.text()).toContain('Skill 已安装为草稿')
+    expect(wrapper.emitted('installed')).toEqual([['skill-1']])
+  })
+
+  it('keeps the selected file and shows actionable server errors', async () => {
+    vi.spyOn(adminApi, 'prepareZipSkillInstallation').mockRejectedValue(Object.assign(new Error('Skill 包校验失败'), { suggestion: '检查 SKILL.md 后重新上传', traceId: 'trace-1' }))
+    const wrapper = render()
+    await chooseFile(wrapper, 'broken.zip')
+    await button(wrapper, '解析安装包').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('broken.zip')
+    expect(wrapper.get('[role="alert"]').text()).toContain('检查 SKILL.md 后重新上传')
+    expect(wrapper.get('[role="alert"]').text()).toContain('trace-1')
+  })
+
+  it('blocks confirmation for an incompatible parsed plan and keeps the assistant entry', async () => {
+    const incompatible: SkillInstallation = { ...pending, compatibilityStatus: 'incompatible', plan: { ...pending.plan!, compatibility: { status: 'incompatible', issues: [{ code: 'python', severity: 'error', message: 'Python 沙箱不可用' }] } } }
+    vi.spyOn(adminApi, 'prepareZipSkillInstallation').mockResolvedValue(incompatible)
+    const wrapper = render()
+    await chooseFile(wrapper, 'python-skill.zip')
+    await button(wrapper, '解析安装包').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Python 沙箱不可用')
+    expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '确认安装').attributes('disabled')).toBeDefined()
     await button(wrapper, '返回修改来源').trigger('click')
-    await button(wrapper, '预览安装流程').trigger('click')
-    expect(button(wrapper, '确认安装（演示）').attributes('disabled')).toBeDefined()
-    await wrapper.get('input[type="checkbox"]').setValue(true)
-    await button(wrapper, '确认安装（演示）').trigger('click')
-    expect(wrapper.text()).toContain('本次未创建 Skill 或版本记录')
-    await button(wrapper, '返回 Skill 中心').trigger('click')
-    expect(wrapper.emitted('back')).toHaveLength(1)
-  })
-
-  it('offers only ZIP upload and delegates conversational management to the unified assistant', async () => {
-    const wrapper = render()
-    expect(wrapper.find('textarea').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('对话安装')
     await button(wrapper, '前往管理助手').trigger('click')
     expect(wrapper.emitted('assistant')).toHaveLength(1)
-  })
-
-  it('clears previous confirmation and sources when switching the installation target', async () => {
-    const wrapper = render()
-    await button(wrapper, '使用示例包').trigger('click')
-    await wrapper.get('input[type="checkbox"]').setValue(true)
-    await wrapper.setProps({ target: { id: 'skill-existing', name: '已有 Skill' } })
-    expect(wrapper.text()).toContain('已有 Skill 的新版本')
-    expect(button(wrapper, '预览安装流程').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
   })
 })

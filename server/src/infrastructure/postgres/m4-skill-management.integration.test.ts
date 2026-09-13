@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { DatabaseClient } from './database.ts'
@@ -14,18 +18,21 @@ let database: DatabaseClient
 let throwaway: ThrowawayDatabase
 let skills: PostgresSkillService
 let agents: PostgresAgentService
+let artifactRoot: string
 
 before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_skill_test', maxConnections: 3 })
   database = throwaway.client
   const tools = new PostgresToolConnectorService(database)
-  skills = new PostgresSkillService(database, undefined, tools)
+  artifactRoot = await mkdtemp(join(tmpdir(), 'dsh-skill-lifecycle-test-'))
+  skills = new PostgresSkillService(database, undefined, tools, new FileSystemSkillArtifactStore(artifactRoot))
   agents = new PostgresAgentService(database, undefined, skills, tools)
 })
 
 after(async () => {
   await throwaway.dispose()
+  await rm(artifactRoot, { recursive: true, force: true })
 })
 
 test('Skill lifecycle auto-generates identity, gates publishing, versions and preserves Agent snapshots', async () => {
@@ -43,6 +50,11 @@ test('Skill lifecycle auto-generates identity, gates publishing, versions and pr
   assert.equal(created.skill.status, 'draft')
   assert.equal(created.skill.version, '0.1.0')
   assert.equal(created.skill.owner, '陈默')
+  const [storedDraft] = await database<{ instructions: string; artifactRef: string; manifest: unknown }[]>`
+    select instructions, artifact_ref as "artifactRef", manifest from skill_versions where id = ${created.version.id}`
+  assert.equal(storedDraft?.instructions, '')
+  assert.match(storedDraft?.artifactRef ?? '', /^packages\//)
+  assert.equal(JSON.stringify(storedDraft?.manifest).includes(created.version.instructions), false)
 
   await assert.rejects(
     skills.setStatus({ skillId, status: 'published', actor: 'U00008' }),

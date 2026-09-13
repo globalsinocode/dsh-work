@@ -34,7 +34,6 @@ const detailRows = ref<Array<{ label: string; value: string }>>([])
 const detailType = ref<'skill' | 'tool' | 'connector'>('skill')
 const detailTargetId = ref('')
 const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
-const installationTarget = ref<{ id: string; name: string }>()
 const actionLoading = ref('')
 const healthRefreshing = ref(false)
 
@@ -72,10 +71,8 @@ function navigateTabs(event: KeyboardEvent) {
   document.getElementById(`capability-tab-${tab.id}`)?.focus()
 }
 
-function installVersion(skill: SkillDefinition) {
-  installationTarget.value = { id: skill.id, name: skill.name }
-  detailOpen.value = false
-  switchTab('install')
+async function refreshInstalledSkills() {
+  await contentStore.load(true)
 }
 
 function inspectSkill(skill: SkillDefinition) {
@@ -303,7 +300,7 @@ onMounted(() => contentStore.load())
     </section>
 
     <div v-if="authStore.canManage" v-show="activeTab === 'install'" id="capability-panel-install" role="tabpanel" aria-labelledby="capability-tab-install">
-      <SkillInstallationPanel :target="installationTarget" @back="switchTab('skills')" @clear-target="installationTarget = undefined" @assistant="router.push('/assistant?context=skills')" />
+      <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
     <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="`capability-tab-${activeTab}`">
@@ -315,7 +312,7 @@ onMounted(() => contentStore.load())
         <el-table-column prop="owner" label="负责人" min-width="140" />
         <el-table-column label="状态" width="108"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" width="120" />
-        <el-table-column label="操作" width="280" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" data-action="install-skill-version" @click="installVersion(scope.row)">安装新版本</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
 
       <el-table v-else-if="activeTab === 'tools'" class="data-table" v-loading="contentStore.loading" :data="filteredTools" empty-text="暂无匹配的工具">
@@ -371,7 +368,7 @@ onMounted(() => contentStore.load())
         <el-empty v-if="!selectedSkillReleases.length" description="暂无发布记录" />
         <el-timeline v-else><el-timeline-item v-for="record in selectedSkillReleases" :key="record.id" :timestamp="record.time" placement="top"><article class="release-record"><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
       </section>
-      <div v-if="authStore.canManage" class="capability-detail__actions"><template v-if="detailType === 'skill' && selectedSkill"><el-button @click="installVersion(selectedSkill)">安装新版本</el-button><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template><el-button v-if="detailType === 'tool'" type="primary" @click="openToolPermissions()">配置权限与数据范围</el-button></div>
+      <div v-if="authStore.canManage" class="capability-detail__actions"><template v-if="detailType === 'skill' && selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template><el-button v-if="detailType === 'tool'" type="primary" @click="openToolPermissions()">配置权限与数据范围</el-button></div>
     </el-drawer>
 
   </div>

@@ -24,8 +24,12 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   for (const skill of input.agent_configuration.skill_instructions) {
     assertId('agent_configuration.skill_instructions.id', skill.id)
     assertId('agent_configuration.skill_instructions.version', skill.version)
-    if (skill.instructions.trim().length < 20) {
+    const externalized = typeof skill.artifact_ref === 'string'
+    if (!externalized && (skill.instructions ?? '').trim().length < 20) {
       throw new TypeError('agent_configuration.skill_instructions.instructions must be at least 20 characters')
+    }
+    if (externalized && (!/^packages\/[A-Za-z0-9._-]+\/[a-f0-9]{64}$/.test(skill.artifact_ref!) || !/^[a-f0-9]{64}$/.test(skill.instructions_sha256 ?? ''))) {
+      throw new TypeError('agent_configuration.skill_instructions artifact reference is invalid')
     }
     const catalogName = (skill.name ?? skill.id).trim()
     if (!catalogName || catalogName.length > 80 || skillNames.has(catalogName)) throw new TypeError('Skill 目录名称为空、过长或重复')
@@ -39,10 +43,14 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     for (const file of skill.files ?? []) {
       if (!file.path || /[\\:]/.test(file.path) || [...file.path].some(character => character.charCodeAt(0) < 32) || file.path.split('/').some(part => !part || part === '.' || part === '..') || paths.has(file.path)) throw new TypeError('Skill 文件路径无效')
       paths.add(file.path)
-      if (sha256(file.content) !== file.sha256) throw new TypeError('Skill 文件摘要不匹配')
-      skillBytes += Buffer.byteLength(file.content)
+      if (file.content !== undefined && sha256(file.content) !== file.sha256) throw new TypeError('Skill 文件摘要不匹配')
+      if (file.content === undefined && !externalized) throw new TypeError('Skill 文件内容只能由受控文件夹引用省略')
+      if (!/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isInteger(file.size) || file.size < 0) throw new TypeError('Skill 文件索引无效')
+      if (file.content !== undefined && Buffer.byteLength(file.content) !== file.size) throw new TypeError('Skill 文件大小不匹配')
+      skillBytes += file.size
       if (skillBytes > MAX_SKILL_BYTES) throw new TypeError('单个 Skill 资源合计超过 1 MB')
     }
+    if (externalized && !(skill.files ?? []).some(file => file.path === 'SKILL.md')) throw new TypeError('Skill 文件夹索引缺少 SKILL.md')
     if (!skillReferences.has(`${skill.id}@${skill.version}`)) {
       throw new TypeError(`skill instruction is not declared in skills: ${skill.id}@${skill.version}`)
     }

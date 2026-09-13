@@ -113,7 +113,7 @@ test('compilation failure converges the Run instead of leaving it queued without
   const attempt = await runs.getAttempt('tenant-dsh-work', combined.currentAttemptId!)
   const manifest = attempt!.manifest as unknown as RuntimeManifest
   assert.equal(manifest.agent_configuration.skill_instructions.length, 2)
-  assert.equal(manifest.agent_configuration.skill_instructions.reduce((total, skill) => total + skill.files![0]!.content.length, 0), 1200 * 1024)
+  assert.equal(manifest.agent_configuration.skill_instructions.reduce((total, skill) => total + skill.files![0]!.content!.length, 0), 1200 * 1024)
 })
 
 test('cancel and retry keep one Run and create a new immutable Attempt', async () => {

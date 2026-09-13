@@ -16,6 +16,16 @@ export interface SkillPackage {
   compatibility: SkillCompatibility
   disableModelInvocation: boolean
 }
+export interface SkillPackageFileIndex {
+  path: string
+  sha256: string
+  size: number
+}
+export interface SkillPackageArtifact extends Omit<SkillPackage, 'instructions' | 'files'> {
+  artifactRef: string
+  instructionsSha256: string
+  files: SkillPackageFileIndex[]
+}
 export interface SkillRequirement {
   type: 'skill' | 'tool' | 'python' | 'external'
   name: string
@@ -32,8 +42,70 @@ export interface SkillBundle {
   edges: Array<{ from: string; to: string; type: 'skill' }>
 }
 export const hash = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
+export const skillPackageContentHash = (files: SkillPackage['files']) => hash(JSON.stringify(files.map(file => ({
+  path: file.path,
+  content: file.content,
+  size: file.size,
+  sha256: file.sha256,
+}))))
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const fail = (message: string): never => { throw Object.assign(new Error(`Skill 包校验失败：${message}`), { status: 422, code: 'skill_package_invalid' }) }
+
+export function toSkillPackageArtifact(pkg: SkillPackage, artifactRef: string): SkillPackageArtifact {
+  return {
+    name: pkg.name,
+    description: pkg.description,
+    version: pkg.version,
+    toolIds: [...pkg.toolIds],
+    files: pkg.files.map(({ path, sha256, size }) => ({ path, sha256, size })),
+    sha256: pkg.sha256,
+    archiveSha256: pkg.archiveSha256,
+    requirements: structuredClone(pkg.requirements),
+    compatibility: structuredClone(pkg.compatibility),
+    disableModelInvocation: pkg.disableModelInvocation,
+    artifactRef,
+    instructionsSha256: hash(pkg.instructions),
+  }
+}
+
+export function parseSkillMarkdown(value: string) {
+  return parseEntry(value)
+}
+
+export function createSkillPackage(input: {
+  name: string
+  description: string
+  instructions: string
+  version: string | null
+  toolIds: string[]
+}): SkillPackage {
+  const allowedTools = input.toolIds.map(reference => reference.split('@')[0]!).filter(Boolean)
+  const content = [
+    '---',
+    `name: ${JSON.stringify(input.name)}`,
+    `description: ${JSON.stringify(input.description)}`,
+    ...(input.version ? [`version: ${JSON.stringify(input.version)}`] : []),
+    ...(allowedTools.length ? [`allowed-tools: ${JSON.stringify(allowedTools)}`] : []),
+    '---',
+    input.instructions.trim(),
+    '',
+  ].join('\n')
+  const files = [{ path: 'SKILL.md', content, size: Buffer.byteLength(content), sha256: hash(content) }]
+  const sha256 = skillPackageContentHash(files)
+  return {
+    name: input.name,
+    description: input.description,
+    instructions: input.instructions.trim(),
+    version: input.version,
+    toolIds: [...input.toolIds],
+    files,
+    sha256,
+    archiveSha256: sha256,
+    requirements: [],
+    compatibility: { status: 'compatible', issues: [] },
+    disableModelInvocation: false,
+  }
+}
 
 export function parseSkillPackage(bytes: Uint8Array, selected?: string, directory?: string): SkillPackage {
   if (bytes.length > 20 * 1024 * 1024) fail('下载包超过 20 MB')
@@ -96,7 +168,7 @@ export function parseSkillPackage(bytes: Uint8Array, selected?: string, director
     if (packaged.some(file => /(?:^|\/)pyproject\.toml$/i.test(file.path))) requirements.push({ type: 'external', name: 'pyproject-dependencies', status: 'needs_review', evidence: 'pyproject.toml 需要与固定镜像核对' })
   }
   const compatibility = compatibilityFor(requirements)
-  return { ...metadata, toolIds: [...tools], files: packaged, requirements, compatibility, archiveSha256: hash(bytes), sha256: hash(JSON.stringify(packaged)) }
+  return { ...metadata, toolIds: [...tools], files: packaged, requirements, compatibility, archiveSha256: hash(bytes), sha256: skillPackageContentHash(packaged) }
 }
 
 /** Resolve same-archive Skill dependencies without executing package content. */

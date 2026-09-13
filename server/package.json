@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "node --env-file-if-exists=../.env --experimental-strip-types src/infrastructure/postgres/migrate.ts",
+    "db:migrate:skill-files": "node --env-file-if-exists=../.env --experimental-strip-types src/infrastructure/postgres/migrate-skill-files.ts",
     "test:m2": "node --experimental-strip-types --test src/modules/run/run-state-machine.test.ts src/modules/model/model-governance-service.test.ts",
     "test:m2:integration": "node --experimental-strip-types --test src/infrastructure/postgres/postgres-repositories.integration.test.ts",
     "test:m3:integration": "node --experimental-strip-types --test src/infrastructure/postgres/m3-orchestration.integration.test.ts",

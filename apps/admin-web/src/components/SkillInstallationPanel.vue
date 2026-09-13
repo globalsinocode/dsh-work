@@ -1,28 +1,35 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { ChatDotRound, Check, Document, FolderOpened, Right, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadInstance } from 'element-plus'
+import { adminApi } from '@/api/client'
+import type { SkillInstallation } from '@/types/assistant'
 import SkillPackagePreview from './SkillPackagePreview.vue'
 
-const props = defineProps<{ target?: { id: string; name: string } }>()
-const emit = defineEmits<{ back: []; clearTarget: []; assistant: [] }>()
+const emit = defineEmits<{ back: []; assistant: []; installed: [skillId: string] }>()
 
 type Stage = 'source' | 'preview' | 'complete'
 const stage = ref<Stage>('source')
 const upload = ref<UploadInstance>()
-const selectedFile = ref<{ name: string; size: number }>()
+const selectedFile = ref<File>()
 const fileError = ref('')
 const acknowledged = ref(false)
+const preparing = ref(false)
+const confirming = ref(false)
+const installation = ref<SkillInstallation>()
 const stageHeading = ref<HTMLElement>()
 const source = computed(() => selectedFile.value?.name ?? '')
 const activeStep = computed(() => ({ source: 0, preview: 1, complete: 3 })[stage.value])
-watch(() => props.target?.id, reset)
+const canConfirm = computed(() => installation.value?.plan?.compatibility.status !== 'incompatible')
 
 function reset() {
   stage.value = 'source'
   selectedFile.value = undefined
   fileError.value = ''
   acknowledged.value = false
+  preparing.value = false
+  confirming.value = false
+  installation.value = undefined
   upload.value?.clearFiles()
 }
 
@@ -38,8 +45,15 @@ function selectFile(file: UploadFile) {
     fileError.value = '文件为空，请重新选择 Skill 包。'
     return
   }
-  // Frontend review only: keep metadata, never upload or interpret user files.
-  selectedFile.value = { name: file.name, size: file.size }
+  if (file.size > 20 * 1024 * 1024) {
+    fileError.value = 'Skill 包超过 20 MB 限制。'
+    return
+  }
+  if (!file.raw) {
+    fileError.value = '无法读取所选文件，请重新选择。'
+    return
+  }
+  selectedFile.value = file.raw
 }
 
 function formatSize(size: number) {
@@ -53,20 +67,49 @@ async function changeStage(value: Stage) {
   stageHeading.value?.focus()
 }
 
-function preview() {
-  if (!source.value) return
-  void changeStage('preview')
-}
-
-function useSample() {
-  selectedFile.value = { name: 'document-summary.zip', size: 12288 }
+async function preview() {
+  if (!selectedFile.value || preparing.value) return
+  preparing.value = true
   fileError.value = ''
-  preview()
+  try {
+    installation.value = await adminApi.prepareZipSkillInstallation(selectedFile.value)
+    await changeStage('preview')
+  } catch (cause) {
+    fileError.value = failureMessage(cause, 'Skill 包解析失败')
+  } finally {
+    preparing.value = false
+  }
 }
 
-function confirm() {
-  if (stage.value !== 'preview' || !acknowledged.value) return
-  void changeStage('complete')
+async function confirm() {
+  const current = installation.value
+  if (stage.value !== 'preview' || !acknowledged.value || !canConfirm.value || !current?.planSha256 || confirming.value) return
+  confirming.value = true
+  fileError.value = ''
+  try {
+    installation.value = await adminApi.confirmZipSkillInstallation(current.id, current.planSha256)
+    await changeStage('complete')
+    if (installation.value.skillId) emit('installed', installation.value.skillId)
+  } catch (cause) {
+    fileError.value = failureMessage(cause, 'Skill 安装失败')
+  } finally {
+    confirming.value = false
+  }
+}
+
+function removeFile() {
+  selectedFile.value = undefined
+  installation.value = undefined
+  fileError.value = ''
+  upload.value?.clearFiles()
+}
+
+function failureMessage(cause: unknown, fallback: string) {
+  const error = cause as Error & { suggestion?: string; traceId?: string }
+  const reason = error?.message || fallback
+  const suggestion = error?.suggestion ? ` 下一步：${error.suggestion}` : ''
+  const trace = error?.traceId && error.traceId !== '—' ? ` 链路编号：${error.traceId}` : ''
+  return `${reason}${suggestion}${trace}`
 }
 </script>
 
@@ -74,14 +117,9 @@ function confirm() {
   <section class="content-panel skill-installation" aria-label="新增 Skill">
     <header class="installation-heading">
       <div><h2 class="panel-title">上传 Skill 包</h2><p class="panel-subtitle">选择本地 ZIP 文件，查看内容与依赖后确认安装。</p></div>
-      <el-tag type="info" effect="plain">交互预览</el-tag>
+      <el-tag type="info" effect="plain">ZIP 文件</el-tag>
     </header>
-    <p class="preview-note"><el-icon><Document /></el-icon>当前仅演示交互：文件不会上传或解析，包信息与安装结果均为示例。</p>
-
-    <div v-if="target" class="target-banner">
-      <span>安装目标：<strong>{{ target.name }}</strong> 的新版本</span>
-      <el-button link type="primary" @click="emit('clearTarget')">改为新增 Skill</el-button>
-    </div>
+    <p class="preview-note"><el-icon><Document /></el-icon>上传后先解析包内容并生成安装计划；确认后保存为待验证草稿，发布前不会被 Agent 使用。</p>
 
     <el-steps :active="activeStep" finish-status="success" simple class="installation-steps">
       <el-step title="提供来源" /><el-step title="确认内容" /><el-step title="安装结果" />
@@ -97,12 +135,12 @@ function confirm() {
           </el-upload>
           <p v-if="fileError" class="input-error" role="alert">{{ fileError }}</p>
           <div v-if="selectedFile" class="selected-file" role="status">
-            <el-icon><Document /></el-icon><div><strong>{{ selectedFile.name }}</strong><small>{{ formatSize(selectedFile.size) }} · 已选择，尚未上传或解析</small></div>
-            <el-button link type="danger" @click="selectedFile = undefined">移除</el-button>
+            <el-icon><Document /></el-icon><div><strong>{{ selectedFile.name }}</strong><small>{{ formatSize(selectedFile.size) }} · 已选择，等待解析</small></div>
+            <el-button link type="danger" :disabled="preparing" @click="removeFile">移除</el-button>
           </div>
           <div class="source-actions">
-            <el-button link type="primary" @click="useSample">使用示例包体验流程</el-button>
-            <el-button type="primary" :icon="Right" :disabled="!selectedFile" @click="preview">预览安装流程</el-button>
+            <span class="source-limit">单个 ZIP 最大 20 MB</span>
+            <el-button type="primary" :icon="Right" :loading="preparing" :disabled="!selectedFile" @click="preview">解析安装包</el-button>
           </div>
         </div>
 
@@ -117,13 +155,14 @@ function confirm() {
     </div>
 
     <section v-else-if="stage === 'preview'" class="installation-preview">
-      <header class="preview-heading"><div><h3 ref="stageHeading" tabindex="-1">确认安装内容</h3><p>以下为固定示例内容，并非从所选文件或链接中解析。</p></div><el-tag effect="plain">示例包</el-tag></header>
-      <SkillPackagePreview :source="source" :target-name="target?.name" />
-      <footer class="preview-footer"><el-checkbox v-model="acknowledged">已确认来源、内容及权限范围</el-checkbox><div><el-button @click="changeStage('source')">返回修改来源</el-button><el-button type="primary" :disabled="!acknowledged" @click="confirm">确认安装（演示）</el-button></div></footer>
+      <header class="preview-heading"><div><h3 ref="stageHeading" tabindex="-1">确认安装内容</h3><p>以下内容由平台从所选 ZIP 中解析，并已完成依赖与运行能力检查。</p></div><el-tag effect="plain">真实安装计划</el-tag></header>
+      <p v-if="fileError" class="input-error" role="alert">{{ fileError }}</p>
+      <SkillPackagePreview v-if="installation?.package" :source="source" :package="installation.package" :plan="installation.plan" />
+      <footer class="preview-footer"><el-checkbox v-model="acknowledged" :disabled="!canConfirm">已确认来源、内容及权限范围</el-checkbox><div><el-button :disabled="confirming" @click="changeStage('source')">返回修改来源</el-button><el-button type="primary" :loading="confirming" :disabled="!acknowledged || !canConfirm" @click="confirm">确认安装</el-button></div></footer>
     </section>
 
     <section v-else class="installation-complete" role="status">
-      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">安装流程演示完成</h3><p>正式安装后，Skill 会保存为待验证版本。完成试运行并发布后，即可使用。</p><el-tag type="info" effect="plain">本次未创建 Skill 或版本记录</el-tag><div class="complete-actions"><el-button @click="reset">继续体验安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
+      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">Skill 已安装为草稿</h3><p>平台已保存确认的 Skill 包和安装计划。请返回 Skill 中心执行严格试运行，确认结果后发布。</p><el-tag type="success" effect="plain">待验证 · v0.1.0</el-tag><div class="complete-actions"><el-button @click="reset">继续安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
     </section>
   </section>
 </template>
@@ -133,7 +172,6 @@ function confirm() {
 .installation-heading, .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-card); }
 .panel-subtitle { color: var(--color-text-secondary); }
 .preview-note { display: flex; align-items: center; gap: calc(var(--spacing-card) / 2); margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); }
-.target-banner { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-card); padding: calc(var(--spacing-card) / 2) var(--spacing-card); border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
 .installation-steps { background: var(--color-bg-page); }
 .installation-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .38fr); gap: calc(var(--spacing-section) * 1.5); }
 .source-panel { min-width: 0; }
@@ -144,6 +182,8 @@ function confirm() {
 .zip-source strong span { color: var(--color-primary); }
 .zip-source p { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .zip-source .input-error { color: var(--color-danger-strong); }
+.installation-preview > .input-error { margin: 0; color: var(--color-danger-strong); }
+.source-limit { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .selected-file { display: flex; align-items: center; gap: var(--spacing-card); padding: var(--spacing-card); margin-top: var(--spacing-card); border: 1px solid var(--color-border); border-radius: var(--radius-button); }
 .selected-file > .el-icon { color: var(--color-primary); font-size: var(--font-size-heading); }
 .selected-file > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -165,6 +205,6 @@ h3, h4 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size
 .installation-complete p { margin: 0; color: var(--color-text-secondary); }
 .complete-actions { margin-top: var(--spacing-card); }
 @media (max-width: 1180px) { .installation-layout { grid-template-columns: minmax(0, 1fr); } .installation-guide { padding: var(--spacing-card); border: 0; background: var(--color-bg-page); border-radius: var(--radius-card); } .installation-guide ol { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); } .guide-note { padding: 0; } }
-@media (max-width: 680px) { .installation-guide ol { grid-template-columns: minmax(0, 1fr); } .installation-heading, .source-actions, .target-banner { align-items: flex-start; flex-direction: column; } .preview-note { align-items: flex-start; } }
+@media (max-width: 680px) { .installation-guide ol { grid-template-columns: minmax(0, 1fr); } .installation-heading, .source-actions { align-items: flex-start; flex-direction: column; } .preview-note { align-items: flex-start; } }
 .assistant-entry { display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--spacing-card) / 2); padding: var(--spacing-card) 0; border-top: 1px solid var(--color-border); }
 </style>

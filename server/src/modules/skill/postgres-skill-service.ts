@@ -1,4 +1,4 @@
-import type { SkillPackage } from './skill-package.ts'
+import { createSkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type {
@@ -13,6 +13,7 @@ import type {
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -24,6 +25,8 @@ interface SkillRow {
   instructions: string
   owner: string
   packageSha256?: string
+  artifact: SkillPackageArtifact | null
+  strictTest: boolean
   persistedStatus: PublishStatus
   activeVersionId: string | null
   draftVersionId: string | null
@@ -45,7 +48,7 @@ type SkillFingerprintSource = Pick<SkillRow,
   | 'testPrompt'
 >
 
-type LockedSkillDraft = SkillFingerprintSource & { id: string }
+type LockedSkillDraft = SkillFingerprintSource & { id: string; artifact: SkillPackageArtifact | null }
 
 interface VersionRow {
   id: string
@@ -64,6 +67,7 @@ interface VersionRow {
   publishedBy: string | null
   sourceVersion: string | null
   summary: string
+  artifact: SkillPackageArtifact | null
 }
 
 export interface SkillTestResult {
@@ -82,7 +86,8 @@ export interface RuntimeSkillConfiguration {
   version: string
   instructions: string
   tools: string[]
-  files?: SkillPackage['files']
+  artifact?: SkillPackageArtifact
+  files?: SkillPackageArtifact['files']
   dependencies?: string[]
   dependencySkills?: RuntimeSkillConfiguration[]
   disableModelInvocation?: boolean
@@ -109,15 +114,18 @@ export class PostgresSkillService {
   private readonly database: DatabaseClient
   private readonly operations?: PostgresOperationsService
   private readonly toolService?: PostgresToolConnectorService
+  private readonly artifactStore?: FileSystemSkillArtifactStore
 
   constructor(
     database: DatabaseClient,
     operations?: PostgresOperationsService,
     toolService?: PostgresToolConnectorService,
+    artifactStore?: FileSystemSkillArtifactStore,
   ) {
     this.database = database
     this.operations = operations
     this.toolService = toolService
+    this.artifactStore = artifactStore
   }
 
   async getSkills(): Promise<SkillDefinition[]> {
@@ -157,13 +165,14 @@ export class PostgresSkillService {
              sv.test_prompt as "testPrompt", sv.status, sv.created_at as "createdAt",
              creator.display_name as "createdBy", sv.published_at as "publishedAt",
              publisher.display_name as "publishedBy", sv.source_version as "sourceVersion",
-             sv.change_summary as summary
+             sv.change_summary as summary, sv.manifest->'artifact' as artifact
         from skill_versions sv
         join users creator on creator.tenant_id = sv.tenant_id and creator.id = sv.created_by
         left join users publisher on publisher.tenant_id = sv.tenant_id and publisher.id = sv.published_by
        where sv.tenant_id = ${tenantId}
        order by sv.created_at desc
     `
+    for (const row of rows) if (row.artifact) row.instructions = (await this.requireArtifactStore().read(row.artifact)).instructions
     return rows.map(toVersionRecord)
   }
 
@@ -202,6 +211,13 @@ export class PostgresSkillService {
     assertConfiguration(configuration)
     await this.toolService?.assertAvailableReferences(configuration.toolIds)
     const versionId = `skill-version-${randomUUID()}`
+    const artifact = await this.requireArtifactStore().put(createSkillPackage({
+      name: configuration.name,
+      description: configuration.description,
+      instructions: configuration.instructions,
+      version: '0.1.0',
+      toolIds: configuration.toolIds,
+    }))
 
     await this.database.begin(async transaction => {
       await transaction`
@@ -217,11 +233,12 @@ export class PostgresSkillService {
       await transaction`
         insert into skill_versions (
           id, tenant_id, skill_id, version, name, category, description, instructions,
-          manifest, tool_refs, test_prompt, status, created_by, change_summary
+          manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, '0.1.0', ${configuration.name},
-          ${configuration.category}, ${configuration.description}, ${configuration.instructions},
-          '{}', ${transaction.json(configuration.toolIds)}, ${configuration.testPrompt},
+          ${configuration.category}, ${configuration.description}, '',
+          ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, ${artifact.artifactRef}, ${artifact.sha256},
+          ${transaction.json(configuration.toolIds)}, ${configuration.testPrompt},
           'draft', ${actor.id}, '创建 Skill 初始版本'
         )
       `
@@ -238,7 +255,7 @@ export class PostgresSkillService {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readSkillRows(input.skillId)
     if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
-    const [packaged] = await this.database`select id from skill_versions where tenant_id = ${tenantId} and skill_id = ${input.skillId} and manifest ? 'package' limit 1`
+    const [packaged] = await this.database`select id from skill_versions where tenant_id = ${tenantId} and skill_id = ${input.skillId} and manifest ? 'installationId' limit 1`
     if (packaged) throw new Error('安装包版本不可通过文本编辑，请通过新包安装更新')
     const configuration = normalizeConfiguration({ id: input.skillId, ...input })
     assertConfiguration(configuration)
@@ -250,21 +267,33 @@ export class PostgresSkillService {
         activeVersionId: string | null
         draftVersionId: string | null
         activeVersion: string | null
+        draftVersion: string | null
       }[]>`
         select s.active_version_id as "activeVersionId", s.draft_version_id as "draftVersionId",
-               active.version as "activeVersion"
+               active.version as "activeVersion", draft.version as "draftVersion"
           from skills s
           left join skill_versions active on active.tenant_id = s.tenant_id and active.id = s.active_version_id
+          left join skill_versions draft on draft.tenant_id = s.tenant_id and draft.id = s.draft_version_id
          where s.tenant_id = ${tenantId} and s.id = ${input.skillId}
          for update of s
       `
       if (!locked) throw new Error(`Skill 不存在：${input.skillId}`)
       draftVersionId = locked.draftVersionId
       if (draftVersionId) {
+        if (!locked.draftVersion) throw new Error('Skill 草稿版本不存在')
+        const artifact = await this.requireArtifactStore().put(createSkillPackage({
+          name: configuration.name,
+          description: configuration.description,
+          instructions: configuration.instructions,
+          version: locked.draftVersion,
+          toolIds: configuration.toolIds,
+        }))
         await transaction`
           update skill_versions
              set name = ${configuration.name}, category = ${configuration.category},
-                 description = ${configuration.description}, instructions = ${configuration.instructions},
+                 description = ${configuration.description}, instructions = '',
+                 manifest = ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, artifact_ref = ${artifact.artifactRef},
+                 package_sha256 = ${artifact.sha256},
                  tool_refs = ${transaction.json(configuration.toolIds)}, test_prompt = ${configuration.testPrompt},
                  change_summary = ${`更新 ${configuration.name} 配置`}
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
@@ -280,14 +309,23 @@ export class PostgresSkillService {
            limit 1
         `
         draftVersionId = `skill-version-${randomUUID()}`
+        const version = nextVersion(latest?.version ?? locked.activeVersion)
+        const artifact = await this.requireArtifactStore().put(createSkillPackage({
+          name: configuration.name,
+          description: configuration.description,
+          instructions: configuration.instructions,
+          version,
+          toolIds: configuration.toolIds,
+        }))
         await transaction`
           insert into skill_versions (
             id, tenant_id, skill_id, version, name, category, description, instructions,
-            manifest, tool_refs, test_prompt, status, created_by, source_version, change_summary
+            manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, source_version, change_summary
           ) values (
-            ${draftVersionId}, ${tenantId}, ${input.skillId}, ${nextVersion(latest?.version ?? locked.activeVersion)},
+            ${draftVersionId}, ${tenantId}, ${input.skillId}, ${version},
             ${configuration.name}, ${configuration.category}, ${configuration.description},
-            ${configuration.instructions}, '{}', ${transaction.json(configuration.toolIds)},
+            '', ${transaction.json(JSON.parse(JSON.stringify({ artifact })))}, ${artifact.artifactRef}, ${artifact.sha256},
+            ${transaction.json(configuration.toolIds)},
             ${configuration.testPrompt}, 'draft', ${actor.id}, ${locked.activeVersion},
             ${`创建 ${configuration.name} 新版本`}
           )
@@ -317,12 +355,14 @@ export class PostgresSkillService {
     const testId = `skill-test-${randomUUID()}`
     let summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
     let status: 'passed' | 'failed' = 'passed'
-    if (skill.packageSha256) {
+    if (skill.strictTest) {
       if (!this.packageTester) throw new Error('DSH Skill 试运行不可用')
-      const [version] = await this.database<{ manifest: { package: SkillPackage; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+      const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+      if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
+      const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
       const dependencySkills = await this.resolveDraftRuntimeSkills(version!.manifest.dependencies ?? [])
       await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
-      const result = await this.packageTester(actor.id, { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: skill.instructions, tools: skill.toolIds, files: version!.manifest.package.files, dependencies: version!.manifest.dependencies ?? [], dependencySkills }, prompt)
+      const result = await this.packageTester(actor.id, { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, dependencies: version.manifest.dependencies ?? [], dependencySkills }, prompt)
       status = result.passed ? 'passed' : 'failed'
       summary = `DSH 试运行${result.passed ? '完成' : '失败'}（${result.runId}）：\n${result.summary}`
     }
@@ -335,7 +375,7 @@ export class PostgresSkillService {
         ${prompt}, ${status}, ${summary}, ${actor.id}
       )
     `
-    await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', skill.packageSha256 ? `DSH Skill 试运行 ${status}` : summary)
+    await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', skill.strictTest ? `DSH Skill 试运行 ${status}` : summary)
     return {
       id: testId,
       skillId: skill.id,
@@ -451,15 +491,16 @@ export class PostgresSkillService {
       if (seen.has(reference)) continue
       seen.add(reference)
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { package?: SkillPackage; dependencies?: string[] } }[]>`
+      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`
         select name, description, instructions, tool_refs as tools, manifest from skill_versions
          where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
            and status = 'published'
       `
       if (!row) throw new Error(`Runtime 无法解析已锁定的 Skill Version：${reference}`)
+      const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
       pending.push(...(row.manifest.dependencies ?? []))
-      resolved.push({ id, name: row.name, description: row.description, version, instructions: row.instructions, tools: row.tools,
-        ...(row.manifest.package ? { files: row.manifest.package.files, disableModelInvocation: row.manifest.package.disableModelInvocation } : {}), ...(row.manifest.dependencies?.length ? { dependencies: row.manifest.dependencies } : {}) })
+      resolved.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
+        ...(row.manifest.artifact ? { artifact: row.manifest.artifact, files: row.manifest.artifact.files, disableModelInvocation: row.manifest.artifact.disableModelInvocation } : {}), ...(row.manifest.dependencies?.length ? { dependencies: row.manifest.dependencies } : {}) })
     }
     return resolved
   }
@@ -468,12 +509,13 @@ export class PostgresSkillService {
     const result: RuntimeSkillConfiguration[] = []
     for (const reference of references) {
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { package?: SkillPackage; dependencies?: string[] } }[]>`
+      const [row] = await this.database<{ name: string; description: string; instructions: string; tools: string[]; manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`
         select name, description, instructions, tool_refs as tools, manifest from skill_versions
         where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version} and status = 'draft'`
       if (!row) throw new Error(`依赖 Skill 草稿不存在：${reference}`)
-      result.push({ id, name: row.name, description: row.description, version, instructions: row.instructions, tools: row.tools,
-        files: row.manifest.package?.files, disableModelInvocation: row.manifest.package?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveDraftRuntimeSkills(row.manifest.dependencies ?? []) })
+      const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
+      result.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
+        artifact: row.manifest.artifact, files: row.manifest.artifact?.files, disableModelInvocation: row.manifest.artifact?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveDraftRuntimeSkills(row.manifest.dependencies ?? []) })
     }
     return result
   }
@@ -498,13 +540,15 @@ export class PostgresSkillService {
     const release = await this.database.begin(async transaction => {
       const [locked] = await transaction<LockedSkillDraft[]>`
         select s.id, sv.id as "versionId", sv.name, sv.category, sv.description,
-               sv.instructions, sv.tool_refs as "toolIds", sv.test_prompt as "testPrompt"
+               sv.instructions, sv.tool_refs as "toolIds", sv.test_prompt as "testPrompt",
+               sv.manifest->'artifact' as artifact
           from skills s
           join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.draft_version_id
          where s.tenant_id = ${tenantId} and s.id = ${current.id} and sv.status = 'draft'
          for update of s, sv
       `
       if (!locked) throw new Error('当前 Skill 草稿已发生变化，请重新测试后再发布')
+      if (locked.artifact) locked.instructions = (await this.requireArtifactStore().read(locked.artifact)).instructions
 
       const fingerprint = configurationFingerprint(locked)
       const [test] = await transaction<{ id: string }[]>`
@@ -584,12 +628,13 @@ export class PostgresSkillService {
   }
 
   private async readSkillRows(skillId?: string): Promise<SkillRow[]> {
-    return this.database<SkillRow[]>`
+    const rows = await this.database<SkillRow[]>`
       select s.id, sv.name, sv.category, sv.description, sv.instructions,
              owner.display_name as owner, s.status as "persistedStatus",
              s.active_version_id as "activeVersionId", s.draft_version_id as "draftVersionId",
              sv.id as "versionId", sv.version, active.version as "activeVersion",
-             sv.tool_refs as "toolIds", sv.manifest #>> '{package,sha256}' as "packageSha256", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
+             sv.tool_refs as "toolIds", sv.package_sha256 as "packageSha256", sv.manifest->'artifact' as artifact,
+             (sv.manifest ? 'installationId') as "strictTest", sv.test_prompt as "testPrompt", s.updated_at as "updatedAt"
         from skills s
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
         join skill_versions sv on sv.tenant_id = s.tenant_id
@@ -598,6 +643,13 @@ export class PostgresSkillService {
        where s.tenant_id = ${tenantId} ${skillId ? this.database`and s.id = ${skillId}` : this.database``}
        order by s.updated_at desc
     `
+    for (const row of rows) if (row.artifact) row.instructions = (await this.requireArtifactStore().read(row.artifact)).instructions
+    return rows
+  }
+
+  private requireArtifactStore() {
+    if (!this.artifactStore) throw new Error('Skill 文件夹存储未配置')
+    return this.artifactStore
   }
 
   private async requireActor(userId: string) {

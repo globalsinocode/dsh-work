@@ -26,7 +26,7 @@ export interface SkillInstallationPlan {
 }
 export interface SkillInstallation {
   id: string
-  runId: string
+  runId: string | null
   source: string
   resolvedUrl: string | null
   resolvedRef: string | null

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { strToU8, zipSync, type Zippable } from 'fflate'
 import { parseSkillBundle, parseSkillPackage } from './skill-package.ts'
 import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
 import { continueSkillSource, isPublicAddress, parseSkillSource } from './skill-source.ts'
+import { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
 export const sampleSkill = '---\nname: test-skill\ndescription: Read an exact reference file and report its value.\n---\nRead references/example.txt and report the exact value without inventing data.\n'
 test('parses an existing Skill and preserves immutable UTF-8 resources', () => {
@@ -14,6 +18,23 @@ test('parses an existing Skill and preserves immutable UTF-8 resources', () => {
   assert.deepEqual(pkg.toolIds, ['read@1.0.0'])
   assert.deepEqual(parseSkillPackage(strToU8(sampleSkill.replace('Read references/example.txt and report the exact value without inventing data.', 'Summarize the supplied user text faithfully without inventing any facts.'))).toolIds, [])
   assert.equal(pkg.sha256, parseSkillPackage(bytes).sha256)
+})
+test('persists Skill bodies as an immutable folder and keeps only an index descriptor', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
+  try {
+    const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('folder-marker') }))
+    const store = new FileSystemSkillArtifactStore(root)
+    const artifact = await store.put(pkg)
+    assert.equal(JSON.stringify(artifact).includes('folder-marker'), false)
+    assert.equal(await readFile(join(root, artifact.artifactRef, 'references/example.txt'), 'utf8'), 'folder-marker')
+    assert.equal((await store.read(artifact)).instructions, pkg.instructions)
+    await assert.rejects(async () => {
+      const changed = { ...artifact, files: artifact.files.map(file => file.path === 'references/example.txt' ? { ...file, sha256: '0'.repeat(64) } : file) }
+      await store.read(changed)
+    }, /修改/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 test('rejects unsafe paths, executable shell files and ambiguous packages', () => {
   const invalidPackages: Zippable[] = [

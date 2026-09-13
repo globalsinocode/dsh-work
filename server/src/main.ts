@@ -51,9 +51,12 @@ import { PostgresWorkspaceUsageService } from './modules/workbench/application/p
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
+import { registerSkillInstallationRoutes } from './http/admin/skill-installation-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
 import { acquireSkillSource } from './modules/skill/skill-source.ts'
 import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
+import { FileSystemSkillArtifactStore } from './modules/skill/file-system-skill-artifact-store.ts'
+import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
@@ -107,6 +110,8 @@ async function start() {
   if (database) {
     const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
     const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
+    const skillArtifacts = new FileSystemSkillArtifactStore(resolve(dataRoot, 'skills'))
+    await migrateSkillFilesToFileSystem(database, skillArtifacts)
     dshInstallation = await resolveDshRuntimeInstallation({ projectRoot })
     await preflightDshRuntime(dshInstallation)
     const pythonRunner = process.env.DSH_WORK_PYTHON_IMAGE ? new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE) : null
@@ -122,6 +127,7 @@ async function start() {
       process: dshInstallation.process,
       permissionDecision: async () => 'allow_once',
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
+      loadSkillArtifact: skill => skillArtifacts.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
       recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
       recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
       ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
@@ -143,7 +149,7 @@ async function start() {
     const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
     const tools = new PostgresToolConnectorService(database, runtime, operations)
-    const skills = new PostgresSkillService(database, operations, tools)
+    const skills = new PostgresSkillService(database, operations, tools, skillArtifacts)
     const agents = new PostgresAgentService(database, operations, skills, tools)
     const knowledge = new PostgresKnowledgeService(database)
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
@@ -159,9 +165,10 @@ async function start() {
       authorization,
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages)
+    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
     registerAssistantRoutes(router, installationService)
+    registerSkillInstallationRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()
     if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
       console.warn('service restart recovery completed', restartRecovery)
@@ -184,6 +191,7 @@ async function start() {
   } else {
     registerUnavailableWorkbenchCommandRoutes(router)
     registerAssistantRoutes(router)
+    registerSkillInstallationRoutes(router)
   }
   registerWorkbenchRoutes(router, new WorkbenchQueryService(repository))
   registerAdminRoutes(router, new AdminQueryService(repository))

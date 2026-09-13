@@ -399,6 +399,33 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
   })
 
+  it('loads an externalized Skill folder without putting its body in the persisted manifest', async () => {
+    const instructions = 'Read references/value.txt and return the exact immutable value.'
+    const skillMarkdown = `---\nname: externalized-skill\ndescription: Verify filesystem-backed Skill loading.\n---\n${instructions}\n`
+    const resource = 'externalized-resource-marker'
+    const files = [
+      { path: 'SKILL.md', content: skillMarkdown, sha256: createHash('sha256').update(skillMarkdown).digest('hex'), size: Buffer.byteLength(skillMarkdown) },
+      { path: 'references/value.txt', content: resource, sha256: createHash('sha256').update(resource).digest('hex'), size: Buffer.byteLength(resource) },
+    ]
+    const adapter = await createAdapter(500, async () => ({ instructions, files }))
+    const input = manifest('run-externalized-skill', 'attempt-1')
+    input.skills = [{ id: 'skill-externalized', version: '1.0.0' }]
+    input.agent_configuration.skill_instructions = [{
+      id: 'skill-externalized', name: 'externalized-skill', description: 'Verify filesystem-backed Skill loading.', version: '1.0.0',
+      artifact_ref: `packages/externalized-skill/${'a'.repeat(64)}`,
+      instructions_sha256: createHash('sha256').update(instructions).digest('hex'),
+      files: files.map(({ path, sha256, size }) => ({ path, sha256, size })),
+    }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const persisted = await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')
+    assert.equal(persisted.includes(resource), false)
+    assert.equal(persisted.includes(instructions), false)
+    const [skillDirectory] = await readdir(join(result.attemptDirectory, 'workspace/skills'))
+    assert.ok(skillDirectory)
+    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/skills', skillDirectory, 'references/value.txt'), 'utf8'), resource)
+  })
+
   it('routes permission requests through a fail-closed decision and audit events', async () => {
     const adapter = await createAdapter()
     const input = manifest('run-permission', 'attempt-1', '[permission] read inventory')
@@ -504,7 +531,10 @@ describe('DSH ACP Runtime Adapter', () => {
   })
 })
 
-async function createAdapter(shutdownGraceMs = 500): Promise<DshAcpRuntimeAdapter> {
+async function createAdapter(
+  shutdownGraceMs = 500,
+  loadSkillArtifact?: NonNullable<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]['loadSkillArtifact']>,
+): Promise<DshAcpRuntimeAdapter> {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-test-'))
   const adapter = new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-test',
@@ -516,6 +546,7 @@ async function createAdapter(shutdownGraceMs = 500): Promise<DshAcpRuntimeAdapte
       cwd: process.cwd(),
     },
     shutdownGraceMs,
+    ...(loadSkillArtifact ? { loadSkillArtifact } : {}),
   })
   adapters.push(adapter)
   return adapter

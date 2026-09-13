@@ -35,10 +35,12 @@ export interface RuntimeManifest {
       name?: string
       description?: string
       version: string
-      instructions: string
+      instructions?: string
+      artifact_ref?: string
+      instructions_sha256?: string
       dependencies?: string[]
       disable_model_invocation?: boolean
-      files?: Array<{ path: string; content: string; sha256: string; size: number }>
+      files?: Array<{ path: string; content?: string; sha256: string; size: number }>
     }>
   }
   user_context: {

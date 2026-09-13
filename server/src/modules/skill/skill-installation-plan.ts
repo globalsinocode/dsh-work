@@ -1,10 +1,9 @@
-import { hash, type SkillBundle, type SkillCompatibility, type SkillPackage } from './skill-package.ts'
+import { hash, type SkillBundle, type SkillCompatibility, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { canonicalJson } from '../runtime/canonical-json.ts'
 
-export interface SkillInstallationPlan {
+interface InstallationPlanBase {
   planVersion: '1.0'
   rootName: string
-  packages: SkillPackage[]
   edges: SkillBundle['edges']
   compatibility: SkillCompatibility
   summary: {
@@ -16,10 +15,18 @@ export interface SkillInstallationPlan {
   sha256: string
 }
 
+export interface PreparedSkillInstallationPlan extends InstallationPlanBase {
+  packages: SkillPackage[]
+}
+
+export interface SkillInstallationPlan extends InstallationPlanBase {
+  packages: SkillPackageArtifact[]
+}
+
 export function buildSkillInstallationPlan(
   bundle: SkillBundle,
   options: { pythonSandboxAvailable: boolean; pythonPackages?: string[]; unavailableTools?: string[] },
-): SkillInstallationPlan {
+): PreparedSkillInstallationPlan {
   const unavailableTools = new Set(options.unavailableTools ?? [])
   const pythonPackages = new Set((options.pythonPackages ?? []).map(value => value.toLowerCase()))
   const packages = bundle.packages.map(pkg => {
@@ -53,6 +60,27 @@ export function buildSkillInstallationPlan(
       toolIds: [...new Set(packages.flatMap(pkg => pkg.toolIds))].sort(),
       pythonFiles: packages.flatMap(pkg => pkg.files).filter(file => file.path.endsWith('.py')).length,
     },
+  }
+  return { ...unsigned, sha256: hash(canonicalJson(unsigned)) }
+}
+
+export function externalizeSkillInstallationPlan(
+  prepared: PreparedSkillInstallationPlan,
+  artifacts: SkillPackageArtifact[],
+): SkillInstallationPlan {
+  const byName = new Map(artifacts.map(artifact => [artifact.name, artifact]))
+  const packages = prepared.packages.map(pkg => {
+    const artifact = byName.get(pkg.name)
+    if (!artifact || artifact.sha256 !== pkg.sha256) throw new Error(`Skill 文件夹写入结果不完整：${pkg.name}`)
+    return artifact
+  })
+  const unsigned = {
+    planVersion: prepared.planVersion,
+    rootName: prepared.rootName,
+    packages,
+    edges: prepared.edges,
+    compatibility: prepared.compatibility,
+    summary: prepared.summary,
   }
   return { ...unsigned, sha256: hash(canonicalJson(unsigned)) }
 }

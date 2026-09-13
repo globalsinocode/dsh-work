@@ -41,7 +41,7 @@
 | `python_execute@1.0.0` 是 Runtime 内置工具；安装计划仅在摘要锁定镜像可用且声明包已配置时判为可运行 | 建立版本化环境注册表、依赖范围求解、健康状态、`task_output` 执行效果与管理界面 |
 | 平台工具桥按 Attempt 分发 manifest 允许的工具并接收限长 JSON 参数；`activate_skill` 和 `python_execute` 都经过当前 Attempt 校验 | 为每个工具补全独立 JSON Schema、数据库幂等调用记录、并发槽位、取消和重启恢复 |
 | Python Runner 使用无网络、只读根文件系统、cap-drop、no-new-privileges、PID/内存/CPU 限制的临时容器；只执行当前快照中的 `.py`，没有宿主 Python 回退 | 改为非 root 可信 launcher、容量受限 tmpfs、完整 seccomp/架构策略、子进程回收与目标 Mac mini 隔离验收 |
-| Runtime Manifest 仍以内联文本挂载会话输入；脚本可读取固定 `/input` 目录，但尚无原始二进制输入链路 | 新增原始文件版本引用和授权暂存流程，不能把抽取文本改名为 `.xlsx` |
+| Skill 文件已保存到平台内容寻址目录，Runtime Manifest 只携带相对引用和摘要索引；脚本可读取固定 `/input` 目录，但尚无原始二进制输入链路 | 新增原始文件版本引用和授权暂存流程，不能把抽取文本改名为 `.xlsx` |
 | Skill 严格试运行已要求 DSH 激活根 Skill/依赖；包含 Python 时还要求成功执行证据；Agent testAgent 仍是配置检查 | 增加入口级测试矩阵、成果内容/格式检查、管理员业务验收指纹；继续清楚区分 Agent 配置检查 |
 | Runner 只收集输出目录顶层普通文件的名称和大小，未发布为 Artifact | 新增容量受控收集协议、格式/恶意文件检查与事务化 Artifact 发布，复用现有归属和下载鉴权 |
 | 管理会话没有 Workspace | 管理测试文件/成果使用 owner-only 暂存对象，不写入员工 Workspace；必要下载走 Admin API |
@@ -174,14 +174,14 @@ Docker 不使用自动 remove：平台先等待输出收集与退出证据，再
 
 | 对象 | 计划字段与不变量 |
 | --- | --- |
-| skill_versions.manifest v2 | 原始包摘要、文件清单、运行配置摘要、入口、依赖要求；包和覆盖配置分别保存；发布后不可变 |
+| skill_versions.manifest v2 | Skill 文件夹相对引用、原始包摘要、文件索引、运行配置摘要、入口和依赖要求；不保存文件正文或脚本源码；发布后不可变 |
 | python_execution_profiles | 固定镜像、Python/依赖锁、架构、策略版本；状态及健康独立更新，不改已固定制品 |
 | skill_validation_runs | 固定测试指纹、Run/Attempt、每个入口执行证据、成果校验、人工接受人/时间；不能覆盖历史结果 |
 | tool_executions | tenant/run/attempt/call 唯一键、skill版本、镜像、状态、container标识、取消原因、退出码、摘要、时间；不保存凭据 |
 | execution_output_files | execution/file唯一键、暂存存储键、类型、大小、摘要、提交状态；通过现有 Artifact 关联正式成果 |
 | admin_test_files | 管理员所有权、固定版本、存储键、大小、摘要和清理时间；员工 API 不可读 |
 
-包资源建议从内联内容扩展为平台受控、按内容摘要存储的 blob 引用，以避免大包重复进入 manifest。保留 v1 原摘要及读取方式；不得重算历史摘要或批量改写已发布版本。v2 暂存时重新校验 bytes/hash，归档原始包不执行。存储先暂存、事务提交引用后转正，失败文件由幂等清理回收。
+包资源已经迁移为平台受控、按内容摘要存储的文件夹引用，避免正文和脚本重复进入 PostgreSQL 与 Runtime Manifest。启动迁移保留历史 Attempt 原摘要，并为外置后的 Manifest 计算新摘要；发布版本通过受控迁移事务改为文件夹引用。暂存时重新校验 bytes/hash，归档原始包不执行。文件先写入临时目录并原子转正，数据库随后提交引用；无引用目录可由幂等清理回收。
 
 ### 6.2 Runtime Manifest 与授权
 

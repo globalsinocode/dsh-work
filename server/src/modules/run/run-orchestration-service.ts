@@ -84,7 +84,13 @@ export class RunOrchestrationService {
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     if (!attempt) throw new Error('安装运行缺少原始输入，请重新发送来源')
     const manifest = attempt.manifest as unknown as RuntimeManifest
-    await this.dispatchAdmin(run, manifest.input.message, manifest.installation_source ?? '', manifest.purpose === 'admin-skill-test' ? { ...manifest.agent_configuration.skill_instructions[0]!, name: manifest.agent_configuration.skill_instructions[0]!.name ?? manifest.agent_configuration.skill_instructions[0]!.id, description: manifest.agent_configuration.skill_instructions[0]!.description ?? '', tools: manifest.tools.filter(tool => tool.id !== 'activate_skill').map(tool => `${tool.id}@${tool.version}`) } : undefined, manifest.input.conversation_history)
+    const retriedSkill = manifest.agent_configuration.skill_instructions[0]
+    await this.dispatchAdmin(run, manifest.input.message, manifest.installation_source ?? '', manifest.purpose === 'admin-skill-test' && retriedSkill ? {
+      id: retriedSkill.id, name: retriedSkill.name ?? retriedSkill.id, description: retriedSkill.description ?? '', version: retriedSkill.version,
+      instructions: retriedSkill.instructions ?? '', tools: manifest.tools.filter(tool => tool.id !== 'activate_skill').map(tool => `${tool.id}@${tool.version}`),
+      ...(retriedSkill.artifact_ref ? { artifact: { artifactRef: retriedSkill.artifact_ref, instructionsSha256: retriedSkill.instructions_sha256!, files: retriedSkill.files ?? [] } as RuntimeSkillConfiguration['artifact'], files: retriedSkill.files } : {}),
+      dependencies: retriedSkill.dependencies, disableModelInvocation: retriedSkill.disable_model_invocation,
+    } : undefined, manifest.input.conversation_history)
     return this.runs.getRun(tenantId, runId)
   }
 
@@ -118,7 +124,7 @@ export class RunOrchestrationService {
       const testCatalog = [testSkill, ...flattenSkillDependencies(testSkill)]
       manifest.agent_configuration = {
         system_prompt: `你是 dsh-work Skill 严格试运行助手。必须先调用 activate_skill 激活 ${testSkill.name ?? testSkill.id}，并按依赖关系逐一激活其他 Skill，再按返回的锁定说明处理测试输入。激活结果包含 Python 入口时，必须通过 python_execute 至少成功执行一个声明入口；不得直接运行宿主机命令。需要文件时必须实际调用已授权的只读工具读取准确路径，不猜测文件内容；缺少输入时明确说明。不要执行任何安装、发布或平台配置操作。`,
-        skill_instructions: testCatalog.map(skill => ({ id: skill.id, name: skill.name ?? skill.id, description: skill.description ?? '', version: skill.version, instructions: skill.instructions, dependencies: skill.dependencies, disable_model_invocation: skill.disableModelInvocation, files: skill.files })),
+        skill_instructions: testCatalog.map(toRuntimeManifestSkill),
       }
       manifest.skills = testCatalog.map(skill => ({ id: skill.id, version: skill.version }))
       manifest.tools = [...new Set(testCatalog.flatMap(skill => skill.tools))].map(toCapabilityReference).concat({ id: 'activate_skill', version: '1.0.0' })
@@ -452,16 +458,7 @@ export class RunOrchestrationService {
       agent_version_id: input.agentVersionId,
       agent_configuration: {
         system_prompt: agent.systemPrompt,
-        skill_instructions: agent.skillInstructions.map(skill => ({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          version: skill.version,
-          instructions: skill.instructions,
-          ...(skill.dependencies?.length ? { dependencies: skill.dependencies } : {}),
-          ...(skill.disableModelInvocation ? { disable_model_invocation: true } : {}),
-          ...('files' in skill && skill.files ? { files: skill.files } : {}),
-        })),
+        skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
       },
       user_context: {
         user_id: input.userId,
@@ -805,6 +802,26 @@ export class RunOrchestrationService {
 
 function flattenSkillDependencies(skill: RuntimeSkillConfiguration): RuntimeSkillConfiguration[] {
   return (skill.dependencySkills ?? []).flatMap(item => [item, ...flattenSkillDependencies(item)])
+}
+
+function toRuntimeManifestSkill(skill: RuntimeSkillConfiguration): RuntimeManifest['agent_configuration']['skill_instructions'][number] {
+  const base = {
+    id: skill.id,
+    name: skill.name ?? skill.id,
+    description: skill.description ?? '',
+    version: skill.version,
+    ...(skill.dependencies?.length ? { dependencies: skill.dependencies } : {}),
+    ...(skill.disableModelInvocation ? { disable_model_invocation: true } : {}),
+  }
+  if (skill.artifact) {
+    return {
+      ...base,
+      artifact_ref: skill.artifact.artifactRef,
+      instructions_sha256: skill.artifact.instructionsSha256,
+      files: skill.artifact.files,
+    }
+  }
+  return { ...base, instructions: skill.instructions, ...(skill.files ? { files: skill.files } : {}) }
 }
 
 function assertPrompt(prompt: string) {

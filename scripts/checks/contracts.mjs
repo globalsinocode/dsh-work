@@ -11,7 +11,7 @@ const requiredPaths = {
     '/tools/permissions', '/connectors', '/connectors/check', '/runtimes', '/runtimes/check',
     '/runtimes/configuration', '/sessions', '/workspaces', '/audit-events', '/health',
     '/model-providers', '/provider-models', '/model-routes', '/operations/summary', '/operations/runs/{runId}',
-    '/grant-sources/unresolved', '/grant-sources/reconcile',
+    '/grant-sources/unresolved', '/grant-sources/reconcile', '/skill-installations', '/skill-installations/{id}/confirm',
   ],
 }
 

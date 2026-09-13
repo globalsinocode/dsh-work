@@ -37,6 +37,7 @@ interface ExecutionRecord {
   assistantText: string
   terminal: boolean
   activatedSkills: Set<string>
+  materializedSkills: Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
 }
 
@@ -56,6 +57,9 @@ export interface DshAcpRuntimeAdapterConfiguration {
     manifest: RuntimeManifest,
   ) => Promise<'allow_once' | 'reject_once'>
   prepareSkillInstallation?: (manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  loadSkillArtifact?: (
+    skill: RuntimeManifest['agent_configuration']['skill_instructions'][number],
+  ) => Promise<{ instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
@@ -101,14 +105,27 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await writeFile(target, mount.content, { flag: 'wx', mode: 0o400 })
       await chmod(target, 0o400)
     }
+    const materializedSkills = new Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>()
     for (const skill of compiled.manifest.agent_configuration.skill_instructions) {
-      for (const file of skill.files ?? []) {
+      const materialized = skill.artifact_ref
+        ? await this.configuration.loadSkillArtifact?.(skill)
+        : {
+            instructions: skill.instructions ?? '',
+            files: (skill.files ?? []).filter((file): file is { path: string; content: string; sha256: string; size: number } => file.content !== undefined),
+          }
+      if (!materialized || materialized.instructions.length < 20) throw new Error(`Skill 文件夹不可用：${skill.id}@${skill.version}`)
+      if (skill.instructions_sha256 && createHash('sha256').update(materialized.instructions).digest('hex') !== skill.instructions_sha256) throw new Error(`Skill 执行说明摘要不匹配：${skill.id}`)
+      const indexed = new Map((skill.files ?? []).map(file => [file.path, file]))
+      for (const file of materialized.files) {
+        const expected = indexed.get(file.path)
+        if (skill.artifact_ref && (!expected || expected.sha256 !== file.sha256 || expected.size !== file.size)) throw new Error(`Skill 文件索引不匹配：${file.path}`)
         const root = join(workspaceDirectory, 'skills', safeSegment(skill.id))
         const target = resolve(root, file.path)
         if (!target.startsWith(`${root}/`)) throw new Error('Unsafe Skill resource path')
         await mkdir(dirname(target), { recursive: true })
         await writeFile(target, file.content, { flag: 'wx', mode: 0o400 })
       }
+      materializedSkills.set(skill.id, materialized)
     }
     await writeFile(join(attemptDirectory, 'manifest.json'), `${compiled.canonicalJson}\n`, { flag: 'wx' })
 
@@ -137,6 +154,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       assistantText: '',
       terminal: false,
       activatedSkills: new Set(),
+      materializedSkills,
     }
     this.executions.set(manifest.run_id, record)
     this.emit(record, 'run.queued', '任务已进入 Runtime 队列', { manifest_sha256: compiled.sha256 })
@@ -263,17 +281,19 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           const skill = matches[0]!
           const exactName = skill.name ?? skill.id
           if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) throw new Error(`Skill ${exactName} 只允许用户显式激活`)
-          const contentSha256 = createHash('sha256').update(JSON.stringify({ instructions: skill.instructions, files: skill.files ?? [] })).digest('hex')
+          const materialized = record.materializedSkills.get(skill.id)
+          if (!materialized) throw new Error(`Skill 文件夹未装载：${exactName}`)
+          const contentSha256 = createHash('sha256').update(JSON.stringify({ instructions: materialized.instructions, files: skill.files ?? [] })).digest('hex')
           await this.configuration.recordSkillActivation?.(record.manifest, skill, contentSha256)
           record.activatedSkills.add(skill.id)
           return {
             id: skill.id,
             name: skill.name ?? skill.id,
             version: skill.version,
-            instructions: skill.instructions,
+            instructions: materialized.instructions,
             resourceDirectory: skill.files?.length ? `skills/${safeSegment(skill.id)}/` : null,
             dependencies: skill.dependencies ?? [],
-            pythonEntries: (skill.files ?? []).filter(file => file.path.endsWith('.py')).map(file => file.path),
+            pythonEntries: materialized.files.filter(file => file.path.endsWith('.py')).map(file => file.path),
             contentSha256,
           }
         }
@@ -543,7 +563,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       : [
         '# 已启用 Skill（兼容模式）',
         ...manifest.agent_configuration.skill_instructions.map(skill =>
-          `## ${skill.id}@${skill.version}\n${skill.files?.length ? `资源目录：skills/${safeSegment(skill.id)}/，以下说明中的相对路径均基于该目录。\n` : ''}${skill.instructions.trim()}`,
+          `## ${skill.id}@${skill.version}\n${skill.files?.length ? `资源目录：skills/${safeSegment(skill.id)}/，以下说明中的相对路径均基于该目录。\n` : ''}${skill.instructions?.trim() || '请先通过平台激活并读取此 Skill 的文件夹说明。'}`,
         ),
       ].join('\n\n'))
   }

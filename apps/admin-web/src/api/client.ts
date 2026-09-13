@@ -1,4 +1,4 @@
-import type { AdminConversation } from '../types/assistant'
+import type { AdminConversation, SkillInstallation } from '../types/assistant'
 import type {
   AdminSession,
   AdminTaskSummary,
@@ -107,6 +107,12 @@ export const adminApi = {
   getAssistantConversation: (id: string) => request<AdminConversation>(`/assistant/sessions/${encodeURIComponent(id)}`),
   sendAssistantMessage: (input: { sessionId: string; message: string; requestId: string }) => request<AdminConversation>('/assistant/messages', { method: 'POST', body: JSON.stringify(input) }),
   confirmSkillInstallation: (runId: string, planSha256: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
+  prepareZipSkillInstallation: (file: File) => request<SkillInstallation>('/skill-installations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
+    body: file,
+  }),
+  confirmZipSkillInstallation: (installationId: string, planSha256: string) => request<SkillInstallation>(`/skill-installations/${encodeURIComponent(installationId)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
   cancelAssistantRun: (runId: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }),
   retryAssistantRun: (runId: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }),
   getSession: () => request<AdminSession>('/session'),

@@ -834,6 +834,85 @@
         }
       }
     },
+    "/skill-installations": {
+      "post": {
+        "operationId": "prepareZipSkillInstallation",
+        "summary": "上传本地 ZIP，并复用统一包解析与兼容性计划逻辑",
+        "parameters": [
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "required": true,
+            "description": "encodeURIComponent 编码的原始 ZIP 文件名",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/zip": {
+              "schema": {
+                "type": "string",
+                "contentEncoding": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/skill-installations/{id}/confirm": {
+      "post": {
+        "operationId": "confirmZipSkillInstallation",
+        "summary": "确认 ZIP 安装计划摘要，原子保存待验证 Skill 草稿",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillInstallationConfirmation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/assistant/sessions": {
       "get": {
         "operationId": "listAdminConversations",

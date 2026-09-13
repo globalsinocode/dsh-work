@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { Router } from '../../http/router.ts'
 import { registerAssistantRoutes } from '../../http/admin/assistant-routes.ts'
+import { registerSkillInstallationRoutes } from '../../http/admin/skill-installation-routes.ts'
 import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -24,21 +25,29 @@ import { resolveDshRuntimeInstallation } from '../../modules/runtime/dsh-runtime
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { acquireSkillSource } from '../../modules/skill/skill-source.ts'
+import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { migrateSkillFilesToFileSystem } from '../../modules/skill/skill-file-storage-migration.ts'
+import { parseSkillPackage } from '../../modules/skill/skill-package.ts'
+import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
+import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 const real = process.env.DSH_WORK_SKILL_REAL_DSH === '1'
 let database: ThrowawayDatabase, orchestration: RunOrchestrationService, service: AdminSkillInstallationService
 let runtimeRoot: string, conversations: PostgresConversationRepository, runs: PostgresRunRepository
+let artifactStore: FileSystemSkillArtifactStore
 const body = '---\nname: installation-test\ndescription: Read a reference file and return its exact contents.\n---\nUse the read tool to read references/value.txt and report exactly the value, never infer or fabricate it.\n'
 const bytes = zipSync({ 'SKILL.md': strToU8(body), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
 before(async () => {
   database = await createThrowawayDatabase({ namePrefix: 'dsh_skill_installation_test' })
   runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-install-test-'))
+  artifactStore = new FileSystemSkillArtifactStore(join(runtimeRoot, 'skills'))
   const projectRoot = resolve(import.meta.dirname, '../../../..')
   const installation = real ? await resolveDshRuntimeInstallation({ projectRoot }) : null
   const runtime = new DshAcpRuntimeAdapter({ runtimeId: 'runtime-local-01', runtimeRoot, dshRepository: installation?.home ?? runtimeRoot,
     process: installation?.process ?? { command: process.execPath, args: ['--experimental-strip-types', resolve(import.meta.dirname, '../../modules/runtime/testing/mock-acp-worker.ts')], cwd: runtimeRoot },
     permissionDecision: async () => 'allow_once', prepareSkillInstallation: (manifest, signal) => service.prepare(manifest, signal),
+    loadSkillArtifact: skill => artifactStore.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
     recordSkillActivation: (manifest, skill, digest) => service.recordActivation(manifest, skill, digest),
   })
   const auth = new PostgresAuthorizationService(database.client)
@@ -47,7 +56,7 @@ before(async () => {
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
   orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, undefined, undefined, auth)
-  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : async source => ({ bytes: source.repository === 'fixture/multiple' ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) }) : source.repository === 'fixture/delegated' ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') }) : bytes, resolvedUrl: source.url, resolvedRef: null }))
+  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : async source => ({ bytes: source.repository === 'fixture/multiple' ? zipSync({ 'repo/wanted/SKILL.md': strToU8(body.replace('installation-test', 'wanted')), 'repo/wanted/references/value.txt': strToU8('selected-marker'), 'repo/other/SKILL.md': strToU8(body.replace('installation-test', 'other').replace('description:', 'allowed-tools: [Bash]\ndescription:')) }) : source.repository === 'fixture/delegated' ? zipSync({ 'repo/grill-me/SKILL.md': strToU8('---\nname: grill-me\ndescription: Delegate to the complete grilling workflow.\n---\nCall the Skill tool with "grilling" and follow its instructions exactly.\n'), 'repo/grilling/SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'repo/grilling/references/value.txt': strToU8('dependency-marker') }) : bytes, resolvedUrl: source.url, resolvedRef: null }), false, [], artifactStore)
 })
 after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
 const source = real ? 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md' : 'https://example.org/skill.zip'
@@ -79,11 +88,14 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
   assert.equal(results[0]!.installations[0]?.status, 'installed')
   const [afterCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skills`
   assert.equal(afterCount!.count, beforeCount!.count + 1)
-  const [version] = await database.client<{ status: string; manifest: { package: { files: unknown[] } } }[]>`select status, manifest from skill_versions where skill_id = ${results[0]!.installations[0]!.skillId!}`
+  const [version] = await database.client<{ status: string; instructions: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`select status, instructions, manifest from skill_versions where skill_id = ${results[0]!.installations[0]!.skillId!}`
   assert.equal(version?.status, 'draft')
-  assert.ok(version!.manifest.package.files.length)
+  assert.equal(version?.instructions, '')
+  assert.ok(version!.manifest.artifact.files.length)
+  assert.equal(JSON.stringify(version!.manifest).includes('SKILL_RESOURCE_MARKER_7F31'), false)
+  assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
   if (!real) {
-    const skills = new PostgresSkillService(database.client)
+    const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
     const skillId = results[0]!.installations[0]!.skillId!
     await assert.rejects(skills.testSkill({ skillId, actor }), /试运行不可用/)
     await assert.rejects(skills.setStatus({ skillId, actor, status: 'published' }), /测试/)
@@ -94,7 +106,14 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     assert.equal((await skills.testSkill({ skillId, actor })).status, 'passed')
     await skills.setStatus({ skillId, actor, status: 'published' })
     const resolved = await skills.resolveRuntimeSkills([`${skillId}@0.1.0`])
-    assert.equal(resolved[0]?.files?.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
+    assert.equal((await artifactStore.read(resolved[0]!.artifact!)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
+    const [storedBodies] = await database.client<{ versions: number; installations: number; attempts: number }[]>`
+      select
+        (select count(*)::int from skill_versions where manifest::text like '%SKILL_RESOURCE_MARKER_7F31%' or instructions like '%SKILL_RESOURCE_MARKER_7F31%') as versions,
+        (select count(*)::int from skill_installations where package::text like '%SKILL_RESOURCE_MARKER_7F31%' or plan::text like '%SKILL_RESOURCE_MARKER_7F31%') as installations,
+        (select count(*)::int from run_attempts where manifest::text like '%SKILL_RESOURCE_MARKER_7F31%') as attempts
+    `
+    assert.deepEqual(storedBodies, { versions: 0, installations: 0, attempts: 0 })
   }
   const duplicate = await service.send(actor, { sessionId, requestId, message: source })
   assert.equal(duplicate.runs.length, 1)
@@ -111,6 +130,33 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     console.log(JSON.stringify({ realDsh: true, package: pkg.name, digest: pkg.sha256, toolCalls: completion.safeMetadata['tool_call_count'], installed: true }))
   }
 })
+test('ZIP upload reuses package parsing, compatibility planning, folder storage and atomic confirmation', { skip: real }, async () => {
+  const preview = await service.prepareZip(actor, { fileName: 'installation-test.zip', bytes })
+  assert.equal(preview.runId, null)
+  assert.equal(preview.source, 'installation-test.zip')
+  assert.equal(preview.status, 'pending')
+  assert.equal(preview.package?.name, 'installation-test')
+  assert.equal(preview.plan?.rootName, 'installation-test')
+  assert.equal(preview.planSha256, preview.plan?.sha256)
+  assert.equal(preview.package?.files.some(file => file.path === 'references/value.txt'), true)
+  const [stored] = await database.client<{ runId: string | null; channel: string; containsBody: boolean }[]>`
+    select run_id as "runId", channel, (package::text like '%SKILL_RESOURCE_MARKER_7F31%' or plan::text like '%SKILL_RESOURCE_MARKER_7F31%') as "containsBody"
+    from skill_installations where id = ${preview.id}
+  `
+  assert.deepEqual(stored, { runId: null, channel: 'zip', containsBody: false })
+  await assert.rejects(service.confirmZip(actor, preview.id, 'wrong-digest'), /计划/)
+  const [first, second] = await Promise.all([
+    service.confirmZip(actor, preview.id, preview.planSha256!),
+    service.confirmZip(actor, preview.id, preview.planSha256!),
+  ])
+  assert.equal(first.status, 'installed')
+  assert.equal(first.skillId, second.skillId)
+  const [version] = await database.client<{ status: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
+    select status, manifest from skill_versions where skill_id = ${first.skillId!}
+  `
+  assert.equal(version?.status, 'draft')
+  assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
+})
 test('one confirmed plan atomically installs, tests and publishes same-source Skill dependencies', { skip: real, timeout: 30000 }, async () => {
   const { sessionId, runId } = await send('npx skills@latest add fixture/delegated --skill=grill-me')
   const detail = await wait(sessionId)
@@ -126,7 +172,7 @@ test('one confirmed plan atomically installs, tests and publishes same-source Sk
   assert.equal(after!.count, before!.count + 2)
   const [dependencyCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skill_version_dependencies`
   assert.ok(dependencyCount!.count >= 1)
-  const skills = new PostgresSkillService(database.client)
+  const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
   skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
   assert.equal((await skills.testSkill({ skillId: rootId, actor })).status, 'passed')
   await skills.setStatus({ skillId: rootId, actor, status: 'published' })
@@ -171,19 +217,32 @@ test('real DSH reads the exact immutable Skill resource through the governed rea
 test('admin HTTP routes enforce write permission, conversation ownership and unavailable mode', { skip: real }, async () => {
   const saved = await send(); await wait(saved.sessionId)
   let userId = actor
-  const router = new Router({ authenticateApi: async (request, audience) => ({ ...(await prototypeApiAuthenticator(request, audience)), userId, permissions: ['admin:read'] }) })
+  let permissions = ['admin:read']
+  const router = new Router({ authenticateApi: async (request, audience) => ({ ...(await prototypeApiAuthenticator(request, audience)), userId, permissions }) })
   registerAssistantRoutes(router, service)
+  registerSkillInstallationRoutes(router, service)
   const server = createServer((request, response) => { void router.handle(request, response) })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as { port: number }
   const base = `http://127.0.0.1:${address.port}/api/admin/v1/assistant`
   try {
     assert.equal((await fetch(`${base}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403)
+    assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/admin/v1/skill-installations`, { method: 'POST', headers: { 'Content-Type': 'application/zip', 'X-File-Name': 'test.zip' }, body: bytes })).status, 403)
     assert.equal((await fetch(`${base}/sessions/${saved.sessionId}`)).status, 200)
     userId = 'U00001'
     assert.equal((await fetch(`${base}/sessions/${saved.sessionId}`)).status, 403)
     const history = await fetch(`${base}/sessions`).then(response => response.json()) as { data: unknown[] }
     assert.deepEqual(history.data, [])
+    userId = actor
+    permissions = ['admin:write']
+    const uploaded = await fetch(`http://127.0.0.1:${address.port}/api/admin/v1/skill-installations`, { method: 'POST', headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent('接口安装.zip') }, body: bytes })
+    assert.equal(uploaded.status, 201)
+    const prepared = await uploaded.json() as { data: { id: string; planSha256: string; package: { name: string }; status: string } }
+    assert.equal(prepared.data.package.name, 'installation-test')
+    assert.equal(prepared.data.status, 'pending')
+    const confirmed = await fetch(`http://127.0.0.1:${address.port}/api/admin/v1/skill-installations/${prepared.data.id}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planSha256: prepared.data.planSha256 }) })
+    assert.equal(confirmed.status, 200)
+    assert.equal(((await confirmed.json()) as { data: { status: string } }).data.status, 'installed')
   } finally { await new Promise<void>(resolve => server.close(() => resolve())) }
 })
 
@@ -210,4 +269,44 @@ test('a later message selects the previous repository and snapshots only its own
   const [otherAttempt] = await database.client<{ manifest: import('../../modules/runtime/runtime-types.ts').RuntimeManifest }[]>`select manifest from run_attempts where run_id = ${other.runId}`
   assert.equal(otherAttempt!.manifest.installation_source, '')
   assert.equal(otherAttempt!.manifest.input.conversation_history, undefined)
+})
+
+test('legacy packaged versions migrate to folders without weakening published-version immutability', { skip: real }, async () => {
+  const legacy = parseSkillPackage(bytes)
+  const skillId = `skill-${randomUUID().slice(0, 12)}`
+  const versionId = `skill-version-${randomUUID()}`
+  const sessionId = `admin-session-${randomUUID()}`
+  const runId = `run-${randomUUID()}`
+  const attemptId = `attempt-${randomUUID()}`
+  const oldManifest: RuntimeManifest = {
+    manifest_version: '1.0', run_id: runId, attempt_id: attemptId, session_id: sessionId, workspace_id: '', agent_version_id: null,
+    agent_configuration: { system_prompt: '这是旧版 Skill 文件内联迁移测试，只验证存储迁移行为。', skill_instructions: [{ id: skillId, name: legacy.name, description: legacy.description, version: '0.1.0', instructions: legacy.instructions, files: legacy.files }] },
+    user_context: { user_id: actor, tenant_id: tenant, role_ids: [] }, permission_policy: { approval_mode: 'always', network_policy: 'deny', write_policy: 'deny' },
+    skills: [{ id: skillId, version: '0.1.0' }], tools: [{ id: 'read', version: '1.0.0' }], data_scopes: [], knowledge_context: [],
+    input: { message: '迁移测试', file_mounts: [] }, limits: { timeout_seconds: 30, max_output_bytes: 65536, max_tool_calls: 3 }, created_at: new Date().toISOString(),
+  }
+  const oldCompiled = compileRuntimeManifest(oldManifest)
+  await database.client.begin(async transaction => {
+    await transaction`insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
+      values (${skillId}, ${tenant}, ${skillId}, ${legacy.name}, '迁移测试', ${legacy.description}, ${actor}, ${actor}, 'published')`
+    await transaction`insert into skill_versions (id, tenant_id, skill_id, version, name, category, description, instructions, manifest, tool_refs, test_prompt, status, created_by, published_by, published_at, change_summary)
+      values (${versionId}, ${tenant}, ${skillId}, '0.1.0', ${legacy.name}, '迁移测试', ${legacy.description}, ${legacy.instructions}, ${transaction.json(JSON.parse(JSON.stringify({ package: legacy })))}, ${transaction.json(legacy.toolIds)}, '迁移测试', 'published', ${actor}, ${actor}, now(), '旧存储格式')`
+    await transaction`update skills set active_version_id = ${versionId} where id = ${skillId}`
+    await transaction`insert into sessions (id, tenant_id, created_by, title, status, audience, workspace_id, agent_version_id) values (${sessionId}, ${tenant}, ${actor}, '旧 Attempt', 'active', 'admin', null, null)`
+    await transaction`insert into runs (id, tenant_id, session_id, requested_by, idempotency_key, status) values (${runId}, ${tenant}, ${sessionId}, ${actor}, ${randomUUID()}, 'succeeded')`
+    await transaction`insert into run_attempts (id, tenant_id, run_id, attempt_no, runtime_id, manifest, manifest_sha256, model_route_snapshot, status) values (${attemptId}, ${tenant}, ${runId}, 1, 'runtime-local-01', ${transaction.json(JSON.parse(oldCompiled.canonicalJson))}, ${oldCompiled.sha256}, '{}', 'succeeded')`
+    await transaction`update runs set current_attempt_id = ${attemptId} where id = ${runId}`
+  })
+  await migrateSkillFilesToFileSystem(database.client, artifactStore)
+  const [migrated] = await database.client<{ instructions: string; artifactRef: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
+    select instructions, artifact_ref as "artifactRef", manifest from skill_versions where id = ${versionId}
+  `
+  assert.equal(migrated?.instructions, '')
+  assert.equal(JSON.stringify(migrated?.manifest).includes('SKILL_RESOURCE_MARKER_7F31'), false)
+  assert.equal((await artifactStore.read(migrated!.manifest.artifact)).files[1]?.content, 'SKILL_RESOURCE_MARKER_7F31')
+  const [migratedAttempt] = await database.client<{ manifest: RuntimeManifest; manifestSha256: string; legacyManifestSha256: string }[]>`select manifest, manifest_sha256 as "manifestSha256", legacy_manifest_sha256 as "legacyManifestSha256" from run_attempts where id = ${attemptId}`
+  assert.equal(JSON.stringify(migratedAttempt?.manifest).includes('SKILL_RESOURCE_MARKER_7F31'), false)
+  assert.equal(migratedAttempt?.legacyManifestSha256, oldCompiled.sha256)
+  assert.equal(migratedAttempt?.manifestSha256, compileRuntimeManifest(migratedAttempt!.manifest).sha256)
+  await assert.rejects(database.client`update skill_versions set description = '不能修改' where id = ${versionId}`, /immutable/)
 })
