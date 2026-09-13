@@ -115,14 +115,6 @@ function copyAnswer(content: string) {
   ElMessage.success('回答已复制')
 }
 
-function speakAnswer(content: string) {
-  window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(content)
-  utterance.lang = 'zh-CN'
-  window.speechSynthesis.speak(utterance)
-  ElMessage.success('开始朗读回答')
-}
-
 function copyConversationLink() {
   void navigator.clipboard.writeText(window.location.href)
   ElMessage.success('对话链接已复制')
@@ -261,9 +253,6 @@ watch(
                 <div class="assistant-actions">
                   <button type="button" aria-label="复制回答" @click="copyAnswer(message.content)">
                     <el-icon><CopyDocument /></el-icon>
-                  </button>
-                  <button type="button" aria-label="朗读回答" @click="speakAnswer(message.content)">
-                    <span aria-hidden="true">◖</span>
                   </button>
                   <button
                     type="button"

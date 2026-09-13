@@ -158,5 +158,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.get('.assistant-answer strong').text()).toBe('运行时未授权工具')
     expect(wrapper.get('.assistant-answer pre code').text()).toBe('Error: tool is not authorized')
     expect(wrapper.get('.assistant-answer').text()).not.toContain('```')
+    expect(wrapper.find('button[aria-label="朗读回答"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="复制回答"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="复制对话链接"]').exists()).toBe(true)
   })
 })
