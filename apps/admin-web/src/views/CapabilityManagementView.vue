@@ -52,6 +52,18 @@ let skillTestPollTimer: ReturnType<typeof setTimeout> | undefined
 let skillTestPollEpoch = 0
 
 const skillTestActive = computed(() => ['queued', 'running', 'cancel_requested'].includes(skillTestProgress.value?.status ?? ''))
+const skillTestResultTitle = computed(() => skillTestProgress.value?.status === 'passed' ? '可以发布' : '暂不能发布')
+const skillTestResultDescription = computed(() => {
+  const progress = skillTestProgress.value
+  if (!progress) return ''
+  if (progress.status !== 'passed') return compactResultSummary(progress.resultSummary ?? '试运行未通过，请检查失败步骤后重试。')
+  const skillCount = progress.steps.filter(step => step.id.startsWith('activation:')).length
+  const pythonCount = progress.steps.filter(step => step.id.startsWith('python:')).length
+  const details = [`${skillCount || 1} 个 Skill 已验证`]
+  if (pythonCount) details.push(`${pythonCount} 个 Python 入口执行成功`)
+  details.push('DSH 已返回有效结果')
+  return `${details.join('，')}。`
+})
 
 const selectedSkill = computed(() => contentStore.skills.find((item) => item.id === detailTargetId.value))
 const selectedSkillVersions = computed(() => contentStore.skillVersions.filter((item) => item.skillId === detailTargetId.value))
@@ -270,9 +282,9 @@ function isActiveTestStatus(status: SkillTestRunProgress['status']) {
 
 function syncSkillTestFeedback(skill: SkillDefinition, progress: SkillTestRunProgress) {
   if (progress.status === 'passed') {
-    skillActionFeedback.value = { type: 'warning', title: `“${skill.name}”试运行通过，等待确认发布`, description: progress.resultSummary ?? '所有严格试运行门禁均已通过。' }
+    skillActionFeedback.value = { type: 'warning', title: `“${skill.name}”试运行通过，等待确认发布`, description: '请在试运行窗口确认结果后发布。' }
   } else if (progress.status === 'failed' || progress.status === 'cancelled') {
-    skillActionFeedback.value = { type: 'error', title: `“${skill.name}”严格试运行未通过`, description: progress.resultSummary ?? 'DSH Attempt 未成功完成，请查看进度后重试。' }
+    skillActionFeedback.value = { type: 'error', title: `“${skill.name}”严格试运行未通过`, description: '请在试运行窗口查看失败步骤和处理建议。' }
   } else {
     skillActionFeedback.value = { type: 'info', title: `正在严格试运行“${skill.name}”`, description: `Run ${progress.runId} 正在执行，具体进度可在弹窗中查看。` }
   }
@@ -307,6 +319,15 @@ function skillTestStatusLabel(status?: SkillTestRunProgress['status']) {
 
 function skillTestStepIcon(status: SkillTestRunProgress['steps'][number]['status']) {
   return status === 'completed' ? Check : status === 'failed' ? Close : status === 'running' ? Loading : Clock
+}
+
+function compactResultSummary(summary: string) {
+  const compact = summary
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[`*_#>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return compact.length > 240 ? `${compact.slice(0, 240)}…` : compact
 }
 
 async function rollbackSkill(version: SkillVersionRecord) {
@@ -530,9 +551,12 @@ onUnmounted(() => clearSkillTestPoll())
             </div>
           </article>
         </div>
-        <section v-if="skillTestProgress.resultSummary" class="skill-test-dialog__result">
-          <h3>试运行结果</h3>
-          <p>{{ skillTestProgress.resultSummary }}</p>
+        <section v-if="!skillTestActive" class="skill-test-dialog__result" :class="`is-${skillTestProgress.status}`">
+          <span class="skill-test-dialog__result-icon"><el-icon><component :is="skillTestProgress.status === 'passed' ? Check : Close" /></el-icon></span>
+          <div>
+            <h3>{{ skillTestResultTitle }}</h3>
+            <p>{{ skillTestResultDescription }}</p>
+          </div>
         </section>
       </template>
 
@@ -605,9 +629,14 @@ onUnmounted(() => clearSkillTestPoll())
 .skill-test-progress strong { display: block; padding-top: 3px; color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .skill-test-progress p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.55; }
 .skill-test-progress time { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
-.skill-test-dialog__result { margin-top: 4px; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
-.skill-test-dialog__result h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.skill-test-dialog__result p { max-height: 150px; margin: 7px 0 0; overflow-y: auto; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.65; white-space: pre-wrap; }
+.skill-test-dialog__result { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; margin-top: 4px; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
+.skill-test-dialog__result.is-passed { border-color: var(--color-success); background: var(--color-success-light); }
+.skill-test-dialog__result.is-failed, .skill-test-dialog__result.is-cancelled { border-color: var(--color-danger); background: var(--color-danger-light); }
+.skill-test-dialog__result-icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; color: var(--color-text-muted); background: var(--color-bg-base); }
+.skill-test-dialog__result.is-passed .skill-test-dialog__result-icon { color: var(--color-success); }
+.skill-test-dialog__result.is-failed .skill-test-dialog__result-icon, .skill-test-dialog__result.is-cancelled .skill-test-dialog__result-icon { color: var(--color-danger); }
+.skill-test-dialog__result h3 { margin: 2px 0 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.skill-test-dialog__result p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }
 .skill-test-dialog__hint { margin-right: auto; color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .skill-test-dialog :deep(.el-dialog__footer) { display: flex; align-items: center; }
 .skill-test-dialog :deep(.el-dialog__body) { max-height: calc(100vh - 220px); overflow-y: auto; }

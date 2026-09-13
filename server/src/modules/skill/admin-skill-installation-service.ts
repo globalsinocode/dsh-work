@@ -116,10 +116,12 @@ export class AdminSkillInstallationService {
     const missingActivations = requiredSkillIds.filter(id => !activatedIds.has(id))
     const missingPython = pythonSkillIds.filter(id => !executedPythonIds.has(id))
     const terminal = ['succeeded', 'failed', 'cancelled'].includes(owned.status)
-    const assistantSummary = assistantMessages.map(message => message.text).join('\n').slice(0, 6000)
-    const passed = owned.status === 'succeeded' && missingActivations.length === 0 && missingPython.length === 0 && Boolean(assistantSummary)
+    const hasAssistantResult = assistantMessages.some(message => message.text.trim())
+    const passed = owned.status === 'succeeded' && missingActivations.length === 0 && missingPython.length === 0 && hasAssistantResult
     const summary = terminal
-      ? passed ? assistantSummary : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : owned.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`
+      ? passed
+        ? `严格试运行通过：已验证 ${requiredSkillIds.length} 个 Skill${pythonSkillIds.length ? `、${pythonSkillIds.length} 个 Python 执行入口` : ''}，DSH 已返回有效结果。`
+        : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : owned.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`
       : undefined
     const workerStarted = events.find(event => event.eventType === 'run.started')
     const activeStatus = (completed: boolean, running: boolean): SkillTestProgressStep['status'] => completed ? 'completed' : terminal ? 'failed' : running ? 'running' : 'pending'
@@ -136,7 +138,7 @@ export class AdminSkillInstallationService {
         const successful = executions.find(row => row.succeeded)
         return { id: `python:${skillId}`, title: `执行 Python 验证：${skillId}`, description: successful ? `沙箱入口 ${successful.entry} 执行成功` : executions.length ? `沙箱入口执行失败：${executions.at(-1)!.entry}` : '等待 DSH 调用 python_execute', status: activeStatus(Boolean(successful), owned.status === 'running' && activatedIds.has(skillId)), ...(successful ? { occurredAt: successful.createdAt.toISOString() } : {}) }
       }),
-      { id: 'result', title: '生成并核验试运行结果', description: summary ?? (owned.status === 'running' ? 'DSH 正在处理测试输入并生成结果' : '等待前置步骤完成'), status: terminal ? (passed ? 'completed' : 'failed') : owned.status === 'running' ? 'running' : 'pending', ...(attempt.endedAt ? { occurredAt: attempt.endedAt.toISOString() } : {}) },
+      { id: 'result', title: '核验发布条件', description: terminal ? (passed ? '全部发布条件均已通过' : '存在未通过的发布条件') : owned.status === 'running' ? '正在核验运行结果与执行证据' : '等待前置步骤完成', status: terminal ? (passed ? 'completed' : 'failed') : owned.status === 'running' ? 'running' : 'pending', ...(attempt.endedAt ? { occurredAt: attempt.endedAt.toISOString() } : {}) },
     ]
     return { runId, sessionId: owned.sessionId, status: owned.status as SkillTestRunStatus, ...(terminal ? { passed, summary } : {}), steps }
   }

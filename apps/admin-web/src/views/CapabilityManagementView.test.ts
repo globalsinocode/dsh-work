@@ -100,8 +100,11 @@ describe('Skill installation sibling tab', () => {
     let resolveStart!: (value: import('../types/domain').SkillTestRunProgress) => void
     vi.spyOn(content, 'startSkillTestRun').mockReturnValue(new Promise(resolve => { resolveStart = resolve }))
     const getProgress = vi.spyOn(content, 'getSkillTestRun').mockResolvedValue({
-      runId: 'run-strict-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成：已激活 Skill。', testedAt: '2026-09-13T15:01:00.000Z',
-      steps: [{ id: 'result', title: '生成并核验试运行结果', description: '全部门禁通过', status: 'completed' }],
+      runId: 'run-strict-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: '这是一段不应直接展示的 DSH 详细回复。', testedAt: '2026-09-13T15:01:00.000Z',
+      steps: [
+        { id: `activation:${skill.id}`, title: '激活根 Skill', description: '已验证锁定内容', status: 'completed' },
+        { id: 'result', title: '核验发布条件', description: '全部发布条件均已通过', status: 'completed' },
+      ],
     })
     await wrapper.get('[data-action="publish-skill"]').trigger('click')
     await flushPromises()
@@ -122,7 +125,10 @@ describe('Skill installation sibling tab', () => {
     await flushPromises()
     expect(getProgress).toHaveBeenCalledWith(skill.id, 'run-strict-1')
     expect(wrapper.get('.skill-test-dialog').text()).toContain('试运行通过')
-    expect(wrapper.get('.skill-test-dialog').text()).toContain('DSH 试运行完成')
+    expect(wrapper.get('.skill-test-dialog__result').text()).toContain('可以发布')
+    expect(wrapper.get('.skill-test-dialog__result').text()).toContain('1 个 Skill 已验证，DSH 已返回有效结果')
+    expect(wrapper.get('.skill-test-dialog').text()).not.toContain('不应直接展示的 DSH 详细回复')
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('请在试运行窗口确认结果后发布')
   })
 
   it('publishes only after the administrator confirms the completed result', async () => {
