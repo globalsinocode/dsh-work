@@ -17,6 +17,11 @@ describe('AssistantMessageContent', () => {
       '2. **grilling**',
       '<img src=x onerror=alert(1)>',
       '',
+      '| 术语 | 定义 |',
+      '|:---|---:|',
+      '| 需求日期 | 工单计划开工日 |',
+      '| 锁料 | 固定供给分配结果 |',
+      '',
       '```text',
       'Error: tool is not authorized',
       '```',
@@ -29,6 +34,11 @@ describe('AssistantMessageContent', () => {
     expect(wrapper.get('a').attributes()).toMatchObject({ href: 'https://github.com/example/skills', target: '_blank', rel: 'noopener noreferrer' })
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.text()).toContain('<img src=x onerror=alert(1)>')
+    expect(wrapper.findAll('table')).toHaveLength(1)
+    expect(wrapper.findAll('th').map(item => item.text())).toEqual(['术语', '定义'])
+    expect(wrapper.findAll('tbody tr').map(item => item.text())).toEqual(['需求日期工单计划开工日', '锁料固定供给分配结果'])
+    expect(wrapper.findAll('th')[0]!.attributes('style')).toContain('text-align: left')
+    expect(wrapper.findAll('th')[1]!.attributes('style')).toContain('text-align: right')
     expect(wrapper.get('.assistant-code-block > span').text()).toBe('text')
     expect(wrapper.get('pre code').text()).toBe('Error: tool is not authorized')
   })

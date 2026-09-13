@@ -5,10 +5,18 @@ interface ListItem { text: string; children: ListBlock[] }
 type ListBlock =
   | { type: 'unordered-list'; items: ListItem[] }
   | { type: 'ordered-list'; items: ListItem[] }
+type TableAlignment = 'left' | 'center' | 'right'
+interface TableBlock {
+  type: 'table'
+  headers: string[]
+  alignments: TableAlignment[]
+  rows: string[][]
+}
 type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; lines: string[] }
   | { type: 'code'; language: string; text: string }
+  | TableBlock
   | ListBlock
 
 const props = defineProps<{ text: string }>()
@@ -53,6 +61,12 @@ function parseBlocks(value: string): Block[] {
       index++
       continue
     }
+    const table = parseTable(lines, index)
+    if (table) {
+      result.push(table.block)
+      index = table.next
+      continue
+    }
     const list = listLine(line)
     if (list) {
       const parsed = parseList(lines, index, list.indent, list.type)
@@ -70,6 +84,61 @@ function parseBlocks(value: string): Block[] {
     result.push({ type: 'paragraph', lines: paragraph })
   }
   return result
+}
+
+function parseTable(lines: string[], start: number): { block: TableBlock; next: number } | null {
+  if (start + 1 >= lines.length || !hasTableSeparator(lines[start]!)) return null
+  const headers = splitTableRow(lines[start]!)
+  const delimiters = splitTableRow(lines[start + 1]!)
+  if (!headers.length || headers.length !== delimiters.length || delimiters.some(cell => !/^:?-{3,}:?$/.test(cell))) return null
+
+  const alignments = delimiters.map<TableAlignment>((cell) => {
+    if (cell.startsWith(':') && cell.endsWith(':')) return 'center'
+    if (cell.endsWith(':')) return 'right'
+    return 'left'
+  })
+  const rows: string[][] = []
+  let index = start + 2
+  while (index < lines.length && lines[index]!.trim() && hasTableSeparator(lines[index]!)) {
+    const cells = splitTableRow(lines[index]!)
+    rows.push(headers.map((_, cellIndex) => cells[cellIndex] ?? ''))
+    index++
+  }
+  return { block: { type: 'table', headers, alignments, rows }, next: index }
+}
+
+function hasTableSeparator(line: string) {
+  let inCode = false
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index]
+    if (character === '`' && line[index - 1] !== '\\') inCode = !inCode
+    if (character === '|' && line[index - 1] !== '\\' && !inCode) return true
+  }
+  return false
+}
+
+function splitTableRow(line: string) {
+  const value = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  const cells: string[] = []
+  let cell = ''
+  let inCode = false
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!
+    if (character === '\\' && value[index + 1] === '|') {
+      cell += '|'
+      index++
+      continue
+    }
+    if (character === '`') inCode = !inCode
+    if (character === '|' && !inCode) {
+      cells.push(cell.trim())
+      cell = ''
+      continue
+    }
+    cell += character
+  }
+  cells.push(cell.trim())
+  return cells
 }
 
 function listLine(line: string) {
@@ -131,6 +200,20 @@ function inlineNodes(value: string): VNodeChild[] {
         <span v-if="block.language">{{ block.language }}</span>
         <pre><code>{{ block.text }}</code></pre>
       </div>
+      <div v-else-if="block.type === 'table'" class="assistant-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th v-for="(header, cellIndex) in block.headers" :key="cellIndex" :style="{ textAlign: block.alignments[cellIndex] }"><InlineMarkdown :text="header" /></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, rowIndex) in block.rows" :key="rowIndex">
+              <td v-for="(cell, cellIndex) in row" :key="cellIndex" :style="{ textAlign: block.alignments[cellIndex] }"><InlineMarkdown :text="cell" /></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <MarkdownList v-else-if="block.type === 'unordered-list' || block.type === 'ordered-list'" :block="block" />
       <p v-else><template v-for="(line, lineIndex) in block.lines" :key="lineIndex"><br v-if="lineIndex"><InlineMarkdown :text="line" /></template></p>
     </template>
@@ -155,4 +238,10 @@ function inlineNodes(value: string): VNodeChild[] {
 .assistant-code-block > span { display: block; padding: 7px 12px; border-bottom: 1px solid var(--dsh-color-border, #e4e8ef); color: var(--dsh-color-muted, #667085); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: var(--dsh-font-size-micro, 11px); }
 .assistant-code-block pre { margin: 0; padding: 12px 14px; overflow-x: auto; white-space: pre; }
 .assistant-code-block code { color: var(--dsh-color-ink, #172033); background: transparent; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: var(--dsh-font-size-caption, 13px); line-height: 1.65; }
+.assistant-table-wrap { margin: 12px 0; overflow-x: auto; border: 1px solid var(--dsh-color-border, #e4e8ef); border-radius: var(--dsh-radius-md, 12px); }
+.assistant-table-wrap table { width: 100%; min-width: 480px; border-spacing: 0; border-collapse: separate; color: inherit; font-size: inherit; line-height: 1.55; }
+.assistant-table-wrap th, .assistant-table-wrap td { padding: 10px 12px; border-right: 1px solid var(--dsh-color-border, #e4e8ef); border-bottom: 1px solid var(--dsh-color-border, #e4e8ef); vertical-align: top; }
+.assistant-table-wrap th { color: var(--dsh-color-ink, #172033); background: var(--dsh-color-canvas, #f3f5f8); font-weight: 650; }
+.assistant-table-wrap tr > :last-child { border-right: 0; }
+.assistant-table-wrap tbody tr:last-child td { border-bottom: 0; }
 </style>
