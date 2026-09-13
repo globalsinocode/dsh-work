@@ -55,6 +55,22 @@ test('DSH tool policy fails closed when allow-list input is malformed', () => {
   assert.match(guard({ name: 'read', arguments: { file_path: 'inside.txt' } }), /未授权工具/)
 })
 
+test('DSH tool policy confines write to supported files in the Run output directory', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'dsh-work-output-policy-'))
+  await mkdir(join(workspace, 'output'))
+  await mkdir(join(workspace, 'input'))
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["write"]'
+  process.env.DSH_WORKSPACE_ROOT = workspace
+  process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+  const { guard } = capturePolicy()
+
+  assert.equal(guard({ name: 'write', arguments: { file_path: 'output/report.md', content: '# 报告' } }), undefined)
+  assert.equal(guard({ name: 'write', arguments: { file_path: 'output/data.csv', content: 'id,value' } }), undefined)
+  assert.match(guard({ name: 'write', arguments: { file_path: 'input/source.txt', content: 'changed' } }), /只允许.*output/)
+  assert.match(guard({ name: 'write', arguments: { file_path: 'report.md', content: '# 报告' } }), /只允许.*output/)
+  assert.match(guard({ name: 'write', arguments: { file_path: 'output/report.html', content: '<h1>报告</h1>' } }), /仅支持/)
+})
+
 test('DSH tool policy asks before every governed tool call unless approval is disabled', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-work-tool-approval-'))
   await writeFile(join(workspace, 'inside.txt'), 'inside')

@@ -50,6 +50,8 @@ onMounted(() => contentStore.refresh())
         <el-option label="PDF" value="pdf" />
         <el-option label="Word" value="docx" />
         <el-option label="Markdown" value="markdown" />
+        <el-option label="CSV" value="csv" />
+        <el-option label="纯文本" value="text" />
       </el-select>
       <span>{{ filteredArtifacts.length }} 个文件</span>
     </div>

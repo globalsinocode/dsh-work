@@ -1,4 +1,6 @@
 import { request } from 'node:http'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 interface JsonRpcMessage {
@@ -69,6 +71,16 @@ lines.on('line', (line) => {
     if (text.includes('[hang]')) return
     if (text.includes('[unexpected-cancel]')) {
       finishPrompt(pending, 'cancelled', false)
+      return
+    }
+    if (text.includes('[artifact]')) {
+      void (async () => {
+        const workspace = process.env.DSH_WORKSPACE_ROOT
+        if (!workspace) throw new Error('DSH_WORKSPACE_ROOT is missing')
+        await mkdir(join(workspace, 'output'), { recursive: true })
+        await writeFile(join(workspace, 'output', 'report.md'), '# 测试成果\n')
+        finishPrompt(pending, 'end_turn')
+      })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
     if (text.includes('[permission]')) {

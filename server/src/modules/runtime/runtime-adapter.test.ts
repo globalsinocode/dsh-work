@@ -399,6 +399,30 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
   })
 
+  it('collects generated output before committing a successful Run', async () => {
+    const collected: Array<{ runId: string; name: string; content: string }> = []
+    const adapter = await createAdapter(500, undefined, async (input, workspaceDirectory) => {
+      const name = 'report.md'
+      collected.push({
+        runId: input.run_id,
+        name,
+        content: await readFile(join(workspaceDirectory, 'output', name), 'utf8'),
+      })
+      return [{ name, size: Buffer.byteLength(collected[0]!.content) }]
+    })
+    const input = manifest('run-artifact', 'attempt-1', '[artifact] create report')
+    input.tools = [{ id: 'write', version: '1.0.0' }]
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.deepEqual(collected, [{ runId: input.run_id, name: 'report.md', content: '# 测试成果\n' }])
+    assert.equal(events.at(-1)?.safe_metadata['artifact_count'], 1)
+    assert.match(renderSystemPrompt(input), /output\/<文件名>\.md/)
+  })
+
   it('loads an externalized Skill folder without putting its body in the persisted manifest', async () => {
     const instructions = 'Read references/value.txt and return the exact immutable value.'
     const skillMarkdown = `---\nname: externalized-skill\ndescription: Verify filesystem-backed Skill loading.\n---\n${instructions}\n`
@@ -534,6 +558,7 @@ describe('DSH ACP Runtime Adapter', () => {
 async function createAdapter(
   shutdownGraceMs = 500,
   loadSkillArtifact?: NonNullable<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]['loadSkillArtifact']>,
+  collectArtifacts?: NonNullable<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]['collectArtifacts']>,
 ): Promise<DshAcpRuntimeAdapter> {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-test-'))
   const adapter = new DshAcpRuntimeAdapter({
@@ -547,6 +572,7 @@ async function createAdapter(
     },
     shutdownGraceMs,
     ...(loadSkillArtifact ? { loadSkillArtifact } : {}),
+    ...(collectArtifacts ? { collectArtifacts } : {}),
   })
   adapters.push(adapter)
   return adapter

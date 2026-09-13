@@ -53,18 +53,19 @@ after(async () => {
 
 test('Tool and Connector management gates immutable Agent and Skill references', async () => {
   const catalog = await tools.getTools()
-  assert.deepEqual(catalog.map(tool => tool.id).sort(), ['glob', 'grep', 'read'])
-  assert.ok(catalog.every(tool => tool.mode === 'read' && tool.version === '1.0.0'))
+  assert.deepEqual(catalog.map(tool => tool.id).sort(), ['glob', 'grep', 'read', 'write'])
+  assert.ok(catalog.every(tool => tool.version === '1.0.0'))
+  assert.equal(catalog.find(tool => tool.id === 'write')?.mode, 'write')
 
   const [connector] = await tools.getConnectors()
   assert.equal(connector?.id, 'connector-dsh-workspace')
   assert.equal(connector?.name, 'DSH 工作空间文件连接器')
   assert.equal(connector?.protocol, 'runtime')
-  assert.equal(connector?.toolCount, 3)
+  assert.equal(connector?.toolCount, 4)
 
-  await tools.assertAvailableReferences(['read@1.0.0', 'glob@1.0.0', 'grep@1.0.0'])
+  await tools.assertAvailableReferences(['read@1.0.0', 'glob@1.0.0', 'grep@1.0.0', 'write@1.0.0'])
   await assert.rejects(tools.assertAvailableReferences(['read']), /锁定版本/)
-  await assert.rejects(tools.assertAvailableReferences(['write@1.0.0']), /一期只读工具/)
+  assert.equal(await tools.resolveRuntimeApprovalMode(['write@1.0.0']), 'never')
 
   assert.equal(await tools.resolveRuntimeApprovalMode(['read@1.0.0']), 'never')
   await tools.updateToolPermissions({

@@ -63,6 +63,10 @@ export interface DshAcpRuntimeAdapterConfiguration {
   recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
+  collectArtifacts?: (
+    manifest: RuntimeManifest,
+    workspaceDirectory: string,
+  ) => Promise<Array<{ name: string; size: number }>>
   now?: () => Date
 }
 
@@ -94,7 +98,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       safeSegment(manifest.attempt_id),
     )
     const workspaceDirectory = join(attemptDirectory, 'workspace')
-    const outputDirectory = join(attemptDirectory, 'output')
+    const outputDirectory = join(workspaceDirectory, 'output')
     await mkdir(workspaceDirectory, { recursive: true })
     await mkdir(outputDirectory, { recursive: true })
     for (const mount of compiled.manifest.input.file_mounts) {
@@ -367,6 +371,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         return
       }
 
+      let artifacts: Array<{ name: string; size: number }> = []
+      if (record.manifest.purpose === undefined && record.manifest.tools.some(tool => tool.id === 'write')) {
+        if (!this.configuration.collectArtifacts) throw new Error('成果收集服务不可用')
+        artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
+      }
       if (record.assistantText.length > 0) {
         this.emit(record, 'assistant.completed', record.assistantText, { committed: true })
       }
@@ -378,6 +387,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         output_tokens: evidence?.outputTokens ?? null,
         tool_call_count: evidence?.toolCallCount ?? 0,
         tool_result_count: evidence?.toolResultCount ?? 0,
+        artifact_count: artifacts.length,
         usage_source: evidence ? 'dsh-session-log' : 'unavailable',
       })
       this.finish(record)
@@ -549,6 +559,13 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
         `   - 读取路径：${file.mount_path.slice('/workspace/'.length)}`,
         `   - 媒体类型：${file.media_type}`,
       ].join('\n')),
+    ].join('\n'))
+  }
+  if (manifest.purpose === undefined && manifest.tools.some(tool => tool.id === 'write')) {
+    sections.push([
+      '# 成果文件',
+      '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本和 CSV 分别使用 output/<文件名>.md、.txt、.csv；不要写入其他目录。',
+      '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

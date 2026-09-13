@@ -77,7 +77,7 @@ interface EventRow {
 interface ArtifactRow {
   id: string
   name: string
-  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown'
+  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text'
   version: number
   sizeBytes: string | number
   createdAt: Date

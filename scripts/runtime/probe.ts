@@ -94,7 +94,9 @@ export async function runProbe(mode: ProbeMode, configuration: AcpProcessConfigu
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(root, `sessions-${index}`),
             DSH_WORK_DSH_SESSIONS_ROOT: join(root, `sessions-${index}`),
+            DSH_WORKSPACE_ROOT: workspaces[index]!,
             DSH_ALLOWED_TOOLS_JSON: JSON.stringify(mode === 'artifact' ? ['read', 'write'] : mode === 'tool' ? ['read'] : []),
+            DSH_TOOL_APPROVAL_MODE: 'never',
           },
           shutdownGraceMs: 5000,
         }, {

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
@@ -81,6 +84,35 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')
   assert.equal(usageRecord.department, '供应链中心')
+})
+
+test('validated Runtime output is published once as a downloadable Artifact', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '生成 Markdown 成果' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '生成生产欠料管理 PRD', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForTask(created.id, 'succeeded')
+  const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+  const manifest = attempt!.manifest as unknown as RuntimeManifest
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-publish-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  await writeFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), '# 生产欠料管理 PRD\n')
+
+  const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+  const repeated = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+  assert.deepEqual(first, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+  assert.deepEqual(repeated, first)
+
+  const task = await conversations.getTask(created.id, 'U00001')
+  assert.equal(task?.artifacts.length, 1)
+  assert.equal(task?.artifacts[0]?.name, '生产欠料管理PRD.md')
+  assert.equal(task?.artifacts[0]?.type, 'markdown')
+  const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+  const downloaded = await content.readFile(fileId, 'U00001')
+  assert.equal(downloaded.name, '生产欠料管理PRD.md')
+  assert.equal(downloaded.bytes.toString('utf8'), '# 生产欠料管理 PRD\n')
+  assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
 })
 
 test('a follow-up Run snapshots only the preceding messages from its product Session', async () => {

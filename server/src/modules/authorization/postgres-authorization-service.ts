@@ -658,10 +658,11 @@ export class PostgresAuthorizationService {
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
           join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
-           and t.status = 'available' and t.mode = 'read'
+           and t.status = 'available'
+           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace' and t.dsh_tool_name = 'write'))
            and tv.status = 'published' and c.status = 'healthy'
       `
-      if (!row) throw new Error(`工具不存在、未发布、不可用或不符合一期只读策略：${reference}`)
+      if (!row) throw authorizationDenied(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
       resolved.push({ reference, versionId: row.versionId, allowedRoleIds: row.allowedRoleIds, requiredDataScopes: row.requiredDataScopes })
     }
     return resolved

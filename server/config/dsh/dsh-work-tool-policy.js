@@ -8,7 +8,10 @@ const pathArguments = new Map([
   ['read', 'file_path'],
   ['glob', 'path'],
   ['grep', 'path'],
+  ['write', 'file_path'],
 ])
+
+const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
 
 /**
  * Apply the immutable Runtime Manifest tool allow-list before DSH executes a tool.
@@ -116,6 +119,16 @@ function validateExecution(execution, allowedTools, workspaceRoot) {
 
   const candidate = resolve(workspaceRoot, rawPath)
   if (!isWithin(workspaceRoot, candidate)) return `dsh-work 拒绝访问当前 Run 工作区之外的路径：${rawPath}`
+  if (execution.name === 'write') {
+    const outputRoot = resolve(workspaceRoot, 'output')
+    if (!isWithin(outputRoot, candidate) || candidate === outputRoot) {
+      return `dsh-work 只允许在当前 Run 的 output 目录生成成果：${rawPath}`
+    }
+    const extension = candidate.slice(candidate.lastIndexOf('.')).toLowerCase()
+    if (!writableArtifactExtensions.has(extension)) {
+      return 'dsh-work 文本成果仅支持 Markdown、TXT 和 CSV 文件'
+    }
+  }
 
   try {
     const canonicalCandidate = realpathWithMissingTail(candidate)

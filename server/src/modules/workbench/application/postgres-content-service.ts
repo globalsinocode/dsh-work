@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 
 import type { Artifact, Workspace } from '../../../domain/types.ts'
@@ -108,6 +108,18 @@ export interface PreparedRuntimeFile {
   fileId: string
   extractionId: string
   mount: FileMount
+}
+
+interface PreparedRuntimeArtifact {
+  artifactId: string
+  artifactVersionId: string
+  fileId: string
+  name: string
+  type: Artifact['type']
+  mimeType: string
+  bytes: Buffer
+  sha256: string
+  storageKey: string
 }
 
 export class PostgresContentService {
@@ -1133,6 +1145,119 @@ export class PostgresContentService {
     return prepared
   }
 
+  /**
+   * Collect task-local files only after DSH has completed its turn. Output is
+   * validated before one database transaction publishes immutable Artifact
+   * versions, so a partial or unsafe output set never appears in the UI.
+   */
+  async publishRuntimeArtifacts(input: {
+    manifest: import('../../runtime/runtime-types.ts').RuntimeManifest
+    workspaceDirectory: string
+  }): Promise<Array<{ name: string; size: number }>> {
+    const { manifest } = input
+    if (manifest.purpose !== undefined) return []
+    await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
+
+    const workspaceRoot = resolve(input.workspaceDirectory)
+    const outputRoot = resolve(workspaceRoot, 'output')
+    if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw new Error('Runtime 成果目录无效')
+    const entries = await readdir(outputRoot, { withFileTypes: true })
+    if (entries.length > 20) throw new Error('单次 Run 最多生成 20 个成果文件')
+
+    const prepared: PreparedRuntimeArtifact[] = []
+    let totalBytes = 0
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isFile() || entry.name.startsWith('.') || entry.name.includes('\0')) {
+        throw new Error(`成果目录只允许顶层普通文件：${entry.name}`)
+      }
+      const extension = extname(entry.name).toLowerCase()
+      const type = artifactTypeForExtension(extension)
+      if (!type) throw new Error(`成果文件格式不受支持：${entry.name}`)
+      const sourcePath = resolve(outputRoot, entry.name)
+      if (!sourcePath.startsWith(`${outputRoot}/`)) throw new Error(`成果文件路径无效：${entry.name}`)
+      const details = await lstat(sourcePath)
+      if (!details.isFile() || details.nlink !== 1) throw new Error(`成果文件不是独立普通文件：${entry.name}`)
+      if (details.size < 1 || details.size > 10 * 1024 * 1024) throw new Error(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
+      totalBytes += details.size
+      if (totalBytes > 20 * 1024 * 1024) throw new Error('单次 Run 成果文件合计不能超过 20 MB')
+      const bytes = await readFile(sourcePath)
+      const scan = await this.scanner.scan({ name: entry.name, mimeType: artifactMimeType(type), bytes })
+      if (!scan.clean) throw new Error(`成果文件安全检查未通过：${entry.name}`)
+      const contentSha256 = createHash('sha256').update(bytes).digest('hex')
+      const identity = createHash('sha256').update(`${manifest.attempt_id}\0${entry.name}\0${contentSha256}`).digest('hex').slice(0, 32)
+      const artifactIdentity = createHash('sha256').update(`${manifest.run_id}\0${entry.name}`).digest('hex').slice(0, 32)
+      prepared.push({
+        artifactId: `artifact-${artifactIdentity}`,
+        artifactVersionId: `artifact-version-${identity}`,
+        fileId: `file-artifact-${identity}`,
+        name: entry.name,
+        type,
+        mimeType: artifactMimeType(type),
+        bytes,
+        sha256: contentSha256,
+        storageKey: join('artifact-files', manifest.session_id, `file-artifact-${identity}${extension}`),
+      })
+    }
+
+    for (const artifact of prepared) await this.writeStorage(artifact.storageKey, artifact.bytes)
+    await this.database.begin(async transaction => {
+      const [run] = await transaction<{ id: string }[]>`
+        select r.id from runs r
+        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+         where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}
+           and r.current_attempt_id = ${manifest.attempt_id}
+           and r.session_id = ${manifest.session_id}
+           and r.requested_by = ${manifest.user_context.user_id}
+           and s.workspace_id = ${manifest.workspace_id}
+           and s.created_by = ${manifest.user_context.user_id}
+           and s.status = 'active'
+         for update of r
+      `
+      if (!run) throw authorizationDenied('Run 已变化，不能发布成果文件')
+
+      for (const artifact of prepared) {
+        const [existing] = await transaction<{ id: string }[]>`
+          select id from artifact_versions
+           where tenant_id = ${tenantId} and id = ${artifact.artifactVersionId}
+        `
+        if (existing) continue
+        await transaction`
+          insert into file_objects (
+            id, tenant_id, workspace_id, session_id, storage_key, original_name,
+            mime_type, size_bytes, sha256, scan_status, uploaded_by
+          ) values (
+            ${artifact.fileId}, ${tenantId}, ${manifest.workspace_id}, ${manifest.session_id},
+            ${artifact.storageKey}, ${artifact.name}, ${artifact.mimeType}, ${artifact.bytes.length},
+            ${artifact.sha256}, 'clean', ${manifest.user_context.user_id}
+          )
+        `
+        await transaction`
+          insert into artifacts (
+            id, tenant_id, workspace_id, session_id, name, artifact_type, created_by
+          ) values (
+            ${artifact.artifactId}, ${tenantId}, ${manifest.workspace_id}, ${manifest.session_id},
+            ${artifact.name}, ${artifact.type}, ${manifest.user_context.user_id}
+          )
+          on conflict (id) do nothing
+        `
+        const [version] = await transaction<{ versionNo: number }[]>`
+          select coalesce(max(version_no), 0)::integer + 1 as "versionNo"
+            from artifact_versions
+           where tenant_id = ${tenantId} and artifact_id = ${artifact.artifactId}
+        `
+        await transaction`
+          insert into artifact_versions (
+            id, tenant_id, artifact_id, version_no, file_object_id, source_run_id
+          ) values (
+            ${artifact.artifactVersionId}, ${tenantId}, ${artifact.artifactId},
+            ${version?.versionNo ?? 1}, ${artifact.fileId}, ${manifest.run_id}
+          )
+        `
+      }
+    })
+    return prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length }))
+  }
+
   async getRunInputFileIds(runId: string) {
     const rows = await this.database<{ fileId: string }[]>`
       select rif.file_id as "fileId" from run_input_files rif
@@ -1379,6 +1504,20 @@ function detectedType(extension: string): 'pdf' | 'docx' | 'xlsx' | 'csv' | 'tex
   if (extension === '.xlsx') return 'xlsx'
   if (extension === '.csv') return 'csv'
   return 'text'
+}
+
+function artifactTypeForExtension(extension: string): Artifact['type'] | null {
+  if (extension === '.md') return 'markdown'
+  if (extension === '.txt') return 'text'
+  if (extension === '.csv') return 'csv'
+  return null
+}
+
+function artifactMimeType(type: Artifact['type']) {
+  if (type === 'markdown') return 'text/markdown; charset=utf-8'
+  if (type === 'csv') return 'text/csv; charset=utf-8'
+  if (type === 'text') return 'text/plain; charset=utf-8'
+  return 'application/octet-stream'
 }
 
 function safeMountName(name: string, index: number) {

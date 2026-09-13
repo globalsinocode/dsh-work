@@ -116,6 +116,10 @@ async function start() {
     await preflightDshRuntime(dshInstallation)
     const pythonRunner = process.env.DSH_WORK_PYTHON_IMAGE ? new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE) : null
     await pythonRunner?.preflight()
+    const conversations = new PostgresConversationRepository(database)
+    const authorization = new PostgresAuthorizationService(database)
+    const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
+    const runs = new PostgresRunRepository(database)
     const runtime: DshAcpRuntimeAdapter = new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -130,12 +134,9 @@ async function start() {
       loadSkillArtifact: skill => skillArtifacts.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
       recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
       recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
+      collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
       ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
     })
-    const conversations = new PostgresConversationRepository(database)
-    const authorization = new PostgresAuthorizationService(database)
-    const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
-    const runs = new PostgresRunRepository(database)
     const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
     const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
     const workspaceActivity = new PostgresWorkspaceActivityService(database, new PostgresWorkspaceService(database))

@@ -205,11 +205,12 @@ export class PostgresToolConnectorService {
         select tv.id from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
-         where t.tenant_id = ${tenantId} and t.id = ${id} and t.mode = 'read'
+         where t.tenant_id = ${tenantId} and t.id = ${id}
+           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace' and t.dsh_tool_name = 'write'))
            and t.status = 'available' and c.status = 'healthy'
            and tv.version = ${version} and tv.status = 'published'
       `
-      if (!row) throw new Error(`工具不存在、未发布、不可用或不是一期只读工具：${reference}`)
+      if (!row) throw new Error(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
     }
   }
 

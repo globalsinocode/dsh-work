@@ -4,7 +4,7 @@ import { Download, Document } from '@element-plus/icons-vue'
 
 interface ArtifactCardItem {
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown'
+  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text'
   version: number
   size: string
   createdAt: string
