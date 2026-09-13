@@ -15,13 +15,18 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function render(canManage = true, initial = '/capabilities') {
+async function render(canManage = true, initial = '/skills') {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().$patch({ permissions: canManage ? ['admin:write'] : ['admin:read'] })
   const content = useContentStore()
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/capabilities', component: CapabilityManagementView }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [
+    { path: '/skills', component: CapabilityManagementView },
+    { path: '/skills/install', component: CapabilityManagementView },
+    { path: '/tools', component: CapabilityManagementView },
+    { path: '/connectors', component: CapabilityManagementView },
+  ] })
   await router.push(initial)
   await router.isReady()
   const wrapper = mount(CapabilityManagementView, { global: { plugins: [pinia, router, ElementPlus], stubs: { teleport: true } } })
@@ -50,11 +55,11 @@ function strictDraftSkill(): import('../types/domain').SkillDefinition {
 describe('Skill installation sibling tab', () => {
   it('opens the dedicated tab, removes the old create dialog, and preserves inputs across tabs', async () => {
     const { wrapper, router } = await render()
-    expect(wrapper.findAll('[role="tablist"][aria-label="能力类型"] [role="tab"]').map(tab => tab.text())).toEqual(['Skill 中心 0', '新增 Skill', '工具目录 0', '连接器状态 0'])
+    expect(wrapper.findAll('[role="tablist"][aria-label="Skill 管理"] [role="tab"]').map(tab => tab.text())).toEqual(['Skill 列表 0', '新增 Skill'])
     expect(wrapper.find('[data-action="create-skills"]').exists()).toBe(false)
     await wrapper.get('#capability-tab-install').trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.query.tab).toBe('install')
+    expect(router.currentRoute.value.path).toBe('/skills/install')
     expect(wrapper.get('#capability-panel-install').isVisible()).toBe(true)
     expect(wrapper.find('.capability-toolbar').exists()).toBe(false)
     const fileInput = wrapper.get('input[type="file"]')
@@ -70,7 +75,7 @@ describe('Skill installation sibling tab', () => {
   })
 
   it('hides installation from readers even for a direct URL and responds to permission revocation', async () => {
-    const { wrapper, auth } = await render(false, '/capabilities?tab=install')
+    const { wrapper, auth } = await render(false, '/skills/install')
     expect(wrapper.find('#capability-tab-install').exists()).toBe(false)
     expect(wrapper.find('#capability-panel-install').exists()).toBe(false)
     expect(wrapper.get('#capability-tab-skills').attributes('aria-selected')).toBe('true')
@@ -86,10 +91,26 @@ describe('Skill installation sibling tab', () => {
     const { wrapper, router } = await render()
     await wrapper.get('#capability-tab-skills').trigger('keydown', { key: 'ArrowRight' })
     await flushPromises()
-    expect(router.currentRoute.value.query.tab).toBe('install')
+    expect(router.currentRoute.value.path).toBe('/skills/install')
     await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'End' })
     await flushPromises()
-    expect(router.currentRoute.value.query.tab).toBe('connectors')
+    expect(router.currentRoute.value.path).toBe('/skills/install')
+    await wrapper.get('#capability-tab-install').trigger('keydown', { key: 'ArrowLeft' })
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/skills')
+  })
+
+  it('renders tools and connectors as independent pages without the Skill tabs', async () => {
+    const { wrapper, router } = await render(true, '/tools')
+    expect(wrapper.find('[role="tablist"][aria-label="Skill 管理"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="工具列表"]').attributes('aria-label')).toBe('工具列表')
+    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索工具名称、标识或系统')
+    expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
+
+    await router.push('/connectors')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="连接器列表"]').attributes('aria-label')).toBe('连接器列表')
+    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索连接器或企业系统')
   })
 
   it('groups dependency Skills under their installation entry', async () => {
@@ -111,7 +132,7 @@ describe('Skill installation sibling tab', () => {
     content.skills.splice(0, content.skills.length, root, dependency)
     await flushPromises()
 
-    expect(wrapper.get('#capability-tab-skills').text()).toContain('Skill 中心 1')
+    expect(wrapper.get('#capability-tab-skills').text()).toContain('Skill 列表 1')
     expect(wrapper.findAll('[data-action="view-skill"]')).toHaveLength(1)
     expect(wrapper.get('.skill-primary-cell').text()).toContain('入口 Skill')
     expect(wrapper.get('.skill-dependencies').text()).toContain('依赖 1')

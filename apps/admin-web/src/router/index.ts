@@ -12,7 +12,10 @@ const router = createRouter({
     { path: '/admin/overview', redirect: '/overview' },
     { path: '/admin/assistant', redirect: '/assistant' },
     { path: '/admin/agents', redirect: '/agents' },
-    { path: '/admin/capabilities', redirect: '/capabilities' },
+    { path: '/admin/capabilities', redirect: to => legacyCapabilityRedirect(to.query.tab) },
+    { path: '/admin/skills', redirect: '/skills' },
+    { path: '/admin/tools', redirect: '/tools' },
+    { path: '/admin/connectors', redirect: '/connectors' },
     { path: '/admin/runtimes', redirect: '/runtimes' },
     { path: '/admin/sessions', redirect: '/sessions' },
     { path: '/admin/workspaces', redirect: '/workspaces' },
@@ -54,9 +57,31 @@ const router = createRouter({
     },
     {
       path: '/capabilities',
-      name: 'capabilities',
+      redirect: to => legacyCapabilityRedirect(to.query.tab),
+    },
+    {
+      path: '/skills',
+      name: 'skills',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: 'Skill 与工具', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Skill 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/skills/install',
+      name: 'skill-install',
+      component: () => import('@/views/CapabilityManagementView.vue'),
+      meta: { title: '新增 Skill', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/tools',
+      name: 'tools',
+      component: () => import('@/views/CapabilityManagementView.vue'),
+      meta: { title: '工具管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/connectors',
+      name: 'connectors',
+      component: () => import('@/views/CapabilityManagementView.vue'),
+      meta: { title: '连接器管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/model-governance',
@@ -162,4 +187,11 @@ export default router
 function errorStatus(cause: unknown) {
   if (typeof cause !== 'object' || cause === null || !('status' in cause)) return 0
   return typeof cause.status === 'number' ? cause.status : 0
+}
+
+function legacyCapabilityRedirect(tab: unknown) {
+  if (tab === 'install') return '/skills/install'
+  if (tab === 'tools') return '/tools'
+  if (tab === 'connectors') return '/connectors'
+  return '/skills'
 }

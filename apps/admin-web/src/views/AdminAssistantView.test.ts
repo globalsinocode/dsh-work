@@ -16,7 +16,7 @@ async function render(canManage = true, saved = false) {
   const store = useAdminAssistantStore()
   vi.spyOn(adminApi, 'getAssistantConversation').mockResolvedValue(conversationFixture())
   vi.spyOn(adminApi, 'getAssistantConversations').mockResolvedValue([])
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/assistant', component: AdminAssistantView }, { path: '/capabilities', component: { template: '<div>Skill 中心</div>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/assistant', component: AdminAssistantView }, { path: '/skills', component: { template: '<div>Skill 管理</div>' } }] })
   await router.push(`/assistant${saved ? `?conversation=${conversationFixture().id}` : ''}`); await router.isReady()
   const wrapper = mount(AdminAssistantView, { global: { plugins: [pinia, router, ElementPlus] } }); wrappers.push(wrapper); await flushPromises()
   return { wrapper, store, auth, router }
@@ -35,7 +35,7 @@ describe('real Skill installation conversation', () => {
     expect(confirm).toHaveBeenCalledWith('run-1', 'd'.repeat(64))
     expect(wrapper.text()).toContain('Skill 已安装')
     expect(wrapper.text()).toContain('已安装完成，并保存为 v0.1.0 待验证草稿')
-    expect(wrapper.text()).toContain('前往 Skill 中心验证并发布')
+    expect(wrapper.text()).toContain('前往 Skill 管理验证并发布')
     expect(wrapper.text()).toContain('查看已确认的安装计划')
   })
   it('preserves input and the idempotency key after an uncertain request failure', async () => {

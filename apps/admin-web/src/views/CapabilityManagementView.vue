@@ -17,17 +17,17 @@ const contentStore = useContentStore()
 const router = useRouter()
 const route = useRoute()
 const activeTab = computed<CapabilityTab>(() => {
-  const tab = route.query.tab
-  if (tab === 'install') return authStore.canManage ? 'install' : 'skills'
-  return tab === 'tools' || tab === 'connectors' ? tab : 'skills'
+  if (route.path === '/skills/install') return authStore.canManage ? 'install' : 'skills'
+  if (route.path === '/tools') return 'tools'
+  if (route.path === '/connectors') return 'connectors'
+  return 'skills'
 })
 const managedSkills = computed(() => contentStore.skills.filter(skill => skill.installationRole !== 'dependency'))
 const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }>>(() => [
-  { id: 'skills', label: 'Skill 中心', count: managedSkills.value.length },
+  { id: 'skills', label: 'Skill 列表', count: managedSkills.value.length },
   ...(authStore.canManage ? [{ id: 'install' as const, label: '新增 Skill' }] : []),
-  { id: 'tools', label: '工具目录', count: contentStore.tools.length },
-  { id: 'connectors', label: '连接器状态', count: contentStore.connectors.length },
 ])
+const skillSection = computed(() => activeTab.value === 'skills' || activeTab.value === 'install')
 const query = ref('')
 const detailOpen = ref(false)
 const detailTitle = ref('')
@@ -84,7 +84,13 @@ const filteredConnectors = computed(() => {
 })
 function switchTab(tab: CapabilityTab) {
   query.value = ''
-  void router.replace({ query: { ...route.query, tab: tab === 'skills' ? undefined : tab } })
+  const paths: Record<CapabilityTab, string> = {
+    skills: '/skills',
+    install: '/skills/install',
+    tools: '/tools',
+    connectors: '/connectors',
+  }
+  void router.push(paths[tab])
 }
 
 function navigateTabs(event: KeyboardEvent) {
@@ -483,13 +489,13 @@ onUnmounted(() => clearSkillTestPoll())
     />
 
     <section class="content-panel filter-panel capability-filters">
-      <div class="status-tabs" role="tablist" aria-label="能力类型" @keydown="navigateTabs">
+      <div v-if="skillSection" class="status-tabs" role="tablist" aria-label="Skill 管理" @keydown="navigateTabs">
         <button v-for="tab in tabs" :id="`capability-tab-${tab.id}`" :key="tab.id" class="status-tab" :class="{ active: activeTab === tab.id }" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`capability-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" @click="switchTab(tab.id)">{{ tab.label }} <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span></button>
       </div>
       <div v-if="activeTab !== 'install'" class="filter-bar capability-toolbar">
         <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索工具名称、标识或系统' : '搜索连接器或企业系统'" />
         <div v-if="activeTab === 'skills'" class="capability-toolbar__legend"><span>版本发布后不可变</span></div>
-        <el-button @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
+        <el-button v-if="activeTab === 'skills'" @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
         <el-button v-if="authStore.canManage && activeTab === 'connectors'" :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
       </div>
     </section>
@@ -498,7 +504,7 @@ onUnmounted(() => clearSkillTestPoll())
       <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
-    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="`capability-tab-${activeTab}`">
+    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? '工具列表' : activeTab === 'connectors' ? '连接器列表' : undefined">
       <el-table v-if="activeTab === 'skills'" class="data-table" v-loading="contentStore.loading" :data="filteredSkills" empty-text="暂无匹配的 Skill">
         <el-table-column label="Skill" min-width="360">
           <template #default="scope">

@@ -3,6 +3,8 @@ import { computed, ref, watch, type Component } from 'vue'
 import {
   ArrowRight,
   ChatDotRound,
+  Collection,
+  Connection,
   Cpu,
   DataAnalysis,
   FolderOpened,
@@ -62,7 +64,9 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     label: 'Agent 治理',
     items: [
       { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'admin' },
-      { label: 'Skill 与工具', path: '/capabilities', icon: Tools, permission: 'admin' },
+      { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
+      { label: '工具管理', path: '/tools', icon: Tools, permission: 'admin' },
+      { label: '连接器管理', path: '/connectors', icon: Connection, permission: 'admin' },
     ],
   },
   {
