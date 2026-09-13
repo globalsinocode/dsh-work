@@ -252,6 +252,14 @@ export const useContentStore = defineStore('admin-content', () => {
     return adminApi.testSkill({ skillId, prompt })
   }
 
+  function startSkillTestRun(skillId: string, prompt: string) {
+    return adminApi.startSkillTestRun({ skillId, prompt })
+  }
+
+  function getSkillTestRun(skillId: string, runId: string) {
+    return adminApi.getSkillTestRun(skillId, runId)
+  }
+
   async function setSkillStatus(
     skillId: string,
     status: 'published' | 'disabled',
@@ -347,6 +355,8 @@ export const useContentStore = defineStore('admin-content', () => {
     updateSkill,
     setSkillStatus,
     testSkill,
+    startSkillTestRun,
+    getSkillTestRun,
     rollbackSkill,
     setToolStatus,
     checkConnector,

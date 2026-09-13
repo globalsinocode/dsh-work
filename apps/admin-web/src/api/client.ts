@@ -28,6 +28,7 @@ import type {
   SessionDefinition,
   SkillDefinition,
   SkillReleaseRecord,
+  SkillTestRunProgress,
   SkillVersionRecord,
   ToolDefinition,
   UpdateAgentDraftInput,
@@ -182,6 +183,10 @@ export const adminApi = {
     request<{ skill: SkillDefinition; version: SkillVersionRecord }>('/skills', { method: 'PATCH', body: JSON.stringify(input) }),
   testSkill: (input: { skillId: string; prompt?: string }) =>
     request<{ id: string; skillId: string; version: string; status: 'passed' | 'failed'; resultSummary: string; testedAt: string }>('/skills/test', { method: 'POST', body: JSON.stringify(input) }),
+  startSkillTestRun: (input: { skillId: string; prompt?: string }) =>
+    request<SkillTestRunProgress>('/skills/test-runs', { method: 'POST', body: JSON.stringify(input) }),
+  getSkillTestRun: (skillId: string, runId: string) =>
+    request<SkillTestRunProgress>(`/skills/${encodeURIComponent(skillId)}/test-runs/${encodeURIComponent(runId)}`),
   setSkillStatus: (input: { skillId: string; status: 'published' | 'disabled' }) =>
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/status', { method: 'PATCH', body: JSON.stringify(input) }),
   rollbackSkill: (input: { skillId: string; version: string }) =>

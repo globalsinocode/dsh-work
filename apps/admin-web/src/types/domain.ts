@@ -312,6 +312,22 @@ export interface SkillReleaseRecord {
   note: string
 }
 
+export interface SkillTestRunProgress {
+  runId: string
+  skillId: string
+  version: string
+  status: 'queued' | 'running' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
+  resultSummary?: string
+  testedAt?: string
+  steps: Array<{
+    id: string
+    title: string
+    description: string
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    occurredAt?: string
+  }>
+}
+
 export interface SkillConfiguration {
   id: string
   name: string

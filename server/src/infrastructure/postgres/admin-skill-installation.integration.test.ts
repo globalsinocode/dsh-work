@@ -115,8 +115,20 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     skills.setPackageTester(async () => ({ passed: false, summary: 'Runtime failed', runId: 'failed-test' }))
     assert.equal((await skills.testSkill({ skillId, actor })).status, 'failed')
     await assert.rejects(skills.setStatus({ skillId, actor, status: 'published' }), /测试/)
-    skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
-    assert.equal((await skills.testSkill({ skillId, actor })).status, 'passed')
+    skills.setPackageTestLifecycle({
+      start: (userId, skill, prompt) => service.startPackageTest(userId, skill, prompt),
+      progress: (userId, skill, testRunId) => service.packageTestProgress(userId, skill, testRunId),
+    })
+    const startedTest = await skills.startSkillTest({ skillId, actor })
+    assert.ok(['queued', 'running', 'passed'].includes(startedTest.status))
+    assert.equal(startedTest.steps[0]?.title, '创建严格试运行')
+    let testProgress = startedTest
+    for (let index = 0; index < 150 && ['queued', 'running', 'cancel_requested'].includes(testProgress.status); index++) {
+      await delay(100)
+      testProgress = await skills.getSkillTestProgress({ skillId, runId: startedTest.runId, actor })
+    }
+    assert.equal(testProgress.status, 'passed', testProgress.resultSummary)
+    assert.ok(testProgress.steps.some(step => step.id.startsWith('activation:') && step.status === 'completed'))
     await skills.setStatus({ skillId, actor, status: 'published' })
     const resolved = await skills.resolveRuntimeSkills([`${skillId}@0.1.0`])
     assert.equal((await artifactStore.read(resolved[0]!.artifact!)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')

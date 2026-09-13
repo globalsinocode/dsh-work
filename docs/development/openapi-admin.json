@@ -242,7 +242,33 @@
     "/skills/test": {
       "post": {
         "operationId": "testSkill",
-        "summary": "校验当前 Skill 草稿并持久化配置指纹证据",
+        "summary": "兼容接口：同步校验当前 Skill 草稿并持久化配置指纹证据",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/skills/test-runs": {
+      "post": {
+        "operationId": "startSkillTestRun",
+        "summary": "启动 Skill 严格试运行并立即返回 Run 标识与初始进度",
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/skills/{skillId}/test-runs/{runId}": {
+      "get": {
+        "operationId": "getSkillTestRun",
+        "summary": "读取 Skill 严格试运行的真实 Run、激活与脚本执行进度",
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "runId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

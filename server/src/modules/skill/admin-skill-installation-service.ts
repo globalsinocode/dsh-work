@@ -12,6 +12,22 @@ import { acquireSkillSource, continueSkillSource, parseSkillSource, type SkillSo
 import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
 const tenant = 'tenant-dsh-work'
+type SkillTestRunStatus = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+export interface SkillTestProgressStep {
+  id: string
+  title: string
+  description: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  occurredAt?: string
+}
+export interface PackageTestProgress {
+  runId: string
+  sessionId: string
+  status: SkillTestRunStatus
+  passed?: boolean
+  summary?: string
+  steps: SkillTestProgressStep[]
+}
 type InstallationSource = SkillSource | { kind: 'zip'; fileName: string }
 type InstallationResultType = 'created' | 'updated' | 'duplicate'
 interface InstallationRow {
@@ -40,31 +56,89 @@ export class AdminSkillInstallationService {
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
+    const started = await this.startPackageTest(userId, skill, prompt)
+    for (let count = 0; count < 200; count++) {
+      const progress = await this.packageTestProgress(userId, skill, started.runId)
+      if (['succeeded', 'failed', 'cancelled'].includes(progress.status)) {
+        return { passed: progress.passed ?? false, summary: progress.summary ?? 'DSH 试运行未产生结果', runId: progress.runId }
+      }
+      await delay(1000)
+    }
+    await this.orchestration.cancelAdminRun(started.runId, userId)
+    return { passed: false, summary: 'DSH 试运行超时，请检查 Runtime 后重试', runId: started.runId }
+  }
+
+  async startPackageTest(userId: string, skill: RuntimeSkillConfiguration, prompt: string): Promise<PackageTestProgress> {
     await this.authorization.requirePlatformAdmin(userId)
     const sessionId = `admin-session-${randomUUID()}`
     await this.db`insert into sessions (id, tenant_id, created_by, title, status, audience, workspace_id, agent_version_id)
       values (${sessionId}, ${tenant}, ${userId}, ${`Skill 试运行 ${skill.id}`}, 'active', 'admin', null, null)`
     const run = await this.orchestration.startAdminRun({ userId, sessionId, prompt, idempotencyKey: randomUUID(), source: '', testSkill: skill })
-    for (let count = 0; count < 200; count++) {
-      const detail = await this.detail(userId, sessionId)
-      const current = detail.runs.find(item => item.id === run.id)
-      if (current && ['succeeded', 'failed', 'cancelled'].includes(current.status)) {
-        const requiredSkillIds = [skill.id, ...flattenDependencies(skill).map(item => item.id)]
-        const activations = await this.db<{ skillId: string }[]>`select skill_id as "skillId" from skill_runtime_activations where tenant_id = ${tenant} and run_id = ${run.id} and skill_id in ${this.db(requiredSkillIds)}`
-        const activatedIds = new Set(activations.map(item => item.skillId))
-        const missingActivations = requiredSkillIds.filter(id => !activatedIds.has(id))
-        const pythonSkillIds = [skill, ...flattenDependencies(skill)].filter(item => item.files?.some(file => file.path.endsWith('.py'))).map(item => item.id)
-        const pythonExecutions = pythonSkillIds.length ? await this.db<{ skillId: string }[]>`select distinct skill_id as "skillId" from skill_python_executions where tenant_id = ${tenant} and run_id = ${run.id} and succeeded = true and skill_id in ${this.db(pythonSkillIds)}` : []
-        const executedPythonIds = new Set(pythonExecutions.map(item => item.skillId))
-        const missingPython = pythonSkillIds.filter(id => !executedPythonIds.has(id))
-        const assistantSummary = detail.messages.filter(message => message.role === 'assistant').map(message => message.text).join('\n').slice(0, 6000)
-        const passed = current.status === 'succeeded' && missingActivations.length === 0 && missingPython.length === 0 && Boolean(assistantSummary)
-        return { passed, summary: passed ? assistantSummary : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : current.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`, runId: run.id }
-      }
-      await delay(1000)
-    }
-    await this.orchestration.cancelAdminRun(run.id, userId)
-    return { passed: false, summary: 'DSH 试运行超时，请检查 Runtime 后重试', runId: run.id }
+    return this.packageTestProgress(userId, skill, run.id)
+  }
+
+  async packageTestProgress(userId: string, skill: RuntimeSkillConfiguration, runId: string): Promise<PackageTestProgress> {
+    await this.authorization.requirePlatformAdmin(userId)
+    const owned = await this.requireRun(userId, runId)
+    const [attempt] = await this.db<{ manifest: RuntimeManifest; createdAt: Date; startedAt: Date | null; endedAt: Date | null }[]>`
+      select manifest, created_at as "createdAt", started_at as "startedAt", ended_at as "endedAt"
+        from run_attempts where tenant_id = ${tenant} and run_id = ${runId}
+        order by attempt_no desc limit 1
+    `
+    if (!attempt || attempt.manifest.purpose !== 'admin-skill-test') throw new Error('Skill 试运行不存在或类型不匹配')
+    const expectedReference = `${skill.id}@${skill.version}`
+    if (!attempt.manifest.skills.some(reference => `${reference.id}@${reference.version}` === expectedReference)) throw new Error('Skill 试运行版本已变化，请重新发起')
+
+    const catalog = [skill, ...flattenDependencies(skill)]
+    const requiredSkillIds = catalog.map(item => item.id)
+    const activations = await this.db<{ skillId: string; skillVersion: string; createdAt: Date }[]>`
+      select skill_id as "skillId", skill_version as "skillVersion", created_at as "createdAt"
+        from skill_runtime_activations where tenant_id = ${tenant} and run_id = ${runId}
+        order by created_at
+    `
+    const pythonSkillIds = catalog.filter(item => item.files?.some(file => file.path.endsWith('.py'))).map(item => item.id)
+    const pythonExecutions = await this.db<{ skillId: string; entry: string; succeeded: boolean; createdAt: Date }[]>`
+      select skill_id as "skillId", entry_path as entry, succeeded, created_at as "createdAt"
+        from skill_python_executions where tenant_id = ${tenant} and run_id = ${runId}
+        order by created_at
+    `
+    const events = await this.db<{ eventType: string; displayMessage: string | null; occurredAt: Date }[]>`
+      select event_type as "eventType", display_message as "displayMessage", occurred_at as "occurredAt"
+        from run_events where tenant_id = ${tenant} and run_id = ${runId}
+        order by stream_position, sequence
+    `
+    const assistantMessages = await this.db<{ text: string }[]>`
+      select content as text from messages where tenant_id = ${tenant} and session_id = ${owned.sessionId}
+        and run_id = ${runId} and role = 'assistant' order by created_at, id
+    `
+    const activatedIds = new Set(activations.map(item => item.skillId))
+    const executedPythonIds = new Set(pythonExecutions.filter(item => item.succeeded).map(item => item.skillId))
+    const missingActivations = requiredSkillIds.filter(id => !activatedIds.has(id))
+    const missingPython = pythonSkillIds.filter(id => !executedPythonIds.has(id))
+    const terminal = ['succeeded', 'failed', 'cancelled'].includes(owned.status)
+    const assistantSummary = assistantMessages.map(message => message.text).join('\n').slice(0, 6000)
+    const passed = owned.status === 'succeeded' && missingActivations.length === 0 && missingPython.length === 0 && Boolean(assistantSummary)
+    const summary = terminal
+      ? passed ? assistantSummary : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : owned.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`
+      : undefined
+    const workerStarted = events.find(event => event.eventType === 'run.started')
+    const activeStatus = (completed: boolean, running: boolean): SkillTestProgressStep['status'] => completed ? 'completed' : terminal ? 'failed' : running ? 'running' : 'pending'
+    const steps: SkillTestProgressStep[] = [
+      { id: 'created', title: '创建严格试运行', description: `已锁定 ${skill.name ?? skill.id}@${skill.version}，Run ${runId}`, status: 'completed', occurredAt: attempt.createdAt.toISOString() },
+      { id: 'scheduled', title: '等待 Runtime 调度', description: owned.status === 'queued' ? '正在等待可用的 DSH Worker' : 'Runtime 已接收本次试运行', status: owned.status === 'queued' ? 'running' : 'completed', occurredAt: attempt.startedAt?.toISOString() },
+      { id: 'worker', title: '启动 DSH Worker', description: workerStarted?.displayMessage ?? (owned.status === 'queued' ? '尚未启动' : '正在启动并加载固定 Runtime Manifest'), status: activeStatus(Boolean(workerStarted), owned.status === 'running'), occurredAt: workerStarted?.occurredAt.toISOString() },
+      ...catalog.map((item, index) => {
+        const activation = activations.find(row => row.skillId === item.id)
+        return { id: `activation:${item.id}`, title: `${index === 0 ? '激活根 Skill' : '激活依赖 Skill'}：${item.name ?? item.id}`, description: activation ? `已校验 ${activation.skillId}@${activation.skillVersion} 的锁定内容摘要` : '等待 DSH 调用 activate_skill', status: activeStatus(Boolean(activation), owned.status === 'running' && (index === 0 || activatedIds.has(catalog[index - 1]!.id))), ...(activation ? { occurredAt: activation.createdAt.toISOString() } : {}) }
+      }),
+      ...pythonSkillIds.map(skillId => {
+        const executions = pythonExecutions.filter(row => row.skillId === skillId)
+        const successful = executions.find(row => row.succeeded)
+        return { id: `python:${skillId}`, title: `执行 Python 验证：${skillId}`, description: successful ? `沙箱入口 ${successful.entry} 执行成功` : executions.length ? `沙箱入口执行失败：${executions.at(-1)!.entry}` : '等待 DSH 调用 python_execute', status: activeStatus(Boolean(successful), owned.status === 'running' && activatedIds.has(skillId)), ...(successful ? { occurredAt: successful.createdAt.toISOString() } : {}) }
+      }),
+      { id: 'result', title: '生成并核验试运行结果', description: summary ?? (owned.status === 'running' ? 'DSH 正在处理测试输入并生成结果' : '等待前置步骤完成'), status: terminal ? (passed ? 'completed' : 'failed') : owned.status === 'running' ? 'running' : 'pending', ...(attempt.endedAt ? { occurredAt: attempt.endedAt.toISOString() } : {}) },
+    ]
+    return { runId, sessionId: owned.sessionId, status: owned.status as SkillTestRunStatus, ...(terminal ? { passed, summary } : {}), steps }
   }
 
   async send(userId: string, input: { sessionId: string; message: string; requestId: string }) {

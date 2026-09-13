@@ -167,6 +167,10 @@ async function start() {
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
     const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
+    skills.setPackageTestLifecycle({
+      start: (userId, skill, prompt) => installationService.startPackageTest(userId, skill, prompt),
+      progress: (userId, skill, runId) => installationService.packageTestProgress(userId, skill, runId),
+    })
     registerAssistantRoutes(router, installationService)
     registerSkillInstallationRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()

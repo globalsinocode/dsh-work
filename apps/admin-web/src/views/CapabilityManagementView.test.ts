@@ -1,4 +1,4 @@
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -11,6 +11,7 @@ import { useContentStore } from '../stores/content'
 const wrappers: VueWrapper[] = []
 afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -23,7 +24,7 @@ async function render(canManage = true, initial = '/capabilities') {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/capabilities', component: CapabilityManagementView }] })
   await router.push(initial)
   await router.isReady()
-  const wrapper = mount(CapabilityManagementView, { global: { plugins: [pinia, router, ElementPlus] } })
+  const wrapper = mount(CapabilityManagementView, { global: { plugins: [pinia, router, ElementPlus], stubs: { teleport: true } } })
   wrappers.push(wrapper)
   await flushPromises()
   return { wrapper, router, auth: useAuthStore(), content }
@@ -91,40 +92,59 @@ describe('Skill installation sibling tab', () => {
     expect(router.currentRoute.value.query.tab).toBe('connectors')
   })
 
-  it('shows persistent progress and success feedback for a strict Skill test', async () => {
+  it('opens a progress dialog immediately and polls the real strict test run', async () => {
     const { wrapper, content } = await render()
     const skill = strictDraftSkill()
     content.skills.push(skill)
     await flushPromises()
-    let resolveTest!: (value: { id: string; skillId: string; version: string; status: 'passed'; resultSummary: string; testedAt: string }) => void
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(undefined as never)
-    vi.spyOn(content, 'testSkill').mockReturnValue(new Promise(resolve => { resolveTest = resolve }))
-    vi.spyOn(content, 'setSkillStatus').mockResolvedValue({ ...skill, status: 'published', activeVersion: skill.version })
+    let resolveStart!: (value: import('../types/domain').SkillTestRunProgress) => void
+    vi.spyOn(content, 'startSkillTestRun').mockReturnValue(new Promise(resolve => { resolveStart = resolve }))
+    const getProgress = vi.spyOn(content, 'getSkillTestRun').mockResolvedValue({
+      runId: 'run-strict-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成：已激活 Skill。', testedAt: '2026-09-13T15:01:00.000Z',
+      steps: [{ id: 'result', title: '生成并核验试运行结果', description: '全部门禁通过', status: 'completed' }],
+    })
     await wrapper.get('[data-action="publish-skill"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('正在严格试运行')
-    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('DSH 试运行')
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('正在创建 DSH 严格试运行')
+    expect(wrapper.find('[data-testid="skill-action-feedback"]').exists()).toBe(false)
 
-    resolveTest({ id: 'test-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成：已激活 Skill。', testedAt: '2026-09-13 15:01' })
+    vi.useFakeTimers()
+    resolveStart({
+      runId: 'run-strict-1', skillId: skill.id, version: skill.version, status: 'running',
+      steps: [{ id: 'activation', title: '激活根 Skill', description: '等待 DSH 调用 activate_skill', status: 'running' }],
+    })
     await flushPromises()
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('Run run-strict-1')
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('激活根 Skill')
 
-    expect(content.setSkillStatus).toHaveBeenCalledWith(skill.id, 'published')
-    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('Skill 已发布')
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(getProgress).toHaveBeenCalledWith(skill.id, 'run-strict-1')
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('试运行通过')
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('DSH 试运行完成')
   })
 
-  it('keeps a visible result when the administrator postpones publication', async () => {
+  it('publishes only after the administrator confirms the completed result', async () => {
     const { wrapper, content } = await render()
     const skill = strictDraftSkill()
     content.skills.push(skill)
     await flushPromises()
-    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(undefined as never).mockRejectedValueOnce('cancel')
-    vi.spyOn(content, 'testSkill').mockResolvedValue({ id: 'test-1', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: 'DSH 试运行完成。', testedAt: '2026-09-13 15:01' })
-    const publish = vi.spyOn(content, 'setSkillStatus')
+    vi.spyOn(content, 'startSkillTestRun').mockResolvedValue({
+      runId: 'run-strict-2', skillId: skill.id, version: skill.version, status: 'passed', resultSummary: '根 Skill 与依赖均已激活。', testedAt: '2026-09-13T15:01:00.000Z',
+      steps: [{ id: 'result', title: '生成并核验试运行结果', description: '全部门禁通过', status: 'completed' }],
+    })
+    const publish = vi.spyOn(content, 'setSkillStatus').mockResolvedValue({ ...skill, status: 'published', activeVersion: skill.version })
     await wrapper.get('[data-action="publish-skill"]').trigger('click')
     await flushPromises()
 
     expect(publish).not.toHaveBeenCalled()
-    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('试运行已通过，尚未发布')
+    const publishButton = wrapper.findAll('button').find(button => button.text() === '确认结果并发布')
+    expect(publishButton).toBeDefined()
+    await publishButton!.trigger('click')
+    await flushPromises()
+    expect(publish).toHaveBeenCalledWith(skill.id, 'published')
+    expect(wrapper.get('.skill-test-dialog').text()).toContain('Skill 已发布')
+    expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('Skill 已发布')
   })
 })

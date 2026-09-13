@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Connection, DocumentCopy, Refresh, Search, View } from '@element-plus/icons-vue'
+import { Check, Clock, Close, Connection, DocumentCopy, Loading, Refresh, Search, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { ConnectorDefinition, SkillDefinition, SkillReleaseRecord, SkillVersionRecord, ToolDefinition } from '@/types/domain'
+import type { ConnectorDefinition, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
 
 type CapabilityTab = 'skills' | 'install' | 'tools' | 'connectors'
 
@@ -41,6 +41,17 @@ const skillActionFeedback = ref<{
   title: string
   description: string
 } | null>(null)
+const skillTestDialogOpen = ref(false)
+const skillTestTarget = ref<SkillDefinition | null>(null)
+const skillTestProgress = ref<SkillTestRunProgress | null>(null)
+const skillTestStarting = ref(false)
+const skillTestPublishing = ref(false)
+const skillTestPublished = ref(false)
+const skillTestError = ref('')
+let skillTestPollTimer: ReturnType<typeof setTimeout> | undefined
+let skillTestPollEpoch = 0
+
+const skillTestActive = computed(() => ['queued', 'running', 'cancel_requested'].includes(skillTestProgress.value?.status ?? ''))
 
 const selectedSkill = computed(() => contentStore.skills.find((item) => item.id === detailTargetId.value))
 const selectedSkillVersions = computed(() => contentStore.skillVersions.filter((item) => item.skillId === detailTargetId.value))
@@ -149,6 +160,10 @@ function openToolPermissions(toolId = detailTargetId.value) {
 }
 
 async function changeSkillStatus(skill: SkillDefinition) {
+  if (skill.status === 'draft' && skill.packageSha256) {
+    openStrictSkillTest(skill)
+    return
+  }
   const disabling = skill.status === 'published'
   const nextStatus = disabling ? 'disabled' : 'published'
   const action = disabling ? '停用' : skill.status === 'draft' ? '发布' : '启用'
@@ -172,21 +187,6 @@ async function changeSkillStatus(skill: SkillDefinition) {
         title: `“${skill.name}”试运行通过，等待确认发布`,
         description: test.resultSummary,
       }
-      if (skill.packageSha256) {
-        try {
-          await ElMessageBox.confirm(test.resultSummary, '检查 Skill 真实试运行结果', { confirmButtonText: '确认结果并发布', cancelButtonText: '暂不发布', type: 'info' })
-        } catch (cause) {
-          if (cause === 'cancel' || cause === 'close') {
-            skillActionFeedback.value = {
-              type: 'warning',
-              title: `“${skill.name}”试运行已通过，尚未发布`,
-              description: '试运行证据已保存。需要发布时可再次点击“试运行并发布”，平台会重新验证当前版本。',
-            }
-            return
-          }
-          throw cause
-        }
-      }
     }
     const updated = await contentStore.setSkillStatus(skill.id, nextStatus)
     if (detailOpen.value && detailTargetId.value === skill.id) inspectSkill(updated)
@@ -209,6 +209,104 @@ async function changeSkillStatus(skill: SkillDefinition) {
   } finally {
     actionLoading.value = ''
   }
+}
+
+function openStrictSkillTest(skill: SkillDefinition) {
+  skillTestPollEpoch++
+  clearSkillTestPoll()
+  skillTestTarget.value = skill
+  skillTestProgress.value = null
+  skillTestError.value = ''
+  skillTestPublished.value = false
+  skillTestDialogOpen.value = true
+  void startStrictSkillTest(skill, skillTestPollEpoch)
+}
+
+async function startStrictSkillTest(skill: SkillDefinition, epoch: number) {
+  skillTestStarting.value = true
+  actionLoading.value = `skill:${skill.id}`
+  try {
+    const progress = await contentStore.startSkillTestRun(skill.id, skill.testPrompt)
+    if (epoch !== skillTestPollEpoch) return
+    skillTestProgress.value = progress
+    syncSkillTestFeedback(skill, progress)
+    if (isActiveTestStatus(progress.status)) scheduleSkillTestPoll(skill, progress.runId, epoch)
+    else actionLoading.value = ''
+  } catch (cause) {
+    if (epoch !== skillTestPollEpoch) return
+    skillTestError.value = cause instanceof Error ? cause.message : '严格试运行启动失败'
+    actionLoading.value = ''
+  } finally {
+    if (epoch === skillTestPollEpoch) skillTestStarting.value = false
+  }
+}
+
+function scheduleSkillTestPoll(skill: SkillDefinition, runId: string, epoch: number) {
+  clearSkillTestPoll()
+  skillTestPollTimer = setTimeout(async () => {
+    try {
+      const progress = await contentStore.getSkillTestRun(skill.id, runId)
+      if (epoch !== skillTestPollEpoch) return
+      skillTestProgress.value = progress
+      syncSkillTestFeedback(skill, progress)
+      if (isActiveTestStatus(progress.status)) scheduleSkillTestPoll(skill, runId, epoch)
+      else actionLoading.value = ''
+    } catch (cause) {
+      if (epoch !== skillTestPollEpoch) return
+      skillTestError.value = cause instanceof Error ? cause.message : '试运行进度读取失败'
+      actionLoading.value = ''
+    }
+  }, 1000)
+}
+
+function clearSkillTestPoll() {
+  if (skillTestPollTimer) clearTimeout(skillTestPollTimer)
+  skillTestPollTimer = undefined
+}
+
+function isActiveTestStatus(status: SkillTestRunProgress['status']) {
+  return ['queued', 'running', 'cancel_requested'].includes(status)
+}
+
+function syncSkillTestFeedback(skill: SkillDefinition, progress: SkillTestRunProgress) {
+  if (progress.status === 'passed') {
+    skillActionFeedback.value = { type: 'warning', title: `“${skill.name}”试运行通过，等待确认发布`, description: progress.resultSummary ?? '所有严格试运行门禁均已通过。' }
+  } else if (progress.status === 'failed' || progress.status === 'cancelled') {
+    skillActionFeedback.value = { type: 'error', title: `“${skill.name}”严格试运行未通过`, description: progress.resultSummary ?? 'DSH Attempt 未成功完成，请查看进度后重试。' }
+  } else {
+    skillActionFeedback.value = { type: 'info', title: `正在严格试运行“${skill.name}”`, description: `Run ${progress.runId} 正在执行，具体进度可在弹窗中查看。` }
+  }
+}
+
+async function publishTestedSkill() {
+  const skill = skillTestTarget.value
+  if (!skill || skillTestProgress.value?.status !== 'passed') return
+  skillTestPublishing.value = true
+  try {
+    const updated = await contentStore.setSkillStatus(skill.id, 'published')
+    if (detailOpen.value && detailTargetId.value === skill.id) inspectSkill(updated)
+    skillTestPublished.value = true
+    skillActionFeedback.value = { type: 'success', title: `“${skill.name}”真实试运行已确认，Skill 已发布`, description: `v${updated.version} 已成为可供 Agent 固定引用的活动版本。` }
+    ElMessage.success('真实试运行已确认，Skill 已发布')
+  } catch (cause) {
+    skillTestError.value = cause instanceof Error ? cause.message : 'Skill 发布失败'
+  } finally {
+    skillTestPublishing.value = false
+  }
+}
+
+function retryStrictSkillTest() {
+  const skill = skillTestTarget.value
+  if (!skill) return
+  openStrictSkillTest(skill)
+}
+
+function skillTestStatusLabel(status?: SkillTestRunProgress['status']) {
+  return { queued: '等待调度', running: '试运行中', cancel_requested: '正在停止', passed: '试运行通过', failed: '试运行失败', cancelled: '已取消' }[status ?? 'queued']
+}
+
+function skillTestStepIcon(status: SkillTestRunProgress['steps'][number]['status']) {
+  return status === 'completed' ? Check : status === 'failed' ? Close : status === 'running' ? Loading : Clock
 }
 
 async function rollbackSkill(version: SkillVersionRecord) {
@@ -322,6 +420,7 @@ function protocolLabel(protocol: ConnectorDefinition['protocol']) {
 }
 
 onMounted(() => contentStore.load())
+onUnmounted(() => clearSkillTestPoll())
 </script>
 
 <template>
@@ -390,6 +489,61 @@ onMounted(() => contentStore.load())
       </el-table>
     </section>
 
+    <el-dialog
+      v-model="skillTestDialogOpen"
+      class="skill-test-dialog"
+      width="min(680px, calc(100vw - 32px))"
+      :close-on-click-modal="!skillTestPublishing"
+      :close-on-press-escape="!skillTestPublishing"
+      :show-close="!skillTestPublishing"
+      destroy-on-close
+    >
+      <template #header>
+        <div class="skill-test-dialog__header">
+          <div>
+            <span>严格试运行</span>
+            <h2>{{ skillTestTarget?.name }}</h2>
+          </div>
+          <StatusTag v-if="skillTestProgress" :status="skillTestProgress.status === 'passed' ? 'succeeded' : skillTestProgress.status" :label="skillTestStatusLabel(skillTestProgress.status)" dot />
+        </div>
+      </template>
+
+      <el-alert v-if="skillTestError" :title="skillTestError" type="error" :closable="false" show-icon />
+      <el-alert v-else-if="skillTestPublished" title="Skill 已发布" type="success" description="严格试运行结果已确认，当前版本已成为活动版本。" :closable="false" show-icon />
+      <div v-else-if="skillTestStarting && !skillTestProgress" class="skill-test-dialog__starting" role="status">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <div><strong>正在创建 DSH 严格试运行</strong><p>平台正在锁定 Skill 版本、依赖图与 Runtime Manifest。</p></div>
+      </div>
+
+      <template v-if="skillTestProgress">
+        <div class="skill-test-dialog__run-meta">
+          <span>版本 <code>v{{ skillTestProgress.version }}</code></span>
+          <span>Run <code>{{ skillTestProgress.runId }}</code></span>
+        </div>
+        <div class="skill-test-progress" aria-live="polite">
+          <article v-for="step in skillTestProgress.steps" :key="step.id" :class="`is-${step.status}`">
+            <span class="skill-test-progress__icon"><el-icon :class="{ 'is-loading': step.status === 'running' }"><component :is="skillTestStepIcon(step.status)" /></el-icon></span>
+            <div>
+              <strong>{{ step.title }}</strong>
+              <p>{{ step.description }}</p>
+              <time v-if="step.occurredAt">{{ new Date(step.occurredAt).toLocaleTimeString('zh-CN', { hour12: false }) }}</time>
+            </div>
+          </article>
+        </div>
+        <section v-if="skillTestProgress.resultSummary" class="skill-test-dialog__result">
+          <h3>试运行结果</h3>
+          <p>{{ skillTestProgress.resultSummary }}</p>
+        </section>
+      </template>
+
+      <template #footer>
+        <span v-if="skillTestActive" class="skill-test-dialog__hint">关闭窗口不会终止后台试运行</span>
+        <el-button @click="skillTestDialogOpen = false">{{ skillTestPublished ? '完成' : '关闭' }}</el-button>
+        <el-button v-if="skillTestProgress?.status === 'failed' || skillTestProgress?.status === 'cancelled' || skillTestError" :loading="skillTestStarting" @click="retryStrictSkillTest">重新试运行</el-button>
+        <el-button v-if="skillTestProgress?.status === 'passed' && !skillTestPublished" type="primary" :loading="skillTestPublishing" @click="publishTestedSkill">确认结果并发布</el-button>
+      </template>
+    </el-dialog>
+
     <el-drawer v-model="detailOpen" size="min(620px, 100vw)" :title="detailTitle">
       <div v-if="detailType === 'skill'" class="capability-detail__notice"><el-icon><Connection /></el-icon><p>Skill 发布后当前版本不可原地编辑，Agent 引用时锁定具体版本。</p></div>
       <div v-if="detailType === 'skill'" class="status-tabs capability-detail__tabs" role="tablist" aria-label="Skill 详情类型">
@@ -432,6 +586,31 @@ onMounted(() => contentStore.load())
 .capability-filters { gap: 0; }
 .skill-action-feedback { margin-bottom: 14px; }
 .skill-action-feedback :deep(.el-alert__description) { line-height: 1.65; white-space: pre-wrap; }
+.skill-test-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-right: 20px; }
+.skill-test-dialog__header span { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.skill-test-dialog__header h2 { margin: 4px 0 0; color: var(--color-text-heading); font-size: var(--dsh-font-size-section); }
+.skill-test-dialog__starting { display: flex; align-items: center; gap: 12px; min-height: 110px; padding: 18px; border-radius: var(--radius-card); color: var(--color-primary); background: var(--color-primary-light); }
+.skill-test-dialog__starting > .el-icon { font-size: 24px; }
+.skill-test-dialog__starting strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.skill-test-dialog__starting p { margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
+.skill-test-dialog__run-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 16px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.skill-test-dialog__run-meta code { margin-left: 4px; color: var(--color-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.skill-test-progress { padding: 4px 0; }
+.skill-test-progress article { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; min-height: 70px; }
+.skill-test-progress article:not(:last-child)::after { position: absolute; top: 27px; bottom: 3px; left: 14px; width: 1px; background: var(--color-border); content: ''; }
+.skill-test-progress__icon { z-index: 1; display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; color: var(--color-text-muted); background: var(--color-bg-base); }
+.skill-test-progress article.is-completed .skill-test-progress__icon { border-color: var(--color-success); color: var(--color-success); background: var(--color-success-light); }
+.skill-test-progress article.is-running .skill-test-progress__icon { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-light); }
+.skill-test-progress article.is-failed .skill-test-progress__icon { border-color: var(--color-danger); color: var(--color-danger); background: var(--color-danger-light); }
+.skill-test-progress strong { display: block; padding-top: 3px; color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.skill-test-progress p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.55; }
+.skill-test-progress time { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.skill-test-dialog__result { margin-top: 4px; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
+.skill-test-dialog__result h3 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.skill-test-dialog__result p { max-height: 150px; margin: 7px 0 0; overflow-y: auto; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.65; white-space: pre-wrap; }
+.skill-test-dialog__hint { margin-right: auto; color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.skill-test-dialog :deep(.el-dialog__footer) { display: flex; align-items: center; }
+.skill-test-dialog :deep(.el-dialog__body) { max-height: calc(100vh - 220px); overflow-y: auto; }
 .capability-toolbar { justify-content: space-between; padding-top: 10px; }
 .capability-toolbar .el-input { width: 330px; }
 .capability-toolbar__legend { margin-left: auto; color: var(--color-text-muted); font-size: var(--font-size-badge); }

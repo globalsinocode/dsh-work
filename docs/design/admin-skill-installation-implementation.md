@@ -49,6 +49,8 @@
 
 严格试运行不再以“DSH 成功并产生一条回复”为通过条件。当前锁定的根 Skill 和全部递归依赖都必须留下 `activate_skill` 激活证据；含 Python 的 Skill 还必须留下沙箱退出码为 0 的执行证据。发布根 Skill 时，同一安装图中的依赖草稿在一个事务中同步发布，正式 Agent 随后按固定版本递归解析目录。
 
+Skill 中心通过异步试运行接口立即取得 Run 标识，并按秒读取 Run、Runtime 调度、`activate_skill` 和 `python_execute` 的持久化证据。管理端弹窗只展示标准运行状态和安全的执行摘要，不展示模型隐藏推理；严格试运行通过后，管理员在同一弹窗确认结果并发布。
+
 ## 验证入口
 
 - `pnpm --filter @dsh-work/server db:migrate:skill-files`：执行数据库结构迁移，将旧 Skill 文件、脚本和历史运行快照正文迁到 `${DSH_WORK_DATA_ROOT}/skills`，并在退出前确认数据库正文计数归零。服务正常启动时也会幂等执行同一迁移。

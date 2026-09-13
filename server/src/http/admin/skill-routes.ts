@@ -29,6 +29,20 @@ export function registerSkillRoutes(router: Router, service: PostgresSkillServic
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.post(`${basePath}/skills/test-runs`, async (request, context) => {
+    const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
+    return httpResult(202, envelope('admin', await service.startSkillTest({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres'))
+  })
+  router.get(`${basePath}/skills/:skillId/test-runs/:runId`, async (_request, context) => {
+    return envelope('admin', await service.getSkillTestProgress({
+      skillId: context.params['skillId']!,
+      runId: context.params['runId']!,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.patch(`${basePath}/skills/status`, async (request, context) => {
     const input = await readJsonBody<{
       skillId: string

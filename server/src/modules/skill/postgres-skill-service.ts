@@ -79,6 +79,22 @@ export interface SkillTestResult {
   testedAt: string
 }
 
+export interface SkillTestRunProgress {
+  runId: string
+  skillId: string
+  version: string
+  status: 'queued' | 'running' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
+  resultSummary?: string
+  testedAt?: string
+  steps: Array<{
+    id: string
+    title: string
+    description: string
+    status: 'pending' | 'running' | 'completed' | 'failed'
+    occurredAt?: string
+  }>
+}
+
 export interface RuntimeSkillConfiguration {
   id: string
   name?: string
@@ -110,7 +126,12 @@ interface WorkbenchSkillRow extends Omit<WorkbenchSkillDefinition, 'updatedAt'> 
 
 export class PostgresSkillService {
   private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string }>
+  private packageTestLifecycle?: {
+    start: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ runId: string; status: string; steps: SkillTestRunProgress['steps'] }>
+    progress: (userId: string, skill: RuntimeSkillConfiguration, runId: string) => Promise<{ runId: string; status: string; passed?: boolean; summary?: string; steps: SkillTestRunProgress['steps'] }>
+  }
   setPackageTester(tester: NonNullable<PostgresSkillService['packageTester']>) { this.packageTester = tester }
+  setPackageTestLifecycle(lifecycle: NonNullable<PostgresSkillService['packageTestLifecycle']>) { this.packageTestLifecycle = lifecycle }
   private readonly database: DatabaseClient
   private readonly operations?: PostgresOperationsService
   private readonly toolService?: PostgresToolConnectorService
@@ -384,6 +405,92 @@ export class PostgresSkillService {
       resultSummary: summary,
       testedAt: new Date().toISOString(),
     }
+  }
+
+  async startSkillTest(input: { skillId: string; prompt?: string; actor: string }): Promise<SkillTestRunProgress> {
+    const context = await this.strictTestContext(input)
+    if (!context.skill.strictTest) {
+      const result = await this.testSkill(input)
+      return {
+        runId: result.id,
+        skillId: result.skillId,
+        version: result.version,
+        status: result.status,
+        resultSummary: result.resultSummary,
+        testedAt: result.testedAt,
+        steps: [{ id: 'configuration', title: '校验 Skill 配置', description: result.resultSummary, status: result.status === 'passed' ? 'completed' : 'failed', occurredAt: result.testedAt }],
+      }
+    }
+    if (!this.packageTestLifecycle) throw new Error('DSH Skill 试运行进度服务不可用')
+    const progress = await this.packageTestLifecycle.start(context.actor.id, context.runtimeSkill, context.prompt)
+    if (['succeeded', 'failed', 'cancelled'].includes(progress.status)) {
+      return this.getSkillTestProgress({ skillId: context.skill.id, runId: progress.runId, actor: context.actor.id })
+    }
+    return { runId: progress.runId, skillId: context.skill.id, version: context.skill.version, status: normalizeTestRunStatus(progress.status), steps: progress.steps }
+  }
+
+  async getSkillTestProgress(input: { skillId: string; runId: string; actor: string }): Promise<SkillTestRunProgress> {
+    const context = await this.strictTestContext({ skillId: input.skillId, actor: input.actor })
+    if (!context.skill.strictTest || !this.packageTestLifecycle) throw new Error('当前 Skill 没有可查询的严格试运行')
+    const progress = await this.packageTestLifecycle.progress(context.actor.id, context.runtimeSkill, input.runId)
+    const status = progress.status === 'succeeded' ? (progress.passed ? 'passed' : 'failed') : normalizeTestRunStatus(progress.status)
+    if (!['passed', 'failed'].includes(status)) {
+      return { runId: progress.runId, skillId: context.skill.id, version: context.skill.version, status, steps: progress.steps }
+    }
+
+    const resultSummary = progress.summary ?? 'DSH 试运行未产生结果'
+    const testId = `skill-test-${input.runId}`
+    const [inserted] = await this.database<{ createdAt: Date }[]>`
+      insert into skill_test_runs (
+        id, tenant_id, skill_id, skill_version_id, configuration_fingerprint,
+        test_prompt, status, result_summary, tested_by
+      ) values (
+        ${testId}, ${tenantId}, ${context.skill.id}, ${context.skill.draftVersionId}, ${context.fingerprint},
+        ${context.prompt}, ${status}, ${resultSummary}, ${context.actor.id}
+      ) on conflict (id) do nothing
+      returning created_at as "createdAt"
+    `
+    const [stored] = inserted ? [inserted] : await this.database<{ createdAt: Date }[]>`
+      select created_at as "createdAt" from skill_test_runs where tenant_id = ${tenantId} and id = ${testId}
+    `
+    if (inserted) await this.audit(context.actor.id, 'skill.test', context.skill.id, status === 'passed' ? 'success' : 'failed', `DSH Skill 试运行 ${status}`)
+    return {
+      runId: progress.runId,
+      skillId: context.skill.id,
+      version: context.skill.version,
+      status,
+      resultSummary,
+      testedAt: (stored?.createdAt ?? new Date()).toISOString(),
+      steps: progress.steps,
+    }
+  }
+
+  private async strictTestContext(input: { skillId: string; prompt?: string; actor: string }) {
+    const actor = await this.requireActor(input.actor)
+    const [skill] = await this.readSkillRows(input.skillId)
+    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!skill.draftVersionId) throw new Error('当前 Skill 没有待测试的草稿版本')
+    await this.toolService?.assertAvailableReferences(skill.toolIds)
+    const prompt = (input.prompt ?? skill.testPrompt).trim()
+    if (prompt.length < 4) throw new Error('测试问题至少需要 4 个字符')
+    const fingerprint = configurationFingerprint(skill)
+    let runtimeSkill: RuntimeSkillConfiguration = {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      version: skill.version,
+      instructions: skill.instructions,
+      tools: skill.toolIds,
+    }
+    if (skill.strictTest) {
+      const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
+      if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
+      const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
+      const dependencySkills = await this.resolveDraftRuntimeSkills(version.manifest.dependencies ?? [])
+      await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
+      runtimeSkill = { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, dependencies: version.manifest.dependencies ?? [], dependencySkills }
+    }
+    return { actor, skill, prompt, fingerprint, runtimeSkill }
   }
 
   async setStatus(input: {
@@ -697,6 +804,11 @@ function normalizeConfiguration(input: SkillConfiguration): SkillConfiguration {
     toolIds: unique(input.toolIds),
     testPrompt: input.testPrompt.trim(),
   }
+}
+
+function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] {
+  if (status === 'queued' || status === 'running' || status === 'cancel_requested' || status === 'failed' || status === 'cancelled') return status
+  return 'failed'
 }
 
 function assertConfiguration(input: SkillConfiguration) {

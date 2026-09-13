@@ -1,6 +1,6 @@
 import type { PublishStatus, SkillDefinition, SkillReleaseRecord, SkillVersionRecord } from '../../domain/types.ts'
 import type { AdminQueryService } from '../../modules/admin/application/admin-query-service.ts'
-import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
 const basePath = '/api/admin/v1'
 
@@ -90,6 +90,35 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
       status: 'passed',
       resultSummary: `配置校验通过：${skill.toolIds.length} 个工具引用。`,
       testedAt: new Date().toISOString(),
+    })
+  })
+  router.post(`${basePath}/skills/test-runs`, async (request) => {
+    const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
+    const skill = (await service.getSkills()).find(item => item.id === input.skillId)
+    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
+    const testedAt = new Date().toISOString()
+    return httpResult(202, envelope('admin', {
+      runId: `skill-test-${Date.now()}`,
+      skillId: skill.id,
+      version: skill.version,
+      status: 'passed',
+      resultSummary: `配置校验通过：${skill.toolIds.length} 个工具引用。`,
+      testedAt,
+      steps: [{ id: 'configuration', title: '校验 Skill 配置', description: '原型模式已完成确定性配置校验。', status: 'completed', occurredAt: testedAt }],
+    }))
+  })
+  router.get(`${basePath}/skills/:skillId/test-runs/:runId`, async (_request, context) => {
+    const skill = (await service.getSkills()).find(item => item.id === context.params.skillId)
+    if (!skill) throw new Error(`Skill 不存在：${context.params.skillId}`)
+    const testedAt = new Date().toISOString()
+    return envelope('admin', {
+      runId: context.params.runId,
+      skillId: skill.id,
+      version: skill.version,
+      status: 'passed',
+      resultSummary: `配置校验通过：${skill.toolIds.length} 个工具引用。`,
+      testedAt,
+      steps: [{ id: 'configuration', title: '校验 Skill 配置', description: '原型模式已完成确定性配置校验。', status: 'completed', occurredAt: testedAt }],
     })
   })
   router.patch(`${basePath}/skills/status`, async (request, context) => {
