@@ -113,6 +113,7 @@ try {
     launchMode: installation.launchMode,
     process: installation.process,
     permissionDecision: async () => 'allow_once',
+    collectArtifacts: async (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
   })
 
   const conversations = new PostgresConversationRepository(database)
@@ -165,13 +166,22 @@ try {
   // --- 团队 Agent 成员关联：走真实服务（同时建立 Agent/Skill/Tool 授权来源） ---
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   await agentMembers.addAgentMember(workspaceId, 'agent-dsh-work-assistant', ownerId, ['role-employee'])
+  // 迁移可能会将默认 Agent 的活动版本升级（例如增加受控成果写入工具）。
+  // 会话必须使用成员关联时实际锁定的版本，而不能假定历史版本 ID。
+  const [activeAgent] = await database<{ activeVersionId: string | null }[]>`
+    select active_version_id as "activeVersionId"
+      from agents
+     where tenant_id = ${tenantId} and id = 'agent-dsh-work-assistant'
+  `
+  const agentVersionId = activeAgent?.activeVersionId
+  if (!agentVersionId) throw new Error('默认 Agent 缺少活动版本')
 
   // --- B（成员）引用该文件发起真实运行 ---
   const session = await orchestration.createSession({
     userId: memberId,
     title: '1B e2e 文件引用分析',
     workspaceId,
-    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    agentVersionId,
   })
   const started = await orchestration.startRun({
     userId: memberId,
@@ -262,7 +272,7 @@ try {
     userId: memberId,
     title: '4-T3 固定版本读取（独立会话）',
     workspaceId,
-    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    agentVersionId,
   })
   const pinned = await orchestration.startRun({
     userId: memberId,
@@ -351,7 +361,7 @@ try {
   await database`
     insert into sessions (id, tenant_id, workspace_id, created_by, agent_version_id, title, status)
     values (${blockedSessionId}, ${tenantId}, ${workspaceId}, ${ownerId},
-            'agent-version-dsh-work-assistant-1', 'E2E 第三状态样本会话', 'active')
+            ${agentVersionId}, 'E2E 第三状态样本会话', 'active')
   `
   const blockedRunId = `run-e2e-blocked-${suffix}`
   await database`
@@ -407,7 +417,7 @@ try {
   await database`
     insert into sessions (id, tenant_id, workspace_id, created_by, agent_version_id, title, status)
     values (${otherSessionId}, ${tenantId}, ${otherWorkspaceId}, ${ownerId},
-            'agent-version-dsh-work-assistant-1', 'E2E 另一空间会话', 'active')
+            ${agentVersionId}, 'E2E 另一空间会话', 'active')
   `
   const otherRunId = `run-e2e-other-${suffix}`
   await database`
@@ -556,8 +566,15 @@ try {
       status: finished,
       assistantTextIncludesMarker: (assistant?.messages ?? []).some(message => message.content.includes(marker)),
       eventTypes: [...new Set(events.map(event => event.eventType))],
+      failures: events.filter(event => event.eventType === 'run.failed').map(event => event.safeMetadata),
     },
-    secondRun: { runId: second.id, status: secondFinished, assistantTextIncludesMarker: secondText.includes(marker) },
+    secondRun: {
+      runId: second.id,
+      status: secondFinished,
+      assistantTextIncludesMarker: secondText.includes(marker),
+      failures: (await runs.readEvents('tenant-dsh-work', second.id))
+        .filter(event => event.eventType === 'run.failed').map(event => event.safeMetadata),
+    },
     archivedWorkspace: {
       ok: archiveReadOk,
       readTrack: archivedRead,
@@ -587,6 +604,8 @@ try {
         readV1Marker: pinnedText.includes(marker),
         leakedV2Marker: pinnedText.includes(markerV2),
         traceableVersionNo: trace?.versionNo ?? null,
+        failures: (await runs.readEvents('tenant-dsh-work', pinned.id))
+          .filter(event => event.eventType === 'run.failed').map(event => event.safeMetadata),
       },
       note: 'TW-07：新版本成为 current 且不覆盖旧对象；坏版本被拒但记录保留、current 不前移；引用 v1 的真实 DSH 运行只读到 v1 内容，且 run_input_files → workspace_file_versions 可追溯实际版本号。',
     },
