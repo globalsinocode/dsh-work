@@ -9,6 +9,7 @@ import {
   DataAnalysis,
   FolderOpened,
   Grid,
+  InfoFilled,
   Key,
   Menu,
   Monitor,
@@ -132,6 +133,7 @@ function openConversation(id: string) {
 
 function onRoleCommand(command: string | number | object) {
   const value = String(command)
+  if (value === 'about') navigate('/about')
   if (value === 'workbench') emit('openWorkbench')
   if (value === 'logout') emit('logout')
 }
@@ -209,6 +211,7 @@ watch(
             </button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="about"><el-icon><InfoFilled /></el-icon>关于 dsh-work</el-dropdown-item>
                 <el-dropdown-item command="workbench"><el-icon><Grid /></el-icon>返回员工工作台</el-dropdown-item>
                 <el-dropdown-item v-if="canLogout" divided command="logout"><el-icon><SwitchButton /></el-icon>退出登录</el-dropdown-item>
               </el-dropdown-menu>

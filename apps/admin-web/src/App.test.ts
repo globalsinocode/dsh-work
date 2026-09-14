@@ -25,6 +25,7 @@ async function render() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/assistant', component: AdminAssistantView, meta: { title: '管理助手' } },
     { path: '/agents', component: { template: '<div>Agent 管理</div>' }, meta: { title: 'Agent 管理' } },
+    { path: '/about', component: { template: '<div>关于 dsh-work</div>' }, meta: { title: '关于 dsh-work' } },
   ] })
   await router.push('/assistant?context=skills')
   await router.isReady()
@@ -73,5 +74,19 @@ describe('global management conversation history', () => {
     auth.$patch({ permissions: ['audit:read'] })
     await flushPromises()
     expect(wrapper.find('nav [aria-label="对话记录"]').exists()).toBe(false)
+  })
+
+  it('opens the about page from the authenticated user dropdown', async () => {
+    const { wrapper, router } = await render()
+    await wrapper.get('.header-user-button').trigger('click')
+
+    const aboutItem = [...document.body.querySelectorAll('.el-dropdown-menu__item')]
+      .find(item => item.textContent?.includes('关于 dsh-work'))
+    expect(aboutItem).toBeTruthy()
+    ;(aboutItem as HTMLElement).click()
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/about')
+    expect(wrapper.text()).toContain('关于 dsh-work')
   })
 })

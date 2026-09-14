@@ -143,6 +143,12 @@ const router = createRouter({
       meta: { title: '系统健康', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/about',
+      name: 'about',
+      component: () => import('@/views/AboutView.vue'),
+      meta: { title: '关于 dsh-work', requiresAdmin: true },
+    },
+    {
       path: '/:pathMatch(.*)*',
       name: 'not-found',
       component: () => import('@/views/NotFoundView.vue'),

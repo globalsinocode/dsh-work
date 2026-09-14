@@ -71,3 +71,17 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(page).toHaveURL(/\/runtimes$/)
   await expect(page.getByText('Runtimes', { exact: true }).first()).toBeVisible()
 })
+
+test('administrator can open system information from the user menu', async ({ page }) => {
+  await page.goto(`${adminUrl}/overview`)
+
+  const userMenu = page.getByRole('button', { name: /平台管理员/ })
+  await expect(userMenu).toBeVisible()
+  await userMenu.click()
+  await page.getByRole('menuitem', { name: '关于 dsh-work' }).click()
+
+  await expect(page).toHaveURL(/\/about$/)
+  await expect(page.getByRole('heading', { name: 'dsh-work 管理平台' })).toBeVisible()
+  await expect(page.getByTestId('about-system-version')).toHaveText(/^v\d{4}\.\d{2}\.\d{2}-\d{2}$/)
+  await expect(page.getByTestId('about-dsh-version')).toHaveText('0.1.2-rc.1')
+})

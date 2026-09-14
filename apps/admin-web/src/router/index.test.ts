@@ -25,4 +25,13 @@ describe('admin authentication routes', () => {
     expect(route.meta.requiredPermission).toBe('adminRead')
     expect(route.meta.requiresAiHubIdentity).toBe(true)
   })
+
+  it('registers the about page for every authenticated management user', () => {
+    const route = router.resolve('/about')
+
+    expect(route.name).toBe('about')
+    expect(route.meta.title).toBe('关于 dsh-work')
+    expect(route.meta.requiresAdmin).toBe(true)
+    expect(route.meta.requiredPermission).toBeUndefined()
+  })
 })
