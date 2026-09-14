@@ -1,7 +1,7 @@
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
 import { request } from 'node:http'
-import { appendFileSync, realpathSync } from 'node:fs'
+import { appendFileSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 
 const pathArguments = new Map([
@@ -9,6 +9,7 @@ const pathArguments = new Map([
   ['glob', 'path'],
   ['grep', 'path'],
   ['write', 'file_path'],
+  ['edit', 'file_path'],
 ])
 
 const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
@@ -19,6 +20,7 @@ const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
  */
 export function apply(ctx) {
   registerPlatformTools(ctx)
+  publishRuntimeToolCatalog(ctx, process.env.DSH_TOOL_CATALOG_PATH)
   const allowedTools = parseAllowedTools(process.env.DSH_ALLOWED_TOOLS_JSON)
   const workspaceRoot = parseWorkspaceRoot(process.env.DSH_WORKSPACE_ROOT)
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
@@ -56,6 +58,27 @@ export function apply(ctx) {
 
 apply.inject = ['tools']
 export default apply
+
+function publishRuntimeToolCatalog(ctx, path) {
+  if (!path || !isAbsolute(path)) return
+  const publish = () => {
+    try {
+      const target = resolve(path)
+      const temporary = `${target}.${process.pid}.tmp`
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(temporary, `${JSON.stringify({
+        formatVersion: 1,
+        generatedAt: new Date().toISOString(),
+        tools: ctx.tools.schemas(),
+      })}\n`, { encoding: 'utf8', mode: 0o600 })
+      renameSync(temporary, target)
+    } catch {
+      // Tool discovery is a management-plane projection. A write failure must
+      // not make an already admitted Agent attempt unavailable.
+    }
+  }
+  publish()
+}
 
 function parseAllowedTools(value) {
   if (!value) return new Set()
@@ -119,10 +142,10 @@ function validateExecution(execution, allowedTools, workspaceRoot) {
 
   const candidate = resolve(workspaceRoot, rawPath)
   if (!isWithin(workspaceRoot, candidate)) return `dsh-work 拒绝访问当前 Run 工作区之外的路径：${rawPath}`
-  if (execution.name === 'write') {
+  if (execution.name === 'write' || execution.name === 'edit') {
     const outputRoot = resolve(workspaceRoot, 'output')
     if (!isWithin(outputRoot, candidate) || candidate === outputRoot) {
-      return `dsh-work 只允许在当前 Run 的 output 目录生成成果：${rawPath}`
+      return `dsh-work 只允许在当前 Run 的 output 目录生成或编辑成果：${rawPath}`
     }
     const extension = candidate.slice(candidate.lastIndexOf('.')).toLowerCase()
     if (!writableArtifactExtensions.has(extension)) {
@@ -180,6 +203,48 @@ function registerPlatformTools(ctx) {
     name: 'prepare_skill_installation',
     description: 'Fetch, validate and resolve the existing Skill source supplied by the administrator. Returns the authoritative installation plan. Never saves or publishes a Skill; the administrator must confirm in the application.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'inspect_admin_state',
+    description: 'Read a bounded, non-secret snapshot of current Skill, Agent, Runtime or task state. This tool never changes platform data.',
+    parameters: {
+      type: 'object',
+      properties: {
+        domain: { type: 'string', enum: ['overview', 'skills', 'agents', 'operations'] },
+        query: { type: 'string', maxLength: 200, description: 'Optional literal object name or ID filter. Omit this field when listing all objects or asking for counts; never put a natural-language instruction here.' },
+      },
+      required: ['domain'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'propose_admin_task',
+    description: 'Record a proposed delegation to a governed admin specialist. It does not start the specialist or execute any platform change; the administrator must confirm the proposal in the application.',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['skill-install', 'agent-management', 'platform-operations'] },
+        summary: { type: 'string', minLength: 4, maxLength: 240 },
+        impact: { type: 'string', minLength: 4, maxLength: 500 },
+      },
+      required: ['kind', 'summary', 'impact'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'prepare_admin_action',
+    description: 'Prepare and persist an exact Agent or Runtime change plan from current platform state. It never executes the change; the administrator must confirm the plan in the application.',
+    parameters: {
+      type: 'object',
+      properties: {
+        actionType: { type: 'string', enum: ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'] },
+        target: { type: 'string', minLength: 1, maxLength: 160 },
+        summary: { type: 'string', minLength: 4, maxLength: 300 },
+        changes: { type: 'object' },
+      },
+      required: ['actionType', 'target', 'summary', 'changes'],
+      additionalProperties: false,
+    },
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'activate_skill',

@@ -56,8 +56,6 @@ type AgentFingerprintSource = Pick<AgentRow,
   | 'timeoutSeconds'
 >
 
-type LockedAgentDraft = AgentFingerprintSource & { id: string }
-
 interface VersionRow {
   id: string
   agentId: string
@@ -134,6 +132,11 @@ export interface RuntimeAgentSnapshot {
   dataScopes: string[]
   maxTokens: number
   timeoutSeconds: number
+}
+
+export interface AgentMutationSnapshot {
+  agent: AgentDefinition
+  revision: string
 }
 
 export class PostgresAgentService {
@@ -235,7 +238,13 @@ export class PostgresAgentService {
     return this.requireAgentResult(configuration.id, versionId)
   }
 
-  async updateAgent(input: UpdateAgentDraftInput) {
+  async getMutationSnapshot(agentId: string): Promise<AgentMutationSnapshot> {
+    const [row] = await this.readAgentRows(agentId)
+    if (!row) throw new Error(`Agent 不存在：${agentId}`)
+    return { agent: toAgentDefinition(row), revision: agentMutationRevision(row) }
+  }
+
+  async updateAgent(input: UpdateAgentDraftInput, expectedRevision?: string) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
@@ -249,19 +258,9 @@ export class PostgresAgentService {
 
     let draftVersionId = current.draftVersionId
     await this.database.begin(async transaction => {
-      const [locked] = await transaction<{
-        activeVersionId: string | null
-        draftVersionId: string | null
-        activeVersion: string | null
-      }[]>`
-        select a.active_version_id as "activeVersionId", a.draft_version_id as "draftVersionId",
-               active.version as "activeVersion"
-          from agents a
-          left join agent_versions active on active.tenant_id = a.tenant_id and active.id = a.active_version_id
-         where a.tenant_id = ${tenantId} and a.id = ${input.agentId}
-         for update of a
-      `
+      const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+      assertAgentMutationRevision(locked, expectedRevision)
       draftVersionId = locked.draftVersionId
       if (draftVersionId) {
         await transaction`
@@ -278,7 +277,7 @@ export class PostgresAgentService {
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
       } else {
-        if (!locked.activeVersionId || !locked.activeVersion) throw new Error('Agent 没有可用于创建新版本的已发布版本')
+        if (!locked.activeVersionId) throw new Error('Agent 没有可用于创建新版本的已发布版本')
         const [latest] = await transaction<{ version: string }[]>`
           select version from agent_versions
            where tenant_id = ${tenantId} and agent_id = ${input.agentId}
@@ -294,13 +293,13 @@ export class PostgresAgentService {
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
             timeout_seconds, skill_refs, tool_refs, status, created_by, source_version, change_summary
           ) values (
-            ${draftVersionId}, ${tenantId}, ${input.agentId}, ${nextVersion(latest?.version ?? locked.activeVersion)},
+            ${draftVersionId}, ${tenantId}, ${input.agentId}, ${nextVersion(latest?.version ?? locked.version)},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
             ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
             ${configuration.maxTokens}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(configuration.tools)},
-            'draft', ${actor.id}, ${locked.activeVersion}, ${configuration.changeSummary}
+            'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
           )
         `
       }
@@ -350,16 +349,19 @@ export class PostgresAgentService {
     agentId: string
     status: Extract<PublishStatus, 'published' | 'disabled'>
     actor: string
-  }) {
+  }, expectedRevision?: string) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
 
     if (input.status === 'disabled') {
-      if (current.draftVersionId) throw new Error('存在待发布草稿时不能停用 Agent，请先发布或回滚')
-      if (!current.activeVersionId) throw new Error('尚未发布的 Agent 不能停用')
-      const activeVersionId = current.activeVersionId
       const release = await this.database.begin(async transaction => {
+        const locked = await this.lockAgentForMutation(transaction, input.agentId)
+        if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+        assertAgentMutationRevision(locked, expectedRevision)
+        if (locked.draftVersionId) throw new Error('存在待发布草稿时不能停用 Agent，请先发布或回滚')
+        if (!locked.activeVersionId) throw new Error('尚未发布的 Agent 不能停用')
+        const activeVersionId = locked.activeVersionId
         const updated = await transaction`
           update agents set status = 'disabled', updated_at = now()
            where tenant_id = ${tenantId} and id = ${input.agentId}
@@ -374,12 +376,18 @@ export class PostgresAgentService {
       return { agent: await this.requireAgent(input.agentId), release }
     }
 
-    if (current.draftVersionId) return this.publishDraft(current, actor)
+    if (current.draftVersionId) return this.publishDraft(current, actor, expectedRevision)
     if (!current.activeVersionId || current.persistedStatus !== 'disabled') {
       throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
-    const activeVersionId = current.activeVersionId
     const release = await this.database.begin(async transaction => {
+      const locked = await this.lockAgentForMutation(transaction, input.agentId)
+      if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+      assertAgentMutationRevision(locked, expectedRevision)
+      if (!locked.activeVersionId || locked.persistedStatus !== 'disabled' || locked.draftVersionId) {
+        throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
+      }
+      const activeVersionId = locked.activeVersionId
       const updated = await transaction`
         update agents set status = 'published', updated_at = now()
          where tenant_id = ${tenantId} and id = ${input.agentId}
@@ -658,22 +666,12 @@ export class PostgresAgentService {
     return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, approvalMode }
   }
 
-  private async publishDraft(current: AgentRow, actor: { id: string; displayName: string; department: string }) {
+  private async publishDraft(current: AgentRow, actor: { id: string; displayName: string; department: string }, expectedRevision?: string) {
     await this.assertCapabilityReferences(current.skills, current.tools, current.roleIds, current.dataScopes)
     const release = await this.database.begin(async transaction => {
-      const [locked] = await transaction<LockedAgentDraft[]>`
-        select a.id, av.id as "versionId", av.name, av.description,
-               av.welcome_message as "welcomeMessage", av.system_prompt as "systemPrompt",
-               av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
-               av.example_prompts as "examplePrompts", av.skill_refs as skills,
-               av.tool_refs as tools, av.max_tokens as "maxTokens",
-               av.timeout_seconds as "timeoutSeconds"
-          from agents a
-          join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.draft_version_id
-         where a.tenant_id = ${tenantId} and a.id = ${current.id} and av.status = 'draft'
-         for update of a, av
-      `
-      if (!locked) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
+      const locked = await this.lockAgentForMutation(transaction, current.id)
+      if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
+      assertAgentMutationRevision(locked, expectedRevision)
 
       const fingerprint = configurationFingerprint(locked)
       const [test] = await transaction<{ id: string }[]>`
@@ -784,6 +782,27 @@ export class PostgresAgentService {
        where a.tenant_id = ${tenantId} ${agentId ? this.database`and a.id = ${agentId}` : this.database``}
        order by a.updated_at desc
     `
+  }
+
+  private async lockAgentForMutation(transaction: DatabaseTransaction, agentId: string): Promise<AgentRow | undefined> {
+    const [row] = await transaction<AgentRow[]>`
+      select a.id, av.name, av.description, av.welcome_message as "welcomeMessage",
+             owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
+             a.status as "persistedStatus", a.active_version_id as "activeVersionId",
+             a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
+             av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
+             av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
+             a.allow_workspace_join as "allowWorkspaceJoin",
+             av.max_tokens as "maxTokens", av.timeout_seconds as "timeoutSeconds",
+             av.skill_refs as skills, av.tool_refs as tools, a.updated_at as "updatedAt"
+        from agents a
+        join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
+        join agent_versions av on av.tenant_id = a.tenant_id
+         and av.id = coalesce(a.draft_version_id, a.active_version_id)
+       where a.tenant_id = ${tenantId} and a.id = ${agentId}
+       for update of a, av
+    `
+    return row
   }
 
   private async requireAgent(agentId: string): Promise<AgentDefinition> {
@@ -908,6 +927,23 @@ function configurationFingerprint(row: AgentFingerprintSource) {
     maxTokens: row.maxTokens,
     timeoutSeconds: row.timeoutSeconds,
   })).digest('hex')
+}
+
+function agentMutationRevision(row: AgentRow) {
+  return createHash('sha256').update(JSON.stringify({
+    configuration: configurationFingerprint(row),
+    persistedStatus: row.persistedStatus,
+    activeVersionId: row.activeVersionId,
+    draftVersionId: row.draftVersionId,
+    owner: row.owner,
+    department: row.department,
+  })).digest('hex')
+}
+
+function assertAgentMutationRevision(row: AgentRow, expectedRevision?: string) {
+  if (expectedRevision && agentMutationRevision(row) !== expectedRevision) {
+    throw new Error('Agent 配置已变化，请重新生成操作计划')
+  }
 }
 
 function nextVersion(current: string) {

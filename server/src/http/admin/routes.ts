@@ -141,6 +141,11 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     return envelope('admin', { skill, release: prototypeSkillRelease(skill, requireRequestIdentity(context, 'admin').userId, 'rollback') })
   })
   router.get(`${basePath}/tools`, async () => envelope('admin', await service.getTools()))
+  router.get(`${basePath}/tools/catalog`, async () => envelope('admin', await service.getToolCatalog()))
+  router.post(`${basePath}/tools`, async (request, context) => {
+    const input = await readJsonBody<Omit<Parameters<AdminQueryService['addTool']>[0], 'actor'>>(request)
+    return envelope('admin', await service.addTool({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
+  })
   router.patch(`${basePath}/tools/status`, async (request, context) => {
     const input = await readJsonBody<{ toolId: string; status: 'available' | 'disabled' }>(request)
     return envelope('admin', await service.setToolStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))

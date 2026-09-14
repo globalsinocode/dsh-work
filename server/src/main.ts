@@ -27,6 +27,7 @@ import { PrototypeRepository } from './infrastructure/prototype/prototype-reposi
 import { AdminQueryService } from './modules/admin/application/admin-query-service.ts'
 import { PostgresOperationsService } from './modules/admin/application/postgres-operations-service.ts'
 import { PostgresGrantReconciliationService } from './modules/admin/application/postgres-grant-reconciliation-service.ts'
+import { AdminAssistantService } from './modules/admin/application/admin-assistant-service.ts'
 import { MemoryModelGovernanceRepository } from './modules/model/memory-model-governance-repository.ts'
 import { ModelGovernanceService } from './modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from './modules/model/postgres-model-governance-repository.ts'
@@ -124,13 +125,19 @@ async function start() {
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
       dshRepository: dshInstallation.home,
+      toolCatalogPath: dshInstallation.toolCatalogPath,
       runtimeVersion: dshInstallation.version,
       runtimeCommit: dshInstallation.commit,
       protocolVersion: dshInstallation.protocolVersion,
       launchMode: dshInstallation.launchMode,
       process: dshInstallation.process,
-      permissionDecision: async () => 'allow_once',
+      // No durable human-approval channel is wired to ACP yet. Manifests that
+      // require approval therefore fail closed instead of silently escalating.
+      permissionDecision: async () => 'reject_once',
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
+      inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
+      proposeAdminTask: (input, manifest, signal) => assistantService.proposeTask(input, manifest, signal),
+      prepareAdminAction: (input, manifest, signal) => assistantService.prepareAction(input, manifest, signal),
       loadSkillArtifact: skill => skillArtifacts.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
       recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
       recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
@@ -167,16 +174,21 @@ async function start() {
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
     const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts)
+    const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
     skills.setPackageTestLifecycle({
       start: (userId, skill, prompt) => installationService.startPackageTest(userId, skill, prompt),
       progress: (userId, skill, runId) => installationService.packageTestProgress(userId, skill, runId),
     })
-    registerAssistantRoutes(router, installationService)
+    registerAssistantRoutes(router, assistantService)
     registerSkillInstallationRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()
     if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
       console.warn('service restart recovery completed', restartRecovery)
+    }
+    const assistantRecovery = await assistantService.recoverInterruptedActions()
+    if (assistantRecovery.inspected > 0) {
+      console.warn('admin assistant action recovery completed', assistantRecovery)
     }
     // 1A-T5: 进程内撤权事件消费循环，与调度器同一生命周期（启动即开始、关停即停止）。
     revocationSweep = new RunRevocationSweep(database, runs, orchestration, authorization)

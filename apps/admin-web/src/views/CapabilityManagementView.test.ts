@@ -29,7 +29,16 @@ async function render(canManage = true, initial = '/skills') {
   ] })
   await router.push(initial)
   await router.isReady()
-  const wrapper = mount(CapabilityManagementView, { global: { plugins: [pinia, router, ElementPlus], stubs: { teleport: true } } })
+  const wrapper = mount(CapabilityManagementView, {
+    global: {
+      plugins: [pinia, router, ElementPlus],
+      stubs: {
+        teleport: true,
+        ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+        ElOption: true,
+      },
+    },
+  })
   wrappers.push(wrapper)
   await flushPromises()
   return { wrapper, router, auth: useAuthStore(), content }
@@ -106,11 +115,52 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('[aria-label="工具列表"]').attributes('aria-label')).toBe('工具列表')
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索工具名称、标识或系统')
     expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
+    expect(wrapper.get('[data-action="add-tool"]').text()).toContain('添加工具')
 
     await router.push('/connectors')
     await flushPromises()
     expect(wrapper.get('[aria-label="连接器列表"]').attributes('aria-label')).toBe('连接器列表')
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索连接器或企业系统')
+  })
+
+  it('adds a ready DSH tool with explicit role, scope and approval defaults', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    content.toolCatalog.push({
+      id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
+      description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
+      risk: 'low', mode: 'write', timeoutSeconds: 30,
+      defaultAllowedRoles: ['普通员工', '平台管理员'],
+      defaultDataScopes: ['workspace:authorized'], defaultApprovalPolicy: 'none',
+      requirements: ['当前 Run 工作区', '仅允许 output 成果目录'],
+      status: 'ready', availabilityMessage: '当前部署已批准该工具，DSH Runtime 健康检查通过',
+    })
+    const addTool = vi.spyOn(content, 'addTool').mockResolvedValue({
+      id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
+      description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
+      risk: 'low', mode: 'write', status: 'available', inputSchema: '{}', outputSchema: '{}',
+      timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
+      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-action="add-tool"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.tool-catalog-card').text()).toContain('edit@1.0.0')
+    expect(wrapper.get('.tool-catalog-config').text()).toContain('仅允许 output 成果目录')
+    await wrapper.get('[data-action="confirm-add-tool"]').trigger('click')
+    await flushPromises()
+
+    expect(addTool).toHaveBeenCalledWith({
+      catalogId: 'edit',
+      allowedRoles: ['普通员工', '平台管理员'],
+      dataScopes: ['workspace:authorized'],
+      approvalPolicy: 'none',
+    })
+  })
+
+  it('does not expose tool creation to read-only administrators', async () => {
+    const { wrapper } = await render(false, '/tools')
+    expect(wrapper.find('[data-action="add-tool"]').exists()).toBe(false)
   })
 
   it('groups dependency Skills under their installation entry', async () => {

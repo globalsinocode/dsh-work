@@ -189,10 +189,10 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
   if (/离线|不可用|未处于健康状态|健康检查/.test(original)) {
     return { status: 503, error: { code: 'dependency_unavailable', message: original, object, suggestion: '请管理员检查运行时或连接器状态，恢复后再重试。', traceId } }
   }
-  if (/当前状态|只有.*可以|不能/.test(original)) {
+  if (/当前状态|只有.*可以|不能|已存在/.test(original)) {
     return { status: 409, error: { code: 'state_conflict', message: original, object, suggestion: '刷新对象状态后，按页面允许的操作继续。', traceId } }
   }
-  if (/必须|仅支持|至少|最多|超过|无效|不能为空|缺少|长度|大小/.test(original)) {
+  if (/必须|不支持|仅支持|至少|最多|超过|无效|不能为空|缺少|长度|大小/.test(original)) {
     return { status: 422, error: { code: 'invalid_request', message: original, object, suggestion: '按提示调整输入内容或文件后重新提交。', traceId } }
   }
   return { status: 500, error: { code: 'operation_failed', message: `${object}操作未完成`, object, suggestion: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`, traceId } }
@@ -202,7 +202,7 @@ function inferRequestObject(path: string) {
   const segments = path.split('/').filter(Boolean)
   const mappings: Array<[string, string]> = [
     ['artifacts', '成果'], ['files', '文件'], ['connectors', '连接器'], ['runtimes', '运行时'],
-    ['runs', '运行'], ['sessions', '对话'], ['workspaces', '工作空间'], ['agents', 'Agent'], ['skills', 'Skill'],
+    ['runs', '运行'], ['sessions', '对话'], ['workspaces', '工作空间'], ['agents', 'Agent'], ['skills', 'Skill'], ['tools', '工具'],
     ['identity', '员工与权限'],
   ]
   for (const [segment, label] of mappings) {
@@ -247,11 +247,14 @@ export function assertApiRouteAccess(
   const isPlatformAdmin = permissions.has('admin:*')
   if (path === '/api/admin/v1/session') return
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method ?? 'GET')) {
+    const isAssistantConversationCommand = path === '/api/admin/v1/assistant/messages'
+      || /^\/api\/admin\/v1\/assistant\/runs\/[^/]+\/(cancel|retry)$/.test(path)
     if (path.startsWith('/api/admin/v1/identity/') && !isPlatformAdmin) {
       throw routePermissionDenied('只有平台管理员可以修改员工授权和身份同步配置')
     }
     if (!isPlatformAdmin
-      && !permissions.has('admin:write')) {
+      && !permissions.has('admin:write')
+      && !(isAssistantConversationCommand && permissions.has('admin:read'))) {
       throw routePermissionDenied('当前用户没有管理写权限')
     }
     return

@@ -62,7 +62,7 @@ const actionLabels: Record<string, string> = {
   'agent.publish': '发布 Agent', 'agent.enable': '启用 Agent', 'agent.disable': '停用 Agent', 'agent.rollback': '回滚 Agent',
   'skill.create': '创建 Skill', 'skill.draft.update': '更新 Skill 草稿', 'skill.test': '测试 Skill',
   'skill.publish': '发布 Skill', 'skill.enable': '启用 Skill', 'skill.disable': '停用 Skill', 'skill.rollback': '回滚 Skill',
-  'tool.permissions.update': '更新工具权限', 'connector.health.check': '检查连接器',
+  'tool.create': '添加工具', 'tool.permissions.update': '更新工具权限', 'connector.health.check': '检查连接器',
   'model_provider.create': '创建模型服务商', 'model_provider.credential_ref.update': '更新密钥引用',
   'provider_model.create': '注册模型', 'model_route.create': '创建模型路由',
   'agent.configuration.update': '更新 Agent 配置',

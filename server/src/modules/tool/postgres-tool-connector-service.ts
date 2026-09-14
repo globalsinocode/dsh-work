@@ -1,12 +1,22 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ConnectorDefinition, ToolDefinition } from '../../domain/types.ts'
+import type { AddToolInput, ConnectorDefinition, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { AgentRuntimePort, RuntimeManifest } from '../runtime/runtime-types.ts'
+import {
+  assertDshToolApprovalPolicy,
+  dshBuiltInToolCatalog,
+  normalizeToolPolicyInput,
+  publicCatalogCandidate,
+  requiredDshToolApprovalPolicy,
+  runtimeToolToCatalogEntry,
+  type CatalogEntry,
+} from './dsh-built-in-tool-catalog.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeIntrinsicTools = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
+const hiddenRuntimeCatalogTools = new Set(['activate_skill', 'prepare_skill_installation', 'python_execute'])
 
 interface ToolRow {
   id: string
@@ -92,6 +102,92 @@ export class PostgresToolConnectorService {
     }))
   }
 
+  async getToolCatalog(): Promise<ToolCatalogCandidate[]> {
+    const installedRows = await this.database<{ id: string }[]>`
+      select id from tools where tenant_id = ${tenantId}
+    `
+    const installed = new Set(installedRows.map(row => row.id))
+    let runtimeAvailable = false
+    let runtimeMessage = 'DSH Runtime 未配置，暂时不能添加工具'
+    let entries: readonly CatalogEntry[] = dshBuiltInToolCatalog
+    if (this.runtime) {
+      try {
+        const health = await this.runtime.health()
+        runtimeAvailable = health.status === 'healthy' && health.acceptingRuns
+        runtimeMessage = runtimeAvailable ? '当前 DSH Profile 已加载该工具' : health.message
+        if (runtimeAvailable) entries = await this.loadRuntimeCatalogEntries()
+      } catch (cause) {
+        runtimeAvailable = false
+        runtimeMessage = cause instanceof Error ? cause.message : 'DSH Runtime 工具目录读取失败'
+      }
+    }
+    return entries.map(entry => {
+      if (!entry.platformSupported) {
+        const prefix = installed.has(entry.id) ? '该工具已安装但不可授权：' : ''
+        return publicCatalogCandidate(entry, 'unavailable', `${prefix}${entry.unsupportedReason ?? '平台尚未接入该工具'}`)
+      }
+      if (installed.has(entry.id)) return publicCatalogCandidate(entry, 'installed', '已添加到工具目录')
+      return publicCatalogCandidate(entry, runtimeAvailable ? 'ready' : 'unavailable', runtimeMessage)
+    }).sort((left, right) => {
+      const rank = { ready: 0, installed: 1, unavailable: 2 }
+      return rank[left.status] - rank[right.status] || left.name.localeCompare(right.name, 'zh-CN')
+    })
+  }
+
+  async addTool(input: AddToolInput): Promise<ToolDefinition> {
+    const actor = await this.requireActor(input.actor)
+    const policy = normalizeToolPolicyInput(input)
+    const entry = (await this.loadRuntimeCatalogEntries()).find(item => item.id === input.catalogId)
+    if (!entry) throw new Error(`不支持添加该 DSH 工具：${input.catalogId}`)
+    if (!entry.platformSupported) throw new Error(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
+    assertDshToolApprovalPolicy(entry, policy.approvalPolicy)
+    const candidate = (await this.getToolCatalog()).find(item => item.id === entry.id)
+    if (candidate?.status === 'installed') throw new Error(`工具已存在：${entry.name}`)
+    if (candidate?.status !== 'ready') throw new Error(candidate?.availabilityMessage ?? '工具当前不可添加')
+    const roleIds = await this.resolveRoleIds(policy.allowedRoles)
+
+    await this.database.begin(async transaction => {
+      const [connector] = await transaction<{ id: string }[]>`
+        select id from connectors
+         where tenant_id = ${tenantId} and id = ${entry.connectorId} and status = 'healthy'
+      `
+      if (!connector) throw new Error('DSH Runtime 连接器未处于健康状态，不能添加工具')
+      const inserted = await transaction`
+        insert into tools (
+          id, tenant_id, key, name, source, status, connector_id, system, description,
+          dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
+          approval_policy, last_checked_at
+        ) values (
+          ${entry.id}, ${tenantId}, ${`dsh-${entry.id}`}, ${entry.name}, 'platform', 'available',
+          ${entry.connectorId}, ${entry.system}, ${entry.description}, ${entry.id}, ${entry.mode},
+          ${entry.timeoutSeconds}, ${transaction.json(roleIds)}, ${transaction.json(policy.dataScopes)},
+          ${policy.approvalPolicy}, now()
+        ) on conflict do nothing returning id
+      `
+      if (!inserted.length) throw new Error(`工具已存在：${entry.name}`)
+      await transaction`
+        insert into tool_versions (
+          id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status
+        ) values (
+          ${`tool-version-${entry.id}-1`}, ${tenantId}, ${entry.id}, ${entry.version},
+          ${JSON.stringify(entry.inputSchemaObject)}::jsonb, ${JSON.stringify(entry.outputSchemaObject)}::jsonb,
+          ${entry.risk}, 'published'
+        )
+      `
+    })
+    await this.audit(actor.id, 'tool.create', entry.id, 'success', `从 DSH 内置目录添加工具 ${entry.name}@${entry.version}`)
+    return this.requireTool(entry.id)
+  }
+
+  private async loadRuntimeCatalogEntries(): Promise<readonly CatalogEntry[]> {
+    if (!this.runtime?.listTools) return dshBuiltInToolCatalog
+    const tools = await this.runtime.listTools()
+    if (!tools.length) throw new Error('DSH Runtime 返回了空工具目录')
+    return tools
+      .filter(tool => !hiddenRuntimeCatalogTools.has(tool.id))
+      .map(runtimeToolToCatalogEntry)
+  }
+
   async getConnectors(): Promise<ConnectorDefinition[]> {
     const rows = await this.database<ConnectorRow[]>`
       select c.id, c.name, c.system, c.status, c.protocol, c.endpoint,
@@ -110,14 +206,24 @@ export class PostgresToolConnectorService {
 
   async setToolStatus(input: { toolId: string; status: 'available' | 'disabled'; actor: string }) {
     const actor = await this.requireActor(input.actor)
-    const [tool] = await this.database<{ connectorStatus: ConnectorDefinition['status'] }[]>`
-      select c.status as "connectorStatus" from tools t
+    const [tool] = await this.database<{
+      connectorStatus: ConnectorDefinition['status']
+      connectorId: string | null
+      dshToolName: string | null
+    }[]>`
+      select c.status as "connectorStatus", t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName" from tools t
       join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
        where t.tenant_id = ${tenantId} and t.id = ${input.toolId}
     `
     if (!tool) throw new Error(`工具不存在：${input.toolId}`)
     if (input.status === 'available' && tool.connectorStatus !== 'healthy') {
       throw new Error('连接器未处于健康状态，不能启用工具')
+    }
+    if (input.status === 'available'
+      && tool.connectorId === 'connector-dsh-workspace'
+      && tool.dshToolName
+      && requiredDshToolApprovalPolicy(tool.dshToolName) === undefined) {
+      throw new Error('该 DSH 工具所需的逐次审批尚未接入，不能启用')
     }
     await this.database`
       update tools set status = ${input.status}, updated_at = now()
@@ -136,14 +242,19 @@ export class PostgresToolConnectorService {
   }) {
     const actor = await this.requireActor(input.actor)
     if (!input.allowedRoles.length || !input.dataScopes.length) throw new Error('工具必须配置授权角色和数据范围')
-    const roleIds: string[] = []
-    for (const value of unique(input.allowedRoles)) {
-      const [role] = await this.database<{ id: string }[]>`
-        select id from roles where tenant_id = ${tenantId} and (id = ${value} or name = ${value})
-      `
-      if (!role) throw new Error(`角色不存在：${value}`)
-      roleIds.push(role.id)
+    const [current] = await this.database<{ connectorId: string | null; dshToolName: string | null }[]>`
+      select connector_id as "connectorId", dsh_tool_name as "dshToolName"
+        from tools where tenant_id = ${tenantId} and id = ${input.toolId}
+    `
+    if (!current) throw new Error(`工具不存在：${input.toolId}`)
+    if (current.connectorId === 'connector-dsh-workspace' && current.dshToolName) {
+      const requiredPolicy = requiredDshToolApprovalPolicy(current.dshToolName)
+      if (requiredPolicy === undefined) throw new Error('该 DSH 工具尚未接入所需的逐次审批，不能配置为可用')
+      if (input.approvalPolicy !== requiredPolicy) {
+        throw new Error('DSH 内置工具的审批策略由平台安全策略固定，不能在权限页面覆盖')
+      }
     }
+    const roleIds = await this.resolveRoleIds(input.allowedRoles)
     const result = await this.database`
       update tools set allowed_role_ids = ${this.database.json(roleIds)},
                        data_scopes = ${this.database.json(unique(input.dataScopes))},
@@ -206,7 +317,8 @@ export class PostgresToolConnectorService {
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id}
-           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace' and t.dsh_tool_name = 'write'))
+           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
+                and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
            and t.status = 'available' and c.status = 'healthy'
            and tv.version = ${version} and tv.status = 'published'
       `
@@ -264,7 +376,7 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const policies: ToolDefinition['approvalPolicy'][] = []
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) { policies.push('sensitive'); continue }
+      if (runtimeIntrinsicTools.has(reference)) { policies.push('none'); continue }
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ approvalPolicy: ToolDefinition['approvalPolicy'] }[]>`
         select t.approval_policy as "approvalPolicy" from tools t
@@ -313,6 +425,18 @@ export class PostgresToolConnectorService {
       select id, name from roles where tenant_id = ${tenantId}
     `
     return new Map(rows.map(row => [row.id, row.name]))
+  }
+
+  private async resolveRoleIds(values: string[]) {
+    const roleIds: string[] = []
+    for (const value of unique(values)) {
+      const [role] = await this.database<{ id: string }[]>`
+        select id from roles where tenant_id = ${tenantId} and (id = ${value} or name = ${value})
+      `
+      if (!role) throw new Error(`角色不存在：${value}`)
+      roleIds.push(role.id)
+    }
+    return roleIds
   }
 
   private audit(actorId: string, action: string, objectId: string, result: 'success' | 'failed', detail: string) {

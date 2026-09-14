@@ -116,6 +116,15 @@ export class PrototypeRepository {
     return copy(tool)
   }
 
+  async createTool(tool: ToolDefinition): Promise<ToolDefinition> {
+    await simulateIo()
+    if (prototypeData.tools.some((item) => item.id === tool.id)) {
+      throw new Error(`工具已存在：${tool.name}`)
+    }
+    prototypeData.tools.unshift(copy(tool))
+    return copy(tool)
+  }
+
   async updateConnector(
     connectorId: string,
     patch: Partial<Omit<ConnectorDefinition, 'id'>>,

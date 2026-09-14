@@ -14,6 +14,7 @@ const originalEnvironment = {
   approvalLog: process.env.DSH_TOOL_APPROVAL_LOG,
   maximumCalls: process.env.DSH_MAX_TOOL_CALLS,
   platformSocket: process.env.DSH_PLATFORM_TOOL_SOCKET,
+  toolCatalogPath: process.env.DSH_TOOL_CATALOG_PATH,
 }
 
 afterEach(() => {
@@ -23,6 +24,7 @@ afterEach(() => {
   restoreEnvironment('DSH_TOOL_APPROVAL_LOG', originalEnvironment.approvalLog)
   restoreEnvironment('DSH_MAX_TOOL_CALLS', originalEnvironment.maximumCalls)
   restoreEnvironment('DSH_PLATFORM_TOOL_SOCKET', originalEnvironment.platformSocket)
+  restoreEnvironment('DSH_TOOL_CATALOG_PATH', originalEnvironment.toolCatalogPath)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -55,11 +57,11 @@ test('DSH tool policy fails closed when allow-list input is malformed', () => {
   assert.match(guard({ name: 'read', arguments: { file_path: 'inside.txt' } }), /未授权工具/)
 })
 
-test('DSH tool policy confines write to supported files in the Run output directory', async () => {
+test('DSH tool policy confines write and edit to supported files in the Run output directory', async () => {
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-work-output-policy-'))
   await mkdir(join(workspace, 'output'))
   await mkdir(join(workspace, 'input'))
-  process.env.DSH_ALLOWED_TOOLS_JSON = '["write"]'
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["write","edit"]'
   process.env.DSH_WORKSPACE_ROOT = workspace
   process.env.DSH_TOOL_APPROVAL_MODE = 'never'
   const { guard } = capturePolicy()
@@ -69,6 +71,9 @@ test('DSH tool policy confines write to supported files in the Run output direct
   assert.match(guard({ name: 'write', arguments: { file_path: 'input/source.txt', content: 'changed' } }), /只允许.*output/)
   assert.match(guard({ name: 'write', arguments: { file_path: 'report.md', content: '# 报告' } }), /只允许.*output/)
   assert.match(guard({ name: 'write', arguments: { file_path: 'output/report.html', content: '<h1>报告</h1>' } }), /仅支持/)
+  assert.equal(guard({ name: 'edit', arguments: { file_path: 'output/report.md', old_string: '旧', new_string: '新' } }), undefined)
+  assert.match(guard({ name: 'edit', arguments: { file_path: 'input/source.txt', old_string: '旧', new_string: '新' } }), /只允许.*output/)
+  assert.match(guard({ name: 'edit', arguments: { file_path: 'output/report.html', old_string: '旧', new_string: '新' } }), /仅支持/)
 })
 
 test('DSH tool policy asks before every governed tool call unless approval is disabled', async () => {
@@ -135,22 +140,39 @@ test('DSH tool policy enforces the immutable Attempt tool-call budget', async ()
   assert.equal((await capturePolicy().preExecute(execution, next)).kind, 'deny')
 })
 
-test('DSH registers only the fixed platform Skill tool contracts when an Attempt bridge exists', () => {
+test('DSH registers only the fixed governed platform tool contracts when an Attempt bridge exists', () => {
   process.env.DSH_PLATFORM_TOOL_SOCKET = '/tmp/attempt-only.sock'
   const { registered } = capturePolicy()
-  assert.deepEqual(registered.map(tool => tool.name), ['prepare_skill_installation', 'activate_skill', 'python_execute'])
+  assert.deepEqual(registered.map(tool => tool.name), ['prepare_skill_installation', 'inspect_admin_state', 'propose_admin_task', 'prepare_admin_action', 'activate_skill', 'python_execute'])
+  assert.match(registered.find(tool => tool.name === 'inspect_admin_state').parameters.properties.query.description, /literal object name or ID/)
+  assert.deepEqual(registered.find(tool => tool.name === 'propose_admin_task').parameters.required, ['kind', 'summary', 'impact'])
+  assert.deepEqual(registered.find(tool => tool.name === 'prepare_admin_action').parameters.properties.actionType.enum, ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'])
   assert.deepEqual(registered.find(tool => tool.name === 'activate_skill').parameters.required, ['name'])
   assert.equal(registered.find(tool => tool.name === 'python_execute').parameters.additionalProperties, false)
 })
 
-function capturePolicy() {
+test('DSH publishes the tools loaded by the active Profile for platform discovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-work-tool-catalog-'))
+  const path = join(root, 'runtime-tools.json')
+  process.env.DSH_TOOL_CATALOG_PATH = path
+  const schemas = [
+    { name: 'read', description: 'Read a file.', parameters: { type: 'object' } },
+    { name: 'todo_write', description: 'Update todos.', parameters: { type: 'object' } },
+  ]
+  capturePolicy(schemas)
+
+  const catalog = JSON.parse(await readFile(path, 'utf8'))
+  assert.equal(catalog.formatVersion, 1)
+  assert.deepEqual(catalog.tools, schemas)
+})
+
+function capturePolicy(schemas = []) {
   let guard
   let preExecute
   const registered = []
   apply({
     on: (event, candidate) => {
-      assert.equal(event, 'tools/pre-execute')
-      preExecute = candidate
+      if (event === 'tools/pre-execute') preExecute = candidate
       return () => undefined
     },
     tools: {
@@ -159,6 +181,7 @@ function capturePolicy() {
         guard = candidate
         return () => undefined
       },
+      schemas: () => schemas,
     },
   })
   assert.ok(guard)

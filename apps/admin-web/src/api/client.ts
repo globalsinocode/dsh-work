@@ -31,6 +31,7 @@ import type {
   SkillTestRunProgress,
   SkillVersionRecord,
   ToolDefinition,
+  ToolCatalogCandidate,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
@@ -108,6 +109,10 @@ export const adminApi = {
   getAssistantConversation: (id: string) => request<AdminConversation>(`/assistant/sessions/${encodeURIComponent(id)}`),
   sendAssistantMessage: (input: { sessionId: string; message: string; requestId: string }) => request<AdminConversation>('/assistant/messages', { method: 'POST', body: JSON.stringify(input) }),
   confirmSkillInstallation: (runId: string, planSha256: string) => request<AdminConversation>(`/assistant/runs/${encodeURIComponent(runId)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
+  confirmAssistantProposal: (proposalId: string, proposalSha256: string) => request<AdminConversation>(`/assistant/task-proposals/${encodeURIComponent(proposalId)}/confirm`, { method: 'POST', body: JSON.stringify({ proposalSha256 }) }),
+  cancelAssistantProposal: (proposalId: string) => request<AdminConversation>(`/assistant/task-proposals/${encodeURIComponent(proposalId)}/cancel`, { method: 'POST' }),
+  confirmAssistantAction: (actionId: string, planSha256: string) => request<AdminConversation>(`/assistant/action-plans/${encodeURIComponent(actionId)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
+  cancelAssistantAction: (actionId: string) => request<AdminConversation>(`/assistant/action-plans/${encodeURIComponent(actionId)}/cancel`, { method: 'POST' }),
   prepareZipSkillInstallation: (file: File) => request<SkillInstallation>('/skill-installations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
@@ -192,6 +197,13 @@ export const adminApi = {
   rollbackSkill: (input: { skillId: string; version: string }) =>
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/rollback', { method: 'POST', body: JSON.stringify(input) }),
   getTools: () => request<ToolDefinition[]>('/tools'),
+  getToolCatalog: () => request<ToolCatalogCandidate[]>('/tools/catalog'),
+  addTool: (input: {
+    catalogId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) => request<ToolDefinition>('/tools', { method: 'POST', body: JSON.stringify(input) }),
   setToolStatus: (input: { toolId: string; status: 'available' | 'disabled' }) =>
     request<ToolDefinition>('/tools/status', { method: 'PATCH', body: JSON.stringify(input) }),
   getConnectors: () => request<ConnectorDefinition[]>('/connectors'),

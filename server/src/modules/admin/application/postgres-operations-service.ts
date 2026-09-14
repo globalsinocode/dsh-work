@@ -11,7 +11,7 @@ import type {
   UpdateRuntimeConfigurationInput,
   UsagePoint,
 } from '../../../domain/types.ts'
-import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
+import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RunAttemptRecord, RunRecord } from '../../run/run-types.ts'
 import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
@@ -19,6 +19,14 @@ import { authorizationDenied } from '../../authorization/authorization-errors.ts
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../../security/safe-observability.ts'
 
 const tenantId = 'tenant-dsh-work'
+
+export interface RuntimeMutationSnapshot {
+  runtimeId: string
+  maxConcurrentWorkers: number
+  attemptTimeoutMinutes: number
+  schedulingStatus: RuntimeDefinition['schedulingStatus']
+  revision: number
+}
 
 export class PostgresOperationsService {
   private readonly database: DatabaseClient
@@ -112,18 +120,23 @@ export class PostgresOperationsService {
     return (await this.getRuntimes()).find((runtime) => runtime.id === input.runtimeId)
   }
 
-  async updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
+  async getRuntimeMutationSnapshot(runtimeId: string): Promise<RuntimeMutationSnapshot> {
+    const snapshot = await this.readRuntimeMutationSnapshot(this.database, runtimeId)
+    if (!snapshot) throw new Error(`Runtime 不存在：${runtimeId}`)
+    return snapshot
+  }
+
+  async updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput, expected?: RuntimeMutationSnapshot) {
     const actor = await this.requirePlatformAdmin(input.actor)
     assertRuntimeConfiguration(input)
     let runtimeConfigurationStarted = false
     try {
       await this.database.begin(async (transaction) => {
-        const [runtime] = await transaction<{ id: string }[]>`
-          select id from runtimes
-           where tenant_id = ${tenantId} and id = ${input.runtimeId}
-           for update
-        `
+        const runtime = await this.readRuntimeMutationSnapshot(transaction, input.runtimeId, true)
         if (!runtime) throw new Error(`Runtime 不存在：${input.runtimeId}`)
+        if (expected && !sameRuntimeMutationSnapshot(runtime, expected)) {
+          throw new Error('Runtime 状态已变化，请重新生成操作计划')
+        }
 
         if (input.schedulingStatus === 'accepting') {
           const health = await this.runtime?.health()
@@ -195,6 +208,35 @@ export class PostgresOperationsService {
       revision: configuration?.revision ?? 0,
       sandboxPolicy: configuration?.sandboxPolicy ?? {},
     }
+  }
+
+  private async readRuntimeMutationSnapshot(
+    database: DatabaseClient | DatabaseTransaction,
+    runtimeId: string,
+    lock = false,
+  ): Promise<RuntimeMutationSnapshot | undefined> {
+    const [row] = await database<{
+      runtimeId: string
+      maxConcurrentWorkers: number
+      attemptTimeoutMinutes: number
+      schedulingStatus: RuntimeDefinition['schedulingStatus']
+      revision: number
+    }[]>`
+      select r.id as "runtimeId", r.capacity as "maxConcurrentWorkers",
+             r.scheduling_status as "schedulingStatus",
+             ceil(coalesce(configuration.timeout_seconds, 300) / 60.0)::integer as "attemptTimeoutMinutes",
+             coalesce(configuration.revision, 0)::integer as revision
+        from runtimes r
+        left join lateral (
+          select revision, timeout_seconds
+            from runtime_configurations
+           where tenant_id = r.tenant_id and runtime_id = r.id
+           order by revision desc limit 1
+        ) configuration on true
+       where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
+       ${lock ? database`for update of r` : database``}
+    `
+    return row
   }
 
   async getSessions(): Promise<SessionDefinition[]> {
@@ -573,6 +615,14 @@ export class PostgresOperationsService {
       if (runtime) await this.runtime?.configureScheduling?.(runtime.schedulingStatus)
     })
   }
+}
+
+function sameRuntimeMutationSnapshot(left: RuntimeMutationSnapshot, right: RuntimeMutationSnapshot) {
+  return left.runtimeId === right.runtimeId
+    && left.maxConcurrentWorkers === right.maxConcurrentWorkers
+    && left.attemptTimeoutMinutes === right.attemptTimeoutMinutes
+    && left.schedulingStatus === right.schedulingStatus
+    && left.revision === right.revision
 }
 
 function assertRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {

@@ -169,9 +169,9 @@ export class PostgresRunRepository implements RunRepository {
       if (!['queued', 'failed', 'cancelled'].includes(run.status)) {
         throw new Error(`Run 当前状态不能创建 Attempt：${run.status}`)
       }
-      if (input.manifest['purpose'] === 'admin-skill-install' || input.manifest['purpose'] === 'admin-skill-test') {
+      if (typeof input.manifest['purpose'] === 'string' && input.manifest['purpose'].startsWith('admin-')) {
         const [active] = await transaction`select id from run_attempts where tenant_id = ${input.tenantId} and run_id = ${input.runId} and status in ('queued', 'running', 'cancel_requested') limit 1`
-        if (active) throw Object.assign(new Error('该请求已有进行中的 Attempt，请刷新安装状态'), { status: 409, code: 'attempt_already_active' })
+        if (active) throw Object.assign(new Error('该请求已有进行中的 Attempt，请刷新管理助手状态'), { status: 409, code: 'attempt_already_active' })
       }
       const [counter] = await transaction<{ next: number }[]>`
         select coalesce(max(attempt_no), 0)::integer + 1 as next

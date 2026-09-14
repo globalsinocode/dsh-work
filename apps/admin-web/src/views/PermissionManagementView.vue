@@ -125,7 +125,7 @@ onMounted(async () => {
       <el-form v-if="selectedTool" label-position="top" :disabled="!authStore.canManage">
         <el-form-item label="允许使用的角色"><el-select v-model="toolForm.allowedRoles" multiple filterable allow-create default-first-option><el-option v-for="role in roleOptions" :key="role" :label="role" :value="role" /></el-select></el-form-item>
         <el-form-item label="允许的数据范围"><el-select v-model="toolForm.dataScopes" multiple filterable allow-create default-first-option><el-option v-for="scope in dataScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
-        <el-form-item label="审批策略"><el-radio-group v-model="toolForm.approvalPolicy"><el-radio value="none">无需审批</el-radio><el-radio value="sensitive">敏感范围审批</el-radio><el-radio value="always">每次审批</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="审批策略"><el-radio-group v-model="toolForm.approvalPolicy" :disabled="selectedTool.system === 'DSH Runtime'"><el-radio value="none">无需审批</el-radio><el-radio value="sensitive">敏感范围审批</el-radio><el-radio value="always">每次审批</el-radio></el-radio-group><small v-if="selectedTool.system === 'DSH Runtime'" class="policy-help">DSH 内置工具的审批策略由平台安全边界固定；需要逐次审批的工具在审批中心接入前不可授权。</small></el-form-item>
       </el-form>
       <el-alert type="warning" :closable="false" show-icon title="授权角色与数据范围必须同时满足；审批不能扩大后端注入的业务数据权限。" />
       <template #footer><el-button @click="toolDialogOpen = false">{{ authStore.canManage ? '取消' : '关闭' }}</el-button><el-button v-if="authStore.canManage" type="primary" :loading="saving" @click="saveTool">保存工具策略</el-button></template>
@@ -149,6 +149,7 @@ onMounted(async () => {
 .scope-text { display: inline-flex; align-items: flex-start; gap: 6px; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.5; }
 .scope-text .el-icon { margin-top: 2px; color: var(--color-warning); }
 .approval-label { color: var(--color-text-primary); font-size: var(--font-size-badge); font-weight: var(--font-weight-badge); }
+.policy-help { display: block; margin-top: 8px; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .el-dialog .el-select { width: 100%; }
 @media (max-width: 960px) { .permission-model { grid-template-columns: 1fr; } .permission-model > i { display: none; } }
 @media (max-width: 700px) { .permission-toolbar, .permission-toolbar .el-input { width: 100%; } }

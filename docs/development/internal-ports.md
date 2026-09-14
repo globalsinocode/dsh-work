@@ -11,6 +11,7 @@
 | 身份与本地授权上下文 | [RequestIdentity](../../server/src/modules/identity/types.ts) | 用户、角色、数据范围和操作人只从服务端产生 |
 | 对象与执行授权 | [PostgresAuthorizationService](../../server/src/modules/authorization/postgres-authorization-service.ts) | Workspace、Agent/Skill/Tool Version 与数据范围逐层校验，默认拒绝 |
 | Skill 安装计划 | [AdminSkillInstallationService](../../server/src/modules/skill/admin-skill-installation-service.ts) | 固定来源、生成依赖计划、绑定管理员确认、原子保存草稿并记录激活/脚本试运行证据 |
+| 通用管理对话与任务调度 | [AdminAssistantService](../../server/src/modules/admin/application/admin-assistant-service.ts) | 通过 DSH 进行普通对话和意图提案；绑定第一次调度确认、专用助手操作计划、第二次写入确认、行锁内版本复核及重启结果收敛 |
 | Attempt 平台工具 | [platform-tool-bridge](../../server/src/modules/runtime/platform-tool-bridge.ts) | 为当前 Attempt 暴露 `prepare_skill_installation`、`activate_skill`、`python_execute` 等显式授权处理器；不承载 Agent Loop |
 
 ## API 与运行契约

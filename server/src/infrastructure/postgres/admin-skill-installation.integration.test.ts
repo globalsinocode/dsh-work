@@ -24,6 +24,8 @@ import { DshAcpRuntimeAdapter } from '../../modules/runtime/dsh-acp-runtime-adap
 import { resolveDshRuntimeInstallation } from '../../modules/runtime/dsh-runtime-installation.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
+import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { AdminAssistantService, type StoredActionPlan } from '../../modules/admin/application/admin-assistant-service.ts'
 import { acquireSkillSource, type SkillSource } from '../../modules/skill/skill-source.ts'
 import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from '../../modules/skill/skill-file-storage-migration.ts'
@@ -34,6 +36,9 @@ import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 const real = process.env.DSH_WORK_SKILL_REAL_DSH === '1'
 let database: ThrowawayDatabase, orchestration: RunOrchestrationService, service: AdminSkillInstallationService
+let assistant: AdminAssistantService
+let operations: PostgresOperationsService
+let agents: PostgresAgentService
 let runtimeRoot: string, conversations: PostgresConversationRepository, runs: PostgresRunRepository
 let artifactStore: FileSystemSkillArtifactStore
 const body = '---\nname: installation-test\ndescription: Read a reference file and return its exact contents.\n---\nUse the read tool to read references/value.txt and report exactly the value, never infer or fabricate it.\n'
@@ -58,16 +63,22 @@ before(async () => {
   const runtime = new DshAcpRuntimeAdapter({ runtimeId: 'runtime-local-01', runtimeRoot, dshRepository: installation?.home ?? runtimeRoot,
     process: installation?.process ?? { command: process.execPath, args: ['--experimental-strip-types', resolve(import.meta.dirname, '../../modules/runtime/testing/mock-acp-worker.ts')], cwd: runtimeRoot },
     permissionDecision: async () => 'allow_once', prepareSkillInstallation: (manifest, signal) => service.prepare(manifest, signal),
+    inspectAdminState: (input, manifest, signal) => assistant.inspectState(input, manifest, signal),
+    proposeAdminTask: (input, manifest, signal) => assistant.proposeTask(input, manifest, signal),
+    prepareAdminAction: (input, manifest, signal) => assistant.prepareAction(input, manifest, signal),
     loadSkillArtifact: skill => artifactStore.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
     recordSkillActivation: (manifest, skill, digest) => service.recordActivation(manifest, skill, digest),
   })
   const auth = new PostgresAuthorizationService(database.client)
-  const operations = new PostgresOperationsService(database.client)
+  operations = new PostgresOperationsService(database.client, runtime, auth)
   const tools = new PostgresToolConnectorService(database.client, runtime, operations)
+  const skills = new PostgresSkillService(database.client, operations, tools, artifactStore)
+  agents = new PostgresAgentService(database.client, operations, skills, tools)
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
-  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, undefined, undefined, auth)
+  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, agents, undefined, auth)
   service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
+  assistant = new AdminAssistantService(database.client, orchestration, auth, service, skills, agents, operations)
 })
 after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
 const source = real ? 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/web-design-guidelines/SKILL.md' : 'https://example.org/skill.zip'
@@ -84,6 +95,183 @@ async function wait(sessionId: string) {
   }
   throw new Error('Installation run did not finish')
 }
+async function waitForAssistant(sessionId: string) {
+  for (let index = 0; index < 150; index++) {
+    const detail = await assistant.detail(actor, sessionId)
+    if (detail.runs.every(run => ['succeeded', 'failed', 'cancelled'].includes(run.status))) return detail
+    await delay(100)
+  }
+  throw new Error('Admin assistant run did not finish')
+}
+
+test('general admin chat proposes delegation and executes a specialist plan only after both confirmations', { skip: real, timeout: 60000 }, async () => {
+  const sessionId = `admin-session-${randomUUID()}`
+  const ordinary = await assistant.send(actor, { sessionId, requestId: randomUUID(), message: '当前平台概况如何？' })
+  assert.equal(ordinary.proposals.length, 0)
+  const ordinaryDone = await waitForAssistant(sessionId)
+  assert.equal(ordinaryDone.proposals.length, 0)
+  assert.equal(ordinaryDone.runs[0]?.status, 'succeeded')
+  const [ordinaryAttempt] = await database.client<{ purpose: string; tools: Array<{ id: string }>; systemPrompt: string }[]>`
+    select manifest->>'purpose' as purpose,
+           manifest->'tools' as tools,
+           manifest->'agent_configuration'->>'system_prompt' as "systemPrompt"
+      from run_attempts where run_id = ${ordinaryDone.runs[0]!.id}
+  `
+  assert.equal(ordinaryAttempt?.purpose, 'admin-assistant')
+  assert.deepEqual(ordinaryAttempt?.tools.map(tool => tool.id), ['inspect_admin_state', 'propose_admin_task'])
+  assert.match(ordinaryAttempt?.systemPrompt ?? '', /通用管理助手，不是 Skill 安装助手/)
+  assert.match(ordinaryAttempt?.systemPrompt ?? '', /Skill 安装只是你的能力之一/)
+  assert.match(ordinaryAttempt?.systemPrompt ?? '', /不要主动索取 Skill 来源/)
+  assert.match(ordinaryAttempt?.systemPrompt ?? '', /只有 totalCount 为 0/)
+
+  await assistant.send(actor, { sessionId, requestId: randomUUID(), message: '把当前 Runtime 的 Attempt 超时时间调整一分钟' })
+  const proposed = await waitForAssistant(sessionId)
+  const proposal = proposed.proposals.at(-1)!
+  assert.equal(proposal.kind, 'platform-operations')
+  assert.equal(proposal.status, 'pending')
+  assert.equal(proposal.delegatedRunId, null)
+  const runtimeBefore = (await database.client<{ timeoutMinutes: number }[]>`
+    select ceil(timeout_seconds / 60.0)::integer as "timeoutMinutes" from runtime_configurations
+     where runtime_id = 'runtime-local-01' order by revision desc limit 1
+  `)[0]!.timeoutMinutes
+  await assert.rejects(assistant.confirmProposal(actor, proposal.id, 'wrong-digest'), /变化/)
+  const delegated = await assistant.confirmProposal(actor, proposal.id, proposal.proposalSha256)
+  assert.equal(delegated.proposals.at(-1)?.status, 'confirmed')
+  assert.ok(delegated.proposals.at(-1)?.delegatedRunId)
+  assert.equal((await database.client<{ timeoutMinutes: number }[]>`select ceil(timeout_seconds / 60.0)::integer as "timeoutMinutes" from runtime_configurations where runtime_id = 'runtime-local-01' order by revision desc limit 1`)[0]!.timeoutMinutes, runtimeBefore)
+
+  const planned = await waitForAssistant(sessionId)
+  const action = planned.actions.at(-1)!
+  assert.equal(action.actionType, 'runtime-update-configuration')
+  assert.equal(action.status, 'pending')
+  assert.equal(action.before.attemptTimeoutMinutes, runtimeBefore)
+  await assert.rejects(assistant.confirmAction(actor, action.id, 'wrong-digest'), /变化/)
+  const executed = await assistant.confirmAction(actor, action.id, action.planSha256)
+  assert.equal(executed.actions.at(-1)?.status, 'executed')
+  assert.notEqual((await database.client<{ timeoutMinutes: number }[]>`select ceil(timeout_seconds / 60.0)::integer as "timeoutMinutes" from runtime_configurations where runtime_id = 'runtime-local-01' order by revision desc limit 1`)[0]!.timeoutMinutes, runtimeBefore)
+  assert.match(executed.messages.at(-1)?.text ?? '', /管理员确认的计划执行/)
+
+  await assistant.send(actor, { sessionId, requestId: randomUUID(), message: '调整 Agent 的说明，保存为待发布草稿' })
+  const agentProposed = await waitForAssistant(sessionId)
+  const agentProposal = agentProposed.proposals.at(-1)!
+  assert.equal(agentProposal.kind, 'agent-management')
+  await assistant.confirmProposal(actor, agentProposal.id, agentProposal.proposalSha256)
+  const agentPlanned = await waitForAssistant(sessionId)
+  const agentAction = agentPlanned.actions.at(-1)!
+  assert.equal(agentAction.actionType, 'agent-update-draft')
+  const agentId = String(agentAction.after.agentId)
+  const desiredDescription = String(agentAction.after.description)
+  const [beforeAgent] = await database.client<{ description: string }[]>`
+    select av.description from agents a
+    join agent_versions av on av.tenant_id = a.tenant_id and av.id = coalesce(a.draft_version_id, a.active_version_id)
+    where a.tenant_id = ${tenant} and a.id = ${agentId}
+  `
+  assert.equal(beforeAgent?.description, agentAction.before.description)
+  const agentExecuted = await assistant.confirmAction(actor, agentAction.id, agentAction.planSha256)
+  assert.equal(agentExecuted.actions.at(-1)?.status, 'executed')
+  const [afterAgent] = await database.client<{ description: string }[]>`
+    select av.description from agents a join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.draft_version_id
+    where a.tenant_id = ${tenant} and a.id = ${agentId}
+  `
+  assert.equal(afterAgent?.description, desiredDescription)
+
+  await assistant.send(actor, { sessionId, requestId: randomUUID(), message: '再次调整当前 Runtime 的 Attempt 超时时间' })
+  const staleProposed = await waitForAssistant(sessionId)
+  const staleProposal = staleProposed.proposals.at(-1)!
+  await assistant.confirmProposal(actor, staleProposal.id, staleProposal.proposalSha256)
+  const stalePlanned = await waitForAssistant(sessionId)
+  const staleAction = stalePlanned.actions.at(-1)!
+  await database.client`
+    insert into runtime_configurations (tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, updated_by)
+    select tenant_id, runtime_id, max(revision) + 1, ${Number(staleAction.before.maxConcurrentWorkers)}, ${(Number(staleAction.before.attemptTimeoutMinutes) + 2) * 60}, '{}', ${actor}
+      from runtime_configurations where tenant_id = ${tenant} and runtime_id = 'runtime-local-01' group by tenant_id, runtime_id
+  `
+  await assert.rejects(assistant.confirmAction(actor, staleAction.id, staleAction.planSha256), /状态已变化/)
+  const staleRejected = await assistant.detail(actor, sessionId)
+  assert.equal(staleRejected.actions.at(-1)?.status, 'failed')
+  assert.match(staleRejected.messages.at(-1)?.text ?? '', /本次未执行平台写入/)
+  await database.client`
+    insert into runtime_configurations (tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, updated_by)
+    select tenant_id, runtime_id, max(revision) + 1, ${Number(staleAction.before.maxConcurrentWorkers)}, ${Number(staleAction.before.attemptTimeoutMinutes) * 60}, '{}', ${actor}
+      from runtime_configurations where tenant_id = ${tenant} and runtime_id = 'runtime-local-01' group by tenant_id, runtime_id
+  `
+
+  const prepareInterruptedRuntimeAction = async (message: string) => {
+    await assistant.send(actor, { sessionId, requestId: randomUUID(), message })
+    const nextProposal = (await waitForAssistant(sessionId)).proposals.at(-1)!
+    await assistant.confirmProposal(actor, nextProposal.id, nextProposal.proposalSha256)
+    return (await waitForAssistant(sessionId)).actions.at(-1)!
+  }
+
+  const notStarted = await prepareInterruptedRuntimeAction('再次调整 Runtime 超时时间，用于重启前未写入场景')
+  await database.client`update admin_assistant_action_plans set status = 'executing' where tenant_id = ${tenant} and id = ${notStarted.id}`
+  const notStartedRecovery = await assistant.recoverInterruptedActions()
+  assert.deepEqual(notStartedRecovery, { inspected: 1, recoveredExecuted: 0, failed: 1 })
+  assert.equal((await assistant.detail(actor, sessionId)).actions.at(-1)?.status, 'failed')
+
+  const alreadyApplied = await prepareInterruptedRuntimeAction('再次调整 Runtime 超时时间，用于重启后核对已写入场景')
+  const [stored] = await database.client<{ plan: StoredActionPlan }[]>`
+    select plan from admin_assistant_action_plans where tenant_id = ${tenant} and id = ${alreadyApplied.id}
+  `
+  if (!stored || stored.plan.actionType !== 'runtime-update-configuration') throw new Error('Runtime 恢复测试计划缺失')
+  await database.client`update admin_assistant_action_plans set status = 'executing' where tenant_id = ${tenant} and id = ${alreadyApplied.id}`
+  await operations.updateRuntimeConfiguration({
+    runtimeId: stored.plan.after.runtimeId,
+    maxConcurrentWorkers: stored.plan.after.maxConcurrentWorkers,
+    attemptTimeoutMinutes: stored.plan.after.attemptTimeoutMinutes,
+    schedulingStatus: stored.plan.after.schedulingStatus,
+    actor,
+  }, stored.plan.before)
+  const appliedRecovery = await assistant.recoverInterruptedActions()
+  assert.deepEqual(appliedRecovery, { inspected: 1, recoveredExecuted: 1, failed: 0 })
+  const recoveredDetail = await assistant.detail(actor, sessionId)
+  assert.equal(recoveredDetail.actions.at(-1)?.status, 'executed')
+  assert.match(recoveredDetail.messages.at(-1)?.text ?? '', /服务重启后已核对目标最终状态/)
+})
+
+test('guarded Runtime and Agent mutations reject a stale plan revision inside the write lock', async () => {
+  const runtimeBefore = await operations.getRuntimeMutationSnapshot('runtime-local-01')
+  await operations.updateRuntimeConfiguration({
+    runtimeId: runtimeBefore.runtimeId,
+    maxConcurrentWorkers: runtimeBefore.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeBefore.attemptTimeoutMinutes === 60 ? 59 : runtimeBefore.attemptTimeoutMinutes + 1,
+    schedulingStatus: runtimeBefore.schedulingStatus,
+    actor,
+  })
+  await assert.rejects(operations.updateRuntimeConfiguration({
+    runtimeId: runtimeBefore.runtimeId,
+    maxConcurrentWorkers: runtimeBefore.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeBefore.attemptTimeoutMinutes,
+    schedulingStatus: runtimeBefore.schedulingStatus,
+    actor,
+  }, runtimeBefore), /Runtime 状态已变化/)
+
+  const agent = (await agents.getAgents())[0]
+  if (!agent) throw new Error('Agent 竞态测试数据缺失')
+  const agentBefore = await agents.getMutationSnapshot(agent.id)
+  const input = {
+    agentId: agentBefore.agent.id,
+    name: agentBefore.agent.name,
+    description: `${agentBefore.agent.description.slice(0, 170)}（并发更新）`,
+    owner: agentBefore.agent.owner,
+    department: agentBefore.agent.department,
+    visibility: agentBefore.agent.visibility,
+    roleIds: agentBefore.agent.roleIds,
+    dataScopes: agentBefore.agent.dataScopes,
+    welcomeMessage: agentBefore.agent.welcomeMessage,
+    examplePrompts: agentBefore.agent.examplePrompts,
+    systemPrompt: agentBefore.agent.systemPrompt,
+    maxTokens: agentBefore.agent.maxTokens,
+    timeoutSeconds: agentBefore.agent.timeoutSeconds,
+    skills: agentBefore.agent.skills,
+    tools: agentBefore.agent.tools,
+    changeSummary: '并发更新测试',
+    actor,
+  }
+  await agents.updateAgent(input)
+  await assert.rejects(agents.updateAgent({ ...input, description: `${input.description.slice(0, 170)}（旧计划）` }, agentBefore.revision), /Agent 配置已变化/)
+})
+
 test('DSH tool preview, explicit confirmation, atomic idempotent install and durable history', { timeout: 210000 }, async () => {
   const { sessionId, requestId, runId } = await send()
   const detail = await wait(sessionId)
@@ -132,6 +320,16 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     await skills.setStatus({ skillId, actor, status: 'published' })
     const resolved = await skills.resolveRuntimeSkills([`${skillId}@0.1.0`])
     assert.equal((await artifactStore.read(resolved[0]!.artifact!)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
+    const querySessionId = `admin-session-${randomUUID()}`
+    await assistant.send(actor, { sessionId: querySessionId, requestId: randomUUID(), message: '平台上有哪些skill?' })
+    const queried = await waitForAssistant(querySessionId)
+    const queryReply = queried.messages.find(message => message.role === 'assistant')?.text ?? ''
+    const querySnapshot = JSON.parse(queryReply) as { totalCount: number; matchedCount: number; returnedCount: number; filterWarning?: string; items: Array<{ id: string; name: string }> }
+    assert.equal(querySnapshot.totalCount, afterCount!.count)
+    assert.equal(querySnapshot.matchedCount, 0)
+    assert.equal(querySnapshot.returnedCount, querySnapshot.totalCount)
+    assert.ok(querySnapshot.items.some(item => item.id === skillId && item.name === 'installation-test'))
+    assert.match(querySnapshot.filterWarning ?? '', /只有 totalCount 为 0/)
     const [storedBodies] = await database.client<{ versions: number; installations: number; attempts: number }[]>`
       select
         (select count(*)::int from skill_versions where manifest::text like '%SKILL_RESOURCE_MARKER_7F31%' or instructions like '%SKILL_RESOURCE_MARKER_7F31%') as versions,
@@ -297,25 +495,24 @@ test('real DSH reads the exact immutable Skill resource through the governed rea
   console.log(JSON.stringify({ realDshResourceRead: true, toolCalls: completion.safeMetadata['tool_call_count'] }))
 })
 
-test('admin HTTP routes enforce write permission, conversation ownership and unavailable mode', { skip: real }, async () => {
+test('admin HTTP routes allow read-only chat but protect management writes and conversation ownership', { skip: real }, async () => {
   const saved = await send(); await wait(saved.sessionId)
   let userId = actor
   let permissions = ['admin:read']
   const router = new Router({ authenticateApi: async (request, audience) => ({ ...(await prototypeApiAuthenticator(request, audience)), userId, permissions }) })
-  registerAssistantRoutes(router, service)
+  registerAssistantRoutes(router, assistant)
   registerSkillInstallationRoutes(router, service)
   const server = createServer((request, response) => { void router.handle(request, response) })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as { port: number }
   const base = `http://127.0.0.1:${address.port}/api/admin/v1/assistant`
   try {
-    assert.equal((await fetch(`${base}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403)
+    assert.equal((await fetch(`${base}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 422)
     assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/admin/v1/skill-installations`, { method: 'POST', headers: { 'Content-Type': 'application/zip', 'X-File-Name': 'test.zip' }, body: bytes })).status, 403)
     assert.equal((await fetch(`${base}/sessions/${saved.sessionId}`)).status, 200)
     userId = 'U00001'
     assert.equal((await fetch(`${base}/sessions/${saved.sessionId}`)).status, 403)
-    const history = await fetch(`${base}/sessions`).then(response => response.json()) as { data: unknown[] }
-    assert.deepEqual(history.data, [])
+    assert.equal((await fetch(`${base}/sessions`)).status, 403)
     userId = actor
     permissions = ['admin:write']
     const uploaded = await fetch(`http://127.0.0.1:${address.port}/api/admin/v1/skill-installations`, { method: 'POST', headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent('接口安装.zip') }, body: bytes })

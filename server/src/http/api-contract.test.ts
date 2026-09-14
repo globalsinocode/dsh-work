@@ -217,6 +217,47 @@ test('prototype admin exposes the asynchronous Skill test progress contract', as
   assert.equal(progress.body.data.status, 'passed')
 })
 
+test('prototype admin lists and adds approved DSH tools without allowing duplicates', async () => {
+  const catalog = await getJson<{ data: Array<{ id: string; status: string; defaultApprovalPolicy: string }> }>('/api/admin/v1/tools/catalog')
+  assert.equal(catalog.response.status, 200)
+  const candidate = catalog.body.data.find(item => item.status === 'ready')
+  assert.ok(candidate)
+
+  const invalid = await fetch(`${baseUrl}/api/admin/v1/tools`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ catalogId: candidate.id, allowedRoles: [], dataScopes: [], approvalPolicy: candidate.defaultApprovalPolicy }),
+  })
+  assert.equal(invalid.status, 422)
+
+  const response = await fetch(`${baseUrl}/api/admin/v1/tools`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      catalogId: candidate.id,
+      allowedRoles: ['试点员工'],
+      dataScopes: ['当前工作空间'],
+      approvalPolicy: candidate.defaultApprovalPolicy,
+    }),
+  })
+  const body = await response.json() as { data: { id: string; approvalPolicy: string } }
+  assert.equal(response.status, 200)
+  assert.equal(body.data.id, candidate.id)
+  assert.equal(body.data.approvalPolicy, candidate.defaultApprovalPolicy)
+
+  const duplicate = await fetch(`${baseUrl}/api/admin/v1/tools`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      catalogId: candidate.id,
+      allowedRoles: ['试点员工'],
+      dataScopes: ['当前工作空间'],
+      approvalPolicy: candidate.defaultApprovalPolicy,
+    }),
+  })
+  assert.equal(duplicate.status, 409)
+})
+
 test('unavailable conversation commands return an actionable 503 instead of a route 404', async () => {
   const response = await fetch(`${baseUrl}/api/workbench/v1/sessions`, {
     method: 'POST',

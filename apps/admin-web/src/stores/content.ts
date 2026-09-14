@@ -24,6 +24,7 @@ import type {
   SkillDefinition,
   SkillReleaseRecord,
   SkillVersionRecord,
+  ToolCatalogCandidate,
   ToolDefinition,
   UpdateRuntimeConfigurationInput,
   UsagePoint,
@@ -42,6 +43,7 @@ export const useContentStore = defineStore('admin-content', () => {
   const skillVersions = ref<SkillVersionRecord[]>([])
   const skillReleaseRecords = ref<SkillReleaseRecord[]>([])
   const tools = ref<ToolDefinition[]>([])
+  const toolCatalog = ref<ToolCatalogCandidate[]>([])
   const connectors = ref<ConnectorDefinition[]>([])
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
@@ -97,6 +99,7 @@ export const useContentStore = defineStore('admin-content', () => {
       skillVersionData,
       skillReleaseData,
       toolData,
+      toolCatalogData,
       connectorData,
       healthData,
       usageData,
@@ -114,6 +117,7 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getSkillVersions(),
       adminApi.getSkillReleaseRecords(),
       adminApi.getTools(),
+      adminApi.getToolCatalog(),
       adminApi.getConnectors(),
       adminApi.getHealth(),
       adminApi.getUsage(),
@@ -131,6 +135,7 @@ export const useContentStore = defineStore('admin-content', () => {
     skillVersions.value = skillVersionData
     skillReleaseRecords.value = skillReleaseData
     tools.value = toolData
+    toolCatalog.value = toolCatalogData
     connectors.value = connectorData
     health.value = healthData
     usage.value = usageData
@@ -233,6 +238,22 @@ export const useContentStore = defineStore('admin-content', () => {
     return tool
   }
 
+  async function addTool(input: {
+    catalogId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) {
+    const tool = await adminApi.addTool(input)
+    replaceById(tools.value, tool)
+    const candidate = toolCatalog.value.find(item => item.id === input.catalogId)
+    if (candidate) {
+      candidate.status = 'installed'
+      candidate.availabilityMessage = '已添加到工具目录'
+    }
+    return tool
+  }
+
   async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
     const result = await adminApi.createSkill(input)
     skills.value.unshift(result.skill)
@@ -329,6 +350,7 @@ export const useContentStore = defineStore('admin-content', () => {
     skillVersions,
     skillReleaseRecords,
     tools,
+    toolCatalog,
     connectors,
     auditEvents,
     operationsSummary,
@@ -363,6 +385,7 @@ export const useContentStore = defineStore('admin-content', () => {
     checkRuntime,
     updateRuntimeConfiguration,
     updateToolPermissions,
+    addTool,
   }
 })
 

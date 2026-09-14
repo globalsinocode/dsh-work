@@ -52,6 +52,7 @@ lines.on('line', (line) => {
     const text = Array.isArray(prompt)
       ? prompt.map(block => isRecord(block) && typeof block['text'] === 'string' ? block['text'] : '').join('')
       : ''
+    const currentText = text.includes('\n\n当前消息：\n') ? text.slice(text.lastIndexOf('\n\n当前消息：\n') + '\n\n当前消息：\n'.length) : text
     const pending = { id: message.id, sessionId, answer: `Mock response: ${text}` }
     pendingPrompts.set(sessionId, pending)
 
@@ -121,6 +122,43 @@ lines.on('line', (line) => {
               for (const dependency of parsed.dependencies ?? []) await activate(dependency.split('@')[0]!)
             }
             await activate(skillName)
+          } else if (allowedTools.includes('propose_admin_task')) {
+            const kind = /agent/i.test(currentText)
+              ? 'agent-management'
+              : /(runtime|运行时|排空|调度)/i.test(currentText)
+                ? 'platform-operations'
+                : /https?:\/\/|npx\s+skills/i.test(currentText)
+                  ? 'skill-install'
+                  : undefined
+            pending.answer = kind
+              ? await callPlatformTool('propose_admin_task', { kind, summary: `Mock ${kind} proposal`, impact: '等待管理员确认后才会调用专用助手。' })
+              : /平台上有哪些\s*skill/i.test(currentText)
+                ? await callPlatformTool('inspect_admin_state', { domain: 'skills', query: '列出平台上所有已安装的 Skill' })
+                : await callPlatformTool('inspect_admin_state', { domain: 'overview' })
+          } else if (allowedTools.includes('prepare_admin_action')) {
+            if (/(runtime|运行时|排空|调度)/i.test(currentText)) {
+              const inspected = JSON.parse(await callPlatformTool('inspect_admin_state', { domain: 'operations' })) as { runtimes?: Array<{ id: string; schedulingStatus: string; attemptTimeoutMinutes: number }> }
+              const runtime = inspected.runtimes?.[0]
+              if (!runtime) throw new Error('No Runtime fixture')
+              pending.answer = await callPlatformTool('prepare_admin_action', {
+                actionType: 'runtime-update-configuration',
+                target: runtime.id,
+                summary: 'Mock Runtime scheduling change',
+                changes: /排空/.test(currentText)
+                  ? { schedulingStatus: runtime.schedulingStatus === 'draining' ? 'accepting' : 'draining' }
+                  : { attemptTimeoutMinutes: runtime.attemptTimeoutMinutes === 60 ? 59 : runtime.attemptTimeoutMinutes + 1 },
+              })
+            } else {
+              const inspected = JSON.parse(await callPlatformTool('inspect_admin_state', { domain: 'agents' })) as { items?: Array<{ id: string; description: string }> }
+              const agent = inspected.items?.[0]
+              if (!agent) throw new Error('No Agent fixture')
+              pending.answer = await callPlatformTool('prepare_admin_action', {
+                actionType: 'agent-update-draft',
+                target: agent.id,
+                summary: 'Mock Agent draft change',
+                changes: { description: `${agent.description}（管理助手测试）`, changeSummary: '管理助手确认链路测试' },
+              })
+            }
           } else pending.answer = await callPlatformTool('prepare_skill_installation', {})
           finishPrompt(pending, 'end_turn')
         } catch { failPrompt(pending, 'Platform tool unavailable', 'tool') }

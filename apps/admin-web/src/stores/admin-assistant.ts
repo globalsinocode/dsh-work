@@ -24,7 +24,7 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     const blank = conversations.value.find(item => !item.saved && !item.draft)
     if (blank) { selectedId.value = blank.id; blank.context = context; return }
     const id = `admin-session-${crypto.randomUUID()}`
-    conversations.value.unshift({ id, title: '管理助手', messages: [], runs: [], installations: [], draft: '', context, loaded: true, saved: false })
+    conversations.value.unshift({ id, title: '管理助手', messages: [], runs: [], installations: [], proposals: [], actions: [], draft: '', context, loaded: true, saved: false })
     selectedId.value = id
   }
   watch(() => [auth.user.id, auth.canReadAdmin], () => {
@@ -46,7 +46,7 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
       const rows = await adminApi.getAssistantConversations()
       if (epoch !== generation) return
       for (const row of rows) {
-        if (!conversations.value.some(item => item.id === row.id)) conversations.value.push({ ...row, messages: [], runs: [], installations: [], draft: '', context: 'skills', loaded: false, saved: true })
+        if (!conversations.value.some(item => item.id === row.id)) conversations.value.push({ ...row, messages: [], runs: [], installations: [], proposals: [], actions: [], draft: '', context: 'general', loaded: false, saved: true })
       }
     } catch (cause) { if (epoch === generation) error.value = message(cause) }
     finally { if (epoch === generation) loading.value = false }
@@ -75,7 +75,7 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     finally { refreshing = false }
   }
   async function send() {
-    if (!auth.canManage || active.value || busyIds.value.includes(selectedId.value)) return
+    if (!auth.canReadAdmin || active.value || busyIds.value.includes(selectedId.value)) return
     const conversation = current.value, text = conversation.draft.trim()
     if (!text) return
     let request = requests.get(conversation.id)
@@ -85,10 +85,10 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
       if (conversation.draft.trim() === text) conversation.draft = ''
       requests.delete(conversation.id)
       return result
-    })
+    }, false, true)
   }
-  async function act(id: string, perform: () => Promise<AdminConversation>, replyOnFailure = false) {
-    if (!auth.canManage || busyIds.value.includes(id)) return
+  async function act(id: string, perform: () => Promise<AdminConversation>, replyOnFailure = false, allowRead = false) {
+    if ((!auth.canManage && !(allowRead && auth.canReadAdmin)) || busyIds.value.includes(id)) return
     const epoch = generation
     const messageIds = new Set(conversations.value.find(item => item.id === id)?.messages.map(item => item.id) ?? [])
     busyIds.value.push(id); error.value = ''
@@ -107,8 +107,12 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
     finally { if (epoch === generation) busyIds.value = busyIds.value.filter(value => value !== id) }
   }
   async function confirm(runId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmSkillInstallation(runId, planSha256), true) }
+  async function confirmProposal(proposalId: string, proposalSha256: string) { await act(selectedId.value, () => adminApi.confirmAssistantProposal(proposalId, proposalSha256), true) }
+  async function cancelProposal(proposalId: string) { await act(selectedId.value, () => adminApi.cancelAssistantProposal(proposalId), true) }
+  async function confirmAction(actionId: string, planSha256: string) { await act(selectedId.value, () => adminApi.confirmAssistantAction(actionId, planSha256), true) }
+  async function cancelAction(actionId: string) { await act(selectedId.value, () => adminApi.cancelAssistantAction(actionId), true) }
   async function cancel(runId: string) { await act(selectedId.value, () => adminApi.cancelAssistantRun(runId)) }
   async function retry(runId: string) { await act(selectedId.value, () => adminApi.retryAssistantRun(runId)) }
-  return { conversations, selectedId, current, active, loading, error, busyIds, start, load, select, refresh, send, confirm, cancel, retry }
+  return { conversations, selectedId, current, active, loading, error, busyIds, start, load, select, refresh, send, confirm, confirmProposal, cancelProposal, confirmAction, cancelAction, cancel, retry }
 })
 function message(cause: unknown) { return cause instanceof Error ? cause.message : '管理助手请求失败，请重试' }

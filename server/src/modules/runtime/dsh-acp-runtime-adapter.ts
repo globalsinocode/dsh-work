@@ -21,6 +21,7 @@ import type {
   RuntimeHealth,
   RuntimeManifest,
   RuntimeRunStatus,
+  RuntimeToolDescriptor,
 } from './runtime-types.ts'
 
 interface ExecutionRecord {
@@ -45,6 +46,7 @@ export interface DshAcpRuntimeAdapterConfiguration {
   runtimeId: string
   runtimeRoot: string
   dshRepository: string
+  toolCatalogPath?: string
   runtimeVersion?: string
   runtimeCommit?: string
   protocolVersion?: number
@@ -57,6 +59,9 @@ export interface DshAcpRuntimeAdapterConfiguration {
     manifest: RuntimeManifest,
   ) => Promise<'allow_once' | 'reject_once'>
   prepareSkillInstallation?: (manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  inspectAdminState?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  proposeAdminTask?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  prepareAdminAction?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   loadSkillArtifact?: (
     skill: RuntimeManifest['agent_configuration']['skill_instructions'][number],
   ) => Promise<{ instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
@@ -242,6 +247,28 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     }
   }
 
+  async listTools(): Promise<RuntimeToolDescriptor[]> {
+    const path = this.configuration.toolCatalogPath
+    if (!path) throw new Error('DSH Runtime 未配置工具目录输出')
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+    if (!isRecord(parsed) || parsed['formatVersion'] !== 1 || !Array.isArray(parsed['tools'])) {
+      throw new Error('DSH Runtime 工具目录格式无效')
+    }
+    return parsed['tools'].map((value) => {
+      if (!isRecord(value)
+        || typeof value['name'] !== 'string'
+        || typeof value['description'] !== 'string'
+        || !isRecord(value['parameters'])) {
+        throw new Error('DSH Runtime 工具目录包含无效条目')
+      }
+      return {
+        id: value['name'],
+        description: value['description'],
+        inputSchema: value['parameters'],
+      }
+    })
+  }
+
   async configureScheduling(status: 'accepting' | 'draining' | 'disabled'): Promise<void> {
     if (this.closed && status === 'accepting') throw new Error('已关闭的 Runtime Adapter 不能重新接收任务')
     this.acceptingRuns = status === 'accepting' && !this.closed
@@ -276,6 +303,21 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         const prepare = this.configuration.prepareSkillInstallation
         if (!prepare) throw new Error('安装助手不可用：未配置平台安装工具')
         platformTools['prepare_skill_installation'] = (_input, signal) => prepare(record.manifest, signal)
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'inspect_admin_state')) {
+        const inspect = this.configuration.inspectAdminState
+        if (!inspect) throw new Error('管理助手不可用：未配置平台查询工具')
+        platformTools['inspect_admin_state'] = (input, signal) => inspect(input, record.manifest, signal)
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'propose_admin_task')) {
+        const propose = this.configuration.proposeAdminTask
+        if (!propose) throw new Error('管理助手不可用：未配置任务提案工具')
+        platformTools['propose_admin_task'] = (input, signal) => propose(input, record.manifest, signal)
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'prepare_admin_action')) {
+        const prepare = this.configuration.prepareAdminAction
+        if (!prepare) throw new Error('管理助手不可用：未配置操作计划工具')
+        platformTools['prepare_admin_action'] = (input, signal) => prepare(input, record.manifest, signal)
       }
       if (record.manifest.tools.some(tool => tool.id === 'activate_skill')) {
         platformTools['activate_skill'] = async (input) => {

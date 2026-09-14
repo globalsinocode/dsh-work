@@ -109,6 +109,27 @@ describe('Runtime Manifest compiler', () => {
 })
 
 describe('DSH ACP Runtime Adapter', () => {
+  it('reads the tool schemas published by the active DSH Profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
+    const toolCatalogPath = join(root, 'runtime-tools.json')
+    await writeFile(toolCatalogPath, JSON.stringify({
+      formatVersion: 1,
+      tools: [{ name: 'read', description: 'Read a file.', parameters: { type: 'object' } }],
+    }))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-catalog-test',
+      runtimeRoot: root,
+      dshRepository: process.cwd(),
+      toolCatalogPath,
+      process: { command: process.execPath, args: ['--version'], cwd: process.cwd() },
+    })
+    adapters.push(adapter)
+
+    assert.deepEqual(await adapter.listTools(), [
+      { id: 'read', description: 'Read a file.', inputSchema: { type: 'object' } },
+    ])
+  })
+
   it('passes only an explicit non-secret environment baseline to DSH workers', () => {
     const originalDatabaseUrl = process.env.DSH_WORK_DATABASE_URL
     process.env.DSH_WORK_DATABASE_URL = 'postgres://user:password@database/internal'
@@ -201,6 +222,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(installation.process.args.slice(0, 4), ['--version', '--profile', 'acp', '--patch'])
     assert.equal(installation.process.args[4], join(dataRoot, 'dsh-config/acp-managed-credentials.cordis.yml'))
     assert.equal(installation.process.env?.['DSH_WORK_DSH_SESSIONS_ROOT'], sessionsRoot)
+    assert.equal(installation.process.env?.['DSH_TOOL_CATALOG_PATH'], join(dataRoot, 'dsh-config/runtime-tools.json'))
     const generatedOverlay = join(dataRoot, 'dsh-config/acp-managed-credentials.cordis.yml')
     await stat(generatedOverlay)
     assert.doesNotMatch(await readFile(generatedOverlay, 'utf8'), /__DSH_WORK_TOOL_POLICY_MODULE__/)
@@ -330,6 +352,7 @@ describe('DSH ACP Runtime Adapter', () => {
   it('negotiates ACP and creates a disposable Session before serving traffic', async () => {
     await preflightDshRuntime({
       home: process.cwd(),
+      toolCatalogPath: join(tmpdir(), 'unused-runtime-tools.json'),
       version: 'test',
       commit: '0'.repeat(40),
       protocolVersion: 1,
@@ -421,6 +444,22 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(collected, [{ runId: input.run_id, name: 'report.md', content: '# 测试成果\n' }])
     assert.equal(events.at(-1)?.safe_metadata['artifact_count'], 1)
     assert.match(renderSystemPrompt(input), /output\/<文件名>\.md/)
+  })
+
+  it('bridges general admin inspection and delegation proposal tools without executing a platform write', async () => {
+    const calls: Array<{ name: string; input: Record<string, unknown> }> = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      inspectAdminState: async (input) => { calls.push({ name: 'inspect_admin_state', input }); return { skills: { total: 3 } } },
+      proposeAdminTask: async (input) => { calls.push({ name: 'propose_admin_task', input }); return { id: 'proposal-1', status: 'pending' } },
+    })
+    const ordinary = adminManifest('run-admin-query', 'attempt-1', '当前平台概况如何？')
+    const ordinaryResult = await (await adapter.execute(ordinary)).done
+    assert.equal(ordinaryResult.status, 'completed', ordinaryResult.errorMessage ?? undefined)
+    const delegated = adminManifest('run-admin-proposal', 'attempt-1', '调整 Agent 的可见角色')
+    const delegatedResult = await (await adapter.execute(delegated)).done
+    assert.equal(delegatedResult.status, 'completed', delegatedResult.errorMessage ?? undefined)
+    assert.deepEqual(calls.map(call => call.name), ['inspect_admin_state', 'propose_admin_task'])
+    assert.equal(calls[1]?.input['kind'], 'agent-management')
   })
 
   it('loads an externalized Skill folder without putting its body in the persisted manifest', async () => {
@@ -559,6 +598,7 @@ async function createAdapter(
   shutdownGraceMs = 500,
   loadSkillArtifact?: NonNullable<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]['loadSkillArtifact']>,
   collectArtifacts?: NonNullable<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]['collectArtifacts']>,
+  additionalConfiguration: Partial<ConstructorParameters<typeof DshAcpRuntimeAdapter>[0]> = {},
 ): Promise<DshAcpRuntimeAdapter> {
   const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-test-'))
   const adapter = new DshAcpRuntimeAdapter({
@@ -573,9 +613,22 @@ async function createAdapter(
     shutdownGraceMs,
     ...(loadSkillArtifact ? { loadSkillArtifact } : {}),
     ...(collectArtifacts ? { collectArtifacts } : {}),
+    ...additionalConfiguration,
   })
   adapters.push(adapter)
   return adapter
+}
+
+function adminManifest(runId: string, attemptId: string, message: string): RuntimeManifest {
+  const input = manifest(runId, attemptId, message)
+  input.purpose = 'admin-assistant'
+  input.workspace_id = ''
+  input.agent_version_id = null
+  input.agent_configuration = { system_prompt: '你是通用管理助手，只能查询平台安全摘要或创建等待管理员确认的任务提案。', skill_instructions: [] }
+  input.skills = []
+  input.tools = [{ id: 'inspect_admin_state', version: '1.0.0' }, { id: 'propose_admin_task', version: '1.0.0' }]
+  input.permission_policy = { approval_mode: 'always', network_policy: 'deny', write_policy: 'deny' }
+  return input
 }
 
 function fileMount(mountPath: string, content: string) {

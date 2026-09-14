@@ -45,4 +45,32 @@ export interface AdminConversation {
   messages: Array<{ id: string; role: 'user' | 'assistant'; text: string; runId: string }>
   runs: Array<{ id: string; status: 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'; error: string | null }>
   installations: SkillInstallation[]
+  proposals: AdminTaskProposal[]
+  actions: AdminActionPlan[]
+}
+
+export interface AdminTaskProposal {
+  id: string
+  runId: string
+  kind: 'skill-install' | 'agent-management' | 'platform-operations'
+  title: string
+  assistantName: string
+  purpose: 'admin-skill-install' | 'admin-agent-manage' | 'admin-platform-operations'
+  request: string
+  impact: string
+  proposalSha256: string
+  status: 'pending' | 'confirmed' | 'cancelled'
+  delegatedRunId: string | null
+}
+
+export interface AdminActionPlan {
+  id: string
+  runId: string
+  actionType: 'agent-update-draft' | 'agent-set-status' | 'runtime-update-configuration'
+  summary: string
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+  planSha256: string
+  status: 'pending' | 'executing' | 'executed' | 'cancelled' | 'failed'
+  resultSummary: string | null
 }

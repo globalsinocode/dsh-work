@@ -376,6 +376,32 @@ export interface ToolDefinition {
   lastCheckedAt: string
 }
 
+export interface ToolCatalogCandidate {
+  id: string
+  version: string
+  name: string
+  system: string
+  description: string
+  connectorId: string
+  risk: ToolDefinition['risk']
+  mode: ToolDefinition['mode']
+  timeoutSeconds: number
+  defaultAllowedRoles: string[]
+  defaultDataScopes: string[]
+  defaultApprovalPolicy: ToolDefinition['approvalPolicy']
+  requirements: string[]
+  status: 'ready' | 'installed' | 'unavailable'
+  availabilityMessage: string
+}
+
+export interface AddToolInput {
+  catalogId: string
+  allowedRoles: string[]
+  dataScopes: string[]
+  approvalPolicy: ToolDefinition['approvalPolicy']
+  actor: string
+}
+
 export interface ConnectorDefinition {
   id: string
   name: string

@@ -36,6 +36,7 @@ interface RuntimeMetadata extends RuntimeIdentity {
 
 export interface DshRuntimeInstallation {
   home: string
+  toolCatalogPath: string
   version: string
   commit: string
   protocolVersion: number
@@ -102,6 +103,7 @@ export async function resolveDshRuntimeInstallation(
     options.projectRoot,
     env['DSH_WORK_DSH_SESSIONS_ROOT'] ?? resolve(dataRoot, 'dsh-sessions'),
   )
+  const toolCatalogPath = resolve(dataRoot, 'dsh-config/runtime-tools.json')
   const deploymentConfig = await writeDeploymentOverlay(
     dataRoot,
     deploymentConfigTemplate,
@@ -131,6 +133,7 @@ export async function resolveDshRuntimeInstallation(
 
   return {
     home,
+    toolCatalogPath,
     version: metadata.version,
     commit: metadata.commit,
     protocolVersion: metadata.protocolVersion,
@@ -147,6 +150,7 @@ export async function resolveDshRuntimeInstallation(
       acpBaseConfig,
       env: {
         DSH_WORK_DSH_SESSIONS_ROOT: dshSessionsRoot,
+        DSH_TOOL_CATALOG_PATH: toolCatalogPath,
       },
     }),
   }

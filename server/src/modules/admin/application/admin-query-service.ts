@@ -15,10 +15,18 @@ import type {
   SkillConfiguration,
   SkillDefinition,
   ToolDefinition,
+  AddToolInput,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
 } from '../../../domain/types.ts'
+import {
+  assertDshToolApprovalPolicy,
+  catalogEntryToToolDefinition,
+  dshBuiltInToolCatalog,
+  normalizeToolPolicyInput,
+  publicCatalogCandidate,
+} from '../../tool/dsh-built-in-tool-catalog.ts'
 
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
@@ -396,6 +404,32 @@ export class AdminQueryService {
 
   getTools() {
     return this.repository.read('tools')
+  }
+
+  async getToolCatalog() {
+    const installed = new Set((await this.repository.read('tools')).map(tool => tool.id))
+    return dshBuiltInToolCatalog.map(entry => {
+      if (!entry.platformSupported) return publicCatalogCandidate(entry, 'unavailable', entry.unsupportedReason ?? '平台尚未接入该工具')
+      return installed.has(entry.id)
+        ? publicCatalogCandidate(entry, 'installed', '已添加到工具目录')
+        : publicCatalogCandidate(entry, 'ready', '原型模式可演示添加；真实环境仍会检查 DSH Runtime')
+    })
+  }
+
+  async addTool(input: AddToolInput) {
+    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    const policy = normalizeToolPolicyInput(input)
+    const entry = dshBuiltInToolCatalog.find(item => item.id === input.catalogId)
+    if (!entry) throw new Error(`不支持添加该 DSH 工具：${input.catalogId}`)
+    if (!entry.platformSupported) throw new Error(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
+    assertDshToolApprovalPolicy(entry, policy.approvalPolicy)
+    const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
+    if (existing) throw new Error(`工具已存在：${entry.name}`)
+    return this.repository.createTool(catalogEntryToToolDefinition(entry, {
+      allowedRoles: policy.allowedRoles,
+      dataScopes: policy.dataScopes,
+      approvalPolicy: policy.approvalPolicy,
+    }))
   }
 
   async setToolStatus(input: {

@@ -35,6 +35,14 @@ const runtime: AgentRuntimePort = {
       message: `测试 Runtime：${runtimeStatus}`,
     }
   },
+  async listTools() {
+    return [
+      { id: 'edit', description: 'Edit an existing file.', inputSchema: { type: 'object' } },
+      { id: 'todo_write', description: 'Update the task list.', inputSchema: { type: 'object' } },
+      { id: 'bash', description: 'Execute a shell command.', inputSchema: { type: 'object' } },
+      { id: 'subagent', description: 'Delegate work.', inputSchema: { type: 'object' } },
+    ]
+  },
   async close() {},
 }
 
@@ -63,27 +71,77 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   assert.equal(connector?.protocol, 'runtime')
   assert.equal(connector?.toolCount, 4)
 
+  const candidates = await tools.getToolCatalog()
+  assert.deepEqual(candidates.map(candidate => candidate.id).sort(), ['bash', 'edit', 'subagent', 'todo_write'])
+  assert.deepEqual(candidates.filter(candidate => candidate.status === 'ready').map(candidate => candidate.id).sort(), ['edit', 'todo_write'])
+  assert.equal(candidates.find(candidate => candidate.id === 'subagent')?.status, 'unavailable')
+  assert.equal(candidates.find(candidate => candidate.id === 'bash')?.status, 'unavailable')
+  assert.match(candidates.find(candidate => candidate.id === 'bash')?.availabilityMessage ?? '', /不开放任意 Shell/)
+  await assert.rejects(tools.addTool({
+    catalogId: 'subagent', allowedRoles: ['平台管理员'], dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'always', actor: 'U00008',
+  }), /尚未接入/)
+  const added = await tools.addTool({
+    catalogId: 'edit',
+    allowedRoles: ['普通员工', '平台管理员'],
+    dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none',
+    actor: 'U00008',
+  })
+  assert.equal(added.id, 'edit')
+  assert.equal(added.mode, 'write')
+  assert.equal(added.approvalPolicy, 'none')
+  await tools.assertAvailableReferences(['edit@1.0.0'])
+  assert.equal(await tools.resolveRuntimeApprovalMode(['edit@1.0.0']), 'never')
+  await assert.rejects(tools.addTool({
+    catalogId: 'edit', allowedRoles: ['普通员工'], dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none', actor: 'U00008',
+  }), /已存在/)
+  assert.equal((await tools.getToolCatalog()).find(candidate => candidate.id === 'edit')?.status, 'installed')
+  await assert.rejects(tools.addTool({
+    catalogId: 'bash',
+    allowedRoles: ['平台管理员'],
+    dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'always',
+    actor: 'U00008',
+  }), /不开放任意 Shell/)
+  await database`
+    insert into tools (
+      id, tenant_id, key, name, source, status, connector_id, system, description,
+      dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes, approval_policy
+    ) values (
+      'bash', 'tenant-dsh-work', 'dsh-bash-disabled-test', '执行 Shell 命令', 'platform', 'disabled',
+      'connector-dsh-workspace', 'DSH Runtime', '不可授权的测试记录', 'bash', 'write', 60,
+      '["role-platform-admin"]'::jsonb, '["workspace:authorized"]'::jsonb, 'always'
+    )
+  `
+  await database`
+    insert into tool_versions (id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status)
+    values ('tool-version-bash-disabled-test', 'tenant-dsh-work', 'bash', '1.0.0', '{}'::jsonb, '{}'::jsonb, 'high', 'published')
+  `
+  assert.match((await tools.getToolCatalog()).find(candidate => candidate.id === 'bash')?.availabilityMessage ?? '', /已安装但不可授权/)
+  await assert.rejects(tools.setToolStatus({ toolId: 'bash', status: 'available', actor: 'U00008' }), /逐次审批尚未接入/)
+  await assert.rejects(tools.assertAvailableReferences(['bash@1.0.0']), /不可用/)
+
   await tools.assertAvailableReferences(['read@1.0.0', 'glob@1.0.0', 'grep@1.0.0', 'write@1.0.0'])
   await assert.rejects(tools.assertAvailableReferences(['read']), /锁定版本/)
   assert.equal(await tools.resolveRuntimeApprovalMode(['write@1.0.0']), 'never')
 
   assert.equal(await tools.resolveRuntimeApprovalMode(['read@1.0.0']), 'never')
-  await tools.updateToolPermissions({
+  await assert.rejects(tools.updateToolPermissions({
     toolId: 'read',
     allowedRoles: ['普通员工', '平台管理员'],
     dataScopes: ['workspace:authorized'],
     approvalPolicy: 'always',
     actor: 'U00008',
-  })
-  assert.equal(await tools.resolveRuntimeApprovalMode(['read@1.0.0']), 'always')
-  await tools.updateToolPermissions({
+  }), /平台安全策略固定/)
+  await assert.rejects(tools.updateToolPermissions({
     toolId: 'read',
     allowedRoles: ['普通员工', '平台管理员'],
     dataScopes: ['workspace:authorized'],
     approvalPolicy: 'sensitive',
     actor: 'U00008',
-  })
-  assert.equal(await tools.resolveRuntimeApprovalMode(['read@1.0.0']), 'risk_based')
+  }), /平台安全策略固定/)
 
   const permissionUpdated = await tools.updateToolPermissions({
     toolId: 'read',
@@ -93,6 +151,7 @@ test('Tool and Connector management gates immutable Agent and Skill references',
     actor: 'U00008',
   })
   assert.deepEqual(permissionUpdated.allowedRoles, ['普通员工', '平台管理员'])
+  assert.equal(await tools.resolveRuntimeApprovalMode(['activate_skill@1.0.0']), 'never')
 
   await tools.setToolStatus({ toolId: 'read', status: 'disabled', actor: 'U00008' })
   await assert.rejects(tools.assertAvailableReferences(['read@1.0.0']), /不可用/)

@@ -21,7 +21,7 @@ export type RuntimeEventType =
 
 export interface RuntimeManifest {
   manifest_version: '1.0'
-  purpose?: 'admin-skill-install' | 'admin-skill-test'
+  purpose?: 'admin-assistant' | 'admin-skill-install' | 'admin-skill-test' | 'admin-agent-manage' | 'admin-platform-operations'
   installation_source?: string
   run_id: string
   attempt_id: string
@@ -150,6 +150,12 @@ export interface RuntimeHealth {
   message: string
 }
 
+export interface RuntimeToolDescriptor {
+  id: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
 export type RuntimeEventListener = (event: RuntimeEvent) => void
 
 export type RuntimeCancelCause = 'user' | 'system_revoke'
@@ -168,6 +174,8 @@ export interface AgentRuntimePort {
   cancel(runId: string, requestedBy: string, cancelCause?: RuntimeCancelCause): Promise<{ accepted: boolean }>
   status(runId: string): RuntimeExecutionSnapshot | undefined
   health(): Promise<RuntimeHealth>
+  /** Return the model-facing tools registered by the active DSH deployment. */
+  listTools?(): Promise<RuntimeToolDescriptor[]>
   /** Mirror scheduler state for health reporting; admission remains database-owned. */
   configureScheduling?(status: 'accepting' | 'draining' | 'disabled'): Promise<void>
   close(): Promise<void>

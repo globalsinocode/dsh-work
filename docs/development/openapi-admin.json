@@ -326,7 +326,30 @@
     "/tools": {
       "get": {
         "operationId": "listTools",
-        "summary": "查询平台预置工具；一期只读",
+        "summary": "查询已添加的平台工具",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addTool",
+        "summary": "从当前 DSH Profile 的已加载工具中添加平台支持项并配置初始权限",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/tools/catalog": {
+      "get": {
+        "operationId": "listToolCatalog",
+        "summary": "查询当前 DSH Profile 已加载工具及其平台安装和兼容状态",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -986,7 +1009,7 @@
     "/assistant/messages": {
       "post": {
         "operationId": "sendAdminAssistantMessage",
-        "summary": "通过既有 Run/Attempt 和 DSH 解析已有 Skill 来源",
+        "summary": "通过既有 Run/Attempt 和 DSH 进行普通管理对话或生成专用助手任务提案",
         "responses": {
           "202": {
             "$ref": "#/components/responses/Ok"
@@ -1008,6 +1031,69 @@
             }
           }
         }
+      }
+    },
+    "/assistant/task-proposals/{id}/confirm": {
+      "post": {
+        "operationId": "confirmAdminAssistantTaskProposal",
+        "summary": "确认调用提案中锁定的 DSH 专用助手；此步骤不直接执行平台写入",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "description": "没有管理写权限或不拥有此对话" },
+          "409": { "description": "提案状态已变化" },
+          "503": { "description": "未配置数据库或 DSH 管理助手不可用" }
+        },
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminTaskProposalConfirmation" } } }
+        }
+      }
+    },
+    "/assistant/task-proposals/{id}/cancel": {
+      "post": {
+        "operationId": "cancelAdminAssistantTaskProposal",
+        "summary": "取消尚未确认的专用助手调用提案",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "description": "没有管理写权限或不拥有此对话" }
+        },
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
+      }
+    },
+    "/assistant/action-plans/{id}/confirm": {
+      "post": {
+        "operationId": "confirmAdminAssistantActionPlan",
+        "summary": "确认并执行专用助手生成的精确 Agent 或 Runtime 操作计划",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "description": "没有管理写权限或不拥有此对话" },
+          "409": { "description": "目标状态或计划状态已变化" }
+        },
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminActionPlanConfirmation" } } }
+        }
+      }
+    },
+    "/assistant/action-plans/{id}/cancel": {
+      "post": {
+        "operationId": "cancelAdminAssistantActionPlan",
+        "summary": "取消尚未执行的专用助手操作计划",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "description": "没有管理写权限或不拥有此对话" }
+        },
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ]
       }
     },
     "/assistant/runs/{id}/confirm": {
@@ -1519,6 +1605,30 @@
           }
         }
       },
+      "AdminTaskProposalConfirmation": {
+        "type": "object",
+        "required": ["proposalSha256"],
+        "additionalProperties": false,
+        "properties": {
+          "proposalSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "管理员确认的专用助手调用提案摘要。"
+          }
+        }
+      },
+      "AdminActionPlanConfirmation": {
+        "type": "object",
+        "required": ["planSha256"],
+        "additionalProperties": false,
+        "properties": {
+          "planSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "管理员确认的 Agent 或 Runtime 精确变更计划摘要。"
+          }
+        }
+      },
       "SkillInstallationConfirmation": {
         "type": "object",
         "required": [
@@ -1540,7 +1650,9 @@
           "title",
           "messages",
           "runs",
-          "installations"
+          "installations",
+          "proposals",
+          "actions"
         ],
         "properties": {
           "id": {
@@ -1677,6 +1789,43 @@
                     null
                   ]
                 }
+              }
+            }
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "runId", "kind", "assistantName", "purpose", "request", "impact", "proposalSha256", "status"],
+              "properties": {
+                "id": { "type": "string" },
+                "runId": { "type": "string" },
+                "kind": { "enum": ["skill-install", "agent-management", "platform-operations"] },
+                "assistantName": { "type": "string" },
+                "purpose": { "enum": ["admin-skill-install", "admin-agent-manage", "admin-platform-operations"] },
+                "request": { "type": "string" },
+                "impact": { "type": "string" },
+                "proposalSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "status": { "enum": ["pending", "confirmed", "cancelled"] },
+                "delegatedRunId": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "runId", "actionType", "summary", "before", "after", "planSha256", "status"],
+              "properties": {
+                "id": { "type": "string" },
+                "runId": { "type": "string" },
+                "actionType": { "enum": ["agent-update-draft", "agent-set-status", "runtime-update-configuration"] },
+                "summary": { "type": "string" },
+                "before": { "type": "object" },
+                "after": { "type": "object" },
+                "planSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "status": { "enum": ["pending", "executing", "executed", "cancelled", "failed"] },
+                "resultSummary": { "type": ["string", "null"] }
               }
             }
           }

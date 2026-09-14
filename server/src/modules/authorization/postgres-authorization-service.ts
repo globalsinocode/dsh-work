@@ -441,6 +441,26 @@ export class PostgresAuthorizationService {
     return row
   }
 
+  async requireAdminReader(userId: string) {
+    const [row] = await this.database<{ id: string; displayName: string; department: string }[]>`
+      select u.id, u.display_name as "displayName",
+             coalesce(u.department_id, '未分配部门') as department
+        from users u
+       where u.tenant_id = ${tenantId} and u.id = ${userId}
+         and u.status = 'active'
+         and exists (
+           select 1 from user_roles ur
+           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
+            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
+              and ur.source_key = 'local' and r.status = 'active'
+              and (ur.valid_until is null or ur.valid_until > now())
+              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write' or r.permissions ? 'admin:read')
+         )
+    `
+    if (!row) throw authorizationDenied(`操作人不存在、已停用或没有管理读取权限：${userId}`)
+    return row
+  }
+
   /**
    * Building block, not a complete identity check: verifies only that the
    * given user holds one of `allowedRoles` in the given team workspace.
@@ -659,7 +679,8 @@ export class PostgresAuthorizationService {
           join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
            and t.status = 'available'
-           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace' and t.dsh_tool_name = 'write'))
+           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
+                and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
            and tv.status = 'published' and c.status = 'healthy'
       `
       if (!row) throw authorizationDenied(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
