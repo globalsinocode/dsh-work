@@ -16,6 +16,12 @@ pnpm install --frozen-lockfile
 NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
 ```
 
+若默认端口已有 OIDC/开发数据库服务，浏览器冒烟应改用独立端口并显式关闭数据库，避免 Playwright 复用真实环境：
+
+```bash
+DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=4274 DSH_WORK_ADMIN_PORT=4280 DSH_WORK_SERVER_PORT=4290 VITE_ADMIN_URL=http://localhost:4280 VITE_WORKBENCH_URL=http://localhost:4274 pnpm test:e2e
+```
+
 - 员工端：`http://localhost:4174/workbench`
 - 管理端：`http://localhost:4180/overview`
 - 后端：`http://localhost:4190/health`

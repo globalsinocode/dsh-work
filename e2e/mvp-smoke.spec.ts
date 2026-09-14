@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
+
 test('employee can open the workbench and enter a team workspace', async ({ page }) => {
   await page.goto('/workbench')
 
@@ -33,15 +35,36 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   await expect(workspaceTabs.getByRole('tab', { name: /^成果/ })).toBeVisible()
 })
 
-test('administrator can navigate governance modules and switch capability tabs', async ({ page }) => {
-  await page.goto('http://localhost:4180/capabilities')
+test('employee can inspect shared files and workspace artifacts', async ({ page }) => {
+  await page.goto('/workspaces/ws-supply?tab=files')
 
-  await expect(page).toHaveTitle(/Skill 与工具 · dsh-work/)
+  const workspaceTabs = page.getByRole('tablist', { name: '工作空间内容' })
+  await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('heading', { name: '共享文件', exact: true })).toBeVisible()
+
+  const filesPanel = page.locator('#workspace-panel-files')
+  await expect(filesPanel.getByText('八月生产计划_v3.xlsx', { exact: true })).toBeVisible()
+  await expect(filesPanel.getByText('华东区交付口径说明.docx', { exact: true })).toBeVisible()
+  await expect(filesPanel.getByRole('button', { name: '引用到对话' })).toHaveCount(2)
+
+  await workspaceTabs.getByRole('tab', { name: /^成果/ }).click()
+  await expect(page.getByRole('heading', { name: '成果', exact: true })).toBeVisible()
+  await expect(page.getByText('华东区订单交付风险清单.xlsx', { exact: true })).toBeVisible()
+  await expect(page.getByText('华东区交付风险分析报告.pdf', { exact: true })).toBeVisible()
+})
+
+test('administrator can navigate governance modules and switch Skill tabs', async ({ page }) => {
+  await page.goto(`${adminUrl}/capabilities`)
+
+  await expect(page).toHaveTitle(/Skill 管理 · dsh-work/)
   await expect(page.getByText('管理平台', { exact: true })).toBeVisible()
-  await expect(page.getByRole('tab', { name: /Skill 中心/ })).toHaveAttribute('aria-selected', 'true')
+  const skillTabs = page.getByRole('tablist', { name: 'Skill 管理' })
+  await expect(skillTabs.getByRole('tab', { name: /Skill 列表/ })).toHaveAttribute('aria-selected', 'true')
+  await skillTabs.getByRole('tab', { name: '新增 Skill' }).click()
+  await expect(page).toHaveURL(/\/skills\/install$/)
 
-  await page.getByRole('tab', { name: /连接器状态/ }).click()
-  await expect(page.getByRole('tab', { name: /连接器状态/ })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('button', { name: '连接器管理', exact: true }).click()
+  await expect(page).toHaveURL(/\/connectors$/)
   await expect(page.getByRole('button', { name: '全部检查' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Runtimes', exact: true }).click()

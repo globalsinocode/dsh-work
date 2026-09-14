@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const workbenchPort = Number(process.env.DSH_WORK_WORKBENCH_PORT ?? 4174)
+const adminPort = Number(process.env.DSH_WORK_ADMIN_PORT ?? 4180)
+const serverPort = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
+const workbenchUrl = `http://localhost:${workbenchPort}`
+const adminUrl = `http://localhost:${adminPort}`
+const serverUrl = `http://localhost:${serverPort}`
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -11,7 +18,7 @@ export default defineConfig({
     // http://localhost:4174、AI_HUB_ADMIN_PORTAL_URL 是 http://localhost:4180，
     // 服务端按请求入口 Origin 校验（127.0.0.1 会得到 421 unknown_request_origin）。
     // 因此浏览器导航与 webServer 健康检查一律使用 localhost，不要改回 127.0.0.1。
-    baseURL: 'http://localhost:4174',
+    baseURL: workbenchUrl,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -22,19 +29,19 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm dev:server',
-      url: 'http://localhost:4190/health',
+      url: `${serverUrl}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
     {
       command: 'pnpm dev:workbench',
-      url: 'http://localhost:4174/workbench',
+      url: `${workbenchUrl}/workbench`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
     {
       command: 'pnpm dev:admin',
-      url: 'http://localhost:4180/overview',
+      url: `${adminUrl}/overview`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },

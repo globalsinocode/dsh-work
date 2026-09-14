@@ -3,6 +3,9 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
+const workbenchPort = Number(process.env.DSH_WORK_WORKBENCH_PORT ?? 4174)
+const serverPort = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -11,15 +14,15 @@ export default defineConfig({
     },
   },
   server: {
-    port: 4174,
+    port: workbenchPort,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:4190',
+        target: `http://127.0.0.1:${serverPort}`,
         changeOrigin: false,
       },
       '/auth': {
-        target: 'http://127.0.0.1:4190',
+        target: `http://127.0.0.1:${serverPort}`,
         changeOrigin: false,
       },
     },
