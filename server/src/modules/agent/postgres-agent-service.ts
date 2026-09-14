@@ -662,7 +662,9 @@ export class PostgresAgentService {
     const approvalMode = this.toolService
       ? await this.toolService.resolveRuntimeApprovalMode(tools)
       : 'risk_based'
-    const runtimeSkills = skillInstructions.map(skill => `${skill.id}@${skill.version}`)
+    const runtimeSkills = this.skillService
+      ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
+      : skills
     return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, approvalMode }
   }
 

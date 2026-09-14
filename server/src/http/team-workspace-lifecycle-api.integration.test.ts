@@ -319,9 +319,10 @@ test('并发互斥：归档先提交时，正在等待锁的空间设置改写�
   })
   await held
 
-  const patchPromise = content.updateWorkspace(ws, { description: '归档后不应写入' }, ownerId)
   const archivePromise = lifecycle.archiveWorkspace(ws, ownerId)
-  await new Promise(resolve => setTimeout(resolve, 250))
+  await waitForWorkspaceLockWaiters(1, '归档进入空间行锁等待队列')
+  const patchPromise = content.updateWorkspace(ws, { description: '归档后不应写入' }, ownerId)
+  await waitForWorkspaceLockWaiters(2, '空间设置改写排在归档之后等待同一行锁')
   releaseLock()
   await holder
 
@@ -526,10 +527,11 @@ test('并发互斥：归档先提交时，正在等待锁的成员变更不得�
   })
   await held
 
-  // ② 等待锁的两个操作：归档与新增成员。
-  const addPromise = members.addMember(ws, newMemberId, 'member', ownerId)
+  // ② 先确认归档进入等待队列，再让新增成员排在它之后等待同一把锁。
   const archivePromise = lifecycle.archiveWorkspace(ws, ownerId)
-  await new Promise(resolve => setTimeout(resolve, 250))
+  await waitForWorkspaceLockWaiters(1, '归档进入空间行锁等待队列')
+  const addPromise = members.addMember(ws, newMemberId, 'member', ownerId)
+  await waitForWorkspaceLockWaiters(2, '新增成员排在归档之后等待同一行锁')
 
   // ③ 释放锁：两者按取得锁的顺序串行，归档先提交则新增必须被拒绝。
   releaseLock()
@@ -1034,6 +1036,21 @@ async function waitFor(condition: () => Promise<boolean> | boolean, label: strin
     await new Promise(resolve => setTimeout(resolve, 10))
   }
   throw new Error(`等待超时：${label}`)
+}
+
+async function waitForWorkspaceLockWaiters(minimum: number, label: string) {
+  await waitFor(async () => {
+    const [row] = await database<{ count: number }[]>`
+      select count(*)::integer as count
+        from pg_stat_activity
+       where datname = current_database()
+         and pid <> pg_backend_pid()
+         and state = 'active'
+         and wait_event_type = 'Lock'
+         and query ilike '%from workspaces%'
+    `
+    return (row?.count ?? 0) >= minimum
+  }, label)
 }
 
 class FakeRuntime implements AgentRuntimePort {

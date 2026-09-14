@@ -51,6 +51,17 @@ export async function inspectPersonalWorkspaceBaseline(
        and is_nullable = 'YES'
      order by table_name
   `
+  const [sessionAudienceConstraint] = await database<{ definition: string; validated: boolean }[]>`
+    select pg_get_constraintdef(oid) as definition, convalidated as validated
+      from pg_constraint
+     where conname = 'sessions_audience_configuration'
+       and conrelid = 'public.sessions'::regclass
+       and contype = 'c'
+  `
+  const sessionConstraintDefinition = sessionAudienceConstraint?.definition.toLowerCase() ?? ''
+  const workbenchSessionsRequireWorkspace = sessionAudienceConstraint?.validated === true
+    && sessionConstraintDefinition.includes("audience = 'workbench'::text")
+    && sessionConstraintDefinition.includes('workspace_id is not null')
   // 触发器必须挂在各自的预期表上（users / workspace_members）：仅按名称匹配时，
   // 同名对象若存在于其他表会误判基线完好。
   const triggerRows = await database<{ triggerName: string }[]>`
@@ -66,7 +77,9 @@ export async function inspectPersonalWorkspaceBaseline(
   return {
     uniqueIndexPresent: (indexRow?.count ?? 0) > 0,
     activeOnlyConstraintPresent: (constraintRow?.count ?? 0) > 0,
-    missingNotNullColumns: nullableRows.map(row => row.tableName),
+    missingNotNullColumns: nullableRows
+      .filter(row => row.tableName !== 'sessions' || !workbenchSessionsRequireWorkspace)
+      .map(row => row.tableName),
     missingGuardTriggers: PERSONAL_WORKSPACE_GUARD_TRIGGERS.filter(name => !presentTriggers.has(name)),
   }
 }

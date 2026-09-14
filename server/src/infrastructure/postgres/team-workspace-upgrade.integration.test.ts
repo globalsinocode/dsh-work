@@ -152,10 +152,17 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
     drop table if exists workspace_agent_members;
     alter table agents drop column if exists allow_workspace_join;
     alter table workspaces drop column if exists team_auth_revision;
-    delete from schema_migrations where version >= '0022';
+    delete from schema_migrations where version in (
+      '0022_team_workspace_authorization.sql',
+      '0023_revocation_event_dead_letter.sql',
+      '0025_workspace_file_versions.sql',
+      '0026_workspace_activity.sql',
+      '0028_runs_and_usage_indexes.sql'
+    );
   `)
 
-  // 0022 是可回滚的附加迁移：旧表与个人空间数据不依赖它。
+  // 只回滚本用例覆盖的附加对象；后续管理会话等迁移保持已应用，避免把它们的
+  // schema_migrations 记录删除后在未回滚对应结构的情况下重复执行。
   const oldSchema = await baseSnapshot()
   assert.equal(oldSchema.grantCount, beforeRollback.grantCount)
   assert.equal(oldSchema.personalSessions, beforeRollback.personalSessions)
