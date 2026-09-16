@@ -405,6 +405,14 @@ describe('DSH ACP Runtime Adapter', () => {
     ])
     assert.deepEqual(events.map(event => event.sequence), [1, 2, 3, 4, 5])
     assert.match(events[2]?.display_message ?? '', /Mock response/)
+    const started = events[1]
+    assert.equal(typeof started?.safe_metadata['prepare_ms'], 'number')
+    assert.equal(typeof started?.safe_metadata['worker_init_ms'], 'number')
+    assert.equal(typeof started?.safe_metadata['session_ready_ms'], 'number')
+    const completedEvent = events.at(-1)
+    assert.equal(typeof completedEvent?.safe_metadata['elapsed_ms'], 'number')
+    assert.equal(typeof completedEvent?.safe_metadata['execution_ms'], 'number')
+    assert.equal(typeof completedEvent?.safe_metadata['first_output_ms'], 'number')
 
     const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
     assert.equal(stored.run_id, input.run_id)
@@ -550,6 +558,8 @@ describe('DSH ACP Runtime Adapter', () => {
     first.limits.timeout_seconds = 1
     const second = manifest('run-other', 'attempt-1', 'finish independently')
     const firstHandle = await adapter.execute(first)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(first.run_id, event => { events.push(event) })
     const secondHandle = await adapter.execute(second)
 
     const [timedOut, completed] = await Promise.all([firstHandle.done, secondHandle.done])
@@ -557,6 +567,59 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(timedOut.errorCode, 'RUN_TIMEOUT')
     assert.equal(completed.status, 'completed')
     assert.notEqual(timedOut.attemptDirectory, completed.attemptDirectory)
+
+    const failed = events.find(event => event.event_type === 'run.failed')
+    assert.equal(failed?.safe_metadata['timeout_phase'], 'execution')
+    assert.equal(failed?.safe_metadata['timeout_seconds'], 1)
+    assert.equal(typeof failed?.safe_metadata['elapsed_ms'], 'number')
+    assert.ok(events.some(event => event.event_type === 'run.started'))
+    assert.ok(!events.some(event => event.event_type === 'assistant.completed'))
+  })
+
+  it('bounds Worker startup separately and reports the setup phase on timeout', async () => {
+    const adapter = await createAdapter(100, undefined, undefined, {
+      setupTimeoutMs: 50,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--delay-init=30000'],
+        cwd: process.cwd(),
+      },
+    })
+    const input = manifest('run-setup-timeout', 'attempt-1', 'finish normally')
+    input.limits.timeout_seconds = 5
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'RUN_TIMEOUT')
+    assert.ok(!events.some(event => event.event_type === 'run.started'))
+    const cancelRequested = events.find(event => event.event_type === 'run.cancel_requested')
+    assert.equal(cancelRequested?.display_message, 'Worker 启动超时，正在终止')
+    const failed = events.find(event => event.event_type === 'run.failed')
+    assert.equal(failed?.safe_metadata['timeout_phase'], 'setup')
+    assert.equal(failed?.safe_metadata['timeout_seconds'], 5)
+  })
+
+  it('commits the partial answer before failing a timed-out Attempt', async () => {
+    const adapter = await createAdapter(100)
+    const input = manifest('run-partial-timeout', 'attempt-1', '[partial-hang] exceed deadline')
+    input.limits.timeout_seconds = 1
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'RUN_TIMEOUT')
+    const committed = events.find(event => event.event_type === 'assistant.completed')
+    assert.match(committed?.display_message ?? '', /已生成的部分回答内容/)
+    assert.match(committed?.display_message ?? '', /执行超时中断/)
+    assert.equal(committed?.safe_metadata['interrupted'], 'timeout')
+    const failed = events.find(event => event.event_type === 'run.failed')
+    assert.equal(failed?.safe_metadata['timeout_phase'], 'execution')
+    assert.equal(typeof failed?.safe_metadata['first_output_ms'], 'number')
   })
 
   it('classifies Worker crashes without leaving the execution active', async () => {

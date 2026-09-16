@@ -218,6 +218,21 @@ export class PostgresConversationRepository {
   }
 
   /**
+   * Assistant messages committed by earlier Attempts of the same Run — e.g. a
+   * partial answer preserved when the Attempt timed out. Unlike
+   * getConversationHistory this intentionally returns the Run's own messages
+   * so a retry can continue from the confirmed partial output as ordinary
+   * conversation context (not a checkpoint resume of the old Attempt).
+   */
+  async getRunAssistantOutputs(runId: string): Promise<ConversationHistoryMessage[]> {
+    return this.database<ConversationHistoryMessage[]>`
+      select role, content from messages
+       where tenant_id = ${tenantId} and run_id = ${runId} and role = 'assistant'
+       order by created_at asc, id asc
+    `
+  }
+
+  /**
    * Returns the causal product-Session context that existed before a Run was
    * created. The current Run is excluded so its prompt remains the single
    * authoritative `input.message`, and a retry receives the same preceding
@@ -490,7 +505,7 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
     RUN_TIMEOUT: {
       message: '本轮执行超时',
       reason: '执行时间超过当前 Agent 与运行时配置中的较短时限。',
-      suggestion: '减少问题范围或文件数量后重新执行；若持续超时，请联系管理员检查运行时容量。',
+      suggestion: '已生成的部分内容会保留并带入重新执行；可减少问题范围或文件数量后重试，若持续超时请联系管理员检查运行时容量。',
       retryable: true,
     },
     CONNECTOR_TIMEOUT: {

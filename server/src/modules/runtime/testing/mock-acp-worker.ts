@@ -22,21 +22,21 @@ let sessionSequence = 0
 let permissionSequence = 9000
 const pendingPrompts = new Map<string, PendingPrompt>()
 const permissionPrompts = new Map<number, PendingPrompt>()
+const initDelayArg = process.argv.find(arg => arg.startsWith('--delay-init='))
+const initDelayMs = initDelayArg ? Number(initDelayArg.slice('--delay-init='.length)) : 0
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 
 lines.on('line', (line) => {
   const message = JSON.parse(line) as JsonRpcMessage
   if (message.method === 'initialize' && message.id !== undefined) {
-    send({
-      jsonrpc: '2.0',
-      id: message.id,
-      result: {
-        protocolVersion: 1,
-        agentCapabilities: { promptCapabilities: { image: false, audio: false, embeddedContext: false } },
-        authMethods: [],
-      },
-    })
+    const result = {
+      protocolVersion: 1,
+      agentCapabilities: { promptCapabilities: { image: false, audio: false, embeddedContext: false } },
+      authMethods: [],
+    }
+    if (initDelayMs > 0) setTimeout(() => send({ jsonrpc: '2.0', id: message.id, result }), initDelayMs)
+    else send({ jsonrpc: '2.0', id: message.id, result })
     return
   }
 
@@ -67,6 +67,20 @@ lines.on('line', (line) => {
     }
     if (text.includes('[network-failure]')) {
       failPrompt(pending, 'Network connection unavailable', 'network')
+      return
+    }
+    if (text.includes('[partial-hang]')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '已生成的部分回答内容。' },
+          },
+        },
+      })
       return
     }
     if (text.includes('[hang]')) return

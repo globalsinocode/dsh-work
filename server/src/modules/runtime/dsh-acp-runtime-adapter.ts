@@ -24,6 +24,8 @@ import type {
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
 
+const DEFAULT_SETUP_TIMEOUT_MS = 120_000
+
 interface ExecutionRecord {
   manifest: RuntimeManifest
   snapshot: RuntimeExecutionSnapshot
@@ -34,9 +36,13 @@ interface ExecutionRecord {
   client?: AcpJsonRpcClient
   acpSessionId?: string
   timeout?: NodeJS.Timeout
+  timeoutPhase?: 'setup' | 'execution'
   cancelCause?: RuntimeCancelCause | 'timeout' | 'shutdown'
   assistantText: string
   terminal: boolean
+  acceptedMono: number
+  promptStartMono?: number
+  firstOutputMs?: number
   activatedSkills: Set<string>
   materializedSkills: Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
@@ -54,6 +60,12 @@ export interface DshAcpRuntimeAdapterConfiguration {
   process: Omit<AcpProcessConfiguration, 'env'> & { env?: Record<string, string> }
   acceptingRuns?: boolean
   shutdownGraceMs?: number
+  /**
+   * Bound for Worker spawn + ACP initialize + session/new, kept separate from
+   * the manifest execution budget so Worker startup cannot consume the Agent
+   * Loop deadline (and a hung spawn still fails fast).
+   */
+  setupTimeoutMs?: number
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
@@ -88,6 +100,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     if (this.closed) throw new Error('Runtime Adapter is closed')
+    const acceptedMono = performance.now()
     // The Postgres scheduler is the admission gate. A manifest reaching this
     // port has already been claimed and must remain executable if an operator
     // switches the Runtime to draining before dispatch reaches this process.
@@ -162,6 +175,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       resolveDone,
       assistantText: '',
       terminal: false,
+      acceptedMono,
       activatedSkills: new Set(),
       materializedSkills,
     }
@@ -293,11 +307,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   }
 
   private async run(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
+    const runStartMono = performance.now()
     try {
       this.setStatus(record, 'starting')
-      record.timeout = setTimeout(() => {
-        void this.timeout(record)
-      }, record.manifest.limits.timeout_seconds * 1000)
+      this.armDeadline(record, 'setup', this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
       const platformTools: Record<string, import('./platform-tool-bridge.ts').PlatformToolHandler> = {}
       if (record.manifest.purpose === 'admin-skill-install') {
         const prepare = this.configuration.prepareSkillInstallation
@@ -358,6 +371,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         }
       }
       if (Object.keys(platformTools).length) record.bridge = await createPlatformToolBridge(platformTools, record.manifest.limits.max_tool_calls)
+      if (record.cancelCause !== undefined) {
+        this.finishFromCancellationCause(record)
+        return
+      }
       const client = AcpJsonRpcClient.launch(
         {
           ...this.configuration.process,
@@ -385,20 +402,30 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         },
       )
       record.client = client
+      const spawnMono = performance.now()
       await client.initialize()
+      const initializedMono = performance.now()
       record.acpSessionId = await client.newSession(workspaceDirectory)
+      const sessionReadyMono = performance.now()
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)
         return
       }
+      this.armDeadline(record, 'execution', record.manifest.limits.timeout_seconds * 1000)
       this.setStatus(record, 'running')
       record.snapshot.startedAt = this.now()
       this.emit(record, 'run.started', 'DSH Worker 已启动', {
         transport: 'acp-stdio',
         acp_session_id: record.acpSessionId,
+        prepare_ms: Math.round(runStartMono - record.acceptedMono),
+        worker_spawn_ms: Math.round(spawnMono - runStartMono),
+        worker_init_ms: Math.round(initializedMono - spawnMono),
+        session_ready_ms: Math.round(sessionReadyMono - initializedMono),
       })
 
+      record.promptStartMono = performance.now()
       const response = await client.prompt(record.acpSessionId, renderUserPrompt(record.manifest))
+      const promptDoneMono = performance.now()
       const stopReason = response['stopReason']
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)
@@ -425,6 +452,9 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       const evidence = await waitForSessionEvidence(join(record.snapshot.attemptDirectory, 'sessions'))
       this.emit(record, 'run.completed', '任务执行完成', {
         stop_reason: stopReason ?? 'unknown',
+        elapsed_ms: Math.round(performance.now() - record.acceptedMono),
+        execution_ms: Math.round(promptDoneMono - (record.promptStartMono ?? promptDoneMono)),
+        first_output_ms: record.firstOutputMs === undefined ? null : Math.round(record.firstOutputMs),
         input_tokens: evidence?.inputTokens ?? null,
         output_tokens: evidence?.outputTokens ?? null,
         tool_call_count: evidence?.toolCallCount ?? 0,
@@ -453,6 +483,9 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (updateType !== 'agent_message_chunk' || !isRecord(content) || content['type'] !== 'text') return
     const text = content['text']
     if (typeof text !== 'string' || text.length === 0) return
+    if (record.firstOutputMs === undefined && record.promptStartMono !== undefined) {
+      record.firstOutputMs = performance.now() - record.promptStartMono
+    }
 
     const remaining = record.manifest.limits.max_output_bytes - Buffer.byteLength(record.assistantText)
     if (remaining <= 0) return
@@ -493,12 +526,25 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     return { outcome: { outcome: 'selected', optionId: option.optionId } }
   }
 
+  private armDeadline(record: ExecutionRecord, phase: 'setup' | 'execution', timeoutMs: number): void {
+    if (record.timeout !== undefined) clearTimeout(record.timeout)
+    record.timeoutPhase = phase
+    record.timeout = setTimeout(() => {
+      void this.timeout(record)
+    }, timeoutMs)
+  }
+
   private async timeout(record: ExecutionRecord): Promise<void> {
     if (record.terminal || record.cancelCause !== undefined) return
     record.bridge?.abort()
     record.cancelCause = 'timeout'
     this.setStatus(record, 'cancel_requested')
-    this.emit(record, 'run.cancel_requested', '任务执行超时，正在终止', { reason: 'timeout' })
+    this.emit(
+      record,
+      'run.cancel_requested',
+      record.timeoutPhase === 'setup' ? 'Worker 启动超时，正在终止' : '任务执行超时，正在终止',
+      { reason: 'timeout', timeout_phase: record.timeoutPhase ?? 'execution' },
+    )
     if (record.client !== undefined && record.acpSessionId !== undefined) {
       await record.client.cancel(record.acpSessionId).catch(() => undefined)
       this.scheduleForcedClose(record)
@@ -523,12 +569,28 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   private finishFromCancellationCause(record: ExecutionRecord): void {
     if (record.cancelCause === 'timeout') {
+      this.commitInterruptedOutput(record, 'timeout')
       this.finishFailed(record, 'RUN_TIMEOUT', 'Runtime execution timed out')
     } else if (record.cancelCause === 'shutdown') {
+      this.commitInterruptedOutput(record, 'shutdown')
       this.finishFailed(record, 'SERVICE_SHUTDOWN', 'Runtime stopped while the Attempt was active')
     } else {
       this.finishCancelled(record)
     }
+  }
+
+  /**
+   * Persists whatever the Worker already produced before an interruption, so a
+   * timed-out Attempt keeps its partial answer instead of reporting only a
+   * bare failure. The stored message carries an explicit interruption marker;
+   * a later retry receives it as ordinary conversation history (context
+   * continuation — this is not a checkpoint resume of the old Attempt).
+   */
+  private commitInterruptedOutput(record: ExecutionRecord, cause: 'timeout' | 'shutdown'): void {
+    const text = record.assistantText.trimEnd()
+    if (text.length === 0) return
+    const note = cause === 'timeout' ? '本轮回答因执行超时中断，以上为已生成内容。' : '本轮回答因服务中断终止，以上为已生成内容。'
+    this.emit(record, 'assistant.completed', `${text}\n\n---\n*${note}*`, { committed: true, interrupted: cause })
   }
 
   private finishFailed(record: ExecutionRecord, code: string, message: string): void {
@@ -536,7 +598,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     record.snapshot.errorCode = code
     record.snapshot.errorMessage = message
     this.setStatus(record, 'failed')
-    this.emit(record, 'run.failed', '任务执行失败', { error_code: code, reason: message })
+    this.emit(record, 'run.failed', '任务执行失败', {
+      error_code: code,
+      reason: message,
+      elapsed_ms: Math.round(performance.now() - record.acceptedMono),
+      timeout_seconds: record.manifest.limits.timeout_seconds,
+      ...(record.cancelCause === 'timeout' ? { timeout_phase: record.timeoutPhase ?? 'execution' } : {}),
+      ...(record.firstOutputMs === undefined ? {} : { first_output_ms: Math.round(record.firstOutputMs) }),
+    })
     this.finish(record)
   }
 
