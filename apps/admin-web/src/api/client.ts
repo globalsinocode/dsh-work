@@ -3,7 +3,12 @@ import type {
   AdminSession,
   AdminTaskSummary,
   AgentDefinition,
+  AgentEvalCase,
   AgentJoinedWorkspaceRecord,
+  AgentPackageInspection,
+  AgentReleaseState,
+  AgentSubmissionSummary,
+  AgentVersionEvidenceEntry,
   CreateAgentDraftInput,
   CreateSkillInput,
   AgentReleaseRecord,
@@ -169,6 +174,47 @@ export const adminApi = {
     request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ allowWorkspaceJoin: input.allowWorkspaceJoin }),
+    }),
+  getAgentReleaseSubmissions: () => request<{ items: AgentSubmissionSummary[] }>('/agent-release-submissions'),
+  getAgentVersionEvidence: () => request<{ items: AgentVersionEvidenceEntry[] }>('/agent-version-evidence'),
+  getAgentReleaseState: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
+  ensureAgentReleaseCandidate: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
+  runAgentReleaseChecks: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/checks`, { method: 'POST' }),
+  updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
+      method: 'POST',
+      body: JSON.stringify({ cases }),
+    }),
+  removeAgentReleaseDependency: (agentId: string, input: { kind: 'skills' | 'tools'; reference: string }) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/dependencies/remove`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  startAgentReleaseTrial: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials`, { method: 'POST' }),
+  confirmAgentReleaseTrial: (agentId: string, trialId: string, verdicts: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }>) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
+  cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cancel`, { method: 'POST' }),
+  publishAgentRelease: (agentId: string, note: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  inspectAgentPackage: (file: File) =>
+    request<AgentPackageInspection>('/agent-packages/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
+      body: file,
+    }),
+  importAgentPackage: (file: File) =>
+    request<AgentReleaseState>('/agent-packages/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
+      body: file,
     }),
   getAgentJoinedWorkspaces: (agentId: string) =>
     request<{ items: AgentJoinedWorkspaceRecord[] }>(`/agents/${encodeURIComponent(agentId)}/workspaces`),

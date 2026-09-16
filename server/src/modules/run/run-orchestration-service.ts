@@ -21,6 +21,9 @@ const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
 type AdminPurpose = NonNullable<RuntimeManifest['purpose']>
 
+const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 export class RunOrchestrationService {
   private readonly eventWrites = new Map<string, Promise<void>>()
   private readonly assistantOutputs = new Map<string, string>()
@@ -87,13 +90,26 @@ export class RunOrchestrationService {
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     if (!attempt) throw new Error('管理助手运行缺少原始输入，请重新发送请求')
     const manifest = attempt.manifest as unknown as RuntimeManifest
+    // 试运行 Run 属于发布治理证据：失败应在工作台重新发起完整试运行（封存/案例/确认
+    // 全链路），不能按管理助手语义单独重试——那会用 Skill 安装工具集重放治理输入。
+    if (manifest.purpose === 'agent-release-trial') {
+      throw new Error('试运行不支持单独重试；请在发布工作台重新发起试运行')
+    }
     const retriedSkill = manifest.agent_configuration.skill_instructions[0]
-    await this.dispatchAdmin(run, manifest.input.message, manifest.installation_source ?? '', manifest.purpose ?? 'admin-skill-install', manifest.purpose === 'admin-skill-test' && retriedSkill ? {
+    // 不从上一次 Attempt 的 manifest 续叠：其中的 message 已是续写指令、history 已并入
+    // 部分输出，再次基于它构造会重复。始终回到稳定来源——Run 的原始用户问题与 Run 之前
+    // 的会话历史，再由 withContinuationOutputs 统一追加全部已提交的部分输出。
+    const continued = await this.withContinuationOutputs(
+      await this.conversations.getConversationHistory(run.sessionId, run.id),
+      run.id,
+      await this.conversations.getRunPrompt(run.id),
+    )
+    await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', manifest.purpose ?? 'admin-skill-install', manifest.purpose === 'admin-skill-test' && retriedSkill ? {
       id: retriedSkill.id, name: retriedSkill.name ?? retriedSkill.id, description: retriedSkill.description ?? '', version: retriedSkill.version,
       instructions: retriedSkill.instructions ?? '', tools: manifest.tools.filter(tool => tool.id !== 'activate_skill').map(tool => `${tool.id}@${tool.version}`),
       ...(retriedSkill.artifact_ref ? { artifact: { artifactRef: retriedSkill.artifact_ref, instructionsSha256: retriedSkill.instructions_sha256!, files: retriedSkill.files ?? [] } as RuntimeSkillConfiguration['artifact'], files: retriedSkill.files } : {}),
       dependencies: retriedSkill.dependencies, disableModelInvocation: retriedSkill.disable_model_invocation,
-    } : undefined, manifest.input.conversation_history)
+    } : undefined, continued.history)
     return this.runs.getRun(tenantId, runId)
   }
 
@@ -139,6 +155,92 @@ export class RunOrchestrationService {
     await this.runs.createAttempt({ attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
       manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
       modelRouteSnapshot: JSON.parse(JSON.stringify(route)) as JsonObject })
+    this.pendingExecutions.push({ run, manifest })
+    void this.pumpScheduler()
+  }
+
+  /**
+   * 发布试运行：以草稿版本的完整运行时配置经 Run/Attempt → Runtime Adapter → DSH
+   * 真实执行一个评估案例，等待终态并返回输出。治理证据只允许来自这条链路。
+   */
+  async runReleaseTrialCase(input: {
+    userId: string
+    sessionId: string
+    draftVersionId: string
+    message: string
+    idempotencyKey: string
+    deadlineMs?: number
+  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string }> {
+    if (!this.agents) throw new Error('试运行执行链路未接入：缺少 Agent 运行时服务')
+    const run = await this.runs.createRun({
+      tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
+    })
+    if (!run.currentAttemptId && run.status === 'queued') {
+      await this.conversations.appendMessage({
+        sessionId: run.sessionId, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
+      })
+      await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(run, input.userId, input.draftVersionId, input.message))
+    }
+    const deadline = Date.now() + (input.deadlineMs ?? 150_000)
+    let current = await this.runs.getRun(tenantId, run.id)
+    while (current && !TRIAL_TERMINAL_STATUSES.has(current.status) && Date.now() < deadline) {
+      await delay(200)
+      current = await this.runs.getRun(tenantId, run.id)
+    }
+    // 治理等待超时不能留 Run 继续执行：主动收敛为 cancelled，避免治理侧已放弃
+    // 等待后底层 DSH 仍跑完并留下与试运行记录不一致的执行痕迹。
+    if (current && !TRIAL_TERMINAL_STATUSES.has(current.status)) {
+      await this.systemCancelRun(run.id, 'system_revoke', '试运行等待超时，取消仍在运行的执行').catch(() => undefined)
+      current = await this.runs.getRun(tenantId, run.id)
+    }
+    const outputs = await this.conversations.getRunAssistantOutputs(run.id)
+    return {
+      runId: run.id,
+      attemptId: current?.currentAttemptId ?? null,
+      status: current && TRIAL_TERMINAL_STATUSES.has(current.status) ? current.status : 'failed',
+      output: outputs.map(output => output.content).join('\n'),
+    }
+  }
+
+  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {
+    const route = await this.models.resolveRoute('default')
+    const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
+    const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
+    const manifest: RuntimeManifest = {
+      manifest_version: '1.0',
+      purpose: 'agent-release-trial',
+      run_id: run.id,
+      attempt_id: `attempt-${randomUUID()}`,
+      session_id: run.sessionId,
+      workspace_id: '',
+      agent_version_id: draftVersionId,
+      agent_configuration: {
+        system_prompt: agent.systemPrompt,
+        skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
+      },
+      user_context: { user_id: userId, tenant_id: tenantId, role_ids: agent.roleIds },
+      // 试运行是治理动作：不触发人工审批、不写工作区、不访问网络
+      permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
+      skills: agent.skills.map(toCapabilityReference),
+      tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
+      data_scopes: agent.dataScopes,
+      knowledge_context: [],
+      model_route_id: route.routeId,
+      input: { message, file_mounts: [] },
+      limits: {
+        timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
+        max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024),
+        max_tool_calls: 20,
+      },
+      created_at: new Date().toISOString(),
+      trace_id: `trace-${run.id}-trial`,
+    }
+    const compiled = compileRuntimeManifest(manifest)
+    await this.runs.createAttempt({
+      attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
+      manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
+      modelRouteSnapshot: JSON.parse(JSON.stringify(route)) as JsonObject,
+    })
     this.pendingExecutions.push({ run, manifest })
     void this.pumpScheduler()
   }
@@ -351,17 +453,22 @@ export class RunOrchestrationService {
       ...authorizationContext,
     })
     const prompt = await this.conversations.getRunPrompt(run.id)
-    const history = await this.conversations.getConversationHistory(session.id, run.id)
+    const continued = await this.withContinuationOutputs(
+      await this.conversations.getConversationHistory(session.id, run.id),
+      run.id,
+      prompt,
+    )
     const fileIds = this.content ? await this.content.getRunInputFileIds(run.id) : []
     await this.dispatch(run, {
       prompt,
+      message: continued.message,
       workspaceId: session.workspaceId,
       agentVersionId: session.agentVersionId,
       userId,
       fileIds,
       authorization,
       additionalSkillReferences,
-      history,
+      history: continued.history,
     })
     await this.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.runs.getRun(tenantId, run.id)
@@ -397,6 +504,53 @@ export class RunOrchestrationService {
     await Promise.all(this.eventWrites.values())
   }
 
+  /**
+   * Appends assistant output already committed by earlier Attempts of the same
+   * Run (e.g. a partial answer preserved after RUN_TIMEOUT) to the retry's
+   * conversation history, so the new Attempt continues from confirmed content
+   * instead of starting blank. The triggering user question is re-appended
+   * before the partial outputs — otherwise the model sees "partial answer →
+   * question" and re-answers instead of continuing. The manifest message then
+   * becomes a continue instruction rather than the question repeated.
+   * The merge stays inside the manifest bound (≤12 messages, ≤24000 chars);
+   * oldest entries are evicted first because the interrupted output is more
+   * relevant than the oldest turn.
+   */
+  private async withContinuationOutputs(
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
+    runId: string,
+    prompt: string,
+  ): Promise<{ history: Array<{ role: 'user' | 'assistant'; content: string }>; message: string }> {
+    const outputs = (await this.conversations.getRunAssistantOutputs(runId)).filter(output => output.content.trim())
+    if (!outputs.length) {
+      const merged = [...history]
+      while (merged.length > 12) merged.shift()
+      let used = merged.reduce((total, entry) => total + entry.content.length, 0)
+      while (used > 24_000 && merged.length > 1) used -= merged.shift()!.content.length
+      if (used > 24_000) merged[0] = { ...merged[0]!, content: merged[0]!.content.slice(-24_000) }
+      return { history: merged, message: prompt }
+    }
+    // 尾部受保护段 = 原始问题 + 各次已提交的部分回答。裁剪只动更早的会话历史与
+    // 最旧的部分回答，绝不让超长部分输出把原始问题挤掉——否则模型失去任务目标。
+    const merged = [...history, { role: 'user' as const, content: prompt }]
+    for (const output of outputs) merged.push({ role: 'assistant' as const, content: output.content })
+    const pinned = outputs.length + 1
+    while (merged.length > 12 && merged.length > pinned) merged.shift()
+    let used = merged.reduce((total, entry) => total + entry.content.length, 0)
+    while (used > 24_000 && merged.length > pinned) used -= merged.shift()!.content.length
+    // 受保护段仍超限：逐个丢弃最旧的部分回答（保留原始问题与最新输出）。
+    while (used > 24_000 && merged.length > 2) used -= merged.splice(1, 1)[0]!.content.length
+    if (used > 24_000) {
+      const last = merged.at(-1)!
+      const room = Math.max(0, 24_000 - (used - last.content.length))
+      merged[merged.length - 1] = { ...last, content: last.content.slice(-room) }
+    }
+    return {
+      history: merged,
+      message: '上一次回答在输出中途被中断。请从已有内容的断点处继续完成回答，不要重复已输出的部分。',
+    }
+  }
+
   private async failUndispatchedRun(run: RunRecord, dispatch: () => Promise<void>) {
     try {
       await dispatch()
@@ -412,6 +566,8 @@ export class RunOrchestrationService {
 
   private async dispatch(run: RunRecord, input: {
     prompt: string
+    /** manifest 输入消息的重写（如续写指令）；缺省时使用 prompt。 */
+    message?: string
     workspaceId: string
     agentVersionId: string
     userId: string
@@ -497,7 +653,7 @@ export class RunOrchestrationService {
       })),
       model_route_id: route.routeId,
       input: {
-        message: input.prompt.trim(),
+        message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.map(file => file.mount),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
       },
@@ -633,8 +789,12 @@ export class RunOrchestrationService {
     _run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
-    if (manifest.purpose?.startsWith('admin-')) {
-      if (!this.authorization) return { denied: true, reason: '管理助手授权服务不可用' }
+    // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
+    // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权
+    // 仍会进入 DSH 执行。权限失效时 Run/Attempt 在此收敛为 failed。
+    const adminPurpose = manifest.purpose?.startsWith('admin-') || manifest.purpose === 'agent-release-trial'
+    if (adminPurpose) {
+      if (!this.authorization) return { denied: true, reason: '管理授权服务不可用' }
       try {
         if (manifest.purpose === 'admin-assistant') await this.authorization.requireAdminReader(manifest.user_context.user_id)
         else await this.authorization.requirePlatformAdmin(manifest.user_context.user_id)

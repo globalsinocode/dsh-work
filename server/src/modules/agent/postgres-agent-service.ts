@@ -17,6 +17,14 @@ import { authorizationDenied } from '../authorization/authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
+/**
+ * Platform-seeded default assistant (0003 seed). It is the workbench's
+ * implicit default: `listWorkbenchAgents` orders it first and new team
+ * workspaces auto-join it so a fresh space can start conversations
+ * without a manual owner step.
+ */
+export const DEFAULT_WORKBENCH_AGENT_ID = 'agent-dsh-work-assistant'
+
 interface AgentRow {
   id: string
   name: string
@@ -41,7 +49,7 @@ interface AgentRow {
   updatedAt: Date
 }
 
-type AgentFingerprintSource = Pick<AgentRow,
+export type AgentFingerprintSource = Pick<AgentRow,
   | 'versionId'
   | 'name'
   | 'description'
@@ -376,7 +384,9 @@ export class PostgresAgentService {
       return { agent: await this.requireAgent(input.agentId), release }
     }
 
-    if (current.draftVersionId) return this.publishDraft(current, actor, expectedRevision)
+    if (current.draftVersionId) {
+      throw new Error('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
+    }
     if (!current.activeVersionId || current.persistedStatus !== 'disabled') {
       throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
@@ -543,7 +553,7 @@ export class PostgresAgentService {
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
               and av.visible_role_ids ? r.id
          )
-       order by case when a.id = 'agent-dsh-work-assistant' then 0 else 1 end,
+       order by case when a.id = ${DEFAULT_WORKBENCH_AGENT_ID} then 0 else 1 end,
                 a.updated_at desc, a.id
     `
   }
@@ -668,40 +678,56 @@ export class PostgresAgentService {
     return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, approvalMode }
   }
 
-  private async publishDraft(current: AgentRow, actor: { id: string; displayName: string; department: string }, expectedRevision?: string) {
-    await this.assertCapabilityReferences(current.skills, current.tools, current.roleIds, current.dataScopes)
-    const release = await this.database.begin(async transaction => {
-      const locked = await this.lockAgentForMutation(transaction, current.id)
-      if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
-      assertAgentMutationRevision(locked, expectedRevision)
+  /**
+   * 草稿发布的事务内实现：发布治理借此把版本发布、提交状态与证据写入放进同一事务。
+   * 锁行、修订断言、能力校验与测试/试运行证据门禁均在事务内完成。
+   */
+  async publishDraftWithinTransaction(
+    transaction: DatabaseTransaction,
+    agentId: string,
+    actor: { id: string },
+    expectedRevision?: string,
+  ): Promise<AgentReleaseRecord> {
+    const locked = await this.lockAgentForMutation(transaction, agentId)
+    if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
+    assertAgentMutationRevision(locked, expectedRevision)
+    await this.assertCapabilityReferences(locked.skills, locked.tools, locked.roleIds, locked.dataScopes)
 
-      const fingerprint = configurationFingerprint(locked)
-      const [test] = await transaction<{ id: string }[]>`
-        select id from agent_test_runs
-         where tenant_id = ${tenantId} and agent_version_id = ${locked.versionId}
-           and configuration_fingerprint = ${fingerprint} and status = 'passed'
-         order by created_at desc limit 1
-      `
-      if (!test) throw new Error('发布前必须使用当前配置完成一次服务端测试')
+    const fingerprint = configurationFingerprint(locked)
+    // 发布门禁只认封存试运行：agent_trial_runs 的案例经 Run/Attempt → Runtime Adapter
+    // → DSH 真实执行且 bound_fingerprint/sealed_revision 与当前配置一致。交互式
+    // agent_test_runs 是结构校验，不能作为发布证据（避免绕过发布治理流程）。
+    const [trial] = await transaction<{ id: string }[]>`
+      select t.id from agent_trial_runs t
+        join agent_release_submissions s
+          on s.tenant_id = t.tenant_id and s.id = t.submission_id
+       where t.tenant_id = ${tenantId} and t.status = 'passed'
+         and s.agent_version_id = ${locked.versionId}
+         and s.bound_fingerprint = ${fingerprint}
+         and s.sealed_revision is not null and s.sealed_revision = s.revision
+         and t.submission_revision = s.sealed_revision
+       limit 1
+    `
+    if (!trial) throw new Error('发布前必须在发布工作台完成与当前配置一致的封存试运行')
 
-      const published = await transaction<{ id: string }[]>`
-        update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id}
-         where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
-         returning id
-      `
-      if (!published.length) throw new Error('Agent 草稿发布状态已发生变化，请刷新后重试')
+    const published = await transaction<{ id: string }[]>`
+      update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id}
+       where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
+       returning id
+    `
+    if (!published.length) throw new Error('Agent 草稿发布状态已发生变化，请刷新后重试')
 
-      const activated = await transaction<{ id: string }[]>`
-        update agents set active_version_id = ${locked.versionId}, draft_version_id = null,
-                          status = 'published', updated_at = now()
-         where tenant_id = ${tenantId} and id = ${current.id} and draft_version_id = ${locked.versionId}
-         returning id
-      `
-      if (!activated.length) throw new Error('Agent 草稿指针已发生变化，请刷新后重试')
-      return this.appendRelease(transaction, locked.versionId, current.id, 'published', actor.id, '服务端配置测试通过，发布当前 Agent 版本。')
-    })
-    await this.audit(actor.id, 'agent.publish', current.id, 'success', release.note)
-    return { agent: await this.requireAgent(current.id), release }
+    // 发布只切换活动版本与草稿指针，不隐式重新启用：停用中的 Agent 发布后仍保持
+    // disabled，重新启用必须走独立的状态变更操作与确认流程。
+    const activated = await transaction<{ id: string }[]>`
+      update agents set active_version_id = ${locked.versionId}, draft_version_id = null,
+                        status = case when status = 'disabled' then 'disabled' else 'published' end,
+                        updated_at = now()
+       where tenant_id = ${tenantId} and id = ${agentId} and draft_version_id = ${locked.versionId}
+       returning id
+    `
+    if (!activated.length) throw new Error('Agent 草稿指针已发生变化，请刷新后重试')
+    return this.appendRelease(transaction, locked.versionId, agentId, 'published', actor.id, '封存试运行通过，发布当前 Agent 版本。')
   }
 
   private async assertCapabilityReferences(
@@ -914,7 +940,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
   }
 }
 
-function configurationFingerprint(row: AgentFingerprintSource) {
+export function configurationFingerprint(row: AgentFingerprintSource) {
   return createHash('sha256').update(JSON.stringify({
     versionId: row.versionId,
     name: row.name,

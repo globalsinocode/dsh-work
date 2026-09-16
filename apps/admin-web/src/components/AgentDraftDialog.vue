@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
+import AgentZipImportPanel from '@/components/AgentZipImportPanel.vue'
+import type { ZipInspection } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { AgentDefinition, AgentDraftConfiguration } from '@/types/domain'
@@ -11,17 +13,25 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  saved: [agent: AgentDefinition]
+  saved: [agent: AgentDefinition, source: 'config' | 'zip']
+  'continue-release': [agent: AgentDefinition]
 }>()
 
 const dialogOpen = defineModel<boolean>({ default: false })
 const authStore = useAuthStore()
 const contentStore = useContentStore()
 const formRef = ref<FormInstance>()
+const zipPanelRef = ref<InstanceType<typeof AgentZipImportPanel>>()
+const creationMode = ref<'config' | 'zip'>('config')
 const activeStep = ref(0)
 const saving = ref(false)
 const examplePrompt = ref('')
 const initialSnapshot = ref('')
+const savedResult = ref<{
+  agent: AgentDefinition
+  source: 'config' | 'zip'
+  inspection?: ZipInspection
+}>()
 const roleLabels: Record<string, string> = {
   'role-platform-admin': '平台管理员',
   'role-employee': '试点员工',
@@ -75,9 +85,15 @@ const roleOptions = computed(() => unique([
   ...form.roleIds,
 ]).map((id) => ({ id, name: roleName(id) })))
 const selectedRoleNames = computed(() => form.roleIds.map(roleName))
-const editorTitle = computed(() => props.agent ? `编辑 Agent：${props.agent.name}` : '创建 Agent')
+const editorTitle = computed(() => savedResult.value
+  ? savedResult.value.source === 'zip' ? 'Agent 导入完成' : 'Agent 草稿已保存'
+  : props.agent ? `编辑 Agent：${props.agent.name}` : '创建 Agent')
 const employeeWelcome = computed(() => form.welcomeMessage.trim() || buildWelcomeMessage(form.name, form.description))
 const isDirty = computed(() => JSON.stringify(form) !== initialSnapshot.value)
+const savedMissingCount = computed(() => {
+  const missing = savedResult.value?.inspection?.missing
+  return missing ? missing.skills.length + missing.tools.length : 0
+})
 
 const stepFields: string[][] = [
   ['name', 'description'],
@@ -141,6 +157,8 @@ function resetEditor() {
       }
     : emptyDraft()
   Object.assign(form, source)
+  savedResult.value = undefined
+  creationMode.value = 'config'
   activeStep.value = 0
   examplePrompt.value = source.examplePrompts[0] ?? '请介绍你能提供哪些帮助'
   initialSnapshot.value = JSON.stringify(form)
@@ -179,11 +197,8 @@ async function saveAgent() {
       ? await contentStore.updateAgentDraft(payload)
       : await contentStore.createAgentDraft(payload)
     initialSnapshot.value = JSON.stringify(form)
-    dialogOpen.value = false
-    emit('saved', saved)
-    ElMessage.success(props.agent?.status === 'published' || props.agent?.status === 'disabled'
-      ? 'Agent 新版本草稿已创建'
-      : props.agent ? 'Agent 配置已保存' : 'Agent 已创建，当前为草稿状态')
+    savedResult.value = { agent: saved, source: 'config' }
+    emit('saved', saved, 'config')
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : 'Agent 保存失败')
   } finally {
@@ -197,8 +212,13 @@ function findFirstInvalidStep() {
   return -1
 }
 
+function handleZipSaved(agent: AgentDefinition, inspection: ZipInspection) {
+  savedResult.value = { agent, source: 'zip', inspection }
+  emit('saved', agent, 'zip')
+}
+
 function handleBeforeClose(done: () => void) {
-  if (!isDirty.value || saving.value) {
+  if (savedResult.value || (!props.agent && creationMode.value === 'zip') || !isDirty.value || saving.value) {
     done()
     return
   }
@@ -213,6 +233,17 @@ function requestClose() {
   handleBeforeClose(() => {
     dialogOpen.value = false
   })
+}
+
+function finishSaved() {
+  dialogOpen.value = false
+}
+
+function continueRelease() {
+  const saved = savedResult.value?.agent
+  if (!saved) return
+  dialogOpen.value = false
+  emit('continue-release', saved)
 }
 
 function cloneDraft(value: AgentDraftConfiguration): AgentDraftConfiguration {
@@ -281,15 +312,49 @@ function toVersionedToolReference(reference: string) {
     :before-close="handleBeforeClose"
     destroy-on-close
   >
-    <div class="agent-editor__steps">
+    <section v-if="savedResult" class="draft-completion" aria-live="polite">
+      <el-result
+        icon="success"
+        :title="savedResult.source === 'zip' ? '已导入为 Agent 草稿' : 'Agent 草稿已保存'"
+        sub-title="草稿已保存在 Agent 管理中。您可以关闭弹窗稍后处理，也可以主动进入发布流程。"
+      />
+      <dl class="draft-completion__summary">
+        <div><dt>Agent</dt><dd>{{ savedResult.agent.name }}</dd></div>
+        <div><dt>草稿版本</dt><dd class="mono">v{{ savedResult.agent.version }}</dd></div>
+        <div><dt>创建方式</dt><dd>{{ savedResult.source === 'zip' ? 'ZIP 导入' : '配置创建' }}</dd></div>
+        <div><dt>能力引用</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · {{ savedResult.agent.tools.length }} 个工具</dd></div>
+      </dl>
+      <el-alert
+        v-if="savedMissingCount"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`草稿仍有 ${savedMissingCount} 个依赖待处理，暂不能试运行`"
+        description="进入定义与依赖页面后，可以补齐平台能力或移除不需要的引用。"
+      />
+    </section>
+
+    <template v-else>
+      <section v-if="!props.agent" class="creation-mode" aria-labelledby="creation-mode-title">
+      <div>
+        <strong id="creation-mode-title">创建方式</strong>
+        <span>两种方式都会进入同一套检查、试运行和发布流程</span>
+      </div>
+      <el-radio-group v-model="creationMode" aria-label="选择 Agent 创建方式">
+        <el-radio-button value="config">配置创建</el-radio-button>
+        <el-radio-button value="zip">ZIP 导入</el-radio-button>
+      </el-radio-group>
+      </section>
+
+      <div v-if="props.agent || creationMode === 'config'" class="agent-editor__steps">
       <el-steps :active="activeStep" finish-status="success" align-center>
         <el-step title="定义 Agent" description="名称、说明和欢迎语" />
         <el-step title="配置能力和权限" description="Prompt、Skill、工具和权限" />
         <el-step :title="props.agent ? '确认并保存' : '确认并创建'" description="确认员工端展示和配置摘要" />
       </el-steps>
-    </div>
+      </div>
 
-    <el-form ref="formRef" :model="form" :rules="rules" label-position="top" status-icon>
+      <el-form v-if="props.agent || creationMode === 'config'" ref="formRef" :model="form" :rules="rules" label-position="top" status-icon>
       <section v-show="activeStep === 0" class="agent-editor__pane" aria-label="Agent 基础信息">
         <header class="pane-heading">
           <div><h3>定义 Agent</h3><p>填写员工识别和理解 Agent 所需的基础信息。</p></div>
@@ -394,16 +459,30 @@ function toVersionedToolReference(reference: string) {
           </section>
         </div>
       </section>
-    </el-form>
+      </el-form>
+      <AgentZipImportPanel v-else ref="zipPanelRef" class="agent-editor__zip" @saved="handleZipSaved" />
+    </template>
 
     <template #footer>
-      <div class="agent-editor__footer">
+      <div v-if="savedResult" class="agent-editor__footer">
+        <el-button @click="finishSaved">关闭</el-button>
+        <el-button type="primary" @click="continueRelease">进入定义与依赖</el-button>
+      </div>
+      <div v-else class="agent-editor__footer">
         <el-button :disabled="saving" @click="requestClose">取消</el-button>
-        <div>
+        <div v-if="props.agent || creationMode === 'config'">
           <el-button v-if="activeStep > 0" :disabled="saving" @click="previousStep">上一步</el-button>
           <el-button v-if="activeStep < 2" type="primary" @click="nextStep">下一步</el-button>
           <el-button v-else type="primary" :loading="saving" @click="saveAgent">{{ props.agent ? '保存修改' : '完成创建' }}</el-button>
         </div>
+        <el-button
+          v-else
+          type="primary"
+          :loading="zipPanelRef?.importing ?? false"
+          :disabled="!zipPanelRef?.parsed"
+          data-action="confirm-zip-import"
+          @click="zipPanelRef?.importAsDraft()"
+        >导入为草稿</el-button>
       </div>
     </template>
   </el-dialog>
@@ -413,7 +492,22 @@ function toVersionedToolReference(reference: string) {
 :global(.agent-editor.el-dialog) { display: flex; max-height: 92vh; flex-direction: column; overflow: hidden; }
 :global(.agent-editor .el-dialog__body) { min-height: 0; overflow: auto; }
 :global(.agent-editor .el-dialog__footer) { flex: 0 0 auto; border-top: 1px solid var(--color-border); }
+.creation-mode { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 2px 8px 18px; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
+.creation-mode > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.creation-mode strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.creation-mode span { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.creation-mode :deep(.el-radio-group) { display: inline-flex; flex-direction: row; flex-wrap: nowrap; }
+.creation-mode :deep(.el-radio-button) { flex: 0 0 auto; }
 .agent-editor__steps { padding: 4px 12px 22px; border-bottom: 1px solid var(--color-border); }
+.agent-editor__zip { min-height: 500px; padding: 4px 8px; }
+.draft-completion { max-width: 760px; min-height: 480px; margin: 0 auto; }
+.draft-completion :deep(.el-result) { padding: 36px 20px 24px; }
+.draft-completion__summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; margin: 0 0 18px; padding: 0 18px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
+.draft-completion__summary > div { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+.draft-completion__summary > div:nth-last-child(-n + 2) { border-bottom: 0; }
+.draft-completion__summary dt { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.draft-completion__summary dd { margin: 3px 0 0; color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.mono { font-family: monospace; }
 .agent-editor__pane { min-height: 500px; padding: 22px 8px 4px; }
 .pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .pane-heading h3, .employee-preview h4, .draft-summary h4 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-title); }
@@ -456,7 +550,7 @@ function toVersionedToolReference(reference: string) {
 .draft-summary__grid > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .draft-summary strong { overflow: hidden; color: var(--color-text-heading); font-size: var(--font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
 .draft-summary small { overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
-.agent-editor__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-editor__footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .agent-editor__footer > div { display: flex; gap: 8px; }
 :deep(.el-form-item) { margin-bottom: 20px; }
 :deep(.el-form-item__label) { color: var(--color-text-heading); font-weight: var(--font-weight-title); }
@@ -465,7 +559,9 @@ function toVersionedToolReference(reference: string) {
 :deep(.el-step__description) { font-size: var(--font-size-badge); }
 :deep(.el-empty) { padding: 24px 0 8px; }
 @media (max-width: 800px) {
-  .form-grid--two, .review-grid, .draft-summary__grid { grid-template-columns: 1fr; }
+  .form-grid--two, .review-grid, .draft-summary__grid, .draft-completion__summary { grid-template-columns: 1fr; }
+  .draft-completion__summary > div:nth-last-child(2) { border-bottom: 1px solid var(--color-border); }
   .agent-editor__pane { min-height: 0; }
+  .creation-mode { align-items: stretch; flex-direction: column; }
 }
 </style>

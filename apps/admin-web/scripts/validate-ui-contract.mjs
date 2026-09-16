@@ -80,6 +80,11 @@ requireFragments('src/router/index.ts', [
   "meta: { title: '运营概览'",
   "meta: { title: '管理助手'",
   "meta: { title: 'Agent 管理'",
+  "meta: { title: 'Agent 发布工作台 ·",
+  "path: '/agents/:agentId/release/definition'",
+  "path: '/agents/:agentId/release/checks'",
+  "path: '/agents/:agentId/release/trial'",
+  "path: '/agents/:agentId/release/review'",
   "meta: { title: 'Skill 管理'",
   "meta: { title: '工具管理'",
   "meta: { title: '连接器管理'",
@@ -96,6 +101,7 @@ requireFragments('src/router/index.ts', [
 const businessViews = [
   'AdminOverviewView.vue',
   'AgentManagementView.vue',
+  'AgentReleaseWorkbenchView.vue',
   'CapabilityManagementView.vue',
   'ModelUsageView.vue',
   'PermissionManagementView.vue',
@@ -125,7 +131,34 @@ for (const name of listViews) {
   requireFragments(`src/views/${name}`, ['filter-panel', 'class="data-table"', 'v-loading', 'empty-text='])
 }
 
-requireFragments('src/views/AgentManagementView.vue', ['data-action="view-agent"', 'data-action="publish-agent"'])
+requireFragments('src/views/AgentManagementView.vue', [
+  'data-action="view-agent"',
+  'data-action="open-candidate"',
+  '@continue-release="openCandidate"',
+])
+forbidFragments('src/views/AgentManagementView.vue', ["activeDetailTab === 'candidate'", 'data-action="publish-agent"'])
+const agentManagementView = read('src/views/AgentManagementView.vue')
+const savedHandlerStart = agentManagementView.indexOf('function handleDraftSaved')
+const savedHandlerEnd = agentManagementView.indexOf('function evidenceName', savedHandlerStart)
+if (savedHandlerStart < 0 || savedHandlerEnd < 0 || agentManagementView.slice(savedHandlerStart, savedHandlerEnd).includes('router.push')) {
+  failures.push('Agent 草稿保存或导入完成后不得自动跳转发布页面')
+}
+requireFragments('src/components/AgentDraftDialog.vue', [
+  '草稿已保存在 Agent 管理中',
+  '进入定义与依赖',
+  "'continue-release': [agent: AgentDefinition]",
+])
+requireFragments('src/views/AgentReleaseWorkbenchView.vue', [
+  '候选发布流程',
+  '版本与变更详情',
+  '依赖状态',
+  '试运行案例',
+  "activeStep === 'definition'",
+  "activeStep === 'checks'",
+  "activeStep === 'trial'",
+  'data-action="publish-agent"',
+])
+forbidFragments('src/views/AgentReleaseWorkbenchView.vue', ['class="workbench-header"'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
   'data-action="view-tool"',

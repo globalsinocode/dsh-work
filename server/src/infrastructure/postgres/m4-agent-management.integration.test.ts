@@ -4,6 +4,7 @@ import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { DatabaseClient } from './database.ts'
+import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
@@ -12,6 +13,13 @@ if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
 let agents: PostgresAgentService
+
+/**
+ * 草稿发布只能走发布治理链路（封存试运行证据 + 事务内发布）。
+ * 本套件验证版本/回滚/可见性等生命周期机制，以治理证据夹具驱动同一个事务内
+ * publish 入口；真实 DSH 试运行到发布的端到端覆盖见 agent-release-governance 套件。
+ */
+const publishDraft = (agentId: string) => publishDraftWithSealedTrial(database, agents, agentId, 'U00008')
 
 before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
@@ -50,14 +58,15 @@ test('Agent lifecycle persists test evidence, publishes, versions, rolls back an
   assert.equal(created.agent.status, 'draft')
   assert.equal(created.agent.version, '0.1.0')
 
+  // 状态直改不再能发布草稿：必须走发布工作台的封存试运行链路
   await assert.rejects(
     agents.setStatus({ agentId, status: 'published', actor: 'U00008' }),
-    /服务端测试/,
+    /发布工作台/,
   )
   const tested = await agents.testAgent({ agentId, prompt: '请介绍你的能力', actor: 'U00008' })
   assert.equal(tested.status, 'passed')
-  const firstPublished = await agents.setStatus({ agentId, status: 'published', actor: 'U00008' })
-  assert.equal(firstPublished.agent.status, 'published')
+  await publishDraft(agentId)
+  assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.status, 'published')
 
   const employeeAgents = await agents.listWorkbenchAgents('U00001')
   assert.ok(employeeAgents.some(agent => agent.id === agentId && agent.version === '0.1.0'))
@@ -90,8 +99,8 @@ test('Agent lifecycle persists test evidence, publishes, versions, rolls back an
   assert.equal((await agents.listWorkbenchAgents('U00001')).find(agent => agent.id === agentId)?.version, '0.1.0')
 
   await agents.testAgent({ agentId, prompt: '请验证二版能力', actor: 'U00008' })
-  const secondPublished = await agents.setStatus({ agentId, status: 'published', actor: 'U00008' })
-  assert.equal(secondPublished.agent.version, '0.2.0')
+  await publishDraft(agentId)
+  assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.version, '0.2.0')
 
   const rolledBack = await agents.rollback({ agentId, version: '0.1.0', actor: 'U00008' })
   assert.equal(rolledBack.agent.version, '0.1.0')

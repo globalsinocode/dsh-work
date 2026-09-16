@@ -526,3 +526,119 @@ export interface PlatformStatus {
   database: 'not-configured' | 'configured' | Record<string, unknown>
   artifactStorage: 'not-configured' | 'local-mvp'
 }
+
+/* ---------- Agent 发布治理（与 server agent-release 契约对齐） ---------- */
+
+export type AgentSubmissionStatus = 'draft' | 'submitted' | 'changes_requested' | 'published' | 'withdrawn'
+
+export interface AgentEvalCase {
+  id: string
+  name: string
+  kind: 'success' | 'invalid_input' | 'permission_denied'
+  input: string
+  expect: string
+}
+
+export interface AgentCapabilityRef { id: string; version: string; path?: string }
+
+export type AgentCheckStatus = 'passed' | 'failed' | 'pending'
+export interface AgentCheckItem { id: string; label: string; status: AgentCheckStatus; detail: string }
+
+export interface AgentPlanItem {
+  kind: 'agent' | 'skill' | 'tool' | 'binding'
+  name: string
+  action: 'create' | 'reuse' | 'upgrade' | 'blocked'
+  version: string
+  detail: string
+}
+
+export type AgentTrialStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
+
+/** 单个评估案例的真实执行证据与审核人逐项确认结论。 */
+export interface AgentTrialCaseRun {
+  caseId: string
+  name: string
+  kind: AgentEvalCase['kind']
+  expect: string
+  runId?: string | null
+  attemptId?: string | null
+  status: string
+  outputExcerpt: string
+  error?: string
+  verdict?: 'passed' | 'failed'
+  verdictNote?: string
+}
+
+export interface AgentTrialStep { id: string; label: string; status: AgentTrialStepStatus; detail?: string; caseRuns?: AgentTrialCaseRun[] }
+
+export interface AgentTrialRun {
+  id: string
+  submissionRevision: number
+  status: 'checking' | 'queued' | 'executing' | 'asserting' | 'passed' | 'failed' | 'cancelled'
+  steps: AgentTrialStep[]
+  startedAt: string
+  finishedAt?: string
+  failureStage?: string
+}
+
+export interface AgentReleaseCandidate {
+  id: string
+  agentId: string
+  agentVersionId: string
+  version: string
+  revision: number
+  status: AgentSubmissionStatus
+  source: 'config' | 'zip'
+  sealedRevision?: number
+  sealedAt?: string
+  cases: AgentEvalCase[]
+  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
+  missingDeps: { skills: string[]; tools: string[] }
+  checks: AgentCheckItem[]
+  plan: AgentPlanItem[]
+  reviewNote?: string
+}
+
+export interface AgentVersionEvidence {
+  kind: 'configuration_checked' | 'runtime_verified' | 'business_accepted'
+  summary: string
+  runId?: string
+  at: string
+  by: string
+  scope: string
+}
+
+export interface AgentReleaseState {
+  candidate?: AgentReleaseCandidate
+  trialRuns: AgentTrialRun[]
+  /** key = 版本号字符串 */
+  evidence: Record<string, AgentVersionEvidence[]>
+  packageWarnings: string[]
+  /** 只读标记：草稿相对候选已变更/尚未同步（由 POST candidate 端点负责落库） */
+  definitionChanged?: boolean
+}
+
+export interface AgentSubmissionSummary {
+  agentId: string
+  revision: number
+  status: AgentSubmissionStatus
+  source: 'config' | 'zip'
+}
+
+export interface AgentVersionEvidenceEntry {
+  agentId: string
+  version: string
+  evidence: AgentVersionEvidence[]
+}
+
+export interface AgentPackageInspection {
+  fileName: string
+  manifest: { id: string; name: string; version: string; description: string }
+  files: string[]
+  systemPrompt: string
+  resolved: { skills: string[]; tools: string[] }
+  missing: { skills: string[]; tools: string[] }
+  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
+  cases: Array<Omit<AgentEvalCase, 'id'>>
+  warnings: string[]
+}

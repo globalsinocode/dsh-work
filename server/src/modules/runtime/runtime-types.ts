@@ -21,7 +21,7 @@ export type RuntimeEventType =
 
 export interface RuntimeManifest {
   manifest_version: '1.0'
-  purpose?: 'admin-assistant' | 'admin-skill-install' | 'admin-skill-test' | 'admin-agent-manage' | 'admin-platform-operations'
+  purpose?: 'admin-assistant' | 'admin-skill-install' | 'admin-skill-test' | 'admin-agent-manage' | 'admin-platform-operations' | 'agent-release-trial'
   installation_source?: string
   run_id: string
   attempt_id: string

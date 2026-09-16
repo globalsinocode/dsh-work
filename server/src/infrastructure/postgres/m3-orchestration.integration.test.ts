@@ -252,6 +252,36 @@ test('cancel and retry keep one Run and create a new immutable Attempt', async (
   assert.deepEqual(attempts[1]?.manifest.input.conversation_history, expectedHistory)
 })
 
+test('a retry continues from the partial output preserved by a timed-out Attempt', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 超时续跑' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '超时中断保留部分回答', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForTask(created.id, 'failed')
+  const failedTask = await conversations.getTask(created.id, 'U00001')
+  assert.match(failedTask?.messages.at(-1)?.content ?? '', /中断前的部分回答/)
+  assert.match(failedTask?.messages.at(-1)?.content ?? '', /执行超时中断/)
+  assert.equal(failedTask?.error?.code, 'RUN_TIMEOUT')
+
+  await orchestration.retry(created.id, 'U00001')
+  await waitForTask(created.id, 'succeeded')
+  const attempts = await database<{ manifest: RuntimeManifest }[]>`
+    select manifest from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${created.id}
+     order by attempt_no
+  `
+  assert.equal(attempts.length, 2)
+  const retriedHistory = attempts[1]?.manifest.input.conversation_history ?? []
+  // 顺序：原始用户问题 → 已提交的部分回答 → 续写指令作为 manifest message
+  assert.equal(retriedHistory.at(-2)?.role, 'user')
+  assert.match(retriedHistory.at(-2)?.content ?? '', /超时中断保留部分回答/)
+  assert.equal(retriedHistory.at(-1)?.role, 'assistant')
+  assert.match(retriedHistory.at(-1)?.content ?? '', /中断前的部分回答/)
+  assert.match(attempts[1]?.manifest.input.message ?? '', /从已有内容的断点处继续/)
+  assert.equal(attempts[0]?.manifest.input.message, '超时中断保留部分回答')
+})
+
 test('deleting a conversation archives it only after active Runs stop', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 删除对话' })
   const created = await orchestration.startRun({
@@ -360,7 +390,7 @@ test('file safety gate blocks executable signatures and Tool audit is persisted'
   assert.ok((count?.count ?? 0) >= 1)
 })
 
-async function waitForTask(runId: string, expected: 'running' | 'succeeded' | 'cancelled') {
+async function waitForTask(runId: string, expected: 'running' | 'succeeded' | 'cancelled' | 'failed') {
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
     const task = await conversations.getTask(runId, 'U00001')
@@ -430,6 +460,15 @@ class DeterministicRuntime implements AgentRuntimePort {
       execution.snapshot.startedAt = new Date().toISOString()
       this.emit(execution, 'run.started', '已启动')
       if (manifest.input.message === '等待取消' && count === 1) return
+      if (manifest.input.message === '超时中断保留部分回答' && count === 1) {
+        this.emit(execution, 'assistant.delta', '中断前的部分回答')
+        this.emit(execution, 'assistant.completed', '中断前的部分回答\n\n---\n*本轮回答因执行超时中断，以上为已生成内容。*')
+        execution.snapshot.status = 'failed'
+        execution.snapshot.errorCode = 'RUN_TIMEOUT'
+        this.emit(execution, 'run.failed', '任务执行失败', { error_code: 'RUN_TIMEOUT' })
+        this.finish(execution)
+        return
+      }
       this.emit(execution, 'assistant.delta', 'M3 真实回答')
       this.emit(execution, 'assistant.completed', 'M3 真实回答')
       execution.snapshot.status = 'completed'
@@ -461,11 +500,11 @@ class DeterministicRuntime implements AgentRuntimePort {
   async health() { return { status: 'healthy' as const, runtimeId: 'runtime-local-01', activeExecutions: 0, acceptingRuns: true, dshRepository: '/tmp', transport: 'acp-stdio' as const, message: 'test' } }
   async close() { return undefined }
 
-  private emit(execution: Execution, eventType: RuntimeEvent['event_type'], display: string) {
+  private emit(execution: Execution, eventType: RuntimeEvent['event_type'], display: string, safeMetadata: Record<string, unknown> = {}) {
     const event: RuntimeEvent = {
       event_id: randomUUID(), run_id: execution.manifest.run_id, attempt_id: execution.manifest.attempt_id,
       sequence: execution.events.length + 1, event_type: eventType, occurred_at: new Date().toISOString(),
-      display_message: display, safe_metadata: {}, trace_id: `trace-${execution.manifest.run_id}`,
+      display_message: display, safe_metadata: safeMetadata, trace_id: `trace-${execution.manifest.run_id}`,
       parent_event_id: execution.events.at(-1)?.event_id ?? null,
     }
     execution.events.push(event)

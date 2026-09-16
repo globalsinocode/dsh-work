@@ -51,6 +51,8 @@ import { PostgresWorkspaceActivityService } from './modules/workbench/applicatio
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
+import { PostgresAgentReleaseService } from './modules/agent/postgres-agent-release-service.ts'
+import { registerAgentReleaseRoutes } from './http/admin/agent-release-routes.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
 import { registerSkillInstallationRoutes } from './http/admin/skill-installation-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
@@ -194,7 +196,7 @@ async function start() {
     revocationSweep = new RunRevocationSweep(database, runs, orchestration, authorization)
     revocationSweep.start()
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
-    registerContentRoutes(router, content, authorization)
+    registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)
     registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
     registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
@@ -202,6 +204,7 @@ async function start() {
     registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
+    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, tools, resolve(dataRoot, 'agent-packages'), orchestration))
     registerSkillRoutes(router, skills)
     registerToolRoutes(router, tools)
     registerWorkbenchAgentRoutes(router, agents, authorization)

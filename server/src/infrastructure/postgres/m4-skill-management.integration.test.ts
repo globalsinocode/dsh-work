@@ -10,6 +10,7 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -102,7 +103,7 @@ test('Skill lifecycle auto-generates identity, gates publishing, versions and pr
     actor: 'U00008',
   })
   await agents.testAgent({ agentId, prompt: '分析当前订单风险', actor: 'U00008' })
-  await agents.setStatus({ agentId, status: 'published', actor: 'U00008' })
+  await publishDraftWithSealedTrial(database, agents, agentId, 'U00008')
   const firstAgentSnapshot = await agents.getRuntimeSnapshot(agentDraft.version.id)
   assert.equal(firstAgentSnapshot.skillInstructions[0]?.version, '0.1.0')
   assert.match(firstAgentSnapshot.skillInstructions[0]?.instructions ?? '', /风险等级/)

@@ -56,6 +56,34 @@ const router = createRouter({
       meta: { title: 'Agent 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/agents/:agentId/release',
+      redirect: to => ({ name: 'agent-release-definition', params: { agentId: to.params.agentId } }),
+    },
+    {
+      path: '/agents/:agentId/release/definition',
+      name: 'agent-release-definition',
+      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
+      meta: { title: 'Agent 发布工作台 · 定义与依赖', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/agents/:agentId/release/checks',
+      name: 'agent-release-checks',
+      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
+      meta: { title: 'Agent 发布工作台 · 检查与案例', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/agents/:agentId/release/trial',
+      name: 'agent-release-trial',
+      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
+      meta: { title: 'Agent 发布工作台 · 试运行', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/agents/:agentId/release/review',
+      name: 'agent-release-review',
+      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
+      meta: { title: 'Agent 发布工作台 · 审核发布', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
       path: '/capabilities',
       redirect: to => legacyCapabilityRedirect(to.query.tab),
     },

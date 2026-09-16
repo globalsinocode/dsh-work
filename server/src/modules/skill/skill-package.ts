@@ -49,7 +49,7 @@ export const skillPackageContentHash = (files: SkillPackage['files']) => hash(JS
   sha256: file.sha256,
 }))))
 const decoder = new TextDecoder('utf-8', { fatal: true })
-const fail = (message: string): never => { throw Object.assign(new Error(`Skill 包校验失败：${message}`), { status: 422, code: 'skill_package_invalid' }) }
+const fail = (message: string, label = 'Skill 包校验失败'): never => { throw Object.assign(new Error(`${label}：${message}`), { status: 422, code: 'skill_package_invalid' }) }
 
 export function toSkillPackageArtifact(pkg: SkillPackage, artifactRef: string): SkillPackageArtifact {
   return {
@@ -277,46 +277,46 @@ export function assertPackagePath(path: string) {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes(':') || [...path].some(character => character.charCodeAt(0) < 32) || path.split('/').some(part => !part || part === '.' || part === '..')) fail(`不安全的文件路径：${path}`)
 }
 
-function extractZip(bytes: Buffer, specialPaths: Set<string>) {
+export function extractZip(bytes: Buffer, specialPaths: Set<string>, label = 'Skill 包校验失败') {
   const files: Record<string, Uint8Array> = Object.create(null)
   let end = -1
   for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65557); offset--) {
     if (bytes.readUInt32LE(offset) === 0x06054b50 && offset + 22 + bytes.readUInt16LE(offset + 20) === bytes.length) { end = offset; break }
   }
-  if (end < 0) fail('ZIP 目录损坏')
+  if (end < 0) fail('ZIP 目录损坏', label)
   const count = bytes.readUInt16LE(end + 10)
-  if (count < 1 || count > 2000 || bytes.readUInt16LE(end + 8) !== count || bytes.readUInt16LE(end + 4) || bytes.readUInt16LE(end + 6)) fail('ZIP 文件数量或分卷格式不受支持')
+  if (count < 1 || count > 2000 || bytes.readUInt16LE(end + 8) !== count || bytes.readUInt16LE(end + 4) || bytes.readUInt16LE(end + 6)) fail('ZIP 文件数量或分卷格式不受支持', label)
   let offset = bytes.readUInt32LE(end + 16), expanded = 0
   const paths = new Set<string>()
   for (let index = 0; index < count; index++) {
-    if (offset + 46 > end || bytes.readUInt32LE(offset) !== 0x02014b50) fail('ZIP 目录无效')
+    if (offset + 46 > end || bytes.readUInt32LE(offset) !== 0x02014b50) fail('ZIP 目录无效', label)
     const nameSize = bytes.readUInt16LE(offset + 28), extraSize = bytes.readUInt16LE(offset + 30), commentSize = bytes.readUInt16LE(offset + 32)
     const next = offset + 46 + nameSize + extraSize + commentSize
-    if (next > end) fail('ZIP 目录越界')
+    if (next > end) fail('ZIP 目录越界', label)
     const path = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameSize))
     assertPackagePath(path.endsWith('/') ? path.slice(0, -1) : path)
     const key = path.replace(/\/$/, '').normalize('NFC').toLowerCase()
-    if (paths.has(key)) fail('ZIP 包含重复或冲突路径')
+    if (paths.has(key)) fail('ZIP 包含重复或冲突路径', label)
     paths.add(key)
     const mode = bytes.readUInt32LE(offset + 38) >>> 16
     if (mode && (mode & 0xf000) !== 0 && ![0x8000, 0x4000].includes(mode & 0xf000)) specialPaths.add(path)
-    if (bytes.readUInt16LE(offset + 8) & 1) fail('不支持加密 ZIP')
-    if (![0, 8].includes(bytes.readUInt16LE(offset + 10))) fail('不支持此 ZIP 压缩方式')
+    if (bytes.readUInt16LE(offset + 8) & 1) fail('不支持加密 ZIP', label)
+    if (![0, 8].includes(bytes.readUInt16LE(offset + 10))) fail('不支持此 ZIP 压缩方式', label)
     expanded += bytes.readUInt32LE(offset + 24)
-    if (expanded > 32 * 1024 * 1024) fail('ZIP 解压总大小超过 32 MB')
+    if (expanded > 32 * 1024 * 1024) fail('ZIP 解压总大小超过 32 MB', label)
     const local = bytes.readUInt32LE(offset + 42)
-    if (local + 30 > offset || bytes.readUInt32LE(local) !== 0x04034b50) fail('ZIP 文件头无效')
+    if (local + 30 > offset || bytes.readUInt32LE(local) !== 0x04034b50) fail('ZIP 文件头无效', label)
     const localName = decoder.decode(bytes.subarray(local + 30, local + 30 + bytes.readUInt16LE(local + 26)))
-    if (localName !== path) fail('ZIP 文件名不一致')
+    if (localName !== path) fail('ZIP 文件名不一致', label)
     const dataStart = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28)
     const compressed = bytes.readUInt32LE(offset + 20), size = bytes.readUInt32LE(offset + 24)
-    if (dataStart + compressed > bytes.readUInt32LE(end + 16)) fail('ZIP 文件数据越界')
+    if (dataStart + compressed > bytes.readUInt32LE(end + 16)) fail('ZIP 文件数据越界', label)
     const raw = bytes.subarray(dataStart, dataStart + compressed)
     const content = bytes.readUInt16LE(offset + 10) === 0 ? raw : inflateRawSync(raw, { maxOutputLength: Math.max(1, size) })
-    if (content.length !== size || crc32(content) !== bytes.readUInt32LE(offset + 16)) fail('ZIP 内容大小或 CRC 校验不匹配')
+    if (content.length !== size || crc32(content) !== bytes.readUInt32LE(offset + 16)) fail('ZIP 内容大小或 CRC 校验不匹配', label)
     files[path] = content
     offset = next
   }
-  if (offset !== end) fail('不支持 ZIP64 或扩展目录')
+  if (offset !== end) fail('不支持 ZIP64 或扩展目录', label)
   return files
 }

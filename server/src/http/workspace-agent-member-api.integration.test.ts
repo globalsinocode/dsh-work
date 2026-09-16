@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
@@ -15,11 +18,13 @@ import type {
   RuntimeExecutionSnapshot,
   RuntimeHealth,
 } from '../modules/runtime/runtime-types.ts'
+import { PostgresContentService } from '../modules/workbench/application/postgres-content-service.ts'
 import { PostgresConversationRepository } from '../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresWorkspaceAgentMemberService } from '../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
 import { Router } from './router.ts'
+import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
 
@@ -30,6 +35,7 @@ const tenantId = 'tenant-dsh-work'
 
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
+let storageRoot: string
 let server: Server
 let baseUrl = ''
 let authorization: PostgresAuthorizationService
@@ -72,6 +78,8 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
+  storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-agent-member-'))
+  const content = new PostgresContentService(database, storageRoot, authorization)
   const conversations = new PostgresConversationRepository(database)
   const orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
@@ -85,6 +93,7 @@ before(async () => {
     authorization,
   )
   const router = new Router({ authenticateApi: testApiAuthenticator })
+  registerContentRoutes(router, content, authorization, agentMembers)
   registerWorkspaceAgentMemberRoutes(router, agentMembers, authorization)
   registerConversationRoutes(router, conversations, orchestration, new PostgresRunRepository(database), agents, authorization, undefined, undefined, agentMembers)
   server = createServer((request, response) => void router.handle(request, response))
@@ -100,6 +109,7 @@ before(async () => {
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   await throwaway.dispose()
+  await rm(storageRoot, { recursive: true, force: true })
 })
 
 // ---------------------------------------------------------------------------
@@ -1183,6 +1193,77 @@ test('个人空间会话启动保持原路径：不需要也不受 workspaceAgen
   })
   assert.equal(withWamField.status, 201)
   assert.equal((withWamField.body.data as { workspaceId: string }).workspaceId, personalWorkspaceId)
+})
+
+// ---------------------------------------------------------------------------
+// 创建空间自动加入默认 Agent
+// ---------------------------------------------------------------------------
+
+test('创建团队空间自动加入默认 Agent 成员并派生 agent_member 授权来源', async () => {
+  const ownerId = 'user-auto-default-owner'
+  await createDirectoryUser(ownerId, '自动默认负责人')
+
+  const created = await api('POST', '/api/workbench/v1/workspaces', {
+    as: ownerId,
+    body: { name: '自动默认空间', description: '' },
+  })
+  assert.equal(created.status, 201)
+  const workspace = created.body.data as { id: string }
+
+  const members = await database<AgentMemberRow[]>`
+    select id, agent_id as "agentId", agent_version_id as "agentVersionId",
+           status, added_by as "addedBy"
+      from workspace_agent_members
+     where tenant_id = ${tenantId} and workspace_id = ${workspace.id}
+  `
+  assert.equal(members.length, 1)
+  assert.equal(members[0]?.agentId, 'agent-dsh-work-assistant')
+  assert.equal(members[0]?.status, 'available')
+  assert.equal(members[0]?.addedBy, ownerId)
+
+  const sources = await database<{ capabilityType: string; capabilityVersionId: string; sourceType: string; status: string; sourceRefId: string }[]>`
+    select capability_type as "capabilityType", capability_version_id as "capabilityVersionId",
+           source_type as "sourceType", status, source_ref_id as "sourceRefId"
+      from workspace_grant_sources
+     where tenant_id = ${tenantId} and workspace_id = ${workspace.id}
+  `
+  assert.ok(sources.length > 0)
+  for (const source of sources) {
+    assert.equal(source.sourceType, 'agent_member')
+    assert.equal(source.status, 'active')
+    assert.equal(source.sourceRefId, members[0]?.id)
+  }
+  assert.ok(sources.some(source => source.capabilityType === 'agent' && source.capabilityVersionId === members[0]?.agentVersionId))
+})
+
+test('默认 Agent 不可加入时空间照常创建且无 Agent 成员', async () => {
+  const ownerId = 'user-auto-default-fallback-owner'
+  await createDirectoryUser(ownerId, '降级负责人')
+  await database`
+    update agents set allow_workspace_join = false
+     where tenant_id = ${tenantId} and id = 'agent-dsh-work-assistant'
+  `
+  try {
+    const created = await api('POST', '/api/workbench/v1/workspaces', {
+      as: ownerId,
+      body: { name: '降级空间', description: '' },
+    })
+    assert.equal(created.status, 201)
+    const workspace = created.body.data as { id: string }
+
+    const members = await database<AgentMemberRow[]>`
+      select id, agent_id as "agentId", agent_version_id as "agentVersionId",
+             status, added_by as "addedBy"
+        from workspace_agent_members
+       where tenant_id = ${tenantId} and workspace_id = ${workspace.id}
+    `
+    assert.equal(members.length, 0)
+  } finally {
+    await database`
+      update agents set allow_workspace_join = true
+       where tenant_id = ${tenantId} and id = 'agent-dsh-work-assistant'
+    `
+  }
 })
 
 // ---------------------------------------------------------------------------

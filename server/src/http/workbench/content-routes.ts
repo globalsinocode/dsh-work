@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
+import type { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import { DEFAULT_WORKBENCH_AGENT_ID } from '../../modules/agent/postgres-agent-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, routeValidationFailed, sessionAuthorizationContext, type Router } from '../router.ts'
 
 const basePath = '/api/workbench/v1'
@@ -32,6 +34,7 @@ export function registerContentRoutes(
   router: Router,
   content: PostgresContentService,
   authorization?: PostgresAuthorizationService,
+  agentMembers?: PostgresWorkspaceAgentMemberService,
 ) {
   router.get(`${basePath}/workspaces`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
@@ -44,13 +47,30 @@ export function registerContentRoutes(
   router.post(`${basePath}/workspaces`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const access = await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const body = await readJsonBody<{ name: string; description?: string }>(request)
     if (body.name.trim().length < 2) throw new Error('工作空间名称至少需要 2 个字符')
-    return httpResult(201, envelope('workbench', await content.createWorkspace({
+    const workspace = await content.createWorkspace({
       name: body.name,
       description: body.description ?? '',
-    }, userId), 'postgres'))
+    }, userId)
+    // 新团队空间自动加入平台默认 Agent（复用 addAgentMember 的版本固定与
+    // 授权派生事务）。默认 Agent 对该创建者不可用（未发布/未开放加入/
+    // 可见角色不含创建者/依赖闭包失效）时降级为「无 Agent」空态，
+    // 空间照常创建，由负责人后续手动添加。
+    if (workspace && agentMembers) {
+      try {
+        await agentMembers.addAgentMember(
+          workspace.id,
+          DEFAULT_WORKBENCH_AGENT_ID,
+          userId,
+          access?.roleIds ?? identity.roleIds,
+        )
+      } catch (error) {
+        console.warn('auto-join default agent failed', { workspaceId: workspace.id, error })
+      }
+    }
+    return httpResult(201, envelope('workbench', workspace, 'postgres'))
   })
 
   // 3-T3 依赖：团队空间名称/说明保存（1A 遗留的 PATCH）。仅负责人；清空说明显式传 null。
