@@ -11,7 +11,7 @@
 部署指定版本 → 登录和备份验收 → 启用后续自动部署。
 
 本文是操作手册，不代表已经在 Mac mini 上执行或验收。当前已确认的服务器访问基线是
-`deploy@192.168.33.20`，服务器报告的 DSH 为 `0.1.2-rc.1`、Commit
+`deploy@192.168.1.99`，服务器报告的 DSH 为 `0.1.2-rc.1`、Commit
 `76fda729799fe9b3848dbe2c211d4b231032b81e`。目录、证书、OIDC 凭据和备份挂载仍须在
 服务器上按本文核验，不能仅依据示例值认定已经满足条件。
 代码保留的 `0.1.1-rc.2` 本地开发兼容模式不适用于本流程，也不能作为服务器降级选项。
@@ -20,11 +20,11 @@
 
 | 组件 | 地址示例 | 本次操作 |
 | --- | --- | --- |
-| 已有 AI Hub 门户/API | `https://192.168.33.20` | 复用，只登记 dsh-work 应用及凭据 |
-| 已有 authentik | `https://192.168.33.20:8443` | 复用，不重装、不直接改蓝图 |
+| 已有 AI Hub 门户/API | `https://192.168.1.99` | 复用，只登记 dsh-work 应用及凭据 |
+| 已有 authentik | `https://192.168.1.99:8443` | 复用，不重装、不直接改蓝图 |
 | 已有 AI Hub PostgreSQL | `127.0.0.1:5433` | 不操作 |
-| 新增 dsh-work 员工端 | `https://192.168.33.20:4174/workbench` | Nginx 容器提供 HTTPS |
-| 新增 dsh-work 管理端 | `https://192.168.33.20:4180/overview` | 同一个 Nginx 容器提供 HTTPS |
+| 新增 dsh-work 员工端 | `https://192.168.1.99:4174/workbench` | Nginx 容器提供 HTTPS |
+| 新增 dsh-work 管理端 | `https://192.168.1.99:4180/overview` | 同一个 Nginx 容器提供 HTTPS |
 | 新增 dsh-work 后端 | `127.0.0.1:4190` | 宿主机 Node 模块化单体，由 launchd 管理 |
 | 新增 dsh-work PostgreSQL | `127.0.0.1:5434` | 独立 Compose 项目 `dsh-work` 和数据卷 |
 | 已有 DSH | 宿主机固定版本的独立安装目录 | 后端通过 stdio 启动；不随应用自动升级 |
@@ -45,7 +45,7 @@ dsh-work 不是 AI Hub 的另一个容器，也不是纯镜像部署。其前后
 | --- | --- | --- |
 | 仓库 | `tonycc/dsh-work` | dsh-work 的公开 GitHub 仓库 |
 | Release Tag | `v2026.09.07-01` | 管理员批准的、已发布的不可变 Release，格式为 `vYYYY.MM.DD-NN` |
-| Mac mini IP | `192.168.33.20` | 沿用 AI Hub 正在使用的 RFC1918 私有保留地址 |
+| Mac mini IP | `192.168.1.99` | 当前部署主机的 RFC1918 私有保留地址 |
 | dsh-work 根目录 | `/Users/deploy/services/dsh-work` | 首次安装的新目录；不能是 AI Hub 或 DSH 目录 |
 | AI Hub 根目录 | `/Users/deploy/services/ai-hub` | 现有部署的真实目录，只读引用其证书 |
 | DSH 安装目录 | `/Users/deploy/services/deepseek-harness` | 已安装且完成构建的独立 checkout |
@@ -60,7 +60,7 @@ dsh-work 不是 AI Hub 的另一个容器，也不是纯镜像部署。其前后
 从运维终端进入服务器：
 
 ```bash
-ssh deploy@192.168.33.20
+ssh deploy@192.168.1.99
 ```
 
 ```bash
@@ -76,7 +76,7 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/R
 DWP_REPOSITORY='tonycc/dsh-work'
 DWP_TAG='v2026.09.07-01'
 DWP_VERSION="${DWP_TAG#v}"
-DWP_IP='192.168.33.20'
+DWP_IP='192.168.1.99'
 DWP_ROOT='/Users/deploy/services/dsh-work'
 DWP_AIH_ROOT='/Users/deploy/services/ai-hub'
 DWP_CERT_SOURCE="${DWP_AIH_ROOT}/tls"
@@ -234,11 +234,11 @@ Commit 为 `76fda729799fe9b3848dbe2c211d4b231032b81e`；第 8 节会用目标发
 | --- | --- |
 | 环境标识 | `production` |
 | 版本 | 目标 dsh-work Release 版本，如 `2026.09.07-01` |
-| 门户入口 | `https://192.168.33.20:4174/workbench` |
-| API 地址 | `https://192.168.33.20:4174/api` |
-| 健康检查 | `https://192.168.33.20:4174/health` |
-| OIDC 回调地址，第 1 行 | `https://192.168.33.20:4174/auth/workbench/callback` |
-| OIDC 回调地址，第 2 行 | `https://192.168.33.20:4180/auth/admin/callback` |
+| 门户入口 | `https://192.168.1.99:4174/workbench` |
+| API 地址 | `https://192.168.1.99:4174/api` |
+| 健康检查 | `https://192.168.1.99:4174/health` |
+| OIDC 回调地址，第 1 行 | `https://192.168.1.99:4174/auth/workbench/callback` |
+| OIDC 回调地址，第 2 行 | `https://192.168.1.99:4180/auth/admin/callback` |
 | 初始管理员 | 准备首次登录 dsh-work 管理端的 ACTIVE 业务员工 |
 | 状态 | 启用（`ACTIVE`） |
 
@@ -629,7 +629,7 @@ bash current/scripts/deploy/restore.sh \
 ```bash
 bash scripts/deploy/issue-intranet-certificate.sh \
   --ca-dir /absolute/offline/company-ca \
-  --ip 192.168.33.20 --ip 192.168.101.20 \
+  --ip 192.168.1.99 --ip 192.168.101.20 \
   --dns work.example.com \
   --output-dir /absolute/staging/dsh-work
 ```
@@ -639,13 +639,13 @@ Mac mini 地址预览示例：
 ```bash
 bash current/scripts/deploy/set-macmini-endpoints.sh plan \
   --deploy-root /Users/deploy/services/dsh-work \
-  --bind-address 192.168.33.20 --bind-address 192.168.101.20 \
-  --workbench-origin https://192.168.33.20:4174 \
+  --bind-address 192.168.1.99 --bind-address 192.168.101.20 \
+  --workbench-origin https://192.168.1.99:4174 \
   --workbench-origin https://192.168.101.20:4174 \
-  --admin-origin https://192.168.33.20:4180 \
+  --admin-origin https://192.168.1.99:4180 \
   --admin-origin https://192.168.101.20:4180 \
-  --workbench-default-origin https://192.168.33.20:4174 \
-  --admin-default-origin https://192.168.33.20:4180
+  --workbench-default-origin https://192.168.1.99:4174 \
+  --admin-default-origin https://192.168.1.99:4180
 ```
 
 从部署根目录执行；确认预览后保留全部参数，把 `plan` 替换为 `check`；通过后再替换为 `apply` 并追加 `--confirm`。域名入口使用相同的 Origin 参数，默认入口必须属于允许列表。保持员工端 4174、管理端 4180 的当前端口约束。

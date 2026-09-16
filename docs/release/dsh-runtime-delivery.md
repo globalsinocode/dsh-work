@@ -46,7 +46,7 @@ dsh-work 不复制或 Fork DSH 源码，也不直接依赖 DSH 内部模块。DS
 
 ## 2. Mac mini 安装与核验
 
-当前服务器访问基线为 `deploy@192.168.33.20`。推荐目录是：
+当前服务器访问基线为 `deploy@192.168.1.99`。推荐目录是：
 
 ```text
 DSH_RUNTIME_HOME=/Users/deploy/services/deepseek-harness
@@ -56,7 +56,7 @@ DSH_HOME=/Users/deploy/.dsh
 部署前在实际 checkout 中独立核验 Version 和 Commit：
 
 ```bash
-ssh deploy@192.168.33.20
+ssh deploy@192.168.1.99
 
 DSH_RUNTIME_HOME='/Users/deploy/services/deepseek-harness'
 test "$(git -C "${DSH_RUNTIME_HOME}" rev-parse HEAD)" = \

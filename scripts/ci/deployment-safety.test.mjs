@@ -202,17 +202,17 @@ async function verifyEndpointRenderer(fixture) {
   const validEnvironment = {
     ...process.env,
     NODE_ENV: 'production',
-    DSH_WORK_BIND_ADDRESSES: '192.168.33.20,192.168.34.20',
-    DSH_WORK_BIND_ADDRESS: '192.168.33.20',
+    DSH_WORK_BIND_ADDRESSES: '192.168.1.99,192.168.34.20',
+    DSH_WORK_BIND_ADDRESS: '192.168.1.99',
     DSH_WORK_WORKBENCH_PORT: '4174',
     DSH_WORK_ADMIN_PORT: '4180',
     DSH_WORK_WORKBENCH_ORIGINS: [
-      'https://192.168.33.20:4174',
+      'https://192.168.1.99:4174',
       'https://192.168.34.20:4174',
       'https://work.example.com:4174',
     ].join(','),
     DSH_WORK_ADMIN_ORIGINS: [
-      'https://192.168.33.20:4180',
+      'https://192.168.1.99:4180',
       'https://192.168.34.20:4180',
       'https://work.example.com:4180',
     ].join(','),
@@ -225,8 +225,8 @@ async function verifyEndpointRenderer(fixture) {
   assert.equal(valid.status, 0, valid.stderr)
   const generated = await readFile(join(fixture, 'generated/compose.endpoints.yaml'), 'utf8')
   for (const mapping of [
-    '192.168.33.20:4174:8443',
-    '192.168.33.20:4180:8444',
+    '192.168.1.99:4174:8443',
+    '192.168.1.99:4180:8444',
     '192.168.34.20:4174:8443',
     '192.168.34.20:4180:8444',
   ]) {
@@ -255,7 +255,7 @@ async function verifyEndpointConfigurator(fixture) {
   const runtimeEnv = join(fixture, 'runtime.env')
   const candidateEnv = join(fixture, 'candidate.env')
   await writeFile(runtimeEnv, [
-    'DSH_WORK_BIND_ADDRESS=192.168.33.20',
+    'DSH_WORK_BIND_ADDRESS=192.168.1.99',
     'DSH_WORK_WORKBENCH_PORT=4174',
     'DSH_WORK_ADMIN_PORT=4180',
     'DSH_WORK_POSTGRES_PASSWORD=preserve-this-secret',
@@ -265,12 +265,12 @@ async function verifyEndpointConfigurator(fixture) {
     endpointConfiguratorPath,
     '--env-file', runtimeEnv,
     '--output', candidateEnv,
-    '--bind-address', '192.168.33.20',
+    '--bind-address', '192.168.1.99',
     '--bind-address', '192.168.34.20',
-    '--workbench-origin', 'https://192.168.33.20:4174',
+    '--workbench-origin', 'https://192.168.1.99:4174',
     '--workbench-origin', 'https://192.168.34.20:4174',
     '--workbench-origin', 'https://work.example.com:4174',
-    '--admin-origin', 'https://192.168.33.20:4180',
+    '--admin-origin', 'https://192.168.1.99:4180',
     '--admin-origin', 'https://192.168.34.20:4180',
     '--admin-origin', 'https://work.example.com:4180',
     '--workbench-default-origin', 'https://work.example.com:4174',
@@ -278,7 +278,7 @@ async function verifyEndpointConfigurator(fixture) {
   ], { encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
   const candidate = await readFile(candidateEnv, 'utf8')
-  assert.match(candidate, /DSH_WORK_BIND_ADDRESSES=192\.168\.33\.20,192\.168\.34\.20/)
+  assert.match(candidate, /DSH_WORK_BIND_ADDRESSES=192\.168\.1\.99,192\.168\.34\.20/)
   assert.match(candidate, /AI_HUB_WORKBENCH_REDIRECT_URI=https:\/\/work\.example\.com:4174\/auth\/workbench\/callback/)
   assert.match(candidate, /DSH_WORK_POSTGRES_PASSWORD=preserve-this-secret/)
 }
@@ -294,8 +294,8 @@ async function verifyNativeCertificateIssuance(fixture) {
     '--ca-dir', join(fixture, 'ca')], { encoding: 'utf8', env })
   assert.equal(ca.status, 0, ca.stderr)
   for (const [args, name] of [
-    [['--ip', '192.168.33.20'], 'single'],
-    [['--ip', '192.168.33.20', '--ip', '192.168.101.20',
+    [['--ip', '192.168.1.99'], 'single'],
+    [['--ip', '192.168.1.99', '--ip', '192.168.101.20',
       '--dns', 'work.example.com'], 'multi'],
   ]) {
     const output = join(fixture, name)
@@ -308,7 +308,7 @@ async function verifyNativeCertificateIssuance(fixture) {
     const cert = spawnSync('/usr/bin/openssl', ['x509', '-in', join(output, 'server.crt'), '-noout', '-text'],
       { encoding: 'utf8', env })
     assert.equal(cert.status, 0, cert.stderr)
-    assert.match(cert.stdout, /IP Address:192\.168\.33\.20/)
+    assert.match(cert.stdout, /IP Address:192\.168\.1\.99/)
     if (name === 'multi') {
       assert.match(cert.stdout, /IP Address:192\.168\.101\.20/)
       assert.match(cert.stdout, /DNS:work\.example\.com/)

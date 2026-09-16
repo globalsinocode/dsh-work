@@ -65,10 +65,10 @@ node scripts/ci/deployment-safety.test.mjs
 
 endpoint_fixture=$(mktemp -d "${TMPDIR:-/tmp}/dsh-work-endpoints-test.XXXXXX")
 NODE_ENV=production \
-DSH_WORK_BIND_ADDRESSES=192.168.33.20 \
-DSH_WORK_BIND_ADDRESS=192.168.33.20 \
-DSH_WORK_WORKBENCH_ORIGINS=https://192.168.33.20:4174 \
-DSH_WORK_ADMIN_ORIGINS=https://192.168.33.20:4180 \
+DSH_WORK_BIND_ADDRESSES=192.168.1.99 \
+DSH_WORK_BIND_ADDRESS=192.168.1.99 \
+DSH_WORK_WORKBENCH_ORIGINS=https://192.168.1.99:4174 \
+DSH_WORK_ADMIN_ORIGINS=https://192.168.1.99:4180 \
 node scripts/deploy/render-endpoint-compose.mjs "${endpoint_fixture}" "${project_root}" >/dev/null
 docker compose --env-file deploy/runtime.env.example \
   -f deploy/compose.yaml \

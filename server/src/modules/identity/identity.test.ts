@@ -57,8 +57,8 @@ test('OIDC configuration supports multiple exact origins and derives matching ca
   delete environment.AI_HUB_ADMIN_PORTAL_URL
   delete environment.AI_HUB_ADMIN_REDIRECT_URI
   Object.assign(environment, {
-    DSH_WORK_WORKBENCH_ORIGINS: 'http://192.168.33.20:4174,http://work.internal:4174',
-    DSH_WORK_ADMIN_ORIGINS: 'http://192.168.33.20:4180,http://work.internal:4180',
+    DSH_WORK_WORKBENCH_ORIGINS: 'http://192.168.1.99:4174,http://work.internal:4174',
+    DSH_WORK_ADMIN_ORIGINS: 'http://192.168.1.99:4180,http://work.internal:4180',
     DSH_WORK_WORKBENCH_DEFAULT_ORIGIN: 'http://work.internal:4174',
     DSH_WORK_ADMIN_DEFAULT_ORIGIN: 'http://work.internal:4180',
   })
@@ -66,13 +66,13 @@ test('OIDC configuration supports multiple exact origins and derives matching ca
   const configuration = loadIdentityConfiguration(environment)
   assert.equal(configuration.mode, 'oidc')
   assert.deepEqual(configuration.audiences.workbench.allowedOrigins, [
-    'http://192.168.33.20:4174',
+    'http://192.168.1.99:4174',
     'http://work.internal:4174',
   ])
   assert.equal(configuration.audiences.workbench.defaultOrigin, 'http://work.internal:4174')
   assert.equal(
-    configuration.audiences.workbench.redirectUriByOrigin['http://192.168.33.20:4174'],
-    'http://192.168.33.20:4174/auth/workbench/callback',
+    configuration.audiences.workbench.redirectUriByOrigin['http://192.168.1.99:4174'],
+    'http://192.168.1.99:4174/auth/workbench/callback',
   )
 })
 
@@ -149,7 +149,7 @@ test('OIDC redirects trust only a forwarded Origin from the exact allowlist', ()
   const environment = baseEnvironment()
   delete environment.AI_HUB_WORKBENCH_PORTAL_URL
   delete environment.AI_HUB_WORKBENCH_REDIRECT_URI
-  environment.DSH_WORK_WORKBENCH_ORIGINS = 'http://192.168.33.20:4174,http://work.internal:4174'
+  environment.DSH_WORK_WORKBENCH_ORIGINS = 'http://192.168.1.99:4174,http://work.internal:4174'
   const configuration = loadIdentityConfiguration(environment)
   if (configuration.mode !== 'oidc') assert.fail('expected OIDC configuration')
   const authentication = new OidcAuthService(configuration, {} as DatabaseClient)
@@ -264,14 +264,14 @@ test('multi-origin callbacks cannot switch away from the transaction origin', as
   const environment = baseEnvironment()
   delete environment.AI_HUB_WORKBENCH_PORTAL_URL
   delete environment.AI_HUB_WORKBENCH_REDIRECT_URI
-  environment.DSH_WORK_WORKBENCH_ORIGINS = 'http://192.168.33.20:4174,http://192.168.101.20:4174'
+  environment.DSH_WORK_WORKBENCH_ORIGINS = 'http://192.168.1.99:4174,http://192.168.101.20:4174'
   const configuration = loadIdentityConfiguration(environment)
   if (configuration.mode !== 'oidc') assert.fail('expected OIDC configuration')
   const authentication = new OidcAuthService(configuration, {} as DatabaseClient)
   context.mock.method(IdentitySessionRepository.prototype, 'consumeLoginTransaction', async () => ({
     stateHash: hashOpaque('state'), codeVerifierEncrypted: '', nonce: '', returnTo: '/',
-    portalOrigin: 'http://192.168.33.20:4174',
-    redirectUri: 'http://192.168.33.20:4174/auth/workbench/callback',
+    portalOrigin: 'http://192.168.1.99:4174',
+    redirectUri: 'http://192.168.1.99:4174/auth/workbench/callback',
   }))
   await assert.rejects(authentication.completeLogin({
     request: requestFor('192.168.101.20:4174'), audience: 'workbench',
