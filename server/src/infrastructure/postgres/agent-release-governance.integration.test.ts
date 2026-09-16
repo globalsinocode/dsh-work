@@ -243,11 +243,16 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
   `
   assert.equal(trialRunsInDb[0]?.count, 3)
 
-  await assert.rejects(release.publish(agentId, '', ADMIN), /需要一次/)
+  // 未逐项确认：既不能提交审核也不能发布
+  await assert.rejects(release.submitForReview(agentId, ADMIN), /通过试运行/)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /尚未提交审核/)
 
   const confirmed = await confirmLatestTrial(agentId)
   assert.equal(confirmed.trialRuns[0]?.status, 'passed')
   assert.ok(confirmed.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? []).every(item => item.verdict === 'passed'))
+
+  const submitted = await release.submitForReview(agentId, ADMIN)
+  assert.equal(submitted.candidate?.status, 'submitted')
 
   const published = await release.publish(agentId, '业务效果已确认', ADMIN)
   // 发布后提交进入终态不再是进行中候选，证据随版本落库：
@@ -310,13 +315,14 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
   assert.equal(refreshed.candidate?.checks.length, 0)
   assert.equal(refreshed.candidate?.sealedRevision, undefined)
 
-  await assert.rejects(release.publish(agentId, '', ADMIN), /试运行对应的修订已被修改|需要一次/)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /尚未提交审核/)
 
   await release.runChecks(agentId, ADMIN)
   await release.startTrial(agentId, ADMIN)
   const retrialed = await confirmLatestTrial(agentId)
   assert.equal(retrialed.trialRuns[0]?.status, 'passed')
   assert.equal(retrialed.trialRuns[0]?.submissionRevision, 2)
+  await release.submitForReview(agentId, ADMIN)
   const published = await release.publish(agentId, '', ADMIN)
   assert.equal(published.candidate, undefined)
   assert.equal(published.evidence['0.1.0']?.length, 5)
@@ -332,7 +338,95 @@ test('审核人判定任一案例不符合预期时试运行记为失败并阻�
   const rejected = await confirmLatestTrial(agentId, 'failed')
   assert.equal(rejected.trialRuns[0]?.status, 'failed')
   assert.equal(rejected.trialRuns[0]?.failureStage, '案例终态断言')
-  await assert.rejects(release.publish(agentId, '', ADMIN), /需要一次/)
+  await assert.rejects(release.submitForReview(agentId, ADMIN), /通过试运行/)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /尚未提交审核/)
+})
+
+test('提交审核后候选封存：退回解锁修订推进，发布必须经 submitted', async () => {
+  const agentId = 'agent-release-submit'
+  await createDraftAgent(agentId)
+  await release.ensureCandidate(agentId, ADMIN)
+  await release.runChecks(agentId, ADMIN)
+  await release.startTrial(agentId, ADMIN)
+  await confirmLatestTrial(agentId)
+
+  // 未提交不能发布
+  await assert.rejects(release.publish(agentId, '', ADMIN), /尚未提交审核/)
+
+  const submitted = await release.submitForReview(agentId, ADMIN)
+  assert.equal(submitted.candidate?.status, 'submitted')
+
+  // 封存：候选内容修改、重新检查、试运行与 ZIP 重导全部拒绝
+  await assert.rejects(release.updateCases(agentId, [], ADMIN), /封存/)
+  await assert.rejects(release.runChecks(agentId, ADMIN), /封存/)
+  await assert.rejects(release.startTrial(agentId, ADMIN), /不能发起试运行/)
+  const zip = createZip({
+    'agent.yaml': buildAgentYaml({ id: agentId, version: '0.2.0' }),
+    'prompts/system.md': PROMPT,
+    'evals/cases.yaml': PACKAGE_CASES,
+  })
+  await assert.rejects(release.importPackage(ADMIN, 'submitted.zip', zip), /提交审核/)
+
+  // 草稿漂移不推进已提交候选的修订；发布按封存指纹复核，漂移内容不能放行
+  await agents.updateAgent({
+    agentId,
+    name: '退款预测助手',
+    description: '基于历史退款记录预测高风险订单并给出处理建议（审核期间修改）。',
+    owner: '发布管理员',
+    department: '平台治理',
+    visibility: '指定角色',
+    roleIds: ['role-employee'],
+    dataScopes: ['workspace:authorized'],
+    welcomeMessage: '',
+    examplePrompts: ['评估本周退款风险订单'],
+    systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
+    maxTokens: 12000,
+    timeoutSeconds: 300,
+    skills: ['skill-document@1.0.0'],
+    tools: ['read@1.0.0'],
+    changeSummary: '审核期间修改说明',
+    actor: ADMIN,
+  })
+  const drifted = await release.ensureCandidate(agentId, ADMIN)
+  assert.equal(drifted.candidate?.status, 'submitted')
+  assert.equal(drifted.candidate?.revision, 1)
+  assert.equal(drifted.definitionChanged, true)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /封存试运行/)
+
+  // 退回解锁：必须带审核意见；同步后修订推进并回到 draft 重新走流程
+  await assert.rejects(release.requestChanges(agentId, '  ', ADMIN), /审核意见/)
+  const returned = await release.requestChanges(agentId, '说明文案需完善', ADMIN)
+  assert.equal(returned.candidate?.status, 'changes_requested')
+  assert.equal(returned.candidate?.reviewNote, '说明文案需完善')
+  const resynced = await release.ensureCandidate(agentId, ADMIN)
+  assert.equal(resynced.candidate?.status, 'draft')
+  assert.equal(resynced.candidate?.revision, 2)
+  assert.equal(resynced.candidate?.sealedRevision, undefined)
+
+  await release.runChecks(agentId, ADMIN)
+  await release.startTrial(agentId, ADMIN)
+  await confirmLatestTrial(agentId)
+  await release.submitForReview(agentId, ADMIN)
+  const published = await release.publish(agentId, '', ADMIN)
+  assert.equal(published.candidate, undefined)
+})
+
+test('撤回使候选进入终态并保留历史，再次同步创建新候选', async () => {
+  const agentId = 'agent-release-withdraw'
+  await createDraftAgent(agentId)
+  await release.ensureCandidate(agentId, ADMIN)
+
+  // 未完成试运行不能提交
+  await assert.rejects(release.submitForReview(agentId, ADMIN), /通过试运行/)
+
+  const withdrawn = await release.withdrawSubmission(agentId, ADMIN)
+  assert.equal(withdrawn.candidate, undefined)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /没有进行中的发布候选/)
+  await assert.rejects(release.withdrawSubmission(agentId, ADMIN), /没有可撤回/)
+
+  const recreated = await release.ensureCandidate(agentId, ADMIN)
+  assert.equal(recreated.candidate?.status, 'draft')
+  assert.equal(recreated.candidate?.revision, 1)
 })
 
 // ---------------------------------------------------------------------------
@@ -359,6 +453,7 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
   await release.startTrial('agent-release-zip', ADMIN)
   const trialed = await confirmLatestTrial('agent-release-zip')
   assert.equal(trialed.trialRuns[0]?.status, 'passed')
+  await release.submitForReview('agent-release-zip', ADMIN)
   const published = await release.publish('agent-release-zip', '', ADMIN)
   assert.equal(published.candidate, undefined)
   assert.equal(published.evidence['0.1.0']?.length, 5)

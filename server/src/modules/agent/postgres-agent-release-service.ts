@@ -355,6 +355,9 @@ export class PostgresAgentReleaseService {
       if (!context?.draft) return
       const submission = await this.activeSubmission(agentId, transaction)
       if (!submission) await this.createSubmission(context, 'config', null, actor.id, transaction)
+      // submitted 候选已封存：草稿漂移只标记 definitionChanged，不推进修订——
+      // 需要先退回（changes_requested）或撤回（withdrawn）才能继续修改。
+      else if (submission.status === 'submitted') return
       else if (submission.agentVersionId !== context.draft.id) await this.rebindSubmission(submission, context, transaction)
       else if (submission.boundFingerprint !== draftFingerprint(context.draft)) await this.refreshSubmissionRevision(submission, context, transaction)
     })
@@ -410,6 +413,7 @@ export class PostgresAgentReleaseService {
     const actor = await this.requireActor(userId)
     const context = await this.requireContext(agentId)
     let submission = await this.requireSubmission(agentId, userId)
+    this.assertMutable(submission)
     if (submission.boundFingerprint !== draftFingerprint(context.draft!)) {
       submission = await this.refreshSubmissionRevision(submission, context)
     }
@@ -420,7 +424,7 @@ export class PostgresAgentReleaseService {
       update agent_release_submissions
          set checks = ${this.database.json(asJson(checks))}, plan = ${this.database.json(asJson(plan))}, updated_at = now()
        where tenant_id = ${tenantId} and id = ${submission.id}
-         and status in ('draft', 'submitted', 'changes_requested')
+         and status in ('draft', 'changes_requested')
       returning id
     `
     if (!stored.length) throw new Error('发布候选已终态，无法写入检查结果')
@@ -578,6 +582,7 @@ export class PostgresAgentReleaseService {
   async updateCases(agentId: string, cases: ReleaseEvalCase[], userId: string): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
     const submission = await this.requireSubmission(agentId, userId)
+    this.assertMutable(submission)
     for (const item of cases) {
       if (!CASE_KINDS.includes(item.kind)) throw Object.assign(new Error(`案例类型无效：${item.kind}`), { status: 422, code: 'validation_failed' })
       if (!item.name?.trim()) throw Object.assign(new Error('案例名称不能为空'), { status: 422, code: 'validation_failed' })
@@ -591,6 +596,7 @@ export class PostgresAgentReleaseService {
   async removeMissingDependency(agentId: string, kind: 'skills' | 'tools', reference: string, userId: string): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
     const submission = await this.requireSubmission(agentId, userId)
+    this.assertMutable(submission)
     const missingDeps = {
       skills: kind === 'skills' ? submission.missingDeps.skills.filter(item => item !== reference) : submission.missingDeps.skills,
       tools: kind === 'tools' ? submission.missingDeps.tools.filter(item => item !== reference) : submission.missingDeps.tools,
@@ -612,10 +618,17 @@ export class PostgresAgentReleaseService {
              missing_deps = case when ${column === 'missing_deps'} then ${serialized} else missing_deps end,
              updated_at = now()
        where tenant_id = ${tenantId} and id = ${submissionId}
-         and status in ('draft', 'submitted', 'changes_requested')
+         and status in ('draft', 'changes_requested')
       returning id
     `
     if (!updated.length) throw new Error('发布候选已终态或不存在，无法修改')
+  }
+
+  /** submitted = 审核中封存：案例/依赖/检查等候选内容一律不可改，只能退回、撤回或发布。 */
+  private assertMutable(submission: SubmissionRow) {
+    if (submission.status === 'submitted') {
+      throw Object.assign(new Error('候选已提交审核，内容已封存；如需修改请先退回或撤回'), { status: 409, code: 'submission_locked' })
+    }
   }
 
   /* ---------- 试运行 ---------- */
@@ -894,6 +907,85 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
+  /* ---------- 提交与审核往返 ---------- */
+
+  /**
+   * 提交审核：draft/changes_requested → submitted。要求当前修订已有逐项确认通过的
+   * 封存试运行——"提交"即"自查与试运行完成，等待发布确认"。提交后候选封存：案例、
+   * 依赖、检查、试运行与 ZIP 重导均被拒绝，只能退回、撤回或发布；草稿漂移不推进
+   * 修订，发布门禁按 bound_fingerprint 复核自动挡下漂移内容。
+   */
+  async submitForReview(agentId: string, userId: string): Promise<AgentReleaseState> {
+    const actor = await this.requireActor(userId)
+    await this.database.begin(async (tx) => {
+      const [lockedAgent] = await tx<{ draftVersionId: string | null }[]>`
+        select draft_version_id as "draftVersionId" from agents
+         where tenant_id = ${tenantId} and id = ${agentId} for update
+      `
+      if (!lockedAgent) throw Object.assign(new Error(`Agent 不存在：${agentId}`), { status: 404, code: 'agent_not_found' })
+      const context = await this.loadContext(agentId)
+      let submission = await this.activeSubmission(agentId, tx)
+      if (!submission) throw new Error('当前 Agent 没有进行中的发布候选')
+      // 草稿漂移且候选仍可编辑：先推进修订，让随后的封存/试运行复核自然拒绝。
+      if (context?.draft && submission.status !== 'submitted') {
+        if (submission.agentVersionId !== context.draft.id) submission = await this.rebindSubmission(submission, context, tx)
+        else if (submission.boundFingerprint !== draftFingerprint(context.draft)) submission = await this.refreshSubmissionRevision(submission, context, tx)
+      }
+      if (submission.status !== 'draft' && submission.status !== 'changes_requested') {
+        throw new Error('候选已提交或已终态，不能重复提交')
+      }
+      if (submission.sealedRevision === null || submission.sealedRevision !== submission.revision) {
+        throw new Error('请先完成与当前修订一致的通过试运行再提交审核')
+      }
+      const [trial] = await tx<{ status: string; submissionRevision: number }[]>`
+        select status, submission_revision as "submissionRevision" from agent_trial_runs
+         where tenant_id = ${tenantId} and submission_id = ${submission.id}
+         order by started_at desc limit 1
+      `
+      if (trial?.status !== 'passed' || trial.submissionRevision !== submission.sealedRevision) {
+        throw new Error('请先完成与当前修订一致的通过试运行再提交审核')
+      }
+      const updated = await tx<{ id: string }[]>`
+        update agent_release_submissions set status = 'submitted', updated_at = now()
+         where tenant_id = ${tenantId} and id = ${submission.id}
+           and status in ('draft', 'changes_requested')
+        returning id
+      `
+      if (!updated.length) throw new Error('候选状态已变化，请刷新后重试')
+    })
+    await this.audit(actor.id, 'agent.release.submit', agentId, 'success', '候选提交审核，定义与试运行证据封存')
+    return this.getReleaseState(agentId)
+  }
+
+  /** 退回修改：submitted → changes_requested，必须登记退回意见。 */
+  async requestChanges(agentId: string, note: string, userId: string): Promise<AgentReleaseState> {
+    const actor = await this.requireActor(userId)
+    if (!note.trim()) throw Object.assign(new Error('退回修改必须填写审核意见'), { status: 422, code: 'validation_failed' })
+    const updated = await this.database<{ id: string }[]>`
+      update agent_release_submissions
+         set status = 'changes_requested', review_note = ${note.trim()}, updated_at = now()
+       where tenant_id = ${tenantId} and agent_id = ${agentId} and status = 'submitted'
+      returning id
+    `
+    if (!updated.length) throw new Error('仅待审核状态的候选可以退回')
+    await this.audit(actor.id, 'agent.release.request-changes', agentId, 'success', `候选退回修改：${note.trim()}`)
+    return this.getReleaseState(agentId)
+  }
+
+  /** 撤回：进行中候选 → withdrawn（终态）。历史提交保留，再次同步时创建新候选。 */
+  async withdrawSubmission(agentId: string, userId: string): Promise<AgentReleaseState> {
+    const actor = await this.requireActor(userId)
+    const updated = await this.database<{ id: string }[]>`
+      update agent_release_submissions set status = 'withdrawn', updated_at = now()
+       where tenant_id = ${tenantId} and agent_id = ${agentId}
+         and status in ('draft', 'submitted', 'changes_requested')
+      returning id
+    `
+    if (!updated.length) throw new Error('当前 Agent 没有可撤回的进行中候选')
+    await this.audit(actor.id, 'agent.release.withdraw', agentId, 'success', '候选已撤回，历史提交记录保留')
+    return this.getReleaseState(agentId)
+  }
+
   /* ---------- 审核发布 ---------- */
 
   async publish(agentId: string, note: string, userId: string): Promise<AgentReleaseState> {
@@ -933,6 +1025,10 @@ export class PostgresAgentReleaseService {
       if (submission.missingDeps.skills.length || submission.missingDeps.tools.length) {
         throw new Error('仍存在无法解析的依赖，不能发布')
       }
+      // 发布是审核动作：候选必须先经 submit 进入 submitted，不能从草稿/退回态直达发布。
+      if (submission.status !== 'submitted') {
+        throw new Error('候选尚未提交审核，请先完成试运行并提交审核后再发布')
+      }
       if (submission.sealedRevision === null || submission.sealedRevision !== submission.revision) {
         throw new Error('试运行对应的修订已被修改，请重新试运行')
       }
@@ -954,7 +1050,7 @@ export class PostgresAgentReleaseService {
         update agent_release_submissions
            set status = 'published', review_note = ${note.trim() || null}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${submission.id}
-           and status in ('draft', 'submitted', 'changes_requested')
+           and status = 'submitted'
         returning id
       `
       if (!closed.length) throw new Error('发布候选状态已变化，请刷新后重试')
@@ -1101,8 +1197,8 @@ export class PostgresAgentReleaseService {
         )
       `
 
-      const [submission] = await tx<{ id: string }[]>`
-        select id from agent_release_submissions
+      const [submission] = await tx<{ id: string; status: string }[]>`
+        select id, status from agent_release_submissions
          where tenant_id = ${tenantId} and agent_id = ${agentId} and status in ('draft', 'submitted', 'changes_requested')
          for update
       `
@@ -1126,6 +1222,13 @@ export class PostgresAgentReleaseService {
           )
         `
       } else {
+        // submitted 候选封存：重新导入等于改写审核中内容，必须先退回或撤回。
+        if (submission.status === 'submitted') {
+          throw Object.assign(
+            new Error('候选已提交审核，请先退回或撤回后再导入新的发布包'),
+            { status: 409, code: 'submission_locked' },
+          )
+        }
         const [current] = await tx<{ cases: ReleaseEvalCase[] }[]>`
           select cases from agent_release_submissions where tenant_id = ${tenantId} and id = ${submission.id}
         `
@@ -1400,8 +1503,9 @@ export class PostgresAgentReleaseService {
       await tx`select id from agents where tenant_id = ${tenantId} and id = ${agentId} for update`
       let submission = await this.activeSubmission(agentId, tx)
       if (!submission) submission = await this.createSubmission(context, 'config', null, actor.id, tx)
-      else if (submission.agentVersionId !== draft.id) submission = await this.rebindSubmission(submission, context, tx)
-      else if (submission.boundFingerprint !== draftFingerprint(draft)) submission = await this.refreshSubmissionRevision(submission, context, tx)
+      // submitted 候选封存：不随草稿漂移推进修订，由各 mutation 入口拒绝修改。
+      else if (submission.status !== 'submitted' && submission.agentVersionId !== draft.id) submission = await this.rebindSubmission(submission, context, tx)
+      else if (submission.status !== 'submitted' && submission.boundFingerprint !== draftFingerprint(draft)) submission = await this.refreshSubmissionRevision(submission, context, tx)
       return submission
     })
   }

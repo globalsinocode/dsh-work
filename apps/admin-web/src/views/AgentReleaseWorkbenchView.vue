@@ -142,6 +142,10 @@ const canStartTrial = computed(() => authStore.canManage
 const canPublish = computed(() => latestTrial.value?.status === 'passed'
   && candidate.value?.sealedRevision === candidate.value?.revision
   && !definitionChanged.value)
+/** 试运行通过且封存一致 → 可提交审核；提交后（submitted）才能确认发布。 */
+const canSubmit = computed(() => canPublish.value
+  && (candidate.value?.status === 'draft' || candidate.value?.status === 'changes_requested'))
+const canFinalize = computed(() => canPublish.value && candidate.value?.status === 'submitted')
 const workflowSteps = computed(() => {
   const current = candidate.value
   if (!current) return []
@@ -150,7 +154,7 @@ const workflowSteps = computed(() => {
     { key: 'definition' as const, index: 1, label: '定义与依赖', state: missingCount ? `${missingCount} 项待处理` : '已就绪', tone: missingCount ? 'blocked' : 'ready' },
     { key: 'checks' as const, index: 2, label: '检查与案例', state: !current.checks.length ? `${current.cases.length} 个案例` : checksPassed.value ? '已通过' : '有阻塞项', tone: !current.checks.length ? 'pending' : checksPassed.value ? 'ready' : 'blocked' },
     { key: 'trial' as const, index: 3, label: '试运行', state: latestTrial.value ? trialStatusLabel[latestTrial.value.status] : '未开始', tone: latestTrial.value?.status === 'passed' ? 'ready' : latestTrial.value?.status === 'failed' ? 'blocked' : 'pending' },
-    { key: 'review' as const, index: 4, label: '审核发布', state: canPublish.value ? '待管理员确认' : '等待试运行', tone: canPublish.value ? 'active' : 'pending' },
+    { key: 'review' as const, index: 4, label: '审核发布', state: current.status === 'submitted' ? '待管理员确认发布' : canPublish.value ? '可提交审核' : '等待试运行', tone: canPublish.value ? 'active' : 'pending' },
   ] as const
 })
 
@@ -292,6 +296,52 @@ async function confirmTrial(trial: AgentTrialRun) {
   }
 }
 
+async function submitForReview() {
+  if (!agent.value) return
+  try {
+    await ElMessageBox.confirm(
+      '提交后候选定义、案例与试运行证据封存，审核期间不能修改；如需调整可退回或撤回。',
+      '提交审核',
+      { confirmButtonText: '提交审核', cancelButtonText: '取消', type: 'warning' },
+    )
+    await governance.submitCandidate(agent.value.id)
+    ElMessage.success('已提交审核，候选内容已封存')
+  } catch (cause) {
+    fail(cause)
+  }
+}
+
+async function requestChanges() {
+  if (!agent.value) return
+  try {
+    const { value } = await ElMessageBox.prompt('退回修改必须填写审核意见，说明需要调整的内容。', '退回修改', {
+      confirmButtonText: '退回',
+      cancelButtonText: '取消',
+      inputPlaceholder: '审核意见',
+      inputValidator: (input: string) => Boolean(input?.trim()) || '审核意见不能为空',
+    })
+    await governance.requestCandidateChanges(agent.value.id, String(value ?? '').trim())
+    ElMessage.success('已退回修改，候选解除封存')
+  } catch (cause) {
+    fail(cause)
+  }
+}
+
+async function withdrawCandidate() {
+  if (!agent.value) return
+  try {
+    await ElMessageBox.confirm(
+      '撤回后本次候选进入终态并保留历史记录；再次进入发布流程将创建新候选。',
+      '撤回候选',
+      { confirmButtonText: '确认撤回', cancelButtonText: '取消', type: 'warning' },
+    )
+    await governance.withdrawCandidate(agent.value.id)
+    ElMessage.success('候选已撤回')
+  } catch (cause) {
+    fail(cause)
+  }
+}
+
 async function reviewAndPublish() {
   const currentAgent = agent.value
   const version = candidateVersion.value
@@ -386,7 +436,7 @@ onMounted(async () => {
                 <el-button v-if="authStore.canManage" size="small" :disabled="candidateLocked" @click="openEdit">编辑定义</el-button>
               </div>
             </div>
-            <p v-if="candidateLocked" class="hint">已提交审核，如需修改请先撤回。</p>
+            <p v-if="candidateLocked" class="hint">已提交审核，内容已封存；如需修改请先在「审核发布」步骤退回或撤回。</p>
             <div class="definition-meta">
               <span class="definition-meta__label">权限</span>
               <el-tag v-for="role in agent.roleIds" :key="`role:${role}`" size="small" type="info" effect="plain">角色 · {{ role }}</el-tag>
@@ -564,10 +614,24 @@ onMounted(async () => {
 
           <section v-if="authStore.canManage" class="content-panel workbench-card submit-card">
             <div class="card-head"><div><span class="card-kicker">步骤 4</span><h2>审核并发布</h2></div></div>
-            <p class="side-note">试运行通过后复核并发布；存在包内候选或未解析依赖时发布将被拒绝。</p>
-            <el-input v-model="submitNote" type="textarea" :rows="3" placeholder="审核意见（业务效果确认、注意事项）" />
-            <el-button type="primary" :loading="governance.busy === 'submit'" :disabled="!canPublish" data-action="publish-agent" @click="reviewAndPublish">审核并发布</el-button>
-            <small v-if="!canPublish" class="submit-hint">需要一次通过的封存试运行，且封存修订与当前修订一致。</small>
+            <template v-if="candidate.status === 'submitted'">
+              <p class="side-note">候选已提交审核并封存。确认发布将登记为不可变平台版本并写入证据；如需调整可退回修改或撤回候选。</p>
+              <el-input v-model="submitNote" type="textarea" :rows="3" placeholder="审核意见（业务效果确认、注意事项）" />
+              <div class="submit-actions">
+                <el-button type="primary" :loading="governance.busy === 'submit'" :disabled="!canFinalize" data-action="publish-agent" @click="reviewAndPublish">审核并发布</el-button>
+                <el-button :loading="governance.busy === 'submit'" @click="requestChanges">退回修改</el-button>
+                <el-button text type="danger" :loading="governance.busy === 'submit'" @click="withdrawCandidate">撤回候选</el-button>
+              </div>
+              <small v-if="!canFinalize" class="submit-hint">封存修订与当前修订不一致时不能发布，请先退回修改并重新试运行。</small>
+            </template>
+            <template v-else>
+              <p class="side-note">试运行通过且封存一致后提交审核；审核期间候选内容封存，确认发布需在提交后进行。</p>
+              <div class="submit-actions">
+                <el-button type="primary" :loading="governance.busy === 'submit'" :disabled="!canSubmit" data-action="submit-agent-release" @click="submitForReview">提交审核</el-button>
+                <el-button text type="danger" :loading="governance.busy === 'submit'" @click="withdrawCandidate">撤回候选</el-button>
+              </div>
+              <small v-if="!canSubmit" class="submit-hint">需要一次通过的封存试运行，且封存修订与当前修订一致。</small>
+            </template>
           </section>
           <footer class="stage-footer">
             <el-button @click="goToStep('trial')">上一步：试运行</el-button>
@@ -674,6 +738,7 @@ onMounted(async () => {
 .case-runs__footer { display: flex; align-items: center; gap: 12px; }
 .submit-card { display: flex; flex-direction: column; gap: 10px; }
 .submit-card .card-head { margin-bottom: 0; }
+.submit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 @media (max-width: 900px) { .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 620px) { .workflow-steps, .meta-grid { grid-template-columns: 1fr; } .meta-grid__wide { grid-column: auto; } .workflow-step button div { justify-content: space-between; } .definition-card__headline { flex-direction: column; } .definition-card__state { justify-content: flex-start; } }
 </style>

@@ -88,15 +88,6 @@ interface VersionRow {
   tools: string[]
 }
 
-export interface AgentTestResult {
-  id: string
-  agentId: string
-  version: string
-  status: 'passed' | 'failed'
-  resultSummary: string
-  testedAt: string
-}
-
 export interface WorkbenchAgentDefinition {
   id: string
   name: string
@@ -323,36 +314,6 @@ export class PostgresAgentService {
     return this.requireAgentResult(input.agentId, draftVersionId)
   }
 
-  async testAgent(input: { agentId: string; prompt: string; actor: string }): Promise<AgentTestResult> {
-    const actor = await this.requireActor(input.actor)
-    const [agent] = await this.readAgentRows(input.agentId)
-    if (!agent) throw new Error(`Agent 不存在：${input.agentId}`)
-    if (!agent.draftVersionId) throw new Error('当前 Agent 没有待测试的草稿版本')
-    if (input.prompt.trim().length < 4) throw new Error('测试问题至少需要 4 个字符')
-    await this.assertCapabilityReferences(agent.skills, agent.tools, agent.roleIds, agent.dataScopes)
-    const fingerprint = configurationFingerprint(agent)
-    const testId = `agent-test-${randomUUID()}`
-    const summary = `配置校验通过：${agent.skills.length} 个 Skill、${agent.tools.length} 个工具、${agent.roleIds.length} 个可见角色。`
-    await this.database`
-      insert into agent_test_runs (
-        id, tenant_id, agent_id, agent_version_id, configuration_fingerprint,
-        test_prompt, status, result_summary, tested_by
-      ) values (
-        ${testId}, ${tenantId}, ${agent.id}, ${agent.draftVersionId}, ${fingerprint},
-        ${input.prompt.trim()}, 'passed', ${summary}, ${actor.id}
-      )
-    `
-    await this.audit(actor.id, 'agent.test', agent.id, 'success', summary)
-    return {
-      id: testId,
-      agentId: agent.id,
-      version: agent.version,
-      status: 'passed',
-      resultSummary: summary,
-      testedAt: new Date().toISOString(),
-    }
-  }
-
   async setStatus(input: {
     agentId: string
     status: Extract<PublishStatus, 'published' | 'disabled'>
@@ -367,34 +328,37 @@ export class PostgresAgentService {
         const locked = await this.lockAgentForMutation(transaction, input.agentId)
         if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
         assertAgentMutationRevision(locked, expectedRevision)
-        if (locked.draftVersionId) throw new Error('存在待发布草稿时不能停用 Agent，请先发布或回滚')
+        // 停用是管理状态切换，与待发布草稿独立：草稿保留并可在治理流程中继续推进，
+        // 发布只切换活动版本，不隐式重新启用（见 publishDraftWithinTransaction）。
         if (!locked.activeVersionId) throw new Error('尚未发布的 Agent 不能停用')
         const activeVersionId = locked.activeVersionId
         const updated = await transaction`
           update agents set status = 'disabled', updated_at = now()
            where tenant_id = ${tenantId} and id = ${input.agentId}
              and status = 'published' and active_version_id = ${activeVersionId}
-             and draft_version_id is null
            returning id
         `
-        if (!updated.length) throw new Error('Agent 状态已发生变化，请刷新后重试')
+        if (!updated.length) throw new Error('仅已发布状态的 Agent 可以停用，或状态已变化请刷新后重试')
         return this.appendRelease(transaction, activeVersionId, input.agentId, 'disabled', actor.id, '停用当前 Agent，不影响已创建的运行。')
       })
       await this.audit(actor.id, 'agent.disable', input.agentId, 'success', release.note)
       return { agent: await this.requireAgent(input.agentId), release }
     }
 
-    if (current.draftVersionId) {
-      throw new Error('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
-    }
-    if (!current.activeVersionId || current.persistedStatus !== 'disabled') {
+    // 重新启用只翻转管理状态：与进行中草稿独立（停用期间草稿可继续编辑）。
+    // 非停用状态的 published 写入属于"发布草稿"，必须走发布工作台封存试运行链路。
+    const reenabling = current.persistedStatus === 'disabled' && Boolean(current.activeVersionId)
+    if (!reenabling) {
+      if (current.draftVersionId) {
+        throw new Error('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
+      }
       throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
     const release = await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
       assertAgentMutationRevision(locked, expectedRevision)
-      if (!locked.activeVersionId || locked.persistedStatus !== 'disabled' || locked.draftVersionId) {
+      if (!locked.activeVersionId || locked.persistedStatus !== 'disabled') {
         throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
       }
       const activeVersionId = locked.activeVersionId
@@ -902,7 +866,9 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     roleIds: row.roleIds,
     dataScopes: row.dataScopes,
     allowWorkspaceJoin: row.allowWorkspaceJoin,
-    status: row.draftVersionId ? 'draft' : row.persistedStatus,
+    // 管理状态优先于草稿外观：停用中的 Agent 即使有待发布草稿也显示「已停用」，
+    // 否则停用被草稿掩盖且无法从列表重新启用。
+    status: row.persistedStatus === 'disabled' ? 'disabled' : row.draftVersionId ? 'draft' : row.persistedStatus,
     version: row.version,
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,

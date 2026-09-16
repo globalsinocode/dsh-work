@@ -42,11 +42,6 @@ interface OperationsSummaryEnvelope {
   meta: { adapter: string }
 }
 
-interface AgentTestEnvelope {
-  data: { agentId: string; version: string; status: string }
-  meta: { adapter: string }
-}
-
 interface SkillTestProgressEnvelope {
   data: { runId: string; skillId: string; version: string; status: string; steps: Array<{ title: string; status: string }> }
   meta: { adapter: string }
@@ -164,22 +159,6 @@ test('prototype admin exposes the operations summary required by the global stor
   assert.ok(result.body.data.runs24h > 0)
   assert.ok(result.body.data.modelTokens24h > 0)
   assert.ok(result.body.data.attentionEvents24h >= 0)
-})
-
-test('prototype admin can validate a draft Agent before publishing', async () => {
-  const response = await fetch(`${baseUrl}/api/admin/v1/agents/test`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      agentId: 'operations-analyst',
-      prompt: '分析本月订单交付情况',
-    }),
-  })
-  const body = await response.json() as AgentTestEnvelope
-  assert.equal(response.status, 200)
-  assert.equal(body.meta.adapter, 'prototype-memory')
-  assert.equal(body.data.agentId, 'operations-analyst')
-  assert.equal(body.data.status, 'passed')
 })
 
 test('prototype admin exposes the asynchronous Skill test progress contract', async () => {

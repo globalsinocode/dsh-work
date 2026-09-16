@@ -188,7 +188,6 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   }
   await assert.rejects(agents.createAgent({ ...baseInput, tools: ['glob@1.0.0'] }), /必须显式授权/)
   const created = await agents.createAgent({ ...baseInput, tools: ['read@1.0.0'] })
-  await agents.testAgent({ agentId: created.agent.id, prompt: '整理当前工作空间文档', actor: 'U00008' })
   await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
   assert.deepEqual(snapshot.tools, ['read@1.0.0'])

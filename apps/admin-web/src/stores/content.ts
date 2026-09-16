@@ -168,10 +168,6 @@ export const useContentStore = defineStore('admin-content', () => {
     return result.agent
   }
 
-  function testAgent(agentId: string, prompt: string) {
-    return adminApi.testAgent({ agentId, prompt })
-  }
-
   async function createAgentDraft(input: AgentDraftConfiguration) {
     const result = await adminApi.createAgentDraft(input)
     agents.value.unshift(result.agent)
@@ -367,7 +363,6 @@ export const useContentStore = defineStore('admin-content', () => {
     createAgentDraft,
     updateAgentDraft,
     setAgentStatus,
-    testAgent,
     rollbackAgent,
     setAgentWorkspaceJoin,
     loadAgentJoinedWorkspaces,

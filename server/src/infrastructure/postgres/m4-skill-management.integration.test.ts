@@ -102,7 +102,6 @@ test('Skill lifecycle auto-generates identity, gates publishing, versions and pr
     changeSummary: '验证 Skill Version 引用',
     actor: 'U00008',
   })
-  await agents.testAgent({ agentId, prompt: '分析当前订单风险', actor: 'U00008' })
   await publishDraftWithSealedTrial(database, agents, agentId, 'U00008')
   const firstAgentSnapshot = await agents.getRuntimeSnapshot(agentDraft.version.id)
   assert.equal(firstAgentSnapshot.skillInstructions[0]?.version, '0.1.0')

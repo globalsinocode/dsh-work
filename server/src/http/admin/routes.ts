@@ -39,22 +39,6 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateAgentDraft']>[0], 'actor'>>(request)
     return envelope('admin', await service.updateAgentDraft({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
-  router.post(`${basePath}/agents/test`, async (request, context) => {
-    const input = await readJsonBody<{ agentId: string; prompt: string }>(request)
-    requireRequestIdentity(context, 'admin')
-    if (input.prompt.trim().length < 4) throw new Error('测试问题至少需要 4 个字符')
-    const agent = (await service.getAgents()).find(item => item.id === input.agentId)
-    if (!agent) throw new Error(`Agent 不存在：${input.agentId}`)
-    if (agent.status !== 'draft') throw new Error('当前 Agent 没有待测试的草稿版本')
-    return envelope('admin', {
-      id: `agent-test-${Date.now()}`,
-      agentId: agent.id,
-      version: agent.version,
-      status: 'passed',
-      resultSummary: `配置校验通过：${agent.skills.length} 个 Skill、${agent.tools.length} 个工具引用。`,
-      testedAt: new Date().toISOString(),
-    })
-  })
   router.patch(`${basePath}/agents/status`, async (request, context) => {
     const input = await readJsonBody<{ agentId: string; status: Extract<PublishStatus, 'published' | 'disabled'> }>(request)
     return envelope('admin', await service.setAgentStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))

@@ -1,6 +1,6 @@
 # 企业内部智能体与工具开发、发布及自动化方案
 
-**状态：** 完整修订版，待分阶段实施。本文统一维护 Agent 管理、工具扩展、真实试运行、定时任务和经验积累的目标设计，不代表这些新增能力已经实现。<br>
+**状态：** 分阶段实施中。AG-01 管理端主线已交付代码并通过 P1 集成验证（候选/检查/真实 DSH 试运行/逐项确认/提交-退回-撤回/事务内发布/版本证据），管理端 API 为当前实现基线；员工自助入口、紧急撤销与卸载、AG-02 工具扩展、AG-03 自动任务、AG-04 经验积累尚未实施。当前实施进度见 §17.1；本文其余部分仍是目标设计，不代表全部能力已实现。<br>
 **更新日期：** 2026-09-15<br>
 **产品定位：** 员工通过配置已有能力或导入内部规范包创建智能体，dsh-work 负责验证、发布、运行和治理，供企业员工按权限使用。<br>
 **首个交付：** 使用已有工具完成 Agent 创建、真实试运行、发布、升级、回滚、停用及卸载；新工具贡献、定时任务、经验积累分别验收。<br>
@@ -203,8 +203,8 @@ Tool 模块拥有候选、测试准入、定义与绑定修订、批准和生命
 
 | 当前依据 | 本方案的目标增量 |
 | --- | --- |
-| [Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts) 的 `testAgent` 只保存配置引用检查 | 配置检查与真实 DSH 试运行证据分开；旧 `passed` 不升级成真实证据 |
-| 同一服务的停用分支在存在草稿时拒绝操作 | 管理状态与候选状态独立；停用、紧急撤销不受草稿阻挡 |
+| [Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts) 旧 `testAgent` / `POST /agents/test` 只保存配置引用检查（已实现：入口已下线，历史 `agent_test_runs` 行仅作配置检查留痕） | 配置检查与真实 DSH 试运行证据分开；旧 `passed` 不升级成真实证据 |
+| 同一服务的停用分支曾在存在草稿时拒绝操作（已实现：停用/启用与草稿独立，管理状态优先于草稿外观展示） | 管理状态与候选状态独立；紧急撤销仍不受草稿阻挡（紧急撤销本身待实现） |
 | [Run 编排](../../server/src/modules/run/run-orchestration-service.ts) 已按 Agent 版本通用构造运行输入 | 提取共用准备端口，补齐封存候选及后台身份路径；保留已有通用执行结构 |
 | [Runtime Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) 逐项装配平台工具处理器 | 通过受控注册入口供给已授权描述与处理器，新增已有类型工具复用接线 |
 
@@ -370,6 +370,8 @@ Agent 管理界面分别显示“当前发布版本”“已启用/已停用/已
 
 首期每个 Agent 保留一个可变候选；试运行使用该候选的封存修订，后续编辑不得改写已运行的修订。负责人移交不改变历史内容或自动任务的执行身份；离职后的候选发布冻结，保留历史后按授权移交。
 
+> 当前实现：状态机已在管理端落地——`submitted` 期间候选封存（案例/依赖/检查/试运行/ZIP 重导均拒绝，草稿漂移只标记 `definitionChanged` 不推进修订），退回必须填写意见转 `changes_requested` 解除封存，撤回转 `withdrawn` 终态并保留历史，发布仅允许 `submitted` 且要求封存修订与逐项确认通过的试运行一致。“开发者/负责人”两角色暂由平台管理员兼任，按对象授权审核待员工自助入口实施。
+
 ### 6.3 按变更影响确定审核
 
 | 变更 | 验证与确认 | 不需要附带的操作 |
@@ -485,7 +487,7 @@ Agent 管理界面分别显示“当前发布版本”“已启用/已停用/已
 
 ### 7.5 历史入口、停用与失败恢复
 
-扩展 `agent_test_runs` 时，将历史静态 `passed` 标记为配置检查，不能升级成真实运行证据。新发布、已有管理状态入口、管理助手发布、重新启用及回滚全部调用统一领域规则；普通停用与紧急撤销走 §6.5 的独立操作，不要求先补发布证据。
+历史静态 `agent_test_runs.passed` 仅保留为配置检查留痕，不能升级成真实运行证据；其写入口（`POST /agents/test` 与 `testAgent`，含原型实现）已随发布治理落地下线，表内不再新增记录。新发布、已有管理状态入口、管理助手发布、重新启用及回滚全部调用统一领域规则；普通停用与紧急撤销走 §6.5 的独立操作，不要求先补发布证据。
 
 迁移前盘点既有已发布版本，安排补证据与兼容回退，不因文档更新直接停掉现有服务。缺少证据的旧版不能借新的发布、扩大共享或新自动任务入口推广；上线前准备满足门禁的回退版本，不能靠回滚接口绕过规则。
 
@@ -763,13 +765,13 @@ Run 应用流程通过端口读取发布/封存定义、Skill 资源、Tool 描�
 
 ### 12.3 API 规划
 
-以下是分阶段的目标接口族，路径是草案，不代表当前已实现。已有同义 API 优先扩展并兼容迁移，避免保留两套不同门禁的写入入口。
+以下是分阶段的目标接口族；AG-01 已按管理端实现落地（路径以当前实现为准），其余行仍是目标草案。已有同义 API 优先扩展并兼容迁移，避免保留两套不同门禁的写入入口。
 
 | 阶段 / Audience | 接口族示例 | 用途与授权 |
 | --- | --- | --- |
-| AG-01 / Workbench | `/api/workbench/v1/agent-submissions`，提交下的 `package`、`checks`、`trial-runs`、`submit`、`withdraw`、`request-changes`、`publish` | 配置与 ZIP 进入同一提交；开发者管理本人候选，负责人按对象授权审核 |
-| AG-01 / Workbench 与 Admin 各自入口 | Agent 下的版本、源码导出、发布记录与 `enable`、`disable`、`rollback`、`archive` 操作 | 维护者与管理员按细分权限治理；源码导出单独授权，生命周期复用同一领域规则 |
-| AG-01 / Admin | Agent/版本的紧急撤销、负责人和共享范围治理 | 当前治理权限与影响范围复核；不通过发布草稿实现停用 |
+| AG-01 / Admin（已实现） | `/api/admin/v1/agents/:agentId/release/*`：`candidate`、`checks`、`cases`、`dependencies/remove`、`trials`、`trials/:trialId/confirm`、`trials/:trialId/cancel`、`submit`、`request-changes`、`withdraw`、`publish`；`/api/admin/v1/agent-packages/inspect`、`/agent-packages/import` | 配置与 ZIP 进入同一候选；平台管理员兼任开发者与审核人。员工自助提交（`/api/workbench/v1/agent-submissions`）与按对象负责人审核为后续入口工作 |
+| AG-01 / Admin（部分实现） | `/api/admin/v1/agent-versions`、`agent-release-records`、`agents/status`（启用/停用）、`agents/rollback` | 启停与回滚已落地且不受草稿阻挡；源码导出、`archive`/卸载与负责人移交未实现 |
+| AG-01 / Admin（未实现） | Agent/版本的紧急撤销、负责人和共享范围治理 | 当前治理权限与影响范围复核；不通过发布草稿实现停用 |
 | AG-02 / Admin | `/api/admin/v1/tool-candidates`，候选下的 `package`、`checks`、`test-admissions`、`trial-runs`、`publish` | 独立新增/升级工具与批准测试，来源 Agent 提交可为空 |
 | AG-02 / Admin | 工具绑定修订、依赖影响查询、工具/版本启停与撤销 | 修改产生新绑定或版本；明确哪些 Agent/任务受影响 |
 | AG-03 / Workbench | `/api/workbench/v1/automations`，以及 `trial-runs`、`enable`、`pause`、`run-now`、`executions` | 仅本人任务；日历与输入修改绑定 revision，执行取消复用 Run 授权端口 |
@@ -784,6 +786,8 @@ Run 应用流程通过端口读取发布/封存定义、Skill 资源、Tool 描�
 ## 13. 用户体验与信息架构
 
 复用现有员工端与管理端应用壳层、Workspace、文件、成果和消息组件；不另建开发者门户。
+
+> 当前实现：AG-01 全流程入口位于管理端「Agent 管理 → 发布工作台」（`/agents/:agentId/release/{definition,checks,trial,review}` 四阶段页面）。员工端「我的智能体」「待我审核」、独立工具准入、自动任务与经验记录入口尚未实现，下表仍是目标信息架构。
 
 | 入口 | 主要体验 |
 | --- | --- |
@@ -948,6 +952,17 @@ Run 应用流程通过端口读取发布/封存定义、Skill 资源、Tool 描�
 | AG-04 经验积累 | 来源授权、DSH 候选、负责人审核、版本/范围检索、撤回完整；不自动改写 Agent，不泄露私人来源或隐式扩权 |
 
 每个阶段交付都应包含必要的前端/API/Schema/数据迁移、P0/P1 与对应 P2 证据、目标环境配置、备份恢复与回退策略。记录实施版本、实际验证范围、未覆盖限制、部署状态和业务验收，区分“文档已更新”“代码已交付”“已部署”“真实环境已验收”。
+
+### 17.1 当前实施进度
+
+| 阶段 | 实施状态 | 已交付 | 未交付 |
+| --- | --- | --- | --- |
+| AG-01 Agent 首版 | **代码已交付，P1 集成验证通过；P2 真实环境验收未执行** | 迁移 `0039`；管理端发布工作台四阶段页面；配置创建与 ZIP 导入收敛同一 `agent_release_submissions` 候选；最小包规范（扁平 `agent.yaml` + `prompts/` + `evals/cases.yaml` + `checksums.json`，非 §5.3 草案的 apiVersion/spec 分层）；真实 DSH 封存试运行（`purpose=agent-release-trial`，执行时管理员权限复核）与逐案例人工确认；提交/退回（必填意见）/撤回状态机与 `submitted` 封存；事务内发布与三类版本证据（`configuration_checked`/`runtime_verified`/`business_accepted`，试运行证据含真实 Run ID）；幂等导入与同版本内容冲突 409；停用/启用/回滚不受草稿阻挡、发布不隐式启用停用 Agent；`POST /agents/test` 静态校验入口下线 | 员工自助提交入口与按对象负责人审核（当前平台管理员兼任）；紧急撤销；卸载/归档与源码导出；负责人移交；§4.3 共用运行准备端口重构（试运行为编排内独立派发） |
+| AG-02 工具扩展 | **仅识别与阻塞** | 包内 `skills/*`/`tools/*` 候选解析、只读展示「待准入」并阻塞测试授权检查与发布放行 | `tool_candidates` 与测试准入数据模型；独立新增/升级工具流程；绑定修订/影响查询；联合发布；管理端工具候选页仍为前端原型（AG-PROTO-03） |
+| AG-03 自动任务 | **未启动** | — | `agent_automations`/`automation_executions`、触发器、暂停/取消/配额、投递证据全部未实现 |
+| AG-04 经验积累 | **未启动** | — | `task_feedback`、候选生成、负责人审核、经验版本/检索/撤回全部未实现 |
+
+已交付部分的验证范围为 P1：一次性 PostgreSQL 集成套件覆盖创建→检查→试运行→逐项确认→提交→发布全链路与提交往返，试运行执行使用 `TrialStubRuntime` 替身而非真实 DSH Worker；至少一个真实业务 Agent 经真实 DSH 链路的端到端验收（AG-01 退出条件之一）尚未执行。
 
 全部阶段完成才代表本方案的完整产品范围交付。公开市场、任意进程、写入 ERP/MES、自主改写和其他非目标不因此成为开发承诺；扩展前重新评估业务需要。
 

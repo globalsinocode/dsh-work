@@ -22,13 +22,6 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
-  router.post(`${basePath}/agents/test`, async (request, context) => {
-    const input = await readJsonBody<{ agentId: string; prompt: string }>(request)
-    return envelope('admin', await service.testAgent({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres')
-  })
   router.patch(`${basePath}/agents/status`, async (request, context) => {
     const input = await readJsonBody<{
       agentId: string

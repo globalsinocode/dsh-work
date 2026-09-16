@@ -32,7 +32,7 @@ after(async () => {
   await throwaway.dispose()
 })
 
-test('Agent lifecycle persists test evidence, publishes, versions, rolls back and controls employee visibility', async () => {
+test('Agent lifecycle publishes, versions, rolls back and controls employee visibility', async () => {
   const suffix = randomUUID().slice(0, 8)
   const agentId = `agent-integration-${suffix}`
   const created = await agents.createAgent({
@@ -63,8 +63,6 @@ test('Agent lifecycle persists test evidence, publishes, versions, rolls back an
     agents.setStatus({ agentId, status: 'published', actor: 'U00008' }),
     /发布工作台/,
   )
-  const tested = await agents.testAgent({ agentId, prompt: '请介绍你的能力', actor: 'U00008' })
-  assert.equal(tested.status, 'passed')
   await publishDraft(agentId)
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.status, 'published')
 
@@ -98,7 +96,6 @@ test('Agent lifecycle persists test evidence, publishes, versions, rolls back an
   assert.equal(draft.agent.version, '0.2.0')
   assert.equal((await agents.listWorkbenchAgents('U00001')).find(agent => agent.id === agentId)?.version, '0.1.0')
 
-  await agents.testAgent({ agentId, prompt: '请验证二版能力', actor: 'U00008' })
   await publishDraft(agentId)
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.version, '0.2.0')
 
@@ -130,6 +127,15 @@ test('Agent lifecycle persists test evidence, publishes, versions, rolls back an
     actor: 'U00008',
   })
   assert.equal(postRollbackDraft.agent.version, '0.3.0')
+
+  // 停用/启用是独立管理状态：存在待发布草稿时仍可停用并重新启用，
+  // 草稿保留在治理流程中。停用的真实效果是员工目录不可见，而不是草稿消失。
+  const disabledWithDraft = await agents.setStatus({ agentId, status: 'disabled', actor: 'U00008' })
+  assert.equal(disabledWithDraft.agent.status, 'disabled')
+  assert.ok(!(await agents.listWorkbenchAgents('U00001')).some(agent => agent.id === agentId))
+  await agents.setStatus({ agentId, status: 'published', actor: 'U00008' })
+  assert.ok((await agents.listWorkbenchAgents('U00001')).some(agent => agent.id === agentId))
+  assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.version, '0.3.0')
 
   const releases = (await agents.getReleaseRecords()).filter(record => record.agentId === agentId)
   assert.deepEqual(new Set(releases.map(record => record.action)), new Set(['published', 'rollback', 'disabled', 'enabled']))

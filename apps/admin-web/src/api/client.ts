@@ -148,18 +148,6 @@ export const adminApi = {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
-  testAgent: (input: { agentId: string; prompt: string }) =>
-    request<{
-      id: string
-      agentId: string
-      version: string
-      status: 'passed' | 'failed'
-      resultSummary: string
-      testedAt: string
-    }>('/agents/test', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
   setAgentStatus: (input: { agentId: string; status: 'published' | 'disabled' }) =>
     request<{ agent: AgentDefinition; release: AgentReleaseRecord }>('/agents/status', {
       method: 'PATCH',
@@ -199,6 +187,15 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
   cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cancel`, { method: 'POST' }),
+  submitAgentRelease: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/submit`, { method: 'POST' }),
+  requestAgentReleaseChanges: (agentId: string, note: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/request-changes`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  withdrawAgentRelease: (agentId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/withdraw`, { method: 'POST' }),
   publishAgentRelease: (agentId: string, note: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publish`, {
       method: 'POST',

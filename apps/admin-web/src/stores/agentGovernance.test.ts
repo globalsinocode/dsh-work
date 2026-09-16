@@ -143,6 +143,30 @@ describe('agent governance store（服务端持久化）', () => {
     expect(reload).toHaveBeenCalledWith(true)
   })
 
+  it('提交/退回/撤回候选走服务端状态机并刷新索引', async () => {
+    const submitted = makeState('agent-5', { candidate: makeCandidate('agent-5', { status: 'submitted', sealedRevision: 1 }) })
+    const returned = makeState('agent-5', { candidate: makeCandidate('agent-5', { status: 'changes_requested', reviewNote: '补充说明' }) })
+    const withdrawn = makeState('agent-5', { candidate: undefined })
+    const submit = vi.spyOn(adminApi, 'submitAgentRelease').mockResolvedValue(submitted)
+    const requestChanges = vi.spyOn(adminApi, 'requestAgentReleaseChanges').mockResolvedValue(returned)
+    const withdraw = vi.spyOn(adminApi, 'withdrawAgentRelease').mockResolvedValue(withdrawn)
+    vi.spyOn(adminApi, 'getAgentReleaseSubmissions').mockResolvedValue({ items: [] })
+    const store = useAgentGovernanceStore()
+
+    await store.submitCandidate('agent-5')
+    expect(submit).toHaveBeenCalledWith('agent-5')
+    expect(store.overlays['agent-5']?.candidate?.status).toBe('submitted')
+
+    await store.requestCandidateChanges('agent-5', '补充说明')
+    expect(requestChanges).toHaveBeenCalledWith('agent-5', '补充说明')
+    expect(store.overlays['agent-5']?.candidate?.status).toBe('changes_requested')
+    expect(store.overlays['agent-5']?.candidate?.reviewNote).toBe('补充说明')
+
+    await store.withdrawCandidate('agent-5')
+    expect(withdraw).toHaveBeenCalledWith('agent-5')
+    expect(store.overlays['agent-5']?.candidate).toBeUndefined()
+  })
+
   it('导入发布包后返回服务端创建的 Agent', async () => {
     const agent = makeAgent('agent-zip')
     const state = makeState('agent-zip', { candidate: makeCandidate('agent-zip', { source: 'zip' }) })

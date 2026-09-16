@@ -75,6 +75,24 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().cancelTrial(context.params['agentId'] ?? '', context.params['trialId'] ?? '', userId), 'postgres')
   })
 
+  // 提交/退回/撤回：候选状态机 draft|changes_requested → submitted → published，
+  // submitted 期间内容封存，发布只允许从 submitted 进入。
+  router.post(`${basePath}/agents/:agentId/release/submit`, async (_request, context) => {
+    const userId = requireRequestIdentity(context, 'admin').userId
+    return envelope('admin', await available().submitForReview(context.params['agentId'] ?? '', userId), 'postgres')
+  })
+
+  router.post(`${basePath}/agents/:agentId/release/request-changes`, async (request, context) => {
+    const userId = requireRequestIdentity(context, 'admin').userId
+    const input = await readJsonBody<{ note?: string }>(request)
+    return envelope('admin', await available().requestChanges(context.params['agentId'] ?? '', input?.note ?? '', userId), 'postgres')
+  })
+
+  router.post(`${basePath}/agents/:agentId/release/withdraw`, async (_request, context) => {
+    const userId = requireRequestIdentity(context, 'admin').userId
+    return envelope('admin', await available().withdrawSubmission(context.params['agentId'] ?? '', userId), 'postgres')
+  })
+
   router.post(`${basePath}/agents/:agentId/release/publish`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ note?: string }>(request)
