@@ -5,6 +5,7 @@ import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
+import { useListPagination } from '@/composables/use-list-pagination'
 import {
   useAgentGovernanceStore,
   type CheckStatus,
@@ -126,6 +127,14 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   return rows.sort((a, b) => weight(a) - weight(b))
 })
 const pendingPackageCount = computed(() => dependencyRows.value.filter(row => row.source === 'package').length)
+const candidatePlan = computed(() => candidate.value?.plan ?? [])
+const trialRuns = computed(() => candidate.value?.trialRuns ?? [])
+const { currentPage: dependencyPage, pagedItems: pagedDependencyRows } =
+  useListPagination(dependencyRows, { resetOn: agentId })
+const { currentPage: planPage, pagedItems: pagedPlan } =
+  useListPagination(candidatePlan, { resetOn: agentId })
+const { currentPage: trialPage, pagedItems: pagedTrialRuns } =
+  useListPagination(trialRuns, { resetOn: agentId })
 const activeStep = computed<ReleaseStep>(() => routeStepByName[String(route.name)] ?? 'definition')
 const trialActive = computed(() => Boolean(
   latestTrial.value && ['checking', 'queued', 'executing', 'asserting'].includes(latestTrial.value.status),
@@ -472,7 +481,7 @@ onMounted(async () => {
               </div>
             </div>
             <el-alert v-if="missingDependencyCount" type="error" :closable="false" show-icon title="缺失依赖会阻止检查和试运行" description="补齐平台能力，或者移除 Agent 不再需要的引用。" />
-            <el-table class="data-table dependency-table" :data="dependencyRows" size="small">
+            <el-table class="data-table dependency-table" :data="pagedDependencyRows" size="small">
               <el-table-column label="依赖" min-width="180">
                 <template #default="scope">
                   <strong class="mono" :class="{ 'plan-blocked': scope.row.status === 'missing' }">{{ scope.row.id }}</strong>
@@ -492,6 +501,7 @@ onMounted(async () => {
                 </template>
               </el-table-column>
             </el-table>
+            <el-pagination v-model:current-page="dependencyPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="dependencyRows.length" :page-size="10" />
             <p class="hint">仅已解析引用进入封存；包内候选需先在 Skill / 工具管理中完成安装发布与准入后才可引用。</p>
             <div v-if="!missingDependencyCount && !pendingPackageCount" class="dependency-ready">
               <el-icon><CircleCheck /></el-icon>
@@ -522,12 +532,13 @@ onMounted(async () => {
 
           <section v-if="candidate.plan.length" class="content-panel workbench-card">
             <div class="card-head"><div><span class="card-kicker">步骤 2</span><h2>部署计划</h2></div></div>
-            <el-table class="data-table" :data="candidate.plan" size="small">
+            <el-table class="data-table" :data="pagedPlan" size="small">
               <el-table-column label="类型" width="76"><template #default="scope"><el-tag size="small" effect="plain">{{ scope.row.kind }}</el-tag></template></el-table-column>
               <el-table-column prop="name" label="对象" min-width="130"><template #default="scope"><strong :class="{ 'plan-blocked': scope.row.action === 'blocked' }">{{ scope.row.name }}</strong><small class="cell-sub mono">{{ scope.row.version }}</small></template></el-table-column>
               <el-table-column label="动作" width="76"><template #default="scope"><el-tag size="small" :type="scope.row.action === 'blocked' ? 'danger' : scope.row.action === 'reuse' ? 'info' : 'success'">{{ planActionName(scope.row.action) }}</el-tag></template></el-table-column>
               <el-table-column prop="detail" label="说明" min-width="180"><template #default="scope"><small class="plan-detail">{{ scope.row.detail }}</small></template></el-table-column>
             </el-table>
+            <el-pagination v-model:current-page="planPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="candidatePlan.length" :page-size="10" />
           </section>
           <footer class="stage-footer">
             <el-button @click="goToStep('definition')">上一步：定义与依赖</el-button>
@@ -547,7 +558,7 @@ onMounted(async () => {
             <p v-if="failedChecks.length" class="hint">阻塞项：{{ failedChecks.map(check => check.label).join('、') }}，全部通过后才能发起试运行。</p>
             <p v-if="definitionChanged" class="hint">草稿已变更，候选正在同步——同步完成前不能发起试运行或发布。</p>
             <el-empty v-if="!candidate.trialRuns.length" description="封存候选后逐案例经 Run/Attempt → Runtime Adapter → DSH 真实执行，输出由审核人逐项确认" :image-size="60" />
-            <div v-for="trial in candidate.trialRuns" :key="trial.id" class="trial">
+            <div v-for="trial in pagedTrialRuns" :key="trial.id" class="trial">
               <div class="trial__head">
                 <el-tag size="small" :type="trial.status === 'failed' ? 'danger' : trial.status === 'passed' ? 'success' : trial.status === 'cancelled' ? 'info' : 'warning'">{{ trialStatusLabel[trial.status] }}</el-tag>
                 <el-tag v-if="trial.submissionRevision !== candidate.revision" size="small" type="info" effect="plain">旧修订</el-tag>
@@ -589,6 +600,7 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
+            <el-pagination v-model:current-page="trialPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="trialRuns.length" :page-size="10" />
           </section>
           <footer class="stage-footer">
             <el-button @click="goToStep('checks')">上一步：检查与案例</el-button>

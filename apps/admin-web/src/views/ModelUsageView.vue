@@ -4,15 +4,11 @@ import { Search, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
-import { useContentStore } from '@/stores/content'
-import type { ModelUsageRecord } from '@/types/domain'
-import {
-  summarizeModelUsageByEmployee,
-  type EmployeeModelUsageSummary,
-} from '@/utils/model-usage'
+import { adminApi } from '@/api/client'
+import { usePagedList } from '@/composables/use-paged-list'
+import type { EmployeeModelUsageSummary, ModelUsagePage, ModelUsageRecord } from '@/types/domain'
 
 const router = useRouter()
-const contentStore = useContentStore()
 const viewMode = ref<'records' | 'employees'>('records')
 const query = ref('')
 const employeeFilter = ref('all')
@@ -21,48 +17,61 @@ const statusFilter = ref('all')
 const selectedRecord = ref<ModelUsageRecord>()
 const drawerOpen = ref(false)
 
-const providers = computed(() =>
-  [...new Set(contentStore.modelUsage.map((record) => record.provider))].sort(),
-)
-const employees = computed(() => {
-  const options = new Map<string, Pick<ModelUsageRecord, 'employeeId' | 'employeeName' | 'department'>>()
-  for (const record of contentStore.modelUsage) {
-    options.set(record.employeeId, {
-      employeeId: record.employeeId,
-      employeeName: record.employeeName,
-      department: record.department,
-    })
+function usageInput(page: number, pageSize: number) {
+  return {
+    query: query.value,
+    employee: employeeFilter.value,
+    provider: providerFilter.value,
+    status: statusFilter.value,
+    page,
+    pageSize,
   }
-  return [...options.values()].sort((left, right) => left.employeeName.localeCompare(right.employeeName, 'zh-CN'))
-})
+}
 
-const filteredRecords = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return contentStore.modelUsage.filter((record) => {
-    const matchesQuery = !keyword || `${record.employeeName} ${record.employeeId} ${record.department} ${record.provider} ${record.model} ${record.modelRoute} ${record.agentId} ${record.runId} ${record.traceId}`.toLowerCase().includes(keyword)
-    const matchesEmployee = employeeFilter.value === 'all' || record.employeeId === employeeFilter.value
-    const matchesProvider = providerFilter.value === 'all' || record.provider === providerFilter.value
-    const matchesStatus = statusFilter.value === 'all' || record.status === statusFilter.value
-    return matchesQuery && matchesEmployee && matchesProvider && matchesStatus
-  })
+const recordsList = usePagedList<ModelUsageRecord, ModelUsagePage>({
+  fetch: (page, pageSize) => adminApi.getModelUsage(usageInput(page, pageSize)),
 })
+const employeesList = usePagedList<EmployeeModelUsageSummary>({
+  fetch: (page, pageSize) => adminApi.getModelUsageEmployees(usageInput(page, pageSize)),
+})
+const {
+  items: recordItems, total: recordTotal, currentPage: recordPage, pageSize: recordPageSize,
+  loading: recordsLoading, error: recordsError, changePage: changeRecordPage,
+} = recordsList
+const {
+  items: employeeItems, total: employeeTotal, currentPage: employeePage, pageSize: employeePageSize,
+  loading: employeesLoading, error: employeesError, changePage: changeEmployeePage,
+} = employeesList
 
-const employeeSummaries = computed(() => summarizeModelUsageByEmployee(filteredRecords.value))
-const totalTokens = computed(() => filteredRecords.value.reduce((sum, record) => sum + record.totalTokens, 0))
-const successfulRecords = computed(() => filteredRecords.value.filter((record) => record.status === 'success'))
-const averageLatency = computed(() => {
-  if (!successfulRecords.value.length) return 0
-  return Math.round(successfulRecords.value.reduce((sum, record) => sum + record.latencyMs, 0) / successfulRecords.value.length)
-})
+const summary = computed(() => recordsList.result.value?.summary)
+const providers = computed(() => recordsList.result.value?.facets.providers ?? [])
+const employees = computed(() => recordsList.result.value?.facets.employees ?? [])
+const pageError = computed(() => recordsError.value || employeesError.value)
+
+function applyFilters() {
+  void recordsList.reload(true)
+  void employeesList.reload(true)
+}
+
+function switchView(mode: 'records' | 'employees') {
+  viewMode.value = mode
+  void (mode === 'records' ? recordsList.reload() : employeesList.reload())
+}
+
+function clearError() {
+  recordsError.value = ''
+  employeesError.value = ''
+}
 
 function inspect(record: ModelUsageRecord) {
   selectedRecord.value = record
   drawerOpen.value = true
 }
 
-function showEmployeeRecords(summary: EmployeeModelUsageSummary) {
-  employeeFilter.value = summary.employeeId
+function showEmployeeRecords(employee: EmployeeModelUsageSummary) {
+  employeeFilter.value = employee.employeeId
   viewMode.value = 'records'
+  applyFilters()
 }
 
 function openAudit() {
@@ -83,46 +92,50 @@ function formatRate(value: number) {
   return `${Math.round(value * 100)}%`
 }
 
-onMounted(() => contentStore.load())
+onMounted(() => {
+  void recordsList.reload()
+  void employeesList.reload()
+})
 </script>
 
 <template>
   <div class="ops-page model-usage-page">
-    <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
+    <el-alert v-if="pageError" :title="pageError" type="error" show-icon @close="clearError" />
 
-    <section class="metric-grid">
-      <article class="metric-card"><div class="metric-label">模型调用</div><div class="metric-value">{{ filteredRecords.length }}</div><div class="metric-detail">涉及 {{ employeeSummaries.length }} 名员工</div></article>
-      <article class="metric-card"><div class="metric-label">Token 用量</div><div class="metric-value">{{ formatTokens(totalTokens) }}</div><div class="metric-detail">输入与输出 Token 合计</div></article>
-      <article class="metric-card"><div class="metric-label">平均模型延迟</div><div class="metric-value">{{ formatLatency(averageLatency) }}</div><div class="metric-detail">只统计成功调用</div></article>
+    <section v-loading="recordsLoading" class="metric-grid">
+      <article class="metric-card"><div class="metric-label">模型调用</div><div class="metric-value">{{ summary?.callCount ?? 0 }}</div><div class="metric-detail">涉及 {{ summary?.employeeCount ?? 0 }} 名员工</div></article>
+      <article class="metric-card"><div class="metric-label">Token 用量</div><div class="metric-value">{{ formatTokens(summary?.totalTokens ?? 0) }}</div><div class="metric-detail">输入与输出 Token 合计</div></article>
+      <article class="metric-card"><div class="metric-label">平均模型延迟</div><div class="metric-value">{{ formatLatency(summary?.averageLatencyMs ?? 0) }}</div><div class="metric-detail">只统计成功调用</div></article>
     </section>
 
     <section class="content-panel filter-panel usage-filter-panel">
       <div class="status-tabs" role="tablist" aria-label="模型用量查看维度">
-        <button class="status-tab" :class="{ active: viewMode === 'records' }" type="button" role="tab" :aria-selected="viewMode === 'records'" @click="viewMode = 'records'">调用明细 <span class="tab-count">{{ filteredRecords.length }}</span></button>
-        <button class="status-tab" :class="{ active: viewMode === 'employees' }" type="button" role="tab" :aria-selected="viewMode === 'employees'" @click="viewMode = 'employees'">员工统计 <span class="tab-count">{{ employeeSummaries.length }}</span></button>
+        <button class="status-tab" :class="{ active: viewMode === 'records' }" type="button" role="tab" :aria-selected="viewMode === 'records'" @click="switchView('records')">调用明细 <span class="tab-count">{{ recordTotal }}</span></button>
+        <button class="status-tab" :class="{ active: viewMode === 'employees' }" type="button" role="tab" :aria-selected="viewMode === 'employees'" @click="switchView('employees')">员工统计 <span class="tab-count">{{ employeeTotal }}</span></button>
       </div>
       <div class="filter-bar">
-        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索员工、模型、运行或链路编号" />
-        <el-select v-model="employeeFilter" class="employee-filter" filterable aria-label="筛选员工">
+        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索员工、模型、运行或链路编号" @keyup.enter="applyFilters" @clear="applyFilters" />
+        <el-select v-model="employeeFilter" class="employee-filter" filterable aria-label="筛选员工" @change="applyFilters">
           <el-option label="全部员工" value="all" />
           <el-option v-for="employee in employees" :key="employee.employeeId" :label="`${employee.employeeName} · ${employee.employeeId}`" :value="employee.employeeId" />
         </el-select>
-        <el-select v-model="providerFilter" class="provider-filter" aria-label="筛选模型提供方">
+        <el-select v-model="providerFilter" class="provider-filter" aria-label="筛选模型提供方" @change="applyFilters">
           <el-option label="全部提供方" value="all" />
           <el-option v-for="provider in providers" :key="provider" :label="provider" :value="provider" />
         </el-select>
-        <el-select v-model="statusFilter" class="status-filter" aria-label="筛选调用结果">
+        <el-select v-model="statusFilter" class="status-filter" aria-label="筛选调用结果" @change="applyFilters">
           <el-option label="全部结果" value="all" />
           <el-option label="成功" value="success" />
           <el-option label="失败" value="failed" />
           <el-option label="已阻止" value="blocked" />
         </el-select>
-        <span class="filter-bar__meta">{{ filteredRecords.length }} 条调用 · {{ employeeSummaries.length }} 名员工</span>
+        <el-button :icon="Search" @click="applyFilters">查询</el-button>
+        <span class="filter-bar__meta">{{ recordTotal }} 条调用 · {{ employeeTotal }} 名员工</span>
       </div>
     </section>
 
     <section class="content-panel content-panel--flush model-usage-table">
-      <el-table v-if="viewMode === 'records'" class="data-table" v-loading="contentStore.loading" :data="filteredRecords" empty-text="暂无匹配的模型调用" @row-click="inspect">
+      <el-table v-if="viewMode === 'records'" class="data-table" v-loading="recordsLoading" :data="recordItems" empty-text="暂无匹配的模型调用" @row-click="inspect">
         <el-table-column prop="time" label="时间" width="164" />
         <el-table-column label="员工" min-width="170">
           <template #default="scope"><div class="employee-cell"><span>{{ scope.row.employeeName.slice(0, 1) }}</span><div><strong>{{ scope.row.employeeName }}</strong><small>{{ scope.row.employeeId }}</small></div></div></template>
@@ -140,7 +153,7 @@ onMounted(() => contentStore.load())
         <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-model-usage" @click.stop="inspect(scope.row)">详情</el-button></template></el-table-column>
       </el-table>
 
-      <el-table v-else class="data-table" v-loading="contentStore.loading" :data="employeeSummaries" empty-text="当前筛选范围内暂无员工用量" @row-click="showEmployeeRecords">
+      <el-table v-else class="data-table" v-loading="employeesLoading" :data="employeeItems" empty-text="当前筛选范围内暂无员工用量" @row-click="showEmployeeRecords">
         <el-table-column label="员工" min-width="210">
           <template #default="scope"><div class="employee-cell"><span>{{ scope.row.employeeName.slice(0, 1) }}</span><div><strong>{{ scope.row.employeeName }}</strong><small>{{ scope.row.employeeId }} · 最近 {{ scope.row.lastUsedAt }}</small></div></div></template>
         </el-table-column>
@@ -155,6 +168,7 @@ onMounted(() => contentStore.load())
         <el-table-column label="平均延迟" min-width="140"><template #default="scope"><div class="usage-metric-cell"><strong>{{ scope.row.successCount ? formatLatency(scope.row.averageLatencyMs) : '—' }}</strong><small>只统计成功调用</small></div></template></el-table-column>
         <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button link type="primary" data-action="view-employee-model-usage" @click.stop="showEmployeeRecords(scope.row)">查看明细</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-if="viewMode === 'records'" v-model:current-page="recordPage" background layout="prev, pager, next" :total="recordTotal" :page-size="recordPageSize" @current-change="changeRecordPage" /><el-pagination v-else v-model:current-page="employeePage" background layout="prev, pager, next" :total="employeeTotal" :page-size="employeePageSize" @current-change="changeEmployeePage" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(580px, 100vw)" title="模型调用详情">

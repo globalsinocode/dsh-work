@@ -153,7 +153,7 @@ test('audit and Tool metadata are redacted before persistence and on read', asyn
       select parameter_summary as summary from tool_audit_logs
        where tenant_id = 'tenant-dsh-work' and trace_id = 'trace-tool-redaction'
     `
-    const serialized = JSON.stringify({ management, tool, events: await operations.getAuditEvents() })
+    const serialized = JSON.stringify({ management, tool, events: (await operations.getAuditEvents()).items })
     assert.doesNotMatch(serialized, /bearer-value|pass-value|key-value|access-value/)
     assert.match(serialized, /\[REDACTED\]/)
     assert.equal(tool?.summary['inputTokens'], 12)

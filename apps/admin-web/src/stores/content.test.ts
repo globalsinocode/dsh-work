@@ -12,12 +12,10 @@ const api = vi.hoisted(() => ({
   getConnectors: vi.fn(),
   getGrantSourceReconciliation: vi.fn(),
   getHealth: vi.fn(),
-  getModelUsage: vi.fn(),
   getOperationsSummary: vi.fn(),
   getPlatformStatus: vi.fn(),
   getRuntimes: vi.fn(),
   getSession: vi.fn(),
-  getSessions: vi.fn(),
   getSkillReleaseRecords: vi.fn(),
   getSkills: vi.fn(),
   getSkillVersions: vi.fn(),
@@ -100,7 +98,7 @@ describe('admin content store Skill version state', () => {
       },
     })
     await authStore.load()
-    api.getAuditEvents.mockResolvedValue([])
+    api.getAuditEvents.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 })
     api.getOperationsSummary.mockResolvedValue({
       runs24h: 0,
       modelTokens24h: 0,

@@ -15,11 +15,9 @@ import type {
   GrantSourceReconciliationView,
   HealthComponent,
   ManagedWorkspaceDefinition,
-  ModelUsageRecord,
   OperationsSummary,
   PlatformStatus,
   RuntimeDefinition,
-  SessionDefinition,
   SkillConfiguration,
   SkillDefinition,
   SkillReleaseRecord,
@@ -34,7 +32,6 @@ export const useContentStore = defineStore('admin-content', () => {
   const authStore = useAuthStore()
   const tasks = ref<AdminTaskSummary[]>([])
   const runtimes = ref<RuntimeDefinition[]>([])
-  const sessions = ref<SessionDefinition[]>([])
   const workspaces = ref<ManagedWorkspaceDefinition[]>([])
   const agents = ref<AgentDefinition[]>([])
   const agentVersions = ref<AgentVersionRecord[]>([])
@@ -49,7 +46,6 @@ export const useContentStore = defineStore('admin-content', () => {
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
   const usage = ref<UsagePoint[]>([])
-  const modelUsage = ref<ModelUsageRecord[]>([])
   const platformStatus = ref<PlatformStatus | null>(null)
   const agentJoinedWorkspaces = ref<Record<string, AgentJoinedWorkspaceRecord[]>>({})
   const grantReconciliation = ref<GrantSourceReconciliationView | null>(null)
@@ -90,7 +86,6 @@ export const useContentStore = defineStore('admin-content', () => {
     const [
       taskData,
       runtimeData,
-      sessionData,
       workspaceData,
       agentData,
       agentVersionData,
@@ -103,12 +98,10 @@ export const useContentStore = defineStore('admin-content', () => {
       connectorData,
       healthData,
       usageData,
-      modelUsageData,
       statusData,
     ] = await Promise.all([
       adminApi.getTasks(),
       adminApi.getRuntimes(),
-      adminApi.getSessions(),
       adminApi.getWorkspaces(),
       adminApi.getAgents(),
       adminApi.getAgentVersions(),
@@ -121,12 +114,10 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getConnectors(),
       adminApi.getHealth(),
       adminApi.getUsage(),
-      adminApi.getModelUsage(),
       adminApi.getPlatformStatus(),
     ])
     tasks.value = taskData
     runtimes.value = runtimeData
-    sessions.value = sessionData
     workspaces.value = workspaceData
     agents.value = agentData
     agentVersions.value = agentVersionData
@@ -139,17 +130,16 @@ export const useContentStore = defineStore('admin-content', () => {
     connectors.value = connectorData
     health.value = healthData
     usage.value = usageData
-    modelUsage.value = modelUsageData
     platformStatus.value = statusData
     adminInitialized.value = true
   }
 
   async function loadAuditData() {
     const [auditData, operationsSummaryData] = await Promise.all([
-      adminApi.getAuditEvents(),
+      adminApi.getAuditEvents({ page: 1, pageSize: 20 }),
       adminApi.getOperationsSummary(),
     ])
-    auditEvents.value = auditData
+    auditEvents.value = auditData.items
     operationsSummary.value = operationsSummaryData
     auditInitialized.value = true
   }
@@ -337,7 +327,6 @@ export const useContentStore = defineStore('admin-content', () => {
   return {
     tasks,
     runtimes,
-    sessions,
     workspaces,
     agents,
     agentVersions,
@@ -352,7 +341,6 @@ export const useContentStore = defineStore('admin-content', () => {
     operationsSummary,
     health,
     usage,
-    modelUsage,
     platformStatus,
     agentJoinedWorkspaces,
     grantReconciliation,

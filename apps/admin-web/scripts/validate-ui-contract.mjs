@@ -103,29 +103,29 @@ const businessViews = [
   'AgentManagementView.vue',
   'AgentReleaseWorkbenchView.vue',
   'CapabilityManagementView.vue',
-  'ModelUsageView.vue',
   'PermissionManagementView.vue',
   'AuditView.vue',
   'SystemHealthView.vue',
   'RuntimeManagementView.vue',
-  'SessionManagementView.vue',
   'WorkspaceManagementView.vue',
 ]
 
 const listViews = [
   'AgentManagementView.vue',
   'CapabilityManagementView.vue',
-  'ModelUsageView.vue',
   'PermissionManagementView.vue',
   'AuditView.vue',
   'RuntimeManagementView.vue',
-  'SessionManagementView.vue',
   'WorkspaceManagementView.vue',
 ]
 
 for (const name of businessViews) {
   requireFragments(`src/views/${name}`, ['ops-page', 'contentStore.error'])
 }
+
+// 服务端分页视图自行管理拉取与错误（usePagedList 的 error ref + el-alert）
+requireFragments('src/views/SessionManagementView.vue', ['ops-page', 'sessionsError'])
+requireFragments('src/views/ModelUsageView.vue', ['ops-page', 'pageError'])
 
 for (const name of listViews) {
   requireFragments(`src/views/${name}`, ['filter-panel', 'class="data-table"', 'v-loading', 'empty-text='])

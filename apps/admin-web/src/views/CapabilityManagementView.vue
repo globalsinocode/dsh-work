@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useToolGovernanceStore, type ToolCandidate, type ToolExecutorType } from '@/stores/toolGovernance'
@@ -152,6 +153,22 @@ const filteredToolCatalog = computed(() => {
     return !keyword || `${candidate.name} ${candidate.id} ${candidate.description}`.toLowerCase().includes(keyword)
   })
 })
+const { currentPage: skillPage, pagedItems: pagedSkills } =
+  useListPagination(filteredSkills, { resetOn: query })
+const { currentPage: toolPage, pagedItems: pagedTools } =
+  useListPagination(filteredTools, { resetOn: query })
+const { currentPage: toolCandidatePage, pagedItems: pagedToolCandidates } =
+  useListPagination(filteredToolCandidates, { resetOn: query })
+const { currentPage: connectorPage, pagedItems: pagedConnectors } =
+  useListPagination(filteredConnectors, { resetOn: query })
+const { currentPage: toolCatalogPage, pagedItems: pagedToolCatalog } =
+  useListPagination(filteredToolCatalog, { resetOn: [toolCatalogQuery, toolCatalogFilter] })
+const { currentPage: skillVersionPage, pagedItems: pagedSkillVersions } =
+  useListPagination(selectedSkillVersions, { resetOn: detailTargetId })
+const { currentPage: skillReleasePage, pagedItems: pagedSkillReleases } =
+  useListPagination(selectedSkillReleases, { resetOn: detailTargetId })
+const { currentPage: toolReferencePage, pagedItems: pagedToolReferences } =
+  useListPagination(toolReferences, { resetOn: detailTargetId })
 function switchTab(tab: CapabilityTab) {
   query.value = ''
   const paths: Record<CapabilityTab, string> = {
@@ -747,7 +764,8 @@ onUnmounted(() => clearSkillTestPoll())
         </el-radio-group>
         <el-tag size="small" type="warning" effect="plain">候选与治理数据为原型（仅开发构建可见）</el-tag>
       </div>
-      <el-table v-if="activeTab === 'skills'" class="data-table" v-loading="contentStore.loading" :data="filteredSkills" empty-text="暂无匹配的 Skill">
+      <template v-if="activeTab === 'skills'">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedSkills" empty-text="暂无匹配的 Skill">
         <el-table-column label="Skill" min-width="360">
           <template #default="scope">
             <div class="primary-cell skill-primary-cell">
@@ -783,8 +801,11 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="updatedAt" label="更新时间" width="120" />
         <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
+      </template>
 
-      <el-table v-else-if="activeTab === 'tools' && (toolView === 'published' || !toolCandidatePrototype)" class="data-table" v-loading="contentStore.loading" :data="filteredTools" empty-text="暂无匹配的工具">
+      <template v-else-if="activeTab === 'tools' && (toolView === 'published' || !toolCandidatePrototype)">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的工具">
         <el-table-column label="工具" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small><code>{{ scope.row.id }}</code></div></template></el-table-column>
         <el-table-column prop="system" label="所属系统" min-width="130" />
         <el-table-column label="模式" width="90"><template #default="scope"><span class="mode-label" :class="`mode-label--${scope.row.mode}`">{{ scope.row.mode === 'read' ? '只读' : '写入' }}</span></template></el-table-column>
@@ -795,8 +816,11 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
         <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" data-action="configure-tool-permissions" @click="openToolPermissions(scope.row.id)">权限</el-button><el-button v-if="authStore.canManage && !toolRevoked(scope.row.id)" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
+      </template>
 
-      <el-table v-else-if="activeTab === 'tools' && toolCandidatePrototype" class="data-table" :data="filteredToolCandidates" empty-text="暂无工具候选" aria-label="工具候选列表" @row-click="inspectToolCandidate">
+      <template v-else-if="activeTab === 'tools' && toolCandidatePrototype">
+      <el-table class="data-table" :data="pagedToolCandidates" empty-text="暂无工具候选" aria-label="工具候选列表" @row-click="inspectToolCandidate">
         <el-table-column label="工具" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.schemaSummary }}</small><code>{{ scope.row.id }}</code></div></template></el-table-column>
         <el-table-column label="来源" min-width="180"><template #default="scope">{{ scope.row.sourceAgent ? `随包提交 · ${scope.row.sourceAgent.agentName}` : '独立接入' }}</template></el-table-column>
         <el-table-column label="执行器" width="110"><template #default="scope">{{ executorTypeName(scope.row.executorType) }}</template></el-table-column>
@@ -816,8 +840,11 @@ onUnmounted(() => clearSkillTestPoll())
           </template>
         </el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolCandidatePage" background layout="prev, pager, next" :total="filteredToolCandidates.length" :page-size="10" /></div>
+      </template>
 
-      <el-table v-else class="data-table" v-loading="contentStore.loading" :data="filteredConnectors" empty-text="暂无匹配的连接器">
+      <template v-else>
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的连接器">
         <el-table-column label="连接器" min-width="225"><template #default="scope"><div class="connector-cell"><span><el-icon><Connection /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.system }} · {{ protocolLabel(scope.row.protocol) }}</small></div></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
         <el-table-column prop="toolCount" label="工具数" width="110" />
@@ -826,6 +853,8 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
         <el-table-column label="操作" width="145" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">检查</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="connectorPage" background layout="prev, pager, next" :total="filteredConnectors.length" :page-size="10" /></div>
+      </template>
     </section>
 
     <el-dialog v-model="toolCatalogDialogOpen" title="添加 DSH 工具" width="min(920px, calc(100vw - 32px))" destroy-on-close>
@@ -837,9 +866,10 @@ onUnmounted(() => clearSkillTestPoll())
         </el-radio-group>
       </div>
       <div class="tool-catalog-layout">
+        <div class="tool-catalog-column">
         <div class="tool-catalog-list" aria-label="可添加工具">
           <button
-            v-for="candidate in filteredToolCatalog"
+            v-for="candidate in pagedToolCatalog"
             :key="candidate.id"
             type="button"
             class="tool-catalog-card"
@@ -861,6 +891,8 @@ onUnmounted(() => clearSkillTestPoll())
             :description="toolCatalogFilter === 'ready' ? '当前没有可添加的工具，可切换到“全部”查看' : '当前 DSH Profile 没有可展示的工具'"
             :image-size="72"
           />
+        </div>
+        <el-pagination v-model:current-page="toolCatalogPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="filteredToolCatalog.length" :page-size="10" />
         </div>
 
         <div v-if="selectedToolCandidate" class="tool-catalog-config">
@@ -995,16 +1027,20 @@ onUnmounted(() => clearSkillTestPoll())
         </div>
       </dl>
       <section v-else-if="detailType === 'skill' && skillDetailTab === 'versions'" class="capability-detail__table">
-        <el-table class="data-table" :data="selectedSkillVersions" empty-text="暂无版本记录">
+        <el-table class="data-table" :data="pagedSkillVersions" empty-text="暂无版本记录">
           <el-table-column label="版本" width="95"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
           <el-table-column label="变更说明" min-width="210"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ scope.row.createdAt }}</small></div></template></el-table-column>
           <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
           <el-table-column label="操作" width="100" fixed="right"><template #default="scope"><el-button v-if="authStore.canManage && scope.row.status === 'published' && scope.row.version !== selectedSkill?.activeVersion" link type="primary" :loading="actionLoading === `skill-rollback:${scope.row.id}`" @click="rollbackSkill(scope.row)">回滚至此</el-button><span v-else class="muted">—</span></template></el-table-column>
         </el-table>
+        <el-pagination v-model:current-page="skillVersionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillVersions.length" :page-size="10" />
       </section>
       <section v-else-if="detailType === 'skill'" class="capability-detail__releases">
         <el-empty v-if="!selectedSkillReleases.length" description="暂无发布记录" />
-        <el-timeline v-else><el-timeline-item v-for="record in selectedSkillReleases" :key="record.id" :timestamp="record.time" placement="top"><article class="release-record"><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
+        <template v-else>
+          <el-timeline><el-timeline-item v-for="record in pagedSkillReleases" :key="record.id" :timestamp="record.time" placement="top"><article class="release-record"><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
+          <el-pagination v-model:current-page="skillReleasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillReleases.length" :page-size="10" />
+        </template>
       </section>
       <template v-if="detailType === 'tool' && !detailToolCandidate">
         <template v-if="detailToolGovernance">
@@ -1030,10 +1066,11 @@ onUnmounted(() => clearSkillTestPoll())
         </template>
         <section class="tool-gov-section">
           <h3>引用方</h3>
-          <el-table v-if="toolReferences.length" class="data-table" :data="toolReferences" size="small">
+          <el-table v-if="toolReferences.length" class="data-table" :data="pagedToolReferences" size="small">
             <el-table-column prop="agentName" label="Agent" min-width="160" />
             <el-table-column label="版本" min-width="150"><template #default="scope"><span class="mono">{{ scope.row.versions.map((v: string) => `v${v}`).join('、') }}</span></template></el-table-column>
           </el-table>
+          <el-pagination v-if="toolReferences.length" v-model:current-page="toolReferencePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="toolReferences.length" :page-size="10" />
           <p v-else class="tool-gov-note">暂无 Agent 引用</p>
         </section>
       </template>
@@ -1111,7 +1148,8 @@ onUnmounted(() => clearSkillTestPoll())
 .tool-catalog-toolbar .el-input { max-width: 420px; }
 .tool-catalog-toolbar .el-radio-group { flex: none; }
 .tool-catalog-layout { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr); gap: var(--spacing-section); }
-.tool-catalog-list { display: flex; flex-direction: column; gap: 8px; max-height: 480px; overflow-y: auto; }
+.tool-catalog-column { display: flex; min-width: 0; flex-direction: column; }
+.tool-catalog-list { display: flex; flex: 1; flex-direction: column; gap: 8px; max-height: 480px; overflow-y: auto; }
 .tool-catalog-card { width: 100%; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); color: var(--color-text-primary); background: var(--color-bg-base); text-align: left; cursor: pointer; }
 .tool-catalog-card:hover, .tool-catalog-card.is-selected { border-color: var(--color-primary); background: var(--color-primary-light); }
 .tool-catalog-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }

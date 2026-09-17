@@ -5,6 +5,7 @@ import { Key, Lock, Search, View } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { ToolDefinition } from '@/types/domain'
@@ -32,6 +33,8 @@ const filteredTools = computed(() => {
       .includes(keyword),
   )
 })
+const { currentPage: toolPage, pagedItems: pagedTools } =
+  useListPagination(filteredTools, { resetOn: query })
 
 const roleOptions = computed(() =>
   [...new Set([
@@ -110,7 +113,7 @@ onMounted(async () => {
     </section>
 
     <section class="content-panel content-panel--flush permission-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="filteredTools" empty-text="暂无匹配的工具权限">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的工具权限">
         <el-table-column label="工具" min-width="250"><template #default="scope"><div class="tool-name"><strong>{{ scope.row.name }}</strong><code>{{ scope.row.id }}</code></div></template></el-table-column>
         <el-table-column prop="system" label="系统" min-width="110" />
         <el-table-column label="风险" width="100"><template #default="scope"><StatusTag :status="scope.row.risk" /></template></el-table-column>
@@ -119,6 +122,7 @@ onMounted(async () => {
         <el-table-column label="审批策略" width="145"><template #default="scope"><span class="approval-label">{{ approvalLabel(scope.row.approvalPolicy) }}</span></template></el-table-column>
         <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button link type="primary" data-action="configure-tool-permission" @click="editTool(scope.row)">{{ authStore.canManage ? '配置' : '查看' }}</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
     </section>
 
     <el-dialog v-model="toolDialogOpen" :title="`${authStore.canManage ? '配置' : '查看'}工具权限：${selectedTool?.name ?? ''}`" width="720px">

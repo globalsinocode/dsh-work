@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
+import { useListPagination } from '@/composables/use-list-pagination'
 import {
   useAgentGovernanceStore,
   type EvidenceRef,
@@ -73,6 +74,17 @@ const filteredAgents = computed(() => {
     return matchesQuery && matchesStatus
   })
 })
+const joinedWorkspaces = computed(() =>
+  contentStore.agentJoinedWorkspaces[selectedAgentId.value] ?? [],
+)
+const { currentPage: agentPage, pagedItems: pagedAgents } =
+  useListPagination(filteredAgents, { resetOn: [query, statusFilter] })
+const { currentPage: joinedWorkspacePage, pagedItems: pagedJoinedWorkspaces } =
+  useListPagination(joinedWorkspaces, { resetOn: selectedAgentId })
+const { currentPage: versionPage, pagedItems: pagedVersions } =
+  useListPagination(selectedVersions, { resetOn: selectedAgentId })
+const { currentPage: releasePage, pagedItems: pagedReleases } =
+  useListPagination(selectedReleases, { resetOn: selectedAgentId })
 
 function draftVersionOf(agentId: string) {
   return contentStore.agentVersions.find(
@@ -262,7 +274,7 @@ onMounted(async () => {
     </section>
 
     <section class="content-panel content-panel--flush agent-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="filteredAgents" empty-text="暂无匹配的 Agent" @row-click="inspect">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedAgents" empty-text="暂无匹配的 Agent" @row-click="inspect">
         <el-table-column label="Agent" min-width="300"><template #default="scope"><div class="agent-cell"><span class="agent-cell__mark">d</span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small></div></div></template></el-table-column>
         <el-table-column label="发布版本" width="130">
           <template #default="scope">
@@ -300,6 +312,7 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="agentPage" background layout="prev, pager, next" :total="filteredAgents.length" :page-size="10" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(1040px, 100vw)">
@@ -358,11 +371,11 @@ onMounted(async () => {
               <StatusTag v-else :status="selectedAgent.allowWorkspaceJoin ? 'published' : 'disabled'" :label="selectedAgent.allowWorkspaceJoin ? '允许加入' : '禁止加入'" />
             </div>
             <div class="joined-workspaces">
-              <h4>已加入空间 <span class="tab-count">{{ (contentStore.agentJoinedWorkspaces[selectedAgent.id] ?? []).length }}</span></h4>
+              <h4>已加入空间 <span class="tab-count">{{ joinedWorkspaces.length }}</span></h4>
               <el-table
                 v-loading="joinedWorkspacesLoading"
                 class="data-table"
-                :data="contentStore.agentJoinedWorkspaces[selectedAgent.id] ?? []"
+                :data="pagedJoinedWorkspaces"
                 empty-text="该 Agent 尚未加入任何团队空间"
               >
                 <el-table-column prop="workspaceName" label="空间" min-width="180" />
@@ -371,6 +384,7 @@ onMounted(async () => {
                 <el-table-column prop="addedBy" label="加入人" min-width="120" />
                 <el-table-column label="加入时间" width="165"><template #default="scope">{{ formatUpdatedAt(scope.row.createdAt) }}</template></el-table-column>
               </el-table>
+              <el-pagination v-model:current-page="joinedWorkspacePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="joinedWorkspaces.length" :page-size="10" />
               <el-alert type="info" :closable="false" show-icon title="停用或移出某个空间前，先确认该 Agent 的固定版本与成员状态，避免影响仍在使用它的团队会话。" />
             </div>
           </section>
@@ -379,7 +393,7 @@ onMounted(async () => {
 
 
         <section v-else-if="activeDetailTab === 'versions'" class="agent-detail__table">
-          <el-table class="data-table" :data="selectedVersions" empty-text="暂无版本记录">
+          <el-table class="data-table" :data="pagedVersions" empty-text="暂无版本记录">
             <el-table-column label="版本" width="120"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span><small v-if="scope.row.version === selectedAgent?.version" class="current-version">当前</small><small class="cell-sub mono">{{ versionGov(scope.row).bindingRevision }}</small></template></el-table-column>
             <el-table-column label="变更说明" min-width="200"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ formatUpdatedAt(scope.row.createdAt) }}</small></div></template></el-table-column>
             <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
@@ -398,11 +412,15 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
+          <el-pagination v-model:current-page="versionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedVersions.length" :page-size="10" />
         </section>
 
         <section v-else class="agent-detail__releases">
           <el-empty v-if="!selectedReleases.length" description="暂无发布记录" />
-          <el-timeline v-else><el-timeline-item v-for="record in selectedReleases" :key="record.id" :timestamp="formatUpdatedAt(record.time)" placement="top"><article class="release-record"><div><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><StatusTag :status="record.action === 'disabled' ? 'disabled' : 'published'" :label="releaseActionLabel(record)" /></div><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
+          <template v-else>
+            <el-timeline><el-timeline-item v-for="record in pagedReleases" :key="record.id" :timestamp="formatUpdatedAt(record.time)" placement="top"><article class="release-record"><div><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><StatusTag :status="record.action === 'disabled' ? 'disabled' : 'published'" :label="releaseActionLabel(record)" /></div><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
+            <el-pagination v-model:current-page="releasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedReleases.length" :page-size="10" />
+          </template>
         </section>
 
         <div v-if="authStore.canManage" class="agent-detail__footer">

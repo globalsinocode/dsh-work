@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Cpu, Refresh, Search, Setting, View } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { RuntimeDefinition } from '@/types/domain'
@@ -57,6 +58,8 @@ const filteredRuntimes = computed(() => {
     return matchesQuery && matchesEnvironment && matchesStatus && matchesScheduling
   })
 })
+const { currentPage: runtimePage, pagedItems: pagedRuntimes } =
+  useListPagination(filteredRuntimes, { resetOn: [query, environmentFilter, statusFilter, schedulingFilter] })
 const healthyCount = computed(() => contentStore.runtimes.filter((runtime) => runtime.status === 'healthy').length)
 const totalCapacity = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.maxConcurrentWorkers, 0))
 const activeWorkers = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.activeWorkers, 0))
@@ -194,7 +197,7 @@ onMounted(() => contentStore.load())
     </section>
 
     <section class="content-panel content-panel--flush runtime-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="filteredRuntimes" empty-text="暂无匹配的 Runtime" @row-click="inspect">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedRuntimes" empty-text="暂无匹配的 Runtime" @row-click="inspect">
         <el-table-column label="Runtime" min-width="205">
           <template #default="scope"><div class="runtime-cell"><span><el-icon><Cpu /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small class="mono">{{ scope.row.id }}</small></div></div></template>
         </el-table-column>
@@ -211,6 +214,7 @@ onMounted(() => contentStore.load())
           </template>
         </el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="runtimePage" background layout="prev, pager, next" :total="filteredRuntimes.length" :page-size="10" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(590px, 100vw)" title="Runtime 详情">

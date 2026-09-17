@@ -16,13 +16,15 @@ import type {
   AuditEvent,
   ConnectorDefinition,
   DirectorySyncState,
+  EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
   HealthComponent,
   IdentityRoleSummary,
   IdentityUserPage,
   IdentityUserSummary,
+  ListPage,
   LocalPermissionDefinition,
-  ModelUsageRecord,
+  ModelUsagePage,
   ManagedWorkspaceDefinition,
   ModelProvider,
   ModelRoute,
@@ -30,7 +32,7 @@ import type {
   OperationsSummary,
   PlatformStatus,
   RuntimeDefinition,
-  SessionDefinition,
+  SessionListPage,
   SkillDefinition,
   SkillReleaseRecord,
   SkillTestRunProgress,
@@ -103,6 +105,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data
 }
 
+function listQuery(input: Record<string, string | number | undefined>) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === '' || value === 'all') continue
+    params.set(key === 'pageSize' ? 'page_size' : key, String(value))
+  }
+  const suffix = params.toString()
+  return suffix ? `?${suffix}` : ''
+}
+
 function redirectToLogin() {
   if (typeof window === 'undefined') return
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
@@ -133,7 +145,8 @@ export const adminApi = {
     request<RuntimeDefinition>('/runtimes/check', { method: 'POST', body: JSON.stringify(input) }),
   updateRuntimeConfiguration: (input: UpdateRuntimeConfigurationInput) =>
     request<RuntimeDefinition>('/runtimes/configuration', { method: 'PATCH', body: JSON.stringify(input) }),
-  getSessions: () => request<SessionDefinition[]>('/sessions'),
+  getSessions: (input: { query?: string; status?: string; workspace?: string; page?: number; pageSize?: number } = {}) =>
+    request<SessionListPage>(`/sessions${listQuery(input)}`),
   getWorkspaces: () => request<ManagedWorkspaceDefinition[]>('/workspaces'),
   getAgents: () => request<AgentDefinition[]>('/agents'),
   getAgentVersions: () => request<AgentVersionRecord[]>('/agent-versions'),
@@ -258,12 +271,16 @@ export const adminApi = {
     dataScopes: string[]
     approvalPolicy: ToolDefinition['approvalPolicy']
   }) => request<ToolDefinition>('/tools/permissions', { method: 'PATCH', body: JSON.stringify(input) }),
-  getAuditEvents: () => request<AuditEvent[]>('/audit-events'),
+  getAuditEvents: (input: { query?: string; status?: string; category?: string; page?: number; pageSize?: number } = {}) =>
+    request<ListPage<AuditEvent>>(`/audit-events${listQuery(input)}`),
   getOperationsSummary: () => request<OperationsSummary>('/operations/summary'),
   getRunOperations: (runId: string) => request<AuditEvent[]>(`/operations/runs/${encodeURIComponent(runId)}`),
   getHealth: () => request<HealthComponent[]>('/health'),
   getUsage: () => request<UsagePoint[]>('/usage'),
-  getModelUsage: () => request<ModelUsageRecord[]>('/model-usage'),
+  getModelUsage: (input: { query?: string; employee?: string; provider?: string; status?: string; page?: number; pageSize?: number } = {}) =>
+    request<ModelUsagePage>(`/model-usage${listQuery(input)}`),
+  getModelUsageEmployees: (input: { query?: string; employee?: string; provider?: string; status?: string; page?: number; pageSize?: number } = {}) =>
+    request<ListPage<EmployeeModelUsageSummary>>(`/model-usage/employees${listQuery(input)}`),
   getModelProviders: () => request<ModelProvider[]>('/model-providers'),
   createModelProvider: (input: {
     key: string

@@ -468,6 +468,54 @@ export interface ModelUsageRecord {
   traceId: string
 }
 
+export interface ListPage<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface SessionListPage extends ListPage<SessionDefinition> {
+  summary: {
+    total: number
+    active: number
+    awaitingApproval: number
+    failed: number
+  }
+  facets: {
+    workspaces: { id: string; name: string }[]
+  }
+}
+
+export interface ModelUsagePage extends ListPage<ModelUsageRecord> {
+  summary: {
+    callCount: number
+    employeeCount: number
+    totalTokens: number
+    averageLatencyMs: number
+  }
+  facets: {
+    providers: string[]
+    employees: { employeeId: string; employeeName: string; department: string }[]
+  }
+}
+
+export interface EmployeeModelUsageSummary {
+  employeeId: string
+  employeeName: string
+  department: string
+  callCount: number
+  successCount: number
+  failedCount: number
+  blockedCount: number
+  successRate: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  averageLatencyMs: number
+  lastUsedAt: string
+}
+
 export type ProviderStatus = 'active' | 'disabled'
 export type CredentialBackend = 'dsh-managed' | 'keychain' | 'secret-manager'
 export type CredentialStatus = 'configured' | 'missing' | 'revoked'

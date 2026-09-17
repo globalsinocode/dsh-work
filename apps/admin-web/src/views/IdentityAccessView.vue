@@ -4,6 +4,7 @@ import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { adminApi } from '@/api/client'
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import type {
   DirectorySyncState,
@@ -55,6 +56,7 @@ const groupedPermissions = computed(() => {
   }
   return [...groups.entries()].map(([category, items]) => ({ category, items }))
 })
+const { currentPage: rolePage, pagedItems: pagedRoles } = useListPagination(roles)
 
 async function load() {
   loading.value = true
@@ -420,7 +422,7 @@ onMounted(() => void load())
           <el-button v-if="authStore.canManageIdentity" type="primary" @click="openCreateRole">新建角色</el-button>
         </section>
         <section class="content-panel content-panel--flush">
-          <el-table v-loading="loading" class="data-table" :data="roles" empty-text="暂无角色">
+          <el-table v-loading="loading" class="data-table" :data="pagedRoles" empty-text="暂无角色">
             <el-table-column label="角色" min-width="210"><template #default="scope"><div class="role-cell"><strong>{{ scope.row.name }}</strong><code>{{ scope.row.code }}</code></div></template></el-table-column>
             <el-table-column label="功能权限" min-width="300"><template #default="scope"><div class="tag-list"><el-tag v-for="permission in scope.row.permissions" :key="permission" effect="plain">{{ permission }}</el-tag><span v-if="!scope.row.permissions.length" class="empty-value">未配置</span></div></template></el-table-column>
             <el-table-column label="数据范围" min-width="230"><template #default="scope"><span class="scope-copy">{{ scope.row.dataScopes.join('、') || '未配置' }}</span></template></el-table-column>
@@ -428,6 +430,16 @@ onMounted(() => void load())
             <el-table-column label="状态" width="90"><template #default="scope"><el-tag :type="scope.row.status === 'active' ? 'success' : 'info'" effect="plain">{{ scope.row.status === 'active' ? '启用' : '停用' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="95" fixed="right"><template #default="scope"><el-button link type="primary" @click="openEditRole(scope.row)">{{ authStore.canManageIdentity ? '配置' : '查看' }}</el-button></template></el-table-column>
           </el-table>
+          <div class="table-footer identity-pagination">
+            <span>第 {{ rolePage }} 页，共 {{ roles.length }} 个角色</span>
+            <el-pagination
+              v-model:current-page="rolePage"
+              background
+              layout="prev, pager, next"
+              :total="roles.length"
+              :page-size="10"
+            />
+          </div>
         </section>
       </el-tab-pane>
     </el-tabs>

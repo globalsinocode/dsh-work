@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Plus, Refresh, SetUp } from '@element-plus/icons-vue'
 
 import { adminApi } from '@/api/client'
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import type { ModelProvider, ModelRoute, ModelRoutePurpose } from '@/types/domain'
 
@@ -32,6 +33,8 @@ const modelOptions = computed(() => providers.value.flatMap((provider) => provid
   label: `${provider.name} / ${model.displayName}`,
   disabled: provider.status !== 'active' || model.status !== 'active',
 }))))
+const { currentPage: providerPage, pagedItems: pagedProviders } = useListPagination(providers)
+const { currentPage: routePage, pagedItems: pagedRoutes } = useListPagination(routes)
 
 async function load() {
   loading.value = true
@@ -188,7 +191,7 @@ onMounted(() => void load())
         <el-button v-if="authStore.canManage" type="primary" :icon="Plus" @click="activeTab === 'providers' ? openProviderDialog() : openRouteDialog()">{{ activeTab === 'providers' ? '新建 Provider' : '新建路由' }}</el-button>
       </div>
 
-      <el-table v-if="activeTab === 'providers'" v-loading="loading" class="data-table" :data="providers" empty-text="暂无 Provider">
+      <el-table v-if="activeTab === 'providers'" v-loading="loading" class="data-table" :data="pagedProviders" empty-text="暂无 Provider">
         <el-table-column label="Provider" min-width="210"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.name }}</strong><span>{{ scope.row.key }} · {{ scope.row.providerType }}</span></div></template></el-table-column>
         <el-table-column label="服务地址" min-width="210"><template #default="scope"><span class="mono-value">{{ scope.row.baseUrl }}</span></template></el-table-column>
         <el-table-column label="模型数" width="80"><template #default="scope">{{ scope.row.models.length }} 个</template></el-table-column>
@@ -198,7 +201,7 @@ onMounted(() => void load())
         <el-table-column type="expand" width="48"><template #default="scope"><div class="model-expansion"><h3>已注册模型</h3><el-empty v-if="scope.row.models.length === 0" description="尚未添加模型" :image-size="54" /><div v-else class="model-card-grid"><article v-for="model in scope.row.models" :key="model.id"><div><strong>{{ model.displayName }}</strong><span>{{ model.modelKey }}</span></div><el-tag effect="plain">{{ model.status === 'active' ? '启用' : '停用' }}</el-tag><p>{{ model.capabilities.join(' · ') || '未声明能力' }}</p></article></div></div></template></el-table-column>
       </el-table>
 
-      <el-table v-else v-loading="loading" class="data-table" :data="routes" empty-text="暂无模型路由">
+      <el-table v-else v-loading="loading" class="data-table" :data="pagedRoutes" empty-text="暂无模型路由">
         <el-table-column label="路由" min-width="230"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.name }}</strong><span>{{ scope.row.key }}</span></div></template></el-table-column>
         <el-table-column label="用途" width="110"><template #default="scope"><el-tag effect="plain">{{ purposeLabel(scope.row.purpose) }}</el-tag></template></el-table-column>
         <el-table-column label="路由目标" min-width="280"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.modelName }}</strong><span>{{ scope.row.providerName }} / {{ scope.row.modelKey }}</span></div></template></el-table-column>
@@ -206,6 +209,7 @@ onMounted(() => void load())
         <el-table-column label="状态" width="110"><template #default="scope"><el-tag :type="scope.row.enabled ? 'success' : 'info'" effect="plain">{{ scope.row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="更新于" min-width="180"><template #default="scope">{{ new Date(scope.row.updatedAt).toLocaleString('zh-CN') }}</template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-if="activeTab === 'providers'" v-model:current-page="providerPage" background layout="prev, pager, next" :total="providers.length" :page-size="10" /><el-pagination v-else v-model:current-page="routePage" background layout="prev, pager, next" :total="routes.length" :page-size="10" /></div>
     </section>
 
     <el-dialog v-model="providerDialogOpen" title="新建 Provider" width="620px" destroy-on-close>

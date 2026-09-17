@@ -26,7 +26,13 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     const input = await readJsonBody<Omit<Parameters<AdminQueryService['updateRuntimeConfiguration']>[0], 'actor'>>(request)
     return envelope('admin', await service.updateRuntimeConfiguration({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
-  router.get(`${basePath}/sessions`, async () => envelope('admin', await service.getSessions()))
+  router.get(`${basePath}/sessions`, async (_request, context) => envelope('admin', await service.getSessions({
+    query: context.url.searchParams.get('query') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    workspace: context.url.searchParams.get('workspace') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  })))
   router.get(`${basePath}/workspaces`, async () => envelope('admin', await service.getManagedWorkspaces()))
   router.get(`${basePath}/agents`, async () => envelope('admin', await service.getAgents()))
   router.get(`${basePath}/agent-versions`, async () => envelope('admin', await service.getAgentVersions()))
@@ -144,12 +150,31 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     requireRequestIdentity(context, 'admin')
     return envelope('admin', await service.updateToolPermissions(input))
   })
-  router.get(`${basePath}/audit-events`, async () => envelope('admin', await service.getAuditEvents()))
+  router.get(`${basePath}/audit-events`, async (_request, context) => envelope('admin', await service.getAuditEvents({
+    query: context.url.searchParams.get('query') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    category: context.url.searchParams.get('category') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  })))
   router.get(`${basePath}/operations/summary`, async () => envelope('admin', await service.getOperationsSummary()))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth()))
   router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage()))
-  router.get(`${basePath}/model-usage`, async () => envelope('admin', await service.getModelUsage()))
+  router.get(`${basePath}/model-usage`, async (_request, context) => envelope('admin', await service.getModelUsage(prototypeModelUsageQuery(context))))
+  router.get(`${basePath}/model-usage/employees`, async (_request, context) =>
+    envelope('admin', await service.getModelUsageEmployees(prototypeModelUsageQuery(context))))
   router.get(`${basePath}/platform-status`, () => envelope('admin', service.getPlatformStatus()))
+}
+
+function prototypeModelUsageQuery(context: { url: URL }) {
+  return {
+    query: context.url.searchParams.get('query') ?? undefined,
+    employee: context.url.searchParams.get('employee') ?? undefined,
+    provider: context.url.searchParams.get('provider') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  }
 }
 
 function prototypeSkillVersion(skill: SkillDefinition): SkillVersionRecord {

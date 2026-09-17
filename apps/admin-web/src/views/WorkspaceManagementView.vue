@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { FolderOpened, Search, View } from '@element-plus/icons-vue'
 
+import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { GrantSourceReconciliationItem, ManagedWorkspaceDefinition } from '@/types/domain'
@@ -26,6 +27,10 @@ const sessionTotal = computed(() => contentStore.workspaces.reduce((sum, workspa
 const artifactTotal = computed(() => contentStore.workspaces.reduce((sum, workspace) => sum + workspace.artifactCount, 0))
 const unresolvedItems = computed(() => contentStore.grantReconciliation?.items ?? [])
 const unresolvedWorkspaceCount = computed(() => contentStore.grantReconciliation?.workspaceSummary.length ?? 0)
+const { currentPage: workspacePage, pagedItems: pagedWorkspaces } =
+  useListPagination(filteredWorkspaces, { resetOn: query })
+const { currentPage: reconcilePage, pagedItems: pagedUnresolvedItems } =
+  useListPagination(unresolvedItems)
 
 const capabilityTypeLabels: Record<GrantSourceReconciliationItem['capabilityType'], string> = {
   agent: 'Agent 版本',
@@ -120,7 +125,7 @@ onMounted(async () => {
     </section>
 
     <section class="content-panel content-panel--flush workspace-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="filteredWorkspaces" empty-text="暂无匹配的工作空间" @row-click="inspect">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedWorkspaces" empty-text="暂无匹配的工作空间" @row-click="inspect">
         <el-table-column label="工作空间" min-width="280"><template #default="scope"><div class="workspace-cell"><span><el-icon><FolderOpened /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small><code>{{ scope.row.id }}</code></div></div></template></el-table-column>
         <el-table-column label="创建人" min-width="150" prop="creator" />
         <el-table-column label="规模" min-width="180"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.memberCount }} 名成员 · {{ scope.row.sessionCount }} 个 Session</strong><span>{{ scope.row.fileCount }} 个文件 · {{ scope.row.artifactCount }} 个成果</span></div></template></el-table-column>
@@ -128,6 +133,7 @@ onMounted(async () => {
         <el-table-column prop="updatedAt" label="最近更新" width="120" />
         <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-workspace" @click.stop="inspect(scope.row)">查看</el-button></template></el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="workspacePage" background layout="prev, pager, next" :total="filteredWorkspaces.length" :page-size="10" /></div>
     </section>
 
     <!-- 1A-T7 授权来源对账清单（convergence §2 / plan 6.3）：legacy 来源与可能归属 Agent，仅提示不自动回填。 -->
@@ -139,7 +145,7 @@ onMounted(async () => {
         </div>
         <span class="filter-bar__meta">{{ unresolvedItems.length }} 条 · {{ unresolvedWorkspaceCount }} 个空间</span>
       </header>
-      <el-table class="data-table" :data="unresolvedItems" empty-text="没有待对账的历史授权来源">
+      <el-table class="data-table" :data="pagedUnresolvedItems" empty-text="没有待对账的历史授权来源">
         <el-table-column label="空间" min-width="170"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.workspaceName }}</strong><code>{{ scope.row.workspaceId }}</code></div></template></el-table-column>
         <el-table-column label="能力类型" width="110"><template #default="scope">{{ capabilityTypeLabel(scope.row.capabilityType) }}</template></el-table-column>
         <el-table-column label="能力版本" min-width="200"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.capabilityLabel }}</strong><code>{{ scope.row.capabilityVersionId }}</code></div></template></el-table-column>
@@ -158,6 +164,7 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="reconcilePage" background hide-on-single-page layout="prev, pager, next" :total="unresolvedItems.length" :page-size="10" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(610px, 100vw)" title="工作空间详情">

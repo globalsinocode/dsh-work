@@ -5,13 +5,21 @@ import type {
   AgentDefinition,
   AgentDraftConfiguration,
   AgentVersionRecord,
+  AuditEvent,
+  AuditEventListQuery,
   ConnectorConfiguration,
   CreateAgentDraftInput,
   CreateSkillInput,
+  EmployeeModelUsageSummary,
+  ListPage,
   ManagedWorkspaceDefinition,
+  ModelUsageListQuery,
+  ModelUsagePage,
+  ModelUsageRecord,
   OperationsSummary,
   PublishStatus,
-  SessionDefinition,
+  SessionListPage,
+  SessionListQuery,
   SkillConfiguration,
   SkillDefinition,
   ToolDefinition,
@@ -106,14 +114,14 @@ export class AdminQueryService {
     })
   }
 
-  async getSessions(): Promise<SessionDefinition[]> {
+  async getSessions(input: SessionListQuery = {}): Promise<SessionListPage> {
     const tasks = await this.repository.read('tasks')
     const traceByRun: Record<string, string> = {
       'run-260828-002': 'tr_92af80d18d',
       'run-260828-001': 'tr_abe490071c',
       'run-260826-008': 'tr_6a7c31e02d',
     }
-    return tasks.map((task) => ({
+    const sessions = tasks.map((task) => ({
       id: task.sessionId,
       title: task.title,
       user: task.owner,
@@ -130,6 +138,31 @@ export class AdminQueryService {
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       traceId: traceByRun[task.id] ?? `trace-${task.id.replace(/^run-/, '')}`,
+    }))
+    const keyword = normalizeKeyword(input.query)
+    const filtered = sessions.filter((session) =>
+      (!keyword || `${session.title} ${session.id} ${session.user} ${session.agentName} ${session.runId} ${session.traceId}`.toLowerCase().includes(keyword))
+      && (!input.status || session.status === input.status)
+      && (!input.workspace || session.workspaceId === input.workspace),
+    )
+    const workspaceFacets = new Map<string, string>()
+    for (const session of sessions) workspaceFacets.set(session.workspaceId, session.workspaceName)
+    return paginate(filtered, input, (items, page, pageSize) => ({
+      items,
+      total: filtered.length,
+      page,
+      pageSize,
+      summary: {
+        total: sessions.length,
+        active: sessions.filter((session) => ['queued', 'running'].includes(session.status)).length,
+        awaitingApproval: sessions.filter((session) => session.status === 'awaiting_approval').length,
+        failed: sessions.filter((session) => session.status === 'failed').length,
+      },
+      facets: {
+        workspaces: [...workspaceFacets.entries()]
+          .map(([id, name]) => ({ id, name }))
+          .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
+      },
     }))
   }
 
@@ -474,8 +507,15 @@ export class AdminQueryService {
     })
   }
 
-  getAuditEvents() {
-    return this.repository.read('auditEvents')
+  async getAuditEvents(input: AuditEventListQuery = {}): Promise<ListPage<AuditEvent>> {
+    const events = await this.repository.read('auditEvents')
+    const keyword = normalizeKeyword(input.query)
+    const filtered = events.filter((event) =>
+      (!keyword || `${event.actor} ${event.object} ${event.traceId} ${event.runId ?? ''} ${event.attemptId ?? ''} ${event.detail}`.toLowerCase().includes(keyword))
+      && (!input.status || event.status === input.status)
+      && (!input.category || event.category === input.category),
+    )
+    return paginate(filtered, input)
   }
 
   async getOperationsSummary(): Promise<OperationsSummary> {
@@ -504,8 +544,82 @@ export class AdminQueryService {
     return this.repository.read('usage')
   }
 
-  getModelUsage() {
-    return this.repository.read('modelUsage')
+  async getModelUsage(input: ModelUsageListQuery = {}): Promise<ModelUsagePage> {
+    const records = await this.repository.read('modelUsage')
+    const filtered = filterModelUsage(records, input)
+    const successful = filtered.filter((record) => record.status === 'success')
+    const providers = [...new Set(records.map((record) => record.provider))].sort()
+    const employeeFacets = new Map<string, { employeeId: string; employeeName: string; department: string }>()
+    for (const record of records) {
+      employeeFacets.set(record.employeeId, {
+        employeeId: record.employeeId,
+        employeeName: record.employeeName,
+        department: record.department,
+      })
+    }
+    return paginate(filtered, input, (items, page, pageSize) => ({
+      items,
+      total: filtered.length,
+      page,
+      pageSize,
+      summary: {
+        callCount: filtered.length,
+        employeeCount: new Set(filtered.map((record) => record.employeeId)).size,
+        totalTokens: filtered.reduce((sum, record) => sum + record.totalTokens, 0),
+        averageLatencyMs: successful.length
+          ? Math.round(successful.reduce((sum, record) => sum + record.latencyMs, 0) / successful.length)
+          : 0,
+      },
+      facets: {
+        providers,
+        employees: [...employeeFacets.values()]
+          .sort((left, right) => left.employeeName.localeCompare(right.employeeName, 'zh-CN')),
+      },
+    }))
+  }
+
+  async getModelUsageEmployees(input: ModelUsageListQuery = {}): Promise<ListPage<EmployeeModelUsageSummary>> {
+    const records = await this.repository.read('modelUsage')
+    const filtered = filterModelUsage(records, input)
+    const summaries = new Map<string, EmployeeModelUsageSummary & { latencyTotal: number }>()
+    for (const record of filtered) {
+      const current = summaries.get(record.employeeId) ?? {
+        employeeId: record.employeeId,
+        employeeName: record.employeeName,
+        department: record.department,
+        callCount: 0,
+        successCount: 0,
+        failedCount: 0,
+        blockedCount: 0,
+        successRate: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        averageLatencyMs: 0,
+        lastUsedAt: record.time,
+        latencyTotal: 0,
+      }
+      current.callCount += 1
+      current.promptTokens += record.promptTokens
+      current.completionTokens += record.completionTokens
+      current.totalTokens += record.totalTokens
+      if (record.status === 'success') {
+        current.successCount += 1
+        current.latencyTotal += record.latencyMs
+      } else if (record.status === 'failed') {
+        current.failedCount += 1
+      } else {
+        current.blockedCount += 1
+      }
+      current.successRate = current.callCount ? current.successCount / current.callCount : 0
+      current.averageLatencyMs = current.successCount ? Math.round(current.latencyTotal / current.successCount) : 0
+      if (record.time > current.lastUsedAt) current.lastUsedAt = record.time
+      summaries.set(record.employeeId, current)
+    }
+    const items = [...summaries.values()]
+      .sort((left, right) => right.totalTokens - left.totalTokens || left.employeeName.localeCompare(right.employeeName, 'zh-CN'))
+      .map(({ latencyTotal: _latencyTotal, ...summary }) => summary)
+    return paginate(items, input)
   }
 
   getPlatformStatus(): PlatformStatus {
@@ -518,6 +632,36 @@ export class AdminQueryService {
       artifactStorage: 'not-configured',
     }
   }
+}
+
+function normalizeKeyword(query: string | undefined) {
+  return query?.trim().toLowerCase().slice(0, 100) ?? ''
+}
+
+function paginate<T, R extends ListPage<T>>(
+  source: T[],
+  input: { page?: number; pageSize?: number },
+  wrap: (items: T[], page: number, pageSize: number) => R = (items, page, pageSize) =>
+    ({ items, total: source.length, page, pageSize }) as R,
+): R {
+  const pageSize = Number.isSafeInteger(input.pageSize)
+    ? Math.min(500, Math.max(1, input.pageSize as number))
+    : 10
+  const pageCount = Math.max(1, Math.ceil(source.length / pageSize))
+  const page = Number.isSafeInteger(input.page)
+    ? Math.min(pageCount, Math.max(1, input.page as number))
+    : 1
+  return wrap(source.slice((page - 1) * pageSize, page * pageSize), page, pageSize)
+}
+
+function filterModelUsage(records: ModelUsageRecord[], input: ModelUsageListQuery) {
+  const keyword = normalizeKeyword(input.query)
+  return records.filter((record) =>
+    (!keyword || `${record.employeeName} ${record.employeeId} ${record.department} ${record.provider} ${record.model} ${record.modelRoute} ${record.agentId} ${record.runId} ${record.traceId}`.toLowerCase().includes(keyword))
+    && (!input.employee || record.employeeId === input.employee)
+    && (!input.provider || record.provider === input.provider)
+    && (!input.status || record.status === input.status),
+  )
 }
 
 function prototypeTimestamp() {

@@ -21,16 +21,30 @@ export function registerOperationsRoutes(
     const input = await readJsonBody<Omit<Parameters<PostgresOperationsService['updateRuntimeConfiguration']>[0], 'actor'>>(request)
     return envelope('admin', await service.updateRuntimeConfiguration({ ...input, actor: requireRequestIdentity(context, 'admin').userId }), 'postgres')
   })
-  router.get(`${basePath}/sessions`, async () => envelope('admin', await service.getSessions(), 'postgres'))
+  router.get(`${basePath}/sessions`, async (_request, context) => envelope('admin', await service.getSessions({
+    query: context.url.searchParams.get('query') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    workspace: context.url.searchParams.get('workspace') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  }), 'postgres'))
   router.get(`${basePath}/workspaces`, async () => envelope('admin', await service.getManagedWorkspaces(), 'postgres'))
-  router.get(`${basePath}/audit-events`, async () => envelope('admin', await service.getAuditEvents(), 'postgres'))
+  router.get(`${basePath}/audit-events`, async (_request, context) => envelope('admin', await service.getAuditEvents({
+    query: context.url.searchParams.get('query') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    category: context.url.searchParams.get('category') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
+  }), 'postgres'))
   router.get(`${basePath}/operations/summary`, async () =>
     envelope('admin', await service.getOperationsSummary(), 'postgres'))
   router.get(`${basePath}/operations/runs/:runId`, async (_request, context) =>
     envelope('admin', await service.getRunOperations(context.params.runId ?? ''), 'postgres'))
   router.get(`${basePath}/health`, async () => envelope('admin', await service.getHealth(), 'postgres'))
   router.get(`${basePath}/usage`, async () => envelope('admin', await service.getUsage(), 'postgres'))
-  router.get(`${basePath}/model-usage`, async () => envelope('admin', await service.getModelUsage(), 'postgres'))
+  router.get(`${basePath}/model-usage`, async (_request, context) => envelope('admin', await service.getModelUsage(modelUsageQuery(context)), 'postgres'))
+  router.get(`${basePath}/model-usage/employees`, async (_request, context) =>
+    envelope('admin', await service.getModelUsageEmployees(modelUsageQuery(context)), 'postgres'))
   router.get(`${basePath}/platform-status`, () => envelope('admin', service.getPlatformStatus(), 'postgres'))
   // 1A-T7 授权来源对账清单（convergence §2 / plan 6.3）。仅在 postgres 适配器下注册。
   if (reconciliation) {
@@ -43,5 +57,16 @@ export function registerOperationsRoutes(
         actor: requireRequestIdentity(context, 'admin').userId,
       }), 'postgres')
     })
+  }
+}
+
+function modelUsageQuery(context: { url: URL }) {
+  return {
+    query: context.url.searchParams.get('query') ?? undefined,
+    employee: context.url.searchParams.get('employee') ?? undefined,
+    provider: context.url.searchParams.get('provider') ?? undefined,
+    status: context.url.searchParams.get('status') ?? undefined,
+    page: Number(context.url.searchParams.get('page') ?? undefined),
+    pageSize: Number(context.url.searchParams.get('page_size') ?? undefined),
   }
 }

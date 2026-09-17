@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Download, Search, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { adminApi } from '@/api/client'
+import { usePagedList } from '@/composables/use-paged-list'
 import { useContentStore } from '@/stores/content'
 import type { AuditEvent } from '@/types/domain'
 
@@ -18,19 +19,25 @@ const selectedEvent = ref<AuditEvent>()
 const relatedEvents = ref<AuditEvent[]>([])
 const relatedLoading = ref(false)
 const drawerOpen = ref(false)
-const currentPage = ref(1)
-const pageSize = 10
 
-const filteredEvents = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return contentStore.auditEvents.filter((event) => {
-    const matchesQuery = !keyword || `${event.actor} ${event.object} ${event.traceId} ${event.runId ?? ''} ${event.attemptId ?? ''} ${event.detail}`.toLowerCase().includes(keyword)
-    const matchesStatus = statusFilter.value === 'all' || event.status === statusFilter.value
-    const matchesCategory = categoryFilter.value === 'all' || event.category === categoryFilter.value
-    return matchesQuery && matchesStatus && matchesCategory
-  })
+const {
+  items: events,
+  total: eventTotal,
+  currentPage,
+  pageSize,
+  loading: eventsLoading,
+  error: eventsError,
+  reload: reloadEvents,
+  changePage: changeEventPage,
+} = usePagedList<AuditEvent>({
+  fetch: (page, pageSize) => adminApi.getAuditEvents({
+    query: query.value,
+    status: statusFilter.value,
+    category: categoryFilter.value,
+    page,
+    pageSize,
+  }),
 })
-const pagedEvents = computed(() => filteredEvents.value.slice((currentPage.value - 1) * pageSize, currentPage.value * pageSize))
 
 const summary = computed(() => contentStore.operationsSummary)
 
@@ -106,28 +113,41 @@ async function inspect(event: AuditEvent) {
   }
 }
 
-function exportAudit() {
-  const content = JSON.stringify(filteredEvents.value, null, 2)
+async function exportAudit() {
+  const all: AuditEvent[] = []
+  let page = 1
+  for (;;) {
+    const result = await adminApi.getAuditEvents({
+      query: query.value,
+      status: statusFilter.value,
+      category: categoryFilter.value,
+      page,
+      pageSize: 500,
+    })
+    all.push(...result.items)
+    if (!result.items.length || all.length >= result.total) break
+    page += 1
+  }
+  const content = JSON.stringify(all, null, 2)
   const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }))
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = `dsh-work-运营事件-${new Date().toISOString().slice(0, 10)}.json`
   anchor.click()
   URL.revokeObjectURL(url)
-  ElMessage.success(`已导出 ${filteredEvents.value.length} 条脱敏运营事件`)
+  ElMessage.success(`已导出 ${all.length} 条脱敏运营事件`)
 }
 
 onMounted(() => {
   if (typeof route.query.trace === 'string') query.value = route.query.trace
   void contentStore.load()
+  void reloadEvents()
 })
-
-watch([query, statusFilter, categoryFilter], () => { currentPage.value = 1 })
 </script>
 
 <template>
   <div class="ops-page audit-page">
-    <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
+    <el-alert v-if="eventsError || contentStore.error" :title="eventsError || contentStore.error" type="error" show-icon @close="eventsError = ''; contentStore.error = ''" />
 
     <section v-loading="contentStore.loading" class="metric-grid audit-metrics">
       <article class="metric-card"><div class="metric-label">近 24 小时运行</div><div class="metric-value">{{ summary?.runs24h ?? 0 }}</div><div class="metric-detail">成功 {{ summary?.successfulRuns24h ?? 0 }} · 失败 {{ summary?.failedRuns24h ?? 0 }}</div></article>
@@ -138,16 +158,17 @@ watch([query, statusFilter, categoryFilter], () => { currentPage.value = 1 })
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
-        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索用户、对象、运行、链路编号或摘要" />
-        <el-select v-model="categoryFilter" aria-label="筛选运营事件类型"><el-option label="全部类型" value="all" /><el-option v-for="(label, value) in categoryLabels" :key="value" :label="label" :value="value" /></el-select>
-        <el-select v-model="statusFilter" aria-label="筛选审计结果"><el-option label="全部结果" value="all" /><el-option label="成功" value="success" /><el-option label="失败" value="failed" /><el-option label="已阻止" value="blocked" /></el-select>
-        <span class="filter-bar__meta">{{ filteredEvents.length }} 条事件</span>
-        <el-button :icon="Download" :disabled="!filteredEvents.length" @click="exportAudit">导出当前结果</el-button>
+        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索用户、对象、运行、链路编号或摘要" @keyup.enter="reloadEvents(true)" @clear="reloadEvents(true)" />
+        <el-select v-model="categoryFilter" aria-label="筛选运营事件类型" @change="reloadEvents(true)"><el-option label="全部类型" value="all" /><el-option v-for="(label, value) in categoryLabels" :key="value" :label="label" :value="value" /></el-select>
+        <el-select v-model="statusFilter" aria-label="筛选审计结果" @change="reloadEvents(true)"><el-option label="全部结果" value="all" /><el-option label="成功" value="success" /><el-option label="失败" value="failed" /><el-option label="已阻止" value="blocked" /></el-select>
+        <el-button :icon="Search" @click="reloadEvents(true)">查询</el-button>
+        <span class="filter-bar__meta">{{ eventTotal }} 条事件</span>
+        <el-button :icon="Download" :disabled="!eventTotal" @click="exportAudit">导出当前结果</el-button>
       </div>
     </section>
 
     <section class="content-panel content-panel--flush audit-panel">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedEvents" empty-text="没有匹配的审计记录" @row-click="inspect">
+      <el-table class="data-table" v-loading="eventsLoading" :data="events" empty-text="没有匹配的审计记录" @row-click="inspect">
         <el-table-column prop="time" label="时间" width="164" />
         <el-table-column label="类型" width="115"><template #default="scope"><el-tag effect="plain" size="small">{{ categoryLabel(scope.row.category) }}</el-tag></template></el-table-column>
         <el-table-column label="操作者" min-width="150"><template #default="scope"><div class="actor-cell"><strong>{{ scope.row.actor }}</strong><small>{{ scope.row.department }}</small></div></template></el-table-column>
@@ -157,7 +178,7 @@ watch([query, statusFilter, categoryFilter], () => { currentPage.value = 1 })
         <el-table-column label="链路编号" min-width="150"><template #default="scope"><code>{{ scope.row.traceId }}</code></template></el-table-column>
         <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-audit" @click.stop="inspect(scope.row)">详情</el-button></template></el-table-column>
       </el-table>
-      <div class="table-footer audit-footer"><span>审计数据默认只读，管理端不提供删除能力</span><el-pagination v-model:current-page="currentPage" background layout="prev, pager, next" :total="filteredEvents.length" :page-size="pageSize" /></div>
+      <div class="table-footer audit-footer"><span>审计数据默认只读，管理端不提供删除能力</span><el-pagination v-model:current-page="currentPage" background layout="prev, pager, next" :total="eventTotal" :page-size="pageSize" @current-change="changeEventPage" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(570px, 100vw)" title="审计事件详情">

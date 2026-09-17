@@ -79,7 +79,7 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.deepEqual(resumed.map((event) => event.eventType), ['run.completed'])
 
   const usage = await new PostgresOperationsService(database).getModelUsage()
-  const usageRecord = usage.find((record) => record.runId === created.id)
+  const usageRecord = usage.items.find((record) => record.runId === created.id)
   assert.ok(usageRecord && usageRecord.totalTokens > 0)
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')

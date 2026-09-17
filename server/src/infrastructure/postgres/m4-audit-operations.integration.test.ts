@@ -120,17 +120,17 @@ test('unified operations projection includes every MVP event source without cont
   )
 
   const events = await operations.getAuditEvents()
-  const categories = new Set(events.map((event) => event.category))
+  const categories = new Set(events.items.map((event) => event.category))
   assert.ok(categories.has('management'))
   assert.ok(categories.has('run'))
   assert.ok(categories.has('model'))
   assert.ok(categories.has('tool'))
   assert.ok(categories.has('artifact'))
 
-  const agentEvent = events.find((event) => event.action === 'agent.configuration.update')
+  const agentEvent = events.items.find((event) => event.action === 'agent.configuration.update')
   assert.equal(agentEvent?.objectType, 'agent')
 
-  const serialized = JSON.stringify(events)
+  const serialized = JSON.stringify(events.items)
   assert.doesNotMatch(serialized, /不得进入运营投影的回答正文/)
   assert.match(serialized, /SYNTHETIC_FAILURE/)
 })
@@ -176,4 +176,36 @@ test('5-T4 管理操作人校验类型化：仍映射为 403 permission_denied',
   const mapped = classifyHttpError(denial, '/api/admin/v1/runtimes/runtime-local-01/check')
   assert.equal(mapped.status, 403)
   assert.equal(mapped.error.code, 'permission_denied')
+})
+
+test('admin list endpoints paginate and filter on the server', async () => {
+  const sessionPage = await operations.getSessions({ page: 1, pageSize: 1 })
+  assert.ok(sessionPage.total >= 1)
+  assert.equal(sessionPage.items.length, 1)
+  assert.ok(sessionPage.summary.total >= sessionPage.total)
+  assert.ok(sessionPage.facets.workspaces.some((workspace) => workspace.id === 'ws-supply'))
+
+  const byTrace = await operations.getSessions({ query: `trace-${runId}` })
+  assert.ok(byTrace.items.some((session) => session.runId === runId))
+  const empty = await operations.getSessions({ query: `trace-${runId}`, status: 'succeeded' })
+  assert.ok(empty.items.every((session) => session.status === 'succeeded'))
+
+  const auditPage = await operations.getAuditEvents({ page: 2, pageSize: 2 })
+  assert.ok(auditPage.total >= 4)
+  assert.equal(auditPage.items.length, 2)
+  const firstPage = await operations.getAuditEvents({ page: 1, pageSize: 2 })
+  assert.ok(firstPage.items.every((item) => auditPage.items.every((other) => other.id !== item.id)))
+  const filtered = await operations.getAuditEvents({ query: `trace-${runId}` })
+  assert.ok(filtered.items.some((event) => event.runId === runId))
+  assert.ok(filtered.total <= auditPage.total)
+
+  const usagePage = await operations.getModelUsage({ status: 'failed' })
+  assert.ok(usagePage.items.some((record) => record.runId === runId))
+  assert.ok(usagePage.items.every((record) => record.status === 'failed'))
+  assert.ok(usagePage.summary.callCount >= 1)
+  assert.ok(usagePage.facets.employees.some((employee) => employee.employeeId === 'U00001'))
+
+  const employeePage = await operations.getModelUsageEmployees({ page: 1, pageSize: 10 })
+  const owner = employeePage.items.find((item) => item.employeeId === 'U00001')
+  assert.ok(owner && owner.failedCount >= 1 && owner.callCount >= owner.failedCount)
 })

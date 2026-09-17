@@ -332,6 +332,16 @@ body {
   border-top: 1px solid var(--color-bg-subtle);
 }
 
+.table-footer--pager {
+  justify-content: flex-end;
+  padding: 14px 16px;
+}
+
+.list-pagination {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .footer-total,
 .muted {
   color: var(--color-text-muted);

@@ -489,3 +489,75 @@ export interface ModelUsageRecord {
   latencyMs: number
   traceId: string
 }
+
+export interface ListPage<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface ListPageQuery {
+  page?: number
+  pageSize?: number
+}
+
+export interface SessionListQuery extends ListPageQuery {
+  query?: string
+  status?: string
+  workspace?: string
+}
+
+export interface SessionListPage extends ListPage<SessionDefinition> {
+  summary: {
+    total: number
+    active: number
+    awaitingApproval: number
+    failed: number
+  }
+  facets: {
+    workspaces: { id: string; name: string }[]
+  }
+}
+
+export interface AuditEventListQuery extends ListPageQuery {
+  query?: string
+  status?: string
+  category?: string
+}
+
+export interface ModelUsageListQuery extends ListPageQuery {
+  query?: string
+  employee?: string
+  provider?: string
+  status?: string
+}
+
+export interface ModelUsagePage extends ListPage<ModelUsageRecord> {
+  summary: {
+    callCount: number
+    employeeCount: number
+    totalTokens: number
+    averageLatencyMs: number
+  }
+  facets: {
+    providers: string[]
+    employees: { employeeId: string; employeeName: string; department: string }[]
+  }
+}
+
+export interface EmployeeModelUsageSummary {
+  employeeId: string
+  employeeName: string
+  department: string
+  callCount: number
+  successCount: number
+  failedCount: number
+  blockedCount: number
+  successRate: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  averageLatencyMs: number
+  lastUsedAt: string
+}

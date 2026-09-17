@@ -4,32 +4,38 @@ import { Search, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
-import { useContentStore } from '@/stores/content'
-import type { SessionDefinition } from '@/types/domain'
+import { adminApi } from '@/api/client'
+import { usePagedList } from '@/composables/use-paged-list'
+import type { SessionDefinition, SessionListPage } from '@/types/domain'
 
 const router = useRouter()
-const contentStore = useContentStore()
 const query = ref('')
 const statusFilter = ref('all')
 const workspaceFilter = ref('all')
 const selectedSession = ref<SessionDefinition>()
 const drawerOpen = ref(false)
 
-const workspaces = computed(() =>
-  [...new Set(contentStore.sessions.map((session) => session.workspaceName))].sort(),
-)
-const filteredSessions = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return contentStore.sessions.filter((session) => {
-    const matchesQuery = !keyword || `${session.title} ${session.id} ${session.user} ${session.agentName} ${session.runId} ${session.traceId}`.toLowerCase().includes(keyword)
-    const matchesStatus = statusFilter.value === 'all' || session.status === statusFilter.value
-    const matchesWorkspace = workspaceFilter.value === 'all' || session.workspaceName === workspaceFilter.value
-    return matchesQuery && matchesStatus && matchesWorkspace
-  })
+const {
+  items: sessions,
+  total: sessionTotal,
+  currentPage: sessionPage,
+  pageSize: sessionPageSize,
+  loading: sessionsLoading,
+  error: sessionsError,
+  result: sessionResult,
+  reload: reloadSessions,
+  changePage: changeSessionPage,
+} = usePagedList<SessionDefinition, SessionListPage>({
+  fetch: (page, pageSize) => adminApi.getSessions({
+    query: query.value,
+    status: statusFilter.value,
+    workspace: workspaceFilter.value,
+    page,
+    pageSize,
+  }),
 })
-const activeCount = computed(() => contentStore.sessions.filter((session) => ['queued', 'running'].includes(session.status)).length)
-const approvalCount = computed(() => contentStore.sessions.filter((session) => session.status === 'awaiting_approval').length)
-const failedCount = computed(() => contentStore.sessions.filter((session) => session.status === 'failed').length)
+const workspaces = computed(() => sessionResult.value?.facets.workspaces ?? [])
+const summary = computed(() => sessionResult.value?.summary)
 
 function inspect(session: SessionDefinition) {
   selectedSession.value = session
@@ -45,33 +51,34 @@ function formatTokens(value: number) {
   return value ? value.toLocaleString() : '—'
 }
 
-onMounted(() => contentStore.load())
+onMounted(() => reloadSessions())
 </script>
 
 <template>
   <div class="ops-page session-page">
-    <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
+    <el-alert v-if="sessionsError" :title="sessionsError" type="error" show-icon @close="sessionsError = ''" />
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
-        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索 Session、用户、Agent、运行或链路编号" />
-        <el-select v-model="workspaceFilter" aria-label="筛选工作空间"><el-option label="全部工作空间" value="all" /><el-option v-for="workspace in workspaces" :key="workspace" :label="workspace" :value="workspace" /></el-select>
-        <el-select v-model="statusFilter" aria-label="筛选 Session 状态"><el-option label="全部状态" value="all" /><el-option label="排队中" value="queued" /><el-option label="执行中" value="running" /><el-option label="等待确认" value="awaiting_approval" /><el-option label="已完成" value="succeeded" /><el-option label="失败" value="failed" /><el-option label="已停止" value="cancelled" /></el-select>
-        <span class="filter-bar__meta">{{ filteredSessions.length }} 个 Session</span>
+        <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索 Session、用户、Agent、运行或链路编号" @keyup.enter="reloadSessions(true)" @clear="reloadSessions(true)" />
+        <el-select v-model="workspaceFilter" aria-label="筛选工作空间" @change="reloadSessions(true)"><el-option label="全部工作空间" value="all" /><el-option v-for="workspace in workspaces" :key="workspace.id" :label="workspace.name" :value="workspace.id" /></el-select>
+        <el-select v-model="statusFilter" aria-label="筛选 Session 状态" @change="reloadSessions(true)"><el-option label="全部状态" value="all" /><el-option label="排队中" value="queued" /><el-option label="执行中" value="running" /><el-option label="等待确认" value="awaiting_approval" /><el-option label="已完成" value="succeeded" /><el-option label="失败" value="failed" /><el-option label="已停止" value="cancelled" /></el-select>
+        <el-button :icon="Search" @click="reloadSessions(true)">查询</el-button>
+        <span class="filter-bar__meta">{{ sessionTotal }} 个 Session</span>
       </div>
     </section>
 
     <el-alert type="info" :closable="false" show-icon title="本页用于运行治理，只展示 Session、用户、工作空间、Agent、Token 和链路等元数据；消息正文需要专项审计授权。" />
 
-    <section v-loading="contentStore.loading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">Session 总数</div><div class="metric-value">{{ contentStore.sessions.length }}</div><div class="metric-detail">全部治理记录</div></article>
-      <article class="metric-card"><div class="metric-label">活动 Session</div><div class="metric-value">{{ activeCount }}</div><div class="metric-detail">执行中或排队中</div></article>
-      <article class="metric-card"><div class="metric-label">等待确认</div><div class="metric-value">{{ approvalCount }}</div><div class="metric-detail">服务端自动确认处理中</div></article>
-      <article class="metric-card"><div class="metric-label">失败 Session</div><div class="metric-value">{{ failedCount }}</div><div class="metric-detail">需要检查运行或依赖</div></article>
+    <section v-loading="sessionsLoading" class="metric-grid">
+      <article class="metric-card"><div class="metric-label">Session 总数</div><div class="metric-value">{{ summary?.total ?? 0 }}</div><div class="metric-detail">全部治理记录</div></article>
+      <article class="metric-card"><div class="metric-label">活动 Session</div><div class="metric-value">{{ summary?.active ?? 0 }}</div><div class="metric-detail">执行中或排队中</div></article>
+      <article class="metric-card"><div class="metric-label">等待确认</div><div class="metric-value">{{ summary?.awaitingApproval ?? 0 }}</div><div class="metric-detail">服务端自动确认处理中</div></article>
+      <article class="metric-card"><div class="metric-label">失败 Session</div><div class="metric-value">{{ summary?.failed ?? 0 }}</div><div class="metric-detail">需要检查运行或依赖</div></article>
     </section>
 
     <section class="content-panel content-panel--flush session-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="filteredSessions" empty-text="暂无匹配的 Session" @row-click="inspect">
+      <el-table class="data-table" v-loading="sessionsLoading" :data="sessions" empty-text="暂无匹配的 Session" @row-click="inspect">
         <el-table-column label="Session" min-width="235"><template #default="scope"><div class="session-cell"><strong>{{ scope.row.title }}</strong><small class="mono">{{ scope.row.id }}</small></div></template></el-table-column>
         <el-table-column label="用户与空间" min-width="180"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.user }}</strong><span>{{ scope.row.workspaceName }}</span></div></template></el-table-column>
         <el-table-column label="Agent" min-width="150"><template #default="scope"><div class="stack-cell"><strong>{{ scope.row.agentName }}</strong><span>v{{ scope.row.agentVersion }}</span></div></template></el-table-column>
@@ -80,7 +87,7 @@ onMounted(() => contentStore.load())
         <el-table-column prop="updatedAt" label="最近活动" width="115" />
         <el-table-column label="操作" width="90" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-session" @click.stop="inspect(scope.row)">查看</el-button></template></el-table-column>
       </el-table>
-      <div class="table-footer session-footer"><span>默认只读，不提供删除 Session 或修改运行结果</span><el-pagination background layout="prev, pager, next" :total="filteredSessions.length" :page-size="10" /></div>
+      <div class="table-footer session-footer"><span>默认只读，不提供删除 Session 或修改运行结果</span><el-pagination v-model:current-page="sessionPage" background layout="prev, pager, next" :total="sessionTotal" :page-size="sessionPageSize" @current-change="changeSessionPage" /></div>
     </section>
 
     <el-drawer v-model="drawerOpen" size="min(620px, 100vw)" title="Session 治理详情">
