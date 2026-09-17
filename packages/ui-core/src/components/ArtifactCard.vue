@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Download, Document } from '@element-plus/icons-vue'
+import { Download, Document, View } from '@element-plus/icons-vue'
 
 interface ArtifactCardItem {
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text'
+  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string
@@ -17,6 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   download: []
+  preview: []
 }>()
 
 const typeLabel = computed(() => props.artifact.type.toUpperCase())
@@ -40,6 +41,13 @@ const typeLabel = computed(() => props.artifact.type.toUpperCase())
       </div>
     </div>
     <div class="artifact-card__actions">
+      <el-button
+        v-if="artifact.type === 'html'"
+        text
+        :icon="View"
+        data-testid="artifact-preview-open"
+        @click="emit('preview')"
+      >预览</el-button>
       <el-button text :icon="Download" @click="emit('download')">下载</el-button>
     </div>
   </article>
@@ -96,6 +104,11 @@ const typeLabel = computed(() => props.artifact.type.toUpperCase())
 .artifact-card__icon--docx {
   color: #2f5ec4;
   background: #edf3ff;
+}
+
+.artifact-card__icon--html {
+  color: #b4530a;
+  background: #fff4e8;
 }
 
 .artifact-card__body {

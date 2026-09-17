@@ -243,6 +243,17 @@ export const mockTasks: TaskRun[] = [
         workspaceId: 'ws-supply',
         summary: '经营摘要、风险分布和重点订单处置建议。',
       },
+      {
+        id: 'artifact-003',
+        name: '华东区交付风险看板.html',
+        type: 'html',
+        version: 1,
+        size: '4 KB',
+        createdAt: '今天 09:23',
+        runId: 'run-260828-001',
+        workspaceId: 'ws-supply',
+        summary: '交互式风险看板：风险订单分布、责任部门筛选与处置状态。',
+      },
     ],
     attachments: [],
     summary: '识别 8 张风险订单，其中 3 张需要在 48 小时内处理。',
@@ -592,6 +603,43 @@ export const mockArtifacts: Artifact[] = [
     summary: '过去 90 天出现三次及以上缺料的物料与供应商信息。',
   },
 ]
+
+/**
+ * Prototype 模式下成果下载/预览读取的确定性内容。只为种子 HTML 成果提供字节，
+ * 其余类型保持「原型不提供内容」的既有口径（下载仍会得到明确 404）。
+ */
+export const mockArtifactFiles: Record<string, { name: string; mimeType: string; content: string }> = {
+  'artifact-003': {
+    name: '华东区交付风险看板.html',
+    mimeType: 'text/html; charset=utf-8',
+    content: `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>华东区交付风险看板</title>
+<style>
+  body { margin: 24px; font-family: -apple-system, "PingFang SC", sans-serif; color: #24303e; }
+  h1 { font-size: 20px; }
+  .card { display: inline-block; margin-right: 12px; padding: 12px 16px; border: 1px solid #dde4f0; border-radius: 10px; }
+  .card strong { display: block; font-size: 22px; color: #b42335; }
+  button { margin-top: 16px; padding: 6px 14px; border: 1px solid #315dc4; border-radius: 6px; color: #315dc4; background: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1 data-marker="E2E-HTML-ARTIFACT-20260917">华东区交付风险看板</h1>
+<div class="card"><strong>8</strong><span>风险订单</span></div>
+<div class="card"><strong>3</strong><span>48 小时内需处理</span></div>
+<button type="button" id="toggle">切换高亮风险行</button>
+<script>
+  document.getElementById('toggle').addEventListener('click', () => {
+    document.body.dataset.highlight = document.body.dataset.highlight === 'on' ? 'off' : 'on';
+  });
+</script>
+</body>
+</html>
+`,
+  },
+}
 
 export const mockAgents: AgentDefinition[] = [
   {

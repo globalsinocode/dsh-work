@@ -321,7 +321,7 @@ async function readBinaryBody(request: IncomingMessage, maxBytes: number) {
   return Buffer.concat(chunks)
 }
 
-function writeDownload(response: ServerResponse, name: string, mimeType: string, bytes: Buffer) {
+export function writeDownload(response: ServerResponse, name: string, mimeType: string, bytes: Buffer) {
   const safeName = name.replace(/[\r\n"]/g, '_')
   response.writeHead(200, {
     'Cache-Control': 'private, no-store',

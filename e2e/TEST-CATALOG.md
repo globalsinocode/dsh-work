@@ -26,6 +26,19 @@
 
 **验收：** 当前空间 URL 正确；对应页签处于选中状态；文件和成果内容没有串到其他空间。
 
+### ART-E2E-01 HTML 成果沙箱预览
+
+**优先级：** P0
+**角色：** 员工（Prototype 受控身份）
+**前置数据：** `ws-supply` 团队空间包含一个 `html` 类型成果（`华东区交付风险看板.html`）及既有 xlsx/pdf 成果
+**spec：** `e2e/mvp-smoke.spec.ts`
+
+1. 进入 `/workspaces/ws-supply?tab=artifacts`，验证 HTML 成果卡片可见且提供「预览」入口，xlsx/pdf 卡片不提供「预览」。
+2. 点击「预览」，对话框在 `sandbox="allow-scripts"` 的 iframe（opaque origin，无 `allow-same-origin`）中渲染 HTML 内容。
+3. 切换「源代码」视图查看原始标记，关闭对话框。
+
+**验收：** 预览内容与成果文件一致；iframe 不带 `allow-same-origin`，页面脚本不能访问工作台 Cookie/DOM；加载失败就地报错可重试；下载仍走鉴权附件通道。本层只证明页面与沙箱隔离，不证明 PostgreSQL 成果发布。
+
 ### TW-E2E-02 管理端冒烟（现有基线）
 
 **优先级：** P0
@@ -92,6 +105,23 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **验收：** 旧计划不覆盖新状态；执行前状态收敛为 `failed` 且不自动重试；目标已达到计划后状态时收敛为 `executed`；两种结果都形成持久化对话消息和审计事件。
 
 ## 验证记录
+
+### 2026-09-17：HTML 成果生成与沙箱预览
+
+**阶段：** Spec（ART-E2E-01）→ Code → Verify/Test（P0 Playwright 固化旅程）
+**环境：** Prototype 受控身份、内存合成数据、独立端口 4280/4290/4380，未触碰 4174/4180/4190 开发环境
+
+- 服务端：`artifactTypeForExtension` 接受 `.html`/`.htm`（`type: 'html'`，mime `text/html; charset=utf-8`）；成果下载仍走 `Content-Disposition: attachment` + `nosniff`，直接访问下载 URL 不会被浏览器同源渲染。
+- Prototype 模式新增 `registerPrototypeArtifactFileRoutes`：仅 `mockArtifactFiles` 登记的种子成果（`artifact-003`）提供确定性字节；Postgres 模式下成果下载仍由 `registerContentRoutes` 经鉴权与读门禁处理。
+- 前端：`ArtifactCard` 仅对 `html` 类型显示「预览」；`ArtifactPreviewDialog` 用 `sandbox="allow-scripts"`（无 `allow-same-origin`，opaque origin）iframe 渲染，附「源代码」视图与鉴权下载；预览属读取轨，归档空间与个人空间同样可用。
+
+**证据：**
+
+- `pnpm --filter @dsh-work/workbench-web test`：286/286 通过，含新增 7 个 `ArtifactPreviewDialog` 用例（沙箱属性、源码切换、失败重试、竞态与可访问名称）。
+- `pnpm test:m3:integration`（一次性 PostgreSQL，自动销毁）：12/12 通过，含新增「HTML Runtime output is published as a previewable html Artifact」。
+- `playwright test e2e/mvp-smoke.spec.ts`：5/5 通过，含新增沙箱预览旅程（frameLocator 断言渲染内容、sandbox 属性与关闭路径）。
+
+**未覆盖：** 真实 DSH 产出 `.html` 的端到端验收（P2）；Prototype 模式下未登记种子的成果仍无内容字节（下载 404 为既有口径）；工作区上传的 `.html` 文件不参与文本提取（`extractDocument` 支持集未变）。
 
 ### 2026-09-16：管理端列表分页 P0 冒烟
 

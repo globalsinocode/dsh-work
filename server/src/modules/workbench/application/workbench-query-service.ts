@@ -27,6 +27,11 @@ export class WorkbenchQueryService {
     return this.repository.read('artifacts')
   }
 
+  /** Prototype 成果内容：供无库模式下成果下载/预览路由读取确定性种子字节。 */
+  getArtifactFile(artifactId: string) {
+    return this.repository.readArtifactFile(artifactId)
+  }
+
   async getAgents() {
     const agents = await this.repository.read('agents')
     return agents

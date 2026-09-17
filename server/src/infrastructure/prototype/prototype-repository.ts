@@ -2,6 +2,7 @@ import {
   mockAgents,
   mockAgentReleaseRecords,
   mockAgentVersions,
+  mockArtifactFiles,
   mockArtifacts,
   mockAuditEvents,
   mockConnectors,
@@ -39,6 +40,19 @@ export class PrototypeRepository {
   async read<K extends PrototypeCollection>(collection: K): Promise<PrototypeData[K]> {
     await simulateIo()
     return copy(prototypeData[collection])
+  }
+
+  /**
+   * Prototype 成果文件内容：只有 `mockArtifactFiles` 登记过的种子成果（当前为
+   * HTML 预览用例）提供字节，其余保持「原型无内容」的明确 404。
+   */
+  async readArtifactFile(
+    artifactId: string,
+  ): Promise<{ name: string; mimeType: string; bytes: Buffer }> {
+    await simulateIo()
+    const file = mockArtifactFiles[artifactId]
+    if (!file) throw new Error(`成果内容不存在：${artifactId}`)
+    return { name: file.name, mimeType: file.mimeType, bytes: Buffer.from(file.content, 'utf8') }
   }
 
   async updateAgent(

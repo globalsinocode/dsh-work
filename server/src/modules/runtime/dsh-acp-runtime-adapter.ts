@@ -675,7 +675,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
   if (manifest.purpose === undefined && manifest.tools.some(tool => tool.id === 'write')) {
     sections.push([
       '# 成果文件',
-      '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本和 CSV 分别使用 output/<文件名>.md、.txt、.csv；不要写入其他目录。',
+      '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',
       '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
     ].join('\n'))
   }

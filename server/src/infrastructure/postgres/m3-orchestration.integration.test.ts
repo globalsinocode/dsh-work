@@ -115,6 +115,32 @@ test('validated Runtime output is published once as a downloadable Artifact', as
   assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
 })
 
+test('HTML Runtime output is published as a previewable html Artifact', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '生成 HTML 成果' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '生成交互式风险看板', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForTask(created.id, 'succeeded')
+  const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+  const manifest = attempt!.manifest as unknown as RuntimeManifest
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-html-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  const markup = '<!DOCTYPE html><html><body><h1>风险看板</h1></body></html>'
+  await writeFile(join(workspaceDirectory, 'output', '华东区风险看板.html'), markup)
+
+  const published = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+  assert.deepEqual(published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
+
+  const task = await conversations.getTask(created.id, 'U00001')
+  assert.equal(task?.artifacts.length, 1)
+  assert.equal(task?.artifacts[0]?.type, 'html')
+  const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+  const downloaded = await content.readFile(fileId, 'U00001')
+  assert.equal(downloaded.mimeType, 'text/html; charset=utf-8')
+  assert.equal(downloaded.bytes.toString('utf8'), markup)
+})
+
 test('a follow-up Run snapshots only the preceding messages from its product Session', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 连续对话上下文' })
   const first = await orchestration.startRun({

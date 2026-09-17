@@ -45,7 +45,7 @@ export interface TaskSource {
 export interface Artifact {
   id: string
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text'
+  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string

@@ -10,7 +10,7 @@ import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
 import { registerOperationsRoutes } from './http/admin/operations-routes.ts'
 import { registerIdentityAdministrationRoutes } from './http/admin/identity-routes.ts'
 import { Router, envelope } from './http/router.ts'
-import { registerWorkbenchRoutes } from './http/workbench/routes.ts'
+import { registerPrototypeArtifactFileRoutes, registerWorkbenchRoutes } from './http/workbench/routes.ts'
 import { registerConversationRoutes } from './http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from './http/workbench/content-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './http/workbench/workspace-lifecycle-routes.ts'
@@ -74,6 +74,7 @@ const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 
 async function start() {
   const repository = new PrototypeRepository()
+  const workbenchQueries = new WorkbenchQueryService(repository)
   const identityConfiguration = loadIdentityConfiguration()
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   const database = databaseUrl ? createDatabase({ url: databaseUrl }) : null
@@ -210,10 +211,11 @@ async function start() {
     registerWorkbenchAgentRoutes(router, agents, authorization)
   } else {
     registerUnavailableWorkbenchCommandRoutes(router)
+    registerPrototypeArtifactFileRoutes(router, workbenchQueries)
     registerAssistantRoutes(router)
     registerSkillInstallationRoutes(router)
   }
-  registerWorkbenchRoutes(router, new WorkbenchQueryService(repository))
+  registerWorkbenchRoutes(router, workbenchQueries)
   registerAdminRoutes(router, new AdminQueryService(repository))
   registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))
 

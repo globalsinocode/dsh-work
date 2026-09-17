@@ -29,6 +29,7 @@ import type {
   WorkspaceUsageRange,
   WorkspaceUsageTotals,
 } from '@/types/domain'
+import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
@@ -86,6 +87,9 @@ const versionUploadError = ref<{ logicalFileId: string; message: string } | null
 
 const memberDialogOpen = ref(false)
 const settingsDialogOpen = ref(false)
+/** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
+const previewOpen = ref(false)
+const previewArtifact = ref<Artifact | null>(null)
 const agentMembers = ref<WorkspaceAgentMember[]>([])
 const workspaceMembers = ref<WorkspaceMember[]>([])
 /** 服务端返回的调用者角色（负责人转交后不再等于创建者，不能靠姓名推断）。 */
@@ -475,6 +479,11 @@ async function onVersionUploadSelected(event: Event) {
 
 function download(item: Artifact) {
   void downloadArtifactFile(item)
+}
+
+function openArtifactPreview(item: Artifact) {
+  previewArtifact.value = item
+  previewOpen.value = true
 }
 
 watch(
@@ -1129,6 +1138,7 @@ watch(
               :key="artifact.id"
               :artifact="artifact"
               @download="download(artifact)"
+              @preview="openArtifactPreview(artifact)"
             />
           </div>
           <el-empty v-else description="当前工作空间暂无成果文件" />
@@ -1346,6 +1356,12 @@ watch(
       />
     </template>
 
+    <!-- 成果预览属读取轨，个人空间与归档空间同样可用，因此不放在 isTeam 分支里。 -->
+    <ArtifactPreviewDialog
+      v-if="previewArtifact"
+      v-model:open="previewOpen"
+      :artifact="previewArtifact"
+    />
   </div>
 </template>
 

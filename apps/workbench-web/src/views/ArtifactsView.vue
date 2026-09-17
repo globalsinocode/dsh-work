@@ -4,12 +4,15 @@ import { Files, Search } from '@element-plus/icons-vue'
 
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useContentStore } from '@/stores/content'
+import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import type { Artifact } from '@/types/domain'
 import { downloadArtifactFile } from '@/utils/feedback'
 
 const contentStore = useContentStore()
 const query = ref('')
 const typeFilter = ref('all')
+const previewOpen = ref(false)
+const previewArtifact = ref<Artifact | null>(null)
 
 const filteredArtifacts = computed(() => {
   const keyword = query.value.trim().toLowerCase()
@@ -22,6 +25,11 @@ const filteredArtifacts = computed(() => {
 
 function download(item: Artifact) {
   void downloadArtifactFile(item)
+}
+
+function preview(item: Artifact) {
+  previewArtifact.value = item
+  previewOpen.value = true
 }
 
 onMounted(() => contentStore.refresh())
@@ -50,6 +58,7 @@ onMounted(() => contentStore.refresh())
         <el-option label="PDF" value="pdf" />
         <el-option label="Word" value="docx" />
         <el-option label="Markdown" value="markdown" />
+        <el-option label="HTML" value="html" />
         <el-option label="CSV" value="csv" />
         <el-option label="纯文本" value="text" />
       </el-select>
@@ -65,12 +74,18 @@ onMounted(() => contentStore.refresh())
         :key="artifact.id"
         :artifact="artifact"
         @download="download(artifact)"
+        @preview="preview(artifact)"
       />
     </div>
     <el-empty v-else description="没有匹配的成果文件">
       <el-button @click="query = ''; typeFilter = 'all'">清除筛选</el-button>
     </el-empty>
 
+    <ArtifactPreviewDialog
+      v-if="previewArtifact"
+      v-model:open="previewOpen"
+      :artifact="previewArtifact"
+    />
   </div>
 </template>
 

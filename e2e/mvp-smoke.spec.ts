@@ -53,6 +53,34 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
   await expect(page.getByText('华东区交付风险分析报告.pdf', { exact: true })).toBeVisible()
 })
 
+test('employee can preview an HTML artifact inside a sandboxed frame', async ({ page }) => {
+  // ART-E2E-01：HTML 成果沙箱预览。
+  await page.goto('/workspaces/ws-supply?tab=artifacts')
+
+  const htmlCard = page.locator('.artifact-card', { hasText: '华东区交付风险看板.html' })
+  await expect(htmlCard).toBeVisible()
+  await expect(htmlCard.getByRole('button', { name: '预览' })).toBeVisible()
+  // 非 HTML 成果不提供预览入口。
+  const xlsxCard = page.locator('.artifact-card', { hasText: '华东区订单交付风险清单.xlsx' })
+  await expect(xlsxCard.getByRole('button', { name: '预览' })).toHaveCount(0)
+
+  await htmlCard.getByRole('button', { name: '预览' }).click()
+  const dialog = page.getByRole('dialog', { name: /成果预览/ })
+  await expect(dialog).toBeVisible()
+
+  const frame = dialog.locator('iframe[data-testid="artifact-preview-frame"]')
+  // opaque origin：允许内联脚本，但不与主机同源（不含 allow-same-origin）。
+  await expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+  await expect(page.frameLocator('iframe[data-testid="artifact-preview-frame"]').getByText('华东区交付风险看板')).toBeVisible()
+
+  // el-radio-button 的原生 input 视觉隐藏，点击命中的是包裹它的 label 文本。
+  await dialog.getByText('源代码', { exact: true }).click()
+  await expect(dialog.getByTestId('artifact-preview-source')).toContainText('E2E-HTML-ARTIFACT-20260917')
+
+  await dialog.getByRole('button', { name: '关闭成果预览' }).click()
+  await expect(dialog).toBeHidden()
+})
+
 test('administrator can navigate governance modules and switch Skill tabs', async ({ page }) => {
   await page.goto(`${adminUrl}/capabilities`)
 

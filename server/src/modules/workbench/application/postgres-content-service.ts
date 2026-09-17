@@ -1510,12 +1510,14 @@ function artifactTypeForExtension(extension: string): Artifact['type'] | null {
   if (extension === '.md') return 'markdown'
   if (extension === '.txt') return 'text'
   if (extension === '.csv') return 'csv'
+  if (extension === '.html' || extension === '.htm') return 'html'
   return null
 }
 
 function artifactMimeType(type: Artifact['type']) {
   if (type === 'markdown') return 'text/markdown; charset=utf-8'
   if (type === 'csv') return 'text/csv; charset=utf-8'
+  if (type === 'html') return 'text/html; charset=utf-8'
   if (type === 'text') return 'text/plain; charset=utf-8'
   return 'application/octet-stream'
 }
