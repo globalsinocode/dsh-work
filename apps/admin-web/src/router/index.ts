@@ -171,6 +171,18 @@ const router = createRouter({
       meta: { title: '系统健康', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
+      path: '/docs/guide',
+      name: 'docs-guide',
+      component: () => import('@/views/IntegrationGuideView.vue'),
+      meta: { title: '接入规范', requiresAdmin: true },
+    },
+    {
+      path: '/docs/api',
+      name: 'docs-api',
+      component: () => import('@/views/ApiDocsView.vue'),
+      meta: { title: '接口文档', requiresAdmin: true },
+    },
+    {
       path: '/about',
       name: 'about',
       component: () => import('@/views/AboutView.vue'),

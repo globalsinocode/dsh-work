@@ -113,3 +113,26 @@ test('administrator can open system information from the user menu', async ({ pa
   await expect(page.getByTestId('about-system-version')).toHaveText(/^v\d{4}\.\d{2}\.\d{2}-\d{2}$/)
   await expect(page.getByTestId('about-dsh-version')).toHaveText('0.1.2-rc.1')
 })
+
+test('administrator can read the integration guide and api docs', async ({ page }) => {
+  await page.goto(`${adminUrl}/overview`)
+
+  const nav = page.getByRole('navigation', { name: '管理后台主导航' })
+  await expect(nav.getByRole('button', { name: '接入规范' })).toBeVisible()
+  await expect(nav.getByRole('button', { name: '接口文档' })).toBeVisible()
+
+  await nav.getByRole('button', { name: '接入规范' }).click()
+  await expect(page).toHaveURL(/\/docs\/guide$/)
+  await expect(page.getByRole('heading', { name: '移动端接入规范' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '认证与会话' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '事件流（SSE）' })).toBeVisible()
+
+  await nav.getByRole('button', { name: '接口文档' }).click()
+  await expect(page).toHaveURL(/\/docs\/api$/)
+  await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 员工工作台 API')
+  await expect(page.getByText('/workspaces', { exact: true }).first()).toBeVisible()
+
+  await page.getByRole('tab', { name: '管理端 API' }).click()
+  await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 管理平台 API')
+  await expect(page.getByText('/runtimes', { exact: true }).first()).toBeVisible()
+})

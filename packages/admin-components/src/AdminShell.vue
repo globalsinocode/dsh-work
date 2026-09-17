@@ -7,12 +7,14 @@ import {
   Connection,
   Cpu,
   DataAnalysis,
+  Document,
   FolderOpened,
   Grid,
   InfoFilled,
   Key,
   Menu,
   Monitor,
+  Notebook,
   PieChart,
   SwitchButton,
   Tickets,
@@ -98,6 +100,13 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
       { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'admin' },
       { label: '审计记录', path: '/audit', icon: Tickets, permission: 'audit' },
       { label: '系统健康', path: '/health', icon: Monitor, permission: 'admin' },
+    ],
+  },
+  {
+    label: '开发接入',
+    items: [
+      { label: '接入规范', path: '/docs/guide', icon: Notebook, permission: 'admin' },
+      { label: '接口文档', path: '/docs/api', icon: Document, permission: 'admin' },
     ],
   },
 ]
