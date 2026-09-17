@@ -19,9 +19,28 @@ export type RuntimeEventType =
   | 'run.failed'
   | 'run.completed'
 
+/**
+ * Admin-side manifest purposes. Admin runs have no workspace/agent binding and
+ * skip employee artifact delivery; workbench-facing runs keep `purpose`
+ * undefined or use 'automation'. AG-03: 'automation' marks a scheduled
+ * background run — it is still an employee run (workspace-bound, artifact
+ * delivery applies), so it must NOT be classified as admin-side.
+ */
+export type AdminRunPurpose =
+  | 'admin-assistant'
+  | 'admin-skill-install'
+  | 'admin-skill-test'
+  | 'admin-agent-manage'
+  | 'admin-platform-operations'
+  | 'agent-release-trial'
+
+export function isAdminRunPurpose(purpose: RuntimeManifest['purpose']): purpose is AdminRunPurpose {
+  return purpose !== undefined && (purpose.startsWith('admin-') || purpose === 'agent-release-trial')
+}
+
 export interface RuntimeManifest {
   manifest_version: '1.0'
-  purpose?: 'admin-assistant' | 'admin-skill-install' | 'admin-skill-test' | 'admin-agent-manage' | 'admin-platform-operations' | 'agent-release-trial'
+  purpose?: AdminRunPurpose | 'automation'
   installation_source?: string
   run_id: string
   attempt_id: string

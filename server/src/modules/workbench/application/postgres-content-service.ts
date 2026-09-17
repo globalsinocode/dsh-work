@@ -7,6 +7,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, requestInvalid } from '../../authorization/authorization-errors.ts'
 import type { FileMount } from '../../runtime/runtime-types.ts'
+import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
 import { PostgresWorkspaceService, type WorkspaceType } from './postgres-workspace-service.ts'
@@ -1069,6 +1070,16 @@ export class PostgresContentService {
     return access
   }
 
+  /** 运行输入文件「可解析」谓词：启用预检与实际挂载必须使用同一份条件。 */
+  private runtimeFileReadyPredicate() {
+    return this.database`
+      and f.scan_status = 'clean'
+      and f.removed_at is null
+      and fe.status = 'succeeded'
+      and fe.extractor_version = 'm4-basic-v1'
+    `
+  }
+
   async prepareRuntimeFiles(input: {
     sessionId: string
     fileIds: string[]
@@ -1086,10 +1097,22 @@ export class PostgresContentService {
           from file_objects f
           join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
           join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
-         where f.tenant_id = ${tenantId} and f.id = ${fileId} and f.scan_status = 'clean'
-         and f.removed_at is null
-           and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-           and target.created_by = ${input.userId} and target.status = 'active'
+         where f.tenant_id = ${tenantId} and f.id = ${fileId}
+           ${this.runtimeFileReadyPredicate()}
+           and target.status = 'active'
+           -- TW-10：团队会话是共享讨论——现任成员可在他人发起的会话中发起 Run；
+           -- 个人会话仍限创建者。
+           and (
+             target.created_by = ${input.userId}
+             or exists (
+               select 1 from workspaces tw
+                 join workspace_members twm
+                   on twm.tenant_id = tw.tenant_id and twm.workspace_id = tw.id
+                  and twm.user_id = ${input.userId}
+                where tw.tenant_id = target.tenant_id and tw.id = target.workspace_id
+                  and tw.workspace_type = 'team' and tw.status = 'active'
+             )
+           )
            and (
              f.session_id = target.id
              -- 本人其它会话的附件：作者身份由 target.created_by 与下方 f.session_id 的
@@ -1098,10 +1121,18 @@ export class PostgresContentService {
                select id from sessions own
                 where own.tenant_id = ${tenantId} and own.created_by = ${input.userId}
              )
-             -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在**他人**
-             -- 私有会话下的附件属于「他人私有对话」，空间成员身份不得成为读取依据
-             -- （方案 §5/AC-10）——否则可把他人私有附件挂进自己的 Run，交给 DSH 读取，
-             -- 绕过 readFile 的同一条限制。
+             -- TW-10：同一团队空间内其它共享会话的附件——讨论对全员可见，附件同属
+             -- 共享内容；跨空间的他人会话附件仍不可挂载。
+             or exists (
+               select 1 from sessions fs
+                 join workspaces fw on fw.tenant_id = fs.tenant_id and fw.id = fs.workspace_id
+                where fs.tenant_id = f.tenant_id and fs.id = f.session_id
+                  and fs.workspace_id = target.workspace_id
+                  and fw.workspace_type = 'team' and fw.status = 'active'
+             )
+             -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在**其他
+             -- 空间**会话下的附件不属于本空间共享讨论，成员身份不得成为读取依据
+             -- （方案 §5/AC-10 口径在同空间共享模型下保留对跨空间附件的隔离）。
              or (
                f.session_id is null
                and f.workspace_id = target.workspace_id
@@ -1146,6 +1177,83 @@ export class PostgresContentService {
   }
 
   /**
+   * AG-03 启用预检：fileIds 必须可挂载到该空间由该用户发起的运行。
+   * 谓词与 prepareRuntimeFiles 同口径——扫描通过、未删除、解析成功，且
+   * 满足三类访问之一：本人会话附件（自动任务会话由 owner 创建，「目标
+   * 会话」与「本人其它会话」两分支在此合一）、任务空间内团队共享会话
+   * 附件、空间共享文件（含空间 active + 个人属主/团队成员校验）。
+   * 运行时 prepareRuntimeFiles 仍会逐次复核，此处只是让「启用即不可行」
+   * 的配置在启用时报错而不是首次触发才失败。
+   */
+  async assertRuntimeFileAccess(input: {
+    fileIds: string[]
+    userId: string
+    workspaceId: string
+    tenantId: string
+  }): Promise<void> {
+    const fileIds = [...new Set(input.fileIds.map(id => id.trim()).filter(Boolean))]
+    if (fileIds.length === 0) return
+    if (fileIds.length > 5) throw requestInvalid('自动任务最多引用 5 个文件')
+    for (const fileId of fileIds) {
+      const [row] = await this.database<{ id: string }[]>`
+        select f.id
+          from file_objects f
+          join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          join workspaces target on target.tenant_id = f.tenant_id and target.id = ${input.workspaceId}
+         where f.tenant_id = ${input.tenantId} and f.id = ${fileId}
+           ${this.runtimeFileReadyPredicate()}
+           and target.status = 'active'
+           and (
+             (target.workspace_type = 'personal' and target.created_by = ${input.userId})
+             or (
+               target.workspace_type = 'team'
+               and exists (
+                 select 1 from workspace_members target_member
+                  where target_member.tenant_id = target.tenant_id
+                    and target_member.workspace_id = target.id
+                    and target_member.user_id = ${input.userId}
+               )
+             )
+           )
+           and (
+             f.session_id in (
+               select id from sessions own
+                where own.tenant_id = ${input.tenantId} and own.created_by = ${input.userId}
+             )
+             or exists (
+               select 1 from sessions fs
+                 join workspaces fw on fw.tenant_id = fs.tenant_id and fw.id = fs.workspace_id
+                where fs.tenant_id = f.tenant_id and fs.id = f.session_id
+                  and fs.workspace_id = ${input.workspaceId}
+                  and fw.workspace_type = 'team' and fw.status = 'active'
+             )
+             or (
+               f.session_id is null
+               and f.workspace_id = ${input.workspaceId}
+               and exists (
+                 select 1 from workspaces w
+                  where w.tenant_id = f.tenant_id and w.id = f.workspace_id and w.status = 'active'
+                    and (
+                      (w.workspace_type = 'personal' and w.created_by = ${input.userId})
+                      or (
+                        w.workspace_type = 'team'
+                        and exists (
+                          select 1 from workspace_members wm
+                           where wm.tenant_id = w.tenant_id and wm.workspace_id = w.id
+                             and wm.user_id = ${input.userId}
+                        )
+                      )
+                    )
+               )
+             )
+           )
+         limit 1
+      `
+      if (!row) throw requestInvalid(`任务输入文件不存在、不可访问或解析未成功：${fileId}`)
+    }
+  }
+
+  /**
    * Collect task-local files only after DSH has completed its turn. Output is
    * validated before one database transaction publishes immutable Artifact
    * versions, so a partial or unsafe output set never appears in the UI.
@@ -1155,7 +1263,9 @@ export class PostgresContentService {
     workspaceDirectory: string
   }): Promise<Array<{ name: string; size: number }>> {
     const { manifest } = input
-    if (manifest.purpose !== undefined) return []
+    // 管理侧 purpose 不产生员工成果；自动化任务（purpose='automation'）是
+    // 员工运行，仍走正常成果收集（AG-03）。
+    if (isAdminRunPurpose(manifest.purpose)) return []
     await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
 
     const workspaceRoot = resolve(input.workspaceDirectory)

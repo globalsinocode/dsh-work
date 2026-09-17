@@ -7,7 +7,7 @@ import { authorizationDenied } from './authorization-errors.ts'
 const tenantId = 'tenant-dsh-work'
 const runtimeIntrinsicToolReferences = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
 
-interface IdentityRow {
+export interface IdentityRow {
   id: string
   roleIds: string[]
   permissions: string[]
@@ -34,6 +34,29 @@ export interface RuntimeAuthorizationDecision {
   permissions: string[]
   dataScopes: string[]
   agentVersionId: string
+}
+
+/**
+ * 自动任务的授权上限（AG-03）：启用时批准的范围快照。
+ *
+ * 这是显式的「求交」上限，不是 dataScopes 那种并集输入——有效权限 =
+ * 当前授权 ∩ 上限。后来涨权不扩大旧任务，被撤销的范围立即掉出交集。
+ * `undefined` 字段表示该维度不设上限；空数组表示该维度不允许任何值。
+ */
+export interface RuntimeScopeCeiling {
+  roleIds?: string[]
+  dataScopes?: string[]
+}
+
+/**
+ * 后台主体校验所需的目录绑定（AG-03）：OIDC 模式下按
+ * `identity_directory_sync_state` 的 last_succeeded_at 判断目录新鲜度，
+ * 超过 maxSyncAgeMs 即 fail-closed。Prototype 模式没有目录同步，传 null。
+ */
+export interface AutomationDirectoryBinding {
+  applicationId: string
+  environment: string
+  maxSyncAgeMs: number
 }
 
 export interface SessionAuthorizationContext {
@@ -87,10 +110,18 @@ export class PostgresAuthorizationService {
    * re-run full authorization on every batch.
    */
   private readonly teamReadAccessCache = new Map<string, { revision: number; checkedAt: number }>()
+  private readonly automationDirectory: AutomationDirectoryBinding | null
 
-  constructor(database: DatabaseClient, streamAccessTtlMs = 10_000) {
+  constructor(
+    database: DatabaseClient,
+    options: {
+      streamAccessTtlMs?: number
+      automationDirectory?: AutomationDirectoryBinding | null
+    } = {},
+  ) {
     this.database = database
-    this.streamAccessTtlMs = streamAccessTtlMs
+    this.streamAccessTtlMs = options.streamAccessTtlMs ?? 10_000
+    this.automationDirectory = options.automationDirectory ?? null
   }
 
   async authorizeWorkbench(input: {
@@ -131,53 +162,89 @@ export class PostgresAuthorizationService {
     roleIds?: string[]
     dataScopes?: string[]
     additionalSkillReferences?: string[]
+    /**
+     * AG-03 自动任务授权上限：与当前授权求交后生效。交集后的角色与数据
+     * 范围同时参与可见性、必需 Scope、工具授权检查，并写入返回的
+     * decision（随后进入 Manifest）。缺省表示不设上限（交互路径现状）。
+     */
+    scopeCeiling?: RuntimeScopeCeiling
   }): Promise<RuntimeAuthorizationDecision> {
-    const workspaceId = normalizeWorkspaceId(input.workspaceId)
     try {
-      const context = await this.authorizeWorkbench({
-        userId: input.userId,
-        workspaceId,
-        roleIds: input.roleIds,
-        dataScopes: input.dataScopes,
-      })
-      const { agent, skillVersions } = await this.assertAgentDependencyClosure(
-        input.agentVersionId,
-        input.additionalSkillReferences ?? [],
-      )
-      if (!intersects(context.roleIds, agent.visibleRoleIds)) {
-        // 5-T4 发现、父代理修复：这是真授权拒绝，但文案不含 403 正则里的任何片段
-        // （「不可使用」不在 `/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/`），
-        // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
-        throw authorizationDenied('当前用户角色不可使用所选 Agent')
-      }
-      requireScopes(context.dataScopes, agent.dataScopes, 'Agent')
-
-      const toolVersions = await this.resolveAndAuthorizeTools(
-        agent.toolReferences,
-        context.roleIds,
-        context.dataScopes,
-      )
-      if (workspaceId && context.workspaceType === 'team') {
-        await this.requireWorkspaceCapabilities(workspaceId, 'agent', [{
-          reference: input.agentVersionId,
-          versionId: input.agentVersionId,
-        }])
-        await this.requireWorkspaceCapabilities(workspaceId, 'skill', skillVersions)
-        await this.requireWorkspaceCapabilities(workspaceId, 'tool', toolVersions)
-      }
-
+      const decision = await this.authorizeRuntimeDecision(input)
       await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'success')
-      return {
-        userId: input.userId,
-        workspaceId,
-        roleIds: context.roleIds,
-        permissions: context.permissions,
-        dataScopes: context.dataScopes,
-        agentVersionId: input.agentVersionId,
-      }
+      return decision
     } catch (error) {
       await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'blocked', error)
       throw error
+    }
+  }
+
+  /**
+   * Runtime 授权决策本体，不直接写决策审计。团队执行复核需要把成员/Agent
+   * 关联检查并入同一条 authorization.runtime 决策，不能先记 success 再补
+   * 一条 blocked。
+   */
+  private async authorizeRuntimeDecision(input: {
+    userId: string
+    workspaceId?: string | null
+    agentVersionId: string
+    roleIds?: string[]
+    dataScopes?: string[]
+    additionalSkillReferences?: string[]
+    scopeCeiling?: RuntimeScopeCeiling
+  }): Promise<RuntimeAuthorizationDecision> {
+    const workspaceId = normalizeWorkspaceId(input.workspaceId)
+    const context = await this.authorizeWorkbench({
+      userId: input.userId,
+      workspaceId,
+      roleIds: input.roleIds,
+      dataScopes: input.dataScopes,
+    })
+    const roleIds = input.scopeCeiling?.roleIds === undefined
+      ? context.roleIds
+      : context.roleIds.filter(id => input.scopeCeiling!.roleIds!.includes(id))
+    const dataScopes = input.scopeCeiling?.dataScopes === undefined
+      ? context.dataScopes
+      : context.dataScopes.filter(scope => input.scopeCeiling!.dataScopes!.includes(scope))
+    // AG-03：permissions 由角色派生，上限裁掉角色后必须重算——否则被裁
+    // 角色的权限仍随完整集合进入 Manifest，「后来涨权不扩大旧任务」在
+    // permissions 维度失守。
+    const permissions = input.scopeCeiling?.roleIds === undefined
+      ? context.permissions
+      : await this.permissionsForRoles(roleIds)
+    const { agent, skillVersions } = await this.assertAgentDependencyClosure(
+      input.agentVersionId,
+      input.additionalSkillReferences ?? [],
+    )
+    if (!intersects(roleIds, agent.visibleRoleIds)) {
+      // 5-T4 发现、父代理修复：这是真授权拒绝，但文案不含 403 正则里的任何片段
+      // （「不可使用」不在 `/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/`），
+      // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
+      throw authorizationDenied('当前用户角色不可使用所选 Agent')
+    }
+    requireScopes(dataScopes, agent.dataScopes, 'Agent')
+
+    const toolVersions = await this.resolveAndAuthorizeTools(
+      agent.toolReferences,
+      roleIds,
+      dataScopes,
+    )
+    if (workspaceId && context.workspaceType === 'team') {
+      await this.requireWorkspaceCapabilities(workspaceId, 'agent', [{
+        reference: input.agentVersionId,
+        versionId: input.agentVersionId,
+      }])
+      await this.requireWorkspaceCapabilities(workspaceId, 'skill', skillVersions)
+      await this.requireWorkspaceCapabilities(workspaceId, 'tool', toolVersions)
+    }
+
+    return {
+      userId: input.userId,
+      workspaceId,
+      roleIds,
+      permissions,
+      dataScopes,
+      agentVersionId: input.agentVersionId,
     }
   }
 
@@ -195,41 +262,88 @@ export class PostgresAuthorizationService {
     roleIds?: string[]
     dataScopes?: string[]
     additionalSkillReferences?: string[]
+    scopeCeiling?: RuntimeScopeCeiling
+    /** AG-03：自动任务必须显式绑定该空间的 Agent 成员；历史交互会话保留无成员行的兼容路径。 */
+    requireAgentMember?: boolean
   }): Promise<RuntimeAuthorizationDecision> {
-    const decision = await this.authorizeRuntime(input)
-    const [member] = await this.database<{ role: TeamMemberRole }[]>`
-      select member_role as role from workspace_members
-       where tenant_id = ${tenantId} and workspace_id = ${input.workspaceId}
-         and user_id = ${input.userId}
-    `
-    // 5-T4 发现、父代理修复：下面两处同为授权拒绝，此前分类都不是 403——
-    // 「不是该团队空间成员」里「不是成员」不连续 → 500 operation_failed；
-    // 「只读…不能继续执行任务」先命中 `/当前状态|只有.*可以|不能/` → 409 state_conflict。
-    // 按权限矩阵它们都是「无权限」，现统一类型化为 403（消息文本不变，避免枚举空间）。
-    if (!member) throw authorizationDenied('当前用户已不是该团队空间成员')
-    if (member.role === 'viewer') throw authorizationDenied('当前用户角色为只读，不能继续执行任务')
+    try {
+      const decision = await this.authorizeRuntimeDecision(input)
+      const [member] = await this.database<{ role: TeamMemberRole }[]>`
+        select member_role as role from workspace_members
+         where tenant_id = ${tenantId} and workspace_id = ${input.workspaceId}
+           and user_id = ${input.userId}
+      `
+      // 5-T4 发现、父代理修复：下面两处同为授权拒绝，此前分类都不是 403——
+      // 「不是该团队空间成员」里「不是成员」不连续 → 500 operation_failed；
+      // 「只读…不能继续执行任务」先命中 `/当前状态|只有.*可以|不能/` → 409 state_conflict。
+      // 按权限矩阵它们都是「无权限」，现统一类型化为 403（消息文本不变，避免枚举空间）。
+      if (!member) throw authorizationDenied('当前用户已不是该团队空间成员')
+      if (member.role === 'viewer') throw authorizationDenied('当前用户角色为只读，不能继续执行任务')
 
-    // Agent 关联状态必须与能力授权分开校验：对账把 legacy 来源改写为 manual 后，
-    // 停用 Agent 成员不会删除该 grant，仅靠 requireWorkspaceCapabilities 会放行已
-    // 停用/移出的关联，导致既有会话继续续写或重试。
-    //
-    // 必须通过「版本所属 Agent」定位成员，而不是按成员的当前 agent_version_id 匹配：
-    // Agent 从 v1 升级到 v2 后成员行指向 v2，v1 会话会查不到关联而被误当作历史无关联
-    // 场景放行。升级后旧版本是否仍可执行由成员状态决定（1A 保留旧版本授权）。
-    const [agentMember] = await this.database<{ status: string }[]>`
-      select wam.status
-        from workspace_agent_members wam
-        join agent_versions av
-          on av.tenant_id = wam.tenant_id and av.id = ${input.agentVersionId}
-       where wam.tenant_id = ${tenantId} and wam.workspace_id = ${input.workspaceId}
-         and wam.agent_id = av.agent_id
-       order by case when wam.status = 'available' then 0 else 1 end, wam.created_at asc
-       limit 1
-    `
-    if (agentMember && agentMember.status !== 'available') {
-      throw authorizationDenied('Agent 成员已停用或已移出该团队空间，不能继续执行任务')
+      // Agent 关联状态必须与能力授权分开校验：对账把 legacy 来源改写为 manual 后，
+      // 停用 Agent 成员不会删除该 grant，仅靠 requireWorkspaceCapabilities 会放行已
+      // 停用/移出的关联，导致既有会话继续续写或重试。
+      //
+      // 必须通过「版本所属 Agent」定位成员，而不是按成员的当前 agent_version_id 匹配：
+      // Agent 从 v1 升级到 v2 后成员行指向 v2，v1 会话会查不到关联而被误当作历史无关联
+      // 场景放行。升级后旧版本是否仍可执行由成员状态决定（1A 保留旧版本授权）。
+      const [agentMember] = await this.database<{ status: string }[]>`
+        select wam.status
+          from workspace_agent_members wam
+          join agent_versions av
+            on av.tenant_id = wam.tenant_id and av.id = ${input.agentVersionId}
+         where wam.tenant_id = ${tenantId} and wam.workspace_id = ${input.workspaceId}
+           and wam.agent_id = av.agent_id
+         order by case when wam.status = 'available' then 0 else 1 end, wam.created_at asc
+         limit 1
+      `
+      if (!agentMember) {
+        if (input.requireAgentMember === true) {
+          throw authorizationDenied('Agent 未加入该团队空间，不能继续执行任务')
+        }
+      } else if (agentMember.status !== 'available') {
+        throw authorizationDenied('Agent 成员已停用或已移出该团队空间，不能继续执行任务')
+      }
+      await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'success')
+      return decision
+    } catch (error) {
+      await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'blocked', error)
+      throw error
     }
-    return decision
+  }
+
+  /**
+   * 后台主体校验（AG-03）：自动任务触发时重查「本人账号当前仍有效」。
+   *
+   * 两段检查：先验证员工目录新鲜度（OIDC 模式按
+   * `identity_directory_sync_state.last_succeeded_at` 是否落在信任窗口内；
+   * 从未成功或超窗一律 fail-closed，Prototype 模式无目录可校、跳过此段），
+   * 再走 requireIdentity 的 active + 租户可用 + 角色解析（business_user
+   * 为否的同步用户已被归一化为 disabled，天然被拦）。
+   *
+   * 不逐次写审计——本方法按扫描周期高频调用，失败证据由调用方落在
+   * automation_executions 的 reason 字段。
+   */
+  async resolveAutomationSubject(userId: string): Promise<IdentityRow> {
+    if (this.automationDirectory) {
+      const [state] = await this.database<{ lastSucceededAt: string | null }[]>`
+        select last_succeeded_at as "lastSucceededAt"
+          from identity_directory_sync_state
+         where application_id = ${this.automationDirectory.applicationId}
+           and environment = ${this.automationDirectory.environment}
+      `
+      const lastSucceededAt = state?.lastSucceededAt
+        ? new Date(state.lastSucceededAt).getTime()
+        : null
+      if (
+        lastSucceededAt === null
+        || !Number.isFinite(lastSucceededAt)
+        || Date.now() - lastSucceededAt > this.automationDirectory.maxSyncAgeMs
+      ) {
+        throw authorizationDenied('员工目录同步状态不可用或已过期，自动任务暂停触发')
+      }
+    }
+    return this.requireIdentity(userId)
   }
 
   /**
@@ -563,6 +677,23 @@ export class PostgresAuthorizationService {
     `
     if (!row) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
     return row
+  }
+
+  /**
+   * AG-03 上限交集后的权限重算：permissions 是角色的派生集合，scope
+   * ceiling 裁掉角色后，被裁角色贡献的权限也必须随之掉出返回值。
+   * 无上限路径不调用本方法，交互行为不变。
+   */
+  private async permissionsForRoles(roleIds: string[]): Promise<string[]> {
+    if (roleIds.length === 0) return []
+    const rows = await this.database<{ permissions: string[] }[]>`
+      select coalesce(array_agg(distinct permission.value) filter (where permission.value is not null), '{}') as permissions
+        from roles r
+        left join lateral jsonb_array_elements_text(coalesce(r.permissions, '[]')) permission(value) on true
+       where r.tenant_id = ${tenantId} and r.status = 'active'
+         and r.id in ${this.database(roleIds)}
+    `
+    return unique(rows.flatMap(row => row.permissions))
   }
 
   /**

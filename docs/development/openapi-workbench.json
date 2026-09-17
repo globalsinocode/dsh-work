@@ -1706,6 +1706,340 @@
           }
         }
       }
+    },
+    "/automations": {
+      "get": {
+        "operationId": "listAutomations",
+        "summary": "列出当前员工的自动任务（不含已停用）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAutomation",
+        "summary": "创建自动任务草稿；固定 Agent 版本 + 确定性输入 + 调度规则",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "agentId",
+                  "workspaceId",
+                  "schedule",
+                  "inputTemplate"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "$ref": "#/components/schemas/AutomationSchedule"
+                  },
+                  "inputTemplate": {
+                    "$ref": "#/components/schemas/AutomationInputTemplate"
+                  },
+                  "agentId": {
+                    "type": "string",
+                    "description": "业务 Agent ID；受理时解析为当前已发布版本并固定"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "get": {
+        "operationId": "getAutomation",
+        "summary": "自动任务详情（owner-scoped）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateAutomation",
+        "summary": "编辑自动任务；仅草稿或暂停状态可编辑",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "workspaceId": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "$ref": "#/components/schemas/AutomationSchedule"
+                  },
+                  "inputTemplate": {
+                    "$ref": "#/components/schemas/AutomationInputTemplate"
+                  },
+                  "agentId": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disableAutomation",
+        "summary": "停用自动任务（软删除；新触发停止，活动执行可单独取消）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/enable": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "enableAutomation",
+        "summary": "启用自动任务：当前授权校验 + 授权上限快照 + 首槽计算",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/pause": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "pauseAutomation",
+        "summary": "暂停自动任务：停止新触发，活动执行继续",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/trial-runs": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "trialRunAutomation",
+        "summary": "可选试运行：草稿/暂停任务走真实受理与 DSH 链路",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "idempotencyKey"
+                ],
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/run-now": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "runAutomationNow",
+        "summary": "立即运行：幂等键派生触发；同键重放返回原执行，异请求拒绝",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "idempotencyKey"
+                ],
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/executions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "get": {
+        "operationId": "listAutomationExecutions",
+        "summary": "执行记录：含 skipped/missed/interrupted 及关联 Run 状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1741,6 +2075,15 @@
         "schema": {
           "type": "string"
         }
+      },
+      "AutomationId": {
+        "name": "automationId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "自动任务 ID"
       }
     },
     "responses": {
@@ -2395,6 +2738,331 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "AutomationSchedule": {
+        "type": "object",
+        "required": [
+          "kind",
+          "timezone"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "daily",
+              "weekly"
+            ],
+            "description": "manual 仅手动触发"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA 时区标识"
+          },
+          "timeOfDay": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "HH:mm；daily/weekly 必填"
+          },
+          "weekdays": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 6
+            },
+            "description": "weekly 必填；0=周日"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutomationInputTemplate": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "确定性任务输入"
+          },
+          "fileIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "已授权文件绑定"
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxToolCalls": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxOutputBytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false,
+            "description": "任务级执行预算上限，落到 Manifest limits 钳制"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Automation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "agentVersionId": {
+            "type": "string",
+            "description": "固定的已发布 Agent 版本"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "schedule": {
+            "type": "object",
+            "required": [
+              "kind",
+              "timezone"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "daily",
+                  "weekly"
+                ],
+                "description": "manual 仅手动触发"
+              },
+              "timezone": {
+                "type": "string",
+                "description": "IANA 时区标识"
+              },
+              "timeOfDay": {
+                "type": "string",
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                "description": "HH:mm；daily/weekly 必填"
+              },
+              "weekdays": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                },
+                "description": "weekly 必填；0=周日"
+              }
+            },
+            "additionalProperties": false
+          },
+          "scheduleRevision": {
+            "type": "integer"
+          },
+          "nextSlotUtc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "inputTemplate": {
+            "type": "object",
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "prompt": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000,
+                "description": "确定性任务输入"
+              },
+              "fileIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "已授权文件绑定"
+              },
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "timeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxToolCalls": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxOutputBytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false,
+                "description": "任务级执行预算上限，落到 Manifest limits 钳制"
+              }
+            },
+            "additionalProperties": false
+          },
+          "scopeCeiling": {
+            "type": "object",
+            "description": "启用时批准的授权上限快照"
+          },
+          "confirmedConfigRevision": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "enabled",
+              "paused",
+              "disabled"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "钉住版本所属业务 Agent；Agent 删除后为 null"
+          },
+          "agentName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "钉住的版本号"
+          }
+        }
+      },
+      "AutomationExecution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "automationId": {
+            "type": "string"
+          },
+          "triggerId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "manual",
+              "missed"
+            ]
+          },
+          "plannedSlotUtc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "missedFromUtc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "missedToUtc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "taskRevision": {
+            "type": "integer"
+          },
+          "scheduleRevision": {
+            "type": "integer"
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "执行状态经此关联读 Run"
+          },
+          "runStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "关联 Run 的当前状态投影"
+          },
+          "admissionStatus": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "skipped",
+              "interrupted"
+            ]
+          },
+          "reasonCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "overlap/subject_invalid/authorization_denied/*_pending_limit/slot_expired/task_paused/task_disabled/schedule_changed/dispatch_interrupted/duplicate_request"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

@@ -2,6 +2,10 @@ import type {
   AgentCandidatePage,
   AgentMemberPatchAction,
   Artifact,
+  Automation,
+  AutomationExecution,
+  AutomationInputTemplate,
+  AutomationSchedule,
   MemberCandidatePage,
   TaskRun,
   TeamMemberRole,
@@ -379,6 +383,44 @@ export const workbenchApi = {
       { method: 'GET' },
     )
   },
+  // ---- AG-03 自动任务 ----
+  getAutomations: () => request<Automation[]>('/automations'),
+  createAutomation: (input: {
+    name: string
+    agentId: string
+    workspaceId: string
+    schedule: AutomationSchedule
+    inputTemplate: AutomationInputTemplate
+  }) => request<Automation>('/automations', { method: 'POST', body: JSON.stringify(input) }),
+  getAutomation: (id: string) => request<Automation>(`/automations/${encodeURIComponent(id)}`),
+  updateAutomation: (id: string, input: {
+    name?: string
+    agentId?: string
+    workspaceId?: string
+    schedule?: AutomationSchedule
+    inputTemplate?: AutomationInputTemplate
+  }) => request<Automation>(`/automations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }),
+  enableAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+  pauseAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
+  disableAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  trialRunAutomation: (id: string, idempotencyKey: string) =>
+    request<AutomationExecution>(`/automations/${encodeURIComponent(id)}/trial-runs`, {
+      method: 'POST',
+      body: JSON.stringify({ idempotencyKey }),
+    }),
+  runAutomationNow: (id: string, idempotencyKey: string) =>
+    request<AutomationExecution>(`/automations/${encodeURIComponent(id)}/run-now`, {
+      method: 'POST',
+      body: JSON.stringify({ idempotencyKey }),
+    }),
+  listAutomationExecutions: (id: string) =>
+    request<AutomationExecution[]>(`/automations/${encodeURIComponent(id)}/executions`),
 }
 
 /**

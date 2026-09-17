@@ -156,6 +156,7 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
     const suggestions: Record<typeof status, string> = {
       401: '请重新登录后继续；若仍失败，请确认 AI Hub 应用与回调配置。',
       403: '请联系业务应用管理员，在 dsh-work 中为当前账号配置角色与数据范围。',
+      404: '返回列表确认对象仍存在，然后重新选择。',
       409: '刷新对象当前状态后重试；若仍有任务在执行，请等待完成或先取消。',
       422: '按提示调整输入内容后重新提交。',
       502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
@@ -312,10 +313,10 @@ function apiAudience(path: string): ApiAudience | null {
 
 function isIdentityAccessError(
   error: unknown,
-): error is Error & { status: 401 | 403 | 409 | 422 | 502 | 503; code: string } {
+): error is Error & { status: 401 | 403 | 404 | 409 | 422 | 502 | 503; code: string } {
   if (!(error instanceof Error)) return false
   const candidate = error as Error & { status?: unknown; code?: unknown }
-  return [401, 403, 409, 422, 502, 503].includes(Number(candidate.status))
+  return [401, 403, 404, 409, 422, 502, 503].includes(Number(candidate.status))
     && typeof candidate.code === 'string'
     && /^[a-z0-9_]{1,80}$/i.test(candidate.code)
 }

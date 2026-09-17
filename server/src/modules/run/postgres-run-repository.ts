@@ -91,9 +91,9 @@ export class PostgresRunRepository implements RunRepository {
     this.database = database
   }
 
-  async createRun(input: CreateRunInput): Promise<RunRecord> {
+  async createRun(input: CreateRunInput, tx?: DatabaseTransaction): Promise<RunRecord> {
     const runId = `run-${randomUUID()}`
-    return this.database.begin(async (transaction) => {
+    const body = async (transaction: DatabaseTransaction) => {
       // 3-T2 lock order: workspaces -> sessions -> runs. Taking the workspace
       // row lock before the session row is what serializes "start a new run"
       // with archive (which locks the same row first). Any other order would
@@ -129,7 +129,10 @@ export class PostgresRunRepository implements RunRepository {
       `
       if (!existing) throw new Error('幂等 Run 查询失败')
       return mapRun(existing)
-    })
+    }
+    // AG-03：调用方提供事务时并入受理事务（Session/Run/执行关联原子提交）；
+    // 未提供时维持原有自治事务语义。
+    return tx ? body(tx) : this.database.begin(body)
   }
 
   async getRun(tenantId: string, runId: string) {
@@ -169,9 +172,12 @@ export class PostgresRunRepository implements RunRepository {
       if (!['queued', 'failed', 'cancelled'].includes(run.status)) {
         throw new Error(`Run 当前状态不能创建 Attempt：${run.status}`)
       }
-      if (typeof input.manifest['purpose'] === 'string' && input.manifest['purpose'].startsWith('admin-')) {
+      // 管理侧与自动任务运行同一 Run 只允许一个活动 Attempt；自动化重放必须
+      // 复用已持久化 Attempt（恢复入队），不能在此静默产生第二个（AG-03）。
+      const purpose = input.manifest['purpose']
+      if (typeof purpose === 'string' && (purpose.startsWith('admin-') || purpose === 'automation')) {
         const [active] = await transaction`select id from run_attempts where tenant_id = ${input.tenantId} and run_id = ${input.runId} and status in ('queued', 'running', 'cancel_requested') limit 1`
-        if (active) throw Object.assign(new Error('该请求已有进行中的 Attempt，请刷新管理助手状态'), { status: 409, code: 'attempt_already_active' })
+        if (active) throw Object.assign(new Error('该请求已有进行中的 Attempt'), { status: 409, code: 'attempt_already_active' })
       }
       const [counter] = await transaction<{ next: number }[]>`
         select coalesce(max(attempt_no), 0)::integer + 1 as next
@@ -257,7 +263,12 @@ export class PostgresRunRepository implements RunRepository {
     return row?.status ?? null
   }
 
-  async claimAttempt(tenantId: string, attemptId: string, runtimeId: string): Promise<boolean> {
+  async claimAttempt(
+    tenantId: string,
+    attemptId: string,
+    runtimeId: string,
+    options?: { automationMaxConcurrent?: number },
+  ): Promise<boolean> {
     return this.database.begin(async (transaction) => {
       // 3-T2: a queued run must never be claimed (queued -> running) inside an
       // archived workspace. The workspace row lock is taken first, matching
@@ -269,11 +280,33 @@ export class PostgresRunRepository implements RunRepository {
           from runtimes where tenant_id = ${tenantId} and id = ${runtimeId} for update
       `
       if (!runtime || runtime.schedulingStatus !== 'accepting') return false
+      // AC-24：cancel_requested 的 Attempt 尚未释放 Worker，仍计入占用。
       const [usage] = await transaction<{ active: number }[]>`
         select count(*)::integer as active from run_attempts
-         where tenant_id = ${tenantId} and runtime_id = ${runtimeId} and status = 'running'
+         where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
+           and status in ('running', 'cancel_requested')
       `
       if ((usage?.active ?? 0) >= runtime.capacity) return false
+      // AG-03：自动任务并发车道——计数与领取在同一 Runtime 行锁内完成。
+      // 有效上限 = min(配置上限, capacity - 1)：始终为交互执行保留一路 Worker；
+      // capacity ≤ 1 时车道为 0，超限返回 false 由调度泵区分「车道满跳过」
+      // 「容量满停泵」与「容量不足收敛」。
+      if (options?.automationMaxConcurrent !== undefined) {
+        const [pending] = await transaction<{ purpose: string | null }[]>`
+          select manifest->>'purpose' as purpose from run_attempts
+           where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
+        `
+        if (pending?.purpose === 'automation') {
+          const laneLimit = Math.max(0, Math.min(options.automationMaxConcurrent, runtime.capacity - 1))
+          const [lane] = await transaction<{ active: number }[]>`
+            select count(*)::integer as active from run_attempts
+             where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
+               and status in ('running', 'cancel_requested')
+               and manifest->>'purpose' = 'automation'
+          `
+          if ((lane?.active ?? 0) >= laneLimit) return false
+        }
+      }
       const [attempt] = await transaction<{ runId: string }[]>`
         update run_attempts set status = 'running', started_at = coalesce(started_at, now())
          where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
@@ -286,6 +319,94 @@ export class PostgresRunRepository implements RunRepository {
       `
       return true
     })
+  }
+
+  /**
+   * AG-03 车道占用读数：返回自动任务有效并发上限与当前占用。
+   * 有效上限 = min(配置上限, capacity - 1)，为交互执行保留一路；capacity ≤ 1
+   * 时 allowed = 0，调用方应把排队自动任务收敛为「容量不足」而非无限空转。
+   * Runtime 行不存在（exists=false）或暂停接活（accepting=false）属部署/
+   * 运维状态，调用方应按「暂不可调度」留队重排而非收敛。占用计数含
+   * cancel_requested（Worker 未释放）。
+   */
+  async automationLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }> {
+    const [row] = await this.database<{ capacity: number; schedulingStatus: string; running: number }[]>`
+      select r.capacity, r.scheduling_status as "schedulingStatus",
+             (select count(*)::integer from run_attempts a
+               where a.tenant_id = r.tenant_id and a.runtime_id = r.id
+                 and a.status in ('running', 'cancel_requested')
+                 and a.manifest->>'purpose' = 'automation') as running
+        from runtimes r
+       where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
+    `
+    if (!row) return { allowed: 0, running: 0, exists: false, accepting: false }
+    return {
+      allowed: Math.max(0, Math.min(configuredMax, row.capacity - 1)),
+      running: row.running,
+      exists: true,
+      accepting: row.schedulingStatus === 'accepting',
+    }
+  }
+
+  /**
+   * AG-03 条件收敛：仅当 Run 仍停在「无 Attempt 的 queued」时落终态——
+   * 受理中断（failed）与暂停清理（cancelled）共用。并发下 Attempt 已创建
+   * 或 Run 已离开 queued 时不动作，返回是否实际收敛。
+   */
+  async convergeUndispatchedRun(
+    tenantId: string,
+    runId: string,
+    to: 'failed' | 'cancelled',
+  ): Promise<boolean> {
+    const updated = await this.database`
+      update runs set status = ${to}, updated_at = now()
+       where tenant_id = ${tenantId} and id = ${runId}
+         and status = 'queued' and current_attempt_id is null
+    `
+    return updated.count > 0
+  }
+
+  /**
+   * AG-03 暂停/停用清理：Run 仍在 queued（未开始执行）时原子取消——
+   * 有 Attempt 的连同 Attempt 一起取消（同事务）；Attempt 已被领取
+   * （running/cancel_requested/终态）或 Run 已离开 queued 时返回 false，
+   * 由调用方按「已开始执行」放行。
+   */
+  async cancelQueuedRun(
+    tenantId: string,
+    runId: string,
+    tx?: DatabaseTransaction,
+  ): Promise<boolean> {
+    const body = async (transaction: DatabaseTransaction) => {
+      // 锁顺序与 claimAttempt 一致（run_attempts → runs）：先无锁读出
+      // attempt 指针只作预判，真正的并发判定交给两条 UPDATE 的状态谓词；
+      // 若先锁 runs 再锁 run_attempts，会与领取事务（持 attempt 锁等 run
+      // 锁）成环造成死锁。
+      const [peek] = await transaction<{ status: RunState; currentAttemptId: string | null }[]>`
+        select status, current_attempt_id as "currentAttemptId"
+          from runs where tenant_id = ${tenantId} and id = ${runId}
+      `
+      if (!peek || peek.status !== 'queued') return false
+      if (peek.currentAttemptId) {
+        const attempt = await transaction`
+          update run_attempts
+             set status = 'cancelled', ended_at = coalesce(ended_at, now())
+           where tenant_id = ${tenantId} and id = ${peek.currentAttemptId}
+             and status = 'queued'
+        `
+        if (attempt.count === 0) return false
+      }
+      const updated = await transaction`
+        update runs set status = 'cancelled', updated_at = now()
+         where tenant_id = ${tenantId} and id = ${runId} and status = 'queued'
+      `
+      return updated.count > 0
+    }
+    return tx ? body(tx) : this.database.begin(body)
   }
 
   async transitionAttempt(

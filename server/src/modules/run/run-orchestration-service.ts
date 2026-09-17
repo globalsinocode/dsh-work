@@ -1,8 +1,10 @@
+import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
 
 import type { ModelGovernanceService } from '../model/model-governance-service.ts'
-import type { AgentRuntimePort, RuntimeEvent, RuntimeManifest } from '../runtime/runtime-types.ts'
+import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
+import type { AdminRunPurpose, AgentRuntimePort, RuntimeEvent, RuntimeManifest } from '../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../runtime/manifest-compiler.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService, PreparedRuntimeFile } from '../workbench/application/postgres-content-service.ts'
@@ -14,12 +16,16 @@ import type {
   RuntimeAuthorizationDecision,
   SessionAuthorizationContext,
 } from '../authorization/postgres-authorization-service.ts'
+import {
+  isAuthorizationDenial,
+  RequestValidationError,
+} from '../authorization/authorization-errors.ts'
 import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
-type AdminPurpose = NonNullable<RuntimeManifest['purpose']>
+type AdminPurpose = AdminRunPurpose
 
 const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -41,6 +47,9 @@ export class RunOrchestrationService {
   private readonly knowledge?: PostgresKnowledgeService
   private readonly authorization?: PostgresAuthorizationService
 
+  private readonly automationMaxConcurrent: number
+  private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
+
   constructor(
     runs: RunRepository,
     conversations: PostgresConversationRepository,
@@ -51,6 +60,15 @@ export class RunOrchestrationService {
     agents?: PostgresAgentService,
     knowledge?: PostgresKnowledgeService,
     authorization?: PostgresAuthorizationService,
+    options?: {
+      automationMaxConcurrent?: number
+      /**
+       * AG-03 执行前复核兜底：按 run_id 反查所属自动任务当前状态。
+       * 暂停/停用后仍排在队列里的 Attempt 在领取后、调用 Runtime 前
+       * 在此被拦下；未接线（测试替身等）时跳过该检查。
+       */
+      automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
+    },
   ) {
     this.runs = runs
     this.conversations = conversations
@@ -61,6 +79,8 @@ export class RunOrchestrationService {
     this.agents = agents
     this.knowledge = knowledge
     this.authorization = authorization
+    this.automationMaxConcurrent = options?.automationMaxConcurrent ?? 2
+    this.automationStatusLookup = options?.automationStatusLookup
   }
 
   async startAdminRun(input: { userId: string; sessionId: string; prompt: string; idempotencyKey: string; source: string; purpose?: AdminPurpose; testSkill?: RuntimeSkillConfiguration; history?: RuntimeManifest['input']['conversation_history'] }) {
@@ -104,7 +124,8 @@ export class RunOrchestrationService {
       run.id,
       await this.conversations.getRunPrompt(run.id),
     )
-    await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', manifest.purpose ?? 'admin-skill-install', manifest.purpose === 'admin-skill-test' && retriedSkill ? {
+    const retryPurpose: AdminPurpose = manifest.purpose && isAdminRunPurpose(manifest.purpose) ? manifest.purpose : 'admin-skill-install'
+    await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', retryPurpose, retryPurpose === 'admin-skill-test' && retriedSkill ? {
       id: retriedSkill.id, name: retriedSkill.name ?? retriedSkill.id, description: retriedSkill.description ?? '', version: retriedSkill.version,
       instructions: retriedSkill.instructions ?? '', tools: manifest.tools.filter(tool => tool.id !== 'activate_skill').map(tool => `${tool.id}@${tool.version}`),
       ...(retriedSkill.artifact_ref ? { artifact: { artifactRef: retriedSkill.artifact_ref, instructionsSha256: retriedSkill.instructions_sha256!, files: retriedSkill.files ?? [] } as RuntimeSkillConfiguration['artifact'], files: retriedSkill.files } : {}),
@@ -156,7 +177,7 @@ export class RunOrchestrationService {
       manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
       modelRouteSnapshot: JSON.parse(JSON.stringify(route)) as JsonObject })
     this.pendingExecutions.push({ run, manifest })
-    void this.pumpScheduler()
+    this.triggerPump()
   }
 
   /**
@@ -441,6 +462,12 @@ export class RunOrchestrationService {
   async retry(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     const run = await this.requireOwnedRun(runId, userId)
     if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的 Run 可以重试')
+    // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
+    // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
+    const lastAttempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
+    if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
+      throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
+    }
     const session = await this.conversations.requireSession(run.sessionId, userId)
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
@@ -474,6 +501,109 @@ export class RunOrchestrationService {
     return this.runs.getRun(tenantId, run.id)
   }
 
+  /**
+   * AG-03 自动任务 Attempt 提交：受理事务（Session/Run/执行关联）提交后由
+   * automation 模块调用。以冻结输入构造 purpose='automation' 的 Manifest
+   * 并复用 dispatch 管线（持久化 Attempt → 内存队列 → 调度泵）。
+   *
+   * 授权决策必须传入受理时 authorizeRuntime 的结果（含 scopeCeiling 交集），
+   * 本方法不重新鉴权；恢复路径不得用它在已存在 Attempt 的 Run 上重复提交
+   * （仓储守卫会拒绝，恢复应走 restart recovery 的重新入队）。
+   */
+  async dispatchAutomation(run: RunRecord, input: {
+    prompt: string
+    workspaceId: string
+    agentVersionId: string
+    userId: string
+    fileIds: string[]
+    attemptId: string
+    authorization?: RuntimeAuthorizationDecision
+    budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+  }) {
+    // AG-03：消息写入与 Attempt 提交同属「派发前准备」，必须同受
+    // failUndispatchedRun 保护——appendMessage 失败若留 queued 幽灵 Run，
+    // 只能等下次重启收敛。
+    await this.failUndispatchedRun(run, async () => {
+      await this.conversations.appendMessage({
+        sessionId: run.sessionId,
+        runId: run.id,
+        role: 'user',
+        content: input.prompt,
+        messageId: `message-user-${run.id}`,
+      })
+      await this.dispatch(run, {
+        prompt: input.prompt,
+        workspaceId: input.workspaceId,
+        agentVersionId: input.agentVersionId,
+        userId: input.userId,
+        fileIds: input.fileIds,
+        authorization: input.authorization,
+        purpose: 'automation',
+        attemptId: input.attemptId,
+        limits: input.budget,
+      })
+    })
+  }
+
+  /**
+   * 自动任务受理中断收敛：Run 停在「无 Attempt 的 queued」。与
+   * failUndispatchedRun 同一先例——run_events 的 attempt_id 有 FK，
+   * 无 Attempt 的 Run 不写运行事件；中断证据由 automation_executions
+   * 的 interrupted/dispatch_interrupted 承载。
+   * 条件更新原子判定：并发下 Attempt 已创建或 Run 已离开 queued 时
+   * 不动作并返回 false（该 Run 已在正常执行链上，不能误杀）。
+   */
+  async convergeInterruptedAutomationRun(runId: string, reason: string): Promise<boolean> {
+    const converged = await this.runs.convergeUndispatchedRun(tenantId, runId, 'failed')
+    if (!converged) return false
+    await this.operations?.appendAudit(
+      'system', 'automation.dispatch-interrupted', runId, 'failed',
+      `trace-${runId}`, reason,
+    )
+    return true
+  }
+
+  /**
+   * AG-03 暂停/停用清理：取消「已受理但未开始执行」的 Run（queued）。
+   * 有 Attempt 的连同 Attempt 原子取消并补一条系统事件；无 Attempt 的
+   * 只落终态（run_events 外键约束）。已被领取/已开始的返回 false，
+   * 由「明确取消」或撤权链路处理，不在此拦截。
+   */
+  async cancelQueuedAutomationRun(
+    runId: string,
+    reason: string,
+    options?: { transaction?: DatabaseTransaction; deferSystemEvent?: boolean },
+  ): Promise<boolean> {
+    const cancelled = await this.runs.cancelQueuedRun(tenantId, runId, options?.transaction)
+    if (!cancelled) return false
+    if (options?.deferSystemEvent !== true) {
+      await this.appendQueuedAutomationCancellation(runId, reason)
+    }
+    return true
+  }
+
+  /**
+   * 取消状态提交后补写系统事件。run_events 非状态权威且 sequence 分配会重试，
+   * 因此刻意不参与「取消 Run/Attempt + 标记 admission」的事务。
+   */
+  async appendQueuedAutomationCancellation(runId: string, reason: string): Promise<void> {
+    // 事件在取消成功后补写；Attempt 已被同事务置为 cancelled，此时重读
+    // current_attempt_id 仍指向它（run_events.attempt_id 有 FK，只有
+    // 实际存在 Attempt 时才能写事件）。
+    const run = await this.runs.getRun(tenantId, runId)
+    if (run?.currentAttemptId) {
+      await this.runs.appendSystemEvent({
+        tenantId,
+        runId,
+        attemptId: run.currentAttemptId,
+        eventType: 'run.cancelled',
+        displayMessage: reason,
+        safeMetadata: { reason },
+        traceId: `trace-${runId}`,
+      })
+    }
+  }
+
   async recoverAfterServiceRestart() {
     const recovery = await this.runs.recoverAfterRestart(tenantId, runtimeId)
     for (const item of recovery.failed) {
@@ -492,7 +622,7 @@ export class RunOrchestrationService {
         manifest: item.attempt.manifest as unknown as RuntimeManifest,
       })
     }
-    if (recovery.queued.length > 0) void this.pumpScheduler()
+    if (recovery.queued.length > 0) this.triggerPump()
     return { failed: recovery.failed.length, resumedQueued: recovery.queued.length }
   }
 
@@ -551,15 +681,43 @@ export class RunOrchestrationService {
     }
   }
 
+  /**
+   * AG-03 车道为 0（Runtime 容量不足以在保留交互余量的前提下运行自动
+   * 任务）时把排队 Attempt 收敛为明确的容量失败，不让其在队列里空转。
+   */
+  private async failAutomationRunForCapacity(run: RunRecord, manifest: RuntimeManifest) {
+    const attempt = await this.runs.getAttempt(tenantId, manifest.attempt_id)
+    const currentRun = await this.runs.getRun(tenantId, run.id)
+    const attemptId = attempt?.id ?? manifest.attempt_id
+    let converged = false
+    if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
+      await this.runs.transitionAttempt(tenantId, attemptId, 'failed', 'AUTOMATION_CAPACITY_EXHAUSTED')
+      converged = true
+    }
+    if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
+      await this.runs.transitionRun(tenantId, run.id, 'failed')
+      converged = true
+    }
+    // 两者均已终态（并发取消等）时不补写 run.failed——终态 Run 上追加失败
+    // 事件会污染时间线并误导归因。
+    if (!converged) return
+    await this.runs.appendSystemEvent({
+      tenantId,
+      runId: run.id,
+      attemptId,
+      eventType: 'run.failed',
+      displayMessage: '自动任务容量不足：需为交互执行保留至少一路 Worker',
+      safeMetadata: { error_code: 'AUTOMATION_CAPACITY_EXHAUSTED' },
+      traceId: `trace-${run.id}`,
+    })
+  }
+
   private async failUndispatchedRun(run: RunRecord, dispatch: () => Promise<void>) {
     try {
       await dispatch()
     } catch (error) {
       // Compilation/model routing can fail before an Attempt exists. Do not leave a ghost queue entry.
-      const current = await this.runs.getRun(tenantId, run.id)
-      if (current?.status === 'queued' && !current.currentAttemptId) {
-        await this.runs.transitionRun(tenantId, run.id, 'failed')
-      }
+      await this.runs.convergeUndispatchedRun(tenantId, run.id, 'failed')
       throw error
     }
   }
@@ -576,6 +734,12 @@ export class RunOrchestrationService {
     authorization?: RuntimeAuthorizationDecision
     additionalSkillReferences?: string[]
     history?: RuntimeManifest['input']['conversation_history']
+    /** AG-03/管理侧 purpose；缺省为员工交互运行（无 purpose 字段）。 */
+    purpose?: RuntimeManifest['purpose']
+    /** 确定性 Attempt ID（自动任务 = attempt-<executionId>），缺省随机。 */
+    attemptId?: string
+    /** 任务预算对 limits 的上限钳制（AG-03 budget）。 */
+    limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
   }) {
     const route = await this.models.resolveRoute('default')
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
@@ -617,9 +781,10 @@ export class RunOrchestrationService {
           userId: input.userId,
         })
       : [])
-    const attemptId = `attempt-${randomUUID()}`
+    const attemptId = input.attemptId ?? `attempt-${randomUUID()}`
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       run_id: run.id,
       attempt_id: attemptId,
       session_id: run.sessionId,
@@ -658,9 +823,9 @@ export class RunOrchestrationService {
         ...(input.history?.length ? { conversation_history: input.history } : {}),
       },
       limits: {
-        timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
-        max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024),
-        max_tool_calls: 20,
+        timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
+        max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
+        max_tool_calls: Math.min(20, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
       },
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-${attemptId}`,
@@ -687,43 +852,52 @@ export class RunOrchestrationService {
     })
 
     this.pendingExecutions.push({ run, manifest })
-    void this.pumpScheduler()
+    this.triggerPump()
   }
 
   private async pumpScheduler() {
     if (this.pumping || this.closing) return
     this.pumping = true
     try {
-      while (this.pendingExecutions.length > 0) {
-        const next = this.pendingExecutions[0]
+      // AG-03：索引扫描而非纯队首消费——自动任务车道满时留队跳过本项，
+      // 继续寻找可领取的交互任务，避免自动化排队阻塞交互执行。
+      let index = 0
+      let automationLane: Awaited<ReturnType<RunRepository['automationLaneUsage']>> | null = null
+      while (index < this.pendingExecutions.length) {
+        const next = this.pendingExecutions[index]
         if (!next) break
         // 3-T2 加固：历史/外部数据的 `manifest` 列可能是 `{}`（没有 attempt_id）。
-        // 直接把 undefined 绑进 SQL 会抛 UNDEFINED_VALUE，并经 `void this.pumpScheduler()`
-        // 变成未处理的 rejection（验证代理 D1：进程级致命）。这里回退到 run 的权威
-        // 指针，两者都没有就跳过并告警，绝不把 undefined 传给仓储。
+        // 直接把 undefined 绑进 SQL 会抛 UNDEFINED_VALUE，异常经 triggerPump 的
+        // catch 记录并重排。这里回退到 run 的权威指针，两者都没有就跳过并告警，
+        // 绝不把 undefined 传给 Runtime。
         const attemptId = next.manifest.attempt_id ?? next.run.currentAttemptId
         if (!attemptId) {
           console.error('scheduler skipped a pending execution without an attempt id', next.run.id)
-          this.pendingExecutions.shift()
+          this.pendingExecutions.splice(index, 1)
           continue
         }
-        const claimed = await this.runs.claimAttempt(tenantId, attemptId, runtimeId)
+        const claimed = await this.runs.claimAttempt(tenantId, attemptId, runtimeId, {
+          automationMaxConcurrent: this.automationMaxConcurrent,
+        })
         if (!claimed) {
           const attempt = await this.runs.getAttempt(tenantId, attemptId)
           if (attempt && attempt.status !== 'queued') {
-            this.pendingExecutions.shift()
+            this.pendingExecutions.splice(index, 1)
             continue
           }
           if (!attempt) {
             // attempt 行已不存在（被清理/历史数据）：无法收敛，移除以免空转。
-            this.pendingExecutions.shift()
+            this.pendingExecutions.splice(index, 1)
             continue
           }
-          // 3-T2：空间在排队后被归档（历史/迁移数据或外部写入）时，claimAttempt 会
+          // 3-T2：归档收敛必须先于车道判断——排在前面保证归档空间里的自动化
+          // Attempt 拿到准确的「空间已归档」终态，而不是在车道满时被留队跳过、
+          // 或在车道为零时被误标为容量耗尽。
+          // 空间在排队后被归档（历史/迁移数据或外部写入）时，claimAttempt 会
           // 一直返回 false；若无条件重排，调度器会每 500ms 空转且永不收敛（评审实测
           // 2.6s 内重试 6 次、run 永远 queued）。这里收敛为终态并落说明事件。
           if (await this.isWorkspaceArchivedForAttempt(attemptId)) {
-            this.pendingExecutions.shift()
+            this.pendingExecutions.splice(index, 1)
             await this.failRunForRevokedAuthorization(
               next.run,
               next.manifest,
@@ -731,12 +905,36 @@ export class RunOrchestrationService {
             )
             continue
           }
+          // AG-03：自动任务并发车道——有效上限 = min(配置, capacity-1)。
+          // 车道为 0（容量不足以保留交互余量）时收敛为「容量不足」而非空转；
+          // 车道满则该项留队，继续扫描后续任务，不阻塞交互执行。
+          // Runtime 行缺失或暂停接活只是「暂不可调度」——落到下方统一的
+          // schedulePump+break 重排路径，不得误收敛为容量失败。
+          if (next.manifest.purpose === 'automation') {
+            automationLane ??= await this.runs.automationLaneUsage(tenantId, runtimeId, this.automationMaxConcurrent)
+            const lane = automationLane
+            if (lane.exists && lane.accepting && lane.allowed <= 0) {
+              this.pendingExecutions.splice(index, 1)
+              await this.failAutomationRunForCapacity(next.run, next.manifest)
+              continue
+            }
+            if (lane.exists && lane.accepting && lane.running >= lane.allowed) {
+              index += 1
+              continue
+            }
+          }
           this.schedulePump()
           break
         }
-        this.pendingExecutions.shift()
+        this.pendingExecutions.splice(index, 1)
+        // 自动任务领取成功即占一路车道，缓存读数失效，下一个 automation 项重查。
+        if (next.manifest.purpose === 'automation') automationLane = null
         void this.executeClaimed(next.run, next.manifest)
       }
+      // 车道满等原因留队的项：补一次延迟重排兜底。运行中的 Attempt 结束时
+      // executeClaimed 的 finally 也会触发重排，这里覆盖「无完成事件」的残留
+      // 场景，避免留队项依赖外部触发才恢复。
+      if (this.pendingExecutions.length > 0) this.schedulePump()
     } finally {
       this.pumping = false
     }
@@ -774,7 +972,7 @@ export class RunOrchestrationService {
       }
       console.error('runtime dispatch failed', error)
     } finally {
-      if (!this.closing) void this.pumpScheduler()
+      if (!this.closing) this.triggerPump()
     }
   }
 
@@ -786,7 +984,7 @@ export class RunOrchestrationService {
    * exact pre-T5 path with no re-check (AC-23).
    */
   private async recheckExecutionAuthorization(
-    _run: RunRecord,
+    run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
@@ -804,6 +1002,68 @@ export class RunOrchestrationService {
       }
     }
     if (!this.authorization) return { denied: false }
+    // AG-03：自动任务不分空间类型一律复核（补齐个人/独立空间被跳过的缺口）。
+    // 三道：后台主体（目录新鲜度+active）→ 空间当前可执行 → 当前授权仍覆盖
+    // Manifest 冻结的范围（受理时已与 scope_ceiling 求交，子集校验等价于
+    // 「冻结快照没有越出当前授权」，期间被撤权立即掉出）。
+    if (manifest.purpose === 'automation') {
+      try {
+        await this.authorization.resolveAutomationSubject(manifest.user_context.user_id)
+        // 暂停/停用兜底：受理后任务被暂停或停用的，排队中的 Attempt
+        // 不得再进入 Runtime（主动清理只覆盖「仍 queued」的 Run，这条
+        // 复核兜住「清理与领取竞态」及恢复重建的队列项）。试运行受理允许
+        // draft/paused——那是显式用户动作；disabled 一律拒绝。
+        if (this.automationStatusLookup) {
+          const automation = await this.automationStatusLookup(run.id)
+          const allowed = automation !== null
+            && automation.status !== 'disabled'
+            && (automation.trial || automation.status === 'enabled')
+          if (!allowed) {
+            // 到达这里：任务为 null / disabled，或非试运行且任务不在 enabled
+            // （暂停，或异常落回 draft）。试运行只可能被 disabled 拒绝——
+            // 该情形已由第一分支覆盖。
+            const reason = !automation || automation.status === 'disabled'
+              ? '任务已停用或不存在'
+              : automation.status === 'paused'
+                ? '任务已暂停'
+                : '任务状态已变化'
+            return { denied: true, reason }
+          }
+        }
+        const workspaceType = await this.authorization.workspaceTypeOf(manifest.workspace_id)
+        if (workspaceType === null) return { denied: true, reason: '工作空间不存在或已归档' }
+        const decision = workspaceType === 'team'
+          ? await this.authorization.authorizeTeamRunExecution({
+              userId: manifest.user_context.user_id,
+              workspaceId: manifest.workspace_id,
+              agentVersionId: manifest.agent_version_id ?? '',
+              requireAgentMember: true,
+            })
+          : await this.authorization.authorizeRuntime({
+              userId: manifest.user_context.user_id,
+              workspaceId: manifest.workspace_id,
+              agentVersionId: manifest.agent_version_id ?? '',
+            })
+        const missingScopes = manifest.data_scopes.filter(scope => !decision.dataScopes.includes(scope))
+        if (missingScopes.length > 0) {
+          return { denied: true, reason: `授权数据范围已收窄：${missingScopes.join('、')}` }
+        }
+        const missingRoles = manifest.user_context.role_ids.filter(role => !decision.roleIds.includes(role))
+        if (missingRoles.length > 0) {
+          return { denied: true, reason: `授权角色已收窄：${missingRoles.join('、')}` }
+        }
+        return { denied: false }
+      } catch (error) {
+        // 只有授权/校验类失败才收敛为 denied；基础设施错误（DB 抖动等）向上
+        // 抛出，走 executeClaimed 的通用失败路径（RUNTIME_DISPATCH_FAILED）——
+        // 不把瞬时故障写成「授权已撤销」的永久失败，也不把内部错误文案带进
+        // run_events。
+        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
+          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+        }
+        throw error
+      }
+    }
     // 独立运行（无 workspace）沿用既有路径，不做团队复核（AC-23）；必须在类型解析
     // 之前判断，否则 workspaceTypeOf(null|undefined|'standalone') 都返回 null 而被
     // 误判为「空间已归档」。
@@ -835,12 +1095,17 @@ export class RunOrchestrationService {
     const attempt = await this.runs.getAttempt(tenantId, manifest.attempt_id)
     const currentRun = await this.runs.getRun(tenantId, run.id)
     const attemptId = attempt?.id ?? manifest.attempt_id
+    let converged = false
     if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
       await this.runs.transitionAttempt(tenantId, attemptId, 'failed', 'AUTHORIZATION_REVOKED')
+      converged = true
     }
     if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
       await this.runs.transitionRun(tenantId, run.id, 'failed')
+      converged = true
     }
+    // 并发收敛（系统取消等）已落终态时不重复写 run.failed 事件。
+    if (!converged) return
     await this.runs.appendSystemEvent({
       tenantId,
       runId: run.id,
@@ -862,11 +1127,23 @@ export class RunOrchestrationService {
     return status === 'archived'
   }
 
+  /**
+   * 触发一次调度泵。pumpScheduler 内的瞬时错误（DB 抖动、行锁竞争等）不能
+   * 成为未处理 rejection（Node 默认 unhandled-rejections=throw，进程级致命），
+   * 也不能让留队项就此停滞：记录日志后安排延迟重排。
+   */
+  private triggerPump() {
+    void this.pumpScheduler().catch((error: unknown) => {
+      console.error('scheduler pump failed; retained items will be retried', error)
+      this.schedulePump()
+    })
+  }
+
   private schedulePump() {
     if (this.schedulerTimer || this.closing) return
     this.schedulerTimer = setTimeout(() => {
       this.schedulerTimer = undefined
-      void this.pumpScheduler()
+      this.triggerPump()
     }, 500)
     this.schedulerTimer.unref()
   }

@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  AlarmClock,
   Collection,
   Grid,
   Delete as DeleteIcon,
@@ -39,6 +40,7 @@ const navigation = [
   { label: '工作台', path: '/workbench', icon: HomeFilled },
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: '工作空间', path: '/workspaces', icon: Collection },
+  { label: '自动任务', path: '/automations', icon: AlarmClock },
   { label: '成果库', path: '/artifacts', icon: Files },
 ]
 

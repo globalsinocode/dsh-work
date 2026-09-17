@@ -106,6 +106,22 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 ## 验证记录
 
+### 2026-09-17：轻量自动任务首版（AG-03）
+
+**阶段：** Spec（AG-AUTO-00~24 登记）→ Code → Verify（真实 HTTP 旅程预演）→ Test（P0 冒烟 + 服务端集成固化）
+**环境：** 一次性 PostgreSQL（自动销毁）集成测试；OIDC + PostgreSQL 本机服务（4190）做真实 HTTP 旅程；Prototype 做 P0 冒烟
+
+- 服务端：`agent_automations`/`automation_executions` 两表（迁移 0040），触发键唯一、Session/Run 关联唯一索引；`AutomationTriggerSweep` 以 pg advisory lock 保证单一调度所有者；`purpose='automation'` 贯穿 Manifest/Runtime Adapter/成果收集；执行授权 = 当前授权 ∩ 启用时 `scope_ceiling`；OIDC 模式按目录同步新鲜度 fail-closed；受理已提交但无 Attempt 的执行在启动恢复时收敛为 `interrupted`。
+- 前端：`/automations` 列表/创建编辑/启停/立即运行/试运行/执行历史抽屉，跳转关联 Conversation；Prototype 下 GET 返回空集合、写操作 503，不伪造数据。
+
+**证据：**
+
+- `automation-calendar.test.ts` 8/8（上海时区、纽约 DST 春缺跳过/秋重取首、manual、weekly、非法时区）；`automation.integration.test.ts` 9/9（创建启用、幂等 run-now、重叠跳过、周期扫描游标、撤权跳过、中断恢复、暂停与越权、暂停收敛排队执行、weekly 规则语义比较）。
+- 真实 HTTP 旅程（OIDC 服务）：创建解析 Agent 为固定已发布版本 → 启用生成 next slot 与 scope ceiling → run-now 建 Session/Run → 同幂等键重放返回同一 execution → Run 实际进入 DSH running；第二实例无法取得 advisory lock。
+- `e2e/automation-smoke.spec.ts` 2/2（P0）；`pnpm verify`、`pnpm check:architecture`、全仓 typecheck、`validate:ui` 通过。
+
+**未覆盖：** P1 浏览器旅程（AG-AUTO-20~24，`e2e/automation.integration.spec.ts` 计划）；P2 真实验收（AG-AUTO-P2）未运行；管理端 OIDC 身份下的既有 mvp-smoke 2 例受测试环境配置阻塞（跳转真实 AI Hub 登录），与本改动无关。
+
 ### 2026-09-17：管理端开发接入文档页
 
 **阶段：** Spec（ADMIN-E2E-04）→ Code → Test（P0 Playwright 固化旅程）
@@ -256,9 +272,11 @@ Agent 发布主线已由服务端接口持久化（`agent_release_submissions` /
 2. 缺失依赖使「依赖闭包与授权」检查失败并阻塞试运行；就地「移除引用」推进修订后重跑检查放行，或先在 Skill/工具管理接入同名能力后重新运行检查（服务端重解析）。
 3. 随包候选（包内 `skills/*/SKILL.md`、`tools/*/tool.yaml`）本期只读展示并标记「待准入」：使「测试授权」检查失败并阻塞发布放行——候选须先在 Skill/工具管理中完成安装发布或准入后重新导入；联合发布与就地准入操作待准入流水线迭代接入。
 
-## AG-03 轻量自动任务（计划，未实施/未验证）
+## AG-03 轻量自动任务（首版已实现，P0 冒烟通过；P1/P2 待补）
 
-依据：[总方案 §9](../docs/design/agent-tool-extension-and-automation-plan.md#9-受控自动执行)与[轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。以下 spec 文件均为计划路径，浏览器预演通过后再编写，不表示文件已存在或测试已通过。
+依据：[总方案 §9](../docs/design/agent-tool-extension-and-automation-plan.md#9-受控自动执行)与[轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
+
+当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠与中断收敛等机制已由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（9 例）与 `automation-calendar.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 与 `e2e/automation.acceptance.spec.ts` 仍为计划路径，不表示文件已存在或测试已通过。
 
 P1 每例准备独立任务、Session、测试用户与数据，结束后清理；多角色使用独立 browser context/storageState。使用专用可丢弃 PostgreSQL 和受控 Runtime，禁止连接开发业务库或生产库。时钟、故障和执行阻塞由测试环境受控依赖提供，不增加生产测试开关。事务/重启故障同时由服务端集成测试验证，浏览器验证其用户可见结果。
 
@@ -268,7 +286,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 员工（Prototype 受控身份）
 **运行层级：** P0 浏览器冒烟
 **前置数据：** 合成已发布 Agent、个人 Workspace、默认限制及成功/失败/遗漏记录
-**spec：** `e2e/automation-smoke.spec.ts`（计划）
+**spec：** `e2e/automation-smoke.spec.ts`（P0 已实现；Prototype 下自动任务集合为空、写操作 503，当前覆盖入口导航、空态与命令面不可用反馈）
 
 1. 从已发布 Agent 进入设为定时任务，配置每日/每周、时间、时区与输入，查看下次运行预览。
 2. 查看可选试运行、启用确认及“停机不补跑、失败不自动重试”的说明。

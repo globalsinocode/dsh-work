@@ -23,6 +23,7 @@ import type {
   RuntimeRunStatus,
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
+import { isAdminRunPurpose } from './runtime-types.ts'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
 
@@ -441,7 +442,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
 
       let artifacts: Array<{ name: string; size: number }> = []
-      if (record.manifest.purpose === undefined && record.manifest.tools.some(tool => tool.id === 'write')) {
+      if (!isAdminRunPurpose(record.manifest.purpose) && record.manifest.tools.some(tool => tool.id === 'write')) {
         if (!this.configuration.collectArtifacts) throw new Error('成果收集服务不可用')
         artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
       }
@@ -672,7 +673,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       ].join('\n')),
     ].join('\n'))
   }
-  if (manifest.purpose === undefined && manifest.tools.some(tool => tool.id === 'write')) {
+  if (!isAdminRunPurpose(manifest.purpose) && manifest.tools.some(tool => tool.id === 'write')) {
     sections.push([
       '# 成果文件',
       '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',

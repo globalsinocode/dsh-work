@@ -53,6 +53,12 @@ const router = createRouter({
     },
     { path: '/history', redirect: '/workbench' },
     {
+      path: '/automations',
+      name: 'automations',
+      component: () => import('@/views/AutomationsView.vue'),
+      meta: { title: '自动任务', section: '员工工作台' },
+    },
+    {
       path: '/artifacts',
       name: 'artifacts',
       component: () => import('@/views/ArtifactsView.vue'),

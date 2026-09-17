@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { httpResult, type Router } from '../router.ts'
+import { envelope, httpResult, type Router } from '../router.ts'
 
 const basePath = '/api/workbench/v1'
 
@@ -25,6 +25,27 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
   router.post(`${basePath}/runs/:runId/retry`, async (_request, context) =>
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
+
+  // AG-03 自动任务：原型模式无持久化与调度，读侧给空集合让页面呈现空态，
+  // 写侧一律 503——不伪造可执行的假数据。
+  router.get(`${basePath}/automations`, async () => envelope('workbench', []))
+  router.get(`${basePath}/automations/:automationId`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.post(`${basePath}/automations`, async () => unavailable('自动任务'))
+  router.patch(`${basePath}/automations/:automationId`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.delete(`${basePath}/automations/:automationId`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.post(`${basePath}/automations/:automationId/enable`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.post(`${basePath}/automations/:automationId/pause`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.post(`${basePath}/automations/:automationId/trial-runs`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.post(`${basePath}/automations/:automationId/run-now`, async (_request, context) =>
+    unavailable(`自动任务 ${context.params['automationId'] ?? ''}`))
+  router.get(`${basePath}/automations/:automationId/executions`, async () =>
+    envelope('workbench', []))
 }
 
 function unavailable(object: string) {

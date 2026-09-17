@@ -63,6 +63,11 @@ import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storag
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
+import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
+import { AutomationService } from './modules/automation/automation-service.ts'
+import { AutomationTriggerSweep } from './modules/automation/automation-trigger-sweep.ts'
+import { defaultAutomationConfig } from './modules/automation/automation-types.ts'
+import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
@@ -110,6 +115,7 @@ async function start() {
 
   let orchestration: RunOrchestrationService | null = null
   let revocationSweep: RunRevocationSweep | null = null
+  let automationSweep: AutomationTriggerSweep | null = null
   let dshInstallation: DshRuntimeInstallation | null = null
   if (database) {
     const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
@@ -121,7 +127,17 @@ async function start() {
     const pythonRunner = process.env.DSH_WORK_PYTHON_IMAGE ? new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE) : null
     await pythonRunner?.preflight()
     const conversations = new PostgresConversationRepository(database)
-    const authorization = new PostgresAuthorizationService(database)
+    const authorization = new PostgresAuthorizationService(database, {
+      // AG-03：OIDC 模式下自动任务后台主体校验需要目录新鲜度，
+      // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
+      automationDirectory: identityConfiguration.mode === 'oidc'
+        ? {
+            applicationId: identityConfiguration.applicationId,
+            environment: identityConfiguration.environment,
+            maxSyncAgeMs: Math.max(identityConfiguration.directorySyncIntervalSeconds * 2, 60) * 1000,
+          }
+        : null,
+    })
     const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
     const runs = new PostgresRunRepository(database)
     const runtime: DshAcpRuntimeAdapter = new DshAcpRuntimeAdapter({
@@ -164,6 +180,8 @@ async function start() {
     const agents = new PostgresAgentService(database, operations, skills, tools)
     const knowledge = new PostgresKnowledgeService(database)
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
+    // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
+    const automationRepository = new PostgresAutomationRepository(database)
     orchestration = new RunOrchestrationService(
       runs,
       conversations,
@@ -174,6 +192,10 @@ async function start() {
       agents,
       knowledge,
       authorization,
+      // AG-03：执行前复核按 run_id 反查任务当前状态（暂停/停用兜底）。
+      {
+        automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+      },
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
     const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts)
@@ -196,6 +218,25 @@ async function start() {
     // 1A-T5: 进程内撤权事件消费循环，与调度器同一生命周期（启动即开始、关停即停止）。
     revocationSweep = new RunRevocationSweep(database, runs, orchestration, authorization)
     revocationSweep.start()
+    // AG-03：自动任务扫描与编排同一生命周期；pg advisory lock 保证
+    // 单一调度所有者，第二个进程实例自动不启动扫描。
+    const automationService = new AutomationService(
+      database,
+      automationRepository,
+      conversations,
+      runs,
+      orchestration,
+      authorization,
+      agents,
+      content,
+      operations,
+      defaultAutomationConfig,
+    )
+    automationSweep = new AutomationTriggerSweep(
+      database, automationRepository, automationService, defaultAutomationConfig,
+    )
+    await automationSweep.start()
+    registerAutomationRoutes(router, automationService)
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
     registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)
@@ -252,6 +293,7 @@ async function start() {
     server.close(() => {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
+        if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         if (orchestration) await orchestration.close()
         if (database) await database.end()

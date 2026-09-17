@@ -343,9 +343,15 @@
     "purpose": {
       "type": "string",
       "enum": [
+        "admin-assistant",
         "admin-skill-install",
-        "admin-skill-test"
-      ]
+        "admin-skill-test",
+        "admin-agent-manage",
+        "admin-platform-operations",
+        "agent-release-trial",
+        "automation"
+      ],
+      "description": "管理侧 purpose（admin-* 与 agent-release-trial）的运行不绑定员工 Workspace/Agent；automation 是员工侧定时任务运行，仍要求 workspace_id 与 agent_version_id。"
     },
     "installation_source": {
       "type": "string",
@@ -419,7 +425,19 @@
       "if": {
         "required": [
           "purpose"
-        ]
+        ],
+        "properties": {
+          "purpose": {
+            "anyOf": [
+              {
+                "pattern": "^admin-"
+              },
+              {
+                "const": "agent-release-trial"
+              }
+            ]
+          }
+        }
       },
       "then": {
         "properties": {

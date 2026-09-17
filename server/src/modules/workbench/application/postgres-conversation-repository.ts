@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ChatMessage, RunStep, TaskRun } from '../../../domain/types.ts'
-import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
+import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RunState } from '../../run/run-types.ts'
 import { PostgresWorkspaceService } from './postgres-workspace-service.ts'
 import { authorizationDenied } from '../../authorization/authorization-errors.ts'
@@ -115,13 +115,17 @@ export class PostgresConversationRepository {
     userId: string
     title: string
     workspaceId?: string
-    agentVersionId?: string
+    /** TW-10：显式传 null 表示团队讨论会话不绑定 Agent；省略沿用默认助手。 */
+    agentVersionId?: string | null
     selectedSkillVersionId?: string
-  }) {
+  }, tx?: DatabaseTransaction) {
     const id = `session-${randomUUID()}`
-    const agentVersionId = input.agentVersionId ?? 'agent-version-dsh-work-assistant-1'
+    const agentVersionId = input.agentVersionId === null
+      ? null
+      : input.agentVersionId ?? 'agent-version-dsh-work-assistant-1'
     const workspaceId = await this.resolveWorkspaceId(input.workspaceId, input.userId)
-    const [row] = await this.database<SessionRow[]>`
+    const db = tx ?? this.database
+    const [row] = await db<SessionRow[]>`
       insert into sessions (
         id, tenant_id, workspace_id, created_by, agent_version_id, selected_skill_version_id, title, status
       ) values (

@@ -466,3 +466,70 @@ export interface WorkbenchSkill {
   testPrompt: string
   updatedAt: string
 }
+
+/** AG-03 自动任务调度规则：manual 仅手动触发；daily/weekly 需 timeOfDay。 */
+export interface AutomationSchedule {
+  kind: 'manual' | 'daily' | 'weekly'
+  timezone: string
+  timeOfDay?: string
+  /** weekly 必填；0=周日 … 6=周六。 */
+  weekdays?: number[]
+}
+
+export interface AutomationBudget {
+  timeoutSeconds?: number
+  maxToolCalls?: number
+  maxOutputBytes?: number
+}
+
+export interface AutomationInputTemplate {
+  prompt: string
+  fileIds?: string[]
+  budget?: AutomationBudget
+}
+
+export type AutomationStatus = 'draft' | 'enabled' | 'paused' | 'disabled'
+
+export interface Automation {
+  id: string
+  name: string
+  agentVersionId: string
+  /** 钉住版本所属的业务 Agent / 名称 / 版本号；Agent 删除后为 null。 */
+  agentId: string | null
+  agentName: string | null
+  agentVersion: string | null
+  workspaceId: string
+  schedule: AutomationSchedule
+  scheduleRevision: number
+  nextSlotUtc: string | null
+  inputTemplate: AutomationInputTemplate
+  scopeCeiling: { roleIds?: string[]; dataScopes?: string[] }
+  confirmedConfigRevision: string
+  revision: number
+  status: AutomationStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export type AutomationExecutionKind = 'scheduled' | 'manual' | 'missed'
+export type AutomationAdmissionStatus = 'accepted' | 'skipped' | 'interrupted'
+
+export interface AutomationExecution {
+  id: string
+  automationId: string
+  triggerId: string
+  kind: AutomationExecutionKind
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  taskRevision: number
+  scheduleRevision: number
+  sessionId: string | null
+  runId: string | null
+  /** 关联 Run 的当前状态投影；未受理为 null。 */
+  runStatus: string | null
+  admissionStatus: AutomationAdmissionStatus
+  reasonCode: string | null
+  createdAt: string
+  updatedAt: string
+}

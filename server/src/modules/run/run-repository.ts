@@ -1,3 +1,4 @@
+import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type {
   AttemptState,
   CreateAttemptInput,
@@ -29,11 +30,37 @@ export interface AppendSystemEventInput {
 }
 
 export interface RunRepository {
-  createRun(input: CreateRunInput): Promise<RunRecord>
+  createRun(input: CreateRunInput, tx?: DatabaseTransaction): Promise<RunRecord>
   getRun(tenantId: string, runId: string): Promise<RunRecord | null>
   getAttempt(tenantId: string, attemptId: string): Promise<RunAttemptRecord | null>
   createAttempt(input: CreateAttemptInput): Promise<RunAttemptRecord>
-  claimAttempt(tenantId: string, attemptId: string, runtimeId: string): Promise<boolean>
+  claimAttempt(
+    tenantId: string,
+    attemptId: string,
+    runtimeId: string,
+    options?: { automationMaxConcurrent?: number },
+  ): Promise<boolean>
+  /**
+   * AG-03 车道占用读数：自动任务有效并发上限（min(配置, capacity-1)，
+   * 为交互保留一路）与当前占用（含 cancel_requested 未释放的 Worker）。
+   * `exists=false`（Runtime 行缺失）或 `accepting=false`（暂停接活）都是
+   * 部署/运维状态——调用方应留队重排而非把排队 Run 收敛为容量失败；
+   * 只有 `exists && accepting && allowed <= 0` 才是确定的容量收敛条件。
+   */
+  automationLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
+  /**
+   * AG-03 条件收敛：仅当 Run 仍停在「无 Attempt 的 queued」时落终态。
+   */
+  convergeUndispatchedRun(tenantId: string, runId: string, to: 'failed' | 'cancelled'): Promise<boolean>
+  /**
+   * AG-03 暂停/停用清理：原子取消 queued Run（含其 queued Attempt）；
+   * Attempt 已被领取或 Run 已离开 queued 时返回 false。
+   */
+  cancelQueuedRun(tenantId: string, runId: string, tx?: DatabaseTransaction): Promise<boolean>
   /**
    * 3-T2: workspace status behind an attempt (attempt → run → session → workspace).
    * Returns null when the chain is missing. Used by the scheduler to converge a
