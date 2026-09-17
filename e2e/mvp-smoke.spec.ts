@@ -127,10 +127,22 @@ test('administrator can read the integration guide and api docs', async ({ page 
   await expect(page.getByRole('heading', { name: '认证与会话' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '事件流（SSE）' })).toBeVisible()
 
+  const [guideDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('download-guide').click(),
+  ])
+  expect(guideDownload.suggestedFilename()).toBe('dsh-work-移动端接入规范.md')
+
   await nav.getByRole('button', { name: '接口文档' }).click()
   await expect(page).toHaveURL(/\/docs\/api$/)
   await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 员工工作台 API')
   await expect(page.getByText('/workspaces', { exact: true }).first()).toBeVisible()
+
+  const [specDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('download-spec').click(),
+  ])
+  expect(specDownload.suggestedFilename()).toBe('openapi-workbench.json')
 
   await page.getByRole('tab', { name: '管理端 API' }).click()
   await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 管理平台 API')

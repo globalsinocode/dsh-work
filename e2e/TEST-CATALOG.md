@@ -112,12 +112,12 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 **环境：** Prototype 受控身份、内存合成数据、独立端口 4380/4390/4374
 
 - 左侧导航新增「开发接入」组：接入规范（/docs/guide）与接口文档（/docs/api）。
-- 接口文档构建期内嵌 `docs/development/openapi-{workbench,admin}.json`，与契约同版本发布。
+- 接口文档构建期内嵌 `docs/development/openapi-{workbench,admin}.json`，与契约同版本发布；接入规范页提供 Markdown 下载（`docs/development/mobile-integration-guide.md`），接口文档页提供 OpenAPI JSON 下载。
 
 **证据：**
 
 - `pnpm --filter @dsh-work/admin-web test`：71/71 通过；`validate:ui` 通过；`vue-tsc` 通过。
-- `playwright test`（含既有 7 条基线）：8/8 通过。
+- `playwright test`（含既有 7 条基线）：8/8 通过，含下载事件与文件名断言。
 
 ### 2026-09-17：HTML 成果生成与沙箱预览
 
@@ -377,7 +377,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **spec：** `e2e/mvp-smoke.spec.ts`
 
 1. 打开管理端任意页面，左侧导航「开发接入」组可见「接入规范」「接口文档」两项。
-2. 进入「接入规范」，验证认证流程、API 包络与事件流章节可见。
-3. 进入「接口文档」，切换员工端/管理端 API 分组，验证端点清单渲染且非空。
+2. 进入「接入规范」，验证认证流程、API 包络与事件流章节可见，并可下载 Markdown 版规范（`dsh-work-移动端接入规范.md`，源文件 `docs/development/mobile-integration-guide.md`）。
+3. 进入「接口文档」，切换员工端/管理端 API 分组，验证端点清单渲染且非空，并可下载当前分组的 OpenAPI JSON。
 
-**验收：** 两个页面无需离开管理平台即可阅读；接口文档内容与仓库 OpenAPI 契约一致（构建期内嵌，同版本发布）。
+**验收：** 两个页面无需离开管理平台即可阅读与下载；接口文档内容与仓库 OpenAPI 契约一致（构建期内嵌，同版本发布）；下载产物适合 Agent/其他工程直接消费（Markdown 规范 + OpenAPI JSON）。

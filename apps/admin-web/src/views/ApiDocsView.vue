@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { Download } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 import adminSpecJson from '../../../../docs/development/openapi-admin.json'
 import workbenchSpecJson from '../../../../docs/development/openapi-workbench.json'
@@ -97,6 +99,17 @@ function requestBodyRef(operation: ApiOperation): string {
   return schema?.$ref?.split('/').pop() ?? schema?.type ?? 'object'
 }
 
+function downloadSpec() {
+  const content = JSON.stringify(activeSpec.value.spec, null, 2)
+  const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `openapi-${activeSpec.value.key}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已下载 ${activeSpec.value.label} OpenAPI 契约`)
+}
+
 function responseStatuses(operation: ApiOperation) {
   const keys = Object.keys(operation.responses ?? {})
   const numeric = keys.filter(status => status !== 'default').sort((a, b) => Number(a) - Number(b))
@@ -112,6 +125,7 @@ function responseStatuses(operation: ApiOperation) {
         <div class="page-title" role="heading" aria-level="1">接口文档</div>
         <p class="page-subtitle">内容与仓库 OpenAPI 契约（docs/development/openapi-*.json）同步构建，随版本发布。</p>
       </div>
+      <el-button :icon="Download" data-testid="download-spec" @click="downloadSpec">下载 {{ activeSpec.label }} OpenAPI</el-button>
     </section>
 
     <div class="status-tabs" role="tablist" aria-label="API 分组" @keydown="navigateTabs">
@@ -172,7 +186,8 @@ function responseStatuses(operation: ApiOperation) {
 
 <style scoped>
 .api-docs-page { max-width: 920px; margin: 0 auto; }
-.api-docs-hero { padding: 24px; }
+.api-docs-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px; }
+.api-docs-hero .el-button { flex: 0 0 auto; }
 .api-docs-hero .page-title { font-size: var(--font-size-heading); }
 .api-docs-hero .page-subtitle { margin-bottom: 0; }
 .api-docs-meta { padding: 16px 24px; }

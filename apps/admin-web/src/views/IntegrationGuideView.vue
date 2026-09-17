@@ -1,5 +1,18 @@
 <script setup lang="ts">
-import { Connection, Document, Key, Lock, Monitor, Refresh } from '@element-plus/icons-vue'
+import { Connection, Document, Download, Key, Lock, Monitor, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+
+import guideMarkdown from '../../../../docs/development/mobile-integration-guide.md?raw'
+
+function downloadGuide() {
+  const url = URL.createObjectURL(new Blob([guideMarkdown], { type: 'text/markdown;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = 'dsh-work-移动端接入规范.md'
+  anchor.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('已下载接入规范 Markdown 文档')
+}
 </script>
 
 <template>
@@ -10,6 +23,7 @@ import { Connection, Document, Key, Lock, Monitor, Refresh } from '@element-plus
         <div class="page-title" role="heading" aria-level="1">移动端接入规范</div>
         <p class="page-subtitle">移动端 H5 是独立的 API 消费方，与员工工作台平级。本页约定接入方式、认证、数据格式与边界。</p>
       </div>
+      <el-button :icon="Download" data-testid="download-guide" @click="downloadGuide">下载 Markdown 文档</el-button>
     </section>
 
     <section class="content-panel guide-section">
@@ -90,7 +104,8 @@ import { Connection, Document, Key, Lock, Monitor, Refresh } from '@element-plus
 
 <style scoped>
 .guide-page { max-width: 920px; margin: 0 auto; }
-.guide-hero { padding: 24px; }
+.guide-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 24px; }
+.guide-hero .el-button { flex: 0 0 auto; }
 .guide-hero .page-title { font-size: var(--font-size-heading); }
 .guide-hero .page-subtitle { margin-bottom: 0; }
 .guide-section { padding: 20px 24px; }
