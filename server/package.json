@@ -57,7 +57,8 @@
     "test:review:8b:unit": "node --experimental-strip-types --test src/modules/skill/skill-test-scenario.test.ts src/modules/skill/skill-test-evidence.test.ts",
     "test:review:8b:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-8b.integration.test.ts",
     "test:review:b3:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-b3-history.integration.test.ts",
-    "test:review:batch03:integration": "npm run test:review:b3:integration"
+    "test:review:batch03:integration": "npm run test:review:b3:integration && npm run test:review:b4:integration",
+    "test:review:b4:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-b4-files.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

@@ -2213,6 +2213,146 @@
           }
         }
       }
+    },
+    "/files": {
+      "get": {
+        "operationId": "listPersonalFiles",
+        "summary": "本人默认资源统一分页：material/attachment/artifact；仅个人范围，Artifact 优先分类去重",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "material",
+                "attachment",
+                "artifact"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "uploadPersonalFile",
+        "summary": "上传个人材料；服务端解析本人默认空间，不接受目标 Workspace 参数",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-File-Name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/files/{fileId}": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "fileId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getPersonalFile",
+        "summary": "单个个人资源元数据，用于显式引用前的可用性检查",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removePersonalFile",
+        "summary": "本人逻辑移除资源：停止下载/新引用，保留历史引用、字节和版本，幂等",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {

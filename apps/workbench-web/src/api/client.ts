@@ -1,4 +1,6 @@
 import type {
+  PersonalFile,
+  PersonalFileQuery,
   UserSessionSummary,
   UserSessionQuery,
   AgentCandidatePage,
@@ -118,6 +120,18 @@ async function parseApiError(response: Response, fallback: string) {
 }
 
 export const workbenchApi = {
+  listPersonalFiles: (query: PersonalFileQuery = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: PersonalFile[]; nextCursor: string | null }>(`/files?${params}`)
+  },
+  getPersonalFile: (id: string) => request<PersonalFile>(`/files/${encodeURIComponent(id)}`),
+  removePersonalFile: (id: string) => request<{ id: string; removed: true }>(`/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  downloadPersonalFile: (id: string) => requestBlob(`/files/${encodeURIComponent(id)}/download`),
+  uploadPersonalFile: (file: File) => request<WorkspaceFile>('/files', { method: 'POST', headers: {
+    'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name),
+  }, body: file }),
+
   listSessions: (query: UserSessionQuery = {}) => {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))

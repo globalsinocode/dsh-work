@@ -96,6 +96,32 @@ export interface UploadedWorkspaceFileVersion {
   extractionStatus: 'succeeded'
 }
 
+export type PersonalFileSource = 'material' | 'attachment' | 'artifact'
+export interface PersonalFileSummary {
+  id: string
+  name: string
+  type: string
+  size: string
+  createdAt: string
+  source: PersonalFileSource
+  sessionId: string | null
+  sourceSessionState: 'active' | 'removed' | null
+  artifactId: string | null
+  version: number | null
+  scanStatus: string
+  parseStatus: string
+  canDownload: boolean
+  canReference: boolean
+  removable: boolean
+}
+export interface PersonalFileQuery {
+  actorUserId: string
+  source?: PersonalFileSource | 'all'
+  query?: string
+  cursor?: string
+  limit?: number
+}
+
 interface RuntimeFileRow {
   workspaceId: string
   fileId: string
@@ -298,7 +324,7 @@ export class PostgresContentService {
         from file_objects f
         join users u on u.tenant_id = f.tenant_id and u.id = f.uploaded_by
        where f.tenant_id = ${tenantId} and f.workspace_id = ${workspaceId} and f.scan_status = 'clean'
-         and f.session_id is null
+         and f.session_id is null and f.removed_at is null
        order by f.created_at desc
     `
     return files.map(file => ({
@@ -407,6 +433,7 @@ export class PostgresContentService {
                 and sm.user_id = ${actorUserId}
            )
          )
+         and (w.workspace_type <> 'personal' or f.removed_at is null)
        order by av.created_at desc
     `
     // 团队成果与团队运行同一读取口径：成果列表同样要复核当前团队读权限，
@@ -441,6 +468,111 @@ export class PostgresContentService {
       workspaceId: row.workspaceId,
       summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
     }))
+  }
+
+  /** Uses existing file_objects/extractions/Artifact relations; no second catalog.
+   * Each immutable object appears once. Artifact membership takes precedence
+   * over session attachment membership. Personal listings never aggregate teams. */
+  async listPersonalFiles(input: PersonalFileQuery) {
+    return this.queryPersonalFiles(input)
+  }
+
+  async getPersonalFile(fileId: string, actorUserId: string): Promise<PersonalFileSummary> {
+    const page = await this.queryPersonalFiles({ actorUserId, limit: 1 }, fileId)
+    if (!page.items[0]) throw authorizationDenied('文件不存在或不可访问')
+    return page.items[0]
+  }
+
+  async storePersonalFile(name: string, mimeType: string, bytes: Buffer, actorUserId: string) {
+    await this.authorization.authorizeWorkbench({ userId: actorUserId })
+    const workspace = await this.workspaces.ensurePersonalWorkspace(actorUserId)
+    return this.storeWorkspaceFile(workspace.id, name, mimeType, bytes, actorUserId)
+  }
+
+  private async queryPersonalFiles(input: PersonalFileQuery, fileId?: string) {
+    await this.authorization.authorizeWorkbench({ userId: input.actorUserId })
+    const source = input.source ?? 'all'
+    if (!['all', 'material', 'attachment', 'artifact'].includes(source)) throw requestInvalid('无效的文件来源筛选')
+    const limit = input.limit ?? 20
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw requestInvalid('limit 必须为 1 到 100 之间的整数')
+    if ((input.query?.length ?? 0) > 200) throw requestInvalid('搜索关键词不能超过 200 个字符')
+    let cursor: { at: string; id: string } | undefined
+    if (input.cursor) {
+      try {
+        cursor = JSON.parse(Buffer.from(input.cursor, 'base64url').toString('utf8'))
+        if (!cursor || typeof cursor.at !== 'string' || !Number.isFinite(Date.parse(cursor.at))
+          || typeof cursor.id !== 'string' || !cursor.id || cursor.id.length > 160 || input.cursor.length > 1024) throw new Error('shape')
+      } catch { throw requestInvalid('无效的分页游标') }
+    }
+    const pattern = input.query?.trim() ? `%${input.query.trim().replaceAll(/[\\%_]/g, value => `\\${value}`)}%` : null
+    const rows = await this.database<Array<{
+      id: string; name: string; mimeType: string; sizeBytes: number; createdAt: Date; cursorAt: string;
+      source: PersonalFileSource; sessionId: string | null; sourceSessionState: 'active' | 'removed' | null;
+      artifactId: string | null; version: number | null; scanStatus: string; parseStatus: string
+    }>>`
+      select f.id, f.original_name as name, f.mime_type as "mimeType", f.size_bytes as "sizeBytes",
+             f.created_at as "createdAt", to_char(f.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorAt",
+             case when result.id is not null then 'artifact' when f.session_id is not null then 'attachment' else 'material' end as source,
+             f.session_id as "sessionId", case when s.status = 'active' then 'active' when s.id is not null then 'removed' else null end as "sourceSessionState",
+             result.id as "artifactId", result.version_no as version, f.scan_status as "scanStatus",
+             coalesce(extraction.status, 'not_parsed') as "parseStatus"
+        from file_objects f
+        join workspaces w on w.tenant_id = f.tenant_id and w.id = f.workspace_id
+        left join sessions s on s.tenant_id = f.tenant_id and s.id = f.session_id and s.workspace_id = f.workspace_id
+        left join lateral (
+          select a.id, av.version_no from artifact_versions av
+          join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+           where av.tenant_id = f.tenant_id and av.file_object_id = f.id
+             and a.workspace_id = w.id and a.session_id = f.session_id
+           order by av.version_no desc, av.id desc limit 1
+        ) result on true
+        left join lateral (select fe.status from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          and fe.extractor_version = 'm4-basic-v1' order by fe.created_at desc, fe.id desc limit 1) extraction on true
+       where f.tenant_id = ${tenantId} and w.workspace_type = 'personal'
+         and (${readableWorkspacePredicate(this.database, input.actorUserId)})
+         and f.removed_at is null
+         and ((f.session_id is null and f.uploaded_by = ${input.actorUserId})
+           or (s.created_by = ${input.actorUserId} and s.audience = 'workbench'))
+         and ${fileId ? this.database`f.id = ${fileId}` : this.database`true`}
+         and ${source === 'all' ? this.database`true` : source === 'artifact' ? this.database`result.id is not null`
+           : source === 'attachment' ? this.database`result.id is null and f.session_id is not null` : this.database`result.id is null and f.session_id is null`}
+         and ${pattern === null ? this.database`true` : this.database`f.original_name ilike ${pattern} escape '\\'`}
+         and ${cursor ? this.database`(f.created_at, f.id) < (${cursor.at}::timestamptz, ${cursor.id})` : this.database`true`}
+       order by f.created_at desc, f.id desc limit ${limit + 1}
+    `
+    const items: PersonalFileSummary[] = rows.slice(0, limit).map(row => ({
+      id: row.id, name: row.name, type: extname(row.name).slice(1).toUpperCase() || 'FILE', size: formatSize(Number(row.sizeBytes)),
+      createdAt: row.createdAt.toISOString(), source: row.source, sessionId: row.sessionId, sourceSessionState: row.sourceSessionState,
+      artifactId: row.artifactId, version: row.version, scanStatus: row.scanStatus, parseStatus: row.parseStatus,
+      canDownload: row.scanStatus === 'clean', canReference: row.scanStatus === 'clean' && row.parseStatus === 'succeeded', removable: true,
+    }))
+    const last = rows[Math.min(rows.length, limit) - 1]
+    return { items, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ at: last.cursorAt, id: last.id })).toString('base64url') : null }
+  }
+
+  /** Remove from future use only. Original bytes, extracts, Artifact versions and
+   * run_input_files are not deleted. Repeated authorized removal is idempotent. */
+  async removePersonalFile(fileId: string, actorUserId: string) {
+    await this.authorization.authorizeWorkbench({ userId: actorUserId })
+    return this.database.begin(async tx => {
+      const [row] = await tx<{ id: string }[]>`
+        select f.id from file_objects f
+        join workspaces w on w.tenant_id = f.tenant_id and w.id = f.workspace_id
+        left join sessions s on s.tenant_id = f.tenant_id and s.id = f.session_id and s.workspace_id = w.id
+         where f.tenant_id = ${tenantId} and f.id = ${fileId} and w.workspace_type = 'personal'
+           and w.created_by = ${actorUserId} and w.status = 'active'
+           and exists (select 1 from users u join tenants t on t.id = u.tenant_id
+             where u.tenant_id = f.tenant_id and u.id = ${actorUserId} and u.status = 'active' and t.status = 'active')
+           and ((f.session_id is null and f.uploaded_by = ${actorUserId}) or (s.created_by = ${actorUserId} and s.audience = 'workbench'))
+         for update of f
+      `
+      if (!row) throw authorizationDenied('文件不存在或不可访问')
+      const updated = await tx`update file_objects set removed_at = now(), removed_by = ${actorUserId}
+        where tenant_id = ${tenantId} and id = ${fileId} and removed_at is null returning id`
+      if (updated.length) await tx`insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id, safe_context)
+        values (${`audit-${randomUUID()}`}, ${tenantId}, 'user', ${actorUserId}, 'file.personal.remove', 'file', ${fileId}, 'success', ${`trace-${randomUUID()}`}, '{"physicalDeletion":false}')`
+      return { id: fileId, removed: true as const, physicalDeletion: false as const }
+    })
   }
 
   /**

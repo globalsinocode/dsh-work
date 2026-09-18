@@ -11,7 +11,7 @@ const basePath = '/api/workbench/v1'
 function parseFilePageLimit(raw: string | null) {
   if (raw === null || raw === '') return undefined
   const limit = Number(raw)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit 必须为 1 到 100 之间的整数')
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw routeValidationFailed('limit 必须为 1 到 100 之间的整数')
   return limit
 }
 
@@ -36,6 +36,32 @@ export function registerContentRoutes(
   authorization?: PostgresAuthorizationService,
   agentMembers?: PostgresWorkspaceAgentMemberService,
 ) {
+  router.get(`${basePath}/files`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const source = context.url.searchParams.get('source') ?? 'all'
+    if (!['all', 'material', 'attachment', 'artifact'].includes(source)) throw routeValidationFailed('无效的文件来源筛选')
+    return envelope('workbench', await content.listPersonalFiles({
+      actorUserId: identity.userId, source: source as 'all' | 'material' | 'attachment' | 'artifact',
+      query: context.url.searchParams.get('query') ?? undefined,
+      cursor: context.url.searchParams.get('cursor') ?? undefined,
+      limit: parseFilePageLimit(context.url.searchParams.get('limit')),
+    }), 'postgres')
+  })
+  router.get(`${basePath}/files/:fileId`, async (_request, context) => envelope('workbench',
+    await content.getPersonalFile(context.params['fileId'] ?? '', requireRequestIdentity(context, 'workbench').userId), 'postgres'))
+  router.delete(`${basePath}/files/:fileId`, async (_request, context) => envelope('workbench',
+    await content.removePersonalFile(context.params['fileId'] ?? '', requireRequestIdentity(context, 'workbench').userId), 'postgres'))
+  router.post(`${basePath}/files`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const header = request.headers['x-file-name']
+    const name = Array.isArray(header) ? header[0] : header
+    if (!name) throw routeValidationFailed('缺少文件名')
+    const bytes = await readBinaryBody(request, 20 * 1024 * 1024)
+    return httpResult(201, envelope('workbench', await content.storePersonalFile(decodeFileNameHeader(name),
+      request.headers['content-type'] ?? 'application/octet-stream', bytes, identity.userId), 'postgres'))
+  })
+
   router.get(`${basePath}/workspaces`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId

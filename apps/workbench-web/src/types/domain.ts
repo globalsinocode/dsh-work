@@ -611,3 +611,27 @@ export interface UserSessionQuery {
   cursor?: string
   limit?: number
 }
+
+export interface PersonalFile {
+  id: string
+  name: string
+  type: string
+  size: string
+  createdAt: string
+  source: 'material' | 'attachment' | 'artifact'
+  sessionId: string | null
+  sourceSessionState: 'active' | 'removed' | null
+  artifactId: string | null
+  version: number | null
+  scanStatus: string
+  parseStatus: string
+  canDownload: boolean
+  canReference: boolean
+  removable: boolean
+}
+export interface PersonalFileQuery {
+  source?: PersonalFile['source'] | 'all'
+  query?: string
+  cursor?: string
+  limit?: number
+}
