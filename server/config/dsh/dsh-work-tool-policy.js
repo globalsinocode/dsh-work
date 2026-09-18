@@ -241,7 +241,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'prepare_admin_action',
-    description: 'Prepare and persist an exact Agent or Runtime change plan from current platform state. It never executes the change; the administrator must confirm the plan in the application.',
+    description: 'Prepare an exact pending plan; never execute it. The general assistant may change only existing draft name, description, welcomeMessage and examplePrompts for one final confirmation. systemPrompt, permissions, skills/tools, publication and Runtime changes require the delegated two-confirmation path; the server enforces this boundary.',
     parameters: {
       type: 'object',
       properties: {

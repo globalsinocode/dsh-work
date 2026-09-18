@@ -133,6 +133,22 @@ describe('real Skill installation conversation', () => {
     expect(confirmAction).toHaveBeenCalledWith('action-1', 'c'.repeat(64))
     expect(wrapper.text()).toContain('Agent 草稿已更新')
   })
+  it('presents a single final draft-copy confirmation without a delegation step', async () => {
+    const planned = conversationFixture(); planned.installations = []; planned.proposals = []
+    planned.actions = [{ id: 'copy-action', runId: 'run-1', actionType: 'agent-update-draft', summary: '改草稿标题',
+      confirmationMode: 'single', before: { name: '原草稿' }, after: { name: '新草稿' },
+      planSha256: 'e'.repeat(64), status: 'pending', resultSummary: null }]
+    const executed = structuredClone(planned); executed.actions[0]!.status = 'executed'
+    const confirm = vi.spyOn(adminApi, 'confirmAssistantAction').mockResolvedValue(executed)
+    const { wrapper, store } = await render()
+    vi.spyOn(adminApi, 'getAssistantConversation').mockResolvedValue(planned)
+    await store.select(planned.id); await flushPromises()
+    expect(wrapper.text()).toContain('一次最终确认')
+    expect(wrapper.text()).toContain('不修改执行指令、权限或发布状态')
+    expect(wrapper.find('.delegation-card').exists()).toBe(false)
+    await button(wrapper, '确认执行计划').trigger('click'); await flushPromises()
+    expect(confirm).toHaveBeenCalledExactlyOnceWith('copy-action', 'e'.repeat(64))
+  })
   it('allows read-only administrators to chat and view proposals but not confirm them', async () => {
     const result = conversationFixture(); result.installations = []; result.proposals = [{ id: 'proposal-read', runId: 'run-1', kind: 'agent-management', title: '调整 Agent', assistantName: 'Agent 管理助手', purpose: 'admin-agent-manage', request: '调整采购分析 Agent 的可见角色', impact: '生成待确认计划。', proposalSha256: 'd'.repeat(64), status: 'pending', delegatedRunId: null }]
     const send = vi.spyOn(adminApi, 'sendAssistantMessage').mockImplementation(async input => ({ ...result, id: input.sessionId }))

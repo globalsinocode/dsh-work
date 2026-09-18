@@ -1,3 +1,4 @@
+import { assertDraftCopyPlan } from './agent-draft-copy-policy.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
 import type {
@@ -243,7 +244,7 @@ export class PostgresAgentService {
     return { agent: toAgentDefinition(row), revision: agentMutationRevision(row) }
   }
 
-  async updateAgent(input: UpdateAgentDraftInput, expectedRevision?: string) {
+  async updateAgent(input: UpdateAgentDraftInput, expectedRevision?: string, options: { draftCopyOnly?: boolean } = {}) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
@@ -260,6 +261,11 @@ export class PostgresAgentService {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
       assertAgentMutationRevision(locked, expectedRevision)
+      await this.requireActor(input.actor, transaction)
+      if (options.draftCopyOnly) {
+        if (!locked.draftVersionId) throw authorizationDenied('一次确认仅允许修改现有草稿')
+        assertDraftCopyPlan(toAgentDefinition(locked), { ...configuration, agentId: input.agentId })
+      }
       draftVersionId = locked.draftVersionId
       if (draftVersionId) {
         await transaction`
@@ -302,12 +308,17 @@ export class PostgresAgentService {
           )
         `
       }
+      if (options.draftCopyOnly) {
+        // Do not modify published catalog metadata, active version or runtime policy.
+        await transaction`update agents set updated_at = now() where tenant_id = ${tenantId} and id = ${input.agentId}`
+      } else {
       await transaction`
         update agents set name = ${configuration.name}, description = ${configuration.description},
                           welcome_message = ${configuration.welcomeMessage}, draft_version_id = ${draftVersionId},
                           updated_at = now()
          where tenant_id = ${tenantId} and id = ${input.agentId}
       `
+      }
     })
     await this.audit(actor.id, 'agent.draft.update', input.agentId, 'success', '保存 Agent 待发布版本')
     if (!draftVersionId) throw new Error('Agent 草稿版本创建失败')
@@ -740,14 +751,15 @@ export class PostgresAgentService {
     return { id, agentId, version: row.version, action, actor: row.actor, time: formatDateTime(row.time), note }
   }
 
-  private async requireActor(userId: string) {
-    const [actor] = await this.database<{ id: string; displayName: string; department: string }[]>`
+  private async requireActor(userId: string, sql: DatabaseClient | DatabaseTransaction = this.database) {
+    const [actor] = await sql<{ id: string; displayName: string; department: string }[]>`
       select u.id, u.display_name as "displayName", coalesce(u.department_id, '未分配部门') as department
         from users u where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
+         and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
          and exists (
            select 1 from user_roles ur
            join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
+            where ur.tenant_id = u.tenant_id and ur.user_id = u.id and ur.source_key = 'local' and r.status = 'active'
               and (ur.valid_until is null or ur.valid_until > now())
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )

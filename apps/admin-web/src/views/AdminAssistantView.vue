@@ -119,7 +119,7 @@ async function confirmInstallation(runId: string, planSha256: string) {
 
 <template>
   <div class="ops-page assistant-page">
-    <div class="assistant-notice"><el-tag type="success" effect="plain">DSH 已接入</el-tag><span>普通问答由通用管理助手处理；识别到执行任务后，确认前不会调用专用助手，具体写入仍需再次确认计划。</span></div>
+    <div class="assistant-notice"><el-tag type="info" effect="plain">统一 DSH 执行链路</el-tag><span>已有草稿展示文案可一次最终确认；执行指令、权限、发布和 Runtime 操作仍需委派确认与最终计划确认。</span></div>
     <el-alert v-if="assistant.error" :title="assistant.error" type="error" show-icon :closable="false"><el-button link type="primary" @click="assistant.current.saved ? assistant.refresh() : assistant.load()">重新连接</el-button></el-alert>
     <div class="assistant-workspace">
       <section class="content-panel assistant-conversation" aria-label="管理助手对话" :aria-busy="busy || assistant.active">
@@ -133,7 +133,7 @@ async function confirmInstallation(runId: string, planSha256: string) {
               <button class="capability-card" type="button" @click="prepare('调整采购分析 Agent 的 Skill 和可见角色')"><el-icon><Grid /></el-icon><strong>Agent 管理</strong><span>先展示职责、能力与权限变更摘要</span><small>已接入 <el-icon><Right /></el-icon></small></button>
               <button class="capability-card" type="button" @click="prepare('排空当前 Runtime，停止接收新任务')"><el-icon><Cpu /></el-icon><strong>平台运维</strong><span>先核对操作对象、当前状态和影响</span><small>已接入 <el-icon><Right /></el-icon></small></button>
             </div>
-            <div class="assistant-boundary"><el-icon><Check /></el-icon><span>普通问答不需要执行确认；调用专用助手前必须确认；具体写入仍以结构化计划再次确认。</span></div>
+            <div class="assistant-boundary"><el-icon><Check /></el-icon><span>普通问答不需要执行确认；已有草稿展示文案一次最终确认；其他管理变更保留两次确认。</span></div>
           </div>
           <div v-else class="assistant-messages" role="log" aria-label="管理对话记录" aria-live="polite">
             <div v-for="run in assistant.current.runs" :key="run.id" class="assistant-run">
@@ -150,7 +150,8 @@ async function confirmInstallation(runId: string, planSha256: string) {
                 <footer v-if="proposalFor(run.id)!.status === 'pending'"><span>确认后将启动真实 DSH 专用助手；此时仍不执行具体写入</span><el-button v-if="auth.canManage" :disabled="busy" @click="cancelProposedTask(proposalFor(run.id)!.id)">取消</el-button><el-button v-if="auth.canManage" type="primary" :loading="busy" :disabled="run.status !== 'succeeded'" @click="confirmProposedTask(proposalFor(run.id)!.id, proposalFor(run.id)!.proposalSha256)">确认并调用</el-button></footer>
               </div>
               <div v-if="actionFor(run.id)" class="action-card">
-                <header><div><h3>确认具体操作计划</h3><p>{{ actionFor(run.id)!.summary }}</p></div><el-tag :type="actionFor(run.id)!.status === 'failed' ? 'danger' : actionFor(run.id)!.status === 'pending' ? 'warning' : 'info'" effect="plain">{{ actionFor(run.id)!.status === 'pending' ? '待确认' : actionFor(run.id)!.status === 'executing' ? '执行中' : actionFor(run.id)!.status === 'executed' ? '已执行' : actionFor(run.id)!.status === 'cancelled' ? '已取消' : '执行失败' }}</el-tag></header>
+                <header><div><h3>{{ actionFor(run.id)!.confirmationMode === 'single' ? '确认草稿文案修改' : '确认具体操作计划' }}</h3><p>{{ actionFor(run.id)!.summary }}</p></div><el-tag :type="actionFor(run.id)!.status === 'failed' ? 'danger' : actionFor(run.id)!.status === 'pending' ? 'warning' : 'info'" effect="plain">{{ actionFor(run.id)!.status === 'pending' ? '待确认' : actionFor(run.id)!.status === 'executing' ? '执行中' : actionFor(run.id)!.status === 'executed' ? '已执行' : actionFor(run.id)!.status === 'cancelled' ? '已取消' : '执行失败' }}</el-tag></header>
+                <p v-if="actionFor(run.id)!.confirmationMode === 'single'" role="note">一次最终确认 · 仅修改已有草稿的展示文案，不修改执行指令、权限或发布状态。</p>
                 <div class="action-diff" role="table" aria-label="操作计划变更前后对比">
                   <div class="action-diff-row action-diff-header" role="row"><strong role="columnheader">字段</strong><strong role="columnheader">变更前</strong><strong role="columnheader">变更后</strong></div>
                   <div v-for="row in actionRows(actionFor(run.id)!)" :key="row.key" class="action-diff-row" role="row"><span role="cell">{{ row.key }}</span><span role="cell">{{ row.before }}</span><span role="cell">{{ row.after }}</span></div>

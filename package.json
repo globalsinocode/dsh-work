@@ -74,7 +74,9 @@
     "test:review:8b:unit": "pnpm --filter @dsh-work/server test:review:8b:unit",
     "test:review:8b:integration": "pnpm --filter @dsh-work/server test:review:8b:integration",
     "test:review:batch03:integration": "pnpm --filter @dsh-work/server test:review:batch03:integration",
-    "test:e2e:personal": "playwright test --config playwright.personal.config.ts"
+    "test:e2e:personal": "playwright test --config playwright.personal.config.ts",
+    "test:review:c6:unit": "pnpm --filter @dsh-work/server test:review:c6:unit",
+    "test:review:c6:integration": "pnpm --filter @dsh-work/server test:review:c6:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

@@ -1,6 +1,8 @@
 import type { AgentDefinition, UpdateAgentDraftInput, UpdateRuntimeConfigurationInput } from '../../../domain/types.ts'
-import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
+import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { redactSensitiveText } from '../../../security/safe-observability.ts'
+import { assertDraftCopyFields, assertDraftCopyPlan, DRAFT_COPY_POLICY } from '../../agent/agent-draft-copy-policy.ts'
+import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
@@ -35,6 +37,7 @@ export interface AdminActionPlan {
   runId: string
   actionType: AdminActionType
   summary: string
+  confirmationMode: 'single' | 'delegated'
   before: Record<string, unknown>
   after: Record<string, unknown>
   planSha256: string
@@ -42,10 +45,18 @@ export interface AdminActionPlan {
   resultSummary: string | null
 }
 
-export type StoredActionPlan =
+interface ActionConfirmation {
+  policy: typeof DRAFT_COPY_POLICY
+  mode: 'single' | 'delegated'
+  attemptId: string
+  requestedFields: string[]
+}
+
+export type StoredActionPlan = (
   | { actionType: 'agent-update-draft'; before: AgentSnapshot; after: Omit<UpdateAgentDraftInput, 'actor'> }
   | { actionType: 'agent-set-status'; before: AgentStatusSnapshot; after: { agentId: string; status: 'published' | 'disabled' } }
   | { actionType: 'runtime-update-configuration'; before: RuntimeSnapshot; after: Omit<UpdateRuntimeConfigurationInput, 'actor'> & { revision: number } }
+) & { confirmation?: ActionConfirmation }
 
 interface ProposalRow {
   id: string
@@ -283,28 +294,42 @@ export class AdminAssistantService {
 
   async prepareAction(input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) {
     signal.throwIfAborted()
-    if (manifest.purpose !== 'admin-agent-manage' && manifest.purpose !== 'admin-platform-operations') throw new Error('当前 Run 不能创建管理操作计划')
+    assertOnlyKeys(input, ['actionType', 'target', 'summary', 'changes'])
+    const single = manifest.purpose === 'admin-assistant'
+    if (!single && manifest.purpose !== 'admin-agent-manage' && manifest.purpose !== 'admin-platform-operations') throw authorizationDenied('当前 Run 不能创建管理操作计划')
     await this.authorization.requirePlatformAdmin(manifest.user_context.user_id)
     await this.requireActiveAttempt(manifest)
     const actionType = readEnum(input, 'actionType', ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'] as const)
-    if (manifest.purpose === 'admin-agent-manage' && !actionType.startsWith('agent-')) throw new Error('Agent 管理助手不能创建运维计划')
-    if (manifest.purpose === 'admin-platform-operations' && actionType !== 'runtime-update-configuration') throw new Error('平台运维助手不能创建 Agent 计划')
+    const changes = readRecord(input, 'changes')
+    if (single) {
+      if (actionType !== 'agent-update-draft') throw authorizationDenied('权限、发布和 Runtime 操作必须经过专用助手的两次确认')
+      assertDraftCopyFields(changes)
+    }
+    if (manifest.purpose === 'admin-agent-manage' && !actionType.startsWith('agent-')) throw authorizationDenied('Agent 管理助手不能创建运维计划')
+    if (manifest.purpose === 'admin-platform-operations' && actionType !== 'runtime-update-configuration') throw authorizationDenied('平台运维助手不能创建 Agent 计划')
     const target = readString(input, 'target', 1, 160)
     const summary = readString(input, 'summary', 4, 300)
-    const changes = readRecord(input, 'changes')
     const plan = await this.buildActionPlan(actionType, target, summary, changes)
+    if (single && plan.actionType === 'agent-update-draft') assertDraftCopyPlan(plan.before, plan.after)
+    plan.confirmation = { policy: DRAFT_COPY_POLICY, mode: single ? 'single' : 'delegated',
+      attemptId: manifest.attempt_id, requestedFields: Object.keys(changes).sort() }
     const digest = sha256(canonicalJson(plan))
     const id = `admin-action-${manifest.run_id}`
-    await this.database`
-      insert into admin_assistant_action_plans (
-        id, tenant_id, session_id, run_id, created_by, action_type, summary, plan, plan_sha256
-      ) values (
-        ${id}, ${tenantId}, ${manifest.session_id}, ${manifest.run_id}, ${manifest.user_context.user_id},
-        ${actionType}, ${summary}, ${this.database.json(JSON.parse(JSON.stringify(plan)))}, ${digest}
-      ) on conflict (tenant_id, run_id) do nothing
-    `
+    await this.database.begin(async transaction => {
+      // Run lock prevents a late tool result from creating a live plan after cancel/retry.
+      await this.requireActiveAttempt(manifest, transaction, true)
+      signal.throwIfAborted()
+      await transaction`
+        insert into admin_assistant_action_plans (
+          id, tenant_id, session_id, run_id, created_by, action_type, summary, plan, plan_sha256
+        ) values (
+          ${id}, ${tenantId}, ${manifest.session_id}, ${manifest.run_id}, ${manifest.user_context.user_id},
+          ${actionType}, ${summary}, ${transaction.json(JSON.parse(JSON.stringify(plan)))}, ${digest}
+        ) on conflict (tenant_id, run_id) do nothing
+      `
+    })
     const action = (await this.readActions(manifest.session_id)).find(item => item.runId === manifest.run_id)
-    if (!action) throw new Error('管理操作计划保存失败')
+    if (!action || action.planSha256 !== digest) throw requestInvalid('本次 Run 已有不同计划，请先取消后重新生成')
     return toActionPlan(action)
   }
 
@@ -313,9 +338,10 @@ export class AdminAssistantService {
     const action = await this.requireAction(userId, actionId)
     if (action.planSha256 !== planSha256 || sha256(canonicalJson(action.plan)) !== planSha256) throw new Error('操作计划不存在或已变化，请重新查看')
     if (action.status === 'executed') return this.detail(userId, action.sessionId)
-    if (action.status !== 'pending') throw new Error(action.status === 'executing' ? '操作计划正在执行，请稍后刷新' : '操作计划已取消或失败，请重新生成')
+    if (action.status !== 'pending') throw actionConflict(action.status === 'executing' ? '操作计划正在执行，请稍后刷新' : '操作计划已取消或失败，请重新生成')
     const [run] = await this.database<{ status: string }[]>`select status from runs where tenant_id = ${tenantId} and id = ${action.runId}`
-    if (run?.status !== 'succeeded') throw new Error('专用助手尚未成功完成，请等待或重试')
+    if (run?.status !== 'succeeded') throw new Error('管理助手尚未成功完成，请等待或重试')
+    await this.assertConfirmationBoundary(action)
     try {
       await this.assertActionPrecondition(action.plan)
     } catch (cause) {
@@ -326,14 +352,14 @@ export class AdminAssistantService {
          where tenant_id = ${tenantId} and id = ${action.id} and status = 'pending'
       `
       await this.recordReply(action.sessionId, action.runId, `message-${action.id}-precondition-failed`, `操作计划已失效：${reason}\n本次未执行平台写入，请刷新状态并重新生成计划。`).catch(() => undefined)
-      throw cause
+      throw actionConflict(reason)
     }
     const started = await this.database`
       update admin_assistant_action_plans set status = 'executing', updated_at = now()
        where tenant_id = ${tenantId} and id = ${action.id} and status = 'pending'
        returning id
     `
-    if (!started.length) throw new Error('操作计划状态已变化，请刷新')
+    if (!started.length) throw actionConflict('操作计划状态已变化，请刷新')
     try {
       const resultSummary = await this.executeAction(action.plan, userId)
       const completed = await this.database`
@@ -496,7 +522,7 @@ export class AdminAssistantService {
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
     delete (comparableAfter as Partial<typeof comparableAfter>)['agentId']
     delete (comparableAfter as Partial<typeof comparableAfter>)['changeSummary']
-    if (canonicalJson(before) === canonicalJson(comparableAfter)) throw new Error('Agent 操作计划没有实际变更')
+    if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(comparableAfter)) throw new Error('Agent 操作计划没有实际变更')
     return { actionType, before, after }
   }
 
@@ -528,7 +554,7 @@ export class AdminAssistantService {
       await this.agents.setStatus({ ...plan.after, actor: userId }, plan.before.revision)
       return actionResultSummary(plan)
     }
-    await this.agents.updateAgent({ ...plan.after, actor: userId }, plan.before.revision)
+    await this.agents.updateAgent({ ...plan.after, actor: userId }, plan.before.revision, { draftCopyOnly: plan.confirmation?.mode === 'single' })
     return actionResultSummary(plan)
   }
 
@@ -576,13 +602,46 @@ export class AdminAssistantService {
     return row
   }
 
-  private async requireActiveAttempt(manifest: RuntimeManifest) {
-    const [row] = await this.database<{ id: string }[]>`
-      select id from runs
-       where tenant_id = ${tenantId} and id = ${manifest.run_id} and current_attempt_id = ${manifest.attempt_id}
-         and requested_by = ${manifest.user_context.user_id} and status = 'running'
+  private async requireActiveAttempt(manifest: RuntimeManifest, sql: DatabaseClient | DatabaseTransaction = this.database, lock = false) {
+    const [row] = await sql<{ id: string }[]>`
+      select r.id from runs r
+      join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+      join run_attempts a on a.tenant_id = r.tenant_id and a.id = r.current_attempt_id and a.run_id = r.id
+       where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id} and r.current_attempt_id = ${manifest.attempt_id}
+         and r.requested_by = ${manifest.user_context.user_id} and r.status = 'running'
+         and s.id = ${manifest.session_id} and s.created_by = r.requested_by and s.audience = 'admin' and s.status = 'active'
+         and a.status = 'running' and a.manifest->>'purpose' = ${manifest.purpose ?? ''}
+      ${lock ? sql`for update of r` : sql``}
     `
-    if (!row) throw new Error('Attempt 已结束、取消或被新 Attempt 替代')
+    if (!row) throw authorizationDenied('Attempt 已结束、取消或被新 Attempt 替代')
+  }
+
+  private async assertConfirmationBoundary(action: ActionRow) {
+    const [run] = await this.database<{ attemptId: string; purpose: RuntimeManifest['purpose'] }[]>`
+      select r.current_attempt_id as "attemptId", a.manifest->>'purpose' as purpose
+        from runs r join run_attempts a on a.tenant_id = r.tenant_id and a.id = r.current_attempt_id and a.run_id = r.id
+       where r.tenant_id = ${tenantId} and r.id = ${action.runId} and r.session_id = ${action.sessionId}
+         and r.requested_by = ${action.createdBy} and r.status = 'succeeded' and a.status = 'succeeded'
+    `
+    const receipt = action.plan.confirmation
+    if (!run || (receipt && (receipt.policy !== DRAFT_COPY_POLICY || receipt.attemptId !== run.attemptId))) {
+      throw authorizationDenied('计划的 Attempt 已变化，请重新生成并确认')
+    }
+    if (receipt?.mode === 'single') {
+      if (run.purpose !== 'admin-assistant' || action.plan.actionType !== 'agent-update-draft') throw authorizationDenied('一次确认计划类型不符')
+      assertDraftCopyFields(Object.fromEntries(receipt.requestedFields.map(field => [field, true])))
+      assertDraftCopyPlan(action.plan.before, action.plan.after)
+      return
+    }
+    // Legacy plans remain delegated. No missing receipt can downgrade to single confirmation.
+    const purpose = action.plan.actionType === 'runtime-update-configuration' ? 'admin-platform-operations' : 'admin-agent-manage'
+    if (run.purpose !== purpose) throw authorizationDenied('专用助手受众不匹配，必须重新确认委派')
+    const [proposal] = await this.database`
+      select p.id from admin_assistant_task_proposals p
+       where p.tenant_id = ${tenantId} and p.session_id = ${action.sessionId} and p.created_by = ${action.createdBy}
+         and p.delegated_run_id = ${action.runId} and p.status = 'confirmed' and p.target_purpose = ${purpose}
+    `
+    if (!proposal) throw authorizationDenied('专用助手缺少第一次委派确认，不能执行计划')
   }
 
   private async requireProposal(userId: string, proposalId: string) {
@@ -716,6 +775,7 @@ function toActionPlan(row: ActionRow): AdminActionPlan {
     runId: row.runId,
     actionType: row.actionType,
     summary: row.summary,
+    confirmationMode: row.plan.confirmation?.mode === 'single' ? 'single' : 'delegated',
     before: presented.before,
     after: presented.after,
     planSha256: row.planSha256,
@@ -877,4 +937,8 @@ function assertOnlyKeys(input: Record<string, unknown>, allowed: string[]) {
 
 function omitKeys(input: object, keys: string[]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(input).filter(([key]) => !keys.includes(key)))
+}
+
+function actionConflict(message: string) {
+  return Object.assign(new Error(message), { status: 409, code: 'state_conflict' })
 }

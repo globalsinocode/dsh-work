@@ -1123,6 +1123,7 @@
     },
     "/assistant/action-plans/{id}/confirm": {
       "post": {
+        "description": "确认精确摘要覆盖的计划。通用 Run 仅可确认服务器白名单中的已有 Agent 草稿展示文案；其他计划必须具有已确认的委派记录。均重新检查写权限、Attempt 和目标版本，重复确认不重复写入。",
         "operationId": "confirmAdminAssistantActionPlan",
         "summary": "确认并执行专用助手生成的精确 Agent 或 Runtime 操作计划",
         "responses": {
@@ -1773,6 +1774,7 @@
           }
         }
       },
+      "AdminActionConfirmationMode": {"type": "string", "enum": ["single", "delegated"], "description": "响应 actions[].confirmationMode 的只读增量字段；缺失表示旧 delegated 计划。不可用作请求中的风险声明。", "readOnly": true},
       "AdminActionPlanConfirmation": {
         "type": "object",
         "required": ["planSha256"],

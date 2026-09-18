@@ -454,3 +454,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 - **P2 真实验收**：上述闭环追加真实 OIDC、DSH 与企业扫描及成果质量检查，单独留证，本轮未运行不得标记业务验收通过。
 
 **本批实际执行记录：** P1 使用专用 PostgreSQL、受控 HTTP 与合成 Runtime，不使用页面 API 拦截。浏览器预演和首条 Playwright 均因容器 Chromium URL 管理策略报 `ERR_BLOCKED_BY_ADMINISTRATOR`；其他浏览器用例未运行，未宣称浏览器通过。组件/Store 和真实数据库 HTTP 回归已单独通过；详见 `docs/development/review-d12-evidence.md`。
+
+## 批次 4 管理操作（C6/C7）
+
+- C6 / P1 / 有写权限管理员：隔离 PostgreSQL、合成 DSH 工具结果中有一个现存草稿；在管理助手描述改标题，看到精确差异与“一次确认”标识，确认前草稿不变，确认一次后只改草稿文案；权限/发布/Runtime 任务仍显示委派确认和最终计划确认。只读管理员不出现确认按钮。对应 `e2e/admin-review.spec.ts`（浏览器可运行环境预演后固化；真实 DSH 属 P2）。

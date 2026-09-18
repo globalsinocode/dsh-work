@@ -11,7 +11,7 @@
 | 身份与本地授权上下文 | [RequestIdentity](../../server/src/modules/identity/types.ts) | 用户、角色、数据范围和操作人只从服务端产生 |
 | 对象与执行授权 | [PostgresAuthorizationService](../../server/src/modules/authorization/postgres-authorization-service.ts) | Workspace、Agent/Skill/Tool Version 与数据范围逐层校验，默认拒绝 |
 | Skill 安装计划 | [AdminSkillInstallationService](../../server/src/modules/skill/admin-skill-installation-service.ts) | 固定来源、生成依赖计划、绑定管理员确认、原子保存草稿并记录激活/脚本试运行证据 |
-| 通用管理对话与任务调度 | [AdminAssistantService](../../server/src/modules/admin/application/admin-assistant-service.ts) | 通过 DSH 进行普通对话和意图提案；绑定第一次调度确认、专用助手操作计划、第二次写入确认、行锁内版本复核及重启结果收敛 |
+| 通用管理对话与任务调度 | [AdminAssistantService](../../server/src/modules/admin/application/admin-assistant-service.ts) | 通过 DSH 进行普通对话；已有草稿展示文案允许一次最终确认，其他变更绑定委派确认与最终计划确认；行锁内版本复核及重启结果收敛不变 |
 | Attempt 平台工具 | [platform-tool-bridge](../../server/src/modules/runtime/platform-tool-bridge.ts) | 为当前 Attempt 暴露 `prepare_skill_installation`、`activate_skill`、`python_execute` 等显式授权处理器；不承载 Agent Loop |
 
 ## API 与运行契约
@@ -62,3 +62,7 @@ Runtime 端口的可选 `assertAvailable(manifest?)` 在受理、编译与恢复
 ## 内容生命周期（B5）
 
 `archiveSession` 保留旧方法和 `archived` 字段，但产品语义为从历史移除，不物理删除。公共读取策略及账号停用语义见 [个人内容生命周期](personal-content-lifecycle.md)；`/content-policy` 返回固定策略版本。团队归档只读与个人移除不混用。
+
+## 管理助手低风险确认（C6）
+
+风险白名单、判定位置、旧计划兼容与证据见 [C6](review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。

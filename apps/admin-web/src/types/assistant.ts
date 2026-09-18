@@ -68,6 +68,7 @@ export interface AdminActionPlan {
   runId: string
   actionType: 'agent-update-draft' | 'agent-set-status' | 'runtime-update-configuration'
   summary: string
+  confirmationMode?: 'single' | 'delegated'
   before: Record<string, unknown>
   after: Record<string, unknown>
   planSha256: string

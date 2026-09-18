@@ -60,7 +60,9 @@
     "test:review:batch03:integration": "npm run test:review:b3:integration && npm run test:review:b4:integration && npm run test:review:b5:integration && npm run test:review:d12:integration",
     "test:review:b4:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-b4-files.integration.test.ts",
     "test:review:b5:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-b5-lifecycle.integration.test.ts",
-    "test:review:d12:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-d12-defaults.integration.test.ts src/infrastructure/postgres/review-batch3-closure.integration.test.ts"
+    "test:review:d12:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-d12-defaults.integration.test.ts src/infrastructure/postgres/review-batch3-closure.integration.test.ts",
+    "test:review:c6:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/agent/agent-draft-copy-policy.test.ts",
+    "test:review:c6:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-c6-confirmation.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

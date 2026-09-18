@@ -118,7 +118,7 @@ test('general admin chat proposes delegation and executes a specialist plan only
       from run_attempts where run_id = ${ordinaryDone.runs[0]!.id}
   `
   assert.equal(ordinaryAttempt?.purpose, 'admin-assistant')
-  assert.deepEqual(ordinaryAttempt?.tools.map(tool => tool.id), ['inspect_admin_state', 'propose_admin_task'])
+  assert.deepEqual(ordinaryAttempt?.tools.map(tool => tool.id), ['inspect_admin_state', 'propose_admin_task', 'prepare_admin_action'])
   assert.match(ordinaryAttempt?.systemPrompt ?? '', /通用管理助手，不是 Skill 安装助手/)
   assert.match(ordinaryAttempt?.systemPrompt ?? '', /Skill 安装只是你的能力之一/)
   assert.match(ordinaryAttempt?.systemPrompt ?? '', /不要主动索取 Skill 来源/)
