@@ -5,7 +5,7 @@ import { extname, join, resolve } from 'node:path'
 import type { Artifact, Workspace } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied, canReadWorkspaceObject, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../authorization/authorization-errors.ts'
 import type { FileMount } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
@@ -97,6 +97,7 @@ export interface UploadedWorkspaceFileVersion {
 }
 
 interface RuntimeFileRow {
+  workspaceId: string
   fileId: string
   extractionId: string
   originalName: string
@@ -1130,6 +1131,94 @@ export class PostgresContentService {
     `
   }
 
+  private async resolveRuntimeFile(input: { sessionId: string; fileId: string; userId: string }): Promise<RuntimeFileRow> {
+    const [row] = await this.database<RuntimeFileRow[]>`
+      select f.workspace_id as "workspaceId", f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
+             f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
+             fe.text_sha256 as "textSha256"
+        from file_objects f
+        join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+        join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
+       where f.tenant_id = ${tenantId} and f.id = ${input.fileId}
+         ${this.runtimeFileReadyPredicate()}
+         and target.status = 'active'
+         -- TW-10：团队会话是共享讨论——现任成员可在他人发起的会话中发起 Run；
+         -- 个人会话仍限创建者。
+         and (
+           target.created_by = ${input.userId}
+           or exists (
+             select 1 from workspaces tw
+               join workspace_members twm
+                 on twm.tenant_id = tw.tenant_id and twm.workspace_id = tw.id
+                and twm.user_id = ${input.userId}
+              where tw.tenant_id = target.tenant_id and tw.id = target.workspace_id
+                and tw.workspace_type = 'team' and tw.status = 'active'
+           )
+         )
+         -- 文件必须与目标会话同空间（批次 1/A1）：作者身份不授予跨空间读取权。
+         and f.workspace_id = target.workspace_id
+         and (
+           f.session_id = target.id
+           -- 同空间本人的其他会话附件可复用；跨空间的本人会话附件同样拒绝。
+           or f.session_id in (
+             select id from sessions own
+              where own.tenant_id = ${tenantId} and own.created_by = ${input.userId}
+           )
+           -- TW-10：同一团队空间内其它共享会话的附件——讨论对全员可见，附件同属
+           -- 共享内容；跨空间的他人会话附件仍不可挂载。
+           or exists (
+             select 1 from sessions fs
+               join workspaces fw on fw.tenant_id = fs.tenant_id and fw.id = fs.workspace_id
+              where fs.tenant_id = f.tenant_id and fs.id = f.session_id
+                and fs.workspace_id = target.workspace_id
+                and fw.workspace_type = 'team' and fw.status = 'active'
+           )
+           -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在**其他
+           -- 空间**会话下的附件不属于本空间共享讨论，成员身份不得成为读取依据
+           -- （方案 §5/AC-10 口径在同空间共享模型下保留对跨空间附件的隔离）。
+           or (
+             f.session_id is null
+             and f.workspace_id = target.workspace_id
+             and exists (
+               select 1 from workspaces w
+                where w.tenant_id = f.tenant_id and w.id = f.workspace_id and w.status = 'active'
+                  and (
+                    (w.workspace_type = 'personal' and w.created_by = ${input.userId})
+                    or (
+                      w.workspace_type = 'team'
+                      and exists (
+                        select 1 from workspace_members wm
+                         where wm.tenant_id = w.tenant_id and wm.workspace_id = w.id
+                           and wm.user_id = ${input.userId}
+                      )
+                    )
+                  )
+             )
+           )
+         )
+    `
+    if (!row) throw authorizationDenied(`文件不存在、不可访问或解析未成功：${input.fileId}`)
+    // Recheck current identity AND source-space access before reading bytes.
+    // This does not trust cached role/data-scope values from the creating request.
+    try {
+      await this.authorization.authorizeWorkbench({ userId: input.userId, workspaceId: row.workspaceId })
+    } catch (error) {
+      if (isAuthorizationDenial(error)) throw authorizationDenied('文件不存在、不可访问或解析未成功')
+      throw error
+    }
+    return row
+  }
+
+  /** Reauthorize immutable inputs without loading or replacing their snapshotted bytes. */
+  async recheckRuntimeFiles(manifest: import('../../runtime/runtime-types.ts').RuntimeManifest): Promise<void> {
+    for (const mount of manifest.input.file_mounts) {
+      const row = await this.resolveRuntimeFile({
+        sessionId: manifest.session_id, fileId: mount.file_id, userId: manifest.user_context.user_id,
+      })
+      if (row.textSha256 !== mount.content_sha256) throw authorizationDenied('输入文件解析版本已变化，不能执行旧快照')
+    }
+  }
+
   async prepareRuntimeFiles(input: {
     sessionId: string
     fileIds: string[]
@@ -1140,71 +1229,7 @@ export class PostgresContentService {
     const prepared: PreparedRuntimeFile[] = []
     let totalBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
-      const [row] = await this.database<RuntimeFileRow[]>`
-        select f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
-               f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
-               fe.text_sha256 as "textSha256"
-          from file_objects f
-          join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
-          join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
-         where f.tenant_id = ${tenantId} and f.id = ${fileId}
-           ${this.runtimeFileReadyPredicate()}
-           and target.status = 'active'
-           -- TW-10：团队会话是共享讨论——现任成员可在他人发起的会话中发起 Run；
-           -- 个人会话仍限创建者。
-           and (
-             target.created_by = ${input.userId}
-             or exists (
-               select 1 from workspaces tw
-                 join workspace_members twm
-                   on twm.tenant_id = tw.tenant_id and twm.workspace_id = tw.id
-                  and twm.user_id = ${input.userId}
-                where tw.tenant_id = target.tenant_id and tw.id = target.workspace_id
-                  and tw.workspace_type = 'team' and tw.status = 'active'
-             )
-           )
-           and (
-             f.session_id = target.id
-             -- 本人其它会话的附件：作者身份由 target.created_by 与下方 f.session_id 的
-             -- 归属共同约束，挂进自己的 Run 不越过任何读取边界（保持既有行为）。
-             or f.session_id in (
-               select id from sessions own
-                where own.tenant_id = ${tenantId} and own.created_by = ${input.userId}
-             )
-             -- TW-10：同一团队空间内其它共享会话的附件——讨论对全员可见，附件同属
-             -- 共享内容；跨空间的他人会话附件仍不可挂载。
-             or exists (
-               select 1 from sessions fs
-                 join workspaces fw on fw.tenant_id = fs.tenant_id and fw.id = fs.workspace_id
-                where fs.tenant_id = f.tenant_id and fs.id = f.session_id
-                  and fs.workspace_id = target.workspace_id
-                  and fw.workspace_type = 'team' and fw.status = 'active'
-             )
-             -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在**其他
-             -- 空间**会话下的附件不属于本空间共享讨论，成员身份不得成为读取依据
-             -- （方案 §5/AC-10 口径在同空间共享模型下保留对跨空间附件的隔离）。
-             or (
-               f.session_id is null
-               and f.workspace_id = target.workspace_id
-               and exists (
-                 select 1 from workspaces w
-                  where w.tenant_id = f.tenant_id and w.id = f.workspace_id and w.status = 'active'
-                    and (
-                      (w.workspace_type = 'personal' and w.created_by = ${input.userId})
-                      or (
-                        w.workspace_type = 'team'
-                        and exists (
-                          select 1 from workspace_members wm
-                           where wm.tenant_id = w.tenant_id and wm.workspace_id = w.id
-                             and wm.user_id = ${input.userId}
-                        )
-                      )
-                    )
-               )
-             )
-           )
-      `
-      if (!row) throw authorizationDenied(`文件不存在、不可访问或解析未成功：${fileId}`)
+      const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
       const content = await readFile(this.resolveStorage(row.textStorageKey), 'utf8')
       totalBytes += Buffer.byteLength(content)
       if (totalBytes > 1024 * 1024) throw new Error('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
@@ -1588,8 +1613,13 @@ export class PostgresContentService {
     // 必须再按对象所属空间复核当前团队读权限（1B-T4 / AC-09）。3-T1 起该门禁走
     // 读取轨：归档空间的现任成员可读，被移出成员与非成员一律拒绝。拒绝统一走
     // 类型化授权错误，并保持与「不存在」相同文案，避免用 fileId 枚举团队对象。
-    if (!(await canReadWorkspaceObject(this.authorization, row.workspaceId, actorUserId))) {
-      throw authorizationDenied('文件不存在或不可访问')
+    try {
+      await this.authorization.authorizeWorkbench({
+        userId: actorUserId, workspaceId: row.workspaceId, allowArchived: true,
+      })
+    } catch (error) {
+      if (isAuthorizationDenial(error)) throw authorizationDenied('文件不存在或不可访问')
+      throw error
     }
     return { name: row.originalName, mimeType: row.mimeType, bytes: await readFile(this.resolveStorage(row.storageKey)) }
   }
