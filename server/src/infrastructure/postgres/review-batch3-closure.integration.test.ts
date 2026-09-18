@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { before, after, test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
+import { randomUUID } from 'node:crypto'
 import { personalWorkbenchFixture } from './personal-workbench-test-fixture.ts'
 import { PersonalBrowserRuntime } from './personal-browser-runtime.ts'
 let f: Awaited<ReturnType<typeof personalWorkbenchFixture>>
@@ -13,7 +14,7 @@ test('B3/B4/D12 HTTP closure: explicit personal material reaches the existing Ru
   await f.team()
   const session=await jsonPost('/sessions',{title:'P1 HTTP closure'})
   assert.equal(session.status,201);assert.equal(session.body.data.workspaceId,'ws-personal-U00001')
-  const run=await jsonPost(`/sessions/${session.body.data.id}/runs`,{prompt:'读取合成文件',fileIds:[file.body.data.id]})
+  const run=await jsonPost(`/sessions/${session.body.data.id}/runs`,{prompt:'读取合成文件',fileIds:[file.body.data.id],idempotencyKey:randomUUID()})
   assert.equal(run.status,202,JSON.stringify(run.body))
   const deadline=Date.now()+5000
   let latest=run
@@ -35,5 +36,5 @@ test('B5 HTTP closure: a removed conversation retains its attachment without all
  assert.equal(files.body.data.items[0].source,'attachment');assert.equal(files.body.data.items[0].sourceSessionState,'removed')
  const download=await fetch(`${f.origin}/files/${file.body.data.id}/download`)
  assert.equal(download.status,200);assert.equal(await download.text(),'retained synthetic bytes')
- assert.equal((await jsonPost(`/sessions/${session.body.data.id}/runs`,{prompt:'must fail'})).status,403)
+ assert.equal((await jsonPost(`/sessions/${session.body.data.id}/runs`,{prompt:'must fail',idempotencyKey:randomUUID()})).status,403)
 })
