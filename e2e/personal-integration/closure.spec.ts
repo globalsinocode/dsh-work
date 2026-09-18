@@ -16,7 +16,8 @@ test('P1: complete history resolves old Runs and resumes an empty Session withou
   await page.goto('/history')
   await page.getByLabel('搜索对话标题').fill('P1-旧对话')
   await page.getByRole('button', { name: '搜索', exact: true }).click()
-  await page.getByRole('button', { name: /P1-旧对话-需要恢复/ }).click()
+  // 行内「移除对话：<标题>」按钮的可访问名称也以标题结尾，必须用 ^ 锚定打开按钮。
+  await page.getByRole('button', { name: /^P1-旧对话-需要恢复/ }).click()
   await expect(page).toHaveURL(/\/conversations\/run-/)
   await expect(page.getByLabel('对话输入')).toBeVisible()
   await page.goto(`/sessions/${seed.emptySessionId}`)
@@ -24,13 +25,14 @@ test('P1: complete history resolves old Runs and resumes an empty Session withou
   await page.getByLabel('对话输入').fill('P1-继续原空会话')
   await page.getByRole('button', { name: '发送消息', exact: true }).click()
   await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible()
-  const resumed = await page.request.get(`/api/workbench/v1/sessions/${seed.emptySessionId}`)
+  const resumed = await page.request.get(`/api/workbench/v1/sessions/${seed.emptySessionId}/summary`)
   const row = (await resumed.json()).data
   expect(row.runCount).toBe(1); expect(row.workspaceId).toBe(seed.personalId)
 })
 
 test('P1: upload, reference, download and logical removal retain the underlying personal ownership', async ({ page }) => {
-  const seed = await fixtures(page), name = `P1-材料-${randomUUID()}.txt`, prompt = `P1-引用-${randomUUID()}`
+  // 会话标题服务端截断为 40 字符（truncateTitle），按全标题搜索的关键词必须短于该上限。
+  const seed = await fixtures(page), name = `P1-材料-${randomUUID()}.txt`, prompt = `P1-引用-${randomUUID().slice(0, 8)}`
   await page.goto('/files')
   await page.getByLabel('上传个人材料').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from('P1 synthetic personal input') })
   const row = page.getByRole('listitem').filter({ hasText: name })
@@ -56,7 +58,7 @@ test('P1: upload, reference, download and logical removal retain the underlying 
 })
 
 test('P1: removing a conversation retains attachments and marks the removed source', async ({ page }) => {
-  const title=`P1-移除-${randomUUID()}`, name=`${title}.txt`
+  const title=`P1-移除-${randomUUID().slice(0, 8)}`, name=`${title}.txt`
   const created=await page.request.post('/api/workbench/v1/sessions',{data:{title}})
   expect(created.status()).toBe(201)
   const session=(await created.json()).data
