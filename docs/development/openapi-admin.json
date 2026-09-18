@@ -216,6 +216,30 @@
         "responses": {
           "201": {
             "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         }
       },
@@ -235,6 +259,30 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         }
       }
@@ -248,7 +296,28 @@
             "$ref": "#/components/responses/Ok"
           },
           "422": {
-            "description": "场景或输入无效，不创建试运行"
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         },
         "requestBody": {
@@ -287,7 +356,28 @@
             "$ref": "#/components/responses/Ok"
           },
           "422": {
-            "description": "场景或输入无效，不创建试运行"
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         },
         "requestBody": {
@@ -328,6 +418,30 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         }
       }
@@ -341,7 +455,28 @@
             "$ref": "#/components/responses/Ok"
           },
           "409": {
-            "$ref": "#/components/responses/Error"
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         }
       }
@@ -353,6 +488,30 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error",
+            "description": "当前管理员身份或操作权限不足"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 或请求的版本不存在（skill_not_found / skill_version_not_found）"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "缺少草稿、状态冲突或测试证据失效；不自动改变对象状态"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 输入类型、测试问题或场景无效"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error",
+            "description": "内部数据或持久化故障；仅返回安全摘要与 traceId"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "Skill 存储、试运行或执行能力不可用"
           }
         }
       }

@@ -1,3 +1,5 @@
+import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
@@ -197,6 +199,7 @@ export class PostgresSkillService {
   }
 
   async resolveWorkbenchSkillVersion(skillId: string) {
+    assertSkillId(skillId)
     const [row] = await this.database<{ id: string; skillId: string; version: string }[]>`
       select sv.id, sv.skill_id as "skillId", sv.version
         from skills s
@@ -212,7 +215,7 @@ export class PostgresSkillService {
            )
          )
     `
-    if (!row) throw new Error('Skill 不存在、未发布或已停用')
+    if (!row) throw skillNotFound('Skill 不存在、未发布或已停用')
     return { id: row.id, reference: `${row.skillId}@${row.version}` }
   }
 
@@ -311,10 +314,11 @@ export class PostgresSkillService {
 
   async updateSkill(input: UpdateSkillInput) {
     const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
     const [current] = await this.readSkillRows(input.skillId)
-    if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!current) throw skillNotFound(`Skill 不存在：${input.skillId}`)
     const [packaged] = await this.database`select id from skill_versions where tenant_id = ${tenantId} and skill_id = ${input.skillId} and manifest ? 'installationId' limit 1`
-    if (packaged) throw new Error('安装包版本不可通过文本编辑，请通过新包安装更新')
+    if (packaged) throw skillConflict('安装包版本不可通过文本编辑，请通过新包安装更新', 'skill_package_immutable')
     const configuration = normalizeConfiguration({ id: input.skillId, ...input })
     assertConfiguration(configuration)
     await this.toolService?.assertAvailableReferences(configuration.toolIds)
@@ -335,10 +339,10 @@ export class PostgresSkillService {
          where s.tenant_id = ${tenantId} and s.id = ${input.skillId}
          for update of s
       `
-      if (!locked) throw new Error(`Skill 不存在：${input.skillId}`)
+      if (!locked) throw skillNotFound(`Skill 不存在：${input.skillId}`)
       draftVersionId = locked.draftVersionId
       if (draftVersionId) {
-        if (!locked.draftVersion) throw new Error('Skill 草稿版本不存在')
+        if (!locked.draftVersion) throw skillInternalFailure('Skill 草稿版本不存在')
         const artifact = await this.requireArtifactStore().put(createSkillPackage({
           name: configuration.name,
           description: configuration.description,
@@ -357,7 +361,7 @@ export class PostgresSkillService {
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
       } else {
-        if (!locked.activeVersionId || !locked.activeVersion) throw new Error('Skill 没有可用于创建新版本的已发布版本')
+        if (!locked.activeVersionId || !locked.activeVersion) throw skillConflict('Skill 没有可用于创建新版本的已发布版本')
         const [latest] = await transaction<{ version: string }[]>`
           select version from skill_versions
            where tenant_id = ${tenantId} and skill_id = ${input.skillId}
@@ -397,19 +401,19 @@ export class PostgresSkillService {
       `
     })
     await this.audit(actor.id, 'skill.draft.update', input.skillId, 'success', '保存 Skill 待发布版本')
-    if (!draftVersionId) throw new Error('Skill 草稿版本创建失败')
+    if (!draftVersionId) throw skillInternalFailure('Skill 草稿版本创建失败')
     return this.requireSkillResult(input.skillId, draftVersionId)
   }
 
   async testSkill(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestResult> {
     const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
     const [skill] = await this.readSkillRows(input.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
-    if (!skill.draftVersionId) throw new Error('当前 Skill 没有待测试的草稿版本')
-    if (input.scenario !== undefined && !skill.strictTest) throw Object.assign(new Error('场景测试要求真实 DSH 试运行包'), { status: 422, code: 'invalid_test_scenario' })
+    if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
+    if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
+    if (input.scenario !== undefined && !skill.strictTest) throw skillInvalid('场景测试要求真实 DSH 试运行包', 'invalid_test_scenario')
     await this.toolService?.assertAvailableReferences(skill.toolIds)
-    const prompt = (input.prompt ?? skill.testPrompt).trim()
-    if (prompt.length < 4) throw new Error('测试问题至少需要 4 个字符')
+    const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
     const fingerprint = configurationFingerprint(skill)
     let testId = `skill-test-${randomUUID()}`
     let runtimeRunId: string | null = null
@@ -418,9 +422,9 @@ export class PostgresSkillService {
     let summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
     let status: 'passed' | 'failed' = 'passed'
     if (skill.strictTest) {
-      if (!this.packageTester) throw new Error('DSH Skill 试运行不可用')
+      if (!this.packageTester) throw skillUnavailable('DSH Skill 试运行不可用')
       const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
-      if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
+      if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
       const dependencySkills = await this.resolveTestRuntimeSkills(version!.manifest.dependencies ?? [])
       await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
@@ -433,7 +437,7 @@ export class PostgresSkillService {
       const runtimeFingerprint = runtimeSkillFingerprint(runtimeSkill)
       const result = await this.packageTester(actor.id, runtimeSkill, prompt)
       evidencePolicy = result.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY
-      if (result.passed && !result.attemptId) throw new Error('严格试运行缺少精确 Attempt 证据，请重新测试')
+      if (result.passed && !result.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
       if (result.attemptId) {
         await this.bindStrictTest(result.runId, skill.id, skill.draftVersionId, fingerprint, runtimeFingerprint, prompt, actor.id)
         runtimeRunId = result.runId
@@ -458,7 +462,7 @@ export class PostgresSkillService {
     `
     if (!inserted) {
       const [stored] = await this.database`select id from skill_test_runs where tenant_id = ${tenantId} and id = ${testId}`
-      if (!stored) throw new Error('试运行 Attempt 已变化，请重新测试')
+      if (!stored) throw skillConflict('试运行 Attempt 已变化，请重新测试', 'skill_test_attempt_changed')
     }
     await this.audit(actor.id, 'skill.test', skill.id, status === 'passed' ? 'success' : 'failed', skill.strictTest ? `DSH Skill 试运行 ${status}` : summary)
     return {
@@ -474,7 +478,7 @@ export class PostgresSkillService {
   async startSkillTest(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext(input)
     if (input.scenario !== undefined) {
-      if (!context.skill.strictTest) throw Object.assign(new Error('场景测试要求真实 DSH 试运行包'), { status: 422, code: 'invalid_test_scenario' })
+      if (!context.skill.strictTest) throw skillInvalid('场景测试要求真实 DSH 试运行包', 'invalid_test_scenario')
       context.runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [context.runtimeSkill, ...flattenRuntimeDependencies(context.runtimeSkill)])
     }
     if (!context.skill.strictTest) {
@@ -489,7 +493,7 @@ export class PostgresSkillService {
         steps: [{ id: 'configuration', title: '校验 Skill 配置', description: result.resultSummary, status: result.status === 'passed' ? 'completed' : 'failed', occurredAt: result.testedAt }],
       }
     }
-    if (!this.packageTestLifecycle) throw new Error('DSH Skill 试运行进度服务不可用')
+    if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
     const runtimeFingerprint = runtimeSkillFingerprint(context.runtimeSkill)
     const progress = await this.packageTestLifecycle.start(context.actor.id, context.runtimeSkill, context.prompt)
     await this.bindStrictTest(progress.runId, context.skill.id, context.skill.draftVersionId!, context.fingerprint,
@@ -502,7 +506,8 @@ export class PostgresSkillService {
 
   async getSkillTestProgress(input: { skillId: string; runId: string; actor: string }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext({ skillId: input.skillId, actor: input.actor })
-    if (!context.skill.strictTest || !this.packageTestLifecycle) throw new Error('当前 Skill 没有可查询的严格试运行')
+    if (!context.skill.strictTest) throw skillConflict('当前 Skill 没有可查询的严格试运行', 'skill_test_state_conflict')
+    if (!this.packageTestLifecycle) throw skillUnavailable('DSH Skill 试运行进度服务不可用')
     const [binding] = await this.database<{ versionId: string; fingerprint: string; runtimeFingerprint: string; prompt: string }[]>`
       select skill_version_id as "versionId", configuration_fingerprint as fingerprint,
              runtime_fingerprint as "runtimeFingerprint", test_prompt as prompt
@@ -511,9 +516,9 @@ export class PostgresSkillService {
     `
     assertStartedSkillTest({ versionId: context.skill.draftVersionId!, fingerprint: context.fingerprint,
       runtimeFingerprint: runtimeSkillFingerprint(context.runtimeSkill) }, binding)
-    if (!binding) throw new Error('试运行启动快照不存在，请重新测试')
+    if (!binding) throw skillConflict('试运行启动快照不存在，请重新测试', 'skill_test_snapshot_changed')
     const progress = await this.packageTestLifecycle.progress(context.actor.id, context.runtimeSkill, input.runId)
-    if (!progress.attemptId) throw new Error('严格试运行缺少精确 Attempt 证据，请重新测试')
+    if (!progress.attemptId) throw skillConflict('严格试运行缺少精确 Attempt 证据，请重新测试', 'skill_test_evidence_required')
     const status = progress.status === 'succeeded' ? (progress.passed ? 'passed' : 'failed') : normalizeTestRunStatus(progress.status)
     if (!['passed', 'failed'].includes(status)) {
       return { runId: progress.runId, skillId: context.skill.id, version: context.skill.version, status, steps: progress.steps }
@@ -535,7 +540,7 @@ export class PostgresSkillService {
     const [stored] = inserted ? [inserted] : await this.database<{ createdAt: Date }[]>`
       select created_at as "createdAt" from skill_test_runs where tenant_id = ${tenantId} and id = ${testId}
     `
-    if (!stored) throw new Error('试运行 Attempt 已变化，请刷新进度')
+    if (!stored) throw skillConflict('试运行 Attempt 已变化，请刷新进度', 'skill_test_attempt_changed')
     if (inserted) await this.audit(context.actor.id, 'skill.test', context.skill.id, status === 'passed' ? 'success' : 'failed', `DSH Skill 试运行 ${status}`)
     return {
       runId: progress.runId,
@@ -568,12 +573,12 @@ export class PostgresSkillService {
 
   private async strictTestContext(input: { skillId: string; prompt?: string; actor: string }) {
     const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
     const [skill] = await this.readSkillRows(input.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
-    if (!skill.draftVersionId) throw new Error('当前 Skill 没有待测试的草稿版本')
+    if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
+    if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
     await this.toolService?.assertAvailableReferences(skill.toolIds)
-    const prompt = (input.prompt ?? skill.testPrompt).trim()
-    if (prompt.length < 4) throw new Error('测试问题至少需要 4 个字符')
+    const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
     const fingerprint = configurationFingerprint(skill)
     let runtimeSkill: RuntimeSkillConfiguration = {
       id: skill.id,
@@ -585,7 +590,7 @@ export class PostgresSkillService {
     }
     if (skill.strictTest) {
       const [version] = await this.database<{ manifest: { artifact?: SkillPackageArtifact; dependencies?: string[] } }[]>`select manifest from skill_versions where tenant_id = ${tenantId} and id = ${skill.draftVersionId}`
-      if (!version?.manifest.artifact) throw new Error('Skill 文件夹索引缺失')
+      if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
       const dependencySkills = await this.resolveTestRuntimeSkills(version.manifest.dependencies ?? [])
       await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
@@ -600,12 +605,14 @@ export class PostgresSkillService {
     actor: string
   }) {
     const actor = await this.requireActor(input.actor)
+    assertSkillId(input.skillId)
     const [current] = await this.readSkillRows(input.skillId)
-    if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!current) throw skillNotFound(`Skill 不存在：${input.skillId}`)
 
+    if (!['published', 'disabled'].includes(input.status)) throw skillInvalid('Skill 状态必须为 published 或 disabled')
     if (input.status === 'disabled') {
-      if (current.draftVersionId) throw new Error('存在待发布草稿时不能停用 Skill，请先发布或回滚')
-      if (!current.activeVersionId) throw new Error('尚未发布的 Skill 不能停用')
+      if (current.draftVersionId) throw skillConflict('存在待发布草稿时不能停用 Skill，请先发布或回滚')
+      if (!current.activeVersionId) throw skillConflict('尚未发布的 Skill 不能停用')
       const activeVersionId = current.activeVersionId
       const release = await this.database.begin(async transaction => {
         const updated = await transaction`
@@ -615,7 +622,7 @@ export class PostgresSkillService {
              and draft_version_id is null
            returning id
         `
-        if (!updated.length) throw new Error('Skill 状态已发生变化，请刷新后重试')
+        if (!updated.length) throw skillConflict('Skill 状态已发生变化，请刷新后重试')
         return this.appendRelease(transaction, activeVersionId, input.skillId, 'disabled', actor.id, '停用 Skill；既有 Agent Version 的固定引用不被改写。')
       })
       await this.audit(actor.id, 'skill.disable', input.skillId, 'success', release.note)
@@ -624,7 +631,7 @@ export class PostgresSkillService {
 
     if (current.draftVersionId) return this.publishDraft(current, actor.id)
     if (!current.activeVersionId || current.persistedStatus !== 'disabled') {
-      throw new Error('当前 Skill 没有可发布草稿，也不处于停用状态')
+      throw skillConflict('当前 Skill 没有可发布草稿，也不处于停用状态')
     }
     const activeVersionId = current.activeVersionId
     const release = await this.database.begin(async transaction => {
@@ -634,7 +641,7 @@ export class PostgresSkillService {
            and status = 'disabled' and active_version_id = ${activeVersionId}
          returning id
       `
-      if (!updated.length) throw new Error('Skill 状态已发生变化，请刷新后重试')
+      if (!updated.length) throw skillConflict('Skill 状态已发生变化，请刷新后重试')
       return this.appendRelease(transaction, activeVersionId, input.skillId, 'enabled', actor.id, '重新启用当前 Skill 版本。')
     })
     await this.audit(actor.id, 'skill.enable', input.skillId, 'success', release.note)
@@ -643,8 +650,10 @@ export class PostgresSkillService {
 
   async rollback(input: { skillId: string; version: string; actor: string }) {
     const actor = await this.requireActor(input.actor)
+    if (typeof input.version !== 'string' || !input.version.trim()) throw skillInvalid('Skill 版本必须为非空字符串')
+    assertSkillId(input.skillId)
     const [current] = await this.readSkillRows(input.skillId)
-    if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!current) throw skillNotFound(`Skill 不存在：${input.skillId}`)
     const [target] = await this.database<VersionRow[]>`
       select sv.id, sv.skill_id as "skillId", sv.version, sv.name, sv.category,
              sv.description, sv.instructions, sv.tool_refs as "toolIds",
@@ -658,7 +667,7 @@ export class PostgresSkillService {
        where sv.tenant_id = ${tenantId} and sv.skill_id = ${input.skillId}
          and sv.version = ${input.version} and sv.status = 'published'
     `
-    if (!target) throw new Error(`已发布 Skill Version 不存在：${input.skillId}@${input.version}`)
+    if (!target) throw skillNotFound(`已发布 Skill Version 不存在：${input.skillId}@${input.version}`, 'skill_version_not_found')
 
     const note = `活动版本由 v${current.activeVersion ?? current.version} 回滚到 v${target.version}。`
     const release = await this.database.begin(async transaction => {
@@ -686,7 +695,7 @@ export class PostgresSkillService {
          where s.tenant_id = ${tenantId} and s.id = ${id} and s.status = 'published'
            and sv.version = ${version} and sv.status = 'published'
       `
-      if (!row) throw new Error(`Agent 引用的 Skill 不存在、未发布或已停用：${reference}`)
+      if (!row) throw skillConflict(`Agent 引用的 Skill 不存在、未发布或已停用：${reference}`, 'skill_dependency_unavailable')
     }
   }
 
@@ -704,7 +713,7 @@ export class PostgresSkillService {
          where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
            and status = 'published'
       `
-      if (!row) throw new Error(`Runtime 无法解析已锁定的 Skill Version：${reference}`)
+      if (!row) throw skillConflict(`Runtime 无法解析已锁定的 Skill Version：${reference}`, 'skill_dependency_unavailable')
       const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
       pending.push(...(row.manifest.dependencies ?? []))
       resolved.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
@@ -721,7 +730,7 @@ export class PostgresSkillService {
         select name, description, instructions, tool_refs as tools, manifest from skill_versions
         where tenant_id = ${tenantId} and skill_id = ${id} and version = ${version}
           and status in ('draft', 'published')`
-      if (!row) throw new Error(`试运行无法解析锁定的依赖 Skill Version：${reference}`)
+      if (!row) throw skillConflict(`试运行无法解析锁定的依赖 Skill Version：${reference}`, 'skill_dependency_unavailable')
       const artifactContent = row.manifest.artifact ? await this.requireArtifactStore().read(row.manifest.artifact) : null
       result.push({ id, name: row.name, description: row.description, version, instructions: artifactContent?.instructions ?? row.instructions, tools: row.tools,
         artifact: row.manifest.artifact, files: row.manifest.artifact?.files, disableModelInvocation: row.manifest.artifact?.disableModelInvocation, dependencies: row.manifest.dependencies ?? [], dependencySkills: await this.resolveTestRuntimeSkills(row.manifest.dependencies ?? [], sql) })
@@ -760,7 +769,7 @@ export class PostgresSkillService {
        where sv.tenant_id = ${tenantId} order by sv.id for update of sv
     `
     const [root] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
-    if (!root) throw new Error('测试配置或依赖已变化，请重新测试')
+    if (!root) throw skillConflict('测试配置或依赖已变化，请重新测试', 'skill_test_snapshot_changed')
     const expectedFingerprint = runtimeSkillFingerprint(root)
     const rows = await transaction<{
       id: string; runId: string; attemptId: string; testStatus: string; runStatus: string;
@@ -809,7 +818,7 @@ export class PostgresSkillService {
     const catalog = [root, ...flattenRuntimeDependencies(root)]
     if (!selected || catalog.some(skill => !coveredSkills.has(`${skill.id}@${skill.version}`))
       || catalog.some(skill => skill.files?.some(file => file.path.endsWith('.py')) && !coveredPython.has(skill.id))) {
-      throw new Error('场景测试覆盖不完整或配置/结果已变化：发布需覆盖全部锁定 Skill 与含 Python 的分支，请补充场景测试')
+      throw skillConflict('场景测试覆盖不完整或配置/结果已变化：发布需覆盖全部锁定 Skill 与含 Python 的分支，请补充场景测试', 'skill_test_coverage_incomplete')
     }
     return selected
   }
@@ -827,7 +836,7 @@ export class PostgresSkillService {
          where s.tenant_id = ${tenantId} and s.id = ${current.id} and sv.status = 'draft'
          for update of s, sv
       `
-      if (!locked) throw new Error('当前 Skill 草稿已发生变化，请重新测试后再发布')
+      if (!locked) throw skillConflict('当前 Skill 草稿已发生变化，请重新测试后再发布', 'skill_test_snapshot_changed')
       // Link-origin dependencies can also be published via another root. Do not
       // let a ZIP/assistant parent bypass the draft-only availability gate.
       const publicationGraph = await transaction<{ status: string; linkOrigin: boolean; toolRefs: string[]; requirements: SkillPackageArtifact['requirements'] | null }[]>`
@@ -865,13 +874,13 @@ export class PostgresSkillService {
          order by t.created_at desc limit 1
       `
       if (!test && current.strictTest) test = await this.requireScenarioPublicationCoverage(transaction, current, locked, fingerprint)
-      if (!test) throw new Error('发布前必须使用当前配置完成一次服务端测试')
+      if (!test) throw skillConflict('发布前必须使用当前配置完成一次服务端测试', 'skill_test_required')
       if (current.strictTest) {
         const [run] = await transaction`
           select id from runs where tenant_id = ${tenantId} and id = ${test.runId}
             and current_attempt_id = ${test.attemptId} and status = 'succeeded' for update
         `
-        if (!run) throw new Error('试运行 Attempt 已变化，请重新测试后发布')
+        if (!run) throw skillConflict('试运行 Attempt 已变化，请重新测试后发布', 'skill_test_attempt_changed')
         await transaction`
           with recursive graph as (
             select dependency_skill_version_id as id from skill_version_dependencies
@@ -889,7 +898,7 @@ export class PostgresSkillService {
            where tenant_id = ${tenantId} and run_id = ${test.runId} and skill_id = ${current.id}
         `
         const [runtimeSkill] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
-        if (!runtimeSkill) throw new Error('测试的 Skill 版本已失效')
+        if (!runtimeSkill) throw skillConflict('测试的 Skill 版本已失效', 'skill_test_snapshot_changed')
         assertStartedSkillTest({ versionId: locked.versionId, fingerprint,
           runtimeFingerprint: runtimeSkillFingerprint(runtimeSkill) }, binding)
       }
@@ -922,7 +931,7 @@ export class PostgresSkillService {
          where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
          returning id
       `
-      if (!published.length) throw new Error('Skill 草稿发布状态已发生变化，请刷新后重试')
+      if (!published.length) throw skillConflict('Skill 草稿发布状态已发生变化，请刷新后重试')
 
       const activated = await transaction<{ id: string }[]>`
         update skills set active_version_id = ${locked.versionId}, draft_version_id = null,
@@ -930,7 +939,7 @@ export class PostgresSkillService {
          where tenant_id = ${tenantId} and id = ${current.id} and draft_version_id = ${locked.versionId}
          returning id
       `
-      if (!activated.length) throw new Error('Skill 草稿指针已发生变化，请刷新后重试')
+      if (!activated.length) throw skillConflict('Skill 草稿指针已发生变化，请刷新后重试')
       return this.appendRelease(transaction, locked.versionId, current.id, 'published', actorId, '服务端配置测试通过，发布当前 Skill 版本。')
     })
     await this.audit(actorId, 'skill.publish', current.id, 'success', release.note)
@@ -958,7 +967,7 @@ export class PostgresSkillService {
         join skill_versions sv on sv.tenant_id = ${tenantId} and sv.id = inserted.skill_version_id
         join users u on u.tenant_id = ${tenantId} and u.id = inserted.actor_id
     `
-    if (!row) throw new Error('Skill 发布记录写入失败')
+    if (!row) throw skillInternalFailure('Skill 发布记录写入失败')
     return { id, skillId, version: row.version, action, actor: row.actor, time: formatDateTime(row.time), note }
   }
 
@@ -1006,7 +1015,7 @@ export class PostgresSkillService {
   }
 
   private requireArtifactStore() {
-    if (!this.artifactStore) throw new Error('Skill 文件夹存储未配置')
+    if (!this.artifactStore) throw skillUnavailable('Skill 文件夹存储未配置')
     return this.artifactStore
   }
 
@@ -1022,20 +1031,20 @@ export class PostgresSkillService {
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )
     `
-    if (!actor) throw new Error(`操作人不存在、已停用或不是平台管理员：${userId}`)
+    if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
     return actor
   }
 
   private async requireSkill(skillId: string): Promise<SkillDefinition> {
     const [row] = await this.readSkillRows(skillId)
-    if (!row) throw new Error(`Skill 不存在：${skillId}`)
+    if (!row) throw skillNotFound(`Skill 不存在：${skillId}`)
     return toSkillDefinition(row)
   }
 
   private async requireSkillResult(skillId: string, versionId: string) {
     const skill = await this.requireSkill(skillId)
     const version = (await this.getSkillVersions()).find(item => item.id === versionId)
-    if (!version) throw new Error(`Skill Version 不存在：${versionId}`)
+    if (!version) throw skillNotFound(`Skill Version 不存在：${versionId}`, 'skill_version_not_found')
     return { skill, version }
   }
 
@@ -1046,6 +1055,12 @@ export class PostgresSkillService {
 }
 
 function normalizeConfiguration(input: SkillConfiguration): SkillConfiguration {
+  for (const key of ['id', 'name', 'category', 'description', 'instructions', 'testPrompt'] as const) {
+    if (typeof input[key] !== 'string') throw skillInvalid(`Skill 字段 ${key} 必须为字符串`)
+  }
+  if (!Array.isArray(input.toolIds) || input.toolIds.some(id => typeof id !== 'string')) {
+    throw skillInvalid('Skill toolIds 必须为字符串数组')
+  }
   return {
     id: input.id,
     name: input.name.trim(),
@@ -1063,12 +1078,12 @@ function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] 
 }
 
 function assertConfiguration(input: SkillConfiguration) {
-  if (!/^skill-[a-z0-9-]{6,48}$/.test(input.id)) throw new Error('Skill 标识格式不正确')
-  if (input.name.length < 2 || input.name.length > 40) throw new Error('Skill 名称长度为 2～40 个字符')
-  if (!input.category || input.category.length > 40) throw new Error('Skill 分类不能为空且不能超过 40 个字符')
-  if (input.description.length < 10 || input.description.length > 200) throw new Error('Skill 说明长度为 10～200 个字符')
-  if (input.instructions.length < 20 || input.instructions.length > 10000) throw new Error('执行指令长度为 20～10000 个字符')
-  if (input.testPrompt.length < 4 || input.testPrompt.length > 500) throw new Error('典型测试问题长度为 4～500 个字符')
+  if (!/^skill-[a-z0-9-]{6,48}$/.test(input.id)) throw skillInvalid('Skill 标识格式不正确')
+  if (input.name.length < 2 || input.name.length > 40) throw skillInvalid('Skill 名称长度为 2～40 个字符')
+  if (!input.category || input.category.length > 40) throw skillInvalid('Skill 分类不能为空且不能超过 40 个字符')
+  if (input.description.length < 10 || input.description.length > 200) throw skillInvalid('Skill 说明长度为 10～200 个字符')
+  if (input.instructions.length < 20 || input.instructions.length > 10000) throw skillInvalid('执行指令长度为 20～10000 个字符')
+  if (input.testPrompt.length < 4 || input.testPrompt.length > 500) throw skillInvalid('典型测试问题长度为 4～500 个字符')
 }
 
 function toSkillDefinition(row: SkillRow): SkillDefinition {
@@ -1145,7 +1160,7 @@ function configurationFingerprint(row: SkillFingerprintSource) {
 function parseReference(reference: string) {
   const separator = reference.lastIndexOf('@')
   if (separator <= 0 || separator === reference.length - 1) {
-    throw new Error(`Skill 引用必须锁定版本：${reference}`)
+    throw skillInvalid(`Skill 引用必须锁定版本：${reference}`)
   }
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
 }
@@ -1165,4 +1180,16 @@ function flattenRuntimeDependencies(skill: RuntimeSkillConfiguration): RuntimeSk
 
 function formatDateTime(value: Date) {
   return value.toISOString().slice(0, 16).replace('T', ' ')
+}
+
+/** HTTP JSON is untrusted even when the TypeScript input type says string. */
+function assertSkillId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !value.trim()) throw skillInvalid('skillId 必须为非空字符串')
+}
+
+function normalizeTestPrompt(value: unknown, fallback: string): string {
+  const prompt = value === undefined ? fallback : value
+  if (typeof prompt !== 'string') throw skillInvalid('测试问题必须为字符串', 'skill_test_prompt_invalid')
+  if (prompt.trim().length < 4) throw skillInvalid('测试问题至少需要 4 个字符', 'skill_test_prompt_invalid')
+  return prompt.trim()
 }

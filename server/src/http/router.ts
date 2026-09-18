@@ -160,17 +160,20 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       409: '刷新对象当前状态后重试；若仍有任务在执行，请等待完成或先取消。',
       421: '请从已配置的前端入口访问；请管理员检查允许入口及反向代理 Host/协议转发配置。',
       422: '按提示调整输入内容后重新提交。',
+      500: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`,
       502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
       503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
     }
     const suggestion = ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
       ? '请管理员检查对应执行能力；配置修复并重启服务后再提交任务。'
-      : suggestions[status]
+      : status === 503 && error.code.startsWith('skill_')
+        ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
+        : suggestions[status]
     return {
       status,
       error: {
         code: error.code,
-        message: error.message,
+        message: status === 500 ? `${object}操作未完成` : error.message,
         object,
         suggestion,
         traceId,
@@ -314,12 +317,13 @@ function apiAudience(path: string): ApiAudience | null {
   return null
 }
 
+/** Also recognizes typed domain/capability errors; never infer their status from message wording. */
 function isIdentityAccessError(
   error: unknown,
-): error is Error & { status: 401 | 403 | 404 | 409 | 421 | 422 | 502 | 503; code: string } {
+): error is Error & { status: 401 | 403 | 404 | 409 | 421 | 422 | 500 | 502 | 503; code: string } {
   if (!(error instanceof Error)) return false
   const candidate = error as Error & { status?: unknown; code?: unknown }
-  return [401, 403, 404, 409, 421, 422, 502, 503].includes(Number(candidate.status))
+  return [401, 403, 404, 409, 421, 422, 500, 502, 503].includes(Number(candidate.status))
     && typeof candidate.code === 'string'
     && /^[a-z0-9_]{1,80}$/i.test(candidate.code)
 }

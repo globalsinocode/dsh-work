@@ -1,3 +1,4 @@
+import { skillConflict } from './skill-errors.ts'
 import { normalizeSkillTestScenario, evaluateScenarioAssertions } from '../../domain/skill-test-scenario.ts'
 import { createHash } from 'node:crypto'
 import { canonicalJson } from '../runtime/canonical-json.ts'
@@ -13,7 +14,7 @@ export function runtimeSkillFingerprint(root: RuntimeSkillConfiguration): string
   const visiting = new Set<string>()
   const visit = (skill: RuntimeSkillConfiguration) => {
     const reference = `${skill.id}@${skill.version}`
-    if (visiting.has(reference)) throw new Error('Skill 试运行依赖包含循环')
+    if (visiting.has(reference)) throw skillConflict('Skill 试运行依赖包含循环', 'skill_dependency_conflict')
     const entry = {
       id: skill.id, version: skill.version, name: skill.name ?? skill.id, description: skill.description ?? '',
       instructionsSha256: createHash('sha256').update(skill.instructions).digest('hex'),
@@ -24,7 +25,7 @@ export function runtimeSkillFingerprint(root: RuntimeSkillConfiguration): string
       disableModelInvocation: Boolean(skill.disableModelInvocation),
     }
     if (entries.has(reference) && canonicalJson(entries.get(reference)) !== canonicalJson(entry)) {
-      throw new Error('同一 Skill 版本的试运行内容不一致')
+      throw skillConflict('同一 Skill 版本的试运行内容不一致', 'skill_dependency_conflict')
     }
     entries.set(reference, entry)
     visiting.add(reference)

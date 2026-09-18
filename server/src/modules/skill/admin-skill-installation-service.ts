@@ -1,3 +1,4 @@
+import { skillNotFound, skillConflict } from './skill-errors.ts'
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { evaluateAttemptEvidence, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY } from './skill-test-evidence.ts'
 import { authorizationDenied, requestInvalid } from '../authorization/authorization-errors.ts'
@@ -94,9 +95,9 @@ export class AdminSkillInstallationService {
         join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id and ra.run_id = r.id
        where r.tenant_id = ${tenant} and r.id = ${runId}
     `
-    if (!attempt || attempt.manifest.purpose !== 'admin-skill-test') throw new Error('Skill 试运行不存在或类型不匹配')
+    if (!attempt || attempt.manifest.purpose !== 'admin-skill-test') throw skillNotFound('Skill 试运行不存在或类型不匹配', 'skill_test_not_found')
     const expectedReference = `${skill.id}@${skill.version}`
-    if (!attempt.manifest.skills.some(reference => `${reference.id}@${reference.version}` === expectedReference)) throw new Error('Skill 试运行版本已变化，请重新发起')
+    if (!attempt.manifest.skills.some(reference => `${reference.id}@${reference.version}` === expectedReference)) throw skillConflict('Skill 试运行版本已变化，请重新发起', 'skill_test_snapshot_changed')
 
     owned.status = attempt.runStatus
     const catalog = attempt.manifest.agent_configuration.skill_instructions

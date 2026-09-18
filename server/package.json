@@ -65,7 +65,9 @@
     "test:review:c6:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-c6-confirmation.integration.test.ts",
     "test:review:c7:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/skill/skill-link.test.ts",
     "test:review:c7:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-c7-link.integration.test.ts",
-    "test:review:p2:origin": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-origin.test.ts"
+    "test:review:p2:origin": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-origin.test.ts",
+    "test:review:p2:skill:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/skill/skill-errors.test.ts",
+    "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

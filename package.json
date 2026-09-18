@@ -79,7 +79,9 @@
     "test:review:c6:integration": "pnpm --filter @dsh-work/server test:review:c6:integration",
     "test:review:c7:unit": "pnpm --filter @dsh-work/server test:review:c7:unit",
     "test:review:c7:integration": "pnpm --filter @dsh-work/server test:review:c7:integration",
-    "test:review:p2:origin": "pnpm --filter @dsh-work/server test:review:p2:origin"
+    "test:review:p2:origin": "pnpm --filter @dsh-work/server test:review:p2:origin",
+    "test:review:p2:skill:unit": "pnpm --filter @dsh-work/server test:review:p2:skill:unit",
+    "test:review:p2:skill:integration": "pnpm --filter @dsh-work/server test:review:p2:skill:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
