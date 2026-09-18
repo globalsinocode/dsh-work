@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
@@ -8,6 +8,8 @@ import { usePagedQuery } from '@/composables/usePagedQuery'
 import type { PersonalFile } from '@/types/domain'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
+let mounted = true
+onBeforeUnmount(() => { mounted = false })
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
 const query = computed(() => typeof route.query.q === 'string' ? route.query.q : '')
 const source = computed(() => ['material','attachment','artifact'].includes(String(route.query.source)) ? route.query.source as PersonalFile['source'] : 'all')
@@ -17,6 +19,7 @@ const { items, nextCursor, loading, error, reload, loadMore } = usePagedQuery(
   () => [query.value, source.value, auth.user.id],
   cursor => workbenchApi.listPersonalFiles({ query: query.value, source: source.value, cursor, limit: 20 }),
 )
+watch(query, value => { keyword.value = value })
 function search() { void router.replace({ query: { ...route.query, q: keyword.value || undefined } }) }
 function filter(event: Event) { void router.replace({ query: { ...route.query, source: (event.target as HTMLSelectElement).value } }) }
 async function upload(event: Event) {
@@ -30,7 +33,9 @@ async function upload(event: Event) {
 async function download(file: PersonalFile) {
   busy.value = file.id
   try {
+    const actor = auth.user.id
     const blob = await workbenchApi.downloadPersonalFile(file.id)
+    if (!mounted || actor !== auth.user.id) return
     const url = URL.createObjectURL(blob), anchor = document.createElement('a')
     anchor.href = url; anchor.download = file.name; anchor.click(); URL.revokeObjectURL(url)
   } catch(cause) { notifyActionFailure('下载文件', file.name, cause) }
@@ -70,15 +75,17 @@ async function remove(file: PersonalFile) {
   </section>
 </template>
 <style scoped>
-.my-files-page { padding: var(--spacing-section); }
-header, .file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-card); }
-header p, small, .file-copy>span { color: var(--color-text-secondary); }
-.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: var(--spacing-section) 0; }
-label, .file-copy { display: flex; flex-direction: column; gap: var(--spacing-xs, 4px); }
-input, select { padding: var(--spacing-sm, 8px); border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-page); color: inherit; }
+.my-files-page { padding: 24px; min-width: 0; }
+header, .file-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+h1 { margin: 0; font-size: var(--dsh-font-size-page-title); }
+header p, small, .file-copy>span { color: var(--dsh-color-muted); }
+.file-filters { justify-content: flex-start; flex-wrap: wrap; margin: 24px 0; }
+label, .file-copy { display: flex; flex-direction: column; gap: 4px; }
+input, select { max-width: 100%; padding: 8px; border: 1px solid var(--dsh-color-border); border-radius: var(--dsh-radius-sm); background: var(--dsh-color-panel); color: inherit; }
 ul { padding: 0; list-style: none; }
-li { padding: var(--spacing-card) 0; border-bottom: 1px solid var(--color-border); }
+li { padding: 16px 0; border-bottom: 1px solid var(--dsh-color-border); }
 .file-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.file-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-sm, 8px); }
+.file-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media(max-width: 700px) { li { align-items: flex-start; flex-direction: column; } }
+@media(max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .history-filters, .file-filters { gap: 12px; } }
 </style>

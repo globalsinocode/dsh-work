@@ -80,3 +80,22 @@ test('invalid file filters and disabled accounts are rejected',async()=>{
     assert.equal((await upload('B4-disabled.txt')).status,403)
   }finally{await f.db.client`update users set status='active' where id='U00001'`}
 })
+
+test('file pagination keeps distinct objects inside one millisecond', async () => {
+  const ids: string[] = []
+  for (const micros of ['555100', '555500', '555900']) {
+    const uploaded = await upload(`B4-micro-${micros}.txt`)
+    assert.equal(uploaded.status, 201)
+    ids.push(uploaded.body.data.id)
+    await f.db.client`update file_objects set created_at = ${`2026-09-18T10:00:00.${micros}Z`}::text::timestamptz where id = ${uploaded.body.data.id}`
+  }
+  let cursor: string | null = null
+  const seen: string[] = []
+  do {
+    const page = await f.api('/files?query=B4-micro&limit=1' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''))
+    assert.equal(page.status, 200)
+    seen.push(...page.body.data.items.map((row: {id: string}) => row.id))
+    cursor = page.body.data.nextCursor
+  } while (cursor)
+  assert.deepEqual(seen, ids.reverse())
+})

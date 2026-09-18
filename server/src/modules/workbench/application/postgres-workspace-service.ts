@@ -1,4 +1,4 @@
-import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
+import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { authorizationDenied } from '../../authorization/authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -18,6 +18,10 @@ export class PostgresWorkspaceService {
   }
 
   async ensurePersonalWorkspace(userId: string): Promise<AccessibleWorkspace> {
+    // An already-provisioned workspace does not override account/tenant revocation.
+    const [actor] = await this.database`select u.id from users u join tenants t on t.id = u.tenant_id
+      where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active' and t.status = 'active'`
+    if (!actor) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
     const proposedId = personalWorkspaceIdFor(userId)
     await this.database`
       insert into workspaces (
@@ -124,7 +128,7 @@ function normalizeWorkspaceId(workspaceId: string | null | undefined) {
 
 /** Shared SQL read predicate for alias `w`. It is a resource boundary, not a
  * replacement for HTTP/function permission checks. No caller-controlled SQL. */
-export function readableWorkspacePredicate(sql: DatabaseClient, userId: string) {
+export function readableWorkspacePredicate(sql: DatabaseClient | DatabaseTransaction, userId: string) {
   return sql`w.status in ('active', 'archived')
     and exists (select 1 from users actor join tenants tenant on tenant.id = actor.tenant_id
       where actor.tenant_id = w.tenant_id and actor.id = ${userId}

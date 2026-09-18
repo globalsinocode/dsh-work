@@ -24,7 +24,7 @@ const router = createRouter({
       path: '/workbench',
       name: 'workbench',
       component: () => import('@/views/WorkbenchView.vue'),
-      meta: { title: '工作台', section: '员工工作台' },
+      meta: { title: '新对话', section: '员工工作台' },
     },
     {
       path: '/skills',
@@ -43,13 +43,13 @@ const router = createRouter({
       path: '/workspaces',
       name: 'workspaces',
       component: () => import('@/views/WorkspacesView.vue'),
-      meta: { title: '工作空间', section: '员工工作台' },
+      meta: { title: '团队空间', section: '员工工作台' },
     },
     {
       path: '/workspaces/:id',
       name: 'workspace-detail',
-      component: () => import('@/views/WorkspaceDetailView.vue'),
-      meta: { title: '工作空间', section: '员工工作台' },
+      component: () => import('@/views/WorkspaceEntryView.vue'),
+      meta: { title: '团队空间', section: '员工工作台' },
       children: [
         {
           // TW-10 空间内对话视图：团队会话在空间外壳内打开，不再跳到
@@ -73,8 +73,7 @@ const router = createRouter({
     {
       path: '/artifacts',
       name: 'artifacts',
-      component: () => import('@/views/ArtifactsView.vue'),
-      meta: { title: '我的成果', section: '员工工作台' },
+      redirect: { path: '/files', query: { source: 'artifact' } },
     },
     {
       path: '/settings',

@@ -538,7 +538,7 @@ export class PostgresContentService {
          and ${source === 'all' ? this.database`true` : source === 'artifact' ? this.database`result.id is not null`
            : source === 'attachment' ? this.database`result.id is null and f.session_id is not null` : this.database`result.id is null and f.session_id is null`}
          and ${pattern === null ? this.database`true` : this.database`f.original_name ilike ${pattern} escape '\\'`}
-         and ${cursor ? this.database`(f.created_at, f.id) < (${cursor.at}::timestamptz, ${cursor.id})` : this.database`true`}
+         and ${cursor ? this.database`(f.created_at, f.id) < (${cursor.at}::text::timestamptz, ${cursor.id})` : this.database`true`}
        order by f.created_at desc, f.id desc limit ${limit + 1}
     `
     const items: PersonalFileSummary[] = rows.slice(0, limit).map(row => ({

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -71,7 +71,12 @@ const props = withDefaults(
  * 触发执行；只有只读成员/角色未知时才整体阻止。Agent 预选（右栏「开始对话」）
  * 现在只是「首条消息默认 @ 谁」的快捷方式，不再是进入对话的前置条件。
  */
+const referenceError = ref('')
+const referenceLoading = ref(false)
+const referenceName = ref('')
 const blockedReason = computed(() => {
+  if (referenceLoading.value) return '正在检查引用文件权限'
+  if (referenceError.value) return referenceError.value
   if (!props.requiresAgentMember) return ''
   return props.canDiscuss ? '' : '当前角色为只读成员或尚无写权限，不能发言或发起执行；请联系负责人。'
 })
@@ -81,7 +86,7 @@ const route = useRoute()
 const taskStore = useTaskStore()
 const contentStore = useContentStore()
 const rootRef = ref<HTMLElement>()
-const workspaceLoadFinished = ref(false)
+
 
 const selectedTask = ref('')
 const presetPrompt = ref('')
@@ -89,32 +94,11 @@ const composerKey = ref(0)
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedSkillId = ref('')
 
-const personalWorkspace = computed(() =>
-  contentStore.workspaces.find(workspace => workspace.type === 'personal'),
-)
-/**
- * 全局新对话的空间选择器（3-T3 design §2.7/§3）：归档团队空间属执行轨，
- * 不允许在这里被选中发起新对话——服务端会拒绝，列出来只会让用户走进死路。
- * 当前所在空间（workspaceLocked）不经过该列表，归档态由详情页自行隐藏入口。
- */
-const selectableWorkspaces = computed(() =>
-  contentStore.workspaces.filter(workspace => workspace.type === 'personal' || workspace.status !== 'archived'),
-)
-const selectedWorkspace = computed(() => {
-  if (props.workspaceLocked) {
-    return contentStore.workspaces.find(workspace => workspace.id === props.workspaceId)
-  }
-  return personalWorkspace.value ?? contentStore.workspaces[0]
-})
-const composerWorkspaceId = computed(() =>
-  props.workspaceLocked ? props.workspaceId : (selectedWorkspace.value?.id ?? ''),
-)
-const composerWorkspaceName = computed(() =>
-  props.workspaceLocked ? props.workspaceName : (selectedWorkspace.value?.name ?? '我的空间'),
-)
-const composerReady = computed(() =>
-  props.workspaceLocked || contentStore.initialized || workspaceLoadFinished.value,
-)
+// Global tasks are implicit personal tasks. Only an explicit locked origin
+// carries a workspace; never infer it from the order of a cached space list.
+const composerWorkspaceId = computed(() => props.workspaceLocked ? props.workspaceId : '')
+const composerWorkspaceName = computed(() => props.workspaceLocked ? props.workspaceName : '')
+const composerReady = computed(() => true)
 const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
   contentStore.skills.find(skill => skill.id === selectedSkillId.value),
 )
@@ -157,6 +141,10 @@ function focusComposer() {
 }
 
 function selectTask(item: (typeof commonTasks)[number]) {
+  referenceError.value = ''; referenceName.value = ''; referenceSequence++
+  if (!props.workspaceLocked && route.query.file) {
+    const query = { ...route.query }; delete query.file; void router.replace({ query })
+  }
   selectedTask.value = item.label
   referencedWorkspaceFileIds.value = []
   presetPrompt.value = item.prompt
@@ -214,7 +202,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
       ? await taskStore.createTask(
           payload.prompt,
           payload.files,
-          payload.workspaceId,
+          props.workspaceLocked ? props.workspaceId : undefined,
           props.workspaceLocked ? props.workspaceName : composerWorkspaceName.value,
           undefined,
           referencedWorkspaceFileIds.value,
@@ -224,7 +212,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
       : await taskStore.createTask(
           payload.prompt,
           payload.files,
-          payload.workspaceId,
+          props.workspaceLocked ? props.workspaceId : undefined,
           props.workspaceLocked ? props.workspaceName : composerWorkspaceName.value,
           undefined,
           referencedWorkspaceFileIds.value,
@@ -267,12 +255,41 @@ onMounted(async () => {
     syncSkillFromRoute()
   } catch (error) {
     notifyActionFailure('加载员工能力', 'Skill 广场', error, '仍可继续发送普通对话；稍后刷新页面重试 Skill。')
-  } finally {
-    workspaceLoadFinished.value = true
   }
 })
 
 watch(() => route.query.skill, syncSkillFromRoute)
+
+let referenceSequence = 0
+function clearPersonalReference() {
+  referenceSequence++; referenceLoading.value = false; referenceError.value = ''; referenceName.value = ''
+  referencedWorkspaceFileIds.value = []
+  if (!props.workspaceLocked && route.query.file) {
+    const query = { ...route.query }; delete query.file; void router.replace({ query })
+  }
+}
+async function syncPersonalReference() {
+  if (props.workspaceLocked) return
+  const sequence = ++referenceSequence
+  referencedWorkspaceFileIds.value = []; referenceName.value = ''; referenceError.value = ''; referenceLoading.value = false
+  const id = typeof route.query.file === 'string' ? route.query.file : ''
+  if (!id) return
+  referenceLoading.value = true
+  try {
+    const file = await workbenchApi.getPersonalFile(id)
+    if (sequence !== referenceSequence) return
+    if (!file.canReference) throw new Error('该文件当前不可引用，请查看文件的解析和安全状态')
+    referencedWorkspaceFileIds.value = [file.id]; referenceName.value = file.name
+    presetPrompt.value = `请分析文件“${file.name}”。`; composerKey.value++
+  } catch(cause) {
+    if (sequence === referenceSequence) referenceError.value = cause instanceof Error ? cause.message : '无法引用文件'
+  } finally { if (sequence === referenceSequence) referenceLoading.value = false }
+}
+watch(() => route.query.file, () => { void syncPersonalReference() }, { immediate: true })
+watch(() => props.workspaceId, () => {
+  clearPersonalReference(); presetPrompt.value = ''; composerKey.value++
+})
+onBeforeUnmount(() => { referenceSequence++ })
 
 defineExpose({ useWorkspaceFile })
 </script>
@@ -313,6 +330,12 @@ defineExpose({ useWorkspaceFile })
           </button>
         </nav>
 
+        <div v-if="!workspaceLocked" class="personal-capability-actions">
+          <el-button link @click="router.push('/skills')">选择 Skill</el-button>
+          <el-button link @click="router.push('/files')">从我的文件引用</el-button>
+        </div>
+        <p v-if="referenceName">已引用：{{ referenceName }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
+        <p v-if="referenceError" role="alert">{{ referenceError }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <TaskComposer
           v-if="composerReady"
           :key="composerKey"
@@ -320,14 +343,16 @@ defineExpose({ useWorkspaceFile })
           :initial-prompt="presetPrompt"
           :initial-workspace-id="composerWorkspaceId"
           :initial-workspace-name="composerWorkspaceName"
-          :workspaces="selectableWorkspaces"
+          :workspaces="[]"
           :workspace-locked="workspaceLocked"
+          :show-workspace-context="workspaceLocked"
           :selected-skill-name="selectedSkill?.name"
           :blocked-reason="blockedReason"
           :mention-options="workspaceLocked ? mentionOptions : []"
           :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"
           @clear-skill="clearSelectedSkill"
+          @open-files="router.push('/files')"
         />
         <el-skeleton v-else class="workbench-composer" :rows="3" animated />
 
@@ -341,6 +366,7 @@ defineExpose({ useWorkspaceFile })
 </template>
 
 <style scoped>
+.personal-capability-actions { display: flex; justify-content: center; gap: 12px; margin-bottom: 10px; }
 .conversation-starter {
   min-height: 100vh;
   overflow: hidden;

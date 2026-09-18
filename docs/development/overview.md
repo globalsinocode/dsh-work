@@ -139,7 +139,7 @@ flowchart TB
 
 ### 4.1 体验层
 
-- `apps/workbench-web`：员工对话、工作空间、文件、成果和设置；
+- `apps/workbench-web`：新对话、历史对话、我的文件、团队空间和用户设置；默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见 [个人工作闭环](review-batch03.md)；
 - `apps/admin-web`：运营、Agent、Skill/Tool、Runtime、Session、权限、模型用量、审计和健康；
 - 两个应用拥有独立路由、Pinia、API 客户端、DTO 和构建产物；
 - `packages/` 只共享 Design Token 和无业务状态组件，不共享认证状态或业务 Store。

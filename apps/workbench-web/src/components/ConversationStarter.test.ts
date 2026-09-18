@@ -203,8 +203,8 @@ describe('ConversationStarter', () => {
     expect(createTask).toHaveBeenCalledWith(
       '整理个人材料',
       [],
-      'ws-personal',
-      '我的空间',
+      undefined,
+      '',
       undefined,
       [],
       undefined,
@@ -382,8 +382,8 @@ describe('ConversationStarter', () => {
 
     const composer = wrapper.findComponent(TaskComposer)
     const offered = (composer.props('workspaces') as Array<{ id: string }>).map(item => item.id)
-    expect(offered).toContain('ws-personal')
-    expect(offered).toContain('ws-active')
+    expect(offered).toEqual([])
+    expect(composer.props('showWorkspaceContext')).toBe(false)
     expect(offered).not.toContain('ws-archived')
   })
 })

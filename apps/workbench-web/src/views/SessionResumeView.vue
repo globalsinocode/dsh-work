@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { workbenchApi } from '@/api/client'
@@ -22,14 +22,20 @@ watch(() => route.params.id, async value => {
   } catch(cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : '无法读取对话' }
   finally { if (current === generation) loading.value = false }
 }, { immediate: true })
+onBeforeUnmount(() => { generation++ })
 async function submit(payload: { prompt: string; files: File[] }) {
-  if (!session.value?.canContinue) return
+  const target = session.value, current = generation
+  if (!target?.canContinue) return
   try {
     const fileIds: string[] = []
-    for(const file of payload.files) fileIds.push((await workbenchApi.uploadSessionFile(session.value.sessionId, file)).id)
-    const task = await workbenchApi.startRun(session.value.sessionId, { prompt: payload.prompt, fileIds, idempotencyKey: crypto.randomUUID() })
-    await router.replace(`/conversations/${task.id}`)
-  } catch(cause) { notifyActionFailure('继续对话', session.value.title, cause) }
+    for (const file of payload.files) {
+      if (current !== generation) return
+      fileIds.push((await workbenchApi.uploadSessionFile(target.sessionId, file)).id)
+    }
+    if (current !== generation) return
+    const task = await workbenchApi.startRun(target.sessionId, { prompt: payload.prompt, fileIds, idempotencyKey: crypto.randomUUID() })
+    if (current === generation) await router.replace(`/conversations/${task.id}`)
+  } catch(cause) { if (current === generation) notifyActionFailure('继续对话', target.title, cause) }
 }
 </script>
 <template>
@@ -39,9 +45,9 @@ async function submit(payload: { prompt: string; files: File[] }) {
     <template v-else-if="session">
       <h1>{{ session.title }}</h1><p v-if="session.workspaceType === 'team'">团队：{{ session.workspaceName }}</p>
       <p>这段对话尚未开始任务。继续发送会沿用原对话，不创建另一个会话。</p>
-      <TaskComposer v-if="session.canContinue" :key="session.sessionId" :workspace-id="session.workspaceId" :workspace-name="session.workspaceName" workspace-locked @submit="submit" />
+      <TaskComposer v-if="session.canContinue" :key="session.sessionId" :initial-workspace-id="session.workspaceId" :initial-workspace-name="session.workspaceName" :show-workspace-context="session.workspaceType === 'team'" workspace-locked @submit="submit" />
       <p v-else>当前对话只读。</p>
     </template>
   </section>
 </template>
-<style scoped>.session-resume { padding: var(--spacing-section); }</style>
+<style scoped>.session-resume { padding: 24px; }</style>

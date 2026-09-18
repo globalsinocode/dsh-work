@@ -80,7 +80,7 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
     expect(wrapper.find('[data-testid="workspace-filter-all"]').classes()).toContain('is-active')
     expect(wrapper.find('[data-testid="workspace-filter-active"]').classes()).not.toContain('is-active')
     expect(wrapper.find('[data-testid="workspace-filter-archived"]').classes()).not.toContain('is-active')
-    expect(wrapper.text()).toContain('3 个可访问工作空间')
+    expect(wrapper.text()).toContain('2 个可访问工作空间')
     // 默认「全部」复用已加载的服务端列表，不额外发筛选请求（服务端默认 all）。
     expect(workbenchApi.getWorkspaces).not.toHaveBeenCalled()
   })
@@ -116,7 +116,7 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
     expect(wrapper.find('[data-testid="workspace-card-archived-tag"]').exists()).toBe(true)
   })
 
-  it('switching to 活动 requests ?status=active and keeps personal spaces visible', async () => {
+  it('switching to 活动 requests ?status=active but hides the implicit personal workspace', async () => {
     vi.mocked(workbenchApi.getWorkspaces).mockResolvedValue([personal, activeTeam])
     const { wrapper } = await mountView()
 
@@ -125,7 +125,7 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
 
     expect(workbenchApi.getWorkspaces).toHaveBeenCalledWith('active')
     expect(router.replace).toHaveBeenCalledWith({ query: { status: 'active' } })
-    expect(wrapper.text()).toContain('我的空间')
+    expect(wrapper.text()).not.toContain('我的空间')
     expect(wrapper.text()).not.toContain('九月复盘')
   })
 
@@ -147,7 +147,7 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
     await flushPromises()
 
     expect(router.replace).toHaveBeenLastCalledWith({ query: {} })
-    expect(wrapper.text()).toContain('3 个可访问工作空间')
+    expect(wrapper.text()).toContain('2 个可访问工作空间')
   })
 
   it('shows the dedicated archived empty state when no team space is archived', async () => {

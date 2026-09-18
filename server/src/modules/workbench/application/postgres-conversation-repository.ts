@@ -268,10 +268,7 @@ export class PostgresConversationRepository {
          for update of w
       `
       if (!workspace) throw authorizationDenied('Session 不存在或不可访问')
-      await this.workspaces.resolveAccessibleWorkspace(workspace.id, userId)
-      const [identity] = await transaction`select u.id from users u join tenants t on t.id = u.tenant_id
-        where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active' and t.status = 'active'`
-      if (!identity) throw authorizationDenied('Session 不存在或不可访问')
+      await this.requireWritableWorkspace(workspace.id, userId, transaction)
       const [session] = await transaction<{ id: string; title: string; workspaceId: string; status: string }[]>`
         select id, title, workspace_id as "workspaceId", status from sessions
          where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${userId}
@@ -279,9 +276,8 @@ export class PostgresConversationRepository {
          for update
       `
       if (!session) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
-      // 删除会话属执行轨（3-T1 决策）：归档是只读保留，删除会销毁要保留的历史内容，
-      // 因此归档空间拒绝（活跃团队 + 当前成员，个人空间不受影响）。
-      await this.requireWritableWorkspace(session.workspaceId)
+      // 移除会话改变历史入口可见性，属写入：归档团队空间保持只读。
+      // 这里不会删除消息、Run 或文件；个人内容按独立保留策略管理。
       if (session.status === 'archived') return { sessionId: session.id, title: session.title,
         archived: true as const, removedFromHistory: true as const, physicalDeletion: false as const }
 
@@ -493,10 +489,11 @@ export class PostgresConversationRepository {
     const cursor = input.cursor ? decodeSessionCursor(input.cursor) : null
     const pattern = input.query?.trim() ? `%${input.query.trim().replaceAll(/[\\%_]/g, value => `\\${value}`)}%` : null
     const rows = await this.database<Array<Omit<UserSessionSummary, 'lastActiveAt' | 'latestRun'> & {
-      lastActiveAt: Date; latestRunId: string | null; latestRunStatus: RunState | null
+      lastActiveAt: Date; cursorTimestamp: string; latestRunId: string | null; latestRunStatus: RunState | null
     }>>`
       select s.id as "sessionId", s.title, s.created_by as "creatorId", u.display_name as "creatorName",
-             s.last_active_at as "lastActiveAt", w.id as "workspaceId", w.name as "workspaceName",
+             s.last_active_at as "lastActiveAt",
+             to_char(s.last_active_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorTimestamp", w.id as "workspaceId", w.name as "workspaceName",
              w.workspace_type as "workspaceType", w.status as "workspaceStatus",
              (select count(*)::integer from runs r where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
              latest.id as "latestRunId", latest.status as "latestRunStatus",
@@ -516,34 +513,33 @@ export class PostgresConversationRepository {
          and ${scope === 'all' ? this.database`true` : this.database`w.workspace_type = ${scope}`}
          and ${sessionId ? this.database`s.id = ${sessionId}` : this.database`true`}
          and ${pattern === null ? this.database`true` : this.database`s.title ilike ${pattern} escape '\\'`}
-         and ${cursor === null ? this.database`true` : this.database`(s.last_active_at, s.id) < (${cursor.lastActiveAt}::timestamptz, ${cursor.id})`}
+         and ${cursor === null ? this.database`true` : this.database`(s.last_active_at, s.id) < (${cursor.lastActiveAt}::text::timestamptz, ${cursor.id})`}
        order by s.last_active_at desc, s.id desc limit ${limit + 1}
     `
-    const items: UserSessionSummary[] = rows.slice(0, limit).map(({ latestRunId, latestRunStatus, ...row }) => ({
-      ...row, lastActiveAt: row.lastActiveAt.toISOString(), runCount: Number(row.runCount),
-      latestRun: latestRunId ? { id: latestRunId, status: latestRunStatus! } : null,
+    const items: UserSessionSummary[] = rows.slice(0, limit).map(row => ({
+      sessionId: row.sessionId, title: row.title, creatorId: row.creatorId, creatorName: row.creatorName,
+      workspaceId: row.workspaceId, workspaceName: row.workspaceName, workspaceType: row.workspaceType,
+      workspaceStatus: row.workspaceStatus, canContinue: row.canContinue, canRemove: row.canRemove,
+      lastActiveAt: row.lastActiveAt.toISOString(), runCount: Number(row.runCount),
+      latestRun: row.latestRunId ? { id: row.latestRunId, status: row.latestRunStatus! } : null,
     }))
     const last = items.at(-1)
-    return { items, nextCursor: rows.length > limit && last ? encodeSessionCursor(last.lastActiveAt, last.sessionId) : null }
+    return { items, nextCursor: rows.length > limit && last ? encodeSessionCursor(rows[items.length - 1]!.cursorTimestamp, last.sessionId) : null }
   }
 
   /**
    * Execution-track guard for writes reached through a session row (3-T1): team
    * workspaces must still be active; personal workspaces keep the existing path.
    */
-  private async requireWritableWorkspace(workspaceId: string) {
-    const [workspace] = await this.database<{ type: 'personal' | 'team' }[]>`
-      select workspace_type as type from workspaces
-       where tenant_id = ${tenantId} and id = ${workspaceId} and status = 'active'
+  private async requireWritableWorkspace(workspaceId: string, userId: string, sql: DatabaseTransaction) {
+    // Keep all checks on the transaction connection. Borrowing the pool here
+    // deadlocks a one-connection pool (or a saturated concurrent deletion burst).
+    const [workspace] = await sql`
+      select w.id from workspaces w
+       where w.tenant_id = ${tenantId} and w.id = ${workspaceId} and w.status = 'active'
+         and (${readableWorkspacePredicate(sql, userId)})
     `
-    if (workspace) return
-    // 空间不存在或已归档：区分成因只用于拒绝文案，不改变拒绝结果。
-    const [anyStatus] = await this.database<{ type: 'personal' | 'team'; status: string }[]>`
-      select workspace_type as type, status from workspaces
-       where tenant_id = ${tenantId} and id = ${workspaceId}
-    `
-    if (anyStatus?.type === 'personal') return
-    throw authorizationDenied('工作空间已归档，仅支持有权限的只读查看与下载')
+    if (!workspace) throw authorizationDenied('工作空间不存在、已归档或当前用户无权访问')
   }
 
   async listTasks(userId: string): Promise<TaskRun[]> {

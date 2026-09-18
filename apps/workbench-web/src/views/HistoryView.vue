@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
@@ -20,6 +20,7 @@ const { items, nextCursor, loading, error, reload, loadMore } = usePagedQuery(
   () => [query.value, scope.value, auth.user.id],
   cursor => workbenchApi.listSessions({ query: query.value, scope: scope.value, cursor, limit: 20 }),
 )
+watch(query, value => { keyword.value = value })
 function search() { void router.replace({ query: { ...route.query, q: keyword.value || undefined } }) }
 function changeScope(event: Event) { void router.replace({ query: { ...route.query, scope: (event.target as HTMLSelectElement).value } }) }
 async function remove(item: UserSessionSummary) {
@@ -50,14 +51,16 @@ async function remove(item: UserSessionSummary) {
   </section>
 </template>
 <style scoped>
-.history-page { padding: var(--spacing-section); }
-header, .history-filters, li { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-card); }
-header p, small { color: var(--color-text-secondary); }
-.history-filters { justify-content: flex-start; flex-wrap: wrap; margin: var(--spacing-section) 0; }
-label { display: flex; flex-direction: column; gap: var(--spacing-xs, 4px); }
-input, select { padding: var(--spacing-sm, 8px); border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-page); color: inherit; }
+.history-page { padding: 24px; min-width: 0; }
+header, .history-filters, li { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+h1 { margin: 0; font-size: var(--dsh-font-size-page-title); }
+header p, small { color: var(--dsh-color-muted); }
+.history-filters { justify-content: flex-start; flex-wrap: wrap; margin: 24px 0; }
+label { display: flex; flex-direction: column; gap: 4px; }
+input, select { max-width: 100%; padding: 8px; border: 1px solid var(--dsh-color-border); border-radius: var(--dsh-radius-sm); background: var(--dsh-color-panel); color: inherit; }
 ul { padding: 0; list-style: none; }
-li { padding: var(--spacing-card) 0; border-bottom: 1px solid var(--color-border); }
-.history-open { text-align: left; display: flex; flex-direction: column; gap: var(--spacing-xs, 4px); flex: 1; min-width: 0; background: none; border: 0; cursor: pointer; color: inherit; }
+li { padding: 16px 0; border-bottom: 1px solid var(--dsh-color-border); }
+.history-open { text-align: left; display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; background: none; border: 0; cursor: pointer; color: inherit; }
 strong { overflow-wrap: anywhere; }
+@media(max-width: 700px) { header { align-items: flex-start; flex-wrap: wrap; } .history-filters, .file-filters { gap: 12px; } }
 </style>

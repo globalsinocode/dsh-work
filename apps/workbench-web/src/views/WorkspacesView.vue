@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowRight, Plus, Search, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Plus, Search, UserFilled } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
@@ -42,16 +42,10 @@ const loadingFiltered = ref(false)
 const filterError = ref<string | null>(null)
 let listToken = 0
 
-const sourceWorkspaces = computed(() => {
-  if (statusFilter.value === 'all') return contentStore.workspaces
-  // 纵深防御（design §2.1）：**仅「已归档」**只响应团队空间——个人空间恒为 active，
-  // 不可能归档，若服务端意外返回则不得渲染。注意「活动」视图里个人空间是合法的，
-  // 不能一并过滤掉（那会改变个人空间在默认/活动视图的可见性，破 AC-23）。
-  if (statusFilter.value === 'archived') {
-    return filteredWorkspacesPage.value.filter(workspace => workspace.type === 'team')
-  }
-  return filteredWorkspacesPage.value
-})
+const sourceWorkspaces = computed(() =>
+  (statusFilter.value === 'all' ? contentStore.workspaces : filteredWorkspacesPage.value)
+    .filter(workspace => workspace.type === 'team'),
+)
 const loading = computed(() => (statusFilter.value === 'all' ? contentStore.loading : loadingFiltered.value))
 
 const filteredWorkspaces = computed(() => {
@@ -60,7 +54,7 @@ const filteredWorkspaces = computed(() => {
     .filter((workspace) =>
       !keyword || `${workspace.name} ${workspace.description} ${workspace.owner}`.toLowerCase().includes(keyword),
     )
-    .sort((left, right) => Number(right.type === 'personal') - Number(left.type === 'personal'))
+
 })
 
 const emptyDescription = computed(() =>
@@ -188,8 +182,8 @@ onMounted(() => contentStore.refresh())
   <div class="page-container page-container--wide workspace-page">
     <header class="page-header">
       <div>
-        <h1 class="page-title">工作空间</h1>
-        <p class="page-description">个人空间用于沉淀仅你可见的内容，团队空间用于协作；所有对话、文件和成果始终归属一个工作空间。</p>
+        <h1 class="page-title">团队空间</h1>
+        <p class="page-description">进入已加入的团队，使用团队资料和获准的 Agent 开展工作。个人对话和文件请使用左侧入口。</p>
       </div>
       <el-button type="primary" :icon="Plus" @click="createDialogOpen = true">创建团队工作空间</el-button>
     </header>
@@ -233,7 +227,7 @@ onMounted(() => contentStore.refresh())
       >
         <div class="workspace-card__top">
           <span class="workspace-card__icon" :class="{ 'workspace-card__icon--personal': workspace.type === 'personal' }">
-            <el-icon><component :is="workspace.type === 'personal' ? User : UserFilled" /></el-icon>
+            <el-icon><UserFilled /></el-icon>
           </span>
           <span class="workspace-card__tags">
             <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '团队工作空间'" />

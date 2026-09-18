@@ -63,3 +63,19 @@ test('directory deactivation revokes auth Sessions and preserves personal conten
   const [ownership]=await f.db.client`select w.created_by,f.uploaded_by from workspaces w join file_objects f on f.workspace_id=w.id where f.id=${file.id}`
   assert.equal(ownership.created_by,user.userId);assert.equal(ownership.uploaded_by,user.userId)
 })
+
+test('conversation removal works with a one-connection pool (no out-of-transaction query borrowing)', async () => {
+  const { createDatabase } = await import('./database.ts')
+  const { PostgresConversationRepository } = await import('../../modules/workbench/application/postgres-conversation-repository.ts')
+  const { setTimeout: delay } = await import('node:timers/promises')
+  const single = createDatabase({ url: f.db.url, maxConnections: 1 })
+  try {
+    const repository = new PostgresConversationRepository(single)
+    const session = await repository.createSession({ userId: 'U00001', title: 'B5 single connection' })
+    const removed = await Promise.race([
+      repository.archiveSession(session.id, 'U00001'),
+      delay(1500).then(() => { throw new Error('archiveSession borrowed a second connection while holding its transaction') }),
+    ])
+    assert.equal(removed.archived, true)
+  } finally { await single.end({ timeout: 0 }) }
+})

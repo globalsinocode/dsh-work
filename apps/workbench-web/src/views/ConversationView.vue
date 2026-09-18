@@ -17,6 +17,7 @@ import {
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ChatMessage, SessionThread, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
@@ -26,6 +27,7 @@ const route = useRoute()
 const router = useRouter()
 const taskStore = useTaskStore()
 const authStore = useAuthStore()
+const contentStore = useContentStore()
 
 const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
@@ -64,6 +66,7 @@ const task = computed(() => taskStore.getTask(routeTargetId.value))
  * 归档只读态（design §2.7 / 3-T1 执行轨）：运行所属团队空间归档后，续写（发送消息）
  * 与重试入口隐藏；内容、来源与成果下载保持可读。个人空间不会命中（AC-23）。
  */
+const currentWorkspace = computed(() => contentStore.workspaces.find(item => item.id === task.value?.workspaceId))
 const workspaceArchived = computed(() =>
   task.value?.workspaceType === 'team' && task.value.workspaceStatus === 'archived')
 /** 会话模式的归档判断与 Run 视图同一口径：均以服务端返回的空间状态为准。 */
@@ -519,7 +522,7 @@ watch(
           <button type="button" class="conversation-header__back" aria-label="返回" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <h1>{{ task.title }}</h1>
+          <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">团队：{{ currentWorkspace.name }}</span>
           <span v-if="task.skill" class="conversation-skill">
             <span>Skill</span>{{ task.skill.name }} · v{{ task.skill.version }}
           </span>
@@ -691,7 +694,7 @@ watch(
           <el-icon><ArrowDown /></el-icon>
         </button>
         <div class="conversation-composer-dock__inner">
-          <TaskComposer
+          <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
             v-if="canFollowUp"
             compact
             :running="canStop"
@@ -720,7 +723,7 @@ watch(
         <section class="drawer-section">
           <h2>当前执行</h2>
           <dl class="run-facts">
-            <div><dt>工作空间</dt><dd>{{ task.workspaceName }}</dd></div>
+            <div v-if="currentWorkspace?.type === 'team'"><dt>团队归属</dt><dd>{{ currentWorkspace.name }}</dd></div>
             <div><dt>会话</dt><dd class="mono">{{ task.sessionId }}</dd></div>
             <div><dt>运行</dt><dd class="mono">{{ task.id }}</dd></div>
             <div><dt>Agent</dt><dd class="mono">{{ task.agentVersion }}</dd></div>

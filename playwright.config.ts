@@ -9,6 +9,7 @@ const serverUrl = `http://localhost:${serverPort}`
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/personal-integration/**',
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
@@ -19,6 +20,7 @@ export default defineConfig({
     // 服务端按请求入口 Origin 校验（127.0.0.1 会得到 421 unknown_request_origin）。
     // 因此浏览器导航与 webServer 健康检查一律使用 localhost，不要改回 127.0.0.1。
     baseURL: workbenchUrl,
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {},
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

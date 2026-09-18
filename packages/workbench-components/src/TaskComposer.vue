@@ -24,6 +24,7 @@ const props = withDefaults(
     initialWorkspaceName?: string
     workspaces?: Array<{ id: string; name: string; type: 'personal' | 'team' }>
     workspaceLocked?: boolean
+    showWorkspaceContext?: boolean
     compact?: boolean
     submitting?: boolean
     running?: boolean
@@ -52,6 +53,7 @@ const props = withDefaults(
     initialWorkspaceName: '',
     workspaces: () => [],
     workspaceLocked: false,
+    showWorkspaceContext: true,
     compact: false,
     submitting: false,
     running: false,
@@ -77,6 +79,7 @@ const emit = defineEmits<{
   }]
   stop: []
   'clear-skill': []
+  'open-files': []
 }>()
 
 const prompt = ref(props.initialPrompt)
@@ -274,7 +277,10 @@ function insertReference(reference: string) {
 function onAddCommand(command: string | number | object) {
   const value = String(command)
   if (value === 'upload') openFilePicker()
-  if (value === 'workspace-file') insertReference('@工作空间文件')
+  if (value === 'workspace-file') {
+    if (props.showWorkspaceContext) insertReference('@工作空间文件')
+    else emit('open-files')
+  }
   if (value === 'enterprise-data') insertReference('@企业数据')
 }
 
@@ -418,7 +424,7 @@ function performPrimaryAction() {
                 </el-dropdown-item>
                 <el-dropdown-item command="workspace-file">
                   <el-icon><FolderOpened /></el-icon>
-                  引用工作空间文件
+                  {{ showWorkspaceContext ? '引用团队文件' : '我的文件' }}
                 </el-dropdown-item>
                 <el-dropdown-item command="enterprise-data">
                   <el-icon><Search /></el-icon>
@@ -430,7 +436,7 @@ function performPrimaryAction() {
           <span
             v-if="compact"
             class="composer__compact-trust"
-            aria-label="按企业身份和工作空间权限执行"
+            :aria-label="showWorkspaceContext ? '按企业身份和工作空间权限执行' : '按当前企业身份与资源权限执行'"
           >
             <el-icon><Lock /></el-icon>
             <span>按企业权限执行</span>
@@ -474,7 +480,7 @@ function performPrimaryAction() {
     <div v-if="!compact" class="composer__context-bar">
       <div class="composer__context-controls">
         <span
-          v-if="workspaceLocked"
+          v-if="showWorkspaceContext && workspaceLocked"
           class="context-control context-control--locked"
           aria-label="当前工作空间"
         >
@@ -482,7 +488,7 @@ function performPrimaryAction() {
           <span>{{ workspaceLabel }}</span>
           <el-icon class="composer__chevron"><Lock /></el-icon>
         </span>
-        <el-dropdown v-else trigger="click" @command="onWorkspaceCommand">
+        <el-dropdown v-else-if="showWorkspaceContext" trigger="click" @command="onWorkspaceCommand">
           <button class="context-control" type="button" aria-label="选择工作空间">
             <el-icon><FolderOpened /></el-icon>
             <span>{{ workspaceLabel }}</span>
@@ -503,7 +509,7 @@ function performPrimaryAction() {
       </div>
       <span class="composer__trust-note">
         <el-icon><Lock /></el-icon>
-        按企业身份和工作空间权限执行
+        {{ showWorkspaceContext ? '按企业身份和工作空间权限执行' : '按当前企业身份与资源权限执行' }}
       </span>
     </div>
 

@@ -5,7 +5,7 @@ const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 test('employee can open the workbench and enter a team workspace', async ({ page }) => {
   await page.goto('/workbench')
 
-  await expect(page).toHaveTitle(/工作台 · dsh-work/)
+  await expect(page).toHaveTitle(/新对话 · dsh-work/)
   await expect(page.getByRole('heading', { name: /dsh-work，我帮你/ })).toBeVisible()
   await expect(page.getByLabel('对话输入')).toBeVisible()
   await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
@@ -20,9 +20,9 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   await commonTasks.getByRole('button', { name: '分析文件' }).click()
   await expect(page.getByLabel('对话输入')).toHaveValue('分析我上传的文件，概括主要指标、异常项和需要跟进的问题。')
 
-  await page.getByRole('button', { name: '工作空间', exact: true }).click()
+  await page.getByRole('button', { name: '团队空间', exact: true }).click()
   await expect(page).toHaveURL(/\/workspaces$/)
-  await expect(page.getByRole('heading', { name: '工作空间', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '团队空间', exact: true })).toBeVisible()
   await expect(page.getByText('供应链经营分析', { exact: true })).toBeVisible()
 
   await page.getByText('供应链经营分析', { exact: true }).first().click()

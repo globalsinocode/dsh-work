@@ -124,3 +124,7 @@ Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验�
 | 运维 | TLS、密钥、磁盘/证书/身份依赖告警、异机备份与恢复、应用回滚兼容性、RTO/RPO 和维护窗口 |
 
 主分支要求 `M6 quality gate`。普通 push 只运行 CI；人工发布、Release watcher、首次安装及回滚统一按 [部署手册](../release/mac-mini-deployment-runbook.md) 执行。已发布 Release、主分支 CI 成功和远端部署完成是三个独立事实。
+
+### 个人工作闭环增量
+
+[批次 3 规则](review-batch03.md) 与 [D12 实测证据](review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。

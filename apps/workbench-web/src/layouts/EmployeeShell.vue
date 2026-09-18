@@ -4,8 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   AlarmClock,
+  Clock,
   Collection,
-  Grid,
   Delete as DeleteIcon,
   Download,
   Files,
@@ -38,11 +38,12 @@ const mobileOpen = ref(false)
 const deletingSessionId = ref<string>()
 
 const navigation = [
-  { label: '工作台', path: '/workbench', icon: HomeFilled },
-  { label: 'Skill 广场', path: '/skills', icon: Grid },
-  { label: '工作空间', path: '/workspaces', icon: Collection },
+  { label: '新对话', path: '/workbench', icon: HomeFilled },
+  { label: '历史对话', path: '/history', icon: Clock },
+  { label: '我的文件', path: '/files', icon: Files },
+  { label: '团队空间', path: '/workspaces', icon: Collection },
+  // AG-03 既有功能入口保留：不属于个人空间概念，不因 D12 收敛被摘掉。
   { label: '自动任务', path: '/automations', icon: AlarmClock },
-  { label: '成果库', path: '/artifacts', icon: Files },
 ]
 
 function isActive(path: string) {
@@ -52,7 +53,8 @@ function isActive(path: string) {
 
 function navigate(path: string) {
   mobileOpen.value = false
-  void router.push(path)
+  if (path === '/workbench') void router.push({ path, query: { new: String(Date.now()) } })
+  else void router.push(path)
 }
 
 function openAdmin() {
@@ -148,9 +150,12 @@ watch(
   },
 )
 
-onMounted(() => {
-  void Promise.all([authStore.load(), taskStore.load(), contentStore.load()])
-})
+watch(() => authStore.user.id, (id, previous) => {
+  if (previous && id !== previous) { taskStore.reset(); contentStore.reset() }
+  if (id === '—') return
+  void Promise.all([taskStore.load(), contentStore.load()]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
+}, { immediate: true })
+onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加载身份', '当前账号', cause)) })
 </script>
 
 <template>
@@ -284,7 +289,7 @@ onMounted(() => {
         aria-label="打开导航"
         @click="mobileOpen = true"
       />
-      <main class="employee-main"><router-view /></main>
+      <main class="employee-main"><router-view :key="authStore.user.id" /></main>
     </div>
   </div>
 </template>

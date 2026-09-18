@@ -27,6 +27,15 @@ export const useTaskStore = defineStore('tasks', () => {
   const tasks = ref<TaskRun[]>([])
   const loading = ref(false)
   const initialized = ref(false)
+  let generation = 0
+  function reset() {
+    generation++
+    for (const id of streams.keys()) closeStream(id)
+    tasks.value = []; loading.value = false; initialized.value = false
+  }
+  function requireGeneration(value: number) {
+    if (value !== generation) throw new Error('账号已切换，请重新操作')
+  }
 
   const activeTasks = computed(() =>
     tasks.value.filter((task) => ['queued', 'running', 'awaiting_approval'].includes(task.status)),
@@ -44,13 +53,16 @@ export const useTaskStore = defineStore('tasks', () => {
 
   async function load() {
     if (initialized.value) return
+    const current = generation
     loading.value = true
     try {
-      tasks.value = await workbenchApi.getTasks()
+      const loaded = await workbenchApi.getTasks()
+      if (current !== generation) return
+      tasks.value = loaded
       initialized.value = true
       for (const task of activeTasks.value) subscribe(task.id)
     } finally {
-      loading.value = false
+      if (current === generation) loading.value = false
     }
   }
 
@@ -59,14 +71,18 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   async function loadTask(id: string) {
+    const current = generation
     try {
       const task = await workbenchApi.getRun(id)
+      requireGeneration(current)
       upsert(task)
       if (!isTerminal(task.status)) subscribe(task.id)
       return task
     } catch (cause) {
-      tasks.value = tasks.value.filter(item => item.id !== id)
-      closeStream(id)
+      if (current === generation) {
+        tasks.value = tasks.value.filter(item => item.id !== id)
+        closeStream(id)
+      }
       throw cause
     }
   }
@@ -82,6 +98,7 @@ export const useTaskStore = defineStore('tasks', () => {
     workspaceAgentMemberId?: string,
   ) {
     void _workspaceName
+    const current = generation
     // TW-10：团队会话保持未绑定的共享讨论形态（agentVersionId 为 null），
     // Agent 成员关联随首条触发消息进入 startRun，而不是固定到会话上。
     const session = await workbenchApi.createSession({
@@ -90,17 +107,20 @@ export const useTaskStore = defineStore('tasks', () => {
       ...(agentId ? { agentId } : {}),
       ...(skillId ? { skillId } : {}),
     })
+    requireGeneration(current)
     const task = await startRunWithSessionFiles(session.id, {
       prompt,
       attachments,
       referencedFileIds,
       workspaceAgentMemberId,
     })
+    requireGeneration(current)
     subscribe(task.id)
     return task
   }
 
   async function sendMessage(id: string, prompt: string, attachments: File[], workspaceAgentMemberId?: string) {
+    const epoch = generation
     const current = getTask(id)
     if (!current) return undefined
     const task = await startRunWithSessionFiles(current.sessionId, {
@@ -108,6 +128,7 @@ export const useTaskStore = defineStore('tasks', () => {
       attachments,
       workspaceAgentMemberId,
     })
+    requireGeneration(epoch)
     subscribe(task.id)
     return task
   }
@@ -116,7 +137,10 @@ export const useTaskStore = defineStore('tasks', () => {
    * TW-10 讨论消息：不产生 Run，仅写入共享消息流。返回后由调用方刷新线程。
    */
   async function postSessionMessage(sessionId: string, content: string) {
-    return workbenchApi.postSessionMessage(sessionId, content)
+    const current = generation
+    const result = await workbenchApi.postSessionMessage(sessionId, content)
+    requireGeneration(current)
+    return result
   }
 
   /** TW-10：按会话加载共享线程（成员可读他人发起的团队会话）。 */
@@ -125,9 +149,11 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   async function uploadSessionFiles(sessionId: string, attachments: File[]) {
+    const current = generation
     const results = await Promise.allSettled(
       attachments.map(file => workbenchApi.uploadSessionFile(sessionId, file)),
     )
+    requireGeneration(current)
     const fileIds: string[] = []
     const failedNames: string[] = []
     results.forEach((result, index) => {
@@ -153,9 +179,11 @@ export const useTaskStore = defineStore('tasks', () => {
     referencedFileIds?: string[]
     workspaceAgentMemberId?: string
   }) {
+    const current = generation
     let uploadedFileIds: string[] = []
     try {
       uploadedFileIds = await uploadSessionFiles(sessionId, input.attachments)
+      requireGeneration(current)
       const task = await workbenchApi.startRun(sessionId, {
         prompt: input.prompt,
         idempotencyKey: crypto.randomUUID(),
@@ -163,6 +191,7 @@ export const useTaskStore = defineStore('tasks', () => {
         ...(input.workspaceAgentMemberId ? { workspaceAgentMemberId: input.workspaceAgentMemberId } : {}),
       })
       if (!task) throw new Error('Run 创建失败')
+      requireGeneration(current)
       upsert(task)
       return task
     } catch (error) {
@@ -175,20 +204,26 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   async function cancelTask(id: string) {
+    const current = generation
     const task = await workbenchApi.cancelRun(id)
+    requireGeneration(current)
     upsert(task)
     return task
   }
 
   async function retryTask(id: string) {
+    const current = generation
     const task = await workbenchApi.retryRun(id)
+    requireGeneration(current)
     upsert(task)
     subscribe(task.id, true)
     return task
   }
 
   async function deleteConversation(sessionId: string) {
+    const current = generation
     await workbenchApi.deleteSession(sessionId)
+    requireGeneration(current)
     const removed = tasks.value.filter((task) => task.sessionId === sessionId)
     for (const task of removed) closeStream(task.id)
     tasks.value = tasks.value.filter((task) => task.sessionId !== sessionId)
@@ -197,12 +232,14 @@ export const useTaskStore = defineStore('tasks', () => {
   function subscribe(runId: string, replace = false) {
     if (replace) closeStream(runId)
     if (streams.has(runId)) return
+    const current = generation
     const stream = new EventSource(workbenchApi.runEventsUrl(runId), { withCredentials: true })
     streams.set(runId, stream)
     for (const eventType of runtimeEventTypes) {
       stream.addEventListener(eventType, (message) => {
+        if (current !== generation) return
         const event = JSON.parse((message as MessageEvent<string>).data) as RuntimeEvent
-        void applyEvent(event)
+        void applyEvent(event).catch(() => closeStream(runId))
       })
     }
     stream.onerror = () => {
@@ -211,6 +248,7 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   async function applyEvent(event: RuntimeEvent) {
+    const current = generation
     const task = getTask(event.run_id)
     if (!task) return
     if (task.attemptId !== null && event.attempt_id !== task.attemptId) return
@@ -268,15 +306,14 @@ export const useTaskStore = defineStore('tasks', () => {
 
     if (isTerminal(task.status)) {
       await wait(100)
+      if (current !== generation) return
       await refreshRun(task.id)
       closeStream(task.id)
     }
   }
 
   async function refreshRun(runId: string) {
-    const task = await workbenchApi.getRun(runId)
-    if (task) upsert(task)
-    return task
+    return loadTask(runId)
   }
 
   function upsert(task: TaskRun | null | undefined) {
@@ -292,7 +329,7 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   return {
-    tasks, loading, initialized, activeTasks, recentTasks, load, getTask, loadTask,
+    tasks, loading, initialized, activeTasks, recentTasks, reset, load, getTask, loadTask,
     createTask, sendMessage, postSessionMessage, loadSessionThread, uploadSessionFiles,
     startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
     upsert, subscribe,

@@ -326,7 +326,7 @@ test('deleting a conversation archives it only after active Runs stop', async ()
   await waitForTask(created.id, 'cancelled')
   const archived = await conversations.archiveSession(session.id, 'U00001')
 
-  assert.deepEqual(archived, { sessionId: session.id, title: 'M3 删除对话', archived: true })
+  assert.deepEqual(archived, { sessionId: session.id, title: 'M3 删除对话', archived: true, removedFromHistory: true, physicalDeletion: false })
   assert.equal(await conversations.getTask(created.id, 'U00001'), null)
   assert.equal((await conversations.listTasks('U00001')).some(task => task.sessionId === session.id), false)
   await assert.rejects(conversations.requireSession(session.id, 'U00001'), /不存在或不可访问/)

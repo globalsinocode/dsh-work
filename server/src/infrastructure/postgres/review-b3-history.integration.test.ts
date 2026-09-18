@@ -79,3 +79,21 @@ test('invalid scope, page size and timestamp cursor are typed validation errors'
     const res = await f.api(path); assert.equal(res.status, 422, path)
   }
 })
+
+test('Session cursor retains PostgreSQL microseconds at one-millisecond page boundaries', async () => {
+  const ids: string[] = []
+  for (const microsecond of ['123100', '123500', '123900']) {
+    const s = await f.conversations.createSession({ userId: 'U00001', title: 'B3微秒' + microsecond })
+    ids.push(s.id)
+    await f.db.client`update sessions set last_active_at = ${`2026-09-18T10:00:00.${microsecond}Z`}::text::timestamptz where id = ${s.id}`
+  }
+  const seen: string[] = []
+  let cursor: string | null = null
+  do {
+    const page = await f.api(`/sessions?query=${encodeURIComponent('B3微秒')}&limit=1${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`)
+    assert.equal(page.status, 200)
+    seen.push(...page.body.data.items.map((row: {sessionId: string}) => row.sessionId))
+    cursor = page.body.data.nextCursor
+  } while(cursor)
+  assert.deepEqual(seen, ids.reverse())
+})

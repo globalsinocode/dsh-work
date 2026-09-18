@@ -10,6 +10,11 @@ const basePath = '/api/workbench/v1'
  * database is reported as a configuration problem rather than a version skew.
  */
 export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
+  for (const path of ['/sessions', '/sessions/:sessionId', '/files', '/files/:fileId', '/files/:fileId/download']) {
+    router.get(`${basePath}${path}`, () => unavailable('个人历史与文件（需要 PostgreSQL）'))
+  }
+  router.post(`${basePath}/files`, () => unavailable('个人文件上传'))
+  router.delete(`${basePath}/files/:fileId`, () => unavailable('个人文件移除'))
   router.post(`${basePath}/sessions`, async () => unavailable('对话'))
   router.delete(`${basePath}/sessions/:sessionId`, async (_request, context) =>
     unavailable(`对话 ${context.params['sessionId'] ?? ''}`))
