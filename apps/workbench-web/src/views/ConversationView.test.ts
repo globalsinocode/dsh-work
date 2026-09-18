@@ -35,6 +35,16 @@ const api = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => route }))
 vi.mock('@/api/client', () => ({ workbenchApi: api }))
 
+/** 非终态 Run 会触发 SSE 订阅；happy-dom 没有 EventSource，用最小桩替代。 */
+class FakeEventSource {
+  readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
+  constructor(readonly url: string) {}
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
+  }
+  close() {}
+}
+
 function task(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: 'run-001',
@@ -122,6 +132,8 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
   const taskStore = useTaskStore(pinia)
   const item = options.item === undefined ? task() : options.item
   taskStore.tasks.splice(0, taskStore.tasks.length, ...(item ? [item] : []))
+  // B5：详情刷新失败会把条目从缓存移除；Run 存在时详情请求应返回它本身。
+  if (item) api.getRun.mockResolvedValue(item)
   vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
   const contentStore = useContentStore(pinia)
   contentStore.workspaces.splice(0, contentStore.workspaces.length, options.workspace ?? workspace())
@@ -138,6 +150,7 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
 describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
