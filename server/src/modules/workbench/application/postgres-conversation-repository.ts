@@ -640,6 +640,31 @@ export class PostgresConversationRepository {
   }
 
   /**
+   * Workspace session activity signal for the live-update SSE (TW-10). The
+   * marker is the newest change a viewer can observe: message writes bump
+   * `last_active_at`, Run lifecycle transitions surface through
+   * `max(runs.updated_at)`. The stream endpoint polls and diffs this marker
+   * so discussion messages, @-triggered Runs and status changes all become
+   * push events without an extra event table. Callers authorize separately.
+   */
+  async listWorkspaceSessionActivity(workspaceId: string) {
+    return this.database<{ sessionId: string; activityAt: Date }[]>`
+      select s.id as "sessionId",
+             greatest(
+               s.last_active_at,
+               coalesce(
+                 (select max(r.updated_at) from runs r
+                   where r.tenant_id = s.tenant_id and r.session_id = s.id),
+                 s.last_active_at
+               )
+             ) as "activityAt"
+        from sessions s
+       where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
+         and s.status = 'active' and s.audience = 'workbench'
+    `
+  }
+
+  /**
    * Shared team-discussion view (TW-10): session header plus every user/
    * assistant message with sender and Agent attribution, and the Run list so
    * the client can render execution status inline. Access is checked by the

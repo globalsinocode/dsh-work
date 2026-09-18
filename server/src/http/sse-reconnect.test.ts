@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 
+import { authorizationDenied } from '../modules/authorization/authorization-errors.ts'
 import type { StoredRunEvent } from '../modules/run/run-types.ts'
-import { streamRunEvents } from './workbench/conversation-routes.ts'
+import { streamRunEvents, streamWorkspaceSessionEvents } from './workbench/conversation-routes.ts'
 
 test('SSE reconnect forwards Last-Event-ID and emits only later persisted events', async () => {
   const response = new MemorySseResponse()
@@ -84,5 +85,76 @@ test('personal SSE stops before delivering the next batch after current access i
   await streamRunEvents(response, undefined, 'run-personal', runs, 1, 60_000, undefined, async () => ++checks === 1)
   assert.match(response.body, /batch-1/)
   assert.doesNotMatch(response.body, /batch-2/)
+  assert.equal(response.ended, true)
+})
+
+// ---------------------------------------------------------------------------
+// TW-10 空间会话活动流（streamWorkspaceSessionEvents）
+// ---------------------------------------------------------------------------
+
+test('workspace session stream stays silent while activity markers are unchanged', async () => {
+  const response = new MemorySseResponse()
+  const activityAt = new Date('2026-09-12T08:00:00Z')
+  let polls = 0
+  const conversations = {
+    async listWorkspaceSessionActivity() {
+      if (++polls === 3) response.emit('close')
+      return [{ sessionId: 's-1', activityAt }]
+    },
+  }
+
+  await streamWorkspaceSessionEvents(response, 'ws-team', conversations, 1, 60_000)
+
+  // 首轮只建立基线、后续无变化：一条事件都不该写。
+  assert.equal(response.body, '')
+})
+
+test('workspace session stream emits session.updated on activity and session.archived on removal', async () => {
+  const response = new MemorySseResponse()
+  const at1 = new Date('2026-09-12T08:00:00Z')
+  const at2 = new Date('2026-09-12T08:01:00Z')
+  let polls = 0
+  const conversations = {
+    async listWorkspaceSessionActivity() {
+      polls += 1
+      if (polls === 1) return [{ sessionId: 's-1', activityAt: at1 }]
+      if (polls === 2) return [{ sessionId: 's-1', activityAt: at2 }, { sessionId: 's-2', activityAt: at1 }]
+      if (polls === 3) return [{ sessionId: 's-1', activityAt: at2 }]
+      response.emit('close')
+      return [{ sessionId: 's-1', activityAt: at2 }]
+    },
+  }
+
+  await streamWorkspaceSessionEvents(response, 'ws-team', conversations, 1, 60_000)
+
+  assert.match(response.body, /event: session\.updated\ndata: \{"session_id":"s-1","activity_at":"2026-09-12T08:01:00\.000Z"\}/)
+  assert.match(response.body, /event: session\.updated\ndata: \{"session_id":"s-2"/)
+  assert.match(response.body, /event: session\.archived\ndata: \{"session_id":"s-2"\}/)
+})
+
+test('workspace session stream stops before delivering after read access is revoked', { timeout: 2000 }, async () => {
+  const response = new MemorySseResponse()
+  const at1 = new Date('2026-09-12T08:00:00Z')
+  const at2 = new Date('2026-09-12T08:01:00Z')
+  let polls = 0
+  const conversations = {
+    async listWorkspaceSessionActivity() {
+      polls += 1
+      return [{ sessionId: 's-1', activityAt: polls >= 2 ? at2 : at1 }]
+    },
+  }
+  const teamAccess = {
+    workspaceId: 'ws-team',
+    userId: 'u-revoked',
+    authorization: {
+      async readableWorkspaceTypeOf() { return 'team' as const },
+      async authorizeTeamReadAccess() { throw authorizationDenied('已被移出空间') },
+    },
+  }
+
+  await streamWorkspaceSessionEvents(response, 'ws-team', conversations, 1, 60_000, teamAccess)
+
+  // 第二轮检测到变化但读轨已失权：断流，变化批次不得写出。
+  assert.equal(response.body, '')
   assert.equal(response.ended, true)
 })

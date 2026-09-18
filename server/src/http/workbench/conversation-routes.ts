@@ -92,7 +92,7 @@ export function registerConversationRoutes(
     }), 'postgres')
   })
 
-  router.get(`${basePath}/sessions/:sessionId`, async (_request, context) => {
+  router.get(`${basePath}/sessions/:sessionId/summary`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     return envelope('workbench', await conversations.getSessionForUser(context.params['sessionId'] ?? '', identity.userId), 'postgres')
@@ -364,6 +364,29 @@ export function registerConversationRoutes(
     }
     await streamRunEvents(response, request.headers['last-event-id'], runId, runs)
   })
+
+  // TW-10 共享讨论实时更新：空间内任一会话的消息、@ 触发或 Run 状态变化都推
+  // `session.updated`，会话被删除推 `session.archived`；打开的共享线程与历史
+  // 列表据此即时刷新。建连门槛与 GET /workspaces/:id/sessions 同一读轨（仅团队
+  // 空间、现任成员含归档只读）；流内逐批复权与 /runs/:id/events 一致，失权即断流。
+  router.get(`${basePath}/workspaces/:workspaceId/session-events`, async (_request, context, response) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const workspaceType = authorization ? await authorization.readableWorkspaceTypeOf(workspaceId) : null
+    if (authorization && workspaceType !== 'team') {
+      throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    }
+    await authorization?.requireTeamRole(
+      workspaceId,
+      userId,
+      ['owner', 'admin', 'member', 'viewer'],
+      { purpose: 'read' },
+    )
+    await streamWorkspaceSessionEvents(response, workspaceId, conversations, 500, 15_000,
+      authorization ? { workspaceId, userId, authorization } : undefined)
+  })
 }
 
 /**
@@ -576,6 +599,77 @@ async function hasStreamAccess(teamAccess: TeamStreamAccess) {
   } catch {
     return false
   }
+}
+
+/**
+ * Workspace session-activity SSE (TW-10). Each poll diffs the per-session
+ * activity marker (message writes via last_active_at, Run lifecycle via
+ * max(runs.updated_at)) and pushes `session.updated` for changed sessions and
+ * `session.archived` for sessions that left the active set. The first poll
+ * only establishes the baseline — the client already holds current state.
+ * Read access is re-verified before every emitted batch and heartbeat, the
+ * same revocation contract as streamRunEvents (1A-T5).
+ */
+export async function streamWorkspaceSessionEvents(
+  response: RunEventStreamResponse,
+  workspaceId: string,
+  conversations: {
+    listWorkspaceSessionActivity(workspaceId: string): Promise<Array<{ sessionId: string; activityAt: Date }>>
+  },
+  pollIntervalMs = 500,
+  heartbeatIntervalMs = 15_000,
+  teamAccess?: TeamStreamAccess,
+) {
+  response.writeHead(200, {
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'X-Accel-Buffering': 'no',
+  })
+  response.flushHeaders()
+  let closed = false
+  response.on('close', () => { closed = true })
+  let heartbeatAt = Date.now()
+  let snapshot: Map<string, string> | null = null
+  const canDeliver = async () => {
+    try {
+      return !teamAccess || await hasStreamAccess(teamAccess)
+    } catch {
+      return false
+    }
+  }
+
+  while (!closed) {
+    const rows = await conversations.listWorkspaceSessionActivity(workspaceId)
+    const current = new Map(rows.map(row => [row.sessionId, row.activityAt.toISOString()]))
+    if (snapshot !== null) {
+      const baseline = snapshot
+      const changed = rows.filter(row => baseline.get(row.sessionId) !== row.activityAt.toISOString())
+      const removed = [...baseline.keys()].filter(sessionId => !current.has(sessionId))
+      if ((changed.length > 0 || removed.length > 0) && !(await canDeliver())) break
+      for (const row of changed) {
+        response.write('event: session.updated\n')
+        response.write(`data: ${JSON.stringify({
+          session_id: row.sessionId,
+          activity_at: row.activityAt.toISOString(),
+        })}\n\n`)
+      }
+      for (const sessionId of removed) {
+        response.write('event: session.archived\n')
+        response.write(`data: ${JSON.stringify({ session_id: sessionId })}\n\n`)
+      }
+    }
+    snapshot = current
+    if (Date.now() - heartbeatAt >= heartbeatIntervalMs) {
+      // Same contract as streamRunEvents: the heartbeat authorization probe is
+      // the only extra query, so check the interval before paying for it.
+      if (!(await canDeliver())) break
+      response.write(`: heartbeat ${Date.now()}\n\n`)
+      heartbeatAt = Date.now()
+    }
+    await wait(pollIntervalMs)
+  }
+  if (!closed) response.end()
 }
 
 interface RunEventStreamResponse {

@@ -86,6 +86,12 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   assert.equal(thread.messages.length, 0)
   assert.equal(thread.runs.length, 0)
 
+  // 会话摘要（历史恢复详情）与会话线程分离：`/summary` 仍按创建者口径，
+  // 团队会话的共享读走 `/sessions/:id` 线程契约。
+  const ownerSummary = await api('GET', `/api/workbench/v1/sessions/${session.id}/summary`, { as: ownerId })
+  assert.equal(ownerSummary.status, 200)
+  assert.equal((await api('GET', `/api/workbench/v1/sessions/${session.id}/summary`, { as: memberId })).status, 403)
+
   // 成员发讨论消息：不产生 Run，带发送者归因。
   const posted = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: memberId,
@@ -152,6 +158,65 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   })
   assert.equal(personalPost.status, 422)
   assert.match(errorMessage(personalPost), /仅团队空间会话支持讨论消息/)
+})
+
+test('空间会话活动流：成员实时收到他人讨论消息的 session.updated 推送，非成员建连被拒', async () => {
+  const workspaceId = 'ws-tw10-live'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  const outsiderId = `${workspaceId}-outsider`
+  await createDirectoryUser(ownerId, '推送负责人')
+  await createDirectoryUser(memberId, '推送成员')
+  await createDirectoryUser(outsiderId, '推送外部人')
+  await createTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+
+  const created = await api('POST', '/api/workbench/v1/sessions', {
+    as: ownerId,
+    body: { title: '实时讨论', workspaceId },
+  })
+  assert.equal(created.status, 201)
+  const sessionId = (created.body.data as { id: string }).id
+
+  // 非成员建连被拒：与列表/线程读取同一 403 口径，不留无拦截降级路径。
+  const denied = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/session-events`, { as: outsiderId })
+  assert.equal(denied.status, 403)
+
+  // 成员建连：首轮轮询只建立基线；等待超过一个轮询周期后再发消息，
+  // 保证新消息一定落在基线之后、以 diff 形式推送。
+  const stream = await fetch(`${baseUrl}/api/workbench/v1/workspaces/${workspaceId}/session-events`, {
+    headers: { 'x-test-user-id': memberId, Accept: 'text/event-stream' },
+  })
+  assert.equal(stream.status, 200)
+  assert.match(stream.headers.get('content-type') ?? '', /text\/event-stream/)
+  const reader = stream.body!.getReader()
+  const decoder = new TextDecoder()
+  let received = ''
+  const readUntil = async (needle: string, timeoutMs = 8000) => {
+    const deadline = Date.now() + timeoutMs
+    while (!received.includes(needle) && Date.now() < deadline) {
+      const { value, done } = await reader.read()
+      if (done) break
+      received += decoder.decode(value, { stream: true })
+    }
+    assert.ok(
+      received.includes(needle),
+      `session-events 未推送 ${needle}；已收到：${received || '(空)'}`,
+    )
+  }
+  await new Promise(resolve => setTimeout(resolve, 700))
+
+  const posted = await api('POST', `/api/workbench/v1/sessions/${sessionId}/messages`, {
+    as: ownerId,
+    body: { content: '实时推送验证' },
+  })
+  assert.equal(posted.status, 201)
+  await readUntil(`"session_id":"${sessionId}"`)
+  assert.match(received, /event: session\.updated/)
+
+  await reader.cancel()
 })
 
 test('@Agent 触发：成员在共享会话中按成员固定版本发起 Run，回复进共享流并带归因', async () => {
