@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 
+import { logHttpFailure } from './http-error-log.ts'
+
 import type {
   ApiAudience,
   ApiAuthenticator,
@@ -36,6 +38,7 @@ type RouteHandler = (
 ) => unknown | Promise<unknown>
 
 interface RouteDefinition {
+  path: string
   method: string
   pattern: RegExp
   parameterNames: string[]
@@ -85,7 +88,7 @@ export class Router {
         return '([^/]+)'
       })
       .join('/')
-    this.routes.push({ method, pattern: new RegExp(`^${source}$`), parameterNames, handler })
+    this.routes.push({ path, method, pattern: new RegExp(`^${source}$`), parameterNames, handler })
   }
 
   async handle(request: IncomingMessage, response: ServerResponse) {
@@ -100,15 +103,16 @@ export class Router {
     const route = this.routes.find((candidate) => candidate.method === method && candidate.pattern.test(url.pathname))
 
     if (!route) {
-      writeJson(response, 404, {
-        error: {
-          code: 'route_not_found',
-          message: `没有找到 ${request.method ?? 'GET'} ${url.pathname}`,
-          object: '当前接口',
-          suggestion: '请刷新页面；若问题持续，请确认前后端版本一致。',
-          traceId: `trace-http-${randomUUID()}`,
-        },
-      })
+      const error = {
+        code: 'route_not_found',
+        message: `没有找到 ${request.method ?? 'GET'} ${url.pathname}`,
+        object: '当前接口',
+        suggestion: '请刷新页面；若问题持续，请确认前后端版本一致。',
+        traceId: `trace-http-${randomUUID()}`,
+      }
+      logHttpFailure({ traceId: error.traceId, method, path: '[unmatched]', status: 404,
+        code: error.code, safeMessage: '未匹配到路由', responseStarted: false })
+      writeJson(response, 404, { error })
       return
     }
 
@@ -124,14 +128,19 @@ export class Router {
       if (identity) assertApiRouteAccess(identity, url.pathname, request.method)
       const result = await route.handler(request, { params, url, identity }, response)
       if (response.headersSent || response.writableEnded) return
-      if (isHttpResult(result)) writeJson(response, result.status, result.body)
-      else writeJson(response, 200, result)
+      if (isHttpResult(result)) {
+        if (result.status >= 400 && result.status <= 599) logErrorResult(result, method, route.path)
+        writeJson(response, result.status, result.body)
+      } else writeJson(response, 200, result)
     } catch (error) {
+      const failure = classifyHttpError(error, url.pathname)
+      logHttpFailure({ traceId: failure.error.traceId, method, path: route.path,
+        status: failure.status, code: failure.error.code, error,
+        safeMessage: failure.error.message, responseStarted: response.headersSent || response.writableEnded })
       if (response.headersSent || response.writableEnded) {
         response.end()
         return
       }
-      const failure = classifyHttpError(error, url.pathname)
       writeJson(response, failure.status, { error: failure.error })
     }
   }
@@ -341,4 +350,20 @@ export function routePermissionDenied(message: string) {
   error.status = 403
   error.code = 'permission_denied'
   return error
+}
+
+/** Explicit httpResult errors also get a diagnostic, without logging the surrounding payload.
+ * Existing response bodies are not changed; absent trace IDs are server-side correlations only.
+ */
+function logErrorResult(result: HttpResult, method: string, path: string) {
+  const body = result.body
+  const detail = body && typeof body === 'object' && 'error' in body
+    && body.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : {}
+  const traceId = typeof detail.traceId === 'string' && /^trace-http-[a-f0-9-]{36}$/i.test(detail.traceId)
+    ? detail.traceId : `trace-http-${randomUUID()}`
+  const code = typeof detail.code === 'string' && /^[a-z0-9_]{1,80}$/i.test(detail.code)
+    ? detail.code : 'http_error_response'
+  const message = typeof detail.message === 'string' ? detail.message : '接口返回错误状态'
+  logHttpFailure({ traceId, method, path, status: result.status, code,
+    error: new Error(message), safeMessage: '接口返回错误状态', responseStarted: false })
 }

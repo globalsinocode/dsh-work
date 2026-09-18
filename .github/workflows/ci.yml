@@ -101,6 +101,9 @@ jobs:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:review:p2:skill:unit && pnpm test:review:p2:skill:integration
 
+      - name: Run P2 safe HTTP error logging regression
+        run: pnpm test:review:p2:logging
+
       - name: Run PostgreSQL integration tests
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test

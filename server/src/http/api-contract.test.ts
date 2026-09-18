@@ -97,7 +97,6 @@ test('removed management and detail routes stay unavailable', async () => {
     '/api/admin/v1/roles',
     '/api/admin/v1/members',
     '/api/admin/v1/sessions/session-demo-001',
-    '/api/workbench/v1/sessions',
     '/api/workbench/v1/workspaces/ws-supply',
   ]
   for (const path of removedRoutes) {
@@ -105,6 +104,15 @@ test('removed management and detail routes stay unavailable', async () => {
     assert.equal(result.response.status, 404, path)
     assert.equal(result.body.error.code, 'route_not_found', path)
   }
+})
+
+test('registered personal history reports unavailable persistence rather than a removed route', async () => {
+  const result = await getJson<ErrorEnvelope>('/api/workbench/v1/sessions')
+  assert.equal(result.response.status, 503)
+  assert.equal(result.body.error.code, 'workbench_runtime_not_configured')
+  assert.match(result.body.error.traceId, /^trace-http-/)
+  assert.ok(result.body.error.suggestion)
+  assert.equal('data' in result.body, false, 'missing persistence must not fabricate personal history')
 })
 
 test('operations DTOs omit metrics that are not collected', async () => {
