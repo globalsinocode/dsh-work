@@ -738,8 +738,9 @@ export class PostgresOperationsService {
     })
   }
 
-  getPlatformStatus() {
-    return { architecture: 'node-modular-monolith', persistence: 'postgres', sso: this.sso, dshRuntime: 'connected', database: 'configured', artifactStorage: 'local-mvp' }
+  async getPlatformStatus() {
+    const health = await this.runtime?.health()
+    return { architecture: 'node-modular-monolith', persistence: 'postgres', sso: this.sso, dshRuntime: health && health.status !== 'offline' ? 'connected' : 'not-connected', database: 'configured', artifactStorage: 'local-mvp' }
   }
 
   async recordModelUsage(input: {

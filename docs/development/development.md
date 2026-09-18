@@ -34,7 +34,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
 4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；需要真实员工与权限管理时按 [身份指南](../release/ai-hub-sso-integration.md) 切换 `oidc`。身份管理路由只在 OIDC 与数据库都启用时注册。
-5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
+5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 本地完整模式与生产部署使用两套环境文件，且允许 DSH Runtime 目标不同：
 

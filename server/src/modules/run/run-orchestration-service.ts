@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
@@ -97,6 +98,7 @@ export class RunOrchestrationService {
     if (purpose === 'admin-assistant') await this.authorization?.requireAdminReader(input.userId)
     else await this.authorization?.requirePlatformAdmin(input.userId)
     await this.conversations.requireSession(input.sessionId, input.userId, 'admin')
+    await this.runtime.assertAvailable?.()
     const run = await this.runs.createRun({ tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey })
     if (run.currentAttemptId || run.status !== 'queued') return run
     await this.conversations.appendMessage({ sessionId: run.sessionId, runId: run.id, role: 'user', content: input.prompt, messageId: `message-user-${run.id}` })
@@ -114,6 +116,7 @@ export class RunOrchestrationService {
 
   async retryAdminRun(runId: string, userId: string) {
     const run = await this.requireAdminRun(runId, userId)
+    await this.runtime.assertAvailable?.()
     if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的运行可以重试')
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     if (!attempt) throw new Error('管理助手运行缺少原始输入，请重新发送请求')
@@ -128,6 +131,7 @@ export class RunOrchestrationService {
       // root-only reconstruction dropped dependencies and mixed configurations.
       const retried: RuntimeManifest = { ...structuredClone(manifest),
         attempt_id: `attempt-${randomUUID()}`, created_at: new Date().toISOString() }
+      await this.runtime.assertAvailable?.(retried)
       const compiled = compileRuntimeManifest(retried)
       await this.runs.createAttempt({ attemptId: retried.attempt_id, tenantId, runId: run.id, runtimeId,
         manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
@@ -187,6 +191,7 @@ export class RunOrchestrationService {
       manifest.skills = testCatalog.map(skill => ({ id: skill.id, version: skill.version }))
       manifest.tools = [...new Set(testCatalog.flatMap(skill => skill.tools))].map(toCapabilityReference).concat({ id: 'activate_skill', version: '1.0.0' })
     }
+    await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({ attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
       manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
@@ -432,6 +437,7 @@ export class RunOrchestrationService {
       additionalSkillReferences,
       ...input.authorizationContext,
     })
+    await this.runtime.assertAvailable?.()
     const preparedFiles = this.content
       ? await this.content.prepareRuntimeFiles({
           sessionId: session.id,
@@ -966,6 +972,7 @@ export class RunOrchestrationService {
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-${attemptId}`,
     }
+    await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({
       attemptId,
@@ -1010,6 +1017,14 @@ export class RunOrchestrationService {
         if (!attemptId) {
           console.error('scheduler skipped a pending execution without an attempt id', next.run.id)
           this.pendingExecutions.splice(index, 1)
+          continue
+        }
+        // Restored queues must not spin forever behind an unavailable capability,
+        // even when persisted scheduling is disabled/draining.
+        try { await this.runtime.assertAvailable?.(next.manifest) } catch (error) {
+          if (!(error instanceof ExecutionCapabilityUnavailableError)) throw error
+          this.pendingExecutions.shift()
+          await this.failRunForUnavailableCapability(next.run, attemptId, error)
           continue
         }
         const claimed = await this.runs.claimAttempt(tenantId, attemptId, runtimeId, {
@@ -1074,6 +1089,17 @@ export class RunOrchestrationService {
     } finally {
       this.pumping = false
     }
+  }
+
+  private async failRunForUnavailableCapability(run: RunRecord, attemptId: string, error: ExecutionCapabilityUnavailableError) {
+    const current = await this.runs.getRun(tenantId, run.id)
+    const attempt = await this.runs.getAttempt(tenantId, attemptId)
+    if (!current || current.currentAttemptId !== attemptId || !attempt
+      || !['queued', 'running'].includes(current.status) || !['queued', 'running'].includes(attempt.status)) return
+    await this.runs.transitionAttempt(tenantId, attemptId, 'failed', error.code)
+    await this.runs.transitionRun(tenantId, run.id, 'failed')
+    await this.runs.appendSystemEvent({ tenantId, runId: run.id, attemptId, eventType: 'run.failed',
+      displayMessage: error.message, safeMetadata: { error_code: error.code }, traceId: `trace-${run.id}` })
   }
 
   private async executeClaimed(run: RunRecord, manifest: RuntimeManifest) {

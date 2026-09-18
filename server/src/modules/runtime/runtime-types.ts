@@ -180,6 +180,8 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void
 export type RuntimeCancelCause = 'user' | 'system_revoke'
 
 export interface AgentRuntimePort {
+  /** Optional capability admission gate; negative ports must fail without accepting work. */
+  assertAvailable?(manifest?: RuntimeManifest): Promise<void>
   /** Execute a manifest that the durable scheduler has already admitted. */
   execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle>
   subscribe(runId: string, listener: RuntimeEventListener): () => void

@@ -65,6 +65,9 @@ jobs:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:review:integration
 
+      - name: Run review batch02 unit regression
+        run: pnpm test:review:batch02:unit
+
       - name: Run review batch02 PostgreSQL regression
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test

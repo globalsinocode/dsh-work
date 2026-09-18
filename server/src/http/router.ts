@@ -162,7 +162,9 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
       503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
     }
-    const suggestion = suggestions[status]
+    const suggestion = ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
+      ? '请管理员检查对应执行能力；配置修复并重启服务后再提交任务。'
+      : suggestions[status]
     return {
       status,
       error: {

@@ -9,7 +9,7 @@ import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
 import { registerOperationsRoutes } from './http/admin/operations-routes.ts'
 import { registerIdentityAdministrationRoutes } from './http/admin/identity-routes.ts'
-import { Router, envelope } from './http/router.ts'
+import { Router, envelope, httpResult } from './http/router.ts'
 import { registerPrototypeArtifactFileRoutes, registerWorkbenchRoutes } from './http/workbench/routes.ts'
 import { registerConversationRoutes } from './http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from './http/workbench/content-routes.ts'
@@ -37,6 +37,8 @@ import { PostgresRunRepository } from './modules/run/postgres-run-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
+import { CapabilityGuardedRuntime, UnavailableRuntime, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
+import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import {
   preflightDshRuntime,
@@ -117,15 +119,30 @@ async function start() {
   let revocationSweep: RunRevocationSweep | null = null
   let automationSweep: AutomationTriggerSweep | null = null
   let dshInstallation: DshRuntimeInstallation | null = null
+  let executionRuntime: AgentRuntimePort | null = null
+  let dshCapability: CapabilityState = { status: 'not-configured' }
+  let pythonCapability: CapabilityState = { status: 'not-configured' }
   if (database) {
     const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
     const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
     const skillArtifacts = new FileSystemSkillArtifactStore(resolve(dataRoot, 'skills'))
     await migrateSkillFilesToFileSystem(database, skillArtifacts)
-    dshInstallation = await resolveDshRuntimeInstallation({ projectRoot })
-    await preflightDshRuntime(dshInstallation)
-    const pythonRunner = process.env.DSH_WORK_PYTHON_IMAGE ? new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE) : null
-    await pythonRunner?.preflight()
+    // Database migrations and identity initialization above stay fail-closed.
+    // Only optional execution capabilities may fail independently.
+    const dsh = await probeExecutionCapability('dsh', async () => {
+      const installation = await resolveDshRuntimeInstallation({ projectRoot })
+      await preflightDshRuntime(installation)
+      return installation
+    })
+    dshInstallation = dsh.value
+    dshCapability = dsh.state
+    const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
+      const runner = new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE!)
+      await runner.preflight()
+      return runner
+    } : null)
+    const pythonRunner = python.value
+    pythonCapability = python.state
     const conversations = new PostgresConversationRepository(database)
     const authorization = new PostgresAuthorizationService(database, {
       // AG-03：OIDC 模式下自动任务后台主体校验需要目录新鲜度，
@@ -140,7 +157,7 @@ async function start() {
     })
     const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
     const runs = new PostgresRunRepository(database)
-    const runtime: DshAcpRuntimeAdapter = new DshAcpRuntimeAdapter({
+    const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
       dshRepository: dshInstallation.home,
@@ -166,7 +183,9 @@ async function start() {
       recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
       collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
       ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
-    })
+    }) : new UnavailableRuntime('runtime-local-01')
+    const runtime = new CapabilityGuardedRuntime(dshAdapter, pythonCapability)
+    executionRuntime = runtime
     const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
     const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
     const workspaceActivity = new PostgresWorkspaceActivityService(database, new PostgresWorkspaceService(database))
@@ -271,6 +290,17 @@ async function start() {
     version: '0.1.0',
   }))
 
+  router.get('/health/ready', async () => {
+    // Configured authentication was validated before listen. Runtime availability
+    // is intentionally separate; a DB outage never reports core readiness.
+    try {
+      if (database) await checkDatabase(database)
+      return { status: 'ready', core: true, executionCapabilities: { dsh: dshCapability, python: pythonCapability } }
+    } catch {
+      return httpResult(503, { status: 'not-ready', core: false, code: 'DATABASE_UNAVAILABLE' })
+    }
+  })
+
   router.get('/health', async () =>
     envelope('system', {
       service: 'dsh-work-server',
@@ -278,7 +308,8 @@ async function start() {
       architecture: 'node-modular-monolith',
       persistence: database ? 'postgres-foundation' : 'prototype-memory',
       sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'mock',
-      dshRuntime: dshInstallation ? {
+      executionCapabilities: { dsh: dshCapability, python: pythonCapability },
+      dshRuntime: executionRuntime ? await executionRuntime.health() : dshInstallation ? {
         status: 'connected',
         version: dshInstallation.version,
         commit: dshInstallation.commit,
