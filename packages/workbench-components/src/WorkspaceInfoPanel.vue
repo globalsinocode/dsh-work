@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowRight, ChatDotRound, Cpu, FolderOpened, Lock, Setting, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight, Cpu, FolderOpened, Lock, Setting, UserFilled } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { describeWorkspaceActivity, type WorkspaceActivityKind } from './workspace-activity'
@@ -28,11 +28,6 @@ interface WorkspaceAgentMemberInfo {
    * 未授权／Runtime 不可用时由服务端给出；status 为 disabled 时恒为 null。
    */
   unavailableReason?: string | null
-  /**
-   * 服务端返回的当前操作人允许动作。只读成员（viewer）为 []，因此不得只凭
-   * status 渲染「开始对话」——权限判定以服务端为准。
-   */
-  allowedActions?: string[]
 }
 
 /**
@@ -71,12 +66,6 @@ const props = withDefaults(
     currentUserRole?: TeamMemberRole | null
     /** Agent 成员摘要：由宿主按既有 T4 接口加载后传入，面板自身不发请求。 */
     agentMembers?: WorkspaceAgentMemberInfo[]
-    /**
-     * 当前新对话已预选的 Agent 成员 id（TW-02：行内预选或唯一成员默认选中）。
-     * 该成员行显示「使用中」而不再给出「开始对话」链接——入口的职责是选择
-     * Agent，已完成的选择不应再渲染成待办操作；其它可发起成员仍保留入口。
-     */
-    activeAgentMemberId?: string
     /** 最近动态摘要（最多 3 条）：由宿主加载后传入。 */
     activityItems?: WorkspaceActivityInfo[]
     /** 摘要首屏加载中。 */
@@ -102,7 +91,6 @@ const props = withDefaults(
     collapsible: false,
     currentUserRole: null,
     agentMembers: () => [],
-    activeAgentMemberId: '',
     activityItems: () => [],
     activityLoading: false,
     activityError: false,
@@ -125,11 +113,6 @@ const emit = defineEmits<{
    */
   'manage-agents': []
   'open-settings': []
-  /**
-   * 团队成员点击可用 Agent 发起对话（TW-02）：普通成员没有成员管理弹窗入口，
-   * 右栏 Agent 条目就是他们唯一可达的选择入口。不可用状态不触发。
-   */
-  'start-agent-conversation': [agentMemberId: string]
   /** 打开「查看全部」动态抽屉；携带触发元素用于关闭后恢复焦点（design §4）。 */
   'view-all-activity': [event?: MouseEvent]
   'mark-activity-read': []
@@ -172,18 +155,6 @@ function agentStatusTone(agent: WorkspaceAgentMemberInfo) {
 /** tooltip 优先展示不可用原因；可用/停用时回落到状态文案。 */
 function agentStatusTooltip(agent: WorkspaceAgentMemberInfo) {
   return agent.unavailableReason || agentStatusLabel(agent)
-}
-
-/**
- * 与服务端 allowedActions 一致：缺省视为不允许，宁可漏开不可误开。
- *
- * 归档空间属执行轨（design §2.7：归档后「开始对话」必须隐藏），因此同样按服务端返回的
- * `status` 判定——3-T3 的写入口审计漏了这一处（规格评审 F2）。成员/Agent 条目本身仍
- * 展示（只读可看），只是不再给出可点的写入口。
- */
-function canStartAgentConversation(agent: WorkspaceAgentMemberInfo) {
-  if (props.workspace.status === 'archived') return false
-  return agent.status === 'available' && (agent.allowedActions?.includes('start_conversation') ?? false)
 }
 
 /** 只用 kind + safeMetadata + 演员名 +（可选）文件名生成描述，绝不使用 id 当名称。 */
@@ -340,23 +311,6 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
               :aria-label="`Agent 状态：${agentStatusLabel(agent)}`"
             />
           </el-tooltip>
-          <span
-            v-if="agent.id === activeAgentMemberId && canStartAgentConversation(agent)"
-            data-testid="panel-agent-active"
-            class="workspace-agent__active"
-          >
-            使用中
-          </span>
-          <el-button
-            v-else-if="canStartAgentConversation(agent)"
-            data-testid="panel-agent-start"
-            link
-            type="primary"
-            :icon="ChatDotRound"
-            @click="emit('start-agent-conversation', agent.id)"
-          >
-            开始对话
-          </el-button>
         </article>
       </div>
       <p v-else class="workspace-info-panel__empty">尚未加入 Agent</p>
@@ -811,12 +765,6 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 /* 第三态「不可用」（available + 原因）：红点，tooltip 展示具体原因。 */
 .workspace-agent__status--danger {
   background: var(--dsh-color-danger);
-}
-
-/* 已预选为新对话成员的 Agent：状态文案代替「开始对话」操作入口。 */
-.workspace-agent__active {
-  color: #176750;
-  font-size: var(--dsh-font-size-micro);
 }
 
 .workspace-info-panel__empty {

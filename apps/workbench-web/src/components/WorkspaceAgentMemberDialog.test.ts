@@ -68,8 +68,9 @@ describe('WorkspaceAgentMemberDialog', () => {
     expect(panelOf(wrapper).findAll('[data-testid="agent-member-row"]')).toHaveLength(2)
   })
 
-  it('renders only server-allowed Agent actions and starts a conversation from the row', async () => {
-    // 服务端按操作人角色裁剪 allowedActions：成员只拿到 start_conversation。
+  it('renders only server-allowed Agent actions', async () => {
+    // 服务端按操作人角色裁剪 allowedActions：成员没有管理动作；start_conversation
+    // 仍由服务端返回供输入区 @ 提及判定，但弹窗不再渲染「开始对话」行内入口。
     const wrapper = mountDialog({
       currentUserRole: 'member',
       agentMembers: [
@@ -80,16 +81,12 @@ describe('WorkspaceAgentMemberDialog', () => {
     await flushPromises()
     const rows = panelOf(wrapper).findAll('[data-testid="agent-member-row"]')
 
-    // 只读行由服务端 allowedActions 决定：成员没有管理动作，只有开始对话。
-    expect(rows[0]?.find('[data-testid="agent-start-conversation"]').exists()).toBe(true)
+    expect(rows[0]?.find('[data-testid="agent-start-conversation"]').exists()).toBe(false)
     expect(rows[0]?.find('[data-testid="agent-action-disable"]').exists()).toBe(false)
     expect(rows[0]?.find('[data-testid="agent-action-remove"]').exists()).toBe(false)
-    // 已停用且服务端未返回 start_conversation 时不渲染开始对话。
     expect(rows[1]?.find('[data-testid="agent-start-conversation"]').exists()).toBe(false)
     expect(rows[1]?.find('[data-testid="agent-action-enable"]').exists()).toBe(true)
-
-    await rows[0]!.find('[data-testid="agent-start-conversation"]').trigger('click')
-    expect(wrapper.emitted('start-conversation')?.at(-1)).toEqual(['wam-1'])
+    expect(wrapper.emitted('start-conversation')).toBeUndefined()
   })
 
   it('confirms Agent lifecycle actions with the in-flight convergence warning', async () => {
@@ -137,7 +134,7 @@ describe('WorkspaceAgentMemberDialog', () => {
 
     const tooltipContents = wrapper.findAllComponents(ElTooltip).map(tooltip => String(tooltip.props('content')))
     expect(tooltipContents).toContain('Runtime 不可用：暂无可接单的运行节点')
-    // 不可用时不得渲染「开始对话」（服务端 allowedActions 已剔除）。
+    // 「开始对话」入口已整体移除，任何成员行都不再渲染。
     expect(panel.findAll('[data-testid="agent-start-conversation"]')).toHaveLength(0)
     expect(panel.findAll('[data-testid="agent-action-disable"]')).toHaveLength(1)
   })

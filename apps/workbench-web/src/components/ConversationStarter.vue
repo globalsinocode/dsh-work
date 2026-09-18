@@ -25,11 +25,6 @@ const props = withDefaults(
     embedded?: boolean
     title?: string
     /**
-     * 团队空间 Agent 成员的行内「开始对话」预选（plan TW-02）。个人空间不传，
-     * 启动参数保持现状（AC-23）。
-     */
-    presetAgentMember?: { id: string; name: string; status: 'available' | 'disabled' } | null
-    /**
      * 团队空间中当前操作人**可发起对话**的 Agent 成员 id（服务端 allowedActions
      * 含 start_conversation 且可用）。只读成员服务端返回空数组，因此既看不到入口
      * 也不能提交；缺省空数组，宁可漏开不可误开。
@@ -58,7 +53,6 @@ const props = withDefaults(
     workspaceLocked: false,
     embedded: false,
     title: 'dsh-work，我帮你',
-    presetAgentMember: null,
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
     canDiscuss: true,
@@ -68,8 +62,8 @@ const props = withDefaults(
 
 /**
  * TW-10：团队共享讨论里普通成员可直接发言（不产生 Run）或在文本里 @ Agent
- * 触发执行；只有只读成员/角色未知时才整体阻止。Agent 预选（右栏「开始对话」）
- * 现在只是「首条消息默认 @ 谁」的快捷方式，不再是进入对话的前置条件。
+ * 触发执行；只有只读成员/角色未知时才整体阻止。Agent 的默认选择（唯一可发起
+ * 成员自动预选）只是「首条消息默认 @ 谁」，不再是进入对话的前置条件。
  */
 const referenceError = ref('')
 const referenceLoading = ref(false)
@@ -103,11 +97,10 @@ const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
   contentStore.skills.find(skill => skill.id === selectedSkillId.value),
 )
 /**
- * 唯一可发起 Agent 的兜底预选：父级已传入的显式/自动选择优先；组件自身在
- * 仅一个 startable 成员时也会选中，多个成员或用户已选择时绝不改写。
+ * 唯一可发起 Agent 的自动预选（TW-02「只有一个可用 Agent 时可默认选中」）：
+ * 身份由预选横幅明确展示；多个可发起成员时不预选，由用户在输入区 @ 选择。
  */
 const effectivePresetAgentMember = computed(() => {
-  if (props.presetAgentMember) return props.presetAgentMember
   if (!props.workspaceLocked || !props.requiresAgentMember) return null
   const startable = props.mentionOptions.filter(option => props.startableAgentMemberIds.includes(option.id))
   return startable.length === 1 ? { ...startable[0]!, status: 'available' as const } : null
@@ -176,7 +169,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
     return
   }
   try {
-    // TW-10：文本中显式 @ 的 Agent 成员优先于右栏预选（预选只是默认值）。
+    // TW-10：文本中显式 @ 的 Agent 成员优先于唯一成员的自动预选。
     const presetMemberId = effectivePresetAgentMember.value?.status === 'available'
       ? effectivePresetAgentMember.value.id
       : undefined

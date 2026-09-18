@@ -83,42 +83,14 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     expect(agentSection.findAll('[data-testid="panel-agent-status"]')).toHaveLength(2)
   })
 
-  it('任何成员都能从右栏可用 Agent 条目发起对话，停用条目不可点', async () => {
-    // 普通成员没有成员管理弹窗入口，右栏 Agent 条目是其唯一可达的选择入口。
-    const wrapper = mountPanel({ currentUserRole: 'member' })
-    const starts = wrapper.findAll('[data-testid="panel-agent-start"]')
-    expect(starts).toHaveLength(1)
-    expect(starts[0]?.text()).toContain('开始对话')
-    await starts[0]?.trigger('click')
-    expect(wrapper.emitted('start-agent-conversation')).toEqual([['wam-1']])
-  })
-
-  it('只读成员看不到开始对话入口（按服务端 allowedActions）', async () => {
-    const wrapper = mountPanel({
-      currentUserRole: 'viewer',
-      agentMembers: agentMembers.map(member => ({ ...member, allowedActions: [] })),
-    })
-    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(0)
-  })
-
-  it('已预选为新对话成员的 Agent 行显示「使用中」，不再给出「开始对话」链接', async () => {
-    const wrapper = mountPanel({ activeAgentMemberId: 'wam-1' })
-    const rows = wrapper.findAll('[data-testid="panel-agent-row"]')
-
-    expect(rows[0]?.find('[data-testid="panel-agent-active"]').text()).toBe('使用中')
-    expect(rows[0]?.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
-    // 不传 activeAgentMemberId 时入口保持原样。
-    const fallback = mountPanel()
-    expect(fallback.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
-    expect(fallback.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
-  })
-
-  it('预选成员已停用或不可发起时不显示「使用中」', () => {
-    // wam-2 为 disabled：即便被标记为预选 id，也不渲染「使用中」。
-    const wrapper = mountPanel({ activeAgentMemberId: 'wam-2' })
-
-    expect(wrapper.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
-    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
+  it('Agent 行只读展示，不提供行内发起入口（Agent 选择走输入区 @ 提及）', () => {
+    // 右栏「开始对话」入口已按产品决定移除：可用、停用、不可用成员都只展示
+    // 名称与状态点；任何人重新加回行内操作都会命中这两条断言。
+    for (const role of ['owner', 'admin', 'member', 'viewer', null] as const) {
+      const wrapper = mountPanel({ currentUserRole: role })
+      expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(0)
+      expect(wrapper.findAll('[data-testid="panel-agent-active"]')).toHaveLength(0)
+    }
   })
 
   it('shows 管理成员 to owners and admins only', async () => {
@@ -221,8 +193,6 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     expect(statuses[0]?.attributes('aria-label')).toBe('Agent 状态：可用')
     expect(statuses[1]?.attributes('aria-label')).toBe('Agent 状态：不可用')
     expect(statuses[1]?.classes()).toContain('workspace-agent__status--danger')
-    // 不可用不渲染「开始对话」入口（服务端 allowedActions 已剔除）。
-    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
     const tooltips = wrapper.findAllComponents(ElTooltip)
     expect(tooltips.some(tooltip => String(tooltip.props('content')).includes('版本失效'))).toBe(true)
   })

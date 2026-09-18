@@ -43,7 +43,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:open': [value: boolean]
   refresh: []
-  'start-conversation': [agentMemberId: string]
 }>()
 
 const loadingAgents = ref(false)
@@ -171,11 +170,6 @@ async function runAgentAction(member: WorkspaceAgentMember, action: 'disable' | 
   }
 }
 
-function startConversation(member: WorkspaceAgentMember) {
-  if (!member.allowedActions.includes('start_conversation')) return
-  emit('start-conversation', member.id)
-}
-
 function agentStatusLabel(member: WorkspaceAgentMember) {
   if (member.status !== 'available') return '已停用'
   return member.unavailableReason ? '不可用' : '可用'
@@ -239,14 +233,6 @@ onBeforeUnmount(() => {
               />
             </el-tooltip>
             <div class="member-dialog__actions">
-              <el-button
-                v-if="!archived && member.allowedActions.includes('start_conversation')"
-                data-testid="agent-start-conversation"
-                plain
-                @click="startConversation(member)"
-              >
-                开始对话
-              </el-button>
               <el-button
                 v-if="!archived && member.allowedActions.includes('disable')"
                 data-testid="agent-action-disable"

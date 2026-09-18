@@ -92,7 +92,7 @@ describe('ConversationStarter', () => {
     )
   })
 
-  it('passes the selected team Agent member when starting a conversation (TW-02)', async () => {
+  it('passes the @-mentioned team Agent member when starting a conversation (TW-10)', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(ConversationStarter, {
@@ -100,24 +100,28 @@ describe('ConversationStarter', () => {
         workspaceId: 'ws-team',
         workspaceName: '供应链团队',
         workspaceLocked: true,
-        presetAgentMember: { id: 'wam-001', name: '订单分析助手', status: 'available' },
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-001', 'wam-2'],
+        mentionOptions: [
+          { id: 'wam-001', name: '订单分析助手' },
+          { id: 'wam-2', name: '库存助手' },
+        ],
       },
       global: { plugins: [pinia, ElementPlus] },
     })
     const taskStore = useTaskStore(pinia)
     const createTask = vi.spyOn(taskStore, 'createTask').mockResolvedValue({ id: 'run-test' } as never)
 
-    expect(wrapper.find('[data-testid="preset-agent-member"]').text()).toContain('订单分析助手')
-
     wrapper.findComponent(TaskComposer).vm.$emit('submit', {
-      prompt: '分析订单波动',
+      prompt: '@订单分析助手 分析订单波动',
       files: [],
       workspaceId: 'ws-team',
+      mentions: ['wam-001'],
     })
     await flushPromises()
 
     expect(createTask).toHaveBeenCalledWith(
-      '分析订单波动',
+      '@订单分析助手 分析订单波动',
       [],
       'ws-team',
       '供应链团队',
@@ -181,7 +185,7 @@ describe('ConversationStarter', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(ConversationStarter, {
-      props: { presetAgentMember: { id: 'wam-001', name: '订单分析助手', status: 'available' } },
+      props: {},
       global: { plugins: [pinia, ElementPlus] },
     })
     const taskStore = useTaskStore(pinia)
@@ -254,7 +258,7 @@ describe('ConversationStarter', () => {
     expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-new')
   })
 
-  it('文本中 @ 的 Agent 成员优先于预选并进入 startRun（TW-10）', async () => {
+  it('文本中 @ 的 Agent 成员进入 startRun（TW-10）', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(ConversationStarter, {
@@ -264,7 +268,10 @@ describe('ConversationStarter', () => {
         workspaceLocked: true,
         requiresAgentMember: true,
         startableAgentMemberIds: ['wam-1', 'wam-9'],
-        presetAgentMember: { id: 'wam-1', name: '订单分析助手', status: 'available' },
+        mentionOptions: [
+          { id: 'wam-1', name: '订单分析助手' },
+          { id: 'wam-9', name: '欠料追踪助手' },
+        ],
       },
       global: { plugins: [pinia, ElementPlus] },
     })
@@ -323,7 +330,7 @@ describe('ConversationStarter', () => {
     expect(apiMocks.createSession).not.toHaveBeenCalled()
   })
 
-  it('团队空间选中可用 Agent 成员后解除阻止并带上关联 ID', async () => {
+  it('@ 的 Agent 不在可发起集合时回落到自动预选成员（TW-10 兜底）', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(ConversationStarter, {
@@ -333,7 +340,7 @@ describe('ConversationStarter', () => {
         workspaceLocked: true,
         requiresAgentMember: true,
         startableAgentMemberIds: ['wam-1'],
-        presetAgentMember: { id: 'wam-1', name: '订单分析助手', status: 'available' },
+        mentionOptions: [{ id: 'wam-1', name: '订单分析助手' }],
       },
       global: { plugins: [pinia, ElementPlus] },
     })
@@ -341,15 +348,18 @@ describe('ConversationStarter', () => {
     const createTask = vi.spyOn(taskStore, 'createTask').mockResolvedValue({ id: 'run-test' } as never)
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="composer-blocked"]').exists()).toBe(false)
+    // 提及候选只来自 startable 集合；若因竞态（成员刚被停用）提交了非 startable
+    // 的提及，按「无效提及」处理并回落到唯一成员的自动预选，而不是把执行意图
+    // 静默降级为讨论消息。
     wrapper.findComponent(TaskComposer).vm.$emit('submit', {
-      prompt: '帮我看看库存',
+      prompt: '@库存助手 帮我看看库存',
       files: [],
       workspaceId: 'ws-team',
+      mentions: ['wam-9'],
     })
     await flushPromises()
     expect(createTask).toHaveBeenCalledWith(
-      '帮我看看库存',
+      '@库存助手 帮我看看库存',
       [],
       'ws-team',
       '供应链空间',

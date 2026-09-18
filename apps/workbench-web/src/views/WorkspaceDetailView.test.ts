@@ -283,22 +283,6 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { tab: 'files' } })
   })
 
-  it('exits the embedded thread when starting an Agent conversation from the panel', async () => {
-    route.name = 'workspace-conversation'
-    route.params = { id: 'ws-team', conversationId: 'session-001' }
-    // 两个可发起成员避免唯一成员自动预选占用「开始对话」入口。
-    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
-      agentMember(),
-      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
-    ])
-    const { wrapper } = await mountView(workspace())
-    await flushPromises()
-
-    // 线程视图内点右栏「开始对话」：路径归位到空间页，新对话输入框才能浮现。
-    await wrapper.findAll('[data-testid="panel-agent-start"]')[0]!.trigger('click')
-    expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: {} })
-  })
-
   it('restores the history view from a ?view=history deep link after the workspace resolves', async () => {
     route.query = { view: 'history' }
     const { wrapper } = await mountView(workspace())
@@ -342,35 +326,24 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('[data-testid="workspace-session-history"]').exists()).toBe(false)
   })
 
-  it('只有一个可发起 Agent 成员时自动预选为新对话成员（TW-02 默认选中）', async () => {
+  it('把可发起 Agent 成员传给新对话输入区（@ 提及与唯一成员自动预选在 starter 内完成）', async () => {
     vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([agentMember()])
     const { wrapper } = await mountView(workspace())
     await flushPromises()
 
     const starter = wrapper.findComponent(ConversationStarter)
     expect(starter.props('requiresAgentMember')).toBe(true)
-    expect(starter.props('presetAgentMember')).toMatchObject({ id: 'wam-1', name: '订单分析助手' })
-    // 已预选成员的「开始对话」入口收敛为「使用中」状态，不再渲染成待办操作。
-    expect(wrapper.find('[data-testid="panel-agent-active"]').text()).toBe('使用中')
+    expect(starter.props('startableAgentMemberIds')).toEqual(['wam-1'])
+    expect(starter.props('mentionOptions')).toEqual([{ id: 'wam-1', name: '订单分析助手' }])
+    // 右栏不再提供「开始对话」入口：Agent 选择统一走输入区 @ 提及。
     expect(wrapper.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
   })
 
-  it('存在多个可发起 Agent 成员时不预选，仍由用户在 Agent 区选择', async () => {
-    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
-      agentMember(),
-      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
-    ])
-    const { wrapper } = await mountView(workspace())
-    await flushPromises()
-
-    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toBeNull()
-  })
-
-  it('自动预选在可发起成员不再唯一时撤销，交还用户选择', async () => {
+  it('可发起成员集合随成员刷新同步到输入区', async () => {
     vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([agentMember()])
     const { wrapper } = await mountView(workspace())
     await flushPromises()
-    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
+    expect(wrapper.findComponent(ConversationStarter).props('startableAgentMemberIds')).toEqual(['wam-1'])
 
     // 负责人随后加入第二个可用 Agent（经成员弹窗 refresh 链路重新加载）。
     vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
@@ -380,38 +353,7 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     wrapper.findComponent(WorkspaceMemberDialog).vm.$emit('refresh')
     await flushPromises()
 
-    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toBeNull()
-    // 选择权交还用户：两个可发起成员恢复「开始对话」入口。
-    expect(wrapper.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
-    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(2)
-  })
-
-  it('用户显式选择的 Agent 成员不因成员集合变化而被自动逻辑改写', async () => {
-    // 两个可发起成员：不触发自动预选，用户在 Agent 区显式选择 wam-1。
-    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
-      agentMember(),
-      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
-    ])
-    const { wrapper } = await mountView(workspace())
-    await flushPromises()
-
-    await wrapper.findAll('[data-testid="panel-agent-start"]')[0]?.trigger('click')
-    await flushPromises()
-    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
-    // 已选中的行显示「使用中」，其它可发起成员保留「开始对话」。
-    expect(wrapper.findAll('[data-testid="panel-agent-active"]')).toHaveLength(1)
-    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
-
-    // 第三个 Agent 加入：显式选择保留（对比自动预选会被撤销）。
-    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
-      agentMember(),
-      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
-      agentMember({ id: 'wam-3', agentId: 'agent-3', name: '质检助手' }),
-    ])
-    wrapper.findComponent(WorkspaceMemberDialog).vm.$emit('refresh')
-    await flushPromises()
-
-    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
+    expect(wrapper.findComponent(ConversationStarter).props('startableAgentMemberIds')).toEqual(['wam-1', 'wam-2'])
   })
 
   it('renders no team UI and issues no member query for a personal space (AC-23)', async () => {

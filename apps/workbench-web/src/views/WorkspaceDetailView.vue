@@ -100,12 +100,6 @@ const serverUserRole = ref<TeamMemberRole | null>(null)
 const startableAgentMemberIds = computed(() => agentMembers.value
   .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
   .map(member => member.id))
-const presetAgentMember = ref<WorkspaceAgentMember | null>(null)
-/**
- * 预选是否来自「唯一可发起成员」的自动回填（TW-02：只有一个可用 Agent 时可默认
- * 选中）；用户在 Agent 区点「开始对话」的显式选择为 false，不会被自动逻辑改写。
- */
-const presetAgentMemberAuto = ref(false)
 /**
  * TW-10：输入框可 @ 的 Agent 成员（id + 名称），与 startableAgentMemberIds
  * 同一过滤口径（可用 + allowedActions 含 start_conversation）。
@@ -778,40 +772,6 @@ async function loadMoreActivity() {
   }
 }
 
-function startAgentConversation(agentMemberId: string) {
-  // 纵深防御：归档空间不得新开对话（执行轨）。右栏入口已在面板内隐藏，这里再挡一次，
-  // 避免任何其它调用路径绕过。
-  if (isArchived.value) return
-  const member = agentMembers.value.find(item => item.id === agentMemberId)
-  if (!member) return
-  presetAgentMember.value = member
-  presetAgentMemberAuto.value = false
-  memberDialogOpen.value = false
-  agentDialogOpen.value = false
-  setConversationView('new')
-  selectTab('conversation')
-}
-
-/**
- * 唯一可发起 Agent 成员的自动预选（TW-02「只有一个可用 Agent 时可默认选中，但必须
- * 明确显示身份」——身份由新对话区的预选横幅展示）。只在预选空缺或已失效时回填，
- * 不覆盖用户仍有效的显式选择；自动预选在可选成员不再唯一时撤销，交还选择权。
- */
-watch(startableAgentMemberIds, ids => {
-  const presetStartable = !!presetAgentMember.value && ids.includes(presetAgentMember.value.id)
-  if (ids.length === 1) {
-    if (!presetStartable) {
-      presetAgentMember.value = agentMembers.value.find(member => member.id === ids[0]) ?? null
-      presetAgentMemberAuto.value = true
-    }
-    return
-  }
-  if (presetAgentMemberAuto.value) {
-    presetAgentMember.value = null
-    presetAgentMemberAuto.value = false
-  }
-})
-
 function refreshTeamMembers() {
   void loadAgentMembers()
   void loadWorkspaceMembers()
@@ -880,8 +840,6 @@ watch(workspace, (value) => {
   // 先作废在途请求，再清空本地状态：否则旧响应会在清空之后落回来（评审 P1-2）。
   invalidateActivityRequests()
   invalidateUsageRequests()
-  presetAgentMember.value = null
-  presetAgentMemberAuto.value = false
   memberDialogOpen.value = false
   agentDialogOpen.value = false
   settingsDialogOpen.value = false
@@ -1077,7 +1035,6 @@ watch(
                 :workspace-name="workspace.name"
                 workspace-locked
                 :title="`在“${workspace.name}”中开始对话`"
-                :preset-agent-member="isTeam ? presetAgentMember : null"
                 :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
@@ -1228,7 +1185,6 @@ watch(
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
         :agent-members="agentMembers"
-        :active-agent-member-id="presetAgentMember?.id ?? ''"
         :activity-items="activitySummaryItems"
         :activity-loading="activityLoading"
         :activity-error="activityError"
@@ -1244,7 +1200,6 @@ watch(
         @manage-members="memberDialogOpen = true"
         @manage-agents="agentDialogOpen = true"
         @open-settings="settingsDialogOpen = true"
-        @start-agent-conversation="startAgentConversation"
         @view-all-activity="openActivityDrawer"
         @mark-activity-read="markActivityRead"
         @toggle-activity-mute="toggleActivityMute"
@@ -1266,7 +1221,6 @@ watch(
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
         :agent-members="agentMembers"
-        :active-agent-member-id="presetAgentMember?.id ?? ''"
         :activity-items="activitySummaryItems"
         :activity-loading="activityLoading"
         :activity-error="activityError"
@@ -1280,7 +1234,6 @@ watch(
         @manage-members="memberDialogOpen = true"
         @manage-agents="agentDialogOpen = true"
         @open-settings="settingsDialogOpen = true"
-        @start-agent-conversation="startAgentConversation"
         @view-all-activity="openActivityDrawer"
         @mark-activity-read="markActivityRead"
         @toggle-activity-mute="toggleActivityMute"
@@ -1403,7 +1356,6 @@ watch(
         :load-agent-members="false"
         :archived="isArchived"
         @refresh="refreshTeamMembers"
-        @start-conversation="startAgentConversation"
       />
 
       <WorkspaceSettingsDialog

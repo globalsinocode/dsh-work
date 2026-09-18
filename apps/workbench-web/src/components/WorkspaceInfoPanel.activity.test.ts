@@ -117,7 +117,7 @@ describe('WorkspaceInfoPanel 最近动态摘要（design §2.9 / TW-08）', () =
     expect(wrapper.find('[data-testid="panel-activity-empty"]').exists()).toBe(false)
   })
 
-  it('归档空间不得渲染 Agent「开始对话」写入口（规格评审 F2：3-T3 遗留缺口）', () => {
+  it('归档空间 Agent 条目仍只读展示，不出现行内操作', () => {
     const agents = [{
       id: 'wam-1',
       name: '订单助手',
@@ -125,16 +125,15 @@ describe('WorkspaceInfoPanel 最近动态摘要（design §2.9 / TW-08）', () =
       allowedActions: ['start_conversation'],
     }]
 
-    const active = mountPanel({ activityItems: [activity()], agentMembers: agents })
-    expect(active.find('[data-testid="panel-agent-start"]').exists()).toBe(true)
-
     const archived = mountPanel({
       workspace: { ...teamWorkspace, status: 'archived' },
       activityItems: [activity()],
       agentMembers: agents,
     })
-    // 条目本身仍展示（只读可看），但不再给出可点的写入口。
+    // 条目本身仍展示（只读可看）；「开始对话」入口已整体移除，活动态同样不渲染。
     expect(archived.findAll('[data-testid="panel-agent-row"]')).toHaveLength(1)
+    const active = mountPanel({ activityItems: [activity()], agentMembers: agents })
+    expect(active.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
     expect(archived.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
   })
 
