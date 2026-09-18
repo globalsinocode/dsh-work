@@ -13,7 +13,11 @@ const conversationHistoryCharacterLimit = 24_000
 interface SessionRow {
   id: string
   workspaceId: string
-  agentVersionId: string
+  workspaceType: 'personal' | 'team'
+  workspaceStatus: 'active' | 'archived'
+  /** TW-10：团队讨论会话可为 null（首次 @Agent 前不绑定 Agent）。 */
+  agentVersionId: string | null
+  createdBy: string
   selectedSkillVersionId: string | null
   selectedSkillReference?: string | null
   title: string
@@ -30,8 +34,13 @@ interface TaskRow {
   title: string
   workspaceId: string
   workspaceName: string
-  agentVersion: string
+  workspaceType: 'personal' | 'team'
+  workspaceStatus: 'active' | 'archived'
+  /** TW-10：取当前 Attempt Manifest 记录的 Agent 版本（团队会话逐消息绑定）。 */
+  agentVersion: string | null
+  agentName: string | null
   owner: string
+  requestedBy: string
   errorCode: string | null
   selectedSkillId: string | null
   selectedSkillName: string | null
@@ -60,6 +69,13 @@ interface MessageRow {
   content: string
   createdAt: Date
   runId: string | null
+  /** TW-10 共享讨论：用户消息的作者（历史消息回退为会话创建者）。 */
+  senderId: string | null
+  senderName: string | null
+  /** 该消息所属 Run 的发起人与执行 Agent（@ 触发归因，assistant 消息用）。 */
+  runRequesterId: string | null
+  runRequesterName: string | null
+  agentName: string | null
 }
 
 export interface ConversationHistoryMessage {
@@ -77,7 +93,7 @@ interface EventRow {
 interface ArtifactRow {
   id: string
   name: string
-  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text'
+  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   sizeBytes: string | number
   createdAt: Date
@@ -146,13 +162,40 @@ export class PostgresConversationRepository {
     }
   }
 
-  async requireSession(sessionId: string, userId: string, audience: 'workbench' | 'admin' = 'workbench') {
+  /**
+   * Load a session without the creator gate (TW-10). Team sessions are shared:
+   * any current member may read them, so callers perform the membership/role
+   * check themselves (see RunOrchestrationService.requireSessionAccess).
+   * Creator-scoped paths keep using {@link requireSession}.
+   */
+  async findSessionRow(sessionId: string, audience: 'workbench' | 'admin' = 'workbench') {
     const [row] = await this.database<SessionRow[]>`
       select s.id, s.workspace_id as "workspaceId", s.agent_version_id as "agentVersionId",
+             w.workspace_type as "workspaceType", w.status as "workspaceStatus",
+             s.created_by as "createdBy",
              s.selected_skill_version_id as "selectedSkillVersionId",
              selected_skill.skill_id || '@' || selected_skill.version as "selectedSkillReference",
              s.title, s.created_at as "createdAt"
         from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+        left join skill_versions selected_skill
+          on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+         and s.status = 'active' and s.audience = ${audience}
+    `
+    return row ? { ...row, createdAt: row.createdAt.toISOString() } : null
+  }
+
+  async requireSession(sessionId: string, userId: string, audience: 'workbench' | 'admin' = 'workbench') {
+    const [row] = await this.database<SessionRow[]>`
+      select s.id, s.workspace_id as "workspaceId", s.agent_version_id as "agentVersionId",
+             w.workspace_type as "workspaceType", w.status as "workspaceStatus",
+             s.created_by as "createdBy",
+             s.selected_skill_version_id as "selectedSkillVersionId",
+             selected_skill.skill_id || '@' || selected_skill.version as "selectedSkillReference",
+             s.title, s.created_at as "createdAt"
+        from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
        where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.created_by = ${userId}
@@ -193,15 +236,19 @@ export class PostgresConversationRepository {
 
   async appendMessage(input: {
     sessionId: string
-    runId: string
+    /** 讨论消息为 null；@ 触发消息与 Agent 回复关联到 Run。 */
+    runId?: string | null
     role: 'user' | 'assistant'
     content: string
+    /** 用户消息作者；Agent 回复为空（归因经 runId → Run 关联）。 */
+    senderUserId?: string | null
     messageId?: string
   }) {
     const id = input.messageId ?? `message-${randomUUID()}`
     await this.database`
-      insert into messages (id, tenant_id, session_id, run_id, role, content)
-      values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId}, ${input.role}, ${input.content})
+      insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
+      values (${id}, ${tenantId}, ${input.sessionId}, ${input.runId ?? null}, ${input.role}, ${input.content},
+              ${input.senderUserId ?? null})
       on conflict (id) do nothing
     `
     await this.database`
@@ -243,11 +290,21 @@ export class PostgresConversationRepository {
    * conversation instead of later messages from the Session.
    */
   async getConversationHistory(sessionId: string, beforeRunId: string): Promise<ConversationHistoryMessage[]> {
-    const recent = await this.database<ConversationHistoryMessage[]>`
-      select m.role, m.content
+    // TW-10：团队会话的讨论消息（run_id 为空）同样进入上下文窗口——@ 触发时
+    // Agent 需要看到讨论语境；为区分多位发言人，团队空间里的 user 消息统一加
+    // 「发送者：」前缀（个人会话发送者唯一，不加前缀以保持既有契约不变）。
+    const recent = await this.database<(ConversationHistoryMessage & { senderName: string | null; team: boolean })[]>`
+      select m.role, m.content, su.display_name as "senderName",
+             (w.workspace_type = 'team') as team
         from messages m
         join runs current_run
           on current_run.tenant_id = m.tenant_id and current_run.id = ${beforeRunId}
+        join sessions s on s.tenant_id = m.tenant_id and s.id = m.session_id
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+        left join runs mr on mr.tenant_id = m.tenant_id and mr.id = m.run_id
+        left join users su
+          on su.tenant_id = m.tenant_id
+         and su.id = coalesce(m.sender_user_id, mr.requested_by, s.created_by)
        where m.tenant_id = ${tenantId}
          and m.session_id = ${sessionId}
          and current_run.session_id = ${sessionId}
@@ -259,7 +316,13 @@ export class PostgresConversationRepository {
     `
     let remaining = conversationHistoryCharacterLimit
     return recent.map(message => {
-      const content = remaining > 0 ? message.content.slice(-remaining) : ''
+      const prefix = message.team && message.role === 'user' && message.senderName
+        ? `${message.senderName}：`
+        : ''
+      const contentBudget = remaining - prefix.length
+      const content = contentBudget > 0
+        ? `${prefix}${message.content.slice(-contentBudget)}`
+        : ''
       remaining -= content.length
       return { role: message.role, content }
     }).filter(message => message.content).reverse()
@@ -277,7 +340,6 @@ export class PostgresConversationRepository {
    */
   async listWorkspaceSessions(input: {
     workspaceId: string
-    actorUserId: string
     query?: string
     cursor?: string
     limit?: number
@@ -316,7 +378,6 @@ export class PostgresConversationRepository {
        where s.tenant_id = ${tenantId}
          and s.workspace_id = ${input.workspaceId}
          and s.status = 'active' and s.audience = 'workbench'
-         and s.created_by = ${input.actorUserId}
          and ${pattern === null ? this.database`true` : this.database`s.title ilike ${pattern} escape '\\'`}
          and ${cursor === null
            ? this.database`true`
@@ -366,14 +427,19 @@ export class PostgresConversationRepository {
       select r.id, r.session_id as "sessionId", r.status,
              r.current_attempt_id as "currentAttemptId", r.created_at as "createdAt",
              r.updated_at as "updatedAt", s.title, s.workspace_id as "workspaceId",
-             w.name as "workspaceName", av.version as "agentVersion", u.display_name as owner,
+             w.name as "workspaceName", w.workspace_type as "workspaceType",
+             w.status as "workspaceStatus",
+             av.version as "agentVersion", ag.name as "agentName",
+             u.display_name as owner, r.requested_by as "requestedBy",
              ra.error_code as "errorCode", selected_skill.skill_id as "selectedSkillId",
              selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion"
         from runs r
         join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-        join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
         left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join agent_versions av on av.tenant_id = s.tenant_id
+          and av.id = coalesce(ra.manifest ->> 'agent_version_id', s.agent_version_id)
+        left join agents ag on ag.tenant_id = av.tenant_id and ag.id = av.agent_id
         left join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
@@ -390,31 +456,145 @@ export class PostgresConversationRepository {
       select r.id, r.session_id as "sessionId", r.status,
              r.current_attempt_id as "currentAttemptId", r.created_at as "createdAt",
              r.updated_at as "updatedAt", s.title, s.workspace_id as "workspaceId",
-             w.name as "workspaceName", av.version as "agentVersion", u.display_name as owner,
+             w.name as "workspaceName", w.workspace_type as "workspaceType",
+             w.status as "workspaceStatus",
+             av.version as "agentVersion", ag.name as "agentName",
+             u.display_name as owner, r.requested_by as "requestedBy",
              ra.error_code as "errorCode", selected_skill.skill_id as "selectedSkillId",
              selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion"
         from runs r
         join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
-        join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
         left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join agent_versions av on av.tenant_id = s.tenant_id
+          and av.id = coalesce(ra.manifest ->> 'agent_version_id', s.agent_version_id)
+        left join agents ag on ag.tenant_id = av.tenant_id and ag.id = av.agent_id
         left join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
-       where r.tenant_id = ${tenantId} and r.id = ${runId} and r.requested_by = ${userId}
+       where r.tenant_id = ${tenantId} and r.id = ${runId}
+         -- TW-10：团队会话共享讨论——Run 详情对「发起人」或「空间现任成员」
+         -- 放行（行定位），撤销/角色边界由路由层 authorizeTeamTaskRead 复核。
+         -- 被移出成员的 workspace_members 行已删除，exists 不再命中。
+         and (
+           r.requested_by = ${userId}
+           or exists (
+             select 1 from workspace_members wm
+             where wm.tenant_id = r.tenant_id
+               and wm.workspace_id = s.workspace_id
+               and wm.user_id = ${userId}
+           )
+         )
          and s.status = 'active' and s.audience = 'workbench'
     `
     return row ? this.mapTask(row) : null
   }
 
-  private async mapTask(row: TaskRow): Promise<TaskRun> {
-    const messages = await this.database<MessageRow[]>`
-      select id, role, content, created_at as "createdAt", run_id as "runId"
-        from messages
-       where tenant_id = ${tenantId} and session_id = ${row.sessionId}
-         and role in ('user', 'assistant')
-       order by created_at asc
+  /**
+   * Shared message rows for a session (TW-10): user messages resolve their
+   * author via sender_user_id; assistant messages resolve the triggering Run's
+   * requester and the Agent recorded in the Run manifest (falling back to the
+   * session-bound Agent for legacy rows).
+   */
+  private async loadSessionMessages(sessionId: string): Promise<MessageRow[]> {
+    return this.database<MessageRow[]>`
+      select m.id, m.role, m.content, m.created_at as "createdAt", m.run_id as "runId",
+             coalesce(m.sender_user_id, r.requested_by) as "senderId",
+             su.display_name as "senderName",
+             r.requested_by as "runRequesterId", ru.display_name as "runRequesterName",
+             ag.name as "agentName"
+        from messages m
+        left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id
+        left join users su on su.tenant_id = m.tenant_id
+          and su.id = coalesce(m.sender_user_id, r.requested_by)
+        left join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join sessions ms on ms.tenant_id = m.tenant_id and ms.id = m.session_id
+        left join agent_versions av on av.tenant_id = m.tenant_id
+          and av.id = coalesce(ra.manifest ->> 'agent_version_id', ms.agent_version_id)
+        left join agents ag on ag.tenant_id = av.tenant_id and ag.id = av.agent_id
+       where m.tenant_id = ${tenantId} and m.session_id = ${sessionId}
+         and m.role in ('user', 'assistant')
+       order by m.created_at asc
     `
+  }
+
+  /**
+   * Shared team-discussion view (TW-10): session header plus every user/
+   * assistant message with sender and Agent attribution, and the Run list so
+   * the client can render execution status inline. Access is checked by the
+   * caller (requireSessionAccess / authorizeTeamTaskRead); this method only
+   * loads data for an active workbench session.
+   */
+  async getSessionThread(sessionId: string) {
+    const [row] = await this.database<{
+      id: string
+      title: string
+      workspaceId: string
+      workspaceType: 'personal' | 'team'
+      workspaceStatus: 'active' | 'archived'
+      createdBy: string
+      creatorName: string
+      lastActiveAt: Date
+      createdAt: Date
+    }[]>`
+      select s.id, s.title, s.workspace_id as "workspaceId",
+             w.workspace_type as "workspaceType", w.status as "workspaceStatus",
+             s.created_by as "createdBy", u.display_name as "creatorName",
+             s.last_active_at as "lastActiveAt", s.created_at as "createdAt"
+        from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+        join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+         and s.status = 'active' and s.audience = 'workbench'
+    `
+    if (!row) return null
+    const messages = await this.loadSessionMessages(sessionId)
+    const runs = await this.database<{
+      id: string
+      status: RunState
+      requestedBy: string
+      requesterName: string
+      createdAt: Date
+    }[]>`
+      select r.id, r.status, r.requested_by as "requestedBy",
+             ru.display_name as "requesterName", r.created_at as "createdAt"
+        from runs r
+        join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+       where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
+       order by r.created_at asc
+    `
+    return {
+      sessionId: row.id,
+      title: row.title,
+      workspaceId: row.workspaceId,
+      workspaceType: row.workspaceType,
+      workspaceStatus: row.workspaceStatus,
+      createdBy: row.createdBy,
+      creatorName: row.creatorName,
+      createdAt: row.createdAt.toISOString(),
+      lastActiveAt: row.lastActiveAt.toISOString(),
+      messages: messages.map(message => ({
+        ...mapMessage(message),
+        runId: message.runId,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        runRequesterId: message.runRequesterId,
+        runRequesterName: message.runRequesterName,
+        agentName: message.agentName,
+      })),
+      runs: runs.map(run => ({
+        runId: run.id,
+        status: run.status,
+        requestedBy: run.requestedBy,
+        requesterName: run.requesterName,
+        createdAt: run.createdAt.toISOString(),
+      })),
+    }
+  }
+
+  private async mapTask(row: TaskRow): Promise<TaskRun> {
+    const messages = await this.loadSessionMessages(row.sessionId)
     const events = row.currentAttemptId
       ? await this.database<EventRow[]>`
           select id, event_type as "eventType", display_message as "displayMessage",
@@ -464,11 +644,14 @@ export class PostgresConversationRepository {
       status: mapStatus(row.status),
       workspaceId: row.workspaceId,
       workspaceName: row.workspaceName,
+      workspaceType: row.workspaceType,
+      workspaceStatus: row.workspaceStatus,
       sessionId: row.sessionId,
-      agentVersion: `dsh-work-assistant@${row.agentVersion}`,
+      agentVersion: row.agentVersion ? `${row.agentName ?? 'dsh-work-assistant'}@${row.agentVersion}` : '',
       createdAt: formatDateTime(row.createdAt),
       updatedAt: formatDateTime(row.updatedAt),
       owner: row.owner,
+      requestedBy: row.requestedBy,
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, events, row.status),
       sources: sources.map(source => ({
@@ -588,6 +771,12 @@ function mapMessage(row: MessageRow): ChatMessage {
     role: row.role,
     content: row.content,
     createdAt: row.createdAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
+    runId: row.runId,
+    senderId: row.senderId ?? undefined,
+    senderName: row.senderName ?? undefined,
+    runRequesterId: row.runRequesterId ?? undefined,
+    runRequesterName: row.runRequesterName ?? undefined,
+    agentName: row.agentName ?? undefined,
   }
 }
 

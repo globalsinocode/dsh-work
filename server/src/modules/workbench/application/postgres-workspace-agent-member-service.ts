@@ -365,8 +365,8 @@ export class PostgresWorkspaceAgentMemberService {
          and workspace_id = ${workspaceId}
          and id = ${workspaceAgentMemberId}
     `
-    if (!row) throw new Error('Agent 成员不存在或不属于该团队空间')
-    if (row.status !== 'available') throw new Error('Agent 成员已停用或已移出，不能发起新对话')
+    if (!row) throw authorizationDenied('Agent 成员不存在或不属于该团队空间')
+    if (row.status !== 'available') throw authorizationDenied('Agent 成员已停用或已移出，不能发起新对话')
     return { agentId: row.agentId, agentVersionId: row.agentVersionId }
   }
 

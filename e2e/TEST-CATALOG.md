@@ -64,7 +64,21 @@
 
 ## P1/P2 待补旅程
 
-- 团队成员进入“历史对话”，按标题搜索并打开本人会话（P1，需 PostgreSQL 团队 Session API）。
+### TW-E2E-10 团队共享讨论与 @Agent 触发（TW-10）
+
+**优先级：** P1
+**角色：** 空间成员（member）、负责人（owner）、只读成员（viewer），各自独立 browser context
+**运行层级：** P1 集成用户旅程（P0 不可达：Prototype 模式无会话持久化，命令面 503）
+**前置数据：** 专用可丢弃 PostgreSQL；团队空间含 owner/member/viewer 三个测试身份与至少一个可发起的 Agent 成员
+**spec：** `e2e/team-discussion.integration.spec.ts`（计划）；API 契约已由 `server/src/http/team-workspace-discussion-api.integration.test.ts` 固化
+
+1. 成员 A 在空间「新对话」直接输入普通消息发送（不 @）：创建讨论会话并出现全员可见的讨论消息，不产生 Run。
+2. 成员 B 打开同一会话（历史列表对全员可见）：读到 A 的消息并回帖，消息标注各自发送者。
+3. 成员 B 输入 `@` 触发 Agent 成员补全，选择 Agent 后发送：创建 Run 并沿用该成员固定版本，回复进同一消息流且标注「由 B 发起」。
+4. viewer 打开同一会话：消息流可读，输入框隐藏并显示只读提示。
+
+**验收：** 无 @ 消息零 Run；@ 触发复用既有 Run/Attempt/Runtime 链路；发送者与触发人归因逐条可见；viewer 写入口不出现；归档空间全部写入口隐藏。
+
 - 负责人管理员工/Agent 成员、调整角色并验证收权（P1，需多角色测试身份）。
 - 上传文件、上传新版本、失败版本保留且旧版本仍可引用（P1）。
 - 归档后历史读取仍可用、新对话/上传/重试被拒（P1）。
@@ -122,13 +136,29 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **未覆盖：** P1 浏览器旅程（AG-AUTO-20~24，`e2e/automation.integration.spec.ts` 计划）；P2 真实验收（AG-AUTO-P2）未运行；管理端 OIDC 身份下的既有 mvp-smoke 2 例受测试环境配置阻塞（跳转真实 AI Hub 登录），与本改动无关。
 
+### 2026-09-18：团队共享讨论与 @Agent 触发（TW-10）
+
+**阶段：** Spec（TW-E2E-10 登记为 P1 计划）→ Code → 服务端集成测试 + 前端组件单测
+**环境：** 一次性 PostgreSQL（自动销毁）、受控测试身份与 Runtime 替身
+
+- 服务端：会话写授权上移至编排层（仓储不再做创建者过滤）；讨论消息 `run_id=null` + `sender_user_id` 归因；`POST /sessions/:id/messages`、`GET /sessions/:id`（共享线程含 `currentUserRole`）、`POST /sessions/:id/runs` 支持按 `workspaceAgentMemberId` 选固定版本且必须显式携带幂等键（body 或 Idempotency-Key 头，缺失 422）；共享会话的取消/重试对写轨成员（owner/admin/member）开放、不限发起人，团队重试强制沿用原 Attempt manifest 固定版本；`createAttempt` 恢复文件范围兜底（同会话/同空间/发起人自有会话，跨空间他人附件拒绝）。
+- 前端：TaskComposer `@` 补全（键盘导航/选中）；ConversationView 支持零 Run 会话模式与讨论消息分流；归因渲染（发送者/触发人/Agent）；viewer 与归档输入禁用；ConversationStarter 无 @ 时创建讨论会话。
+
+**证据：**
+
+- `team-workspace-discussion-api.integration.test.ts` 5/5；团队会话 6/6；共享文件 18/18；生命周期 20/20；Agent 成员 22/22；收权管线 29/29；编排 12/12；API 契约 12/12。
+- `pnpm --filter @dsh-work/workbench-web test`：292/292；`vue-tsc` 与 `eslint` 无告警。
+- `playwright test`（P0 Prototype）：8/8 通过（回归基线，Prototype 无会话持久化故不覆盖讨论流本身）。
+
+**未覆盖：** P1 浏览器旅程（TW-E2E-10，待多角色 browser context）；成员级消息实时同步仍靠刷新拉取（SSE 仅覆盖 Run 事件）。
+
 ### 2026-09-17：管理端开发接入文档页
 
 **阶段：** Spec（ADMIN-E2E-04）→ Code → Test（P0 Playwright 固化旅程）
 **环境：** Prototype 受控身份、内存合成数据、独立端口 4380/4390/4374
 
 - 左侧导航新增「开发接入」组：接入规范（/docs/guide）与接口文档（/docs/api）。
-- 接口文档构建期内嵌 `docs/development/openapi-{workbench,admin}.json`，与契约同版本发布；接入规范页提供 Markdown 下载（`docs/development/mobile-integration-guide.md`），接口文档页提供 OpenAPI JSON 下载。
+- 接口文档由内置渲染器（`apps/admin-web/src/utils/openapi-doc.ts`）渲染构建期内嵌的 `docs/development/openapi-mobile-h5.json`（移动端实际调用的 Workbench API 子集，带完整 parameters/requestBody/响应 schema），与契约同版本发布；页面按「接口信息表 + 请求/响应报文 + 字段表」展示，左侧接口目录固定。接入规范页提供 Markdown 下载（`docs/development/mobile-integration-guide.md`），接口文档页提供 OpenAPI JSON 下载。
 
 **证据：**
 
@@ -396,6 +426,6 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 1. 打开管理端任意页面，左侧导航「开发接入」组可见「接入规范」「接口文档」两项。
 2. 进入「接入规范」，验证认证流程、API 包络与事件流章节可见，并可下载 Markdown 版规范（`dsh-work-移动端接入规范.md`，源文件 `docs/development/mobile-integration-guide.md`）。
-3. 进入「接口文档」，切换员工端/管理端 API 分组，验证端点清单渲染且非空，并可下载当前分组的 OpenAPI JSON。
+3. 进入「接口文档」，验证移动端 H5 API 契约渲染且非空（`openapi-mobile-h5.json`，仅收录移动端实际调用的 Workbench 子集，含结构化入参/返回字段），并可下载该 OpenAPI JSON。
 
-**验收：** 两个页面无需离开管理平台即可阅读与下载；接口文档内容与仓库 OpenAPI 契约一致（构建期内嵌，同版本发布）；下载产物适合 Agent/其他工程直接消费（Markdown 规范 + OpenAPI JSON）。
+**验收：** 两个页面无需离开管理平台即可阅读与下载；接口文档内容与仓库移动端 OpenAPI 契约一致（构建期内嵌，同版本发布）；下载产物适合 Agent/其他工程直接消费（Markdown 规范 + OpenAPI JSON）。

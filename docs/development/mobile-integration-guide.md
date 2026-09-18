@@ -1,7 +1,7 @@
 # dsh-work 移动端（H5）接入规范
 
 > 面向移动端 H5 客户端（含 AI Agent 阅读）的对接约定。契约唯一事实来源：
-> `docs/development/openapi-workbench.json`、`docs/development/run-event.schema.json`。
+> `docs/development/openapi-mobile-h5.json`（仅收录移动端实际调用的端点）、`docs/development/run-event.schema.json`。
 > 本文与 AdminShell「开发接入 → 接入规范」页面内容保持一致。
 
 ## 1. 定位与边界
@@ -76,4 +76,4 @@ data: {"runId":"run-…","step":"…"}
 1. 部署移动端静态产物 + nginx 反代 `/api`、`/auth`（见 §2）。
 2. 跳转 `/auth/workbench/login` 完成登录，随后 `GET /api/workbench/v1/session` 拿当前用户。
 3. `POST /api/workbench/v1/sessions` 建会话 → `POST /sessions/{id}/runs` 发起任务 → `GET /runs/{runId}/events` 订阅 SSE 渲染进度。
-4. 列表、详情、文件下载等按需调用 `openapi-workbench.json` 中的对应端点。
+4. 列表、详情、文件下载等按需调用 `openapi-mobile-h5.json` 中的对应端点（完整工作台端点见 `openapi-workbench.json`，移动端不需要）。

@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   getTasks: vi.fn(),
   createSession: vi.fn(),
   uploadSessionFile: vi.fn(),
+  deleteSessionFile: vi.fn(),
   startRun: vi.fn(),
   cancelRun: vi.fn(),
   retryRun: vi.fn(),
@@ -46,11 +47,14 @@ const baseTask: TaskRun = {
   attemptId: 'attempt-001',
   workspaceId: 'ws-supply',
   workspaceName: '供应链经营分析',
+  workspaceType: 'team',
+  workspaceStatus: 'active',
   sessionId: 'session-001',
   agentVersion: 'assistant@1.0.0',
   createdAt: '刚刚',
   updatedAt: '刚刚',
   owner: '林岚',
+  requestedBy: 'user-1',
   messages: [],
   steps: [],
   sources: [],
@@ -66,6 +70,7 @@ describe('task store', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     api.getTasks.mockResolvedValue([])
     api.deleteSession.mockResolvedValue({ sessionId: 'session-001', title: '库存分析', archived: true })
+    api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
   })
 
   it('creates a server Session and Run, then subscribes to persisted events', async () => {
@@ -132,6 +137,36 @@ describe('task store', () => {
     expect(store.getTask(initial.id)).toBeDefined()
   })
 
+  it('discards uploaded session files when Run creation is rejected', async () => {
+    const { useTaskStore } = await import('./tasks')
+    api.createSession.mockResolvedValue({ id: 'session-001' })
+    api.uploadSessionFile.mockResolvedValue({ id: 'file-001' })
+    api.startRun.mockRejectedValue(new Error('prompt 不能为空'))
+    const store = useTaskStore()
+
+    await expect(store.createTask('分析库存', [new File(['x'], 'input.txt')], 'ws-supply'))
+      .rejects.toThrow('prompt 不能为空')
+
+    expect(api.deleteSessionFile).toHaveBeenCalledWith('session-001', 'file-001')
+  })
+
+  it('discards successfully uploaded session files when another attachment upload fails', async () => {
+    const { useTaskStore } = await import('./tasks')
+    api.createSession.mockResolvedValue({ id: 'session-001' })
+    api.uploadSessionFile
+      .mockResolvedValueOnce({ id: 'file-001' })
+      .mockRejectedValueOnce(new Error('上传失败'))
+    const store = useTaskStore()
+
+    await expect(store.createTask('分析库存', [
+      new File(['ok'], 'input.txt'),
+      new File(['bad'], 'broken.txt'),
+    ], 'ws-supply')).rejects.toThrow('文件上传失败')
+
+    expect(api.deleteSessionFile).toHaveBeenCalledWith('session-001', 'file-001')
+    expect(api.startRun).not.toHaveBeenCalled()
+  })
+
   it('binds an authorized workspace file id to the immutable Run input', async () => {
     const { useTaskStore } = await import('./tasks')
     api.createSession.mockResolvedValue({ id: 'session-001' })
@@ -162,11 +197,14 @@ describe('task store', () => {
       'wam-001',
     )
 
+    // TW-10：会话保持未绑定的共享讨论形态，成员关联随首条触发消息进入 startRun。
     expect(api.createSession).toHaveBeenCalledWith({
       title: '分析订单波动',
       workspaceId: 'ws-team',
-      workspaceAgentMemberId: 'wam-001',
     })
+    expect(api.startRun).toHaveBeenCalledWith('session-agent-001', expect.objectContaining({
+      workspaceAgentMemberId: 'wam-001',
+    }))
   })
 
   it('omits the team Agent member association for personal conversations (AC-23)', async () => {

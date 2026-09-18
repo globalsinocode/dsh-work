@@ -620,6 +620,26 @@ export class PostgresAuthorizationService {
     }
   }
 
+  /**
+   * Current member role lookup for the read track (TW-10): returns the caller's
+   * role in an active or archived team workspace; null for personal workspaces,
+   * non-members and missing workspaces. Never throws — callers use it to
+   * annotate a response after requireTeamRole has already gated access.
+   */
+  async teamRoleOf(workspaceId: string | null | undefined, userId: string): Promise<TeamMemberRole | null> {
+    const id = normalizeWorkspaceId(workspaceId)
+    if (!id) return null
+    const [row] = await this.database<{ role: TeamMemberRole }[]>`
+      select wm.member_role as role
+        from workspace_members wm
+        join workspaces w on w.tenant_id = wm.tenant_id and w.id = wm.workspace_id
+       where wm.tenant_id = ${tenantId} and wm.workspace_id = ${id}
+         and wm.user_id = ${userId}
+         and w.workspace_type = 'team' and w.status in ('active', 'archived')
+    `
+    return row?.role ?? null
+  }
+
   async resolveWorkspaceOwner(workspaceId: string) {
     const rows = await this.database<{ userId: string }[]>`
       select wm.user_id as "userId" from workspace_members wm

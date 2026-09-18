@@ -653,7 +653,7 @@
                       "string",
                       "null"
                     ],
-                    "description": "个人空间显式指定时锁定该 Agent；省略时优先选择平台默认 Agent，并在选择 Skill 时自动跳过工具能力不兼容的 Agent。团队空间不允许通过原始 agentId 选择，必须使用 workspaceAgentMemberId。"
+                    "description": "个人空间显式指定时锁定该 Agent；省略时优先选择平台默认 Agent，并在选择 Skill 时自动跳过工具能力不兼容的 Agent。团队空间不接受单独的原始 agentId 选择——仅在同时携带 workspaceAgentMemberId 时用于一致性校验，解析版本不一致即拒绝。"
                   },
                   "skillId": {
                     "type": [
@@ -667,7 +667,7 @@
                       "string",
                       "null"
                     ],
-                    "description": "团队空间发起对话必须携带的 Agent 成员关联 ID；服务端使用其固定版本并校验当前可用。个人空间忽略该字段。"
+                    "description": "团队空间可选携带的 Agent 成员关联 ID：携带时校验可用性并记录固定版本为会话默认；省略时创建不绑定 Agent 的共享讨论会话（普通消息不产生 Run，@ 成员时经 POST /sessions/{sessionId}/runs 按成员固定版本执行）。同时携带 agentId 且解析版本与成员固定版本不一致时拒绝。个人空间忽略该字段。"
                   },
                   "title": {
                     "type": [
@@ -737,12 +737,53 @@
         }
       }
     },
+    "/sessions/{sessionId}/files/{fileId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        },
+        {
+          "name": "fileId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "operationId": "discardSessionFile",
+        "summary": "回收尚未被 Run 引用的会话输入文件",
+        "description": "用于 Run 创建失败后的附件清理；仅上传人可调用。已逻辑移除的对象返回 removed=true；已经被任一 Run 输入引用的对象按执行历史保留并返回 removed=false。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/sessions/{sessionId}": {
       "parameters": [
         {
           "$ref": "#/components/parameters/SessionId"
         }
       ],
+      "get": {
+        "operationId": "getSessionThread",
+        "summary": "获取会话共享线程（消息流 + Run 列表 + 发送者/触发人归因）；团队会话对全部现任成员可读，个人会话限创建者",
+        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "delete": {
         "operationId": "deleteSession",
         "summary": "删除当前员工拥有的对话；保留审计记录与已发布成果",
@@ -799,6 +840,10 @@
                     "type": "string",
                     "minLength": 8,
                     "maxLength": 128
+                  },
+                  "workspaceAgentMemberId": {
+                    "type": "string",
+                    "description": "TW-10：团队会话每次执行必须携带的 Agent 成员关联 ID（@ 触发），服务端按其固定版本执行并复核成员可用性；个人会话忽略该字段。"
                   }
                 }
               }
@@ -2036,6 +2081,49 @@
             "$ref": "#/components/responses/Error"
           },
           "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/messages": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
+      "post": {
+        "operationId": "postSessionMessage",
+        "summary": "发送不产生 Run 的讨论消息；仅团队空间会话可用，进入全员可见的共享消息流",
+        "description": "普通发言不产生 Run；viewer/非成员与归档空间被拒绝。需 Agent 处理时改用 POST /sessions/{sessionId}/runs 并携带 workspaceAgentMemberId。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
             "$ref": "#/components/responses/Error"
           }
         }

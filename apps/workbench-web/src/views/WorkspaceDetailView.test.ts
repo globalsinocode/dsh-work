@@ -13,6 +13,7 @@ import type {
   Workspace,
   WorkspaceActivityItem,
   WorkspaceActivityPage,
+  WorkspaceAgentMember,
   WorkspaceFile,
   WorkspaceFileVersion,
   WorkspaceFileVersionPage,
@@ -20,6 +21,8 @@ import type {
   WorkspaceNotificationView,
   WorkspaceUsage,
 } from '@/types/domain'
+import ConversationStarter from '@/components/ConversationStarter.vue'
+import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceDetailView from './WorkspaceDetailView.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
@@ -79,6 +82,21 @@ function notificationView(overrides: Partial<WorkspaceNotificationView> = {}): W
 
 function notificationState(overrides: Partial<WorkspaceNotificationState> = {}): WorkspaceNotificationState {
   return { workspaceId: 'ws-team', muted: false, mutedAt: null, lastReadAt: null, unreadCount: 0, ...overrides }
+}
+
+function agentMember(overrides: Partial<WorkspaceAgentMember> = {}): WorkspaceAgentMember {
+  return {
+    id: 'wam-1',
+    agentId: 'agent-1',
+    name: '订单分析助手',
+    description: '分析订单数据',
+    status: 'available',
+    version: '1.0.0',
+    addedBy: 'user-a',
+    createdAt: '2026-09-09T10:00:00.000Z',
+    allowedActions: ['start_conversation'],
+    ...overrides,
+  }
 }
 
 /** 空间用量摘要（4-T2）：宿主只在团队 + 负责人/管理员时请求，这里给出默认成功响应。 */
@@ -245,6 +263,11 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
 
   it('guides a startable member from an empty personal history back to the new conversation', async () => {
     route.query = { view: 'history' }
+    // TW-10：可写成员（服务端确认 member）即可发起讨论会话，无需可用 Agent。
+    vi.mocked(workbenchApi.listWorkspaceMembers).mockResolvedValue({
+      items: [{ userId: 'u-current', displayName: '周航', role: 'member', joinedAt: '2026-09-01T00:00:00.000Z' }],
+      currentUserRole: 'member',
+    })
     vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([{
       id: 'wam-1',
       agentId: 'agent-1',
@@ -264,13 +287,85 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('[data-testid="session-history-empty-own"]').exists()).toBe(true)
     expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledWith('ws-team', { limit: 20 })
 
-    // 可发起成员存在：引导回新对话并清掉 ?view=history。
+    // 可写成员存在：引导回新对话并清掉 ?view=history。
     const back = wrapper.find('[data-testid="session-history-empty-own"] button')
-    expect(back.text()).toBe('返回新对话')
+    expect(back.text()).toBe('发起新对话')
     await back.trigger('click')
     await flushPromises()
     expect(router.replace).toHaveBeenCalledWith({ query: {} })
     expect(wrapper.find('[data-testid="workspace-session-history"]').exists()).toBe(false)
+  })
+
+  it('只有一个可发起 Agent 成员时自动预选为新对话成员（TW-02 默认选中）', async () => {
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([agentMember()])
+    const { wrapper } = await mountView(workspace())
+    await flushPromises()
+
+    const starter = wrapper.findComponent(ConversationStarter)
+    expect(starter.props('requiresAgentMember')).toBe(true)
+    expect(starter.props('presetAgentMember')).toMatchObject({ id: 'wam-1', name: '订单分析助手' })
+    // 已预选成员的「开始对话」入口收敛为「使用中」状态，不再渲染成待办操作。
+    expect(wrapper.find('[data-testid="panel-agent-active"]').text()).toBe('使用中')
+    expect(wrapper.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
+  })
+
+  it('存在多个可发起 Agent 成员时不预选，仍由用户在 Agent 区选择', async () => {
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
+      agentMember(),
+      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
+    ])
+    const { wrapper } = await mountView(workspace())
+    await flushPromises()
+
+    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toBeNull()
+  })
+
+  it('自动预选在可发起成员不再唯一时撤销，交还用户选择', async () => {
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([agentMember()])
+    const { wrapper } = await mountView(workspace())
+    await flushPromises()
+    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
+
+    // 负责人随后加入第二个可用 Agent（经成员弹窗 refresh 链路重新加载）。
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
+      agentMember(),
+      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
+    ])
+    wrapper.findComponent(WorkspaceMemberDialog).vm.$emit('refresh')
+    await flushPromises()
+
+    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toBeNull()
+    // 选择权交还用户：两个可发起成员恢复「开始对话」入口。
+    expect(wrapper.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(2)
+  })
+
+  it('用户显式选择的 Agent 成员不因成员集合变化而被自动逻辑改写', async () => {
+    // 两个可发起成员：不触发自动预选，用户在 Agent 区显式选择 wam-1。
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
+      agentMember(),
+      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
+    ])
+    const { wrapper } = await mountView(workspace())
+    await flushPromises()
+
+    await wrapper.findAll('[data-testid="panel-agent-start"]')[0]?.trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
+    // 已选中的行显示「使用中」，其它可发起成员保留「开始对话」。
+    expect(wrapper.findAll('[data-testid="panel-agent-active"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
+
+    // 第三个 Agent 加入：显式选择保留（对比自动预选会被撤销）。
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
+      agentMember(),
+      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
+      agentMember({ id: 'wam-3', agentId: 'agent-3', name: '质检助手' }),
+    ])
+    wrapper.findComponent(WorkspaceMemberDialog).vm.$emit('refresh')
+    await flushPromises()
+
+    expect(wrapper.findComponent(ConversationStarter).props('presetAgentMember')).toMatchObject({ id: 'wam-1' })
   })
 
   it('renders no team UI and issues no member query for a personal space (AC-23)', async () => {

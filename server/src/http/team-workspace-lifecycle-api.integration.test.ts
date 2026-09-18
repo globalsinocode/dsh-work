@@ -19,6 +19,8 @@ import { PostgresContentService } from '../modules/workbench/application/postgre
 import { PostgresConversationRepository } from '../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresWorkspaceLifecycleService } from '../modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
+import { PostgresWorkspaceAgentMemberService } from '../modules/workbench/application/postgres-workspace-agent-member-service.ts'
+import type { PostgresAgentService } from '../modules/agent/postgres-agent-service.ts'
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './workbench/workspace-lifecycle-routes.ts'
@@ -37,6 +39,7 @@ let authorization: PostgresAuthorizationService
 let content: PostgresContentService
 let lifecycle: PostgresWorkspaceLifecycleService
 let members: PostgresWorkspaceMemberService
+let agentMembers: PostgresWorkspaceAgentMemberService
 let conversations: PostgresConversationRepository
 let runs: PostgresRunRepository
 let orchestration: RunOrchestrationService
@@ -64,6 +67,12 @@ before(async () => {
   content = new PostgresContentService(database, storageRoot, authorization)
   lifecycle = new PostgresWorkspaceLifecycleService(database)
   members = new PostgresWorkspaceMemberService(database, authorization)
+  // TW-10：团队会话 startRun 必须经 Agent 成员关联解析固定版本。
+  agentMembers = new PostgresWorkspaceAgentMemberService(
+    database,
+    authorization,
+    undefined as unknown as PostgresAgentService,
+  )
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
   runtime = new FakeRuntime()
@@ -77,6 +86,7 @@ before(async () => {
     undefined,
     undefined,
     authorization,
+    { agentMembers },
   )
 
   const router = new Router({ authenticateApi: testApiAuthenticator })
@@ -470,7 +480,7 @@ test('默认返回全部（含归档）且只含有权访问的空间；筛选�
 // ---------------------------------------------------------------------------
 
 test('并发互斥：归档与开跑最多一方成功，归档空间内不得存在活动 Run', async () => {
-  const { ws, ownerId, userId, sessionId } = await seedRunnableWorkspace('race-start')
+  const { ws, ownerId, userId, sessionId, agentMemberId } = await seedRunnableWorkspace('race-start')
 
   const [archiveResult, startResult] = await Promise.allSettled([
     lifecycle.archiveWorkspace(ws, ownerId),
@@ -479,6 +489,7 @@ test('并发互斥：归档与开跑最多一方成功，归档空间内不得�
       sessionId,
       prompt: '并发开跑',
       idempotencyKey: `${ws}-race-start`,
+      workspaceAgentMemberId: agentMemberId,
     }),
   ])
   await new Promise(resolve => setTimeout(resolve, 150))
@@ -621,7 +632,7 @@ test('并发互斥：开跑必须先取得空间行锁（外部持锁时不得�
 })
 
 test('并发互斥：归档先提交时，随后创建 Run 必须被拒绝且不落库', async () => {
-  const { ws, ownerId, userId, sessionId } = await seedRunnableWorkspace('race-archive-first')
+  const { ws, ownerId, userId, sessionId, agentMemberId } = await seedRunnableWorkspace('race-archive-first')
 
   let reachedCreateRun = false
   let release: () => void = () => undefined
@@ -649,6 +660,7 @@ test('并发互斥：归档先提交时，随后创建 Run 必须被拒绝且不
     undefined,
     undefined,
     authorization,
+    { agentMembers },
   )
 
   try {
@@ -657,6 +669,7 @@ test('并发互斥：归档先提交时，随后创建 Run 必须被拒绝且不
       sessionId,
       prompt: '归档后不得开跑',
       idempotencyKey: `${ws}-archive-first`,
+      workspaceAgentMemberId: agentMemberId,
     })
     await waitFor(() => reachedCreateRun, '开跑到达创建 Run 的临界点')
 
@@ -920,10 +933,13 @@ async function seedRunnableWorkspace(prefix: string) {
   await seedUser(userId, `${prefix} 成员`)
   await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId, role: 'member' }])
   await seedAgent(ws, versionId)
-  await grantAgentVersion(ws, versionId)
+  // TW-10：经真实加入路径写 Agent 成员——同事务落 workspace_agent_members +
+  // agent_member 授权来源 + workspace_capability_grants，与生产授权模型一致；
+  // 直接插行会缺 grant source，测不到派发前复核依赖的授权链路。
+  const member = await agentMembers.addAgentMember(ws, `${ws}-agent`, ownerId, ['role-employee'])
   const sessionId = `${ws}-session`
   await createSessionRow(sessionId, ws, userId, versionId)
-  return { ws, ownerId, userId, versionId, sessionId }
+  return { ws, ownerId, userId, versionId, sessionId, agentMemberId: member.id }
 }
 
 async function archiveViaSql(workspaceId: string) {

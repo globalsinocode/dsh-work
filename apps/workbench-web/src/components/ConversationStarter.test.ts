@@ -10,8 +10,16 @@ import type { Workspace, WorkspaceFile } from '@/types/domain'
 import ConversationStarter from './ConversationStarter.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ createSession: vi.fn() }))
 
 vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => ({ query: {} }) }))
+vi.mock('@/api/client', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/api/client')>()
+  return {
+    ...mod,
+    workbenchApi: { ...mod.workbenchApi, createSession: apiMocks.createSession },
+  }
+})
 
 /** 完整 Workspace 夹具（`status` 已为必填字段，3-T3 收紧）。 */
 function wsFixture(overrides: Partial<Workspace> = {}): Workspace {
@@ -120,6 +128,55 @@ describe('ConversationStarter', () => {
     )
   })
 
+  it('auto-selects the only startable Agent member even when the parent passes no preset', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链团队',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1'],
+        mentionOptions: [{ id: 'wam-1', name: '订单分析助手' }],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const taskStore = useTaskStore(pinia)
+    const createTask = vi.spyOn(taskStore, 'createTask').mockResolvedValue({ id: 'run-test' } as never)
+
+    expect(wrapper.find('[data-testid="preset-agent-member"]').text()).toContain('订单分析助手')
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '分析订单波动', files: [], workspaceId: 'ws-team', mentions: [],
+    })
+    await flushPromises()
+
+    expect(createTask).toHaveBeenCalledWith(
+      '分析订单波动', [], 'ws-team', '供应链团队', undefined, [], undefined, 'wam-1',
+    )
+  })
+
+  it('does not auto-select when multiple startable Agent members are available', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链团队',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1', 'wam-2'],
+        mentionOptions: [
+          { id: 'wam-1', name: '订单分析助手' },
+          { id: 'wam-2', name: '库存助手' },
+        ],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+
+    expect(wrapper.find('[data-testid="preset-agent-member"]').exists()).toBe(false)
+  })
+
   it('does not send a team Agent member id for personal conversations (AC-23)', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -155,7 +212,7 @@ describe('ConversationStarter', () => {
     )
   })
 
-  it('团队空间未选中可用 Agent 成员时阻止提交并给出引导', async () => {
+  it('团队空间无 @ 且未预选 Agent 时创建讨论会话，不产生 Run（TW-10）', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(ConversationStarter, {
@@ -169,21 +226,101 @@ describe('ConversationStarter', () => {
       global: { plugins: [pinia, ElementPlus] },
     })
     const taskStore = useTaskStore(pinia)
-    const createTask = vi.spyOn(taskStore, 'createTask').mockResolvedValue({ id: 'run-test' } as never)
+    const createTask = vi.spyOn(taskStore, 'createTask')
+    const postSessionMessage = vi.spyOn(taskStore, 'postSessionMessage')
+      .mockResolvedValue({ messageId: 'msg-1', sessionId: 'session-new' })
+    apiMocks.createSession.mockResolvedValue({
+      id: 'session-new',
+      workspaceId: 'ws-team',
+      agentVersionId: null,
+      title: '帮我看看库存',
+      createdAt: '2026-09-18T00:00:00.000Z',
+    })
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="composer-blocked"]').text()).toContain('开始对话')
-    const send = wrapper.find('.composer__send')
-    expect(send.attributes('disabled')).toBeDefined()
+    // 可写成员不再被「必须先选 Agent」挡住：直接发言即开启共享讨论。
+    expect(wrapper.find('[data-testid="composer-blocked"]').exists()).toBe(false)
 
-    // 即使强行触发 submit 也不得发起请求（后端只接受带关联 ID 的团队会话）。
     wrapper.findComponent(TaskComposer).vm.$emit('submit', {
       prompt: '帮我看看库存',
       files: [],
       workspaceId: 'ws-team',
+      mentions: [],
+    })
+    await flushPromises()
+    expect(apiMocks.createSession).toHaveBeenCalledWith({ title: '帮我看看库存', workspaceId: 'ws-team' })
+    expect(postSessionMessage).toHaveBeenCalledWith('session-new', '帮我看看库存')
+    expect(createTask).not.toHaveBeenCalled()
+    expect(router.push).toHaveBeenCalledWith('/conversations/session-new')
+  })
+
+  it('文本中 @ 的 Agent 成员优先于预选并进入 startRun（TW-10）', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链空间',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1', 'wam-9'],
+        presetAgentMember: { id: 'wam-1', name: '订单分析助手', status: 'available' },
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const taskStore = useTaskStore(pinia)
+    const createTask = vi.spyOn(taskStore, 'createTask').mockResolvedValue({ id: 'run-test' } as never)
+    await flushPromises()
+
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '@欠料追踪助手 查一下延期',
+      files: [],
+      workspaceId: 'ws-team',
+      mentions: ['wam-9'],
+    })
+    await flushPromises()
+    expect(createTask).toHaveBeenCalledWith(
+      '@欠料追踪助手 查一下延期',
+      [],
+      'ws-team',
+      '供应链空间',
+      undefined,
+      [],
+      undefined,
+      'wam-9',
+    )
+  })
+
+  it('只读成员在团队空间不能发言或发起执行（TW-10 只读口径）', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链空间',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        canDiscuss: false,
+        startableAgentMemberIds: ['wam-1'],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const taskStore = useTaskStore(pinia)
+    const createTask = vi.spyOn(taskStore, 'createTask')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="composer-blocked"]').text()).toContain('只读')
+    expect(wrapper.find('.composer__send').attributes('disabled')).toBeDefined()
+
+    wrapper.findComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '帮我看看库存',
+      files: [],
+      workspaceId: 'ws-team',
+      mentions: [],
     })
     await flushPromises()
     expect(createTask).not.toHaveBeenCalled()
+    expect(apiMocks.createSession).not.toHaveBeenCalled()
   })
 
   it('团队空间选中可用 Agent 成员后解除阻止并带上关联 ID', async () => {

@@ -71,6 +71,12 @@ const props = withDefaults(
     currentUserRole?: TeamMemberRole | null
     /** Agent 成员摘要：由宿主按既有 T4 接口加载后传入，面板自身不发请求。 */
     agentMembers?: WorkspaceAgentMemberInfo[]
+    /**
+     * 当前新对话已预选的 Agent 成员 id（TW-02：行内预选或唯一成员默认选中）。
+     * 该成员行显示「使用中」而不再给出「开始对话」链接——入口的职责是选择
+     * Agent，已完成的选择不应再渲染成待办操作；其它可发起成员仍保留入口。
+     */
+    activeAgentMemberId?: string
     /** 最近动态摘要（最多 3 条）：由宿主加载后传入。 */
     activityItems?: WorkspaceActivityInfo[]
     /** 摘要首屏加载中。 */
@@ -96,6 +102,7 @@ const props = withDefaults(
     collapsible: false,
     currentUserRole: null,
     agentMembers: () => [],
+    activeAgentMemberId: '',
     activityItems: () => [],
     activityLoading: false,
     activityError: false,
@@ -319,8 +326,15 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
               :aria-label="`Agent 状态：${agentStatusLabel(agent)}`"
             />
           </el-tooltip>
+          <span
+            v-if="agent.id === activeAgentMemberId && canStartAgentConversation(agent)"
+            data-testid="panel-agent-active"
+            class="workspace-agent__active"
+          >
+            使用中
+          </span>
           <el-button
-            v-if="canStartAgentConversation(agent)"
+            v-else-if="canStartAgentConversation(agent)"
             data-testid="panel-agent-start"
             link
             type="primary"
@@ -783,6 +797,12 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 /* 第三态「不可用」（available + 原因）：红点，tooltip 展示具体原因。 */
 .workspace-agent__status--danger {
   background: var(--dsh-color-danger);
+}
+
+/* 已预选为新对话成员的 Agent：状态文案代替「开始对话」操作入口。 */
+.workspace-agent__active {
+  color: #176750;
+  font-size: var(--dsh-font-size-micro);
 }
 
 .workspace-info-panel__empty {

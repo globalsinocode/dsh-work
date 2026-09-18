@@ -59,6 +59,14 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** 该消息所属的 Run；共享讨论消息为 null。 */
+  runId?: string | null
+  /** TW-10 共享讨论归因：用户消息作者；assistant 消息记录触发人与 Agent。 */
+  senderId?: string
+  senderName?: string
+  runRequesterId?: string
+  runRequesterName?: string
+  agentName?: string
 }
 
 export interface TaskRun {
@@ -69,6 +77,9 @@ export interface TaskRun {
   status: RunStatus
   workspaceId: string
   workspaceName: string
+  /** Run 所属空间类型/状态，供客户端按服务端事实判定团队共享与归档只读。 */
+  workspaceType?: 'personal' | 'team'
+  workspaceStatus?: 'active' | 'archived'
   sessionId: string
   agentVersion: string
   createdAt: string
@@ -76,6 +87,10 @@ export interface TaskRun {
   duration?: string
   tokenUsage?: number
   owner: string
+  /** 触发人用户 id（TW-10 共享线程里用于区分「我发起的」与他人发起的 Run）。 */
+  requestedBy: string
+  /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
+  currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]
   steps: RunStep[]
   sources: TaskSource[]

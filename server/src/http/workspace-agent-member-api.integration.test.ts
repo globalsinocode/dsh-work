@@ -91,6 +91,7 @@ before(async () => {
     agents,
     undefined,
     authorization,
+    { agentMembers },
   )
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerContentRoutes(router, content, authorization, agentMembers)
@@ -623,12 +624,13 @@ test('停用撤销本成员授权来源并写入事件，共享工具授权由�
   assert.deepEqual(event?.payload, { agentMemberId: wamA, agentId: agentA.id })
   assert.ok(event?.payloadHash && /^[0-9a-f]{32}$/.test(event?.payloadHash ?? ''))
 
-  // 停用后新会话启动被阻止并给出具体原因（TW-02）。
+  // 停用后新会话启动被阻止并给出具体原因（TW-02）。成员不可用是类型化授权
+  // 拒绝（403），与 requireTeamRole 等成员写轨同口径。
   const start = await api('POST', '/api/workbench/v1/sessions', {
     as: memberId,
     body: { title: '停用后启动', workspaceId, workspaceAgentMemberId: wamA },
   })
-  assert.equal(start.status, 409)
+  assert.equal(start.status, 403)
   assert.match(errorMessage(start), /不能发起/)
 
   // B 的会话仍可启动（共享工具授权未被误删）。
@@ -995,7 +997,7 @@ test('移出撤销授权来源并写入 agent_removed 事件，新会话被阻�
     as: memberId,
     body: { title: '移出后启动', workspaceId, workspaceAgentMemberId: wamId },
   })
-  assert.equal(start.status, 409)
+  assert.equal(start.status, 403)
   assert.match(errorMessage(start), /不能发起/)
 
   const removeAgain = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId })
@@ -1105,7 +1107,7 @@ test('成员变更操作在服务层重新校验负责人角色（TOCTOU）', as
 // 团队会话启动
 // ---------------------------------------------------------------------------
 
-test('团队空间会话必须通过 Agent 成员关联发起：缺关联、跨空间关联与原始版本不匹配均被拒绝', async () => {
+test('团队空间会话：缺关联创建共享讨论（TW-10），跨空间关联与原始版本不匹配仍被拒绝', async () => {
   const workspaceId = 'ws-1a-session-team'
   const otherWorkspaceId = 'ws-1a-session-other'
   const ownerId = 'user-1a-ses-owner'
@@ -1148,13 +1150,23 @@ test('团队空间会话必须通过 Agent 成员关联发起：缺关联、跨�
   assert.equal(session.workspaceId, workspaceId)
   assert.equal(session.agentVersionId, agent.versionId)
 
-  // 缺关联字段：拒绝并提示必须通过 Agent 成员关联发起。
+  // 缺关联字段（TW-10）：不再拒绝——创建不绑定 Agent 的共享讨论会话，
+  // 普通消息不产生 Run，@Agent 成员时才按固定版本发起执行。
   const omitted = await api('POST', '/api/workbench/v1/sessions', {
     as: memberId,
     body: { title: '缺关联', workspaceId },
   })
-  assert.equal(omitted.status, 422)
-  assert.match(errorMessage(omitted), /团队空间对话必须通过 Agent 成员关联发起/)
+  assert.equal(omitted.status, 201)
+  assert.equal((omitted.body.data as { agentVersionId: string | null }).agentVersionId, null)
+
+  // 只传 agentId 不传成员关联（TW-10）：有歧义的输入，明确 422 而不是静默
+  // 创建未绑定会话让 Agent 绑定意图被吞掉。
+  const rawOnly = await api('POST', '/api/workbench/v1/sessions', {
+    as: memberId,
+    body: { title: '只传原始 agentId', workspaceId, agentId: agent.id },
+  })
+  assert.equal(rawOnly.status, 422)
+  assert.match(errorMessage(rawOnly), /不能单独使用 agentId/)
 
   // 携带原始 agentId 解析出的版本（v2）与成员固定版本（v1）不一致：拒绝。
   const rawMismatch = await api('POST', '/api/workbench/v1/sessions', {
@@ -1164,12 +1176,13 @@ test('团队空间会话必须通过 Agent 成员关联发起：缺关联、跨�
   assert.equal(rawMismatch.status, 422)
   assert.match(errorMessage(rawMismatch), /团队空间对话必须通过 Agent 成员关联发起/)
 
-  // 跨空间关联：拒绝。
+  // 跨空间关联：类型化授权拒绝（403），不区分「不存在」与「不属于该空间」，
+  // 避免成员 id 存在性可枚举。
   const crossWorkspace = await api('POST', '/api/workbench/v1/sessions', {
     as: ownerId,
     body: { title: '跨空间关联', workspaceId: otherWorkspaceId, workspaceAgentMemberId: wamId },
   })
-  assert.equal(crossWorkspace.status, 404)
+  assert.equal(crossWorkspace.status, 403)
   assert.match(errorMessage(crossWorkspace), /不存在或不属于/)
 
   assert.ok(v2Id)

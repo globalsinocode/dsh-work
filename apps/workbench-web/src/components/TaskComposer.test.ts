@@ -11,6 +11,16 @@ function mountComposer(props: Record<string, unknown> = {}) {
   })
 }
 
+function submitPayload(wrapper: ReturnType<typeof mountComposer>) {
+  return wrapper.emitted('submit')?.[0]?.[0] as {
+    prompt: string
+    files: File[]
+    workspaceId: string
+    mentions: string[]
+    confirm: () => void
+  }
+}
+
 describe('TaskComposer', () => {
   it('keeps submit unavailable for empty input and while a request is in flight', async () => {
     const empty = mountComposer()
@@ -43,7 +53,7 @@ describe('TaskComposer', () => {
     expect(stop.attributes('aria-busy')).toBe('true')
   })
 
-  it('submits a trimmed prompt with the locked workspace context and then clears input', async () => {
+  it('submits a trimmed prompt and clears input only after the parent confirms', async () => {
     const wrapper = mountComposer({
       initialWorkspaceId: 'ws-supply',
       initialWorkspaceName: '供应链经营分析',
@@ -53,11 +63,31 @@ describe('TaskComposer', () => {
     await input.setValue('  汇总本周延期订单  ')
     await wrapper.get('[aria-label="发送消息"]').trigger('click')
 
-    expect(wrapper.emitted('submit')).toEqual([[
-      { prompt: '汇总本周延期订单', files: [], workspaceId: 'ws-supply' },
-    ]])
+    const payload = submitPayload(wrapper)
+    expect(payload).toMatchObject({ prompt: '汇总本周延期订单', files: [], workspaceId: 'ws-supply', mentions: [] })
+    // 父级确认前保留草稿——异步失败（上传/建 Run/发消息）时输入不得丢失。
+    expect(input.element.value).toBe('  汇总本周延期订单  ')
+
+    payload.confirm()
+    await wrapper.vm.$nextTick()
     expect(input.element.value).toBe('')
     expect(wrapper.text()).toContain('供应链经营分析')
+  })
+
+  it('keeps prompt and attachments when the parent never confirms (async failure)', async () => {
+    const wrapper = mountComposer({ initialPrompt: '看看这个文件' })
+    const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['库存'], '库存计划.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(wrapper.emitted('submit')).toHaveLength(1)
+    expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).toBe('看看这个文件')
+    expect(wrapper.text()).toContain('库存计划.xlsx')
   })
 
   it('submits with Enter and keeps Shift+Enter available for a new line', async () => {
@@ -114,6 +144,103 @@ describe('TaskComposer', () => {
 
     await wrapper.get('[aria-label="移除已选择 Skill"]').trigger('click')
     expect(wrapper.emitted('clear-skill')).toEqual([[]])
+  })
+
+  it('keeps prompt and attachments when files require an @Agent mention (TW-10)', async () => {
+    const wrapper = mountComposer({
+      initialPrompt: '看看这个文件',
+      filesRequireMention: true,
+      mentionOptions: [{ id: 'wam-1', name: '欠料追踪助手' }],
+    })
+    const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['库存'], '库存计划.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).toBe('看看这个文件')
+    expect(wrapper.text()).toContain('库存计划.xlsx')
+  })
+
+  it('only resolves @mentions at a token boundary, not inside words', async () => {
+    const mentionOptions = [{ id: 'wam-1', name: '助手' }]
+    const embedded = mountComposer({ mentionOptions })
+    await embedded.get<HTMLTextAreaElement>('[aria-label="对话输入"]').setValue('发到 user@助手 邮箱')
+    await embedded.get('[aria-label="发送消息"]').trigger('click')
+    expect(submitPayload(embedded).mentions).toEqual([])
+
+    const boundary = mountComposer({ mentionOptions })
+    await boundary.get<HTMLTextAreaElement>('[aria-label="对话输入"]').setValue('请 @助手 查一下')
+    await boundary.get('[aria-label="发送消息"]').trigger('click')
+    expect(submitPayload(boundary).mentions).toEqual(['wam-1'])
+  })
+
+  it('resolves duplicate agent names deterministically to the first listed member', async () => {
+    const wrapper = mountComposer({
+      mentionOptions: [
+        { id: 'wam-1', name: '助手' },
+        { id: 'wam-2', name: '助手' },
+      ],
+    })
+    await wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').setValue('@助手 汇总')
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(submitPayload(wrapper).mentions).toEqual(['wam-1'])
+  })
+
+  it('does not let a duplicate-name mention selection drift after the token moves', async () => {
+    const wrapper = mountComposer({
+      mentionOptions: [
+        { id: 'wam-1', name: '助手' },
+        { id: 'wam-2', name: '助手' },
+      ],
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.setValue('@')
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.composer__mention-option')[1]!.trigger('mousedown')
+    expect(input.element.value).toBe('@助手 ')
+
+    await input.setValue('前缀 @助手 汇总')
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(submitPayload(wrapper).mentions).toEqual(['wam-1'])
+  })
+
+  it('keeps an explicitly selected duplicate mention at its recorded position', async () => {
+    const wrapper = mountComposer({
+      mentionOptions: [
+        { id: 'wam-1', name: '助手' },
+        { id: 'wam-2', name: '助手' },
+      ],
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.setValue('@')
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.composer__mention-option')[1]!.trigger('mousedown')
+
+    await input.setValue('@助手 汇总')
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(submitPayload(wrapper).mentions).toEqual(['wam-2'])
+  })
+
+  it('drops a selected mention when its @ token is edited into a word', async () => {
+    const wrapper = mountComposer({ mentionOptions: [{ id: 'wam-1', name: '助手' }] })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.setValue('@')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.composer__mention-option').trigger('mousedown')
+    expect(input.element.value).toBe('@助手 ')
+
+    await input.setValue('发给 user@助手 邮箱')
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+
+    expect(submitPayload(wrapper).mentions).toEqual([])
   })
 
   it('defaults to the personal workspace and never offers an unassigned conversation', () => {

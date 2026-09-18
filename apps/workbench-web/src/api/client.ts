@@ -7,6 +7,7 @@ import type {
   AutomationInputTemplate,
   AutomationSchedule,
   MemberCandidatePage,
+  SessionThread,
   TaskRun,
   TeamMemberRole,
   WorkbenchAgent,
@@ -121,7 +122,8 @@ export const workbenchApi = {
   getSkills: () => request<WorkbenchSkill[]>('/skills'),
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
   createSession: (input: { title: string; workspaceId?: string; agentId?: string; skillId?: string; workspaceAgentMemberId?: string }) =>
-    request<{ id: string; workspaceId: string; agentVersionId: string; title: string; createdAt: string }>('/sessions', {
+    // TW-10：团队讨论会话可为 null（首次 @Agent 前不绑定 Agent）。
+    request<{ id: string; workspaceId: string; agentVersionId: string | null; title: string; createdAt: string }>('/sessions', {
       method: 'POST',
       body: JSON.stringify(input),
     }),
@@ -129,7 +131,20 @@ export const workbenchApi = {
     `/sessions/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
   ),
-  startRun: (sessionId: string, input: { prompt: string; idempotencyKey: string; fileIds?: string[] }) =>
+  /** TW-10：团队会话共享线程（全员可读的消息流 + Run 列表 + 归因）。 */
+  getSessionThread: (sessionId: string) =>
+    request<SessionThread>(`/sessions/${encodeURIComponent(sessionId)}`),
+  /** TW-10：不产生 Run 的讨论消息（仅团队空间会话）。 */
+  postSessionMessage: (sessionId: string, content: string) =>
+    request<{ messageId: string; sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
+  /**
+   * 在会话中发起一次执行。团队会话按消息绑定 Agent 成员（@ 触发），传
+   * `workspaceAgentMemberId`；个人会话沿用会话绑定版本，忽略该字段。
+   */
+  startRun: (sessionId: string, input: { prompt: string; idempotencyKey: string; fileIds?: string[]; workspaceAgentMemberId?: string }) =>
     request<TaskRun>(`/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -188,6 +203,11 @@ export const workbenchApi = {
       body: file,
     },
   ),
+  deleteSessionFile: (sessionId: string, fileId: string) =>
+    request<{ id: string; removed: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}`,
+      { method: 'DELETE' },
+    ),
   /**
    * 逻辑文件的全部版本（TW-07 / 3-T9，读取轨：归档空间的现任成员仍可查看）。
    * 服务端按版本号倒序返回**含失败版本**的全部版本；`current` 与 `canDownload`

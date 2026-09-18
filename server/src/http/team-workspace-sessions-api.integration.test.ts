@@ -157,9 +157,20 @@ test('团队 Session 列表对所有成员可读，非成员被拒绝，个人�
     assert.equal(result.status, 200, `${userId} 应可读取团队会话列表`)
   }
 
-  // 列表固定为本人范围（TW-03 本人历史列表）：成员看不到别人发起的会话。
+  // TW-10 共享讨论：团队会话全员可见，成员也能看到负责人发起的会话。
   const asMember = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/sessions`, { as: memberId })
-  assert.deepEqual((asMember.body.data as { items: unknown[] }).items, [], '成员本人尚无会话时为空')
+  assert.deepEqual(
+    (asMember.body.data as { items: Array<{ sessionId: string }> }).items.map(item => item.sessionId),
+    [sessionId],
+    '成员可读负责人发起的共享会话',
+  )
+  // 只读成员同样可读。
+  const asViewer = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/sessions`, { as: viewerId })
+  assert.deepEqual(
+    (asViewer.body.data as { items: Array<{ sessionId: string }> }).items.map(item => item.sessionId),
+    [sessionId],
+    '只读成员可读共享会话',
+  )
 
   const outsider = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/sessions`, { as: outsiderId })
   assert.equal(outsider.status, 403, '非成员不得读取团队会话列表')
@@ -282,7 +293,7 @@ test('执行轨：归档团队空间拒绝新对话、续写与重试（3-T1 执
   // 续写：在既有活动会话上创建 Run 必须被拒绝（执行轨）。
   const startRun = await api('POST', `/api/workbench/v1/sessions/${sessionId}/runs`, {
     as: memberId,
-    body: { prompt: '归档后续写' },
+    body: { prompt: '归档后续写', idempotencyKey: `${sessionId}-archived-write` },
   })
   assert.notEqual(startRun.status, 202, '归档空间不得续写团队会话')
   assert.ok(startRun.status >= 400)

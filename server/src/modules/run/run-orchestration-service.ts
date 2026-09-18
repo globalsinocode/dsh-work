@@ -17,9 +17,12 @@ import type {
   SessionAuthorizationContext,
 } from '../authorization/postgres-authorization-service.ts'
 import {
+  authorizationDenied,
   isAuthorizationDenial,
   RequestValidationError,
+  requestInvalid,
 } from '../authorization/authorization-errors.ts'
+import type { PostgresWorkspaceAgentMemberService } from '../workbench/application/postgres-workspace-agent-member-service.ts'
 import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 
@@ -46,6 +49,7 @@ export class RunOrchestrationService {
   private readonly agents?: PostgresAgentService
   private readonly knowledge?: PostgresKnowledgeService
   private readonly authorization?: PostgresAuthorizationService
+  private readonly agentMembers?: PostgresWorkspaceAgentMemberService
 
   private readonly automationMaxConcurrent: number
   private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
@@ -62,6 +66,8 @@ export class RunOrchestrationService {
     authorization?: PostgresAuthorizationService,
     options?: {
       automationMaxConcurrent?: number
+      /** TW-10：团队会话 @Agent 触发时按成员关联解析固定版本。 */
+      agentMembers?: PostgresWorkspaceAgentMemberService
       /**
        * AG-03 执行前复核兜底：按 run_id 反查所属自动任务当前状态。
        * 暂停/停用后仍排在队列里的 Attempt 在领取后、调用 Runtime 前
@@ -79,6 +85,7 @@ export class RunOrchestrationService {
     this.agents = agents
     this.knowledge = knowledge
     this.authorization = authorization
+    this.agentMembers = options?.agentMembers
     this.automationMaxConcurrent = options?.automationMaxConcurrent ?? 2
     this.automationStatusLookup = options?.automationStatusLookup
   }
@@ -263,19 +270,20 @@ export class RunOrchestrationService {
       modelRouteSnapshot: JSON.parse(JSON.stringify(route)) as JsonObject,
     })
     this.pendingExecutions.push({ run, manifest })
-    void this.pumpScheduler()
+    this.triggerPump()
   }
 
   async createSession(input: {
     userId: string
-    title: string
+    title: unknown
     workspaceId?: string
-    agentVersionId?: string
+    /** TW-10：团队讨论会话传 null（首次 @Agent 前不绑定 Agent）。 */
+    agentVersionId?: string | null
     selectedSkillVersionId?: string
     selectedSkillReference?: string
     authorizationContext?: SessionAuthorizationContext
   }) {
-    assertPrompt(input.title)
+    const title = assertPrompt(input.title)
     const workspaceId = await this.conversations.resolveWorkspaceId(input.workspaceId, input.userId)
     if (this.authorization && input.agentVersionId) {
       await this.authorization.authorizeRuntime({
@@ -294,30 +302,125 @@ export class RunOrchestrationService {
     }
     return this.conversations.createSession({
       userId: input.userId,
-      title: input.title,
+      title,
       workspaceId,
       agentVersionId: input.agentVersionId,
       selectedSkillVersionId: input.selectedSkillVersionId,
     })
   }
 
+  /**
+   * Session access shared by read/write paths (TW-10). Team sessions are shared
+   * discussions: any current member may read; only non-viewer members may write
+   * (send messages, trigger runs). Archived team workspaces keep read access
+   * (3-T1 read track) while writes stay fail-closed. Personal/standalone
+   * sessions keep the creator-only gate.
+   */
+  private async requireSessionAccess(sessionId: string, userId: string, mode: 'read' | 'write') {
+    const session = await this.conversations.findSessionRow(sessionId)
+    if (!session) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    if (mode === 'write' && session.workspaceStatus !== 'active') {
+      throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    }
+    if (session.workspaceType === 'team' && this.authorization) {
+      await this.authorization.requireTeamRole(
+        session.workspaceId,
+        userId,
+        mode === 'write' ? ['owner', 'admin', 'member'] : ['owner', 'admin', 'member', 'viewer'],
+        mode === 'read' ? { purpose: 'read' } : {},
+      )
+    } else if (session.createdBy !== userId) {
+      throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    }
+    return session
+  }
+
+  /**
+   * Shared session detail (TW-10): any current team member reads the whole
+   * discussion thread (message sender + triggering requester + Agent
+   * attribution); personal sessions remain creator-only.
+   */
+  async getSessionThread(sessionId: string, userId: string) {
+    const session = await this.requireSessionAccess(sessionId, userId, 'read')
+    const thread = await this.conversations.getSessionThread(sessionId)
+    if (!thread) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    // 附带调用者的当前成员角色（读轨）：前端据此对只读成员禁用输入框；
+    // 个人会话恒为 null，可写性由 createdBy === userId 判断。
+    const currentUserRole = this.authorization
+      ? await this.authorization.teamRoleOf(session.workspaceId, userId)
+      : null
+    return { ...thread, currentUserRole }
+  }
+
+  /**
+   * Discussion message without a Run (TW-10): the message is persisted with
+   * sender attribution and run_id=null; it never invokes a model. Only
+   * non-viewer members of an active team workspace may post.
+   */
+  async postDiscussionMessage(input: { userId: string; sessionId: string; content: unknown }) {
+    if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
+    const content = input.content.trim()
+    if (!content) throw requestInvalid('消息内容不能为空')
+    if (content.length > 20_000) throw requestInvalid('消息长度必须为 1～20000 个字符')
+    const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
+    if (session.workspaceType !== 'team') throw requestInvalid('仅团队空间会话支持讨论消息')
+    const messageId = await this.conversations.appendMessage({
+      sessionId: session.id,
+      runId: null,
+      role: 'user',
+      content,
+      senderUserId: input.userId,
+    })
+    return { messageId, sessionId: session.id }
+  }
+
   async startRun(input: {
     userId: string
     sessionId: string
-    prompt: string
+    prompt: unknown
     idempotencyKey: string
     fileIds?: string[]
+    /**
+     * TW-10：团队会话按消息绑定 Agent 成员（@ 触发），成员固定版本即本次
+     * 执行的 Agent 版本；个人/独立会话忽略此字段，沿用会话绑定版本。
+     */
+    workspaceAgentMemberId?: string
     authorizationContext?: SessionAuthorizationContext
   }) {
-    assertPrompt(input.prompt)
-    const session = await this.conversations.requireSession(input.sessionId, input.userId)
+    const prompt = assertPrompt(input.prompt)
+    if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) {
+      throw requestInvalid('idempotencyKey 必须是非空字符串')
+    }
+    if (input.workspaceAgentMemberId !== undefined && typeof input.workspaceAgentMemberId !== 'string') {
+      throw requestInvalid('workspaceAgentMemberId 必须是字符串')
+    }
+    if (input.fileIds !== undefined && (!Array.isArray(input.fileIds) || input.fileIds.some(id => typeof id !== 'string'))) {
+      throw requestInvalid('fileIds 必须是文件标识数组')
+    }
+    const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
+    let agentVersionId = session.agentVersionId
+    if (session.workspaceType === 'team') {
+      // TW-10 @ 触发：团队会话每次执行都必须显式绑定当前可用的 Agent 成员；
+      // 不再回退到会话级 agentVersionId，避免历史绑定绕过成员状态复核。
+      if (!input.workspaceAgentMemberId || !this.agentMembers) {
+        throw requestInvalid('团队空间对话必须通过 @Agent 成员发起执行')
+      }
+      agentVersionId = (
+        await this.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, input.workspaceAgentMemberId)
+      ).agentVersionId
+    }
+    if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法发起执行')
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []
+    // 受理授权与执行前复核分工不变：此处只取能力交集（成员写轨与 Agent
+    // 成员状态已由 requireSessionAccess / requireAvailableAgentMemberVersion
+    // 在上方校验）；成员/授权在受理后被撤销的情形由调度前的
+    // authorizeTeamRunExecution 复核兜底。
     const authorization = await this.authorization?.authorizeRuntime({
       userId: input.userId,
       workspaceId: session.workspaceId,
-      agentVersionId: session.agentVersionId,
+      agentVersionId,
       additionalSkillReferences,
       ...input.authorizationContext,
     })
@@ -339,15 +442,16 @@ export class RunOrchestrationService {
       sessionId: session.id,
       runId: run.id,
       role: 'user',
-      content: input.prompt.trim(),
+      content: prompt,
+      senderUserId: input.userId,
       messageId: `message-user-${run.id}`,
     })
     await this.failUndispatchedRun(run, async () => {
       const history = await this.conversations.getConversationHistory(session.id, run.id)
       await this.dispatch(run, {
-        prompt: input.prompt,
+        prompt,
         workspaceId: session.workspaceId,
-        agentVersionId: session.agentVersionId,
+        agentVersionId,
         userId: input.userId,
         fileIds: input.fileIds ?? [],
         preparedFiles,
@@ -362,7 +466,7 @@ export class RunOrchestrationService {
 
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
-    const run = await this.requireOwnedRun(runId, userId)
+    const run = await this.requireWritableRun(runId, userId)
     if (!['queued', 'running', 'cancel_requested'].includes(run.status)) return run
     const result = await this.runtime.cancel(runId, userId)
     await this.operations?.appendAudit(userId, 'run.cancel.request', runId, 'success', `trace-${runId}`, '员工请求取消当前 Attempt')
@@ -375,7 +479,7 @@ export class RunOrchestrationService {
 
   /**
    * System-side cancellation for the revocation pipeline (1A-T5). Deliberately
-   * NOT ownership-gated: it must never call requireOwnedRun — a revoked
+   * NOT user-gated: it must never call requireWritableRun — a revoked
    * employee is by definition not the actor here. Idempotent convergence by
    * state, mirroring the existing user cancel flow:
    * - terminal (succeeded/failed/cancelled): return the run unchanged;
@@ -460,7 +564,7 @@ export class RunOrchestrationService {
   }
 
   async retry(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
-    const run = await this.requireOwnedRun(runId, userId)
+    const run = await this.requireWritableRun(runId, userId)
     if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的 Run 可以重试')
     // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
     // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
@@ -468,17 +572,40 @@ export class RunOrchestrationService {
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
       throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
     }
-    const session = await this.conversations.requireSession(run.sessionId, userId)
+    const session = await this.conversations.findSessionRow(run.sessionId)
+    if (!session) throw authorizationDenied(`Session 不存在或不可访问：${run.sessionId}`)
+    const workspaceType = this.authorization
+      ? await this.authorization.workspaceTypeOf(session.workspaceId)
+      : null
+    // TW-10：共享会话按消息绑定 Agent——重试必须沿用原 Attempt Manifest 记录的
+    // 固定版本（requireWritableRun 已完成写轨校验）。会话级绑定对未绑定讨论串
+    // 恒为 null、对已绑定会话也可能与触发时成员版本漂移，不能回落；缺失即拒绝。
+    const manifestAgentVersionId = (lastAttempt?.manifest as RuntimeManifest | undefined)?.agent_version_id
+    const agentVersionId = workspaceType === 'team'
+      ? manifestAgentVersionId ?? null
+      : session.agentVersionId
+    if (workspaceType === 'team' && !manifestAgentVersionId) {
+      throw requestInvalid('原运行缺少 Agent 版本记录，无法重试；请重新 @Agent 发起执行')
+    }
+    if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法重试')
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []
-    const authorization = await this.authorization?.authorizeRuntime({
-      userId,
-      workspaceId: session.workspaceId,
-      agentVersionId: session.agentVersionId,
-      additionalSkillReferences,
-      ...authorizationContext,
-    })
+    const authorization = workspaceType === 'team'
+      ? await this.authorization?.authorizeTeamRunExecution({
+          userId,
+          workspaceId: session.workspaceId,
+          agentVersionId,
+          additionalSkillReferences,
+          ...authorizationContext,
+        })
+      : await this.authorization?.authorizeRuntime({
+          userId,
+          workspaceId: session.workspaceId,
+          agentVersionId,
+          additionalSkillReferences,
+          ...authorizationContext,
+        })
     const prompt = await this.conversations.getRunPrompt(run.id)
     const continued = await this.withContinuationOutputs(
       await this.conversations.getConversationHistory(session.id, run.id),
@@ -490,7 +617,7 @@ export class RunOrchestrationService {
       prompt,
       message: continued.message,
       workspaceId: session.workspaceId,
-      agentVersionId: session.agentVersionId,
+      agentVersionId,
       userId,
       fileIds,
       authorization,
@@ -529,6 +656,7 @@ export class RunOrchestrationService {
         runId: run.id,
         role: 'user',
         content: input.prompt,
+        senderUserId: input.userId,
         messageId: `message-user-${run.id}`,
       })
       await this.dispatch(run, {
@@ -1255,10 +1383,19 @@ export class RunOrchestrationService {
     if (run && run.status !== state) await this.runs.transitionRun(tenantId, runId, state)
   }
 
-  private async requireOwnedRun(runId: string, userId: string) {
+  /**
+   * Write-track gate for run mutations (cancel/retry). TW-10 shared sessions
+   * treat a Run as part of the shared discussion: any member with write-track
+   * role (owner/admin/member) may cancel or retry it — not only the original
+   * requester. requireSessionAccess('write') enforces the team role set and
+   * rejects viewers, removed members and archived workspaces; for
+   * personal/standalone sessions it still requires the session creator, so
+   * the personal-space contract is unchanged.
+   */
+  private async requireWritableRun(runId: string, userId: string) {
     const run = await this.runs.getRun(tenantId, runId)
-    if (!run || run.requestedBy !== userId) throw new Error(`Run 不存在或不可访问：${runId}`)
-    await this.conversations.requireSession(run.sessionId, userId)
+    if (!run) throw new Error(`Run 不存在或不可访问：${runId}`)
+    await this.requireSessionAccess(run.sessionId, userId, 'write')
     return run
   }
 }
@@ -1287,9 +1424,11 @@ function toRuntimeManifestSkill(skill: RuntimeSkillConfiguration): RuntimeManife
   return { ...base, instructions: skill.instructions, ...(skill.files ? { files: skill.files } : {}) }
 }
 
-function assertPrompt(prompt: string) {
-  const length = prompt.trim().length
-  if (length < 1 || length > 20_000) throw new Error('消息长度必须为 1～20000 个字符')
+function assertPrompt(prompt: unknown) {
+  if (typeof prompt !== 'string') throw requestInvalid('消息内容必须是字符串')
+  const value = prompt.trim()
+  if (value.length < 1 || value.length > 20_000) throw requestInvalid('消息长度必须为 1～20000 个字符')
+  return value
 }
 
 function toCapabilityReference(reference: string) {

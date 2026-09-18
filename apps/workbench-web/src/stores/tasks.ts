@@ -69,44 +69,96 @@ export const useTaskStore = defineStore('tasks', () => {
     workspaceAgentMemberId?: string,
   ) {
     void _workspaceName
+    // TW-10：团队会话保持未绑定的共享讨论形态（agentVersionId 为 null），
+    // Agent 成员关联随首条触发消息进入 startRun，而不是固定到会话上。
     const session = await workbenchApi.createSession({
       title: prompt,
       ...(workspaceId ? { workspaceId } : {}),
       ...(agentId ? { agentId } : {}),
       ...(skillId ? { skillId } : {}),
-      // 团队分支：服务端据此解析获准的 Agent 版本（plan TW-02 发起对话）。
-      ...(workspaceAgentMemberId ? { workspaceAgentMemberId } : {}),
     })
-    const uploadedFileIds = await uploadSessionFiles(session.id, attachments)
-    const fileIds = [...new Set([...referencedFileIds, ...uploadedFileIds])]
-    const task = await workbenchApi.startRun(session.id, {
+    const task = await startRunWithSessionFiles(session.id, {
       prompt,
-      idempotencyKey: crypto.randomUUID(),
-      fileIds,
+      attachments,
+      referencedFileIds,
+      workspaceAgentMemberId,
     })
-    upsert(task)
     subscribe(task.id)
     return task
   }
 
-  async function sendMessage(id: string, prompt: string, attachments: File[]) {
+  async function sendMessage(id: string, prompt: string, attachments: File[], workspaceAgentMemberId?: string) {
     const current = getTask(id)
     if (!current) return undefined
-    const fileIds = await uploadSessionFiles(current.sessionId, attachments)
-    const task = await workbenchApi.startRun(current.sessionId, {
+    const task = await startRunWithSessionFiles(current.sessionId, {
       prompt,
-      idempotencyKey: crypto.randomUUID(),
-      fileIds,
+      attachments,
+      workspaceAgentMemberId,
     })
-    upsert(task)
     subscribe(task.id)
     return task
+  }
+
+  /**
+   * TW-10 讨论消息：不产生 Run，仅写入共享消息流。返回后由调用方刷新线程。
+   */
+  async function postSessionMessage(sessionId: string, content: string) {
+    return workbenchApi.postSessionMessage(sessionId, content)
+  }
+
+  /** TW-10：按会话加载共享线程（成员可读他人发起的团队会话）。 */
+  async function loadSessionThread(sessionId: string) {
+    return workbenchApi.getSessionThread(sessionId)
   }
 
   async function uploadSessionFiles(sessionId: string, attachments: File[]) {
-    const uploaded = []
-    for (const file of attachments) uploaded.push(await workbenchApi.uploadSessionFile(sessionId, file))
-    return uploaded.map(file => file.id)
+    const results = await Promise.allSettled(
+      attachments.map(file => workbenchApi.uploadSessionFile(sessionId, file)),
+    )
+    const fileIds: string[] = []
+    const failedNames: string[] = []
+    results.forEach((result, index) => {
+      const id = result.status === 'fulfilled' ? result.value.id : ''
+      if (id) fileIds.push(id)
+      else failedNames.push(attachments[index]?.name ?? '未知文件')
+    })
+    if (failedNames.length) {
+      const error = new Error(`文件上传失败：${failedNames.join('、')}，请重新发送`) as Error & { uploadedFileIds: string[] }
+      error.uploadedFileIds = fileIds
+      throw error
+    }
+    return fileIds
+  }
+
+  async function discardSessionFiles(sessionId: string, fileIds: string[]) {
+    await Promise.allSettled(fileIds.map(fileId => workbenchApi.deleteSessionFile(sessionId, fileId)))
+  }
+
+  async function startRunWithSessionFiles(sessionId: string, input: {
+    prompt: string
+    attachments: File[]
+    referencedFileIds?: string[]
+    workspaceAgentMemberId?: string
+  }) {
+    let uploadedFileIds: string[] = []
+    try {
+      uploadedFileIds = await uploadSessionFiles(sessionId, input.attachments)
+      const task = await workbenchApi.startRun(sessionId, {
+        prompt: input.prompt,
+        idempotencyKey: crypto.randomUUID(),
+        fileIds: [...new Set([...(input.referencedFileIds ?? []), ...uploadedFileIds])],
+        ...(input.workspaceAgentMemberId ? { workspaceAgentMemberId: input.workspaceAgentMemberId } : {}),
+      })
+      if (!task) throw new Error('Run 创建失败')
+      upsert(task)
+      return task
+    } catch (error) {
+      const partialUploadIds = error instanceof Error && 'uploadedFileIds' in error
+        ? (error as Error & { uploadedFileIds?: string[] }).uploadedFileIds ?? []
+        : []
+      await discardSessionFiles(sessionId, uploadedFileIds.length ? uploadedFileIds : partialUploadIds)
+      throw error
+    }
   }
 
   async function cancelTask(id: string) {
@@ -178,13 +230,15 @@ export const useTaskStore = defineStore('tasks', () => {
       const messageId = `${event.attempt_id}-streaming`
       const message = task.messages.find((item) => item.id === messageId)
       if (message) message.content += event.display_message
-      else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚' })
+      else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚', runId: event.run_id })
     }
     if (event.event_type === 'assistant.completed' && event.display_message) {
       const messageId = `${event.attempt_id}-streaming`
       const message = task.messages.find((item) => item.id === messageId)
-      if (message) message.content = event.display_message
-      else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚' })
+      if (message) {
+        message.content = event.display_message
+        message.runId = event.run_id
+      } else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚', runId: event.run_id })
     }
 
     if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
@@ -208,11 +262,12 @@ export const useTaskStore = defineStore('tasks', () => {
 
   async function refreshRun(runId: string) {
     const task = await workbenchApi.getRun(runId)
-    upsert(task)
+    if (task) upsert(task)
     return task
   }
 
-  function upsert(task: TaskRun) {
+  function upsert(task: TaskRun | null | undefined) {
+    if (!task) return
     const index = tasks.value.findIndex((item) => item.id === task.id)
     if (index >= 0) tasks.value.splice(index, 1, task)
     else tasks.value.unshift(task)
@@ -225,7 +280,9 @@ export const useTaskStore = defineStore('tasks', () => {
 
   return {
     tasks, loading, initialized, activeTasks, recentTasks, load, getTask,
-    createTask, sendMessage, cancelTask, retryTask, deleteConversation, refreshRun,
+    createTask, sendMessage, postSessionMessage, loadSessionThread, uploadSessionFiles,
+    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
+    upsert, subscribe,
   }
 })
 

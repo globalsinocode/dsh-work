@@ -99,6 +99,18 @@ const startableAgentMemberIds = computed(() => agentMembers.value
   .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
   .map(member => member.id))
 const presetAgentMember = ref<WorkspaceAgentMember | null>(null)
+/**
+ * 预选是否来自「唯一可发起成员」的自动回填（TW-02：只有一个可用 Agent 时可默认
+ * 选中）；用户在 Agent 区点「开始对话」的显式选择为 false，不会被自动逻辑改写。
+ */
+const presetAgentMemberAuto = ref(false)
+/**
+ * TW-10：输入框可 @ 的 Agent 成员（id + 名称），与 startableAgentMemberIds
+ * 同一过滤口径（可用 + allowedActions 含 start_conversation）。
+ */
+const startableMentionOptions = computed(() => agentMembers.value
+  .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
+  .map(member => ({ id: member.id, name: member.name })))
 
 /** 摘要固定取最新 3 条；抽屉分页 20 条（design §2.9 / TW-08）。 */
 const ACTIVITY_SUMMARY_LIMIT = 3
@@ -237,6 +249,15 @@ const canUploadFileVersions = computed(() =>
  * 入口（版本列表与下载仍保留）。
  */
 const canReferenceFileVersion = computed(() => isTeam.value && !isArchived.value)
+/**
+ * TW-10 共享讨论的写入口径：团队空间中非只读成员且空间未归档才可发言/触发
+ * 执行；角色未知（名册请求失败）时宁可漏开不可误开，与上传入口一致。
+ */
+const canWriteTeamContent = computed(() =>
+  isTeam.value
+  && !isArchived.value
+  && currentUserRole.value !== null
+  && currentUserRole.value !== 'viewer')
 /**
  * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
  * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
@@ -738,10 +759,31 @@ function startAgentConversation(agentMemberId: string) {
   const member = agentMembers.value.find(item => item.id === agentMemberId)
   if (!member) return
   presetAgentMember.value = member
+  presetAgentMemberAuto.value = false
   memberDialogOpen.value = false
   setConversationView('new')
   selectTab('conversation')
 }
+
+/**
+ * 唯一可发起 Agent 成员的自动预选（TW-02「只有一个可用 Agent 时可默认选中，但必须
+ * 明确显示身份」——身份由新对话区的预选横幅展示）。只在预选空缺或已失效时回填，
+ * 不覆盖用户仍有效的显式选择；自动预选在可选成员不再唯一时撤销，交还选择权。
+ */
+watch(startableAgentMemberIds, ids => {
+  const presetStartable = !!presetAgentMember.value && ids.includes(presetAgentMember.value.id)
+  if (ids.length === 1) {
+    if (!presetStartable) {
+      presetAgentMember.value = agentMembers.value.find(member => member.id === ids[0]) ?? null
+      presetAgentMemberAuto.value = true
+    }
+    return
+  }
+  if (presetAgentMemberAuto.value) {
+    presetAgentMember.value = null
+    presetAgentMemberAuto.value = false
+  }
+})
 
 function refreshTeamMembers() {
   void loadAgentMembers()
@@ -812,6 +854,7 @@ watch(workspace, (value) => {
   invalidateActivityRequests()
   invalidateUsageRequests()
   presetAgentMember.value = null
+  presetAgentMemberAuto.value = false
   memberDialogOpen.value = false
   settingsDialogOpen.value = false
   agentMembers.value = []
@@ -1007,13 +1050,15 @@ watch(
               :preset-agent-member="isTeam ? presetAgentMember : null"
               :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
               :requires-agent-member="isTeam"
+              :can-discuss="!isTeam || canWriteTeamContent"
+              :mention-options="isTeam ? startableMentionOptions : []"
             />
 
             <WorkspaceSessionHistory
               v-if="showSessionHistory"
               :workspace-id="workspace.id"
               :workspace-name="workspace.name"
-              :can-start-conversation="!isArchived && startableAgentMemberIds.length > 0"
+              :can-start-conversation="!isArchived && canWriteTeamContent"
               :archived="isArchived"
               @start-new="setConversationView('new')"
             />
@@ -1152,6 +1197,7 @@ watch(
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
         :agent-members="agentMembers"
+        :active-agent-member-id="presetAgentMember?.id ?? ''"
         :activity-items="activitySummaryItems"
         :activity-loading="activityLoading"
         :activity-error="activityError"
@@ -1188,6 +1234,7 @@ watch(
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
         :agent-members="agentMembers"
+        :active-agent-member-id="presetAgentMember?.id ?? ''"
         :activity-items="activitySummaryItems"
         :activity-loading="activityLoading"
         :activity-error="activityError"

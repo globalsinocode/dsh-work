@@ -134,17 +134,21 @@ test('administrator can read the integration guide and api docs', async ({ page 
   expect(guideDownload.suggestedFilename()).toBe('dsh-work-移动端接入规范.md')
 
   await nav.getByRole('button', { name: '接口文档' }).click()
-  await expect(page).toHaveURL(/\/docs\/api$/)
-  await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 员工工作台 API')
-  await expect(page.getByText('/workspaces', { exact: true }).first()).toBeVisible()
+  // Scalar 会附加文档内锚点（如 #description/introduction），只断言路径前缀。
+  await expect(page).toHaveURL(/\/docs\/api/)
+  const apiPanel = page.getByTestId('api-docs-panel')
+  // 页面渲染移动端 H5 子集契约（openapi-mobile-h5.json）：左侧接口目录按 tag
+  // 分组，正文以「接口信息表 + 请求/响应报文 + 字段表」展示每个端点。
+  // 以下断言对应其中路径 /workspaces 与 /runs/{runId}/events 的 summary。
+  await expect(apiPanel.getByRole('heading', { name: /查询当前员工的个人工作空间/ })).toBeVisible()
+  await expect(apiPanel.getByRole('link', { name: /通过 SSE 订阅 Run 事件/ })).toBeVisible()
+  // 端点信息表包含 HTTP URL / HTTP Method / 权限要求三行。
+  await expect(apiPanel.getByText('权限要求').first()).toBeVisible()
+  await expect(apiPanel.getByText(/GET \/api\/workbench\/v1\/session/).first()).toBeVisible()
 
   const [specDownload] = await Promise.all([
     page.waitForEvent('download'),
     page.getByTestId('download-spec').click(),
   ])
-  expect(specDownload.suggestedFilename()).toBe('openapi-workbench.json')
-
-  await page.getByRole('tab', { name: '管理端 API' }).click()
-  await expect(page.getByTestId('api-spec-title')).toHaveText('dsh-work 管理平台 API')
-  await expect(page.getByText('/runtimes', { exact: true }).first()).toBeVisible()
+  expect(specDownload.suggestedFilename()).toBe('openapi-mobile-h5.json')
 })

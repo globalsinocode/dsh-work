@@ -11,6 +11,7 @@ import {
 } from '@element-plus/icons-vue'
 
 import { TaskComposer } from '@dsh-work/workbench-components'
+import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkbenchSkill, WorkspaceFile } from '@/types/domain'
@@ -39,6 +40,17 @@ const props = withDefaults(
      * 详情同样是 workspaceLocked，但不能被这条规则拦住（AC-23）。
      */
     requiresAgentMember?: boolean
+    /**
+     * TW-10 共享讨论：当前操作人是否具备空间写权限（owner/admin/member）。
+     * 只读成员（viewer）与角色未知时不允许发言或发起执行——宁可漏开不可误开。
+     * 个人空间不受影响（AC-23）。
+     */
+    canDiscuss?: boolean
+    /**
+     * 输入框可 @ 的 Agent 成员（TW-10）：id + 展示名，与工作空间详情页的
+     * startable 过滤口径一致；非团队锁定场景传空。
+     */
+    mentionOptions?: Array<{ id: string; name: string }>
   }>(),
   {
     workspaceId: '',
@@ -49,19 +61,19 @@ const props = withDefaults(
     presetAgentMember: null,
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
+    canDiscuss: true,
+    mentionOptions: () => [],
   },
 )
 
 /**
- * 团队会话必须绑定可用的 Agent 成员（TW-02）：右栏点击可用 Agent 即完成选择。
- * 普通成员看不到成员管理弹窗，这里给出可达的引导而不是提交后由服务端拒绝。
+ * TW-10：团队共享讨论里普通成员可直接发言（不产生 Run）或在文本里 @ Agent
+ * 触发执行；只有只读成员/角色未知时才整体阻止。Agent 预选（右栏「开始对话」）
+ * 现在只是「首条消息默认 @ 谁」的快捷方式，不再是进入对话的前置条件。
  */
 const blockedReason = computed(() => {
   if (!props.requiresAgentMember) return ''
-  if (props.presetAgentMember && props.startableAgentMemberIds.includes(props.presetAgentMember.id)) return ''
-  return props.startableAgentMemberIds.length > 0
-    ? '请先在右侧「Agent」区点击「开始对话」，选择本次使用的 Agent 成员。'
-    : '当前角色不能发起团队对话，或该空间尚无可用 Agent 成员；请联系负责人。'
+  return props.canDiscuss ? '' : '当前角色为只读成员或尚无写权限，不能发言或发起执行；请联系负责人。'
 })
 
 const router = useRouter()
@@ -106,6 +118,16 @@ const composerReady = computed(() =>
 const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
   contentStore.skills.find(skill => skill.id === selectedSkillId.value),
 )
+/**
+ * 唯一可发起 Agent 的兜底预选：父级已传入的显式/自动选择优先；组件自身在
+ * 仅一个 startable 成员时也会选中，多个成员或用户已选择时绝不改写。
+ */
+const effectivePresetAgentMember = computed(() => {
+  if (props.presetAgentMember) return props.presetAgentMember
+  if (!props.workspaceLocked || !props.requiresAgentMember) return null
+  const startable = props.mentionOptions.filter(option => props.startableAgentMemberIds.includes(option.id))
+  return startable.length === 1 ? { ...startable[0]!, status: 'available' as const } : null
+})
 
 const commonTasks = [
   {
@@ -150,16 +172,34 @@ function useWorkspaceFile(file: WorkspaceFile) {
   focusComposer()
 }
 
-async function submitTask(payload: { prompt: string; files: File[]; workspaceId: string }) {
+async function submitTask(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
   if (blockedReason.value) {
     ElMessage.warning(blockedReason.value)
     return
   }
   try {
-    const agentMemberId = props.presetAgentMember?.status === 'available'
-      ? props.presetAgentMember.id
+    // TW-10：文本中显式 @ 的 Agent 成员优先于右栏预选（预选只是默认值）。
+    const presetMemberId = effectivePresetAgentMember.value?.status === 'available'
+      ? effectivePresetAgentMember.value.id
       : undefined
-    const workspaceAgentMemberId = props.workspaceLocked ? agentMemberId : undefined
+    const mentionedId = (payload.mentions ?? []).find(id => props.startableAgentMemberIds.includes(id))
+    const workspaceAgentMemberId = props.workspaceLocked ? (mentionedId ?? presetMemberId) : undefined
+    if (props.workspaceLocked && props.requiresAgentMember && !workspaceAgentMemberId) {
+      // 团队空间、无 @ 也无预选：开启纯讨论会话（不产生 Run）。
+      if (payload.files.length || referencedWorkspaceFileIds.value.length) {
+        ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+        return
+      }
+      const session = await workbenchApi.createSession({
+        title: payload.prompt,
+        workspaceId: payload.workspaceId,
+      })
+      await taskStore.postSessionMessage(session.id, payload.prompt)
+      await router.push(`/conversations/${session.id}`)
+      payload.confirm?.()
+      referencedWorkspaceFileIds.value = []
+      return
+    }
     const task = selectedSkillId.value
       ? await taskStore.createTask(
           payload.prompt,
@@ -181,8 +221,9 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
           undefined,
           workspaceAgentMemberId,
         )
-    referencedWorkspaceFileIds.value = []
     await router.push(`/conversations/${task.id}`)
+    payload.confirm?.()
+    referencedWorkspaceFileIds.value = []
   } catch (error) {
     notifyActionFailure('创建对话', props.workspaceLocked ? `工作空间“${props.workspaceName}”` : '新对话', error, '检查 Agent、工作空间、附件和输入内容后重新提交。')
   }
@@ -240,12 +281,12 @@ defineExpose({ useWorkspaceFile })
         </div>
 
         <p
-          v-if="presetAgentMember"
+          v-if="effectivePresetAgentMember"
           data-testid="preset-agent-member"
           class="conversation-starter__agent"
         >
           <el-icon><Cpu /></el-icon>
-          <span>本次对话使用 Agent 成员：<strong>{{ presetAgentMember.name }}</strong>（{{ presetAgentMember.status === 'available' ? '可用' : '已停用，暂不可用' }}）</span>
+          <span>本次对话使用 Agent 成员：<strong>{{ effectivePresetAgentMember.name }}</strong>（{{ effectivePresetAgentMember.status === 'available' ? '可用' : '已停用，暂不可用' }}）</span>
         </p>
 
         <nav class="capability-strip" aria-label="常用任务">
@@ -273,6 +314,8 @@ defineExpose({ useWorkspaceFile })
           :workspace-locked="workspaceLocked"
           :selected-skill-name="selectedSkill?.name"
           :blocked-reason="blockedReason"
+          :mention-options="workspaceLocked ? mentionOptions : []"
+          :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"
           @clear-skill="clearSelectedSkill"
         />

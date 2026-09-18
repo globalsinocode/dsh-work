@@ -20,6 +20,8 @@ export default tseslint.config(
       'vue/multi-word-component-names': 'off',
       'vue/require-default-prop': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
+      // rest-siblings 解构用于「丢弃内部字段后输出」，被丢弃的属性不是未使用变量。
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
     },
   },
   {

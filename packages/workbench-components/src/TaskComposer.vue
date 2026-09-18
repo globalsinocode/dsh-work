@@ -33,6 +33,17 @@ const props = withDefaults(
      * workspaceAgentMemberId 的团队会话，前端先行拦住无意义的失败请求。
      */
     blockedReason?: string
+    /**
+     * TW-10 共享讨论：团队会话里可 @ 的 Agent 成员（workspace_agent_member id
+     * + 展示名）。非空时输入 `@` 弹出补全；提交时在最终文本里把 `@名称`
+     * 解析回成员 id 放进 mentions。
+     */
+    mentionOptions?: Array<{ id: string; name: string }>
+    /**
+     * TW-10：团队会话中「带附件但未 @Agent」没有对应语义（讨论消息不支持附件）。
+     * 开启后提交时在组件内拦截并保留输入与文件，而不是交给调用方丢弃。
+     */
+    filesRequireMention?: boolean
   }>(),
   {
     initialPrompt: '',
@@ -46,11 +57,23 @@ const props = withDefaults(
     stopping: false,
     selectedSkillName: '',
     blockedReason: '',
+    mentionOptions: () => [],
+    filesRequireMention: false,
   },
 )
 
 const emit = defineEmits<{
-  submit: [payload: { prompt: string; files: File[]; workspaceId: string }]
+  submit: [payload: {
+    prompt: string
+    files: File[]
+    workspaceId: string
+    mentions: string[]
+    /**
+     * 父级确认提交（上传/建 Run/发消息）成功后调用以清空草稿；异步失败时
+     * 不要调用——输入、附件与提及选择全部保留，用户可直接重试。
+     */
+    confirm: () => void
+  }]
   stop: []
   'clear-skill': []
 }>()
@@ -61,6 +84,124 @@ const files = ref<File[]>([])
 const fileInput = ref<HTMLInputElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 const isDragging = ref(false)
+
+// ---- TW-10 @Agent 提及补全 ----
+// 光标前最近的 `@非空白*` 片段即提及查询；选中后把该片段替换为 `@名称 `，
+// 提交时再把文本中的 `@名称` 解析回成员 id（删掉文本即放弃提及）。
+// 光标移动不触发响应式依赖，统一在 input/keyup/click 后显式重算。
+const mentionQuery = ref<string | null>(null)
+const mentionStart = ref(-1)
+const mentionIndex = ref(0)
+/**
+ * 下拉选中的提及记录（id + 名称 + 插入位置）。提交时先按位置精确回放，
+ * 保证重名 Agent 成员消歧到用户实际点击的那一项；手工输入或文本被编辑后
+ * 位置漂移的提及，再由名称匹配按文本出现顺序兜底。
+ */
+const appliedMentions = ref<Array<{ id: string; name: string; start: number }>>([])
+
+const filteredMentions = computed(() => {
+  const query = mentionQuery.value
+  if (query === null) return []
+  const normalized = query.toLowerCase()
+  return props.mentionOptions.filter(option => option.name.toLowerCase().includes(normalized)).slice(0, 8)
+})
+const mentionOpen = computed(() => mentionQuery.value !== null && filteredMentions.value.length > 0)
+
+watch(filteredMentions, () => { mentionIndex.value = 0 })
+
+function refreshMentionState() {
+  void nextTick(() => {
+    const input = inputRef.value
+    if (!input || !props.mentionOptions.length) {
+      mentionQuery.value = null
+      mentionStart.value = -1
+      return
+    }
+    const caret = input.selectionStart ?? prompt.value.length
+    const match = prompt.value.slice(0, caret).match(/@([^\s@]*)$/)
+    const start = match ? caret - match[0].length : -1
+    // `@` 必须出现在 token 边界：行首或非单词字符之后，避免邮箱/句柄里的
+    // `user@x`、`@@x` 触发补全。
+    const validStart = match && (start === 0 || !MENTION_LEFT_TOKEN.test(prompt.value.charAt(start - 1)))
+    mentionQuery.value = match && validStart ? match[1]! : null
+    mentionStart.value = match && validStart ? start : -1
+    if (!match) mentionIndex.value = 0
+  })
+}
+
+function applyMention(option: { id: string; name: string }) {
+  const input = inputRef.value
+  const caret = input?.selectionStart ?? prompt.value.length
+  const start = mentionStart.value >= 0 ? mentionStart.value : caret
+  prompt.value = `${prompt.value.slice(0, start)}@${option.name} ${prompt.value.slice(caret)}`
+  appliedMentions.value.push({ id: option.id, name: option.name, start })
+  const nextCaret = start + option.name.length + 2
+  void nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(nextCaret, nextCaret)
+  })
+  mentionStart.value = -1
+}
+
+const MENTION_BOUNDARY = String.raw`[\s,，。！？!?；;：:]`
+/** `@` 左侧若是单词字符/`.`/`@`/`-`，说明它嵌在邮箱、句柄等 token 内部，不算提及起点。 */
+const MENTION_LEFT_TOKEN = /[\w.@-]/
+
+function findMentionPositions(text: string, name: string) {
+  const pattern = new RegExp(`@${escapeRegExp(name)}(?=$|${MENTION_BOUNDARY})`, 'g')
+  const positions: number[] = []
+  for (const match of text.matchAll(pattern)) {
+    const pos = match.index ?? 0
+    if (pos > 0 && MENTION_LEFT_TOKEN.test(text.charAt(pos - 1))) continue
+    positions.push(pos)
+  }
+  return positions
+}
+
+function resolveMentions(text: string) {
+  // `@名称` 后必须紧跟空白/中英文标点或结尾，避免「@助手汇总」误命中「@助手」；
+  // `@` 左侧不能紧跟单词字符，避免 `user@example.com` / `@@助手` 误判。
+  const resolved: Array<{ id: string; pos: number }> = []
+  const retained: typeof appliedMentions.value = []
+  const claimedPositions = new Set<number>()
+  for (const applied of appliedMentions.value) {
+    const option = props.mentionOptions.find(item => item.id === applied.id)
+    if (!option || option.name !== applied.name) continue
+    const positions = findMentionPositions(text, applied.name)
+    let pos = positions.includes(applied.start) ? applied.start : undefined
+    // 文本在提及前插入会导致位置整体漂移；只有该名称在候选成员中唯一时才
+    // 跟随。重名成员下，旧位置无法区分「前面插入了文本」和「删掉后又在别处
+    // 输入同名文本」，此时交给兜底扫描按候选顺序消歧，避免旧选择错误跟随。
+    const sameNameOptions = props.mentionOptions.filter(item => item.name === applied.name)
+    if (
+      pos === undefined
+      && sameNameOptions.length === 1
+      && positions.length === 1
+      && !claimedPositions.has(positions[0]!)
+    ) {
+      pos = positions[0]
+    }
+    if (pos === undefined || claimedPositions.has(pos)) continue
+    resolved.push({ id: applied.id, pos })
+    retained.push({ ...applied, start: pos })
+    claimedPositions.add(pos)
+  }
+  appliedMentions.value = retained
+  // 兜底扫描只用于未登记的提及；同名成员重名时按 mentionOptions 顺序取首个，
+  // 下拉选择的提及已通过上面的位置回放/唯一位置跟随消歧到用户实际点击的成员。
+  for (const option of props.mentionOptions) {
+    for (const pos of findMentionPositions(text, option.name)) {
+      if (claimedPositions.has(pos)) continue
+      resolved.push({ id: option.id, pos })
+      claimedPositions.add(pos)
+    }
+  }
+  return [...new Set(resolved.sort((a, b) => a.pos - b.pos).map(item => item.id))]
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 const canSubmit = computed(() => (
   prompt.value.trim().length > 0
@@ -144,16 +285,49 @@ function showVoiceMessage() {
 
 function submit() {
   if (!canSubmit.value) return
+  const mentions = resolveMentions(prompt.value)
+  // 团队会话里带附件的消息必须 @Agent 发起执行；拦截在组件内完成，
+  // 保留输入与已选文件，避免发出后才发现附件被丢弃。
+  if (props.filesRequireMention && files.value.length > 0 && mentions.length === 0) {
+    ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+    return
+  }
   emit('submit', {
     prompt: prompt.value.trim(),
     files: [...files.value],
     workspaceId: workspaceId.value,
+    mentions,
+    confirm: clearComposer,
   })
+}
+
+function clearComposer() {
   prompt.value = ''
   files.value = []
+  mentionQuery.value = null
+  appliedMentions.value = []
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (mentionOpen.value) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      mentionIndex.value = (mentionIndex.value + delta + filteredMentions.value.length) % filteredMentions.value.length
+      return
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && !event.isComposing)) {
+      event.preventDefault()
+      const option = filteredMentions.value[mentionIndex.value] ?? filteredMentions.value[0]
+      if (option) applyMention(option)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      mentionQuery.value = null
+      return
+    }
+  }
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return
   if (props.running) return
   event.preventDefault()
@@ -209,11 +383,36 @@ function performPrimaryAction() {
         aria-label="对话输入"
         :placeholder="
           compact
-            ? '继续提问，可 @ 引用对话文件或调用能力…'
-            : '今天想完成什么？可 @ 引用企业数据，或从左下角添加文件'
+            ? '继续提问，可 @ 提及 Agent 或引用对话文件…'
+            : '今天想完成什么？可 @ 提及 Agent、引用企业数据，或从左下角添加文件'
         "
         @keydown="onKeydown"
+        @input="refreshMentionState"
+        @keyup="refreshMentionState"
+        @click="refreshMentionState"
       ></textarea>
+
+      <div
+        v-if="mentionOpen"
+        class="composer__mentions"
+        role="listbox"
+        aria-label="提及 Agent"
+        data-testid="mention-options"
+      >
+        <button
+          v-for="(option, index) in filteredMentions"
+          :key="option.id"
+          type="button"
+          role="option"
+          class="composer__mention-option"
+          :class="{ 'composer__mention-option--active': index === mentionIndex }"
+          :aria-selected="index === mentionIndex"
+          @mousedown.prevent="applyMention(option)"
+        >
+          <span class="composer__mention-at">@</span>
+          <span>{{ option.name }}</span>
+        </button>
+      </div>
 
       <div class="composer__action-row">
         <div class="composer__leading-actions">
@@ -343,6 +542,52 @@ function performPrimaryAction() {
   background: #fff;
   box-shadow: 0 10px 30px rgb(24 25 24 / 6%);
   transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.composer__mentions {
+  display: flex;
+  max-height: 216px;
+  flex-direction: column;
+  margin: 0 12px 8px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid #e3e6e2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(35 45 40 / 8%);
+}
+
+.composer__mention-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #3a3f3a;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--dsh-font-size-caption);
+  text-align: left;
+}
+
+.composer__mention-option:hover,
+.composer__mention-option--active {
+  color: #175e4d;
+  background: #f0f7f4;
+}
+
+.composer__mention-at {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  color: #fff;
+  background: #3e5f55;
+  font-size: var(--dsh-font-size-micro);
+  font-weight: 700;
 }
 
 .composer:focus-within .composer__surface {

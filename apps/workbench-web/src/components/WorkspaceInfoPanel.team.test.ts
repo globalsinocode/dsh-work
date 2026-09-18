@@ -101,6 +101,26 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(0)
   })
 
+  it('已预选为新对话成员的 Agent 行显示「使用中」，不再给出「开始对话」链接', async () => {
+    const wrapper = mountPanel({ activeAgentMemberId: 'wam-1' })
+    const rows = wrapper.findAll('[data-testid="panel-agent-row"]')
+
+    expect(rows[0]?.find('[data-testid="panel-agent-active"]').text()).toBe('使用中')
+    expect(rows[0]?.find('[data-testid="panel-agent-start"]').exists()).toBe(false)
+    // 不传 activeAgentMemberId 时入口保持原样。
+    const fallback = mountPanel()
+    expect(fallback.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
+    expect(fallback.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
+  })
+
+  it('预选成员已停用或不可发起时不显示「使用中」', () => {
+    // wam-2 为 disabled：即便被标记为预选 id，也不渲染「使用中」。
+    const wrapper = mountPanel({ activeAgentMemberId: 'wam-2' })
+
+    expect(wrapper.find('[data-testid="panel-agent-active"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="panel-agent-start"]')).toHaveLength(1)
+  })
+
   it('shows 管理成员 to owners and admins only', async () => {
     for (const role of ['owner', 'admin']) {
       const wrapper = mountPanel({ currentUserRole: role })

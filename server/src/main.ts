@@ -192,8 +192,9 @@ async function start() {
       agents,
       knowledge,
       authorization,
-      // AG-03：执行前复核按 run_id 反查任务当前状态（暂停/停用兜底）。
+      // TW-10：团队会话 @Agent 触发经成员关联解析固定版本。
       {
+        agentMembers: workspaceAgentMembers,
         automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
       },
     )

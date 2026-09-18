@@ -12,6 +12,7 @@ import { AuthorizationDeniedError, isAuthorizationDenial } from '../modules/auth
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
 import { PostgresContentService } from '../modules/workbench/application/postgres-content-service.ts'
+import { PostgresRunRepository } from '../modules/run/postgres-run-repository.ts'
 import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
 import { Router, classifyHttpError } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
@@ -219,7 +220,7 @@ test('非成员与个人空间不能列出或移除共享文件', async () => {
 // 文件与结果读取收权（1B-T4 / AC-09；个人空间 AC-23）
 // ---------------------------------------------------------------------------
 
-test('被移出团队的成员不能再下载本人团队会话文件，现任成员与个人空间作者不受影响', async () => {
+test('被移出团队的成员不能再下载团队会话文件，现任成员可读共享会话附件（TW-10）', async () => {
   const workspaceId = 'ws-revoke-file'
   const ownerId = `${workspaceId}-owner`
   const memberId = `${workspaceId}-member`
@@ -241,8 +242,8 @@ test('被移出团队的成员不能再下载本人团队会话文件，现任�
   // 移除前：本人（会话作者）可下载，同时让授权缓存进入已授予状态，以便验证成员
   // 变更后的撤权修订号能立即失效缓存，而不是靠 TTL 过期。
   assert.equal((await content.readFile(fileId, memberId)).bytes.toString('utf8'), '团队会话文件正文')
-  // 该文件挂在 memberId 的私有会话下：空间成员身份不构成读取依据（AC-10 / §5）。
-  await assert.rejects(content.readFile(fileId, currentId), /文件不存在或不可访问/)
+  // TW-10 共享会话：附件随会话对空间现任成员可读。
+  assert.equal((await content.readFile(fileId, currentId)).bytes.toString('utf8'), '团队会话文件正文')
 
   await workspaceMembers.removeMember(workspaceId, memberId, ownerId)
 
@@ -345,7 +346,8 @@ test('被移出团队的成员不能再下载本人团队成果与历史版本�
     '被移出成员的团队成果不再返回，个人成果保留',
   )
 
-  // 另一名现任成员只能看到并下载自己的成果；被移出成员的成果不因空间仍在而放行。
+  // TW-10 共享会话：另一名现任成员能看到并下载共享会话中的全部成果；
+  // 被移出成员的成果不因空间仍在而对**他自己**放行（上方已断言）。
   const currentSession = await seedSession(workspaceId, currentId)
   const currentRun = await seedRun(currentSession, currentId)
   const currentFile = `${workspaceId}-current-file`
@@ -357,9 +359,16 @@ test('被移出团队的成员不能再下载本人团队成果与历史版本�
     artifactId: currentArtifact, workspaceId, sessionId: currentSession, createdBy: currentId, fileId: currentFile, runId: currentRun,
   })
   assert.equal(await content.artifactFileId(currentArtifact, 1, currentId), currentFile)
+  // 成员也可读其他成员共享会话产出的成果。
+  assert.equal(await content.artifactFileId(artifactId, 1, currentId), fileId)
+  assert.deepEqual(
+    new Set((await content.listArtifacts(currentId)).map(artifact => artifact.id)),
+    new Set([artifactId, currentArtifact]),
+    '成员可见同一空间共享会话的全部成果',
+  )
 })
 
-test('Run 输入挂载不得读取他人私有会话附件，但可挂载空间共享文件', async () => {
+test('Run 输入挂载：同空间共享会话附件可挂（TW-10），跨空间与个人会话附件仍拒绝', async () => {
   const workspaceId = 'ws-mount-scope'
   const ownerId = `${workspaceId}-owner`
   const authorId = `${workspaceId}-author`
@@ -373,31 +382,57 @@ test('Run 输入挂载不得读取他人私有会话附件，但可挂载空间�
     { userId: otherId, role: 'member' },
   ])
 
-  // author 的私有会话附件：只有 author 能挂进自己的 Run。
+  // TW-10 共享会话：author 的会话附件对同一空间的现任成员可挂载。
   const authorSession = await seedSession(workspaceId, authorId)
-  const privateFileId = `${workspaceId}-private-file`
+  const sessionFileId = `${workspaceId}-session-file`
   await seedStoredFile({
-    id: privateFileId, workspaceId, sessionId: authorSession, uploadedBy: authorId, name: '私有.txt', content: '机密私有正文',
+    id: sessionFileId, workspaceId, sessionId: authorSession, uploadedBy: authorId, name: '共享会话附件.txt', content: '共享会话附件正文',
   })
-  await seedExtraction(privateFileId, '机密私有解析正文')
+  await seedExtraction(sessionFileId, '共享会话附件解析正文')
 
   const otherSession = await seedSession(workspaceId, otherId)
   for (const actorId of [otherId, ownerId]) {
-    // 5-T4：挂载他人私有附件被拒时也是类型化授权拒绝，HTTP 仍是 403。
-    const denial = await content.prepareRuntimeFiles({ sessionId: otherSession, fileIds: [privateFileId], userId: actorId })
-      .then(() => null, (error: unknown) => error)
-    assert.ok(denial instanceof AuthorizationDeniedError, `必须是类型化授权拒绝，实际：${String(denial)}`)
-    assert.equal(denial.status, 403)
-    assert.equal(denial.code, 'permission_denied')
-    assert.match(denial.message, /不存在、不可访问或解析未成功/, `${actorId} 不得把他人私有会话附件挂进 Run 输入（负责人身份也不构成依据）`)
+    const mountedShared = await content.prepareRuntimeFiles({ sessionId: otherSession, fileIds: [sessionFileId], userId: actorId })
+    assert.equal(mountedShared.length, 1, `${actorId} 可挂载同一空间共享会话的附件（TW-10）`)
   }
-  const authorOwn = await content.prepareRuntimeFiles({ sessionId: authorSession, fileIds: [privateFileId], userId: authorId })
+
+  // 跨空间会话附件仍拒绝：另一个团队空间的会话附件不属于本空间共享讨论。
+  const foreignWorkspaceId = 'ws-mount-scope-foreign'
+  await seedTeamWorkspace(foreignWorkspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: authorId, role: 'member' },
+  ])
+  const foreignSession = await seedSession(foreignWorkspaceId, authorId)
+  const foreignFileId = `${workspaceId}-foreign-file`
+  await seedStoredFile({
+    id: foreignFileId, workspaceId: foreignWorkspaceId, sessionId: foreignSession, uploadedBy: authorId, name: '跨空间.txt', content: '跨空间正文',
+  })
+  await seedExtraction(foreignFileId, '跨空间解析正文')
+  const foreignDenial = await content.prepareRuntimeFiles({ sessionId: otherSession, fileIds: [foreignFileId], userId: otherId })
+    .then(() => null, (error: unknown) => error)
+  assert.ok(foreignDenial instanceof AuthorizationDeniedError, '跨空间会话附件挂载必须是类型化授权拒绝')
+  assert.match(foreignDenial.message, /不存在、不可访问或解析未成功/)
+
+  // 个人空间会话附件仍属私有：非作者不得挂载。
+  const personalWorkspaceId = `ws-personal-${authorId}`
+  const personalSession = await seedSession(personalWorkspaceId, authorId)
+  const personalFileId = `${workspaceId}-personal-file`
+  await seedStoredFile({
+    id: personalFileId, workspaceId: personalWorkspaceId, sessionId: personalSession, uploadedBy: authorId, name: '个人.txt', content: '个人正文',
+  })
+  await seedExtraction(personalFileId, '个人解析正文')
+  const personalDenial = await content.prepareRuntimeFiles({ sessionId: otherSession, fileIds: [personalFileId], userId: otherId })
+    .then(() => null, (error: unknown) => error)
+  assert.ok(personalDenial instanceof AuthorizationDeniedError, '个人会话附件挂载必须是类型化授权拒绝')
+  assert.match(personalDenial.message, /不存在、不可访问或解析未成功/)
+
+  const authorOwn = await content.prepareRuntimeFiles({ sessionId: authorSession, fileIds: [sessionFileId], userId: authorId })
   assert.equal(authorOwn.length, 1, '作者本人仍可挂载自己的会话附件')
 
   // 作者把**自己另一个会话**的附件挂进自己的新会话：既有行为，保持可用（AC-23）。
   const authorSecondSession = await seedSession(workspaceId, authorId)
   const crossSession = await content.prepareRuntimeFiles({
-    sessionId: authorSecondSession, fileIds: [privateFileId], userId: authorId,
+    sessionId: authorSecondSession, fileIds: [sessionFileId], userId: authorId,
   })
   assert.equal(crossSession.length, 1, '本人跨会话附件仍可挂载')
 
@@ -682,6 +717,162 @@ test('归档团队空间：上传与移除文件仍走执行轨被拒绝（3-T1 
     body: '上传正文',
   })
   assert.equal(upload.status, 403, '归档空间不得通过 HTTP 上传文件')
+})
+
+test('会话附件回收只清理未被 Run 引用的上传对象', async () => {
+  const workspaceId = 'ws-session-file-discard'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  await seedUser(ownerId, '回收负责人')
+  await seedUser(memberId, '回收成员')
+  await seedTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  const sessionId = await seedSession(workspaceId, memberId)
+  const orphanFileId = `${workspaceId}-orphan-file`
+  await seedStoredFile({
+    id: orphanFileId, workspaceId, sessionId, uploadedBy: memberId, name: '未引用.txt', content: '未引用正文',
+  })
+
+  const discarded = await fetch(`${baseUrl}/api/workbench/v1/sessions/${sessionId}/files/${orphanFileId}`, {
+    method: 'DELETE',
+    headers: { 'x-test-user-id': memberId },
+  })
+  assert.equal(discarded.status, 200)
+  assert.deepEqual((await discarded.json()).data, { id: orphanFileId, removed: true })
+  await assert.rejects(content.readFile(orphanFileId, memberId), /文件不存在或不可访问/)
+
+  const referencedFileId = `${workspaceId}-referenced-file`
+  await seedStoredFile({
+    id: referencedFileId, workspaceId, sessionId, uploadedBy: memberId, name: '已引用.txt', content: '已引用正文',
+  })
+  await seedExtraction(referencedFileId, '已引用解析正文')
+  const runId = await seedRun(sessionId, memberId)
+  await database`
+    insert into run_input_files (id, tenant_id, run_id, attempt_id, file_id, extraction_id, mount_path)
+    values (
+      ${`${workspaceId}-rif`}, ${tenantId}, ${runId}, ${`${runId}-attempt`},
+      ${referencedFileId}, ${`${referencedFileId}-extraction`}, '/input/已引用.txt'
+    )
+  `
+  const retained = await content.discardSessionFile(sessionId, referencedFileId, memberId)
+  assert.deepEqual(retained, { id: referencedFileId, removed: false })
+  assert.equal((await content.readFile(referencedFileId, memberId)).bytes.toString('utf8'), '已引用正文')
+})
+
+test('跨会话挂载的附件可进入 Attempt 且被引用后阻止回收（准入范围由 prepareRuntimeFiles 裁决）', async () => {
+  const workspaceId = 'ws-cross-session-mount'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  await seedUser(ownerId, '跨会话负责人')
+  await seedUser(memberId, '跨会话成员')
+  await seedTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  // 附件挂在 author 的会话下，由 member 挂进自己的会话运行（TW-10 同空间共享）。
+  const sourceSession = await seedSession(workspaceId, ownerId)
+  const targetSession = await seedSession(workspaceId, memberId)
+  const fileId = `${workspaceId}-file`
+  await seedStoredFile({
+    id: fileId, workspaceId, sessionId: sourceSession, uploadedBy: ownerId, name: '跨会话.txt', content: '跨会话正文',
+  })
+  await seedExtraction(fileId, '跨会话解析正文')
+  const prepared = await content.prepareRuntimeFiles({ sessionId: targetSession, fileIds: [fileId], userId: memberId })
+  assert.equal(prepared.length, 1, '准入层允许同空间跨会话挂载')
+
+  const runRepository = new PostgresRunRepository(database)
+  const run = await runRepository.createRun({
+    tenantId, sessionId: targetSession, requestedBy: memberId, idempotencyKey: `idem-${workspaceId}`,
+  })
+  const attempt = await runRepository.createAttempt({
+    tenantId,
+    runId: run.id,
+    manifest: { purpose: 'workbench', session_id: targetSession, workspace_id: workspaceId },
+    manifestSha256: 'x',
+    modelRouteSnapshot: {},
+    inputFiles: prepared.map(file => ({
+      fileId: file.fileId,
+      extractionId: file.extractionId,
+      mountPath: file.mount.mount_path,
+    })),
+  })
+  assert.ok(attempt.id, '已被准入层放行的跨会话附件必须能创建 Attempt')
+
+  // 一旦被 run_input_files 引用，回收按执行历史保留（跨会话引用同样生效）。
+  const retained = await content.discardSessionFile(sourceSession, fileId, ownerId)
+  assert.deepEqual(retained, { id: fileId, removed: false })
+})
+
+test('createAttempt 范围兜底：跨空间他人附件与已移除文件不得进入 Attempt', async () => {
+  const workspaceId = 'ws-attempt-scope'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  const foreignOwnerId = `${workspaceId}-foreign`
+  await seedUser(ownerId, '兜底负责人')
+  await seedUser(memberId, '兜底成员')
+  await seedUser(foreignOwnerId, '兜底外部人')
+  await seedTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  const sessionId = await seedSession(workspaceId, memberId)
+  const runRepository = new PostgresRunRepository(database)
+  const createRun = (key: string) => runRepository.createRun({
+    tenantId, sessionId, requestedBy: memberId, idempotencyKey: key,
+  })
+  const mount = (fileId: string) => ({
+    fileId, extractionId: `${fileId}-extraction`, mountPath: '/workspace/input/x.txt',
+  })
+  const tryAttempt = (key: string, fileId: string) => createRun(key).then(run =>
+    runRepository.createAttempt({
+      tenantId,
+      runId: run.id,
+      manifest: { session_id: sessionId, workspace_id: workspaceId },
+      manifestSha256: 'x',
+      modelRouteSnapshot: {},
+      inputFiles: [mount(fileId)],
+    }),
+  )
+
+  // 跨空间的他人会话附件：绕过准入层直传 inputFiles 时，仓储层同样必须拒绝。
+  const foreignWorkspaceId = `${workspaceId}-foreign-ws`
+  await seedTeamWorkspace(foreignWorkspaceId, [{ userId: foreignOwnerId, role: 'owner' }])
+  const foreignSession = await seedSession(foreignWorkspaceId, foreignOwnerId)
+  const foreignFileId = `${workspaceId}-foreign-file`
+  await seedStoredFile({
+    id: foreignFileId, workspaceId: foreignWorkspaceId, sessionId: foreignSession,
+    uploadedBy: foreignOwnerId, name: '跨空间.txt', content: 'x',
+  })
+  await seedExtraction(foreignFileId, 'x')
+  await assert.rejects(
+    tryAttempt(`${workspaceId}-foreign`, foreignFileId),
+    /超出该运行的可挂载范围|不存在/,
+    '跨空间他人附件不得进入 Attempt',
+  )
+
+  // 已移除与不存在文件拒绝。
+  const removedFileId = `${workspaceId}-removed-file`
+  await seedStoredFile({
+    id: removedFileId, workspaceId, sessionId, uploadedBy: memberId, name: '已移除.txt', content: 'x',
+  })
+  await seedExtraction(removedFileId, 'x')
+  await database`update file_objects set removed_at = now() where tenant_id = ${tenantId} and id = ${removedFileId}`
+  await assert.rejects(tryAttempt(`${workspaceId}-removed`, removedFileId), /已被移除/)
+  await assert.rejects(tryAttempt(`${workspaceId}-missing`, `${workspaceId}-missing-file`), /不存在/)
+
+  // 本人其它空间的自有会话附件：AC-23 既有行为，仓储层同样放行。
+  const ownWorkspaceId = `ws-personal-${memberId}`
+  const ownSession = await seedSession(ownWorkspaceId, memberId)
+  const ownFileId = `${workspaceId}-own-file`
+  await seedStoredFile({
+    id: ownFileId, workspaceId: ownWorkspaceId, sessionId: ownSession,
+    uploadedBy: memberId, name: '本人跨空间.txt', content: 'x',
+  })
+  await seedExtraction(ownFileId, 'x')
+  const ownAttempt = await tryAttempt(`${workspaceId}-own`, ownFileId)
+  assert.ok(ownAttempt.id, '发起人自有会话的跨空间附件必须可进入 Attempt')
 })
 
 test('个人空间读取与授权路径完全不受 3-T1 双轨影响（AC-23）', async () => {

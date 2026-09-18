@@ -6,6 +6,7 @@ import type { PostgresAgentService } from '../../modules/agent/postgres-agent-se
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject } from '../../modules/authorization/authorization-errors.ts'
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
+import type { TaskRun } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import {
   envelope,
@@ -73,7 +74,7 @@ export function registerConversationRoutes(
     const cursor = context.url.searchParams.get('cursor') ?? undefined
     return envelope(
       'workbench',
-      await conversations.listWorkspaceSessions({ workspaceId, actorUserId: userId, query, cursor, limit }),
+      await conversations.listWorkspaceSessions({ workspaceId, query, cursor, limit }),
       'postgres',
     )
   })
@@ -83,25 +84,59 @@ export function registerConversationRoutes(
     const userId = identity.userId
     const authorizationContext = sessionAuthorizationContext(identity)
     const body = await readJsonBody<{
-      title: string
-      workspaceId?: string
-      agentId?: string
-      skillId?: string
-      workspaceAgentMemberId?: string
-    }>(request)
+      title: unknown
+      workspaceId?: unknown
+      agentId?: unknown
+      skillId?: unknown
+      workspaceAgentMemberId?: unknown
+    } | null>(request)
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      throw routeValidationFailed('请求体必须是 JSON 对象')
+    }
+    for (const [field, value] of Object.entries({
+      workspaceId: body.workspaceId,
+      agentId: body.agentId,
+      skillId: body.skillId,
+      workspaceAgentMemberId: body.workspaceAgentMemberId,
+    })) {
+      if (value !== undefined && typeof value !== 'string') throw routeValidationFailed(`${field} 必须是字符串`)
+    }
+    const workspaceId = body.workspaceId as string | undefined
+    const agentId = body.agentId as string | undefined
+    const skillId = body.skillId as string | undefined
+    const workspaceAgentMemberId = body.workspaceAgentMemberId as string | undefined
     const access = await authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     // Team workspaces must start sessions through the agent member
     // association (pinned version); personal workspaces, non-members and
     // omitted workspaceIds keep the existing resolution path untouched
     // (AC-23).
-    const selectedSkillVersion = body.skillId && skills
-      ? await skills.resolveWorkbenchSkillVersion(body.skillId)
+    const selectedSkillVersion = skillId && skills
+      ? await skills.resolveWorkbenchSkillVersion(skillId)
       : undefined
-    const workspaceType = await authorization?.resolveWorkspaceType(body.workspaceId, userId)
+    const workspaceType = await authorization?.resolveWorkspaceType(workspaceId, userId)
+    // TW-10：团队空间会话是全队共享讨论，创建时不再强制绑定 Agent 成员——
+    // 普通消息不产生 Run，@Agent 时才按成员固定版本执行。只读成员不得创建
+    // 讨论串；显式携带成员关联时仍校验其可用性并记录固定版本（会话级默认值）。
+    if (workspaceType === 'team') {
+      await authorization!.requireTeamRole(workspaceId!, userId, ['owner', 'admin', 'member'])
+      // 单独传 agentId 不传成员关联是有歧义的输入：拒绝而不是静默创建
+      // 未绑定会话，避免调用方误以为 Agent 已绑定（发现延迟到首次 startRun）。
+      if (agentId !== undefined && !workspaceAgentMemberId) {
+        throw routeValidationFailed('团队空间对话不能单独使用 agentId；请通过 workspaceAgentMemberId 选择 Agent 成员')
+      }
+    }
     const agentVersionId = workspaceType === 'team'
-      ? await resolveTeamSessionAgentVersion(agentMembers, agents, body, userId, access?.roleIds ?? identity.roleIds)
+      ? workspaceAgentMemberId
+        ? await resolveTeamSessionAgentVersion(
+            agentMembers,
+            agents,
+            { workspaceId, workspaceAgentMemberId, agentId },
+            userId,
+            access?.roleIds ?? identity.roleIds,
+          )
+        : null
       : await agents.resolveWorkbenchAgentVersion(
-          body.agentId,
+          agentId,
           userId,
           access?.roleIds ?? identity.roleIds,
           selectedSkillVersion ? [selectedSkillVersion.reference] : [],
@@ -109,7 +144,7 @@ export function registerConversationRoutes(
     const session = await orchestration.createSession({
       userId,
       title: body.title,
-      workspaceId: body.workspaceId,
+      workspaceId,
       agentVersionId,
       selectedSkillVersionId: selectedSkillVersion?.id,
       selectedSkillReference: selectedSkillVersion?.reference,
@@ -157,28 +192,78 @@ export function registerConversationRoutes(
     if (authorization && !(await authorizeTeamTaskRead(authorization, task, userId))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
-    return envelope('workbench', task, 'postgres')
+    return envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres')
+  })
+
+  // TW-10 共享讨论：会话详情对全部现任成员可读（含归档空间的只读保留），
+  // 个人会话仍限创建者。消息带作者/触发人/Agent 归因，runs 列表供前端内联
+  // 展示执行状态。
+  router.get(`${basePath}/sessions/:sessionId`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    return envelope('workbench', await orchestration.getSessionThread(context.params['sessionId'] ?? '', userId), 'postgres')
+  })
+
+  // TW-10：不产生 Run 的讨论消息。仅团队空间会话可用；viewer/非成员/归档
+  // 空间由编排层的写轨校验拒绝。
+  router.post(`${basePath}/sessions/:sessionId/messages`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    const body = await readJsonBody<{ content?: unknown } | null>(request)
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      throw routeValidationFailed('请求体必须是 JSON 对象')
+    }
+    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const result = await orchestration.postDiscussionMessage({
+      userId,
+      sessionId: context.params['sessionId'] ?? '',
+      content: body.content,
+    })
+    return httpResult(201, envelope('workbench', result, 'postgres'))
   })
 
   router.post(`${basePath}/sessions/:sessionId/runs`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    const body = await readJsonBody<{ prompt: string; idempotencyKey?: string; fileIds?: string[] }>(request)
-    if (body.fileIds !== undefined && (!Array.isArray(body.fileIds) || body.fileIds.some(id => typeof id !== 'string'))) {
-      throw new Error('fileIds 必须是文件标识数组')
+    const body = await readJsonBody<{
+      prompt: unknown
+      idempotencyKey?: unknown
+      fileIds?: unknown
+      /** TW-10：团队会话 @ 触发的 Agent 成员关联；个人会话忽略。 */
+      workspaceAgentMemberId?: unknown
+    } | null>(request)
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      throw routeValidationFailed('请求体必须是 JSON 对象')
     }
-    if ((body.fileIds?.length ?? 0) > 5) throw new Error('每次 Run 最多分析 5 个文件')
+    if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== 'string') {
+      throw routeValidationFailed('idempotencyKey 必须是字符串')
+    }
+    if (body.workspaceAgentMemberId !== undefined && typeof body.workspaceAgentMemberId !== 'string') {
+      throw routeValidationFailed('workspaceAgentMemberId 必须是字符串')
+    }
+    if (body.fileIds !== undefined && (!Array.isArray(body.fileIds) || body.fileIds.some(id => typeof id !== 'string'))) {
+      throw routeValidationFailed('fileIds 必须是文件标识数组')
+    }
+    if ((body.fileIds?.length ?? 0) > 5) throw routeValidationFailed('每次 Run 最多分析 5 个文件')
     const headerKey = request.headers['idempotency-key']
+    const idempotencyKey = body.idempotencyKey ?? (Array.isArray(headerKey) ? headerKey[0] : headerKey)
+    // 幂等键必须由客户端显式提供（body 或 Idempotency-Key 头）：缺省生成随机键会让
+    // 网络重试/双击每次都创建新 Run，幂等保护形同虚设。
+    if (idempotencyKey === undefined) {
+      throw routeValidationFailed('必须提供 idempotencyKey 或 Idempotency-Key 请求头')
+    }
     const run = await orchestration.startRun({
       userId,
       sessionId: context.params['sessionId'] ?? '',
       prompt: body.prompt,
-      idempotencyKey: body.idempotencyKey ?? (Array.isArray(headerKey) ? headerKey[0] : headerKey) ?? crypto.randomUUID(),
+      idempotencyKey,
       fileIds: body.fileIds ?? [],
+      workspaceAgentMemberId: body.workspaceAgentMemberId,
       authorizationContext: sessionAuthorizationContext(identity),
     })
     if (!run) throw new Error('Run 创建失败')
-    const task = await conversations.getTask(run.id, userId)
+    const task = await attachCurrentUserRole(authorization, await conversations.getTask(run.id, userId), userId)
     return httpResult(202, envelope('workbench', task, 'postgres'))
   })
 
@@ -196,7 +281,7 @@ export function registerConversationRoutes(
     if (!task || (authorization && !(await authorizeTeamTaskRead(authorization, task, userId)))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
-    return httpResult(202, envelope('workbench', task, 'postgres'))
+    return httpResult(202, envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres'))
   })
 
   router.post(`${basePath}/runs/:runId/retry`, async (_request, context) => {
@@ -211,7 +296,7 @@ export function registerConversationRoutes(
     if (!task || (authorization && !(await authorizeTeamTaskRead(authorization, task, userId)))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
-    return httpResult(202, envelope('workbench', task, 'postgres'))
+    return httpResult(202, envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres'))
   })
 
   router.get(`${basePath}/runs/:runId/events`, async (request, context, response) => {
@@ -274,6 +359,21 @@ function parseSessionPageLimit(raw: string | null) {
  * `canReadWorkspaceObject`（1B-T4 / §6.5-3「团队文件下载与结果读取采用相同
  * 授权边界」），避免两处各自实现后在归档、个人空间等边界上漂移。
  */
+/**
+ * Attach the caller's current workspace role to a Run detail (TW-10): lets the
+ * client hide write affordances for viewers without a second request. null for
+ * personal/standalone sessions and when no authorization service is wired.
+ */
+async function attachCurrentUserRole(
+  authorization: PostgresAuthorizationService | undefined,
+  task: TaskRun | null,
+  userId: string,
+): Promise<TaskRun | null> {
+  if (!task || !authorization) return task
+  const currentUserRole = await authorization.teamRoleOf(task.workspaceId, userId)
+  return { ...task, currentUserRole }
+}
+
 async function authorizeTeamTaskRead(
   authorization: PostgresAuthorizationService,
   task: { workspaceId: string },

@@ -154,7 +154,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     const empty = wrapper.find('[data-testid="session-history-empty-own"]')
     expect(empty.exists()).toBe(true)
-    expect(empty.text()).toContain('你还没有在本工作空间发起过对话')
+    expect(empty.text()).toContain('本工作空间还没有对话')
     await empty.find('button').trigger('click')
     expect(wrapper.emitted('start-new')).toHaveLength(1)
   })
@@ -165,7 +165,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     await flushPromises()
 
     const empty = wrapper.find('[data-testid="session-history-empty-own"]')
-    expect(empty.text()).toContain('联系负责人添加可用 Agent 成员')
+    expect(empty.text()).toContain('当前角色不能发起对话')
     expect(empty.find('button').exists()).toBe(false)
   })
 

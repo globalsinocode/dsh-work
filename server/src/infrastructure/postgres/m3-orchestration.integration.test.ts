@@ -213,6 +213,7 @@ test('conversation history keeps the newest messages within the Manifest limits'
 
 test('compilation failure converges the Run instead of leaving it queued without an Attempt', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '启动失败收敛' })
+  assert.ok(session.agentVersionId)
   const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
   const resource = (content: string) => ({ path: 'reference.txt', content, size: content.length, sha256: createHash('sha256').update(content).digest('hex') })
   const snapshot: RuntimeAgentSnapshot = {

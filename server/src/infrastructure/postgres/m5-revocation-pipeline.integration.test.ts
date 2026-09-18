@@ -64,6 +64,12 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
+  members = new PostgresWorkspaceMemberService(database, authorization)
+  agentMembers = new PostgresWorkspaceAgentMemberService(
+    database,
+    authorization,
+    undefined as unknown as PostgresAgentService,
+  )
   orchestration = new RunOrchestrationService(
     runs,
     conversations,
@@ -74,14 +80,9 @@ before(async () => {
     undefined,
     undefined,
     authorization,
+    { agentMembers },
   )
   sweep = new RunRevocationSweep(database, runs, orchestration, authorization)
-  members = new PostgresWorkspaceMemberService(database, authorization)
-  agentMembers = new PostgresWorkspaceAgentMemberService(
-    database,
-    authorization,
-    undefined as unknown as PostgresAgentService,
-  )
 
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerConversationRoutes(
@@ -156,8 +157,10 @@ test('systemCancelRun：running 运行调用 runtime.cancel 并携带 system_rev
   await seedUser(ownerId, '收权运行负责人')
   await seedUser(userId, '收权运行成员')
   await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId: userId, role: 'member' }])
-  await seedAgent(ws, versionId)
+  const { agentId } = await seedAgent(ws, versionId)
   await grantAgentVersion(ws, versionId)
+  const agentMemberId = `${ws}-agent-member`
+  await addAgentMemberRow(ws, agentMemberId, agentId, versionId)
   const sessionId = `${ws}-session`
   await createSession(sessionId, ws, userId, versionId)
   runtime.holdCompletions = true
@@ -166,6 +169,7 @@ test('systemCancelRun：running 运行调用 runtime.cancel 并携带 system_rev
     sessionId,
     prompt: '收权运行测试',
     idempotencyKey: `${runIdPrefix(ws)}-syscancel-running`,
+    workspaceAgentMemberId: agentMemberId,
   })
   if (!started) throw new Error('Run 创建失败')
   await waitFor(async () => (await runRow(started.id)).status === 'running', 'run 进入 running')
@@ -269,9 +273,11 @@ test('收权清扫：member_removed 取消该成员在本空间的排队与运�
   await seedUser(otherUserId, '清扫其他空间成员')
   await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId: revokedId, role: 'member' }, { userId: peerId, role: 'member' }])
   await createTeamWorkspace(otherWs, [{ userId: otherUserId, role: 'owner' }])
-  await seedAgent(ws, versionId)
+  const { agentId } = await seedAgent(ws, versionId)
   await grantAgentVersion(ws, versionId)
   await grantAgentVersion(otherWs, versionId)
+  const agentMemberId = `${ws}-agent-member`
+  await addAgentMemberRow(ws, agentMemberId, agentId, versionId)
   const sessionId = `${ws}-session`
   await createSession(sessionId, ws, revokedId, versionId)
   const otherSessionId = `${otherWs}-session`
@@ -296,6 +302,7 @@ test('收权清扫：member_removed 取消该成员在本空间的排队与运�
     sessionId: runningSessionId,
     prompt: '收权清扫运行中任务',
     idempotencyKey: `${runIdPrefix(ws)}-sweep-running`,
+    workspaceAgentMemberId: agentMemberId,
   })
   if (!running) throw new Error('Run 创建失败')
   await waitFor(async () => (await runRow(running.id)).status === 'running', 'run 进入 running')
@@ -919,11 +926,13 @@ test('REST 读取：被移出的成员不得读取团队运行详情，列表也
   assert.equal((await taskIds()).includes(runId), false, '被移出成员的运行列表不得包含该团队运行')
 
   // 取消/重试同样返回完整正文，也必须被同一口径拦住，否则可借其读回回答内容。
+  // TW-10 起取消在服务层先过成员写轨：被移出成员 403 直接拒绝（此前仅响应层
+  // 404 遮蔽，取消请求实际仍会执行——写轨校验同时堵住了这个口子）。
   const cancelAfterRemoval = await fetch(`${baseUrl}/api/workbench/v1/runs/${runId}/cancel`, {
     method: 'POST',
     headers: { 'x-test-user-id': userId },
   })
-  assert.equal(cancelAfterRemoval.status, 404, '被移出成员不得通过取消接口读回正文')
+  assert.equal(cancelAfterRemoval.status, 403, '被移出成员不得取消团队运行')
   const cancelBody = await cancelAfterRemoval.text()
   assert.equal(cancelBody.includes('团队运行正文'), false, '取消响应不得包含正文')
 })
@@ -1080,8 +1089,10 @@ test('执行前复核通过后、调用 Runtime 前被系统取消的运行不�
   await seedUser(ownerId, '领取竞态负责人')
   await seedUser(userId, '领取竞态成员')
   await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId: userId, role: 'member' }])
-  await seedAgent(ws, versionId)
+  const { agentId } = await seedAgent(ws, versionId)
   await grantAgentVersion(ws, versionId)
+  const agentMemberId = `${ws}-agent-member`
+  await addAgentMemberRow(ws, agentMemberId, agentId, versionId)
   const sessionId = `${ws}-session`
   await createSession(sessionId, ws, userId, versionId)
 
@@ -1115,6 +1126,7 @@ test('执行前复核通过后、调用 Runtime 前被系统取消的运行不�
     undefined,
     undefined,
     racingAuthorization,
+    { agentMembers },
   )
 
   runtime.holdCompletions = true
@@ -1124,6 +1136,7 @@ test('执行前复核通过后、调用 Runtime 前被系统取消的运行不�
       sessionId,
       prompt: '领取与执行竞态',
       idempotencyKey: `${runIdPrefix(ws)}-claim-exec-race`,
+      workspaceAgentMemberId: agentMemberId,
     })
     if (!started) throw new Error('Run 创建失败')
     // startRun 在调度执行前就返回；等复核真正通过、执行停在守卫之前。

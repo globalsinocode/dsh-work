@@ -59,6 +59,54 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** 该消息所属的 Run；共享讨论消息为 null。 */
+  runId?: string | null
+  /** TW-10 共享讨论归因：用户消息作者；assistant 消息记录触发人与 Agent。 */
+  senderId?: string
+  senderName?: string
+  runRequesterId?: string
+  runRequesterName?: string
+  agentName?: string
+}
+
+/**
+ * TW-10 团队共享讨论线程（GET /sessions/:id）：消息流带发送者与 @ 触发归因，
+ * runs 供前端内联展示每条执行的最新状态；个人会话不返回此结构。
+ */
+/** 共享线程消息：归因字段恒返回（无值时为 null），runId 为 null 即讨论消息。 */
+export interface SessionThreadMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  runId: string | null
+  senderId: string | null
+  senderName: string | null
+  runRequesterId: string | null
+  runRequesterName: string | null
+  agentName: string | null
+}
+
+export interface SessionThread {
+  sessionId: string
+  title: string
+  workspaceId: string
+  workspaceType?: 'personal' | 'team'
+  workspaceStatus?: 'active' | 'archived'
+  createdBy: string
+  creatorName: string
+  createdAt: string
+  lastActiveAt: string
+  /** 调用者的当前成员角色（读轨）；个人会话恒为 null。 */
+  currentUserRole: TeamMemberRole | null
+  messages: SessionThreadMessage[]
+  runs: Array<{
+    runId: string
+    status: string
+    requestedBy: string
+    requesterName: string
+    createdAt: string
+  }>
 }
 
 export interface TaskRun {
@@ -69,6 +117,9 @@ export interface TaskRun {
   status: RunStatus
   workspaceId: string
   workspaceName: string
+  /** Run 所属空间类型/状态，供客户端按服务端事实判定团队共享与归档只读。 */
+  workspaceType?: 'personal' | 'team'
+  workspaceStatus?: 'active' | 'archived'
   sessionId: string
   agentVersion: string
   createdAt: string
@@ -76,6 +127,10 @@ export interface TaskRun {
   duration?: string
   tokenUsage?: number
   owner: string
+  /** 触发人用户 id（TW-10 共享线程里区分「我发起的」与他人发起的 Run）。 */
+  requestedBy: string
+  /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
+  currentUserRole?: TeamMemberRole | null
   messages: ChatMessage[]
   steps: RunStep[]
   sources: TaskSource[]

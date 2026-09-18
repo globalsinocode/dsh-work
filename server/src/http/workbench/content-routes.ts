@@ -265,6 +265,22 @@ export function registerContentRoutes(
     return httpResult(201, envelope('workbench', file, 'postgres'))
   })
 
+  // Run 创建失败后的附件回收（TW-10）：仅上传人可清理尚未被 Run 输入引用的
+  // 会话文件；已引用对象必须保留，避免破坏执行/审计历史。
+  router.delete(`${basePath}/sessions/:sessionId/files/:fileId`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    return envelope(
+      'workbench',
+      await content.discardSessionFile(
+        context.params['sessionId'] ?? '',
+        context.params['fileId'] ?? '',
+        identity.userId,
+      ),
+      'postgres',
+    )
+  })
+
   router.get(`${basePath}/files/:fileId/download`, async (_request, context, response) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId

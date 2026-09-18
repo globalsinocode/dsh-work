@@ -13,10 +13,16 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
   router.post(`${basePath}/sessions`, async () => unavailable('对话'))
   router.delete(`${basePath}/sessions/:sessionId`, async (_request, context) =>
     unavailable(`对话 ${context.params['sessionId'] ?? ''}`))
+  router.get(`${basePath}/sessions/:sessionId`, async (_request, context) =>
+    unavailable(`对话 ${context.params['sessionId'] ?? ''}`))
+  router.post(`${basePath}/sessions/:sessionId/messages`, async (_request, context) =>
+    unavailable(`对话 ${context.params['sessionId'] ?? ''}`))
   router.post(`${basePath}/sessions/:sessionId/runs`, async (_request, context) =>
     unavailable(`对话 ${context.params['sessionId'] ?? ''}`))
   router.post(`${basePath}/sessions/:sessionId/files`, async (_request, context) =>
     unavailable(`对话 ${context.params['sessionId'] ?? ''} 的文件`))
+  router.delete(`${basePath}/sessions/:sessionId/files/:fileId`, async (_request, context) =>
+    unavailable(`对话 ${context.params['sessionId'] ?? ''} 的文件 ${context.params['fileId'] ?? ''}`))
   router.get(`${basePath}/runs/:runId`, async (_request, context) =>
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
   router.get(`${basePath}/runs/:runId/events`, async (_request, context) =>

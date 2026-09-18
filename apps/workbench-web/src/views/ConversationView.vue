@@ -15,43 +15,109 @@ import {
 } from '@element-plus/icons-vue'
 
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
-import { useContentStore } from '@/stores/content'
+import { workbenchApi } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, TaskSource } from '@/types/domain'
+import type { Artifact, ChatMessage, SessionThread, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
 const route = useRoute()
 const router = useRouter()
 const taskStore = useTaskStore()
-const contentStore = useContentStore()
+const authStore = useAuthStore()
 
 const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
 const stopping = ref(false)
 
+/**
+ * TW-10 会话模式：路由 id 不是任何 Run 时，按 Session 直接加载共享线程；
+ * 线程中的执行记录以状态入口内联展示，点击进入对应 Run 详情。
+ */
+const sessionThread = ref<SessionThread | null>(null)
+const threadMissing = ref(false)
+
 const task = computed(() => taskStore.getTask(String(route.params.id)))
 /**
  * 归档只读态（design §2.7 / 3-T1 执行轨）：运行所属团队空间归档后，续写（发送消息）
  * 与重试入口隐藏；内容、来源与成果下载保持可读。个人空间不会命中（AC-23）。
  */
-const workspaceArchived = computed(() => {
-  const workspace = contentStore.workspaces.find(item => item.id === task.value?.workspaceId)
-  return workspace?.type === 'team' && workspace.status === 'archived'
-})
+const workspaceArchived = computed(() =>
+  task.value?.workspaceType === 'team' && task.value.workspaceStatus === 'archived')
+/** 会话模式的归档判断与 Run 视图同一口径：均以服务端返回的空间状态为准。 */
+const sessionArchived = computed(() =>
+  sessionThread.value?.workspaceType === 'team' && sessionThread.value.workspaceStatus === 'archived')
+/** TW-10：团队会话的消息流是全空间共享讨论，发送与归因按成员区分。 */
+const isTeamSession = computed(() =>
+  task.value?.workspaceType === 'team' || sessionThread.value?.workspaceType === 'team')
+/** 停止/重试只对本 Run 的触发人可用（共享会话里他人发起的 Run 只能看）。 */
+const isRequester = computed(() => Boolean(task.value && task.value.requestedBy === authStore.user.id))
+/**
+ * TW-10：Run 视图的写权限。只读成员可读共享 Run 详情但不得发言/触发/停止/重试；
+ * `currentUserRole` 由服务端随 Run 详情返回。团队 Run 字段缺失（旧数据/异常）
+ * 时按只读处理（fail-closed），服务端写轨仍是最终裁决；个人 Run 无角色字段，不拦截。
+ */
+const TEAM_WRITE_ROLES: ReadonlySet<TeamMemberRole> = new Set(['owner', 'admin', 'member'])
+function canWriteTeamRole(role: TeamMemberRole | null | undefined) {
+  return role !== null && role !== undefined && TEAM_WRITE_ROLES.has(role)
+}
+const isRunViewer = computed(() =>
+  task.value?.workspaceType === 'team' && !canWriteTeamRole(task.value.currentUserRole))
 const canStop = computed(() => Boolean(
-  task.value && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
+  task.value && isRequester.value && !isRunViewer.value
+  && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
 ))
-const canRetry = computed(() => task.value && ['failed', 'cancelled'].includes(task.value.status)
+const canRetry = computed(() => task.value && isRequester.value && !isRunViewer.value
+  && ['failed', 'cancelled'].includes(task.value.status)
   && (task.value.error?.retryable ?? true))
-const canFollowUp = computed(() => !workspaceArchived.value)
+const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
+/**
+ * 会话模式写权限：团队会话要求非只读成员（服务端 currentUserRole，读轨，
+ * 归档空间仍返回角色但由 sessionArchived 拦截）；个人会话仅创建者可写。
+ * 角色为 null 且属团队会话时宁可漏开不可误开。
+ */
+const canWriteSession = computed(() => {
+  const thread = sessionThread.value
+  if (!thread || sessionArchived.value) return false
+  if (thread.workspaceType === 'team') return canWriteTeamRole(thread.currentUserRole)
+  return thread.createdBy === authStore.user.id
+})
+/** 只读成员查看共享会话时的提示（归档优先）。 */
+const sessionReadOnly = computed(() =>
+  Boolean(sessionThread.value) && !sessionArchived.value && !canWriteSession.value)
+
+/** 当前空间可 @ 的 Agent 成员（仅团队会话加载；只读成员的名册可读但无发起权）。 */
+const agentMembers = ref<WorkspaceAgentMember[]>([])
+const mentionOptions = computed(() =>
+  agentMembers.value
+    .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
+    .map(member => ({ id: member.id, name: member.name })),
+)
+
+async function loadAgentMembers(workspaceId: string | undefined) {
+  if (!workspaceId || !isTeamSession.value) {
+    agentMembers.value = []
+    return
+  }
+  try {
+    agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+  } catch {
+    agentMembers.value = []
+  }
+}
 const currentStep = computed(() =>
   task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
 )
 const lastAssistantMessageId = computed(() =>
-  [...(task.value?.messages ?? [])].reverse().find((message) => message.role === 'assistant')?.id,
+  [...(task.value?.messages ?? [])]
+    .reverse()
+    .find(message => message.role === 'assistant' && message.runId === task.value?.id)?.id,
 )
+function belongsToCurrentRun(message: ChatMessage) {
+  return message.runId === task.value?.id
+}
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -79,7 +145,7 @@ function onConversationScroll() {
 }
 
 async function stopCurrentRun() {
-  if (!task.value || stopping.value) return
+  if (!task.value || stopping.value || isRunViewer.value) return
   try {
     await ElMessageBox.confirm(
       '停止后会终止本轮运行尝试，已有对话和执行记录仍会保留。',
@@ -101,7 +167,7 @@ async function stopCurrentRun() {
 }
 
 async function retryRun() {
-  if (!task.value || workspaceArchived.value) return
+  if (!task.value || workspaceArchived.value || isRunViewer.value) return
   try {
     await taskStore.retryTask(task.value.id)
     ElMessage.success('已创建新的运行尝试')
@@ -124,27 +190,120 @@ function download(item: Artifact) {
   void downloadArtifactFile(item)
 }
 
-async function submitFollowUp(payload: { prompt: string; files: File[]; workspaceId: string }) {
-  if (!task.value || workspaceArchived.value) return
+function openSessionRun(runId: string) {
+  void router.push(`/conversations/${runId}`)
+}
+
+function formatSessionRunTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+async function submitFollowUp(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
+  // TW-10 防线：viewer/角色未知不允许发言或触发执行，不能只靠模板不渲染
+  // composer——函数本身也要 fail-closed。服务端写轨仍是最终裁决。
+  if (!task.value || workspaceArchived.value || isRunViewer.value) return
   try {
-    const nextTask = await taskStore.sendMessage(task.value.id, payload.prompt, payload.files)
-    if (nextTask) await router.replace(`/conversations/${nextTask.id}`)
+    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
+    if (isTeamSession.value && !mentionedMemberId) {
+      // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
+      if (payload.files.length) {
+        ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+        return
+      }
+      await taskStore.postSessionMessage(task.value.sessionId, payload.prompt)
+      payload.confirm?.()
+      try {
+        await taskStore.refreshRun(task.value.id)
+        ElMessage.success('讨论消息已发送，如需 Agent 处理请 @ 对应成员')
+      } catch {
+        ElMessage.warning('讨论消息已发送，但对话状态刷新失败，请稍后手动刷新。')
+      }
+    } else {
+      const nextTask = await taskStore.sendMessage(task.value.id, payload.prompt, payload.files, mentionedMemberId)
+      if (nextTask) await router.replace(`/conversations/${nextTask.id}`)
+      payload.confirm?.()
+    }
     await nextTick(() => scrollToBottom())
   } catch (error) {
     notifyActionFailure('发送消息', `对话“${task.value.title}”`, error, '检查输入和附件后重试；已有对话内容不会丢失。')
   }
 }
 
+/** 会话模式：@ 触发新的 Run 并跳到 Run 详情；普通消息留在共享讨论线程。 */
+async function submitSessionMessage(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
+  const thread = sessionThread.value
+  if (!thread || !canWriteSession.value) return
+  try {
+    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
+    // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
+    if (mentionedMemberId || !isTeamSession.value) {
+      const createdRun = await taskStore.startRunWithSessionFiles(thread.sessionId, {
+        prompt: payload.prompt,
+        attachments: payload.files,
+        workspaceAgentMemberId: mentionedMemberId,
+      })
+      taskStore.subscribe(createdRun.id)
+      await router.replace(`/conversations/${createdRun.id}`)
+      payload.confirm?.()
+      return
+    }
+    if (payload.files.length) {
+      ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+      return
+    }
+    await taskStore.postSessionMessage(thread.sessionId, payload.prompt)
+    payload.confirm?.()
+    try {
+      sessionThread.value = await taskStore.loadSessionThread(thread.sessionId)
+      await nextTick(() => scrollToBottom())
+    } catch {
+      ElMessage.warning('讨论消息已发送，但会话刷新失败，请稍后手动刷新。')
+    }
+  } catch (error) {
+    notifyActionFailure('发送消息', `对话“${thread.title}”`, error, '检查输入后重试；已有讨论内容不会丢失。')
+  }
+}
+
 async function initializeConversation() {
   await taskStore.load()
+  const thread = task.value ? null : await loadConversationTarget(String(route.params.id))
+  await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
   await nextTick()
   scrollToBottom('auto')
+}
+
+/** Run ID 可直接定位共享 Run；不是 Run 时才退回 Session 线程视图。 */
+async function loadConversationTarget(id: string): Promise<SessionThread | null> {
+  const run = taskStore.getTask(id) ?? await taskStore.refreshRun(id).catch(() => null)
+  return run ? null : loadSessionMode(id)
+}
+
+async function loadSessionMode(id: string): Promise<SessionThread | null> {
+  try {
+    const thread = await taskStore.loadSessionThread(id)
+    sessionThread.value = thread
+    return thread
+  } catch {
+    threadMissing.value = true
+    return null
+  }
 }
 
 onMounted(initializeConversation)
 
 watch(
-  [() => route.params.id, () => task.value?.messages.length, () => task.value?.status],
+  () => String(route.params.id),
+  async id => {
+    sessionThread.value = null
+    threadMissing.value = false
+    const thread = taskStore.getTask(String(id)) ? null : await loadConversationTarget(String(id))
+    await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  },
+)
+
+watch(
+  [() => String(route.params.id), () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length],
   async () => {
     await nextTick()
     if (!showJumpToLatest.value) scrollToBottom('smooth')
@@ -154,9 +313,101 @@ watch(
 
 <template>
   <div class="conversation-page">
-    <div v-if="taskStore.loading && !task" class="conversation-state">
+    <div v-if="taskStore.loading && !task && !sessionThread && !threadMissing" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
+
+    <template v-else-if="!task && sessionThread">
+      <header class="conversation-header">
+        <div class="conversation-header__left">
+          <button type="button" class="conversation-header__back" aria-label="返回" @click="goBack">
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <h1>{{ sessionThread.title }}</h1>
+          <span class="conversation-skill"><span>发起人</span>{{ sessionThread.creatorName }}</span>
+        </div>
+      </header>
+
+      <main
+        ref="conversationScroll"
+        class="conversation-scroll"
+        aria-label="对话内容"
+        @scroll.passive="onConversationScroll"
+      >
+        <div class="conversation-thread">
+          <p v-if="!sessionThread.messages.length" class="thread-empty">
+            还没有讨论内容。直接发送即发表全员可见的讨论消息；@ Agent 成员则发起一次执行。
+          </p>
+          <article
+            v-for="message in sessionThread.messages"
+            :key="message.id"
+            class="conversation-message"
+            :class="`conversation-message--${message.role}`"
+          >
+            <div v-if="message.role === 'user'" class="user-message">
+              <p>{{ message.content }}</p>
+              <time>
+                <span v-if="message.senderName" class="message-sender">{{ message.senderName }}</span>
+                {{ message.createdAt }}
+              </time>
+            </div>
+            <template v-else>
+              <div class="assistant-identity">
+                <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ message.agentName ?? 'dsh-work' }}</strong>
+                  <span>
+                    {{ message.createdAt }}
+                    <template v-if="message.runRequesterName"> · 由 {{ message.runRequesterName }} 发起</template>
+                  </span>
+                </div>
+              </div>
+              <div class="assistant-answer">
+                <AssistantMessageContent :text="message.content" />
+              </div>
+            </template>
+          </article>
+          <section
+            v-if="sessionThread.runs.length"
+            class="session-run-list"
+            aria-label="本讨论的执行记录"
+          >
+            <button
+              v-for="run in sessionThread.runs"
+              :key="run.runId"
+              type="button"
+              class="session-run"
+              data-testid="session-run"
+              @click="openSessionRun(run.runId)"
+            >
+              <StatusTag :status="run.status" dot />
+              <span class="session-run__requester">{{ run.requesterName }} 发起</span>
+              <time>{{ formatSessionRunTime(run.createdAt) }}</time>
+            </button>
+          </section>
+          <div class="conversation-end" aria-hidden="true"></div>
+        </div>
+      </main>
+
+      <div class="conversation-composer-dock">
+        <div class="conversation-composer-dock__inner">
+          <TaskComposer
+            v-if="canWriteSession"
+            compact
+            :mention-options="isTeamSession ? mentionOptions : []"
+            :files-require-mention="isTeamSession"
+            @submit="submitSessionMessage"
+          />
+          <p v-else-if="sessionArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
+            该空间已归档，仅保留有权限的只读查看与下载；无法发言或发起执行。
+          </p>
+          <p v-else-if="sessionReadOnly" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
+            当前角色为只读成员，仅可查看讨论内容。
+          </p>
+          <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
+        </div>
+      </div>
+    </template>
 
     <el-result
       v-else-if="!task"
@@ -212,19 +463,25 @@ watch(
             <template v-if="message.role === 'user'">
               <div class="user-message">
                 <p>{{ message.content }}</p>
-                <time>{{ message.createdAt }}</time>
+                <time>
+                  <span v-if="message.senderName" class="message-sender">{{ message.senderName }}</span>
+                  {{ message.createdAt }}
+                </time>
               </div>
             </template>
 
             <template v-else>
               <div class="assistant-identity">
-                <span class="assistant-avatar">d</span>
+                <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
                 <div>
-                  <strong>dsh-work</strong>
-                  <span v-if="message.id === lastAssistantMessageId && task.status === 'succeeded'">
+                  <strong>{{ message.agentName ?? 'dsh-work' }}</strong>
+                  <span v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.status === 'succeeded'">
                     已完成{{ task.duration ? ` · ${task.duration}` : '' }}
                   </span>
-                  <span v-else>{{ message.createdAt }}</span>
+                  <span v-else>
+                    {{ message.createdAt }}
+                    <template v-if="message.runRequesterName"> · 由 {{ message.runRequesterName }} 发起</template>
+                  </span>
                 </div>
               </div>
 
@@ -232,7 +489,7 @@ watch(
                 <AssistantMessageContent :text="message.content" />
 
                 <div
-                  v-if="message.id === lastAssistantMessageId && task.artifacts.length"
+                  v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.artifacts.length"
                   class="answer-artifacts"
                 >
                   <button
@@ -261,7 +518,7 @@ watch(
                   >
                     <el-icon><Share /></el-icon>
                   </button>
-                  <span class="assistant-run-meta">
+                  <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
                     {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
                     · {{ task.agentVersion.split('@')[0] }}
                   </span>
@@ -314,7 +571,7 @@ watch(
               <code>{{ task.error.code }}</code>
             </div>
             <el-button
-              v-if="task.error.retryable && !workspaceArchived"
+              v-if="canRetry && !workspaceArchived"
               type="primary"
               plain
               :icon="RefreshRight"
@@ -344,11 +601,16 @@ watch(
             compact
             :running="canStop"
             :stopping="stopping"
+            :mention-options="isTeamSession ? mentionOptions : []"
+            :files-require-mention="isTeamSession"
             @submit="submitFollowUp"
             @stop="stopCurrentRun"
           />
-          <p v-else data-testid="conversation-archived-notice" class="conversation-archived-notice">
+          <p v-else-if="workspaceArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
             该空间已归档，仅保留有权限的只读查看与下载；无法续写或重试。
+          </p>
+          <p v-else-if="isRunViewer" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
+            当前角色为只读成员，仅可查看讨论内容。
           </p>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
@@ -555,6 +817,51 @@ watch(
   margin-top: 5px;
   color: #a0a39f;
   font-size: var(--dsh-font-size-micro);
+}
+
+.message-sender {
+  margin-right: 6px;
+  color: #7e837e;
+  font-weight: 600;
+}
+
+.thread-empty {
+  margin: 48px 0;
+  color: #8a8f8a;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.8;
+  text-align: center;
+}
+
+.session-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 30px;
+}
+
+.session-run {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8e4;
+  border-radius: 10px;
+  color: #59615b;
+  background: #fbfdfc;
+  font-size: var(--dsh-font-size-micro);
+  cursor: pointer;
+}
+
+.session-run:hover {
+  border-color: #b8dccd;
+  background: #f2faf6;
+}
+
+.session-run__requester {
+  font-weight: 600;
 }
 
 .assistant-identity {

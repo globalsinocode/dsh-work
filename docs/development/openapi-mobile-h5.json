@@ -1,0 +1,3060 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "dsh-work 移动端 H5 API",
+    "version": "0.6.0-m6",
+    "description": "面向移动端 H5 客户端的 Workbench API 子集契约：只收录移动端实际调用的端点，字段与 `apps/workbench-web` 消费的类型及 `server` 路由实现保持一致。完整工作台端点清单见 `openapi-workbench.json`；事件载荷结构见 `run-event.schema.json`。\n\n认证：AI Hub OIDC 登录后由 dsh-work 签发 HttpOnly Cookie `dsh_work_session`（SameSite=Lax, Path=/），浏览器同源自动携带，无需任何请求头；会话失效返回 401（error.code=`authentication_required`）。\n\n包络：成功 `{ data, meta }`，业务数据只读 `data`；失败 `{ error: { code, message, object?, suggestion?, traceId? } }`。\n\n边界：所有 Agent 交互必须经 Run/Attempt 链路发起，禁止直连模型 API；管理端 API（/api/admin/v1）不属于移动端范围。"
+  },
+  "servers": [
+    {
+      "url": "/api/workbench/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "身份",
+      "description": "当前登录身份与权限上下文"
+    },
+    {
+      "name": "目录",
+      "description": "可用 Agent 与 Skill 目录"
+    },
+    {
+      "name": "空间",
+      "description": "工作空间与空间内会话列表"
+    },
+    {
+      "name": "会话",
+      "description": "对话的创建、读取、消息与执行发起"
+    },
+    {
+      "name": "执行",
+      "description": "Run 状态、事件流与取消/重试"
+    },
+    {
+      "name": "文件",
+      "description": "会话附件与团队空间共享文件"
+    },
+    {
+      "name": "成果",
+      "description": "执行产物下载"
+    }
+  ],
+  "paths": {
+    "/session": {
+      "get": {
+        "tags": [
+          "身份"
+        ],
+        "operationId": "getSession",
+        "summary": "获取当前员工身份与权限上下文",
+        "description": "登录后首个调用：返回当前用户档案、身份来源与 API 受众。未登录返回 401，移动端应跳转 `/auth/workbench/login` 走 OIDC。",
+        "responses": {
+          "200": {
+            "description": "当前身份上下文",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WorkbenchSession"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "x-permission": "登录会话"
+      }
+    },
+    "/agents": {
+      "get": {
+        "tags": [
+          "目录"
+        ],
+        "operationId": "listWorkbenchAgents",
+        "summary": "按当前员工角色查询可用的已发布 Agent",
+        "description": "返回当前用户可见并可发起会话的已发布 Agent 列表（个人会话按角色解析当前发布版本）。",
+        "responses": {
+          "200": {
+            "description": "可用 Agent 列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkbenchAgent"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "x-permission": "登录会话"
+      }
+    },
+    "/skills": {
+      "get": {
+        "tags": [
+          "目录"
+        ],
+        "operationId": "listWorkbenchSkills",
+        "summary": "查询当前员工可查看的已发布 Skill 入口目录",
+        "description": "依赖 Skill 仅在单独安装后展示；仅返回员工可见的入口级信息。",
+        "responses": {
+          "200": {
+            "description": "Skill 入口目录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkbenchSkill"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "x-permission": "登录会话"
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "tags": [
+          "空间"
+        ],
+        "operationId": "listMyWorkspaces",
+        "summary": "查询当前员工的个人工作空间和已加入的团队工作空间",
+        "description": "默认返回全部（`all`）：个人空间与全部有权团队空间。`archived` 只返回仍是现任成员的已归档团队空间。",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived",
+                "all"
+              ],
+              "default": "all"
+            },
+            "description": "`active`=仅活动；`archived`=仅已归档；`all`=全部（默认）。其他取值返回 422。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "空间列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Workspace"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话"
+      }
+    },
+    "/workspaces/{workspaceId}/sessions": {
+      "get": {
+        "tags": [
+          "空间"
+        ],
+        "operationId": "listWorkspaceSessions",
+        "summary": "分页查询团队空间中本人发起的历史会话",
+        "description": "游标分页：响应含 `nextCursor`，下一页以同名 query 参数回传，`nextCursor` 为空即到底。仅团队空间可用；个人空间返回 422，非成员返回 403。范围固定为调用者本人发起的会话。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "按会话标题模糊匹配"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WorkspaceSessionPage"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；团队空间现任成员"
+      }
+    },
+    "/sessions": {
+      "post": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "createSession",
+        "summary": "创建对话会话",
+        "description": "省略 `workspaceId` 时归入当前用户的默认个人空间。个人空间会话按 `agentId`/`skillId` 解析固定发布版本；团队空间会话为共享讨论，可不绑定 Agent（`workspaceAgentMemberId` 用于指定默认 Agent 成员）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "会话标题"
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "description": "目标空间 id；省略时使用默认个人空间"
+                  },
+                  "agentId": {
+                    "type": "string",
+                    "description": "个人空间可选：绑定的已发布 Agent"
+                  },
+                  "skillId": {
+                    "type": "string",
+                    "description": "个人空间可选：会话内安装使用的 Skill"
+                  },
+                  "workspaceAgentMemberId": {
+                    "type": "string",
+                    "description": "团队空间可选：会话默认的 Agent 成员关联（固定版本）"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建会话",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CreatedSession"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；目标空间为团队空间时需为成员"
+      }
+    },
+    "/sessions/{sessionId}": {
+      "get": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "getSessionThread",
+        "summary": "获取会话共享线程（消息流 + Run 列表）",
+        "description": "团队会话对全部现任成员可读（含归档空间的只读保留），个人会话限创建者。`messages[].runId` 为 null 表示纯讨论消息；`runs` 供内联展示每条执行的最新状态。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "会话线程",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SessionThread"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；会话创建者或所属团队空间成员"
+      },
+      "delete": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "deleteSession",
+        "summary": "删除当前员工拥有的对话",
+        "description": "归档会话并保留审计记录与已发布成果。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DeletedSession"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；会话创建者或空间负责人"
+      }
+    },
+    "/sessions/{sessionId}/messages": {
+      "post": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "postSessionMessage",
+        "summary": "发送讨论消息（不产生 Run）",
+        "description": "仅团队空间会话可用：普通发言进入全员可见的消息流，不触发 Agent 执行；只读成员与非成员被拒绝。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "消息正文"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "消息已写入",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CreatedMessage"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；团队空间非只读成员"
+      }
+    },
+    "/sessions/{sessionId}/runs": {
+      "post": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "startRun",
+        "summary": "提交消息并启动一次 Run",
+        "description": "在会话中发起一次 Agent 执行。幂等：body `idempotencyKey` 或 `Idempotency-Key` 请求头二选一，同键重放返回原 Run。`fileIds` 为已通过 `POST /sessions/{id}/files` 上传的附件 id（≤5 个）；团队会话用 `workspaceAgentMemberId` 指定 @ 到的 Agent 成员（固定版本），个人会话沿用会话绑定版本。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt",
+                  "idempotencyKey"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "发送给 Agent 的指令正文"
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "description": "幂等键（建议 UUID v4）；也可用 `Idempotency-Key` 请求头，二者至少提供其一，缺失返回 422"
+                  },
+                  "fileIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 5,
+                    "description": "随消息附加的已上传文件 id，每次最多 5 个"
+                  },
+                  "workspaceAgentMemberId": {
+                    "type": "string",
+                    "description": "团队会话必填：@ 到的 Agent 成员关联 id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Run 已受理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaskRun"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；会话创建者或团队空间非只读成员"
+      }
+    },
+    "/sessions/{sessionId}/files": {
+      "post": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "uploadSessionFile",
+        "summary": "上传当前对话的输入文件",
+        "description": "上传、扫描并基础解析会话附件；上传成功后把返回的 `id` 放入 `POST /sessions/{id}/runs` 的 `fileIds` 引用。文件名经 `X-File-Name` 头携带（必须 `encodeURIComponent`）；`Content-Type` 为文件 MIME；body 为原始字节，上限 20 MB。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`encodeURIComponent` 后的原始文件名"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已上传的文件对象",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/UploadedFile"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；会话创建者或团队空间非只读成员"
+      },
+      "delete": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "discardSessionFile",
+        "summary": "回收未随 Run 提交的会话附件",
+        "description": "Run 创建失败或附件改判不用时，由上传人清理尚未被任何 Run 输入引用的会话文件；已被引用的对象按执行/审计历史保留，返回 removed=false。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/FileId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "回收结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DiscardedSessionFile"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；文件上传人本人"
+      }
+    },
+    "/runs/{runId}": {
+      "get": {
+        "tags": [
+          "执行"
+        ],
+        "operationId": "getRun",
+        "summary": "获取 Run 当前状态",
+        "description": "返回 Run 的完整视图：状态、步骤、消息、来源、成果与附件。团队空间 Run 对现任成员可读；被移出成员返回 404。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run 详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaskRun"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；Run 发起者或团队空间成员"
+      }
+    },
+    "/runs/{runId}/cancel": {
+      "post": {
+        "tags": [
+          "执行"
+        ],
+        "operationId": "cancelRun",
+        "summary": "取消正在执行或排队中的 Run",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "取消后的 Run 状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaskRun"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "x-permission": "登录会话；Run 发起者或团队空间非只读成员"
+      }
+    },
+    "/runs/{runId}/retry": {
+      "post": {
+        "tags": [
+          "执行"
+        ],
+        "operationId": "retryRun",
+        "summary": "基于原输入创建新的 Run Attempt",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "重试后的 Run 状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TaskRun"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        },
+        "x-permission": "登录会话；Run 发起者或团队空间非只读成员"
+      }
+    },
+    "/runs/{runId}/events": {
+      "get": {
+        "tags": [
+          "执行"
+        ],
+        "operationId": "streamRunEvents",
+        "summary": "通过 SSE 订阅 Run 事件",
+        "description": "`Content-Type: text/event-stream`。浏览器用原生 `EventSource` 接入；每条事件带 `id`（游标）与 `event`（类型），断线重连由浏览器自动携带 `Last-Event-ID` 续传。服务端周期发送 `: heartbeat` 注释行保活；Run 进入 `succeeded`/`failed`/`cancelled` 终态后流结束，客户端应停止重连。团队成员被收权时流会主动终止。事件 `data` 载荷结构见 `RunEvent` schema 与 `docs/development/run-event.schema.json`。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "断线续传游标（EventSource 自动携带）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE 事件流",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；Run 发起者或团队空间成员"
+      }
+    },
+    "/files/{fileId}/download": {
+      "get": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "downloadFile",
+        "summary": "鉴权后下载文件对象",
+        "description": "返回原始字节流（`Content-Disposition: attachment`，UTF-8 文件名）。会话附件对所属空间的现任成员可读，空间共享文件按现任成员口径判定。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FileId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件字节流",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；文件所属空间现任成员"
+      }
+    },
+    "/workspaces/{workspaceId}/files": {
+      "get": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "listWorkspaceFiles",
+        "summary": "查询团队空间共享文件（所有成员）",
+        "description": "游标分页，返回每个逻辑文件当前展示版本（最高解析成功版本）。归档空间对现任成员仍可读取；个人空间返回 422。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "按文件名模糊匹配"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "共享文件分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WorkspaceFilePage"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间现任成员"
+      },
+      "post": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "uploadWorkspaceFile",
+        "summary": "上传工作空间共享文件",
+        "description": "向团队空间上传共享文件（新建逻辑文件 V1）。文件名经 `X-File-Name` 头携带（必须 `encodeURIComponent`）；`Content-Type` 为文件 MIME；body 为原始字节，上限 20 MB。归档空间与只读成员被拒绝。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`encodeURIComponent` 后的原始文件名"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已上传的共享文件",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WorkspaceFile"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间非只读成员"
+      }
+    },
+    "/workspaces/{workspaceId}/files/{logicalFileId}/versions": {
+      "get": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "listWorkspaceFileVersions",
+        "summary": "查询逻辑文件的版本历史（所有成员）",
+        "description": "按版本号倒序返回含失败版本的全部版本；`current` 与 `canDownload` 均由服务端判定。归档空间对现任成员仍可读。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalFileId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "版本历史",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/WorkspaceFileVersionPage"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间现任成员"
+      },
+      "post": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "uploadWorkspaceFileVersion",
+        "summary": "上传逻辑文件的新版本",
+        "description": "在既有逻辑文件下追加新版本。文件名经 `X-File-Name`（必须 `encodeURIComponent`），更新说明经可选的 `X-File-Note`（同样编码，≤500 字符）；body 为原始字节，上限 20 MB。归档空间与只读成员被拒绝。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalFileId"
+          },
+          {
+            "name": "X-File-Name",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "`encodeURIComponent` 后的原始文件名"
+          },
+          {
+            "name": "X-File-Note",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "description": "`encodeURIComponent` 后的版本更新说明"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "新版本摘要",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/UploadedWorkspaceFileVersion"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间非只读成员"
+      }
+    },
+    "/workspaces/{workspaceId}/files/{logicalFileId}/versions/{versionNo}/download": {
+      "get": {
+        "tags": [
+          "文件"
+        ],
+        "operationId": "downloadWorkspaceFileVersion",
+        "summary": "鉴权后下载逻辑文件的指定版本",
+        "description": "按版本号解析到不可变文件对象后下载；服务端在不可下载时拒绝。归档空间对现任成员可读。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalFileId"
+          },
+          {
+            "name": "versionNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "版本号（≥1 的整数）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件字节流",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间现任成员"
+      }
+    },
+    "/workspaces/{workspaceId}/agent-members": {
+      "get": {
+        "tags": [
+          "空间"
+        ],
+        "operationId": "listWorkspaceAgentMembers",
+        "summary": "查询团队空间的 Agent 成员列表（所有成员）",
+        "description": "返回团队空间已加入的 Agent 成员及固定版本；移动端 @ 提及补全使用 `id` 作为 `workspaceAgentMemberId`。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent 成员列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkspaceAgentMember"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；空间现任成员"
+      }
+    },
+    "/artifacts": {
+      "get": {
+        "tags": [
+          "成果"
+        ],
+        "operationId": "listArtifacts",
+        "summary": "查询当前员工可见成果",
+        "responses": {
+          "200": {
+            "description": "成果列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Artifact"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "x-permission": "登录会话"
+      }
+    },
+    "/artifacts/{artifactId}/download": {
+      "get": {
+        "tags": [
+          "成果"
+        ],
+        "operationId": "downloadLatestArtifact",
+        "summary": "鉴权后下载成果最新版本",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成果字节流",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；成果所属空间成员"
+      }
+    },
+    "/artifacts/{artifactId}/versions/{versionId}/download": {
+      "get": {
+        "tags": [
+          "成果"
+        ],
+        "operationId": "downloadArtifactVersion",
+        "summary": "鉴权后下载指定成果版本",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          },
+          {
+            "name": "versionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "成果版本号（≥1 的整数）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成果字节流",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        },
+        "x-permission": "登录会话；成果所属空间成员"
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "WorkspaceId": {
+        "name": "workspaceId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "工作空间 id"
+      },
+      "SessionId": {
+        "name": "sessionId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "会话 id"
+      },
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Run id"
+      },
+      "FileId": {
+        "name": "fileId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "文件对象 id（不可变版本）"
+      },
+      "LogicalFileId": {
+        "name": "logicalFileId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "逻辑文件 id（聚合多版本）"
+      },
+      "ArtifactId": {
+        "name": "artifactId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "成果 id"
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "上一页响应的 `nextCursor`；空即到底"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "description": "每页条数，服务端限定 1..100"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "未登录或会话失效；引导重新走 `/auth/workbench/login`",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "无权限（非成员、角色不足或对象不可访问）",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "对象不存在或对当前用户不可见",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "状态冲突（如对象已处于目标状态或并发修改）",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "ValidationFailed": {
+        "description": "请求参数校验失败",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Meta": {
+        "type": "object",
+        "required": [
+          "api",
+          "adapter",
+          "timestamp"
+        ],
+        "properties": {
+          "api": {
+            "type": "string",
+            "enum": [
+              "workbench"
+            ]
+          },
+          "adapter": {
+            "type": "string",
+            "enum": [
+              "postgres",
+              "prototype-memory"
+            ],
+            "description": "服务端适配器；Prototype 联调环境为 prototype-memory"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "稳定机读标识，用于分支处理"
+              },
+              "message": {
+                "type": "string",
+                "description": "面向用户展示的错误信息"
+              },
+              "object": {
+                "type": "string",
+                "description": "出错对象的可读名称"
+              },
+              "suggestion": {
+                "type": "string",
+                "description": "建议的后续动作"
+              },
+              "traceId": {
+                "type": "string",
+                "description": "排障凭证，上报问题时携带"
+              }
+            }
+          }
+        }
+      },
+      "UserRole": {
+        "type": "string",
+        "enum": [
+          "employee",
+          "department_manager",
+          "business_admin",
+          "platform_admin",
+          "auditor"
+        ]
+      },
+      "UserProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "title",
+          "department",
+          "avatarText",
+          "role",
+          "dataScopes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "department": {
+            "type": "string"
+          },
+          "avatarText": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "dataScopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "WorkbenchSession": {
+        "type": "object",
+        "required": [
+          "user",
+          "identityProvider",
+          "apiAudience"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserProfile"
+          },
+          "identityProvider": {
+            "type": "string",
+            "enum": [
+              "prototype-sso",
+              "ai-hub-oidc"
+            ]
+          },
+          "apiAudience": {
+            "type": "string",
+            "enum": [
+              "workbench"
+            ]
+          }
+        }
+      },
+      "WorkbenchAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "welcomeMessage",
+          "version",
+          "examplePrompts"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "welcomeMessage": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "examplePrompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "WorkbenchSkill": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version",
+          "category",
+          "description",
+          "owner",
+          "testPrompt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "testPrompt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkspaceStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "archived"
+        ]
+      },
+      "WorkspaceFile": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "size",
+          "uploadedBy",
+          "uploadedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "文件对象 id（当前展示版本对应的不可变对象）"
+          },
+          "logicalFileId": {
+            "type": "string",
+            "description": "逻辑文件 id（团队共享文件按逻辑文件聚合）"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "扩展名大写，如 XLSX/PDF"
+          },
+          "size": {
+            "type": "string",
+            "description": "格式化大小，如 `1.2 MB`"
+          },
+          "versionNo": {
+            "type": "integer",
+            "description": "当前展示版本号"
+          },
+          "versionCount": {
+            "type": "integer",
+            "description": "版本总数（含失败版本）"
+          },
+          "uploadedBy": {
+            "type": "string"
+          },
+          "uploadedAt": {
+            "type": "string",
+            "description": "格式化时间字符串"
+          },
+          "scanStatus": {
+            "type": "string",
+            "description": "安全扫描状态"
+          },
+          "extractionStatus": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ],
+            "description": "基础解析状态"
+          },
+          "removable": {
+            "type": "boolean",
+            "description": "当前调用者是否可移除（服务端判定）"
+          },
+          "canDownload": {
+            "type": "boolean",
+            "description": "是否可下载（服务端判定）"
+          }
+        }
+      },
+      "WorkspaceFilePage": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFile"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "下一页游标；null 表示到底"
+          }
+        }
+      },
+      "WorkspaceFileVersion": {
+        "type": "object",
+        "required": [
+          "versionNo",
+          "fileId",
+          "logicalFileId",
+          "name",
+          "type",
+          "size",
+          "note",
+          "uploadedBy",
+          "uploadedAt",
+          "scanStatus",
+          "parseStatus",
+          "current",
+          "canDownload"
+        ],
+        "properties": {
+          "versionNo": {
+            "type": "integer"
+          },
+          "fileId": {
+            "type": "string",
+            "description": "该版本对应的不可变文件对象 id；下载与引用都必须固定到它"
+          },
+          "logicalFileId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "上传新版本时填写的更新说明"
+          },
+          "uploadedBy": {
+            "type": "string"
+          },
+          "uploadedAt": {
+            "type": "string"
+          },
+          "scanStatus": {
+            "type": "string"
+          },
+          "parseStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "current": {
+            "type": "boolean",
+            "description": "是否为列表当前展示版本（服务端判定）"
+          },
+          "canDownload": {
+            "type": "boolean",
+            "description": "是否可下载（服务端判定）"
+          }
+        }
+      },
+      "WorkspaceFileVersionPage": {
+        "type": "object",
+        "required": [
+          "logicalFileId",
+          "name",
+          "status",
+          "latestVersionNo",
+          "versionCount",
+          "items"
+        ],
+        "properties": {
+          "logicalFileId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "latestVersionNo": {
+            "type": "integer"
+          },
+          "versionCount": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFileVersion"
+            }
+          }
+        }
+      },
+      "UploadedFile": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "size",
+          "type",
+          "uploadedBy",
+          "uploadedAt",
+          "extractionStatus"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "文件对象 id；在 `POST /sessions/{id}/runs` 的 `fileIds` 中引用"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string",
+            "description": "格式化大小"
+          },
+          "type": {
+            "type": "string",
+            "description": "扩展名大写"
+          },
+          "uploadedBy": {
+            "type": "string"
+          },
+          "uploadedAt": {
+            "type": "string"
+          },
+          "extractionStatus": {
+            "type": "string",
+            "enum": [
+              "succeeded"
+            ]
+          }
+        }
+      },
+      "UploadedWorkspaceFileVersion": {
+        "type": "object",
+        "required": [
+          "id",
+          "logicalFileId",
+          "versionNo",
+          "name",
+          "type",
+          "size",
+          "uploadedBy",
+          "uploadedAt",
+          "extractionStatus"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "新版本对应的不可变文件对象 id"
+          },
+          "logicalFileId": {
+            "type": "string"
+          },
+          "versionNo": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string"
+          },
+          "uploadedBy": {
+            "type": "string"
+          },
+          "uploadedAt": {
+            "type": "string"
+          },
+          "extractionStatus": {
+            "type": "string",
+            "enum": [
+              "succeeded"
+            ]
+          }
+        }
+      },
+      "Workspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "type",
+          "memberCount",
+          "sessionCount",
+          "artifactCount",
+          "updatedAt",
+          "owner",
+          "members",
+          "files",
+          "status",
+          "archivedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team"
+            ]
+          },
+          "memberCount": {
+            "type": "integer"
+          },
+          "sessionCount": {
+            "type": "integer"
+          },
+          "artifactCount": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string",
+            "description": "当前负责人显示名（随转交变化）"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "成员显示名列表"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFile"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkspaceStatus"
+          },
+          "archivedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "RunStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "awaiting_approval",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "TeamMemberRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "admin",
+          "member",
+          "viewer"
+        ],
+        "description": "团队空间员工角色：负责人/管理员/成员/只读成员"
+      },
+      "WorkspaceSessionSummary": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "title",
+          "creatorId",
+          "creatorName",
+          "lastActiveAt",
+          "runCount",
+          "latestRun"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "creatorId": {
+            "type": "string"
+          },
+          "creatorName": {
+            "type": "string"
+          },
+          "lastActiveAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "列表固定按该字段倒序"
+          },
+          "runCount": {
+            "type": "integer"
+          },
+          "latestRun": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/RunStatus"
+              }
+            }
+          }
+        }
+      },
+      "WorkspaceSessionPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceSessionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "下一页游标；null 表示到底"
+          }
+        }
+      },
+      "CreatedSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspaceId",
+          "agentVersionId",
+          "title",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "agentVersionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "会话绑定的固定 Agent 版本；团队讨论会话可为 null"
+          },
+          "title": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreatedMessage": {
+        "type": "object",
+        "required": [
+          "messageId",
+          "sessionId"
+        ],
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        }
+      },
+      "DeletedSession": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "title",
+          "archived"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "archived": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "SessionThreadMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "content",
+          "createdAt",
+          "runId",
+          "senderId",
+          "senderName",
+          "runRequesterId",
+          "runRequesterName",
+          "agentName"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "关联的 Run id；null 即纯讨论消息"
+          },
+          "senderId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "用户消息作者"
+          },
+          "senderName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runRequesterId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "assistant 消息的 @ 触发人"
+          },
+          "runRequesterName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "回复的 Agent 名称"
+          }
+        }
+      },
+      "SessionThreadRun": {
+        "type": "object",
+        "required": [
+          "runId",
+          "status",
+          "requestedBy",
+          "requesterName",
+          "createdAt"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "requestedBy": {
+            "type": "string"
+          },
+          "requesterName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionThread": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "title",
+          "workspaceId",
+          "createdBy",
+          "creatorName",
+          "createdAt",
+          "lastActiveAt",
+          "currentUserRole",
+          "messages",
+          "runs"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "creatorName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "lastActiveAt": {
+            "type": "string"
+          },
+          "currentUserRole": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamMemberRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "调用者在会话所属空间的当前角色；个人会话恒为 null"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionThreadMessage"
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionThreadRun"
+            }
+          },
+          "workspaceType": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team"
+            ],
+            "description": "会话所属空间类型，供客户端判定共享讨论口径"
+          },
+          "workspaceStatus": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "description": "会话所属空间状态；archived 空间只读"
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "content",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "senderId": {
+            "type": "string",
+            "description": "用户消息作者（共享讨论归因）"
+          },
+          "senderName": {
+            "type": "string"
+          },
+          "runRequesterId": {
+            "type": "string",
+            "description": "assistant 消息的 @ 触发人"
+          },
+          "runRequesterName": {
+            "type": "string"
+          },
+          "agentName": {
+            "type": "string"
+          },
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "该消息所属的 Run；共享讨论消息为 null"
+          }
+        }
+      },
+      "RunStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "detail",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "awaiting_approval"
+            ]
+          },
+          "tool": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskSource": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "title",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "knowledge",
+              "erp",
+              "mes",
+              "file"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "effectiveAt": {
+            "type": "string"
+          },
+          "dataScope": {
+            "type": "string"
+          },
+          "synthetic": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "version",
+          "size",
+          "createdAt",
+          "runId",
+          "workspaceId",
+          "summary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "xlsx",
+              "docx",
+              "pdf",
+              "markdown",
+              "csv",
+              "text",
+              "html"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "SkillSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskRunApproval": {
+        "type": "object",
+        "required": [
+          "object",
+          "reason",
+          "nextStep",
+          "toolName",
+          "dataScope"
+        ],
+        "properties": {
+          "object": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "nextStep": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "dataScope": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskRunError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "object",
+          "reason",
+          "suggestion",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TaskRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "attemptId",
+          "title",
+          "prompt",
+          "status",
+          "workspaceId",
+          "workspaceName",
+          "sessionId",
+          "agentVersion",
+          "createdAt",
+          "updatedAt",
+          "owner",
+          "requestedBy",
+          "messages",
+          "steps",
+          "sources",
+          "artifacts",
+          "attachments"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "attemptId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "当前 Attempt id；尚未领取时为 null"
+          },
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "workspaceName": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "agentVersion": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "string"
+          },
+          "tokenUsage": {
+            "type": "number"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "触发人用户 id（共享线程里区分发起者）"
+          },
+          "currentUserRole": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamMemberRole"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "调用者在 Run 所属空间的当前角色；个人/独立空间为 null"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskSource"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "随消息附加的文件名列表"
+          },
+          "skill": {
+            "$ref": "#/components/schemas/SkillSummary"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "approval": {
+            "$ref": "#/components/schemas/TaskRunApproval"
+          },
+          "error": {
+            "$ref": "#/components/schemas/TaskRunError"
+          },
+          "workspaceType": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team"
+            ],
+            "description": "Run 所属空间类型"
+          },
+          "workspaceStatus": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "description": "Run 所属空间状态；archived 空间只读"
+          }
+        }
+      },
+      "WorkspaceAgentMember": {
+        "type": "object",
+        "required": [
+          "id",
+          "agentId",
+          "name",
+          "description",
+          "status",
+          "version",
+          "addedBy",
+          "createdAt",
+          "allowedActions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "成员关联 id；@ 提及时作为 `workspaceAgentMemberId` 使用"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "disabled"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "description": "固定到该成员的 Agent 版本"
+          },
+          "addedBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "allowedActions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "start_conversation",
+                "disable",
+                "enable",
+                "upgrade",
+                "remove"
+              ]
+            }
+          },
+          "unavailableReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "不可用的具体原因（平台未授权/版本失效/Runtime 不可用）"
+          }
+        }
+      },
+      "RunEvent": {
+        "type": "object",
+        "description": "SSE `data` 字段的 JSON 载荷；事件类型集合与字段口径见 `docs/development/run-event.schema.json`",
+        "required": [
+          "event_id",
+          "run_id",
+          "attempt_id",
+          "sequence",
+          "event_type",
+          "occurred_at",
+          "display_message",
+          "safe_metadata",
+          "trace_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "事件游标（SSE `id` 行同值）"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "attempt_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "如 run.step.started / run.message.delta / run.completed 等"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_message": {
+            "type": "string"
+          },
+          "safe_metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "白名单元数据（不含敏感正文）"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscardedSessionFile": {
+        "type": "object",
+        "required": [
+          "id",
+          "removed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "文件对象 id"
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "true=已移除；false=已被 Run 输入引用，按历史保留"
+          }
+        }
+      }
+    }
+  }
+}

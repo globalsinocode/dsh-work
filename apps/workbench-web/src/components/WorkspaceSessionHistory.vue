@@ -14,9 +14,9 @@ import { formatActivityTime, formatActivityTimeShort } from '@/utils/activity-ti
  *
  * - 只由 `WorkspaceDetailView` 的团队分支挂载；个人空间不渲染本组件，因此也不会
  *   产生 `listWorkspaceSessions` 请求（AC-23）。
- * - 列表只返回调用者本人发起的会话（TW-03 的 1B 口径：本人历史列表）。
+ * - TW-10 起列表返回空间内全部会话（共享讨论）；每行显示发起人，零 Run 的
+ *   讨论会话显示「暂无运行」，打开时退回 Session 身份（/conversations/:sessionId）。
  * - 排序固定为服务端「最近活动倒序」，前端不再排序，首版不提供排序切换。
- * - 「团队共享」与发起人筛选随 2A 一并取消，不再规划。
  */
 const props = withDefaults(
   defineProps<{
@@ -64,8 +64,8 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 const searchedTitle = computed(() => appliedQuery.value)
 /**
- * 空态（design §2.2，随 2A 放弃而收缩）：只有「本人尚无对话」与「筛选无结果」。
- * 列表当前只返回本人发起的会话，因此不再需要探测「空间是否已有会话」。
+ * 空态（TW-10 共享列表口径）：只有「空间尚无对话」与「筛选无结果」；
+ * 归档空间维持只读说明。
  */
 const emptyState = computed<'none' | 'own' | 'filter' | 'archived'>(() => {
   if (items.value.length || loading.value || !initialized.value || failed.value) return 'none'
@@ -234,17 +234,17 @@ onBeforeUnmount(() => {
     <el-empty
       v-else-if="emptyState === 'own'"
       data-testid="session-history-empty-own"
-      description="你还没有在本工作空间发起过对话"
+      description="本工作空间还没有对话"
     >
       <el-button
         v-if="canStartConversation"
         type="primary"
         @click="emit('start-new')"
       >
-        返回新对话
+        发起新对话
       </el-button>
       <p v-else class="session-history__own-guidance">
-        请联系负责人添加可用 Agent 成员后，即可发起团队对话。
+        当前角色不能发起对话，或该空间尚无可用 Agent 成员。
       </p>
     </el-empty>
 

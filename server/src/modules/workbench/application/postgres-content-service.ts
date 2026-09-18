@@ -405,7 +405,17 @@ export class PostgresContentService {
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
         join sessions s on s.tenant_id = a.tenant_id and s.id = a.session_id
         left join workspaces w on w.tenant_id = a.tenant_id and w.id = a.workspace_id
-       where a.tenant_id = ${tenantId} and s.created_by = ${actorUserId}
+       where a.tenant_id = ${tenantId}
+         -- TW-10：团队会话成果对空间成员可见（下方 canReadWorkspaceObject 复核
+         -- 移出/归档口径）；个人会话仍限创建者。
+         and (
+           s.created_by = ${actorUserId}
+           or exists (
+             select 1 from workspace_members sm
+              where sm.tenant_id = s.tenant_id and sm.workspace_id = s.workspace_id
+                and sm.user_id = ${actorUserId}
+           )
+         )
        order by av.created_at desc
     `
     // 团队成果与团队运行同一读取口径：成果列表同样要复核当前团队读权限，
@@ -1003,15 +1013,55 @@ export class PostgresContentService {
   }
 
   async storeSessionFile(sessionId: string, name: string, mimeType: string, bytes: Buffer, actorUserId: string) {
-    const [session] = await this.database<{ id: string; workspaceId: string }[]>`
-      select id, workspace_id as "workspaceId" from sessions
-       where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${actorUserId} and status = 'active'
+    const [session] = await this.database<{ id: string; workspaceId: string; createdBy: string; workspaceType: string | null }[]>`
+      select s.id, s.workspace_id as "workspaceId", s.created_by as "createdBy",
+             w.workspace_type as "workspaceType"
+        from sessions s
+        left join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId} and s.status = 'active'
     `
     if (!session) throw authorizationDenied('Session 不存在或不可访问')
     // 上传属执行轨（3-T1）：归档不改 session.status，必须单独校验所属空间仍活跃，
     // 否则归档空间仍可上传会话附件（符合性评审 P1-2，实测返回 201）。
     await this.requireActiveWorkspace(session.workspaceId, actorUserId)
+    if (session.workspaceType === 'team') {
+      // TW-10 共享会话：任何非只读成员可在共享讨论串中附加文件（与发言同一写轨）。
+      await this.assertCanWriteWorkspaceFiles(session.workspaceId, actorUserId, '向共享会话附加文件')
+    } else if (session.createdBy !== actorUserId) {
+      throw authorizationDenied('Session 不存在或不可访问')
+    }
     return this.storeInputFile({ workspaceId: session.workspaceId, sessionId, name, mimeType, bytes, actorUserId })
+  }
+
+  /**
+   * 回收“已上传但 Run 创建失败”的会话附件。只允许上传人清理；一旦文件已被任何
+   * Run 输入引用，就按已参与历史保留，不再移除（AC-13）。
+   */
+  async discardSessionFile(sessionId: string, fileId: string, actorUserId: string) {
+    return this.database.begin(async (transaction) => {
+      const [file] = await transaction<{ uploadedBy: string; removedAt: Date | null }[]>`
+        select uploaded_by as "uploadedBy", removed_at as "removedAt"
+          from file_objects
+         where tenant_id = ${tenantId} and id = ${fileId} and session_id = ${sessionId}
+         for update
+      `
+      if (!file || file.uploadedBy !== actorUserId) {
+        throw authorizationDenied('文件不存在或不可访问')
+      }
+      if (file.removedAt) return { id: fileId, removed: true }
+      const [reference] = await transaction<{ referenced: boolean }[]>`
+        select exists(
+          select 1 from run_input_files
+           where tenant_id = ${tenantId} and file_id = ${fileId}
+        ) as "referenced"
+      `
+      if (reference?.referenced) return { id: fileId, removed: false }
+      await transaction`
+        update file_objects set removed_at = now(), removed_by = ${actorUserId}
+         where tenant_id = ${tenantId} and id = ${fileId} and removed_at is null
+      `
+      return { id: fileId, removed: true }
+    })
   }
 
   /**
@@ -1319,7 +1369,9 @@ export class PostgresContentService {
            and r.session_id = ${manifest.session_id}
            and r.requested_by = ${manifest.user_context.user_id}
            and s.workspace_id = ${manifest.workspace_id}
-           and s.created_by = ${manifest.user_context.user_id}
+           -- TW-10：共享会话中 Run 发起人未必是会话创建者（成员可在他人讨论串中
+           -- @ 触发）；Run↔Session↔Manifest 的三方绑定已构成一致性校验，
+           -- 不再要求发起人等于创建者。
            and s.status = 'active'
          for update of r
       `
@@ -1491,11 +1543,22 @@ export class PostgresContentService {
        where f.tenant_id = ${tenantId} and f.id = ${fileId} and f.scan_status = 'clean'
          and f.removed_at is null
          and (
-           -- 本人会话的附件（含个人空间与团队空间），作者可读。
-           f.session_id in (select id from sessions where tenant_id = ${tenantId} and created_by = ${actorUserId})
-           -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在他人
-           -- 私有会话下的附件属于「他人私有对话」，空间成员身份不得成为读取依据
-           -- （方案 §5「查看他人私有对话与未发布成果：不允许」，AC-10）。
+           -- TW-10 共享会话：会话附件对会话所属空间的现任成员可读（含个人空间的
+           -- 本人——个人空间成员行即 owner）；下方 canReadWorkspaceObject 仍复核
+           -- 移出/归档口径。其他空间的会话附件不进入候选。
+           f.session_id in (
+             select s.id from sessions s
+              where s.tenant_id = ${tenantId}
+                and exists (
+                  select 1 from workspace_members sm
+                   where sm.tenant_id = s.tenant_id and sm.workspace_id = s.workspace_id
+                     and sm.user_id = ${actorUserId}
+                )
+           )
+           -- 空间共享文件（session_id 为空）。刻意限定 session_id is null：挂在其他
+           -- 空间会话下的附件不属于本空间共享讨论，成员身份不得成为读取依据
+           -- （方案 §5「查看他人私有对话与未发布成果：不允许」在同空间共享模型下
+           -- 保留跨空间隔离）。
            or (
              f.session_id is null
              and f.workspace_id in (
@@ -1537,7 +1600,14 @@ export class PostgresContentService {
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
         join sessions s on s.tenant_id = a.tenant_id and s.id = a.session_id
-       where av.tenant_id = ${tenantId} and av.artifact_id = ${artifactId} and s.created_by = ${actorUserId}
+       where av.tenant_id = ${tenantId} and av.artifact_id = ${artifactId}
+         -- TW-10：共享会话成果对会话所属空间的现任成员可读（canReadWorkspaceObject
+         -- 后置复核移出/归档）；个人空间成员行即 owner，口径不变。
+         and exists (
+           select 1 from workspace_members sm
+            where sm.tenant_id = s.tenant_id and sm.workspace_id = s.workspace_id
+              and sm.user_id = ${actorUserId}
+         )
          and (${version ?? null}::integer is null or av.version_no = ${version ?? null})
        order by av.version_no desc limit 1
     `

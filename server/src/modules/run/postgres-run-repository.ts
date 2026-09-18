@@ -98,11 +98,15 @@ export class PostgresRunRepository implements RunRepository {
       // row lock before the session row is what serializes "start a new run"
       // with archive (which locks the same row first). Any other order would
       // let the two interleave and a queued run could survive an archive.
-      await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId, input.requestedBy)
+      // TW-10：仓储层不再校验会话属主——团队会话是共享讨论，任何具备写轨
+      // 角色的成员都能在他人发起的会话中创建 Run；授权由调用方
+      // （RunOrchestrationService.requireSessionAccess / requireSession）
+      // 在受理前完成，这里只校验会话存在且活跃。
+      await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId)
       const [session] = await transaction<{ id: string }[]>`
         select id from sessions
          where tenant_id = ${input.tenantId} and id = ${input.sessionId}
-           and created_by = ${input.requestedBy} and status = 'active'
+           and status = 'active'
          for update
       `
       if (!session) throw new Error(`Session 不存在或不可访问：${input.sessionId}`)
@@ -162,8 +166,10 @@ export class PostgresRunRepository implements RunRepository {
       // failed/cancelled run into a new queued attempt, so it is a real
       // "start a run" path and must not slip past an archive.
       await lockActiveWorkspaceForRun(transaction, input.tenantId, input.runId)
-      const [run] = await transaction<{ status: RunState }[]>`
-        select r.status from runs r
+      const [run] = await transaction<{ status: RunState; sessionId: string; workspaceId: string | null; requestedBy: string }[]>`
+        select r.status, r.session_id as "sessionId", s.workspace_id as "workspaceId",
+               r.requested_by as "requestedBy"
+          from runs r
         join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         where r.tenant_id = ${input.tenantId} and r.id = ${input.runId} and s.status = 'active'
         for update of s, r
@@ -214,6 +220,42 @@ export class PostgresRunRepository implements RunRepository {
         `
       }
       for (const file of input.inputFiles ?? []) {
+        // TW-10 附件回收序列化：discardSessionFile 只先取同一 file_objects
+        // 行锁、再检查 run_input_files 引用；本路径虽有更长的
+        // workspaces → sessions/runs → file_objects 顺序，但两条路径唯一
+        // 共同互斥点仍是该文件行，不存在反向持锁等待。discard 先提交时这里
+        // 看到 removed_at 而失败收敛；本事务先提交时 discard 等待后读到
+        // run_input_files 引用而保留文件——两个方向都不会产生「已引用但
+        // 已删除」的输入文件。
+        // 范围兜底与准入层 prepareRuntimeFiles 同构：文件须满足四者之一——
+        // 挂在目标会话下、属于 Run 所在空间（空间共享文件）、其会话属于 Run
+        // 所在空间（同空间其它共享会话附件，TW-10）、或挂在 Run 发起人本人
+        // 名下的会话（本人跨空间附件，AC-23 既有行为）。workspace_id 为 null
+        // 的独立会话只能命中会话分支，跨空间的他人会话附件被排除。成员/角色
+        // 等更细裁决仍以准入为准；discardSessionFile 的引用检查按 file_id
+        // 全局生效，跨会话引用同样阻止回收。
+        const [fileRow] = await transaction<{ removedAt: Date | null }[]>`
+          select f.removed_at as "removedAt" from file_objects f
+           where f.tenant_id = ${input.tenantId} and f.id = ${file.fileId}
+             and (
+               f.session_id = ${run.sessionId}
+               or f.workspace_id = ${run.workspaceId}
+               or exists (
+                 select 1 from sessions fs
+                  where fs.tenant_id = f.tenant_id and fs.id = f.session_id
+                    and fs.workspace_id = ${run.workspaceId}
+               )
+               or exists (
+                 select 1 from sessions own
+                  where own.tenant_id = f.tenant_id and own.id = f.session_id
+                    and own.created_by = ${run.requestedBy}
+               )
+             )
+           for update
+        `
+        if (!fileRow || fileRow.removedAt) {
+          throw new Error(`Run 输入文件不存在、已被移除或超出该运行的可挂载范围：${file.fileId}`)
+        }
         await transaction`
           insert into run_input_files (
             id, tenant_id, run_id, attempt_id, file_id, extraction_id, mount_path
@@ -763,14 +805,12 @@ async function lockActiveWorkspaceForSession(
   transaction: DatabaseTransaction,
   tenantIdValue: string,
   sessionId: string,
-  requestedBy: string,
 ): Promise<void> {
   const [workspace] = await transaction<{ status: string }[]>`
     select w.status
       from sessions s
       join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
      where s.tenant_id = ${tenantIdValue} and s.id = ${sessionId}
-       and s.created_by = ${requestedBy}
      for update of w
   `
   assertWorkspaceActive(workspace)
