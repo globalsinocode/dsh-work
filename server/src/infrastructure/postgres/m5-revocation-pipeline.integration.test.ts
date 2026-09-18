@@ -584,7 +584,7 @@ test('执行前复核：团队运行成员被移除后置 failed 且不调用 Ru
   assert.equal(typeof note.safeMetadata['reason'], 'string')
 })
 
-test('执行前复核：个人空间运行不复核，正常执行', async () => {
+test('执行前复核：个人空间通过当前授权后正常执行', async () => {
   const prefix = uniqueWorkspace('recheck-personal')
   const userId = `${prefix}-owner`
   const versionId = `${prefix}-version`
@@ -1472,6 +1472,7 @@ async function createRunWithAttempt(input: {
     workspace_id: input.workspaceId,
     agent_version_id: input.agentVersionId,
     user_context: { user_id: input.requestedBy, tenant_id: tenantId, role_ids: [] },
+    skills: [], data_scopes: [], input: { message: 'revocation fixture', file_mounts: [] },
   }
   // runs_current_attempt_fk is deferrable — both rows must exist at commit.
   await database.begin(async transaction => {

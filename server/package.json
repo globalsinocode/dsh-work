@@ -50,8 +50,8 @@
     "test:m5:usage:integration": "node --experimental-strip-types --test src/http/team-workspace-usage-api.integration.test.ts",
     "test:skill-install": "node --experimental-strip-types --test src/modules/skill/skill-package.test.ts",
     "test:skill-install:integration": "node --experimental-strip-types --test src/infrastructure/postgres/admin-skill-installation.integration.test.ts",
-    "test:review:unit": "node --experimental-strip-types --test src/modules/run/run-state-machine.test.ts",
-    "test:review:integration": "node --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts src/infrastructure/postgres/review-a1.integration.test.ts"
+    "test:review:unit": "node --experimental-strip-types --test src/modules/run/run-state-machine.test.ts src/modules/run/current-execution-authorization.test.ts src/modules/runtime/runtime-adapter.test.ts config/dsh/dsh-work-tool-policy.test.js src/http/sse-reconnect.test.ts",
+    "test:review:integration": "node --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts src/infrastructure/postgres/review-a1.integration.test.ts src/infrastructure/postgres/review-a2.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

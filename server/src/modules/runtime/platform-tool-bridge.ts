@@ -6,7 +6,7 @@ import { join } from 'node:path'
 export type PlatformToolHandler = (input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
 
 /** Per-Attempt local transport. No credentials, model calls or agent loop live here. */
-export async function createPlatformToolBridge(handlers: Record<string, PlatformToolHandler>, limit: number) {
+export async function createPlatformToolBridge(handlers: Record<string, PlatformToolHandler>, limit: number, authorize?: () => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-tool-'))
   const socket = join(directory, 'bridge.sock')
   const controller = new AbortController()
@@ -15,6 +15,20 @@ export async function createPlatformToolBridge(handlers: Record<string, Platform
   const server = createServer((request, response) => {
     const task = (async () => {
       response.setHeader('Content-Type', 'application/json')
+      // Internal policy probe, never registered as an Agent tool or counted as a tool call.
+      if (request.url === '/authorize-execution') {
+        if (request.method !== 'POST' || !authorize || controller.signal.aborted) {
+          response.writeHead(403).end(JSON.stringify({ error: 'Attempt 未获授权' }))
+          return
+        }
+        try {
+          await authorize()
+          response.end(JSON.stringify({ authorized: true }))
+        } catch {
+          response.writeHead(403).end(JSON.stringify({ error: '当前执行授权不可用或已撤销' }))
+        }
+        return
+      }
       const toolName = request.url === '/prepare-skill'
         ? 'prepare_skill_installation'
         : request.url?.match(/^\/tools\/([a-z0-9_]+)$/)?.[1]
@@ -25,14 +39,18 @@ export async function createPlatformToolBridge(handlers: Record<string, Platform
       }
       try {
         const input = await readBody(request)
+        await authorize?.()
+        controller.signal.throwIfAborted()
         const value = await handler(input, controller.signal)
+        await authorize?.()
+        controller.signal.throwIfAborted()
         response.end(JSON.stringify(value))
       } catch (error) {
         response.writeHead(422).end(JSON.stringify({ error: error instanceof Error ? error.message : '包解析失败' }))
       }
     })()
     active.add(task)
-    void task.finally(() => active.delete(task))
+    void task.catch(() => response.destroy()).finally(() => active.delete(task))
   })
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socket, resolve) })
   await chmod(socket, 0o600)

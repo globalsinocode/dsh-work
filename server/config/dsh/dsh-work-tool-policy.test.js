@@ -1,3 +1,4 @@
+import { createPlatformToolBridge } from '../../src/modules/runtime/platform-tool-bridge.ts'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,6 +9,7 @@ import { afterEach, test } from 'node:test'
 import { apply } from './dsh-work-tool-policy.js'
 
 const originalEnvironment = {
+  currentAuthorization: process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION,
   allowedTools: process.env.DSH_ALLOWED_TOOLS_JSON,
   workspaceRoot: process.env.DSH_WORKSPACE_ROOT,
   approvalMode: process.env.DSH_TOOL_APPROVAL_MODE,
@@ -18,6 +20,7 @@ const originalEnvironment = {
 }
 
 afterEach(() => {
+  restoreEnvironment('DSH_REQUIRE_CURRENT_AUTHORIZATION', originalEnvironment.currentAuthorization)
   restoreEnvironment('DSH_ALLOWED_TOOLS_JSON', originalEnvironment.allowedTools)
   restoreEnvironment('DSH_WORKSPACE_ROOT', originalEnvironment.workspaceRoot)
   restoreEnvironment('DSH_TOOL_APPROVAL_MODE', originalEnvironment.approvalMode)
@@ -193,3 +196,22 @@ function restoreEnvironment(key, value) {
   if (value === undefined) delete process.env[key]
   else process.env[key] = value
 }
+
+
+test('current authorization is checked on every built-in tool call and does not consume the tool budget', async () => {
+  let revoked = false, checks = 0
+  const bridge = await createPlatformToolBridge({}, 0, async () => { checks++; if (revoked) throw new Error('revoked') })
+  try {
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION = 'true'
+    process.env.DSH_ALLOWED_TOOLS_JSON = '["todo_write"]'
+    process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+    const { preExecute } = capturePolicy()
+    assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, async () => ({ kind: 'allow' }))).kind, 'allow')
+    assert.equal(checks, 2)
+    revoked = true
+    let downstream = false
+    assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, async () => { downstream = true; return { kind: 'allow' } })).kind, 'deny')
+    assert.equal(downstream, false)
+  } finally { await bridge.close() }
+})

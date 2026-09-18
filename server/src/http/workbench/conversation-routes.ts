@@ -336,6 +336,12 @@ export function registerConversationRoutes(
       if (workspaceType === null) {
         throw routePermissionDenied('该工作空间不存在或已归档')
       }
+      await streamRunEvents(response, request.headers['last-event-id'], runId, runs, 250, 15_000, undefined, async () => {
+        // Do not reuse the role snapshot from the request that opened the stream.
+        await authorization.authorizeWorkbench({ userId, workspaceId: task.workspaceId, allowArchived: true })
+        return true
+      })
+      return
     }
     await streamRunEvents(response, request.headers['last-event-id'], runId, runs)
   })
@@ -432,7 +438,7 @@ export interface TeamStreamAccess {
  * undelivered content is dropped. The check runs immediately before the
  * write — content read while the check passed is in-flight by definition
  * (plan 6.5: 已经开始写出的内容无法回收); nothing after a failed check is
- * ever written. The personal path stays exactly as before (AC-23).
+ * ever written. Personal streams supply the current-identity callback; team read semantics stay unchanged.
  */
 export async function streamRunEvents(
   response: RunEventStreamResponse,
@@ -442,6 +448,7 @@ export async function streamRunEvents(
   pollIntervalMs = 250,
   heartbeatIntervalMs = 15_000,
   teamAccess?: TeamStreamAccess,
+  personalAccess?: () => Promise<boolean>,
 ) {
   response.writeHead(200, {
     'Cache-Control': 'no-cache, no-transform',
@@ -455,10 +462,18 @@ export async function streamRunEvents(
   response.on('close', () => { closed = true })
   let emptyTerminalPolls = 0
   let heartbeatAt = Date.now()
+  const canDeliver = async () => {
+    try {
+      if (personalAccess && !(await personalAccess())) return false
+      return !teamAccess || await hasStreamAccess(teamAccess)
+    } catch {
+      return false
+    }
+  }
 
   while (!closed) {
     const events = await runs.readEventsAfterEvent(tenantId, runId, cursor)
-    if (events.length > 0 && teamAccess && !(await hasStreamAccess(teamAccess))) break
+    if (events.length > 0 && !(await canDeliver())) break
     for (const event of events) {
       cursor = event.id
       response.write(`id: ${event.id}\n`)
@@ -485,7 +500,7 @@ export async function streamRunEvents(
     if (Date.now() - heartbeatAt >= heartbeatIntervalMs) {
       // Check the interval first: the heartbeat authorization probe is the only
       // extra query here, so do not pay for it on every poll.
-      if (teamAccess && !(await hasStreamAccess(teamAccess))) break
+      if (!(await canDeliver())) break
       response.write(`: heartbeat ${Date.now()}\n\n`)
       heartbeatAt = Date.now()
     }

@@ -150,6 +150,10 @@ async function start() {
       protocolVersion: dshInstallation.protocolVersion,
       launchMode: dshInstallation.launchMode,
       process: dshInstallation.process,
+      authorizeExecution: async manifest => {
+        if (!orchestration) throw new Error('运行授权服务尚未就绪')
+        await orchestration.assertCurrentRunAuthorization(manifest)
+      },
       // No durable human-approval channel is wired to ACP yet. Manifests that
       // require approval therefore fail closed instead of silently escalating.
       permissionDecision: async () => 'reject_once',

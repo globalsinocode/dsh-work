@@ -116,7 +116,7 @@ lines.on('line', (line) => {
       })
       return
     }
-    if (process.env.DSH_PLATFORM_TOOL_SOCKET) {
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action'].includes(name))) {
       const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
       const activating = allowedTools.includes('activate_skill')
       const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''

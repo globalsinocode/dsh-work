@@ -849,3 +849,50 @@ async function waitForStatus(
   }
   throw new Error(`Timed out waiting for ${runId} to reach ${status}`)
 }
+
+
+describe('current execution authorization', () => {
+  it('stops a live Worker after authorization is revoked, without a later completion', async () => {
+    let revoked = false
+    const events: RuntimeEvent[] = []
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: async () => { if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
+    })
+    const input = manifest('run-current-authorization', 'attempt-1', '[hang]')
+    const handle = await adapter.execute(input)
+    const unsubscribe = adapter.subscribe(input.run_id, event => { events.push(event); if (event.event_type === 'run.started') revoked = true })
+    const result = await handle.done
+    unsubscribe()
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'AUTHORIZATION_REVOKED')
+    assert.equal(events.some(event => event.event_type === 'run.completed'), false)
+    assert.equal(events.some(event => event.event_type === 'assistant.completed'), false)
+  })
+
+  it('does not commit a completed response if permission was revoked during artifact collection', async () => {
+    let revoked = false
+    const events: RuntimeEvent[] = []
+    const adapter = await createAdapter(200, undefined, async () => { revoked = true; return [] }, {
+      authorizeExecution: async () => { if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
+    })
+    const input = manifest('run-revoke-at-output', 'attempt-1', '[artifact]')
+    input.tools = [{ id: 'write', version: '1.0.0' }]
+    const handle = await adapter.execute(input)
+    const unsubscribe = adapter.subscribe(input.run_id, event => events.push(event))
+    assert.equal((await handle.done).errorCode, 'AUTHORIZATION_REVOKED')
+    unsubscribe()
+    assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
+  })
+})
+
+
+it('user cancellation during an authorization check keeps cancellation semantics', async () => {
+  let release!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  const adapter = await createAdapter(200, undefined, undefined, { authorizeExecution: () => waiting })
+  const input = manifest('run-cancel-authorization', 'attempt-1', '[hang]')
+  const handle = await adapter.execute(input)
+  await adapter.cancel(input.run_id, 'usr-linlan')
+  release()
+  assert.equal((await handle.done).status, 'cancelled')
+})

@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
+
+type Port = Parameters<typeof assertCurrentExecutionAuthorization>[0]
+const manifest = { workspace_id: 'ws-personal-u1', agent_version_id: 'agent-v1',
+  user_context: { user_id: 'u1', tenant_id: 'tenant-dsh-work', role_ids: [] },
+  skills: [{ id: 'selected', version: '1.0.0' }], data_scopes: ['scope:one'],
+  input: { message: 'synthetic', file_mounts: [] },
+} as unknown as RuntimeManifest
+function ports(changes: Partial<Port> = {}): Port {
+  const decision = { userId: 'u1', workspaceId: 'ws-personal-u1', roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' }
+  return {
+    async workspaceTypeOf() { return 'personal' }, async authorizeRuntime() { return decision },
+    async authorizeTeamRunExecution() { return decision },
+    async requireAdminReader() { return { id: 'u1', displayName: '', department: '' } },
+    async requirePlatformAdmin() { return { id: 'u1', displayName: '', department: '' } }, ...changes,
+  }
+}
+test('personal checks exact Agent and extra Skill references without mutating the Manifest', async () => {
+  const original = JSON.stringify(manifest)
+  let count = 0
+  const auth = ports()
+  await assertCurrentExecutionAuthorization(ports({ async authorizeRuntime(input) {
+    count++; assert.equal(input.agentVersionId, 'agent-v1')
+    assert.deepEqual(input.additionalSkillReferences, ['selected@1.0.0'])
+    return auth.authorizeRuntime(input)
+  } }), undefined, manifest)
+  assert.equal(count, 1); assert.equal(JSON.stringify(manifest), original)
+})
+test('team-specific membership gate is preserved', async () => {
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return 'team' },
+    async authorizeTeamRunExecution() { throw authorizationDenied('removed') },
+  }), undefined, manifest), { code: 'permission_denied' })
+})
+test('pinned scopes cannot survive revoked grants', async () => {
+  const auth = ports()
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async authorizeRuntime(input) {
+    return { ...await auth.authorizeRuntime(input), dataScopes: [] }
+  } }), undefined, manifest), { code: 'permission_denied' })
+})
+test('missing space, removed files and missing input checker all fail closed', async () => {
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return null } }), undefined, manifest), { code: 'permission_denied' })
+  const input = { ...manifest, input: { ...manifest.input, file_mounts: [{ file_id: 'file-1' }] as RuntimeManifest['input']['file_mounts'] } }
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, input), AuthorizationCheckUnavailableError)
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), { async recheckRuntimeFiles() { throw authorizationDenied('removed') } }, input), { code: 'permission_denied' })
+})
+test('infrastructure outage is distinguishable and never treated as a grant', async () => {
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({ async authorizeRuntime() { throw new Error('database unavailable') } }), undefined, manifest), AuthorizationCheckUnavailableError)
+})

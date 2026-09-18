@@ -25,6 +25,8 @@ export function apply(ctx) {
   const workspaceRoot = parseWorkspaceRoot(process.env.DSH_WORKSPACE_ROOT)
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
   const approvalLog = parseApprovalLog(process.env.DSH_TOOL_APPROVAL_LOG)
+  const requireCurrentAuthorization = process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION === 'true'
+  const authorizationSocket = process.env.DSH_PLATFORM_TOOL_SOCKET
 
   const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
   let calls = 0
@@ -35,8 +37,14 @@ export function apply(ctx) {
     if (denial !== undefined) return { kind: 'deny', reason: denial }
 
     if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
+    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
+      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
+    }
     const downstream = await next()
     if (downstream.kind === 'deny') return downstream
+    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
+      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
+    }
     const requiresApproval = downstream.kind === 'ask' || approvalMode !== 'never'
     if (!requiresApproval) return downstream
     if (!recordApprovalRequest(approvalLog, execution)) {
@@ -292,5 +300,29 @@ function registerPlatformTool(ctx, socketPath, definition) {
         req.end(body)
       })
     },
+  })
+}
+
+/** A product-owned Unix-socket check, not a model tool or external network request. */
+function authorizeCurrentExecution(socketPath, signal) {
+  if (!socketPath) return Promise.resolve(false)
+  return new Promise(resolve => {
+    const timeout = globalThis.AbortSignal.timeout(6000)
+    const req = request({ socketPath, path: '/authorize-execution', method: 'POST',
+      signal: signal ? globalThis.AbortSignal.any([signal, timeout]) : timeout }, response => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => {
+        body += chunk
+        if (body.length > 1024) req.destroy()
+      })
+      response.on('error', () => resolve(false))
+      response.on('end', () => {
+        try { resolve(response.statusCode === 200 && JSON.parse(body).authorized === true) }
+        catch { resolve(false) }
+      })
+    })
+    req.on('error', () => resolve(false))
+    req.end()
   })
 }

@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
 
@@ -1070,9 +1071,8 @@ export class RunOrchestrationService {
 
   private async executeClaimed(run: RunRecord, manifest: RuntimeManifest) {
     try {
-      // 5.2 执行前复核（1A-T5）：团队空间任务在调用 Runtime 前重新校验当前
-      // 授权（员工有效、团队成员与角色、Agent 关联与平台授权）。复核只决定
-      // 是否执行，绝不修改不可变 Manifest；个人/独立空间跳过复核（AC-23）。
+      // 调用 Runtime 前复核当前身份、固定能力和输入；团队额外检查成员关系。
+      // 只决定是否执行，绝不改写 Manifest；个人空间不再豁免。
       const recheck = await this.recheckExecutionAuthorization(run, manifest)
       if (recheck.denied) {
         await this.failRunForRevokedAuthorization(run, manifest, recheck.reason)
@@ -1083,7 +1083,7 @@ export class RunOrchestrationService {
       // 一次当前状态，避免对被取消的 run 仍然调用 Runtime（AC-09 取消与完成竞态）。
       // 收敛方已负责 attempt 与 run 的共同收敛，这里只跳过执行、不重复改写终态。
       const current = await this.runs.getRun(tenantId, run.id)
-      if (!current || !['queued', 'running'].includes(current.status)) return
+      if (!current || current.currentAttemptId !== manifest.attempt_id || !['queued', 'running'].includes(current.status)) return
       const handle = await this.runtime.execute(manifest)
       const unsubscribe = this.runtime.subscribe(run.id, (event) => this.queueEvent(run, event))
       await handle.done
@@ -1093,10 +1093,15 @@ export class RunOrchestrationService {
       const attempt = await this.runs.getAttempt(tenantId, manifest.attempt_id)
       const currentRun = await this.runs.getRun(tenantId, run.id)
       if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
-        await this.runs.transitionAttempt(tenantId, attempt.id, 'failed', 'RUNTIME_DISPATCH_FAILED')
+        await this.runs.transitionAttempt(tenantId, attempt.id, 'failed', error instanceof AuthorizationCheckUnavailableError ? 'AUTHORIZATION_CHECK_UNAVAILABLE' : 'RUNTIME_DISPATCH_FAILED')
       }
       if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
         await this.runs.transitionRun(tenantId, run.id, 'failed')
+      }
+      if (error instanceof AuthorizationCheckUnavailableError && attempt) {
+        await this.runs.appendSystemEvent({ tenantId, runId: run.id, attemptId: attempt.id,
+          eventType: 'run.failed', displayMessage: '授权检查暂不可用，任务未执行',
+          safeMetadata: { error_code: error.code }, traceId: `trace-${run.id}` })
       }
       console.error('runtime dispatch failed', error)
     } finally {
@@ -1104,13 +1109,25 @@ export class RunOrchestrationService {
     }
   }
 
-  /**
-   * 5.2 execution-time authorization re-check. The workspace type is resolved
-   * independent of the requesting user's CURRENT membership (workspaceTypeOf)
-   * so a team workspace keeps re-checking even after the member was removed;
-   * only team workspaces are re-checked — personal/standalone runs keep the
-   * exact pre-T5 path with no re-check (AC-23).
-   */
+  /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
+  async assertCurrentRunAuthorization(manifest: RuntimeManifest): Promise<void> {
+    if (!this.authorization) throw new AuthorizationCheckUnavailableError()
+    try {
+      const run = await this.runs.getRun(tenantId, manifest.run_id)
+      if (!run || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
+        || run.status !== 'running') throw authorizationDenied('Attempt 已结束、取消或被替代')
+      const session = await this.conversations.requireSession(manifest.session_id, manifest.user_context.user_id,
+        manifest.purpose ? 'admin' : 'workbench')
+      if (!manifest.purpose && (session.workspaceId !== manifest.workspace_id || session.agentVersionId !== manifest.agent_version_id)) {
+        throw authorizationDenied('会话归属或固定 Agent 已变化')
+      }
+      await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest)
+    } catch (error) {
+      if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
+      throw new AuthorizationCheckUnavailableError(error)
+    }
+  }
+
   private async recheckExecutionAuthorization(
     run: RunRecord,
     manifest: RuntimeManifest,
@@ -1197,20 +1214,17 @@ export class RunOrchestrationService {
     // 误判为「空间已归档」。
     if (!manifest.workspace_id) return { denied: false }
     const workspaceType = await this.authorization.workspaceTypeOf(manifest.workspace_id)
-    // 个人/独立运行的既有路径不复核（AC-23）；但类型为 null 说明空间已归档或不存在，
-    // 不能当作「非团队」跳过复核，否则归档后排队中的团队运行仍会进入 Runtime
-    // （1B-T4 / §6.5-3，与读取侧同一 fail-closed 口径）。
+    // 类型为 null 说明空间已归档或不存在，不能当作「非团队」跳过复核，否则归档后
+    // 排队中的团队运行仍会进入 Runtime（1B-T4 / §6.5-3，与读取侧同一 fail-closed
+    // 口径）。批次 1/A2 起个人与团队任务统一走 assertCurrentRunAuthorization 复核：
+    // AC-23 约束的是个人空间的产品形态，不是豁免共同执行授权检查。
     if (workspaceType === null) return { denied: true, reason: '工作空间不存在或已归档' }
-    if (workspaceType === 'personal') return { denied: false }
     try {
-      await this.authorization.authorizeTeamRunExecution({
-        userId: manifest.user_context.user_id,
-        workspaceId: manifest.workspace_id,
-        agentVersionId: manifest.agent_version_id ?? '',
-      })
+      await this.assertCurrentRunAuthorization(manifest)
       return { denied: false }
     } catch (error) {
-      return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+      if (!isAuthorizationDenial(error)) throw error
+      return { denied: true, reason: '当前身份、固定能力或输入资源授权已撤销' }
     }
   }
 

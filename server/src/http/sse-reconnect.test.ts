@@ -64,3 +64,25 @@ class MemorySseResponse extends EventEmitter {
     return this
   }
 }
+
+test('personal SSE stops before delivering the next batch after current access is revoked', { timeout: 2000 }, async () => {
+  const response = new MemorySseResponse()
+  let batches = 0, checks = 0
+  const runs = {
+    async readEventsAfterEvent() {
+      batches++
+      return [{ id: `event-${batches}`, tenantId: 'tenant-dsh-work', runId: 'run-personal',
+        attemptId: 'attempt-personal', sequence: batches, eventType: 'assistant.delta' as const,
+        displayMessage: `batch-${batches}`, safeMetadata: {}, traceId: 'trace-personal', occurredAt: new Date().toISOString() }]
+    },
+    async getRun() {
+      return { id: 'run-personal', tenantId: 'tenant-dsh-work', sessionId: 'session-personal',
+        requestedBy: 'U00001', idempotencyKey: 'id-personal', status: 'running' as const,
+        currentAttemptId: 'attempt-personal', createdAt: '', updatedAt: '' }
+    },
+  }
+  await streamRunEvents(response, undefined, 'run-personal', runs, 1, 60_000, undefined, async () => ++checks === 1)
+  assert.match(response.body, /batch-1/)
+  assert.doesNotMatch(response.body, /batch-2/)
+  assert.equal(response.ended, true)
+})

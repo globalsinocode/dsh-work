@@ -1,0 +1,57 @@
+import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
+import { authorizationDenied, isAuthorizationDenial } from '../authorization/authorization-errors.ts'
+import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
+
+export class AuthorizationCheckUnavailableError extends Error {
+  readonly code = 'AUTHORIZATION_CHECK_UNAVAILABLE'
+  readonly status = 503
+  constructor(cause?: unknown) {
+    super('当前授权检查不可用，任务未获准继续执行', { cause })
+    this.name = 'AuthorizationCheckUnavailableError'
+  }
+}
+
+type AuthorizationPort = Pick<PostgresAuthorizationService,
+  'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin'>
+
+/** All checks use live grants and pinned versions. This never rewrites the Manifest. */
+export async function assertCurrentExecutionAuthorization(
+  authorization: AuthorizationPort,
+  content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
+  manifest: RuntimeManifest,
+): Promise<void> {
+  try {
+    if (manifest.purpose?.startsWith('admin-')) {
+      if (manifest.purpose === 'admin-assistant') await authorization.requireAdminReader(manifest.user_context.user_id)
+      else await authorization.requirePlatformAdmin(manifest.user_context.user_id)
+      return
+    }
+    if (!manifest.workspace_id || !manifest.agent_version_id) {
+      throw authorizationDenied('执行清单缺少固定工作空间或 Agent 版本')
+    }
+    const type = await authorization.workspaceTypeOf(manifest.workspace_id)
+    if (type === null) throw authorizationDenied('工作空间不存在或已归档')
+    const input = {
+      userId: manifest.user_context.user_id,
+      workspaceId: manifest.workspace_id,
+      agentVersionId: manifest.agent_version_id,
+      additionalSkillReferences: (manifest.skills ?? []).map(skill => `${skill.id}@${skill.version}`),
+    }
+    const current = type === 'team'
+      ? await authorization.authorizeTeamRunExecution(input)
+      : await authorization.authorizeRuntime(input)
+    const scopes = new Set(current.dataScopes)
+    if ((manifest.data_scopes ?? []).some(scope => !scopes.has(scope))) {
+      throw authorizationDenied('任务快照包含当前已撤销的数据范围')
+    }
+    if (manifest.input.file_mounts.length) {
+      if (!content) throw new AuthorizationCheckUnavailableError()
+      await content.recheckRuntimeFiles(manifest)
+    }
+  } catch (error) {
+    if (isAuthorizationDenial(error)) throw authorizationDenied('当前身份、固定能力或输入资源授权已撤销')
+    if (error instanceof AuthorizationCheckUnavailableError) throw error
+    throw new AuthorizationCheckUnavailableError(error)
+  }
+}
