@@ -1,4 +1,6 @@
 import type {
+  UserSessionSummary,
+  UserSessionQuery,
   AgentCandidatePage,
   AgentMemberPatchAction,
   Artifact,
@@ -116,6 +118,13 @@ async function parseApiError(response: Response, fallback: string) {
 }
 
 export const workbenchApi = {
+  listSessions: (query: UserSessionQuery = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: UserSessionSummary[]; nextCursor: string | null }>(`/sessions?${params}`)
+  },
+  getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}`),
+
   getSession: () => request<WorkbenchSession>('/session'),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),

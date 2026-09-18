@@ -686,6 +686,66 @@
             "$ref": "#/components/responses/Ok"
           }
         }
+      },
+      "get": {
+        "operationId": "listSessionsForUser",
+        "summary": "按 Session 分页查询本人历史；当前空间权限在 SQL 分页前过滤",
+        "description": "scope 默认 personal；all 包含本人当前可读团队会话，团队归档可读、失权即不可见。空会话亦返回；不返回消息正文。旧 tasks 与团队会话接口保留。",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "team",
+                "all"
+              ],
+              "default": "personal"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/sessions/{sessionId}/files": {
@@ -798,6 +858,31 @@
             "$ref": "#/components/responses/Error"
           },
           "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getSessionForUser",
+        "summary": "本人会话稳定入口；含 Workspace 归属和 latestRun（空会话为 null）",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
             "$ref": "#/components/responses/Error"
           }
         }

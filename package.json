@@ -72,7 +72,8 @@
     "test:review:batch02:integration": "pnpm --filter @dsh-work/server test:review:batch02:integration",
     "test:review:batch02:unit": "pnpm --filter @dsh-work/server test:review:batch02:unit",
     "test:review:8b:unit": "pnpm --filter @dsh-work/server test:review:8b:unit",
-    "test:review:8b:integration": "pnpm --filter @dsh-work/server test:review:8b:integration"
+    "test:review:8b:integration": "pnpm --filter @dsh-work/server test:review:8b:integration",
+    "test:review:batch03:integration": "pnpm --filter @dsh-work/server test:review:batch03:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

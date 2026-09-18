@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { ChatMessage, RunStep, TaskRun } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RunState } from '../../run/run-types.ts'
-import { PostgresWorkspaceService } from './postgres-workspace-service.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
+import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -72,6 +72,23 @@ export interface WorkspaceSessionSummary {
 export interface WorkspaceSessionPage {
   items: WorkspaceSessionSummary[]
   nextCursor: string | null
+}
+
+export interface UserSessionSummary extends WorkspaceSessionSummary {
+  workspaceId: string
+  workspaceName: string
+  workspaceType: 'personal' | 'team'
+  workspaceStatus: 'active' | 'archived'
+  canContinue: boolean
+  canRemove: boolean
+}
+
+export interface UserSessionQuery {
+  actorUserId: string
+  scope?: 'personal' | 'team' | 'all'
+  query?: string
+  cursor?: string
+  limit?: number
 }
 
 interface MessageRow {
@@ -435,6 +452,63 @@ export class PostgresConversationRepository {
       items,
       nextCursor: hasMore && last ? encodeSessionCursor(last.lastActiveAt, last.sessionId) : null,
     }
+  }
+
+  /** One owner-scoped query for the global history and stable Session detail.
+   * Existing team/shared-session APIs remain separate consumers in this same
+   * repository: global "my history" never widens to other members' Sessions. */
+  async listSessionsForUser(input: UserSessionQuery): Promise<{ items: UserSessionSummary[]; nextCursor: string | null }> {
+    return this.queryUserSessions(input)
+  }
+
+  async getSessionForUser(sessionId: string, actorUserId: string): Promise<UserSessionSummary> {
+    const page = await this.queryUserSessions({ actorUserId, scope: 'all', limit: 1 }, sessionId)
+    const row = page.items[0]
+    if (!row) throw authorizationDenied('Session 不存在或不可访问')
+    return row
+  }
+
+  private async queryUserSessions(input: UserSessionQuery, sessionId?: string) {
+    const scope = input.scope ?? 'personal'
+    if (!['personal', 'team', 'all'].includes(scope)) throw requestInvalid('scope 必须为 personal、team 或 all')
+    const limit = input.limit ?? 20
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw requestInvalid('limit 必须为 1 到 100 之间的整数')
+    if ((input.query?.length ?? 0) > 200) throw requestInvalid('搜索关键词不能超过 200 个字符')
+    const cursor = input.cursor ? decodeSessionCursor(input.cursor) : null
+    const pattern = input.query?.trim() ? `%${input.query.trim().replaceAll(/[\\%_]/g, value => `\\${value}`)}%` : null
+    const rows = await this.database<Array<Omit<UserSessionSummary, 'lastActiveAt' | 'latestRun'> & {
+      lastActiveAt: Date; latestRunId: string | null; latestRunStatus: RunState | null
+    }>>`
+      select s.id as "sessionId", s.title, s.created_by as "creatorId", u.display_name as "creatorName",
+             s.last_active_at as "lastActiveAt", w.id as "workspaceId", w.name as "workspaceName",
+             w.workspace_type as "workspaceType", w.status as "workspaceStatus",
+             (select count(*)::integer from runs r where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
+             latest.id as "latestRunId", latest.status as "latestRunStatus",
+             (w.status = 'active' and (w.workspace_type = 'personal' or exists (
+                select 1 from workspace_members m where m.tenant_id = w.tenant_id and m.workspace_id = w.id
+                  and m.user_id = ${input.actorUserId} and m.member_role <> 'viewer'))) as "canContinue",
+             (w.status = 'active' and not exists (select 1 from runs live where live.tenant_id = s.tenant_id
+               and live.session_id = s.id and live.status in ('queued', 'running', 'cancel_requested'))) as "canRemove"
+        from sessions s
+        join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+        left join lateral (select r.id, r.status from runs r where r.tenant_id = s.tenant_id and r.session_id = s.id
+          order by r.created_at desc, r.id desc limit 1) latest on true
+       where s.tenant_id = ${tenantId} and s.audience = 'workbench' and s.status = 'active'
+         and s.created_by = ${input.actorUserId}
+         and (${readableWorkspacePredicate(this.database, input.actorUserId)})
+         and ${scope === 'all' ? this.database`true` : this.database`w.workspace_type = ${scope}`}
+         and ${sessionId ? this.database`s.id = ${sessionId}` : this.database`true`}
+         and ${pattern === null ? this.database`true` : this.database`s.title ilike ${pattern} escape '\\'`}
+         and ${cursor === null ? this.database`true` : this.database`(s.last_active_at, s.id) < (${cursor.lastActiveAt}::timestamptz, ${cursor.id})`}
+       order by s.last_active_at desc, s.id desc limit ${limit + 1}
+    `
+    const items: UserSessionSummary[] = rows.slice(0, limit).map(({ latestRunId, latestRunStatus, ...row }) => ({
+      ...row, lastActiveAt: row.lastActiveAt.toISOString(), runCount: Number(row.runCount),
+      latestRun: latestRunId ? { id: latestRunId, status: latestRunStatus! } : null,
+    }))
+    const last = items.at(-1)
+    return { items, nextCursor: rows.length > limit && last ? encodeSessionCursor(last.lastActiveAt, last.sessionId) : null }
   }
 
   /**
@@ -884,9 +958,10 @@ function encodeSessionCursor(lastActiveAt: string, id: string) {
 function decodeSessionCursor(cursor: string): { lastActiveAt: string; id: string } {
   try {
     const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { at?: unknown; id?: unknown }
-    if (typeof parsed.at !== 'string' || typeof parsed.id !== 'string') throw new Error('shape')
+    if (typeof parsed.at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(parsed.at) || !Number.isFinite(Date.parse(parsed.at))
+      || typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 160 || cursor.length > 1024) throw new Error('shape')
     return { lastActiveAt: parsed.at, id: parsed.id }
   } catch {
-    throw new Error('无效的分页游标')
+    throw requestInvalid('无效的分页游标')
   }
 }

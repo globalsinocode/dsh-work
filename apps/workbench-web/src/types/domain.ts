@@ -588,3 +588,26 @@ export interface AutomationExecution {
   createdAt: string
   updatedAt: string
 }
+
+/** Owner-scoped history, including old and zero-Run Sessions. */
+export interface UserSessionSummary {
+  sessionId: string
+  title: string
+  creatorId: string
+  creatorName: string
+  lastActiveAt: string
+  runCount: number
+  latestRun: { id: string; status: string } | null
+  workspaceId: string
+  workspaceName: string
+  workspaceType: 'personal' | 'team'
+  workspaceStatus: 'active' | 'archived'
+  canContinue: boolean
+  canRemove: boolean
+}
+export interface UserSessionQuery {
+  scope?: 'personal' | 'team' | 'all'
+  query?: string
+  cursor?: string
+  limit?: number
+}

@@ -55,7 +55,9 @@
     "test:review:batch02:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-admin-session.integration.test.ts src/infrastructure/postgres/review-c9-startup.integration.test.ts src/infrastructure/postgres/review-c10-bootstrap.integration.test.ts",
     "test:review:batch02:unit": "node --experimental-strip-types --test src/modules/runtime/execution-capabilities.test.ts src/modules/identity/bootstrap-scope.test.ts",
     "test:review:8b:unit": "node --experimental-strip-types --test src/modules/skill/skill-test-scenario.test.ts src/modules/skill/skill-test-evidence.test.ts",
-    "test:review:8b:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-8b.integration.test.ts"
+    "test:review:8b:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-8b.integration.test.ts",
+    "test:review:b3:integration": "node --experimental-strip-types --test src/infrastructure/postgres/review-b3-history.integration.test.ts",
+    "test:review:batch03:integration": "npm run test:review:b3:integration"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

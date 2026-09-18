@@ -78,6 +78,11 @@ jobs:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:review:8b:unit && pnpm test:review:8b:integration
 
+      - name: Run personal workbench integration regression
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:review:batch03:integration
+
       - name: Run PostgreSQL integration tests
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test

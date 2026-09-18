@@ -10,7 +10,7 @@ import type { FileMount } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
-import { PostgresWorkspaceService, type WorkspaceType } from './postgres-workspace-service.ts'
+import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
 
@@ -207,17 +207,7 @@ export class PostgresContentService {
            : status === 'archived'
              ? this.database.unsafe(`w.status = 'archived'`)
              : this.database.unsafe(`w.status = 'active'`)}
-         and (
-           (w.workspace_type = 'personal' and w.created_by = ${actorUserId})
-           or (
-             w.workspace_type = 'team'
-             and exists (
-               select 1 from workspace_members access
-                where access.tenant_id = w.tenant_id and access.workspace_id = w.id
-                  and access.user_id = ${actorUserId}
-             )
-           )
-         )
+         and (${readableWorkspacePredicate(this.database, actorUserId)})
        group by w.id, creator.display_name, owner.display_name
        order by "updatedAt" desc
     `

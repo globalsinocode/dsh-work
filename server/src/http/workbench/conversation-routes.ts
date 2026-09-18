@@ -79,6 +79,25 @@ export function registerConversationRoutes(
     )
   })
 
+  router.get(`${basePath}/sessions`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const scope = context.url.searchParams.get('scope') ?? 'personal'
+    if (scope !== 'personal' && scope !== 'team' && scope !== 'all') throw routeValidationFailed('scope 必须为 personal、team 或 all')
+    return envelope('workbench', await conversations.listSessionsForUser({
+      actorUserId: identity.userId, scope,
+      query: context.url.searchParams.get('query') ?? undefined,
+      cursor: context.url.searchParams.get('cursor') ?? undefined,
+      limit: parseSessionPageLimit(context.url.searchParams.get('limit')),
+    }), 'postgres')
+  })
+
+  router.get(`${basePath}/sessions/:sessionId`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    return envelope('workbench', await conversations.getSessionForUser(context.params['sessionId'] ?? '', identity.userId), 'postgres')
+  })
+
   router.post(`${basePath}/sessions`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId

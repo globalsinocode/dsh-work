@@ -61,7 +61,8 @@ const router = createRouter({
         },
       ],
     },
-    { path: '/history', redirect: '/workbench' },
+    { path: '/history', name: 'history', component: () => import('@/views/HistoryView.vue'), meta: { title: '历史对话', section: '员工工作台' } },
+    { path: '/sessions/:id', name: 'session-detail', component: () => import('@/views/SessionResumeView.vue'), meta: { title: '对话', section: '员工工作台' } },
     {
       path: '/automations',
       name: 'automations',

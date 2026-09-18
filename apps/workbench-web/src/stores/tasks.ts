@@ -58,6 +58,19 @@ export const useTaskStore = defineStore('tasks', () => {
     return tasks.value.find((task) => task.id === id)
   }
 
+  async function loadTask(id: string) {
+    try {
+      const task = await workbenchApi.getRun(id)
+      upsert(task)
+      if (!isTerminal(task.status)) subscribe(task.id)
+      return task
+    } catch (cause) {
+      tasks.value = tasks.value.filter(item => item.id !== id)
+      closeStream(id)
+      throw cause
+    }
+  }
+
   async function createTask(
     prompt: string,
     attachments: File[],
@@ -279,7 +292,7 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   return {
-    tasks, loading, initialized, activeTasks, recentTasks, load, getTask,
+    tasks, loading, initialized, activeTasks, recentTasks, load, getTask, loadTask,
     createTask, sendMessage, postSessionMessage, loadSessionThread, uploadSessionFiles,
     startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
     upsert, subscribe,

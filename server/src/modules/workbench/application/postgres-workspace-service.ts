@@ -121,3 +121,17 @@ function normalizeWorkspaceId(workspaceId: string | null | undefined) {
   const normalized = workspaceId?.trim()
   return normalized && normalized !== 'standalone' ? normalized : null
 }
+
+/** Shared SQL read predicate for alias `w`. It is a resource boundary, not a
+ * replacement for HTTP/function permission checks. No caller-controlled SQL. */
+export function readableWorkspacePredicate(sql: DatabaseClient, userId: string) {
+  return sql`w.status in ('active', 'archived')
+    and exists (select 1 from users actor join tenants tenant on tenant.id = actor.tenant_id
+      where actor.tenant_id = w.tenant_id and actor.id = ${userId}
+        and actor.status = 'active' and tenant.status = 'active')
+    and ((w.workspace_type = 'personal' and w.created_by = ${userId})
+      or (w.workspace_type = 'team' and exists (
+        select 1 from workspace_members access_member
+         where access_member.tenant_id = w.tenant_id and access_member.workspace_id = w.id
+           and access_member.user_id = ${userId})))`
+}
