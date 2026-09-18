@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
@@ -187,6 +188,13 @@ export class RunOrchestrationService {
       manifest.agent_configuration = {
         system_prompt: `你是 dsh-work Skill 严格试运行助手。必须先调用 activate_skill 激活 ${testSkill.name ?? testSkill.id}，并按依赖关系逐一激活其他 Skill，再按返回的锁定说明处理测试输入。激活结果包含 Python 入口时，必须通过 python_execute 至少成功执行一个声明入口；不得直接运行宿主机命令。需要文件时必须实际调用已授权的只读工具读取准确路径，不猜测文件内容；缺少输入时明确说明。不要执行任何安装、发布或平台配置操作。`,
         skill_instructions: testCatalog.map(toRuntimeManifestSkill),
+      }
+      if (testSkill.testScenario) {
+        manifest.test_scenario = normalizeSkillTestScenario(testSkill.testScenario, testCatalog)
+        // Budget remains bounded but must admit every explicitly required activation
+        // and Python call, plus a small allowance for reading fixture inputs.
+        manifest.limits.max_tool_calls = Math.min(160, 8 + manifest.test_scenario.requiredSkills.length + manifest.test_scenario.requiredPythonEntries.length)
+        manifest.agent_configuration.system_prompt = `你是 dsh-work 场景试运行助手。先激活根 Skill，再完成本场景要求的能力：${manifest.test_scenario.requiredSkills.join('、')}。本场景必须通过 python_execute 执行：${JSON.stringify(manifest.test_scenario.requiredPythonEntries)}。其他分支无需强行执行。按实际输入返回结果，不猜测文件；只使用已授权工具，不安装、发布或修改平台。`
       }
       manifest.skills = testCatalog.map(skill => ({ id: skill.id, version: skill.version }))
       manifest.tools = [...new Set(testCatalog.flatMap(skill => skill.tools))].map(toCapabilityReference).concat({ id: 'activate_skill', version: '1.0.0' })

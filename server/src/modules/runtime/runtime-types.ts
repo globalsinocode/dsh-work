@@ -1,3 +1,5 @@
+import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
+
 export type RuntimeRunStatus =
   | 'queued'
   | 'starting'
@@ -40,6 +42,8 @@ export function isAdminRunPurpose(purpose: RuntimeManifest['purpose']): purpose 
 
 export interface RuntimeManifest {
   manifest_version: '1.0'
+  /** Admin-authored, immutable expectations for one trial scenario. */
+  test_scenario?: SkillTestScenario
   purpose?: AdminRunPurpose | 'automation'
   installation_source?: string
   run_id: string

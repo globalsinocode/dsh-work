@@ -52,7 +52,7 @@ export class CapabilityGuardedRuntime implements AgentRuntimePort {
   constructor(delegate: AgentRuntimePort, python: CapabilityState) { this.delegate = delegate; this.python = python }
   async assertAvailable(manifest?: RuntimeManifest) {
     await this.delegate.assertAvailable?.(manifest)
-    if (this.python.status !== 'available' && manifest?.tools.some(tool => tool.id === 'python_execute')) {
+    if (this.python.status !== 'available' && (manifest?.test_scenario ? manifest.test_scenario.requiredPythonEntries.length > 0 : manifest?.tools?.some(tool => tool.id === 'python_execute'))) {
       throw new ExecutionCapabilityUnavailableError('python')
     }
   }

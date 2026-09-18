@@ -246,6 +246,34 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "description": "场景或输入无效，不创建试运行"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "skillId"
+                ],
+                "properties": {
+                  "skillId": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "scenario": {
+                    "$ref": "#/components/schemas/SkillTestScenario"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -257,6 +285,34 @@
         "responses": {
           "202": {
             "$ref": "#/components/responses/Ok"
+          },
+          "422": {
+            "description": "场景或输入无效，不创建试运行"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "skillId"
+                ],
+                "properties": {
+                  "skillId": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "scenario": {
+                    "$ref": "#/components/schemas/SkillTestScenario"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1266,6 +1322,106 @@
       }
     },
     "schemas": {
+      "SkillTestScenario": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "requiredSkills",
+          "requiredPythonEntries",
+          "assertions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "requiredSkills": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string"
+            }
+          },
+          "requiredPythonEntries": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "skill",
+                "entry"
+              ],
+              "properties": {
+                "skill": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "assertions": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "reply_contains"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "path",
+                    "expected"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "reply_json_equals"
+                    },
+                    "path": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 8,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                      }
+                    },
+                    "expected": {
+                      "type": [
+                        "string",
+                        "number",
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
       "AgentConfiguration": {
         "type": "object",
         "required": [

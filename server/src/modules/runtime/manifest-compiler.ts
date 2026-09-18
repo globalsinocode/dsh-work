@@ -1,3 +1,4 @@
+import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
 import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.ts'
@@ -54,6 +55,10 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!skillReferences.has(`${skill.id}@${skill.version}`)) {
       throw new TypeError(`skill instruction is not declared in skills: ${skill.id}@${skill.version}`)
     }
+  }
+  if (input.test_scenario !== undefined) {
+    if (input.purpose !== 'admin-skill-test') throw new TypeError('test_scenario requires admin-skill-test purpose')
+    normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)
   }
   const history = input.input.conversation_history ?? []
   if (history.length > 12 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 24000) {

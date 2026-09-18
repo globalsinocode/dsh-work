@@ -1,4 +1,5 @@
-import { evaluateAttemptEvidence } from './skill-test-evidence.ts'
+import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { evaluateAttemptEvidence, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY } from './skill-test-evidence.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
@@ -22,6 +23,7 @@ export interface SkillTestProgressStep {
   occurredAt?: string
 }
 export interface PackageTestProgress {
+  evidencePolicy?: string
   attemptId: string
   runId: string
   sessionId: string
@@ -62,7 +64,7 @@ export class AdminSkillInstallationService {
     for (let count = 0; count < 200; count++) {
       const progress = await this.packageTestProgress(userId, skill, started.runId)
       if (['succeeded', 'failed', 'cancelled'].includes(progress.status)) {
-        return { passed: progress.passed ?? false, summary: progress.summary ?? 'DSH 试运行未产生结果', runId: progress.runId, attemptId: progress.attemptId }
+        return { passed: progress.passed ?? false, summary: progress.summary ?? 'DSH 试运行未产生结果', runId: progress.runId, attemptId: progress.attemptId, evidencePolicy: progress.evidencePolicy }
       }
       await delay(1000)
     }
@@ -95,13 +97,16 @@ export class AdminSkillInstallationService {
 
     owned.status = attempt.runStatus
     const catalog = attempt.manifest.agent_configuration.skill_instructions
-    const requiredSkillIds = catalog.map(item => item.id)
+    const scenario = attempt.manifest.test_scenario === undefined ? undefined : normalizeSkillTestScenario(attempt.manifest.test_scenario, catalog)
+    const requiredCatalog = scenario ? catalog.filter(skill => scenario.requiredSkills.includes(`${skill.id}@${skill.version}`)) : catalog
+    const requiredSkillIds = requiredCatalog.map(item => item.id)
     const activations = await this.db<{ attemptId: string; skillId: string; skillVersion: string; createdAt: Date }[]>`
       select attempt_id as "attemptId", skill_id as "skillId", skill_version as "skillVersion", created_at as "createdAt"
         from skill_runtime_activations where tenant_id = ${tenant} and run_id = ${runId} and attempt_id = ${attempt.id}
         order by created_at
     `
-    const pythonSkillIds = catalog.filter(item => item.files?.some(file => file.path.endsWith('.py'))).map(item => item.id)
+    const pythonSkillIds = scenario ? [...new Set(scenario.requiredPythonEntries.map(entry => entry.skill.slice(0, entry.skill.lastIndexOf('@'))))]
+      : catalog.filter(item => item.files?.some(file => file.path.endsWith('.py'))).map(item => item.id)
     const pythonExecutions = await this.db<{ attemptId: string; skillId: string; entry: string; succeeded: boolean; createdAt: Date }[]>`
       select attempt_id as "attemptId", skill_id as "skillId", entry_path as entry, succeeded, created_at as "createdAt"
         from skill_python_executions where tenant_id = ${tenant} and run_id = ${runId} and attempt_id = ${attempt.id}
@@ -119,15 +124,15 @@ export class AdminSkillInstallationService {
       status: 409, code: 'skill_test_attempt_changed',
     })
     const activatedIds = new Set(activations.filter(row => catalog.some(skill => skill.id === row.skillId && skill.version === row.skillVersion)).map(row => row.skillId))
-    const { missingActivations, missingPython, passed } = evaluateAttemptEvidence({
+    const { missingActivations, missingPython, passed, assertionResults, validationLevel } = evaluateAttemptEvidence({
       attemptId: attempt.id, runStatus: owned.status, attemptStatus: attempt.status,
       manifest: attempt.manifest, activations, pythonExecutions, events,
     })
     const terminal = ['succeeded', 'failed', 'cancelled'].includes(owned.status)
     const summary = terminal
       ? passed
-        ? `严格试运行通过：已验证 ${requiredSkillIds.length} 个 Skill${pythonSkillIds.length ? `、${pythonSkillIds.length} 个含 Python 的 Skill` : ''}，本 Attempt 已返回非空回答，业务正确性仍需验收。`
-        : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : owned.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : 'DSH 未产生有效结果'}`
+        ? `${scenario ? '场景' : '严格'}试运行通过：${validationLevel === 'business-assertions' ? '声明的结果断言通过；' : '仅执行验证；'}已验证 ${requiredSkillIds.length} 个 Skill${pythonSkillIds.length ? `、${pythonSkillIds.length} 个含 Python 的 Skill` : ''}，本 Attempt 已返回非空回答，业务正确性仍需验收。`
+        : `严格试运行未通过：${missingActivations.length ? `缺少 Skill 激活证据（${missingActivations.join('、')}）` : missingPython.length ? `缺少 Python 沙箱成功证据（${missingPython.join('、')}）` : owned.status !== 'succeeded' ? 'DSH Attempt 未成功完成' : assertionResults.some(result => !result.passed) ? '结果断言未通过' : 'DSH 未产生有效结果'}`
       : undefined
     const workerStarted = events.find(event => event.eventType === 'run.started')
     const activeStatus = (completed: boolean, running: boolean): SkillTestProgressStep['status'] => completed ? 'completed' : terminal ? 'failed' : running ? 'running' : 'pending'
@@ -135,18 +140,22 @@ export class AdminSkillInstallationService {
       { id: 'created', title: '创建严格试运行', description: `已锁定 ${skill.name ?? skill.id}@${skill.version}，Run ${runId}`, status: 'completed', occurredAt: attempt.createdAt.toISOString() },
       { id: 'scheduled', title: '等待 Runtime 调度', description: owned.status === 'queued' ? '正在等待可用的 DSH Worker' : 'Runtime 已接收本次试运行', status: owned.status === 'queued' ? 'running' : 'completed', occurredAt: attempt.startedAt?.toISOString() },
       { id: 'worker', title: '启动 DSH Worker', description: workerStarted ? 'Worker 已启动并加载固定运行清单' : owned.status === 'queued' ? '等待可用 Worker' : '正在启动 Worker', status: activeStatus(Boolean(workerStarted), owned.status === 'running'), occurredAt: workerStarted?.occurredAt.toISOString() },
-      ...catalog.map((item, index) => {
+      ...requiredCatalog.map((item, index) => {
         const activation = activations.find(row => row.skillId === item.id && row.skillVersion === item.version)
-        return { id: `activation:${item.id}`, title: `${index === 0 ? '激活根 Skill' : '激活依赖 Skill'}：${item.name ?? item.id}`, description: activation ? `已校验 ${activation.skillId}@${activation.skillVersion} 的锁定内容摘要` : '等待 DSH 调用 activate_skill', status: activeStatus(Boolean(activation), owned.status === 'running' && (index === 0 || activatedIds.has(catalog[index - 1]!.id))), ...(activation ? { occurredAt: activation.createdAt.toISOString() } : {}) }
+        return { id: `activation:${item.id}`, title: `${index === 0 ? '激活根 Skill' : '激活依赖 Skill'}：${item.name ?? item.id}`, description: activation ? `已校验 ${activation.skillId}@${activation.skillVersion} 的锁定内容摘要` : '等待 DSH 调用 activate_skill', status: activeStatus(Boolean(activation), owned.status === 'running' && (index === 0 || activatedIds.has(requiredCatalog[index - 1]!.id))), ...(activation ? { occurredAt: activation.createdAt.toISOString() } : {}) }
       }),
-      ...pythonSkillIds.map(skillId => {
-        const executions = pythonExecutions.filter(row => row.skillId === skillId && catalog.find(skill => skill.id === skillId)?.files?.some(file => file.path === row.entry && file.path.endsWith('.py')))
+      ...(scenario ? scenario.requiredPythonEntries.map(entry => ({
+        skillId: entry.skill.slice(0, entry.skill.lastIndexOf('@')), entry: entry.entry,
+      })) : pythonSkillIds.map(skillId => ({ skillId, entry: null }))).map(({ skillId, entry }) => {
+        const executions = pythonExecutions.filter(row => row.skillId === skillId
+          && (entry ? row.entry === entry : catalog.find(skill => skill.id === skillId)?.files?.some(file => file.path === row.entry && file.path.endsWith('.py'))))
         const successful = executions.find(row => row.succeeded)
-        return { id: `python:${skillId}`, title: `执行 Python 验证：${skillId}`, description: successful ? `沙箱入口 ${successful.entry} 执行成功` : executions.length ? `沙箱入口执行失败：${executions.at(-1)!.entry}` : '等待 DSH 调用 python_execute', status: activeStatus(Boolean(successful), owned.status === 'running' && activatedIds.has(skillId)), ...(successful ? { occurredAt: successful.createdAt.toISOString() } : {}) }
+        return { id: `python:${skillId}${entry ? `:${entry}` : ''}`, title: `执行 Python 验证：${skillId}${entry ? ` / ${entry}` : ''}`, description: successful ? `沙箱入口 ${successful.entry} 执行成功` : executions.length ? `沙箱入口执行失败：${executions.at(-1)!.entry}` : '等待 DSH 调用声明的 python_execute 入口', status: activeStatus(Boolean(successful), owned.status === 'running' && activatedIds.has(skillId)), ...(successful ? { occurredAt: successful.createdAt.toISOString() } : {}) }
       }),
-      { id: 'result', title: '核验发布条件', description: terminal ? (passed ? '全部发布条件均已通过' : '存在未通过的发布条件') : owned.status === 'running' ? '正在核验运行结果与执行证据' : '等待前置步骤完成', status: terminal ? (passed ? 'completed' : 'failed') : owned.status === 'running' ? 'running' : 'pending', ...(attempt.endedAt ? { occurredAt: attempt.endedAt.toISOString() } : {}) },
+      ...assertionResults.map(result => ({ id: result.id, title: '验证场景结果', description: `${result.kind}：${result.passed ? '通过' : '未通过'}`, status: activeStatus(result.passed, !terminal) })),
+      { id: 'result', title: '核验试运行条件', description: terminal ? (passed ? '本次试运行条件通过，发布另检查完整覆盖' : '存在未通过的试运行条件') : owned.status === 'running' ? '正在核验运行结果与执行证据' : '等待前置步骤完成', status: terminal ? (passed ? 'completed' : 'failed') : owned.status === 'running' ? 'running' : 'pending', ...(attempt.endedAt ? { occurredAt: attempt.endedAt.toISOString() } : {}) },
     ]
-    return { runId, attemptId: attempt.id, sessionId: owned.sessionId, status: owned.status as SkillTestRunStatus, ...(terminal ? { passed, summary } : {}), steps }
+    return { runId, evidencePolicy: scenario ? SKILL_TEST_SCENARIO_POLICY : SKILL_TEST_EVIDENCE_POLICY, attemptId: attempt.id, sessionId: owned.sessionId, status: owned.status as SkillTestRunStatus, ...(terminal ? { passed, summary } : {}), steps }
   }
 
   async send(userId: string, input: { sessionId: string; message: string; requestId: string }) {

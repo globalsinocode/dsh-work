@@ -1,4 +1,6 @@
-import { assertStartedSkillTest, runtimeSkillFingerprint, SKILL_TEST_EVIDENCE_POLICY } from './skill-test-evidence.ts'
+import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { assertStartedSkillTest, runtimeSkillFingerprint, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY, evaluateAttemptEvidence } from './skill-test-evidence.ts'
 import { createSkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -111,6 +113,7 @@ export interface SkillTestRunProgress {
 }
 
 export interface RuntimeSkillConfiguration {
+  testScenario?: SkillTestScenario
   id: string
   name?: string
   description?: string
@@ -140,10 +143,10 @@ interface WorkbenchSkillRow extends Omit<WorkbenchSkillDefinition, 'updatedAt'> 
 }
 
 export class PostgresSkillService {
-  private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string; attemptId?: string }>
+  private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string; attemptId?: string; evidencePolicy?: string }>
   private packageTestLifecycle?: {
     start: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ runId: string; status: string; steps: SkillTestRunProgress['steps'] }>
-    progress: (userId: string, skill: RuntimeSkillConfiguration, runId: string) => Promise<{ runId: string; attemptId?: string; status: string; passed?: boolean; summary?: string; steps: SkillTestRunProgress['steps'] }>
+    progress: (userId: string, skill: RuntimeSkillConfiguration, runId: string) => Promise<{ runId: string; attemptId?: string; status: string; passed?: boolean; summary?: string; evidencePolicy?: string; steps: SkillTestRunProgress['steps'] }>
   }
   setPackageTester(tester: NonNullable<PostgresSkillService['packageTester']>) { this.packageTester = tester }
   setPackageTestLifecycle(lifecycle: NonNullable<PostgresSkillService['packageTestLifecycle']>) { this.packageTestLifecycle = lifecycle }
@@ -395,11 +398,12 @@ export class PostgresSkillService {
     return this.requireSkillResult(input.skillId, draftVersionId)
   }
 
-  async testSkill(input: { skillId: string; prompt?: string; actor: string }): Promise<SkillTestResult> {
+  async testSkill(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestResult> {
     const actor = await this.requireActor(input.actor)
     const [skill] = await this.readSkillRows(input.skillId)
     if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
     if (!skill.draftVersionId) throw new Error('当前 Skill 没有待测试的草稿版本')
+    if (input.scenario !== undefined && !skill.strictTest) throw Object.assign(new Error('场景测试要求真实 DSH 试运行包'), { status: 422, code: 'invalid_test_scenario' })
     await this.toolService?.assertAvailableReferences(skill.toolIds)
     const prompt = (input.prompt ?? skill.testPrompt).trim()
     if (prompt.length < 4) throw new Error('测试问题至少需要 4 个字符')
@@ -407,6 +411,7 @@ export class PostgresSkillService {
     let testId = `skill-test-${randomUUID()}`
     let runtimeRunId: string | null = null
     let runtimeAttemptId: string | null = null
+    let evidencePolicy = SKILL_TEST_EVIDENCE_POLICY
     let summary = `配置校验通过：执行指令 ${skill.instructions.length} 字符，${skill.toolIds.length} 个工具引用。`
     let status: 'passed' | 'failed' = 'passed'
     if (skill.strictTest) {
@@ -421,8 +426,10 @@ export class PostgresSkillService {
         artifact: version.manifest.artifact, files: version.manifest.artifact.files,
         disableModelInvocation: version.manifest.artifact.disableModelInvocation,
         dependencies: version.manifest.dependencies ?? [], dependencySkills }
+      if (input.scenario !== undefined) runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [runtimeSkill, ...flattenRuntimeDependencies(runtimeSkill)])
       const runtimeFingerprint = runtimeSkillFingerprint(runtimeSkill)
       const result = await this.packageTester(actor.id, runtimeSkill, prompt)
+      evidencePolicy = result.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY
       if (result.passed && !result.attemptId) throw new Error('严格试运行缺少精确 Attempt 证据，请重新测试')
       if (result.attemptId) {
         await this.bindStrictTest(result.runId, skill.id, skill.draftVersionId, fingerprint, runtimeFingerprint, prompt, actor.id)
@@ -440,7 +447,7 @@ export class PostgresSkillService {
       ) select
         ${testId}, ${tenantId}, ${skill.id}, ${skill.draftVersionId}, ${fingerprint},
         ${prompt}, ${status}, ${summary}, ${actor.id}, ${runtimeRunId}, ${runtimeAttemptId},
-        ${runtimeAttemptId ? SKILL_TEST_EVIDENCE_POLICY : 'legacy'}
+        ${runtimeAttemptId ? evidencePolicy : 'legacy'}
       where (${runtimeAttemptId}::text is null or exists (
         select 1 from runs where tenant_id = ${tenantId} and id = ${runtimeRunId} and current_attempt_id = ${runtimeAttemptId}
       ))
@@ -461,8 +468,12 @@ export class PostgresSkillService {
     }
   }
 
-  async startSkillTest(input: { skillId: string; prompt?: string; actor: string }): Promise<SkillTestRunProgress> {
+  async startSkillTest(input: { skillId: string; prompt?: string; actor: string; scenario?: unknown }): Promise<SkillTestRunProgress> {
     const context = await this.strictTestContext(input)
+    if (input.scenario !== undefined) {
+      if (!context.skill.strictTest) throw Object.assign(new Error('场景测试要求真实 DSH 试运行包'), { status: 422, code: 'invalid_test_scenario' })
+      context.runtimeSkill.testScenario = normalizeSkillTestScenario(input.scenario, [context.runtimeSkill, ...flattenRuntimeDependencies(context.runtimeSkill)])
+    }
     if (!context.skill.strictTest) {
       const result = await this.testSkill(input)
       return {
@@ -513,7 +524,7 @@ export class PostgresSkillService {
         test_prompt, status, result_summary, tested_by, runtime_run_id, runtime_attempt_id, evidence_policy
       ) select
         ${testId}, ${tenantId}, ${context.skill.id}, ${binding.versionId}, ${binding.fingerprint},
-        ${binding.prompt}, ${status}, ${resultSummary}, ${context.actor.id}, ${input.runId}, ${progress.attemptId}, ${SKILL_TEST_EVIDENCE_POLICY}
+        ${binding.prompt}, ${status}, ${resultSummary}, ${context.actor.id}, ${input.runId}, ${progress.attemptId}, ${progress.evidencePolicy ?? SKILL_TEST_EVIDENCE_POLICY}
       from runs r
       where r.tenant_id = ${tenantId} and r.id = ${input.runId} and r.current_attempt_id = ${progress.attemptId}
       on conflict (id) do nothing returning created_at as "createdAt"
@@ -729,6 +740,77 @@ export class PostgresSkillService {
     return unique(rows.flatMap(row => row.tools))
   }
 
+  private async requireScenarioPublicationCoverage(
+    transaction: DatabaseTransaction, current: SkillRow, locked: LockedSkillDraft, fingerprint: string,
+  ): Promise<{ id: string; runId: string; attemptId: string }> {
+    // Root is already locked by publishDraft. Lock the complete dependency graph
+    // before comparing all scenario start snapshots, just as the strict path does.
+    await transaction`
+      with recursive graph as (
+        select dependency_skill_version_id as id from skill_version_dependencies
+         where tenant_id = ${tenantId} and skill_version_id = ${locked.versionId}
+        union
+        select d.dependency_skill_version_id from skill_version_dependencies d
+        join graph g on g.id = d.skill_version_id where d.tenant_id = ${tenantId}
+      )
+      select sv.id from skill_versions sv join graph g on g.id = sv.id
+       where sv.tenant_id = ${tenantId} order by sv.id for update of sv
+    `
+    const [root] = await this.resolveTestRuntimeSkills([`${current.id}@${current.version}`], transaction)
+    if (!root) throw new Error('测试配置或依赖已变化，请重新测试')
+    const expectedFingerprint = runtimeSkillFingerprint(root)
+    const rows = await transaction<{
+      id: string; runId: string; attemptId: string; testStatus: string; runStatus: string;
+      attemptStatus: string; runtimeFingerprint: string; manifest: RuntimeManifest
+    }[]>`
+      select t.id, r.id as "runId", ra.id as "attemptId", t.status as "testStatus",
+             r.status as "runStatus", ra.status as "attemptStatus", b.runtime_fingerprint as "runtimeFingerprint", ra.manifest
+        from skill_test_runs t
+        join runs r on r.tenant_id = t.tenant_id and r.id = t.runtime_run_id and r.current_attempt_id = t.runtime_attempt_id
+        join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id and ra.run_id = r.id
+        join skill_test_bindings b on b.tenant_id = r.tenant_id and b.run_id = r.id and b.skill_version_id = t.skill_version_id
+       where t.tenant_id = ${tenantId} and t.skill_version_id = ${locked.versionId}
+         and t.configuration_fingerprint = ${fingerprint} and b.configuration_fingerprint = ${fingerprint}
+         and t.evidence_policy = ${SKILL_TEST_SCENARIO_POLICY}
+       order by t.created_at desc, t.id desc for update of r
+    `
+    const coveredSkills = new Set<string>(), coveredPython = new Set<string>(), seenScenarios = new Set<string>()
+    let selected: { id: string; runId: string; attemptId: string } | undefined
+    for (const row of rows) {
+      if (row.runtimeFingerprint !== expectedFingerprint || !row.manifest.test_scenario) continue
+      const scenarioId = row.manifest.test_scenario.id
+      // The latest finished evaluation of a named scenario replaces its earlier
+      // result. A new failed evaluation cannot silently reuse an older pass.
+      if (seenScenarios.has(scenarioId)) continue
+      seenScenarios.add(scenarioId)
+      if (row.testStatus !== 'passed') continue
+      const activations = await transaction<{ attemptId: string; skillId: string; skillVersion: string }[]>`
+        select attempt_id as "attemptId", skill_id as "skillId", skill_version as "skillVersion"
+          from skill_runtime_activations where tenant_id = ${tenantId} and run_id = ${row.runId} and attempt_id = ${row.attemptId}
+      `
+      const pythonExecutions = await transaction<{ attemptId: string; skillId: string; entry: string; succeeded: boolean }[]>`
+        select attempt_id as "attemptId", skill_id as "skillId", entry_path as entry, succeeded
+          from skill_python_executions where tenant_id = ${tenantId} and run_id = ${row.runId} and attempt_id = ${row.attemptId}
+      `
+      const events = await transaction<{ attemptId: string; eventType: string; displayMessage: string | null }[]>`
+        select attempt_id as "attemptId", event_type as "eventType", display_message as "displayMessage"
+          from run_events where tenant_id = ${tenantId} and run_id = ${row.runId} and attempt_id = ${row.attemptId}
+         order by stream_position, sequence
+      `
+      const result = evaluateAttemptEvidence({ ...row, activations, pythonExecutions, events })
+      if (!result.passed) continue
+      result.verifiedSkillReferences.forEach(reference => coveredSkills.add(reference))
+      result.verifiedPythonSkillIds.forEach(id => coveredPython.add(id))
+      selected ??= row
+    }
+    const catalog = [root, ...flattenRuntimeDependencies(root)]
+    if (!selected || catalog.some(skill => !coveredSkills.has(`${skill.id}@${skill.version}`))
+      || catalog.some(skill => skill.files?.some(file => file.path.endsWith('.py')) && !coveredPython.has(skill.id))) {
+      throw new Error('场景测试覆盖不完整或配置/结果已变化：发布需覆盖全部锁定 Skill 与含 Python 的分支，请补充场景测试')
+    }
+    return selected
+  }
+
   private async publishDraft(current: SkillRow, actorId: string) {
     const dependencyTools = current.draftVersionId ? await this.readDependencyToolReferences(current.draftVersionId) : []
     await this.toolService?.assertAvailableReferences([...current.toolIds, ...dependencyTools])
@@ -746,7 +828,7 @@ export class PostgresSkillService {
       if (locked.artifact) locked.instructions = (await this.requireArtifactStore().read(locked.artifact)).instructions
 
       const fingerprint = configurationFingerprint(locked)
-      const [test] = await transaction<{ id: string; runId: string | null; attemptId: string | null }[]>`
+      let [test] = await transaction<{ id: string; runId: string | null; attemptId: string | null }[]>`
         select t.id, t.runtime_run_id as "runId", t.runtime_attempt_id as "attemptId" from skill_test_runs t
          where t.tenant_id = ${tenantId} and t.skill_version_id = ${locked.versionId}
            and t.configuration_fingerprint = ${fingerprint} and t.status = 'passed'
@@ -757,6 +839,7 @@ export class PostgresSkillService {
            )))
          order by t.created_at desc limit 1
       `
+      if (!test && current.strictTest) test = await this.requireScenarioPublicationCoverage(transaction, current, locked, fingerprint)
       if (!test) throw new Error('发布前必须使用当前配置完成一次服务端测试')
       if (current.strictTest) {
         const [run] = await transaction`
