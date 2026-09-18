@@ -1157,10 +1157,20 @@ export class RunOrchestrationService {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
       if (!run || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
         || run.status !== 'running') throw authorizationDenied('Attempt 已结束、取消或被替代')
-      const session = await this.conversations.requireSession(manifest.session_id, manifest.user_context.user_id,
-        manifest.purpose ? 'admin' : 'workbench')
-      if (!manifest.purpose && (session.workspaceId !== manifest.workspace_id || session.agentVersionId !== manifest.agent_version_id)) {
-        throw authorizationDenied('会话归属或固定 Agent 已变化')
+      // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
+      // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
+      // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
+      // 成员版本由下方授权复核。
+      if (manifest.purpose) {
+        await this.conversations.requireSession(manifest.session_id, manifest.user_context.user_id, 'admin')
+      } else {
+        const session = await this.conversations.findSessionRow(manifest.session_id)
+        if (!session) throw authorizationDenied(`Session 不存在或不可访问：${manifest.session_id}`)
+        if (session.workspaceId !== manifest.workspace_id
+          || (session.workspaceType !== 'team'
+            && (session.createdBy !== manifest.user_context.user_id || session.agentVersionId !== manifest.agent_version_id))) {
+          throw authorizationDenied('会话归属或固定 Agent 已变化')
+        }
       }
       await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest)
     } catch (error) {
