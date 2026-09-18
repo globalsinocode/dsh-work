@@ -50,6 +50,16 @@ const router = createRouter({
       name: 'workspace-detail',
       component: () => import('@/views/WorkspaceDetailView.vue'),
       meta: { title: '工作空间', section: '员工工作台' },
+      children: [
+        {
+          // TW-10 空间内对话视图：团队会话在空间外壳内打开，不再跳到
+          // 独立 /conversations 页；:conversationId 兼容 Run ID 与 Session ID。
+          path: 'conversations/:conversationId',
+          name: 'workspace-conversation',
+          component: () => import('@/views/ConversationView.vue'),
+          meta: { title: '对话', section: '员工工作台' },
+        },
+      ],
     },
     { path: '/history', redirect: '/workbench' },
     {

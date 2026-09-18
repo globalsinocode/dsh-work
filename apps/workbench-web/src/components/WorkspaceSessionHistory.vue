@@ -15,7 +15,8 @@ import { formatActivityTime, formatActivityTimeShort } from '@/utils/activity-ti
  * - 只由 `WorkspaceDetailView` 的团队分支挂载；个人空间不渲染本组件，因此也不会
  *   产生 `listWorkspaceSessions` 请求（AC-23）。
  * - TW-10 起列表返回空间内全部会话（共享讨论）；每行显示发起人，零 Run 的
- *   讨论会话显示「暂无运行」，打开时退回 Session 身份（/conversations/:sessionId）。
+ *   讨论会话显示「暂无运行」，打开时退回 Session 身份；目标统一为空间内
+ *   对话视图（/workspaces/:id/conversations/:target）。
  * - 排序固定为服务端「最近活动倒序」，前端不再排序，首版不提供排序切换。
  */
 const props = withDefaults(
@@ -152,8 +153,9 @@ function reset() {
 
 function openSession(item: WorkspaceSessionSummary) {
   // 服务端兼容 Run ID 链接并解析回 Session；没有 Run 的会话退回 Session 身份。
+  // TW-10 空间内对话视图：历史会话在空间外壳内打开，停留在 /workspaces/:id 上下文。
   const target = item.latestRun?.id ?? item.sessionId
-  void router.push(`/conversations/${target}`)
+  void router.push(`/workspaces/${props.workspaceId}/conversations/${target}`)
 }
 
 function dotStatus(item: WorkspaceSessionSummary) {

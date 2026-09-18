@@ -251,7 +251,7 @@ describe('ConversationStarter', () => {
     expect(apiMocks.createSession).toHaveBeenCalledWith({ title: '帮我看看库存', workspaceId: 'ws-team' })
     expect(postSessionMessage).toHaveBeenCalledWith('session-new', '帮我看看库存')
     expect(createTask).not.toHaveBeenCalled()
-    expect(router.push).toHaveBeenCalledWith('/conversations/session-new')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-new')
   })
 
   it('文本中 @ 的 Agent 成员优先于预选并进入 startRun（TW-10）', async () => {

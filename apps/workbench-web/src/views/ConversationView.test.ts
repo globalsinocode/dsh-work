@@ -11,7 +11,10 @@ import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
-const route = vi.hoisted(() => ({ params: { id: 'run-001' } }))
+const route = vi.hoisted(() => ({
+  name: undefined as string | undefined,
+  params: {} as Record<string, string>,
+}))
 const api = vi.hoisted(() => ({
   getTasks: vi.fn(),
   getSession: vi.fn(),
@@ -181,6 +184,45 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(cancelTask).toHaveBeenCalledWith('run-001')
   })
 
+  it('lets any writable member retry a shared run, not only the requester (TW-10)', async () => {
+    // 服务端 requireWritableRun 的口径是「会话写轨」：团队空间内任一可写成员
+    // 都可停止/重试共享会话里的 Run，不限发起人（前端此前误收窄为仅发起人）。
+    const item = task({ requestedBy: 'U00002', currentUserRole: 'member', status: 'failed' })
+    const { wrapper } = await mountView({ item })
+
+    expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(true)
+  })
+
+  it('lets a non-requester member stop a running shared run', async () => {
+    const item = task({ requestedBy: 'U00002', currentUserRole: 'member', status: 'running', error: undefined })
+    const { wrapper, taskStore } = await mountView({ item })
+    const cancelTask = vi.spyOn(taskStore, 'cancelTask').mockResolvedValue(item)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const composer = wrapper.getComponent(TaskComposer)
+
+    expect(composer.props('running')).toBe(true)
+    composer.vm.$emit('stop')
+    await flushPromises()
+    expect(cancelTask).toHaveBeenCalledWith('run-001')
+  })
+
+  it('keeps retry requester-only for personal runs', async () => {
+    // 个人会话写轨仍是创建者-only（requireSessionAccess 的非团队分支）。
+    const item = task({
+      requestedBy: 'U00002',
+      workspaceId: 'ws-personal',
+      workspaceType: 'personal',
+      currentUserRole: null,
+      status: 'failed',
+    })
+    const { wrapper } = await mountView({
+      item,
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+    })
+
+    expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(false)
+  })
+
   it('never applies the archived gate to a personal workspace (AC-23)', async () => {
     const { wrapper } = await mountView({
       item: task({ workspaceId: 'ws-personal', workspaceName: '我的空间', workspaceType: 'personal' }),
@@ -254,6 +296,40 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.text()).toContain('由 周航 发起')
     // 成员可继续发言
     expect(wrapper.find('task-composer-stub').exists()).toBe(true)
+  })
+
+  it('aligns my user messages to the right and other members/agents to the left', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      messages: [
+        {
+          id: 'm-mine', role: 'user', content: '我来跟', createdAt: '10:00',
+          runId: null, senderId: 'U00001', senderName: '林岚',
+          runRequesterId: null, runRequesterName: null, agentName: null,
+        },
+        {
+          id: 'm-other', role: 'user', content: '这批料谁跟一下？', createdAt: '10:01',
+          runId: null, senderId: 'U00002', senderName: '周航',
+          runRequesterId: null, runRequesterName: null, agentName: null,
+        },
+        {
+          id: 'm-agent', role: 'assistant', content: '延期明细已整理', createdAt: '10:02',
+          runId: 'run-9', senderId: null, senderName: null,
+          runRequesterId: 'U00002', runRequesterName: '周航', agentName: '欠料追踪助手',
+        },
+      ],
+    }))
+    const { wrapper } = await mountView({ item: null })
+
+    const articles = wrapper.findAll('article.conversation-message')
+    // 本人消息带 --own（CSS 镜像到右侧）；他人与 Agent 消息保持左侧。
+    expect(articles[0]!.classes()).toContain('conversation-message--own')
+    expect(articles[1]!.classes()).not.toContain('conversation-message--own')
+    expect(articles[2]!.classes()).not.toContain('conversation-message--own')
+    // 人员消息与 Agent 回复统一身份行 + 卡片结构。
+    expect(articles[0]!.find('.assistant-identity strong').text()).toBe('林岚')
+    expect(articles[1]!.find('.assistant-identity strong').text()).toBe('周航')
+    expect(articles[0]!.find('.user-message p').text()).toBe('我来跟')
   })
 
   it('posts a discussion message without creating a run when no Agent is mentioned', async () => {
@@ -383,5 +459,75 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(runEntry.text()).toContain('执行中')
     await runEntry.trigger('click')
     expect(router.push).toHaveBeenCalledWith('/conversations/run-9')
+  })
+})
+
+describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    route.name = undefined
+    route.params = { id: 'run-001' }
+    api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.getRun.mockRejectedValue(new Error('not a run'))
+    api.getSessionThread.mockRejectedValue(new Error('not found'))
+  })
+
+  it('redirects a team session opened via the standalone URL into the workspace', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    await mountView({ item: null })
+    expect(router.replace).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-001')
+  })
+
+  it('keeps a personal session on the standalone URL without redirect', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({ workspaceType: 'personal' }))
+    await mountView({ item: null })
+    expect(router.replace).not.toHaveBeenCalled()
+  })
+
+  it('loads the thread by conversationId when embedded and does not redirect', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    const { wrapper } = await mountView({ item: null })
+    expect(api.getSessionThread).toHaveBeenCalledWith('session-001')
+    expect(router.replace).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('供应商讨论')
+  })
+
+  it('opens session runs within the workspace URL when embedded', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      runs: [{
+        runId: 'run-9',
+        status: 'running',
+        requestedBy: 'U00002',
+        requesterName: '周航',
+        createdAt: '2026-09-10T10:00:00.000Z',
+      }],
+    }))
+    const { wrapper } = await mountView({ item: null })
+    await wrapper.get('[data-testid="session-run"]').trigger('click')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/run-9')
+  })
+
+  it('falls back to the workspace page when going back without history', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    const { wrapper } = await mountView({ item: null })
+    await wrapper.get('.conversation-header__back').trigger('click')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team')
+  })
+
+  it('re-roots to the owning workspace when the embedded target belongs elsewhere', async () => {
+    // 手改 URL/陈旧链接可能把 B 空间的会话挂进 A 空间外壳：归位到其真实空间。
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-other', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    await mountView({ item: null })
+    expect(router.replace).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-001')
   })
 })

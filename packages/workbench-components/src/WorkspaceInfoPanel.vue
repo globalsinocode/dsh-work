@@ -119,6 +119,11 @@ const props = withDefaults(
 const emit = defineEmits<{
   collapse: []
   'manage-members': []
+  /**
+   * 打开「管理 Agent」弹窗（负责人-only，与服务端写轨一致）：Agent 的添加与
+   * 生命周期操作全部限 owner，admin/member 在名册上已可读，不再给空入口。
+   */
+  'manage-agents': []
   'open-settings': []
   /**
    * 团队成员点击可用 Agent 发起对话（TW-02）：普通成员没有成员管理弹窗入口，
@@ -308,6 +313,15 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
           <h3>Agent</h3>
           <span data-testid="panel-agent-count">{{ agentMembers.length }} 个 Agent</span>
         </div>
+        <button
+          v-if="currentUserRole === 'owner'"
+          data-testid="panel-manage-agents"
+          class="workspace-info-panel__link"
+          type="button"
+          @click="emit('manage-agents')"
+        >
+          管理 Agent
+        </button>
       </div>
       <div v-if="agentMembers.length" class="workspace-agent-list">
         <article

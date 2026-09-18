@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowRight,
@@ -32,6 +32,7 @@ import type {
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
+import WorkspaceAgentMemberDialog from '@/components/WorkspaceAgentMemberDialog.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceSessionHistory from '@/components/WorkspaceSessionHistory.vue'
 import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
@@ -86,6 +87,7 @@ const versionUploadingId = ref<string | null>(null)
 const versionUploadError = ref<{ logicalFileId: string; message: string } | null>(null)
 
 const memberDialogOpen = ref(false)
+const agentDialogOpen = ref(false)
 const settingsDialogOpen = ref(false)
 /** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
 const previewOpen = ref(false)
@@ -187,6 +189,12 @@ const conversationViews: Array<{ id: ConversationView; label: string }> = [
   { id: 'new', label: '新对话' },
   { id: 'history', label: '历史对话' },
 ]
+/**
+ * TW-10 空间内对话视图：子路由 /workspaces/:id/conversations/:target 命中时，
+ * 对话面板正文切换为内嵌线程（router-view），「新对话/历史对话」切换条隐藏，
+ * 由线程自身的返回控件回到列表。
+ */
+const isConversationThreadRoute = computed(() => route.name === 'workspace-conversation')
 
 const workspaceId = computed(() => String(route.params.id ?? ''))
 const workspace = computed(() =>
@@ -316,12 +324,24 @@ const workspaceTabs = computed(() => [
   },
 ])
 
+/**
+ * 页签/视图切换只写 query；但当当前处于空间内对话子路由
+ * （/workspaces/:id/conversations/:target）时必须同时把路径归位到
+ * /workspaces/:id，否则 isConversationThreadRoute 恒为 true，「新对话」
+ * 输入框与文件引用永远无法浮现（评审修复）。
+ */
+function workspaceBaseLocation(query: LocationQuery) {
+  return isConversationThreadRoute.value
+    ? { path: `/workspaces/${workspaceId.value}`, query }
+    : { query }
+}
+
 function selectTab(tab: WorkspaceTab) {
   activeTab.value = tab
   const query = { ...route.query }
   if (tab === 'conversation') delete query.tab
   else query.tab = tab
-  void router.replace({ query })
+  return router.replace(workspaceBaseLocation(query))
 }
 
 /**
@@ -333,7 +353,7 @@ function setConversationView(view: ConversationView) {
   const query = { ...route.query }
   if (view === 'history') query.view = 'history'
   else delete query.view
-  void router.replace({ query })
+  return router.replace(workspaceBaseLocation(query))
 }
 
 watch(
@@ -360,14 +380,20 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
   void nextTick(() => tabButtonRefs.value[targetIndex]?.focus())
 }
 
-function useWorkspaceFile(file: WorkspaceFile) {
-  if (isTeam.value) setConversationView('new')
-  selectTab('conversation')
-  mobileInfoOpen.value = false
-  void nextTick(() => {
+async function useWorkspaceFile(file: WorkspaceFile) {
+  // 处于空间内对话子路由时，selectTab/setConversationView 会触发路径归位，
+  // ConversationStarter 在导航确认后才挂载——必须等导航与渲染完成再取
+  // starterRef，否则引用被静默丢弃（评审修复）。
+  try {
+    if (isTeam.value) await setConversationView('new')
+    await selectTab('conversation')
+    mobileInfoOpen.value = false
+    await nextTick()
     starterRef.value?.useWorkspaceFile(file)
     ElMessage.success(`已将“${file.name}”带入新对话`)
-  })
+  } catch (error) {
+    notifyActionFailure('引用文件到对话', `文件“${file.name}”`, error, '请重试或刷新页面。')
+  }
 }
 
 function uploadFile() {
@@ -761,6 +787,7 @@ function startAgentConversation(agentMemberId: string) {
   presetAgentMember.value = member
   presetAgentMemberAuto.value = false
   memberDialogOpen.value = false
+  agentDialogOpen.value = false
   setConversationView('new')
   selectTab('conversation')
 }
@@ -856,6 +883,7 @@ watch(workspace, (value) => {
   presetAgentMember.value = null
   presetAgentMemberAuto.value = false
   memberDialogOpen.value = false
+  agentDialogOpen.value = false
   settingsDialogOpen.value = false
   agentMembers.value = []
   workspaceMembers.value = []
@@ -1017,7 +1045,7 @@ watch(
           aria-labelledby="workspace-tab-conversation"
         >
           <div
-            v-if="showConversationViewSwitch"
+            v-if="showConversationViewSwitch && !isConversationThreadRoute"
             class="panel workspace-conversation-pane__viewbar"
             data-testid="conversation-view-switch"
             role="tablist"
@@ -1038,30 +1066,33 @@ watch(
           </div>
 
           <div class="workspace-conversation-pane__body">
-            <ConversationStarter
-              v-if="showConversationStarter"
-              v-show="conversationView === 'new'"
-              ref="starterRef"
-              embedded
-              :workspace-id="workspace.id"
-              :workspace-name="workspace.name"
-              workspace-locked
-              :title="`在“${workspace.name}”中开始对话`"
-              :preset-agent-member="isTeam ? presetAgentMember : null"
-              :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
-              :requires-agent-member="isTeam"
-              :can-discuss="!isTeam || canWriteTeamContent"
-              :mention-options="isTeam ? startableMentionOptions : []"
-            />
+            <RouterView v-if="isConversationThreadRoute" />
+            <template v-else>
+              <ConversationStarter
+                v-if="showConversationStarter"
+                v-show="conversationView === 'new'"
+                ref="starterRef"
+                embedded
+                :workspace-id="workspace.id"
+                :workspace-name="workspace.name"
+                workspace-locked
+                :title="`在“${workspace.name}”中开始对话`"
+                :preset-agent-member="isTeam ? presetAgentMember : null"
+                :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
+                :requires-agent-member="isTeam"
+                :can-discuss="!isTeam || canWriteTeamContent"
+                :mention-options="isTeam ? startableMentionOptions : []"
+              />
 
-            <WorkspaceSessionHistory
-              v-if="showSessionHistory"
-              :workspace-id="workspace.id"
-              :workspace-name="workspace.name"
-              :can-start-conversation="!isArchived && canWriteTeamContent"
-              :archived="isArchived"
-              @start-new="setConversationView('new')"
-            />
+              <WorkspaceSessionHistory
+                v-if="showSessionHistory"
+                :workspace-id="workspace.id"
+                :workspace-name="workspace.name"
+                :can-start-conversation="!isArchived && canWriteTeamContent"
+                :archived="isArchived"
+                @start-new="setConversationView('new')"
+              />
+            </template>
           </div>
         </section>
 
@@ -1211,6 +1242,7 @@ watch(
         collapsible
         @collapse="panelCollapsed = true"
         @manage-members="memberDialogOpen = true"
+        @manage-agents="agentDialogOpen = true"
         @open-settings="settingsDialogOpen = true"
         @start-agent-conversation="startAgentConversation"
         @view-all-activity="openActivityDrawer"
@@ -1246,6 +1278,7 @@ watch(
         :usage-loading="usageLoading"
         :usage-error="usageError"
         @manage-members="memberDialogOpen = true"
+        @manage-agents="agentDialogOpen = true"
         @open-settings="settingsDialogOpen = true"
         @start-agent-conversation="startAgentConversation"
         @view-all-activity="openActivityDrawer"
@@ -1356,6 +1389,16 @@ watch(
         :workspace-name="workspace.name"
         :current-user-role="currentUserRole"
         :members="workspaceMembers"
+        :archived="isArchived"
+        @refresh="refreshTeamMembers"
+      />
+
+      <!-- 管理 Agent 独立入口（TW-10）：右栏 Agent 区块触发，负责人-only 操作。 -->
+      <WorkspaceAgentMemberDialog
+        v-model:open="agentDialogOpen"
+        :workspace-id="workspace.id"
+        :workspace-name="workspace.name"
+        :current-user-role="currentUserRole"
         :agent-members="agentMembers"
         :load-agent-members="false"
         :archived="isArchived"

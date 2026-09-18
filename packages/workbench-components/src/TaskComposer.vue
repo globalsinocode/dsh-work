@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowUp,
   Close,
+  Cpu,
   Files,
   FolderOpened,
   Loading,
@@ -106,6 +107,8 @@ const filteredMentions = computed(() => {
   return props.mentionOptions.filter(option => option.name.toLowerCase().includes(normalized)).slice(0, 8)
 })
 const mentionOpen = computed(() => mentionQuery.value !== null && filteredMentions.value.length > 0)
+/** 浮层面板本身只要有 `@` 片段就打开（含空态提示）；键盘导航仍按 mentionOpen 收敛。 */
+const mentionPanelOpen = computed(() => mentionQuery.value !== null && props.mentionOptions.length > 0)
 
 watch(filteredMentions, () => { mentionIndex.value = 0 })
 
@@ -309,6 +312,12 @@ function clearComposer() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // Esc 关闭整个浮层（含「没有匹配的 Agent」空态），不只挂在有候选的分支。
+  if (mentionPanelOpen.value && event.key === 'Escape') {
+    event.preventDefault()
+    mentionQuery.value = null
+    return
+  }
   if (mentionOpen.value) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -320,11 +329,6 @@ function onKeydown(event: KeyboardEvent) {
       event.preventDefault()
       const option = filteredMentions.value[mentionIndex.value] ?? filteredMentions.value[0]
       if (option) applyMention(option)
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      mentionQuery.value = null
       return
     }
   }
@@ -391,28 +395,6 @@ function performPrimaryAction() {
         @keyup="refreshMentionState"
         @click="refreshMentionState"
       ></textarea>
-
-      <div
-        v-if="mentionOpen"
-        class="composer__mentions"
-        role="listbox"
-        aria-label="提及 Agent"
-        data-testid="mention-options"
-      >
-        <button
-          v-for="(option, index) in filteredMentions"
-          :key="option.id"
-          type="button"
-          role="option"
-          class="composer__mention-option"
-          :class="{ 'composer__mention-option--active': index === mentionIndex }"
-          :aria-selected="index === mentionIndex"
-          @mousedown.prevent="applyMention(option)"
-        >
-          <span class="composer__mention-at">@</span>
-          <span>{{ option.name }}</span>
-        </button>
-      </div>
 
       <div class="composer__action-row">
         <div class="composer__leading-actions">
@@ -524,6 +506,37 @@ function performPrimaryAction() {
         按企业身份和工作空间权限执行
       </span>
     </div>
+
+    <!--
+      @Agent 提及浮层：Devin 风格弹出面板，悬浮在输入框上方（surface 的
+      overflow:hidden 会裁剪，故挂在 .composer 根下）。键盘 ↑↓ 选择、
+      Enter/Tab 确认、Esc 关闭，鼠标 mousedown 选择避免 blur 抢焦点。
+    -->
+    <div
+      v-if="mentionPanelOpen"
+      class="composer__mentions"
+      role="listbox"
+      aria-label="提及 Agent"
+      data-testid="mention-options"
+    >
+      <template v-if="filteredMentions.length">
+        <button
+          v-for="(option, index) in filteredMentions"
+          :key="option.id"
+          type="button"
+          role="option"
+          class="composer__mention-option"
+          :class="{ 'composer__mention-option--active': index === mentionIndex }"
+          :aria-selected="index === mentionIndex"
+          @mousedown.prevent="applyMention(option)"
+        >
+          <span class="composer__mention-icon"><el-icon><Cpu /></el-icon></span>
+          <span class="composer__mention-name">{{ option.name }}</span>
+          <span class="composer__mention-kind">Agent</span>
+        </button>
+      </template>
+      <p v-else class="composer__mention-empty">没有匹配的 Agent</p>
+    </div>
   </section>
 </template>
 
@@ -544,27 +557,32 @@ function performPrimaryAction() {
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
+/* @Agent 提及浮层：悬浮在输入框上方的弹出面板（见模板注释）。 */
 .composer__mentions {
+  position: absolute;
+  z-index: 6;
+  bottom: calc(100% + 8px);
+  left: 0;
   display: flex;
-  max-height: 216px;
+  width: min(300px, calc(100% - 16px));
+  max-height: 264px;
   flex-direction: column;
-  margin: 0 12px 8px;
-  padding: 4px;
+  padding: 6px;
   overflow-y: auto;
-  border: 1px solid #e3e6e2;
-  border-radius: 12px;
+  border: 1px solid #e4e6e3;
+  border-radius: 14px;
   background: #fff;
-  box-shadow: 0 6px 20px rgb(35 45 40 / 8%);
+  box-shadow: 0 14px 38px rgb(24 25 24 / 14%), 0 2px 8px rgb(24 25 24 / 6%);
 }
 
 .composer__mention-option {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px 10px;
+  gap: 9px;
+  padding: 8px 9px;
   border: 0;
-  border-radius: 8px;
-  color: #3a3f3a;
+  border-radius: 9px;
+  color: #2c302c;
   background: transparent;
   cursor: pointer;
   font-size: var(--dsh-font-size-caption);
@@ -577,17 +595,37 @@ function performPrimaryAction() {
   background: #f0f7f4;
 }
 
-.composer__mention-at {
+.composer__mention-icon {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: 6px;
-  color: #fff;
-  background: #3e5f55;
+  border-radius: 8px;
+  color: #176750;
+  background: #e8f5f0;
+  font-size: var(--dsh-font-size-caption);
+}
+
+.composer__mention-name {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__mention-kind {
+  flex: 0 0 auto;
+  color: #a4aaa5;
   font-size: var(--dsh-font-size-micro);
-  font-weight: 700;
+}
+
+.composer__mention-empty {
+  margin: 0;
+  padding: 9px 11px;
+  color: #969a96;
+  font-size: var(--dsh-font-size-micro);
 }
 
 .composer:focus-within .composer__surface {

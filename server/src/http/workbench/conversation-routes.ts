@@ -3,7 +3,7 @@ import type { PostgresWorkspaceAgentMemberService } from '../../modules/workbenc
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import type { RunRepository } from '../../modules/run/run-repository.ts'
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
-import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject } from '../../modules/authorization/authorization-errors.ts'
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import type { TaskRun } from '../../domain/types.ts'
@@ -40,10 +40,10 @@ export function registerConversationRoutes(
     const tasks = await conversations.listTasks(userId)
     // 团队空间运行在收权后必须停止交付：列表与详情同样只按发起人过滤，因此这里
     // 逐条复核当前团队读权限，失权空间的条目直接不返回（与 SSE 同一口径）。
+    // 同时附带调用者的 currentUserRole（TW-10）：前端按它决定写入口显隐，
+    // 若列表不带角色，从工作台打开的团队 Run 会被 fail-closed 误判为只读成员。
     const visible = authorization
-      ? (await Promise.all(tasks.map(async task =>
-          (await authorizeTeamTaskRead(authorization, task, userId)) ? task : null,
-        ))).filter((task): task is (typeof tasks)[number] => task !== null)
+      ? await attachListRoles(authorization, tasks, userId)
       : tasks
     return envelope('workbench', visible, 'postgres')
   })
@@ -378,6 +378,35 @@ async function attachCurrentUserRole(
   if (!task || !authorization) return task
   const currentUserRole = await authorization.teamRoleOf(task.workspaceId, userId)
   return { ...task, currentUserRole }
+}
+
+/**
+ * 任务列表的角色附带：同一空间往往有多个 Run，按 workspaceId 去重
+ * teamRoleOf 的 Promise，避免列表退化成逐条成员查询（评审修复）。
+ * 失权条目与详情同一口径直接不返回。
+ */
+async function attachListRoles(
+  authorization: PostgresAuthorizationService,
+  tasks: TaskRun[],
+  userId: string,
+): Promise<TaskRun[]> {
+  const roleCache = new Map<string, Promise<TeamMemberRole | null>>()
+  const roleOf = (workspaceId: string) => {
+    // 独立/个人 Run 可能没有 workspaceId：直接返回 null，避免无效查询拖垮整个列表。
+    if (!workspaceId) return Promise.resolve(null)
+    let pending = roleCache.get(workspaceId)
+    if (!pending) {
+      pending = authorization.teamRoleOf(workspaceId, userId)
+      roleCache.set(workspaceId, pending)
+    }
+    return pending
+  }
+  const visible = await Promise.all(tasks.map(async (task): Promise<TaskRun | null> =>
+    (await authorizeTeamTaskRead(authorization, task, userId))
+      ? { ...task, currentUserRole: await roleOf(task.workspaceId) }
+      : null,
+  ))
+  return visible.filter((task): task is TaskRun => task !== null)
 }
 
 async function authorizeTeamTaskRead(

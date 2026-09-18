@@ -79,7 +79,23 @@
 
 **验收：** 无 @ 消息零 Run；@ 触发复用既有 Run/Attempt/Runtime 链路；发送者与触发人归因逐条可见；viewer 写入口不出现；归档空间全部写入口隐藏。
 
-- 负责人管理员工/Agent 成员、调整角色并验证收权（P1，需多角色测试身份）。
+### TW-E2E-11 空间内对话视图（TW-10 导航）
+
+**优先级：** P1
+**角色：** 空间成员（member）
+**运行层级：** P1 集成用户旅程（P0 不可达：Prototype 模式无会话持久化）
+**前置数据：** 专用可丢弃 PostgreSQL；团队空间含至少一个可发起的 Agent 成员与一段历史会话
+**spec：** `e2e/team-discussion.integration.spec.ts`（计划，与 TW-E2E-10 同文件）；组件行为由 `WorkspaceDetailView`/`ConversationView` 单测固化
+
+1. 成员在空间页「新对话」发送消息（或 @Agent 触发 Run）：不离开 `/workspaces/:id` 上下文，地址栏进入 `/workspaces/:id/conversations/:target`，空间标题、页签与右栏保持可见。
+2. 在对话视图内点「返回」：回到同一空间页的「新对话/历史对话」页签。
+3. 「历史对话」打开任一会话：同样落在空间内对话视图。
+4. 从空间外入口（工作台最近对话）打开团队会话 `/conversations/:id`：自动跳转到对应 `/workspaces/:id/conversations/:id`，空间外壳完整。
+5. 个人空间会话仍使用 `/conversations/:id` 独立页，不发生跳转。
+
+**验收：** 空间内发起/打开团队会话始终停留在空间上下文；返回键回到空间页而非工作台；空间外旧链接可解析但归位到空间 URL；个人空间路径行为不变。
+
+- 负责人经「管理成员」管理员工、调整角色并验证收权；经右栏 Agent 区块「管理 Agent」独立入口管理 Agent 成员（P1，需多角色测试身份）。
 - 上传文件、上传新版本、失败版本保留且旧版本仍可引用（P1）。
 - 归档后历史读取仍可用、新对话/上传/重试被拒（P1）。
 - 真实 DSH 双账号上传共享文件、引用执行、收权和归档验收（P2，复用 `scripts/runtime/team-workspace-e2e.ts`，已通过）。

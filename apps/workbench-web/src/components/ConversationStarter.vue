@@ -172,6 +172,16 @@ function useWorkspaceFile(file: WorkspaceFile) {
   focusComposer()
 }
 
+/**
+ * TW-10：工作空间内发起的对话停留在空间页（/workspaces/:id 内嵌视图）；
+ * 工作台等独立入口仍打开 /conversations 独立页。
+ */
+function conversationPath(workspaceId: string, target: string) {
+  return props.workspaceLocked
+    ? `/workspaces/${workspaceId}/conversations/${target}`
+    : `/conversations/${target}`
+}
+
 async function submitTask(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
   if (blockedReason.value) {
     ElMessage.warning(blockedReason.value)
@@ -195,7 +205,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
         workspaceId: payload.workspaceId,
       })
       await taskStore.postSessionMessage(session.id, payload.prompt)
-      await router.push(`/conversations/${session.id}`)
+      await router.push(conversationPath(payload.workspaceId, session.id))
       payload.confirm?.()
       referencedWorkspaceFileIds.value = []
       return
@@ -221,7 +231,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
           undefined,
           workspaceAgentMemberId,
         )
-    await router.push(`/conversations/${task.id}`)
+    await router.push(conversationPath(payload.workspaceId, task.id))
     payload.confirm?.()
     referencedWorkspaceFileIds.value = []
   } catch (error) {

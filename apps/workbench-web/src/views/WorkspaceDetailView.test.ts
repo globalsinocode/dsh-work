@@ -26,9 +26,17 @@ import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceDetailView from './WorkspaceDetailView.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
-const route = vi.hoisted(() => ({ query: {} as Record<string, unknown>, params: { id: 'ws-team' } }))
+const route = vi.hoisted(() => ({
+  name: undefined as string | undefined,
+  query: {} as Record<string, unknown>,
+  params: {} as Record<string, string>,
+}))
 
-vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => route }))
+vi.mock('vue-router', () => ({
+  useRouter: () => router,
+  useRoute: () => route,
+  RouterView: { template: '<div data-testid="router-view" />' },
+}))
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -151,6 +159,7 @@ async function mountView(
 
 describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
   beforeEach(() => {
+    route.name = undefined
     route.params = { id: 'ws-team' }
     route.query = {}
     vi.spyOn(workbenchApi, 'listWorkspaceAgentMembers').mockResolvedValue([])
@@ -200,7 +209,8 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('[data-testid="panel-workspace-settings"]').exists()).toBe(true)
     // 服务端确认 owner：4-T2 的空间用量区块与详情弹窗随之挂载（默认关闭）。
     expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(true)
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([false, false, false])
+    // 成员、Agent、空间设置与用量详情四个弹窗均默认关闭。
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([false, false, false, false])
   })
 
   it('opens the team management entry only for the resolved owner', async () => {
@@ -215,18 +225,27 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     // 「负责人姓名 == 登录者姓名」（评审 P2/N3）。成员/设置入口仍按既有姓名回退渲染。
     expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(false)
     const dialogs = wrapper.findAllComponents(ElDialog)
-    expect(dialogs.map(dialog => dialog.props('modelValue'))).toEqual([false, false])
+    expect(dialogs.map(dialog => dialog.props('modelValue'))).toEqual([false, false, false])
 
     // 团队分支才挂载 2.6 成员管理弹窗与 2.7 空间设置弹窗。
     await entry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false])
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, false])
     expect(wrapper.find('.member-dialog__body').exists()).toBe(true)
 
     await settingsEntry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, true])
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, true])
     expect(wrapper.find('.settings-dialog__body').exists()).toBe(true)
+
+    // 「管理 Agent」独立入口：右栏 Agent 区块触发第二个弹窗，成员弹窗不再混管 Agent。
+    const agentEntry = wrapper.find('[data-testid="panel-manage-agents"]')
+    expect(agentEntry.exists()).toBe(true)
+    await agentEntry.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, true, true])
+    expect(wrapper.find('[data-testid="member-section-agent"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="member-section-employee"]').exists()).toBe(true)
   })
 
   it('renders the 新对话／历史对话 switch for a team space and defaults to the new conversation', async () => {
@@ -251,6 +270,33 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('[data-testid="workspace-session-history"]').exists()).toBe(true)
     // 1B 历史视图默认按本人范围拉取。
     expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledWith('ws-team', { limit: 20 })
+  })
+
+  it('exits the embedded conversation route when switching workspace tabs (TW-10)', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    const { wrapper } = await mountView(workspace())
+
+    // 线程路由下正文是内嵌 RouterView；切页签必须同时归位路径，
+    // 否则旧线程一直占位、文件页签内容可达但 URL 语义错乱。
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { tab: 'files' } })
+  })
+
+  it('exits the embedded thread when starting an Agent conversation from the panel', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    // 两个可发起成员避免唯一成员自动预选占用「开始对话」入口。
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([
+      agentMember(),
+      agentMember({ id: 'wam-2', agentId: 'agent-2', name: '库存助手' }),
+    ])
+    const { wrapper } = await mountView(workspace())
+    await flushPromises()
+
+    // 线程视图内点右栏「开始对话」：路径归位到空间页，新对话输入框才能浮现。
+    await wrapper.findAll('[data-testid="panel-agent-start"]')[0]!.trigger('click')
+    expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: {} })
   })
 
   it('restores the history view from a ?view=history deep link after the workspace resolves', async () => {

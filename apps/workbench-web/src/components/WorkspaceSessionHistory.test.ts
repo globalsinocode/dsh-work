@@ -90,7 +90,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     await wrapper.find('[data-testid="session-history-row"]').trigger('click')
     // 服务端兼容 Run ID 链接并解析回 Session。
-    expect(router.push).toHaveBeenCalledWith('/conversations/run/9')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/run/9')
   })
 
   it('falls back to the Session identity when a session has no Run yet', async () => {
@@ -100,7 +100,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     expect(wrapper.find('[data-testid="session-history-row"] .status-tag').text()).toBe('暂无运行')
     await wrapper.find('[data-testid="session-history-row"]').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/conversations/session-empty')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-empty')
   })
 
   it('appends the next cursor page and shows the end marker once exhausted', async () => {

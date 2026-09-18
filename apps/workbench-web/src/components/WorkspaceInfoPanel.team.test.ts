@@ -135,6 +135,21 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     }
   })
 
+  it('shows 管理 Agent in the Agent section to the owner only', async () => {
+    // Agent 添加/停用/移除是负责人-only 写轨（与服务端 addAgentMember 口径一致），
+    // 因此入口收敛在 Agent 区块且仅负责人可见；admin 管理员工但不管 Agent。
+    const owner = mountPanel({ currentUserRole: 'owner' })
+    const entry = owner.find('[data-testid="panel-manage-agents"]')
+    expect(entry.exists()).toBe(true)
+    expect(entry.text()).toContain('管理 Agent')
+    await entry.trigger('click')
+    expect(owner.emitted('manage-agents')).toBeTruthy()
+
+    for (const role of ['admin', 'member', 'viewer', null]) {
+      expect(mountPanel({ currentUserRole: role }).find('[data-testid="panel-manage-agents"]').exists()).toBe(false)
+    }
+  })
+
   it('shows the 空间设置 entry to the owner only', async () => {
     const owner = mountPanel({ currentUserRole: 'owner' })
     const entry = owner.find('[data-testid="panel-workspace-settings"]')

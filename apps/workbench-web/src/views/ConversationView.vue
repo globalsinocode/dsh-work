@@ -38,8 +38,28 @@ const stopping = ref(false)
  */
 const sessionThread = ref<SessionThread | null>(null)
 const threadMissing = ref(false)
+/** Run/Session 目标解析在途标记：避免加载间隙闪现「未找到对话」。 */
+const targetLoading = ref(false)
 
-const task = computed(() => taskStore.getTask(String(route.params.id)))
+/**
+ * TW-10 空间内嵌套：作为 /workspaces/:id/conversations/:conversationId 子路由
+ * 渲染时 params.id 是空间 id、目标在 conversationId；独立 /conversations/:id
+ * 路径仍按原样解析。团队会话的外部链接加载后归位到空间 URL
+ * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
+ */
+const isEmbeddedInWorkspace = computed(() => route.name === 'workspace-conversation')
+const embeddedWorkspaceId = computed(() =>
+  isEmbeddedInWorkspace.value ? String(route.params.id) : '')
+const routeTargetId = computed(() =>
+  isEmbeddedInWorkspace.value ? String(route.params.conversationId) : String(route.params.id))
+
+function conversationPath(target: string) {
+  return isEmbeddedInWorkspace.value
+    ? `/workspaces/${embeddedWorkspaceId.value}/conversations/${target}`
+    : `/conversations/${target}`
+}
+
+const task = computed(() => taskStore.getTask(routeTargetId.value))
 /**
  * 归档只读态（design §2.7 / 3-T1 执行轨）：运行所属团队空间归档后，续写（发送消息）
  * 与重试入口隐藏；内容、来源与成果下载保持可读。个人空间不会命中（AC-23）。
@@ -52,7 +72,7 @@ const sessionArchived = computed(() =>
 /** TW-10：团队会话的消息流是全空间共享讨论，发送与归因按成员区分。 */
 const isTeamSession = computed(() =>
   task.value?.workspaceType === 'team' || sessionThread.value?.workspaceType === 'team')
-/** 停止/重试只对本 Run 的触发人可用（共享会话里他人发起的 Run 只能看）。 */
+/** 个人会话的写轨仍是创建者-only；团队共享会话的写轨见 canOperateRun。 */
 const isRequester = computed(() => Boolean(task.value && task.value.requestedBy === authStore.user.id))
 /**
  * TW-10：Run 视图的写权限。只读成员可读共享 Run 详情但不得发言/触发/停止/重试；
@@ -65,13 +85,24 @@ function canWriteTeamRole(role: TeamMemberRole | null | undefined) {
 }
 const isRunViewer = computed(() =>
   task.value?.workspaceType === 'team' && !canWriteTeamRole(task.value.currentUserRole))
+/**
+ * 停止/重试写轨与服务端 requireWritableRun 一致（TW-10）：团队共享会话内
+ * 任一可写成员（owner/admin/member）都可操作他人发起的 Run——卡住或误发
+ * 的执行不能只靠发起人收敛；个人会话仍是创建者-only（isRequester），
+ * 归档空间写轨整体关闭。
+ */
+const canOperateRun = computed(() => Boolean(
+  task.value && !workspaceArchived.value && !isRunViewer.value
+  && (task.value.workspaceType === 'team' || isRequester.value),
+))
 const canStop = computed(() => Boolean(
-  task.value && isRequester.value && !isRunViewer.value
+  task.value && canOperateRun.value
   && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
 ))
-const canRetry = computed(() => task.value && isRequester.value && !isRunViewer.value
+const canRetry = computed(() => Boolean(
+  task.value && canOperateRun.value
   && ['failed', 'cancelled'].includes(task.value.status)
-  && (task.value.error?.retryable ?? true))
+  && (task.value.error?.retryable ?? true)))
 const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
 /**
  * 会话模式写权限：团队会话要求非只读成员（服务端 currentUserRole，读轨，
@@ -87,6 +118,19 @@ const canWriteSession = computed(() => {
 /** 只读成员查看共享会话时的提示（归档优先）。 */
 const sessionReadOnly = computed(() =>
   Boolean(sessionThread.value) && !sessionArchived.value && !canWriteSession.value)
+
+/**
+ * 对话列表左右分栏（TW-10）：本人发送的 user 消息在右侧，其他成员与
+ * Agent 消息在左侧，统一使用 Agent 回复的「身份行 + 卡片」样式。
+ * 个人会话/个人 Run 的 user 消息即本人；团队线程恒带 senderId，
+ * 团队 Run 缺归因时退回请求人口径。
+ */
+function isOwnMessage(message: { role: string; senderId?: string | null }) {
+  if (message.role !== 'user') return false
+  if (message.senderId) return message.senderId === authStore.user.id
+  if (!isTeamSession.value) return true
+  return task.value?.requestedBy === authStore.user.id
+}
 
 /** 当前空间可 @ 的 Agent 成员（仅团队会话加载；只读成员的名册可读但无发起权）。 */
 const agentMembers = ref<WorkspaceAgentMember[]>([])
@@ -127,6 +171,12 @@ const sourceTypeLabels: Record<TaskSource['type'], string> = {
 }
 
 function goBack() {
+  // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
+  // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
+  if (isEmbeddedInWorkspace.value) {
+    void router.push(`/workspaces/${embeddedWorkspaceId.value}`)
+    return
+  }
   if (window.history.length > 1) router.back()
   else void router.push('/workbench')
 }
@@ -145,7 +195,7 @@ function onConversationScroll() {
 }
 
 async function stopCurrentRun() {
-  if (!task.value || stopping.value || isRunViewer.value) return
+  if (!task.value || stopping.value || !canOperateRun.value) return
   try {
     await ElMessageBox.confirm(
       '停止后会终止本轮运行尝试，已有对话和执行记录仍会保留。',
@@ -167,7 +217,7 @@ async function stopCurrentRun() {
 }
 
 async function retryRun() {
-  if (!task.value || workspaceArchived.value || isRunViewer.value) return
+  if (!task.value || !canOperateRun.value) return
   try {
     await taskStore.retryTask(task.value.id)
     ElMessage.success('已创建新的运行尝试')
@@ -191,7 +241,7 @@ function download(item: Artifact) {
 }
 
 function openSessionRun(runId: string) {
-  void router.push(`/conversations/${runId}`)
+  void router.push(conversationPath(runId))
 }
 
 function formatSessionRunTime(value: string) {
@@ -221,7 +271,7 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
       }
     } else {
       const nextTask = await taskStore.sendMessage(task.value.id, payload.prompt, payload.files, mentionedMemberId)
-      if (nextTask) await router.replace(`/conversations/${nextTask.id}`)
+      if (nextTask) await router.replace(conversationPath(nextTask.id))
       payload.confirm?.()
     }
     await nextTick(() => scrollToBottom())
@@ -244,7 +294,7 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
         workspaceAgentMemberId: mentionedMemberId,
       })
       taskStore.subscribe(createdRun.id)
-      await router.replace(`/conversations/${createdRun.id}`)
+      await router.replace(conversationPath(createdRun.id))
       payload.confirm?.()
       return
     }
@@ -267,16 +317,47 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
 
 async function initializeConversation() {
   await taskStore.load()
-  const thread = task.value ? null : await loadConversationTarget(String(route.params.id))
+  const thread = await loadConversationTarget(routeTargetId.value)
+  await reconcileConversationRoute()
   await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
   await nextTick()
   scrollToBottom('auto')
 }
 
-/** Run ID 可直接定位共享 Run；不是 Run 时才退回 Session 线程视图。 */
+/**
+ * TW-10 路由归位：
+ * - 空间外旧链接（/conversations/:id）解析到团队空间后跳转到
+ *   /workspaces/:wid/conversations/:target，团队对话始终停留在空间上下文；
+ * - 空间内嵌套时校验归属：目标实际属于其它空间（手改 URL/陈旧链接）则
+ *   归位到其真实空间，避免「A 空间外壳渲染 B 会话」的错壳与错链；
+ * - 个人空间会话不做跳转。
+ */
+async function reconcileConversationRoute() {
+  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
+  if (isEmbeddedInWorkspace.value) {
+    if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
+      await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+    }
+    return
+  }
+  const workspaceType = task.value?.workspaceType ?? sessionThread.value?.workspaceType
+  if (workspaceType !== 'team' || !workspaceId) return
+  await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+}
+
+/**
+ * Run ID 可直接定位共享 Run；不是 Run 时才退回 Session 线程视图。
+ * 总是先刷新 Run 详情：列表缓存没有 currentUserRole/最新归因（TW-10），
+ * 直接用缓存会把可写成员误判成只读；详情失败才退回列表数据保底。
+ */
 async function loadConversationTarget(id: string): Promise<SessionThread | null> {
-  const run = taskStore.getTask(id) ?? await taskStore.refreshRun(id).catch(() => null)
-  return run ? null : loadSessionMode(id)
+  targetLoading.value = true
+  try {
+    const run = await taskStore.refreshRun(id).catch(() => null) ?? taskStore.getTask(id) ?? null
+    return run ? null : await loadSessionMode(id)
+  } finally {
+    targetLoading.value = false
+  }
 }
 
 async function loadSessionMode(id: string): Promise<SessionThread | null> {
@@ -293,17 +374,18 @@ async function loadSessionMode(id: string): Promise<SessionThread | null> {
 onMounted(initializeConversation)
 
 watch(
-  () => String(route.params.id),
+  () => routeTargetId.value,
   async id => {
     sessionThread.value = null
     threadMissing.value = false
-    const thread = taskStore.getTask(String(id)) ? null : await loadConversationTarget(String(id))
+    const thread = await loadConversationTarget(String(id))
+    await reconcileConversationRoute()
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
   },
 )
 
 watch(
-  [() => String(route.params.id), () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length],
+  [() => routeTargetId.value, () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length],
   async () => {
     await nextTick()
     if (!showJumpToLatest.value) scrollToBottom('smooth')
@@ -312,8 +394,8 @@ watch(
 </script>
 
 <template>
-  <div class="conversation-page">
-    <div v-if="taskStore.loading && !task && !sessionThread && !threadMissing" class="conversation-state">
+  <div class="conversation-page" :class="{ 'conversation-page--embedded': isEmbeddedInWorkspace }">
+    <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
 
@@ -342,15 +424,20 @@ watch(
             v-for="message in sessionThread.messages"
             :key="message.id"
             class="conversation-message"
-            :class="`conversation-message--${message.role}`"
+            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"
           >
-            <div v-if="message.role === 'user'" class="user-message">
-              <p>{{ message.content }}</p>
-              <time>
-                <span v-if="message.senderName" class="message-sender">{{ message.senderName }}</span>
-                {{ message.createdAt }}
-              </time>
-            </div>
+            <template v-if="message.role === 'user'">
+              <div class="assistant-identity">
+                <span class="assistant-avatar assistant-avatar--user">{{ (message.senderName ?? '我').slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ message.senderName ?? '我' }}</strong>
+                  <span>{{ message.createdAt }}</span>
+                </div>
+              </div>
+              <div class="assistant-answer user-message">
+                <p>{{ message.content }}</p>
+              </div>
+            </template>
             <template v-else>
               <div class="assistant-identity">
                 <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
@@ -417,7 +504,12 @@ watch(
       sub-title="该对话可能已被删除，或当前角色无权访问。"
     >
       <template #extra>
-        <el-button type="primary" @click="router.push('/workbench')">返回工作台</el-button>
+        <el-button
+          type="primary"
+          @click="isEmbeddedInWorkspace ? router.push(`/workspaces/${embeddedWorkspaceId}`) : router.push('/workbench')"
+        >
+          {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
+        </el-button>
       </template>
     </el-result>
 
@@ -438,7 +530,7 @@ watch(
             <span class="header-action-label">对话详情</span>
           </el-button>
           <el-button
-            v-if="canRetry && !workspaceArchived"
+            v-if="canRetry"
             text
             :icon="RefreshRight"
             aria-label="重新执行本轮"
@@ -458,15 +550,18 @@ watch(
             v-for="message in task.messages"
             :key="message.id"
             class="conversation-message"
-            :class="`conversation-message--${message.role}`"
+            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"
           >
             <template v-if="message.role === 'user'">
-              <div class="user-message">
+              <div class="assistant-identity">
+                <span class="assistant-avatar assistant-avatar--user">{{ (message.senderName ?? '我').slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ message.senderName ?? '我' }}</strong>
+                  <span>{{ message.createdAt }}</span>
+                </div>
+              </div>
+              <div class="assistant-answer user-message">
                 <p>{{ message.content }}</p>
-                <time>
-                  <span v-if="message.senderName" class="message-sender">{{ message.senderName }}</span>
-                  {{ message.createdAt }}
-                </time>
               </div>
             </template>
 
@@ -571,7 +666,7 @@ watch(
               <code>{{ task.error.code }}</code>
             </div>
             <el-button
-              v-if="canRetry && !workspaceArchived"
+              v-if="canRetry"
               type="primary"
               plain
               :icon="RefreshRight"
@@ -781,6 +876,19 @@ watch(
   margin: 0 auto;
 }
 
+/* TW-10 空间内嵌套：高度收敛到空间页对话面板，不再占满视口。 */
+.conversation-page--embedded {
+  height: 100%;
+}
+
+.conversation-page--embedded .conversation-scroll {
+  height: 100%;
+}
+
+.conversation-page--embedded .conversation-thread {
+  min-height: calc(100% - 330px);
+}
+
 .conversation-message {
   width: 100%;
 }
@@ -789,40 +897,36 @@ watch(
   margin-top: 30px;
 }
 
-.conversation-message--user {
-  display: flex;
-  justify-content: flex-end;
-  padding-left: 20%;
+/*
+ * 人员消息与 Agent 回复共用「身份行 + 卡片」样式；本人消息镜像到右侧
+ * （头像在右、卡片右对齐缩进），其他成员/Agent 保持在左。
+ */
+.assistant-avatar--user {
+  background: #6b736d;
 }
 
 .user-message {
-  max-width: 72%;
-  color: #303330;
-  text-align: right;
+  padding-bottom: 16px;
 }
 
 .user-message p {
   margin: 0;
-  padding: 10px 14px;
-  border-radius: 14px 14px 4px 14px;
-  background: #f1f2f0;
   font-size: var(--dsh-font-size-body);
   line-height: 1.65;
-  text-align: left;
   white-space: pre-wrap;
 }
 
-.user-message time {
-  display: block;
-  margin-top: 5px;
-  color: #a0a39f;
-  font-size: var(--dsh-font-size-micro);
+.conversation-message--own .assistant-identity {
+  flex-direction: row-reverse;
 }
 
-.message-sender {
-  margin-right: 6px;
-  color: #7e837e;
-  font-weight: 600;
+.conversation-message--own .assistant-identity > div {
+  align-items: flex-end;
+}
+
+.conversation-message--own .assistant-answer {
+  margin-right: 34px;
+  margin-left: 20%;
 }
 
 .thread-empty {
@@ -1350,12 +1454,9 @@ watch(
     padding: 78px 14px 218px;
   }
 
-  .conversation-message--user {
-    padding-left: 12%;
-  }
-
-  .user-message {
-    max-width: 88%;
+  .conversation-message--own .assistant-answer {
+    margin-right: 0;
+    margin-left: 12%;
   }
 
   .assistant-answer,
