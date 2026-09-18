@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { AddToolInput, ConnectorDefinition, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
-import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
+import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { AgentRuntimePort, RuntimeManifest } from '../runtime/runtime-types.ts'
 import {
@@ -309,17 +309,26 @@ export class PostgresToolConnectorService {
   }
 
   async assertAvailableReferences(references: string[]): Promise<void> {
+    return this.assertReferences(references, true)
+  }
+
+  /** Draft storage is not execution: allow unhealthy connectors, never unknown/disabled tools or unpublished versions. */
+  async assertDraftReferences(references: string[], sql: DatabaseClient | DatabaseTransaction = this.database): Promise<void> {
+    return this.assertReferences(references, false, sql)
+  }
+
+  private async assertReferences(references: string[], requireHealthy: boolean, sql: DatabaseClient | DatabaseTransaction = this.database): Promise<void> {
     for (const reference of unique(references)) {
       if (runtimeIntrinsicTools.has(reference)) continue
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ id: string }[]>`
+      const [row] = await sql<{ id: string }[]>`
         select tv.id from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id}
            and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
                 and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
-           and t.status = 'available' and c.status = 'healthy'
+           and ${requireHealthy ? sql` t.status = 'available' and c.status = 'healthy'` : sql`t.status in ('available', 'degraded')`}
            and tv.version = ${version} and tv.status = 'published'
       `
       if (!row) throw new Error(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)

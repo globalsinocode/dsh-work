@@ -119,3 +119,79 @@ describe('ZIP Skill installation', () => {
     expect(wrapper.emitted('assistant')).toHaveLength(1)
   })
 })
+
+const pendingLink: SkillInstallation = { ...pending, channel: 'link', source: 'https://github.com/fixture/document-summary',
+  canSaveDraft: true, canPublish: false, publicationBlockers: [
+    { code: 'RUNTIME_UNAVAILABLE', message: 'DSH 执行能力不可用，当前不可发布' },
+    { code: 'TRIAL_REQUIRED', message: '发布前必须完成当前版本的真实试运行' },
+  ],
+}
+async function linkMode(wrapper: VueWrapper) {
+  await button(wrapper, '链接导入').trigger('click')
+  await wrapper.get('input#skill-source-url').setValue(pendingLink.source)
+}
+
+describe('C7 direct link installation', () => {
+  it('C7 RED: previews and saves a link draft without a chat, ZIP or model route', async () => {
+    const prepare = vi.spyOn(adminApi, 'prepareLinkSkillInstallation').mockResolvedValue(pendingLink)
+    const zip = vi.spyOn(adminApi, 'prepareZipSkillInstallation')
+    const confirm = vi.spyOn(adminApi, 'confirmDirectSkillInstallation').mockResolvedValue({ ...pendingLink, status: 'installed', skillId: 'skill-link', resultType: 'created', installedVersion: '0.1.0', canSaveDraft: false })
+    const wrapper = render()
+    await linkMode(wrapper)
+    await wrapper.get('input#skill-source-selected').setValue('document-summary')
+    await button(wrapper, '解析链接').trigger('click'); await flushPromises()
+    expect(prepare).toHaveBeenCalledWith({ url: pendingLink.source, selected: 'document-summary' })
+    expect(zip).not.toHaveBeenCalled(); expect(wrapper.emitted('assistant')).toBeUndefined()
+    expect(wrapper.text()).toContain('当前不可发布')
+    expect(wrapper.text()).toContain('DSH 执行能力不可用')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    expect(button(wrapper, '确认安装').attributes('disabled')).toBeUndefined()
+    await button(wrapper, '确认安装').trigger('click'); await flushPromises()
+    expect(confirm).toHaveBeenCalledWith(pendingLink.id, pendingLink.planSha256)
+    expect(wrapper.emitted('installed')).toEqual([['skill-link']])
+    expect(wrapper.text()).toContain('本次没有执行发布')
+  })
+
+  it('C7 RED: incompatible link packages cannot be confirmed despite an otherwise available UI', async () => {
+    vi.spyOn(adminApi, 'prepareLinkSkillInstallation').mockResolvedValue({ ...pendingLink, canSaveDraft: false,
+      plan: { ...pendingLink.plan!, compatibility: { status: 'incompatible', issues: [{ code: 'forbidden-tool', message: 'Bash 不支持', severity: 'error' }] } } })
+    const confirm = vi.spyOn(adminApi, 'confirmDirectSkillInstallation')
+    const wrapper = render(); await linkMode(wrapper)
+    await button(wrapper, '解析链接').trigger('click'); await flushPromises()
+    expect(button(wrapper, '确认安装').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('retains source and displays sanitized backend errors without creating a plan', async () => {
+    vi.spyOn(adminApi, 'prepareLinkSkillInstallation').mockRejectedValue(new Error('来源域名未获准'))
+    const wrapper = render(); await linkMode(wrapper)
+    await button(wrapper, '解析链接').trigger('click'); await flushPromises()
+    expect(wrapper.get('input#skill-source-url').element).toHaveProperty('value', pendingLink.source)
+    expect(wrapper.get('[role="alert"]').text()).toContain('来源域名未获准')
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+  })
+
+  it('changing source/mode invalidates the prior digest and explicit acknowledgement', async () => {
+    vi.spyOn(adminApi, 'prepareLinkSkillInstallation').mockResolvedValue(pendingLink)
+    const wrapper = render(); await linkMode(wrapper)
+    await button(wrapper, '解析链接').trigger('click'); await flushPromises()
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await button(wrapper, '返回修改来源').trigger('click')
+    expect(wrapper.text()).not.toContain('plan-sha')
+    await button(wrapper, 'ZIP 文件').trigger('click')
+    expect(wrapper.find('input#skill-source-url').exists()).toBe(false)
+    expect(button(wrapper, '解析安装包').attributes('disabled')).toBeDefined()
+  })
+
+  it('freezes source during acquisition and discards a response after unmount', async () => {
+    let resolve: (value: SkillInstallation) => void = () => undefined
+    vi.spyOn(adminApi, 'prepareLinkSkillInstallation').mockImplementation(() => new Promise(done => { resolve = done }))
+    const wrapper = render(); await linkMode(wrapper)
+    await button(wrapper, '解析链接').trigger('click')
+    expect(wrapper.get('input#skill-source-url').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, 'ZIP 文件').attributes('disabled')).toBeDefined()
+    wrapper.unmount(); resolve(pendingLink); await flushPromises()
+    expect(wrapper.emitted('installed')).toBeUndefined()
+  })
+})

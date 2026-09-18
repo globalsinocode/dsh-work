@@ -978,9 +978,97 @@
         }
       }
     },
+    "/skill-installations/link": {
+      "post": {
+        "operationId": "prepareLinkSkillInstallation",
+        "summary": "直接获取获准公共链接，保存待确认的草稿安装计划；不创建 Agent Run",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "maxLength": 2048
+                  },
+                  "selected": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "平台返回结构化安装计划与草稿状态；不执行发布"
+          },
+          "403": {
+            "description": "需要本人且有效管理写权限"
+          },
+          "422": {
+            "description": "来源或字段无效"
+          }
+        }
+      }
+    },
+    "/skill-installations/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getDirectSkillInstallation",
+        "summary": "本人 ZIP/link 安装计划及当前执行阻塞原因，不返回助手会话",
+        "responses": {
+          "200": {
+            "description": "平台返回结构化安装计划与草稿状态；不执行发布"
+          },
+          "403": {
+            "description": "需要本人且有效管理写权限"
+          },
+          "422": {
+            "description": "来源或字段无效"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelDirectSkillInstallation",
+        "summary": "取消未确认的直接导入计划；已安装返回冲突，不移除版本",
+        "responses": {
+          "200": {
+            "description": "平台返回结构化安装计划与草稿状态；不执行发布"
+          },
+          "403": {
+            "description": "需要本人且有效管理写权限"
+          },
+          "422": {
+            "description": "来源或字段无效"
+          },
+          "409": {
+            "description": "草稿已保存，不能取消"
+          }
+        }
+      }
+    },
     "/skill-installations/{id}/confirm": {
       "post": {
         "operationId": "confirmZipSkillInstallation",
+        "description": "兼容现有路径与 operationId；按服务端 channel 确认 ZIP 或 link，不接收客户端 channel。链接仅保存草稿，运行不可用不能发布。",
         "summary": "确认 ZIP 安装计划摘要，原子保存待验证 Skill 草稿",
         "parameters": [
           {
@@ -1784,6 +1872,47 @@
             "type": "string",
             "pattern": "^[a-f0-9]{64}$",
             "description": "管理员确认的 Agent 或 Runtime 精确变更计划摘要。"
+          }
+        }
+      },
+      "DirectInstallationReadiness": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "assistant",
+              "zip",
+              "link"
+            ]
+          },
+          "canSaveDraft": {
+            "type": "boolean"
+          },
+          "canPublish": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "本安装操作不执行发布，不代表已复用版本的活动状态"
+          },
+          "publicationBlockers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },

@@ -1,3 +1,4 @@
+import { requestInvalid } from '../../modules/authorization/authorization-errors.ts'
 import type { IncomingMessage } from 'node:http'
 
 import type { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
@@ -19,9 +20,28 @@ export function registerSkillInstallationRoutes(router: Router, service?: AdminS
     return httpResult(201, envelope('admin', result, 'postgres'))
   })
 
+  router.post(`${base}/link`, async (request, context, response) => {
+    const input = await readJsonBody<{ url: string; selected?: string }>(request)
+    const controller = new AbortController()
+    const disconnect = () => { if (!response.writableEnded) controller.abort(new Error('安装请求已断开')) }
+    request.once('aborted', disconnect)
+    response.once('close', disconnect)
+    try {
+      const result = await available().prepareLink(requireRequestIdentity(context, 'admin').userId, input, controller.signal)
+      return httpResult(201, envelope('admin', result, 'postgres'))
+    } finally { request.off('aborted', disconnect); response.off('close', disconnect) }
+  })
+
+  router.get(`${base}/:id`, async (_request, context) => envelope('admin',
+    await available().getDirectInstallation(requireRequestIdentity(context, 'admin').userId, context.params['id']!), 'postgres'))
+
+  router.delete(`${base}/:id`, async (_request, context) => envelope('admin',
+    await available().cancelDirect(requireRequestIdentity(context, 'admin').userId, context.params['id']!), 'postgres'))
+
   router.post(`${base}/:id/confirm`, async (request, context) => {
     const input = await readJsonBody<{ planSha256: string }>(request)
-    const result = await available().confirmZip(requireRequestIdentity(context, 'admin').userId, context.params['id']!, input?.planSha256)
+    if (!input || Object.keys(input).some(key => key !== 'planSha256')) throw requestInvalid('安装确认字段无效')
+    const result = await available().confirmDirect(requireRequestIdentity(context, 'admin').userId, context.params['id']!, input?.planSha256)
     return envelope('admin', result, 'postgres')
   })
 }

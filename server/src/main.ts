@@ -37,7 +37,7 @@ import { PostgresRunRepository } from './modules/run/postgres-run-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
-import { CapabilityGuardedRuntime, UnavailableRuntime, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
+import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import {
@@ -200,6 +200,18 @@ async function start() {
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
     const tools = new PostgresToolConnectorService(database, runtime, operations)
     const skills = new PostgresSkillService(database, operations, tools, skillArtifacts)
+    // C7 only inspects execution capability; it never starts a Worker/model call.
+    const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
+      await runtime.assertAvailable()
+      const health = await runtime.health()
+      if (health.status === 'offline' || !health.acceptingRuns) throw new ExecutionCapabilityUnavailableError('dsh')
+      if (references.includes('python_execute@1.0.0') && pythonCapability.status !== 'available') throw new ExecutionCapabilityUnavailableError('python')
+      const configuredPackages = new Set(pythonPackages.map(value => value.toLowerCase()))
+      if (requiredPackages.some(name => !configuredPackages.has(name.toLowerCase()))) {
+        throw Object.assign(new Error('声明的 Python 依赖未配置并验证，当前不可发布'), { status: 503, code: 'SKILL_DEPENDENCIES_UNAVAILABLE' })
+      }
+    }
+    skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
     const agents = new PostgresAgentService(database, operations, skills, tools)
     const knowledge = new PostgresKnowledgeService(database)
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
@@ -222,7 +234,7 @@ async function start() {
       },
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts)
+    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
     const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
     skills.setPackageTestLifecycle({

@@ -25,18 +25,18 @@ export interface SkillInstallationPlan extends InstallationPlanBase {
 
 export function buildSkillInstallationPlan(
   bundle: SkillBundle,
-  options: { pythonSandboxAvailable: boolean; pythonPackages?: string[]; unavailableTools?: string[] },
+  options: { pythonSandboxAvailable: boolean; pythonPackages?: string[]; unavailableTools?: string[]; deferRuntimeRequirements?: boolean },
 ): PreparedSkillInstallationPlan {
   const unavailableTools = new Set(options.unavailableTools ?? [])
   const pythonPackages = new Set((options.pythonPackages ?? []).map(value => value.toLowerCase()))
   const packages = bundle.packages.map(pkg => {
     const requirements = pkg.requirements.map(requirement => {
       if (requirement.type === 'python') {
-        return { ...requirement, status: options.pythonSandboxAvailable ? 'resolved' as const : 'unsupported' as const }
+        return { ...requirement, status: options.pythonSandboxAvailable ? 'resolved' as const : options.deferRuntimeRequirements ? 'needs_review' as const : 'unsupported' as const }
       }
       if (requirement.type === 'external' && requirement.name.startsWith('python-package:')) {
         const packageName = requirement.name.slice('python-package:'.length)
-        return { ...requirement, status: options.pythonSandboxAvailable && pythonPackages.has(packageName) ? 'resolved' as const : 'unsupported' as const }
+        return { ...requirement, status: options.pythonSandboxAvailable && pythonPackages.has(packageName) ? 'resolved' as const : options.deferRuntimeRequirements ? 'needs_review' as const : 'unsupported' as const }
       }
       if (requirement.type === 'external' && requirement.name === 'pyproject-dependencies') return { ...requirement, status: 'unsupported' as const }
       if (requirement.type === 'tool' && unavailableTools.has(requirement.name)) {

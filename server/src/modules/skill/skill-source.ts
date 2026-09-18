@@ -5,6 +5,21 @@ import { isIP } from 'node:net'
 export interface SkillSource { url: string; selected?: string; directory?: string; repository?: string; ref?: string }
 const invalid = (message: string): never => { throw Object.assign(new Error(`安装来源无效：${message}`), { status: 422, code: 'skill_source_invalid' }) }
 
+/** Direct UI accepts exactly one URL, never a command, prose, credentials or caller-supplied resolved ref. */
+export function parseSkillLink(input: { url: string; selected?: string }): SkillSource {
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || Object.keys(input).some(key => !['url', 'selected'].includes(key))
+    || typeof input.url !== 'string' || input.url.length > 2048
+    || !/^https:\/\/[^\s<>"']+$/.test(input.url)) return invalid('请只提供一个直接 HTTPS 链接')
+  let parsed: SkillSource
+  try { parsed = parseUrl(input.url) } catch { return invalid('链接格式、路径或凭据不符合公共来源规则') }
+  const hostname = new URL(parsed.url).hostname
+  if (isIP(hostname) || !configuredSourceHosts().has(hostname)) return invalid('来源域名未获准')
+  if (input.selected !== undefined && (typeof input.selected !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(input.selected))) return invalid('Skill 名称格式无效')
+  return { ...parsed, ...(input.selected ? { selected: input.selected } : {}) }
+}
+
 export function parseSkillSource(input: string): SkillSource | null {
   if (typeof input !== 'string' || input.length > 20000) return invalid('输入过长')
   const text = input.trim()

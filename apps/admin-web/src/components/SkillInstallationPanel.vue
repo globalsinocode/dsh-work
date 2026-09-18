@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { ChatDotRound, Check, Document, FolderOpened, Right, UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadInstance } from 'element-plus'
 import { adminApi } from '@/api/client'
@@ -10,6 +10,11 @@ const emit = defineEmits<{ back: []; assistant: []; installed: [skillId: string]
 
 type Stage = 'source' | 'preview' | 'complete'
 const stage = ref<Stage>('source')
+const sourceMode = ref<'zip' | 'link'>('zip')
+const linkUrl = ref('')
+const selectedSkill = ref('')
+let requestGeneration = 0
+onBeforeUnmount(() => { requestGeneration++ })
 const upload = ref<UploadInstance>()
 const selectedFile = ref<File>()
 const fileError = ref('')
@@ -18,9 +23,9 @@ const preparing = ref(false)
 const confirming = ref(false)
 const installation = ref<SkillInstallation>()
 const stageHeading = ref<HTMLElement>()
-const source = computed(() => selectedFile.value?.name ?? '')
+const source = computed(() => installation.value?.source ?? (sourceMode.value === 'link' ? linkUrl.value : selectedFile.value?.name ?? ''))
 const activeStep = computed(() => ({ source: 0, preview: 1, complete: 3 })[stage.value])
-const canConfirm = computed(() => installation.value?.plan?.compatibility.status !== 'incompatible')
+const canConfirm = computed(() => Boolean(installation.value?.plan) && installation.value?.plan?.compatibility.status !== 'incompatible' && installation.value?.canSaveDraft !== false)
 const completeTitle = computed(() => installation.value?.resultType === 'duplicate' ? 'Skill 已存在，无需重复安装' : installation.value?.resultType === 'updated' ? 'Skill 新版本已保存' : 'Skill 已安装为草稿')
 const completeDescription = computed(() => installation.value?.resultType === 'duplicate'
   ? '平台已找到内容一致的现有版本，本次没有创建重复 Skill 或版本。'
@@ -30,6 +35,9 @@ const completeTag = computed(() => installation.value?.resultType === 'duplicate
   : `待验证 · v${installation.value?.installedVersion ?? '0.1.0'}`)
 
 function reset() {
+  requestGeneration++
+  linkUrl.value = ''
+  selectedSkill.value = ''
   stage.value = 'source'
   selectedFile.value = undefined
   fileError.value = ''
@@ -38,6 +46,12 @@ function reset() {
   confirming.value = false
   installation.value = undefined
   upload.value?.clearFiles()
+}
+
+function setSourceMode(value: 'zip' | 'link') {
+  if (preparing.value || confirming.value || sourceMode.value === value) return
+  reset()
+  sourceMode.value = value
 }
 
 function selectFile(file: UploadFile) {
@@ -69,38 +83,49 @@ function formatSize(size: number) {
 
 async function changeStage(value: Stage) {
   stage.value = value
+  if (value === 'source') { requestGeneration++; installation.value = undefined }
   acknowledged.value = false
   await nextTick()
   stageHeading.value?.focus()
 }
 
 async function preview() {
-  if (!selectedFile.value || preparing.value) return
+  if (preparing.value || (sourceMode.value === 'zip' ? !selectedFile.value : !linkUrl.value.trim())) return
+  const generation = ++requestGeneration
   preparing.value = true
   fileError.value = ''
   try {
-    installation.value = await adminApi.prepareZipSkillInstallation(selectedFile.value)
+    const result = sourceMode.value === 'link'
+      ? await adminApi.prepareLinkSkillInstallation({ url: linkUrl.value.trim(), ...(selectedSkill.value.trim() ? { selected: selectedSkill.value.trim() } : {}) })
+      : await adminApi.prepareZipSkillInstallation(selectedFile.value!)
+    if (generation !== requestGeneration) return
+    installation.value = result
     await changeStage('preview')
   } catch (cause) {
-    fileError.value = failureMessage(cause, 'Skill 包解析失败')
+    if (generation === requestGeneration) fileError.value = failureMessage(cause, 'Skill 包解析失败')
   } finally {
-    preparing.value = false
+    if (generation === requestGeneration) preparing.value = false
   }
 }
 
 async function confirm() {
   const current = installation.value
   if (stage.value !== 'preview' || !acknowledged.value || !canConfirm.value || !current?.planSha256 || confirming.value) return
+  const generation = ++requestGeneration
   confirming.value = true
   fileError.value = ''
   try {
-    installation.value = await adminApi.confirmZipSkillInstallation(current.id, current.planSha256)
+    const result = current.channel === 'link'
+      ? await adminApi.confirmDirectSkillInstallation(current.id, current.planSha256)
+      : await adminApi.confirmZipSkillInstallation(current.id, current.planSha256)
+    if (generation !== requestGeneration) return
+    installation.value = result
     await changeStage('complete')
     if (installation.value.skillId) emit('installed', installation.value.skillId)
   } catch (cause) {
-    fileError.value = failureMessage(cause, 'Skill 安装失败')
+    if (generation === requestGeneration) fileError.value = failureMessage(cause, 'Skill 安装失败')
   } finally {
-    confirming.value = false
+    if (generation === requestGeneration) confirming.value = false
   }
 }
 
@@ -123,8 +148,8 @@ function failureMessage(cause: unknown, fallback: string) {
 <template>
   <section class="content-panel skill-installation" aria-label="新增 Skill">
     <header class="installation-heading">
-      <div><h2 class="panel-title">上传 Skill 包</h2><p class="panel-subtitle">选择本地 ZIP 文件，查看内容与依赖后确认安装。</p></div>
-      <el-tag type="info" effect="plain">ZIP 文件</el-tag>
+      <div><h2 class="panel-title">导入 Skill 包</h2><p class="panel-subtitle">上传 ZIP 或提供获准链接，查看内容与依赖后确认保存草稿。</p></div>
+      <el-tag type="info" effect="plain">{{ sourceMode === 'link' ? '链接导入' : 'ZIP 文件' }}</el-tag>
     </header>
     <p class="preview-note"><el-icon><Document /></el-icon>上传后先解析包内容并生成安装计划；确认后保存为待验证草稿，发布前不会被 Agent 使用。</p>
 
@@ -132,9 +157,13 @@ function failureMessage(cause: unknown, fallback: string) {
       <el-step title="提供来源" /><el-step title="确认内容" /><el-step title="安装结果" />
     </el-steps>
 
+    <div v-if="stage === 'source'" role="group" aria-label="选择导入方式">
+      <el-button :aria-pressed="sourceMode === 'zip'" :disabled="preparing" @click="setSourceMode('zip')">ZIP 文件</el-button>
+      <el-button :aria-pressed="sourceMode === 'link'" :disabled="preparing" @click="setSourceMode('link')">链接导入</el-button>
+    </div>
     <div v-if="stage === 'source'" class="installation-layout">
       <section class="source-panel">
-        <div class="zip-source">
+        <div v-if="sourceMode === 'zip'" class="zip-source">
           <el-upload ref="upload" drag accept=".zip" :auto-upload="false" :show-file-list="false" :on-change="selectFile" aria-label="选择 ZIP 格式的 Skill 包">
             <el-icon class="upload-symbol"><UploadFilled /></el-icon>
             <strong>拖拽 ZIP 文件到这里，或<span>点击选择文件</span></strong>
@@ -150,31 +179,43 @@ function failureMessage(cause: unknown, fallback: string) {
             <el-button type="primary" :icon="Right" :loading="preparing" :disabled="!selectedFile" @click="preview">解析安装包</el-button>
           </div>
         </div>
-
+        <div v-else class="link-source">
+          <label for="skill-source-url">Skill 公共 HTTPS 链接</label>
+          <el-input id="skill-source-url" v-model="linkUrl" :disabled="preparing" placeholder="https://github.com/owner/repository" />
+          <label for="skill-source-selected">Skill 名称（多包仓库可选）</label>
+          <el-input id="skill-source-selected" v-model="selectedSkill" :disabled="preparing" placeholder="与 SKILL.md 中的 name 一致" />
+          <p>只接受已获准的公共来源；不接受安装命令、凭据或私网地址。下载和校验由平台直接完成，不启动管理助手对话。</p>
+          <p v-if="fileError" class="input-error" role="alert">{{ fileError }}</p>
+          <div class="source-actions"><span class="source-limit">确认后仅保存草稿，不会自动发布</span><el-button type="primary" :icon="Right" :loading="preparing" :disabled="!linkUrl.trim()" @click="preview">解析链接</el-button></div>
+        </div>
       </section>
 
       <aside class="installation-guide">
         <h3>安装前，你会看到什么？</h3>
         <ol><li><strong>能力与来源</strong><p>确认 Skill 的用途、来源及版本。</p></li><li><strong>内容与依赖</strong><p>查看包内文件，以及所需工具和权限。</p></li><li><strong>安装与验证</strong><p>确认后保存待验证版本，验证并发布后才可使用。</p></li></ol>
-        <div class="assistant-entry"><strong>有链接或安装命令？</strong><p>交给统一的管理助手，协助安装已有 Skill。</p><el-button :icon="ChatDotRound" plain @click="emit('assistant')">前往管理助手</el-button></div>
+        <div class="assistant-entry"><strong>需要解释依赖或安装命令？</strong><p>也可以使用管理助手；直接链接导入不以对话为前置条件。</p><el-button :icon="ChatDotRound" plain @click="emit('assistant')">前往管理助手</el-button></div>
         <div class="guide-note"><el-icon><FolderOpened /></el-icon><p>升级通过新包完成，已发布版本与已有引用保留。</p></div>
       </aside>
     </div>
 
     <section v-else-if="stage === 'preview'" class="installation-preview">
-      <header class="preview-heading"><div><h3 ref="stageHeading" tabindex="-1">确认安装内容</h3><p>以下内容由平台从所选 ZIP 中解析，并已完成依赖与运行能力检查。</p></div><el-tag effect="plain">真实安装计划</el-tag></header>
+      <header class="preview-heading"><div><h3 ref="stageHeading" tabindex="-1">确认安装内容</h3><p>以下内容由平台从固定来源中解析。包兼容性与当前执行能力分别展示，保存草稿不代表可以发布。</p></div><el-tag effect="plain">真实安装计划</el-tag></header>
       <p v-if="fileError" class="input-error" role="alert">{{ fileError }}</p>
+      <el-alert v-if="installation?.channel === 'link'" type="warning" :closable="false" title="本次导入不会发布；当前不可发布" role="status"><p v-for="blocker in installation.publicationBlockers" :key="blocker.code">{{ blocker.message }}</p></el-alert>
       <SkillPackagePreview v-if="installation?.package" :source="source" :package="installation.package" :plan="installation.plan" />
       <footer class="preview-footer"><el-checkbox v-model="acknowledged" :disabled="!canConfirm">已确认来源、内容及权限范围</el-checkbox><div><el-button :disabled="confirming" @click="changeStage('source')">返回修改来源</el-button><el-button type="primary" :loading="confirming" :disabled="!acknowledged || !canConfirm" @click="confirm">确认安装</el-button></div></footer>
     </section>
 
     <section v-else class="installation-complete" role="status">
-      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">{{ completeTitle }}</h3><p>{{ completeDescription }}</p><el-tag type="success" effect="plain">{{ completeTag }}</el-tag><div class="complete-actions"><el-button @click="reset">继续安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
+      <span class="complete-icon"><el-icon><Check /></el-icon></span><h3 ref="stageHeading" tabindex="-1">{{ completeTitle }}</h3><p>{{ completeDescription }}</p><el-alert v-if="installation?.channel === 'link'" type="warning" :closable="false" title="导入仅保存草稿或复用已有版本，本次没有执行发布" role="status"><p v-for="blocker in installation.publicationBlockers" :key="blocker.code">{{ blocker.message }}</p></el-alert><el-tag type="success" effect="plain">{{ completeTag }}</el-tag><div class="complete-actions"><el-button @click="reset">继续安装</el-button><el-button type="primary" @click="emit('back')">返回 Skill 中心</el-button></div>
     </section>
   </section>
 </template>
 
 <style scoped>
+.link-source { display: flex; flex-direction: column; gap: var(--spacing-card); }
+.link-source p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); }
+.link-source .input-error { color: var(--color-danger-strong); }
 .skill-installation { display: flex; flex-direction: column; gap: var(--spacing-section); padding: var(--spacing-section); }
 .installation-heading, .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--spacing-card); }
 .panel-subtitle { color: var(--color-text-secondary); }

@@ -4,6 +4,12 @@
 
 脚本能力遵循 [Skill Python 脚本执行方案](skill-python-execution-plan.md)：平台可以保存受支持的 `.py` 源文件，但只有配置摘要锁定的 `DSH_WORK_PYTHON_IMAGE` 后安装计划才兼容；执行固定走无网络、只读根文件系统、资源受限的临时容器，不存在宿主机 Python 回退。
 
+## C7 直接链接增量（2026-09-18）
+
+新增 Skill 页可直接解析公共 HTTPS 来源，可指定多包仓库中的 Skill 名称。不经过管理助手、不创建 Run，复用 `skill-source.ts` 的固定提交下载、安全校验和 `prepareBundle` / `installPlan`。`link` 与 `zip` 记录均为 `run_id=null`，`assistant` 不变。仅链接入口允许运行依赖待验证时先保存草稿，不把“待验证”改称兼容；实际发布检查覆盖根及依赖闭包中的 link 草稿，并要求当前 DSH/Python 可用和对应试运行证据。ZIP 与对话安装的默认兼容性规则不变。
+
+新增迁移 0045，仅扩展 channel/check。旧 API 的 ZIP 确认路径继续兼容，`confirmZip` 服务方法仍严格限制 ZIP；HTTP 确认由服务端读取 channel 后调用共同 `confirmDirect`。取消不删除草稿/版本，已安装记录取消返回 409；错误摘要或他人计划不能确认。详见 [C7 红绿证据](../development/review-c7-evidence.md)。
+
 ## 使用方式
 
 在管理助手发送自然语言、已有来源或受支持命令，等待 DSH 调用平台工具检查包，查看根 Skill、同源依赖图、文件、工具、脚本要求、兼容性和计划摘要，再点击「确认安装计划」。确认会在一个事务中生成全部 0.1.0 草稿及依赖关系；不按名称覆盖现有 Skill，也不自动发布或更新 Agent 引用。根 Skill 经真实 DSH 严格试运行后，依赖图作为同一验证单元由管理员发布。

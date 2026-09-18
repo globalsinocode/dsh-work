@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { after, before, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
 import { AdminAssistantService } from '../../modules/admin/application/admin-assistant-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
@@ -111,8 +112,7 @@ test('all privilege, execution, status, Runtime and unknown fields are refused b
 test('published-only targets, no-op edits and read-only actors cannot use the shortcut', async () => {
   const agent = await draft()
   await assert.rejects(prepare(await seedRun('admin-assistant'), agent.id, { name: agent.name }))
-  await agents.testAgent({ agentId: agent.id, prompt: '验证当前配置', actor })
-  await agents.setStatus({ agentId: agent.id, status: 'published', actor })
+  await publishDraftWithSealedTrial(db.client, agents, agent.id, actor)
   await assert.rejects(prepare(await seedRun('admin-assistant'), agent.id, { name: '不自动创建草稿' }))
   const other = await draft(), manifest = await seedRun('admin-assistant')
   manifest.user_context.user_id = 'U00001'
@@ -184,8 +184,7 @@ test('HTTP confirmation checks role and owner; double clicks do not duplicate th
 
 test('a draft-copy change never alters its existing published version or published catalog metadata', async () => {
   const agent = await draft()
-  await agents.testAgent({ agentId: agent.id, prompt: '验证发布基线', actor })
-  await agents.setStatus({ agentId: agent.id, status: 'published', actor })
+  await publishDraftWithSealedTrial(db.client, agents, agent.id, actor)
   await agents.updateAgent({ ...agent, agentId: agent.id, name: '后续待发布草稿', changeSummary: '创建新草稿', actor })
   const [before] = await db.client`select name, description, active_version_id from agents where id = ${agent.id}`
   const [published] = await db.client`select to_jsonb(v) as snapshot from agent_versions v where id = ${before!.active_version_id}`

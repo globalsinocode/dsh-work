@@ -25,6 +25,11 @@ export interface SkillInstallationPlan {
   sha256: string
 }
 export interface SkillInstallation {
+  channel?: 'assistant' | 'zip' | 'link'
+  canSaveDraft?: boolean
+  /** This installation endpoint never publishes; existing-version status is displayed in Skill management. */
+  canPublish?: false
+  publicationBlockers?: Array<{ code: string; message: string }>
   id: string
   runId: string | null
   source: string

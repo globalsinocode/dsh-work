@@ -1,3 +1,4 @@
+import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { normalizeSkillTestScenario, type SkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { assertStartedSkillTest, runtimeSkillFingerprint, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY, evaluateAttemptEvidence } from './skill-test-evidence.ts'
@@ -143,6 +144,8 @@ interface WorkbenchSkillRow extends Omit<WorkbenchSkillDefinition, 'updatedAt'> 
 }
 
 export class PostgresSkillService {
+  private publicationAvailabilityChecker?: (references: string[], requiredPackages: string[]) => Promise<void>
+  setPublicationAvailabilityChecker(checker: (references: string[], requiredPackages: string[]) => Promise<void>) { this.publicationAvailabilityChecker = checker }
   private packageTester?: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ passed: boolean; summary: string; runId: string; attemptId?: string; evidencePolicy?: string }>
   private packageTestLifecycle?: {
     start: (userId: string, skill: RuntimeSkillConfiguration, prompt: string) => Promise<{ runId: string; status: string; steps: SkillTestRunProgress['steps'] }>
@@ -825,6 +828,28 @@ export class PostgresSkillService {
          for update of s, sv
       `
       if (!locked) throw new Error('当前 Skill 草稿已发生变化，请重新测试后再发布')
+      // Link-origin dependencies can also be published via another root. Do not
+      // let a ZIP/assistant parent bypass the draft-only availability gate.
+      const publicationGraph = await transaction<{ status: string; linkOrigin: boolean; toolRefs: string[]; requirements: SkillPackageArtifact['requirements'] | null }[]>`
+        with recursive graph as (
+          select ${locked.versionId}::text as id
+          union
+          select d.dependency_skill_version_id from skill_version_dependencies d
+          join graph g on g.id = d.skill_version_id where d.tenant_id = ${tenantId}
+        )
+        select sv.status, sv.tool_refs as "toolRefs", sv.manifest->'artifact'->'requirements' as requirements,
+          (coalesce(sv.manifest->>'installationChannel', '') = 'link' or exists (
+          select 1 from skill_installations i where i.tenant_id = sv.tenant_id and i.version_id = sv.id
+            and i.channel = 'link' and i.status = 'installed'
+        )) as "linkOrigin"
+        from graph g join skill_versions sv on sv.id = g.id and sv.tenant_id = ${tenantId}
+      `
+      if (publicationGraph.some(row => row.status === 'draft' && row.linkOrigin)) {
+        if (!this.publicationAvailabilityChecker) throw new ExecutionCapabilityUnavailableError('dsh')
+        await this.publicationAvailabilityChecker(unique(publicationGraph.flatMap(row => row.toolRefs)),
+          unique(publicationGraph.flatMap(row => (row.requirements ?? []).filter(r => r.type === 'external' && r.name.startsWith('python-package:'))
+            .map(r => r.name.slice('python-package:'.length)))))
+      }
       if (locked.artifact) locked.instructions = (await this.requireArtifactStore().read(locked.artifact)).instructions
 
       const fingerprint = configurationFingerprint(locked)

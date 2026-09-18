@@ -1,5 +1,7 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { evaluateAttemptEvidence, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY } from './skill-test-evidence.ts'
+import { authorizationDenied, requestInvalid } from '../authorization/authorization-errors.ts'
+import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
@@ -10,7 +12,7 @@ import type { PostgresAuthorizationService } from '../authorization/postgres-aut
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { parseSkillBundle, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan, externalizeSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
-import { acquireSkillSource, continueSkillSource, parseSkillSource, type SkillSource } from './skill-source.ts'
+import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLink, type SkillSource } from './skill-source.ts'
 import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
 const tenant = 'tenant-dsh-work'
@@ -35,7 +37,7 @@ export interface PackageTestProgress {
 type InstallationSource = SkillSource | { kind: 'zip'; fileName: string }
 type InstallationResultType = 'created' | 'updated' | 'duplicate'
 interface InstallationRow {
-  id: string; runId: string | null; source: InstallationSource; resolvedUrl: string | null; resolvedRef: string | null
+  id: string; channel?: 'assistant' | 'zip' | 'link'; runId: string | null; source: InstallationSource; resolvedUrl: string | null; resolvedRef: string | null
   package: SkillPackageArtifact | null; status: 'pending' | 'installed' | 'cancelled'; skillId: string | null; versionId: string | null
   plan: SkillInstallationPlan | null; planSha256: string | null; compatibilityStatus: SkillInstallationPlan['compatibility']['status'] | null
   resultType: InstallationResultType | null; installedVersion: string | null
@@ -55,8 +57,9 @@ export class AdminSkillInstallationService {
   private readonly pythonSandboxAvailable: boolean
   private readonly pythonPackages: string[]
   private readonly artifactStore?: FileSystemSkillArtifactStore
-  constructor(db: DatabaseClient, orchestration: RunOrchestrationService, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: FileSystemSkillArtifactStore) {
-    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore
+  private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
+  constructor(db: DatabaseClient, orchestration: RunOrchestrationService, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: FileSystemSkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
+    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
@@ -272,6 +275,27 @@ export class AdminSkillInstallationService {
     return this.getZipInstallation(userId, id)
   }
 
+  /** No model, Session, Run or shell: acquire once, validate, snapshot, then await an explicit draft-save confirmation. */
+  async prepareLink(userId: string, input: { url: string; selected?: string }, signal?: AbortSignal) {
+    await this.authorization.requirePlatformAdmin(userId)
+    const source = parseSkillLink(input)
+    const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(60_000)])
+    bounded.throwIfAborted()
+    const acquired = await this.acquire(source, bounded)
+    bounded.throwIfAborted()
+    const { plan, pkg } = await this.prepareBundle(acquired.bytes, source.selected, source.directory, true)
+    const id = `installation-${randomUUID()}`
+    await this.db.begin(async tx => {
+      await requireAdminInTransaction(tx, userId)
+      bounded.throwIfAborted()
+      await tx`insert into skill_installations (id, tenant_id, run_id, created_by, source, resolved_url, resolved_ref, package, plan, plan_sha256, compatibility_status, channel)
+        values (${id}, ${tenant}, null, ${userId}, ${tx.json(JSON.parse(JSON.stringify(source)))}, ${acquired.resolvedUrl}, ${acquired.resolvedRef},
+          ${tx.json(JSON.parse(JSON.stringify(pkg)))}, ${tx.json(JSON.parse(JSON.stringify(plan)))}, ${plan.sha256}, ${plan.compatibility.status}, 'link')`
+      bounded.throwIfAborted()
+    })
+    return this.getDirectInstallation(userId, id)
+  }
+
   async confirm(userId: string, runId: string, sha256: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const owned = await this.requireRun(userId, runId)
@@ -302,20 +326,40 @@ export class AdminSkillInstallationService {
     return this.detail(userId, owned.sessionId)
   }
 
+  /** Kept as a strict ZIP-only compatibility wrapper for existing service callers. */
   async confirmZip(userId: string, installationId: string, sha256: string) {
+    return this.confirmDirect(userId, installationId, sha256, 'zip')
+  }
+
+  async confirmDirect(userId: string, installationId: string, sha256: string, expectedChannel?: 'zip') {
+    await this.authorization.requirePlatformAdmin(userId)
+    if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) throw requestInvalid('安装计划摘要无效')
+    await this.db.begin(async tx => {
+      await requireAdminInTransaction(tx, userId)
+      const [row] = await tx<{ id: string; channel: 'zip' | 'link'; package: SkillPackageArtifact; plan: SkillInstallationPlan; planSha256: string; status: string }[]>`
+        select id, channel, package, plan, plan_sha256 as "planSha256", status from skill_installations
+        where tenant_id = ${tenant} and id = ${installationId} and created_by = ${userId} and channel in ('zip', 'link') and run_id is null for update
+      `
+      if (!row || (expectedChannel && row.channel !== expectedChannel)) throw authorizationDenied('安装计划不存在或不可访问')
+      this.assertPlan(row, sha256)
+      if (row.status === 'installed') return
+      if (row.status !== 'pending') throw requestInvalid('安装已取消，请重新提供来源')
+      await this.installPlan(tx, row, userId, `trace-${installationId}`, `通过 ${row.channel === 'link' ? '链接' : 'ZIP 包'}按确认计划保存草稿，尚未发布`)
+    })
+    return this.getDirectInstallation(userId, installationId)
+  }
+
+  async cancelDirect(userId: string, installationId: string) {
     await this.authorization.requirePlatformAdmin(userId)
     await this.db.begin(async tx => {
       await requireAdminInTransaction(tx, userId)
-      const [row] = await tx<{ id: string; package: SkillPackageArtifact; plan: SkillInstallationPlan; planSha256: string; status: string }[]>`
-        select id, package, plan, plan_sha256 as "planSha256", status from skill_installations
-        where tenant_id = ${tenant} and id = ${installationId} and created_by = ${userId} and channel = 'zip' and run_id is null for update
-      `
-      this.assertPlan(row, sha256)
-      if (row.status === 'installed') return
-      if (row.status !== 'pending') throw new Error('安装已取消，请重新上传 Skill 包')
-      await this.installPlan(tx, row, userId, `trace-${installationId}`, '通过 ZIP 包按确认的安装计划保存，等待严格试运行和发布')
+      const [row] = await tx<{ status: string }[]>`select status from skill_installations where tenant_id = ${tenant} and id = ${installationId}
+        and created_by = ${userId} and channel in ('zip', 'link') and run_id is null for update`
+      if (!row) throw authorizationDenied('安装计划不存在或不可访问')
+      if (row.status === 'installed') throw Object.assign(new Error('草稿已保存，不能取消安装计划'), { status: 409, code: 'state_conflict' })
+      await tx`update skill_installations set status = 'cancelled', updated_at = now() where tenant_id = ${tenant} and id = ${installationId}`
     })
-    return this.getZipInstallation(userId, installationId)
+    return this.getDirectInstallation(userId, installationId)
   }
 
   async cancel(userId: string, runId: string) {
@@ -380,32 +424,40 @@ export class AdminSkillInstallationService {
   }
   private async readInstallations(sessionId: string) {
     return this.db<InstallationRow[]>`
-      select i.id, i.run_id as "runId", i.source, i.resolved_url as "resolvedUrl", i.resolved_ref as "resolvedRef", i.package, i.plan, i.plan_sha256 as "planSha256", i.compatibility_status as "compatibilityStatus", i.status, i.skill_id as "skillId", i.version_id as "versionId",
+      select i.id, i.channel, i.run_id as "runId", i.source, i.resolved_url as "resolvedUrl", i.resolved_ref as "resolvedRef", i.package, i.plan, i.plan_sha256 as "planSha256", i.compatibility_status as "compatibilityStatus", i.status, i.skill_id as "skillId", i.version_id as "versionId",
         i.result_type as "resultType", i.installed_version as "installedVersion"
       from skill_installations i join runs r on r.tenant_id = i.tenant_id and r.id = i.run_id where i.tenant_id = ${tenant} and r.session_id = ${sessionId}
     `
   }
 
   private async getZipInstallation(userId: string, installationId: string) {
+    return this.getDirectInstallation(userId, installationId, 'zip')
+  }
+
+  async getDirectInstallation(userId: string, installationId: string, expectedChannel?: 'zip') {
+    await this.authorization.requirePlatformAdmin(userId)
     const [row] = await this.db<InstallationRow[]>`
-      select id, run_id as "runId", source, resolved_url as "resolvedUrl", resolved_ref as "resolvedRef", package, plan,
+      select id, channel, run_id as "runId", source, resolved_url as "resolvedUrl", resolved_ref as "resolvedRef", package, plan,
         plan_sha256 as "planSha256", compatibility_status as "compatibilityStatus", status, skill_id as "skillId", version_id as "versionId",
         result_type as "resultType", installed_version as "installedVersion"
-      from skill_installations where tenant_id = ${tenant} and id = ${installationId} and created_by = ${userId} and channel = 'zip'
+      from skill_installations where tenant_id = ${tenant} and id = ${installationId} and created_by = ${userId} and channel in ('zip', 'link') and run_id is null
     `
-    if (!row) throw new Error('ZIP 安装计划不存在或不可访问')
+    if (!row || (expectedChannel && row.channel !== expectedChannel)) throw authorizationDenied('安装计划不存在或不可访问')
     return this.preview(row)
   }
 
-  private async prepareBundle(bytes: Uint8Array, selected?: string, directory?: string) {
+  private async prepareBundle(bytes: Uint8Array, selected?: string, directory?: string, deferRuntimeRequirements = false) {
     const bundle = parseSkillBundle(bytes, selected, directory)
     const unavailableTools: string[] = []
     for (const reference of [...new Set(bundle.packages.flatMap(pkg => pkg.toolIds))]) {
       if (reference === 'python_execute@1.0.0') continue
-      try { await this.tools.assertAvailableReferences([reference]) }
+      try {
+        if (deferRuntimeRequirements) await this.tools.assertDraftReferences([reference])
+        else await this.tools.assertAvailableReferences([reference])
+      }
       catch { unavailableTools.push(reference.split('@')[0]!) }
     }
-    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools })
+    const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools, deferRuntimeRequirements })
     const artifacts: SkillPackageArtifact[] = []
     for (const packageToStore of preparedPlan.packages) artifacts.push(await this.requireArtifactStore().put(packageToStore))
     const plan = externalizeSkillInstallationPlan(preparedPlan, artifacts)
@@ -414,13 +466,14 @@ export class AdminSkillInstallationService {
 
   private assertPlan(row: { package: SkillPackageArtifact; plan: SkillInstallationPlan; planSha256: string } | undefined, sha256: string) {
     if (!row || !row.package || !row.plan || row.planSha256 !== sha256 || row.plan.sha256 !== sha256 || installationPlanDigest(row.plan) !== sha256) {
-      throw new Error('安装计划不存在或已变化，请重新查看计划')
+      throw Object.assign(new Error('安装计划不存在或已变化，请重新查看计划'), { status: 409, code: 'skill_installation_plan_changed' })
     }
   }
 
-  private async installPlan(tx: DatabaseTransaction, row: { id: string; plan: SkillInstallationPlan }, userId: string, traceId: string, changeSummary: string) {
+  private async installPlan(tx: DatabaseTransaction, row: { id: string; channel?: string; plan: SkillInstallationPlan }, userId: string, traceId: string, changeSummary: string) {
     if (row.plan.compatibility.status === 'incompatible') throw new Error(`安装计划不兼容：${row.plan.compatibility.issues.map(issue => issue.message).join('；')}`)
-    await this.tools.assertAvailableReferences(row.plan.summary.toolIds)
+    if (row.channel === 'link') await this.tools.assertDraftReferences(row.plan.summary.toolIds, tx)
+    else await this.tools.assertAvailableReferences(row.plan.summary.toolIds)
     for (const artifact of row.plan.packages) await this.requireArtifactStore().read(artifact)
     const packageKeys = [...new Set(row.plan.packages.map(pkg => installationKey(pkg.name)))].sort()
     for (const key of packageKeys) await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant}:skill-install:${key}`}, 0))`
@@ -446,7 +499,7 @@ export class AdminSkillInstallationService {
       await tx`
         insert into skill_versions (id, tenant_id, skill_id, version, name, category, description, instructions, manifest, artifact_ref, package_sha256, tool_refs, test_prompt, status, created_by, change_summary)
         values (${identity.versionId}, ${tenant}, ${identity.skillId}, ${identity.version}, ${pkg.name}, '已安装 Skill', ${pkg.description}, '',
-          ${tx.json(JSON.parse(JSON.stringify({ artifact: pkg, installationId: row.id, dependencies })))}, ${pkg.artifactRef}, ${pkg.sha256}, ${tx.json(pkg.toolIds)}, '请按照 Skill 说明完成一个最小示例；有参考资料时实际读取并说明结果，缺少业务输入时明确指出。', 'draft', ${userId}, ${changeSummary})
+          ${tx.json(JSON.parse(JSON.stringify({ artifact: pkg, installationId: row.id, dependencies, ...(row.channel === 'link' ? { installationChannel: 'link' } : {}) })))}, ${pkg.artifactRef}, ${pkg.sha256}, ${tx.json(pkg.toolIds)}, '请按照 Skill 说明完成一个最小示例；有参考资料时实际读取并说明结果，缺少业务输入时明确指出。', 'draft', ${userId}, ${changeSummary})
       `
       await tx`update skills set name = ${pkg.name}, description = ${pkg.description}, draft_version_id = ${identity.versionId}, updated_at = now() where tenant_id = ${tenant} and id = ${identity.skillId}`
     }
@@ -544,14 +597,42 @@ export class AdminSkillInstallationService {
     return this.artifactStore
   }
 
+  private async linkPublicationState(row: InstallationRow) {
+    const blockers: Array<{ code: string; message: string }> = []
+    try {
+      if (!this.checkRuntime) throw new ExecutionCapabilityUnavailableError('dsh')
+      await this.checkRuntime(row.plan?.summary.toolIds ?? [], [...new Set((row.plan?.packages ?? []).flatMap(pkg => pkg.requirements
+        .filter(r => r.type === 'external' && r.name.startsWith('python-package:')).map(r => r.name.slice('python-package:'.length))))])
+    } catch (cause) {
+      blockers.push(cause instanceof ExecutionCapabilityUnavailableError
+        ? { code: cause.code, message: cause.message }
+        : cause instanceof Error && 'code' in cause && cause.code === 'SKILL_DEPENDENCIES_UNAVAILABLE'
+          ? { code: 'SKILL_DEPENDENCIES_UNAVAILABLE', message: '声明的 Python 依赖未配置并验证，当前不可发布' }
+          : { code: 'RUNTIME_UNAVAILABLE', message: '执行能力尚未确认可用，当前不可发布' })
+    }
+    if (row.plan?.summary.pythonFiles && !this.pythonSandboxAvailable) {
+      if (!blockers.some(b => b.code === 'PYTHON_UNAVAILABLE')) blockers.push({ code: 'PYTHON_UNAVAILABLE', message: 'Python 沙箱未就绪，脚本仅保存，当前不可发布' })
+    }
+    if (row.plan?.packages.some(pkg => pkg.requirements.some(r => r.type === 'external' && r.status !== 'resolved'))) {
+      blockers.push({ code: 'DEPENDENCIES_UNVERIFIED', message: '运行依赖未验证，须配置受控执行环境并重新试运行' })
+    }
+    try { await this.tools.assertAvailableReferences(row.plan?.summary.toolIds ?? []) }
+    catch { blockers.push({ code: 'TOOLS_UNAVAILABLE', message: '所需平台工具暂不可执行，不能发布' }) }
+    blockers.push({ code: 'TRIAL_REQUIRED', message: row.resultType === 'duplicate'
+      ? '本次未创建版本或执行发布；已有版本状态请在 Skill 中心查看'
+      : '导入只保存草稿；发布前须在 Skill 中心完成当前版本的真实试运行及发布检查' })
+    return { canSaveDraft: row.status === 'pending' && Boolean(row.plan) && row.plan?.compatibility.status !== 'incompatible', canPublish: false as const, publicationBlockers: blockers }
+  }
+
   private async preview(row: InstallationRow) {
     const packagePreview = row.package ? withoutFileContents(await this.requireArtifactStore().read(row.package)) : null
     const planPackages = row.plan
       ? await Promise.all(row.plan.packages.map(async artifact => withoutFileContents(await this.requireArtifactStore().read(artifact))))
       : null
     return {
-      id: row.id, runId: row.runId, source: installationSourceLabel(row.source), resolvedUrl: row.resolvedUrl, resolvedRef: row.resolvedRef,
+      id: row.id, channel: row.channel ?? (row.runId ? 'assistant' : 'zip'), runId: row.runId, source: installationSourceLabel(row.source), resolvedUrl: row.resolvedUrl, resolvedRef: row.resolvedRef,
       status: row.status, skillId: row.skillId, resultType: row.resultType, installedVersion: row.installedVersion, package: packagePreview,
+      ...(row.channel === 'link' ? await this.linkPublicationState(row) : {}),
       planSha256: row.planSha256, compatibilityStatus: row.compatibilityStatus,
       plan: row.plan ? { ...row.plan, packages: planPackages! } : null,
     }
@@ -590,5 +671,5 @@ async function requireAdminInTransaction(tx: DatabaseTransaction, userId: string
       and (ur.valid_until is null or ur.valid_until > now()) and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
     for share of u, ur, r
   `
-  if (!actor) throw new Error('当前用户没有管理写权限')
+  if (!actor) throw authorizationDenied('当前用户没有管理写权限')
 }

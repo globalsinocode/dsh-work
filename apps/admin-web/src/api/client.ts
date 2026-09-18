@@ -130,6 +130,10 @@ export const adminApi = {
   cancelAssistantProposal: (proposalId: string) => request<AdminConversation>(`/assistant/task-proposals/${encodeURIComponent(proposalId)}/cancel`, { method: 'POST' }),
   confirmAssistantAction: (actionId: string, planSha256: string) => request<AdminConversation>(`/assistant/action-plans/${encodeURIComponent(actionId)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
   cancelAssistantAction: (actionId: string) => request<AdminConversation>(`/assistant/action-plans/${encodeURIComponent(actionId)}/cancel`, { method: 'POST' }),
+  prepareLinkSkillInstallation: (input: { url: string; selected?: string }) => request<SkillInstallation>('/skill-installations/link', { method: 'POST', body: JSON.stringify(input) }),
+  confirmDirectSkillInstallation: (id: string, planSha256: string) => request<SkillInstallation>(`/skill-installations/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({ planSha256 }) }),
+  getDirectSkillInstallation: (id: string) => request<SkillInstallation>(`/skill-installations/${encodeURIComponent(id)}`),
+  cancelDirectSkillInstallation: (id: string) => request<SkillInstallation>(`/skill-installations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   prepareZipSkillInstallation: (file: File) => request<SkillInstallation>('/skill-installations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
