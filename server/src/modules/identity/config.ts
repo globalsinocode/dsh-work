@@ -86,6 +86,7 @@ export function loadIdentityConfiguration(
     mode,
     platformUrl,
     applicationId: workbench.applicationId,
+    adminBootstrapEnabled: booleanValue(environment.DSH_WORK_ADMIN_BOOTSTRAP_ENABLED, false, 'DSH_WORK_ADMIN_BOOTSTRAP_ENABLED'),
     environment: applicationEnvironment,
     sessionSecret,
     sessionTtlSeconds: positiveInteger(
@@ -142,9 +143,7 @@ function audienceConfiguration(
       audience === 'workbench' ? 'dsh_work_oidc_tx' : 'dsh_work_admin_oidc_tx',
       production,
     ),
-    loginScopes: audience === 'admin'
-      ? [...defaultScopes, 'platform.application.bootstrap']
-      : [...defaultScopes],
+    loginScopes: [...defaultScopes],
   }
 }
 

@@ -42,3 +42,7 @@ Runtime 端口的可选 `assertAvailable(manifest?)` 在受理、编译与恢复
 `/health/live` 表示进程存活；`/health/ready` 验证核心数据库可达，并报告启动时校验的身份配置与各执行能力状态。DSH/Python 预检失败不否定核心就绪；DB/身份初始化失败仍不监听。就绪不代表实时 OIDC/模型业务联调通过。修复执行配置后需重启重探，不提供自动回退。`/health` 新增 `executionCapabilities`；其 `dshRuntime` 使用 RuntimeHealth 的状态，不再把未连接写成 connected。
 
 发布脚本的严格 DSH 预检保持不变；核心就绪不能替代上线前的真实执行验收。
+
+## 首次管理员认领意图（C10）
+
+`GET /auth/admin/bootstrap` 是显式首次认领入口，默认关闭，仅全新安装临时开放。普通登录与刷新仅要求基础身份 Scope；认领 Scope 从不成为持续登录条件。`oidc_login_transactions.login_purpose` 由服务端写入并在回调时消费，不能从回调参数读取。初始化是否已消费只查询应用/环境账本，不计数当前管理员。新迁移为 `0040_oidc_login_bootstrap_intent.sql`，保留全部旧认领和身份数据。

@@ -8,6 +8,7 @@ import { authorizationDenied } from '../authorization/authorization-errors.ts'
 const tenantId = 'tenant-dsh-work'
 
 export interface LoginTransactionRecord {
+  loginPurpose?: 'login' | 'admin-bootstrap'
   stateHash: string
   codeVerifierEncrypted: string
   nonce: string
@@ -70,6 +71,7 @@ export class IdentitySessionRepository {
   }
 
   async createLoginTransaction(input: {
+    loginPurpose?: 'login' | 'admin-bootstrap'
     transactionHash: string
     audience: ApiAudience
     stateHash: string
@@ -85,11 +87,11 @@ export class IdentitySessionRepository {
       await transaction`
         insert into oidc_login_transactions (
           transaction_hash, audience, state_hash, code_verifier_encrypted,
-          nonce, return_to, portal_origin, redirect_uri, expires_at
+          nonce, return_to, portal_origin, redirect_uri, expires_at, login_purpose
         ) values (
           ${input.transactionHash}, ${input.audience}, ${input.stateHash},
           ${input.codeVerifierEncrypted}, ${input.nonce}, ${input.returnTo},
-          ${input.portalOrigin}, ${input.redirectUri}, ${input.expiresAt}
+          ${input.portalOrigin}, ${input.redirectUri}, ${input.expiresAt}, ${input.loginPurpose ?? 'login'}
         )
       `
     })
@@ -106,7 +108,7 @@ export class IdentitySessionRepository {
            and expires_at > now()
         returning state_hash as "stateHash", code_verifier_encrypted as "codeVerifierEncrypted",
                   nonce, return_to as "returnTo", portal_origin as "portalOrigin",
-                  redirect_uri as "redirectUri"
+                  redirect_uri as "redirectUri", login_purpose as "loginPurpose"
       `
       return record ?? null
     })
@@ -217,6 +219,17 @@ export class IdentitySessionRepository {
       }
       return { userId: record.id, authorizationVersion: record.authorizationVersion }
     })
+  }
+
+  /** Durable consumption ledger, never inferred from the current number of admins. */
+  async hasConsumedAdminBootstrap(applicationId: string, environment: string): Promise<boolean> {
+    const [row] = await this.database<{ consumed: boolean }[]>`
+      select exists (
+        select 1 from application_admin_bootstrap_claims
+         where application_id = ${applicationId} and environment = ${environment}
+      ) as consumed
+    `
+    return row?.consumed === true
   }
 
   async consumeAdminBootstrap(input: {

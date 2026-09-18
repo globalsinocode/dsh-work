@@ -104,7 +104,7 @@ DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS=900
 1. AI Hub 中登记应用负责人，在 `local` 环境单独指定初始管理员，并创建环境凭据；
 2. 启动 dsh-work，迁移会创建本地身份映射、授权版本、初始管理员记录和目录同步状态；
 3. 环境初始管理员打开 `http://localhost:4180` 并完成 AI Hub 登录；
-4. dsh-work 读取 `/me` 建立本地用户，调用一次性 `admin-bootstrap`，然后只在本地授予 `platform_admin`；
+4. 全新安装时显式开启 `DSH_WORK_ADMIN_BOOTSTRAP_ENABLED=true`，访问 `/auth/admin/bootstrap`；回调核对指定业务员工并消费一次性 `admin-bootstrap`，仅在本地授予 `platform_admin`。正常 `/auth/admin/login` 不再自动认领；
 5. 初始管理员进入“员工与权限”，同步员工目录并为其他员工配置角色和数据范围；
 6. 至少再配置一位平台管理员，避免首位管理员停用后无人维护。
 
@@ -158,3 +158,11 @@ Bootstrap 只在本地认领记录首次原子写入时授予 `role-platform-adm
 平台账号被 `business_user_required` 拒绝时，错误页的“切换账号”访问对应 Audience 的 `/auth/workbench/switch-account` 或 `/auth/admin/switch-account`。服务端撤销当前应用 Session，并新建带 `prompt=login`、PKCE、state 和 nonce 的授权事务，锁定原入口及回调。不能把普通 OIDC `end-session` 当作账号切换：未登记退出回跳时 Authentik 会忽略该回跳，已登记回跳时又要求有效 ID Token hint，均不能保证返回当前业务应用。
 
 AI Hub 门户与 dsh-work 的应用 Session 独立。切换 dsh-work 身份不会自动撤销 AI Hub 门户已有的管理员 Session；验收应确认业务人员最终回到原员工端或管理端，且该应用会话的身份为所选员工，而不是根据另一个门户显示的账号判断。
+
+## C10：正常登录与首次认领分离
+
+正常登录和刷新不申请、不要求 `platform.application.bootstrap`。用户没有本地管理角色时正常拒绝，不因管理员数量为零自动认领。额外旧 Scope 可兼容，但不能触发认领。
+
+全新安装由实施人员临时设置 `DSH_WORK_ADMIN_BOOTSTRAP_ENABLED=true`，重启后访问 `/auth/admin/bootstrap`。该入口验证应用/环境尚无消费记录，使用数据库中的一次性登录事务绑定 `admin-bootstrap` 意图；只有此回调要求 Bootstrap Scope，再核对上游指定员工、应用与环境并原子消费。认领完成后关闭该开关并重启。即使开关误留 true、所有管理员均被撤权，消费记录仍阻止重新开放。
+
+旧部署及没有完整消费记录的历史部署默认关闭认领；不得用当前角色数量推断它是新安装，也不得为恢复管理员而重新启用认领。恢复本地角色应走受控管理/恢复流程。旧待处理登录事务按 login 解释；先升级服务端与迁移，再缩小身份平台 Scope 配置。真实 AI Hub 首次认领与刷新联调仍需目标环境验收。

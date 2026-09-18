@@ -54,6 +54,8 @@ export interface PrototypeIdentityConfiguration {
 }
 
 export interface OidcIdentityConfiguration {
+  /** Explicit fresh-install opt-in. A consumed application/environment claim always closes it. */
+  adminBootstrapEnabled?: boolean
   mode: 'oidc'
   platformUrl: string
   applicationId: string

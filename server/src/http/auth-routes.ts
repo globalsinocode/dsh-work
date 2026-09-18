@@ -5,6 +5,10 @@ import type { ApiAudience } from '../modules/identity/types.ts'
 import type { Router } from './router.ts'
 
 export function registerOidcRoutes(router: Router, authentication: OidcAuthService) {
+  router.get('/auth/admin/bootstrap', async (request, context, response) => {
+    const result = await authentication.beginBootstrapLogin(request, context.url.searchParams.get('return_to'))
+    redirect(response, result.location, [result.cookie])
+  })
   for (const audience of ['workbench', 'admin'] as const) {
     router.get(`/auth/${audience}/login`, async (request, context, response) => {
       const result = await authentication.beginLogin(request, audience, context.url.searchParams.get('return_to'))

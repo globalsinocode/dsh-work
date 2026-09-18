@@ -19,6 +19,8 @@ import type {
 } from './types.ts'
 import { LOCAL_PERMISSIONS } from './types.ts'
 
+const bootstrapScope = 'platform.application.bootstrap'
+
 export class IdentityAccessError extends Error {
   readonly status: number
   readonly code: string
@@ -55,18 +57,40 @@ export class OidcAuthService {
     requestedReturnTo: string | null,
     forceLogin = false,
   ) {
+    return this.beginLoginTransaction(request, audience, requestedReturnTo, forceLogin, 'login')
+  }
+
+  async beginBootstrapLogin(request: IncomingMessage, returnTo: string | null) {
+    await this.assertBootstrapOpen()
+    return this.beginLoginTransaction(request, 'admin', returnTo, true, 'admin-bootstrap')
+  }
+
+  private async assertBootstrapOpen() {
+    if (!this.configuration.adminBootstrapEnabled
+      || await this.repository.hasConsumedAdminBootstrap(this.configuration.applicationId, this.configuration.environment)) {
+      throw new IdentityAccessError(403, 'admin_bootstrap_closed', '初始管理员认领未开放或已经完成，请使用正常登录')
+    }
+  }
+
+  private async beginLoginTransaction(
+    request: IncomingMessage, audience: ApiAudience, requestedReturnTo: string | null,
+    forceLogin: boolean, loginPurpose: 'login' | 'admin-bootstrap',
+  ) {
     const settings = this.configuration.audiences[audience]
     const portalOrigin = resolveRequestOrigin(request, settings)
     const redirectUri = redirectUriForOrigin(settings, portalOrigin)
+    const scopes = settings.loginScopes.filter(scope => scope !== bootstrapScope)
+    if (loginPurpose === 'admin-bootstrap') scopes.push(bootstrapScope)
     const authorization = await this.providers[audience].createAuthorizationRequest(
       redirectUri,
-      settings.loginScopes,
+      scopes,
       forceLogin,
     )
     const transactionToken = randomOpaque()
     await this.repository.createLoginTransaction({
       transactionHash: hashOpaque(transactionToken),
       audience,
+      loginPurpose,
       stateHash: hashOpaque(authorization.state),
       codeVerifierEncrypted: this.secretBox.seal(authorization.codeVerifier),
       nonce: authorization.nonce,
@@ -123,6 +147,12 @@ export class OidcAuthService {
       throw new IdentityAccessError(401, 'invalid_redirect_uri', 'OIDC 登录回调地址不在允许列表中')
     }
 
+    // Callback query parameters cannot elevate intent; use only the consumed transaction.
+    const bootstrap = transaction.loginPurpose === 'admin-bootstrap'
+    if (bootstrap) {
+      if (input.audience !== 'admin') throw new IdentityAccessError(403, 'invalid_bootstrap_audience', '认领受众无效')
+      await this.assertBootstrapOpen()
+    }
     let tokenResponse
     let verified: VerifiedToken
     try {
@@ -132,7 +162,7 @@ export class OidcAuthService {
         this.secretBox.open(transaction.codeVerifierEncrypted),
       )
       verified = await this.providers[input.audience].verify(tokenResponse.accessToken, {
-        requiredScopes: requiredUserScopes(input.audience),
+        requiredScopes: [...requiredUserScopes(), ...(bootstrap ? [bootstrapScope] : [])],
         requireAiHubUser: true,
       })
       if (!tokenResponse.idToken) {
@@ -165,7 +195,7 @@ export class OidcAuthService {
         )
       }
       authorization = await this.repository.resolveAuthorization(synchronized.userId)
-      if (input.audience === 'admin' && !hasAdminAccess(authorization.permissions)) {
+      if (bootstrap) {
         authorization = await this.claimInitialAdministrator({
           accessToken: tokenResponse.accessToken,
           settings,
@@ -302,7 +332,7 @@ export class OidcAuthService {
             this.secretBox.open(latest.refreshTokenEncrypted),
           )
           const verified = await this.providers[latest.audience].verify(tokenResponse.accessToken, {
-            requiredScopes: requiredUserScopes(latest.audience),
+            requiredScopes: requiredUserScopes(),
             requireAiHubUser: true,
           })
           if (verified.subject !== latest.subject) {
@@ -356,6 +386,7 @@ export class OidcAuthService {
     localUserId: string
   }): Promise<LocalAuthorizationContext> {
     try {
+      await this.assertBootstrapOpen()
       const claim = await this.platform.claimAdminBootstrap(
         input.accessToken,
         input.settings.applicationId,
@@ -410,11 +441,10 @@ function provider(configuration: OidcIdentityConfiguration, audience: ApiAudienc
   })
 }
 
-function requiredUserScopes(audience: ApiAudience) {
+function requiredUserScopes() {
   return [
     'ai_hub.identity',
     'platform.me.read',
-    ...(audience === 'admin' ? ['platform.application.bootstrap'] : []),
   ]
 }
 

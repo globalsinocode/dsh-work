@@ -36,7 +36,8 @@ test('OIDC configuration uses one AI Hub credential for both portals', () => {
   assert.deepEqual(configuration.audiences.workbench.loginScopes, [
     'openid', 'profile', 'email', 'offline_access', 'ai_hub.identity', 'platform.me.read',
   ])
-  assert.ok(configuration.audiences.admin.loginScopes.includes('platform.application.bootstrap'))
+  assert.equal(configuration.audiences.admin.loginScopes.includes('platform.application.bootstrap'), false)
+  assert.equal(configuration.adminBootstrapEnabled, false)
 })
 
 test('OIDC configuration rejects a separate admin application credential', () => {
