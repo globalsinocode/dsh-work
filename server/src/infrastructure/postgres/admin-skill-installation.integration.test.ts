@@ -428,6 +428,25 @@ test('one confirmed plan atomically installs, tests and publishes same-source Sk
   const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
   skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
   assert.equal((await skills.testSkill({ skillId: rootId, actor })).status, 'passed')
+  // Resource-only changes in a draft dependency must invalidate the root's
+  // publication evidence without changing the root's own configuration.
+  const [dependency] = await database.client<{ id: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
+    select sv.id, sv.manifest from skill_version_dependencies d
+    join skill_versions sv on sv.tenant_id = d.tenant_id and sv.id = d.dependency_skill_version_id
+    join skills root on root.tenant_id = d.tenant_id and root.draft_version_id = d.skill_version_id
+    where root.tenant_id = ${tenant} and root.id = ${rootId} limit 1`
+  assert.ok(dependency)
+  const changedDependency = await artifactStore.put(parseSkillPackage(zipSync({
+    'SKILL.md': strToU8(body.replace('installation-test', 'grilling')), 'references/value.txt': strToU8('CHANGED_DEPENDENCY'),
+  })))
+  try {
+    await database.client`update skill_versions set manifest = ${database.client.json(JSON.parse(JSON.stringify({ ...dependency.manifest, artifact: changedDependency })))},
+      artifact_ref = ${changedDependency.artifactRef}, package_sha256 = ${changedDependency.sha256} where id = ${dependency.id}`
+    await assert.rejects(skills.setStatus({ skillId: rootId, actor, status: 'published' }), { code: 'skill_test_snapshot_changed' })
+  } finally {
+    await database.client`update skill_versions set manifest = ${database.client.json(JSON.parse(JSON.stringify(dependency.manifest)))},
+      artifact_ref = ${dependency.manifest.artifact.artifactRef}, package_sha256 = ${dependency.manifest.artifact.sha256} where id = ${dependency.id}`
+  }
   await skills.setStatus({ skillId: rootId, actor, status: 'published' })
   const resolved = await skills.resolveRuntimeSkills([`${rootId}@0.1.0`])
   assert.deepEqual(resolved.map(item => item.name).sort(), ['grill-me', 'grilling'])
@@ -590,3 +609,79 @@ test('legacy packaged versions migrate to folders without weakening published-ve
   assert.equal(migratedAttempt?.manifestSha256, compileRuntimeManifest(migratedAttempt!.manifest).sha256)
   await assert.rejects(database.client`update skill_versions set description = '不能修改' where id = ${versionId}`, /immutable/)
 })
+
+test('review 8a: same-version resource change cannot relabel a completed trial or publish it', { skip: real, timeout: 30000 }, async () => {
+  const name = `binding-${randomUUID().slice(0, 8)}`
+  const originalBytes = zipSync({ 'SKILL.md': strToU8(body.replace('installation-test', name)), 'references/value.txt': strToU8('ORIGINAL') })
+  const preview = await service.prepareZip(actor, { fileName: 'binding.zip', bytes: originalBytes })
+  const installed = await service.confirmZip(actor, preview.id, preview.planSha256!)
+  const skillId = installed.skillId!
+  const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
+  skills.setPackageTestLifecycle({
+    start: (userId, skill, prompt) => service.startPackageTest(userId, skill, prompt),
+    progress: (userId, skill, runId) => service.packageTestProgress(userId, skill, runId),
+  })
+  const started = await skills.startSkillTest({ skillId, actor })
+  const session = await runs.getRun(tenant, started.runId)
+  await wait(session!.sessionId)
+  const finished = await skills.getSkillTestProgress({ skillId, runId: started.runId, actor })
+  assert.equal(finished.status, 'passed')
+  const [original] = await database.client<{ versionId: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
+    select id as "versionId", manifest from skill_versions where tenant_id = ${tenant} and skill_id = ${skillId} and status = 'draft'`
+  assert.ok(original)
+  const changed = await artifactStore.put(parseSkillPackage(zipSync({
+    'SKILL.md': strToU8(body.replace('installation-test', name)), 'references/value.txt': strToU8('CHANGED'),
+  })))
+  try {
+    await database.client`update skill_versions set manifest = ${database.client.json(JSON.parse(JSON.stringify({ ...original.manifest, artifact: changed })))},
+      artifact_ref = ${changed.artifactRef}, package_sha256 = ${changed.sha256}
+      where tenant_id = ${tenant} and id = ${original.versionId}`
+    await assert.rejects(skills.getSkillTestProgress({ skillId, runId: started.runId, actor }), { code: 'skill_test_snapshot_changed' })
+    await assert.rejects(skills.setStatus({ skillId, actor, status: 'published' }), /测试/)
+  } finally {
+    await database.client`update skill_versions set manifest = ${database.client.json(JSON.parse(JSON.stringify(original.manifest)))},
+      artifact_ref = ${original.manifest.artifact.artifactRef}, package_sha256 = ${original.manifest.artifact.sha256}
+      where tenant_id = ${tenant} and id = ${original.versionId}`
+  }
+  await skills.setStatus({ skillId, actor, status: 'published' })
+})
+
+test('review 8a: retry preserves every pinned Skill and original model route', { skip: real, timeout: 30000 }, async () => {
+  const child = { id: 'retry-child', version: '1.0.0', instructions: 'Follow this exact child instruction in the controlled test.', tools: [] }
+  const root = { id: 'retry-root', version: '1.0.0', instructions: 'Follow this exact root instruction in the controlled test.', tools: [],
+    dependencies: ['retry-child@1.0.0'], dependencySkills: [child] }
+  const started = await service.startPackageTest(actor, root, '[hang] 保留固定依赖图')
+  const run = await runs.getRun(tenant, started.runId)
+  const oldAttempt = await runs.getAttempt(tenant, run!.currentAttemptId!)
+  assert.ok(oldAttempt)
+  await waitForAttemptStart(oldAttempt.id)
+  await orchestration.cancelAdminRun(started.runId, actor)
+  await wait(run!.sessionId)
+  await orchestration.retryAdminRun(started.runId, actor)
+  const retried = await runs.getRun(tenant, started.runId)
+  const newAttempt = await runs.getAttempt(tenant, retried!.currentAttemptId!)
+  try {
+    assert.ok(newAttempt)
+    assert.notEqual(newAttempt.id, oldAttempt.id)
+    assert.deepEqual(newAttempt.manifest.agent_configuration, oldAttempt.manifest.agent_configuration)
+    assert.deepEqual(newAttempt.manifest.skills, oldAttempt.manifest.skills)
+    assert.deepEqual(newAttempt.manifest.tools, oldAttempt.manifest.tools)
+    assert.deepEqual(newAttempt.manifest.input, oldAttempt.manifest.input)
+    assert.deepEqual(newAttempt.modelRouteSnapshot, oldAttempt.modelRouteSnapshot)
+  } finally {
+    if (newAttempt) await waitForAttemptStart(newAttempt.id)
+    await orchestration.cancelAdminRun(started.runId, actor)
+    await wait(run!.sessionId)
+  }
+})
+
+async function waitForAttemptStart(attemptId: string) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const [started] = await database.client`select id from run_events where tenant_id = ${tenant}
+      and attempt_id = ${attemptId} and event_type = 'run.started'`
+    if (started) return
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error('受控 Worker 未进入运行态')
+}

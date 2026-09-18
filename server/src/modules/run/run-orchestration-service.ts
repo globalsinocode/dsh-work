@@ -123,22 +123,29 @@ export class RunOrchestrationService {
     if (manifest.purpose === 'agent-release-trial') {
       throw new Error('试运行不支持单独重试；请在发布工作台重新发起试运行')
     }
-    const retriedSkill = manifest.agent_configuration.skill_instructions[0]
-    // 不从上一次 Attempt 的 manifest 续叠：其中的 message 已是续写指令、history 已并入
-    // 部分输出，再次基于它构造会重复。始终回到稳定来源——Run 的原始用户问题与 Run 之前
-    // 的会话历史，再由 withContinuationOutputs 统一追加全部已提交的部分输出。
-    const continued = await this.withContinuationOutputs(
-      await this.conversations.getConversationHistory(run.sessionId, run.id),
-      run.id,
-      await this.conversations.getRunPrompt(run.id),
-    )
-    const retryPurpose: AdminPurpose = manifest.purpose && isAdminRunPurpose(manifest.purpose) ? manifest.purpose : 'admin-skill-install'
-    await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', retryPurpose, retryPurpose === 'admin-skill-test' && retriedSkill ? {
-      id: retriedSkill.id, name: retriedSkill.name ?? retriedSkill.id, description: retriedSkill.description ?? '', version: retriedSkill.version,
-      instructions: retriedSkill.instructions ?? '', tools: manifest.tools.filter(tool => tool.id !== 'activate_skill').map(tool => `${tool.id}@${tool.version}`),
-      ...(retriedSkill.artifact_ref ? { artifact: { artifactRef: retriedSkill.artifact_ref, instructionsSha256: retriedSkill.instructions_sha256!, files: retriedSkill.files ?? [] } as RuntimeSkillConfiguration['artifact'], files: retriedSkill.files } : {}),
-      dependencies: retriedSkill.dependencies, disableModelInvocation: retriedSkill.disable_model_invocation,
-    } : undefined, continued.history)
+    if (manifest.purpose === 'admin-skill-test') {
+      // Reuse the full immutable graph, tool allowlist and original input. The
+      // root-only reconstruction dropped dependencies and mixed configurations.
+      const retried: RuntimeManifest = { ...structuredClone(manifest),
+        attempt_id: `attempt-${randomUUID()}`, created_at: new Date().toISOString() }
+      const compiled = compileRuntimeManifest(retried)
+      await this.runs.createAttempt({ attemptId: retried.attempt_id, tenantId, runId: run.id, runtimeId,
+        manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
+        modelRouteSnapshot: attempt.modelRouteSnapshot })
+      this.pendingExecutions.push({ run, manifest: retried })
+      void this.pumpScheduler()
+    } else {
+      // 不从上一次 Attempt 的 manifest 续叠：其中的 message 已是续写指令、history 已并入
+      // 部分输出，再次基于它构造会重复。始终回到稳定来源——Run 的原始用户问题与 Run 之前
+      // 的会话历史，再由 withContinuationOutputs 统一追加全部已提交的部分输出。
+      const continued = await this.withContinuationOutputs(
+        await this.conversations.getConversationHistory(run.sessionId, run.id),
+        run.id,
+        await this.conversations.getRunPrompt(run.id),
+      )
+      const retryPurpose: AdminPurpose = manifest.purpose && isAdminRunPurpose(manifest.purpose) ? manifest.purpose : 'admin-skill-install'
+      await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', retryPurpose, undefined, continued.history)
+    }
     return this.runs.getRun(tenantId, runId)
   }
 

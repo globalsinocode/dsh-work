@@ -25,3 +25,9 @@
 ## 兼容与回滚
 
 跨空间收紧是显式行为变化；旧已排队输入也按新授权复核。已有文件/空间/会话标识和已发布 Skill 保持。新迁移只增加证据元数据；回滚二进制不降低 Schema，但旧版本的宽松发布判据不能作为安全回滚路径（需临时关闭发布入口或继续运行修复版）。
+
+## 本轮交付证据
+
+独立提交记录见 [A1](review-a1-evidence.md)、[A2](review-a2-evidence.md)、[8a](review-8a-evidence.md)。本轮完成批次 0 的范围收敛/测试接线与批次 1 的代码修复；C11 全面 UI 校验重构、8b、C9/C10 和个人页面改版未实施。
+
+服务器聚合入口 `test:review:unit` 与 `test:review:integration` 分别在 CI 中执行；安装/发布相邻用例仍由原有 `test:skill-install:integration` 执行。新增迁移仅为 0039。可直接应用的补丁按提交顺序提供，不包含生产配置、凭据、node_modules 或运行时二进制。
