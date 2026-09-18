@@ -735,6 +735,9 @@ export class PostgresConversationRepository {
         requesterName: run.requesterName,
         createdAt: run.createdAt.toISOString(),
       })),
+      latestRun: runs.length > 0
+        ? { id: runs[runs.length - 1]!.id, status: runs[runs.length - 1]!.status }
+        : null,
     }
   }
 
