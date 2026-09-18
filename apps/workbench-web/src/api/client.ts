@@ -138,7 +138,7 @@ export const workbenchApi = {
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
     return request<{ items: UserSessionSummary[]; nextCursor: string | null }>(`/sessions?${params}`)
   },
-  getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}`),
+  getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}/summary`),
 
   getSession: () => request<WorkbenchSession>('/session'),
   getTasks: () => request<TaskRun[]>('/tasks'),
@@ -176,6 +176,12 @@ export const workbenchApi = {
   cancelRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }),
   retryRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' }),
   runEventsUrl: (runId: string) => `${baseUrl}/runs/${encodeURIComponent(runId)}/events`,
+  /**
+   * TW-10 空间会话活动流（SSE）：空间内会话的消息、@ 触发与 Run 状态变化推
+   * `session.updated`，会话删除推 `session.archived`。仅团队空间可订阅。
+   */
+  workspaceSessionEventsUrl: (workspaceId: string) =>
+    `${baseUrl}/workspaces/${encodeURIComponent(workspaceId)}/session-events`,
   /**
    * 空间列表（3-T2/3-T3）。`status` 由服务端按可见范围过滤：`all`（默认，与不带
    * 参数等价）返回个人空间与全部有权团队空间；`archived` 只返回仍是现任成员的

@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   deleteSession: vi.fn(),
   getRun: vi.fn(),
   runEventsUrl: vi.fn((runId: string) => `/events/${runId}`),
+  workspaceSessionEventsUrl: vi.fn((workspaceId: string) => `/session-events/${workspaceId}`),
 }))
 
 vi.mock('../api/client', () => ({ workbenchApi: api }))
@@ -347,5 +348,40 @@ describe('task store', () => {
     expect(store.tasks.map(task => task.id)).toEqual(['run-003'])
     expect(FakeEventSource.instances.slice(0, 2).every(stream => stream.closed)).toBe(true)
     expect(FakeEventSource.instances[2]?.closed).toBe(false)
+  })
+
+  it('shares one workspace session stream across subscribers and bumps sessionActivity on events', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const store = useTaskStore()
+
+    store.subscribeWorkspaceSessions('ws-team')
+    store.subscribeWorkspaceSessions('ws-team')
+    store.subscribeWorkspaceSessions('ws-other')
+    expect(FakeEventSource.instances).toHaveLength(2)
+    expect(FakeEventSource.instances[0]?.url).toBe('/session-events/ws-team')
+
+    FakeEventSource.instances[0]?.emit('session.updated', {
+      session_id: 's-1',
+      activity_at: '2026-09-12T08:01:00.000Z',
+    })
+    expect(store.sessionActivity['s-1']).toMatch(/^updated:2026-09-12T08:01:00\.000Z:\d+$/)
+
+    // 相同 activity_at 的连续事件也必须产生不同标记，否则视图 watch 不触发。
+    FakeEventSource.instances[0]?.emit('session.updated', {
+      session_id: 's-1',
+      activity_at: '2026-09-12T08:01:00.000Z',
+    })
+    expect(store.sessionActivity['s-1']).not.toBe('updated:2026-09-12T08:01:00.000Z:1')
+    expect(store.sessionActivity['s-1']).toMatch(/^updated:2026-09-12T08:01:00\.000Z:2$/)
+
+    FakeEventSource.instances[0]?.emit('session.archived', { session_id: 's-2' })
+    expect(store.sessionActivity['s-2']).toMatch(/^archived:/)
+
+    // 引用计数归零才关闭连接。
+    store.unsubscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances[0]?.closed).toBe(false)
+    store.unsubscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances[0]?.closed).toBe(true)
+    expect(FakeEventSource.instances[1]?.closed).toBe(false)
   })
 })

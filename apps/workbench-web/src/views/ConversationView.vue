@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -386,6 +386,69 @@ watch(
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
   },
 )
+
+/**
+ * TW-10 实时更新：当前目标属于团队空间时订阅空间会话活动流——其他成员的
+ * 讨论消息、@ 触发或 Run 状态变化推送 `session.updated` 标记，线程视图刷新
+ * 共享线程、Run 视图刷新 Run 详情（Run 详情同样包含会话级讨论消息）。
+ * 同一空间多个消费者共享一条 SSE 连接（store 引用计数），个人空间不订阅。
+ */
+const streamWorkspaceId = computed(() => {
+  if (sessionThread.value?.workspaceType === 'team') return sessionThread.value.workspaceId
+  if (task.value?.workspaceType === 'team') return task.value.workspaceId
+  return ''
+})
+const streamSessionId = computed(() => sessionThread.value?.sessionId ?? task.value?.sessionId ?? '')
+
+let sessionRefreshTimer: ReturnType<typeof setTimeout> | undefined
+let sessionRefreshInFlight = false
+let sessionRefreshQueued = false
+
+async function refreshSharedTarget() {
+  if (sessionRefreshInFlight) {
+    sessionRefreshQueued = true
+    return
+  }
+  sessionRefreshInFlight = true
+  try {
+    if (sessionThread.value) {
+      try {
+        sessionThread.value = await taskStore.loadSessionThread(sessionThread.value.sessionId)
+      } catch {
+        // 会话被删除或已失权：与初次加载同一口径落到「未找到对话」。
+        sessionThread.value = null
+        threadMissing.value = true
+      }
+    } else if (task.value) {
+      await taskStore.refreshRun(task.value.id).catch(() => undefined)
+    }
+  } finally {
+    sessionRefreshInFlight = false
+    if (sessionRefreshQueued) {
+      sessionRefreshQueued = false
+      void refreshSharedTarget()
+    }
+  }
+}
+
+watch(
+  () => (streamSessionId.value ? taskStore.sessionActivity[streamSessionId.value] : undefined),
+  marker => {
+    if (!marker) return
+    if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
+    sessionRefreshTimer = setTimeout(() => void refreshSharedTarget(), 150)
+  },
+)
+
+watch(streamWorkspaceId, (workspaceId, previous) => {
+  if (previous && previous !== workspaceId) taskStore.unsubscribeWorkspaceSessions(previous)
+  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId)
+})
+
+onBeforeUnmount(() => {
+  if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
+  if (streamWorkspaceId.value) taskStore.unsubscribeWorkspaceSessions(streamWorkspaceId.value)
+})
 
 watch(
   [() => routeTargetId.value, () => task.value?.messages.length, () => task.value?.status, () => sessionThread.value?.messages.length],

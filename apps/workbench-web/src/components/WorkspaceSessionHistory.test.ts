@@ -187,6 +187,48 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     expect(wrapper.find('.session-history__toolbar select').exists()).toBe(false)
   })
 
+  it('silently reloads the list when the workspace session stream reports new activity', async () => {
+    class FakeSessionStream {
+      static instances: FakeSessionStream[] = []
+      readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
+      closed = false
+      constructor(readonly url: string) { FakeSessionStream.instances.push(this) }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
+      }
+      close() { this.closed = true }
+      emit(type: string, payload: unknown) {
+        this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
+      }
+    }
+    vi.stubGlobal('EventSource', FakeSessionStream)
+    vi.mocked(workbenchApi.listWorkspaceSessions)
+      .mockResolvedValueOnce(page([session({ sessionId: 's-1' })]))
+      .mockResolvedValueOnce(page([
+        session({ sessionId: 's-2', title: '新发起的讨论' }),
+        session({ sessionId: 's-1' }),
+      ]))
+    const wrapper = mountHistory()
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="session-history-row"]')).toHaveLength(1)
+    expect(FakeSessionStream.instances[0]?.url).toContain('/workspaces/ws-team/session-events')
+
+    // 其他成员发消息/新建会话 → 服务端推 session.updated → 列表防抖后静默重取。
+    FakeSessionStream.instances[0]?.emit('session.updated', {
+      session_id: 's-2',
+      activity_at: '2026-09-12T08:01:00.000Z',
+    })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await flushPromises()
+
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(2)
+    const rows = wrapper.findAll('[data-testid="session-history-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.text()).toContain('新发起的讨论')
+    vi.unstubAllGlobals()
+  })
+
   it('keeps a short time beside the full time so ≤520px can drop to the short format', async () => {
     mockSessionPages(() => page([session({ lastActiveAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString() })]))
     const wrapper = mountHistory()

@@ -5,6 +5,7 @@ import { Search } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
+import { useTaskStore } from '@/stores/tasks'
 import type { WorkspaceSessionSummary } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 import { formatActivityTime, formatActivityTimeShort } from '@/utils/activity-time'
@@ -52,6 +53,7 @@ const runStatusLabels: Record<string, string> = {
 }
 
 const router = useRouter()
+const taskStore = useTaskStore()
 
 const items = ref<WorkspaceSessionSummary[]>([])
 const nextCursor = ref<string | null>(null)
@@ -62,6 +64,7 @@ const loadingMore = ref(false)
 const initialized = ref(false)
 const failed = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+let liveRefreshTimer: ReturnType<typeof setTimeout> | undefined
 
 const searchedTitle = computed(() => appliedQuery.value)
 /**
@@ -85,7 +88,7 @@ async function fetchPage(cursor?: string) {
 /** 递增请求令牌：后发请求覆盖先发结果，避免旧响应覆盖新筛选。 */
 let loadToken = 0
 
-async function load() {
+async function load(silent = false) {
   const token = ++loadToken
   loading.value = true
   try {
@@ -95,8 +98,9 @@ async function load() {
     nextCursor.value = page.nextCursor
     failed.value = false
   } catch (error) {
-    if (token !== loadToken) return
+    if (token !== loadToken || silent) return
     // 保留输入与已加载内容（design §3.3）；首屏失败时给出行内重试。
+    // silent（SSE 触发的后台刷新）失败不打断用户，保留旧列表等待下一事件。
     failed.value = true
     notifyActionFailure(
       '加载历史对话',
@@ -184,17 +188,36 @@ watch(keyword, (value) => {
   if (value.length === 0) applySearchNow()
 })
 
-watch(() => props.workspaceId, () => {
+watch(() => props.workspaceId, (workspaceId, previous) => {
+  if (previous) taskStore.unsubscribeWorkspaceSessions(previous)
+  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId)
   reset()
   void load()
 })
 
+/**
+ * TW-10 实时更新：订阅本空间的会话活动流——其他成员发消息、@ 触发或
+ * 会话删除时服务端推标记，防抖后静默重取第一页（保留当前筛选词）。
+ * 后台刷新失败保留旧列表，不打扰用户。
+ */
+watch(
+  () => taskStore.sessionActivity,
+  () => {
+    if (!initialized.value) return
+    if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
+    liveRefreshTimer = setTimeout(() => void load(true), 300)
+  },
+)
+
 onMounted(() => {
+  taskStore.subscribeWorkspaceSessions(props.workspaceId)
   void load()
 })
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
+  taskStore.unsubscribeWorkspaceSessions(props.workspaceId)
   // 卸载后丢弃在途响应。
   loadToken += 1
 })

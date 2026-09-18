@@ -17,6 +17,10 @@ interface RuntimeEvent {
 }
 
 const streams = new Map<string, EventSource>()
+/** 空间级会话活动流按 workspaceId 共享一条连接，多个视图（线程/历史列表）引用计数复用。 */
+const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
+/** 会话活动标记的单调序号：保证每个事件产生唯一标记字符串。 */
+let sessionEventSeq = 0
 const runtimeEventTypes = [
   'run.queued', 'run.started', 'assistant.delta', 'assistant.completed',
   'approval.required', 'approval.resolved', 'run.cancel_requested',
@@ -36,6 +40,11 @@ export const useTaskStore = defineStore('tasks', () => {
   function requireGeneration(value: number) {
     if (value !== generation) throw new Error('账号已切换，请重新操作')
   }
+  /**
+   * TW-10 实时更新：sessionId → 服务端推送的活动标记（`updated:`/`archived:` 前缀）。
+   * 视图监听自己关心的 sessionId，标记一变即重新拉取线程/Run/列表。
+   */
+  const sessionActivity = ref<Record<string, string>>({})
 
   const activeTasks = computed(() =>
     tasks.value.filter((task) => ['queued', 'running', 'awaiting_approval'].includes(task.status)),
@@ -247,6 +256,47 @@ export const useTaskStore = defineStore('tasks', () => {
     }
   }
 
+  /**
+   * TW-10：订阅团队空间的会话活动流。同一空间多个消费者共享一条连接，
+   * 引用计数归零才真正关闭。收到事件只更新 sessionActivity 标记，
+   * 由各视图决定刷新哪个目标（保持读路径与鉴权逻辑单一）。
+   */
+  function subscribeWorkspaceSessions(workspaceId: string) {
+    // 无 SSE 能力的环境（旧浏览器/测试环境）优雅降级为无实时更新，页面仍可手动刷新。
+    if (typeof EventSource === 'undefined') return
+    const entry = sessionStreams.get(workspaceId)
+    if (entry) {
+      entry.refs += 1
+      return
+    }
+    const source = new EventSource(workbenchApi.workspaceSessionEventsUrl(workspaceId), { withCredentials: true })
+    const bump = (sessionId: string, kind: string) => {
+      // 标记必须对每个事件唯一：同一毫秒的连续事件若产生相同字符串，
+      // 视图的 watch 不会触发、刷新会被静默丢弃。
+      sessionEventSeq += 1
+      sessionActivity.value = { ...sessionActivity.value, [sessionId]: `${kind}:${sessionEventSeq}` }
+    }
+    source.addEventListener('session.updated', (message) => {
+      const event = JSON.parse((message as MessageEvent<string>).data) as { session_id: string; activity_at: string }
+      bump(event.session_id, `updated:${event.activity_at}`)
+    })
+    source.addEventListener('session.archived', (message) => {
+      const event = JSON.parse((message as MessageEvent<string>).data) as { session_id: string }
+      bump(event.session_id, 'archived')
+    })
+    sessionStreams.set(workspaceId, { source, refs: 1 })
+  }
+
+  function unsubscribeWorkspaceSessions(workspaceId: string) {
+    const entry = sessionStreams.get(workspaceId)
+    if (!entry) return
+    entry.refs -= 1
+    if (entry.refs <= 0) {
+      entry.source.close()
+      sessionStreams.delete(workspaceId)
+    }
+  }
+
   async function applyEvent(event: RuntimeEvent) {
     const current = generation
     const task = getTask(event.run_id)
@@ -329,10 +379,10 @@ export const useTaskStore = defineStore('tasks', () => {
   }
 
   return {
-    tasks, loading, initialized, activeTasks, recentTasks, reset, load, getTask, loadTask,
+    tasks, loading, initialized, activeTasks, recentTasks, sessionActivity, reset, load, getTask, loadTask,
     createTask, sendMessage, postSessionMessage, loadSessionThread, uploadSessionFiles,
     startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
-    upsert, subscribe,
+    upsert, subscribe, subscribeWorkspaceSessions, unsubscribeWorkspaceSessions,
   }
 })
 
