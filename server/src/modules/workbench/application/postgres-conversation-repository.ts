@@ -24,6 +24,17 @@ interface SessionRow {
   createdAt: Date
 }
 
+type WorkbenchSession = Omit<SessionRow, 'createdAt'> & { createdAt: string }
+interface AdminSession {
+  id: string
+  title: string
+  createdAt: string
+  workspaceId: null
+  agentVersionId: null
+  selectedSkillVersionId: null
+  selectedSkillReference: null
+}
+
 interface TaskRow {
   id: string
   sessionId: string
@@ -186,7 +197,15 @@ export class PostgresConversationRepository {
     return row ? { ...row, createdAt: row.createdAt.toISOString() } : null
   }
 
+  async requireSession(sessionId: string, userId: string, audience?: 'workbench'): Promise<WorkbenchSession>
+  async requireSession(sessionId: string, userId: string, audience: 'admin'): Promise<AdminSession>
+  async requireSession(sessionId: string, userId: string, audience: 'workbench' | 'admin'): Promise<WorkbenchSession | AdminSession>
   async requireSession(sessionId: string, userId: string, audience: 'workbench' | 'admin' = 'workbench') {
+    // Admin conversations are owned by one administrator and deliberately have
+    // no Workspace/Agent binding. Do not run the workbench (TW-10) space query.
+    // The caller still checks the operation's current admin role before execution.
+    if (audience === 'admin') return this.requireAdminSession(sessionId, userId)
+
     const [row] = await this.database<SessionRow[]>`
       select s.id, s.workspace_id as "workspaceId", s.agent_version_id as "agentVersionId",
              w.workspace_type as "workspaceType", w.status as "workspaceStatus",
@@ -203,6 +222,21 @@ export class PostgresConversationRepository {
     `
     if (!row) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
     return { ...row, createdAt: row.createdAt.toISOString() }
+  }
+
+  private async requireAdminSession(sessionId: string, userId: string): Promise<AdminSession> {
+    const [row] = await this.database<{ id: string; title: string; createdAt: Date }[]>`
+      select s.id, s.title, s.created_at as "createdAt"
+        from sessions s
+        join users u on u.tenant_id = s.tenant_id and u.id = s.created_by and u.status = 'active'
+        join tenants t on t.id = s.tenant_id and t.status = 'active'
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+         and s.created_by = ${userId} and s.audience = 'admin' and s.status = 'active'
+         and s.workspace_id is null and s.agent_version_id is null
+    `
+    if (!row) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
+    return { ...row, createdAt: row.createdAt.toISOString(), workspaceId: null,
+      agentVersionId: null, selectedSkillVersionId: null, selectedSkillReference: null }
   }
 
   async archiveSession(sessionId: string, userId: string) {

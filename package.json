@@ -68,7 +68,8 @@
     "test:skill-install": "pnpm --filter @dsh-work/server test:skill-install",
     "test:skill-install:integration": "pnpm --filter @dsh-work/server test:skill-install:integration",
     "test:review:unit": "pnpm --filter @dsh-work/server test:review:unit",
-    "test:review:integration": "pnpm --filter @dsh-work/server test:review:integration"
+    "test:review:integration": "pnpm --filter @dsh-work/server test:review:integration",
+    "test:review:batch02:integration": "pnpm --filter @dsh-work/server test:review:batch02:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
