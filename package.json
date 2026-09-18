@@ -66,7 +66,9 @@
     "test:m5:usage:integration": "pnpm --filter @dsh-work/server test:m5:usage:integration",
     "bench:team-workspace-statistics": "node --experimental-strip-types --env-file-if-exists=.env scripts/bench/team-workspace-statistics.ts",
     "test:skill-install": "pnpm --filter @dsh-work/server test:skill-install",
-    "test:skill-install:integration": "pnpm --filter @dsh-work/server test:skill-install:integration"
+    "test:skill-install:integration": "pnpm --filter @dsh-work/server test:skill-install:integration",
+    "test:review:unit": "pnpm --filter @dsh-work/server test:review:unit",
+    "test:review:integration": "pnpm --filter @dsh-work/server test:review:integration"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

@@ -57,6 +57,14 @@ jobs:
       - name: Run quality gate
         run: pnpm ci:check
 
+      - name: Run review unit regression
+        run: pnpm test:review:unit
+
+      - name: Run review PostgreSQL regression
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:review:integration
+
       - name: Run PostgreSQL integration tests
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
