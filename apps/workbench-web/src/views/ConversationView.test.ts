@@ -1,7 +1,7 @@
 import ElementPlus, { ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
@@ -30,10 +30,14 @@ const api = vi.hoisted(() => ({
   uploadSessionFile: vi.fn(),
   deleteSessionFile: vi.fn(),
   runEventsUrl: vi.fn((runId: string) => `/events/${runId}`),
+  workspaceSessionEventsUrl: vi.fn((workspaceId: string) => `/session-events/${workspaceId}`),
 }))
 
 vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => route }))
 vi.mock('@/api/client', () => ({ workbenchApi: api }))
+
+// 视图 onBeforeUnmount 会释放空间会话流订阅；不自动卸载会让模块级引用计数跨用例泄漏。
+enableAutoUnmount(afterEach)
 
 /** 非终态 Run 会触发 SSE 订阅；happy-dom 没有 EventSource，用最小桩替代。 */
 class FakeEventSource {
@@ -542,5 +546,74 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     api.getSessionThread.mockResolvedValue(sessionThread())
     await mountView({ item: null })
     expect(router.replace).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-001')
+  })
+
+  it('refreshes the shared thread when the workspace session stream reports new activity', async () => {
+    class FakeSessionStream {
+      static instances: FakeSessionStream[] = []
+      readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
+      closed = false
+      constructor(readonly url: string) { FakeSessionStream.instances.push(this) }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
+      }
+      close() { this.closed = true }
+      emit(type: string, payload: unknown) {
+        this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
+      }
+    }
+    vi.stubGlobal('EventSource', FakeSessionStream)
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    const { wrapper } = await mountView({ item: null })
+    expect(api.getSessionThread).toHaveBeenCalledTimes(1)
+    expect(FakeSessionStream.instances[0]?.url).toBe('/session-events/ws-team')
+
+    // 其他成员发表讨论消息 → 服务端推 session.updated → 线程自动重取。
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      messages: [{
+        id: 'message-live-1',
+        role: 'user',
+        content: '其他成员刚发的讨论',
+        createdAt: '刚刚',
+        runId: null,
+        senderId: 'U00002',
+        senderName: '周航',
+        runRequesterId: null,
+        runRequesterName: null,
+        agentName: null,
+      }],
+    }))
+    FakeSessionStream.instances[0]?.emit('session.updated', {
+      session_id: 'session-001',
+      activity_at: '2026-09-12T08:01:00.000Z',
+    })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await flushPromises()
+
+    expect(api.getSessionThread).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('其他成员刚发的讨论')
+    vi.unstubAllGlobals()
+  })
+
+  it('does not subscribe to the workspace stream for personal sessions', async () => {
+    class NoopSessionStream {
+      static instances: NoopSessionStream[] = []
+      constructor(readonly url: string) { NoopSessionStream.instances.push(this) }
+      addEventListener() { return undefined }
+      close() { return undefined }
+    }
+    vi.stubGlobal('EventSource', NoopSessionStream)
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-personal', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      workspaceId: 'ws-personal',
+      workspaceType: 'personal',
+      createdBy: 'U00001',
+    }))
+    await mountView({ item: null })
+    expect(NoopSessionStream.instances).toHaveLength(0)
+    vi.unstubAllGlobals()
   })
 })

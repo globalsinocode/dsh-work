@@ -29,7 +29,7 @@ describe('D12 personal default and explicit team origin',()=>{
    wrapper.unmount()
  })
  it('team origin pins its own workspace, never a child payload workspace',async()=>{
-   const {wrapper,create}=await setup({workspaceId:'team-one',workspaceName:'团队一',workspaceLocked:true,requiresAgentMember:true,presetAgentMember:{id:'member-agent',name:'Agent',status:'available'},startableAgentMemberIds:['member-agent']})
+   const {wrapper,create}=await setup({workspaceId:'team-one',workspaceName:'团队一',workspaceLocked:true,requiresAgentMember:true,mentionOptions:[{id:'member-agent',name:'Agent'}],startableAgentMemberIds:['member-agent']})
    wrapper.findComponent(TaskComposer).vm.$emit('submit',{prompt:'团队任务',files:[],workspaceId:'team-forged'});await flushPromises()
    expect(create.mock.calls[0]?.[2]).toBe('team-one');expect(create.mock.calls[0]?.[7]).toBe('member-agent')
    wrapper.unmount()

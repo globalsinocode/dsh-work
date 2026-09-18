@@ -84,7 +84,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 
 按功能维护脚本，不再随里程碑新增 `verify-mN` 文件。发布与部署命令仍由 [部署手册](../release/mac-mini-deployment-runbook.md) 统一说明。`render-endpoint-compose.sh` 负责加载环境并验证 Compose，`.mjs` 负责生成配置；证书签发统一使用 `issue-intranet-certificate.sh`。
 
-PostgreSQL 集成测试必须显式指定专用可丢弃测试库，禁止使用开发业务库或生产库：
+PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发业务库或生产库。测试脚本统一经 `--env-file-if-exists=../.env` 读取 `.env` 中的 `DSH_WORK_TEST_DATABASE_URL`（本地指向 `dsh-work-postgres-local` 的 `postgres` 维护库即可，各套件自建一次性库）；也可在命令行显式覆盖：
 
 ```bash
 DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:sso:integration
