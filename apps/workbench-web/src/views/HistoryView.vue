@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useTaskStore } from '@/stores/tasks'
 import { usePagedQuery } from '@/composables/usePagedQuery'
 import type { UserSessionSummary } from '@/types/domain'
+import { conversationRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
 const route = useRoute()
 const router = useRouter()
@@ -22,7 +23,7 @@ const { items, nextCursor, loading, error, reload, loadMore } = usePagedQuery(
 function search() { void router.replace({ query: { ...route.query, q: keyword.value || undefined } }) }
 function changeScope(event: Event) { void router.replace({ query: { ...route.query, scope: (event.target as HTMLSelectElement).value } }) }
 async function remove(item: UserSessionSummary) {
-  try { await ElMessageBox.confirm('从历史列表移除该对话；保存的文件和成果仍保留。这不是物理删除，当前不提供恢复。', '移除对话？', { confirmButtonText: '移除对话', cancelButtonText: '取消' }) }
+  try { await ElMessageBox.confirm(conversationRemovalNotice, '移除对话？', { confirmButtonText: '移除对话', cancelButtonText: '取消' }) }
   catch { return }
   try { await tasks.deleteConversation(item.sessionId); await reload() }
   catch(cause) { notifyActionFailure('移除对话', item.title, cause) }

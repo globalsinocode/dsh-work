@@ -860,7 +860,8 @@
           "409": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "description": "逻辑移除：保留 archived 响应字段，增加 removedFromHistory=true、physicalDeletion=false。停止出现在历史/最近列表，不物理删除消息/运行/文件/成果；不提供恢复。幂等但仍复核当前作者和空间访问。"
       },
       "get": {
         "operationId": "getSessionForUser",
@@ -2341,6 +2342,23 @@
       "delete": {
         "operationId": "removePersonalFile",
         "summary": "本人逻辑移除资源：停止下载/新引用，保留历史引用、字节和版本，幂等",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/content-policy": {
+      "get": {
+        "operationId": "getContentLifecyclePolicy",
+        "summary": "当前逻辑移除和保留策略，不承诺物理删除时限",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

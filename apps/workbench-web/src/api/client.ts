@@ -120,6 +120,7 @@ async function parseApiError(response: Response, fallback: string) {
 }
 
 export const workbenchApi = {
+  getContentPolicy: () => request<{ version: string; physicalDeletion: false; retentionDays: null; notice: string }>('/content-policy'),
   listPersonalFiles: (query: PersonalFileQuery = {}) => {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))

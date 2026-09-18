@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
+import { personalContentPolicy } from '../../modules/workbench/application/content-lifecycle-policy.ts'
 import type { WorkbenchQueryService } from '../../modules/workbench/application/workbench-query-service.ts'
 import { envelope, requireRequestIdentity, type RouteContext, type Router } from '../router.ts'
 import { writeDownload } from './content-routes.ts'
@@ -7,6 +8,7 @@ import { writeDownload } from './content-routes.ts'
 const basePath = '/api/workbench/v1'
 
 export function registerWorkbenchRoutes(router: Router, service: WorkbenchQueryService) {
+  router.get(`${basePath}/content-policy`, () => envelope('workbench', personalContentPolicy))
   router.get(`${basePath}/session`, async (_request, context) => envelope(
     'workbench',
     context.identity

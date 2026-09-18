@@ -501,7 +501,7 @@ watch(
       class="conversation-state"
       icon="warning"
       title="未找到对话"
-      sub-title="该对话可能已被删除，或当前角色无权访问。"
+      sub-title="该对话可能已从历史中移除，或当前账号无权访问。文件和成果按保留策略独立管理。"
     >
       <template #extra>
         <el-button

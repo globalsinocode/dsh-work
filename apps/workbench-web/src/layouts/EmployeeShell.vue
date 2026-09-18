@@ -25,6 +25,7 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { TaskRun } from '@/types/domain'
 import { isTaskInArchivedWorkspace } from '@/utils/archived-workspaces'
+import { conversationRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
 
 const route = useRoute()
@@ -100,16 +101,16 @@ async function deleteConversation(task: TaskRun) {
     return
   }
   if (['queued', 'running', 'awaiting_approval'].includes(task.status)) {
-    ElMessage.warning('请先停止当前运行，再删除对话')
+    ElMessage.warning('请先停止当前运行，再移除对话')
     return
   }
 
   try {
     await ElMessageBox.confirm(
-      '删除后，对话将从工作台和最近对话中移除，已发布成果仍保留在成果库。该对话无法在工作台恢复。',
-      `删除对话“${task.title}”？`,
+      conversationRemovalNotice,
+      `移除对话“${task.title}”？`,
       {
-        confirmButtonText: '删除对话',
+        confirmButtonText: '移除对话',
         cancelButtonText: '取消',
         type: 'warning',
         confirmButtonClass: 'el-button--danger',
@@ -124,10 +125,10 @@ async function deleteConversation(task: TaskRun) {
   deletingSessionId.value = task.sessionId
   try {
     await taskStore.deleteConversation(task.sessionId)
-    ElMessage.success(`已删除对话“${task.title}”`)
+    ElMessage.success(`已移除对话“${task.title}”`)
     if (deletingCurrentConversation) await router.replace('/workbench')
   } catch (error) {
-    notifyActionFailure('删除对话', `对话“${task.title}”`, error, '刷新对话状态；若仍在执行，请先停止后再删除。')
+    notifyActionFailure('移除对话', `对话“${task.title}”`, error, '刷新对话状态；若仍在执行，请先停止后再移除。')
   } finally {
     deletingSessionId.value = undefined
   }
@@ -235,7 +236,7 @@ onMounted(() => {
                   command="delete"
                 >
                   <el-icon><DeleteIcon /></el-icon>
-                  删除对话
+                  移除对话
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>

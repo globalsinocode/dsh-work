@@ -411,12 +411,13 @@ export class PostgresContentService {
       createdAt: Date
       runId: string
       workspaceId: string
+      sourceSessionStatus: string
       workspaceType: string | null
     }[]>`
       select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt",
              av.source_run_id as "runId", a.workspace_id as "workspaceId",
-             w.workspace_type as "workspaceType"
+             w.workspace_type as "workspaceType", s.status as "sourceSessionStatus"
         from artifacts a
         join artifact_versions av on av.tenant_id = a.tenant_id and av.artifact_id = a.id
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -466,7 +467,7 @@ export class PostgresContentService {
       createdAt: formatDateTime(row.createdAt),
       runId: row.runId,
       workspaceId: row.workspaceId,
-      summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
+      summary: row.sourceSessionStatus === 'archived' ? '原对话已从历史中移除；成果独立保留，下载仍需当前授权。' : '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
     }))
   }
 

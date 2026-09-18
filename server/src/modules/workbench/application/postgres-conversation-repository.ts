@@ -258,16 +258,32 @@ export class PostgresConversationRepository {
 
   async archiveSession(sessionId: string, userId: string) {
     return this.database.begin(async (transaction) => {
-      const [session] = await transaction<{ id: string; title: string; workspaceId: string }[]>`
-        select id, title, workspace_id as "workspaceId" from sessions
+      // Same lock order as Run creation: Workspace -> Session -> Run. A member
+      // removal/archive cannot cross this operation after a stale UI check.
+      const [workspace] = await transaction<{ id: string; status: string }[]>`
+        select w.id, w.status from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+         where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+           and s.created_by = ${userId} and s.audience = 'workbench'
+         for update of w
+      `
+      if (!workspace) throw authorizationDenied('Session 不存在或不可访问')
+      await this.workspaces.resolveAccessibleWorkspace(workspace.id, userId)
+      const [identity] = await transaction`select u.id from users u join tenants t on t.id = u.tenant_id
+        where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active' and t.status = 'active'`
+      if (!identity) throw authorizationDenied('Session 不存在或不可访问')
+      const [session] = await transaction<{ id: string; title: string; workspaceId: string; status: string }[]>`
+        select id, title, workspace_id as "workspaceId", status from sessions
          where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${userId}
-           and status = 'active'
+           and audience = 'workbench' and status in ('active', 'archived')
          for update
       `
       if (!session) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
       // 删除会话属执行轨（3-T1 决策）：归档是只读保留，删除会销毁要保留的历史内容，
       // 因此归档空间拒绝（活跃团队 + 当前成员，个人空间不受影响）。
       await this.requireWritableWorkspace(session.workspaceId)
+      if (session.status === 'archived') return { sessionId: session.id, title: session.title,
+        archived: true as const, removedFromHistory: true as const, physicalDeletion: false as const }
 
       const [activeRun] = await transaction<{ id: string }[]>`
         select id from runs
@@ -281,7 +297,7 @@ export class PostgresConversationRepository {
         update sessions set status = 'archived', last_active_at = now()
          where tenant_id = ${tenantId} and id = ${sessionId}
       `
-      return { sessionId: session.id, title: session.title, archived: true as const }
+      return { sessionId: session.id, title: session.title, archived: true as const, removedFromHistory: true as const, physicalDeletion: false as const }
     })
   }
 

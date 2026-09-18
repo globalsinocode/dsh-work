@@ -6,6 +6,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { usePagedQuery } from '@/composables/usePagedQuery'
 import type { PersonalFile } from '@/types/domain'
+import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
 const query = computed(() => typeof route.query.q === 'string' ? route.query.q : '')
@@ -36,7 +37,7 @@ async function download(file: PersonalFile) {
   finally { busy.value = '' }
 }
 async function remove(file: PersonalFile) {
-  try { await ElMessageBox.confirm('移除后不再允许下载或用于新任务。历史任务引用和底层文件按保留策略保留，不作物理删除。', '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }
+  try { await ElMessageBox.confirm(fileRemovalNotice, '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }
   catch { return }
   busy.value = file.id
   try { await workbenchApi.removePersonalFile(file.id); await reload() }

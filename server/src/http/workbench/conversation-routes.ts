@@ -191,11 +191,11 @@ export function registerConversationRoutes(
     const archived = await conversations.archiveSession(sessionId, userId)
     await operations?.appendAudit(
       userId,
-      'session.delete',
+      'session.archive',
       sessionId,
       'success',
       `trace-session-${crypto.randomUUID()}`,
-      '员工删除对话',
+      '员工从历史中移除对话；文件独立保留，不作物理删除',
       'session',
     ).catch((error: unknown) => console.error('session deletion audit failed', error))
     return envelope('workbench', archived, 'postgres')

@@ -1,3 +1,4 @@
+import { personalContentPolicy } from '../../modules/workbench/application/content-lifecycle-policy.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
@@ -36,6 +37,11 @@ export function registerContentRoutes(
   authorization?: PostgresAuthorizationService,
   agentMembers?: PostgresWorkspaceAgentMemberService,
 ) {
+  router.get(`${basePath}/content-policy`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    return envelope('workbench', personalContentPolicy, 'postgres')
+  })
   router.get(`${basePath}/files`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const source = context.url.searchParams.get('source') ?? 'all'

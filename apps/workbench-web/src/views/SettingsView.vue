@@ -1,9 +1,18 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { workbenchApi } from '@/api/client'
 import { User } from '@element-plus/icons-vue'
 
 import { roleLabels, useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const policy = ref('')
+const policyError = ref('')
+async function loadPolicy() {
+  try { policy.value = (await workbenchApi.getContentPolicy()).notice; policyError.value = '' }
+  catch { policyError.value = '暂时无法加载内容保留规则，请重试。' }
+}
+onMounted(loadPolicy)
 </script>
 
 <template>
@@ -30,11 +39,18 @@ const authStore = useAuthStore()
         </dl>
       </section>
 
+      <section class="panel settings-section retention-notice">
+        <h2>内容保留与账号停用</h2>
+        <p v-if="policy">{{ policy }}</p>
+        <p v-if="policyError" role="alert">{{ policyError }} <el-button @click="loadPolicy">重试</el-button></p>
+        <p>默认仅本人在员工工作台访问个人内容；企业授权审计、运维和备份按公司规则执行，不因个人入口而豁免。</p>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
+.retention-notice { margin-top: 20px; padding: 20px; }
 .settings-layout {
   display: block;
 }
