@@ -87,9 +87,28 @@ async function fetchPage(cursor?: string) {
 
 /** 递增请求令牌：后发请求覆盖先发结果，避免旧响应覆盖新筛选。 */
 let loadToken = 0
+/**
+ * 会话列表「状态为最新」的水位线（二审残留）：每次重取列表时刷新。
+ * 订阅 SSE 时作为 since 传给服务端——首拉到建连之间归档的会话由
+ * 服务端在基线轮补推 session.archived。
+ */
+const syncedAt = ref<string>(new Date().toISOString())
+
+/**
+ * 在途恢复请求 + 待刷新标记（五审）：持续截断会让服务端周期性发 resync，
+ * 每次 resync 若都作废在途请求并另起新请求，正常但稍慢的响应永远无法被
+ * 应用。同一上下文的重复恢复只标记 pending，当前请求结束后补一次；
+ * 用户发起的筛选/空间切换仍走 loadToken 直接作废旧请求。
+ */
+let pendingSilentRefresh = false
 
 async function load(silent = false) {
+  if (silent && loading.value) {
+    pendingSilentRefresh = true
+    return
+  }
   const token = ++loadToken
+  syncedAt.value = new Date().toISOString()
   loading.value = true
   try {
     const page = await fetchPage()
@@ -97,11 +116,15 @@ async function load(silent = false) {
     items.value = page.items
     nextCursor.value = page.nextCursor
     failed.value = false
+    initialized.value = true
   } catch (error) {
-    if (token !== loadToken || silent) return
+    if (token !== loadToken) return
     // 保留输入与已加载内容（design §3.3）；首屏失败时给出行内重试。
-    // silent（SSE 触发的后台刷新）失败不打断用户，保留旧列表等待下一事件。
+    // silent（SSE 触发的后台刷新）只在已有成功快照时吞错——尚未建立任何
+    // 成功结果时，恢复失败必须显式可重试，不能伪装成「空间尚无对话」（五审）。
+    if (silent && initialized.value) return
     failed.value = true
+    initialized.value = true
     notifyActionFailure(
       '加载历史对话',
       `工作空间“${props.workspaceName || props.workspaceId}”`,
@@ -111,7 +134,10 @@ async function load(silent = false) {
   } finally {
     if (token === loadToken) {
       loading.value = false
-      initialized.value = true
+      if (pendingSilentRefresh) {
+        pendingSilentRefresh = false
+        void load(true)
+      }
     }
   }
 }
@@ -153,6 +179,7 @@ function reset() {
   keyword.value = ''
   initialized.value = false
   failed.value = false
+  pendingSilentRefresh = false
 }
 
 function openSession(item: WorkspaceSessionSummary) {
@@ -190,7 +217,7 @@ watch(keyword, (value) => {
 
 watch(() => props.workspaceId, (workspaceId, previous) => {
   if (previous) taskStore.unsubscribeWorkspaceSessions(previous)
-  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId)
+  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId, syncedAt.value)
   reset()
   void load()
 })
@@ -203,14 +230,16 @@ watch(() => props.workspaceId, (workspaceId, previous) => {
 watch(
   () => taskStore.sessionActivity,
   () => {
-    if (!initialized.value) return
+    // 不在 initialized 前跳过（四审）：服务端基线握手/截断 resync 可能先于
+    // 首屏响应到达——此时必须再发一次 load()，loadToken 会让旧的慢响应作废，
+    // 保证「旧请求不覆盖新状态」。
     if (liveRefreshTimer) clearTimeout(liveRefreshTimer)
     liveRefreshTimer = setTimeout(() => void load(true), 300)
   },
 )
 
 onMounted(() => {
-  taskStore.subscribeWorkspaceSessions(props.workspaceId)
+  taskStore.subscribeWorkspaceSessions(props.workspaceId, syncedAt.value)
   void load()
 })
 

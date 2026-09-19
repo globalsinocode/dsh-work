@@ -8,6 +8,7 @@ import {
   httpResult,
   readJsonBody,
   requireRequestIdentity,
+  routeValidationFailed,
   sessionAuthorizationContext,
   type Router,
 } from '../router.ts'
@@ -94,6 +95,6 @@ export function isAgentMemberPatchAction(value: unknown): value is AgentMemberPa
 }
 
 function parseAgentMemberAction(value: unknown): AgentMemberPatchAction {
-  if (!isAgentMemberPatchAction(value)) throw new Error(`无效的操作：${String(value)}`)
+  if (!isAgentMemberPatchAction(value)) throw routeValidationFailed(`无效的操作：${String(value)}`)
   return value
 }

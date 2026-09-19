@@ -6,7 +6,8 @@ import type {
   WorkspaceAgentCandidate,
 } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import {
   currentTeamAuthRevision,
@@ -229,7 +230,7 @@ export class PostgresWorkspaceAgentMemberService {
          for update
       `
       if (existing && existing.status !== 'removed') {
-        throw new Error('该 Agent 已是空间成员，不能重复加入')
+        throw workspaceStateConflict('该 Agent 已是空间成员，不能重复加入')
       }
       memberId = existing?.id ?? `wam-${randomUUID()}`
       if (existing) {
@@ -297,7 +298,7 @@ export class PostgresWorkspaceAgentMemberService {
     await this.assertTeamWorkspace(workspaceId)
     await this.requireActorRole(workspaceId, actorUserId, ['owner'])
     const member = await this.requireMemberState(workspaceId, memberId)
-    if (member.status === 'removed') throw new Error('Agent 成员已移出，不能重复移除')
+    if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重复移除')
 
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
@@ -312,8 +313,8 @@ export class PostgresWorkspaceAgentMemberService {
          where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${memberId}
          for update
       `
-      if (!locked) throw new Error('Agent 成员不存在')
-      if (locked.status === 'removed') throw new Error('Agent 成员已移出，不能重复移除')
+      if (!locked) throw agentMemberNotFound('Agent 成员不存在')
+      if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重复移除')
       await transaction`
         update workspace_agent_members
            set status = 'removed', updated_at = now()
@@ -380,7 +381,7 @@ export class PostgresWorkspaceAgentMemberService {
     actorUserId: string,
   ): Promise<AgentMemberRecord> {
     const member = await this.requireMemberState(workspaceId, memberId)
-    if (member.status === 'removed') throw new Error('Agent 成员已移出，不能停用')
+    if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能停用')
     if (member.status === 'disabled') return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
 
     await this.database.begin(async transaction => {
@@ -396,8 +397,8 @@ export class PostgresWorkspaceAgentMemberService {
          where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${memberId}
          for update
       `
-      if (!locked) throw new Error('Agent 成员不存在')
-      if (locked.status === 'removed') throw new Error('Agent 成员已移出，不能停用')
+      if (!locked) throw agentMemberNotFound('Agent 成员不存在')
+      if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能停用')
       if (locked.status === 'disabled') return
       await transaction`
         update workspace_agent_members
@@ -426,8 +427,8 @@ export class PostgresWorkspaceAgentMemberService {
     actorUserId: string,
   ): Promise<AgentMemberRecord> {
     const member = await this.requireMemberState(workspaceId, memberId)
-    if (member.status === 'removed') throw new Error('Agent 成员已移出，不能重新启用，请重新添加')
-    if (member.status === 'available') throw new Error('Agent 成员当前已是可用状态，不能重复启用')
+    if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重新启用，请重新添加')
+    if (member.status === 'available') throw workspaceStateConflict('Agent 成员当前已是可用状态，不能重复启用')
 
     const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(member.agentVersionId)
     const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
@@ -443,9 +444,9 @@ export class PostgresWorkspaceAgentMemberService {
          where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${memberId}
          for update
       `
-      if (!locked) throw new Error('Agent 成员不存在')
-      if (locked.status === 'removed') throw new Error('Agent 成员已移出，不能重新启用，请重新添加')
-      if (locked.status === 'available') throw new Error('Agent 成员当前已是可用状态，不能重复启用')
+      if (!locked) throw agentMemberNotFound('Agent 成员不存在')
+      if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重新启用，请重新添加')
+      if (locked.status === 'available') throw workspaceStateConflict('Agent 成员当前已是可用状态，不能重复启用')
       await transaction`
         update workspace_agent_members
            set status = 'available', updated_at = now()
@@ -472,8 +473,8 @@ export class PostgresWorkspaceAgentMemberService {
     actorUserId: string,
   ): Promise<AgentMemberRecord> {
     const member = await this.requireMemberState(workspaceId, memberId)
-    if (member.status === 'removed') throw new Error('Agent 成员已移出，不能升级，请重新添加')
-    if (member.status === 'disabled') throw new Error('Agent 成员已停用，不能升级，请先启用后再升级')
+    if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能升级，请重新添加')
+    if (member.status === 'disabled') throw workspaceStateConflict('Agent 成员已停用，不能升级，请先启用后再升级')
 
     const active = await this.requireActivePublishedVersion(member.agentId, false)
     if (active.versionId === member.agentVersionId) {
@@ -493,9 +494,9 @@ export class PostgresWorkspaceAgentMemberService {
          where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${memberId}
          for update
       `
-      if (!locked) throw new Error('Agent 成员不存在')
-      if (locked.status === 'removed') throw new Error('Agent 成员已移出，不能升级，请重新添加')
-      if (locked.status === 'disabled') throw new Error('Agent 成员已停用，不能升级，请先启用后再升级')
+      if (!locked) throw agentMemberNotFound('Agent 成员不存在')
+      if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能升级，请重新添加')
+      if (locked.status === 'disabled') throw workspaceStateConflict('Agent 成员已停用，不能升级，请先启用后再升级')
       await transaction`
         update workspace_agent_members
            set agent_version_id = ${active.versionId}, updated_at = now()
@@ -525,7 +526,7 @@ export class PostgresWorkspaceAgentMemberService {
     `
     // 与成员服务同口径：用「不可访问」避免用状态码区分归档与不存在。
     if (!workspace) throw authorizationDenied('工作空间不存在或不可访问')
-    if (workspace.type !== 'team') throw new Error('仅支持团队工作空间进行成员管理')
+    if (workspace.type !== 'team') throw requestInvalid('仅支持团队工作空间进行成员管理')
   }
 
   /**
@@ -544,16 +545,16 @@ export class PostgresWorkspaceAgentMemberService {
         from agents a
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
     `
-    if (!agentRow) throw new Error(`Agent 不存在：${agentId}`)
-    if (agentRow.agentStatus !== 'published') throw new Error('Agent 未发布，不能用于团队空间')
-    if (requireAllowJoin && !agentRow.allowJoin) throw new Error('Agent 未开放加入团队空间，不能添加为成员')
-    if (!agentRow.activeVersionId) throw new Error('Agent 没有已发布的活动版本，不能用于团队空间')
+    if (!agentRow) throw agentMemberNotFound(`Agent 不存在：${agentId}`)
+    if (agentRow.agentStatus !== 'published') throw workspaceStateConflict('Agent 未发布，不能用于团队空间')
+    if (requireAllowJoin && !agentRow.allowJoin) throw workspaceStateConflict('Agent 未开放加入团队空间，不能添加为成员')
+    if (!agentRow.activeVersionId) throw workspaceStateConflict('Agent 没有已发布的活动版本，不能用于团队空间')
     const [versionRow] = await this.database<{ id: string; version: string }[]>`
       select av.id, av.version from agent_versions av
        where av.tenant_id = ${tenantId} and av.id = ${agentRow.activeVersionId}
          and av.status = 'published'
     `
-    if (!versionRow) throw new Error('Agent 活动版本未发布，不能用于团队空间')
+    if (!versionRow) throw workspaceStateConflict('Agent 活动版本未发布，不能用于团队空间')
     return { agentId, versionId: versionRow.id, version: versionRow.version }
   }
 
@@ -586,7 +587,7 @@ export class PostgresWorkspaceAgentMemberService {
   ) {
     const role = await this.memberRoleOf(workspaceId, actorUserId, executor)
     if (!role) throw authorizationDenied('当前用户不是该空间的成员')
-    if (!allowedRoles.includes(role)) throw new Error('当前用户角色没有权限执行此操作')
+    if (!allowedRoles.includes(role)) throw authorizationDenied('当前用户角色没有权限执行此操作')
     return role
   }
 
@@ -596,7 +597,7 @@ export class PostgresWorkspaceAgentMemberService {
         from workspace_agent_members
        where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${memberId}
     `
-    if (!member) throw new Error('Agent 成员不存在')
+    if (!member) throw agentMemberNotFound('Agent 成员不存在')
     return member
   }
 
@@ -628,7 +629,7 @@ export class PostgresWorkspaceAgentMemberService {
          and wam.workspace_id = ${workspaceId}
          and wam.id = ${memberId}
     `
-    if (!row) throw new Error('Agent 成员不存在')
+    if (!row) throw agentMemberNotFound('Agent 成员不存在')
     return {
       id: row.id,
       agentId: row.agentId,
@@ -670,13 +671,25 @@ export class PostgresWorkspaceAgentMemberService {
  * workspace; grant source add/revoke sweeps rely on the same lock, so
  * concurrent joins, disables and removes cannot interleave into a grant
  * with zero active sources.
+ *
+ * 锁内必须复核空间仍活跃（评审 M1）：前置的 assertTeamWorkspace 在拿锁之前，
+ * 归档若在等待锁期间提交，旧快照会让成员变更写进已归档空间。
  */
 async function lockWorkspaceRow(transaction: DatabaseTransaction, workspaceId: string) {
-  await transaction`
-    select id from workspaces
+  const [workspace] = await transaction<{ status: string }[]>`
+    select status from workspaces
      where tenant_id = ${tenantId} and id = ${workspaceId}
      for update
   `
+  if (!workspace) throw authorizationDenied('工作空间不存在或不可访问')
+  if (workspace.status !== 'active') {
+    throw authorizationDenied('工作空间已归档，不能变更 Agent 成员')
+  }
+}
+
+/** Agent 成员域的类型化 404：不再依赖中文文案正则映射状态码（评审 L2）。 */
+function agentMemberNotFound(message: string): Error {
+  return Object.assign(new Error(message), { status: 404, code: 'agent_member_not_found' })
 }
 
 function allowedActionsFor(

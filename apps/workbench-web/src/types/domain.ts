@@ -107,6 +107,9 @@ export interface SessionThread {
     requesterName: string
     createdAt: string
   }>
+  /** 还有更早的消息页时 true；用 messagesCursor 作 before 翻页。 */
+  hasMoreMessages?: boolean
+  messagesCursor?: string | null
 }
 
 export interface TaskRun {
@@ -175,6 +178,14 @@ export interface WorkspaceFile {
   versionNo?: number
   /** 逻辑文件下的版本总数（含失败版本，用于追溯）。 */
   versionCount?: number
+  /** 展示版本的安全扫描状态（评审低1）。 */
+  scanStatus?: string
+  /** 展示版本的解析状态（评审低1）：与安全扫描 scanStatus 区分。 */
+  parseStatus?: string
+  /** 可下载（安全扫描通过）。 */
+  canDownload?: boolean
+  /** 可引用给 Agent（扫描通过且展示版本解析成功）。 */
+  canReference?: boolean
 }
 
 /** 版本解析状态（迁移 0025 的 CHECK 闭合集合，TW-07 契约）。 */

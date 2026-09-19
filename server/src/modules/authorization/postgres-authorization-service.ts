@@ -109,7 +109,7 @@ export class PostgresAuthorizationService {
    * cached grant is trusted for a short TTL so the 250ms SSE poll does not
    * re-run full authorization on every batch.
    */
-  private readonly teamReadAccessCache = new Map<string, { revision: number; checkedAt: number }>()
+  private readonly teamReadAccessCache = new Map<string, { revision: number; authFingerprint: string; checkedAt: number }>()
   private readonly automationDirectory: AutomationDirectoryBinding | null
 
   constructor(
@@ -409,25 +409,53 @@ export class PostgresAuthorizationService {
     // 修订号查询必须带状态轨：否则归档前预热的缓存条目会在归档后继续放行默认
     // （执行）轨调用，使「省略参数即保持执行语义」的默认安全声明失效
     // （符合性评审 P2-1，实测 defaultAfterArchive=resolved）。
-    const [row] = await this.database<{ revision: number }[]>`
-      select team_auth_revision as revision from workspaces
-       where tenant_id = ${tenantId} and id = ${workspaceId}
+    // 评审中5：缓存有效性不再只看「空间修订号未变 + TTL 未到期」——探测
+    // 查询同时返回用户/租户有效性与本地角色指纹（角色集合 + 各角色权限
+    // 内容哈希 + valid_until 判定）。全局权限撤销、角色到期、角色权限
+    // 编辑、租户停用都会改变指纹或使探测失败，不再被 TTL 放行。
+    const [row] = await this.database<{ revision: number; authFingerprint: string }[]>`
+      select w.team_auth_revision as revision,
+             md5(coalesce((
+               select string_agg(concat(ur.role_id, ':', r.id, ':', md5(coalesce(r.permissions::text, ''))), ','
+                                order by ur.role_id)
+                 from user_roles ur
+                 join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id and r.status = 'active'
+                where ur.tenant_id = ${tenantId} and ur.user_id = ${userId}
+                  and ur.source_key = 'local'
+                  and (ur.valid_until is null or ur.valid_until > now())
+             ), '')) as "authFingerprint"
+        from workspaces w
+       where w.tenant_id = ${tenantId} and w.id = ${workspaceId}
          and ${allowArchived
-           ? this.database.unsafe(`status in ('active', 'archived')`)
-           : this.database.unsafe(`status = 'active'`)}
+           ? this.database.unsafe(`w.status in ('active', 'archived')`)
+           : this.database.unsafe(`w.status = 'active'`)}
+         -- 评审 M5：成员变更会 bump team_auth_revision 即时失效缓存，但用户级
+         -- 停用不动修订号——把「用户仍活跃」并入探测条件，否则缓存条目最长
+         -- 会把已停用用户的读权限再放行一个 TTL。
+         and exists (
+           select 1 from users u
+            where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
+         )
+         and exists (
+           select 1 from tenants t
+            where t.id = ${tenantId} and t.status = 'active'
+         )
     `
-    if (!row) throw new Error('工作空间不存在或已归档')
+    if (!row) throw new Error('工作空间不存在、已归档或当前用户不可用')
     // Key includes tenant and the status track so a future multi-tenant
     // deployment cannot mix entries and, more importantly, an active-only
     // (execution) probe can never be satisfied by a cached archived-read
     // grant of the same viewer.
     const key = `${tenantId}:${workspaceId}:${userId}:${allowArchived ? 'archived' : 'active'}`
     const cached = this.teamReadAccessCache.get(key)
-    if (cached && cached.revision === row.revision && Date.now() - cached.checkedAt < (options.ttlMs ?? this.streamAccessTtlMs)) {
+    if (cached
+      && cached.revision === row.revision
+      && cached.authFingerprint === row.authFingerprint
+      && Date.now() - cached.checkedAt < (options.ttlMs ?? this.streamAccessTtlMs)) {
       return
     }
     await this.authorizeWorkbench({ userId, workspaceId, allowArchived })
-    this.setStreamAccessCache(key, { revision: row.revision, checkedAt: Date.now() }, options.ttlMs ?? this.streamAccessTtlMs)
+    this.setStreamAccessCache(key, { revision: row.revision, authFingerprint: row.authFingerprint, checkedAt: Date.now() }, options.ttlMs ?? this.streamAccessTtlMs)
   }
 
   /**
@@ -437,7 +465,7 @@ export class PostgresAuthorizationService {
    * map grows past a threshold and hard-cap the size as a backstop; the cache
    * is only a latency optimization, so dropping entries is always safe.
    */
-  private setStreamAccessCache(key: string, entry: { revision: number; checkedAt: number }, ttlMs: number) {
+  private setStreamAccessCache(key: string, entry: { revision: number; authFingerprint: string; checkedAt: number }, ttlMs: number) {
     if (this.teamReadAccessCache.size >= STREAM_ACCESS_CACHE_SWEEP_THRESHOLD) {
       const now = Date.now()
       for (const [existingKey, existing] of this.teamReadAccessCache) {

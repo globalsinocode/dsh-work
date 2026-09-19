@@ -40,6 +40,8 @@ const stopping = ref(false)
  */
 const sessionThread = ref<SessionThread | null>(null)
 const threadMissing = ref(false)
+/** 「加载更早」在途标记（评审中3）：线程只保留最近一页，更早历史按需前置合并。 */
+const loadingEarlierMessages = ref(false)
 /** Run/Session 目标解析在途标记：避免加载间隙闪现「未找到对话」。 */
 const targetLoading = ref(false)
 
@@ -318,6 +320,32 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
   }
 }
 
+/**
+ * 加载共享线程更早一页并前置合并（评审中3）：服务端只回最近一页，
+ * `messagesCursor` 是当前最旧一条消息的 id。合并期间若已切到别的会话，
+ * 迟到响应直接丢弃。
+ */
+async function loadEarlierMessages() {
+  const thread = sessionThread.value
+  if (!thread?.hasMoreMessages || !thread.messagesCursor || loadingEarlierMessages.value) return
+  loadingEarlierMessages.value = true
+  try {
+    const page = await taskStore.loadEarlierThreadMessages(thread.sessionId, thread.messagesCursor)
+    const current = sessionThread.value
+    if (!current || current.sessionId !== thread.sessionId) return
+    sessionThread.value = {
+      ...current,
+      messages: [...page.messages, ...current.messages],
+      hasMoreMessages: page.hasMoreMessages ?? false,
+      messagesCursor: page.messagesCursor ?? null,
+    }
+  } catch (error) {
+    notifyActionFailure('加载更早消息', `对话“${thread.title}”`, error, '稍后重试。')
+  } finally {
+    loadingEarlierMessages.value = false
+  }
+}
+
 async function initializeConversation() {
   await taskStore.load()
   const thread = await loadConversationTarget(routeTargetId.value)
@@ -353,8 +381,16 @@ async function reconcileConversationRoute() {
  * 总是先刷新 Run 详情：列表缓存没有 currentUserRole/最新归因（TW-10），
  * 直接用缓存会把可写成员误判成只读；详情失败才退回列表数据保底。
  */
+/**
+ * 当前目标「状态为最新」的水位线（二审残留）：每次开始解析目标时刷新。
+ * 订阅空间 SSE 时作为 since 传入——目标加载到流建立之间归档的会话由
+ * 服务端基线轮补推 session.archived。
+ */
+const contentSyncedAt = ref<string>(new Date().toISOString())
+
 async function loadConversationTarget(id: string): Promise<SessionThread | null> {
   targetLoading.value = true
+  contentSyncedAt.value = new Date().toISOString()
   try {
     const run = await taskStore.refreshRun(id).catch(() => null) ?? taskStore.getTask(id) ?? null
     return run ? null : await loadSessionMode(id)
@@ -447,7 +483,7 @@ watch(
 
 watch(streamWorkspaceId, (workspaceId, previous) => {
   if (previous && previous !== workspaceId) taskStore.unsubscribeWorkspaceSessions(previous)
-  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId)
+  if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId, contentSyncedAt.value)
 })
 
 onBeforeUnmount(() => {
@@ -488,6 +524,14 @@ watch(
         @scroll.passive="onConversationScroll"
       >
         <div class="conversation-thread">
+          <button
+            v-if="sessionThread.hasMoreMessages"
+            type="button"
+            data-testid="thread-load-earlier"
+            class="thread-earlier"
+            :disabled="loadingEarlierMessages"
+            @click="loadEarlierMessages"
+          >{{ loadingEarlierMessages ? '正在加载…' : '加载更早消息' }}</button>
           <p v-if="!sessionThread.messages.length" class="thread-empty">
             还没有讨论内容。直接发送即发表全员可见的讨论消息；@ Agent 成员则发起一次执行。
           </p>
@@ -1006,6 +1050,23 @@ watch(
   font-size: var(--dsh-font-size-caption);
   line-height: 1.8;
   text-align: center;
+}
+
+.thread-earlier {
+  display: block;
+  margin: 0 auto 18px;
+  padding: 5px 14px;
+  border: 1px solid #dfe4df;
+  border-radius: 999px;
+  color: #4f5751;
+  background: #f6f8f6;
+  font-size: var(--dsh-font-size-micro);
+  cursor: pointer;
+}
+
+.thread-earlier:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .session-run-list {

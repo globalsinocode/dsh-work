@@ -361,7 +361,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     })
     await flushPromises()
 
-    expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '收到，我下午核对')
+    expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '收到，我下午核对', expect.any(String))
     expect(api.startRun).not.toHaveBeenCalled()
   })
 

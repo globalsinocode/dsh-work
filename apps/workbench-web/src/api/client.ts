@@ -155,14 +155,14 @@ export const workbenchApi = {
     `/sessions/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
   ),
-  /** TW-10：团队会话共享线程（全员可读的消息流 + Run 列表 + 归因）。 */
-  getSessionThread: (sessionId: string) =>
-    request<SessionThread>(`/sessions/${encodeURIComponent(sessionId)}`),
-  /** TW-10：不产生 Run 的讨论消息（仅团队空间会话）。 */
-  postSessionMessage: (sessionId: string, content: string) =>
+  /** TW-10：团队会话共享线程（全员可读的消息流 + Run 列表 + 归因）。before 取更早一页。 */
+  getSessionThread: (sessionId: string, before?: string) =>
+    request<SessionThread>(`/sessions/${encodeURIComponent(sessionId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+  /** TW-10：不产生 Run 的讨论消息（仅团队空间会话）。幂等键由调用方提供。 */
+  postSessionMessage: (sessionId: string, content: string, idempotencyKey: string) =>
     request<{ messageId: string; sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, idempotencyKey }),
     }),
   /**
    * 在会话中发起一次执行。团队会话按消息绑定 Agent 成员（@ 触发），传
@@ -180,8 +180,8 @@ export const workbenchApi = {
    * TW-10 空间会话活动流（SSE）：空间内会话的消息、@ 触发与 Run 状态变化推
    * `session.updated`，会话删除推 `session.archived`。仅团队空间可订阅。
    */
-  workspaceSessionEventsUrl: (workspaceId: string) =>
-    `${baseUrl}/workspaces/${encodeURIComponent(workspaceId)}/session-events`,
+  workspaceSessionEventsUrl: (workspaceId: string, since?: string) =>
+    `${baseUrl}/workspaces/${encodeURIComponent(workspaceId)}/session-events${since ? `?since=${encodeURIComponent(since)}` : ''}`,
   /**
    * 空间列表（3-T2/3-T3）。`status` 由服务端按可见范围过滤：`all`（默认，与不带
    * 参数等价）返回个人空间与全部有权团队空间；`archived` 只返回仍是现任成员的

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { workbenchApi } from '@/api/client'
 import type { WorkspaceSessionPage, WorkspaceSessionSummary } from '@/types/domain'
@@ -33,6 +33,8 @@ function mockSessionPages(handler: () => WorkspaceSessionPage) {
   vi.mocked(workbenchApi.listWorkspaceSessions).mockImplementation(async () => handler())
 }
 
+const mountedWrappers: VueWrapper[] = []
+
 function mountHistory(options: {
   props?: Record<string, unknown>
 } = {}) {
@@ -46,12 +48,37 @@ function mountHistory(options: {
     },
     global: { plugins: [pinia, ElementPlus] },
   })
+  mountedWrappers.push(wrapper)
   return wrapper
+}
+
+/** 受控 SSE 替身：emit 直接向 store 注册的监听器投递事件。 */
+class FakeSessionStream {
+  static instances: FakeSessionStream[] = []
+  readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
+  closed = false
+  readyState = 1
+  constructor(readonly url: string) { FakeSessionStream.instances.push(this) }
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
+  }
+  close() { this.closed = true }
+  emit(type: string, payload: unknown) {
+    this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
+  }
 }
 
 describe('WorkspaceSessionHistory 团队历史对话视图', () => {
   beforeEach(() => {
+    FakeSessionStream.instances = []
     vi.spyOn(workbenchApi, 'listWorkspaceSessions').mockResolvedValue(page([]))
+  })
+
+  // module 级 sessionStreams 引用计数经 unmount→unsubscribe 释放；
+  // 放在 afterEach 保证断言失败时也清理，避免死流复用污染后续用例。
+  afterEach(() => {
+    while (mountedWrappers.length) mountedWrappers.pop()?.unmount()
+    vi.unstubAllGlobals()
   })
 
   it('loads the first page and renders one row per Session', async () => {
@@ -188,19 +215,6 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
   })
 
   it('silently reloads the list when the workspace session stream reports new activity', async () => {
-    class FakeSessionStream {
-      static instances: FakeSessionStream[] = []
-      readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
-      closed = false
-      constructor(readonly url: string) { FakeSessionStream.instances.push(this) }
-      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
-        this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
-      }
-      close() { this.closed = true }
-      emit(type: string, payload: unknown) {
-        this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
-      }
-    }
     vi.stubGlobal('EventSource', FakeSessionStream)
     vi.mocked(workbenchApi.listWorkspaceSessions)
       .mockResolvedValueOnce(page([session({ sessionId: 's-1' })]))
@@ -226,7 +240,6 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     const rows = wrapper.findAll('[data-testid="session-history-row"]')
     expect(rows).toHaveLength(2)
     expect(rows[0]?.text()).toContain('新发起的讨论')
-    vi.unstubAllGlobals()
   })
 
   it('keeps a short time beside the full time so ≤520px can drop to the short format', async () => {
@@ -240,5 +253,72 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     expect(short.text()).toMatch(/^(\d{2}:\d{2}|\d{2}-\d{2}|\d{4}-\d{2}-\d{2})$/)
     // 发起人字段保留在行内，由 ≤520px 的样式隐藏（design §2.2）。
     expect(wrapper.find('[data-testid="session-history-creator"]').exists()).toBe(true)
+  })
+
+  it('持续 resync 不作废在途恢复请求：慢响应最终能应用（五审恢复调度）', async () => {
+    // 五审反例：持续截断 → 周期性 resync → 每次都作废旧请求另起新请求，
+    // 慢响应永远无法应用。修复后：在途 silent 请求只标记 pending，结束后补一次。
+    vi.stubGlobal('EventSource', FakeSessionStream)
+    let resolveFirst: ((value: WorkspaceSessionPage) => void) | undefined
+    let resolveSecond: ((value: WorkspaceSessionPage) => void) | undefined
+    vi.mocked(workbenchApi.listWorkspaceSessions)
+      .mockImplementationOnce(() => new Promise<WorkspaceSessionPage>(resolve => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise<WorkspaceSessionPage>(resolve => { resolveSecond = resolve }))
+    const wrapper = mountHistory()
+    await flushPromises()
+
+    // 首屏请求在途：连发基线握手与截断通知（持续截断的多轮 resync）。
+    FakeSessionStream.instances[0]?.emit('session.resync', { reason: 'baseline' })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    FakeSessionStream.instances[0]?.emit('session.resync', { reason: 'truncated' })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    // 在途期间重发不另起请求——此时仍只有首屏 1 次调用。
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(1)
+
+    // 慢响应到达：先应用首屏结果，pending 补一次恢复请求（不是每轮都重发）。
+    resolveFirst?.(page([session({ sessionId: 's-0', title: '首屏慢响应' })]))
+    await flushPromises()
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(2)
+    // 补取请求在途期间，界面已呈现慢响应的结果。
+    expect(wrapper.findAll('[data-testid="session-history-row"]')[0]?.text()).toContain('首屏慢响应')
+
+    resolveSecond?.(page([session({ sessionId: 's-1' })]))
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="session-history-row"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="session-history-row"]')[0]?.text()).toContain('季度复盘')
+  })
+
+  it('恢复在途期间再有 resync：当前请求结束后补取一次，不因去重漏掉新变化', async () => {
+    vi.stubGlobal('EventSource', FakeSessionStream)
+    let resolveSecond: ((value: WorkspaceSessionPage) => void) | undefined
+    vi.mocked(workbenchApi.listWorkspaceSessions)
+      .mockResolvedValueOnce(page([session({ sessionId: 's-1' })]))
+      .mockImplementationOnce(() => new Promise<WorkspaceSessionPage>(resolve => { resolveSecond = resolve }))
+      .mockResolvedValue(page([session({ sessionId: 's-2', title: '恢复后的新状态' })]))
+    const wrapper = mountHistory()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="session-history-row"]')).toHaveLength(1)
+
+    // 第一次 resync：启动恢复请求（在途）。
+    FakeSessionStream.instances[0]?.emit('session.resync', { reason: 'baseline' })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await flushPromises()
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(2)
+
+    // 恢复请求在途期间修订号再次变化（又一次 resync）：只标记 pending。
+    FakeSessionStream.instances[0]?.emit('session.resync', { reason: 'truncated' })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await flushPromises()
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(2)
+
+    // 在途恢复请求完成：pending 触发一次补取，拿到最新状态。
+    resolveSecond?.(page([session({ sessionId: 's-1' })]))
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    await flushPromises()
+
+    expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledTimes(3)
+    expect(wrapper.findAll('[data-testid="session-history-row"]')[0]?.text()).toContain('恢复后的新状态')
   })
 })

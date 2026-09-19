@@ -192,6 +192,12 @@ export interface WorkspaceFile {
   versionNo?: number
   /** Total recorded versions under the logical file. */
   versionCount?: number
+  /** Scan/parse status of the displayed version (team summaries). */
+  scanStatus?: string
+  parseStatus?: string
+  /** Server-resolved capabilities; 评审低1：前端不得缺省放行引用。 */
+  canDownload?: boolean
+  canReference?: boolean
 }
 
 export interface Workspace {

@@ -214,28 +214,28 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
   })
 
   it('opens the team management entry only for the resolved owner', async () => {
+    // 服务端确认当前用户为 owner（评审 M7 后不再按「负责人姓名 == 登录者姓名」回退）。
+    vi.mocked(workbenchApi.listWorkspaceMembers).mockResolvedValue({ items: [], currentUserRole: 'owner' })
     const { wrapper } = await mountView(workspace(), { ownerName: '林岚' })
 
     const entry = wrapper.find('[data-testid="panel-manage-members"]')
     expect(entry.exists()).toBe(true)
     const settingsEntry = wrapper.find('[data-testid="panel-workspace-settings"]')
     expect(settingsEntry.exists()).toBe(true)
-    // 本用例的名册返回 currentUserRole: null（角色未由服务端解析），因此 4-T2 的
-    // 空间用量区块与弹窗**不挂载**——用量只认服务端确认的 owner/admin，不回退到
-    // 「负责人姓名 == 登录者姓名」（评审 P2/N3）。成员/设置入口仍按既有姓名回退渲染。
-    expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(false)
+    // 服务端确认 owner：4-T2 的空间用量区块随之挂载。
+    expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(true)
     const dialogs = wrapper.findAllComponents(ElDialog)
-    expect(dialogs.map(dialog => dialog.props('modelValue'))).toEqual([false, false, false])
+    expect(dialogs.map(dialog => dialog.props('modelValue'))).toEqual([false, false, false, false])
 
     // 团队分支才挂载 2.6 成员管理弹窗与 2.7 空间设置弹窗。
     await entry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, false])
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, false, false])
     expect(wrapper.find('.member-dialog__body').exists()).toBe(true)
 
     await settingsEntry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, true])
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, true, false])
     expect(wrapper.find('.settings-dialog__body').exists()).toBe(true)
 
     // 「管理 Agent」独立入口：右栏 Agent 区块触发第二个弹窗，成员弹窗不再混管 Agent。
@@ -243,7 +243,7 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(agentEntry.exists()).toBe(true)
     await agentEntry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, true, true])
+    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, true, true, false])
     expect(wrapper.find('[data-testid="member-section-agent"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="member-section-employee"]').exists()).toBe(true)
   })
@@ -724,6 +724,8 @@ describe('WorkspaceDetailView 文件版本 UI（TW-07 / 3-T9）', () => {
   })
 
   function teamFile(overrides: Partial<WorkspaceFile> = {}): WorkspaceFile {
+    // 与 listTeamWorkspaceFileSummaries 的真实投影一致（评审低1）：团队摘要
+    // 必带服务端判定的状态与能力字段，缺省的夹具不再代表真实响应。
     return {
       id: 'file-3',
       name: '库存明细.xlsx',
@@ -734,6 +736,10 @@ describe('WorkspaceDetailView 文件版本 UI（TW-07 / 3-T9）', () => {
       logicalFileId: 'wfile-1',
       versionNo: 3,
       versionCount: 3,
+      scanStatus: 'clean',
+      parseStatus: 'succeeded',
+      canDownload: true,
+      canReference: true,
       ...overrides,
     }
   }
@@ -890,6 +896,37 @@ describe('WorkspaceDetailView 文件版本 UI（TW-07 / 3-T9）', () => {
     const { wrapper } = await mountView(workspace({ files: [teamFile()] }))
 
     expect(wrapper.find('[data-testid="workspace-file-upload-version"]').exists()).toBe(true)
+  })
+
+  it('评审低1：解析失败的团队文件显示状态且没有引用入口（canReference 必须显式为真）', async () => {
+    const { wrapper } = await mountView(workspace({
+      files: [teamFile({ parseStatus: 'failed', canReference: false })],
+    }))
+
+    const status = wrapper.find('[data-testid="workspace-file-parse-status"]')
+    expect(status.exists()).toBe(true)
+    expect(status.text()).toContain('解析失败')
+    expect(wrapper.find('[data-testid="workspace-file-reference"]').exists()).toBe(false)
+    // 版本与上传入口不受引用门控影响（失败版本仍可追溯、可上传新版本修复）。
+    expect(wrapper.find('[data-testid="workspace-file-versions"]').exists()).toBe(true)
+  })
+
+  it('评审低1：团队摘要缺省 canReference 字段时同样不提供引用入口', async () => {
+    const { wrapper } = await mountView(workspace({
+      files: [teamFile({ canReference: undefined })],
+    }))
+
+    expect(wrapper.find('[data-testid="workspace-file-reference"]').exists()).toBe(false)
+  })
+
+  it('评审低1：个人空间文件没有解析管线字段，引用入口保持原样（AC-23）', async () => {
+    const personal = workspace({ type: 'personal', files: [{
+      id: 'p-file-1', name: '个人材料.pdf', type: 'PDF', size: '8 KB',
+      uploadedBy: '林岚', uploadedAt: '2026-09-12 09:00',
+    }] })
+    const { wrapper } = await mountView(personal)
+
+    expect(wrapper.find('[data-testid="workspace-file-reference"]').exists()).toBe(true)
   })
 
   it('上传新版本先询问可选更新说明，成功后刷新文件列表使新版本成为当前', async () => {

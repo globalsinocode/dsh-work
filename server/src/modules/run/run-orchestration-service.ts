@@ -3,7 +3,7 @@ import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import type { ModelGovernanceService } from '../model/model-governance-service.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
@@ -361,9 +361,9 @@ export class RunOrchestrationService {
    * discussion thread (message sender + triggering requester + Agent
    * attribution); personal sessions remain creator-only.
    */
-  async getSessionThread(sessionId: string, userId: string) {
+  async getSessionThread(sessionId: string, userId: string, before?: string) {
     const session = await this.requireSessionAccess(sessionId, userId, 'read')
-    const thread = await this.conversations.getSessionThread(sessionId)
+    const thread = await this.conversations.getSessionThread(sessionId, before ? { before } : undefined)
     if (!thread) throw authorizationDenied(`Session 不存在或不可访问：${sessionId}`)
     // 附带调用者的当前成员角色（读轨）：前端据此对只读成员禁用输入框；
     // 个人会话恒为 null，可写性由 createdBy === userId 判断。
@@ -378,21 +378,38 @@ export class RunOrchestrationService {
    * sender attribution and run_id=null; it never invokes a model. Only
    * non-viewer members of an active team workspace may post.
    */
-  async postDiscussionMessage(input: { userId: string; sessionId: string; content: unknown }) {
+  async postDiscussionMessage(input: {
+    userId: string
+    sessionId: string
+    content: unknown
+    /** Client-supplied dedupe key; absent keys fall back to a fresh message id. */
+    idempotencyKey?: string | null
+  }) {
     if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
     const content = input.content.trim()
     if (!content) throw requestInvalid('消息内容不能为空')
     if (content.length > 20_000) throw requestInvalid('消息长度必须为 1～20000 个字符')
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
     if (session.workspaceType !== 'team') throw requestInvalid('仅团队空间会话支持讨论消息')
-    const messageId = await this.conversations.appendMessage({
+    // 幂等键必须显式提供且非空白（与路由强制一致）：空白退化随机 ID 等于
+    // 没有幂等保护。键做完整哈希而非截断拼接——前缀相同的过长键不会被
+    // 人为合并；会话 ID 入键，同键跨会话不会误命中别人的消息（评审中1）。
+    const key = typeof input.idempotencyKey === 'string' ? input.idempotencyKey.trim() : ''
+    if (!key) throw requestInvalid('idempotencyKey 必须是非空字符串')
+    // 哈希前用结构化编码而非字符串拼接（M-R2）：拼接无法区分
+    // (userId='a', key='bc') 与 (userId='ab', key='c')，不同二元组会得到
+    // 同一原始输入。JSON 数组编码对各段长度无歧义。
+    const keyHash = createHash('sha256')
+      .update(JSON.stringify([tenantId, session.id, input.userId, key]))
+      .digest('hex').slice(0, 32)
+    const messageId = `message-discussion-${session.id}-${keyHash}`
+    const committed = await this.conversations.appendDiscussionMessage({
       sessionId: session.id,
-      runId: null,
-      role: 'user',
+      userId: input.userId,
       content,
-      senderUserId: input.userId,
+      messageId,
     })
-    return { messageId, sessionId: session.id }
+    return { messageId: committed.messageId, sessionId: session.id, created: committed.created }
   }
 
   async startRun(input: {
@@ -629,12 +646,55 @@ export class RunOrchestrationService {
           ...authorizationContext,
         })
     const prompt = await this.conversations.getRunPrompt(run.id)
+    // 输入文件固定到已校验的来源 Attempt，而不是可变 current 指针（评审中2）。
+    const fileIds = this.content ? await this.content.getRunInputFileIds(run.id, run.currentAttemptId) : []
+    // TW-10：他人重试 = 发起人变更。执行身份契约要求
+    // run.requested_by === manifest.user_context.user_id（assertCurrentRunAuthorization
+    // 与成果发布共用），因此跨成员「重新运行」不在原 Run 上叠加 Attempt，
+    // 而是在同一共享会话中创建属于当前操作者的新 Run：沿用原 Run 的提问与
+    // 固定 Agent 版本，授权、审计、成果归因全部以当前操作者为准。
+    // 幂等键绑定来源 Run + 当前 Attempt 代际（评审中2）：同一次逻辑重试的
+    // 重放返回同一个新 Run；来源 Run 产生新 Attempt 后再重试必须创建新的
+    // child，而不是静默返回上一代已结束的结果。
+    if (run.requestedBy !== userId) {
+      const retried = await this.runs.createRun({
+        tenantId,
+        sessionId: session.id,
+        requestedBy: userId,
+        idempotencyKey: `retry-of-${run.id}-${run.currentAttemptId ?? 'none'}`,
+      })
+      if (retried.currentAttemptId || retried.status !== 'queued') return retried
+      await this.failUndispatchedRun(retried, async () => {
+        // 新 Run 的用户消息：成果归因、getRunPrompt 与共享线程展示都依赖它；
+        // 发送者是本次操作者，不是原 Run 发起人。
+        await this.conversations.appendMessage({
+          sessionId: session.id,
+          runId: retried.id,
+          role: 'user',
+          content: prompt,
+          senderUserId: userId,
+          messageId: `message-user-${retried.id}`,
+        })
+        const history = await this.conversations.getConversationHistory(session.id, retried.id)
+        await this.dispatch(retried, {
+          prompt,
+          workspaceId: session.workspaceId,
+          agentVersionId,
+          userId,
+          fileIds,
+          authorization,
+          additionalSkillReferences,
+          history,
+        })
+      })
+      await this.operations?.appendAudit(userId, 'run.retry', retried.id, 'success', `trace-${retried.id}`, `员工重新发起共享运行（来源 ${run.id}）`)
+      return this.runs.getRun(tenantId, retried.id)
+    }
     const continued = await this.withContinuationOutputs(
       await this.conversations.getConversationHistory(session.id, run.id),
       run.id,
       prompt,
     )
-    const fileIds = this.content ? await this.content.getRunInputFileIds(run.id) : []
     await this.dispatch(run, {
       prompt,
       message: continued.message,

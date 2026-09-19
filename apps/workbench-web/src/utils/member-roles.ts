@@ -1,23 +1,5 @@
 import type { TeamMemberRole, WorkspaceMember } from '@/types/domain'
 
-export interface CurrentUserRoleInput {
-  workspaceType: 'personal' | 'team' | undefined
-  archived: boolean
-  owner: string | undefined
-  userName: string | undefined
-}
-
-/**
- * 当前操作人在团队中的员工角色。服务端契约目前不返回该字段（见 1A-T6 报告
- * 缺口），因此只在「空间负责人姓名 == 当前登录用户姓名」这一可判定情形下
- * 推导为负责人；其余一律返回 null，团队写入口不渲染，避免臆造权限。
- */
-export function resolveCurrentUserRole(input: CurrentUserRoleInput): TeamMemberRole | null {
-  if (input.workspaceType !== 'team' || input.archived) return null
-  if (!input.owner || !input.userName || input.userName === '正在加载') return null
-  return input.owner === input.userName ? 'owner' : null
-}
-
 export interface MemberRoleCapabilitiesInput {
   actorRole: TeamMemberRole | null
   member: WorkspaceMember

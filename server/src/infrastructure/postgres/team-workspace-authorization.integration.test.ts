@@ -190,7 +190,7 @@ test('归档后默认（执行）轨不得被归档前预热的授权缓存放�
   // 必须拒绝——这正是验证代理 D3 指出「旧断言不具鉴别力」的地方。
   await assert.rejects(
     authorization.authorizeTeamReadAccess(ws, ownerId),
-    /不存在或已归档/,
+    /不存在、已归档或当前用户不可用/,
     '归档后默认执行轨不得被归档前的预热缓存放行',
   )
   // 读取轨仍应放行（归档 = 只读保留）。

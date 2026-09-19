@@ -39,9 +39,8 @@ import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
 import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
 import { WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
-import { resolveCurrentUserRole } from '@/utils/member-roles'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
-import { formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
+import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
 type WorkspaceTab = 'conversation' | 'files' | 'artifacts'
 /** 对话页签内的视图：新对话（默认）/ 历史对话（design §2.2）。 */
@@ -153,6 +152,21 @@ let drawerRequestSeq = 0
  * 发起时的空间 id，切换空间或连续重试时晚到的旧响应不得写进当前视图。
  */
 let usageRequestSeq = 0
+/**
+ * 员工名册与 Agent 成员加载的世代号：与动态请求同一模式。切换空间后晚到的旧
+ * 响应不得覆盖新空间的名册与角色（评审 M7）——角色来源被污染会错误渲染/隐藏
+ * 负责人入口。
+ */
+let memberRequestSeq = 0
+let agentMemberRequestSeq = 0
+
+function isCurrentMemberRequest(seq: number, workspaceId: string) {
+  return seq === memberRequestSeq && workspaceId === (workspace.value?.id ?? '')
+}
+
+function isCurrentAgentMemberRequest(seq: number, workspaceId: string) {
+  return seq === agentMemberRequestSeq && workspaceId === (workspace.value?.id ?? '')
+}
 
 type ActivityStream = 'summary' | 'notification' | 'drawer'
 
@@ -209,23 +223,15 @@ const showConversationStarter = computed(() => !isArchived.value)
 const showConversationViewSwitch = computed(() => isTeam.value && !isArchived.value)
 const showSessionHistory = computed(() => isTeam.value && (conversationView.value === 'history' || isArchived.value))
 /**
- * 当前操作人的团队角色。优先采用 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`（负责人转交后创建者不再是负责人，按姓名推断会失效）；
- * 名册未就绪或加载失败时才回退到「负责人姓名 == 当前用户姓名」的保守判断，
- * 其余一律 null，团队写入口不渲染（不臆造权限，不误开入口）。
+ * 当前操作人的团队角色。只采用服务端给出的角色——父组件显式传入的
+ * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
+ * `currentUserRole`。名册未就绪或加载失败时一律 null：展示名不唯一，
+ * 「负责人姓名 == 当前用户姓名 ⇒ owner」的推断会把同名成员误判为负责人
+ * （评审 M7）；角色未知时团队写入口不渲染，宁可漏开不可误开。
  */
 const currentUserRole = computed<TeamMemberRole | null>(() => {
   if (props.currentUserRole !== undefined) return props.currentUserRole
-  // 优先采用服务端返回的角色：负责人转交后创建者不再是负责人，按姓名推断会让
-  // 新负责人失去全部写入口、旧创建者被误判。仅在名册尚未加载完成/加载失败时
-  // 才回退到「负责人姓名 == 当前用户姓名」的保守判断。
-  if (serverUserRole.value !== null) return serverUserRole.value
-  return resolveCurrentUserRole({
-    workspaceType: workspace.value?.type,
-    archived: isArchived.value,
-    owner: workspace.value?.owner,
-    userName: authStore.user.name,
-  })
+  return serverUserRole.value
 })
 const workspaceArtifacts = computed(() =>
   contentStore.artifacts.filter((artifact) => artifact.workspaceId === workspaceId.value),
@@ -263,11 +269,9 @@ const canWriteTeamContent = computed(() =>
 /**
  * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
  * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`。**刻意不使用** `currentUserRole` computed 的姓名推断回退
- * （`resolveCurrentUserRole`：「负责人姓名 == 当前用户姓名 ⇒ owner」）：用量是
- * 消耗/费用类数据，只有服务端确认的负责人/管理员才该看到；名册失败时宁可漏开。
- * 评审 P2/N3 实测：名册失败 + 姓名相同会让回退判定为 owner，从而渲染区块并发一次
- * 注定 403 的请求。
+ * `currentUserRole`。姓名推断回退已在评审 M7 中移除——`currentUserRole`
+ * computed 与这里现在是同一来源；用量是消耗/费用类数据，只有服务端确认的
+ * 负责人/管理员才该看到；名册失败时宁可漏开。
  */
 const usageServerRole = computed<TeamMemberRole | null>(() =>
   props.currentUserRole !== undefined ? props.currentUserRole : serverUserRole.value)
@@ -375,6 +379,8 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
 }
 
 async function useWorkspaceFile(file: WorkspaceFile) {
+  // 评审低1：团队文件引用资格由服务端显式判定，缺省/否决一律不放行。
+  if (isTeam.value && file.canReference !== true) return
   // 处于空间内对话子路由时，selectTab/setConversationView 会触发路径归位，
   // ConversationStarter 在导航确认后才挂载——必须等导航与渲染完成再取
   // starterRef，否则引用被静默丢弃（评审修复）。
@@ -543,9 +549,13 @@ watch(
  */
 async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
   if (!workspaceId || !isTeam.value) return
+  const seq = ++agentMemberRequestSeq
   try {
-    agentMembers.value = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+    const items = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
+    agentMembers.value = items
   } catch (error) {
+    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
     agentMembers.value = []
     notifyActionFailure('加载 Agent 成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
   }
@@ -557,11 +567,14 @@ async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
  */
 async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
   if (!workspaceId || !isTeam.value) return
+  const seq = ++memberRequestSeq
   try {
     const directory = await workbenchApi.listWorkspaceMembers(workspaceId)
+    if (!isCurrentMemberRequest(seq, workspaceId)) return
     workspaceMembers.value = directory.items
     serverUserRole.value = directory.currentUserRole
   } catch (error) {
+    if (!isCurrentMemberRequest(seq, workspaceId)) return
     workspaceMembers.value = []
     serverUserRole.value = null
     notifyActionFailure('加载员工成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
@@ -840,6 +853,9 @@ watch(workspace, (value) => {
   // 先作废在途请求，再清空本地状态：否则旧响应会在清空之后落回来（评审 P1-2）。
   invalidateActivityRequests()
   invalidateUsageRequests()
+  // 名册/Agent 成员同样作废（评审 M7）：旧空间的迟到响应不得覆盖新空间状态。
+  memberRequestSeq += 1
+  agentMemberRequestSeq += 1
   memberDialogOpen.value = false
   agentDialogOpen.value = false
   settingsDialogOpen.value = false
@@ -1101,7 +1117,18 @@ watch(
                     class="workspace-file-row__version"
                   >{{ fileVersionLabel(file) }}</span>
                 </strong>
-                <span class="workspace-file-row__meta">{{ file.size }} · {{ file.uploadedBy }}上传 · {{ file.uploadedAt }}</span>
+                <span class="workspace-file-row__meta">
+                  {{ file.size }} · {{ file.uploadedBy }}上传 · {{ file.uploadedAt }}
+                  <!--
+                    评审低1：展示版本的解析状态与安全扫描分列——失败/处理中的版本
+                    不再静默显示为「可引用」，状态不靠颜色单独传达。
+                  -->
+                  <span
+                    v-if="file.parseStatus && file.parseStatus !== 'succeeded'"
+                    data-testid="workspace-file-parse-status"
+                    class="workspace-file-row__status"
+                  > · {{ describeVersionParseStatus(file.parseStatus) }}</span>
+                </span>
                 <span
                   v-if="versionUploadError && versionUploadError.logicalFileId === file.logicalFileId"
                   data-testid="workspace-file-upload-error"
@@ -1131,7 +1158,16 @@ watch(
                 >
                   上传新版本
                 </el-button>
-                <el-button v-if="!isArchived" plain @click="useWorkspaceFile(file)">引用到对话</el-button>
+                <!--
+                  评审低1：团队文件必须服务端显式 canReference === true 才可引用；
+                  个人空间无解析管线，缺省字段维持可引用（AC-23）。
+                -->
+                <el-button
+                  v-if="!isArchived && (isTeam ? file.canReference === true : file.canReference !== false)"
+                  data-testid="workspace-file-reference"
+                  plain
+                  @click="useWorkspaceFile(file)"
+                >引用到对话</el-button>
               </div>
             </article>
           </div>
@@ -1797,6 +1833,11 @@ watch(
   color: #8c3226;
   font-size: var(--dsh-font-size-micro);
   line-height: 1.6;
+}
+
+.workspace-file-row__status {
+  color: #a4642a;
+  font-weight: 600;
 }
 
 .workspace-file-row__actions {

@@ -152,7 +152,7 @@ export const useTaskStore = defineStore('tasks', () => {
    */
   async function postSessionMessage(sessionId: string, content: string) {
     const current = generation
-    const result = await workbenchApi.postSessionMessage(sessionId, content)
+    const result = await workbenchApi.postSessionMessage(sessionId, content, crypto.randomUUID())
     requireGeneration(current)
     return result
   }
@@ -160,6 +160,14 @@ export const useTaskStore = defineStore('tasks', () => {
   /** TW-10：按会话加载共享线程（成员可读他人发起的团队会话）。 */
   async function loadSessionThread(sessionId: string) {
     return workbenchApi.getSessionThread(sessionId)
+  }
+
+  /**
+   * 加载共享线程更早一页（评审中3）：`before` 传当前已展示的最旧一条消息 id
+   * （服务端 `messagesCursor`），返回上一页供调用方前置合并。
+   */
+  async function loadEarlierThreadMessages(sessionId: string, before: string) {
+    return workbenchApi.getSessionThread(sessionId, before)
   }
 
   async function uploadSessionFiles(sessionId: string, attachments: File[]) {
@@ -271,7 +279,7 @@ export const useTaskStore = defineStore('tasks', () => {
    * 引用计数归零才真正关闭。收到事件只更新 sessionActivity 标记，
    * 由各视图决定刷新哪个目标（保持读路径与鉴权逻辑单一）。
    */
-  function subscribeWorkspaceSessions(workspaceId: string) {
+  function subscribeWorkspaceSessions(workspaceId: string, since?: string) {
     // 无 SSE 能力的环境（旧浏览器/测试环境）优雅降级为无实时更新，页面仍可手动刷新。
     if (typeof EventSource === 'undefined') return
     const entry = sessionStreams.get(workspaceId)
@@ -282,7 +290,10 @@ export const useTaskStore = defineStore('tasks', () => {
       entry.refs += 1
       return
     }
-    const source = new EventSource(workbenchApi.workspaceSessionEventsUrl(workspaceId), { withCredentials: true })
+    // since：客户端「会话状态为最新」的水位线（二审残留）。首拉列表到流
+    // 建立之间归档的会话，服务端按此水位线补推 session.archived；不传则
+    // 归档增量从流起点起算（不补历史）。
+    const source = new EventSource(workbenchApi.workspaceSessionEventsUrl(workspaceId, since), { withCredentials: true })
     const bump = (sessionId: string, kind: string) => {
       // 标记必须对每个事件唯一：同一毫秒的连续事件若产生相同字符串，
       // 视图的 watch 不会触发、刷新会被静默丢弃。
@@ -298,8 +309,9 @@ export const useTaskStore = defineStore('tasks', () => {
     }
     // EventSource 自动重连时服务端首轮只重建基线不补推——断开期间发生的
     // 变更永远不会到达。第二次及以后的 onopen 视为重连，用通配标记让
-    // 各订阅视图整体重取一次当前状态。
-    let connected = false
+    // 各订阅视图整体重取一次当前状态。原地重建的死连接同样按重连处理：
+    // 旧连接死掉到重新订阅之间的事件无从知晓，必须补一次整体重取。
+    let connected = entry !== undefined
     source.onopen = () => {
       if (connected) bump('*', 'resync')
       connected = true
@@ -317,6 +329,12 @@ export const useTaskStore = defineStore('tasks', () => {
     source.addEventListener('session.archived', (message) => {
       const event = parseMarker(message)
       if (event?.session_id) bump(event.session_id, 'archived')
+    })
+    // 服务端显式重同步协议（四审）：基线握手（onopen 不代表服务端已建基线）、
+    // 归档查询截断、跟踪集合淘汰都要求客户端作废在途读取整体重取——与重连
+    // 同一个通配标记，各视图按自己的 loadToken 丢弃旧响应。
+    source.addEventListener('session.resync', () => {
+      bump('*', 'resync')
     })
     if (entry) {
       entry.source = source
@@ -419,7 +437,7 @@ export const useTaskStore = defineStore('tasks', () => {
 
   return {
     tasks, loading, initialized, activeTasks, recentTasks, sessionActivity, reset, load, getTask, loadTask,
-    createTask, sendMessage, postSessionMessage, loadSessionThread, uploadSessionFiles,
+    createTask, sendMessage, postSessionMessage, loadSessionThread, loadEarlierThreadMessages, uploadSessionFiles,
     startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
     upsert, subscribe, subscribeWorkspaceSessions, unsubscribeWorkspaceSessions,
   }

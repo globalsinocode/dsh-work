@@ -133,6 +133,35 @@ test('团队 Session 列表按标题搜索并支持游标翻页到末尾', async
   assert.equal(new Set(seen).size, 4, '两页合起来覆盖全部 4 个会话且不重复')
 })
 
+test('团队 Session 分页游标保留 PostgreSQL 微秒精度，同毫秒记录不丢失（评审 M3）', async () => {
+  const workspaceId = 'ws-sessions-cursor-us'
+  const ownerId = `${workspaceId}-owner`
+  await seedUser(ownerId, '微秒分页负责人')
+  await seedTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
+
+  // 两个会话落在同一毫秒、不同微秒：旧实现用 toISOString() 编码游标会截断
+  // 微秒，把两条记录视作同一时间点，导致第二页漏掉边界上的另一条。
+  const later = `${workspaceId}-later`
+  const earlier = `${workspaceId}-earlier`
+  await createSession(later, workspaceId, ownerId, '微秒边界后')
+  await createSession(earlier, workspaceId, ownerId, '微秒边界前')
+  await touchSession(later, '2026-09-01T00:00:00.123789Z')
+  await touchSession(earlier, '2026-09-01T00:00:00.123456Z')
+
+  const first = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/sessions?limit=1`, { as: ownerId })
+  const firstPage = first.body.data as { items: Array<{ sessionId: string }>; nextCursor: string | null }
+  assert.deepEqual(firstPage.items.map(item => item.sessionId), [later])
+  assert.ok(firstPage.nextCursor, '仍有下一页时必须给出游标')
+
+  const second = await api(
+    'GET',
+    `/api/workbench/v1/workspaces/${workspaceId}/sessions?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor ?? '')}`,
+    { as: ownerId },
+  )
+  const secondPage = second.body.data as { items: Array<{ sessionId: string }>; nextCursor: string | null }
+  assert.deepEqual(secondPage.items.map(item => item.sessionId), [earlier], '同毫秒不同微秒的记录不得被游标漏掉')
+})
+
 test('团队 Session 列表对所有成员可读，非成员被拒绝，个人空间被拒绝', async () => {
   const workspaceId = 'ws-sessions-access'
   const ownerId = `${workspaceId}-owner`
@@ -255,6 +284,38 @@ test('执行轨：归档团队空间拒绝删除自己的会话（只读保留�
   // 归档后：删除会销毁只读保留的历史内容，必须拒绝。
   const archivedDelete = await api('DELETE', `/api/workbench/v1/sessions/${secondSessionId}`, { as: memberId })
   assert.equal(archivedDelete.status, 403, '归档空间不得删除会话')
+})
+
+test('viewer 不得归档共享会话：创建者被降级为只读后删除被拒（评审 H2）', async () => {
+  const workspaceId = 'ws-sessions-viewer-delete'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  await seedUser(ownerId, '降级负责人')
+  await seedUser(memberId, '降级成员')
+  await seedTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }, { userId: memberId, role: 'member' }])
+  const sessionId = `${workspaceId}-session`
+  await createSession(sessionId, workspaceId, memberId, '降级前会话')
+  await createRun(`${sessionId}-run`, sessionId, memberId, 'succeeded', '2026-09-06T00:00:00.000Z')
+
+  // 创建者仍是 member 时可删除自己的会话（基线）。
+  const baselineDelete = await api('DELETE', `/api/workbench/v1/sessions/${sessionId}`, { as: memberId })
+  assert.equal(baselineDelete.status, 200)
+
+  // 第二会话：先降级为 viewer，再尝试删除——创建者身份不豁免只读约束。
+  const secondSessionId = `${workspaceId}-session-2`
+  await createSession(secondSessionId, workspaceId, memberId, '降级后待删会话')
+  await database`
+    update workspace_members set member_role = 'viewer'
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${memberId}
+  `
+  const viewerDelete = await api('DELETE', `/api/workbench/v1/sessions/${secondSessionId}`, { as: memberId })
+  assert.equal(viewerDelete.status, 403, 'viewer 创建者不得归档共享会话')
+
+  // 会话保持活动状态，未被部分修改。
+  const [row] = await database<{ status: string }[]>`
+    select status from sessions where tenant_id = ${tenantId} and id = ${secondSessionId}
+  `
+  assert.equal(row?.status, 'active')
 })
 
 test('执行轨：归档团队空间拒绝新对话、续写与重试（3-T1 执行轨）', async () => {

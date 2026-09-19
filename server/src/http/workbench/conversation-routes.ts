@@ -221,7 +221,9 @@ export function registerConversationRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
-    return envelope('workbench', await orchestration.getSessionThread(context.params['sessionId'] ?? '', userId), 'postgres')
+    // before：加载更早一页共享讨论消息（游标=本页最旧一条消息 id）。
+    const before = context.url.searchParams.get('before') ?? undefined
+    return envelope('workbench', await orchestration.getSessionThread(context.params['sessionId'] ?? '', userId, before), 'postgres')
   })
 
   // TW-10：不产生 Run 的讨论消息。仅团队空间会话可用；viewer/非成员/归档
@@ -229,15 +231,26 @@ export function registerConversationRoutes(
   router.post(`${basePath}/sessions/:sessionId/messages`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    const body = await readJsonBody<{ content?: unknown } | null>(request)
+    const body = await readJsonBody<{ content?: unknown; idempotencyKey?: unknown } | null>(request)
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw routeValidationFailed('请求体必须是 JSON 对象')
     }
+    if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== 'string') {
+      throw routeValidationFailed('idempotencyKey 必须是字符串')
+    }
     await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const headerKey = request.headers['idempotency-key']
+    const idempotencyKey = body.idempotencyKey ?? (Array.isArray(headerKey) ? headerKey[0] : headerKey)
+    // 与 /runs 同一口径：幂等键必须由客户端显式提供，否则网络重试/双击
+    // 会产生重复讨论消息（缺省随机键等于没有幂等保护）。
+    if (idempotencyKey === undefined) {
+      throw routeValidationFailed('必须提供 idempotencyKey 或 Idempotency-Key 请求头')
+    }
     const result = await orchestration.postDiscussionMessage({
       userId,
       sessionId: context.params['sessionId'] ?? '',
       content: body.content,
+      idempotencyKey,
     })
     return httpResult(201, envelope('workbench', result, 'postgres'))
   })
@@ -306,12 +319,14 @@ export function registerConversationRoutes(
   router.post(`${basePath}/runs/:runId/retry`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await orchestration.retry(
+    // 跨成员重试创建属于当前操作者的新 Run（TW-10）：响应必须返回新 Run 的
+    // 详情，而不是已结束的原 Run，否则前端拿不到本次执行的状态与归因。
+    const retried = await orchestration.retry(
       context.params['runId'] ?? '',
       userId,
       sessionAuthorizationContext(identity),
     )
-    const task = await conversations.getTask(context.params['runId'] ?? '', userId)
+    const task = await conversations.getTask(retried?.id ?? context.params['runId'] ?? '', userId)
     if (!task || (authorization && !(await authorizeTeamTaskRead(authorization, task, userId)))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
@@ -384,8 +399,15 @@ export function registerConversationRoutes(
       ['owner', 'admin', 'member', 'viewer'],
       { purpose: 'read' },
     )
+    // since：客户端「状态为最新」的水位线（二审残留——建流前已归档的会话
+    // 不在 archived_since(流起点) 集合里，首拉列表到 SSE 建连之间的归档
+    // 会静默漏掉）。客户端带上自己最后一次同步会话状态的时刻，服务端把
+    // 该时刻起归档的会话在基线轮就推 session.archived。非法/未来时间忽略。
+    const sinceRaw = context.url.searchParams.get('since')
+    const sinceParsed = sinceRaw ? Date.parse(sinceRaw) : Number.NaN
+    const clientSince = Number.isNaN(sinceParsed) || sinceParsed > Date.now() ? null : new Date(sinceParsed)
     await streamWorkspaceSessionEvents(response, workspaceId, sharedSessionActivitySource(conversations), 500, 15_000,
-      authorization ? { workspaceId, userId, authorization } : undefined)
+      authorization ? { workspaceId, userId, authorization } : undefined, clientSince)
   })
 }
 
@@ -608,8 +630,30 @@ interface WorkspaceSessionActivityRow {
   activityEpoch?: number
 }
 
+interface WorkspaceSessionActivityPage {
+  /** 最近活跃会话（有界，详见仓储层 workspaceSessionActivitySessionLimit）。 */
+  sessions: WorkspaceSessionActivityRow[]
+  /**
+   * 空间授权修订号（M-R4）：归档在同一事务里 bump，修订号变化是「归档已
+   * 提交」的一致信号——不依赖任何时间戳比较。
+   */
+  revision?: number
+}
+
 interface WorkspaceSessionActivitySource {
-  listWorkspaceSessionActivity(workspaceId: string): Promise<WorkspaceSessionActivityRow[]>
+  listWorkspaceSessionActivity(workspaceId: string): Promise<WorkspaceSessionActivityPage>
+  /**
+   * 自 since 起归档的会话 id（有界增量，评审中4）：按 last_active_at
+   * 过滤，覆盖客户端水位线之后正常归档的会话。
+   */
+  listRecentlyArchivedSessionIds(workspaceId: string, since: Date): Promise<{ ids: string[]; truncated: boolean }>
+  /**
+   * 直接复核指定会话的当前归档状态（M-R4）：不依赖时间戳，覆盖「归档
+   * 事务开始早、提交晚」导致 last_active_at 早于水位线的残余缝隙。
+   */
+  listArchivedSessionIdsAmong(workspaceId: string, sessionIds: string[]): Promise<string[]>
+  /** 无时间过滤的有界归档集：仅在空间修订号变化（提交已发生）时回扫。 */
+  listArchivedSessionIds(workspaceId: string): Promise<{ ids: string[]; truncated: boolean }>
 }
 
 /**
@@ -621,8 +665,8 @@ interface WorkspaceSessionActivitySource {
 const SESSION_ACTIVITY_SNAPSHOT_TTL_MS = 250
 const sessionActivitySnapshots = new Map<string, {
   at: number
-  rows?: WorkspaceSessionActivityRow[]
-  pending?: Promise<WorkspaceSessionActivityRow[]>
+  rows?: WorkspaceSessionActivityPage
+  pending?: Promise<WorkspaceSessionActivityPage>
 }>()
 
 function sharedSessionActivitySource(conversations: WorkspaceSessionActivitySource): WorkspaceSessionActivitySource {
@@ -647,6 +691,17 @@ function sharedSessionActivitySource(conversations: WorkspaceSessionActivitySour
         sessionActivitySnapshots.delete(workspaceId)
         throw error
       }
+    },
+    // 归档相关查询按各订阅者自己的水位线/跟踪集合过滤，不进共享快照——
+    // 不同订阅者的 since 与曾活跃集合不同，共享会互相误报。
+    async listRecentlyArchivedSessionIds(workspaceId: string, since: Date) {
+      return conversations.listRecentlyArchivedSessionIds(workspaceId, since)
+    },
+    async listArchivedSessionIdsAmong(workspaceId: string, sessionIds: string[]) {
+      return conversations.listArchivedSessionIdsAmong(workspaceId, sessionIds)
+    },
+    async listArchivedSessionIds(workspaceId: string) {
+      return conversations.listArchivedSessionIds(workspaceId)
     },
   }
 }
@@ -673,6 +728,12 @@ export async function streamWorkspaceSessionEvents(
   pollIntervalMs = 500,
   heartbeatIntervalMs = 15_000,
   teamAccess?: TeamStreamAccess,
+  /**
+   * 客户端「状态为最新」的水位线（二审残留）：客户端首拉列表到本流建立
+   * 之间归档的会话，既不在活跃集也不在 archived_since(流起点) 集合——
+   * 不带水位线时无从得知。带水位线时归档增量从该时刻起算，基线轮即可补推。
+   */
+  clientSince?: Date | null,
 ) {
   response.writeHead(200, {
     'Cache-Control': 'no-cache, no-transform',
@@ -684,7 +745,45 @@ export async function streamWorkspaceSessionEvents(
   let closed = false
   response.on('close', () => { closed = true })
   let heartbeatAt = Date.now()
+  const archivedSince = clientSince ?? new Date()
   let snapshot: Map<string, number> | null = null
+  let lastRevision: number | null = null
+  let lastResyncSignature: string | null = null
+  /**
+   * 归档跟踪（评审中4 + M-R4），三路互补、各有上界：
+   * 1. everSeenActive：本流曾观测为活跃的会话（上限 TRACKED_CAP，超出
+   *    淘汰最早插入项）。从活跃集消失的成员直接复核当前 status——不看
+   *    时间戳，「归档事务开始早、提交晚」导致 last_active_at 早于水位线
+   *    的缝隙由此关闭。
+   * 2. clientSince 水印：客户端声明「状态为最新」的时刻起归档的会话——
+   *    覆盖从未进入活跃窗口、但客户端可能持有的旧会话。
+   * 3. 修订号补扫：team_auth_revision 变化（归档与成员变更在同一事务
+   *    提交）时做一次无时间过滤的有界回扫，兜住前两条都漏的边角。
+   */
+  const TRACKED_CAP = 4000
+  const everSeenActive = new Set<string>()
+  const notifiedArchived = new Set<string>()
+  /** 返回是否发生了容量淘汰——淘汰即丢失跟踪精度，必须向客户端发 resync。 */
+  const rememberActive = (ids: Iterable<string>) => {
+    let evicted = false
+    for (const id of ids) {
+      everSeenActive.delete(id)
+      everSeenActive.add(id)
+    }
+    while (everSeenActive.size > TRACKED_CAP) {
+      const oldest = everSeenActive.values().next().value
+      if (oldest === undefined) break
+      everSeenActive.delete(oldest)
+      evicted = true
+    }
+    while (notifiedArchived.size > TRACKED_CAP * 2) {
+      const oldest = notifiedArchived.values().next().value
+      if (oldest === undefined) break
+      notifiedArchived.delete(oldest)
+      evicted = true
+    }
+    return evicted
+  }
   const canDeliver = async () => {
     try {
       return !teamAccess || await hasStreamAccess(teamAccess)
@@ -692,15 +791,44 @@ export async function streamWorkspaceSessionEvents(
       return false
     }
   }
+  const emitResync = (reason: string) => {
+    response.write('event: session.resync\n')
+    response.write(`data: ${JSON.stringify({ reason })}\n\n`)
+  }
 
   while (!closed) {
-    const rows = await conversations.listWorkspaceSessionActivity(workspaceId)
-    const current = new Map(rows.map(row => [row.sessionId, sessionActivityMarker(row)]))
+    const page = await conversations.listWorkspaceSessionActivity(workspaceId)
+    const current = new Map(page.sessions.map(row => [row.sessionId, sessionActivityMarker(row)]))
+    const gone = [...everSeenActive].filter(id => !current.has(id))
+    const evicted = rememberActive(current.keys())
+    const seenArchived = gone.length > 0
+      ? await conversations.listArchivedSessionIdsAmong(workspaceId, gone)
+      : []
+    const watermarkArchived = clientSince != null
+      ? await conversations.listRecentlyArchivedSessionIds(workspaceId, archivedSince)
+      : { ids: [], truncated: false }
+    const revisionChanged = lastRevision !== null && page.revision !== undefined && page.revision !== lastRevision
+    const sweptArchived = revisionChanged && clientSince != null
+      ? await conversations.listArchivedSessionIds(workspaceId)
+      : { ids: [], truncated: false }
+    lastRevision = page.revision ?? lastRevision
+    const removed = [...new Set([...seenArchived, ...watermarkArchived.ids, ...sweptArchived.ids])]
+      .filter(id => !notifiedArchived.has(id))
+    // 截断/淘汰恢复协议（四审）：归档查询超限或跟踪集合淘汰后，逐 id 事件
+    // 不再构成完整性依据——发明确的 session.resync 要求客户端整体重取，
+    // 已知 id 仍作为加速提示先行推送。
+    // 恢复代际签名去重（五审）：持续截断下同一修订号的恢复状态只通知一次；
+    // 修订号变化（新归档已提交）或原因切换仍再次触发——不按 reason 永久去重，
+    // 也不前移 since 水位线（那会重新引入事务时间洞）。
+    const resyncReason = watermarkArchived.truncated || sweptArchived.truncated
+      ? 'truncated'
+      : evicted ? 'tracking' : null
+    const resyncSignature = resyncReason ? `${resyncReason}:${page.revision ?? 'na'}` : null
+    const emitResyncNow = resyncSignature !== null && resyncSignature !== lastResyncSignature
     if (snapshot !== null) {
       const baseline = snapshot
-      const changed = rows.filter(row => baseline.get(row.sessionId) !== sessionActivityMarker(row))
-      const removed = [...baseline.keys()].filter(sessionId => !current.has(sessionId))
-      if ((changed.length > 0 || removed.length > 0) && !(await canDeliver())) break
+      const changed = page.sessions.filter(row => baseline.get(row.sessionId) !== sessionActivityMarker(row))
+      if ((changed.length > 0 || removed.length > 0 || emitResyncNow) && !(await canDeliver())) break
       for (const row of changed) {
         response.write('event: session.updated\n')
         response.write(`data: ${JSON.stringify({
@@ -709,8 +837,30 @@ export async function streamWorkspaceSessionEvents(
         })}\n\n`)
       }
       for (const sessionId of removed) {
+        notifiedArchived.add(sessionId)
         response.write('event: session.archived\n')
         response.write(`data: ${JSON.stringify({ session_id: sessionId })}\n\n`)
+      }
+      if (emitResyncNow && resyncReason) {
+        emitResync(resyncReason)
+        lastResyncSignature = resyncSignature
+      }
+    } else {
+      // 基线轮：补推客户端水位线之后（或曾活跃集合中刚消失就归档）的会话。
+      // session.updated 仍不补（客户端自身快照即为基线）。
+      if (!(await canDeliver())) break
+      for (const sessionId of removed) {
+        notifiedArchived.add(sessionId)
+        response.write('event: session.archived\n')
+        response.write(`data: ${JSON.stringify({ session_id: sessionId })}\n\n`)
+      }
+      // 基线握手（四审）：onopen 只代表 HTTP 头已发，不代表服务端已建立
+      // 基线。首份快照落库后显式通知客户端作废在途读取并重取——「首拉返回
+      // active、归档先于基线提交」的窗口由水位线补推 + 本次重取双重兜住。
+      emitResync('baseline')
+      if (emitResyncNow && resyncReason) {
+        emitResync(resyncReason)
+        lastResyncSignature = resyncSignature
       }
     }
     snapshot = current

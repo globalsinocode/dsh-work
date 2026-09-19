@@ -21,6 +21,7 @@ import type {
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
+import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
@@ -55,6 +56,8 @@ before(async () => {
     agents,
     undefined,
     authorization,
+    // TW-10：团队会话必须经 @Agent 成员发起执行。
+    { agentMembers: new PostgresWorkspaceAgentMemberService(database, authorization, agents) },
   )
 })
 
@@ -170,11 +173,19 @@ test('authorization is fail-closed and compiles the effective identity into Runt
     workspaceId: 'ws-supply',
     agentVersionId: 'agent-version-dsh-work-assistant-1',
   })
+  // TW-10：团队会话经 @Agent 成员发起执行——成员固定版本即本测试断言的版本。
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values ('wam-supply-assistant', 'tenant-dsh-work', 'ws-supply',
+            'agent-dsh-work-assistant', 'agent-version-dsh-work-assistant-1', 'available', 'U00001')
+    on conflict (id) do nothing
+  `
   const run = await orchestration.startRun({
     userId: 'U00001',
     sessionId: session.id,
     prompt: '读取工作空间文件并整理重点',
     idempotencyKey: randomUUID(),
+    workspaceAgentMemberId: 'wam-supply-assistant',
   })
   assert.ok(run)
   await waitForRun(run.id)

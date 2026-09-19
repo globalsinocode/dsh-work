@@ -125,28 +125,55 @@ watch(() => props.members, () => {
   if (employeeSearch.value.open) void ensureEmployeeCandidates()
 })
 
+/**
+ * M-R5 操作世代：空间切换、弹窗关闭都会递增——旧确认框在 A→B→A 或
+ * 关闭重开后不得复活；仅比对 workspaceId 不够（回到同一空间时仍相等）。
+ * 候选搜索另用 searchSeq 保证同空间乱序响应「后到先输」不覆盖新结果。
+ */
+let dialogGeneration = 0
+let candidateSearchSeq = 0
+// 组件直接卸载（离开整个空间页）时 props.open 未必先变 false——watcher 停了
+// 但挂起的确认 Promise 还活着，没有 disposed 守卫旧操作仍会发写请求（四审）。
+let disposed = false
+const generationAlive = (gen: number) => !disposed && gen === dialogGeneration && props.open
+
+watch(() => props.workspaceId, () => {
+  dialogGeneration += 1
+})
+watch(() => props.open, (open) => {
+  if (!open) dialogGeneration += 1
+})
+
 /** 已加入者按服务端口径排除，前端再按本地成员列表兜底去重。 */
 async function ensureEmployeeCandidates(reset = true) {
-  if (!canManageEmployees.value || !props.workspaceId) return
+  if (!canManageEmployees.value || !props.workspaceId || !props.open) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
+  const seq = ++candidateSearchSeq
+  const query = employeeSearch.value.query
   if (reset) {
     employeeSearch.value.items = []
     employeeSearch.value.nextCursor = null
   }
   employeeSearch.value.loading = true
   try {
-    const page = await workbenchApi.listMemberCandidates(props.workspaceId, {
-      ...(employeeSearch.value.query ? { query: employeeSearch.value.query } : {}),
+    const page = await workbenchApi.listMemberCandidates(workspaceId, {
+      ...(query ? { query } : {}),
       ...(reset ? {} : employeeSearch.value.nextCursor ? { cursor: employeeSearch.value.nextCursor } : {}),
       limit: 10,
     })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId || seq !== candidateSearchSeq) return
     const joined = new Set(props.members.map(member => member.userId))
     const merged = reset ? page.items : [...employeeSearch.value.items, ...page.items]
     employeeSearch.value.items = merged.filter(item => !joined.has(item.id))
     employeeSearch.value.nextCursor = page.nextCursor
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId || seq !== candidateSearchSeq) return
     notifyActionFailure('搜索员工', '企业员工目录', error, '稍后重试；仍失败请联系管理员检查员工目录权限。')
   } finally {
-    employeeSearch.value.loading = false
+    if (generationAlive(gen) && props.workspaceId === workspaceId && seq === candidateSearchSeq) {
+      employeeSearch.value.loading = false
+    }
   }
 }
 
@@ -165,14 +192,18 @@ function openEmployeeSearch() {
 
 async function addEmployee(candidateUserId: string) {
   if (addingEmployee.value) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
   addingEmployee.value = candidateUserId
   try {
-    await workbenchApi.addWorkspaceMember(props.workspaceId, { userId: candidateUserId, role: 'member' })
+    await workbenchApi.addWorkspaceMember(workspaceId, { userId: candidateUserId, role: 'member' })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success('已添加员工成员')
     employeeSearch.value.open = false
     employeeSearch.value.query = ''
     emit('refresh')
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('添加员工', `工作空间“${props.workspaceName}”`, error, '确认该员工在职、有应用访问资格且尚未加入本空间。')
   } finally {
     addingEmployee.value = ''
@@ -181,17 +212,26 @@ async function addEmployee(candidateUserId: string) {
 
 async function changeMemberRole(member: WorkspaceMember, role: TeamMemberRole) {
   if (!editableRoles(member).includes(role) || role === member.role) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
   try {
-    await workbenchApi.updateMemberRole(props.workspaceId, member.userId, { role })
+    await workbenchApi.updateMemberRole(workspaceId, member.userId, { role })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success(`已将“${member.displayName}”调整为${roleLabels[role]}`)
     emit('role-changed')
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('调整角色', `成员“${member.displayName}”`, error, '确认你仍拥有该角色的任免权限后重试。')
   }
 }
 
 async function removeMember(member: WorkspaceMember) {
   if (!canRemove(member) || isLastOwner(member)) return
+  // 评审中6+M-R5：确认框打开前捕获空间、目标与世代——确认等待期间
+  // 切团队、关闭弹窗或 A→B→A 往返后按「确认」，旧操作一律作废。
+  const workspaceId = props.workspaceId
+  const memberId = member.userId
+  const gen = dialogGeneration
   try {
     await ElMessageBox.confirm(
       `移除后“${member.displayName}”立即失去该空间的后续访问；其已共享的贡献与作者归属保留，下载链接会重新鉴权。`,
@@ -201,11 +241,14 @@ async function removeMember(member: WorkspaceMember) {
   } catch {
     return
   }
+  if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
   try {
-    await workbenchApi.removeWorkspaceMember(props.workspaceId, member.userId)
+    await workbenchApi.removeWorkspaceMember(workspaceId, memberId)
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success(`已移除“${member.displayName}”`)
     emit('refresh')
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('移除成员', `成员“${member.displayName}”`, error, '确认你不是在移除最后一位负责人后重试。')
   }
 }
@@ -215,6 +258,9 @@ function close() {
 }
 
 onBeforeUnmount(() => {
+  disposed = true
+  dialogGeneration += 1
+  candidateSearchSeq += 1
   if (employeeSearchTimer) clearTimeout(employeeSearchTimer)
 })
 

@@ -11,6 +11,7 @@ import {
   readJsonBody,
   requireRequestIdentity,
   routePermissionDenied,
+  routeValidationFailed,
   sessionAuthorizationContext,
   type Router,
 } from '../router.ts'
@@ -157,18 +158,18 @@ function isTeamRoleDenial(error: unknown): error is Error {
 }
 
 function parseMemberRole(value: unknown): MemberRole {
-  if (!isMemberRole(value)) throw new Error(`无效的角色：${String(value)}`)
+  if (!isMemberRole(value)) throw routeValidationFailed(`无效的角色：${String(value)}`)
   return value
 }
 
 export function requireNonEmptyString(value: unknown, field: string) {
-  if (typeof value !== 'string' || value.trim() === '') throw new Error(`${field} 不能为空`)
+  if (typeof value !== 'string' || value.trim() === '') throw routeValidationFailed(`${field} 不能为空`)
   return value.trim()
 }
 
 export function parseLimit(raw: string | null) {
   if (raw === null || raw === '') return 20
   const limit = Number(raw)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit 必须为 1 到 100 之间的整数')
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw routeValidationFailed('limit 必须为 1 到 100 之间的整数')
   return limit
 }

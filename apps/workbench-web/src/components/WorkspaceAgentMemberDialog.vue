@@ -62,17 +62,38 @@ const agentMemberList = ref<WorkspaceAgentMember[]>(props.agentMembers)
 
 const isOwner = computed(() => props.currentUserRole === 'owner')
 
+/**
+ * M-R5 操作世代：空间切换、弹窗关闭都会递增——确认等待中发生切换或
+ * 关闭后按「确认」，旧操作一律作废（A→B→A 往返亦不复活）。候选搜索另用
+ * searchSeq：同空间乱序响应「后到先输」不得覆盖更新的查询结果。
+ */
+let dialogGeneration = 0
+let candidateSearchSeq = 0
+// 组件直接卸载（离开整个空间页）时 props.open 未必先变 false——watcher 停了
+// 但挂起的确认 Promise 还活着，没有 disposed 守卫旧操作仍会发写请求（四审）。
+let disposed = false
+const generationAlive = (gen: number) => !disposed && gen === dialogGeneration && props.open
+
+watch(() => props.workspaceId, () => {
+  dialogGeneration += 1
+})
+
 async function refreshAgentMembers() {
   if (!props.loadAgentMembers || !props.workspaceId) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
   loadingAgents.value = true
   loadAgentError.value = ''
   try {
-    agentMemberList.value = await workbenchApi.listWorkspaceAgentMembers(props.workspaceId)
+    const list = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
+    agentMemberList.value = list
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('加载 Agent 成员', `工作空间“${props.workspaceName}”`, error, '重新打开弹窗或稍后刷新页面重试。')
     loadAgentError.value = error instanceof Error ? error.message : '加载失败'
   } finally {
-    loadingAgents.value = false
+    if (generationAlive(gen) && props.workspaceId === workspaceId) loadingAgents.value = false
   }
 }
 
@@ -83,6 +104,7 @@ watch(() => props.agentMembers, (value) => {
 watch(() => props.open, (open) => {
   if (open && props.loadAgentMembers) void refreshAgentMembers()
   if (!open) {
+    dialogGeneration += 1
     candidate.value.open = false
     candidate.value.selected = null
   }
@@ -103,19 +125,26 @@ function onAgentSearchInput(value: string) {
 }
 
 async function searchAgentCandidates(query: string) {
-  if (!isOwner.value) return
+  if (!isOwner.value || !props.open) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
+  const seq = ++candidateSearchSeq
   candidate.value.loading = true
   try {
-    const page = await workbenchApi.listWorkspaceAgentCandidates(props.workspaceId, {
+    const page = await workbenchApi.listWorkspaceAgentCandidates(workspaceId, {
       ...(query ? { query } : {}),
       limit: 10,
     })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId || seq !== candidateSearchSeq) return
     candidate.value.items = page.items
     candidate.value.nextCursor = page.nextCursor
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId || seq !== candidateSearchSeq) return
     notifyActionFailure('搜索 Agent', '平台已发布 Agent', error, '确认当前为负责人且平台允许该 Agent 加入本空间。')
   } finally {
-    candidate.value.loading = false
+    if (generationAlive(gen) && props.workspaceId === workspaceId && seq === candidateSearchSeq) {
+      candidate.value.loading = false
+    }
   }
 }
 
@@ -126,15 +155,19 @@ function selectAgentCandidate(item: AgentCandidate) {
 async function confirmAddAgent() {
   const selected = candidate.value.selected
   if (!selected || addingAgent.value) return
+  const workspaceId = props.workspaceId
+  const gen = dialogGeneration
   addingAgent.value = true
   try {
-    await workbenchApi.addWorkspaceAgentMember(props.workspaceId, { agentId: selected.agentId })
+    await workbenchApi.addWorkspaceAgentMember(workspaceId, { agentId: selected.agentId })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success(`已加入 Agent“${selected.name}”`)
     candidate.value.open = false
     candidate.value.selected = null
     emit('refresh')
     if (props.loadAgentMembers) await refreshAgentMembers()
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('添加 Agent 成员', `Agent“${selected.name}”`, error, '确认该 Agent 已发布、允许加入且 Skill／Tool 依赖完整。')
   } finally {
     addingAgent.value = false
@@ -150,6 +183,11 @@ const agentActionCopy: Record<'disable' | 'enable' | 'upgrade' | 'remove', { lab
 
 async function runAgentAction(member: WorkspaceAgentMember, action: 'disable' | 'enable' | 'upgrade' | 'remove') {
   if (!member.allowedActions.includes(action)) return
+  // 评审中6+M-R5：确认框打开前捕获空间、目标与世代——等待确认期间
+  // 切团队、关闭弹窗或 A→B→A 往返后按「确认」，旧操作一律作废。
+  const workspaceId = props.workspaceId
+  const memberId = member.id
+  const gen = dialogGeneration
   try {
     await ElMessageBox.confirm(
       agentActionCopy[action].confirm,
@@ -159,13 +197,16 @@ async function runAgentAction(member: WorkspaceAgentMember, action: 'disable' | 
   } catch {
     return
   }
+  if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
   try {
-    if (action === 'remove') await workbenchApi.removeWorkspaceAgentMember(props.workspaceId, member.id)
-    else await workbenchApi.updateWorkspaceAgentMember(props.workspaceId, member.id, { action })
+    if (action === 'remove') await workbenchApi.removeWorkspaceAgentMember(workspaceId, memberId)
+    else await workbenchApi.updateWorkspaceAgentMember(workspaceId, memberId, { action })
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success(`已${agentActionCopy[action].label}“${member.name}”`)
     emit('refresh')
     if (props.loadAgentMembers) await refreshAgentMembers()
   } catch (error) {
+    if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure(`${agentActionCopy[action].label} Agent`, `Agent“${member.name}”`, error, '刷新成员列表确认当前状态后重试。')
   }
 }
@@ -185,6 +226,9 @@ function close() {
 }
 
 onBeforeUnmount(() => {
+  disposed = true
+  dialogGeneration += 1
+  candidateSearchSeq += 1
   if (agentSearchTimer) clearTimeout(agentSearchTimer)
 })
 </script>

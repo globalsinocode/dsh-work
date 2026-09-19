@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { bumpTeamAuthRevision } from '../../authorization/postgres-workspace-grant-source-service.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
@@ -186,20 +187,18 @@ export class PostgresWorkspaceMemberService {
     await this.assertTeamWorkspace(workspaceId)
     const actorRole = await this.requireActorRole(workspaceId, actorUserId, ['owner', 'admin'])
     await this.assertAddableEmployee(targetUserId)
-    if (role === 'owner') throw new Error('负责人不能直接设置，请通过负责人转交功能')
-    if (actorRole === 'admin' && role === 'admin') throw new Error('管理员没有权限任命管理员')
+    if (role === 'owner') throw workspaceStateConflict('负责人不能直接设置，请通过负责人转交功能')
+    if (actorRole === 'admin' && role === 'admin') throw authorizationDenied('管理员没有权限任命管理员')
 
-    // Existing-membership check runs outside the transaction: two concurrent
-    // adds of the same employee can both pass it and both report
-    // created: true (the insert below is on conflict do nothing). Benign —
-    // the read-back after the transaction reflects the committed state, so
-    // one caller may simply see the other's role.
+    // Existing-membership check runs outside the transaction as a fast path;
+    // the authoritative check is repeated inside the workspace lock below.
     const existing = await this.findMemberRecord(workspaceId, targetUserId)
     if (existing) {
       if (existing.role === role) return { member: existing, created: false }
-      throw new Error('该员工已是空间成员，不能直接变更角色，请使用角色调整功能')
+      throw workspaceStateConflict('该员工已是空间成员，不能直接变更角色，请使用角色调整功能')
     }
 
+    let created = false
     await this.database.begin(async (transaction) => {
       // 3-T2：所有成员关系变更都必须**先取空间行锁**再动 workspace_members。
       // 否则与 owner-transfer（先锁 spaces 再改成员）形成反向锁对，PostgreSQL 会报
@@ -207,6 +206,25 @@ export class PostgresWorkspaceMemberService {
       // 并在锁内复核空间仍活跃：此前状态只在事务外检查，归档若在此期间提交，
       // 成员变更仍会成功（验证代理 D4 强制时序实测 8/8 复现）。
       await lockWorkspaceRow(transaction, workspaceId)
+      // 锁内复核操作者角色：锁外快照在等锁期间可能已降级/移除，不能直接沿用。
+      const lockedActorRole = await this.requireActorRole(
+        workspaceId, actorUserId, ['owner', 'admin'], transaction)
+      if (lockedActorRole === 'admin' && role === 'admin') {
+        throw authorizationDenied('管理员没有权限任命管理员')
+      }
+      // 锁内复核目标成员关系：并发重复添加同角色按幂等处理，不同角色拒绝——
+      // 不能让后到的请求误报 created 或借竞态覆盖角色。
+      const [lockedExisting] = await transaction<{ existingRole: MemberRole }[]>`
+        select member_role as "existingRole"
+          from workspace_members
+         where tenant_id = ${tenantId}
+           and workspace_id = ${workspaceId}
+           and user_id = ${targetUserId}
+      `
+      if (lockedExisting) {
+        if (lockedExisting.existingRole === role) return
+        throw workspaceStateConflict('该员工已是空间成员，不能直接变更角色，请使用角色调整功能')
+      }
       // `returning` tells us whether this transaction actually created the
       // membership: a concurrent/duplicate add hits `on conflict do nothing` and
       // must not add a second `member_added` activity (AC-15). The membership
@@ -218,8 +236,8 @@ export class PostgresWorkspaceMemberService {
         on conflict (tenant_id, workspace_id, user_id) do nothing
         returning joined_at::text as "joinedAt"
       `
-      await bumpTeamAuthRevision(transaction, workspaceId)
       if (!inserted) return
+      await bumpTeamAuthRevision(transaction, workspaceId)
       await recordWorkspaceActivity(transaction, {
         workspaceId,
         kind: 'member_added',
@@ -229,10 +247,11 @@ export class PostgresWorkspaceMemberService {
         dedupeKey: `member_added:${targetUserId}:${inserted.joinedAt}`,
         metadata: { userId: targetUserId, role },
       })
+      created = true
     })
     const member = await this.findMemberRecord(workspaceId, targetUserId)
     if (!member) throw new Error('成员添加失败，请稍后重试')
-    return { member, created: true }
+    return { member, created }
   }
 
   /**
@@ -251,7 +270,7 @@ export class PostgresWorkspaceMemberService {
     await this.assertTeamWorkspace(workspaceId)
     const actorRole = await this.requireActorRole(workspaceId, actorUserId, ['owner', 'admin'])
     const member = await this.findMemberRecord(workspaceId, targetUserId)
-    if (!member) throw new Error('目标成员不存在于该空间')
+    if (!member) throw memberTargetNotFound('目标成员不存在于该空间')
     this.assertRoleChangeAllowed(actorRole, member.role, role)
     if (member.role === role) return member
 
@@ -270,9 +289,13 @@ export class PostgresWorkspaceMemberService {
       `
       if (!current) return
       const fromRole = current.fromRole
+      // 锁内同样复核操作者角色：等锁期间操作者可能已被降级或移出，
+      // 不能沿用锁外快照继续授权。
+      const lockedActorRole = await this.requireActorRole(
+        workspaceId, actorUserId, ['owner', 'admin'], transaction)
       // 用事务内读到的真实角色重跑授权判定：否则锁外快照为 member、实际已是 admin 时，
       // 管理员可以借竞态把另一个管理员降级（既可过期又可越权）。
-      this.assertRoleChangeAllowed(actorRole, fromRole, role)
+      this.assertRoleChangeAllowed(lockedActorRole, fromRole, role)
       if (fromRole === role) return
       // `is distinct from` makes a racing duplicate change a no-op instead of a
       // second write, so only a real transition writes a revocation event and an
@@ -288,8 +311,9 @@ export class PostgresWorkspaceMemberService {
            and member_role is distinct from ${role}
         returning joined_at::text as "joinedAt"
       `
-      await bumpTeamAuthRevision(transaction, workspaceId)
+      // 无实际变化不增加授权修订（评审 L1）：并发败者不应触发一次全局读缓存失效。
       if (!changed) return
+      await bumpTeamAuthRevision(transaction, workspaceId)
       await this.writeRevocationEvent(transaction, workspaceId, targetUserId, 'role_changed', {
         from: fromRole,
         to: role,
@@ -307,7 +331,7 @@ export class PostgresWorkspaceMemberService {
       })
     })
     const updated = await this.findMemberRecord(workspaceId, targetUserId)
-    if (!updated) throw new Error('目标成员不存在于该空间')
+    if (!updated) throw memberTargetNotFound('目标成员不存在于该空间')
     return updated
   }
 
@@ -329,19 +353,32 @@ export class PostgresWorkspaceMemberService {
     await this.assertTeamWorkspace(workspaceId, { allowArchived: true })
     const actorRole = await this.requireActorRole(workspaceId, actorUserId, ['owner', 'admin'])
     const targetRole = await this.memberRoleOf(workspaceId, targetUserId)
-    if (!targetRole) throw new Error('目标成员不存在于该空间')
+    if (!targetRole) throw memberTargetNotFound('目标成员不存在于该空间')
     if (targetRole === 'owner') {
-      if (actorRole === 'admin') throw new Error('管理员没有权限移除管理员或负责人')
+      if (actorRole === 'admin') throw authorizationDenied('管理员没有权限移除管理员或负责人')
       // Pre-check replaces the deferred single-owner trigger failure with a
       // friendly message (the trigger would roll the delete back anyway).
-      throw new Error('负责人不能直接移除，请先转交负责人')
+      throw workspaceStateConflict('负责人不能直接移除，请先转交负责人')
     }
     if (actorRole === 'admin' && targetRole === 'admin') {
-      throw new Error('管理员没有权限移除管理员或负责人')
+      throw authorizationDenied('管理员没有权限移除管理员或负责人')
     }
 
     await this.runMembershipMutation(workspaceId, async (transaction) => {
       // 治理例外：归档空间仍必须能紧急撤权。
+      // 锁内复核操作者与目标角色：等锁期间操作者可能被降级/移出，目标也可能
+      // 刚被提升为管理员或负责人——沿用锁外快照会误删或越权。
+      const lockedActorRole = await this.requireActorRole(
+        workspaceId, actorUserId, ['owner', 'admin'], transaction)
+      const lockedTargetRole = await this.memberRoleOf(workspaceId, targetUserId, transaction)
+      if (!lockedTargetRole) throw memberTargetNotFound('目标成员不存在于该空间')
+      if (lockedTargetRole === 'owner') {
+        if (lockedActorRole === 'admin') throw authorizationDenied('管理员没有权限移除管理员或负责人')
+        throw workspaceStateConflict('负责人不能直接移除，请先转交负责人')
+      }
+      if (lockedActorRole === 'admin' && lockedTargetRole === 'admin') {
+        throw authorizationDenied('管理员没有权限移除管理员或负责人')
+      }
       // `returning` 区分「真的删掉了成员」与并发重复删除：只有前者才写撤权事件
       // 与动态；删除行的 joined_at 是成员代际，重加后再移除会得到不同去重键。
       const [deleted] = await transaction<{ joinedAt: string }[]>`
@@ -351,8 +388,8 @@ export class PostgresWorkspaceMemberService {
            and user_id = ${targetUserId}
         returning joined_at::text as "joinedAt"
       `
-      await bumpTeamAuthRevision(transaction, workspaceId)
       if (!deleted) return
+      await bumpTeamAuthRevision(transaction, workspaceId)
       await this.writeRevocationEvent(transaction, workspaceId, targetUserId, 'member_removed', {
         by: actorUserId,
       })
@@ -385,9 +422,18 @@ export class PostgresWorkspaceMemberService {
       actorUserId,
       ['owner', 'admin', 'member', 'viewer'],
     )
-    if (actorRole === 'owner') throw new Error('负责人不能直接退出空间，请先转交负责人')
+    if (actorRole === 'owner') throw workspaceStateConflict('负责人不能直接退出空间，请先转交负责人')
 
     await this.runMembershipMutation(workspaceId, async (transaction) => {
+      // 锁内复核操作者角色：等锁期间可能刚被提升为负责人，
+      // 此时退出会触发单负责人约束失败，应按业务规则拒绝。
+      const lockedActorRole = await this.requireActorRole(
+        workspaceId, actorUserId, ['owner', 'admin', 'member', 'viewer'], transaction)
+      if (lockedActorRole === 'owner') {
+        // 预检时操作者还是普通成员——此处命中说明等锁期间被并发转交提升为
+        // 负责人，按竞态措辞拒绝（与 transferOwnership 的锁内复核一致）。
+        throw workspaceStateConflict('负责人信息已变化，不能继续操作，请刷新后重试')
+      }
       const [deleted] = await transaction<{ joinedAt: string }[]>`
         delete from workspace_members
          where tenant_id = ${tenantId}
@@ -395,8 +441,8 @@ export class PostgresWorkspaceMemberService {
            and user_id = ${actorUserId}
         returning joined_at::text as "joinedAt"
       `
-      await bumpTeamAuthRevision(transaction, workspaceId)
       if (!deleted) return
+      await bumpTeamAuthRevision(transaction, workspaceId)
       await this.writeRevocationEvent(transaction, workspaceId, actorUserId, 'member_exit', {
         by: actorUserId,
       })
@@ -433,10 +479,10 @@ export class PostgresWorkspaceMemberService {
   ): Promise<{ workspaceId: string; previousOwnerId: string; newOwnerId: string }> {
     await this.assertTeamWorkspace(workspaceId, { allowArchived: true })
     const previousOwnerId = await this.authorization.resolveWorkspaceOwner(workspaceId)
-    if (previousOwnerId !== actorUserId) throw new Error('没有权限转交负责人')
-    if (toUserId === previousOwnerId) throw new Error('转交目标不能是当前负责人')
+    if (previousOwnerId !== actorUserId) throw authorizationDenied('没有权限转交负责人')
+    if (toUserId === previousOwnerId) throw workspaceStateConflict('转交目标不能是当前负责人')
     const targetRole = await this.memberRoleOf(workspaceId, toUserId)
-    if (!targetRole) throw new Error('转交目标必须是该空间的现有成员')
+    if (!targetRole) throw requestInvalid('转交目标必须是该空间的现有成员')
 
     await this.runMembershipMutation(workspaceId, async (transaction) => {
       // 治理例外：归档空间仍必须能转交负责人。
@@ -448,6 +494,12 @@ export class PostgresWorkspaceMemberService {
          where tenant_id = ${tenantId} and id = ${workspaceId}
          for update
       `
+      // 锁内复核：等锁期间并发转交可能已提交，操作者已不再是负责人；
+      // 转交目标也可能已被移出空间。锁外快照不能直接沿用。
+      const lockedActorRole = await this.memberRoleOf(workspaceId, actorUserId, transaction)
+      if (lockedActorRole !== 'owner') throw authorizationDenied('没有权限转交负责人')
+      const lockedTargetRole = await this.memberRoleOf(workspaceId, toUserId, transaction)
+      if (!lockedTargetRole) throw requestInvalid('转交目标必须是该空间的现有成员')
       await transaction`
         update workspace_members
            set member_role = 'member'
@@ -475,7 +527,7 @@ export class PostgresWorkspaceMemberService {
       })
       if (promoted) {
         await this.writeRevocationEvent(transaction, workspaceId, toUserId, 'role_changed', {
-          from: targetRole,
+          from: lockedTargetRole,
           to: 'owner',
           by: actorUserId,
         })
@@ -521,7 +573,7 @@ export class PostgresWorkspaceMemberService {
     // 用「不可访问」而非「不存在」：归档前该空间对调用者可能是可见的，若按「不存在」
     // 映射成 404，会让非成员用状态码区分「归档」与「不存在/无权」，形成存在性泄露。
     if (!workspace) throw authorizationDenied('工作空间不存在或不可访问')
-    if (workspace.type !== 'team') throw new Error('仅支持团队工作空间进行成员管理')
+    if (workspace.type !== 'team') throw requestInvalid('仅支持团队工作空间进行成员管理')
   }
 
   /**
@@ -541,14 +593,18 @@ export class PostgresWorkspaceMemberService {
        where u.tenant_id = ${tenantId} and u.id = ${userId}
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
     `
-    if (!row) throw new Error('目标员工不存在')
-    if (row.reason === 'disabled') throw new Error('该员工已停用，不能添加为成员')
-    if (row.reason === 'directory') throw new Error('该员工不属于业务员工目录，不能添加为成员')
-    if (row.reason === 'no_access') throw new Error('该员工不具备员工工作台使用权限，不能添加为成员')
+    if (!row) throw memberTargetNotFound('目标员工不存在')
+    if (row.reason === 'disabled') throw workspaceStateConflict('该员工已停用，不能添加为成员')
+    if (row.reason === 'directory') throw workspaceStateConflict('该员工不属于业务员工目录，不能添加为成员')
+    if (row.reason === 'no_access') throw workspaceStateConflict('该员工不具备员工工作台使用权限，不能添加为成员')
   }
 
-  private async memberRoleOf(workspaceId: string, userId: string): Promise<MemberRole | null> {
-    const [member] = await this.database<{ role: MemberRole }[]>`
+  private async memberRoleOf(
+    workspaceId: string,
+    userId: string,
+    executor: DatabaseClient | DatabaseTransaction = this.database,
+  ): Promise<MemberRole | null> {
+    const [member] = await executor<{ role: MemberRole }[]>`
       select member_role as role from workspace_members
        where tenant_id = ${tenantId}
          and workspace_id = ${workspaceId}
@@ -561,25 +617,28 @@ export class PostgresWorkspaceMemberService {
    * Service-level re-verification of the actor's current role. Route guards
    * run before this read, so a demotion racing in between (TOCTOU) must be
    * caught here: the actor must be a member and hold one of `allowedRoles`,
-   * otherwise a permission denial is thrown.
+   * otherwise a permission denial is thrown. Membership mutations additionally
+   * re-run this inside the workspace lock (executor = transaction), because a
+   * pre-lock snapshot can go stale while waiting on the lock.
    */
   private async requireActorRole(
     workspaceId: string,
     actorUserId: string,
     allowedRoles: MemberRole[],
+    executor: DatabaseClient | DatabaseTransaction = this.database,
   ): Promise<MemberRole> {
-    const role = await this.memberRoleOf(workspaceId, actorUserId)
+    const role = await this.memberRoleOf(workspaceId, actorUserId, executor)
     if (!role) throw authorizationDenied('当前用户不是该空间的成员')
-    if (!allowedRoles.includes(role)) throw new Error('当前用户角色没有权限执行此操作')
+    if (!allowedRoles.includes(role)) throw authorizationDenied('当前用户角色没有权限执行此操作')
     return role
   }
 
   private assertRoleChangeAllowed(actorRole: MemberRole, targetRole: MemberRole, newRole: MemberRole) {
-    if (targetRole === 'owner') throw new Error('没有权限调整负责人的角色，请使用负责人转交功能')
-    if (newRole === 'owner') throw new Error('负责人不能直接设置，请通过负责人转交功能')
+    if (targetRole === 'owner') throw authorizationDenied('没有权限调整负责人的角色，请使用负责人转交功能')
+    if (newRole === 'owner') throw workspaceStateConflict('负责人不能直接设置，请通过负责人转交功能')
     if (actorRole === 'admin') {
-      if (targetRole === 'admin') throw new Error('管理员没有权限调整管理员的角色')
-      if (newRole === 'admin') throw new Error('管理员没有权限任命管理员')
+      if (targetRole === 'admin') throw authorizationDenied('管理员没有权限调整管理员的角色')
+      if (newRole === 'admin') throw authorizationDenied('管理员没有权限任命管理员')
     }
   }
 
@@ -632,7 +691,7 @@ export class PostgresWorkspaceMemberService {
       })
     } catch (error) {
       if (isSingleOwnerViolation(error)) {
-        throw new Error('负责人信息已变化，不能继续操作，请刷新后重试')
+        throw workspaceStateConflict('负责人信息已变化，不能继续操作，请刷新后重试')
       }
       throw error
     }
@@ -687,6 +746,11 @@ function decodeCandidateCursor(cursor: string): { name: string; id: string } {
   } catch {
     throw new Error('分页游标无效')
   }
+}
+
+/** 成员管理目标的类型化 404：与 automation-service 的 notFound 同一约定，不再依赖中文文案正则。 */
+function memberTargetNotFound(message: string): Error {
+  return Object.assign(new Error(message), { status: 404, code: 'member_target_not_found' })
 }
 
 function isSingleOwnerViolation(error: unknown) {

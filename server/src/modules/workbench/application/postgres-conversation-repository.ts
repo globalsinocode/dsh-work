@@ -5,10 +5,21 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import type { RunState } from '../../run/run-types.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
 import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
 const conversationHistoryCharacterLimit = 24_000
+/** SSE 活动轮询跟踪的最近活跃会话数上限（评审 M8 查询边界）。 */
+const workspaceSessionActivitySessionLimit = 500
+/** 共享线程一次返回的最近消息数上限（评审 M8 查询边界）。 */
+const sessionThreadMessageLimit = 500
+/**
+ * SSE 归档增量 id 集上限（二审残留）：客户端 since 水位线可由请求方给出
+ * 任意早的时刻，归档集必须自身有界——超出上限的更老归档由客户端全量
+ * resync 兜底，不做无界扫描。
+ */
+const workspaceSessionArchivedIdsLimit = 2000
 
 interface SessionRow {
   id: string
@@ -168,26 +179,58 @@ export class PostgresConversationRepository {
       ? null
       : input.agentVersionId ?? 'agent-version-dsh-work-assistant-1'
     const workspaceId = await this.resolveWorkspaceId(input.workspaceId, input.userId)
-    const db = tx ?? this.database
-    const [row] = await db<SessionRow[]>`
-      insert into sessions (
-        id, tenant_id, workspace_id, created_by, agent_version_id, selected_skill_version_id, title, status
-      ) values (
-        ${id}, ${tenantId}, ${workspaceId}, ${input.userId}, ${agentVersionId}, ${input.selectedSkillVersionId ?? null},
-        ${truncateTitle(input.title)}, 'active'
-      )
-      returning id, workspace_id as "workspaceId", agent_version_id as "agentVersionId",
-                selected_skill_version_id as "selectedSkillVersionId",
-                title, created_at as "createdAt"
-    `
-    if (!row) throw new Error('Session 创建失败')
-    return {
-      id: row.id,
-      workspaceId: row.workspaceId,
-      agentVersionId: row.agentVersionId,
-      title: row.title,
-      createdAt: row.createdAt.toISOString(),
+    const insertSession = async (db: DatabaseClient | DatabaseTransaction) => {
+      const [row] = await db<SessionRow[]>`
+        insert into sessions (
+          id, tenant_id, workspace_id, created_by, agent_version_id, selected_skill_version_id, title, status
+        ) values (
+          ${id}, ${tenantId}, ${workspaceId}, ${input.userId}, ${agentVersionId}, ${input.selectedSkillVersionId ?? null},
+          ${truncateTitle(input.title)}, 'active'
+        )
+        returning id, workspace_id as "workspaceId", agent_version_id as "agentVersionId",
+                  selected_skill_version_id as "selectedSkillVersionId",
+                  title, created_at as "createdAt"
+      `
+      if (!row) throw new Error('Session 创建失败')
+      return {
+        id: row.id,
+        workspaceId: row.workspaceId,
+        agentVersionId: row.agentVersionId,
+        title: row.title,
+        createdAt: row.createdAt.toISOString(),
+      }
     }
+    // 评审高2：团队会话的 INSERT 必须与「空间活跃 + 当前成员非 viewer」的复核
+    // 在同一个空间锁事务里完成，否则预检到插入之间归档/撤权仍能穿透。
+    // 个人空间保持本人规则不变；调用方已持有事务时（自动化受理）由其自治。
+    if (!tx) {
+      const [workspace] = await this.database<{ type: 'personal' | 'team' }[]>`
+        select workspace_type as type from workspaces
+         where tenant_id = ${tenantId} and id = ${workspaceId}
+      `
+      if (workspace?.type === 'team') {
+        return this.database.begin(async transaction => {
+          const [locked] = await transaction<{ id: string; status: string }[]>`
+            select id, status from workspaces
+             where tenant_id = ${tenantId} and id = ${workspaceId}
+             for update
+          `
+          if (!locked || locked.status !== 'active') {
+            throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+          }
+          const [member] = await transaction<{ role: string }[]>`
+            select member_role as role from workspace_members
+             where tenant_id = ${tenantId} and workspace_id = ${workspaceId}
+               and user_id = ${input.userId}
+          `
+          if (!member || member.role === 'viewer') {
+            throw authorizationDenied('当前用户角色没有权限创建共享会话')
+          }
+          return insertSession(transaction)
+        })
+      }
+    }
+    return insertSession(tx ?? this.database)
   }
 
   /**
@@ -260,8 +303,8 @@ export class PostgresConversationRepository {
     return this.database.begin(async (transaction) => {
       // Same lock order as Run creation: Workspace -> Session -> Run. A member
       // removal/archive cannot cross this operation after a stale UI check.
-      const [workspace] = await transaction<{ id: string; status: string }[]>`
-        select w.id, w.status from sessions s
+      const [workspace] = await transaction<{ id: string; status: string; type: 'personal' | 'team' }[]>`
+        select w.id, w.status, w.workspace_type as type from sessions s
         join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
          where s.tenant_id = ${tenantId} and s.id = ${sessionId}
            and s.created_by = ${userId} and s.audience = 'workbench'
@@ -269,6 +312,21 @@ export class PostgresConversationRepository {
       `
       if (!workspace) throw authorizationDenied('Session 不存在或不可访问')
       await this.requireWritableWorkspace(workspace.id, userId, transaction)
+      // 移除共享会话改变全队入口，属团队写入而非个人隐藏：团队会话的创建者
+      // 还必须持有非 viewer 角色。readableWorkspacePredicate 放行 viewer，
+      // 因此必须在空间锁内单独复核——成员降级与归档都在锁序内串行化。
+      if (workspace.type === 'team') {
+        const [membership] = await transaction<{ role: string }[]>`
+          select member_role as role
+            from workspace_members
+           where tenant_id = ${tenantId}
+             and workspace_id = ${workspace.id}
+             and user_id = ${userId}
+        `
+        if (!membership || membership.role === 'viewer') {
+          throw authorizationDenied('当前用户角色没有权限移除该共享会话')
+        }
+      }
       const [session] = await transaction<{ id: string; title: string; workspaceId: string; status: string }[]>`
         select id, title, workspace_id as "workspaceId", status from sessions
          where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${userId}
@@ -292,6 +350,14 @@ export class PostgresConversationRepository {
       await transaction`
         update sessions set status = 'archived', last_active_at = now()
          where tenant_id = ${tenantId} and id = ${sessionId}
+      `
+      // M-R4：归档对 SSE 是「提交后可见」的变更——last_active_at 用 now()
+      // 记的是事务开始时间，晚提交时可能早于观察者的水位线。同一事务里
+      //  bump 空间修订号：修订号只在提交后递增，作为与归档一致的变更信号
+      // 触发订阅方做无时间过滤的补扫，同时顺带收紧读轨缓存有效期。
+      await transaction`
+        update workspaces set team_auth_revision = team_auth_revision + 1
+         where tenant_id = ${tenantId} and id = ${session.workspaceId}
       `
       return { sessionId: session.id, title: session.title, archived: true as const, removedFromHistory: true as const, physicalDeletion: false as const }
     })
@@ -319,6 +385,85 @@ export class PostgresConversationRepository {
        where tenant_id = ${tenantId} and id = ${input.sessionId}
     `
     return id
+  }
+
+  /**
+   * TW-10 shared-discussion commit. The orchestration-layer write check is only
+   * a fast fail — this transaction takes the same workspaces → sessions lock
+   * order as `archiveSession`/`createRun` and re-asserts 「空间活跃 + 会话活跃 +
+   * 调用者仍是非只读成员」inside the lock, so a demotion, removal or archive
+   * landing between the pre-check and the commit cannot slip a message in.
+   * Message insert and the activity bump commit together; a client-supplied
+   * deterministic message id makes retries idempotent.
+   */
+  async appendDiscussionMessage(input: {
+    sessionId: string
+    userId: string
+    content: string
+    messageId: string
+  }): Promise<{ messageId: string; created: boolean }> {
+    return this.database.begin(async (transaction) => {
+      const [locked] = await transaction<{
+        workspaceId: string
+        sessionStatus: string
+      }[]>`
+        select w.id as "workspaceId", s.status as "sessionStatus"
+          from sessions s
+          join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+         where s.tenant_id = ${tenantId} and s.id = ${input.sessionId}
+           and s.audience = 'workbench' and w.workspace_type = 'team'
+           and w.status = 'active'
+         for update of w, s
+      `
+      if (!locked || locked.sessionStatus !== 'active') {
+        throw authorizationDenied('Session 不存在或不可访问')
+      }
+      const [membership] = await transaction<{ role: string }[]>`
+        select wm.member_role as role
+          from workspace_members wm
+          join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
+         where wm.tenant_id = ${tenantId}
+           and wm.workspace_id = ${locked.workspaceId}
+           and wm.user_id = ${input.userId}
+      `
+      if (!membership || membership.role === 'viewer') {
+        throw authorizationDenied('当前用户角色没有权限在该会话中发言')
+      }
+      const [inserted] = await transaction<{ id: string }[]>`
+        insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id)
+        values (${input.messageId}, ${tenantId}, ${input.sessionId}, null, 'user', ${input.content}, ${input.userId})
+        on conflict (id) do nothing
+        returning id
+      `
+      if (inserted) {
+        await transaction`
+          update sessions set last_active_at = now()
+           where tenant_id = ${tenantId} and id = ${input.sessionId}
+        `
+        return { messageId: input.messageId, created: true }
+      }
+      // 键冲突即同一次逻辑请求的重放：必须核对确实是「同会话、同发送者、
+      // 同消息类型、同正文」的同一条消息（M-R2）——不能仅凭相同内容认定
+      // 重放；任一维度不符都按冲突拒绝，绝不静默吞掉或归到别人名下。
+      const [existing] = await transaction<{
+        sessionId: string
+        senderId: string | null
+        role: string
+        content: string
+      }[]>`
+        select session_id as "sessionId", sender_user_id as "senderId", role, content
+          from messages
+         where tenant_id = ${tenantId} and id = ${input.messageId}
+      `
+      if (!existing
+        || existing.sessionId !== input.sessionId
+        || existing.senderId !== input.userId
+        || existing.role !== 'user'
+        || existing.content !== input.content) {
+        throw workspaceStateConflict('幂等键已被其他消息占用，请更换 idempotencyKey 后重试')
+      }
+      return { messageId: input.messageId, created: false }
+    })
   }
 
   async getRunPrompt(runId: string) {
@@ -419,6 +564,8 @@ export class PostgresConversationRepository {
       creatorId: string
       creatorName: string
       lastActiveAt: Date
+      /** 微秒级游标文本（同个人历史口径）：toISOString 只到毫秒会丢行（评审 M3）。 */
+      cursorTimestamp: string
       runCount: number
       latestRunId: string | null
       latestRunStatus: RunState | null
@@ -426,6 +573,7 @@ export class PostgresConversationRepository {
       select s.id as "sessionId", s.title,
              s.created_by as "creatorId", u.display_name as "creatorName",
              s.last_active_at as "lastActiveAt",
+             to_char(s.last_active_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorTimestamp",
              (select count(*)::integer from runs r
                where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
              latest.id as "latestRunId", latest.status as "latestRunStatus"
@@ -444,7 +592,7 @@ export class PostgresConversationRepository {
          and ${pattern === null ? this.database`true` : this.database`s.title ilike ${pattern} escape '\\'`}
          and ${cursor === null
            ? this.database`true`
-           : this.database`(s.last_active_at, s.id) < (${cursor.lastActiveAt}::timestamptz, ${cursor.id})`}
+           : this.database`(s.last_active_at, s.id) < (${cursor.lastActiveAt}::text::timestamptz, ${cursor.id})`}
        order by s.last_active_at desc, s.id desc
        limit ${limit + 1}
     `
@@ -458,11 +606,12 @@ export class PostgresConversationRepository {
       lastActiveAt: row.lastActiveAt.toISOString(),
       runCount: Number(row.runCount),
       latestRun: row.latestRunId ? { id: row.latestRunId, status: row.latestRunStatus as RunState } : null,
+      cursorTimestamp: row.cursorTimestamp,
     }))
     const last = items[items.length - 1]
     return {
-      items,
-      nextCursor: hasMore && last ? encodeSessionCursor(last.lastActiveAt, last.sessionId) : null,
+      items: items.map(({ cursorTimestamp: _cursorTimestamp, ...item }) => item),
+      nextCursor: hasMore && last ? encodeSessionCursor(last.cursorTimestamp, last.sessionId) : null,
     }
   }
 
@@ -500,7 +649,10 @@ export class PostgresConversationRepository {
              (w.status = 'active' and (w.workspace_type = 'personal' or exists (
                 select 1 from workspace_members m where m.tenant_id = w.tenant_id and m.workspace_id = w.id
                   and m.user_id = ${input.actorUserId} and m.member_role <> 'viewer'))) as "canContinue",
-             (w.status = 'active' and not exists (select 1 from runs live where live.tenant_id = s.tenant_id
+             (w.status = 'active' and (w.workspace_type = 'personal' or exists (
+                select 1 from workspace_members rm where rm.tenant_id = w.tenant_id and rm.workspace_id = w.id
+                  and rm.user_id = ${input.actorUserId} and rm.member_role <> 'viewer'))
+              and not exists (select 1 from runs live where live.tenant_id = s.tenant_id
                and live.session_id = s.id and live.status in ('queued', 'running', 'cancel_requested'))) as "canRemove"
         from sessions s
         join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
@@ -616,8 +768,27 @@ export class PostgresConversationRepository {
    * requester and the Agent recorded in the Run manifest (falling back to the
    * session-bound Agent for legacy rows).
    */
-  private async loadSessionMessages(sessionId: string): Promise<MessageRow[]> {
-    return this.database<MessageRow[]>`
+  private async loadSessionMessages(
+    sessionId: string,
+    options: { runId?: string; limit?: number; beforeMessageId?: string } = {},
+  ): Promise<MessageRow[]> {
+    // 查询边界（评审 M8）：调用方可用 runId 只取该 Run 的消息（Run 详情不再
+    // 先拉全会话再内存过滤），或用 limit 只取最近 N 条（共享线程）。无界路径
+    // 仅为历史调用方保留。
+    // beforeMessageId：加载更早一页（评审中3）——游标就是当前最旧一条消息
+    // 的 id。边界比较整体留在 SQL 子查询里（二审残留 1）：created_at 不能
+    // 经 JS Date 往返——毫秒截断会把同毫秒不同微秒的消息错误排出上一页。
+    let beforeValid = false
+    if (options.beforeMessageId) {
+      const [boundary] = await this.database<{ id: string }[]>`
+        select id from messages
+         where tenant_id = ${tenantId} and session_id = ${sessionId}
+           and id = ${options.beforeMessageId}
+      `
+      if (!boundary) throw requestInvalid('无效的消息分页游标')
+      beforeValid = true
+    }
+    const rows = await this.database<MessageRow[]>`
       select m.id, m.role, m.content, m.created_at as "createdAt", m.run_id as "runId",
              coalesce(m.sender_user_id, r.requested_by) as "senderId",
              su.display_name as "senderName",
@@ -635,8 +806,18 @@ export class PostgresConversationRepository {
         left join agents ag on ag.tenant_id = av.tenant_id and ag.id = av.agent_id
        where m.tenant_id = ${tenantId} and m.session_id = ${sessionId}
          and m.role in ('user', 'assistant')
-       order by m.created_at asc
+         and ${options.runId ? this.database`m.run_id = ${options.runId}` : this.database`true`}
+         and ${beforeValid
+           ? this.database`(m.created_at, m.id) < (
+               select b.created_at, b.id from messages b
+                where b.tenant_id = ${tenantId} and b.session_id = ${sessionId}
+                  and b.id = ${options.beforeMessageId}
+             )`
+           : this.database`true`}
+       order by m.created_at desc, m.id desc
+       ${options.limit ? this.database`limit ${options.limit}` : this.database``}
     `
+    return rows.reverse()
   }
 
   /**
@@ -648,7 +829,10 @@ export class PostgresConversationRepository {
    * push events without an extra event table. Callers authorize separately.
    */
   async listWorkspaceSessionActivity(workspaceId: string) {
-    return this.database<{ sessionId: string; activityAt: Date; activityEpoch: number }[]>`
+    // 有界活跃集（评审 M8）：先按 last_active_at 走索引取最近 500 个会话，
+    // 昂贵的 max(runs.updated_at) 只对这些会话计算。被挤出窗口的旧会话一旦
+    // 有写入会推高 last_active_at 重新进入窗口，下一拍即被检测到。
+    const sessions = await this.database<{ sessionId: string; activityAt: Date; activityEpoch: number }[]>`
       select s.id as "sessionId",
              activity.activity_at as "activityAt",
              extract(epoch from activity.activity_at)::float8 as "activityEpoch"
@@ -665,7 +849,78 @@ export class PostgresConversationRepository {
         ) activity
        where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
          and s.status = 'active' and s.audience = 'workbench'
+       order by s.last_active_at desc, s.id desc
+       limit ${workspaceSessionActivitySessionLimit}
     `
+    // team_auth_revision 随页返回（M-R4）：归档在同一事务里 bump 修订号，
+    // 订阅方以「修订号变化」作为提交后一致的归档变更信号，做无时间过滤的
+    // 补扫——不再只靠 last_active_at 与某个时间水位线比较。
+    const [workspace] = await this.database<{ revision: number }[]>`
+      select team_auth_revision as revision from workspaces
+       where tenant_id = ${tenantId} and id = ${workspaceId}
+    `
+    return { sessions, revision: workspace?.revision ?? 0 }
+  }
+
+  /**
+   * 归档增量跟踪（评审中4）：归档的唯一路径会把 last_active_at 推到 now()，
+   * 因此「status=archived 且 last_active_at >= since」精确捕获 since 之后
+   * 归档的会话——被挤出活动窗口后才归档的会话不再漏通知，而建流前的历史
+   * 归档也不会每轮全量回扫（归档集与活跃窗口解耦，有界）。
+   */
+  async listRecentlyArchivedSessionIds(workspaceId: string, since: Date) {
+    // LIMIT+1 探测截断（四审）：容量上限是对的，但「超限即丢失」必须伴随
+    // 恢复信号——订阅方据此发 resync 要求客户端整体重取，而不是静默漏报。
+    const rows = await this.database<{ sessionId: string }[]>`
+      select s.id as "sessionId"
+        from sessions s
+       where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
+         and s.status = 'archived' and s.audience = 'workbench'
+         and s.last_active_at >= ${since}
+       order by s.last_active_at desc
+       limit ${workspaceSessionArchivedIdsLimit + 1}
+    `
+    return {
+      ids: rows.slice(0, workspaceSessionArchivedIdsLimit).map(row => row.sessionId),
+      truncated: rows.length > workspaceSessionArchivedIdsLimit,
+    }
+  }
+
+  /**
+   * 直接复核指定会话的当前归档状态（M-R4）：曾活跃集合中消失的成员不看
+   * 任何时间戳——归档事务开始早、提交晚导致 last_active_at 早于水位线时
+   * 也能命中。ids 由调用方的有界跟踪集合提供。
+   */
+  async listArchivedSessionIdsAmong(workspaceId: string, sessionIds: string[]) {
+    if (!sessionIds.length) return []
+    const rows = await this.database<{ sessionId: string }[]>`
+      select s.id as "sessionId"
+        from sessions s
+       where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
+         and s.status = 'archived' and s.audience = 'workbench'
+         and s.id = any(${sessionIds})
+    `
+    return rows.map(row => row.sessionId)
+  }
+
+  /**
+   * 修订号补扫（M-R4）：空间修订号变化（归档/成员变更已提交）时对归档集
+   * 做一次无时间过滤的有界回扫，覆盖「从未进入活跃窗口、且归档时间戳
+   * 早于客户端水位线」的残余缝隙。
+   */
+  async listArchivedSessionIds(workspaceId: string) {
+    const rows = await this.database<{ sessionId: string }[]>`
+      select s.id as "sessionId"
+        from sessions s
+       where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
+         and s.status = 'archived' and s.audience = 'workbench'
+       order by s.last_active_at desc
+       limit ${workspaceSessionArchivedIdsLimit + 1}
+    `
+    return {
+      ids: rows.slice(0, workspaceSessionArchivedIdsLimit).map(row => row.sessionId),
+      truncated: rows.length > workspaceSessionArchivedIdsLimit,
+    }
   }
 
   /**
@@ -675,7 +930,7 @@ export class PostgresConversationRepository {
    * caller (requireSessionAccess / authorizeTeamTaskRead); this method only
    * loads data for an active workbench session.
    */
-  async getSessionThread(sessionId: string) {
+  async getSessionThread(sessionId: string, options?: { before?: string }) {
     const [row] = await this.database<{
       id: string
       title: string
@@ -698,7 +953,15 @@ export class PostgresConversationRepository {
          and s.status = 'active' and s.audience = 'workbench'
     `
     if (!row) return null
-    const messages = await this.loadSessionMessages(sessionId)
+    // 只取最近 500 条（sessionThreadMessageLimit）：共享讨论可能有上千条历史，
+    // 全量加载既慢又撑爆响应体。多取一条判断是否还有更早历史——截断必须
+    // 显式告知客户端并给出翻页游标，不能静默丢消息（评审中3）。
+    const loaded = await this.loadSessionMessages(sessionId, {
+      limit: sessionThreadMessageLimit + 1,
+      beforeMessageId: options?.before,
+    })
+    const hasMoreMessages = loaded.length > sessionThreadMessageLimit
+    const messages = hasMoreMessages ? loaded.slice(1) : loaded
     const runs = await this.database<{
       id: string
       status: RunState
@@ -742,11 +1005,20 @@ export class PostgresConversationRepository {
       latestRun: runs.length > 0
         ? { id: runs[runs.length - 1]!.id, status: runs[runs.length - 1]!.status }
         : null,
+      // 「加载更早」契约（评审中3）：hasMoreMessages 为 true 时，用
+      // messagesCursor（本页最旧一条消息的 id）作 before 参数再取上一页。
+      hasMoreMessages,
+      messagesCursor: hasMoreMessages && messages.length > 0 ? messages[0]!.id : null,
     }
   }
 
   private async mapTask(row: TaskRow): Promise<TaskRun> {
-    const messages = await this.loadSessionMessages(row.sessionId)
+    // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
+    // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
+    // 完整多轮消息历史，不按 Run 收窄（评审中3）。
+    const messages = row.workspaceType === 'team'
+      ? await this.loadSessionMessages(row.sessionId, { runId: row.id })
+      : await this.loadSessionMessages(row.sessionId)
     const events = row.currentAttemptId
       ? await this.database<EventRow[]>`
           select id, event_type as "eventType", display_message as "displayMessage",

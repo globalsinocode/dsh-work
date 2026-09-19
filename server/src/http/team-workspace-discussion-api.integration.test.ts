@@ -95,11 +95,29 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   // 成员发讨论消息：不产生 Run，带发送者归因。
   const posted = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: memberId,
-    body: { content: '本周发布窗口定在周四吗？' },
+    body: { content: '本周发布窗口定在周四吗？', idempotencyKey: 'discussion-retry-1' },
   })
   assert.equal(posted.status, 201)
-  const postedData = posted.body.data as { messageId: string; sessionId: string }
+  const postedData = posted.body.data as { messageId: string; sessionId: string; created: boolean }
   assert.equal(postedData.sessionId, session.id)
+  assert.equal(postedData.created, true)
+
+  // 同一幂等键重放：不产生第二条消息（网络重试/双击去重）。
+  const replayed = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
+    as: memberId,
+    body: { content: '本周发布窗口定在周四吗？', idempotencyKey: 'discussion-retry-1' },
+  })
+  assert.equal(replayed.status, 201)
+  const replayedData = replayed.body.data as { messageId: string; created: boolean }
+  assert.equal(replayedData.messageId, postedData.messageId, '幂等重放应命中同一条消息')
+  assert.equal(replayedData.created, false)
+
+  // 缺少幂等键：与 /runs 同一口径判 422，防止客户端失去去重保护。
+  const noKey = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
+    as: memberId,
+    body: { content: '缺键消息' },
+  })
+  assert.equal(noKey.status, 422, '缺少 idempotencyKey 应拒绝')
 
   const afterPost = await api('GET', `/api/workbench/v1/sessions/${session.id}`, { as: ownerId })
   const afterThread = afterPost.body.data as {
@@ -122,17 +140,17 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   // 空消息与 viewer 发言被拒。
   const empty = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: memberId,
-    body: { content: '   ' },
+    body: { content: '   ', idempotencyKey: 'discussion-empty' },
   })
   assert.equal(empty.status, 422)
   const malformed = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: memberId,
-    body: { content: 123 },
+    body: { content: 123, idempotencyKey: 'discussion-malformed' },
   })
   assert.equal(malformed.status, 422)
   const viewerPost = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: viewerId,
-    body: { content: '只读成员发言' },
+    body: { content: '只读成员发言', idempotencyKey: 'discussion-viewer' },
   })
   assert.equal(viewerPost.status, 403, '只读成员不得发讨论消息')
   // viewer 可读。
@@ -142,7 +160,7 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   assert.equal((await api('GET', `/api/workbench/v1/sessions/${session.id}`, { as: outsiderId })).status, 403)
   const outsiderPost = await api('POST', `/api/workbench/v1/sessions/${session.id}/messages`, {
     as: outsiderId,
-    body: { content: '外部人发言' },
+    body: { content: '外部人发言', idempotencyKey: 'discussion-outsider' },
   })
   assert.equal(outsiderPost.status, 403)
 
@@ -154,10 +172,71 @@ test('团队共享讨论：成员可读他人会话线程、可发不产生 Run 
   assert.equal(personalSession.status, 201)
   const personalPost = await api('POST', `/api/workbench/v1/sessions/${(personalSession.body.data as { id: string }).id}/messages`, {
     as: ownerId,
-    body: { content: '个人会话讨论消息' },
+    body: { content: '个人会话讨论消息', idempotencyKey: 'discussion-personal' },
   })
   assert.equal(personalPost.status, 422)
   assert.match(errorMessage(personalPost), /仅团队空间会话支持讨论消息/)
+})
+
+test('评审 M-R2/M-R3：同键异文 409、跨会话键命名空间独立、同毫秒微秒级翻页不漏消息', async () => {
+  const workspaceId = 'ws-tw10-idem-page'
+  const ownerId = `${workspaceId}-owner`
+  const memberId = `${workspaceId}-member`
+  await createDirectoryUser(ownerId, '幂等负责人')
+  await createDirectoryUser(memberId, '幂等成员')
+  await createTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  const session1 = (await api('POST', '/api/workbench/v1/sessions', {
+    as: ownerId, body: { title: '会话一', workspaceId },
+  })).body.data as { id: string }
+  const session2 = (await api('POST', '/api/workbench/v1/sessions', {
+    as: ownerId, body: { title: '会话二', workspaceId },
+  })).body.data as { id: string }
+
+  // M-R2：同用户、同会话、同键、不同正文——同一确定性 messageId 落到冲突
+  // 分支，必须 409 而不能当作成功重放静默吞掉新内容。
+  const first = await api('POST', `/api/workbench/v1/sessions/${session1.id}/messages`, {
+    as: memberId, body: { content: '第一版内容', idempotencyKey: 'shared-key' },
+  })
+  assert.equal(first.status, 201)
+  const conflict = await api('POST', `/api/workbench/v1/sessions/${session1.id}/messages`, {
+    as: memberId, body: { content: '改过的内容', idempotencyKey: 'shared-key' },
+  })
+  assert.equal(conflict.status, 409, '同键异文必须判冲突而不是当重放')
+
+  // M-R2：键的命名空间含会话——同键跨会话互不冲突，各自独立成消息。
+  const other = await api('POST', `/api/workbench/v1/sessions/${session2.id}/messages`, {
+    as: memberId, body: { content: '另一会话的同键消息', idempotencyKey: 'shared-key' },
+  })
+  assert.equal(other.status, 201)
+  assert.notEqual(
+    (other.body.data as { messageId: string }).messageId,
+    (first.body.data as { messageId: string }).messageId,
+    '跨会话同键必须是不同的确定性 messageId',
+  )
+
+  // M-R3：同毫秒不同微秒——before 边界比较留在 SQL，毫秒截断不得把
+  // 同毫秒的更早消息挤出上一页。
+  await database`
+    insert into messages (id, tenant_id, session_id, run_id, role, content, sender_user_id, created_at)
+    values ('msg-page-a', ${tenantId}, ${session1.id}, null, 'user', '同毫秒更早', ${memberId},
+            '2026-09-12 09:00:00.123456+00'),
+           ('msg-page-b', ${tenantId}, ${session1.id}, null, 'user', '同毫秒更晚', ${memberId},
+            '2026-09-12 09:00:00.123789+00')
+  `
+  const page = await api('GET', `/api/workbench/v1/sessions/${session1.id}?before=msg-page-b`, { as: memberId })
+  assert.equal(page.status, 200)
+  const pageData = page.body.data as { messages: Array<{ id: string }> }
+  assert.ok(
+    pageData.messages.some(m => m.id === 'msg-page-a'),
+    '同毫秒不同微秒的更早消息必须进入上一页',
+  )
+  assert.ok(
+    !pageData.messages.some(m => m.id === 'msg-page-b'),
+    '游标边界消息本身不进入上一页',
+  )
 })
 
 test('空间会话活动流：成员实时收到他人讨论消息的 session.updated 推送，非成员建连被拒', async () => {
@@ -210,7 +289,7 @@ test('空间会话活动流：成员实时收到他人讨论消息的 session.up
 
   const posted = await api('POST', `/api/workbench/v1/sessions/${sessionId}/messages`, {
     as: ownerId,
-    body: { content: '实时推送验证' },
+    body: { content: '实时推送验证', idempotencyKey: 'discussion-sse-push' },
   })
   assert.equal(posted.status, 201)
   await readUntil(`"session_id":"${sessionId}"`)
@@ -509,17 +588,44 @@ test('共享会话取消/重试：写轨成员均可操作他人发起的 Run，
   const cancelledTask = cancelled.body.data as { status: string }
   assert.equal(cancelledTask.status, 'cancelled')
 
-  // owner 重试同一个已取消 Run：版本必须沿用原 Attempt manifest 固定版本。
+  // owner 重试 member 发起的 Run：跨成员重试不在原 Run 上叠加 Attempt——
+  // 执行身份契约要求 requested_by === manifest.user_context.user_id，因此创建
+  // 属于操作者的新 Run（评审 H3），沿用原提问与固定 Agent 版本。
   const retried = await api('POST', `/api/workbench/v1/runs/${runId}/retry`, { as: ownerId })
   assert.equal(retried.status, 202, '写轨成员可重试他人发起的共享 Run')
-  const [retriedAttempt] = await database<{ agentVersionId: string | null }[]>`
-    select manifest ->> 'agent_version_id' as "agentVersionId"
+  const retriedRunId = (retried.body.data as { id: string }).id
+  assert.notEqual(retriedRunId, runId, '跨成员重试应创建新 Run 而不是复用原 Run')
+  const [retriedRun] = await database<{ requestedBy: string; sessionId: string }[]>`
+    select requested_by as "requestedBy", session_id as "sessionId"
+      from runs where tenant_id = ${tenantId} and id = ${retriedRunId}
+  `
+  assert.equal(retriedRun?.requestedBy, ownerId, '新 Run 归属本次操作者')
+  assert.equal(retriedRun?.sessionId, (await database<{ id: string }[]>`
+    select session_id as id from runs where tenant_id = ${tenantId} and id = ${runId}
+  `)[0]?.id, '新 Run 留在同一共享会话')
+  const [retriedAttempt] = await database<{ agentVersionId: string | null; manifestUserId: string | null }[]>`
+    select manifest ->> 'agent_version_id' as "agentVersionId",
+           manifest #>> '{user_context,user_id}' as "manifestUserId"
       from run_attempts
      where tenant_id = ${tenantId} and id = (
-       select current_attempt_id from runs where tenant_id = ${tenantId} and id = ${runId}
+       select current_attempt_id from runs where tenant_id = ${tenantId} and id = ${retriedRunId}
      )
   `
   assert.equal(retriedAttempt?.agentVersionId, agent.versionId, '重试必须沿用原运行的固定版本')
+  assert.equal(retriedAttempt?.manifestUserId, ownerId, 'manifest 用户身份必须是操作者而非原发起人')
+
+  // 等待的是新 Run 而不是原 Run（评审中2）：必须真实收敛到 succeeded，
+  // 原 Run 不得被追加任何新 Attempt。
+  await waitForRun(retriedRunId)
+  const [retriedFinal] = await database<{ status: string }[]>`
+    select status from runs where tenant_id = ${tenantId} and id = ${retriedRunId}
+  `
+  assert.equal(retriedFinal?.status, 'succeeded', '跨成员重试的新 Run 必须真实执行成功')
+  const [originAttemptCount] = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = ${tenantId} and run_id = ${runId}
+  `
+  assert.equal(originAttemptCount?.count, 1, '原 Run 不得因跨成员重试叠加新 Attempt')
 
   // manifest 缺 agent_version_id 的历史数据：团队重试必须 422 而不是回落会话绑定。
   await waitForRun(runId)

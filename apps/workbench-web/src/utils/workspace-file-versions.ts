@@ -1,10 +1,10 @@
-import type { WorkspaceFile, WorkspaceFileVersion, WorkspaceFileVersionParseStatus } from '@/types/domain'
+import type { WorkspaceFile, WorkspaceFileVersion } from '@/types/domain'
 
 /**
  * 版本解析状态文案（design §4：状态不靠颜色传达）。服务端闭集之外的脏数据
  * 返回中性文案，绝不渲染空白行。
  */
-export function describeVersionParseStatus(parseStatus: WorkspaceFileVersionParseStatus): string {
+export function describeVersionParseStatus(parseStatus: string): string {
   if (parseStatus === 'succeeded') return '解析成功'
   if (parseStatus === 'failed') return '解析失败'
   if (parseStatus === 'pending') return '处理中'
@@ -35,6 +35,9 @@ export function toVersionFileReference(version: WorkspaceFileVersion): Workspace
     uploadedBy: version.uploadedBy,
     uploadedAt: version.uploadedAt,
     logicalFileId: version.logicalFileId,
+    // 版本引用与文件行同一道服务端门控（评审低1）：WorkspaceDetailView 对
+    // 团队文件要求显式 canReference，否则 useWorkspaceFile 直接拒绝。
+    canReference: canReferenceVersion(version),
   }
 }
 
