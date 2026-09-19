@@ -1127,9 +1127,20 @@ export class RunOrchestrationService {
       if (!current || current.currentAttemptId !== manifest.attempt_id || !['queued', 'running'].includes(current.status)) return
       const handle = await this.runtime.execute(manifest)
       const unsubscribe = this.runtime.subscribe(run.id, (event) => this.queueEvent(run, event))
-      await handle.done
-      await this.eventWrites.get(run.id)
-      unsubscribe()
+      try {
+        await handle.done
+        await this.eventWrites.get(run.id)
+      } finally {
+        // 事件回调必须在 Attempt 生命周期内摘除：handle.done 拒绝或事件写
+        // 链抛错时漏摘会让订阅挂在 Runtime 上，后续事件继续改写已终态的
+        // Run，并在长进程里泄漏回调。unsubscribe 自身抛错只能记录，不能
+        // 让 finally 覆盖 handle.done 已抛出的原始失败原因。
+        try {
+          unsubscribe()
+        } catch (error) {
+          console.error('runtime unsubscribe failed', error)
+        }
+      }
     } catch (error) {
       const attempt = await this.runs.getAttempt(tenantId, manifest.attempt_id)
       const currentRun = await this.runs.getRun(tenantId, run.id)
@@ -1146,6 +1157,20 @@ export class RunOrchestrationService {
       }
       console.error('runtime dispatch failed', error)
     } finally {
+      // 事件链 settle 后清掉本 Attempt 的内存痕迹：assistantOutputs 只有
+      // run.completed 分支会删，失败/取消/异常路径此前永久残留；eventWrites
+      // 也从不删条目，长跑进程里两个 Map 都无界增长。链上 catch 已兜底，
+      // await 不会再抛；残留在途写（异常路径）写完即止，不回填已删键。
+      // eventWrites 按 run.id 串行化同一 Run 全部 Attempt 的事件写：取消后
+      // 立即重试的新 Attempt 会把自己的事件接进同一键。只能删「自己读到的
+      // 已 settle 链尾」，键上已接入更新的链时必须保留，否则会截断新
+      // Attempt 仍在增长的事件写。
+      const settledEventWrites = this.eventWrites.get(run.id)
+      await settledEventWrites
+      if (settledEventWrites !== undefined && this.eventWrites.get(run.id) === settledEventWrites) {
+        this.eventWrites.delete(run.id)
+      }
+      this.assistantOutputs.delete(manifest.attempt_id)
       if (!this.closing) this.triggerPump()
     }
   }
