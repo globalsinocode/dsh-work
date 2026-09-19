@@ -1,5 +1,6 @@
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, isAuthorizationDenial } from '../authorization/authorization-errors.ts'
+import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
@@ -22,7 +23,10 @@ export async function assertCurrentExecutionAuthorization(
   manifest: RuntimeManifest,
 ): Promise<void> {
   try {
-    if (manifest.purpose?.startsWith('admin-')) {
+    // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
+    // 前缀但同样是管理侧（无工作空间绑定），漏判会落入下方通用分支被
+    // 「缺少固定工作空间」误拒；automation 不在集合内，继续走工作空间复核。
+    if (isAdminRunPurpose(manifest.purpose)) {
       if (manifest.purpose === 'admin-assistant') await authorization.requireAdminReader(manifest.user_context.user_id)
       else await authorization.requirePlatformAdmin(manifest.user_context.user_id)
       return

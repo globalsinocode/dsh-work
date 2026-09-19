@@ -50,3 +50,21 @@ test('missing space, removed files and missing input checker all fail closed', a
 test('infrastructure outage is distinguishable and never treated as a grant', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async authorizeRuntime() { throw new Error('database unavailable') } }), undefined, manifest), AuthorizationCheckUnavailableError)
 })
+test('agent-release-trial is admin-side: platform-admin check, never workspace checks', async () => {
+  const trial = { ...manifest, purpose: 'agent-release-trial', workspace_id: '', agent_version_id: 'draft-v1' } as RuntimeManifest
+  let adminCalls = 0
+  await assertCurrentExecutionAuthorization(ports({
+    async requirePlatformAdmin() { adminCalls += 1; return { id: 'u1', displayName: '', department: '' } },
+    async workspaceTypeOf() { throw new Error('must not reach workspace checks') },
+  }), undefined, trial)
+  assert.equal(adminCalls, 1)
+})
+test('automation purpose is workspace-bound: never reaches the admin branch', async () => {
+  const automation = { ...manifest, purpose: 'automation' } as RuntimeManifest
+  let runtimeCalls = 0
+  await assertCurrentExecutionAuthorization(ports({
+    async authorizeRuntime() { runtimeCalls += 1; return { userId: 'u1', workspaceId: 'ws-personal-u1', roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' } },
+    async requirePlatformAdmin() { throw new Error('automation is not an admin purpose') },
+  }), undefined, automation)
+  assert.equal(runtimeCalls, 1)
+})

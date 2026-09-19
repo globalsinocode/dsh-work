@@ -1160,8 +1160,10 @@ export class RunOrchestrationService {
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
       // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
-      // 成员版本由下方授权复核。
-      if (manifest.purpose) {
+      // 成员版本由下方授权复核。分流必须用 isAdminRunPurpose 而非 purpose
+      // 真值：purpose='automation' 是绑定工作空间的员工 Run，其会话为
+      // workbench 受众，走 admin 门禁会必然失败。
+      if (isAdminRunPurpose(manifest.purpose)) {
         await this.conversations.requireSession(manifest.session_id, manifest.user_context.user_id, 'admin')
       } else {
         const session = await this.conversations.findSessionRow(manifest.session_id)
@@ -1186,8 +1188,7 @@ export class RunOrchestrationService {
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
     // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权
     // 仍会进入 DSH 执行。权限失效时 Run/Attempt 在此收敛为 failed。
-    const adminPurpose = manifest.purpose?.startsWith('admin-') || manifest.purpose === 'agent-release-trial'
-    if (adminPurpose) {
+    if (isAdminRunPurpose(manifest.purpose)) {
       if (!this.authorization) return { denied: true, reason: '管理授权服务不可用' }
       try {
         if (manifest.purpose === 'admin-assistant') await this.authorization.requireAdminReader(manifest.user_context.user_id)
