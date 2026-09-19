@@ -648,17 +648,21 @@ export class PostgresConversationRepository {
    * push events without an extra event table. Callers authorize separately.
    */
   async listWorkspaceSessionActivity(workspaceId: string) {
-    return this.database<{ sessionId: string; activityAt: Date }[]>`
+    return this.database<{ sessionId: string; activityAt: Date; activityEpoch: number }[]>`
       select s.id as "sessionId",
-             greatest(
-               s.last_active_at,
-               coalesce(
-                 (select max(r.updated_at) from runs r
-                   where r.tenant_id = s.tenant_id and r.session_id = s.id),
-                 s.last_active_at
-               )
-             ) as "activityAt"
+             activity.activity_at as "activityAt",
+             extract(epoch from activity.activity_at)::float8 as "activityEpoch"
         from sessions s
+        cross join lateral (
+          select greatest(
+                   s.last_active_at,
+                   coalesce(
+                     (select max(r.updated_at) from runs r
+                       where r.tenant_id = s.tenant_id and r.session_id = s.id),
+                     s.last_active_at
+                   )
+                 ) as activity_at
+        ) activity
        where s.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
          and s.status = 'active' and s.audience = 'workbench'
     `

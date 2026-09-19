@@ -35,6 +35,11 @@ export const useTaskStore = defineStore('tasks', () => {
   function reset() {
     generation++
     for (const id of streams.keys()) closeStream(id)
+    // 空间会话活动流同属本账号的连接：账号切换时必须一并关闭并清标记，
+    // 否则旧凭据的 SSE 继续挂着消耗服务端轮询、还会向新账号视图写标记。
+    for (const entry of sessionStreams.values()) entry.source.close()
+    sessionStreams.clear()
+    sessionActivity.value = {}
     tasks.value = []; loading.value = false; initialized.value = false
   }
   function requireGeneration(value: number) {
@@ -247,7 +252,12 @@ export const useTaskStore = defineStore('tasks', () => {
     for (const eventType of runtimeEventTypes) {
       stream.addEventListener(eventType, (message) => {
         if (current !== generation) return
-        const event = JSON.parse((message as MessageEvent<string>).data) as RuntimeEvent
+        let event: RuntimeEvent
+        try {
+          event = JSON.parse((message as MessageEvent<string>).data) as RuntimeEvent
+        } catch {
+          return
+        }
         void applyEvent(event).catch(() => closeStream(runId))
       })
     }
@@ -265,7 +275,10 @@ export const useTaskStore = defineStore('tasks', () => {
     // 无 SSE 能力的环境（旧浏览器/测试环境）优雅降级为无实时更新，页面仍可手动刷新。
     if (typeof EventSource === 'undefined') return
     const entry = sessionStreams.get(workspaceId)
-    if (entry) {
+    // 服务端拒绝（如成员/读权限撤销返回非 2xx）会把连接置为 CLOSED 且不再
+    // 自动重连。死连接不能继续加引用——否则新订阅者挂到一条永远收不到事件
+    // 的连接上。同一条目上原地重建，原消费者的引用计数随之转移到新连接。
+    if (entry && entry.source.readyState !== EventSource.CLOSED) {
       entry.refs += 1
       return
     }
@@ -276,15 +289,41 @@ export const useTaskStore = defineStore('tasks', () => {
       sessionEventSeq += 1
       sessionActivity.value = { ...sessionActivity.value, [sessionId]: `${kind}:${sessionEventSeq}` }
     }
+    const parseMarker = (message: Event) => {
+      try {
+        return JSON.parse((message as MessageEvent<string>).data) as { session_id: string; activity_at?: string }
+      } catch {
+        return null
+      }
+    }
+    // EventSource 自动重连时服务端首轮只重建基线不补推——断开期间发生的
+    // 变更永远不会到达。第二次及以后的 onopen 视为重连，用通配标记让
+    // 各订阅视图整体重取一次当前状态。
+    let connected = false
+    source.onopen = () => {
+      if (connected) bump('*', 'resync')
+      connected = true
+    }
+    // 非 2xx（权限撤销等）时 EventSource 置 CLOSED 且不再自动重连；网络
+    // 断开则停在 CONNECTING 交给内置重连，重连成功由上面的 onopen 用
+    // resync 补缺口。CLOSED 条目留在 map 中，下次订阅按 readyState 重建。
+    source.onerror = () => {
+      if (source.readyState === EventSource.CLOSED) source.close()
+    }
     source.addEventListener('session.updated', (message) => {
-      const event = JSON.parse((message as MessageEvent<string>).data) as { session_id: string; activity_at: string }
-      bump(event.session_id, `updated:${event.activity_at}`)
+      const event = parseMarker(message)
+      if (event?.session_id) bump(event.session_id, `updated:${event.activity_at ?? ''}`)
     })
     source.addEventListener('session.archived', (message) => {
-      const event = JSON.parse((message as MessageEvent<string>).data) as { session_id: string }
-      bump(event.session_id, 'archived')
+      const event = parseMarker(message)
+      if (event?.session_id) bump(event.session_id, 'archived')
     })
-    sessionStreams.set(workspaceId, { source, refs: 1 })
+    if (entry) {
+      entry.source = source
+      entry.refs += 1
+    } else {
+      sessionStreams.set(workspaceId, { source, refs: 1 })
+    }
   }
 
   function unsubscribeWorkspaceSessions(workspaceId: string) {

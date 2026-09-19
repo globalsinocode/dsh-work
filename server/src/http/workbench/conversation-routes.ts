@@ -384,7 +384,7 @@ export function registerConversationRoutes(
       ['owner', 'admin', 'member', 'viewer'],
       { purpose: 'read' },
     )
-    await streamWorkspaceSessionEvents(response, workspaceId, conversations, 500, 15_000,
+    await streamWorkspaceSessionEvents(response, workspaceId, sharedSessionActivitySource(conversations), 500, 15_000,
       authorization ? { workspaceId, userId, authorization } : undefined)
   })
 }
@@ -601,6 +601,62 @@ async function hasStreamAccess(teamAccess: TeamStreamAccess) {
   }
 }
 
+interface WorkspaceSessionActivityRow {
+  sessionId: string
+  activityAt: Date
+  /** 秒级 Unix 时间（含微数精度）；diff 键优先用它，避免 toISOString 毫秒截断把同毫秒两次变更合并成无事件。 */
+  activityEpoch?: number
+}
+
+interface WorkspaceSessionActivitySource {
+  listWorkspaceSessionActivity(workspaceId: string): Promise<WorkspaceSessionActivityRow[]>
+}
+
+/**
+ * 同一空间的活动查询在多个 SSE 订阅者之间共享：250ms 窗口内的轮询命中
+ * 同一份快照、并发在途查询合并为一次——订阅者数量不再线性放大 DB 压力。
+ * 只缩短「变化可见」时效到亚秒级，不改变逐批复权口径（每个订阅者仍独立
+ * 做读轨检查）。快照行只读，跨订阅者复用安全。
+ */
+const SESSION_ACTIVITY_SNAPSHOT_TTL_MS = 250
+const sessionActivitySnapshots = new Map<string, {
+  at: number
+  rows?: WorkspaceSessionActivityRow[]
+  pending?: Promise<WorkspaceSessionActivityRow[]>
+}>()
+
+function sharedSessionActivitySource(conversations: WorkspaceSessionActivitySource): WorkspaceSessionActivitySource {
+  return {
+    async listWorkspaceSessionActivity(workspaceId: string) {
+      const cached = sessionActivitySnapshots.get(workspaceId)
+      if (cached?.rows && Date.now() - cached.at < SESSION_ACTIVITY_SNAPSHOT_TTL_MS) return cached.rows
+      if (cached?.pending) return cached.pending
+      const pending = conversations.listWorkspaceSessionActivity(workspaceId)
+      sessionActivitySnapshots.set(workspaceId, { at: Date.now(), pending })
+      try {
+        const rows = await pending
+        if (sessionActivitySnapshots.size > 512) {
+          const cutoff = Date.now() - SESSION_ACTIVITY_SNAPSHOT_TTL_MS
+          for (const [key, entry] of sessionActivitySnapshots) {
+            if (entry.at < cutoff && !entry.pending) sessionActivitySnapshots.delete(key)
+          }
+        }
+        sessionActivitySnapshots.set(workspaceId, { at: Date.now(), rows })
+        return rows
+      } catch (error) {
+        sessionActivitySnapshots.delete(workspaceId)
+        throw error
+      }
+    },
+  }
+}
+
+function sessionActivityMarker(row: WorkspaceSessionActivityRow): number {
+  // 统一秒级刻度：activityEpoch 来自 extract(epoch)，回退路径也必须换算成秒，
+  // 否则同一 session 在两种来源间切换时永远不相等，会持续误报 session.updated。
+  return row.activityEpoch ?? row.activityAt.getTime() / 1000
+}
+
 /**
  * Workspace session-activity SSE (TW-10). Each poll diffs the per-session
  * activity marker (message writes via last_active_at, Run lifecycle via
@@ -613,9 +669,7 @@ async function hasStreamAccess(teamAccess: TeamStreamAccess) {
 export async function streamWorkspaceSessionEvents(
   response: RunEventStreamResponse,
   workspaceId: string,
-  conversations: {
-    listWorkspaceSessionActivity(workspaceId: string): Promise<Array<{ sessionId: string; activityAt: Date }>>
-  },
+  conversations: WorkspaceSessionActivitySource,
   pollIntervalMs = 500,
   heartbeatIntervalMs = 15_000,
   teamAccess?: TeamStreamAccess,
@@ -630,7 +684,7 @@ export async function streamWorkspaceSessionEvents(
   let closed = false
   response.on('close', () => { closed = true })
   let heartbeatAt = Date.now()
-  let snapshot: Map<string, string> | null = null
+  let snapshot: Map<string, number> | null = null
   const canDeliver = async () => {
     try {
       return !teamAccess || await hasStreamAccess(teamAccess)
@@ -641,10 +695,10 @@ export async function streamWorkspaceSessionEvents(
 
   while (!closed) {
     const rows = await conversations.listWorkspaceSessionActivity(workspaceId)
-    const current = new Map(rows.map(row => [row.sessionId, row.activityAt.toISOString()]))
+    const current = new Map(rows.map(row => [row.sessionId, sessionActivityMarker(row)]))
     if (snapshot !== null) {
       const baseline = snapshot
-      const changed = rows.filter(row => baseline.get(row.sessionId) !== row.activityAt.toISOString())
+      const changed = rows.filter(row => baseline.get(row.sessionId) !== sessionActivityMarker(row))
       const removed = [...baseline.keys()].filter(sessionId => !current.has(sessionId))
       if ((changed.length > 0 || removed.length > 0) && !(await canDeliver())) break
       for (const row of changed) {

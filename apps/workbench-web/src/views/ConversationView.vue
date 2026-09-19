@@ -432,9 +432,14 @@ async function refreshSharedTarget() {
 }
 
 watch(
-  () => (streamSessionId.value ? taskStore.sessionActivity[streamSessionId.value] : undefined),
-  marker => {
-    if (!marker) return
+  // 第二个元素是断线重连的通配标记（'*'）：SSE 重连后服务端不补推断开
+  // 期间的变更，store 用 resync 标记通知所有订阅视图整体重取。
+  () => [
+    streamSessionId.value ? taskStore.sessionActivity[streamSessionId.value] : undefined,
+    taskStore.sessionActivity['*'],
+  ],
+  ([marker, resync]) => {
+    if (!marker && !resync) return
     if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
     sessionRefreshTimer = setTimeout(() => void refreshSharedTarget(), 150)
   },

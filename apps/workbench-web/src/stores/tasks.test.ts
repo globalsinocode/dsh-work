@@ -21,9 +21,14 @@ vi.mock('../api/client', () => ({ workbenchApi: api }))
 
 class FakeEventSource {
   static instances: FakeEventSource[] = []
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSED = 2
   readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
   onerror: (() => void) | null = null
+  onopen: (() => void) | null = null
   closed = false
+  readyState = FakeEventSource.OPEN
 
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this)
@@ -33,7 +38,10 @@ class FakeEventSource {
     this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
   }
 
-  close() { this.closed = true }
+  close() {
+    this.closed = true
+    this.readyState = FakeEventSource.CLOSED
+  }
 
   emit(type: string, payload: unknown) {
     this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
@@ -383,5 +391,37 @@ describe('task store', () => {
     store.unsubscribeWorkspaceSessions('ws-team')
     expect(FakeEventSource.instances[0]?.closed).toBe(true)
     expect(FakeEventSource.instances[1]?.closed).toBe(false)
+  })
+
+  it('rebuilds a CLOSED workspace session stream in place instead of stacking refs on a dead connection', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const store = useTaskStore()
+
+    store.subscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances).toHaveLength(1)
+
+    // 服务端拒绝（成员/读权限撤销）把连接置为 CLOSED 且不再自动重连。
+    FakeEventSource.instances[0]!.readyState = FakeEventSource.CLOSED
+    FakeEventSource.instances[0]!.onerror?.()
+    expect(FakeEventSource.instances[0]?.closed).toBe(true)
+
+    // 新订阅者不得挂在死连接上：同一条目原地重建，引用计数随订阅关系延续。
+    store.subscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances).toHaveLength(2)
+    expect(FakeEventSource.instances[1]?.url).toBe('/session-events/ws-team')
+    expect(FakeEventSource.instances[1]?.readyState).toBe(FakeEventSource.OPEN)
+
+    // 新连接照常投递事件。
+    FakeEventSource.instances[1]?.emit('session.updated', {
+      session_id: 's-9',
+      activity_at: '2026-09-12T08:02:00.000Z',
+    })
+    expect(store.sessionActivity['s-9']).toMatch(/^updated:/)
+
+    // 两个订阅者各退一次才关闭新连接。
+    store.unsubscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances[1]?.closed).toBe(false)
+    store.unsubscribeWorkspaceSessions('ws-team')
+    expect(FakeEventSource.instances[1]?.closed).toBe(true)
   })
 })
