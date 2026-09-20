@@ -287,6 +287,13 @@
       },
       "uniqueItems": true
     },
+    "tool_bindings": {
+      "type": "array",
+      "description": "B-03/I-04：Attempt 固定的平台工具绑定修订引用（批准的连接/凭据槽位/身份策略/环境/授权范围的语义摘要）。无平台工具的运行省略该字段；引用是执行证据而非继续授权。",
+      "items": {
+        "$ref": "#/$defs/toolBindingRef"
+      }
+    },
     "data_scopes": {
       "type": "array",
       "items": {
@@ -555,6 +562,35 @@
         },
         "version": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolBindingRef": {
+      "type": "object",
+      "required": [
+        "tool",
+        "binding_id",
+        "revision",
+        "digest"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]+@[A-Za-z0-9._:-]+$"
+        },
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "绑定修订的语义摘要；修订行不可变保存完整快照（连接/凭据槽位/身份策略/环境/授权范围），Attempt 凭此引用追溯。"
         }
       },
       "additionalProperties": false

@@ -2,6 +2,7 @@ import type { PostgresAuthorizationService } from '../authorization/postgres-aut
 import { authorizationDenied, isAuthorizationDenial } from '../authorization/authorization-errors.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
 export class AuthorizationCheckUnavailableError extends Error {
@@ -21,8 +22,16 @@ export async function assertCurrentExecutionAuthorization(
   authorization: AuthorizationPort,
   content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
   manifest: RuntimeManifest,
+  bindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>,
 ): Promise<void> {
   try {
+    // B-03/I-04：Attempt 固定的工具绑定修订在 purpose 分流前统一复核——
+    // 试运行与管理运行同样适用；撤销/被取代/语义漂移/行缺失一律拒绝。
+    // Manifest 声明了 pin 而复核端口未接线时 fail-closed 为不可用。
+    if (manifest.tool_bindings?.length) {
+      if (!bindings) throw new AuthorizationCheckUnavailableError()
+      await bindings.assertActiveToolBindings(manifest.tool_bindings)
+    }
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
     // 前缀但同样是管理侧（无工作空间绑定），漏判会落入下方通用分支被
     // 「缺少固定工作空间」误拒；automation 不在集合内，继续走工作空间复核。

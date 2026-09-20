@@ -14,6 +14,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import { RUNTIME_INTRINSIC_TOOL_REFS, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { agentSpecFromConfiguration, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 
@@ -75,6 +76,7 @@ interface VersionRow {
   id: string
   agentId: string
   version: string
+  bindingRefs?: ManifestToolBinding[]
   name: string
   description: string
   status: PublishStatus
@@ -134,6 +136,8 @@ export interface RuntimeAgentSnapshot {
   skillInstructions: RuntimeSkillConfiguration[]
   tools: string[]
   runtimeTools: string[]
+  /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
+  toolBindings: ResolvedToolBinding[]
   approvalMode: 'always' | 'risk_based' | 'never'
   roleIds: string[]
   dataScopes: string[]
@@ -180,7 +184,8 @@ export class PostgresAgentService {
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
-             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools
+             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
+             av.binding_refs as "bindingRefs"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -412,7 +417,8 @@ export class PostgresAgentService {
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
-             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools
+             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
+             av.binding_refs as "bindingRefs"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -652,7 +658,7 @@ export class PostgresAgentService {
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
-    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => ['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))])
+    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => RUNTIME_INTRINSIC_TOOL_REFS.has(reference))])
     const runtimeToolNames = this.toolService
       ? await this.toolService.resolveRuntimeToolNames(tools)
       : tools.map(reference => parseReference(reference).id)
@@ -663,10 +669,15 @@ export class PostgresAgentService {
     const approvalMode = this.toolService
       ? await this.toolService.resolveRuntimeApprovalMode(tools)
       : 'risk_based'
+    // B-03/I-04：按当前真实配置解析每个平台工具的 active 绑定修订（首次解析
+    // 或语义漂移时物化新修订）；内置运行时工具不在绑定表内。
+    const toolBindings = this.toolService
+      ? await this.toolService.resolveToolBindings(tools)
+      : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
-    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, approvalMode }
+    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, approvalMode }
   }
 
   /**
@@ -678,6 +689,8 @@ export class PostgresAgentService {
     agentId: string,
     actor: { id: string },
     expectedRevision?: string,
+    /** B-03/I-04：封存的平台绑定依据随版本发布一并固化；与 status 翻转同一条 UPDATE，不触碰已发布版本的不变约束。 */
+    bindingRefs?: ManifestToolBinding[],
   ): Promise<AgentReleaseRecord> {
     const locked = await this.lockAgentForMutation(transaction, agentId)
     if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
@@ -702,7 +715,8 @@ export class PostgresAgentService {
     if (!trial) throw new Error('发布前必须在发布工作台完成与当前配置一致的封存试运行')
 
     const published = await transaction<{ id: string }[]>`
-      update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id}
+      update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id},
+             binding_refs = ${transaction.json(asJson(bindingRefs ?? []))}
        where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
        returning id
     `
@@ -931,6 +945,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
+    ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),
   }
 }
 

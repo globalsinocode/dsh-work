@@ -41,6 +41,7 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.get(`${basePath}/tools/bindings`, async () => envelope('admin', { items: await service.listToolBindings() }, 'postgres'))
   router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getConnectors(), 'postgres'))
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)

@@ -251,4 +251,37 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.equal(valid, true, 'digest mismatch is content validation; the schema does not read bodies')
     assert.throws(() => compileRuntimeManifest(manifest), /摘要不匹配/)
   })
+
+  it('B-03/I-04: pins platform tool bindings at both boundaries without crossing the tools[] namespace', () => {
+    const pin = () => ({
+      tool: 'tool-erp-read@1.0.0',
+      binding_id: 'tool-binding-9f2c',
+      revision: 3,
+      digest: sha256('binding-snapshot'),
+    })
+    const applyBindings = (mutate: (pins: Record<string, unknown>[]) => void) => {
+      const manifest = baseManifest()
+      const pins = [pin()]
+      mutate(pins)
+      manifest.tool_bindings = pins as unknown as RuntimeManifest['tool_bindings']
+      return manifest
+    }
+    // tools[] 是 DSH 运行时名命名空间，tool_bindings 是平台 id@version 命名空间——
+    // 两者独立校验，互不交叉引用。
+    assertBothAccept(applyBindings(() => undefined), 'platform binding pin')
+    assertBothAccept(baseManifest(), 'manifest without tool_bindings')
+
+    assertBothReject(applyBindings(pins => { pins[0]!.endpoint = 'https://erp.internal' }), /未声明字段/, 'binding pin with undeclared field')
+    assertBothReject(applyBindings(pins => { pins[0]!.tool = 'not-a-reference' }), /id@version/, 'binding pin with malformed tool reference')
+    // 同一工具的重复固定是编译器侧检查——schema 无法表达按字段去重。
+    {
+      const duplicated = applyBindings(pins => { pins.push(pin()) })
+      assert.equal(schemaErrors(duplicated).valid, true)
+      assert.throws(() => compileRuntimeManifest(duplicated), /重复固定/)
+    }
+    assertBothReject(applyBindings(pins => { pins[0]!.binding_id = '' }), /binding_id/, 'binding pin with blank binding_id')
+    assertBothReject(applyBindings(pins => { pins[0]!.revision = 0 }), /revision/, 'binding pin with non-positive revision')
+    assertBothReject(applyBindings(pins => { pins[0]!.digest = 'A'.repeat(64) }), /digest/, 'binding pin with uppercase digest')
+    assertBothReject(applyBindings(pins => { pins[0]!.digest = 'abc' }), /digest/, 'binding pin with short digest')
+  })
 })

@@ -273,11 +273,21 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   actor: string
 }
 
+/** B-03/I-04：发布时固定的平台工具绑定修订引用（tool/binding_id/revision/digest）。 */
+export interface AgentVersionBindingRef {
+  tool: string
+  binding_id: string
+  revision: number
+  digest: string
+}
+
 export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
   status: PublishStatus
+  /** 发布时封存的平台绑定依据；旧版本可能为空（不回填）。 */
+  bindingRefs?: AgentVersionBindingRef[]
   createdAt: string
   createdBy: string
   publishedAt?: string

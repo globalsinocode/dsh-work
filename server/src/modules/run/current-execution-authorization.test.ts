@@ -68,3 +68,22 @@ test('automation purpose is workspace-bound: never reaches the admin branch', as
   }), undefined, automation)
   assert.equal(runtimeCalls, 1)
 })
+
+test('B-03/I-04: pinned tool bindings recheck before any purpose branch, fail-closed without a port', async () => {
+  const pin = { tool: 'read@1.0.0', binding_id: 'tool-binding-1', revision: 1, digest: 'a'.repeat(64) }
+  const pinned = { ...manifest, tool_bindings: [pin] } as RuntimeManifest
+  // Manifest 声明了 pin 但复核端口未接线：不可用而非放行。
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned), AuthorizationCheckUnavailableError)
+  // 管理目的分支同样在绑定复核之后：pin 失效在 requirePlatformAdmin 之前拒绝。
+  const trial = { ...pinned, purpose: 'agent-release-trial', workspace_id: '', agent_version_id: 'draft-v1' } as RuntimeManifest
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, trial), AuthorizationCheckUnavailableError)
+  // 接线后 pin 逐条交回复核端口；拒绝即授权失败。
+  let checked = 0
+  const bindings = { async assertActiveToolBindings(pins: unknown) { checked++; assert.deepEqual(pins, [pin]) } }
+  await assertCurrentExecutionAuthorization(ports(), undefined, pinned, bindings)
+  assert.equal(checked, 1)
+  const rejecting = { async assertActiveToolBindings() { throw authorizationDenied('revoked') } }
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, rejecting), { code: 'permission_denied' })
+  // 无 pin 的 Manifest 不触碰复核端口。
+  await assertCurrentExecutionAuthorization(ports(), undefined, manifest, rejecting)
+})

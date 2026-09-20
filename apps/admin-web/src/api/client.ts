@@ -37,6 +37,7 @@ import type {
   SkillReleaseRecord,
   SkillTestRunProgress,
   SkillVersionRecord,
+  ToolBindingRecord,
   ToolDefinition,
   ToolCatalogCandidate,
   UpdateAgentDraftInput,
@@ -257,6 +258,7 @@ export const adminApi = {
   rollbackSkill: (input: { skillId: string; version: string }) =>
     request<{ skill: SkillDefinition; release: SkillReleaseRecord }>('/skills/rollback', { method: 'POST', body: JSON.stringify(input) }),
   getTools: () => request<ToolDefinition[]>('/tools'),
+  getToolBindings: () => request<{ items: ToolBindingRecord[] }>('/tools/bindings'),
   getToolCatalog: () => request<ToolCatalogCandidate[]>('/tools/catalog'),
   addTool: (input: {
     catalogId: string

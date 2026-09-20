@@ -716,7 +716,11 @@ function protocolLabel(protocol: ConnectorDefinition['protocol']) {
   return { runtime: 'Runtime', rest: 'REST API', openapi: 'OpenAPI', mcp: 'MCP', database: '数据库代理' }[protocol]
 }
 
-onMounted(() => contentStore.load())
+onMounted(() => {
+  void contentStore.load()
+  // B-03/I-04：工具绑定修订为服务端真实记录（/tools/bindings）。
+  void toolStore.loadBindings()
+})
 onUnmounted(() => clearSkillTestPoll())
 </script>
 

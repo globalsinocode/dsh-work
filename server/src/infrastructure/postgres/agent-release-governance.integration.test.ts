@@ -39,12 +39,13 @@ let agents: PostgresAgentService
 let release: PostgresAgentReleaseService
 let orchestration: RunOrchestrationService
 let trialRuntime: TrialStubRuntime
+let tools: PostgresToolConnectorService
 
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_release_test', maxConnections: 8 })
   database = throwaway.client
   packagesDir = await mkdtemp(join(tmpdir(), 'dsh-agent-packages-'))
-  const tools = new PostgresToolConnectorService(database)
+  tools = new PostgresToolConnectorService(database)
   const skills = new PostgresSkillService(database, undefined, tools)
   agents = new PostgresAgentService(database, undefined, skills, tools)
   trialRuntime = new TrialStubRuntime()
@@ -59,6 +60,8 @@ before(async () => {
     undefined,
     // 发布试运行目的在执行时复核平台管理权限，测试环境接真实授权服务
     new PostgresAuthorizationService(database),
+    // B-03/I-04：试运行 Attempt 固定的绑定修订在执行前复核真实绑定服务。
+    { toolBindings: tools },
   )
   release = new PostgresAgentReleaseService(database, agents, skills, tools, packagesDir, orchestration)
   await createAdminUser(ADMIN)
@@ -267,13 +270,17 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const published = await release.publish(agentId, '业务效果已确认', ADMIN)
   // 发布后提交进入终态不再是进行中候选，证据随版本落库：
-  // 1 条配置检查 + 每案例 1 条 runtime_verified（真实 runId）+ 1 条业务确认 = 5 条。
+  // 1 条配置检查 + 1 条绑定修订固定 + 每案例 1 条 runtime_verified（真实 runId）+ 1 条业务确认 = 6 条。
   assert.equal(published.candidate, undefined)
-  assert.equal(published.evidence['0.1.0']?.length, 5)
+  assert.equal(published.evidence['0.1.0']?.length, 6)
   const runtimeEvidence = published.evidence['0.1.0']?.filter(item => item.kind === 'runtime_verified') ?? []
   assert.equal(runtimeEvidence.length, 3)
   assert.ok(runtimeEvidence.every(item => item.runId?.startsWith('run-')))
   assert.ok(published.evidence['0.1.0']?.some(item => item.kind === 'business_accepted'))
+  // B-03/I-04：发布版本携带真实封存绑定依据（tool-binding-* 修订 + 摘要），非占位文本。
+  const bindingEvidence = published.evidence['0.1.0']?.find(item => item.summary.includes('平台绑定修订固定'))
+  assert.ok(bindingEvidence, '发布证据缺少绑定修订固定项')
+  assert.match(bindingEvidence.summary, /read@1\.0\.0 rev\d+（摘要 [a-f0-9]{12}）/)
 
   const agentRows = await agents.getAgents()
   const agent = agentRows.find(item => item.id === agentId)
@@ -281,7 +288,7 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const after = await release.getReleaseState(agentId)
   assert.equal(after.candidate, undefined)
-  assert.equal(after.evidence['0.1.0']?.length, 5)
+  assert.equal(after.evidence['0.1.0']?.length, 6)
 
   const records = await agents.getReleaseRecords()
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
@@ -336,7 +343,7 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
   await release.submitForReview(agentId, ADMIN)
   const published = await release.publish(agentId, '', ADMIN)
   assert.equal(published.candidate, undefined)
-  assert.equal(published.evidence['0.1.0']?.length, 5)
+  assert.equal(published.evidence['0.1.0']?.length, 6)
 })
 
 test('审核人判定任一案例不符合预期时试运行记为失败并阻塞发布', async () => {
@@ -489,7 +496,7 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
   await release.submitForReview('agent-release-zip', ADMIN)
   const published = await release.publish('agent-release-zip', '', ADMIN)
   assert.equal(published.candidate, undefined)
-  assert.equal(published.evidence['0.1.0']?.length, 5)
+  assert.equal(published.evidence['0.1.0']?.length, 6)
   const publishedAgents = await agents.getAgents()
   assert.equal(publishedAgents.find(item => item.id === 'agent-release-zip')?.status, 'published')
 })
@@ -843,6 +850,11 @@ class TrialStubRuntime implements AgentRuntimePort {
   /** 测试可让指定输入失败（断言负路径）。 */
   failOnMessage = ''
 
+  /** 已派发 Attempt 的固化 Manifest：用于断言 tool_bindings 等执行期固定引用。 */
+  manifest(runId: string) {
+    return this.executions.get(runId)?.manifest
+  }
+
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     let resolveDone: (snapshot: RuntimeExecutionSnapshot) => void = () => undefined
     const done = new Promise<RuntimeExecutionSnapshot>(resolve => { resolveDone = resolve })
@@ -920,3 +932,79 @@ class TrialStubRuntime implements AgentRuntimePort {
     execution.resolve(structuredClone(execution.snapshot))
   }
 }
+
+// ---------------------------------------------------------------------------
+// B-03/I-04：真实绑定修订——封存依据、Attempt 固定、漂移拒绝与发布追溯
+// ---------------------------------------------------------------------------
+
+test('平台工具绑定经真实修订封存：Attempt 固定 pin，漂移后发布被拒绝', async () => {
+  const agentId = 'agent-release-binding'
+  await createDraftAgent(agentId)
+  await release.ensureCandidate(agentId, ADMIN)
+
+  // 检查与计划含真实绑定修订：不再是固定占位文本。
+  const checked = await release.runChecks(agentId, ADMIN)
+  const bindingCheck = checked.candidate?.checks.find(item => item.id === 'binding')
+  assert.equal(bindingCheck?.status, 'passed')
+  assert.match(bindingCheck?.detail ?? '', /read@1\.0\.0 rev1/)
+  const bindingPlan = checked.candidate?.plan.find(item => item.kind === 'binding' && item.name === 'read@1.0.0')
+  assert.ok(bindingPlan, '发布计划缺少真实绑定项')
+  assert.equal(bindingPlan.action, 'create')
+  assert.equal(bindingPlan.version, 'rev1')
+  assert.match(bindingPlan.detail, /摘要 [a-f0-9]{12}/)
+
+  // 封存：候选携带真实 pin（binding_id + revision + 摘要）。
+  const trialed = await release.startTrial(agentId, ADMIN)
+  const pins = trialed.candidate?.bindingRefs ?? []
+  assert.equal(pins.length, 1)
+  assert.equal(pins[0]?.tool, 'read@1.0.0')
+  assert.equal(pins[0]?.revision, 1)
+  assert.match(pins[0]?.binding_id ?? '', /^tool-binding-/)
+  assert.match(pins[0]?.digest ?? '', /^[a-f0-9]{64}$/)
+
+  // Attempt Manifest 固定的正是封存 pin：执行证据与封存依据同源。
+  const caseRun = trialed.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? [])[0]
+  assert.ok(caseRun?.runId)
+  const manifest = trialRuntime.manifest(caseRun.runId!)
+  assert.deepEqual(manifest?.tool_bindings, pins)
+
+  const confirmed = await confirmLatestTrial(agentId)
+  assert.equal(confirmed.trialRuns[0]?.status, 'passed')
+  await release.submitForReview(agentId, ADMIN)
+
+  // 封存后绑定语义漂移（授权范围收窄）：当前修订被取代，发布拒绝旧证据。
+  await tools.updateToolPermissions({
+    toolId: 'read',
+    allowedRoles: ['role-platform-admin'],
+    dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none',
+    actor: ADMIN,
+  })
+  await assert.rejects(release.publish(agentId, '', ADMIN), /绑定修订已失效|重新封存/)
+
+  // 漂移后退回并重新走封存-试运行-发布：先恢复兼容的授权范围（又一次修订
+  // 轮换），新修订集成为依据并成功发布。
+  await release.requestChanges(agentId, '绑定修订已漂移，退回重新封存', ADMIN)
+  await tools.updateToolPermissions({
+    toolId: 'read',
+    allowedRoles: ['role-employee'],
+    dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none',
+    actor: ADMIN,
+  })
+  const rechecked = await release.runChecks(agentId, ADMIN)
+  assert.equal(rechecked.candidate?.checks.find(item => item.id === 'binding')?.status, 'passed')
+  await release.startTrial(agentId, ADMIN)
+  const repins = (await release.getReleaseState(agentId)).candidate?.bindingRefs ?? []
+  assert.equal(repins.length, 1)
+  assert.equal(repins[0]?.revision, 3)
+  await confirmLatestTrial(agentId)
+  await release.submitForReview(agentId, ADMIN)
+  const published = await release.publish(agentId, '绑定修订复核通过', ADMIN)
+  assert.equal(published.candidate, undefined)
+
+  // 已发布版本记录携带真实绑定依据，前端与追溯不再需要占位值。
+  const versions = await agents.getAgentVersions()
+  const record = versions.find(item => item.agentId === agentId && item.version === '0.1.0')
+  assert.deepEqual(record?.bindingRefs, repins)
+})

@@ -9,10 +9,12 @@ import type { ModelGovernanceService } from '../model/model-governance-service.t
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { AdminRunPurpose, AgentRuntimePort, RuntimeEvent, RuntimeManifest } from '../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../runtime/manifest-compiler.ts'
+import { toManifestToolBinding } from '../../domain/tool-binding.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService, PreparedRuntimeFile } from '../workbench/application/postgres-content-service.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
+import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresKnowledgeService } from '../knowledge/postgres-knowledge-service.ts'
 import type {
   PostgresAuthorizationService,
@@ -53,6 +55,7 @@ export class RunOrchestrationService {
   private readonly knowledge?: PostgresKnowledgeService
   private readonly authorization?: PostgresAuthorizationService
   private readonly agentMembers?: PostgresWorkspaceAgentMemberService
+  private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
 
   private readonly automationMaxConcurrent: number
   private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
@@ -77,6 +80,8 @@ export class RunOrchestrationService {
        * 在此被拦下；未接线（测试替身等）时跳过该检查。
        */
       automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
+      /** B-03/I-04：Attempt 固定绑定修订的执行期复核端口；未接线且 Manifest 带 pin 时 fail-closed。 */
+      toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
     },
   ) {
     this.runs = runs
@@ -91,6 +96,7 @@ export class RunOrchestrationService {
     this.agentMembers = options?.agentMembers
     this.automationMaxConcurrent = options?.automationMaxConcurrent ?? 2
     this.automationStatusLookup = options?.automationStatusLookup
+    this.toolBindings = options?.toolBindings
   }
 
   async startAdminRun(input: { userId: string; sessionId: string; prompt: string; idempotencyKey: string; source: string; purpose?: AdminPurpose; testSkill?: RuntimeSkillConfiguration; history?: RuntimeManifest['input']['conversation_history'] }) {
@@ -272,6 +278,8 @@ export class RunOrchestrationService {
       permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
+      // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
+      ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       data_scopes: agent.dataScopes,
       knowledge_context: [],
       model_route_id: route.routeId,
@@ -962,6 +970,7 @@ export class RunOrchestrationService {
           skillInstructions: [],
           tools: [],
           runtimeTools: [],
+          toolBindings: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
           dataScopes: ['enterprise:authorized'],
@@ -1017,6 +1026,8 @@ export class RunOrchestrationService {
       },
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
+      // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
+      ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       data_scopes: effectiveDataScopes,
       knowledge_context: knowledgeContext.map(document => ({
         documentId: document.documentId,
@@ -1260,7 +1271,7 @@ export class RunOrchestrationService {
           throw authorizationDenied('会话归属或固定 Agent 已变化')
         }
       }
-      await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest)
+      await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest, this.toolBindings)
     } catch (error) {
       if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
       throw new AuthorizationCheckUnavailableError(error)
@@ -1271,6 +1282,19 @@ export class RunOrchestrationService {
     run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
+    // B-03/I-04：Attempt 固定的工具绑定修订对所有 purpose 生效——排队期间绑定
+    // 被撤销、取代或语义漂移时，领取后在进入 Runtime 前收敛为授权失败。
+    if (manifest.tool_bindings?.length) {
+      if (!this.toolBindings) return { denied: true, reason: '工具绑定复核服务不可用' }
+      try {
+        await this.toolBindings.assertActiveToolBindings(manifest.tool_bindings)
+      } catch (error) {
+        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
+          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+        }
+        throw error
+      }
+    }
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
     // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权
     // 仍会进入 DSH 执行。权限失效时 Run/Attempt 在此收敛为 failed。

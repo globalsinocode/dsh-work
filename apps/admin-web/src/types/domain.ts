@@ -236,11 +236,37 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   agentId: string
 }
 
+/** B-03/I-04：发布时固定的平台工具绑定修订引用。 */
+export interface AgentBindingRef {
+  tool: string
+  binding_id: string
+  revision: number
+  digest: string
+}
+
+/** /tools/bindings 返回的绑定修订（不含密钥值）。 */
+export interface ToolBindingRecord {
+  tool: string
+  bindingId: string
+  revision: number
+  digest: string
+  connectorId: string
+  executor: string
+  endpoint: string
+  credentialRef: string | null
+  identityPolicy: string
+  environment: string
+  approvalPolicy: string
+  status: 'active' | 'superseded' | 'revoked'
+  sealedAt: string
+}
+
 export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
   status: PublishStatus
+  bindingRefs?: AgentBindingRef[]
   createdAt: string
   createdBy: string
   publishedAt?: string
@@ -644,6 +670,8 @@ export interface AgentReleaseCandidate {
   source: 'config' | 'zip'
   sealedRevision?: number
   sealedAt?: string
+  /** B-03/I-04：封存时固定的平台绑定依据。 */
+  bindingRefs: AgentBindingRef[]
   cases: AgentEvalCase[]
   packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
   missingDeps: { skills: string[]; tools: string[] }

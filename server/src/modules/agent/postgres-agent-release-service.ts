@@ -9,6 +9,7 @@ import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { AGENT_ID_PATTERN, VERSION_PATTERN, parseAgentPackage, type AgentPackageCapabilityRef, type AgentPackageCase } from './agent-package.ts'
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
+import { bindingBasisKey, RUNTIME_INTRINSIC_TOOL_REFS, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -84,6 +85,8 @@ export interface ReleaseCandidate {
   source: 'config' | 'zip'
   sealedRevision?: number
   sealedAt?: string
+  /** B-03/I-04：封存时解析固定的平台工具绑定修订（发布依据，非空即已封存绑定）。 */
+  bindingRefs: ManifestToolBinding[]
   cases: ReleaseEvalCase[]
   packageRefs: { skills: CapabilityRef[]; tools: CapabilityRef[] }
   missingDeps: { skills: string[]; tools: string[] }
@@ -173,6 +176,7 @@ interface SubmissionRow {
   source: 'config' | 'zip'
   sealedRevision: number | null
   sealedAt: Date | null
+  bindingRefs: ManifestToolBinding[]
   cases: ReleaseEvalCase[]
   packageRefs: { skills: CapabilityRef[]; tools: CapabilityRef[] }
   missingDeps: { skills: string[]; tools: string[] }
@@ -254,6 +258,7 @@ function toCandidate(row: SubmissionRow, version: string): ReleaseCandidate {
     source: row.source,
     ...(row.sealedRevision !== null ? { sealedRevision: row.sealedRevision } : {}),
     ...(row.sealedAt ? { sealedAt: row.sealedAt.toISOString() } : {}),
+    bindingRefs: row.bindingRefs ?? [],
     cases: row.cases,
     packageRefs: row.packageRefs,
     missingDeps: row.missingDeps,
@@ -384,13 +389,14 @@ export class PostgresAgentReleaseService {
       update agent_release_submissions
          set revision = revision + 1, bound_fingerprint = ${draftFingerprint(context.draft!)},
              checks = '[]'::jsonb, plan = '[]'::jsonb,
-             sealed_revision = null, sealed_at = null,
+             sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
              status = case when status in ('withdrawn', 'changes_requested') then 'draft' else status end,
              updated_at = now()
        where tenant_id = ${tenantId} and id = ${submission.id}
        returning id, agent_id as "agentId", agent_version_id as "agentVersionId",
                  bound_fingerprint as "boundFingerprint", revision, status, source,
                  sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+                 binding_refs as "bindingRefs",
                  cases, package_refs as "packageRefs", missing_deps as "missingDeps",
                  checks, plan, review_note as "reviewNote", package_id as "packageId"
     `
@@ -404,12 +410,13 @@ export class PostgresAgentReleaseService {
          set agent_version_id = ${context.draft!.id}, revision = revision + 1,
              bound_fingerprint = ${draftFingerprint(context.draft!)},
              checks = '[]'::jsonb, plan = '[]'::jsonb,
-             sealed_revision = null, sealed_at = null,
+             sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
              status = 'draft', updated_at = now()
        where tenant_id = ${tenantId} and id = ${submission.id}
        returning id, agent_id as "agentId", agent_version_id as "agentVersionId",
                  bound_fingerprint as "boundFingerprint", revision, status, source,
                  sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+                 binding_refs as "bindingRefs",
                  cases, package_refs as "packageRefs", missing_deps as "missingDeps",
                  checks, plan, review_note as "reviewNote", package_id as "packageId"
     `
@@ -432,8 +439,9 @@ export class PostgresAgentReleaseService {
       submission = await this.refreshSubmissionRevision(submission, context)
     }
     const resolved = await this.resolveDraftReferences(context.draft!)
-    const checks = await this.buildChecks(context, submission, resolved)
-    const plan = await this.buildPlan(context, submission, resolved)
+    const bound = await this.resolveDraftBindings(context.draft!, actor.id)
+    const checks = await this.buildChecks(context, submission, resolved, bound)
+    const plan = await this.buildPlan(context, submission, resolved, bound)
     const stored = await this.database<{ id: string }[]>`
       update agent_release_submissions
          set checks = ${this.database.json(asJson(checks))}, plan = ${this.database.json(asJson(plan))}, updated_at = now()
@@ -446,10 +454,52 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
+  /** 解析草稿工具引用的当前平台绑定修订；解析失败以 error 返回，由检查/计划项展示为失败。 */
+  private async resolveDraftBindings(draft: DraftVersionShape, actorId?: string): Promise<{
+    bindings: Awaited<ReturnType<PostgresToolConnectorService['resolveToolBindings']>>
+    pins: ManifestToolBinding[]
+    error?: string
+  }> {
+    if (!draft.tools.length) return { bindings: [], pins: [] }
+    if (!this.tools) return { bindings: [], pins: [], error: '工具绑定服务未接入' }
+    try {
+      const bindings = await this.tools.resolveToolBindings(draft.tools, actorId)
+      return { bindings, pins: bindings.map(toManifestToolBinding) }
+    } catch (cause) {
+      return { bindings: [], pins: [], error: cause instanceof Error ? cause.message : String(cause) }
+    }
+  }
+
+  /**
+   * B-03/I-04：封存绑定依据的当前有效性复核（提交/发布事务内调用）。
+   * 草稿声明了平台工具但封存依据为空（迁移前历史候选）时 fail-closed；
+   * 已封存 pin 逐条要求仍 active 且语义未漂移，漂移即证据失效。
+   */
+  private async assertSealedBindings(submission: SubmissionRow, tx: DatabaseTransaction) {
+    const [version] = await tx<{ tools: string[] }[]>`
+      select tool_refs as tools from agent_versions
+       where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
+    `
+    const platformTools = (version?.tools ?? [])
+      .filter(reference => !RUNTIME_INTRINSIC_TOOL_REFS.has(reference))
+    const pins = submission.bindingRefs ?? []
+    if (platformTools.length && !pins.length) {
+      throw new Error('缺少平台工具绑定依据，请重新封存试运行')
+    }
+    if (!pins.length) return
+    if (!this.tools) throw new Error('工具绑定复核服务未接入')
+    try {
+      await this.tools.assertActiveToolBindings(pins, tx)
+    } catch (error) {
+      throw new Error(`固定绑定修订已失效，请重新封存试运行：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   private async buildChecks(
     context: AgentContext,
     submission: SubmissionRow,
     resolved: { missingSkills: string[]; missingTools: string[]; authError?: string },
+    bound: { bindings: { tool: string; revision: number }[]; error?: string },
   ): Promise<ReleaseCheckItem[]> {
     const draft = context.draft!
     const hasPackageTools = submission.packageRefs.tools.length > 0
@@ -495,6 +545,16 @@ export class PostgresAgentReleaseService {
         detail: hasPackageTools
           ? `包内 Tool 候选需先完成测试准入：${submission.packageRefs.tools.map(tool => tool.id).join('、')}（准入流水线将于下一迭代提供，当前请先在工具管理中接入并发布）`
           : '无包内 Tool 候选，不需要额外测试授权',
+      },
+      {
+        id: 'binding',
+        label: '平台工具绑定修订',
+        status: bound.error ? 'failed' : 'passed',
+        detail: bound.error
+          ? `绑定解析失败：${bound.error}`
+          : bound.bindings.length
+            ? `${bound.bindings.length} 个平台工具已解析为当前绑定修订：${bound.bindings.map(binding => `${binding.tool} rev${binding.revision}`).join('、')}`
+            : '无平台工具依赖，不需要绑定修订',
       },
       {
         id: 'runtime',
@@ -543,6 +603,7 @@ export class PostgresAgentReleaseService {
     context: AgentContext,
     submission: SubmissionRow,
     resolved: { missingSkills: string[]; missingTools: string[] },
+    bound: { bindings: Awaited<ReturnType<PostgresToolConnectorService['resolveToolBindings']>>; error?: string },
   ): Promise<ReleasePlanItem[]> {
     const draft = context.draft!
     const firstRelease = !context.activeVersionId
@@ -573,7 +634,25 @@ export class PostgresAgentReleaseService {
     for (const tool of [...new Set([...submission.missingDeps.tools, ...resolved.missingTools])]) {
       items.push({ kind: 'tool', name: tool, action: 'blocked', version: '未解析', detail: '平台尚无已发布工具；完成工具接入，或从 Agent 定义中移除该引用' })
     }
-    items.push({ kind: 'binding', name: '平台默认绑定', action: 'reuse', version: 'binding-rev-3', detail: '使用平台已批准的端点、凭据槽位与执行环境' })
+    // B-03/I-04：绑定项来自服务端真实解析的修订——与候选封存依据（bindingRefs）
+    // 比较区分复用/变更/新建；解析失败作为 blocked 项呈现，不再使用固定占位版本。
+    const sealedByTool = new Map((submission.bindingRefs ?? []).map(pin => [pin.tool, pin]))
+    for (const binding of bound.bindings) {
+      const sealed = sealedByTool.get(binding.tool)
+      const action = !sealed
+        ? 'create'
+        : sealed.binding_id === binding.bindingId && sealed.digest === binding.digest ? 'reuse' : 'upgrade'
+      items.push({
+        kind: 'binding',
+        name: binding.tool,
+        action,
+        version: `rev${binding.revision}`,
+        detail: `绑定 ${binding.bindingId} · 端点 ${binding.endpoint} · 凭据槽位 ${binding.credentialRef ?? '无'} · 身份策略 ${binding.identityPolicy} · 环境 ${binding.environment} · 摘要 ${binding.digest.slice(0, 12)}`,
+      })
+    }
+    if (bound.error) {
+      items.push({ kind: 'binding', name: '平台工具绑定', action: 'blocked', version: '未解析', detail: `绑定解析失败：${bound.error}` })
+    }
     return items
   }
 
@@ -651,7 +730,7 @@ export class PostgresAgentReleaseService {
     const updated = await this.database<{ id: string }[]>`
       update agent_release_submissions
          set revision = revision + 1, checks = '[]'::jsonb, plan = '[]'::jsonb,
-             sealed_revision = null, sealed_at = null,
+             sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
              status = 'draft',
              cases = case when ${column === 'cases'} then ${serialized} else cases end,
              missing_deps = case when ${column === 'missing_deps'} then ${serialized} else missing_deps end,
@@ -683,11 +762,17 @@ export class PostgresAgentReleaseService {
     const failedChecks = submission.checks.filter(check => check.status === 'failed')
     if (failedChecks.length) throw new Error(`试运行被阻塞：${failedChecks.map(check => check.label).join('、')}`)
 
+    // B-03/I-04：封存同时固定绑定依据——试运行案例与发布门禁必须引用同一修订集；
+    // 解析失败（工具停用/无已发布版本/绑定服务缺失）在封存前拒绝。
+    const bound = await this.resolveDraftBindings(context.draft!, actor.id)
+    if (bound.error) throw new Error(`绑定解析失败，无法封存试运行：${bound.error}`)
+
     const trialId = `trial-${randomUUID()}`
     const steps = TRIAL_STEPS.map(step => ({ ...step, status: 'pending' as TrialStepStatus }))
     const sealed = await this.database<{ id: string }[]>`
       update agent_release_submissions
-         set sealed_revision = ${submission.revision}, sealed_at = now(), updated_at = now()
+         set sealed_revision = ${submission.revision}, sealed_at = now(),
+             binding_refs = ${this.database.json(asJson(bound.pins))}, updated_at = now()
        where tenant_id = ${tenantId} and id = ${submission.id}
          and revision = ${submission.revision}
          and status in ('draft', 'submitted', 'changes_requested')
@@ -699,7 +784,7 @@ export class PostgresAgentReleaseService {
       values (${trialId}, ${tenantId}, ${submission.id}, ${agentId}, ${submission.revision}, 'checking', ${this.database.json(asJson(steps))}, ${actor.id})
     `
 
-    const outcome = await this.executeTrialSteps(context, submission, steps, { trialId, actorId: actor.id })
+    const outcome = await this.executeTrialSteps(context, { ...submission, bindingRefs: bound.pins }, steps, { trialId, actorId: actor.id })
     // 终态守卫：只允许从进行中状态收敛；并发取消（cancelTrial）已落 'cancelled' 时
     // 不得被本次更新覆盖回 passed/failed/asserting。
     const finalized = await this.database<{ id: string }[]>`
@@ -740,13 +825,20 @@ export class PostgresAgentReleaseService {
       return { status: 'failed' as const, failureStage: TRIAL_STEPS[index]!.label }
     }
 
-    mark(0, 'passed', `候选 rev${submission.revision} 已封存`)
+    mark(0, 'passed', `候选 rev${submission.revision} 已封存（${submission.bindingRefs.length} 项绑定修订）`)
 
     const resolved = await this.resolveDraftReferences(context.draft!)
-    const checks = await this.buildChecks(context, submission, resolved)
+    const boundNow = await this.resolveDraftBindings(context.draft!, input.actorId)
+    const checks = await this.buildChecks(context, submission, resolved, boundNow)
     const failedChecks = checks.filter(check => check.status === 'failed')
     if (failedChecks.length) return failAt(1, `复核未通过：${failedChecks.map(check => check.label).join('、')}`)
     mark(1, 'passed', `${checks.length} 项检查全部通过`)
+
+    // B-03/I-04：封存依据与当前解析的绑定修订集必须一致——绑定在封存后被
+    // 撤销/轮换/语义漂移时本次试运行不能作为该修订集的发布证据。
+    if (bindingBasisKey(boundNow.pins) !== bindingBasisKey(submission.bindingRefs)) {
+      return failAt(1, '工具绑定修订在封存后发生漂移，请重新发起试运行')
+    }
 
     const current = await this.loadContext(context.id)
     if (!current?.draft || current.draft.id !== submission.agentVersionId) {
@@ -984,6 +1076,9 @@ export class PostgresAgentReleaseService {
       if (trial?.status !== 'passed' || trial.submissionRevision !== submission.sealedRevision) {
         throw new Error('请先完成与当前修订一致的通过试运行再提交审核')
       }
+      // B-03/I-04：封存绑定依据提交时复核——封存至提交间的绑定撤销/漂移
+      // 使试运行证据不再代表当前绑定，必须重新封存试运行。
+      await this.assertSealedBindings(submission, tx)
       const updated = await tx<{ id: string }[]>`
         update agent_release_submissions set status = 'submitted', updated_at = now()
          where tenant_id = ${tenantId} and id = ${submission.id}
@@ -1075,6 +1170,7 @@ export class PostgresAgentReleaseService {
         select id, agent_id as "agentId", agent_version_id as "agentVersionId",
                bound_fingerprint as "boundFingerprint", revision, status, source,
                sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+               binding_refs as "bindingRefs",
                cases, package_refs as "packageRefs", missing_deps as "missingDeps",
                checks, plan, review_note as "reviewNote", package_id as "packageId"
           from agent_release_submissions
@@ -1111,8 +1207,15 @@ export class PostgresAgentReleaseService {
       if (!latestTrial || latestTrial.status !== 'passed' || latestTrial.submissionRevision !== submission.sealedRevision) {
         throw new Error('需要一次与当前封存修订一致的通过试运行才能发布')
       }
+      // B-03/I-04：发布事务内复核封存绑定依据——并发绑定变更（撤销/轮换/语义
+      // 漂移）在此拒绝，旧证据不能带病放行。
+      await this.assertSealedBindings(submission, transaction)
 
-      const release = await this.agents.publishDraftWithinTransaction(transaction, agentId, actor)
+      // 已发布版本携带封存绑定依据：与状态翻转同一条 UPDATE（已发布版本不可变，
+      // 不能发布后补写）。Attempt 据此解释当时使用的批准连接/凭据槽位/身份策略。
+      const release = await this.agents.publishDraftWithinTransaction(
+        transaction, agentId, actor, undefined, submission.bindingRefs ?? [],
+      )
       const [versionRow] = await transaction<{ id: string }[]>`
         select id from agent_versions
          where tenant_id = ${tenantId} and agent_id = ${agentId} and version = ${release.version} and status = 'published'
@@ -1144,6 +1247,12 @@ export class PostgresAgentReleaseService {
           }]
       const evidence = [
         { kind: 'configuration_checked' as const, summary: '定义、依赖与绑定检查通过', scope: `submission-rev-${submission.revision}`, runId: null },
+        ...(submission.bindingRefs?.length ? [{
+          kind: 'configuration_checked' as const,
+          summary: `平台绑定修订固定：${submission.bindingRefs.map(pin => `${pin.tool} rev${pin.revision}（摘要 ${pin.digest.slice(0, 12)}）`).join('、')}`,
+          scope: 'tool-bindings',
+          runId: null,
+        }] : []),
         ...trialEvidence,
         { kind: 'business_accepted' as const, summary: note.trim() || '业务效果已确认', scope: 'enterprise', runId: null },
       ]
@@ -1324,7 +1433,7 @@ export class PostgresAgentReleaseService {
                  cases = ${tx.json(asJson(cases))}, package_refs = ${tx.json(asJson(packageRefs))},
                  missing_deps = ${tx.json(asJson(missingDeps))},
                  checks = '[]'::jsonb, plan = '[]'::jsonb,
-                 sealed_revision = null, sealed_at = null,
+                 sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
                  package_id = ${packageId}, updated_at = now()
            where tenant_id = ${tenantId} and id = ${submission.id}
         `
@@ -1574,6 +1683,7 @@ export class PostgresAgentReleaseService {
       select id, agent_id as "agentId", agent_version_id as "agentVersionId",
              bound_fingerprint as "boundFingerprint", revision, status, source,
              sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+                binding_refs as "bindingRefs",
              cases, package_refs as "packageRefs", missing_deps as "missingDeps",
              checks, plan, review_note as "reviewNote", package_id as "packageId"
         from agent_release_submissions
@@ -1616,6 +1726,7 @@ export class PostgresAgentReleaseService {
       returning id, agent_id as "agentId", agent_version_id as "agentVersionId",
                 bound_fingerprint as "boundFingerprint", revision, status, source,
                 sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+                binding_refs as "bindingRefs",
                 cases, package_refs as "packageRefs", missing_deps as "missingDeps",
                 checks, plan, review_note as "reviewNote", package_id as "packageId"
     `

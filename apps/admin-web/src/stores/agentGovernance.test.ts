@@ -21,6 +21,7 @@ function makeCandidate(agentId: string, overrides: Partial<NonNullable<AgentRele
       { id: 'case-3', name: '越权请求', kind: 'permission_denied' as const, input: '读取薪酬', expect: '拒绝访问' },
     ],
     packageRefs: { skills: [], tools: [] },
+    bindingRefs: [],
     missingDeps: { skills: [], tools: [] },
     checks: [],
     plan: [],

@@ -85,6 +85,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
       revision: summary.revision,
       status: summary.status,
       source: summary.source,
+      bindingRefs: [],
       cases: [],
       packageRefs: { skills: [], tools: [] },
       missingDeps: { skills: [], tools: [] },
@@ -92,6 +93,18 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
       plan: [],
       trialRuns: [],
     }
+  }
+
+  /**
+   * 版本行的绑定修订展示：发布版本取 agent_versions.binding_refs（真实封存
+   * 依据）；进行中候选取 candidate.bindingRefs。均无则显示 '—'。
+   */
+  function bindingRevisionLabel(agentId: string, version: string): string {
+    const record = contentStore.agentVersions.find(item => item.agentId === agentId && item.version === version)
+    const refs = record?.bindingRefs?.length
+      ? record.bindingRefs
+      : (states.value[agentId]?.candidate?.version === version ? states.value[agentId]?.candidate?.bindingRefs : undefined) ?? []
+    return refs.length ? refs.map(pin => `${pin.tool}#rev${pin.revision}`).join('、') : '—'
   }
 
   /**
@@ -108,7 +121,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
       const overlay = ensure(agentId)
       for (const [version, evidence] of Object.entries(byVersion)) {
         overlay.versions[version] ??= {
-          bindingRevision: '—',
+          bindingRevision: bindingRevisionLabel(agentId, version),
           evidence,
           revoked: false,
           published: isVersionPublished(agentId, version),
@@ -120,7 +133,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
       if (state.candidate) overlay.candidate = { ...state.candidate, trialRuns: state.trialRuns }
       for (const [version, evidence] of Object.entries(state.evidence)) {
         overlay.versions[version] = {
-          bindingRevision: '—',
+          bindingRevision: bindingRevisionLabel(agentId, version),
           evidence,
           revoked: false,
           published: isVersionPublished(agentId, version),
@@ -199,7 +212,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
 
   function versionGovernance(agentId: string, version: string): VersionGovernance {
     return overlays.value[agentId]?.versions[version] ?? {
-      bindingRevision: '—',
+      bindingRevision: bindingRevisionLabel(agentId, version),
       evidence: [],
       revoked: false,
       published: isVersionPublished(agentId, version),

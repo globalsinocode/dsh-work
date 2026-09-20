@@ -99,7 +99,7 @@ function candidateOf(agentId: string) {
 function versionGov(version: AgentVersionRecord) {
   return selectedAgent.value
     ? governance.versionGovernance(selectedAgent.value.id, version.version)
-    : { bindingRevision: 'binding-rev-3', evidence: [], revoked: false }
+    : { bindingRevision: '—', evidence: [], revoked: false }
 }
 
 function availabilityTag(agent: AgentDefinition): { status: string; label: string } {

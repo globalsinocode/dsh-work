@@ -57,7 +57,11 @@ before(async () => {
     undefined,
     authorization,
     // TW-10：团队会话必须经 @Agent 成员发起执行。
-    { agentMembers: new PostgresWorkspaceAgentMemberService(database, authorization, agents) },
+    {
+      agentMembers: new PostgresWorkspaceAgentMemberService(database, authorization, agents),
+      // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
+      toolBindings: tools,
+    },
   )
 })
 

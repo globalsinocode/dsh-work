@@ -20,7 +20,7 @@
 
 | 规范 | 状态与代码证据 | 测试证据及不足 | 后续动作 |
 | --- | --- | --- | --- |
-| AS-01 对象分离 | **部分实现**。[Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts)的草稿/发布与 `getRuntimeSnapshot`、[Run 类型](../../server/src/modules/run/run-types.ts)已分离目录、版本和 Attempt；[发布服务](../../server/src/modules/agent/postgres-agent-release-service.ts) `buildPlan` 中的 `binding-rev-3` 为固定值 | [发布集成用例](../../server/src/infrastructure/postgres/agent-release-governance.integration.test.ts)覆盖候选修订、封存和发布；没有据此证明绑定修订真实持久化 | 保留 `agentVersionId`；补齐定义、真实绑定修订、发布与 Attempt 的引用及变更验证 |
+| AS-01 对象分离 | **已实现（B-03 后）**。[Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts)的草稿/发布与 `getRuntimeSnapshot`、[Run 类型](../../server/src/modules/run/run-types.ts)已分离目录、版本和 Attempt；发布计划/封存/Attempt 现引用真实 `tool_binding_revisions` 修订（B-03/I-04），不再使用固定占位 | [发布集成用例](../../server/src/infrastructure/postgres/agent-release-governance.integration.test.ts)覆盖候选修订、封存、绑定 pin 固定、漂移拒绝与发布；[绑定集成用例](../../server/src/infrastructure/postgres/tool-binding.integration.test.ts)覆盖修订物化/轮换/撤销 | 保留 `agentVersionId`；跨环境独立发布验证留待 P2 |
 | AS-02 精简定义 | **部分实现**。[包解析器](../../server/src/modules/agent/agent-package.ts) `parseAgentPackage` 接收扁平字段，校验版本、Prompt、摘要和依赖；尚无统一 AgentSpec 及结构化输入输出/模型能力/上下文策略。I-02 已补字段政策：未识别字段警告、平台受管字段与 `apiVersion/spec` 结构清单拒绝、别名并存冲突拒绝、声明与包内候选版本冲突拒绝 | 发布用例覆盖无案例时默认生成、摘要缺项、版本冲突、缺失依赖；[解析单测](../../server/src/modules/agent/agent-package.test.ts)覆盖字段规则、冲突与旧包兼容。默认生成案例已带 `origin` 来源标记并在检查详情提示核对实际预期 | 结构化输入输出/上下文策略/模型能力契约仍待 I-03；不能直接把草案 `apiVersion/spec` 当作受支持格式 |
 | AS-03 统一执行 | **已实现（现有生产接线）**。[main](../../server/src/main.ts)组装 Runtime；[编排服务](../../server/src/modules/run/run-orchestration-service.ts)的员工、管理、发布试运行均创建 Attempt；[Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts)启动 ACP Worker | [执行能力测试](../../server/src/modules/runtime/execution-capabilities.test.ts)、[Adapter 测试](../../server/src/modules/runtime/runtime-adapter.test.ts)覆盖不可用、取消和故障；本次未运行真实 DSH | 维持单链路；每种新增入口均追踪实际接线，发布前验证目标 Runtime |
 | AS-04 状态与上下文 | **部分实现；长期记忆不适用当前范围**。[Manifest 编译器](../../server/src/modules/runtime/manifest-compiler.ts)限制历史、文件和知识；Adapter 的 `renderSystemPrompt` 按需展示 Skill 目录；[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)复核输入；[知识服务](../../server/src/modules/knowledge/postgres-knowledge-service.ts)提供来源 | Adapter 测试覆盖授权知识投影、渐进 Skill、外置资源和历史上限；通用跨任务记忆的来源撤回未在当前链路实现 | 保持现有分层；统一上下文策略与 Schema（见 D-03）；记忆随 AG-04 单独设计 |
@@ -30,14 +30,14 @@
 | AS-08 持久化恢复 | **部分实现；等待/检查点未实现（Run 契约）**。RunState 只有 queued/running/cancel_requested/succeeded/failed/cancelled；[Run 仓储](../../server/src/modules/run/postgres-run-repository.ts) `recoverAfterRestart` 收敛活动 Attempt、恢复排队；[自动任务服务](../../server/src/modules/automation/automation-service.ts)处理中断准备 | [编排集成](../../server/src/infrastructure/postgres/m3-orchestration.integration.test.ts)、[故障集成](../../server/src/infrastructure/postgres/m5-runtime-faults.integration.test.ts)、[自动任务集成](../../server/src/infrastructure/postgres/automation.integration.test.ts)覆盖相关状态与竞态；未证明通用副作用恢复 | 维持 AG-03 轻量语义；有长流程需求后随 EX-03 设计等待/恢复/动作核对，不把聊天重放作为恢复 |
 | AS-09 预算与委派 | **部分实现；委派不适用当前范围**。Manifest 有时长、输出字节、工具次数；Adapter 限时与截断文本，平台桥计数，DSH 收到 `DSH_MAX_TOOL_CALLS`；Run 仓储的 `claimAttempt` 为自动任务保留交互容量 | Adapter 有执行及启动超时用例，自动任务集成有取消/领取竞态；没有统一累计 Token/成本、重试预算及父子任务预算契约。`maxTokens * 4` 用于输出字节估算，不是模型 Token 拦截 | 标明限制实际效力；需要累计硬预算时单独实现并测试 DSH 边界，委派按需求评审 |
 | AS-10 真实结果 | **部分实现**。编排 `persistEvent` 将 `run.completed` 转成 succeeded；Adapter 收集成果并提交回答；内容服务管理版本与权限。没有独立的通用“目标达成/动作未知”结果外层 | Adapter 覆盖成果收集失败/撤权；Run 与文件测试验证执行及成果机制，不能证明所有业务目标达成 | 设计结果外层并同步切换消费者；保留 Run 执行状态，将业务完成、回执和未解决事项独立表达 |
-| AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；发布事务复核 sealedRevision/最新试运行；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖修改候选使证据失效、人工判失败阻塞发布、同版本不同内容冲突；未覆盖真实绑定修订与跨环境变更 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
+| AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；发布事务复核 sealedRevision/最新试运行；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖修改候选使证据失效、人工判失败阻塞发布、同版本不同内容冲突；覆盖真实绑定修订与封存后漂移拒绝；跨环境变更验证未覆盖 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
 | AS-12 评测与审计 | **部分实现**。发布服务要求 success/invalid_input/permission_denied 三类案例，记录 case Run 与人工判定；运行事件关联 trace/Attempt，记录工具和模型用量 | 发布用例使用 `TrialStubRuntime`；成功终态及非空输出后仍由人判业务预期。平台有故障/安全测试，尚未形成覆盖质量、注入、可靠性和成本的统一 Agent 评测契约 | 分清平台测试与 Agent 专属案例，补评测分层、可复现证据和 P2；不将默认三案例作为完整质量证明 |
 
 ## 3. 已确定的契约决策与具体缺口
 
 ### D-01 绑定分离保留现有发布入口
 
-遵循 [Agent 设计规范](agent-design-standard.md)的“定义版本 + 环境绑定修订 → 平台发布版本”逻辑，不新增强制 Release ID。后续实现须从真实绑定记录解析计划；固定 `binding-rev-3` 只证明页面计划中有一项文字，不能证明端点/身份/权限发生变化时能锁定及追溯。
+遵循 [Agent 设计规范](agent-design-standard.md)的“定义版本 + 环境绑定修订 → 平台发布版本”逻辑，不新增强制 Release ID。**B-03 起（2026-09-20）计划/封存/Attempt 已从真实 `tool_binding_revisions` 解析**：端点/身份/授权等语义字段变化产生新修订并使旧封存证据失效；原先的固定 `binding-rev-3` 占位已移除（计划项、候选封存依据、版本绑定引用、管理端展示均为真实记录）。
 
 ### D-02 包的当前支持与目标格式分开
 
@@ -81,7 +81,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | --- | --- | --- | --- | --- |
 | B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一包格式、规范化 AgentSpec、严格字段与依赖校验、输入输出/上下文/模型能力要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、警告后渐进收紧、旧定义转换与默认值回填 | **已实施（见 I-02/I-03 完成记录）**：分层清单 + 严格 Schema + `agent_versions.agent_spec` + 限额列更名；模型能力要求仅声明校验，路由消费待 B-02/B-03 |
 | B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
-| B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | 待实施；与 B-01/B-02 对齐，新外部写动作前完成 |
+| B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | **已实施（2026-09-20，见 I-04 完成记录）**：`tool_binding_revisions` 持久化 + Manifest `tool_bindings` 固定 + 执行复核 + 封存/发布漂移拒绝；多环境独立发布与跨环境差异待真实环境验收 |
 | B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | 待实施；依赖 B-01 输出要求、B-02 执行契约；绑定使用 B-03 |
 | B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | 待补齐，贯穿 B-01～04；保留已有有效安全回归 |
 
@@ -173,6 +173,18 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 5. 直接实现新绑定结构和引用完整性校验，不还原旧绑定或回填历史发布记录。新发布的每项绑定都须有真实依据，缺失则拒绝发布/执行，不能伪造摘要。
 
 **完成标准：** 同定义在两个批准环境可独立发布；换端点/身份后旧证据不能放行；并发改绑定时发布安全失败；历史运行可查原依据，撤权仍即时受执行边界约束。通过新结构引用完整性、发布并发、新契约内回滚和权限集成验证。
+
+**B-03 实施记录（2026-09-20）：**
+
+- **持久化结构：** 迁移 [0047](../../server/migrations/0047_tool_binding_revisions.sql) 新增 `tool_binding_revisions`（租户作用域 id、tool_id/tool_version、revision、connector/executor/endpoint/credential_ref 槽位、identity_policy、environment、allowed_role_ids、data_scopes、approval_policy、content_digest、status ∈ active/superseded/revoked、created_by/at；`(tenant_id, tool_id, revision)` 唯一 + active 索引），并在 `agent_versions`、`agent_release_submissions` 增加 `binding_refs` JSON 列。历史行不回填：首次服务级解析按当前真实配置物化初始修订。
+- **语义摘要：** [domain/tool-binding.ts](../../server/src/domain/tool-binding.ts) `toolBindingDigest` 对规范化快照（角色/数据范围排序）取 SHA-256；凭据槽位**标识**入摘要、密钥值从不进入——槽位切换产生新修订，密钥值等价轮换不产生。`RUNTIME_INTRINSIC_TOOL_REFS`（`activate_skill@1.0.0`、`python_execute@1.0.0`）为共享常量，内生工具不进绑定表。
+- **生命周期：** `resolveToolBindings` 在 tools 行锁下物化/轮换（语义漂移 → 旧行 superseded + 新 revision，修订号按工具全局单调）；`setToolStatus` 停用即撤销、启用按当前配置物化新修订；`updateToolPermissions`/`addTool` 同事务维护修订；`assertActiveToolBindings` 复核固定 pin 的 binding_id/tool@version/revision/digest/status=active，并**重算当前真实配置摘要**比对，撤销/取代/漂移/行缺失/错配均按 `permission_denied` 拒绝。
+- **Manifest 固定：** `RuntimeManifest.tool_bindings`（`tool`/`binding_id`/`revision`/`digest` 四字段 pin）在 Schema 与编译器双侧校验——未声明字段、非法 `id@version`、重复固定、空 binding_id、非正整数 revision、非小写 sha256 摘要均拒绝；`tools[]`（DSH 运行时名）与 `tool_bindings`（平台引用）为独立命名空间，互不交叉校验。员工会话与发布试运行派发时 `getRuntimeSnapshot` 解析真实修订并写入 Attempt Manifest。
+- **执行复核：** `assertCurrentExecutionAuthorization` 在 purpose 分流前统一复核 pin（试运行/管理/员工同口径），`recheckExecutionAuthorization`（领取后、进 Runtime 前）与桥接 `authorizeExecution` 路径同享该门禁；声明 pin 而端口未接线时 fail-closed 为不可用。
+- **发布治理：** `runChecks`/`buildPlan` 经 `resolveDraftBindings` 生成真实 `binding` 检查与计划项（与封存依据比较区分 create/reuse/upgrade，解析失败为 blocked）；`startTrial` 将 pin 封存为 `binding_refs`；`executeTrialSteps`/`submitForReview`/`publish` 经 `assertSealedBindings` 复核封存依据（声明平台工具而无依据的历史候选 fail-closed，语义漂移/撤销拒绝）；`binding_refs` 随 `publishDraftWithinTransaction` 的状态翻转同一条 UPDATE 固化（不触碰已发布版本不变约束），并写入版本证据（`平台绑定修订固定` 项含修订号与摘要前缀）。
+- **管理端：** `GET /tools/bindings` 返回全部修订（不含密钥值）；`toolGovernance` 的绑定列与治理详情改用服务端记录（`candidate-bind-*` 前缀仅存于候选准入开发原型，不与平台修订混淆），`agentGovernance` 版本绑定徽标由 `agent_versions.binding_refs`/候选 `bindingRefs` 推导，`binding-rev-3` 等伪造占位全部移除。
+- **验证：** `tool-binding.integration.test.ts` 6/6（物化/复用、漂移轮换+取代、pin 错配/撤销拒绝、内生工具排除、凭据槽位语义）；`agent-release-governance.integration.test.ts` 20/20（含封存 pin→Attempt manifest 一致性、漂移拒绝发布、重新封存后发布、版本 `bindingRefs` 追溯）；`current-execution-authorization.test.ts` 8/8（含 pin 门禁 fail-closed）；`runtime-manifest-schema.test.ts` 11/11（含双边界 pin 校验）；`test:runtime` 61/61、`m3` 12/12、`m4:authorization` 4/4、`m4:tool` 1/1、`m5-revocation` 29/29、team/automation 集成 42/42、admin-skill-installation 11/11、`admin-web` 87/87、`tsc --noEmit`、eslint、`pnpm verify` 通过。
+- **未覆盖：** 多批准环境（`environment` 字段当前固定 `default`，独立发布未验证）；并发绑定变更的竞态发布为事务内复核而非专用并发用例；真实 DSH/OIDC 与浏览器 E2E 未运行；`m4-runtime-operations` 存在 B-03 之前的既有失败（团队 @Agent 成员门禁，与本项无关）。
 
 ### I-05 统一工具输入输出、错误与效果语义
 

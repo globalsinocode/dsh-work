@@ -231,6 +231,8 @@ async function start() {
       {
         agentMembers: workspaceAgentMembers,
         automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+        // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
+        toolBindings: tools,
       },
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)

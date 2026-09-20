@@ -57,6 +57,8 @@ before(async () => {
     agents,
     undefined,
     authorization,
+    // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
+    { toolBindings: tools },
   )
 })
 

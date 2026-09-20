@@ -1,13 +1,15 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 
-import type { AgentDefinition, AgentVersionRecord, ToolDefinition } from '../types/domain'
+import { adminApi } from '../api/client'
+import type { AgentDefinition, AgentVersionRecord, ToolBindingRecord, ToolDefinition } from '../types/domain'
 import type { EvidenceRef } from './agentGovernance'
 
 /**
- * 工具治理叠加原型 store：候选、测试准入、绑定修订与证据
- * 作为本地内存数据叠加在 content store 的真实 Tool 数据上。
- * 不连接任何服务端接口；接真实 API 时替换为 /api/admin/v1/tool-candidates 接口族。
+ * 工具治理叠加原型 store：候选与测试准入作为本地内存数据叠加在 content
+ * store 的真实 Tool 数据上（接真实 API 时替换为 tool-candidates 接口族）。
+ * 绑定修订是真实服务端数据：loadBindings 读取 /tools/bindings 的平台
+ * 修订记录，不再使用伪造的 binding-rev-N 占位。
  */
 
 export type ToolExecutorType = 'dsh_builtin' | 'interface_wrapper' | 'sandbox_code'
@@ -53,7 +55,9 @@ export interface ToolGovernance {
 const delay = (ms = 420) => new Promise(resolve => setTimeout(resolve, ms))
 const now = () => new Date().toISOString()
 let bindingCounter = 5
-const nextBindingId = () => `binding-rev-${(bindingCounter += 1)}`
+// 候选测试准入是开发原型流程：其标识带 candidate- 前缀，不会与平台真实
+// 绑定修订（tool-binding-*）混淆。
+const nextBindingId = () => `candidate-bind-${(bindingCounter += 1)}`
 
 function seedCandidates(): ToolCandidate[] {
   return [
@@ -72,7 +76,7 @@ function seedCandidates(): ToolCandidate[] {
         basis: '只读订单接口，过滤规则已批准',
       },
       binding: {
-        id: 'binding-rev-4',
+        id: 'candidate-bind-4',
         endpoint: 'https://orders.internal.example.com/api/v1',
         executor: 'connector.orders.read',
         credentialSlot: 'cred-orders-readonly',
@@ -106,45 +110,64 @@ function seedCandidates(): ToolCandidate[] {
 }
 
 function seedGovernance(): Record<string, ToolGovernance> {
-  const builtIn = (endpoint: string, executor: string, runId: string): ToolGovernance => ({
-    bindingRevision: {
-      id: 'binding-rev-3',
-      endpoint,
-      executor,
-      credentialSlot: '—（平台内置）',
-      filterPolicy: '按调用者权限与数据范围过滤',
-      sealedAt: '2026-08-01T02:00:00.000Z',
-    },
-    evidence: [
-      { kind: 'configuration_checked', summary: 'Schema、权限与绑定检查通过', at: '2026-08-01T02:00:00.000Z', by: 'platform', scope: 'tool-catalog' },
-      { kind: 'runtime_verified', summary: 'DSH 链路验证通过', runId, at: '2026-08-01T02:10:00.000Z', by: 'platform', scope: 'dev-isolated' },
-    ],
-    revoked: false,
-  })
+  // 内置工具的证据与绑定不再预置伪造值：绑定由 loadBindings 从服务端加载，
+  // 证据为空的工具显示「暂无运行证据」。
+  return {}
+}
+
+/** 服务端绑定修订 → 视图形态；不展示密钥值，只展示凭据槽位引用与策略标签。 */
+function toBindingRevision(record: ToolBindingRecord): ToolBindingRevision {
   return {
-    'knowledge.search': builtIn('internal://connector-knowledge', 'platform.knowledge.search', 'run-tool-verify-101'),
-    'erp.get_sales_order': builtIn('internal://connector-erp', 'connector.erp.sales_order', 'run-tool-verify-102'),
-    'mes.get_work_order_progress': builtIn('internal://connector-mes', 'connector.mes.work_order', 'run-tool-verify-103'),
-    'wms.get_material_inventory': builtIn('internal://connector-wms', 'connector.wms.inventory', 'run-tool-verify-104'),
-    'artifact.publish': builtIn('internal://artifact-service', 'platform.artifact.publish', 'run-tool-verify-105'),
+    id: `${record.bindingId} rev${record.revision}`,
+    endpoint: record.endpoint,
+    executor: record.executor,
+    credentialSlot: record.credentialRef ?? '—（无凭据槽位）',
+    filterPolicy: `${record.identityPolicy} · ${record.environment}`,
+    sealedAt: record.sealedAt,
   }
 }
 
-const defaultBinding = (toolId: string): ToolBindingRevision => ({
-  id: 'binding-rev-3',
-  endpoint: `internal://platform/${toolId}`,
-  executor: 'platform.executor',
-  credentialSlot: '—（平台内置）',
-  filterPolicy: '按调用者权限过滤',
+const pendingBinding = (): ToolBindingRevision => ({
+  id: '—',
+  endpoint: '—',
+  executor: '—',
+  credentialSlot: '—',
+  filterPolicy: '尚未解析平台绑定',
   sealedAt: '—',
 })
 
 export const useToolGovernanceStore = defineStore('tool-governance-proto', () => {
   const candidates = ref<ToolCandidate[]>(seedCandidates())
   const governance = ref<Record<string, ToolGovernance>>(seedGovernance())
+  /** 服务端真实绑定修订（key = 工具 id）；active 之外的状态标记为 revoked。 */
+  const serverBindings = ref<Record<string, { revision: ToolBindingRevision; revoked: boolean }>>({})
   /** 候选发布后并入工具列表的原型记录；真实数据仍来自 content store。 */
   const publishedFromCandidates = ref<ToolDefinition[]>([])
   const busy = ref('')
+
+  /** 加载平台绑定修订：每个工具取最新修订（active 优先，其次最大 revision）。 */
+  async function loadBindings() {
+    try {
+      const { items } = await adminApi.getToolBindings()
+      const latest = new Map<string, ToolBindingRecord>()
+      for (const record of items) {
+        const toolId = record.tool.split('@')[0] ?? record.tool
+        const current = latest.get(toolId)
+        if (!current
+          || (current.status !== 'active' && record.status === 'active')
+          || (current.status === record.status && record.revision > current.revision)) {
+          latest.set(toolId, record)
+        }
+      }
+      const mapped: Record<string, { revision: ToolBindingRevision; revoked: boolean }> = {}
+      for (const [toolId, record] of latest) {
+        mapped[toolId] = { revision: toBindingRevision(record), revoked: record.status !== 'active' }
+      }
+      serverBindings.value = mapped
+    } catch {
+      serverBindings.value = {}
+    }
+  }
 
   /** Agent 试运行检查用：候选状态、已发布，或 undefined（未知标识）。 */
   function candidateStatusOf(toolId: string): ToolCandidateStatus | 'published' | undefined {
@@ -157,8 +180,10 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
   }
 
   function governanceOf(toolId: string): ToolGovernance {
+    const server = serverBindings.value[toolId]
+    if (server) return { bindingRevision: server.revision, evidence: governance.value[toolId]?.evidence ?? [], revoked: server.revoked }
     return governance.value[toolId] ?? {
-      bindingRevision: defaultBinding(toolId),
+      bindingRevision: pendingBinding(),
       evidence: [],
       revoked: false,
     }
@@ -243,7 +268,7 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
     governance.value = {
       ...governance.value,
       [id]: {
-        bindingRevision: candidate.binding ?? defaultBinding(id),
+        bindingRevision: candidate.binding ?? pendingBinding(),
         revoked: false,
         evidence: [
           { kind: 'configuration_checked', summary: '候选 Schema 与绑定检查通过', at: now(), by: 'platform', scope: `tool-candidate-${id}` },
@@ -300,8 +325,10 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
   return {
     candidates,
     governance,
+    serverBindings,
     publishedFromCandidates,
     busy,
+    loadBindings,
     candidateStatusOf,
     governanceOf,
     registerCandidate,

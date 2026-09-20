@@ -76,7 +76,8 @@ before(async () => {
   agents = new PostgresAgentService(database.client, operations, skills, tools)
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
-  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, agents, undefined, auth)
+  // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
+  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, agents, undefined, auth, { toolBindings: tools })
   service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
   assistant = new AdminAssistantService(database.client, orchestration, auth, service, skills, agents, operations)
 })
