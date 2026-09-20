@@ -80,7 +80,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | 实施包 | 原工作项 | 仍需实施的内容 | 省去的历史兼容工作 | 当前状态与依赖 |
 | --- | --- | --- | --- | --- |
 | B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一包格式、规范化 AgentSpec、严格字段与依赖校验、输入输出/上下文/模型能力要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、警告后渐进收紧、旧定义转换与默认值回填 | **已实施（见 I-02/I-03 完成记录）**：分层清单 + 严格 Schema + `agent_versions.agent_spec` + 限额列更名；模型能力要求仅声明校验，路由消费待 B-02/B-03 |
-| B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查待实施 |
+| B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | 待实施；与 B-01/B-02 对齐，新外部写动作前完成 |
 | B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | 待实施；依赖 B-01 输出要求、B-02 执行契约；绑定使用 B-03 |
 | B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | 待补齐，贯穿 B-01～04；保留已有有效安全回归 |
@@ -197,6 +197,27 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 **完成标准：** 模型说完成但必要成果缺失时不显示目标已达成；外部操作仅受理时不显示已完成；重复事件不重复登记结果；未授权用户看不到正文/成果。按照 Spec → Code → Verify → Test → Green 固化员工对话及自动任务结果旅程。
 
 ### I-07 核实并补齐预算执行
+
+**实施记录（B-02b，2026-09-20）：** 限额执行矩阵已逐项核实——
+
+| 限额 | 单位/作用域 | 计数/执行位置 | 超限行为 |
+| --- | --- | --- | --- |
+| Worker 启动超时 | 毫秒，spawn + initialize + session/new | `DshAcpRuntimeAdapter.armDeadline('setup')` | 停止 Worker → `RUN_TIMEOUT`（`timeout_phase=setup`，无 `run.started`） |
+| 执行超时 | 秒，`timeout_seconds`，覆盖 prompt 到成果收集全程 | `armDeadline('execution')` | 取消 ACP 会话 + abort 平台桥 + 宽限后强制关闭 → `RUN_TIMEOUT`；已产文本经 `commitInterruptedOutput` 带中断标记提交 |
+| 工具调用次数 | 次，单 Attempt | DSH 政策 `tools/pre-execute` 的 `++calls` 覆盖经 `ctx.tools.register` 注册的平台工具与内置工具；平台桥 `++count` 仅计 `/tools/*` socket 调用，同一上限 | 政策 `deny`「已达上限」；桥 403 |
+| 输出字节 | UTF-8 字节，单 Attempt | Adapter `onSessionUpdate` 按 `Buffer.byteLength` 截断，多字节字符不拆半 | 截断/丢弃后续分块，`assistant.completed` 与 `run.completed` 标记 `output_truncated` |
+| 输入文件挂载 | ≤5 个、合计 ≤1 MB、只读、`/workspace/input/` | `compileRuntimeManifest` | 编译拒绝 |
+| Skill 资源 | ≤64 文件、单 Skill ≤1 MB | `compileRuntimeManifest` + 工件存储 stat 预检 | 编译/加载拒绝 |
+| 工具参数体 | ≤64 KB | 平台桥 `readBody` | 422 拒绝 |
+| 写入目标 | 仅 `output/`、`.md/.txt/.csv`、realpath 越界拒绝 | DSH 政策 `validateExecution` | deny |
+| Runtime 并发 | Worker 数/Runtime | `claimAttempt` 行锁下 `running`+`cancel_requested` 对比 `capacity` | 领取失败保持 queued |
+| 自动任务车道 | `min(配置上限, capacity−1)` | `claimAttempt` 车道选项 | 为交互任务保留 1 个 Worker |
+
+**核查结论：** 未发现混用计数绕过——平台工具注册为 DSH 标准工具、经同一 `pre-execute` 管道计数（该前提由锁定的 ACP profile 工具注册契约保证，未做 DSH 内部动态验证；桥侧同上限第二道闸保证平台调用本身不超上限）；无超限后继续执行路径——政策在计数处 `deny`、Adapter 丢弃超字节分块、超时取消会话并强制关闭；无取消中提前释放容量——`cancel_requested` 计入容量直至终态转移；授权探测 `/authorize-execution` 在计数前分流、不消耗工具预算；两处 `++` 递增均同步发生在首个 `await` 之前，无并发越过上限窗口。Allow-list 拒绝的调用不计数（未通过校验不算 Agent 已消耗动作），通过校验后被授权拒绝的调用消耗预算（偏保守，与设计一致）。
+
+**实证修复：** 输出字节截断此前完全静默——超限分块被丢弃后，`run.completed` 与持久化回答无法区分「截断」与「完整」。现 `ExecutionRecord.outputTruncated` 在截断或丢弃分块时置位，随 `assistant.completed`（含超时/关停中断提交路径）与 `run.completed` 的 `safe_metadata` 暴露 `output_truncated: true`；未截断时不输出该字段。边界测试：mock Worker 连发 1000 B + 以多字节字符压界的 103 B + 已超限的 50 B 分块，`max_output_bytes=1024` 断言恰收 1024 字节、截断分块仍产生第二个 `assistant.delta`、第三分块被丢弃、`assistant.completed`/`run.completed` 双事件带标记；既有完整路径断言无 `output_truncated` 字段。验证：`test:runtime` 60/60、typecheck、eslint、`pnpm verify` 通过。
+
+**仍为扩展项：** 累计 Token/成本、跨 Attempt 总预算与无进展检测未实施（本项第 4 条）；模型能力要求字段仅声明校验，路由消费待 B-03。
 
 **改动位置：** Manifest limits、编排与 Scheduler、Adapter/平台工具桥、[DSH 工具政策](../../server/config/dsh/dsh-work-tool-policy.js)、模型用量及相关 UI 说明。
 

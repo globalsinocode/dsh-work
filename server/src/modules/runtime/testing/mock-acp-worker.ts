@@ -83,6 +83,23 @@ lines.on('line', (line) => {
       })
       return
     }
+    if (text.includes('[large-output]')) {
+      for (const chunk of ['A'.repeat(1000), `界${'B'.repeat(100)}`, 'C'.repeat(50)]) {
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: chunk },
+            },
+          },
+        })
+      }
+      finishPrompt(pending, 'end_turn', false)
+      return
+    }
     if (text.includes('[hang]')) return
     if (text.includes('[unexpected-cancel]')) {
       finishPrompt(pending, 'cancelled', false)

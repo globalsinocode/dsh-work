@@ -413,6 +413,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(typeof completedEvent?.safe_metadata['elapsed_ms'], 'number')
     assert.equal(typeof completedEvent?.safe_metadata['execution_ms'], 'number')
     assert.equal(typeof completedEvent?.safe_metadata['first_output_ms'], 'number')
+    assert.equal(completedEvent?.safe_metadata['output_truncated'], undefined)
 
     const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
     assert.equal(stored.run_id, input.run_id)
@@ -452,6 +453,25 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(collected, [{ runId: input.run_id, name: 'report.md', content: '# 测试成果\n' }])
     assert.equal(events.at(-1)?.safe_metadata['artifact_count'], 1)
     assert.match(renderSystemPrompt(input), /output\/<文件名>\.md/)
+  })
+
+  it('flags assistant output truncated at the byte cap instead of presenting it as complete', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-truncated-output', 'attempt-1', '[large-output] emit oversized answer')
+    input.limits.max_output_bytes = 1024
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const deltas = events.filter(event => event.event_type === 'assistant.delta')
+    assert.equal(deltas.length, 2, '截断后继续到达的分块必须被丢弃而不是追加')
+    const committed = events.find(event => event.event_type === 'assistant.completed')
+    assert.equal(Buffer.byteLength(committed?.display_message ?? ''), 1024)
+    assert.equal(committed?.safe_metadata['output_truncated'], true)
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['output_truncated'], true)
   })
 
   it('bridges general admin inspection and delegation proposal tools without executing a platform write', async () => {

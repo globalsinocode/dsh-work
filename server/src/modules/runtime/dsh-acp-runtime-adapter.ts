@@ -41,6 +41,7 @@ interface ExecutionRecord {
   authorizationTimer?: NodeJS.Timeout
   cancelCause?: RuntimeCancelCause | 'timeout' | 'shutdown'
   assistantText: string
+  outputTruncated: boolean
   terminal: boolean
   acceptedMono: number
   promptStartMono?: number
@@ -178,6 +179,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       done,
       resolveDone,
       assistantText: '',
+      outputTruncated: false,
       terminal: false,
       acceptedMono,
       activatedSkills: new Set(),
@@ -468,7 +470,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await this.verifyExecutionAuthorization(record)
       if (record.terminal) return
       if (record.assistantText.length > 0) {
-        this.emit(record, 'assistant.completed', record.assistantText, { committed: true })
+        this.emit(record, 'assistant.completed', record.assistantText, {
+          committed: true,
+          ...(record.outputTruncated ? { output_truncated: true } : {}),
+        })
       }
       this.setStatus(record, 'completed')
       this.emit(record, 'run.completed', '任务执行完成', {
@@ -482,6 +487,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         tool_result_count: evidence?.toolResultCount ?? 0,
         artifact_count: artifacts.length,
         usage_source: evidence ? 'dsh-session-log' : 'unavailable',
+        ...(record.outputTruncated ? { output_truncated: true } : {}),
       })
       this.finish(record)
     } catch (error) {
@@ -552,8 +558,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     }
 
     const remaining = record.manifest.limits.max_output_bytes - Buffer.byteLength(record.assistantText)
-    if (remaining <= 0) return
+    if (remaining <= 0) {
+      record.outputTruncated = true
+      return
+    }
     const bounded = truncateUtf8(text, remaining)
+    if (bounded.length < text.length) record.outputTruncated = true
     record.assistantText += bounded
     this.emit(record, 'assistant.delta', bounded, { committed_block: true })
   }
@@ -654,7 +664,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const text = record.assistantText.trimEnd()
     if (text.length === 0) return
     const note = cause === 'timeout' ? '本轮回答因执行超时中断，以上为已生成内容。' : '本轮回答因服务中断终止，以上为已生成内容。'
-    this.emit(record, 'assistant.completed', `${text}\n\n---\n*${note}*`, { committed: true, interrupted: cause })
+    this.emit(record, 'assistant.completed', `${text}\n\n---\n*${note}*`, {
+      committed: true,
+      interrupted: cause,
+      ...(record.outputTruncated ? { output_truncated: true } : {}),
+    })
   }
 
   private finishFailed(record: ExecutionRecord, code: string, message: string): void {
