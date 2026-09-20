@@ -1,5 +1,6 @@
 /** Prototype server domain model. Frontend applications own their API DTOs independently. */
 import type { ManifestToolBinding } from './tool-binding.ts'
+import type { TaskResult } from './task-result.ts'
 
 export type UserRole = 'employee' | 'department_manager' | 'business_admin' | 'platform_admin' | 'auditor'
 
@@ -71,6 +72,16 @@ export interface ChatMessage {
   agentName?: string
 }
 
+/** Run 失败的结构化错误（错误目录投影；I-06 起收敛进 TaskResult.error）。 */
+export interface TaskRunError {
+  code: string
+  message: string
+  object: string
+  reason: string
+  suggestion: string
+  retryable: boolean
+}
+
 export interface TaskRun {
   id: string
   attemptId: string | null
@@ -95,29 +106,24 @@ export interface TaskRun {
   currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]
   steps: RunStep[]
-  sources: TaskSource[]
-  artifacts: Artifact[]
   attachments: string[]
   skill?: {
     id: string
     name: string
     version: string
   }
-  summary?: string
+  /**
+   * I-06 版本化任务结果外层（task-result/v1）：业务核验状态、回执、待处理
+   * 事项、来源、成果与错误统一收敛在此投影；执行状态仍以 status 为准，
+   * succeeded 不直接等于业务目标达成。
+   */
+  result: TaskResult
   approval?: {
     object: string
     reason: string
     nextStep: string
     toolName: string
     dataScope: string
-  }
-  error?: {
-    code: string
-    message: string
-    object: string
-    reason: string
-    suggestion: string
-    retryable: boolean
   }
 }
 

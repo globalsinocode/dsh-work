@@ -200,7 +200,15 @@ export class AutomationService {
 
   async listExecutions(ownerUserId: string, automationId: string): Promise<AutomationExecutionRecord[]> {
     await this.getMine(ownerUserId, automationId)
-    return this.automations.listExecutions(automationId)
+    const executions = await this.automations.listExecutions(automationId)
+    // I-06：执行列表附带关联 Run 的业务结果核验状态（task-result/v1），
+    // 同一契约投影——自动任务不复制第二份结果状态机，详情仍经会话入口查看。
+    const runIds = executions.map(execution => execution.runId).filter((id): id is string => id !== null)
+    const outcomes = await this.conversations.getTaskResultOutcomes(runIds)
+    return executions.map(execution => ({
+      ...execution,
+      resultOutcome: execution.runId ? outcomes.get(execution.runId) ?? null : null,
+    }))
   }
 
   /**

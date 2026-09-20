@@ -12,6 +12,7 @@ import type {
   AutomationSchedule,
   MemberCandidatePage,
   SessionThread,
+  TaskResult,
   TaskRun,
   TeamMemberRole,
   WorkbenchAgent,
@@ -145,6 +146,8 @@ export const workbenchApi = {
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
   getSkills: () => request<WorkbenchSkill[]>('/skills'),
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
+  /** I-06：Run 的版本化任务结果投影（task-result/v1），与 Run 详情同一授权边界。 */
+  getRunResult: (runId: string) => request<TaskResult>(`/runs/${encodeURIComponent(runId)}/result`),
   createSession: (input: { title: string; workspaceId?: string; agentId?: string; skillId?: string; workspaceAgentMemberId?: string }) =>
     // TW-10：团队讨论会话可为 null（首次 @Agent 前不绑定 Agent）。
     request<{ id: string; workspaceId: string; agentVersionId: string | null; title: string; createdAt: string }>('/sessions', {

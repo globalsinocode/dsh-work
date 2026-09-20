@@ -12,6 +12,7 @@ import {
   Lock,
   RefreshRight,
   Share,
+  Warning,
 } from '@element-plus/icons-vue'
 
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
@@ -19,7 +20,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, SessionThread, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ChatMessage, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
@@ -107,7 +108,7 @@ const canStop = computed(() => Boolean(
 const canRetry = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['failed', 'cancelled'].includes(task.value.status)
-  && (task.value.error?.retryable ?? true)))
+  && (task.value.result.error?.retryable ?? true)))
 const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
 /**
  * 会话模式写权限：团队会话要求非只读成员（服务端 currentUserRole，读轨，
@@ -174,6 +175,19 @@ const sourceTypeLabels: Record<TaskSource['type'], string> = {
   mes: '生产系统',
   file: '上传文件',
 }
+
+/**
+ * I-06 结果外层展示：业务结论只看 result.outcome，不由 status === 'succeeded'
+ * 推断达成；执行状态仍由 task.status 与步骤时间线表达。
+ */
+const resultOutcomeLabels: Record<TaskResultOutcome, string> = {
+  pending: '结果生成中',
+  achieved: '目标已达成',
+  unverified: '结果待核验',
+  not_achieved: '目标未达成',
+}
+const isTerminalRun = computed(() =>
+  Boolean(task.value && ['succeeded', 'failed', 'cancelled'].includes(task.value.status)))
 
 function goBack() {
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
@@ -685,8 +699,8 @@ watch(
                 <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
                 <div>
                   <strong>{{ message.agentName ?? 'dsh-work' }}</strong>
-                  <span v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.status === 'succeeded'">
-                    已完成{{ task.duration ? ` · ${task.duration}` : '' }}
+                  <span v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && isTerminalRun">
+                    {{ resultOutcomeLabels[task.result.outcome] }}{{ task.duration ? ` · ${task.duration}` : '' }}
                   </span>
                   <span v-else>
                     {{ message.createdAt }}
@@ -699,11 +713,11 @@ watch(
                 <AssistantMessageContent :text="message.content" />
 
                 <div
-                  v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.artifacts.length"
+                  v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
                   class="answer-artifacts"
                 >
                   <button
-                    v-for="artifact in task.artifacts"
+                    v-for="artifact in task.result.artifacts"
                     :key="artifact.id"
                     type="button"
                     @click="download(artifact)"
@@ -769,16 +783,16 @@ watch(
             <StatusTag status="awaiting_approval" label="自动确认中" />
           </section>
 
-          <section v-if="task.error" class="conversation-notice error-notice">
+          <section v-if="task.result.error" class="conversation-notice error-notice">
             <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
             <div>
-              <strong>{{ task.error.message }}</strong>
+              <strong>{{ task.result.error.message }}</strong>
               <dl>
-                <div><dt>对象</dt><dd>{{ task.error.object }}</dd></div>
-                <div><dt>原因</dt><dd>{{ task.error.reason }}</dd></div>
+                <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
+                <div><dt>原因</dt><dd>{{ task.result.error.reason }}</dd></div>
               </dl>
-              <p><strong>下一步：</strong>{{ task.error.suggestion }}</p>
-              <code>{{ task.error.code }}</code>
+              <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
+              <code>{{ task.result.error.code }}</code>
             </div>
             <el-button
               v-if="canRetry"
@@ -789,6 +803,32 @@ watch(
             >
               重新执行本轮
             </el-button>
+          </section>
+
+          <section
+            v-if="isTerminalRun && task.result.outcome === 'unverified'"
+            class="conversation-notice verify-notice"
+            data-testid="run-result-unverified"
+          >
+            <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
+            <div>
+              <strong>{{ task.result.summary }}</strong>
+              <ul v-if="task.result.pendingItems.length">
+                <li v-for="item in task.result.pendingItems" :key="item.kind">{{ item.message }}</li>
+              </ul>
+            </div>
+            <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
+          </section>
+          <section
+            v-else-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
+            class="conversation-notice verify-notice verify-notice--neutral"
+            data-testid="run-result-not-achieved"
+          >
+            <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
+            <div>
+              <strong>{{ task.result.summary }}</strong>
+            </div>
+            <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
           </section>
 
           <div class="conversation-end" aria-hidden="true"></div>
@@ -842,6 +882,35 @@ watch(
           </dl>
         </section>
 
+        <section class="drawer-section" data-testid="run-result-section">
+          <h2>结果核验</h2>
+          <div class="result-verification">
+            <p class="result-verification__head">
+              <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" dot />
+              <StatusTag :status="task.result.execution === 'cancel_requested' ? 'running' : task.result.execution" />
+            </p>
+            <p>{{ task.result.summary }}</p>
+            <ul v-if="task.result.pendingItems.length" class="result-pending">
+              <li v-for="item in task.result.pendingItems" :key="item.kind">{{ item.message }}</li>
+            </ul>
+            <dl v-if="task.result.receipts.length" class="result-receipts">
+              <div v-for="receipt in task.result.receipts" :key="`${receipt.kind}-${receipt.ref ?? receipt.label}`">
+                <dt><StatusTag :status="receipt.status" /></dt>
+                <dd>{{ receipt.label }}<code v-if="receipt.ref" class="mono">{{ receipt.ref }}</code></dd>
+              </div>
+            </dl>
+            <dl class="run-facts">
+              <div><dt>声明成果</dt><dd>{{ task.result.evidence.artifactsClaimed ?? '未上报' }}</dd></div>
+              <div><dt>登记成果</dt><dd>{{ task.result.evidence.artifactsRegistered }}</dd></div>
+              <div v-if="task.result.evidence.toolCalls !== null"><dt>工具调用</dt><dd>{{ task.result.evidence.toolCalls }}</dd></div>
+              <div v-if="task.result.evidence.inputTokens !== null || task.result.evidence.outputTokens !== null">
+                <dt>Token</dt>
+                <dd>{{ task.result.evidence.inputTokens ?? 0 }} 入 / {{ task.result.evidence.outputTokens ?? 0 }} 出</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+
         <section class="drawer-section">
           <h2>本轮执行步骤</h2>
           <RunTimeline :steps="task.steps" />
@@ -849,8 +918,8 @@ watch(
 
         <section class="drawer-section">
           <h2>数据来源</h2>
-          <div v-if="task.sources.length" class="source-list">
-            <article v-for="source in task.sources" :key="source.id">
+          <div v-if="task.result.sources.length" class="source-list">
+            <article v-for="source in task.result.sources" :key="source.id">
               <span>{{ sourceTypeLabels[source.type] }}</span>
               <strong>{{ source.title }}</strong>
               <small v-if="source.version || source.effectiveAt">
@@ -867,9 +936,9 @@ watch(
 
         <section class="drawer-section">
           <h2>成果文件</h2>
-          <div v-if="task.artifacts.length" class="drawer-artifacts">
+          <div v-if="task.result.artifacts.length" class="drawer-artifacts">
             <button
-              v-for="artifact in task.artifacts"
+              v-for="artifact in task.result.artifacts"
               :key="artifact.id"
               type="button"
               @click="download(artifact)"
@@ -1370,6 +1439,83 @@ watch(
   margin-top: 7px;
   color: #9b3c47;
   font-size: var(--dsh-font-size-micro);
+}
+
+.verify-notice {
+  border-color: #f0d9b5;
+  background: #fffaf1;
+}
+
+.verify-notice .conversation-notice__icon {
+  color: #a14506;
+  background: #ffe9c7;
+}
+
+.verify-notice--neutral {
+  border-color: #e3e7ed;
+  background: #f7f8fa;
+}
+
+.verify-notice--neutral .conversation-notice__icon {
+  color: #667085;
+  background: #eceef1;
+}
+
+.verify-notice ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #767069;
+  font-size: var(--dsh-font-size-badge);
+  line-height: 1.6;
+}
+
+.result-verification > p {
+  margin: 6px 0 0;
+  color: #55504a;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+}
+
+.result-verification__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.result-pending {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #a14506;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+}
+
+.result-receipts {
+  margin: 10px 0 0;
+  border-top: 1px dashed #e8e2d9;
+  padding-top: 10px;
+}
+
+.result-receipts div {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 6px;
+}
+
+.result-receipts dt,
+.result-receipts dd {
+  margin: 0;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.result-receipts dd {
+  color: #55504a;
+}
+
+.result-receipts code {
+  display: block;
+  color: #9b8a74;
 }
 
 .conversation-end {

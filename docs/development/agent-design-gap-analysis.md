@@ -7,7 +7,7 @@
 
 ## 1. 结论与状态口径
 
-已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算和轻量自动任务。本轮补齐模型能力准入与 I-05 工具契约；下一项是 B-04/I-06 任务结果外层，同时按 B-05 补分层验收。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
+已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。本轮补齐模型能力准入、I-05 工具契约与 I-06 任务结果外层（B-04 完成）；下一项是 B-05/I-08 分层验收。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
 
 | 状态 | 本文含义 |
 | --- | --- |
@@ -78,10 +78,10 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一格式、规范化 AgentSpec、严格字段与依赖校验、文本输入输出/recent 上下文/模型要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、渐进收紧、旧定义转换与默认值回填 | **基础已实施**：结构与持久化、配置保存/分叉保留定义、模型与 Runtime 准入。高级模型能力实际支持仍待接通；不影响无额外要求的 Agent |
 | B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | **已实施（2026-09-20，见 I-04 完成记录）**：`tool_binding_revisions` 持久化 + Manifest `tool_bindings` 固定 + 执行复核 + 封存/发布漂移拒绝；多环境独立发布与跨环境差异待真实环境验收 |
-| B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | **I-05 已实施；I-06 待实施**。平台工具执行契约已贯通，DSH 原生输出明确标出不可验证边界；外部异步写协议随实际能力接入 |
+| B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | **I-05、I-06 已实施（2026-09-20）**。平台工具执行契约已贯通；`task-result/v1` 读时投影区分执行终态与业务结果（见 I-06 记录）；DSH 原生输出明确标出不可验证边界；外部异步写协议随实际能力接入 |
 | B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | 待补齐，贯穿 B-01～04；保留已有有效安全回归 |
 
-**下一步：B-04/I-06 任务结果外层。** 先确定执行终态与业务结果的版本化外层、验证状态和来源/动作/成果引用，再同步 Run 持久化、API、事件消费者和前端。B-05 随改动补浏览器旅程，继续保留真实 DSH/OIDC/P2 缺口。外部异步写协议在接入具体能力时补业务操作键和查询回执。
+**下一步：B-05/I-08 分层评测与验收。** B-04 已完成（I-05 工具契约 + I-06 `task-result/v1` 结果外层）；剩余按 I-08 补平台/Agent 分层案例、自动任务 P1 浏览器旅程与各发布能力的 P2 真实证据，继续保留真实 DSH/OIDC 缺口标记。外部异步写协议在接入具体能力时补业务操作键和查询回执。
 
 ### 4.2 原工作项映射与完成记录
 
@@ -92,7 +92,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | I-03 落实规范化 Agent 定义 | AS-02/04，D-02/04 | 配置/ZIP 共用定义、输入输出与上下文策略、模型/Runtime 能力校验 | I-01/02；AG 定义及运行准备 |
 | I-04 落地真实绑定修订 | AS-01/07/11，D-01 | 绑定修订、发布/Attempt 引用、变更影响与证据失效机制 | 可先做既有能力绑定；与 I-03 接口对齐；AG-01/02 |
 | I-05 统一工具契约与结果 | AS-05/06/07 | 输入输出校验、稳定错误、效果/重试语义、既有工具贯通样例 | 既有工具可独立；外部写入依赖 I-04；EX-01 |
-| I-06 增加任务结果外层 | AS-10，D-05 | 区分执行终态与业务结果的存储/API/前端投影 | I-03 的输出要求、I-05 的动作结果；EX-01/02 |
+| I-06 增加任务结果外层 | AS-10，D-05 | 区分执行终态与业务结果的存储/API/前端投影 **已完成（2026-09-20，`task-result/v1` 读时投影）** | I-03 的输出要求、I-05 的动作结果；EX-01/02 |
 | I-07 核实并补齐预算执行 | AS-09，D-04 | 限额执行矩阵、现有限额漏洞修复及边界测试 | 现有时长/工具/输出上限可独立；EX-00、AG-03 |
 | I-08 补齐评测和验收证据 | AS-03/07/08/12，D-06 | 评测分层、现有安全/故障回归、自动任务 P1 浏览器旅程、P2 记录 | 现有路径可先验证；新增契约随 I-01～07 增补；AG/EX 共同门禁 |
 | I-09 接入外部能力/MCP | AS-05/06/07 | 一种批准接入类型及完整准入、调用、撤权验证 | 按需；I-04/05/08；AG-02 |
@@ -211,6 +211,13 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 - **验证：** Runtime 71/71（含平台桥 7 项及 DSH 政策 9 项）、工具治理 PostgreSQL 集成 1/1（专用可丢弃数据库）、管理端 17 文件 92 项、全仓 typecheck、lint、`pnpm verify`、`git diff --check` 通过。未执行浏览器 E2E、真实 DSH/OIDC/P2。
 
 ### I-06 增加可核验的任务结果外层
+
+**实施记录（2026-09-20）：** 已实施版本化读时投影 `task-result/v1`，不建第二份状态机与结果表——
+
+- **契约与判据：** [task-result.ts](../../server/src/domain/task-result.ts) 的 `deriveTaskResult` 纯函数由持久化权威证据确定性推导：当前 Attempt `run_events` 的 `safe_metadata`、已提交回答消息、**当前 Attempt** 已登记成果数、工具审计、知识来源与 Runtime 错误码。`execution` 保留 Run 终态原值；`outcome` 为 `pending`/`achieved`/`unverified`/`not_achieved`；`receipts` 覆盖 answer/artifact/tool × completed/accepted/rejected/failed/missing；`pendingItems` 列出 `answer_uncommitted`、`artifact_registration_gap`、`no_deliverable`、`no_verified_deliverable`、`output_truncated`、`output_interrupted` 等缺口。非终态 → `pending`；failed/cancelled → `not_achieved`（附错误）；succeeded 且当前 Attempt 至少登记一个成果版本或已完成工具动作回执、其余证据无缺口 → `achieved`；任一证据缺口（含仅登记回答内容）→ `unverified`。模型自述仅作 `primaryOutput` 说明，不构成核验依据；`accepted` 用于工具审批记录（`parameter_summary.decision` 非空的审计行在执行前写入，获准≠完成）与预留的异步外部写受理回执，不计入完成。
+- **装配与 API：** `PostgresConversationRepository.mapTask` 统一挂 `task.result`（sources/artifacts/error 移入结果外层）；`GET /api/workbench/v1/runs/{runId}/result` 复用 Run 详情同一行定位、Workbench 授权与团队读门禁，不可访问一律 404，只读不触发执行；自动任务执行列表增 `resultOutcome` 字段，经同一投影推导，无 Run 时为 `null`，受理不视为达成。
+- **前端与契约：** ConversationView 消费 `task.result.*`；身份行与「对话详情 → 结果核验」区分列展示业务 outcome、回执、待处理项与遥测证据；`unverified` 显示警示且不出现「目标已达成」。AutomationsView 执行记录分列受理/执行/业务结果。StatusTag 增加 outcome 与回执状态标签。[openapi-workbench.json](openapi-workbench.json) 新增结果路径与 `TaskResult` 系列 schema；Prototype 夹具提供四种 outcome 样例。
+- **验证：** `deriveTaskResult` 单测 12/12；PostgreSQL 集成——m3 编排 22/22（含不可变成果版本回执、声明成果未登记 → `unverified`、失败 Run → `not_achieved`）、自动化 13/13（受理≠达成、`resultOutcome` 投影）、团队讨论收权 7/7（`/result` 与详情同一 404 边界）、api-contract 15/15；前端 344/344（含 unverified 不显示「目标已达成」）；P1 浏览器旅程 [task-result.spec.ts](../../e2e/personal-integration/task-result.spec.ts) 3/3（专用可丢弃 PostgreSQL + 合成 Runtime）。**未执行真实 DSH/OIDC/P2**；外部异步写操作的 `accepted` 回执核对仍随具体能力接入。
 
 **改动位置：** Run 类型/仓储/事件投影、[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)、[对话 API](../../server/src/http/workbench/conversation-routes.ts)、[Workbench OpenAPI](openapi-workbench.json)、[对话页面](../../apps/workbench-web/src/views/ConversationView.vue)及自动任务结果入口。
 
@@ -346,3 +353,12 @@ B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治�
 - PostgreSQL 工具治理集成 1/1，使用专用可丢弃数据库验证迁移及新增/读取 Tool Version 契约字段；管理端测试 17 文件 92 项通过。
 - `pnpm typecheck`、`pnpm lint`（含架构和 UI 契约检查）、`pnpm verify`、`git diff --check` 通过。
 - 未执行浏览器 E2E、真实 DSH/OIDC/P2；未提交、推送或发布。下一项为 I-06 任务结果外层；外部异步写操作的操作键、受理回执和状态核对随具体能力接入。
+
+**2026-09-20 I-06 任务结果外层实施轮（与上述改动同一未提交工作区）：**
+
+- 领域单测 `task-result.test.ts` 12/12：非终态/失败/成功三态、成果登记缺口、未提交回答、截断与中断、工具审批与完成回执、无交付物及不可变成果版本引用等判据分支。
+- PostgreSQL 集成（专用可丢弃库）：m3 编排 22/22（新增不可变成果版本回执、成果登记缺口 → `unverified`、失败 Run → `not_achieved` 断言）；自动化 13/13（受理不视为达成、`resultOutcome` 投影）；团队讨论收权 7/7（`/runs/{id}/result` 与详情同一授权边界）；m4 知识/通知、 m5 故障套件同步迁移到 `task.result.*` 断言。
+- HTTP 契约：`api-contract` 15/15，Prototype 下 `/runs/{id}/result` 与自动化执行列表的 `resultOutcome` 按 503/契约校验，并固定 `/sessions/{id}` 线程与 `/sessions/{id}/summary` 摘要 operation。
+- 前端全量测试 344/344：结果核验区、unverified 警示、无「目标已达成」误报；`pnpm --filter './apps/*' --filter @dsh-work/server typecheck` 通过。
+- P1 浏览器旅程 `e2e/personal-integration/task-result.spec.ts` 3/3：专用可丢弃 PostgreSQL + 显式合成 Runtime/身份，覆盖已登记成果、仅回答与 `P1-成果缺口` 三条链路。
+- 未执行真实 DSH/OIDC/P2 验收；未提交、推送或发布。外部异步写操作的 `accepted` 回执核对随具体能力接入。

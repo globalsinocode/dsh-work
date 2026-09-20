@@ -10,6 +10,7 @@ import type {
   Automation,
   AutomationExecution,
   AutomationSchedule,
+  TaskResultOutcome,
 } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 
@@ -49,6 +50,14 @@ const runStatusLabels: Record<string, string> = {
   failed: '失败',
   cancelled: '已取消',
   awaiting_approval: '待审批',
+}
+
+/** I-06：业务结果核验状态（task-result/v1 outcome），与受理状态、Run 状态独立展示。 */
+const outcomeMeta: Record<TaskResultOutcome, { label: string; type: 'success' | 'warning' | 'info' | 'danger' }> = {
+  pending: { label: '结果生成中', type: 'info' },
+  achieved: { label: '目标已达成', type: 'success' },
+  unverified: { label: '结果待核验', type: 'warning' },
+  not_achieved: { label: '目标未达成', type: 'danger' },
 }
 
 const reasonLabels: Record<string, string> = {
@@ -541,11 +550,19 @@ onMounted(() => {
             {{ formatInstant(row.plannedSlotUtc ?? row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="结果" min-width="110">
+        <el-table-column label="受理/执行" min-width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="row.admissionStatus === 'accepted' ? 'success' : 'info'">
               {{ describeExecution(row) }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="业务结果" min-width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.resultOutcome" size="small" :type="outcomeMeta[row.resultOutcome as TaskResultOutcome]?.type ?? 'info'">
+              {{ outcomeMeta[row.resultOutcome as TaskResultOutcome]?.label ?? row.resultOutcome }}
+            </el-tag>
+            <span v-else>—</span>
           </template>
         </el-table-column>
         <el-table-column label="说明" min-width="150">

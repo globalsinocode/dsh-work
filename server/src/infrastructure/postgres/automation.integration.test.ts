@@ -254,6 +254,10 @@ test('runNow 原子受理：Session/Run/执行记录齐备；同幂等键重放�
 
   const executions = await service.listExecutions(userId, created.id)
   assert.equal(executions.length, 1)
+  // I-06：受理≠执行完成≠业务达成。dispatch 在后台并发推进，读取时 Run
+  // 可以仍在 queued，也可以已经 running；两种状态的核验结果都必须是 pending。
+  assert.ok(['queued', 'running'].includes(executions[0]!.runStatus ?? ''))
+  assert.equal(executions[0]!.resultOutcome, 'pending')
 })
 
 test('重叠触发被跳过并记录 overlap 原因', async () => {
@@ -275,6 +279,10 @@ test('重叠触发被跳过并记录 overlap 原因', async () => {
   assert.equal(second.admissionStatus, 'skipped')
   assert.equal(second.reasonCode, 'overlap')
   assert.equal(second.runId, null)
+
+  // I-06：未受理（无关联 Run）的执行没有结果核验状态。
+  const listed = await service.listExecutions(userId, created.id)
+  assert.equal(listed.find(execution => execution.id === second.id)?.resultOutcome, null)
 })
 
 test('触发扫描受理到期槽位且推进游标；二次扫描不重复', async () => {

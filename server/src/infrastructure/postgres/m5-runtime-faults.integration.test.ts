@@ -68,7 +68,7 @@ test('service restart fails orphaned active Attempts, resumes queued work and pr
     assert.equal(failedAttempt?.errorCode, 'SERVICE_RESTARTED')
     const failedTask = await conversations.getTask(interrupted.run.id, 'U00001')
     assert.equal(failedTask?.status, 'failed')
-    assert.equal(failedTask?.error?.code, 'SERVICE_RESTARTED')
+    assert.equal(failedTask?.result.error?.code, 'SERVICE_RESTARTED')
 
     const resumedEvents = await runs.readEventsAfterEvent(
       'tenant-dsh-work',
@@ -105,8 +105,8 @@ test('model, Tool timeout and network failures retain actionable error codes in 
       })
       assert.ok(run)
       const task = await waitForRun(run.id, 'failed')
-      assert.equal(task.error?.code, errorCode)
-      assert.equal(task.error?.retryable, true)
+      assert.equal(task.result.error?.code, errorCode)
+      assert.equal(task.result.error?.retryable, true)
       const events = await runs.readEventsAfterEvent('tenant-dsh-work', run.id)
       assert.equal(events.at(-1)?.eventType, 'run.failed')
       assert.equal(events.at(-1)?.safeMetadata['error_code'], errorCode)

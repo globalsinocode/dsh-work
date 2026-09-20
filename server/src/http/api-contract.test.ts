@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { after, before, test } from 'node:test'
 
@@ -50,6 +51,16 @@ interface SkillTestProgressEnvelope {
 interface RecordListEnvelope {
   data: Array<Record<string, unknown>>
 }
+
+test('workbench OpenAPI keeps session thread and summary operations on their actual routes', async () => {
+  const document = JSON.parse(await readFile(
+    new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
+    'utf8',
+  )) as { paths: Record<string, { get?: { operationId?: string } }> }
+
+  assert.equal(document.paths['/sessions/{sessionId}']?.get?.operationId, 'getSessionThread')
+  assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
+})
 
 before(async () => {
   const repository = new PrototypeRepository()
@@ -267,6 +278,14 @@ test('unavailable conversation commands return an actionable 503 instead of a ro
   assert.equal(deleteResponse.status, 503)
   assert.equal(deleteBody.error.code, 'workbench_runtime_not_configured')
   assert.equal(deleteBody.error.object, '对话 session-demo-001')
+})
+
+test('prototype run result route reports unavailable persistence rather than a route 404', async () => {
+  // I-06：无库原型不提供真实结果投影；必须给出可操作的 503，不能 404 伪装成路由缺失。
+  const result = await getJson<ErrorEnvelope>('/api/workbench/v1/runs/run-260828-001/result')
+  assert.equal(result.response.status, 503)
+  assert.equal(result.body.error.code, 'workbench_runtime_not_configured')
+  assert.equal('data' in result.body, false)
 })
 
 test('malformed management payloads use the shared actionable error contract', async () => {

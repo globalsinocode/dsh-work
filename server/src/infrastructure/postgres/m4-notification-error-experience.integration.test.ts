@@ -30,25 +30,25 @@ after(async () => {
 test('failed Attempts expose persisted error codes as object, reason and next step', async () => {
   const timeoutTask = await createFailedTask('RUN_TIMEOUT')
   assert.equal(timeoutTask.status, 'failed')
-  assert.equal(timeoutTask.error?.code, 'RUN_TIMEOUT')
-  assert.equal(timeoutTask.error?.object, `运行 ${timeoutTask.id}`)
-  assert.match(timeoutTask.error?.reason ?? '', /执行时间|时限/)
-  assert.match(timeoutTask.error?.suggestion ?? '', /重新执行|运行时/)
-  assert.equal(timeoutTask.error?.retryable, true)
+  assert.equal(timeoutTask.result.error?.code, 'RUN_TIMEOUT')
+  assert.equal(timeoutTask.result.error?.object, `运行 ${timeoutTask.id}`)
+  assert.match(timeoutTask.result.error?.reason ?? '', /执行时间|时限/)
+  assert.match(timeoutTask.result.error?.suggestion ?? '', /重新执行|运行时/)
+  assert.equal(timeoutTask.result.error?.retryable, true)
 
   const deniedTask = await createFailedTask('TOOL_PERMISSION_DENIED')
-  assert.equal(deniedTask.error?.code, 'TOOL_PERMISSION_DENIED')
-  assert.match(deniedTask.error?.reason ?? '', /角色|数据范围|审批策略/)
-  assert.match(deniedTask.error?.suggestion ?? '', /授权/)
-  assert.equal(deniedTask.error?.retryable, false)
+  assert.equal(deniedTask.result.error?.code, 'TOOL_PERMISSION_DENIED')
+  assert.match(deniedTask.result.error?.reason ?? '', /角色|数据范围|审批策略/)
+  assert.match(deniedTask.result.error?.suggestion ?? '', /授权/)
+  assert.equal(deniedTask.result.error?.retryable, false)
 })
 
 test('unknown Runtime errors remain traceable without inventing a success state', async () => {
   const task = await createFailedTask('ENTERPRISE_CONNECTOR_BROKEN')
   assert.equal(task.status, 'failed')
-  assert.equal(task.error?.code, 'ENTERPRISE_CONNECTOR_BROKEN')
-  assert.match(task.error?.reason ?? '', /ENTERPRISE_CONNECTOR_BROKEN/)
-  assert.match(task.error?.suggestion ?? '', /运行编号|错误码/)
+  assert.equal(task.result.error?.code, 'ENTERPRISE_CONNECTOR_BROKEN')
+  assert.match(task.result.error?.reason ?? '', /ENTERPRISE_CONNECTOR_BROKEN/)
+  assert.match(task.result.error?.suggestion ?? '', /运行编号|错误码/)
 })
 
 async function createFailedTask(errorCode: string) {

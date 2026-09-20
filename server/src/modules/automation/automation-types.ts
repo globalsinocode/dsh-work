@@ -1,5 +1,6 @@
 import type { RuntimeScopeCeiling } from '../authorization/postgres-authorization-service.ts'
 import type { JsonObject } from '../run/run-types.ts'
+import type { TaskResultOutcome } from '../../domain/task-result.ts'
 
 /**
  * AG-03 轻量自动任务——模块类型。
@@ -103,6 +104,11 @@ export interface AutomationExecutionRecord {
   updatedAt: string
   /** 列表投影：关联 Run 的当前状态（未受理为 null）。 */
   runStatus?: string | null
+  /**
+   * I-06：关联 Run 的业务结果核验状态（task-result/v1 的 outcome）。
+   * 由服务层按结果契约投影，未受理或投影缺失为 null；不复制第二份结果状态机。
+   */
+  resultOutcome?: TaskResultOutcome | null
 }
 
 /** reason_code 枚举（自由文本前缀允许 detail；UI 按主码展示）。 */

@@ -467,8 +467,16 @@ test('被移出成员不得再读共享 Run 详情（含其本人发起的 Run�
 
   // 其他成员与非请求成员可读共享 Run。
   assert.equal((await api('GET', `/api/workbench/v1/runs/${runId}`, { as: ownerId })).status, 200)
-  // 从未加入的外部人读不到。
+  // I-06：结果投影与详情同一授权边界——现任成员可读 task-result/v1 投影。
+  const resultRead = await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: ownerId })
+  assert.equal(resultRead.status, 200)
+  const result = (resultRead.body.data as { version: string; outcome: string; execution: string })
+  assert.equal(result.version, 'task-result/v1')
+  assert.ok(['queued', 'running'].includes(result.execution))
+  assert.equal(result.outcome, 'pending')
+  // 从未加入的外部人读不到（正文、来源与成果均不可见）。
   assert.equal((await api('GET', `/api/workbench/v1/runs/${runId}`, { as: outsiderId })).status, 404)
+  assert.equal((await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: outsiderId })).status, 404)
 
   // 移出成员（删除成员行）：即便是该 Run 的发起人也不得再读。
   await database`
@@ -477,6 +485,8 @@ test('被移出成员不得再读共享 Run 详情（含其本人发起的 Run�
   `
   const removedRead = await api('GET', `/api/workbench/v1/runs/${runId}`, { as: memberId })
   assert.equal(removedRead.status, 404, '被移出成员不得再读已知 Run 详情')
+  const removedResult = await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: memberId })
+  assert.equal(removedResult.status, 404, '被移出成员不得再读已知 Run 结果')
 })
 
 test('团队会话执行权限沿用成员能力边界：@ 已停用 Agent 成员被拒绝', async () => {

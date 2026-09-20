@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { SessionThread, TaskRun, Workspace } from '@/types/domain'
+import type { SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
 
@@ -49,6 +49,44 @@ class FakeEventSource {
   close() {}
 }
 
+function result(overrides: Partial<TaskResult> = {}): TaskResult {
+  return {
+    version: 'task-result/v1',
+    runId: 'run-001',
+    attemptId: 'attempt-001',
+    execution: 'failed',
+    outcome: 'not_achieved',
+    summary: '执行未达成目标：本轮执行失败',
+    primaryOutput: null,
+    receipts: [],
+    pendingItems: [],
+    sources: [],
+    artifacts: [],
+    error: {
+      code: 'run_failed',
+      message: '本轮执行失败',
+      object: '运行 run-001',
+      reason: '上游超时',
+      suggestion: '可重新执行本轮。',
+      retryable: true,
+    },
+    evidence: {
+      stopReason: null,
+      toolCalls: null,
+      toolResults: null,
+      artifactsClaimed: null,
+      artifactsRegistered: 0,
+      inputTokens: null,
+      outputTokens: null,
+      elapsedMs: null,
+      outputTruncated: false,
+      interrupted: null,
+    },
+    completedAt: '2026-09-10T10:05:00.000Z',
+    ...overrides,
+  }
+}
+
 function task(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: 'run-001',
@@ -68,18 +106,9 @@ function task(overrides: Partial<TaskRun> = {}): TaskRun {
     requestedBy: 'U00001',
     messages: [],
     steps: [],
-    sources: [],
-    artifacts: [],
     attachments: [],
     currentUserRole: 'member',
-    error: {
-      code: 'run_failed',
-      message: '本轮执行失败',
-      object: '运行 run-001',
-      reason: '上游超时',
-      suggestion: '可重新执行本轮。',
-      retryable: true,
-    },
+    result: result(),
     ...overrides,
   }
 }
@@ -186,7 +215,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
   })
 
   it('moves the active-run stop action into the composer send control', async () => {
-    const item = task({ status: 'running', error: undefined })
+    const item = task({ status: 'running', result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) })
     const { wrapper, taskStore } = await mountView({ item })
     const cancelTask = vi.spyOn(taskStore, 'cancelTask').mockResolvedValue(item)
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
@@ -211,7 +240,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
   })
 
   it('lets a non-requester member stop a running shared run', async () => {
-    const item = task({ requestedBy: 'U00002', currentUserRole: 'member', status: 'running', error: undefined })
+    const item = task({ requestedBy: 'U00002', currentUserRole: 'member', status: 'running', result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) })
     const { wrapper, taskStore } = await mountView({ item })
     const cancelTask = vi.spyOn(taskStore, 'cancelTask').mockResolvedValue(item)
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
@@ -426,18 +455,23 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       item: task({
         status: 'succeeded',
         tokenUsage: 1234,
-        error: undefined,
-        artifacts: [{
-          id: 'artifact-1',
-          name: '欠料分析.xlsx',
-          type: 'xlsx',
-          version: 1,
-          size: '12 KB',
-          createdAt: '2026-09-10 10:05',
-          runId: 'run-001',
-          workspaceId: 'ws-team',
-          summary: '本轮成果',
-        }],
+        result: result({
+          execution: 'succeeded',
+          outcome: 'achieved',
+          summary: '执行完成：回答与成果均已登记，结果可追溯核验。',
+          error: null,
+          artifacts: [{
+            id: 'artifact-1',
+            name: '欠料分析.xlsx',
+            type: 'xlsx',
+            version: 1,
+            size: '12 KB',
+            createdAt: '2026-09-10 10:05',
+            runId: 'run-001',
+            workspaceId: 'ws-team',
+            summary: '本轮成果',
+          }],
+        }),
         messages: [
           { id: 'm-user', role: 'user', content: '查欠料', createdAt: '10:00', runId: 'run-001' },
           { id: 'm-current', role: 'assistant', content: '本轮回答', createdAt: '10:01', runId: 'run-001' },
@@ -449,13 +483,47 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     const assistants = wrapper.findAll('article.conversation-message--assistant')
     expect(assistants).toHaveLength(2)
     expect(assistants[0]!.text()).toContain('本轮回答')
-    expect(assistants[0]!.text()).toContain('已完成')
+    expect(assistants[0]!.text()).toContain('目标已达成')
     expect(assistants[0]!.text()).toContain('欠料分析.xlsx')
     expect(assistants[0]!.text()).toContain('1,234 Token')
     expect(assistants[1]!.text()).toContain('另一轮回答')
-    expect(assistants[1]!.text()).not.toContain('已完成')
+    expect(assistants[1]!.text()).not.toContain('目标已达成')
     expect(assistants[1]!.text()).not.toContain('欠料分析.xlsx')
     expect(assistants[1]!.find('.assistant-run-meta').exists()).toBe(false)
+  })
+
+  it('does not present a succeeded run with missing deliverables as goal achieved (I-06)', async () => {
+    // 执行终态 succeeded ≠ 业务达成：登记缺口时展示「结果待核验」与缺口明细。
+    const { wrapper } = await mountView({
+      item: task({
+        status: 'succeeded',
+        result: result({
+          execution: 'succeeded',
+          outcome: 'unverified',
+          summary: '执行已结束，但业务结果未验证：执行报告生成 2 个成果，实际登记 0 个。',
+          error: null,
+          pendingItems: [{
+            kind: 'artifact_registration_gap',
+            message: '执行报告生成 2 个成果，实际登记 0 个；缺失成果不视为已交付。',
+          }],
+          receipts: [{
+            kind: 'artifact',
+            status: 'missing',
+            ref: null,
+            label: '执行声明 2 个成果，实际仅登记 0 个',
+          }],
+        }),
+        messages: [
+          { id: 'm-user', role: 'user', content: '生成报告', createdAt: '10:00', runId: 'run-001' },
+          { id: 'm-current', role: 'assistant', content: '已生成两份报告', createdAt: '10:01', runId: 'run-001' },
+        ],
+      }),
+    })
+
+    const notice = wrapper.get('[data-testid="run-result-unverified"]')
+    expect(notice.text()).toContain('结果待核验')
+    expect(notice.text()).toContain('缺失成果不视为已交付')
+    expect(wrapper.text()).not.toContain('目标已达成')
   })
 
   it('renders session run statuses as links in the shared discussion thread', async () => {

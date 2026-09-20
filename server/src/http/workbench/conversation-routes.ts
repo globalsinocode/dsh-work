@@ -214,6 +214,23 @@ export function registerConversationRoutes(
     return envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres')
   })
 
+  /**
+   * I-06：独立结果读取入口。返回 task-result/v1 投影（业务核验状态、回执、
+   * 待处理事项、来源、成果与错误），与 Run 详情同一行定位与团队读门禁。
+   * 结果读取失败只影响本响应——不触发新的执行，也不覆盖 Run 终态。
+   */
+  router.get(`${basePath}/runs/:runId/result`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const task = await conversations.getTaskResult(context.params['runId'] ?? '', userId)
+    if (!task) return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
+    if (authorization && !(await authorizeTeamTaskRead(authorization, task, userId))) {
+      return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
+    }
+    return envelope('workbench', task.result, 'postgres')
+  })
+
   // TW-10 共享讨论：会话详情对全部现任成员可读（含归档空间的只读保留），
   // 个人会话仍限创建者。消息带作者/触发人/Agent 归因，runs 列表供前端内联
   // 展示执行状态。

@@ -54,6 +54,100 @@ export interface Artifact {
   summary: string
 }
 
+/**
+ * I-06 任务结果外层（task-result/v1）的业务核验状态，独立于 Run 执行终态：
+ * pending=执行未结束；achieved=执行成功且当前 Attempt 有已登记成果或已完成
+ * 工具动作等可核验证据、其余证据无缺口；unverified=执行已结束但缺少可核验
+ * 证据——仅登记回答内容不构成达成判据（不等于达成）；not_achieved=失败/取消。
+ */
+export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_achieved'
+
+/** Run 执行状态原文（含 cancel_requested）；比展示用 RunStatus 更原始。 */
+export type TaskResultExecution = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
+
+/**
+ * 回执核验状态：completed=已完成且有持久化登记；accepted=仅受理/获准——
+ * 工具审批记录在执行前写入，不代表执行完成（也预留异步外部写操作）；
+ * rejected=授权/策略拒绝；failed=执行失败；missing=Runtime 声明但登记缺失。
+ */
+export type TaskResultReceiptStatus = 'completed' | 'accepted' | 'rejected' | 'failed' | 'missing'
+
+export interface TaskResultReceipt {
+  kind: TaskResultReceiptKind
+  status: TaskResultReceiptStatus
+  /** 可核验引用：消息 id / artifact_version id / tool_audit id；无引用为 null。 */
+  ref: string | null
+  label: string
+  detail?: string
+}
+
+export type TaskResultPendingKind =
+  | 'answer_uncommitted'
+  | 'artifact_registration_gap'
+  | 'no_deliverable'
+  | 'no_verified_deliverable'
+  | 'output_truncated'
+  | 'output_interrupted'
+
+export interface TaskResultPendingItem {
+  kind: TaskResultPendingKind
+  message: string
+}
+
+/** 执行遥测证据：来自持久化事件 safe_metadata 与登记记录，不从正文猜测。 */
+export interface TaskResultTelemetry {
+  stopReason: string | null
+  toolCalls: number | null
+  toolResults: number | null
+  artifactsClaimed: number | null
+  artifactsRegistered: number
+  inputTokens: number | null
+  outputTokens: number | null
+  elapsedMs: number | null
+  outputTruncated: boolean
+  interrupted: string | null
+}
+
+/**
+ * I-06 版本化任务结果外层：由持久化证据确定性推导的读时投影。
+ * `execution` 是 Run 执行状态原文；`outcome` 是业务核验状态——
+ * 前端展示业务结论必须以 outcome 为准，不得由 status === 'succeeded' 推断达成。
+ */
+export interface TaskResult {
+  version: 'task-result/v1'
+  runId: string
+  attemptId: string | null
+  execution: TaskResultExecution
+  outcome: TaskResultOutcome
+  /** 平台按核验状态生成的结果说明，不是模型自述。 */
+  summary: string
+  primaryOutput: {
+    kind: 'text'
+    messageId: string
+    truncated: boolean
+    interrupted: string | null
+  } | null
+  receipts: TaskResultReceipt[]
+  pendingItems: TaskResultPendingItem[]
+  sources: TaskSource[]
+  artifacts: Artifact[]
+  error: TaskRunError | null
+  evidence: TaskResultTelemetry
+  completedAt: string | null
+}
+
+/** Run 失败的结构化错误（I-06 起收敛进 TaskResult.error）。 */
+export interface TaskRunError {
+  code: string
+  message: string
+  object: string
+  reason: string
+  suggestion: string
+  retryable: boolean
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -136,25 +230,20 @@ export interface TaskRun {
   currentUserRole?: TeamMemberRole | null
   messages: ChatMessage[]
   steps: RunStep[]
-  sources: TaskSource[]
-  artifacts: Artifact[]
   attachments: string[]
   skill?: Pick<WorkbenchSkill, 'id' | 'name' | 'version'>
-  summary?: string
+  /**
+   * I-06 版本化任务结果外层（task-result/v1）：业务核验状态、回执、待处理
+   * 事项、来源、成果与错误统一收敛在此投影；执行状态仍以 status 为准，
+   * succeeded 不直接等于业务目标达成。
+   */
+  result: TaskResult
   approval?: {
     object: string
     reason: string
     nextStep: string
     toolName: string
     dataScope: string
-  }
-  error?: {
-    code: string
-    message: string
-    object: string
-    reason: string
-    suggestion: string
-    retryable: boolean
   }
 }
 
@@ -594,6 +683,8 @@ export interface AutomationExecution {
   runId: string | null
   /** 关联 Run 的当前状态投影；未受理为 null。 */
   runStatus: string | null
+  /** 关联 Run 的业务结果核验状态（task-result/v1 outcome 投影）；未受理或缺失为 null。 */
+  resultOutcome: TaskResultOutcome | null
   admissionStatus: AutomationAdmissionStatus
   reasonCode: string | null
   createdAt: string

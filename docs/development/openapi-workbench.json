@@ -862,20 +862,17 @@
           }
         },
         "description": "逻辑移除：保留 archived 响应字段，增加 removedFromHistory=true、physicalDeletion=false。停止出现在历史/最近列表，不物理删除消息/运行/文件/成果；不提供恢复。幂等但仍复核当前作者和空间访问。"
-      },
+      }
+    },
+    "/sessions/{sessionId}/summary": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SessionId"
+        }
+      ],
       "get": {
         "operationId": "getSessionForUser",
         "summary": "本人会话稳定入口；含 Workspace 归属和 latestRun（空会话为 null）",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -954,8 +951,28 @@
       ],
       "get": {
         "operationId": "getRun",
-        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。",
+        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。",
         "summary": "获取 Run 当前状态",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/runs/{runId}/result": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getRunResult",
+        "summary": "读取 Run 的版本化任务结果（task-result/v1）",
+        "description": "I-06 任务结果外层：独立于 Run 执行终态的业务核验投影。outcome 为业务结果状态（pending/achieved/unverified/not_achieved），execution 为 Run 执行状态原文——执行成功不直接等于业务目标达成。来源、成果与回执引用与 Run 详情同一授权边界；结果读取失败只影响本接口，不触发新的执行。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2158,7 +2175,7 @@
       ],
       "get": {
         "operationId": "listAutomationExecutions",
-        "summary": "执行记录：含 skipped/missed/interrupted 及关联 Run 状态",
+        "summary": "执行记录：含 skipped/missed/interrupted、关联 Run 状态与结果核验状态",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -3072,6 +3089,267 @@
           }
         }
       },
+      "TaskResultOutcome": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "achieved",
+          "unverified",
+          "not_achieved"
+        ],
+        "description": "业务结果核验状态（I-06）：pending=执行未结束；achieved=执行成功且当前 Attempt 至少登记一个成果版本或已完成工具动作回执、其余核验证据无缺口；unverified=执行已结束但缺少可核验证据（回答未登记/成果缺失/仅登记回答内容而无可核验交付物/输出截断/无交付物）；not_achieved=执行失败或取消。succeeded 执行终态不直接等于 achieved。"
+      },
+      "TaskResultReceipt": {
+        "type": "object",
+        "required": [
+          "kind",
+          "status",
+          "ref",
+          "label"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "answer",
+              "artifact",
+              "tool"
+            ],
+            "description": "回执类别：回答提交/成果登记/平台工具动作"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "accepted",
+              "rejected",
+              "failed",
+              "missing"
+            ],
+            "description": "completed=已完成且有持久化登记；accepted=仅受理/获准——工具审批决定在执行前写入审计记录，不代表执行完成（同时预留异步外部写操作的受理回执）；rejected=被授权/策略拒绝；failed=执行失败；missing=Runtime 声明但登记缺失"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "可核验引用：消息 id / artifact_version id / tool_audit id；无引用为 null"
+          },
+          "label": {
+            "type": "string",
+            "description": "面向用户的核验说明"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskResultPendingItem": {
+        "type": "object",
+        "required": [
+          "kind",
+          "message"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "answer_uncommitted",
+              "artifact_registration_gap",
+              "no_deliverable",
+              "no_verified_deliverable",
+              "output_truncated",
+              "output_interrupted"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskResultTelemetry": {
+        "type": "object",
+        "required": [
+          "stopReason",
+          "toolCalls",
+          "toolResults",
+          "artifactsClaimed",
+          "artifactsRegistered",
+          "inputTokens",
+          "outputTokens",
+          "elapsedMs",
+          "outputTruncated",
+          "interrupted"
+        ],
+        "properties": {
+          "stopReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toolCalls": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "toolResults": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "artifactsClaimed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Runtime 终态事件声明的成果数；未上报为 null"
+          },
+          "artifactsRegistered": {
+            "type": "integer",
+            "description": "平台实际登记的成果版本数"
+          },
+          "inputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "elapsedMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outputTruncated": {
+            "type": "boolean"
+          },
+          "interrupted": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "中断保留标记 timeout/shutdown；未中断为 null"
+          }
+        },
+        "description": "执行遥测证据：来自持久化 run_events.safe_metadata 与登记记录，不从回答正文猜测。"
+      },
+      "TaskResult": {
+        "type": "object",
+        "required": [
+          "version",
+          "runId",
+          "attemptId",
+          "execution",
+          "outcome",
+          "summary",
+          "primaryOutput",
+          "receipts",
+          "pendingItems",
+          "sources",
+          "artifacts",
+          "error",
+          "evidence",
+          "completedAt"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "enum": [
+              "task-result/v1"
+            ],
+            "description": "结果外层契约版本"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "attemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "cancel_requested",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "description": "Run 执行状态原文（引用，不是新状态机）"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/TaskResultOutcome"
+          },
+          "summary": {
+            "type": "string",
+            "description": "平台按核验状态生成的结果说明，不是模型自述"
+          },
+          "primaryOutput": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "主要结果：已提交回答的登记回执引用（kind=text, messageId, truncated, interrupted）；未提交为 null"
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskResultReceipt"
+            }
+          },
+          "pendingItems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskResultPendingItem"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "description": "本轮引用的知识/数据来源（输入证据）",
+            "items": {
+              "type": "object"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "description": "已登记成果引用（可下载版本）",
+            "items": {
+              "type": "object"
+            }
+          },
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "执行失败的结构化错误（code/message/object/reason/suggestion/retryable）；非失败终态为 null"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/TaskResultTelemetry"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "执行终态时间；未结束为 null"
+          }
+        },
+        "description": "I-06 版本化任务结果外层：由持久化证据（事件遥测、已提交消息、已登记成果、工具审计回执、知识来源）确定性推导的读时投影；模型自述不作为已验证依据，重复事件不会重复登记结果。"
+      },
       "AutomationSchedule": {
         "type": "object",
         "required": [
@@ -3394,6 +3672,20 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "resultOutcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "achieved",
+              "unverified",
+              "not_achieved",
+              null
+            ],
+            "description": "关联 Run 的业务结果核验状态（task-result/v1 outcome 投影）；未受理或投影缺失为 null。"
           }
         }
       }

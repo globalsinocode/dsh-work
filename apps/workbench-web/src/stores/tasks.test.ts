@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { TaskRun } from '../types/domain'
+import type { TaskResult, TaskRun } from '../types/domain'
 
 const api = vi.hoisted(() => ({
   getTasks: vi.fn(),
@@ -66,9 +66,34 @@ const baseTask: TaskRun = {
   requestedBy: 'user-1',
   messages: [],
   steps: [],
-  sources: [],
-  artifacts: [],
   attachments: [],
+  result: {
+    version: 'task-result/v1',
+    runId: 'run-001',
+    attemptId: 'attempt-001',
+    execution: 'running',
+    outcome: 'pending',
+    summary: '执行进行中，业务结果尚未生成。',
+    primaryOutput: null,
+    receipts: [],
+    pendingItems: [],
+    sources: [],
+    artifacts: [],
+    error: null,
+    evidence: {
+      stopReason: null,
+      toolCalls: null,
+      toolResults: null,
+      artifactsClaimed: null,
+      artifactsRegistered: 0,
+      inputTokens: null,
+      outputTokens: null,
+      elapsedMs: null,
+      outputTruncated: false,
+      interrupted: null,
+    },
+    completedAt: null,
+  } satisfies TaskResult,
 }
 
 describe('task store', () => {

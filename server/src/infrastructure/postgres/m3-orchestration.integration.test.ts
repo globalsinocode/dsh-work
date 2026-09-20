@@ -70,7 +70,28 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.ok(created)
   const task = await waitForTask(created.id, 'succeeded')
   assert.match(task.messages.at(-1)?.content ?? '', /真实回答/)
-  assert.equal(task.artifacts.length, 0)
+  assert.equal(task.result.artifacts.length, 0)
+
+  // I-06：版本化结果投影——执行终态与业务核验状态独立。回答登记只证明
+  // 内容落库：没有已登记成果等可核验交付物时保持 unverified（评审修复）。
+  assert.equal(task.result.version, 'task-result/v1')
+  assert.equal(task.result.execution, 'succeeded')
+  assert.equal(task.result.outcome, 'unverified')
+  assert.equal(
+    task.result.pendingItems.some(item => item.kind === 'no_verified_deliverable'),
+    true,
+  )
+  assert.equal(task.result.primaryOutput?.messageId, task.messages.at(-1)?.id)
+  assert.equal(
+    task.result.receipts.some(receipt => receipt.kind === 'answer' && receipt.status === 'completed'),
+    true,
+  )
+
+  // 读时投影幂等：重复读取得到同一结果，不重复登记。
+  const reread = await conversations.getTaskResult(created.id, 'U00001')
+  assert.deepEqual(reread?.result, task.result)
+  // 未授权用户看不到正文/成果：行定位即拒绝（无权限成员读轨）。
+  assert.equal(await conversations.getTaskResult(created.id, 'U99999'), null)
 
   const events = await runs.readEventsAfterEvent('tenant-dsh-work', created.id)
   assert.deepEqual(events.map((event) => event.eventType), [
@@ -123,10 +144,19 @@ test('validated Runtime output is published once as a downloadable Artifact', as
     )
 
     const task = await conversations.getTask(created.id, 'U00001')
-    assert.equal(task?.artifacts.length, 1)
-    assert.equal(task?.artifacts[0]?.name, '生产欠料管理PRD.md')
-    assert.equal(task?.artifacts[0]?.type, 'markdown')
-    const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+    assert.equal(task?.result.artifacts.length, 1)
+    assert.equal(task?.result.artifacts[0]?.name, '生产欠料管理PRD.md')
+    assert.equal(task?.result.artifacts[0]?.type, 'markdown')
+    // I-06：当前 Attempt 已登记成果构成可核验业务交付物 → achieved。
+    assert.equal(task?.result.outcome, 'achieved')
+    const artifactReceipt = task?.result.receipts.find(receipt => receipt.kind === 'artifact')
+    const [storedVersion] = await database<{ id: string }[]>`
+      select id from artifact_versions
+       where tenant_id = 'tenant-dsh-work' and source_run_id = ${created.id}
+    `
+    // 回执固定到不可变 artifact_version，而不是会随版本推进的逻辑 artifact。
+    assert.equal(artifactReceipt?.ref, storedVersion?.id)
+    const fileId = await content.artifactFileId(task!.result.artifacts[0]!.id, 1, 'U00001')
     const downloaded = await content.readFile(fileId, 'U00001')
     assert.equal(downloaded.name, '生产欠料管理PRD.md')
     assert.equal(downloaded.bytes.toString('utf8'), '# 生产欠料管理 PRD\n')
@@ -160,14 +190,95 @@ test('HTML Runtime output is published as a previewable html Artifact', async ()
     await waitForTask(created.id, 'succeeded')
 
     const task = await conversations.getTask(created.id, 'U00001')
-    assert.equal(task?.artifacts.length, 1)
-    assert.equal(task?.artifacts[0]?.type, 'html')
-    const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+    assert.equal(task?.result.artifacts.length, 1)
+    assert.equal(task?.result.artifacts[0]?.type, 'html')
+    const fileId = await content.artifactFileId(task!.result.artifacts[0]!.id, 1, 'U00001')
     const downloaded = await content.readFile(fileId, 'U00001')
     assert.equal(downloaded.mimeType, 'text/html; charset=utf-8')
     assert.equal(downloaded.bytes.toString('utf8'), markup)
   } finally {
     releaseCompletion()
+  }
+})
+
+test('a succeeded Run claiming unregistered artifacts projects unverified, not achieved (I-06)', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '成果登记缺口' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '声明成果但未登记', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  const task = await waitForTask(created.id, 'succeeded')
+
+  // 执行终态仍是 succeeded；业务核验状态独立为 unverified。
+  assert.equal(task.status, 'succeeded')
+  assert.equal(task.result.execution, 'succeeded')
+  assert.equal(task.result.outcome, 'unverified')
+  assert.equal(task.result.evidence.artifactsClaimed, 2)
+  assert.equal(task.result.evidence.artifactsRegistered, 0)
+  assert.equal(
+    task.result.pendingItems.some(item => item.kind === 'artifact_registration_gap'),
+    true,
+  )
+  assert.equal(
+    task.result.receipts.some(receipt => receipt.kind === 'artifact' && receipt.status === 'missing'),
+    true,
+  )
+  assert.match(task.result.summary, /未验证/)
+
+  const projected = await conversations.getTaskResult(created.id, 'U00001')
+  assert.equal(projected?.result.outcome, 'unverified')
+  assert.equal(projected?.workspaceId, task.workspaceId)
+})
+
+test('artifacts registered by a failed Attempt do not leak into the retried Attempt result (I-06)', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '历史 Attempt 成果隔离' })
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-attempt-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  await writeFile(join(workspaceDirectory, 'output', '旧Attempt成果.md'), '# 旧 Attempt 成果\n')
+
+  // 第一次 Attempt 在 running 窗口登记成果后失败；重试的当前 Attempt 没有
+  // 任何交付物，历史 Attempt 登记的成果不得计入本次交付核验。
+  let failAttempt: () => void = () => undefined
+  runtime.completionGate = new Promise<void>((resolve) => { failAttempt = resolve })
+  try {
+    const created = await orchestration.startRun({
+      userId: 'U00001', sessionId: session.id, prompt: '登记成果后失败', idempotencyKey: randomUUID(),
+    })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const firstAttemptId = created.currentAttemptId!
+    const attempt = await runs.getAttempt('tenant-dsh-work', firstAttemptId)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
+    await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+
+    failAttempt()
+    await waitForTask(created.id, 'failed')
+
+    // 失败 Attempt 的成果版本仍在库（同一 source_run_id），归属 Attempt 1。
+    const versions = await database<{ sourceAttemptId: string | null }[]>`
+      select source_attempt_id as "sourceAttemptId" from artifact_versions
+       where tenant_id = 'tenant-dsh-work' and source_run_id = ${created.id}
+    `
+    assert.deepEqual(versions.map(row => row.sourceAttemptId), [firstAttemptId])
+
+    await orchestration.retry(created.id, 'U00001')
+    const retried = await waitForTask(created.id, 'succeeded')
+
+    assert.notEqual(retried.result.attemptId, firstAttemptId)
+    assert.equal(retried.result.execution, 'succeeded')
+    assert.equal(retried.result.outcome, 'unverified')
+    assert.equal(retried.result.artifacts.length, 0)
+    assert.equal(retried.result.evidence.artifactsRegistered, 0)
+    assert.equal(
+      retried.result.pendingItems.some(item => item.kind === 'no_verified_deliverable'),
+      true,
+    )
+
+    const projected = await conversations.getTaskResult(created.id, 'U00001')
+    assert.equal(projected?.result.outcome, 'unverified')
+    assert.equal(projected?.result.artifacts.length, 0)
+  } finally {
+    failAttempt()
   }
 })
 
@@ -386,7 +497,10 @@ test('a retry continues from the partial output preserved by a timed-out Attempt
   const failedTask = await conversations.getTask(created.id, 'U00001')
   assert.match(failedTask?.messages.at(-1)?.content ?? '', /中断前的部分回答/)
   assert.match(failedTask?.messages.at(-1)?.content ?? '', /执行超时中断/)
-  assert.equal(failedTask?.error?.code, 'RUN_TIMEOUT')
+  assert.equal(failedTask?.result.error?.code, 'RUN_TIMEOUT')
+  // I-06：失败执行的核验状态为 not_achieved，结构化错误收敛在结果外层。
+  assert.equal(failedTask?.result.outcome, 'not_achieved')
+  assert.equal(failedTask?.result.execution, 'failed')
 
   await orchestration.retry(created.id, 'U00001')
   await waitForTask(created.id, 'succeeded')
@@ -594,6 +708,30 @@ class DeterministicRuntime implements AgentRuntimePort {
         execution.snapshot.status = 'failed'
         execution.snapshot.errorCode = 'RUN_TIMEOUT'
         this.emit(execution, 'run.failed', '任务执行失败', { error_code: 'RUN_TIMEOUT' })
+        this.finish(execution)
+        return
+      }
+      if (manifest.input.message === '登记成果后失败' && count === 1) {
+        // I-06 跨 Attempt 夹具：保持在 running 等测试在窗口内登记成果，
+        // 闸门释放后失败——重试的新 Attempt 不得继承本次登记的成果。
+        const fail = async () => {
+          await execution.completionGate
+          if (execution.snapshot.status !== 'running') return
+          execution.snapshot.status = 'failed'
+          execution.snapshot.errorCode = 'RUNTIME_EXECUTION_FAILED'
+          this.emit(execution, 'run.failed', '任务执行失败', { error_code: 'RUNTIME_EXECUTION_FAILED' })
+          this.finish(execution)
+        }
+        void fail()
+        return
+      }
+      if (manifest.input.message === '声明成果但未登记' && count === 1) {
+        // I-06 反例夹具：Runtime 自述生成 2 个成果但平台登记为 0——
+        // 执行成功不能显示为业务目标达成。
+        this.emit(execution, 'assistant.delta', '已生成两份报告')
+        this.emit(execution, 'assistant.completed', '已生成两份报告')
+        execution.snapshot.status = 'completed'
+        this.emit(execution, 'run.completed', '已完成', { artifact_count: 2 })
         this.finish(execution)
         return
       }

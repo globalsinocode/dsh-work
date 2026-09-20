@@ -1786,10 +1786,10 @@ export class PostgresContentService {
         `
         await transaction`
           insert into artifact_versions (
-            id, tenant_id, artifact_id, version_no, file_object_id, source_run_id
+            id, tenant_id, artifact_id, version_no, file_object_id, source_run_id, source_attempt_id
           ) values (
             ${artifact.artifactVersionId}, ${tenantId}, ${artifact.artifactId},
-            ${version?.versionNo ?? 1}, ${artifact.fileId}, ${manifest.run_id}
+            ${version?.versionNo ?? 1}, ${artifact.fileId}, ${manifest.run_id}, ${manifest.attempt_id}
           )
         `
       }

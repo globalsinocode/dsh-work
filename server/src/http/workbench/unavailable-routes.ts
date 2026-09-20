@@ -30,6 +30,8 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     unavailable(`对话 ${context.params['sessionId'] ?? ''} 的文件 ${context.params['fileId'] ?? ''}`))
   router.get(`${basePath}/runs/:runId`, async (_request, context) =>
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
+  router.get(`${basePath}/runs/:runId/result`, async (_request, context) =>
+    unavailable(`运行 ${context.params['runId'] ?? ''} 的结果`))
   router.get(`${basePath}/runs/:runId/events`, async (_request, context) =>
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
   router.post(`${basePath}/runs/:runId/cancel`, async (_request, context) =>

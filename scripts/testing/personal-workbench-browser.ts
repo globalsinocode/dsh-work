@@ -3,7 +3,18 @@ import { randomUUID } from 'node:crypto'
 import { personalWorkbenchFixture, testTenant } from '../../server/src/infrastructure/postgres/personal-workbench-test-fixture.ts'
 import { PersonalBrowserRuntime } from '../../server/src/infrastructure/postgres/personal-browser-runtime.ts'
 import { envelope } from '../../server/src/http/router.ts'
-const fixture = await personalWorkbenchFixture('dsh_b3_browser', { port: Number(process.env.DSH_WORK_SERVER_PORT ?? 4390), runtime: new PersonalBrowserRuntime(), browser: true })
+const runtime = new PersonalBrowserRuntime()
+const fixture = await personalWorkbenchFixture('dsh_b3_browser', { port: Number(process.env.DSH_WORK_SERVER_PORT ?? 4390), runtime, browser: true })
+// `P1-成果达成` 标记：在 run.completed 前登记真实成果行（含 source_attempt_id），
+// 对应真实 Adapter 先 collectArtifacts 再完成 Attempt 的顺序。
+runtime.hooks.registerArtifact = async manifest => {
+  const file = await fixture.content.storeSessionFile(manifest.session_id, 'P1-登记成果.txt', 'text/plain', Buffer.from('P1 registered artifact, not a real DSH output'), manifest.user_context.user_id)
+  const artifact = `artifact-${randomUUID()}`
+  await fixture.db.client`insert into artifacts(id,tenant_id,workspace_id,session_id,name,artifact_type,created_by)
+    values(${artifact},${testTenant},${manifest.workspace_id},${manifest.session_id},'P1-登记成果.txt','text',${manifest.user_context.user_id})`
+  await fixture.db.client`insert into artifact_versions(id,tenant_id,artifact_id,version_no,file_object_id,source_run_id,source_attempt_id)
+    values(${randomUUID()},${testTenant},${artifact},1,${file.id},${manifest.run_id},${manifest.attempt_id})`
+}
 const old = await fixture.conversations.createSession({ userId: 'U00001', title: 'P1-旧对话-需要恢复' })
 const empty = await fixture.conversations.createSession({ userId: 'U00001', title: 'P1-空对话-继续原会话' })
 const team = await fixture.team()

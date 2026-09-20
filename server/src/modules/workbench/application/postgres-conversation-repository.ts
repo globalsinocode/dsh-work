@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ChatMessage, RunStep, TaskRun } from '../../../domain/types.ts'
+import type { ChatMessage, RunStep, TaskRun, TaskRunError } from '../../../domain/types.ts'
+import { deriveTaskResult, type TaskResult, type TaskResultEvidence, type TaskResultOutcome } from '../../../domain/task-result.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import type { RunState } from '../../run/run-types.ts'
+import type { JsonObject, RunState } from '../../run/run-types.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
 import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
@@ -126,11 +127,21 @@ interface EventRow {
   id: string
   eventType: string
   displayMessage: string | null
+  /** I-06：终态遥测与截断/中断标记的证据来源。 */
+  safeMetadata: JsonObject
+  occurredAt: Date
+}
+
+interface ToolAuditRow {
+  id: string
+  parameterSummary: JsonObject
+  result: 'success' | 'failed' | 'blocked'
   occurredAt: Date
 }
 
 interface ArtifactRow {
   id: string
+  artifactVersionId: string
   name: string
   artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
@@ -723,7 +734,11 @@ export class PostgresConversationRepository {
     return Promise.all(rows.map((row) => this.mapTask(row)))
   }
 
-  async getTask(runId: string, userId: string): Promise<TaskRun | null> {
+  /**
+   * Run 行定位（发起人或空间现任成员），详情与独立结果读取共用；
+   * 撤销/角色边界由路由层 authorizeTeamTaskRead 复核。
+   */
+  private async findTaskRow(runId: string, userId: string): Promise<TaskRow | null> {
     const [row] = await this.database<TaskRow[]>`
       select r.id, r.session_id as "sessionId", r.status,
              r.current_attempt_id as "currentAttemptId", r.created_at as "createdAt",
@@ -759,7 +774,101 @@ export class PostgresConversationRepository {
          )
          and s.status = 'active' and s.audience = 'workbench'
     `
+    return row ?? null
+  }
+
+  async getTask(runId: string, userId: string): Promise<TaskRun | null> {
+    const row = await this.findTaskRow(runId, userId)
     return row ? this.mapTask(row) : null
+  }
+
+  /**
+   * I-06：独立结果读取入口（GET /runs/:id/result）。只装配核验证据，
+   * 不加载消息正文；授权与详情同一口径（行定位 + 路由层读取门禁）。
+   * 结果读取失败只影响本投影，不触发任何新的执行。
+   */
+  async getTaskResult(runId: string, userId: string): Promise<{ result: TaskResult; workspaceId: string } | null> {
+    const row = await this.findTaskRow(runId, userId)
+    if (!row) return null
+    const messageIds = await this.database<{ id: string }[]>`
+      select id from messages
+       where tenant_id = ${tenantId} and run_id = ${row.id} and role = 'assistant'
+    `
+    const evidence = await this.loadTaskResultEvidence(row, new Set(messageIds.map(message => message.id)))
+    return { result: deriveTaskResult(evidence), workspaceId: row.workspaceId }
+  }
+
+  /**
+   * I-06 批量 outcome 投影（自动任务执行列表等列表场景）：按 Run 分组
+   * 装载当前 Attempt 的证据后逐条推导，避免逐行多次往返。sources 不影响
+   * outcome，批量路径不加载来源明细。
+   */
+  async getTaskResultOutcomes(runIds: string[]): Promise<Map<string, TaskResultOutcome>> {
+    const outcomes = new Map<string, TaskResultOutcome>()
+    if (!runIds.length) return outcomes
+    const rows = await this.database<Array<Pick<TaskRow, 'id' | 'status' | 'currentAttemptId' | 'updatedAt' | 'errorCode'>>>`
+      select r.id, r.status, r.current_attempt_id as "currentAttemptId",
+             r.updated_at as "updatedAt", ra.error_code as "errorCode"
+        from runs r
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+       where r.tenant_id = ${tenantId} and r.id = any(${runIds})
+    `
+    if (!rows.length) return outcomes
+    const attemptIds = rows.map(row => row.currentAttemptId).filter((id): id is string => id !== null)
+    const events = attemptIds.length
+      ? await this.database<Array<EventRow & { attemptId: string }>>`
+          select e.id, e.event_type as "eventType", e.display_message as "displayMessage",
+                 e.safe_metadata as "safeMetadata", e.occurred_at as "occurredAt",
+                 e.attempt_id as "attemptId"
+            from run_events e
+           where e.tenant_id = ${tenantId} and e.attempt_id = any(${attemptIds})
+           order by e.attempt_id asc, e.sequence asc
+        `
+      : []
+    const messageIds = await this.database<{ id: string; runId: string }[]>`
+      select id, run_id as "runId" from messages
+       where tenant_id = ${tenantId} and run_id = any(${runIds}) and role = 'assistant'
+    `
+    const artifacts = await this.database<Array<ArtifactRow & { sourceRunId: string; sourceAttemptId: string | null }>>`
+      select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
+             f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+       where av.tenant_id = ${tenantId} and av.source_run_id = any(${runIds})
+       order by av.version_no desc
+    `
+    const toolAudits = attemptIds.length
+      ? await this.database<Array<ToolAuditRow & { attemptId: string }>>`
+          select tal.id, tal.parameter_summary as "parameterSummary", tal.result,
+                 tal.occurred_at as "occurredAt", tal.attempt_id as "attemptId"
+            from tool_audit_logs tal
+           where tal.tenant_id = ${tenantId} and tal.attempt_id = any(${attemptIds})
+           order by tal.occurred_at asc
+        `
+      : []
+    for (const row of rows) {
+      const committed = new Set(messageIds.filter(message => message.runId === row.id).map(message => message.id))
+      const evidence: TaskResultEvidence = {
+        run: { id: row.id, status: row.status, updatedAt: row.updatedAt },
+        attemptId: row.currentAttemptId,
+        events: events.filter(event => event.attemptId === row.currentAttemptId),
+        committedMessageIds: committed,
+        artifacts: artifacts
+          // 与 loadTaskResultEvidence 同口径：只认当前 Attempt 登记的成果，
+          // 历史 Attempt 的交付不并入本次核验（I-06 评审）。
+          .filter(artifact => artifact.sourceRunId === row.id && artifact.sourceAttemptId === row.currentAttemptId)
+          .map(artifact => mapArtifactEvidenceRow(artifact, row.id)),
+        sources: [],
+        toolAudits: toolAudits
+          .filter(audit => audit.attemptId === row.currentAttemptId)
+          .map(mapToolAuditRow),
+        runError: row.status === 'failed' ? toRunError(row.id, row.errorCode) : null,
+      }
+      outcomes.set(row.id, deriveTaskResult(evidence).outcome)
+    }
+    return outcomes
   }
 
   /**
@@ -1012,32 +1121,39 @@ export class PostgresConversationRepository {
     }
   }
 
-  private async mapTask(row: TaskRow): Promise<TaskRun> {
-    // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
-    // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
-    // 完整多轮消息历史，不按 Run 收窄（评审中3）。
-    const messages = row.workspaceType === 'team'
-      ? await this.loadSessionMessages(row.sessionId, { runId: row.id })
-      : await this.loadSessionMessages(row.sessionId)
+  /**
+   * I-06：装配版本化任务结果的核验证据。全部来自持久化记录——当前
+   * Attempt 的 run_events（含 safe_metadata 遥测）、Run 已提交的
+   * assistant 消息 id、当前 Attempt 登记的 artifact_versions 与
+   * tool_audit_logs 记录；成果按 source_attempt_id 关联到当前 Attempt，
+   * 前一次 Attempt 登记的成果不得计入本次交付核验。
+   * 不从回答正文或运行时内存猜测。
+   */
+  private async loadTaskResultEvidence(
+    row: TaskRow,
+    committedMessageIds: ReadonlySet<string>,
+  ): Promise<TaskResultEvidence> {
     const events = row.currentAttemptId
       ? await this.database<EventRow[]>`
           select id, event_type as "eventType", display_message as "displayMessage",
-                 occurred_at as "occurredAt"
+                 safe_metadata as "safeMetadata", occurred_at as "occurredAt"
             from run_events
            where tenant_id = ${tenantId} and attempt_id = ${row.currentAttemptId}
            order by sequence asc
         `
       : []
-    const runMessages = messages.filter((message) => message.runId === row.id)
-    const artifacts = await this.database<ArtifactRow[]>`
-      select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
-             f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId"
-        from artifact_versions av
-        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
-        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
-       where av.tenant_id = ${tenantId} and av.source_run_id = ${row.id}
-       order by av.version_no desc
-    `
+    const artifacts = row.currentAttemptId
+      ? await this.database<ArtifactRow[]>`
+          select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
+                 f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId"
+            from artifact_versions av
+            join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+            join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+           where av.tenant_id = ${tenantId} and av.source_run_id = ${row.id}
+             and av.source_attempt_id = ${row.currentAttemptId}
+           order by av.version_no desc
+        `
+      : []
     const sources = row.currentAttemptId
       ? await this.database<SourceRow[]>`
           select kd.id, kd.title, kd.version, kd.effective_date as "effectiveAt",
@@ -1050,6 +1166,48 @@ export class PostgresConversationRepository {
            order by rks.relevance_score desc, kd.effective_date desc
         `
       : []
+    const toolAudits = row.currentAttemptId
+      ? await this.database<ToolAuditRow[]>`
+          select id, parameter_summary as "parameterSummary", result, occurred_at as "occurredAt"
+            from tool_audit_logs
+           where tenant_id = ${tenantId} and attempt_id = ${row.currentAttemptId}
+           order by occurred_at asc
+        `
+      : []
+    return {
+      run: { id: row.id, status: row.status, updatedAt: row.updatedAt },
+      attemptId: row.currentAttemptId,
+      events,
+      committedMessageIds,
+      artifacts: artifacts.map(artifact => mapArtifactEvidenceRow(artifact, row.id)),
+      sources: sources.map(source => ({
+        id: source.id,
+        type: 'knowledge' as const,
+        title: source.title,
+        description: source.excerpt,
+        version: source.version,
+        effectiveAt: formatDate(source.effectiveAt),
+        dataScope: source.dataScope,
+        synthetic: source.synthetic,
+        updatedAt: formatDate(source.effectiveAt),
+      })),
+      toolAudits: toolAudits.map(mapToolAuditRow),
+      runError: row.status === 'failed' ? toRunError(row.id, row.errorCode) : null,
+    }
+  }
+
+  private async mapTask(row: TaskRow): Promise<TaskRun> {
+    // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
+    // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
+    // 完整多轮消息历史，不按 Run 收窄（评审中3）。
+    const messages = row.workspaceType === 'team'
+      ? await this.loadSessionMessages(row.sessionId, { runId: row.id })
+      : await this.loadSessionMessages(row.sessionId)
+    const runMessages = messages.filter((message) => message.runId === row.id)
+    const committedMessageIds = new Set(
+      runMessages.filter(message => message.role === 'assistant').map(message => message.id),
+    )
+    const evidence = await this.loadTaskResultEvidence(row, committedMessageIds)
     const attachments = row.currentAttemptId
       ? await this.database<AttachmentRow[]>`
           select f.original_name as name from run_input_files rif
@@ -1077,42 +1235,50 @@ export class PostgresConversationRepository {
       owner: row.owner,
       requestedBy: row.requestedBy,
       messages: messages.map(mapMessage),
-      steps: mapSteps(row.id, events, row.status),
-      sources: sources.map(source => ({
-        id: source.id,
-        type: 'knowledge' as const,
-        title: source.title,
-        description: source.excerpt,
-        version: source.version,
-        effectiveAt: formatDate(source.effectiveAt),
-        dataScope: source.dataScope,
-        synthetic: source.synthetic,
-        updatedAt: formatDate(source.effectiveAt),
-      })),
-      artifacts: artifacts.map((artifact) => ({
-        id: artifact.id,
-        name: artifact.name,
-        type: artifact.artifactType,
-        version: artifact.version,
-        size: formatSize(Number(artifact.sizeBytes)),
-        createdAt: formatDateTime(artifact.createdAt),
-        runId: row.id,
-        workspaceId: artifact.workspaceId,
-        summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
-      })),
+      steps: mapSteps(row.id, evidence.events, row.status),
+      result: deriveTaskResult(evidence),
       attachments: attachments.map(attachment => attachment.name),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
         : undefined,
-      summary: row.status === 'succeeded' ? '本轮对话已由 DSH Runtime 执行完成。' : undefined,
-      error: row.status === 'failed' ? toRunError(row.id, row.errorCode) : undefined,
     }
   }
 }
 
-export function toRunError(runId: string, errorCode: string | null | undefined): NonNullable<TaskRun['error']> {
+function mapArtifactRow(artifact: ArtifactRow, runId: string) {
+  return {
+    id: artifact.id,
+    name: artifact.name,
+    type: artifact.artifactType,
+    version: artifact.version,
+    size: formatSize(Number(artifact.sizeBytes)),
+    createdAt: formatDateTime(artifact.createdAt),
+    runId,
+    workspaceId: artifact.workspaceId,
+    summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
+  }
+}
+
+function mapArtifactEvidenceRow(artifact: ArtifactRow, runId: string) {
+  return {
+    artifact: mapArtifactRow(artifact, runId),
+    artifactVersionId: artifact.artifactVersionId,
+  }
+}
+
+function mapToolAuditRow(audit: ToolAuditRow) {
+  return {
+    id: audit.id,
+    toolName: typeof audit.parameterSummary['tool_name'] === 'string' ? audit.parameterSummary['tool_name'] : null,
+    decision: typeof audit.parameterSummary['decision'] === 'string' ? audit.parameterSummary['decision'] : null,
+    result: audit.result,
+    occurredAt: audit.occurredAt,
+  }
+}
+
+export function toRunError(runId: string, errorCode: string | null | undefined): TaskRunError {
   const code = errorCode ?? 'RUNTIME_EXECUTION_FAILED'
-  const catalog: Record<string, Omit<NonNullable<TaskRun['error']>, 'code' | 'object'>> = {
+  const catalog: Record<string, Omit<TaskRunError, 'code' | 'object'>> = {
     RUN_TIMEOUT: {
       message: '本轮执行超时',
       reason: '执行时间超过当前 Agent 与运行时配置中的较短时限。',

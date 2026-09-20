@@ -125,10 +125,10 @@ test('knowledge answer persists immutable source version and exposes citation me
   assert.equal(manifest?.knowledge_context[0]?.version, '2.1')
   assert.match(manifest?.knowledge_context[0]?.excerpt ?? '', /安全库存/)
 
-  assert.equal(task.sources[0]?.title, '库存安全水位管理规范')
-  assert.equal(task.sources[0]?.version, '2.1')
-  assert.equal(task.sources[0]?.dataScope, 'domain:supply-chain')
-  assert.equal(task.sources[0]?.synthetic, true)
+  assert.equal(task.result.sources[0]?.title, '库存安全水位管理规范')
+  assert.equal(task.result.sources[0]?.version, '2.1')
+  assert.equal(task.result.sources[0]?.dataScope, 'domain:supply-chain')
+  assert.equal(task.result.sources[0]?.synthetic, true)
   assert.match(task.messages.at(-1)?.content ?? '', /参考来源/)
   assert.match(task.messages.at(-1)?.content ?? '', /库存安全水位管理规范 v2.1/)
 
