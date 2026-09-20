@@ -88,57 +88,88 @@ test('real PostgreSQL orchestration persists the assistant result without publis
 
 test('validated Runtime output is published once as a downloadable Artifact', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '生成 Markdown 成果' })
-  const created = await orchestration.startRun({
-    userId: 'U00001', sessionId: session.id, prompt: '生成生产欠料管理 PRD', idempotencyKey: randomUUID(),
-  })
-  assert.ok(created)
-  await waitForTask(created.id, 'succeeded')
-  const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
-  const manifest = attempt!.manifest as unknown as RuntimeManifest
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-publish-'))
   await mkdir(join(workspaceDirectory, 'output'))
   await writeFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), '# 生产欠料管理 PRD\n')
 
-  const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-  const repeated = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-  assert.deepEqual(first, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
-  assert.deepEqual(repeated, first)
+  // 成果发布属于「成功执行」的一部分：只能在 Run 仍 running 时追加（与 Adapter
+  // 在执行期 collectArtifacts 的时序一致）；succeeded 后只允许核对既有版本。
+  let releaseCompletion: () => void = () => undefined
+  runtime.completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve })
+  try {
+    const created = await orchestration.startRun({
+      userId: 'U00001', sessionId: session.id, prompt: '生成生产欠料管理 PRD', idempotencyKey: randomUUID(),
+    })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
 
-  const task = await conversations.getTask(created.id, 'U00001')
-  assert.equal(task?.artifacts.length, 1)
-  assert.equal(task?.artifacts[0]?.name, '生产欠料管理PRD.md')
-  assert.equal(task?.artifacts[0]?.type, 'markdown')
-  const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
-  const downloaded = await content.readFile(fileId, 'U00001')
-  assert.equal(downloaded.name, '生产欠料管理PRD.md')
-  assert.equal(downloaded.bytes.toString('utf8'), '# 生产欠料管理 PRD\n')
-  assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
+    const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    const repeated = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    assert.deepEqual(first, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+    assert.deepEqual(repeated, first)
+    releaseCompletion()
+    await waitForTask(created.id, 'succeeded')
+
+    // succeeded 后同一成果集只能幂等核对；新增文件不得追加进既有成果集。
+    const verified = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    assert.deepEqual(verified, first)
+    await writeFile(join(workspaceDirectory, 'output', '补充说明.md'), '# 补充\n')
+    await assert.rejects(
+      content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
+      /不能追加新成果/,
+    )
+
+    const task = await conversations.getTask(created.id, 'U00001')
+    assert.equal(task?.artifacts.length, 1)
+    assert.equal(task?.artifacts[0]?.name, '生产欠料管理PRD.md')
+    assert.equal(task?.artifacts[0]?.type, 'markdown')
+    const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+    const downloaded = await content.readFile(fileId, 'U00001')
+    assert.equal(downloaded.name, '生产欠料管理PRD.md')
+    assert.equal(downloaded.bytes.toString('utf8'), '# 生产欠料管理 PRD\n')
+    assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
+  } finally {
+    releaseCompletion()
+    runtime.completionGate = null
+  }
 })
 
 test('HTML Runtime output is published as a previewable html Artifact', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '生成 HTML 成果' })
-  const created = await orchestration.startRun({
-    userId: 'U00001', sessionId: session.id, prompt: '生成交互式风险看板', idempotencyKey: randomUUID(),
-  })
-  assert.ok(created)
-  await waitForTask(created.id, 'succeeded')
-  const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
-  const manifest = attempt!.manifest as unknown as RuntimeManifest
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-html-'))
   await mkdir(join(workspaceDirectory, 'output'))
   const markup = '<!DOCTYPE html><html><body><h1>风险看板</h1></body></html>'
   await writeFile(join(workspaceDirectory, 'output', '华东区风险看板.html'), markup)
 
-  const published = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-  assert.deepEqual(published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
+  let releaseCompletion: () => void = () => undefined
+  runtime.completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve })
+  try {
+    const created = await orchestration.startRun({
+      userId: 'U00001', sessionId: session.id, prompt: '生成交互式风险看板', idempotencyKey: randomUUID(),
+    })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
 
-  const task = await conversations.getTask(created.id, 'U00001')
-  assert.equal(task?.artifacts.length, 1)
-  assert.equal(task?.artifacts[0]?.type, 'html')
-  const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
-  const downloaded = await content.readFile(fileId, 'U00001')
-  assert.equal(downloaded.mimeType, 'text/html; charset=utf-8')
-  assert.equal(downloaded.bytes.toString('utf8'), markup)
+    const published = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    assert.deepEqual(published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
+    releaseCompletion()
+    await waitForTask(created.id, 'succeeded')
+
+    const task = await conversations.getTask(created.id, 'U00001')
+    assert.equal(task?.artifacts.length, 1)
+    assert.equal(task?.artifacts[0]?.type, 'html')
+    const fileId = await content.artifactFileId(task!.artifacts[0]!.id, 1, 'U00001')
+    const downloaded = await content.readFile(fileId, 'U00001')
+    assert.equal(downloaded.mimeType, 'text/html; charset=utf-8')
+    assert.equal(downloaded.bytes.toString('utf8'), markup)
+  } finally {
+    releaseCompletion()
+    runtime.completionGate = null
+  }
 })
 
 test('a follow-up Run snapshots only the preceding messages from its product Session', async () => {
@@ -467,6 +498,8 @@ interface Execution {
 class DeterministicRuntime implements AgentRuntimePort {
   private readonly executions = new Map<string, Execution>()
   private readonly attemptCounts = new Map<string, number>()
+  /** 测试闸门：非空时执行停在 running，放行后才发完成事件——模拟 Adapter 在执行期收集成果的窗口。 */
+  completionGate: Promise<void> | null = null
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     let resolveDone: (snapshot: RuntimeExecutionSnapshot) => void = () => undefined
@@ -497,10 +530,15 @@ class DeterministicRuntime implements AgentRuntimePort {
         return
       }
       this.emit(execution, 'assistant.delta', 'M3 真实回答')
-      this.emit(execution, 'assistant.completed', 'M3 真实回答')
-      execution.snapshot.status = 'completed'
-      this.emit(execution, 'run.completed', '已完成')
-      this.finish(execution)
+      const complete = async () => {
+        await this.completionGate
+        if (execution.snapshot.status !== 'running') return
+        this.emit(execution, 'assistant.completed', 'M3 真实回答')
+        execution.snapshot.status = 'completed'
+        this.emit(execution, 'run.completed', '已完成')
+        this.finish(execution)
+      }
+      void complete()
     }, 10)
     return { runId: manifest.run_id, attemptId: manifest.attempt_id, acceptedAt: now, done }
   }
