@@ -80,7 +80,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | 实施包 | 原工作项 | 仍需实施的内容 | 省去的历史兼容工作 | 当前状态与依赖 |
 | --- | --- | --- | --- | --- |
 | B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一包格式、规范化 AgentSpec、严格字段与依赖校验、输入输出/上下文/模型能力要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、警告后渐进收紧、旧定义转换与默认值回填 | **已实施（见 I-02/I-03 完成记录）**：分层清单 + 严格 Schema + `agent_versions.agent_spec` + 限额列更名；模型能力要求仅声明校验，路由消费待 B-02/B-03 |
-| B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；新规则清理及 I-07 待实施。限额核查可先开展 |
+| B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查待实施 |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | 待实施；与 B-01/B-02 对齐，新外部写动作前完成 |
 | B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | 待实施；依赖 B-01 输出要求、B-02 执行契约；绑定使用 B-03 |
 | B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | 待补齐，贯穿 B-01～04；保留已有有效安全回归 |
@@ -109,7 +109,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 ### I-01 修复 Runtime Schema 与实际 Manifest 的漂移
 
-**B-02 后续范围：** 下述完成记录保留事实；其中为旧引用放宽读取规则的兼容处理不再是后续要求，统一新规则尚待实现。本次文档不删除该代码或历史数据。
+**B-02 后续范围：** 下述完成记录保留事实；其中为旧引用放宽读取规则的兼容处理已随 B-02a 移除（2026-09-20）：`FileSystemSkillArtifactStore.resolveReference` 删除 `LEGACY_REF_PATTERN` 改用写入侧严格 `REF_PATTERN`，`compileRuntimeManifest` 的 `ARTIFACT_REF_PATTERN` 与 `runtime-manifest.schema.json` 同步收紧为包名段首尾字母数字的唯一规则，旧生成器持久化引用（如 `packages/____/<sha>`）在 Schema、编译与加载三处一致拒绝；`skill-package.test.ts` 与 `runtime-manifest-schema.test.ts` 的旧格式接受用例已翻转为拒绝。验证：`test:runtime` 59/59、`test:skill-install` 9/9、`m3-orchestration` 12/12、`m4-skill-management` 1/1、`admin-skill-installation` 11/12（1 例真实 DSH 按标记跳过）、typecheck、`pnpm verify` 通过。历史数据不删除；含旧引用形态的持久化记录不再可执行。
 
 **状态：已完成（2026-09-19）。** Schema 已补齐 `artifact_ref`/`instructions_sha256` 及内联/外置条件约束（外置不兼容内联正文缓存、外置文件索引禁止携带 content）；`compileRuntimeManifest` 作为持久化前的实际关口同步 fail-closed，拒绝外置携带 `instructions`/文件 `content`、内联携带 `instructions_sha256` 及未声明字段，`artifact_ref` 对新生成引用要求包名段首尾字母数字（由 `FileSystemSkillArtifactStore` 写入自检保证；读取/编译侧兼容旧版生成器未清理首尾符号的持久化引用），`.`/`..` 遍历段仍拒绝；外置 Skill 的声明文件大小总和在编译期校验，实际文件字节预算由 `FileSystemSkillArtifactStore` 加载侧按 `stat` 预检的实际文件大小执行。结构（Schema）与内容（编译/加载）分工由 `server/src/modules/runtime/runtime-manifest-schema.test.ts` 以同一样本双边界验证（10 例，含 ajv draft 2020-12 严格编译；声明大小预算用例仅编译侧断言）；`test:runtime` 已接入，contracts 静态检查断言外置字段与禁止条件。顺带修复既有 Schema 中 `if` 子 schema 缺 `properties`/`type` 声明的严格模式问题。验证：`pnpm test:runtime` 59/59、`pnpm test:skill-install` 9/9、`tsc --noEmit`、`pnpm verify`、`pnpm check:architecture`、eslint 均通过。未覆盖：Schema 仍未编码编译器的 ID 字符集等细粒度内容规则（属内容边界职责）；模型能力要求字段不在本项。
 

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { strToU8, zipSync, type Zippable } from 'fflate'
 import { parseSkillBundle, parseSkillPackage, toSkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
@@ -36,27 +36,17 @@ test('persists Skill bodies as an immutable folder and keeps only an index descr
     await rm(root, { recursive: true, force: true })
   }
 })
-test('keeps legacy artifact references (symbol-edged package segments) readable', async () => {
+test('rejects legacy artifact references (symbol-edged package segments)', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
   try {
     const store = new FileSystemSkillArtifactStore(root)
     const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('folder-marker') }))
-    // 旧版生成器只替换非法字符并截断、未清理首尾符号：中文名落成 packages/____/<sha>。
-    // 升级前已持久化的引用必须可读，否则既有 Skill 及相关 Agent 无法运行。
-    const legacyRef = `packages/____/${pkg.sha256}`
-    const artifact = toSkillPackageArtifact(pkg, legacyRef)
-    for (const file of pkg.files) {
-      const target = join(root, legacyRef, file.path)
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, file.content)
+    // B-02 唯一引用规则：旧版生成器未清理首尾符号的持久化引用（中文名 →
+    // packages/____/<sha>）读写同口径拒绝，越界与遍历段一并覆盖。
+    for (const segment of ['____', '-degenerate', 'degenerate.', '.hidden', '..', '.']) {
+      const artifact = toSkillPackageArtifact(pkg, `packages/${segment}/${pkg.sha256}`)
+      await assert.rejects(store.read(artifact), /引用无效/, `artifact_ref segment ${segment}`)
     }
-    assert.equal((await store.read(artifact)).instructions, pkg.instructions)
-
-    // . 与 .. 段仍拒绝，越界防护不随兼容放宽
-    const traversal = { ...artifact, artifactRef: `packages/../${pkg.sha256}` }
-    await assert.rejects(store.read(traversal), /引用无效/)
-    const dotSegment = { ...artifact, artifactRef: `packages/./${pkg.sha256}` }
-    await assert.rejects(store.read(dotSegment), /引用无效/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

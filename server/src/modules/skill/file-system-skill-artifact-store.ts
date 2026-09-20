@@ -13,12 +13,9 @@ import {
   type SkillPackageArtifact,
 } from './skill-package.ts'
 
-// 新生成引用的规范形式：包名段首尾必须为字母数字，排除 . / .. 遍历段与退化名。
+// 唯一引用规则（B-02）：包名段首尾必须为字母数字，排除 . / .. 遍历段与退化名；
+// 读写同口径，不再接受旧版生成器未清理首尾符号的持久化引用。
 const REF_PATTERN = /^packages\/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9])\/[a-f0-9]{64}$/
-// 读取兼容：旧版生成器只替换非法字符并截断，未清理首尾符号，中文名等落成
-// packages/____/<sha>；这些已持久化引用必须保持可读，否则既有 Skill 升级后无法加载。
-// 段字符集不含 /（生成时已替换为 _），. 与 .. 段仍拒绝；越界防护由 resolve 边界检查承担。
-const LEGACY_REF_PATTERN = /^packages\/(?!\.{1,2}\/)[A-Za-z0-9._-]{1,64}\/[a-f0-9]{64}$/
 
 /**
  * Durable, immutable Skill folders for the single-node macOS deployment.
@@ -131,7 +128,7 @@ export class FileSystemSkillArtifactStore {
   }
 
   private resolveReference(reference: string) {
-    if (!LEGACY_REF_PATTERN.test(reference)) throw new Error('Skill 文件夹引用无效')
+    if (!REF_PATTERN.test(reference)) throw new Error('Skill 文件夹引用无效')
     const target = resolve(this.root, reference)
     if (!target.startsWith(`${this.root}/`)) throw new Error('Skill 文件夹引用越界')
     return target

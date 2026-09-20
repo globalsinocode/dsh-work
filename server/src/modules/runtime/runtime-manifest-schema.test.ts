@@ -185,16 +185,16 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     }
   })
 
-  it('accepts legacy artifact_ref shapes (symbol-edged package segments) at both boundaries', () => {
-    // 旧版生成器只替换非法字符并截断、未清理首尾符号：中文名落成 packages/____/<sha>，
-    // 首尾带 - _ . 的段是已持久化的历史形态，读取侧必须兼容（写入侧由存储层自检保持严格）。
+  it('rejects legacy artifact_ref shapes (symbol-edged package segments) at both boundaries', () => {
+    // B-02 唯一引用规则：旧版生成器只替换非法字符并截断、未清理首尾符号，
+    // 中文名落成 packages/____/<sha>——Schema/编译/存储读写同口径，不再接受。
     for (const segment of ['____', '-degenerate', 'degenerate.', '.hidden', '._edge_', 'a'.repeat(63) + '-']) {
-      assertBothAccept(applySkill(skill => {
+      assertBothReject(applySkill(skill => {
         const external = externalizedSkill()
         external.artifact_ref = `packages/${segment}/${'a'.repeat(64)}`
         delete skill.instructions
         Object.assign(skill, external)
-      }), `legacy artifact_ref ${segment}`)
+      }), /artifact reference is invalid/, `legacy artifact_ref ${segment}`)
     }
   })
 
