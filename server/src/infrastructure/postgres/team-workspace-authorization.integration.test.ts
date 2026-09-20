@@ -857,13 +857,13 @@ async function createCandidateAgent(input: {
     await transaction`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
         timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
       ) values (
         ${versionId}, ${tenantId}, ${input.id}, '1.0.0', '候选测试 Agent', '用于验证团队空间 Agent 候选过滤。',
         '', ${transaction.json(['测试'] as string[])}, '你是候选测试 Agent。',
         ${transaction.json(input.roleIds)}, ${transaction.json(['enterprise:authorized'] as string[])},
-        12000, 300, ${transaction.json([] as string[])}, ${transaction.json([] as string[])},
+        65536, 20, 300, ${transaction.json([] as string[])}, ${transaction.json([] as string[])},
         ${versionStatus}, 'U00001', '候选过滤测试'
       )
     `
@@ -915,13 +915,13 @@ async function seedAuthorizableAgent(workspaceId: string, versionId: string, vis
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '5-T4 测试 Agent', '5-T4 用例版本。', '',
       ${database.json([] as string[])}, '你是 5-T4 测试 Agent。',
       ${database.json(visibleRoleIds)}, ${database.json(['enterprise:authorized'] as string[])},
-      12000, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
       'published', 'U00008', '5-T4 测试版本'
     )
   `
@@ -965,13 +965,13 @@ test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403�
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${noGrantVersion}, ${tenantId}, ${`${noGrantWorkspace}-agent`}, '1.0.0', '5-T4 无授权 Agent', '5-T4 用例。', '',
       ${database.json([] as string[])}, '你是 5-T4 测试 Agent。',
       ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
-      12000, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
       'published', 'U00008', '5-T4 测试版本'
     )
   `

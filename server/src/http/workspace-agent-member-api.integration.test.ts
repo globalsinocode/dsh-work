@@ -1406,13 +1406,13 @@ async function createAgentVersion(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.agentId}, ${input.version}, 'T4 测试 Agent', 'T4 Agent 成员集成测试。',
       '', ${database.json(['测试'] as string[])}, '你是 T4 集成测试 Agent。',
       ${database.json(input.roleIds)}, ${database.json(['enterprise:authorized'] as string[])},
-      12000, 300, ${database.json(input.skillRefs)}, ${database.json(input.toolRefs)},
+      65536, 20, 300, ${database.json(input.skillRefs)}, ${database.json(input.toolRefs)},
       ${input.versionStatus ?? 'published'}, 'U00008', 'T4 测试版本'
     )
   `

@@ -44,7 +44,7 @@ async function draft() {
     visibility: '试点员工', roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
     welcomeMessage: '欢迎使用', examplePrompts: ['介绍自己的能力'],
     systemPrompt: '你是合成测试助手，仅用于校验管理操作事务，不执行实际模型调用。',
-    maxTokens: 12000, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], tools: ['tool-runtime-file-read@1.0.0'], changeSummary: '合成测试初稿', actor,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], tools: ['tool-runtime-file-read@1.0.0'], changeSummary: '合成测试初稿', actor,
   })).agent
 }
 async function seedRun(purpose: NonNullable<RuntimeManifest['purpose']>, sessionId = `admin-session-${randomUUID()}`) {
@@ -101,7 +101,7 @@ test('C6 RED: one general run prepares a display-only draft plan; only final con
 test('all privilege, execution, status, Runtime and unknown fields are refused by the single-confirmation path', async () => {
   const agent = await draft()
   for (const [key, value] of Object.entries({ systemPrompt: '不得通过通用助手直接改变模型行为指令。',
-    roleIds: ['role-admin'], dataScopes: ['all'], skills: [], tools: [], maxTokens: 24000, timeoutSeconds: 20,
+    roleIds: ['role-admin'], dataScopes: ['all'], skills: [], tools: [], maxOutputBytes: 131072, maxToolCalls: 20, timeoutSeconds: 20,
     visibility: '所有员工', owner: actor, department: 'test', allowWorkspaceJoin: true, status: 'published', confirmationMode: 'single', changeSummary: '不能由调用方覆盖安全字段', unknown: 1 })) {
     await assert.rejects(prepare(await seedRun('admin-assistant'), agent.id, { name: '合法字段混入', [key]: value }))
   }

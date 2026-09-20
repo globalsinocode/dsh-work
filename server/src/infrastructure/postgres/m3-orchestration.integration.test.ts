@@ -220,7 +220,7 @@ test('compilation failure converges the Run instead of leaving it queued without
     versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
-    tools: [], runtimeTools: [], approvalMode: 'risk_based', roleIds: [], dataScopes: [], maxTokens: 12000, timeoutSeconds: 300,
+    tools: [], runtimeTools: [], approvalMode: 'risk_based', roleIds: [], dataScopes: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
   const failing = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {

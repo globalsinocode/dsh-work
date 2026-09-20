@@ -20,13 +20,14 @@ export async function publishDraftWithSealedTrial(
   const [draft] = await database<{
     id: string; name: string; description: string; welcomeMessage: string
     systemPrompt: string; roleIds: string[]; dataScopes: string[]; examplePrompts: string[]
-    skills: string[]; tools: string[]; maxTokens: number; timeoutSeconds: number
+    skills: string[]; tools: string[]; maxOutputBytes: number; maxToolCalls: number; timeoutSeconds: number
   }[]>`
     select id, name, description, welcome_message as "welcomeMessage",
            system_prompt as "systemPrompt", visible_role_ids as "roleIds",
            data_scopes as "dataScopes", example_prompts as "examplePrompts",
            skill_refs as skills, tool_refs as tools,
-           max_tokens as "maxTokens", timeout_seconds as "timeoutSeconds"
+           max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
+           timeout_seconds as "timeoutSeconds"
       from agent_versions
      where tenant_id = ${tenantId} and agent_id = ${agentId} and status = 'draft'
   `

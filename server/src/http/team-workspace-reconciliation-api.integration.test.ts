@@ -558,13 +558,13 @@ async function createPublishedAgent(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.id}, '1.0.0', 'T7 测试 Agent', 'T7 对账与治理集成测试。',
       '', ${database.json(['测试'] as string[])}, '你是 T7 集成测试 Agent。',
       ${database.json(['role-employee'])}, ${database.json(['enterprise:authorized'])},
-      12000, 300, ${database.json([] as string[])}, ${database.json(input.toolRefs ?? [])},
+      65536, 20, 300, ${database.json([] as string[])}, ${database.json(input.toolRefs ?? [])},
       'published', ${input.ownerId}, 'T7 测试版本'
     )
   `

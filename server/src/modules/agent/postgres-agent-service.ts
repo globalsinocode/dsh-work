@@ -15,8 +15,11 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { agentSpecFromConfiguration, assertAgentSpecContent } from './agent-spec.ts'
 
 const tenantId = 'tenant-dsh-work'
+
+const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
 
 /**
  * Platform-seeded default assistant (0003 seed). It is the workbench's
@@ -43,7 +46,8 @@ interface AgentRow {
   dataScopes: string[]
   examplePrompts: string[]
   allowWorkspaceJoin: boolean
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
@@ -61,7 +65,8 @@ export type AgentFingerprintSource = Pick<AgentRow,
   | 'examplePrompts'
   | 'skills'
   | 'tools'
-  | 'maxTokens'
+  | 'maxOutputBytes'
+  | 'maxToolCalls'
   | 'timeoutSeconds'
 >
 
@@ -83,7 +88,8 @@ interface VersionRow {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
@@ -130,7 +136,8 @@ export interface RuntimeAgentSnapshot {
   approvalMode: 'always' | 'risk_based' | 'never'
   roleIds: string[]
   dataScopes: string[]
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
 }
 
@@ -170,7 +177,8 @@ export class PostgresAgentService {
              av.source_version as "sourceVersion", av.change_summary as summary,
              av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
-             av.system_prompt as "systemPrompt", av.max_tokens as "maxTokens",
+             av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
+             av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -204,6 +212,7 @@ export class PostgresAgentService {
     await this.assertCapabilityReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
     const versionId = `agent-version-${randomUUID()}`
     const version = '0.1.0'
+    const spec = agentSpecFromConfiguration(configuration, version)
 
     await this.database.begin(async transaction => {
       await transaction`
@@ -218,15 +227,15 @@ export class PostgresAgentService {
       await transaction`
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
-          example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
-          timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+          example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+          max_tool_calls, timeout_seconds, skill_refs, tool_refs, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
           ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
-          ${transaction.json(configuration.dataScopes)}, ${configuration.maxTokens},
-          ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-          ${transaction.json(configuration.tools)}, 'draft', ${actor.id}, ${configuration.changeSummary}
+          ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
+          ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
+          ${transaction.json(configuration.tools)}, ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
       await transaction`
@@ -276,8 +285,10 @@ export class PostgresAgentService {
                  system_prompt = ${configuration.systemPrompt},
                  visible_role_ids = ${transaction.json(configuration.roleIds)},
                  data_scopes = ${transaction.json(configuration.dataScopes)},
-                 max_tokens = ${configuration.maxTokens}, timeout_seconds = ${configuration.timeoutSeconds},
+                 max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
+                 timeout_seconds = ${configuration.timeoutSeconds},
                  skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(configuration.tools)},
+                 agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version)))},
                  change_summary = ${configuration.changeSummary}
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
@@ -292,18 +303,20 @@ export class PostgresAgentService {
            limit 1
         `
         draftVersionId = `agent-version-${randomUUID()}`
+        const newVersion = nextVersion(latest?.version ?? locked.version)
         await transaction`
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
-            example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
-            timeout_seconds, skill_refs, tool_refs, status, created_by, source_version, change_summary
+            example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+            max_tool_calls, timeout_seconds, skill_refs, tool_refs, agent_spec, status, created_by, source_version, change_summary
           ) values (
-            ${draftVersionId}, ${tenantId}, ${input.agentId}, ${nextVersion(latest?.version ?? locked.version)},
+            ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
             ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
-            ${configuration.maxTokens}, ${configuration.timeoutSeconds},
+            ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(configuration.tools)},
+            ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
           )
         `
@@ -396,7 +409,8 @@ export class PostgresAgentService {
              publisher.display_name as "publishedBy", av.source_version as "sourceVersion",
              av.change_summary as summary, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
-             av.system_prompt as "systemPrompt", av.max_tokens as "maxTokens",
+             av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
+             av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
@@ -627,7 +641,8 @@ export class PostgresAgentService {
     const [row] = await this.database<Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode'>[]>`
       select id as "versionId", system_prompt as "systemPrompt", skill_refs as skills,
              tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes",
-             max_tokens as "maxTokens", timeout_seconds as "timeoutSeconds"
+             max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
+             timeout_seconds as "timeoutSeconds"
         from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     if (!row) throw new Error(`Agent Version 不存在：${versionId}`)
@@ -777,7 +792,8 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
              av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",
-             av.max_tokens as "maxTokens", av.timeout_seconds as "timeoutSeconds",
+             av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
+             av.timeout_seconds as "timeoutSeconds",
              av.skill_refs as skills, av.tool_refs as tools, a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -797,7 +813,8 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
              av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",
-             av.max_tokens as "maxTokens", av.timeout_seconds as "timeoutSeconds",
+             av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
+             av.timeout_seconds as "timeoutSeconds",
              av.skill_refs as skills, av.tool_refs as tools, a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -856,15 +873,11 @@ function normalizeConfiguration(
 
 function assertConfiguration(input: AgentDraftConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw new Error('Agent 标识格式不正确')
-  if (input.name.length < 2 || input.name.length > 40) throw new Error('Agent 名称长度为 2～40 个字符')
-  if (input.description.length < 10 || input.description.length > 200) throw new Error('Agent 说明长度为 10～200 个字符')
-  if (input.welcomeMessage.length > 120) throw new Error('欢迎语不能超过 120 个字符')
-  if (input.systemPrompt.length < 20 || input.systemPrompt.length > 20000) throw new Error('System Prompt 长度必须为 20～20000 个字符')
+  // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
+  assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
   if (!input.roleIds.length || !input.dataScopes.length) throw new Error('必须配置可见角色和数据范围')
   if (!input.examplePrompts.length) throw new Error('必须配置至少一个示例问题')
   if (!input.skills.length || !input.tools.length) throw new Error('必须配置至少一个 Skill 和工具')
-  if (input.maxTokens < 1024 || input.maxTokens > 32768) throw new Error('Token 上限必须在 1024～32768 之间')
-  if (input.timeoutSeconds < 30 || input.timeoutSeconds > 600) throw new Error('运行超时必须在 30～600 秒之间')
 }
 
 function toAgentDefinition(row: AgentRow): AgentDefinition {
@@ -885,7 +898,8 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,
     systemPrompt: row.systemPrompt,
-    maxTokens: row.maxTokens,
+    maxOutputBytes: row.maxOutputBytes,
+    maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
@@ -911,7 +925,8 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,
     systemPrompt: row.systemPrompt,
-    maxTokens: row.maxTokens,
+    maxOutputBytes: row.maxOutputBytes,
+    maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
@@ -930,7 +945,8 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
     tools: [...row.tools].sort(),
-    maxTokens: row.maxTokens,
+    maxOutputBytes: row.maxOutputBytes,
+    maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
   })).digest('hex')
 }

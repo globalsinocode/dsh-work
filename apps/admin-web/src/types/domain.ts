@@ -167,7 +167,8 @@ export interface AgentDefinition {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
@@ -221,7 +222,8 @@ export interface AgentDraftConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
@@ -251,7 +253,8 @@ export interface AgentVersionRecord {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]

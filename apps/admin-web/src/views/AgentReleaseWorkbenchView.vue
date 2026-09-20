@@ -459,7 +459,7 @@ onMounted(async () => {
               <small v-if="!agent.roleIds.length && !candidateDataScopes.length">未配置</small>
               <span class="definition-meta__divider" aria-hidden="true" />
               <span class="definition-meta__label">限制</span>
-              <strong>{{ (draftVersion?.maxTokens ?? 0).toLocaleString() }} Token · {{ draftVersion?.timeoutSeconds ?? '—' }} 秒</strong>
+              <strong>{{ draftVersion?.timeoutSeconds ?? '—' }} 秒 · {{ draftVersion?.maxToolCalls ?? '—' }} 次工具调用 · {{ (draftVersion?.maxOutputBytes ?? 0).toLocaleString() }} 字节输出</strong>
             </div>
             <el-collapse class="definition-details">
               <el-collapse-item title="版本与变更详情" name="version-details">

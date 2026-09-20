@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import { assertAgentSpecLimits } from '../../agent/agent-spec.ts'
+
 import type { PrototypeRepository } from '../../../infrastructure/prototype/prototype-repository.ts'
 import type {
   AgentDefinition,
@@ -330,7 +332,8 @@ export class AdminQueryService {
       welcomeMessage: target.welcomeMessage,
       examplePrompts: target.examplePrompts,
       systemPrompt: target.systemPrompt,
-      maxTokens: target.maxTokens,
+      maxOutputBytes: target.maxOutputBytes,
+      maxToolCalls: target.maxToolCalls,
       timeoutSeconds: target.timeoutSeconds,
       skills: target.skills,
       tools: target.tools,
@@ -688,8 +691,7 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.welcomeMessage.trim().length > 120) throw new Error('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw new Error('请配置至少一个示例问题')
   if (input.systemPrompt.trim().length < 20) throw new Error('System Prompt 至少需要 20 个字符')
-  if (input.maxTokens < 1024 || input.maxTokens > 32768) throw new Error('Token 上限必须在 1024～32768 之间')
-  if (input.timeoutSeconds < 30 || input.timeoutSeconds > 600) throw new Error('运行超时必须在 30～600 秒之间')
+  assertAgentSpecLimits({ timeoutSeconds: input.timeoutSeconds, maxToolCalls: input.maxToolCalls, maxOutputBytes: input.maxOutputBytes })
   if (input.skills.length === 0) throw new Error('请至少引用一个已发布 Skill')
   if (input.tools.length === 0) throw new Error('请至少选择一个可用工具')
 }
@@ -707,7 +709,8 @@ function assertAgentReady(agent: AgentDefinition) {
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: agent.examplePrompts,
     systemPrompt: agent.systemPrompt,
-    maxTokens: agent.maxTokens,
+    maxOutputBytes: agent.maxOutputBytes,
+    maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: agent.skills,
     tools: agent.tools,
@@ -761,7 +764,8 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
-    maxTokens: agent.maxTokens,
+    maxOutputBytes: agent.maxOutputBytes,
+    maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
     tools: [...agent.tools],

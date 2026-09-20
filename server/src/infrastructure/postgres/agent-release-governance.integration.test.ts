@@ -94,7 +94,7 @@ async function createDraftAgent(id: string) {
     welcomeMessage: '',
     examplePrompts: ['评估本周退款风险订单'],
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
-    maxTokens: 12000,
+    maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: ['skill-document@1.0.0'],
     tools: ['read@1.0.0'],
@@ -103,18 +103,27 @@ async function createDraftAgent(id: string) {
   })
 }
 
-function buildAgentYaml(overrides: Record<string, string | string[]> = {}) {
-  const extra = Array.isArray(overrides.extra) ? overrides.extra : []
+function buildAgentYaml(overrides: { id?: string; name?: string; version?: string; description?: string; tools?: string; specLines?: string[]; topLines?: string[] } = {}) {
+  // tools 为逗号分隔的 id@x.y.z 精确引用；specLines 追加在 spec 内，topLines 追加在顶层。
+  const tools = (overrides.tools ?? 'read@1.0.0').split(',').map(item => item.trim()).filter(Boolean)
   return [
-    `id: ${overrides.id ?? 'zip-agent'}`,
-    `name: ${overrides.name ?? '退款预测助手'}`,
-    `version: ${overrides.version ?? '0.1.0'}`,
-    `description: ${overrides.description ?? '基于历史退款记录预测高风险订单。'}`,
-    'system_prompt_file: prompts/system.md',
-    'visible_role_ids: [role-employee]',
-    'data_scopes: [workspace:authorized]',
-    `tools: [${overrides.tools ?? 'read@1.0.0'}]`,
-    ...extra,
+    'apiVersion: dsh-work.ai/v1',
+    'kind: AgentPackage',
+    'metadata:',
+    `  id: ${overrides.id ?? 'zip-agent'}`,
+    `  name: ${overrides.name ?? '退款预测助手'}`,
+    `  version: ${overrides.version ?? '0.1.0'}`,
+    `  description: ${overrides.description ?? '基于历史退款记录预测高风险订单。'}`,
+    'spec:',
+    '  instructions: prompts/system.md',
+    '  capabilities:',
+    '    tools:',
+    ...tools.map(reference => {
+      const separator = reference.lastIndexOf('@')
+      return `      - id: ${reference.slice(0, separator)}\n        version: ${reference.slice(separator + 1)}`
+    }),
+    ...(overrides.specLines ?? []),
+    ...(overrides.topLines ?? []),
     '',
   ].join('\n')
 }
@@ -299,7 +308,7 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
     welcomeMessage: '',
     examplePrompts: ['评估本周退款风险订单'],
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
-    maxTokens: 12000,
+    maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: ['skill-document@1.0.0'],
     tools: ['read@1.0.0'],
@@ -402,7 +411,7 @@ test('提交审核后候选封存：退回解锁修订推进，发布必须经 s
     welcomeMessage: '',
     examplePrompts: ['评估本周退款风险订单'],
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
-    maxTokens: 12000,
+    maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: ['skill-document@1.0.0'],
     tools: ['read@1.0.0'],
@@ -533,18 +542,18 @@ test('checksums.json 必须精确覆盖包内文件集合，版本号拒绝预�
   // 版本号预发布/构建后缀：排序 SQL 会把第 3 段转整数，必须拒绝
   await assert.rejects(
     release.inspectPackage('prerelease.zip', createZip({ ...base, 'agent.yaml': buildAgentYaml({ id: 'agent-checksums', version: '1.0.0-rc.1' }) })),
-    /version 必须是 x\.y\.z/,
+    /metadata\.version must match pattern/,
   )
 })
 
 test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引用后放行', async () => {
   const zip = createZip({
-    'agent.yaml': buildAgentYaml({ id: 'agent-release-missing', tools: 'read@1.0.0, knowledge.search' }),
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-missing', tools: 'read@1.0.0, knowledge.search@1.0.0' }),
     'prompts/system.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   const state = await release.importPackage(ADMIN, 'missing.zip', zip)
-  assert.deepEqual(state.candidate?.missingDeps.tools, ['knowledge.search'])
+  assert.deepEqual(state.candidate?.missingDeps.tools, ['knowledge.search@1.0.0'])
 
   const checked = await release.runChecks('agent-release-missing', ADMIN)
   const deps = checked.candidate?.checks.find(item => item.id === 'deps')
@@ -555,7 +564,7 @@ test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引�
     /试运行被阻塞/,
   )
 
-  const updated = await release.removeMissingDependency('agent-release-missing', 'tools', 'knowledge.search', ADMIN)
+  const updated = await release.removeMissingDependency('agent-release-missing', 'tools', 'knowledge.search@1.0.0', ADMIN)
   assert.equal(updated.candidate?.revision, 2)
   assert.deepEqual(updated.candidate?.missingDeps.tools, [])
 
@@ -651,12 +660,12 @@ test('ZIP 重复导入同内容幂等返回，同版本不同内容明确版本�
 
 test('inspectPackage 只解析不落库', async () => {
   const zip = createZip({
-    'agent.yaml': buildAgentYaml({ id: 'agent-release-inspect', tools: 'read@1.0.0, ghost.tool' }),
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-inspect', tools: 'read@1.0.0, ghost.tool@1.0.0' }),
     'prompts/system.md': PROMPT,
   })
   const info = await release.inspectPackage('inspect.zip', zip)
   assert.equal(info.manifest.id, 'agent-release-inspect')
-  assert.deepEqual(info.missing.tools, ['ghost.tool'])
+  assert.deepEqual(info.missing.tools, ['ghost.tool@1.0.0'])
 
   const agentsList = await agents.getAgents()
   assert.ok(!agentsList.some(item => item.id === 'agent-release-inspect'))
@@ -669,18 +678,18 @@ test('inspectPackage 只解析不落库', async () => {
 // 拒绝、未识别字段警告留痕（不静默忽略）
 // ---------------------------------------------------------------------------
 
-test('平台受管字段与 apiVersion/spec 结构清单在解析期拒绝', async () => {
+test('平台受管字段与旧扁平清单在解析期拒绝', async () => {
   const reserved = createZip({
-    'agent.yaml': buildAgentYaml({ id: 'agent-release-denied', extra: ['api_key: sk-test'] }),
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-denied', topLines: ['api_key: sk-test'] }),
     'prompts/system.md': PROMPT,
   })
   await assert.rejects(release.inspectPackage('denied.zip', reserved), /平台受管字段：api_key/)
 
-  const structured = createZip({
-    'agent.yaml': ['apiVersion: dsh-work/v1', 'spec:', '  id: agent-release-denied', ''].join('\n'),
+  const legacy = createZip({
+    'agent.yaml': ['id: agent-release-denied', 'name: 退款预测助手', 'version: 0.1.0', 'description: 基于历史退款记录预测高风险订单。', 'system_prompt_file: prompts/system.md', ''].join('\n'),
     'prompts/system.md': PROMPT,
   })
-  await assert.rejects(release.inspectPackage('structured.zip', structured), /扁平 agent\.yaml/)
+  await assert.rejects(release.inspectPackage('legacy.zip', legacy), /旧扁平清单字段|apiVersion/)
 
   await assert.rejects(release.importPackage(ADMIN, 'denied.zip', reserved), /平台受管字段：api_key/)
   const agentsList = await agents.getAgents()
@@ -701,21 +710,22 @@ test('声明版本与包内候选版本冲突拒绝导入', async () => {
   assert.ok(!agentsList.some(item => item.id === 'agent-release-depconflict'))
 })
 
-test('别名字段冲突拒绝；未识别字段警告随包留痕并在状态可见', async () => {
+test('旧别名与未识别字段在严格 Schema 下直接拒绝导入', async () => {
   const conflict = createZip({
-    'agent.yaml': buildAgentYaml({ id: 'agent-release-alias', extra: ['display_name: 另一个名称'] }),
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-alias', topLines: ['display_name: 另一个名称'] }),
     'prompts/system.md': PROMPT,
   })
-  await assert.rejects(release.inspectPackage('alias.zip', conflict), /name 与 display_name.*取值不一致/)
+  await assert.rejects(release.inspectPackage('alias.zip', conflict), /未定义字段 display_name|结构校验未通过/)
 
   const unknown = createZip({
-    'agent.yaml': buildAgentYaml({ id: 'agent-release-unknown', extra: ['author: ops-team'] }),
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-unknown', topLines: ['author: ops-team'] }),
     'prompts/system.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
-  const state = await release.importPackage(ADMIN, 'unknown.zip', unknown)
-  assert.equal(state.candidate?.version, '0.1.0')
-  assert.ok(state.packageWarnings.some(item => /未识别字段已忽略：author/.test(item)))
+  await assert.rejects(release.importPackage(ADMIN, 'unknown.zip', unknown), /未定义字段 author|结构校验未通过/)
+  const agentsList = await agents.getAgents()
+  assert.ok(!agentsList.some(item => item.id === 'agent-release-alias'))
+  assert.ok(!agentsList.some(item => item.id === 'agent-release-unknown'))
 })
 
 // 试运行桩 Runtime：模拟 DSH 终态事件流，验证试运行走的是真实 Run/Attempt 编排链路。

@@ -95,7 +95,7 @@ test('Skill lifecycle auto-generates identity, gates publishing, versions and pr
     welcomeMessage: '',
     examplePrompts: ['分析当前订单风险'],
     systemPrompt: '你是 Skill 集成验证助手，只能依据已授权输入和固定 Skill 指令生成可验证结论。',
-    maxTokens: 12000,
+    maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: [`${skillId}@0.1.0`],
     tools: ['read@1.0.0'],

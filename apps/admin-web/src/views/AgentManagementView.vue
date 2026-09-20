@@ -345,7 +345,7 @@ onMounted(async () => {
             </dl>
           </section>
           <dl class="agent-detail__meta">
-            <div><dt>Agent 标识</dt><dd class="mono">{{ selectedAgent.id }}</dd></div><div><dt>活动版本</dt><dd class="mono">v{{ selectedAgent.version }}</dd></div><div><dt>负责人</dt><dd>{{ selectedAgent.owner }}</dd></div><div><dt>归属部门</dt><dd>{{ selectedAgent.department }}</dd></div><div><dt>可见范围</dt><dd>{{ selectedAgent.visibility }}</dd></div><div><dt>可见角色</dt><dd>{{ agentRoleNames(selectedAgent) }}</dd></div><div><dt>运行限制</dt><dd>{{ selectedAgent.maxTokens.toLocaleString() }} Token · {{ selectedAgent.timeoutSeconds }} 秒</dd></div>
+            <div><dt>Agent 标识</dt><dd class="mono">{{ selectedAgent.id }}</dd></div><div><dt>活动版本</dt><dd class="mono">v{{ selectedAgent.version }}</dd></div><div><dt>负责人</dt><dd>{{ selectedAgent.owner }}</dd></div><div><dt>归属部门</dt><dd>{{ selectedAgent.department }}</dd></div><div><dt>可见范围</dt><dd>{{ selectedAgent.visibility }}</dd></div><div><dt>可见角色</dt><dd>{{ agentRoleNames(selectedAgent) }}</dd></div><div><dt>运行限制</dt><dd>{{ selectedAgent.timeoutSeconds }} 秒 · {{ selectedAgent.maxToolCalls }} 次工具调用 · {{ selectedAgent.maxOutputBytes.toLocaleString() }} 字节输出</dd></div>
           </dl>
           <section class="agent-detail__section"><h3>员工使用体验</h3><div class="experience-card"><strong>欢迎语</strong><p>{{ selectedAgent.welcomeMessage }}</p><strong>示例问题</strong><div class="chip-list"><span v-for="prompt in selectedAgent.examplePrompts" :key="prompt">{{ prompt }}</span></div></div></section>
           <section class="agent-detail__section"><h3>System Prompt</h3><pre class="prompt-preview">{{ selectedAgent.systemPrompt }}</pre></section>

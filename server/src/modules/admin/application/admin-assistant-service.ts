@@ -88,7 +88,7 @@ interface ActionRow {
 
 type AgentSnapshot = Pick<AgentDefinition,
   'id' | 'name' | 'description' | 'owner' | 'department' | 'visibility' | 'roleIds' | 'dataScopes'
-  | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'maxTokens' | 'timeoutSeconds' | 'skills' | 'tools'
+  | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'tools'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -498,7 +498,7 @@ export class AdminAssistantService {
       }
     }
 
-    const allowed = ['name', 'description', 'visibility', 'roleIds', 'dataScopes', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxTokens', 'timeoutSeconds', 'skills', 'tools', 'changeSummary']
+    const allowed = ['name', 'description', 'visibility', 'roleIds', 'dataScopes', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'tools', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -513,7 +513,8 @@ export class AdminAssistantService {
       welcomeMessage: readChangedString(changes, 'welcomeMessage', agent.welcomeMessage, 1, 2000),
       examplePrompts: readChangedStringArray(changes, 'examplePrompts', agent.examplePrompts, 20),
       systemPrompt: readChangedString(changes, 'systemPrompt', agent.systemPrompt, 20, 20000),
-      maxTokens: changes['maxTokens'] === undefined ? agent.maxTokens : readInteger(changes, 'maxTokens', 1, 1_000_000),
+      maxOutputBytes: changes['maxOutputBytes'] === undefined ? agent.maxOutputBytes : readInteger(changes, 'maxOutputBytes', 1, 10_000_000),
+      maxToolCalls: changes['maxToolCalls'] === undefined ? agent.maxToolCalls : readInteger(changes, 'maxToolCalls', 1, 10_000),
       timeoutSeconds: changes['timeoutSeconds'] === undefined ? agent.timeoutSeconds : readInteger(changes, 'timeoutSeconds', 1, 3600),
       skills: readChangedStringArray(changes, 'skills', agent.skills, 100),
       tools: readChangedStringArray(changes, 'tools', agent.tools, 100),
@@ -819,7 +820,8 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
-    maxTokens: agent.maxTokens,
+    maxOutputBytes: agent.maxOutputBytes,
+    maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
     tools: [...agent.tools],
@@ -842,7 +844,8 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.welcomeMessage === after.welcomeMessage
     && canonicalJson(agent.examplePrompts) === canonicalJson(after.examplePrompts)
     && agent.systemPrompt === after.systemPrompt
-    && agent.maxTokens === after.maxTokens
+    && agent.maxOutputBytes === after.maxOutputBytes
+    && agent.maxToolCalls === after.maxToolCalls
     && agent.timeoutSeconds === after.timeoutSeconds
     && canonicalJson(agent.skills) === canonicalJson(after.skills)
     && canonicalJson(agent.tools) === canonicalJson(after.tools)

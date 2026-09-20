@@ -148,7 +148,8 @@ interface DraftVersionShape {
   roleIds: string[]
   dataScopes: string[]
   examplePrompts: string[]
-  maxTokens: number
+  maxOutputBytes: number
+  maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
@@ -195,6 +196,16 @@ const CASE_KINDS: ReleaseEvalCase['kind'][] = ['success', 'invalid_input', 'perm
 /** sql.json 需要 JSONValue；与既有服务一致，经 JSON 往返擦除接口类型。 */
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
 
+/**
+ * ZIP 导入的平台字段默认值：可见角色、数据范围与团队空间开关属平台授权配置，
+ * 不在包内声明；首次导入按此初始化，重复导入保留管理员既有配置。
+ */
+const ZIP_IMPORT_PLATFORM_DEFAULTS = {
+  roleIds: ['role-employee'],
+  dataScopes: ['enterprise:authorized', 'workspace:authorized'],
+  allowWorkspaceJoin: false,
+}
+
 function parseRef(reference: string): CapabilityRef {
   const separator = reference.lastIndexOf('@')
   if (separator > 0) return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
@@ -226,7 +237,8 @@ function draftFingerprint(draft: DraftVersionShape) {
     examplePrompts: draft.examplePrompts,
     skills: draft.skills,
     tools: draft.tools,
-    maxTokens: draft.maxTokens,
+    maxOutputBytes: draft.maxOutputBytes,
+    maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
   })
 }
@@ -1157,9 +1169,9 @@ export class PostgresAgentReleaseService {
     const resolved = await this.resolveDeclared(parsed.declared)
     return {
       fileName,
-      manifest: parsed.manifest,
+      manifest: parsed.spec.metadata,
       files: Object.keys(parsed.files).sort(),
-      systemPrompt: parsed.definition.systemPrompt,
+      systemPrompt: parsed.spec.instructions.body,
       resolved: { skills: resolved.skills, tools: resolved.tools },
       missing: { skills: resolved.missingSkills, tools: resolved.missingTools },
       packageRefs: parsed.packageRefs,
@@ -1178,7 +1190,7 @@ export class PostgresAgentReleaseService {
     const packageId = `agent-package-${randomUUID()}`
     const stagingDir = join(this.packagesDir, `.staging-${packageId}`)
     const finalDir = join(this.packagesDir, packageId)
-    const agentId = parsed.manifest.id
+    const agentId = parsed.spec.metadata.id
     const packageSha = createHash('sha256').update(bytes).digest('hex')
     let duplicate = false
     try {
@@ -1197,50 +1209,63 @@ export class PostgresAgentReleaseService {
         const [priorPackage] = await tx<{ sha256: string }[]>`
           select sha256 from agent_packages
            where tenant_id = ${tenantId} and agent_id = ${agentId}
-             and manifest->>'version' = ${parsed.manifest.version}
+             and manifest->>'version' = ${parsed.spec.metadata.version}
            order by created_at desc limit 1
         `
         if (priorPackage?.sha256 === packageSha) { duplicate = true; return }
         if (priorPackage) {
           throw Object.assign(
-            new Error(`版本 v${parsed.manifest.version} 已导入过内容不同的发布包；相同内容可直接复用，不同内容请修改包内 version`),
+            new Error(`版本 v${parsed.spec.metadata.version} 已导入过内容不同的发布包；相同内容可直接复用，不同内容请修改包内 version`),
             { status: 409, code: 'version_conflict' },
           )
         }
       }
       let draftVersionId: string
       let draftVersion: string
+      // 平台字段（可见角色/数据范围/团队空间开关）不随包覆写：首次导入用平台默认值，
+      // 重复导入保留管理员在平台上的既有配置。
+      let platformFields = { ...ZIP_IMPORT_PLATFORM_DEFAULTS }
       if (!existing) {
         draftVersionId = `agent-version-${randomUUID()}`
-        draftVersion = parsed.manifest.version
+        draftVersion = parsed.spec.metadata.version
         await tx`
           insert into agents (id, tenant_id, name, description, welcome_message, owner_user_id, created_by, status, draft_version_id)
-          values (${agentId}, ${tenantId}, ${parsed.manifest.name}, ${parsed.manifest.description}, ${parsed.definition.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null)
+          values (${agentId}, ${tenantId}, ${parsed.spec.metadata.name}, ${parsed.spec.metadata.description}, ${parsed.spec.catalog.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null)
         `
-        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id)
-        await tx`update agents set draft_version_id = ${draftVersionId}, allow_workspace_join = ${parsed.definition.allowWorkspaceJoin}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
+        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)
+        await tx`update agents set draft_version_id = ${draftVersionId}, allow_workspace_join = ${platformFields.allowWorkspaceJoin}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
       } else if (existing.draftVersionId) {
         draftVersionId = existing.draftVersionId
-        draftVersion = await this.updateDraftVersion(tx, draftVersionId, parsed, resolved)
+        const updated = await this.updateDraftVersion(tx, draftVersionId, parsed, resolved)
+        draftVersion = updated.version
+        platformFields = { ...platformFields, roleIds: updated.roleIds, dataScopes: updated.dataScopes }
       } else {
-        draftVersion = await this.availableVersion(tx, agentId, parsed.manifest.version)
+        draftVersion = await this.availableVersion(tx, agentId, parsed.spec.metadata.version)
         draftVersionId = `agent-version-${randomUUID()}`
-        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id)
+        const [current] = await tx<{ roleIds: string[]; dataScopes: string[] }[]>`
+          select visible_role_ids as "roleIds", data_scopes as "dataScopes"
+            from agent_versions
+           where tenant_id = ${tenantId} and agent_id = ${agentId}
+           order by created_at desc limit 1
+        `
+        if (current) platformFields = { ...platformFields, roleIds: current.roleIds, dataScopes: current.dataScopes }
+        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)
         await tx`update agents set draft_version_id = ${draftVersionId}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
       }
 
       const boundFingerprint = draftFingerprint({
         id: draftVersionId,
         version: draftVersion,
-        name: parsed.manifest.name,
-        description: parsed.manifest.description,
-        welcomeMessage: parsed.definition.welcomeMessage,
-        systemPrompt: parsed.definition.systemPrompt,
-        roleIds: parsed.definition.roleIds,
-        dataScopes: parsed.definition.dataScopes,
-        examplePrompts: parsed.definition.examplePrompts,
-        maxTokens: parsed.definition.maxTokens,
-        timeoutSeconds: parsed.definition.timeoutSeconds,
+        name: parsed.spec.metadata.name,
+        description: parsed.spec.metadata.description,
+        welcomeMessage: parsed.spec.catalog.welcomeMessage,
+        systemPrompt: parsed.spec.instructions.body,
+        roleIds: platformFields.roleIds,
+        dataScopes: platformFields.dataScopes,
+        examplePrompts: parsed.spec.catalog.examplePrompts,
+        maxOutputBytes: parsed.spec.limits.maxOutputBytes,
+        maxToolCalls: parsed.spec.limits.maxToolCalls,
+        timeoutSeconds: parsed.spec.limits.timeoutSeconds,
         skills: resolved.skills,
         tools: resolved.tools,
       })
@@ -1251,7 +1276,7 @@ export class PostgresAgentReleaseService {
           ${packageId}, ${tenantId}, ${agentId}, ${fileName},
           ${packageSha},
           ${join(this.packagesDir, packageId)},
-          ${tx.json(asJson({ ...parsed.manifest, rootDir: parsed.rootDir, checksumsVerified: parsed.checksumsVerified, declared: parsed.declared }))},
+          ${tx.json(asJson({ ...parsed.spec.metadata, rootDir: parsed.rootDir, checksumsVerified: parsed.checksumsVerified, declared: parsed.declared }))},
           ${tx.json(asJson(Object.keys(parsed.files)))}, ${tx.json(asJson(warnings))}, ${actor.id}
         )
       `
@@ -1269,7 +1294,7 @@ export class PostgresAgentReleaseService {
       if (!submission) {
         const cases = parsed.cases.length
           ? parsed.cases.map(item => ({ ...item, id: `case-${randomUUID()}` }))
-          : defaultCases({ name: parsed.manifest.name, description: parsed.manifest.description, examplePrompts: parsed.definition.examplePrompts, dataScopes: parsed.definition.dataScopes })
+          : defaultCases({ name: parsed.spec.metadata.name, description: parsed.spec.metadata.description, examplePrompts: parsed.spec.catalog.examplePrompts, dataScopes: platformFields.dataScopes })
         await tx`
           insert into agent_release_submissions (
             id, tenant_id, agent_id, agent_version_id, bound_fingerprint, revision, status, source,
@@ -1313,10 +1338,10 @@ export class PostgresAgentReleaseService {
     if (duplicate) {
       // 相同包重复导入：事务内未写入任何记录，本次落盘的包文件直接清掉。
       await rm(finalDir, { recursive: true, force: true }).catch(() => {})
-      await this.audit(actor.id, 'agent.release.import', agentId, 'success', `重复导入相同发布包 ${fileName}（v${parsed.manifest.version}），返回既有治理状态`)
+      await this.audit(actor.id, 'agent.release.import', agentId, 'success', `重复导入相同发布包 ${fileName}（v${parsed.spec.metadata.version}），返回既有治理状态`)
       return this.getReleaseState(agentId)
     }
-    await this.audit(actor.id, 'agent.release.import', agentId, 'success', `导入发布包 ${fileName}（v${parsed.manifest.version}）`)
+    await this.audit(actor.id, 'agent.release.import', agentId, 'success', `导入发布包 ${fileName}（v${parsed.spec.metadata.version}）`)
     return this.getReleaseState(agentId)
   }
 
@@ -1328,19 +1353,24 @@ export class PostgresAgentReleaseService {
     parsed: ReturnType<typeof parseAgentPackage>,
     resolved: { skills: string[]; tools: string[] },
     actorId: string,
+    platformFields: { roleIds: string[]; dataScopes: string[] },
   ) {
+    // agent_spec 记录声明式定义（含包内候选引用）；skill_refs/tool_refs 记录平台
+    // 已解析引用——两者同一来源（parsed.spec + resolved），不是第二套定义。
+    const spec = { ...parsed.spec, metadata: { ...parsed.spec.metadata, version } }
     await tx`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
-        timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+        max_tool_calls, timeout_seconds, skill_refs, tool_refs, agent_spec, status, created_by, change_summary
       ) values (
-        ${versionId}, ${tenantId}, ${agentId}, ${version}, ${parsed.manifest.name},
-        ${parsed.manifest.description}, ${parsed.definition.welcomeMessage},
-        ${tx.json(asJson(parsed.definition.examplePrompts))}, ${parsed.definition.systemPrompt},
-        ${tx.json(asJson(parsed.definition.roleIds))}, ${tx.json(asJson(parsed.definition.dataScopes))},
-        ${parsed.definition.maxTokens}, ${parsed.definition.timeoutSeconds},
+        ${versionId}, ${tenantId}, ${agentId}, ${version}, ${parsed.spec.metadata.name},
+        ${parsed.spec.metadata.description}, ${parsed.spec.catalog.welcomeMessage},
+        ${tx.json(asJson(parsed.spec.catalog.examplePrompts))}, ${parsed.spec.instructions.body},
+        ${tx.json(asJson(platformFields.roleIds))}, ${tx.json(asJson(platformFields.dataScopes))},
+        ${parsed.spec.limits.maxOutputBytes}, ${parsed.spec.limits.maxToolCalls}, ${parsed.spec.limits.timeoutSeconds},
         ${tx.json(asJson(resolved.skills))}, ${tx.json(asJson(resolved.tools))},
+        ${tx.json(asJson(spec))},
         'draft', ${actorId}, 'ZIP 发布包导入'
       )
     `
@@ -1351,28 +1381,39 @@ export class PostgresAgentReleaseService {
     draftVersionId: string,
     parsed: ReturnType<typeof parseAgentPackage>,
     resolved: { skills: string[]; tools: string[] },
-  ): Promise<string> {
+  ): Promise<{ version: string; roleIds: string[]; dataScopes: string[] }> {
     const [conflict] = await tx<{ id: string }[]>`
       select av.id from agent_versions av
         join agent_versions draft on draft.tenant_id = av.tenant_id and draft.id = ${draftVersionId}
        where av.tenant_id = ${tenantId} and av.agent_id = draft.agent_id
-         and av.version = ${parsed.manifest.version} and av.id <> ${draftVersionId}
+         and av.version = ${parsed.spec.metadata.version} and av.id <> ${draftVersionId}
     `
-    if (conflict) throw new Error(`版本 v${parsed.manifest.version} 已存在于该 Agent 的版本记录中，请修改包内 version 后重新导入`)
+    if (conflict) throw new Error(`版本 v${parsed.spec.metadata.version} 已存在于该 Agent 的版本记录中，请修改包内 version 后重新导入`)
+    // 平台字段（visible_role_ids/data_scopes）不由包声明，重复导入保留既有配置。
+    const [current] = await tx<{ roleIds: string[]; dataScopes: string[] }[]>`
+      select visible_role_ids as "roleIds", data_scopes as "dataScopes"
+        from agent_versions
+       where tenant_id = ${tenantId} and id = ${draftVersionId}
+    `
     await tx`
       update agent_versions
-         set version = ${parsed.manifest.version}, name = ${parsed.manifest.name},
-             description = ${parsed.manifest.description}, welcome_message = ${parsed.definition.welcomeMessage},
-             example_prompts = ${tx.json(asJson(parsed.definition.examplePrompts))},
-             system_prompt = ${parsed.definition.systemPrompt},
-             visible_role_ids = ${tx.json(asJson(parsed.definition.roleIds))},
-             data_scopes = ${tx.json(asJson(parsed.definition.dataScopes))},
-             max_tokens = ${parsed.definition.maxTokens}, timeout_seconds = ${parsed.definition.timeoutSeconds},
+         set version = ${parsed.spec.metadata.version}, name = ${parsed.spec.metadata.name},
+             description = ${parsed.spec.metadata.description}, welcome_message = ${parsed.spec.catalog.welcomeMessage},
+             example_prompts = ${tx.json(asJson(parsed.spec.catalog.examplePrompts))},
+             system_prompt = ${parsed.spec.instructions.body},
+             max_output_bytes = ${parsed.spec.limits.maxOutputBytes},
+             max_tool_calls = ${parsed.spec.limits.maxToolCalls},
+             timeout_seconds = ${parsed.spec.limits.timeoutSeconds},
              skill_refs = ${tx.json(asJson(resolved.skills))}, tool_refs = ${tx.json(asJson(resolved.tools))},
+             agent_spec = ${tx.json(asJson(parsed.spec))},
              change_summary = 'ZIP 发布包导入'
        where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
     `
-    return parsed.manifest.version
+    return {
+      version: parsed.spec.metadata.version,
+      roleIds: current?.roleIds ?? ZIP_IMPORT_PLATFORM_DEFAULTS.roleIds,
+      dataScopes: current?.dataScopes ?? ZIP_IMPORT_PLATFORM_DEFAULTS.dataScopes,
+    }
   }
 
   /**
@@ -1400,33 +1441,22 @@ export class PostgresAgentReleaseService {
     const resolvedSkills: string[] = []
     const resolvedTools: string[] = []
 
-    // 未锁版本的声明解析到平台当前发布/可用版本后，统一走能力服务的规范断言——
-    // 与草稿配置的 resolveDraftReferences 同一口径，避免两套可用性/版本规则漂移。
-    const skillRows = this.skills ? await this.skills.getSkills() : []
-    const toolRows = this.tools ? await this.tools.getTools() : []
-
+    // 声明引用在新格式下必为 `id@x.y.z` 精确版本（解析器已拒绝缺省/非精确写法），
+    // 直接走能力服务的规范断言，不做 implicit/latest 版本解析。
     for (const reference of declared.skills) {
-      const { id, version } = parseRef(reference)
       if (!this.skills) { missingSkills.push(reference); continue }
-      const locked = version === '—'
-        ? `${id}@${skillRows.find(item => item.id === id)?.activeVersion ?? ''}`
-        : reference
       try {
-        await this.skills.assertPublishedReferences([locked])
-        resolvedSkills.push(locked)
+        await this.skills.assertPublishedReferences([reference])
+        resolvedSkills.push(reference)
       } catch {
         missingSkills.push(reference)
       }
     }
     for (const reference of declared.tools) {
-      const { id, version } = parseRef(reference)
       if (!this.tools) { missingTools.push(reference); continue }
-      const locked = version === '—'
-        ? `${id}@${toolRows.find(item => item.id === id)?.version ?? ''}`
-        : reference
       try {
-        await this.tools.assertAvailableReferences([locked])
-        resolvedTools.push(locked)
+        await this.tools.assertAvailableReferences([reference])
+        resolvedTools.push(reference)
       } catch {
         missingTools.push(reference)
       }
@@ -1486,7 +1516,8 @@ export class PostgresAgentReleaseService {
       draftRoleIds: string[] | null
       draftDataScopes: string[] | null
       draftExamplePrompts: string[] | null
-      draftMaxTokens: number | null
+      draftMaxOutputBytes: number | null
+      draftMaxToolCalls: number | null
       draftTimeoutSeconds: number | null
       draftSkills: string[] | null
       draftTools: string[] | null
@@ -1497,7 +1528,8 @@ export class PostgresAgentReleaseService {
              draft.description as "draftDescription", draft.welcome_message as "draftWelcomeMessage",
              draft.system_prompt as "draftSystemPrompt", draft.visible_role_ids as "draftRoleIds",
              draft.data_scopes as "draftDataScopes", draft.example_prompts as "draftExamplePrompts",
-             draft.max_tokens as "draftMaxTokens", draft.timeout_seconds as "draftTimeoutSeconds",
+             draft.max_output_bytes as "draftMaxOutputBytes", draft.max_tool_calls as "draftMaxToolCalls",
+             draft.timeout_seconds as "draftTimeoutSeconds",
              draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools"
         from agents a
         left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
@@ -1520,7 +1552,8 @@ export class PostgresAgentReleaseService {
           roleIds: row.draftRoleIds ?? [],
           dataScopes: row.draftDataScopes ?? [],
           examplePrompts: row.draftExamplePrompts ?? [],
-          maxTokens: row.draftMaxTokens ?? 12000,
+          maxOutputBytes: row.draftMaxOutputBytes ?? 65536,
+          maxToolCalls: row.draftMaxToolCalls ?? 20,
           timeoutSeconds: row.draftTimeoutSeconds ?? 300,
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],

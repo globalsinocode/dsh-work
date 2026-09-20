@@ -1683,7 +1683,8 @@
           "roleIds",
           "dataScopes",
           "systemPrompt",
-          "maxTokens",
+          "maxOutputBytes",
+          "maxToolCalls",
           "timeoutSeconds",
           "skills",
           "tools",
@@ -1757,9 +1758,15 @@
             },
             "uniqueItems": true
           },
-          "maxTokens": {
+          "maxOutputBytes": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1024,
+            "maximum": 1048576
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
           },
           "timeoutSeconds": {
             "type": "integer",

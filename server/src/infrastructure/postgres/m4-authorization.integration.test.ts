@@ -141,7 +141,7 @@ test('authorization is fail-closed and compiles the effective identity into Runt
       roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
       welcomeMessage: '', examplePrompts: ['测试权限'],
       systemPrompt: '这是一个不会被创建的越权测试 Agent 配置。',
-      maxTokens: 12000, timeoutSeconds: 300,
+      maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
       skills: [], tools: [], changeSummary: '越权测试', actor: '林岚',
     }),
     /不是平台管理员/,
@@ -225,12 +225,12 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
     await transaction`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_tokens,
+        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
         timeout_seconds, skill_refs, tool_refs, status, created_by, published_at
       ) values (
         ${agentVersionId}, 'tenant-dsh-work', ${agentId}, '1.0.0', '无读取能力的候选 Agent',
         '验证 Skill 与 Agent 的工具兼容选择。', '', '[]', '只处理不需要工具的文本任务。',
-        '["role-employee"]', '["enterprise:authorized"]', 12000, 300, '[]', '[]',
+        '["role-employee"]', '["enterprise:authorized"]', 65536, 20, 300, '[]', '[]',
         'published', 'U00008', now()
       )
     `
@@ -311,7 +311,7 @@ test('5-T4 管理操作人与会话拒绝类型化：HTTP 仍是 403 permission_
     roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
     welcomeMessage: '', examplePrompts: ['测试权限'],
     systemPrompt: '这是一个不会被创建的越权测试 Agent 配置。',
-    maxTokens: 12000, timeoutSeconds: 300,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
     skills: [], tools: [], changeSummary: '越权测试', actor: '林岚',
   }).then(() => null, (error: unknown) => error)
   assert.ok(actorDenial instanceof AuthorizationDeniedError, `必须是类型化授权拒绝，实际：${String(actorDenial)}`)

@@ -278,8 +278,8 @@ export class RunOrchestrationService {
       input: { message, file_mounts: [] },
       limits: {
         timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
-        max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024),
-        max_tool_calls: 20,
+        max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
+        max_tool_calls: agent.maxToolCalls,
       },
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-trial`,
@@ -965,7 +965,8 @@ export class RunOrchestrationService {
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
           dataScopes: ['enterprise:authorized'],
-          maxTokens: 12000,
+          maxOutputBytes: 65536,
+          maxToolCalls: 20,
           timeoutSeconds: 300,
         }
     const authorization = input.authorization ?? await this.authorization?.authorizeRuntime({
@@ -1034,8 +1035,8 @@ export class RunOrchestrationService {
       },
       limits: {
         timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
-        max_output_bytes: Math.min(agent.maxTokens * 4, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
-        max_tool_calls: Math.min(20, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
+        max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
+        max_tool_calls: Math.min(agent.maxToolCalls, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
       },
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-${attemptId}`,
