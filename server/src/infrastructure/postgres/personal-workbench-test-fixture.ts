@@ -21,9 +21,18 @@ import { registerWorkbenchAgentRoutes } from '../../http/workbench/agent-routes.
 import { Router, envelope, requireRequestIdentity } from '../../http/router.ts'
 import { registerConversationRoutes } from '../../http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
+import { registerAutomationRoutes } from '../../http/workbench/automation-routes.ts'
+import { AutomationService } from '../../modules/automation/automation-service.ts'
+import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
+import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
 
 export const testTenant = 'tenant-dsh-work'
-export async function personalWorkbenchFixture(prefix: string, options: { port?: number; runtime?: AgentRuntimePort; browser?: boolean } = {}) {
+export async function personalWorkbenchFixture(prefix: string, options: {
+  port?: number
+  runtime?: AgentRuntimePort
+  browser?: boolean
+  automationMaxConcurrent?: number
+} = {}) {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
   const auth = new PostgresAuthorizationService(db.client)
@@ -31,10 +40,26 @@ export async function personalWorkbenchFixture(prefix: string, options: { port?:
   const conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
+  const automationRepository = new PostgresAutomationRepository(db.client)
   const runtime = options.runtime ?? new UnavailableRuntime('runtime-local-01')
   const orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
-    content, undefined, agents, undefined, auth)
+    content, undefined, agents, undefined, auth, {
+      automationMaxConcurrent: options.automationMaxConcurrent,
+      automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+    })
+  const automationService = new AutomationService(
+    db.client,
+    automationRepository,
+    conversations,
+    runs,
+    orchestration,
+    auth,
+    agents,
+    content,
+    undefined,
+    defaultAutomationConfig,
+  )
   const router = new Router({ authenticateApi: async (request, audience) => {
     const identity = await prototypeApiAuthenticator(request, audience)
     const user = request.headers['x-test-user-id']
@@ -44,6 +69,7 @@ export async function personalWorkbenchFixture(prefix: string, options: { port?:
   registerContentRoutes(router, content, auth)
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
+    registerAutomationRoutes(router, automationService)
     router.get('/api/workbench/v1/session', (_request, context) => {
       const identity = requireRequestIdentity(context, 'workbench')
       return envelope('workbench', { user: identity.profile, identityProvider: 'prototype-sso', apiAudience: 'workbench' })
@@ -57,7 +83,8 @@ export async function personalWorkbenchFixture(prefix: string, options: { port?:
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}/api/workbench/v1`
   return {
-    db, root, auth, content, conversations, runs, orchestration, origin, router,
+    db, root, auth, content, conversations, runs, orchestration, automationRepository,
+    automationService, origin, router,
     async api(path: string, init?: RequestInit) {
       const response = await fetch(origin + path, init)
       return { status: response.status, body: await response.json() }

@@ -399,7 +399,12 @@ onMounted(() => {
     </el-empty>
 
     <div v-else class="automation-list">
-      <section v-for="item in automations" :key="item.id" class="automation-card panel">
+      <section
+        v-for="item in automations"
+        :key="item.id"
+        class="automation-card panel"
+        :aria-label="`自动任务：${item.name}`"
+      >
         <div class="automation-card__main">
           <div class="automation-card__title">
             <el-icon class="automation-card__icon"><AlarmClock /></el-icon>

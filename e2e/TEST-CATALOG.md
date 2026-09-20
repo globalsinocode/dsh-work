@@ -180,7 +180,18 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 - 真实 HTTP 旅程（OIDC 服务）：创建解析 Agent 为固定已发布版本 → 启用生成 next slot 与 scope ceiling → run-now 建 Session/Run → 同幂等键重放返回同一 execution → Run 实际进入 DSH running；第二实例无法取得 advisory lock。
 - `e2e/automation-smoke.spec.ts` 2/2（P0）；`pnpm verify`、`pnpm check:architecture`、全仓 typecheck、`validate:ui` 通过。
 
-**未覆盖：** P1 浏览器旅程（AG-AUTO-20~24，`e2e/automation.integration.spec.ts` 计划）；P2 真实验收（AG-AUTO-P2）未运行；管理端 OIDC 身份下的既有 mvp-smoke 2 例受测试环境配置阻塞（跳转真实 AI Hub 登录），与本改动无关。
+**当时未覆盖：** 该轮尚无 P1 浏览器旅程。2026-09-21 已补 `e2e/automation.integration.spec.ts` 第一批 5 例，见下方新验证记录；P2 真实验收（AG-AUTO-P2）仍未运行。管理端 OIDC 身份下的既有 mvp-smoke 2 例受测试环境配置阻塞（跳转真实 AI Hub 登录），与本改动无关。
+
+### 2026-09-21：B-05/I-08 自动任务 P1 第一批
+
+**阶段：** Spec（沿用 AG-AUTO-20~24）→ Code（隔离夹具与可访问任务卡）→ Verify/Test（P1 浏览器全旅程）→ Green
+**环境：** 专用可丢弃 PostgreSQL（套件结束自动销毁）、Prototype 受控身份、显式合成 Runtime；没有 OIDC、DSH 或模型调用
+
+- `e2e/automation.integration.spec.ts` 5/5：同键并发去重与准备中断、遗漏记录与失败后明确再次运行、账号停用与跨员工读取拒绝、固定 Agent Version 与暂停、自动任务车道满时交互任务继续执行。
+- 浏览器断言覆盖任务卡状态、执行记录的受理/Run/业务结果三类状态、跳过/中断原因和取消操作；另一员工使用独立 browser context。
+- 服务级事务回滚、日历/DST、调度游标、取消/领取竞态、advisory lock 等继续由既有单元/集成套件负责；P1 不重复伪造这些底层实现。
+
+**仍未覆盖：** 团队成员移除、文件来源移除、固定能力撤销、授权服务故障及活动工具/成果提交阶段的完整矩阵；P2 真实 DSH/OIDC/目录/批准工具和目标环境容量验收未运行。
 
 ### 2026-09-18：团队共享讨论与 @Agent 触发（TW-10）
 
@@ -352,7 +363,7 @@ Agent 发布主线已由服务端接口持久化（`agent_release_submissions` /
 
 依据：[AG-03 轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
 
-当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠与中断收敛等机制已由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（9 例）与 `automation-calendar.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 与 `e2e/automation.acceptance.spec.ts` 仍为计划路径，不表示文件已存在或测试已通过。
+当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠、中断收敛、授权基础设施故障、取消/领取竞态与锁释放由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（13 例）及 `automation-calendar.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 的 P1 第一批 5 例已实现并通过；`e2e/automation.acceptance.spec.ts` 仍为 P2 计划路径，不表示真实验收已完成。
 
 P1 每例准备独立任务、Session、测试用户与数据，结束后清理；多角色使用独立 browser context/storageState。使用专用可丢弃 PostgreSQL 和受控 Runtime，禁止连接开发业务库或生产库。时钟、故障和执行阻塞由测试环境受控依赖提供，不增加生产测试开关。事务/重启故障同时由服务端集成测试验证，浏览器验证其用户可见结果。
 
@@ -377,7 +388,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 任务创建者
 **运行层级：** P1 集成用户旅程
 **前置数据：** 已确认任务、已批准 Agent、受控 Runtime、可注入受理事务/准备/入队故障的独立测试环境
-**spec：** `e2e/automation.integration.spec.ts`（计划）
+**spec：** `e2e/automation.integration.spec.ts`（P1 第一批已实现；事务回滚与 Attempt 入队竞态仍由服务集成覆盖）
 
 1. 并发提交同一个立即运行请求，刷新执行记录；同一键更换输入后再次提交。
 2. 在受理事务回滚、事务提交后尚无 Attempt、Attempt 已提交尚未入队三个位置分别模拟中断并重启，每个场景使用独立数据。
@@ -391,7 +402,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 任务创建者
 **运行层级：** P1 集成用户旅程（DST 边界同时由日历单元测试覆盖）
 **前置数据：** 固定测试时钟、具有夏令时的 IANA 时区、每日/每周任务及可失败 Runtime
-**spec：** `e2e/automation.integration.spec.ts`（计划）
+**spec：** `e2e/automation.integration.spec.ts`（P1 第一批已实现失败/遗漏/明确再运行；DST 与游标由日历/服务测试覆盖）
 
 1. 预览跨夏令时的下次运行，再推进受控时间到对应槽位。
 2. 模拟跨多个槽位停机后启动，查看遗漏说明和下次运行；另例暂停后重新启用、修改规则后收到旧规则回调。
@@ -405,7 +416,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 创建者、另一员工、执行收权操作的管理员
 **运行层级：** P1 集成用户旅程；真实目录与工具边界另做 P2
 **前置数据：** 独立个人/团队空间、角色及数据范围、受控目录同步状态、可阻塞排队和工具调用的 Runtime
-**spec：** `e2e/automation.integration.spec.ts`（计划）
+**spec：** `e2e/automation.integration.spec.ts`（P1 第一批已实现账号停用与另一员工读取拒绝；团队/文件/能力撤权及故障矩阵待补）
 
 1. 启用任务后为用户增加数据授权，执行并核对实际授权仍受启用上限约束。
 2. 分例在排队及活动执行阶段停用账号、撤销个人空间数据范围、移除团队成员、归档空间或紧急撤销能力。
@@ -421,7 +432,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 任务创建者、发布新版本的管理员
 **运行层级：** P1 集成用户旅程
 **前置数据：** 具备有效发布证据的 Agent v1/v2、无需人工审批的工具、已授权固定文件版本及未获授权输入
-**spec：** `e2e/automation.integration.spec.ts`（计划）
+**spec：** `e2e/automation.integration.spec.ts`（P1 第一批已实现固定版本与暂停入口；配置拒绝和排队暂停细分待补）
 
 1. 不做任务级试运行，完成确定性检查及本人确认后启用；另例执行可选试运行，查看实际成功或失败结果。
 2. 用无发布证据、需要人工审批或输入越权的配置尝试启用。
@@ -437,7 +448,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 **角色：** 自动任务创建者、同时发起交互任务的员工
 **运行层级：** P1 集成用户旅程；真实限制和容量另做 P2
 **前置数据：** 多个独立自动任务、受控并发容量及默认限制、可生成成果的 Runtime、消息/成果写入与读取故障
-**spec：** `e2e/automation.integration.spec.ts`（计划）
+**spec：** `e2e/automation.integration.spec.ts`（P1 第一批已实现车道保留、取消后排队恢复及结果投影；持久化故障与全预算边界待补）
 
 1. 完成自动任务并打开关联 Session，读取消息、成果及其归属；以未获授权身份尝试访问。
 2. 分例注入必要结果持久化失败和完成后的页面读取失败，修复后刷新，核对 Runtime 调用次数。
