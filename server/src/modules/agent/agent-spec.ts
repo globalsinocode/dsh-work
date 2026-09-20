@@ -111,23 +111,23 @@ export interface AgentSpecConfiguration {
   maxOutputBytes: number
 }
 
-/** 管理端配置 → 同一 AgentSpec：表单文本归一化为 prompts/system.md 文件表示。 */
-export function agentSpecFromConfiguration(input: AgentSpecConfiguration, version: string): AgentSpec {
+/** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义及指令文件路径。 */
+export function agentSpecFromConfiguration(input: AgentSpecConfiguration, version: string, existing?: AgentSpec | null): AgentSpec {
   return {
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: { id: input.id, name: input.name, version, description: input.description },
-    instructions: { path: AGENT_SPEC_INSTRUCTIONS_PATH, body: input.systemPrompt },
+    instructions: { path: existing?.instructions.path ?? AGENT_SPEC_INSTRUCTIONS_PATH, body: input.systemPrompt },
     capabilities: { skills: [...input.skills], tools: [...input.tools] },
-    input: { type: 'text' },
-    output: { type: 'text' },
-    context: { conversationHistory: 'recent' },
+    input: existing ? { ...existing.input } : { type: 'text' },
+    output: existing ? { ...existing.output } : { type: 'text' },
+    context: existing ? { ...existing.context } : { conversationHistory: 'recent' },
     catalog: { welcomeMessage: input.welcomeMessage, examplePrompts: [...input.examplePrompts] },
     limits: {
       timeoutSeconds: input.timeoutSeconds,
       maxToolCalls: input.maxToolCalls,
       maxOutputBytes: input.maxOutputBytes,
     },
-    evaluation: { cases: null },
-    model: { requirements: [] },
+    evaluation: { cases: existing?.evaluation.cases ?? null },
+    model: { requirements: [...(existing?.model.requirements ?? [])] },
   }
 }

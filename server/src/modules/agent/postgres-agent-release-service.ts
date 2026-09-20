@@ -1243,10 +1243,10 @@ export class PostgresAgentReleaseService {
         draftVersion = await this.availableVersion(tx, agentId, parsed.spec.metadata.version)
         draftVersionId = `agent-version-${randomUUID()}`
         const [current] = await tx<{ roleIds: string[]; dataScopes: string[] }[]>`
-          select visible_role_ids as "roleIds", data_scopes as "dataScopes"
-            from agent_versions
-           where tenant_id = ${tenantId} and agent_id = ${agentId}
-           order by created_at desc limit 1
+          select av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes"
+            from agents a
+            join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+           where a.tenant_id = ${tenantId} and a.id = ${agentId}
         `
         if (current) platformFields = { ...platformFields, roleIds: current.roleIds, dataScopes: current.dataScopes }
         await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)

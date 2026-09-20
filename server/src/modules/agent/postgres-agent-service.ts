@@ -15,7 +15,7 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
-import { agentSpecFromConfiguration, assertAgentSpecContent } from './agent-spec.ts'
+import { agentSpecFromConfiguration, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -30,6 +30,7 @@ const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
 export const DEFAULT_WORKBENCH_AGENT_ID = 'agent-dsh-work-assistant'
 
 interface AgentRow {
+  agentSpec: AgentSpec | null
   id: string
   name: string
   description: string
@@ -288,7 +289,7 @@ export class PostgresAgentService {
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
                  skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(configuration.tools)},
-                 agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version)))},
+                 agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
                  change_summary = ${configuration.changeSummary}
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
@@ -316,7 +317,7 @@ export class PostgresAgentService {
             ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(configuration.tools)},
-            ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion)))},
+            ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
           )
         `
@@ -794,7 +795,7 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, a.updated_at as "updatedAt"
+             av.skill_refs as skills, av.tool_refs as tools, av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
         join agent_versions av on av.tenant_id = a.tenant_id
@@ -815,7 +816,7 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, a.updated_at as "updatedAt"
+             av.skill_refs as skills, av.tool_refs as tools, av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
         join agent_versions av on av.tenant_id = a.tenant_id

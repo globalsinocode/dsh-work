@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import { PostgresAgentReleaseService } from '../../modules/agent/postgres-agent-release-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
@@ -103,7 +104,7 @@ async function createDraftAgent(id: string) {
   })
 }
 
-function buildAgentYaml(overrides: { id?: string; name?: string; version?: string; description?: string; tools?: string; specLines?: string[]; topLines?: string[] } = {}) {
+function buildAgentYaml(overrides: { id?: string; name?: string; version?: string; description?: string; instructions?: string; tools?: string; specLines?: string[]; topLines?: string[] } = {}) {
   // tools 为逗号分隔的 id@x.y.z 精确引用；specLines 追加在 spec 内，topLines 追加在顶层。
   const tools = (overrides.tools ?? 'read@1.0.0').split(',').map(item => item.trim()).filter(Boolean)
   return [
@@ -115,7 +116,7 @@ function buildAgentYaml(overrides: { id?: string; name?: string; version?: strin
     `  version: ${overrides.version ?? '0.1.0'}`,
     `  description: ${overrides.description ?? '基于历史退款记录预测高风险订单。'}`,
     'spec:',
-    '  instructions: prompts/system.md',
+    `  instructions: ${overrides.instructions ?? 'prompts/system.md'}`,
     '  capabilities:',
     '    tools:',
     ...tools.map(reference => {
@@ -491,6 +492,106 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
   assert.equal(published.evidence['0.1.0']?.length, 5)
   const publishedAgents = await agents.getAgents()
   assert.equal(publishedAgents.find(item => item.id === 'agent-release-zip')?.status, 'published')
+})
+
+async function publishReviewedDraft(agentId: string) {
+  await release.ensureCandidate(agentId, ADMIN)
+  const checked = await release.runChecks(agentId, ADMIN)
+  assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'), checked.candidate?.checks.map(item => item.detail).join(' | '))
+  await release.startTrial(agentId, ADMIN)
+  await confirmLatestTrial(agentId)
+  await release.submitForReview(agentId, ADMIN)
+  await release.publish(agentId, '回归测试逐项确认', ADMIN)
+}
+
+test('导入定义经配置保存及发布后分叉保留未编辑字段，已发布定义不变', async () => {
+  const agentId = 'agent-release-preserve-spec'
+  const imported = await release.importPackage(ADMIN, 'preserve-spec.zip', createZip({
+    'agent.yaml': buildAgentYaml({
+      id: agentId,
+      instructions: 'prompts/custom.md',
+      specLines: [
+        '    skills: [{ id: skill-document, version: 1.0.0 }]',
+        '  catalog:',
+        '    welcomeMessage: 欢迎使用退款预测助手',
+        '    examplePrompts: [评估本周退款风险]',
+        '  model:',
+        '    requirements: [long-context, structured-output]',
+        '  evaluation:',
+        '    cases: evals/custom.yaml',
+      ],
+    }),
+    'prompts/custom.md': PROMPT,
+    'evals/custom.yaml': PACKAGE_CASES,
+  }))
+  assert.ok(imported.candidate)
+  const readSpec = async (version: string) => {
+    const [row] = await database<{ spec: AgentSpec }[]>`
+      select agent_spec as spec from agent_versions
+       where tenant_id = ${tenantId} and agent_id = ${agentId} and version = ${version}
+    `
+    assert.ok(row)
+    return row.spec
+  }
+  const original = await readSpec('0.1.0')
+  const { agent } = await agents.getMutationSnapshot(agentId)
+  const description = `${agent.description}更新说明。`
+  const saved = await agents.updateAgent({ ...agent, agentId, description, actor: ADMIN, changeSummary: '只更新说明' })
+  const savedSpec = await readSpec('0.1.0')
+  assert.deepEqual(savedSpec, { ...original, metadata: { ...original.metadata, description } })
+
+  await publishReviewedDraft(agentId)
+  const systemPrompt = `${PROMPT}请标注每项结论的数据来源。`
+  const forked = await agents.updateAgent({ ...saved.agent, agentId, systemPrompt, actor: ADMIN, changeSummary: '新版本调整指令' })
+  assert.equal(forked.version.version, '0.2.0')
+  assert.deepEqual(await readSpec('0.2.0'), {
+    ...savedSpec,
+    metadata: { ...savedSpec.metadata, version: '0.2.0' },
+    instructions: { ...savedSpec.instructions, body: systemPrompt },
+  })
+  assert.deepEqual(await readSpec('0.1.0'), savedSpec, '分叉不能改写已发布定义')
+})
+
+test('回滚后导入继承当前活动版本的角色与数据范围，重复导入保留草稿配置', async () => {
+  const agentId = 'agent-release-import-rollback'
+  const created = await createDraftAgent(agentId)
+  const restricted = await agents.updateAgent({
+    ...created.agent, agentId, roleIds: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
+    actor: ADMIN, changeSummary: '限制初始版本授权',
+  })
+  await publishReviewedDraft(agentId)
+  await agents.updateAgent({
+    ...restricted.agent, agentId, roleIds: ['role-employee'], dataScopes: ['enterprise:authorized', 'workspace:authorized'],
+    actor: ADMIN, changeSummary: '新版本调整授权',
+  })
+  await publishReviewedDraft(agentId)
+  await agents.rollback({ agentId, version: '0.1.0', actor: ADMIN })
+
+  const importVersion = (version: string) => release.importPackage(ADMIN, `${version}.zip`, createZip({
+    'agent.yaml': buildAgentYaml({ id: agentId, version }),
+    'prompts/system.md': PROMPT,
+    'evals/cases.yaml': PACKAGE_CASES,
+  }))
+  await importVersion('0.3.0')
+  const firstDraft = (await agents.getMutationSnapshot(agentId)).agent
+  assert.deepEqual(firstDraft.roleIds, ['role-platform-admin'])
+  assert.deepEqual(firstDraft.dataScopes, ['workspace:authorized'])
+  const [active] = await database<{ version: string }[]>`
+    select av.version from agents a
+      join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+     where a.tenant_id = ${tenantId} and a.id = ${agentId}
+  `
+  assert.equal(active?.version, '0.1.0', '导入不能切换活动版本')
+
+  await agents.updateAgent({
+    ...firstDraft, agentId, roleIds: ['role-employee'], dataScopes: ['enterprise:authorized', 'workspace:authorized'],
+    skills: ['skill-document@1.0.0'], examplePrompts: ['评估本周退款风险'],
+    actor: ADMIN, changeSummary: '管理员调整草稿授权',
+  })
+  await importVersion('0.4.0')
+  const reimported = (await agents.getMutationSnapshot(agentId)).agent
+  assert.deepEqual(reimported.roleIds, ['role-employee'])
+  assert.deepEqual(reimported.dataScopes, ['enterprise:authorized', 'workspace:authorized'])
 })
 
 test('ZIP 缺少 evals/cases.yaml 时自动生成三类默认案例，不因缺文件失败', async () => {
