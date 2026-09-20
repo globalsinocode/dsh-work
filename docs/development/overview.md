@@ -7,6 +7,8 @@
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
+Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；代码支持程度及未实现项见[差异清单](agent-design-gap-analysis.md)。本文保留系统职责与执行链的架构边界。
+
 ## 1. 产品定位与范围
 
 dsh-work 是部署在企业内网的统一 AI Agent 工作台。员工通过自然语言使用经过授权的企业知识、业务数据和文件处理能力，获得带来源的回答、分析结论和可下载成果；平台管理员通过独立管理后台维护 Agent、Skill、预置 Tool/Connector、Runtime、权限、用量和审计。
@@ -258,7 +260,7 @@ flowchart LR
 
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；默认非生产 `prototype` 模式无需启动 AI Hub。
 - Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。实现边界见 [管理助手方案](../design/admin-assistant-plan.md)与[对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
-- 企业内部员工按规范开发并提交部署智能体、真实 Agent DSH 试运行、负责人确认共享、定时自动任务及受控经验积累尚待开发，见 [企业内部智能体开发、发布与经验积累方案](../design/agent-tool-extension-and-automation-plan.md)。该方向以员工工作台为使用入口，不建设外部开发者生态；员工可随包提交受控 Tool 候选，但执行器类型、端点、凭据和权限由平台批准，不能自行安装 Tool/Connector。首版自动任务使用本人身份和固定 Agent Version；自动迭代仅生成候选经验，由能力负责人确认发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享开发者的私人数据与凭据。
+- 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
 - 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 生产依赖 AI Hub 的 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
@@ -283,6 +285,8 @@ flowchart LR
 ## 12. 相关文档
 
 - [文档导航](../index/README.md)
+- [Agent 设计规范](agent-design-standard.md)
+- [Agent 规范与当前实现差异清单](agent-design-gap-analysis.md)
 - [开发与测试](development.md)
 - [数据模型](../design/data-model.md)
 - [内部端口与契约](internal-ports.md)

@@ -1,10 +1,12 @@
 # AG-03 轻量自动任务实施方案
 
-**状态：** 已按确认的轻量语义修订，待实现与验证；本文不代表代码已交付。<br>
-**更新日期：** 2026-09-17<br>
-**上游文档：** [企业内部智能体与工具开发、发布及自动化方案](agent-tool-extension-and-automation-plan.md) §9、§11、§12、§16；本次同步调整上游行为要求与 AC-20～24。<br>
+**状态：** 已按确认的轻量语义修订；2026-09-19 静态核对确认仓库已有迁移、服务、API、触发扫描及回归用例。实现覆盖和分层验收须分别核对，不能据此宣称真实环境已通过；证据入口见 [Agent 规范差异清单](../development/agent-design-gap-analysis.md)。<br>
+**更新日期：** 2026-09-19<br>
+**规范与入口：** 遵循 [Agent 设计规范](../development/agent-design-standard.md)；本文是 AG-03 轻量自动任务的实施入口，行为、数据、接口和 AC-20～24 验收要求在本文内维护，不依赖已删除的总方案章节。<br>
 **阶段依赖：** 使用 AG-01 已发布、已有批准工具的 Agent；不等待 AG-02 新工具或 AG-04 经验能力。<br>
 **执行边界：** [内部端口与契约](../development/internal-ports.md)、[架构总览](../development/overview.md)、[Runtime 执行架构渐进优化方案](runtime-execution-optimization-plan.md)。
+
+通用规则见 [Agent 设计规范](../development/agent-design-standard.md)。其中持久化等待、累计硬预算和委派属于后续要求或可选扩展，不改变本方案已经确认的轻量行为。下文以要求和设计说明为主，不作为逐项实现完成记录。
 
 ## 1. 产品定位与首版范围
 
@@ -40,7 +42,7 @@
 
 执行面编辑须重新检查并确认；未确认的修改保持暂停或草稿，不继续触发。暂停停止新触发及未开始执行，取消当前运行复用 Run 端口。暂停不自动取消已经开始且仍获授权的执行。
 
-`run-now` 仅对已确认配置的 enabled 任务执行当前权限检查后受理；paused 任务须先重新启用（重新确认上限）再走 run-now，比原方案更严格。draft 或未确认的修改不能通过该入口绕过启用检查。可选试运行有单独明确入口，仍受本人权限、能力审批及平台容量限制。
+`run-now` 仅对已确认配置的 enabled 任务执行当前权限检查后受理；paused 任务须先重新启用（重新确认上限）再走 run-now。draft 或未确认的修改不能通过该入口绕过启用检查。可选试运行有单独明确入口，仍受本人权限、能力审批及平台容量限制。
 
 ## 3. 日历、去重与遗漏
 
@@ -191,7 +193,7 @@ Run 模块提供可组合的自动任务受理入口，conversations.createSessi
 | AC-23 | 无任务试运行也能在门禁和确认后启用；固定版本与独立 Session；暂停清理未开始运行，恢复不复活旧执行 |
 | AC-24 | 结果与成果可读有据、持久化/读取失败可见且不重跑；默认限制、自动任务限额与交互余量、队首不阻塞 |
 
-关键旅程登记在 [E2E 验收目录](../../e2e/TEST-CATALOG.md)，全部为计划，尚无运行证据。P0 只证明原型导航/交互；P1 使用专用可丢弃 PostgreSQL、受控身份和 Runtime；P2 单独验证真实 DSH、目录与工具收权和目标环境容量。
+关键旅程登记在 [E2E 验收目录](../../e2e/TEST-CATALOG.md)，已有 [P0 浏览器冒烟](../../e2e/automation-smoke.spec.ts)及[服务端集成用例](../../server/src/infrastructure/postgres/automation.integration.test.ts)；P1 浏览器旅程仍为计划，尚无对应 spec 文件。本次文档核对未执行测试，不能据文件存在推断通过。P0 只证明原型导航/交互；P1 使用专用可丢弃 PostgreSQL、受控身份和 Runtime；P2 单独验证真实 DSH、目录与工具收权和目标环境容量。
 
 实施顺序：
 
@@ -202,4 +204,4 @@ Run 模块提供可组合的自动任务受理入口，conversations.createSessi
 5. 工作台 API/UI；页面成型后浏览器预演，再固化 Playwright，按 Spec → Code → Verify → Test → Green 执行。
 6. 分层验证事务故障、权限、DST、容量和结果；发布前 P2 验收。文档更新不代表功能实现、提交、部署或真实验收。
 
-本次文档验证：`pnpm verify project`、`pnpm check:architecture`、差异检查；运行与 Schema 代码尚未修改，不据此声称功能测试通过。
+文档调整使用 `pnpm verify`、`pnpm check:architecture` 和差异检查；本次整理未修改运行与 Schema 代码，功能验证不能由文档检查替代。

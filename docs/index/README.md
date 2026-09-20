@@ -8,10 +8,12 @@
 | 开发约束与统一 Agent 执行要求 | [项目工作规范](../../AGENTS.md) |
 | 启动开发、选择测试、准备验收 | [开发与测试](../development/development.md) |
 | 理解业务、权限和系统边界 | [架构总览](../development/overview.md) |
-| 逐步优化执行观测、工具适配、上下文延续、恢复与性能 | [Runtime 执行架构渐进优化方案（待实施）](../design/runtime-execution-optimization-plan.md) |
+| 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
+| 核对十二条规范的代码证据、测试覆盖和实施缺口 | [Agent 规范与当前实现差异清单](../development/agent-design-gap-analysis.md) |
+| 逐步优化执行观测、工具适配、上下文延续、恢复与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
+| 实施轻量自动任务及核对 AC-20～24 验收 | [AG-03 轻量自动任务实施方案](../design/automation-implementation-plan.md) |
 | 理解数据关系与迁移约束 | [数据模型](../design/data-model.md) |
 | 规划统一的 Skill、Agent 和运维对话入口 | [管理助手交互方案](../design/admin-assistant-plan.md) |
-| 规划 Agent 生命周期、独立工具扩展、统一运行准备、定时与审核后经验复用 | [企业内部智能体与工具开发、发布及自动化方案（待实施）](../design/agent-tool-extension-and-automation-plan.md) |
 | 设计已有 Skill 的受控 Python 执行、依赖、权限与成果交付 | [Skill Python 脚本执行方案（核心门禁已实施）](../design/skill-python-execution-plan.md) |
 | 了解当前对话安装能力及验收边界 | [对话安装实现](../design/admin-skill-installation-implementation.md) |
 | 规划 Skill ZIP 上传、管理助手安装及手工创建模式退出 | [Skill 安装产品方案与实施计划](../design/skill-installation-plan.md) |

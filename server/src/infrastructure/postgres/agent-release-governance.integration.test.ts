@@ -103,7 +103,8 @@ async function createDraftAgent(id: string) {
   })
 }
 
-function buildAgentYaml(overrides: Record<string, string> = {}) {
+function buildAgentYaml(overrides: Record<string, string | string[]> = {}) {
+  const extra = Array.isArray(overrides.extra) ? overrides.extra : []
   return [
     `id: ${overrides.id ?? 'zip-agent'}`,
     `name: ${overrides.name ?? '退款预测助手'}`,
@@ -113,7 +114,7 @@ function buildAgentYaml(overrides: Record<string, string> = {}) {
     'visible_role_ids: [role-employee]',
     'data_scopes: [workspace:authorized]',
     `tools: [${overrides.tools ?? 'read@1.0.0'}]`,
-    ...(overrides.extra ?? []),
+    ...extra,
     '',
   ].join('\n')
 }
@@ -342,6 +343,27 @@ test('审核人判定任一案例不符合预期时试运行记为失败并阻�
   await assert.rejects(release.publish(agentId, '', ADMIN), /尚未提交审核/)
 })
 
+test('案例编辑的 origin 由服务端维护：既有生成案例保留标记，调用方不能伪造或清除', async () => {
+  const agentId = 'agent-release-origin'
+  await createDraftAgent(agentId)
+  const state = await release.ensureCandidate(agentId, ADMIN)
+  const generated = state.candidate!.cases
+  assert.ok(generated.length > 0)
+  assert.ok(generated.every(item => item.origin === 'generated'))
+
+  const updated = await release.updateCases(agentId, [
+    // 调用方剥离 origin 原样回写：服务端按既有案例 id 恢复标记
+    ...generated.map(item => ({ id: item.id, name: item.name, kind: item.kind, input: item.input, expect: item.expect })),
+    // 调用方伪造 origin：服务端忽略
+    { id: '', name: '伪造来源案例', kind: 'success' as const, input: '评估退款风险', expect: '输出依据', origin: 'generated' as const },
+  ], ADMIN)
+  const kept = updated.candidate!.cases.filter(item => generated.some(g => g.id === item.id))
+  assert.ok(kept.every(item => item.origin === 'generated'))
+  const forged = updated.candidate!.cases.find(item => item.name === '伪造来源案例')
+  assert.ok(forged)
+  assert.equal(forged.origin, undefined)
+})
+
 test('提交审核后候选封存：退回解锁修订推进，发布必须经 submitted', async () => {
   const agentId = 'agent-release-submit'
   await createDraftAgent(agentId)
@@ -416,8 +438,9 @@ test('撤回使候选进入终态并保留历史，再次同步创建新候选',
   await createDraftAgent(agentId)
   await release.ensureCandidate(agentId, ADMIN)
 
-  // 未完成试运行不能提交
+  // 未完成试运行不能提交；草稿态候选也不能退回（仅 submitted 可退回）
   await assert.rejects(release.submitForReview(agentId, ADMIN), /通过试运行/)
+  await assert.rejects(release.requestChanges(agentId, '草稿阶段退回', ADMIN), /仅待审核状态/)
 
   const withdrawn = await release.withdrawSubmission(agentId, ADMIN)
   assert.equal(withdrawn.candidate, undefined)
@@ -540,6 +563,23 @@ test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引�
   assert.ok(rechecked.candidate?.checks.every(item => item.status === 'passed'))
 })
 
+test('声明工具版本与平台可用版本不一致标记缺失，不静默改写为平台版本', async () => {
+  const zip = createZip({
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-toolver', tools: 'read@9.9.9' }),
+    'prompts/system.md': PROMPT,
+  })
+  const info = await release.inspectPackage('toolver.zip', zip)
+  assert.deepEqual(info.missing.tools, ['read@9.9.9'])
+  assert.deepEqual(info.resolved.tools, [])
+
+  const state = await release.importPackage(ADMIN, 'toolver.zip', zip)
+  assert.deepEqual(state.candidate?.missingDeps.tools, ['read@9.9.9'])
+  const checked = await release.runChecks('agent-release-toolver', ADMIN)
+  const deps = checked.candidate?.checks.find(item => item.id === 'deps')
+  assert.equal(deps?.status, 'failed')
+  assert.match(deps?.detail ?? '', /read@9\.9\.9/)
+})
+
 test('包内 Tool 候选阻塞测试授权检查与发布放行', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({
@@ -622,6 +662,60 @@ test('inspectPackage 只解析不落库', async () => {
   assert.ok(!agentsList.some(item => item.id === 'agent-release-inspect'))
   const submissions = await release.listSubmissions()
   assert.ok(!submissions.some(item => item.agentId === 'agent-release-inspect'))
+})
+
+// ---------------------------------------------------------------------------
+// I-02 包字段规则：受管字段/结构化清单拒绝、别名冲突拒绝、声明与包内版本冲突
+// 拒绝、未识别字段警告留痕（不静默忽略）
+// ---------------------------------------------------------------------------
+
+test('平台受管字段与 apiVersion/spec 结构清单在解析期拒绝', async () => {
+  const reserved = createZip({
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-denied', extra: ['api_key: sk-test'] }),
+    'prompts/system.md': PROMPT,
+  })
+  await assert.rejects(release.inspectPackage('denied.zip', reserved), /平台受管字段：api_key/)
+
+  const structured = createZip({
+    'agent.yaml': ['apiVersion: dsh-work/v1', 'spec:', '  id: agent-release-denied', ''].join('\n'),
+    'prompts/system.md': PROMPT,
+  })
+  await assert.rejects(release.inspectPackage('structured.zip', structured), /扁平 agent\.yaml/)
+
+  await assert.rejects(release.importPackage(ADMIN, 'denied.zip', reserved), /平台受管字段：api_key/)
+  const agentsList = await agents.getAgents()
+  assert.ok(!agentsList.some(item => item.id === 'agent-release-denied'))
+})
+
+test('声明版本与包内候选版本冲突拒绝导入', async () => {
+  const zip = createZip({
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-depconflict', tools: 'refund-risk-score@0.2.0' }),
+    'prompts/system.md': PROMPT,
+    'tools/refund-risk-score/tool.yaml': 'id: refund-risk-score\nversion: 0.1.0\nname: 退款风险评分\n',
+  })
+  await assert.rejects(
+    release.importPackage(ADMIN, 'dep-conflict.zip', zip),
+    /声明的 Tool refund-risk-score@0\.2\.0 与包内 tools\/refund-risk-score 候选版本 0\.1\.0 冲突/,
+  )
+  const agentsList = await agents.getAgents()
+  assert.ok(!agentsList.some(item => item.id === 'agent-release-depconflict'))
+})
+
+test('别名字段冲突拒绝；未识别字段警告随包留痕并在状态可见', async () => {
+  const conflict = createZip({
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-alias', extra: ['display_name: 另一个名称'] }),
+    'prompts/system.md': PROMPT,
+  })
+  await assert.rejects(release.inspectPackage('alias.zip', conflict), /name 与 display_name.*取值不一致/)
+
+  const unknown = createZip({
+    'agent.yaml': buildAgentYaml({ id: 'agent-release-unknown', extra: ['author: ops-team'] }),
+    'prompts/system.md': PROMPT,
+    'evals/cases.yaml': PACKAGE_CASES,
+  })
+  const state = await release.importPackage(ADMIN, 'unknown.zip', unknown)
+  assert.equal(state.candidate?.version, '0.1.0')
+  assert.ok(state.packageWarnings.some(item => /未识别字段已忽略：author/.test(item)))
 })
 
 // 试运行桩 Runtime：模拟 DSH 终态事件流，验证试运行走的是真实 Run/Attempt 编排链路。

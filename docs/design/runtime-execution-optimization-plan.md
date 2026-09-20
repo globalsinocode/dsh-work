@@ -25,7 +25,7 @@
 | 内容 | 唯一维护入口 | 与本计划的关系 |
 | --- | --- | --- |
 | 当前执行、授权及状态语义 | [架构总览](../development/overview.md)、[内部端口与契约](../development/internal-ports.md) | 本计划描述未来增量；实施通过后再更新当前基线 |
-| Agent 包、Tool 候选审核、真实 Agent 试运行、版本发布、自动任务和经验 | [企业内部智能体方案](agent-tool-extension-and-automation-plan.md) | 本计划提供共用执行能力，不重复定义这些产品流程 |
+| Agent 包、真实 Agent 试运行、版本发布、自动任务 | [差异清单](../development/agent-design-gap-analysis.md)、[AG-03 实施方案](automation-implementation-plan.md) | 本计划提供共用执行能力，不重复定义这些产品流程 |
 | Skill 包与脚本沙箱 | [Skill 安装方案](skill-installation-plan.md)、[Python 执行方案](skill-python-execution-plan.md) | 复用存储、权限和沙箱；不改为宿主机任意脚本执行 |
 | DSH 安装、精确版本与真实探针 | [Runtime 指南](../release/dsh-runtime-delivery.md) | 恢复和性能验证必须记录实际版本、环境及探针证据 |
 
@@ -121,7 +121,7 @@ EX-01 与 EX-02 可独立推进；EX-04 不必等待恢复能力完成。EX-03 �
 - 未授权、Schema 错误、缺少依赖、超时、取消、输出超限均有不同的可观察结果；不再统一误报为包解析失败。
 - 安装或发现工具不会扩大已有 Agent 权限；上游工具变化不会覆盖旧 Tool Version。
 - 原有 Skill 安装、`activate_skill` 和 `python_execute` 保持相同授权语义和执行链路。
-- 工具注册规范与样例由此阶段交付；员工 Tool 候选审核、发布规则仍由企业内部智能体方案维护。
+- 工具注册规范与样例由此阶段交付；员工 Tool 候选审核、发布规则随准入流水线另行设计，现阶段按[差异清单](../development/agent-design-gap-analysis.md)登记。
 
 ## 6. EX-02：跨轮上下文与成果延续
 

@@ -320,7 +320,7 @@ Agent 发布主线已由服务端接口持久化（`agent_release_submissions` /
 
 ## AG-03 轻量自动任务（首版已实现，P0 冒烟通过；P1/P2 待补）
 
-依据：[总方案 §9](../docs/design/agent-tool-extension-and-automation-plan.md#9-受控自动执行)与[轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
+依据：[AG-03 轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
 
 当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠与中断收敛等机制已由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（9 例）与 `automation-calendar.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 与 `e2e/automation.acceptance.spec.ts` 仍为计划路径，不表示文件已存在或测试已通过。
 

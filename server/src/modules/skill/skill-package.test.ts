@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { strToU8, zipSync, type Zippable } from 'fflate'
-import { parseSkillBundle, parseSkillPackage } from './skill-package.ts'
+import { parseSkillBundle, parseSkillPackage, toSkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
 import { continueSkillSource, isPublicAddress, parseSkillSource } from './skill-source.ts'
 import { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
@@ -32,6 +32,50 @@ test('persists Skill bodies as an immutable folder and keeps only an index descr
       const changed = { ...artifact, files: artifact.files.map(file => file.path === 'references/example.txt' ? { ...file, sha256: '0'.repeat(64) } : file) }
       await store.read(changed)
     }, /修改/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+test('keeps legacy artifact references (symbol-edged package segments) readable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
+  try {
+    const store = new FileSystemSkillArtifactStore(root)
+    const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('folder-marker') }))
+    // 旧版生成器只替换非法字符并截断、未清理首尾符号：中文名落成 packages/____/<sha>。
+    // 升级前已持久化的引用必须可读，否则既有 Skill 及相关 Agent 无法运行。
+    const legacyRef = `packages/____/${pkg.sha256}`
+    const artifact = toSkillPackageArtifact(pkg, legacyRef)
+    for (const file of pkg.files) {
+      const target = join(root, legacyRef, file.path)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, file.content)
+    }
+    assert.equal((await store.read(artifact)).instructions, pkg.instructions)
+
+    // . 与 .. 段仍拒绝，越界防护不随兼容放宽
+    const traversal = { ...artifact, artifactRef: `packages/../${pkg.sha256}` }
+    await assert.rejects(store.read(traversal), /引用无效/)
+    const dotSegment = { ...artifact, artifactRef: `packages/./${pkg.sha256}` }
+    await assert.rejects(store.read(dotSegment), /引用无效/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('truncates the package segment before stripping edge symbols', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
+  try {
+    const store = new FileSystemSkillArtifactStore(root)
+    // 63 个 a + '-report'：先清理后截断会留下结尾 '-'，被规范形式拒绝；先截断后清理得到合法引用。
+    const longName = `${'a'.repeat(63)}-report`
+    const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill.replace('test-skill', longName)), 'references/example.txt': strToU8('marker') }))
+    const artifact = await store.put(pkg)
+    assert.match(artifact.artifactRef, /^packages\/a{63}\/[a-f0-9]{64}$/)
+
+    // 全非字母数字的名称（如中文名）回退为 skill 段，新写入仍符合规范形式。
+    const zh = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill.replace('test-skill', '财务分析')), 'references/example.txt': strToU8('marker') }))
+    const zhArtifact = await store.put(zh)
+    assert.match(zhArtifact.artifactRef, /^packages\/skill\/[a-f0-9]{64}$/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

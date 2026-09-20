@@ -585,6 +585,8 @@ export interface AgentEvalCase {
   kind: 'success' | 'invalid_input' | 'permission_denied'
   input: string
   expect: string
+  /** 平台按定义自动生成的默认案例来源标记；包内 evals 或管理员登记的案例无此字段 */
+  origin?: 'generated'
 }
 
 export interface AgentCapabilityRef { id: string; version: string; path?: string }

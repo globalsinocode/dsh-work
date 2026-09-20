@@ -121,6 +121,7 @@ pnpm dev:admin
 
 - [文档导航与维护规则](docs/index/README.md)
 - [产品与系统架构总览](docs/development/overview.md)
+- [Agent 设计规范](docs/development/agent-design-standard.md)
 - [开发与测试](docs/development/development.md)
 - [Mac mini 部署手册](docs/release/mac-mini-deployment-runbook.md)
 - [数据模型](docs/design/data-model.md)

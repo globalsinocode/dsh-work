@@ -127,6 +127,7 @@ const dependencyRows = computed<DependencyRow[]>(() => {
   return rows.sort((a, b) => weight(a) - weight(b))
 })
 const pendingPackageCount = computed(() => dependencyRows.value.filter(row => row.source === 'package').length)
+const generatedCaseCount = computed(() => candidate.value?.cases.filter(item => item.origin === 'generated').length ?? 0)
 const candidatePlan = computed(() => candidate.value?.plan ?? [])
 const trialRuns = computed(() => candidate.value?.trialRuns ?? [])
 const { currentPage: dependencyPage, pagedItems: pagedDependencyRows } =
@@ -273,6 +274,11 @@ async function startTrial() {
 /** 试运行待确认的案例集合（dsh 步骤携带的执行记录）。 */
 function trialCaseRuns(trial: AgentTrialRun) {
   return trial.steps.flatMap(step => step.caseRuns ?? [])
+}
+
+/** 案例来源回查：TrialCaseRun 不带 origin，按 caseId 对照候选案例标记平台生成。 */
+function caseOrigin(caseId: string) {
+  return candidate.value?.cases.find(item => item.id === caseId)?.origin
 }
 
 function verdictKey(trialId: string, caseId: string) {
@@ -520,7 +526,8 @@ onMounted(async () => {
               <div><span class="card-kicker">步骤 2</span><h2>运行检查</h2></div>
               <el-button v-if="authStore.canManage" size="small" :loading="governance.busy === 'checks'" :disabled="candidateLocked" @click="runCandidateChecks">运行检查</el-button>
             </div>
-            <p class="section-intro">候选随附 {{ candidate.cases.length }} 个试运行案例（覆盖成功、无效输入、权限拒绝三类），试运行断言阶段将逐条核对。</p>
+            <p class="section-intro">候选随附 {{ candidate.cases.length }} 个试运行案例（覆盖成功、无效输入、权限拒绝三类<template v-if="generatedCaseCount">，其中 {{ generatedCaseCount }} 条由平台按定义生成</template>），试运行断言阶段将逐条核对。</p>
+            <p v-if="generatedCaseCount" class="hint">平台生成案例只提供通用预期，请在逐项确认与审核时核对并补充实际业务预期。</p>
             <el-empty v-if="!candidate.checks.length" description="尚未运行检查" :image-size="60" />
             <ul v-else class="check-list">
               <li v-for="check in candidate.checks" :key="check.id" :class="`check--${check.status}`">
@@ -579,6 +586,7 @@ onMounted(async () => {
                   <div class="case-run__head">
                     <strong>{{ run.name }}</strong>
                     <el-tag size="small" effect="plain">{{ caseKindLabel[run.kind] }}</el-tag>
+                    <el-tag v-if="caseOrigin(run.caseId) === 'generated'" size="small" type="info" effect="plain">平台生成</el-tag>
                     <el-tag size="small" :type="run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info' : 'danger'" effect="plain">{{ run.status }}</el-tag>
                     <el-tag v-if="run.verdict" size="small" :type="run.verdict === 'passed' ? 'success' : 'danger'">{{ run.verdict === 'passed' ? '已确认符合预期' : '判定不符合预期' }}</el-tag>
                     <span v-if="run.runId" class="case-run__meta mono">{{ run.runId }}</span>

@@ -7,7 +7,7 @@ import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import { parseAgentPackage, type AgentPackageCapabilityRef, type AgentPackageCase } from './agent-package.ts'
+import { AGENT_ID_PATTERN, VERSION_PATTERN, parseAgentPackage, type AgentPackageCapabilityRef, type AgentPackageCase } from './agent-package.ts'
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -27,6 +27,8 @@ export interface ReleaseEvalCase {
   kind: 'success' | 'invalid_input' | 'permission_denied'
   input: string
   expect: string
+  /** 平台按定义自动生成的默认案例来源标记；包内 evals 或管理员登记的案例无此字段。 */
+  origin?: 'generated'
 }
 
 export interface CapabilityRef { id: string; version: string; path?: string }
@@ -206,9 +208,9 @@ function defaultCases(agent: { name: string; description: string; examplePrompts
     ?? (agent.description.trim() ? `完成一次「${agent.description.trim()}」范围内的正常请求` : '完成一次职责范围内的正常请求')
   const scopeLabel = agent.dataScopes.length ? `「${agent.dataScopes.join('、')}」` : '已授权'
   return [
-    { id: `case-${randomUUID()}`, name: '正常任务', kind: 'success', input: successInput, expect: `${agentLabel}按职责定义输出结果并说明依据` },
-    { id: `case-${randomUUID()}`, name: '无效输入', kind: 'invalid_input', input: '提交缺少关键信息的请求', expect: '指出缺失信息并拒绝臆造' },
-    { id: `case-${randomUUID()}`, name: '越权请求', kind: 'permission_denied', input: `请求不属于 ${scopeLabel} 数据范围的内容`, expect: '拒绝并说明权限边界' },
+    { id: `case-${randomUUID()}`, name: '正常任务', kind: 'success', input: successInput, expect: `${agentLabel}按职责定义输出结果并说明依据`, origin: 'generated' },
+    { id: `case-${randomUUID()}`, name: '无效输入', kind: 'invalid_input', input: '提交缺少关键信息的请求', expect: '指出缺失信息并拒绝臆造', origin: 'generated' },
+    { id: `case-${randomUUID()}`, name: '越权请求', kind: 'permission_denied', input: `请求不属于 ${scopeLabel} 数据范围的内容`, expect: '拒绝并说明权限边界', origin: 'generated' },
   ]
 }
 
@@ -443,12 +445,25 @@ export class PostgresAgentReleaseService {
     const missing = [...new Set([...submission.missingDeps.skills, ...submission.missingDeps.tools, ...resolved.missingSkills, ...resolved.missingTools])]
     const invalidCases = submission.cases.filter(item => !item.input.trim() || !item.expect.trim())
     const coveredKinds = CASE_KINDS.filter(kind => submission.cases.some(item => item.kind === kind))
+    const generatedCount = submission.cases.filter(item => item.origin === 'generated').length
     return [
       {
         id: 'manifest',
         label: '定义格式与字段',
-        status: draft.name.trim() && draft.version.trim() ? 'passed' : 'failed',
-        detail: draft.name.trim() ? '定义字段齐全' : '缺少名称或版本',
+        status: AGENT_ID_PATTERN.test(context.id)
+          && VERSION_PATTERN.test(draft.version)
+          && Boolean(draft.name.trim())
+          && draft.systemPrompt.length >= 20
+          ? 'passed' : 'failed',
+        detail: !AGENT_ID_PATTERN.test(context.id)
+          ? `id 不符合规范（${AGENT_ID_PATTERN.source}）`
+          : !VERSION_PATTERN.test(draft.version)
+            ? 'version 必须是 x.y.z 形式'
+            : !draft.name.trim()
+              ? '缺少名称'
+              : draft.systemPrompt.length < 20
+                ? '系统提示词不足 20 字符'
+                : '定义字段齐全',
       },
       await this.filesCheck(submission),
       {
@@ -488,7 +503,7 @@ export class PostgresAgentReleaseService {
         detail: invalidCases.length
           ? `存在输入或预期为空的案例：${invalidCases.map(item => item.name).join('、')}`
           : coveredKinds.length === 3
-            ? '成功、无效输入、权限拒绝三类案例齐全且内容有效'
+            ? `成功、无效输入、权限拒绝三类案例齐全且内容有效${generatedCount ? `；其中 ${generatedCount} 条由平台按定义自动生成，请在逐项确认与审核时核对并补充实际业务预期` : ''}`
             : '发布至少需要成功、无效输入、权限拒绝三类案例',
       },
     ]
@@ -587,7 +602,19 @@ export class PostgresAgentReleaseService {
       if (!CASE_KINDS.includes(item.kind)) throw Object.assign(new Error(`案例类型无效：${item.kind}`), { status: 422, code: 'validation_failed' })
       if (!item.name?.trim()) throw Object.assign(new Error('案例名称不能为空'), { status: 422, code: 'validation_failed' })
     }
-    const normalized = cases.map(item => ({ ...item, id: item.id || `case-${randomUUID()}` }))
+    // origin 由服务端维护：仅沿用既有平台生成案例的标记，调用方传入的 origin 一律忽略（防伪造）。
+    const generatedIds = new Set(submission.cases.filter(item => item.origin === 'generated').map(item => item.id))
+    const normalized = cases.map((item) => {
+      const id = item.id || `case-${randomUUID()}`
+      return {
+        id,
+        name: item.name,
+        kind: item.kind,
+        input: item.input,
+        expect: item.expect,
+        ...(generatedIds.has(id) ? { origin: 'generated' as const } : {}),
+      }
+    })
     await this.bumpRevision(submission.id, 'cases', normalized)
     await this.audit(actor.id, 'agent.release.cases', agentId, 'success', `候选案例更新为 ${normalized.length} 条`)
     return this.getReleaseState(agentId)
@@ -957,17 +984,36 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
-  /** 退回修改：submitted → changes_requested，必须登记退回意见。 */
+  /**
+   * 退回修改：submitted → changes_requested，必须登记退回意见。
+   * 与 publish/ensureCandidate 同序加锁（先 agents 后 submission）：退回与并发提交、
+   * 发布、撤回在事务内串行，状态条件兜底防止审核意见写到已终态候选上。
+   */
   async requestChanges(agentId: string, note: string, userId: string): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
     if (!note.trim()) throw Object.assign(new Error('退回修改必须填写审核意见'), { status: 422, code: 'validation_failed' })
-    const updated = await this.database<{ id: string }[]>`
-      update agent_release_submissions
-         set status = 'changes_requested', review_note = ${note.trim()}, updated_at = now()
-       where tenant_id = ${tenantId} and agent_id = ${agentId} and status = 'submitted'
-      returning id
-    `
-    if (!updated.length) throw new Error('仅待审核状态的候选可以退回')
+    await this.database.begin(async (tx) => {
+      const [lockedAgent] = await tx<{ id: string }[]>`
+        select id from agents where tenant_id = ${tenantId} and id = ${agentId} for update
+      `
+      if (!lockedAgent) throw Object.assign(new Error(`Agent 不存在：${agentId}`), { status: 404, code: 'agent_not_found' })
+      const [submission] = await tx<{ id: string; status: string }[]>`
+        select id, status from agent_release_submissions
+         where tenant_id = ${tenantId} and agent_id = ${agentId}
+           and status in ('draft', 'submitted', 'changes_requested')
+         for update
+      `
+      if (!submission || submission.status !== 'submitted') {
+        throw new Error('仅待审核状态的候选可以退回')
+      }
+      const updated = await tx<{ id: string }[]>`
+        update agent_release_submissions
+           set status = 'changes_requested', review_note = ${note.trim()}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${submission.id} and status = 'submitted'
+        returning id
+      `
+      if (!updated.length) throw new Error('候选状态已变化，请刷新后重试')
+    })
     await this.audit(actor.id, 'agent.release.request-changes', agentId, 'success', `候选退回修改：${note.trim()}`)
     return this.getReleaseState(agentId)
   }
@@ -975,13 +1021,26 @@ export class PostgresAgentReleaseService {
   /** 撤回：进行中候选 → withdrawn（终态）。历史提交保留，再次同步时创建新候选。 */
   async withdrawSubmission(agentId: string, userId: string): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
-    const updated = await this.database<{ id: string }[]>`
-      update agent_release_submissions set status = 'withdrawn', updated_at = now()
-       where tenant_id = ${tenantId} and agent_id = ${agentId}
-         and status in ('draft', 'submitted', 'changes_requested')
-      returning id
-    `
-    if (!updated.length) throw new Error('当前 Agent 没有可撤回的进行中候选')
+    await this.database.begin(async (tx) => {
+      const [lockedAgent] = await tx<{ id: string }[]>`
+        select id from agents where tenant_id = ${tenantId} and id = ${agentId} for update
+      `
+      if (!lockedAgent) throw Object.assign(new Error(`Agent 不存在：${agentId}`), { status: 404, code: 'agent_not_found' })
+      const [submission] = await tx<{ id: string }[]>`
+        select id from agent_release_submissions
+         where tenant_id = ${tenantId} and agent_id = ${agentId}
+           and status in ('draft', 'submitted', 'changes_requested')
+         for update
+      `
+      if (!submission) throw new Error('当前 Agent 没有可撤回的进行中候选')
+      const updated = await tx<{ id: string }[]>`
+        update agent_release_submissions set status = 'withdrawn', updated_at = now()
+         where tenant_id = ${tenantId} and id = ${submission.id}
+           and status in ('draft', 'submitted', 'changes_requested')
+        returning id
+      `
+      if (!updated.length) throw new Error('候选状态已变化，请刷新后重试')
+    })
     await this.audit(actor.id, 'agent.release.withdraw', agentId, 'success', '候选已撤回，历史提交记录保留')
     return this.getReleaseState(agentId)
   }
@@ -1341,30 +1400,34 @@ export class PostgresAgentReleaseService {
     const resolvedSkills: string[] = []
     const resolvedTools: string[] = []
 
+    // 未锁版本的声明解析到平台当前发布/可用版本后，统一走能力服务的规范断言——
+    // 与草稿配置的 resolveDraftReferences 同一口径，避免两套可用性/版本规则漂移。
     const skillRows = this.skills ? await this.skills.getSkills() : []
     const toolRows = this.tools ? await this.tools.getTools() : []
 
     for (const reference of declared.skills) {
       const { id, version } = parseRef(reference)
-      const skill = skillRows.find(item => item.id === id)
-      if (!skill || skill.status === 'disabled' || !skill.activeVersion) {
-        missingSkills.push(reference)
-        continue
-      }
-      if (version === '—') {
-        resolvedSkills.push(`${id}@${skill.activeVersion}`)
-      } else if (await this.skillVersionPublished(id, version)) {
-        resolvedSkills.push(`${id}@${version}`)
-      } else {
+      if (!this.skills) { missingSkills.push(reference); continue }
+      const locked = version === '—'
+        ? `${id}@${skillRows.find(item => item.id === id)?.activeVersion ?? ''}`
+        : reference
+      try {
+        await this.skills.assertPublishedReferences([locked])
+        resolvedSkills.push(locked)
+      } catch {
         missingSkills.push(reference)
       }
     }
     for (const reference of declared.tools) {
       const { id, version } = parseRef(reference)
-      const tool = toolRows.find(item => item.id === id)
-      if (tool?.status === 'available') {
-        resolvedTools.push(`${id}@${version === '—' ? (tool.version ?? '1.0.0') : version}`)
-      } else {
+      if (!this.tools) { missingTools.push(reference); continue }
+      const locked = version === '—'
+        ? `${id}@${toolRows.find(item => item.id === id)?.version ?? ''}`
+        : reference
+      try {
+        await this.tools.assertAvailableReferences([locked])
+        resolvedTools.push(locked)
+      } catch {
         missingTools.push(reference)
       }
     }
@@ -1377,10 +1440,11 @@ export class PostgresAgentReleaseService {
         if (['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(dependency)) continue
         const depId = parseRef(dependency).id
         if (selected.has(depId)) continue
-        const tool = toolRows.find(item => item.id === depId)
-        if (tool?.status === 'available') {
-          resolvedTools.push(`${depId}@${tool.version ?? '1.0.0'}`)
-        } else {
+        try {
+          if (!this.tools) throw new Error('工具服务未接入')
+          await this.tools.assertAvailableReferences([dependency])
+          resolvedTools.push(dependency)
+        } catch {
           missingTools.push(depId)
           warnings.push(`已解析 Skill 依赖的工具 ${depId} 未发布或不可用，标记「缺少工具」并阻塞试运行`)
         }
@@ -1395,14 +1459,6 @@ export class PostgresAgentReleaseService {
       missingTools: [...new Set(missingTools)],
       warnings,
     }
-  }
-
-  private async skillVersionPublished(skillId: string, version: string): Promise<boolean> {
-    const [row] = await this.database<{ id: string }[]>`
-      select id from skill_versions
-       where tenant_id = ${tenantId} and skill_id = ${skillId} and version = ${version} and status = 'published'
-    `
-    return Boolean(row)
   }
 
   private async storePackageFiles(targetDir: string, files: Record<string, Uint8Array>) {

@@ -32,6 +32,17 @@ export function checkContracts(check) {
     check.assert(schema?.$id === `https://dsh-work.local/schemas/${name}.schema.json`, `${name} 缺少稳定 $id`)
   }
   check.assert(Boolean(manifest?.properties?.knowledge_context), 'Runtime Manifest 缺少 knowledge_context')
+  const skillInstruction = manifest?.properties?.agent_configuration?.properties?.skill_instructions?.items
+  for (const field of ['artifact_ref', 'instructions_sha256']) {
+    check.assert(Boolean(skillInstruction?.properties?.[field]), `Runtime Manifest skill_instructions 缺少外置字段 ${field}`)
+  }
+  const skillConditional = skillInstruction?.allOf?.find(
+    schema => schema?.if?.required?.includes('artifact_ref'),
+  )
+  check.assert(Boolean(skillConditional?.if?.required?.includes('artifact_ref')), 'Runtime Manifest skill_instructions 缺少内联/外置条件约束')
+  check.assert(skillConditional?.then?.properties?.instructions === false, 'Runtime Manifest skill_instructions 外置分支未禁止内联 instructions')
+  check.assert(skillConditional?.else?.properties?.instructions_sha256 === false, 'Runtime Manifest skill_instructions 内联分支未禁止孤立 instructions_sha256')
+  check.assert(skillConditional?.then?.properties?.files?.items?.properties?.content === false, 'Runtime Manifest skill_instructions 外置文件索引未禁止 content')
   for (const field of ['file_id', 'mount_path', 'access', 'source_name', 'media_type', 'content_sha256', 'content']) {
     const required = manifest?.$defs?.fileMount?.required
     check.assert(Array.isArray(required) && required.includes(field), `FileMount 缺少必填字段 ${field}`)

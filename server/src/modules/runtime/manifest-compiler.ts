@@ -4,6 +4,12 @@ import { canonicalJson, sha256 } from './canonical-json.ts'
 import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+// 与 FileSystemSkillArtifactStore 读取兼容同一口径：旧版生成器未清理首尾符号的持久化
+// 引用（中文名 → packages/____/<sha>）必须仍可编译执行；. 与 .. 段仍拒绝，越界防护
+// 由存储层 resolve 边界检查承担。新生成引用的规范形式（首尾字母数字）由写入侧自检保证。
+const ARTIFACT_REF_PATTERN = /^packages\/(?!\.{1,2}\/)[A-Za-z0-9._-]{1,64}\/[a-f0-9]{64}$/
+const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
+const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
 
 function assertId(name: string, value: string): void {
   if (!ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
@@ -23,14 +29,22 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   const skillReferences = new Set(input.skills.map(skill => `${skill.id}@${skill.version}`))
   const skillNames = new Set<string>()
   for (const skill of input.agent_configuration.skill_instructions) {
+    for (const key of Object.keys(skill)) {
+      if (!SKILL_FIELDS.has(key)) throw new TypeError(`Skill 存在未声明字段：${key}`)
+    }
     assertId('agent_configuration.skill_instructions.id', skill.id)
     assertId('agent_configuration.skill_instructions.version', skill.version)
     const externalized = typeof skill.artifact_ref === 'string'
+    if (externalized && skill.instructions !== undefined) throw new TypeError('外置 Skill 不得携带内联 instructions')
+    if (!externalized && skill.instructions_sha256 !== undefined) throw new TypeError('内联 Skill 不得携带 instructions_sha256')
     if (!externalized && (skill.instructions ?? '').trim().length < 20) {
       throw new TypeError('agent_configuration.skill_instructions.instructions must be at least 20 characters')
     }
-    if (externalized && (!/^packages\/[A-Za-z0-9._-]+\/[a-f0-9]{64}$/.test(skill.artifact_ref!) || !/^[a-f0-9]{64}$/.test(skill.instructions_sha256 ?? ''))) {
+    if (externalized && !ARTIFACT_REF_PATTERN.test(skill.artifact_ref!)) {
       throw new TypeError('agent_configuration.skill_instructions artifact reference is invalid')
+    }
+    if (externalized && !/^[a-f0-9]{64}$/.test(skill.instructions_sha256 ?? '')) {
+      throw new TypeError('agent_configuration.skill_instructions instructions_sha256 is invalid or missing')
     }
     const catalogName = (skill.name ?? skill.id).trim()
     if (!catalogName || catalogName.length > 80 || skillNames.has(catalogName)) throw new TypeError('Skill 目录名称为空、过长或重复')
@@ -42,12 +56,17 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     let skillBytes = 0
     const paths = new Set<string>()
     for (const file of skill.files ?? []) {
+      for (const key of Object.keys(file)) {
+        if (!SKILL_FILE_FIELDS.has(key)) throw new TypeError(`Skill 文件索引存在未声明字段：${key}`)
+      }
       if (!file.path || /[\\:]/.test(file.path) || [...file.path].some(character => character.charCodeAt(0) < 32) || file.path.split('/').some(part => !part || part === '.' || part === '..') || paths.has(file.path)) throw new TypeError('Skill 文件路径无效')
       paths.add(file.path)
+      if (externalized && file.content !== undefined) throw new TypeError('外置 Skill 文件索引不得携带 content')
       if (file.content !== undefined && sha256(file.content) !== file.sha256) throw new TypeError('Skill 文件摘要不匹配')
       if (file.content === undefined && !externalized) throw new TypeError('Skill 文件内容只能由受控文件夹引用省略')
       if (!/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isInteger(file.size) || file.size < 0) throw new TypeError('Skill 文件索引无效')
       if (file.content !== undefined && Buffer.byteLength(file.content) !== file.size) throw new TypeError('Skill 文件大小不匹配')
+      // 内联文件的 size 已校验等于内容字节数；外置文件按索引声明值计入，实际文件由加载侧 stat 复核。
       skillBytes += file.size
       if (skillBytes > MAX_SKILL_BYTES) throw new TypeError('单个 Skill 资源合计超过 1 MB')
     }

@@ -2,6 +2,8 @@
 
 两个前端只调用各自 API；服务端通过明确的接口协作。下表链接实际类型和实现，避免维护与源码不一致的伪接口副本。
 
+Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.md)；现有类型、Schema 与目标规范的差异见[实现核对](agent-design-gap-analysis.md)。目标字段须经过契约及消费者迁移，不能仅据规范文字直接调用。
+
 | 边界 | 权威来源 | 约束 |
 | --- | --- | --- |
 | Runtime 启动、取消、事件、健康与关闭 | [AgentRuntimePort](../../server/src/modules/runtime/runtime-types.ts) | 一个 Attempt 一个隔离 Worker；DSH 版本由 Runtime Lock 决定 |

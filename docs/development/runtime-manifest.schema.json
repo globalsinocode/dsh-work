@@ -63,20 +63,20 @@
         },
         "skill_instructions": {
           "type": "array",
-          "description": "Agent 引用的已发布 Skill Version 固定快照。新 Run 只向 DSH 展示 name/description 目录，完整 instructions 由 activate_skill 按需返回。",
+          "description": "Agent 引用的已发布 Skill Version 固定快照。新 Run 只向 DSH 展示 name/description 目录，完整 instructions 由 activate_skill 按需返回。Skill 为内联（携带 instructions 正文）或外置（artifact_ref + instructions_sha256 + files 索引）二选一，不兼容外置引用携带内联正文缓存。",
           "items": {
             "type": "object",
             "required": [
               "id",
-              "version",
-              "instructions"
+              "version"
             ],
             "properties": {
               "id": {
                 "type": "string"
               },
               "name": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 80
               },
               "description": {
                 "type": "string"
@@ -86,7 +86,18 @@
               },
               "instructions": {
                 "type": "string",
-                "minLength": 20
+                "minLength": 20,
+                "description": "内联 Skill 的正文；外置 Skill 不提供此字段。"
+              },
+              "artifact_ref": {
+                "type": "string",
+                "pattern": "^packages/(?!\\.{1,2}/)[A-Za-z0-9._-]{1,64}/[a-f0-9]{64}$",
+                "description": "外置 Skill 的内容存储引用；必须与 instructions_sha256、files 索引同时出现。包名段首尾为字母数字是新生成引用的规范形式（由存储层写入自检保证）；读取兼容旧版生成器未清理首尾符号的持久化引用，. 与 .. 段仍拒绝。"
+              },
+              "instructions_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "description": "外置 Skill 说明正文的内容摘要；摘要真实性由编译/加载阶段读取内容后校验。"
               },
               "dependencies": {
                 "type": "array",
@@ -100,11 +111,11 @@
               "files": {
                 "type": "array",
                 "maxItems": 64,
+                "description": "外置 Skill 为内容索引（不得携带 content）且必须含 SKILL.md 条目；内联 Skill 的文件必须携带 content。",
                 "items": {
                   "type": "object",
                   "required": [
                     "path",
-                    "content",
                     "sha256",
                     "size"
                   ],
@@ -128,7 +139,79 @@
                 }
               }
             },
-            "additionalProperties": false
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "artifact_ref"
+                  ],
+                  "properties": {
+                    "artifact_ref": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "instructions_sha256",
+                    "files"
+                  ],
+                  "properties": {
+                    "instructions": false,
+                    "instructions_sha256": {
+                      "type": "string"
+                    },
+                    "files": {
+                      "type": "array",
+                      "minItems": 1,
+                      "contains": {
+                        "type": "object",
+                        "required": [
+                          "path"
+                        ],
+                        "properties": {
+                          "path": {
+                            "const": "SKILL.md"
+                          }
+                        }
+                      },
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "content": false
+                        }
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "required": [
+                    "instructions"
+                  ],
+                  "properties": {
+                    "instructions": {
+                      "type": "string"
+                    },
+                    "instructions_sha256": false,
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "content"
+                        ],
+                        "properties": {
+                          "content": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       },
@@ -530,6 +613,7 @@
           "purpose": {
             "anyOf": [
               {
+                "type": "string",
                 "pattern": "^admin-"
               },
               {
@@ -552,6 +636,7 @@
       "else": {
         "properties": {
           "workspace_id": {
+            "type": "string",
             "minLength": 1
           }
         }
@@ -561,7 +646,12 @@
       "if": {
         "required": [
           "test_scenario"
-        ]
+        ],
+        "properties": {
+          "test_scenario": {
+            "type": "object"
+          }
+        }
       },
       "then": {
         "required": [
