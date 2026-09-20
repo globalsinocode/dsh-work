@@ -565,7 +565,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const bounded = truncateUtf8(text, remaining)
     if (bounded.length < text.length) record.outputTruncated = true
     record.assistantText += bounded
-    this.emit(record, 'assistant.delta', bounded, { committed_block: true })
+    if (bounded.length > 0) this.emit(record, 'assistant.delta', bounded, { committed_block: true })
   }
 
   private async onPermissionRequest(
@@ -683,6 +683,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       timeout_seconds: record.manifest.limits.timeout_seconds,
       ...(record.cancelCause === 'timeout' ? { timeout_phase: record.timeoutPhase ?? 'execution' } : {}),
       ...(record.firstOutputMs === undefined ? {} : { first_output_ms: Math.round(record.firstOutputMs) }),
+      ...(record.outputTruncated ? { output_truncated: true } : {}),
     })
     this.finish(record)
   }

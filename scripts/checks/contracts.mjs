@@ -36,6 +36,12 @@ export function checkContracts(check) {
   for (const field of ['artifact_ref', 'instructions_sha256']) {
     check.assert(Boolean(skillInstruction?.properties?.[field]), `Runtime Manifest skill_instructions 缺少外置字段 ${field}`)
   }
+  // 与 domain/skill-artifact-ref.ts 的 SKILL_ARTIFACT_REF_PATTERN.source 保持一致；
+  // 静态检查中不导入 TS，字面量独立固定同一规则。
+  check.assert(
+    skillInstruction?.properties?.artifact_ref?.pattern === '^packages/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9])/[a-f0-9]{64}$',
+    'Runtime Manifest artifact_ref 规则与 SKILL_ARTIFACT_REF_PATTERN 不一致',
+  )
   const skillConditional = skillInstruction?.allOf?.find(
     schema => schema?.if?.required?.includes('artifact_ref'),
   )

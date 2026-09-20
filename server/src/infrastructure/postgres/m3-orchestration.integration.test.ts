@@ -92,8 +92,8 @@ test('validated Runtime output is published once as a downloadable Artifact', as
   await mkdir(join(workspaceDirectory, 'output'))
   await writeFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), '# 生产欠料管理 PRD\n')
 
-  // 成果发布属于「成功执行」的一部分：只能在 Run 仍 running 时追加（与 Adapter
-  // 在执行期 collectArtifacts 的时序一致）；succeeded 后只允许核对既有版本。
+  // 成果发布属于「成功执行」的一部分：只能在 Run 仍 running 时追加——即 Adapter
+  // 在执行期调用 collectArtifacts 所处的状态窗口；succeeded 后只允许核对既有版本。
   let releaseCompletion: () => void = () => undefined
   runtime.completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve })
   try {
@@ -132,7 +132,6 @@ test('validated Runtime output is published once as a downloadable Artifact', as
     assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
   } finally {
     releaseCompletion()
-    runtime.completionGate = null
   }
 })
 
@@ -168,7 +167,6 @@ test('HTML Runtime output is published as a previewable html Artifact', async ()
     assert.equal(downloaded.bytes.toString('utf8'), markup)
   } finally {
     releaseCompletion()
-    runtime.completionGate = null
   }
 })
 
@@ -493,12 +491,13 @@ interface Execution {
   snapshot: RuntimeExecutionSnapshot
   resolve: (snapshot: RuntimeExecutionSnapshot) => void
   done: Promise<RuntimeExecutionSnapshot>
+  completionGate: Promise<void> | null
 }
 
 class DeterministicRuntime implements AgentRuntimePort {
   private readonly executions = new Map<string, Execution>()
   private readonly attemptCounts = new Map<string, number>()
-  /** 测试闸门：非空时执行停在 running，放行后才发完成事件——模拟 Adapter 在执行期收集成果的窗口。 */
+  /** 测试闸门：设置后由下一次 execute 消费（随执行记录走并置空），该执行停在 running 直到放行。 */
   completionGate: Promise<void> | null = null
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
@@ -510,7 +509,8 @@ class DeterministicRuntime implements AgentRuntimePort {
       startedAt: null, endedAt: null, manifestSha256: 'test', attemptDirectory: '/tmp/test',
       errorCode: null, errorMessage: null,
     }
-    const execution: Execution = { manifest, events: [], listeners: new Set(), snapshot, resolve: resolveDone, done }
+    const execution: Execution = { manifest, events: [], listeners: new Set(), snapshot, resolve: resolveDone, done, completionGate: this.completionGate }
+    this.completionGate = null
     this.executions.set(manifest.run_id, execution)
     const count = (this.attemptCounts.get(manifest.run_id) ?? 0) + 1
     this.attemptCounts.set(manifest.run_id, count)
@@ -531,7 +531,7 @@ class DeterministicRuntime implements AgentRuntimePort {
       }
       this.emit(execution, 'assistant.delta', 'M3 真实回答')
       const complete = async () => {
-        await this.completionGate
+        await execution.completionGate
         if (execution.snapshot.status !== 'running') return
         this.emit(execution, 'assistant.completed', 'M3 真实回答')
         execution.snapshot.status = 'completed'

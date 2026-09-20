@@ -109,7 +109,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 ### I-01 修复 Runtime Schema 与实际 Manifest 的漂移
 
-**B-02 后续范围：** 下述完成记录保留事实；其中为旧引用放宽读取规则的兼容处理已随 B-02a 移除（2026-09-20）：`FileSystemSkillArtifactStore.resolveReference` 删除 `LEGACY_REF_PATTERN` 改用写入侧严格 `REF_PATTERN`，`compileRuntimeManifest` 的 `ARTIFACT_REF_PATTERN` 与 `runtime-manifest.schema.json` 同步收紧为包名段首尾字母数字的唯一规则，旧生成器持久化引用（如 `packages/____/<sha>`）在 Schema、编译与加载三处一致拒绝；`skill-package.test.ts` 与 `runtime-manifest-schema.test.ts` 的旧格式接受用例已翻转为拒绝。验证：`test:runtime` 59/59、`test:skill-install` 9/9、`m3-orchestration` 12/12、`m4-skill-management` 1/1、`admin-skill-installation` 11/12（1 例真实 DSH 按标记跳过）、typecheck、`pnpm verify` 通过。历史数据不删除；含旧引用形态的持久化记录不再可执行。
+**B-02 后续范围：** 下述完成记录保留事实；其中为旧引用放宽读取规则的兼容处理已随 B-02a 移除（2026-09-20）：`FileSystemSkillArtifactStore.resolveReference` 删除 `LEGACY_REF_PATTERN` 改用写入侧严格 `REF_PATTERN`，`compileRuntimeManifest` 的 `ARTIFACT_REF_PATTERN` 与 `runtime-manifest.schema.json` 同步收紧为包名段首尾字母数字的唯一规则，旧生成器持久化引用（如 `packages/____/<sha>`）在 Schema、编译与加载三处一致拒绝；复审后该规则收敛为共享常量 `domain/skill-artifact-ref.ts` 的 `SKILL_ARTIFACT_REF_PATTERN`（存储层与编译器共同引用，Schema 中的等价 pattern 由 contracts 静态检查固定）；`skill-package.test.ts` 与 `runtime-manifest-schema.test.ts` 的旧格式接受用例已翻转为拒绝。验证：`test:runtime` 59/59、`test:skill-install` 9/9、`m3-orchestration` 12/12、`m4-skill-management` 1/1、`admin-skill-installation` 11/12（1 例真实 DSH 按标记跳过）、typecheck、`pnpm verify` 通过。历史数据不删除；含旧引用形态的持久化记录不再可执行。
 
 **状态：已完成（2026-09-19）。** Schema 已补齐 `artifact_ref`/`instructions_sha256` 及内联/外置条件约束（外置不兼容内联正文缓存、外置文件索引禁止携带 content）；`compileRuntimeManifest` 作为持久化前的实际关口同步 fail-closed，拒绝外置携带 `instructions`/文件 `content`、内联携带 `instructions_sha256` 及未声明字段，`artifact_ref` 对新生成引用要求包名段首尾字母数字（由 `FileSystemSkillArtifactStore` 写入自检保证；读取/编译侧兼容旧版生成器未清理首尾符号的持久化引用），`.`/`..` 遍历段仍拒绝；外置 Skill 的声明文件大小总和在编译期校验，实际文件字节预算由 `FileSystemSkillArtifactStore` 加载侧按 `stat` 预检的实际文件大小执行。结构（Schema）与内容（编译/加载）分工由 `server/src/modules/runtime/runtime-manifest-schema.test.ts` 以同一样本双边界验证（10 例，含 ajv draft 2020-12 严格编译；声明大小预算用例仅编译侧断言）；`test:runtime` 已接入，contracts 静态检查断言外置字段与禁止条件。顺带修复既有 Schema 中 `if` 子 schema 缺 `properties`/`type` 声明的严格模式问题。验证：`pnpm test:runtime` 59/59、`pnpm test:skill-install` 9/9、`tsc --noEmit`、`pnpm verify`、`pnpm check:architecture`、eslint 均通过。未覆盖：Schema 仍未编码编译器的 ID 字符集等细粒度内容规则（属内容边界职责）；模型能力要求字段不在本项。
 
@@ -205,7 +205,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 | Worker 启动超时 | 毫秒，spawn + initialize + session/new | `DshAcpRuntimeAdapter.armDeadline('setup')` | 停止 Worker → `RUN_TIMEOUT`（`timeout_phase=setup`，无 `run.started`） |
 | 执行超时 | 秒，`timeout_seconds`，覆盖 prompt 到成果收集全程 | `armDeadline('execution')` | 取消 ACP 会话 + abort 平台桥 + 宽限后强制关闭 → `RUN_TIMEOUT`；已产文本经 `commitInterruptedOutput` 带中断标记提交 |
 | 工具调用次数 | 次，单 Attempt | DSH 政策 `tools/pre-execute` 的 `++calls` 覆盖经 `ctx.tools.register` 注册的平台工具与内置工具；平台桥 `++count` 仅计 `/tools/*` socket 调用，同一上限 | 政策 `deny`「已达上限」；桥 403 |
-| 输出字节 | UTF-8 字节，单 Attempt | Adapter `onSessionUpdate` 按 `Buffer.byteLength` 截断，多字节字符不拆半 | 截断/丢弃后续分块，`assistant.completed` 与 `run.completed` 标记 `output_truncated` |
+| 输出字节 | UTF-8 字节，单 Attempt | Adapter `onSessionUpdate` 按 `Buffer.byteLength` 截断，多字节字符不拆半 | 截断/丢弃后续分块，`assistant.completed`、`run.completed` 与 `run.failed` 标记 `output_truncated` |
 | 输入文件挂载 | ≤5 个、合计 ≤1 MB、只读、`/workspace/input/` | `compileRuntimeManifest` | 编译拒绝 |
 | Skill 资源 | ≤64 文件、单 Skill ≤1 MB | `compileRuntimeManifest` + 工件存储 stat 预检 | 编译/加载拒绝 |
 | 工具参数体 | ≤64 KB | 平台桥 `readBody` | 422 拒绝 |
@@ -215,7 +215,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 **核查结论：** 未发现混用计数绕过——平台工具注册为 DSH 标准工具、经同一 `pre-execute` 管道计数（该前提由锁定的 ACP profile 工具注册契约保证，未做 DSH 内部动态验证；桥侧同上限第二道闸保证平台调用本身不超上限）；无超限后继续执行路径——政策在计数处 `deny`、Adapter 丢弃超字节分块、超时取消会话并强制关闭；无取消中提前释放容量——`cancel_requested` 计入容量直至终态转移；授权探测 `/authorize-execution` 在计数前分流、不消耗工具预算；两处 `++` 递增均同步发生在首个 `await` 之前，无并发越过上限窗口。Allow-list 拒绝的调用不计数（未通过校验不算 Agent 已消耗动作），通过校验后被授权拒绝的调用消耗预算（偏保守，与设计一致）。
 
-**实证修复：** 输出字节截断此前完全静默——超限分块被丢弃后，`run.completed` 与持久化回答无法区分「截断」与「完整」。现 `ExecutionRecord.outputTruncated` 在截断或丢弃分块时置位，随 `assistant.completed`（含超时/关停中断提交路径）与 `run.completed` 的 `safe_metadata` 暴露 `output_truncated: true`；未截断时不输出该字段。边界测试：mock Worker 连发 1000 B + 以多字节字符压界的 103 B + 已超限的 50 B 分块，`max_output_bytes=1024` 断言恰收 1024 字节、截断分块仍产生第二个 `assistant.delta`、第三分块被丢弃、`assistant.completed`/`run.completed` 双事件带标记；既有完整路径断言无 `output_truncated` 字段。验证：`test:runtime` 60/60、typecheck、eslint、`pnpm verify` 通过。
+**实证修复：** 输出字节截断此前完全静默——超限分块被丢弃后，`run.completed` 与持久化回答无法区分「截断」与「完整」。现 `ExecutionRecord.outputTruncated` 在截断或丢弃分块时置位，随 `assistant.completed`（含超时/关停中断提交路径）、`run.completed` 与 `run.failed` 的 `safe_metadata` 暴露 `output_truncated: true`；未截断时不输出该字段。边界测试：mock Worker 连发 1000 B + 以多字节字符压界的 103 B + 已超限的 50 B 分块，`max_output_bytes=1024` 断言恰收 1024 字节、第二个 `assistant.delta` 恰为压界后的 24 字节且「界」码点完整、第三分块被丢弃、`assistant.completed`/`run.completed` 双事件带标记；既有完整路径断言无 `output_truncated` 字段。验证：`test:runtime` 60/60、typecheck、eslint、`pnpm verify` 通过。
 
 **仍为扩展项：** 累计 Token/成本、跨 Attempt 总预算与无进展检测未实施（本项第 4 条）；模型能力要求字段仅声明校验，路由消费待 B-03。
 

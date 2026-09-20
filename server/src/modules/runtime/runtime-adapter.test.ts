@@ -467,8 +467,14 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
     const deltas = events.filter(event => event.event_type === 'assistant.delta')
     assert.equal(deltas.length, 2, '截断后继续到达的分块必须被丢弃而不是追加')
+    assert.equal(deltas[0]?.display_message, 'A'.repeat(1000))
+    // 第二块 103 字节（界=3B + 100×B）只余 24 字节：截断必须停在码点边界，
+    // 多字节的「界」完整保留，后续 B 补齐到恰好 24 字节。
+    assert.equal(deltas[1]?.display_message, `界${'B'.repeat(21)}`)
+    assert.equal(Buffer.byteLength(deltas[1]?.display_message ?? ''), 24)
     const committed = events.find(event => event.event_type === 'assistant.completed')
     assert.equal(Buffer.byteLength(committed?.display_message ?? ''), 1024)
+    assert.equal(committed?.display_message, deltas.map(delta => delta.display_message).join(''))
     assert.equal(committed?.safe_metadata['output_truncated'], true)
     const completed = events.find(event => event.event_type === 'run.completed')
     assert.equal(completed?.safe_metadata['output_truncated'], true)

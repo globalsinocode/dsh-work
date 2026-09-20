@@ -1,13 +1,13 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
+import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
 import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-// 与 FileSystemSkillArtifactStore、runtime-manifest.schema.json 同一引用规则（B-02）：
-// 包名段首尾必须为字母数字，拒绝旧版生成器遗留的首尾符号形态及 . / .. 遍历段；
-// 越界防护由存储层 resolve 边界检查承担。
-const ARTIFACT_REF_PATTERN = /^packages\/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9])\/[a-f0-9]{64}$/
+// 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 FileSystemSkillArtifactStore
+// 读写同口径；runtime-manifest.schema.json 中的等价 pattern 由 contracts 静态检查固定。
+const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
 const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
 

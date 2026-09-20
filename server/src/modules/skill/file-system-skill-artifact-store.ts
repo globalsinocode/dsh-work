@@ -4,6 +4,7 @@ import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
+import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import {
   hash,
   parseSkillMarkdown,
@@ -13,9 +14,7 @@ import {
   type SkillPackageArtifact,
 } from './skill-package.ts'
 
-// 唯一引用规则（B-02）：包名段首尾必须为字母数字，排除 . / .. 遍历段与退化名；
-// 读写同口径，不再接受旧版生成器未清理首尾符号的持久化引用。
-const REF_PATTERN = /^packages\/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]{0,62}[A-Za-z0-9])\/[a-f0-9]{64}$/
+const REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 
 /**
  * Durable, immutable Skill folders for the single-node macOS deployment.
@@ -124,7 +123,7 @@ export class FileSystemSkillArtifactStore {
       .replaceAll(/[^A-Za-z0-9._-]/g, '_')
       .slice(0, 64)
       .replace(/^[._-]+|[._-]+$/g, '') || 'skill'
-    return `packages/${readable}/${pkg.sha256}`
+    return `packages/${readable}/${pkg.sha256.toLowerCase()}`
   }
 
   private resolveReference(reference: string) {
