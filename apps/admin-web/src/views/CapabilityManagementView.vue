@@ -727,6 +727,7 @@ onUnmounted(() => clearSkillTestPoll())
 <template>
   <div class="ops-page capabilities-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
+    <el-alert v-if="toolStore.bindingsError" :title="`平台绑定修订加载失败：${toolStore.bindingsError}`" type="warning" show-icon @close="toolStore.bindingsError = ''" />
     <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Skill、工具与连接器配置。" />
     <el-alert
       v-if="skillActionFeedback && activeTab === 'skills'"

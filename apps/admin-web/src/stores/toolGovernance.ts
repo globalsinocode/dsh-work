@@ -141,12 +141,15 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
   const governance = ref<Record<string, ToolGovernance>>(seedGovernance())
   /** 服务端真实绑定修订（key = 工具 id）；active 之外的状态标记为 revoked。 */
   const serverBindings = ref<Record<string, { revision: ToolBindingRevision; revoked: boolean }>>({})
+  /** 绑定接口加载失败的可观察信号；为 '' 表示未发生或已恢复。 */
+  const bindingsError = ref('')
   /** 候选发布后并入工具列表的原型记录；真实数据仍来自 content store。 */
   const publishedFromCandidates = ref<ToolDefinition[]>([])
   const busy = ref('')
 
   /** 加载平台绑定修订：每个工具取最新修订（active 优先，其次最大 revision）。 */
   async function loadBindings() {
+    bindingsError.value = ''
     try {
       const { items } = await adminApi.getToolBindings()
       const latest = new Map<string, ToolBindingRecord>()
@@ -164,8 +167,10 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
         mapped[toolId] = { revision: toBindingRevision(record), revoked: record.status !== 'active' }
       }
       serverBindings.value = mapped
-    } catch {
+    } catch (error) {
+      // 不把接口失败静默成「尚未解析绑定」：保留可观察错误信号供视图提示。
       serverBindings.value = {}
+      bindingsError.value = error instanceof Error ? error.message : String(error)
     }
   }
 
@@ -326,6 +331,7 @@ export const useToolGovernanceStore = defineStore('tool-governance-proto', () =>
     candidates,
     governance,
     serverBindings,
+    bindingsError,
     publishedFromCandidates,
     busy,
     loadBindings,

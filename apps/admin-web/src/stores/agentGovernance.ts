@@ -101,9 +101,12 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
    */
   function bindingRevisionLabel(agentId: string, version: string): string {
     const record = contentStore.agentVersions.find(item => item.agentId === agentId && item.version === version)
-    const refs = record?.bindingRefs?.length
-      ? record.bindingRefs
-      : (states.value[agentId]?.candidate?.version === version ? states.value[agentId]?.candidate?.bindingRefs : undefined) ?? []
+    // 草稿已入库，但封存依据仍保存在候选中；发布后才写入版本记录。
+    // 已发布/停用版本只展示自身依据，空值不由候选回填。
+    const candidate = states.value[agentId]?.candidate
+    const refs = record && record.status !== 'draft'
+      ? (record.bindingRefs ?? [])
+      : (candidate?.version === version ? (candidate.bindingRefs ?? []) : [])
     return refs.length ? refs.map(pin => `${pin.tool}#rev${pin.revision}`).join('、') : '—'
   }
 

@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { adminApi } from '../api/client'
-import type { AgentReleaseState, AgentDefinition } from '../types/domain'
+import type { AgentReleaseState, AgentDefinition, AgentVersionRecord } from '../types/domain'
 import { useAgentGovernanceStore } from './agentGovernance'
 import { useContentStore } from './content'
 
@@ -204,5 +204,33 @@ describe('agent governance store（服务端持久化）', () => {
     await store.loadEvidenceIndex()
     expect(store.versionGovernance('agent-4', '1.0.0').evidence).toHaveLength(1)
     expect(store.versionGovernance('agent-4', '9.9.9').evidence).toHaveLength(0)
+  })
+
+  it.each([
+    { name: '已入库草稿展示候选封存依据', status: 'draft', candidateVersion: '0.1.0', hasVersionBinding: false, expected: 'read@1.0.0#rev2' },
+    { name: '草稿不展示其他版本候选的依据', status: 'draft', candidateVersion: '0.2.0', hasVersionBinding: false, expected: '—' },
+    { name: '已发布版本优先展示自身依据', status: 'published', candidateVersion: '0.1.0', hasVersionBinding: true, expected: 'read@1.0.0#rev1' },
+    { name: '已发布版本的空依据不由候选回填', status: 'published', candidateVersion: '0.1.0', hasVersionBinding: false, expected: '—' },
+    { name: '停用版本的空依据不由候选回填', status: 'disabled', candidateVersion: '0.1.0', hasVersionBinding: false, expected: '—' },
+  ] as const)('$name', async ({ status, candidateVersion, hasVersionBinding, expected }) => {
+    const agentId = 'agent-bindings'
+    const pin = { tool: 'read@1.0.0', binding_id: 'binding-1', revision: 1, digest: 'a'.repeat(64) }
+    const record: AgentVersionRecord = {
+      ...makeAgent(agentId),
+      id: 'agent-version-1', agentId, status,
+      createdAt: '2026-09-20T08:00:00.000Z', createdBy: '管理员', summary: '测试版本',
+      bindingRefs: hasVersionBinding ? [pin] : [],
+    }
+    const contentStore = useContentStore()
+    contentStore.agentVersions = [record]
+    vi.spyOn(adminApi, 'getAgentReleaseState').mockResolvedValue(makeState(agentId, {
+      candidate: makeCandidate(agentId, {
+        version: candidateVersion, sealedRevision: 1,
+        bindingRefs: [{ ...pin, binding_id: 'binding-2', revision: 2, digest: 'b'.repeat(64) }],
+      }),
+    }))
+    const store = useAgentGovernanceStore()
+    await store.loadReleaseState(agentId)
+    expect(store.versionGovernance(agentId, record.version).bindingRevision).toBe(expected)
   })
 })

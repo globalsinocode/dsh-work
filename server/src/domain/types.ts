@@ -1,4 +1,6 @@
 /** Prototype server domain model. Frontend applications own their API DTOs independently. */
+import type { ManifestToolBinding } from './tool-binding.ts'
+
 export type UserRole = 'employee' | 'department_manager' | 'business_admin' | 'platform_admin' | 'auditor'
 
 export interface UserProfile {
@@ -273,13 +275,8 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   actor: string
 }
 
-/** B-03/I-04：发布时固定的平台工具绑定修订引用（tool/binding_id/revision/digest）。 */
-export interface AgentVersionBindingRef {
-  tool: string
-  binding_id: string
-  revision: number
-  digest: string
-}
+/** B-03/I-04：发布时固定的平台工具绑定修订引用——与 Manifest pin 同一契约（tool/binding_id/revision/digest）。 */
+export type AgentVersionBindingRef = ManifestToolBinding
 
 export interface AgentVersionRecord {
   id: string

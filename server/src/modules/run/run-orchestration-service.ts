@@ -1248,7 +1248,7 @@ export class RunOrchestrationService {
   }
 
   /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
-  async assertCurrentRunAuthorization(manifest: RuntimeManifest): Promise<void> {
+  async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false): Promise<void> {
     if (!this.authorization) throw new AuthorizationCheckUnavailableError()
     try {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
@@ -1271,7 +1271,7 @@ export class RunOrchestrationService {
           throw authorizationDenied('会话归属或固定 Agent 已变化')
         }
       }
-      await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest, this.toolBindings)
+      await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest, this.toolBindings, toolBindingsChecked)
     } catch (error) {
       if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
       throw new AuthorizationCheckUnavailableError(error)
@@ -1382,7 +1382,8 @@ export class RunOrchestrationService {
     // AC-23 约束的是个人空间的产品形态，不是豁免共同执行授权检查。
     if (workspaceType === null) return { denied: true, reason: '工作空间不存在或已归档' }
     try {
-      await this.assertCurrentRunAuthorization(manifest)
+      // 绑定 pin 已在本函数顶部复核：此处跳过共享闸门的重复检查。
+      await this.assertCurrentRunAuthorization(manifest, true)
       return { denied: false }
     } catch (error) {
       if (!isAuthorizationDenial(error)) throw error

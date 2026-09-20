@@ -23,7 +23,6 @@ import {
 } from './dsh-built-in-tool-catalog.ts'
 
 const tenantId = 'tenant-dsh-work'
-const runtimeIntrinsicTools = RUNTIME_INTRINSIC_TOOL_REFS
 const hiddenRuntimeCatalogTools = new Set(['activate_skill', 'prepare_skill_installation', 'python_execute'])
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
 const PLATFORM_BOOTSTRAP_ACTOR = 'U00008'
@@ -265,13 +264,10 @@ export class PostgresToolConnectorService {
         // 停用即撤销绑定：固定到该修订的在途/排队执行在下一次复核中失败。
         await this.revokeToolBindings(input.toolId, transaction)
       } else {
-        // 重新启用不复活被撤销的修订：按当前配置物化新的 active 修订。
-        const [published] = await transaction<{ version: string }[]>`
-          select version from tool_versions
-           where tenant_id = ${tenantId} and tool_id = ${input.toolId} and status = 'published'
-           order by created_at desc limit 1
-        `
-        if (published) await this.ensureToolBindingWithin(transaction, input.toolId, published.version, actor.id)
+        // 重新启用不复活被撤销的修订：按当前配置为全部已发布版本物化新的 active 修订。
+        for (const { version } of await this.publishedToolVersions(transaction, input.toolId)) {
+          await this.ensureToolBindingWithin(transaction, input.toolId, version, actor.id)
+        }
       }
     })
     await this.audit(actor.id, `tool.${input.status === 'available' ? 'enable' : 'disable'}`, input.toolId, 'success', `工具已${input.status === 'available' ? '启用' : '停用'}`)
@@ -301,21 +297,22 @@ export class PostgresToolConnectorService {
     }
     const roleIds = await this.resolveRoleIds(input.allowedRoles)
     await this.database.begin(async transaction => {
-      const result = await transaction`
+      const result = await transaction<{ status: string }[]>`
         update tools set allowed_role_ids = ${transaction.json(roleIds)},
                          data_scopes = ${transaction.json(unique(input.dataScopes))},
                          approval_policy = ${input.approvalPolicy}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${input.toolId}
-         returning id
+         returning status
       `
       if (!result.length) throw new Error(`工具不存在：${input.toolId}`)
-      // 授权角色/数据范围/审批策略属绑定语义：变更产生新修订，旧发布依据随之失效。
-      const [published] = await transaction<{ version: string }[]>`
-        select version from tool_versions
-         where tenant_id = ${tenantId} and tool_id = ${input.toolId} and status = 'published'
-         order by created_at desc limit 1
-      `
-      if (published) await this.ensureToolBindingWithin(transaction, input.toolId, published.version, actor.id)
+      // 授权角色/数据范围/审批策略属绑定语义：变更对全部已发布版本产生新修订，
+      // 旧发布依据随之失效，不能只轮换最新版本而留下名义上仍 active 的陈旧行。
+      // 已停用工具的绑定早已撤销，不重新物化。
+      if (result[0]!.status !== 'disabled') {
+        for (const { version } of await this.publishedToolVersions(transaction, input.toolId)) {
+          await this.ensureToolBindingWithin(transaction, input.toolId, version, actor.id)
+        }
+      }
     })
     await this.audit(actor.id, 'tool.permissions.update', input.toolId, 'success', '更新工具角色、数据范围和审批策略')
     return this.requireTool(input.toolId)
@@ -373,7 +370,7 @@ export class PostgresToolConnectorService {
 
   private async assertReferences(references: string[], requireHealthy: boolean, sql: DatabaseClient | DatabaseTransaction = this.database): Promise<void> {
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) continue
+      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await sql<{ id: string }[]>`
         select tv.id from tools t
@@ -396,7 +393,7 @@ export class PostgresToolConnectorService {
   ): Promise<void> {
     const scopeSet = new Set(agentDataScopes)
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) continue
+      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ allowedRoleIds: string[]; dataScopes: string[] }[]>`
         select t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes"
@@ -421,7 +418,7 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const names: string[] = []
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) { names.push(parseReference(reference).id); continue }
+      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) { names.push(parseReference(reference).id); continue }
       const { id } = parseReference(reference)
       const [row] = await this.database<{ name: string }[]>`
         select dsh_tool_name as name from tools
@@ -439,7 +436,7 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const policies: ToolDefinition['approvalPolicy'][] = []
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) { policies.push('none'); continue }
+      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) { policies.push('none'); continue }
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ approvalPolicy: ToolDefinition['approvalPolicy'] }[]>`
         select t.approval_policy as "approvalPolicy" from tools t
@@ -465,7 +462,7 @@ export class PostgresToolConnectorService {
   async resolveToolBindings(references: string[], actor = PLATFORM_BOOTSTRAP_ACTOR): Promise<ResolvedToolBinding[]> {
     const resolved: ResolvedToolBinding[] = []
     for (const reference of unique(references)) {
-      if (runtimeIntrinsicTools.has(reference)) continue
+      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       resolved.push(await this.ensureToolBinding(id, version, actor))
     }
@@ -478,7 +475,8 @@ export class PostgresToolConnectorService {
    * 不能覆盖当前收权。
    */
   async assertActiveToolBindings(pins: ManifestToolBinding[], db: DatabaseClient | DatabaseTransaction = this.database): Promise<void> {
-    for (const pin of pins) {
+    // 按 tool 排序取锁：并发事务锁定多个 tools 行时保持全局一致的锁序，避免死锁。
+    for (const pin of [...pins].sort((a, b) => a.tool.localeCompare(b.tool))) {
       const { id, version } = parseReference(pin.tool)
       const [row] = await db<{ toolId: string; toolVersion: string; revision: number; contentDigest: string; status: string }[]>`
         select tool_id as "toolId", tool_version as "toolVersion", revision,
@@ -490,7 +488,9 @@ export class PostgresToolConnectorService {
         || row.revision !== pin.revision || row.contentDigest !== pin.digest) {
         throw authorizationDenied(`固定的工具绑定修订已失效或被撤销：${pin.tool}`)
       }
-      const snapshot = await this.loadBindingSnapshot(db, id, version)
+      // 持 tools 行锁复核当前快照：在发布/提交事务内与 updateToolPermissions、
+      // setToolStatus 等写方串行化，杜绝“校验通过后被并发轮换”的发布竞态。
+      const snapshot = await this.loadBindingSnapshot(db, id, version, true)
       if (!snapshot || toolBindingDigest(snapshot) !== pin.digest) {
         throw authorizationDenied(`工具绑定的当前配置已偏离固定修订：${pin.tool}`)
       }
@@ -533,24 +533,35 @@ export class PostgresToolConnectorService {
     toolVersion: string,
     actor: string,
   ): Promise<ResolvedToolBinding> {
-      const snapshot = await this.loadBindingSnapshot(db, toolId, toolVersion, true)
+      const loadCurrent = async () => {
+        const [row] = await db<BindingRow[]>`
+          select id, tool_id as "toolId", tool_version as "toolVersion", revision,
+                 connector_id as "connectorId", executor, endpoint,
+                 credential_ref as "credentialRef", identity_policy as "identityPolicy",
+                 environment, allowed_role_ids as "allowedRoleIds", data_scopes as "dataScopes",
+                 approval_policy as "approvalPolicy", content_digest as "contentDigest",
+                 status, created_at as "createdAt"
+            from tool_binding_revisions
+           where tenant_id = ${tenantId} and tool_id = ${toolId} and tool_version = ${toolVersion}
+             and status = 'active'
+        `
+        return row
+      }
+      // 快路径不加锁：活跃修订与当前快照一致时直接复用，避免每次派发都对 tools 行取写锁。
+      const snapshot = await this.loadBindingSnapshot(db, toolId, toolVersion, false)
       if (!snapshot) throw new Error(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
       const digest = toolBindingDigest(snapshot)
-      const [current] = await db<BindingRow[]>`
-        select id, tool_id as "toolId", tool_version as "toolVersion", revision,
-               connector_id as "connectorId", executor, endpoint,
-               credential_ref as "credentialRef", identity_policy as "identityPolicy",
-               environment, allowed_role_ids as "allowedRoleIds", data_scopes as "dataScopes",
-               approval_policy as "approvalPolicy", content_digest as "contentDigest",
-               status, created_at as "createdAt"
-          from tool_binding_revisions
-         where tenant_id = ${tenantId} and tool_id = ${toolId} and tool_version = ${toolVersion}
-           and status = 'active'
-      `
-      if (current && current.contentDigest === digest) return toResolvedBinding(current)
-      if (current) {
+      const current = await loadCurrent()
+      if (current?.contentDigest === digest) return toResolvedBinding(current)
+      // 需要轮换：持 tools 行锁复核快照与活跃修订，与并发解析/语义变更串行化。
+      const locked = await this.loadBindingSnapshot(db, toolId, toolVersion, true)
+      if (!locked) throw new Error(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
+      const lockedDigest = toolBindingDigest(locked)
+      const currentUnderLock = await loadCurrent()
+      if (currentUnderLock?.contentDigest === lockedDigest) return toResolvedBinding(currentUnderLock)
+      if (currentUnderLock) {
         await db`update tool_binding_revisions set status = 'superseded'
-                  where tenant_id = ${tenantId} and id = ${current.id} and status = 'active'`
+                  where tenant_id = ${tenantId} and id = ${currentUnderLock.id} and status = 'active'`
       }
       const [seq] = await db<{ next: number }[]>`
         select coalesce(max(revision), 0) + 1 as next
@@ -564,9 +575,9 @@ export class PostgresToolConnectorService {
           allowed_role_ids, data_scopes, approval_policy, content_digest, status, created_by
         ) values (
           ${`tool-binding-${randomUUID()}`}, ${tenantId}, ${toolId}, ${toolVersion}, ${seq!.next},
-          ${snapshot.connectorId}, ${snapshot.executor}, ${snapshot.endpoint}, ${snapshot.credentialRef},
-          ${snapshot.identityPolicy}, ${snapshot.environment}, ${db.json(snapshot.allowedRoleIds)},
-          ${db.json(snapshot.dataScopes)}, ${snapshot.approvalPolicy}, ${digest}, 'active', ${actor}
+          ${locked.connectorId}, ${locked.executor}, ${locked.endpoint}, ${locked.credentialRef},
+          ${locked.identityPolicy}, ${locked.environment}, ${db.json(locked.allowedRoleIds)},
+          ${db.json(locked.dataScopes)}, ${locked.approvalPolicy}, ${lockedDigest}, 'active', ${actor}
         )
         returning id, tool_id as "toolId", tool_version as "toolVersion", revision,
                   connector_id as "connectorId", executor, endpoint,
@@ -576,6 +587,15 @@ export class PostgresToolConnectorService {
                   status, created_at as "createdAt"
       `
       return toResolvedBinding(row!)
+  }
+
+  /** 工具的全部已发布版本（新→旧）：语义变更需要为每个版本轮换绑定修订。 */
+  private async publishedToolVersions(db: DatabaseClient | DatabaseTransaction, toolId: string) {
+    return db<{ version: string }[]>`
+      select version from tool_versions
+       where tenant_id = ${tenantId} and tool_id = ${toolId} and status = 'published'
+       order by created_at desc
+    `
   }
 
   /** 撤销工具全部 active 绑定修订（停用/撤权路径）；重新启用由下一次解析物化新修订。 */

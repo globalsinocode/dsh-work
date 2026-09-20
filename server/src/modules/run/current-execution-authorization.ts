@@ -14,6 +14,17 @@ export class AuthorizationCheckUnavailableError extends Error {
   }
 }
 
+/**
+ * Manifest 声明了工具绑定 pin 但平台未接线绑定复核端口时的 fail-closed 信号。
+ * 区别于一般基础设施不可用：队列认领点把它收敛为任务拒绝（fail 而非无限重排）。
+ */
+export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavailableError {
+  constructor() {
+    super()
+    this.name = 'ToolBindingCheckUnavailableError'
+  }
+}
+
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin'>
 
@@ -23,13 +34,15 @@ export async function assertCurrentExecutionAuthorization(
   content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
   manifest: RuntimeManifest,
   bindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>,
+  toolBindingsChecked = false,
 ): Promise<void> {
   try {
     // B-03/I-04：Attempt 固定的工具绑定修订在 purpose 分流前统一复核——
     // 试运行与管理运行同样适用；撤销/被取代/语义漂移/行缺失一律拒绝。
     // Manifest 声明了 pin 而复核端口未接线时 fail-closed 为不可用。
-    if (manifest.tool_bindings?.length) {
-      if (!bindings) throw new AuthorizationCheckUnavailableError()
+    // 队列认领点已做同一检查时可跳过，避免每次认领重复查询。
+    if (!toolBindingsChecked && manifest.tool_bindings?.length) {
+      if (!bindings) throw new ToolBindingCheckUnavailableError()
       await bindings.assertActiveToolBindings(manifest.tool_bindings)
     }
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
