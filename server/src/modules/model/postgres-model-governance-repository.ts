@@ -215,6 +215,7 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
       modelId: string
       modelKey: string
       modelStatus: ModelStatus
+      modelCapabilities: string[]
       credentialRefId: string | null
       credentialBackend: CredentialBackend | null
       credentialExternalRef: string | null
@@ -224,6 +225,7 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
              p.id as "providerId", p.key as "providerKey", p.provider_type as "providerType",
              p.base_url as "baseUrl", p.status as "providerStatus",
              m.id as "modelId", m.model_key as "modelKey", m.status as "modelStatus",
+             m.capabilities as "modelCapabilities",
              c.id as "credentialRefId", c.backend as "credentialBackend",
              c.external_ref as "credentialExternalRef", c.status as "credentialStatus"
         from model_routes r
@@ -248,6 +250,7 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
       baseUrl: row.baseUrl,
       modelId: row.modelId,
       modelKey: row.modelKey,
+      modelCapabilities: row.modelCapabilities,
       credentialRefId: row.credentialRefId,
       credentialBackend: row.credentialBackend,
       credentialExternalRef: row.credentialExternalRef,

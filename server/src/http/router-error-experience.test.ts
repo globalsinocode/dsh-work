@@ -2,7 +2,19 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
+import { ModelCapabilityMismatchError } from '../modules/model/model-governance-service.ts'
+import { ExecutionCapabilityUnavailableError } from '../modules/runtime/execution-capabilities.ts'
 import { assertApiRouteAccess, classifyHttpError } from './router.ts'
+
+test('model capability errors retain stable codes and explain the administrator action', () => {
+  for (const error of [new ModelCapabilityMismatchError(['structured-output']), new ExecutionCapabilityUnavailableError('model')]) {
+    const result = classifyHttpError(error, '/api/workbench/runs')
+    assert.equal(result.status, error.status)
+    assert.equal(result.error.code, error.code)
+    assert.match(result.error.message, /模型能力|所需能力/)
+    assert.match(result.error.suggestion, /不能直接重试或忽略/)
+  }
+})
 
 test('timeout errors identify the affected run and give an operational next step', () => {
   const result = classifyHttpError(new Error('Runtime timeout after 30 seconds'), '/api/workbench/runs/run-001/retry')

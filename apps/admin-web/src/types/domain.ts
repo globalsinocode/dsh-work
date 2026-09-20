@@ -395,6 +395,10 @@ export interface ToolDefinition {
   status: 'available' | 'degraded' | 'disabled'
   inputSchema: string
   outputSchema: string
+  outputValidation: 'runtime' | 'platform' | 'unavailable'
+  retryPolicy: 'safe' | 'never' | 'verify-first'
+  concurrencyPolicy: 'concurrent' | 'serialized'
+  completionSemantics: 'completed' | 'accepted'
   timeoutSeconds: number
   allowedRoles: string[]
   dataScopes: string[]
@@ -416,6 +420,10 @@ export interface ToolCatalogCandidate {
   defaultDataScopes: string[]
   defaultApprovalPolicy: ToolDefinition['approvalPolicy']
   requirements: string[]
+  outputValidation: ToolDefinition['outputValidation']
+  retryPolicy: ToolDefinition['retryPolicy']
+  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
+  completionSemantics: ToolDefinition['completionSemantics']
   status: 'ready' | 'installed' | 'unavailable'
   availabilityMessage: string
 }

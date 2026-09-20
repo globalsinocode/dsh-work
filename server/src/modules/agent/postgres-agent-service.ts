@@ -131,6 +131,7 @@ export interface AgentJoinedWorkspaceRecord {
 
 export interface RuntimeAgentSnapshot {
   versionId: string
+  modelRequirements: AgentSpec['model']['requirements']
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
@@ -649,7 +650,8 @@ export class PostgresAgentService {
       select id as "versionId", system_prompt as "systemPrompt", skill_refs as skills,
              tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes",
              max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
-             timeout_seconds as "timeoutSeconds"
+             timeout_seconds as "timeoutSeconds",
+             coalesce(agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements"
         from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     if (!row) throw new Error(`Agent Version 不存在：${versionId}`)

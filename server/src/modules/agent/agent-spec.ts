@@ -33,7 +33,7 @@ export interface AgentSpec {
   limits: AgentSpecLimits
   /** 试运行案例文件相对路径；null 表示由平台按定义生成默认案例。 */
   evaluation: { cases: string | null }
-  /** 模型能力要求声明（仅声明，路由与凭据由平台管理；执行侧消费待 B-02/B-03）。 */
+  /** 模型能力要求；准备及队列恢复时校验，路由与凭据由平台管理。 */
   model: { requirements: AgentModelRequirement[] }
 }
 

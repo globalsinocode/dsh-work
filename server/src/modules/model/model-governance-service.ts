@@ -78,8 +78,19 @@ export class ModelGovernanceService {
     return this.repository.createRoute(this.tenantId, { ...input, key: input.key.trim(), name: input.name.trim() })
   }
 
-  resolveRoute(routeKey?: string) {
-    return this.repository.resolveRoute(this.tenantId, routeKey)
+  async resolveRoute(routeKey?: string, requirements: readonly string[] = []) {
+    const route = await this.repository.resolveRoute(this.tenantId, routeKey)
+    const missing = requirements.filter(requirement => !route.modelCapabilities.includes(requirement))
+    if (missing.length) throw new ModelCapabilityMismatchError(missing)
+    return route
+  }
+}
+
+export class ModelCapabilityMismatchError extends Error {
+  readonly status = 422
+  readonly code = 'MODEL_CAPABILITY_MISMATCH'
+  constructor(requirements: readonly string[]) {
+    super(`默认模型路由未声明 Agent 所需能力：${requirements.join('、')}`)
   }
 }
 

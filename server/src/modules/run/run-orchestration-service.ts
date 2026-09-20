@@ -1,6 +1,6 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
-import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
+import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -258,12 +258,14 @@ export class RunOrchestrationService {
   }
 
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {
-    const route = await this.models.resolveRoute('default')
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
     const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
+    const route = await this.models.resolveRoute('default', agent.modelRequirements)
+    await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
       purpose: 'agent-release-trial',
+      model_requirements: agent.modelRequirements,
       run_id: run.id,
       attempt_id: `attempt-${randomUUID()}`,
       session_id: run.sessionId,
@@ -292,6 +294,7 @@ export class RunOrchestrationService {
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-trial`,
     }
+    await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({
       attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
@@ -959,12 +962,12 @@ export class RunOrchestrationService {
     /** 任务预算对 limits 的上限钳制（AG-03 budget）。 */
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
   }) {
-    const route = await this.models.resolveRoute('default')
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
     const agent = this.agents
       ? await this.agents.getRuntimeSnapshot(input.agentVersionId, input.additionalSkillReferences)
       : {
           versionId: input.agentVersionId,
+          modelRequirements: [],
           systemPrompt: '你是 dsh-work 企业员工助手。请给出准确、简洁、可执行的中文回答。',
           skills: [],
           skillInstructions: [],
@@ -978,6 +981,8 @@ export class RunOrchestrationService {
           maxToolCalls: 20,
           timeoutSeconds: 300,
         }
+    const route = await this.models.resolveRoute('default', agent.modelRequirements)
+    await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
     const authorization = input.authorization ?? await this.authorization?.authorizeRuntime({
       userId: input.userId,
       workspaceId: input.workspaceId,
@@ -1005,6 +1010,7 @@ export class RunOrchestrationService {
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
       ...(input.purpose ? { purpose: input.purpose } : {}),
+      model_requirements: agent.modelRequirements,
       run_id: run.id,
       attempt_id: attemptId,
       session_id: run.sessionId,
@@ -1101,9 +1107,21 @@ export class RunOrchestrationService {
         }
         // Restored queues must not spin forever behind an unavailable capability,
         // even when persisted scheduling is disabled/draining.
-        try { await this.runtime.assertAvailable?.(next.manifest) } catch (error) {
+        try {
+          if (next.manifest.model_requirements?.length) {
+            const attempt = await this.runs.getAttempt(tenantId, attemptId)
+            const target = attempt?.modelRouteSnapshot
+            if (!target || typeof target.providerKey !== 'string' || typeof target.modelKey !== 'string' || typeof target.baseUrl !== 'string') {
+              throw new ExecutionCapabilityUnavailableError('model')
+            }
+            await assertRuntimeModelRequirements(this.runtime, next.manifest.model_requirements, {
+              providerKey: target.providerKey, modelKey: target.modelKey, baseUrl: target.baseUrl,
+            })
+          }
+          await this.runtime.assertAvailable?.(next.manifest)
+        } catch (error) {
           if (!(error instanceof ExecutionCapabilityUnavailableError)) throw error
-          this.pendingExecutions.shift()
+          this.pendingExecutions.splice(index, 1)
           await this.failRunForUnavailableCapability(next.run, attemptId, error)
           continue
         }

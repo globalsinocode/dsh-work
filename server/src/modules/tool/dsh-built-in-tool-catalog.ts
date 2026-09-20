@@ -64,6 +64,7 @@ const fallbackSchemas: RuntimeToolDescriptor[] = [
       },
       required: ['file_path', 'old_string', 'new_string'],
     },
+    ...unverifiedOutputContract('write', 'never', 'serialized', 30),
   },
   {
     id: 'todo_write',
@@ -86,8 +87,22 @@ const fallbackSchemas: RuntimeToolDescriptor[] = [
       },
       required: ['todos'],
     },
+    ...unverifiedOutputContract('write', 'never', 'serialized', 10),
   },
 ]
+
+function unverifiedOutputContract(
+  effect: RuntimeToolDescriptor['effect'],
+  retryPolicy: RuntimeToolDescriptor['retryPolicy'],
+  concurrencyPolicy: RuntimeToolDescriptor['concurrencyPolicy'],
+  timeoutSeconds: number,
+): Pick<RuntimeToolDescriptor, 'outputSchema' | 'outputValidation' | 'effect' | 'retryPolicy' | 'concurrencyPolicy' | 'completionSemantics' | 'timeoutSeconds'> {
+  return {
+    outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    outputValidation: 'unavailable', effect, retryPolicy, concurrencyPolicy,
+    completionSemantics: 'completed', timeoutSeconds,
+  }
+}
 
 export const dshBuiltInToolCatalog: readonly CatalogEntry[] = fallbackSchemas.map(runtimeToolToCatalogEntry)
 
@@ -103,13 +118,17 @@ export function runtimeToolToCatalogEntry(tool: RuntimeToolDescriptor): CatalogE
     connectorId: 'connector-dsh-workspace',
     risk: policy?.risk ?? 'high',
     mode: policy?.mode ?? 'write',
-    timeoutSeconds: policy?.timeoutSeconds ?? 30,
+    timeoutSeconds: tool.timeoutSeconds,
     defaultAllowedRoles: policy?.roles ?? ['普通员工', '平台管理员'],
     defaultDataScopes: ['workspace:authorized'],
     defaultApprovalPolicy: policy?.approvalPolicy ?? 'always',
     requirements: policy?.requirements ?? ['DSH Runtime 当前 Profile', '当前 Run 工作区'],
     inputSchemaObject: tool.inputSchema,
-    outputSchemaObject: {},
+    outputSchemaObject: tool.outputSchema,
+    outputValidation: tool.outputValidation,
+    retryPolicy: tool.retryPolicy,
+    concurrencyPolicy: tool.concurrencyPolicy,
+    completionSemantics: tool.completionSemantics,
     platformSupported,
     ...(!platformSupported ? { unsupportedReason: policy?.unsupportedReason ?? 'DSH 已加载，但平台尚未接入该工具的权限和运行结果投影' } : {}),
   }
@@ -145,6 +164,10 @@ export function publicCatalogCandidate(
     defaultDataScopes: [...entry.defaultDataScopes],
     defaultApprovalPolicy: entry.defaultApprovalPolicy,
     requirements: [...entry.requirements],
+    outputValidation: entry.outputValidation,
+    retryPolicy: entry.retryPolicy,
+    concurrencyPolicy: entry.concurrencyPolicy,
+    completionSemantics: entry.completionSemantics,
     status,
     availabilityMessage,
   }
@@ -176,6 +199,10 @@ export function catalogEntryToToolDefinition(
     status: 'available',
     inputSchema: JSON.stringify(entry.inputSchemaObject, null, 2),
     outputSchema: JSON.stringify(entry.outputSchemaObject, null, 2),
+    outputValidation: entry.outputValidation,
+    retryPolicy: entry.retryPolicy,
+    concurrencyPolicy: entry.concurrencyPolicy,
+    completionSemantics: entry.completionSemantics,
     timeoutSeconds: entry.timeoutSeconds,
     allowedRoles: policy?.allowedRoles ?? [...entry.defaultAllowedRoles],
     dataScopes: policy?.dataScopes ?? [...entry.defaultDataScopes],

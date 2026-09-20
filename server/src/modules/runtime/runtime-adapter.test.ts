@@ -109,12 +109,34 @@ describe('Runtime Manifest compiler', () => {
 })
 
 describe('DSH ACP Runtime Adapter', () => {
+  it('rejects unverified model requirements before creating files or starting a Worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-model-admission-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-model-test', runtimeRoot: root, dshRepository: process.cwd(),
+      process: { command: 'must-not-start', args: [], cwd: process.cwd() },
+    })
+    adapters.push(adapter)
+    for (const requirement of ['long-context', 'structured-output'] as const) {
+      const input = { ...manifest('run-model-check', 'attempt-model-check'), model_requirements: [requirement] }
+      await assert.rejects(adapter.assertAvailable(input), { code: 'MODEL_CAPABILITY_UNAVAILABLE' })
+      await assert.rejects(adapter.execute(input), { code: 'MODEL_CAPABILITY_UNAVAILABLE' })
+    }
+    assert.deepEqual(await readdir(root), [])
+    await adapter.assertAvailable(manifest('run-standard', 'attempt-standard'))
+  })
   it('reads the tool schemas published by the active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
     const toolCatalogPath = join(root, 'runtime-tools.json')
     await writeFile(toolCatalogPath, JSON.stringify({
-      formatVersion: 1,
-      tools: [{ name: 'read', description: 'Read a file.', parameters: { type: 'object' } }],
+      formatVersion: 2,
+      tools: [{
+        name: 'read', description: 'Read a file.', parameters: { type: 'object' },
+        contract: {
+          outputSchema: { 'x-dsh-work-output-validation': 'unavailable' }, outputValidation: 'unavailable',
+          effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
+          completionSemantics: 'completed', timeoutSeconds: 30,
+        },
+      }],
     }))
     const adapter = new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-catalog-test',
@@ -126,7 +148,12 @@ describe('DSH ACP Runtime Adapter', () => {
     adapters.push(adapter)
 
     assert.deepEqual(await adapter.listTools(), [
-      { id: 'read', description: 'Read a file.', inputSchema: { type: 'object' } },
+      {
+        id: 'read', description: 'Read a file.', inputSchema: { type: 'object' },
+        outputSchema: { 'x-dsh-work-output-validation': 'unavailable' }, outputValidation: 'unavailable',
+        effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
+        completionSemantics: 'completed', timeoutSeconds: 30,
+      },
     ])
   })
 

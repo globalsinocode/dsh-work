@@ -173,7 +173,9 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
       503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
     }
-    const suggestion = ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
+    const suggestion = ['MODEL_CAPABILITY_MISMATCH', 'MODEL_CAPABILITY_UNAVAILABLE'].includes(error.code)
+      ? '请管理员核对 Agent 模型能力要求、默认模型路由及 DSH 支持情况；能力不足时不能直接重试或忽略要求。'
+      : ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
       ? '请管理员检查对应执行能力；配置修复并重启服务后再提交任务。'
       : status === 503 && error.code.startsWith('skill_')
         ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'

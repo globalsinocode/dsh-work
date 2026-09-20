@@ -1,13 +1,13 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-20<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本次文档更新基于 `4346633`，其中已包含 I-01/I-02 实现。保留已有完成记录，本次未重跑其中的功能测试。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；当前核对基于 `06ed52c` 及本轮模型能力准入、I-05 工具契约改动。B-01、B-02 与 B-03 核心实现已落地；各轮完成记录保留，当前验证见第 5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
-**范围：** 静态阅读契约、关键实现与测试用例；不将用例存在、历史报告或状态文案视为本次运行通过。未启动数据库、浏览器、真实 DSH 或 OIDC 验收。
+**范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
 ## 1. 结论与状态口径
 
-已有统一 DSH 执行、版本发布、精确依赖、当前授权、文件成果、执行事件和轻量自动任务基础。主要缺口是绑定修订的真实落地、结构化定义与结果契约、工具效果语义、持续执行协议和分层评测覆盖。无需因此另建 Agent 执行引擎。
+已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算和轻量自动任务。本轮补齐模型能力准入与 I-05 工具契约；下一项是 B-04/I-06 任务结果外层，同时按 B-05 补分层验收。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
 
 | 状态 | 本文含义 |
 | --- | --- |
@@ -21,14 +21,14 @@
 | 规范 | 状态与代码证据 | 测试证据及不足 | 后续动作 |
 | --- | --- | --- | --- |
 | AS-01 对象分离 | **已实现（B-03 后）**。[Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts)的草稿/发布与 `getRuntimeSnapshot`、[Run 类型](../../server/src/modules/run/run-types.ts)已分离目录、版本和 Attempt；发布计划/封存/Attempt 现引用真实 `tool_binding_revisions` 修订（B-03/I-04），不再使用固定占位 | [发布集成用例](../../server/src/infrastructure/postgres/agent-release-governance.integration.test.ts)覆盖候选修订、封存、绑定 pin 固定、漂移拒绝与发布；[绑定集成用例](../../server/src/infrastructure/postgres/tool-binding.integration.test.ts)覆盖修订物化/轮换/撤销 | 保留 `agentVersionId`；跨环境独立发布验证留待 P2 |
-| AS-02 精简定义 | **部分实现**。[包解析器](../../server/src/modules/agent/agent-package.ts) `parseAgentPackage` 接收扁平字段，校验版本、Prompt、摘要和依赖；尚无统一 AgentSpec 及结构化输入输出/模型能力/上下文策略。I-02 已补字段政策：未识别字段警告、平台受管字段与 `apiVersion/spec` 结构清单拒绝、别名并存冲突拒绝、声明与包内候选版本冲突拒绝 | 发布用例覆盖无案例时默认生成、摘要缺项、版本冲突、缺失依赖；[解析单测](../../server/src/modules/agent/agent-package.test.ts)覆盖字段规则、冲突与旧包兼容。默认生成案例已带 `origin` 来源标记并在检查详情提示核对实际预期 | 结构化输入输出/上下文策略/模型能力契约仍待 I-03；不能直接把草案 `apiVersion/spec` 当作受支持格式 |
+| AS-02 精简定义 | **基础已实现，高级能力待启用**。[包解析器](../../server/src/modules/agent/agent-package.ts)仅接受分层清单；配置与 ZIP 共用持久化 AgentSpec。当前输入/输出为 text，上下文为 recent；未知字段、旧别名与冲突直接拒绝。模型要求已进入路由和 Runtime 准入、Attempt 固定及恢复复核 | 解析与发布用例覆盖严格格式、依赖、定义保存/分叉；编排集成覆盖三入口的模型/Runtime 不匹配。受控 Runtime 正例验证快照，不证明真实高级能力 | 真实 DSH 目前拒绝 long-context/structured-output；启用前接通实际执行约束并留证。任务结果语义由 B-04 补齐 |
 | AS-03 统一执行 | **已实现（现有生产接线）**。[main](../../server/src/main.ts)组装 Runtime；[编排服务](../../server/src/modules/run/run-orchestration-service.ts)的员工、管理、发布试运行均创建 Attempt；[Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts)启动 ACP Worker | [执行能力测试](../../server/src/modules/runtime/execution-capabilities.test.ts)、[Adapter 测试](../../server/src/modules/runtime/runtime-adapter.test.ts)覆盖不可用、取消和故障；本次未运行真实 DSH | 维持单链路；每种新增入口均追踪实际接线，发布前验证目标 Runtime |
-| AS-04 状态与上下文 | **部分实现；长期记忆不适用当前范围**。[Manifest 编译器](../../server/src/modules/runtime/manifest-compiler.ts)限制历史、文件和知识；Adapter 的 `renderSystemPrompt` 按需展示 Skill 目录；[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)复核输入；[知识服务](../../server/src/modules/knowledge/postgres-knowledge-service.ts)提供来源 | Adapter 测试覆盖授权知识投影、渐进 Skill、外置资源和历史上限；通用跨任务记忆的来源撤回未在当前链路实现 | 保持现有分层；统一上下文策略与 Schema（见 D-03）；记忆随 AG-04 单独设计 |
+| AS-04 状态与上下文 | **部分实现；长期记忆不适用当前范围**。[Manifest 编译器](../../server/src/modules/runtime/manifest-compiler.ts)限制历史、文件和知识；Adapter 的 `renderSystemPrompt` 按需展示 Skill 目录；[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)复核输入；[知识服务](../../server/src/modules/knowledge/postgres-knowledge-service.ts)提供来源 | Adapter 测试覆盖授权知识投影、渐进 Skill、外置资源和历史上限；通用跨任务记忆的来源撤回未在当前链路实现 | 保持现有分层；保持 text/recent 基础策略与 Schema 一致（见 D-03）；记忆随 AG-04 单独设计 |
 | AS-05 Skill/Tool/MCP | **部分实现；外部 MCP 未实现（当前 ACP 入口）**。[工具目录](../../server/src/modules/tool/dsh-built-in-tool-catalog.ts)将未知工具标为不支持；[ACP 客户端](../../server/src/modules/runtime/acp-json-rpc-client.ts) `newSession` 提交 `mcpServers: []`；[平台工具桥](../../server/src/modules/runtime/platform-tool-bridge.ts)为本地受控传输 | 发布用例明确包内 Tool 候选阻塞发布；没有外部 MCP 服务绑定、发现变更及调用验收证据 | 保留当前准入；有外部接入需求再按 AG-02 实现，同一能力治理，不新增 MCP 权限体系 |
-| AS-06 工具效果契约 | **部分实现**。[Tool 服务](../../server/src/modules/tool/postgres-tool-connector-service.ts)有输入输出 Schema、审批和超时；目录的 `runtimeToolToCatalogEntry` 为输出使用空 Schema；平台桥调用返回任意结果，没有通用外部操作回执、未知结果与跨 Attempt 动作去重协议 | [工具治理测试](../../server/src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts)验证治理范围；既有 Run 幂等和事件去重不能证明外部副作用恰好一次 | 新写动作开放前补效果、重试、冲突与核对契约；现有本地文件动作按实际语义审查，不强迫接入外部事务系统 |
+| AS-06 工具效果契约 | **基础已实现；外部写操作协议待具体能力接入**。Tool Version 持久化输出验证、重试、并发和完成语义；Runtime 目录携带同一契约。平台桥严格校验输入/输出、大小、当前授权、超时与同名串行调用，并区分冲突、不可用、取消及写入结果未知。DSH 原生工具输出明确标为不可验证 | 平台桥单测覆盖严格 Schema、输入/输出错误、收权、调用上限、串行冲突、读超时与写结果未知；DSH 政策测试覆盖目录和错误传播；工具治理集成验证版本契约持久化。尚未用真实外部异步写操作验证业务操作键与状态查询 | I-06 消费动作结果；新增外部写动作时实现业务幂等键、`accepted` 回执/查询和跨 Attempt 核对，不能仅靠 Run 幂等 |
 | AS-07 当前权限 | **部分实现（当前执行复核已接线；通用持久化审批未实现）**。main 的 `authorizeExecution` → 编排 `assertCurrentRunAuthorization` → [当前授权函数](../../server/src/modules/run/current-execution-authorization.ts)；平台桥前后复核。main 的 ACP `permissionDecision` 默认拒绝；目录明确阻塞尚需逐次审批的工具 | [当前授权](../../server/src/modules/run/current-execution-authorization.test.ts)、[用途分流](../../server/src/modules/run/run-orchestration-authorization.test.ts)、Adapter 活动撤权/成果收集时撤权用例已存在；真实多账号收权及每类工具仍需 P2 | 保持个人/团队共同安全门槛；不把 `approval.required/resolved` 当作持久化人工批准；外部能力和审批接入再逐条验证 |
 | AS-08 持久化恢复 | **部分实现；等待/检查点未实现（Run 契约）**。RunState 只有 queued/running/cancel_requested/succeeded/failed/cancelled；[Run 仓储](../../server/src/modules/run/postgres-run-repository.ts) `recoverAfterRestart` 收敛活动 Attempt、恢复排队；[自动任务服务](../../server/src/modules/automation/automation-service.ts)处理中断准备 | [编排集成](../../server/src/infrastructure/postgres/m3-orchestration.integration.test.ts)、[故障集成](../../server/src/infrastructure/postgres/m5-runtime-faults.integration.test.ts)、[自动任务集成](../../server/src/infrastructure/postgres/automation.integration.test.ts)覆盖相关状态与竞态；未证明通用副作用恢复 | 维持 AG-03 轻量语义；有长流程需求后随 EX-03 设计等待/恢复/动作核对，不把聊天重放作为恢复 |
-| AS-09 预算与委派 | **部分实现；委派不适用当前范围**。Manifest 有时长、输出字节、工具次数；Adapter 限时与截断文本，平台桥计数，DSH 收到 `DSH_MAX_TOOL_CALLS`；Run 仓储的 `claimAttempt` 为自动任务保留交互容量 | Adapter 有执行及启动超时用例，自动任务集成有取消/领取竞态；没有统一累计 Token/成本、重试预算及父子任务预算契约。`maxTokens * 4` 用于输出字节估算，不是模型 Token 拦截 | 标明限制实际效力；需要累计硬预算时单独实现并测试 DSH 边界，委派按需求评审 |
+| AS-09 预算与委派 | **基础已实现；累计预算与委派未启用**。定义直接声明 timeoutSeconds/maxOutputBytes/maxToolCalls，映射到 Manifest；Adapter 限时、限制收集文本并报告截断，平台桥和 DSH 政策约束工具次数；调度为自动任务保留交互容量 | I-07 有边界与截断回归，自动任务集成有取消/领取竞态；没有累计 Token/成本、跨 Attempt 总预算或父子任务预算契约。输出字节上限不等于模型 Token 拦截 | 保留现有限额执行矩阵；累计预算与委派按明确需求另行实施 |
 | AS-10 真实结果 | **部分实现**。编排 `persistEvent` 将 `run.completed` 转成 succeeded；Adapter 收集成果并提交回答；内容服务管理版本与权限。没有独立的通用“目标达成/动作未知”结果外层 | Adapter 覆盖成果收集失败/撤权；Run 与文件测试验证执行及成果机制，不能证明所有业务目标达成 | 设计结果外层并同步切换消费者；保留 Run 执行状态，将业务完成、回执和未解决事项独立表达 |
 | AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；发布事务复核 sealedRevision/最新试运行；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖修改候选使证据失效、人工判失败阻塞发布、同版本不同内容冲突；覆盖真实绑定修订与封存后漂移拒绝；跨环境变更验证未覆盖 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
 | AS-12 评测与审计 | **部分实现**。发布服务要求 success/invalid_input/permission_denied 三类案例，记录 case Run 与人工判定；运行事件关联 trace/Attempt，记录工具和模型用量 | 发布用例使用 `TrialStubRuntime`；成功终态及非空输出后仍由人判业务预期。平台有故障/安全测试，尚未形成覆盖质量、注入、可靠性和成本的统一 Agent 评测契约 | 分清平台测试与 Agent 专属案例，补评测分层、可复现证据和 P2；不将默认三案例作为完整质量证明 |
@@ -45,13 +45,9 @@
 
 **历史记录（2026-09-19，已被 B-01 取代）：** 原基线曾接受扁平清单与字段别名并做冲突校验，详见 I-02 完成记录。2026-09-20“不考虑历史兼容”决策生效后，别名接受、未知字段警告、双格式解析均已移除，不做旧包兼容或渐进迁移。
 
-### D-03 Runtime TypeScript 与 JSON Schema 有漂移
+### D-03 Runtime TypeScript 与 JSON Schema 的原有漂移已修复
 
-[Runtime 类型](../../server/src/modules/runtime/runtime-types.ts)及 `compileRuntimeManifest` 支持 `artifact_ref`、`instructions_sha256`，允许外置 Skill 省略正文及文件 content；[Runtime Manifest Schema](runtime-manifest.schema.json)仍要求 instructions/content，且在 `additionalProperties: false` 下未声明上述外置字段。
-
-这属于已定位的契约同步缺口，应优先修正 Schema 并用内联/外置 Skill、缺少引用摘要、非法路径和额外字段等真实样本验证。当前静态 verify 即使通过，也不代表所有实际 Manifest 能通过 Schema。模型能力要求等新增字段不与这项现有漂移修复混在一起。
-
-**2026-09-19 更新：** 已由 I-01 修复并验证，见对应工作项完成记录。
+原有外置 Skill 字段缺失已由 I-01 修复；B-02 又统一了引用的严格规则。当前 [Runtime 类型](../../server/src/modules/runtime/runtime-types.ts)、编译器与 [Schema](runtime-manifest.schema.json)均支持显式内联/外置形式。本轮新增 `model_requirements` 同步三处，并用有效、未知、重复及错误类型样本验证。历史修复过程见 I-01；新增字段仍须同步生产者与消费者。
 
 ### D-04 Session、恢复和预算不因文档改名升级
 
@@ -69,7 +65,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 ## 4. 具体需要实施的工作
 
-2026-09-20 起按“不考虑历史兼容”组织实施：近期 I-01～I-08 合并为 B-01～B-05 五个实施包，I-09～I-13 五项按需扩展暂缓。保留 I 编号用于差异追踪和已完成记录，不再将它们作为八个独立近期交付批次。I-01/I-02 已按原基线完成，但新决策涉及的旧引用接受、包别名及未知字段警告等清理尚待 B-01/B-02 实施，不能把原完成状态当作新契约已经完成。未标完成的新字段、表与接口均为待设计内容，不表示当前已经支持。工程归属沿用各阶段实施文档（如 [AG-03 实施方案](../design/automation-implementation-plan.md)）及 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)，此处维护差异对应的工作分解。
+2026-09-20 起按“不考虑历史兼容”组织实施：I-01～I-08 合并为 B-01～B-05，I-09～I-13 按需暂缓。B-01/B-02 已清理旧包别名、双格式与旧引用接受，B-03 已落地 default 环境绑定修订；本轮补齐模型准入。保留 I 编号用于差异追踪；未标完成的要求不能当作已支持能力。工程归属沿用 [AG-03 实施方案](../design/automation-implementation-plan.md)及 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)。
 
 为便于追踪已有代码和验收目录，保留阶段编号：AG-01 表示 Agent 包与发布，AG-02 表示工具扩展，AG-03 表示轻量自动任务，AG-04 表示受控经验。AG-01/02/04 的后续工作直接以本文 I 编号为入口，无需查阅已删除的总方案；AG-03 与 EX 的细节使用上述现存文档。阶段编号不表示能力已实现或已授权启动。
 
@@ -79,13 +75,13 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 | 实施包 | 原工作项 | 仍需实施的内容 | 省去的历史兼容工作 | 当前状态与依赖 |
 | --- | --- | --- | --- | --- |
-| B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一包格式、规范化 AgentSpec、严格字段与依赖校验、输入输出/上下文/模型能力要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、警告后渐进收紧、旧定义转换与默认值回填 | **已实施（见 I-02/I-03 完成记录）**：分层清单 + 严格 Schema + `agent_versions.agent_spec` + 限额列更名；模型能力要求仅声明校验，路由消费待 B-02/B-03 |
+| B-01 统一定义与严格包格式 | I-02 + I-03 | 唯一格式、规范化 AgentSpec、严格字段与依赖校验、文本输入输出/recent 上下文/模型要求；配置与 ZIP 共用契约 | 旧包别名、双格式解析、渐进收紧、旧定义转换与默认值回填 | **基础已实施**：结构与持久化、配置保存/分叉保留定义、模型与 Runtime 准入。高级模型能力实际支持仍待接通；不影响无额外要求的 Agent |
 | B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | **已实施（2026-09-20，见 I-04 完成记录）**：`tool_binding_revisions` 持久化 + Manifest `tool_bindings` 固定 + 执行复核 + 封存/发布漂移拒绝；多环境独立发布与跨环境差异待真实环境验收 |
-| B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | 待实施；依赖 B-01 输出要求、B-02 执行契约；绑定使用 B-03 |
+| B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | **I-05 已实施；I-06 待实施**。平台工具执行契约已贯通，DSH 原生输出明确标出不可验证边界；外部异步写协议随实际能力接入 |
 | B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | 待补齐，贯穿 B-01～04；保留已有有效安全回归 |
 
-建议从 B-01 的统一格式/定义和 B-02 的运行契约/限额开始；随后完成 B-03、B-04。B-05 随每个实施包运行相关验证，不留到最后一次性补测。五项可选扩展不作为基础发布门槛，也不因减少历史兼容而自动启用。
+**下一步：B-04/I-06 任务结果外层。** 先确定执行终态与业务结果的版本化外层、验证状态和来源/动作/成果引用，再同步 Run 持久化、API、事件消费者和前端。B-05 随改动补浏览器旅程，继续保留真实 DSH/OIDC/P2 缺口。外部异步写协议在接入具体能力时补业务操作键和查询回执。
 
 ### 4.2 原工作项映射与完成记录
 
@@ -152,7 +148,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 **完成标准：** 相同配置和 ZIP 生成等价规范化定义；无效输入、来源撤回和能力不兼容均有明确拒绝；修改执行字段后必须重新验证。使用新契约 Agent 完成配置→发布→运行回归。
 
-**B-01 实施记录（2026-09-20）：**
+**B-01 原实施记录（2026-09-20；模型准入的后续进展见下文）：**
 
 - **唯一包格式与严格 Schema：** [agent-package.ts](../../server/src/modules/agent/agent-package.ts) 只接受 `apiVersion/kind/metadata/spec` 分层清单，由 [agent-package.schema.ts](../../server/src/modules/agent/agent-package.schema.ts) 与 [agent-package.schema.json](agent-package.schema.json)（Ajv 2020，`additionalProperties: false`，TS 常量导出保证零漂移）校验；旧扁平清单、全部字段别名、未知字段、重复 YAML 键、锚点别名及平台受管字段（凭据/端点/模型路由/执行环境/绑定/授权/调度/安装钩子等保留关键字）直接 422 拒绝。
 - **规范化 AgentSpec：** 新增 [agent-spec.ts](../../server/src/modules/agent/agent-spec.ts) 定义 `AgentSpec`（metadata、instructions 文件引用+正文、capabilities 精确引用、input/output/context、catalog、limits、evaluation、model.requirements）；`agentSpecFromConfiguration` 将配置表单归一化为 `prompts/system.md` 文件表示，与 ZIP 解析结果同构。
@@ -161,6 +157,13 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 - **消费端：** 领域类型、Admin 管理端（domain 类型、AgentDraftDialog、管理视图、发布工作台）、OpenAPI 文档及全部测试夹具切换为 `maxOutputBytes`/`maxToolCalls`。
 - **验证：** `agent-package.test.ts` 67/67（重写为新格式套件：严格 Schema、平台字段拒绝、精确依赖、包内候选版本匹配、checksums）；发布治理集成 17/17（专用可丢弃 PostgreSQL）；server + workbench-web + admin-web `tsc --noEmit` 通过；集成夹具原生 INSERT 同步更名。
 - **未覆盖：** 浏览器 E2E、真实 DSH/OIDC 验收未运行；`model.requirements` 无运行时消费方；既有 `agent_spec` 为 null 的旧版本行不回填，运行时快照仍由列字段驱动。
+
+**I-03 模型能力准入补齐（2026-09-20，本轮）：**
+
+- 版本快照读取 `agent_spec.model.requirements`；员工运行、自动任务与发布试运行先校验默认路由的全部能力标签，再通过 Runtime 端口核对实际执行目标与能力。目录不满足返回 `MODEL_CAPABILITY_MISMATCH`；Runtime 无法保证返回 `MODEL_CAPABILITY_UNAVAILABLE`，不创建 Attempt，无 Attempt 的 Run 收敛为 failed。
+- Attempt 固定 `model_requirements` 与路由 `modelCapabilities`。恢复队列使用固定目标复核当前 Runtime；不兼容时终止 Attempt 并记录错误码。DSH Adapter 直接执行也拒绝未支持要求，避免绕过编排门禁。
+- 当前 DSH 使用固定 Profile，未提供可保证的长上下文容量或结构化输出约束，因此两项非空要求均不放行。受控测试 Runtime 的正例仅证明准入及快照接线；真正支持仍需定义容量/输出约束、接通目标模型并完成真实验收。
+- 普通文本 Agent 的空要求继续运行；不回填历史定义、不自动切换模型、不增加模型循环。验证与未覆盖范围见第 5 节。
 
 ### I-04 落地真实绑定修订与发布追溯
 
@@ -197,6 +200,16 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 **完成标准：** 已有样例工具从目录到真实调用使用一致契约；非法输出、无权限、超时和成果登记失败可区分。新增外部写动作前另验证同键不重复、跨 Attempt 保持同一业务操作身份、超时先核对效果，不能仅用 Run 幂等证明安全。
 
+**实施记录（2026-09-20）：**
+
+- 新增 `PlatformToolContract` 与固定平台工具契约目录；输入/输出 Schema 以 Ajv 2020 strict 模式预编译。桥接调用在处理器前校验输入并复核当前授权，处理器后再次复核授权、校验输出结构及 UTF-8 序列化字节；Attempt 取消会终止调用。
+- 契约声明 `effect`、`retryPolicy`、`concurrencyPolicy`、`completionSemantics`、超时及最大输出字节。`serialized` 工具的同名重叠调用在第二个处理器启动前返回 `TOOL_CONFLICT`；并发只读工具保持可并发。
+- 稳定错误外层区分参数/输出无效、前置条件失败、无权限、调用上限、冲突、暂时不可用、取消、只读超时、写入结果未知和普通执行失败，并携带 `retryable`、`effect_state`。管理操作与 Skill/Python 执行前校验使用有类型错误，避免将尚未开始的写入误报为结果未知。DSH 包装器只接受 2xx，并将稳定错误语义投影到 DSH 会保留的 `Error.message`，不再把错误正文作为成功文本。
+- `python_execute` 按 Runner 允许的 stdout/stderr 上限和 JSON 最坏转义开销使用 16 MiB 输出字节预算，artifact 名称同步限长；Schema 合法的边界输出不再被二次字节限制拒绝。
+- Runtime 工具目录格式升级为 v2；Tool Version 新增输出验证、重试、并发和完成语义并通过迁移持久化。DSH 原生工具当前没有平台可执行的结构化输出验证，因而明确写入 `outputValidation=unavailable` 和标记 Schema；已有非 DSH 工具的输出 Schema 不被迁移覆盖。管理端工具详情和目录展示这些边界。
+- **保留边界：** 当前工具均声明 `completed`。没有接入真实外部异步写操作，因此业务操作键、`accepted` 回执、状态查询及跨 Attempt 效果核对仍是新增该类能力的前置条件；本次不虚构通用事务台账。任务级结果与成果登记失败的统一投影由 I-06 实现。
+- **验证：** Runtime 71/71（含平台桥 7 项及 DSH 政策 9 项）、工具治理 PostgreSQL 集成 1/1（专用可丢弃数据库）、管理端 17 文件 92 项、全仓 typecheck、lint、`pnpm verify`、`git diff --check` 通过。未执行浏览器 E2E、真实 DSH/OIDC/P2。
+
 ### I-06 增加可核验的任务结果外层
 
 **改动位置：** Run 类型/仓储/事件投影、[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)、[对话 API](../../server/src/http/workbench/conversation-routes.ts)、[Workbench OpenAPI](openapi-workbench.json)、[对话页面](../../apps/workbench-web/src/views/ConversationView.vue)及自动任务结果入口。
@@ -229,7 +242,7 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 **实证修复：** 输出字节截断此前完全静默——超限分块被丢弃后，`run.completed` 与持久化回答无法区分「截断」与「完整」。现 `ExecutionRecord.outputTruncated` 在截断或丢弃分块时置位，随 `assistant.completed`（含超时/关停中断提交路径）、`run.completed` 与 `run.failed` 的 `safe_metadata` 暴露 `output_truncated: true`；未截断时不输出该字段。边界测试：mock Worker 连发 1000 B + 以多字节字符压界的 103 B + 已超限的 50 B 分块，`max_output_bytes=1024` 断言恰收 1024 字节、第二个 `assistant.delta` 恰为压界后的 24 字节且「界」码点完整、第三分块被丢弃、`assistant.completed`/`run.completed` 双事件带标记；既有完整路径断言无 `output_truncated` 字段。验证：`test:runtime` 60/60、typecheck、eslint、`pnpm verify` 通过。
 
-**仍为扩展项：** 累计 Token/成本、跨 Attempt 总预算与无进展检测未实施（本项第 4 条）；模型能力要求字段仅声明校验，路由消费待 B-03。
+**仍为扩展项：** 累计 Token/成本、跨 Attempt 总预算与无进展检测未实施（本项第 4 条）；模型能力准入已由 I-03 本轮补齐，真实高级能力支持仍未启用。
 
 **改动位置：** Manifest limits、编排与 Scheduler、Adapter/平台工具桥、[DSH 工具政策](../../server/config/dsh/dsh-work-tool-policy.js)、模型用量及相关 UI 说明。
 
@@ -316,6 +329,20 @@ Manifest 的输出字节限制只截断收集的文本，工具次数还依赖�
 
 以上为原实施记录，未包含浏览器 E2E 或真实 DSH/OIDC 验收；表中的测试链接不声明本清单外条目已通过。I-01/I-02 实现已包含于本次读取的提交 `4346633`，本次未核对其推送或发布状态。
 
-2026-09-20 本轮仅更新“不考虑历史兼容”的设计范围、五个实施包及对应验收要求；未修改业务代码或删除数据，未重跑上述功能测试。文档检查结果见本次交付记录，本轮文档改动未提交。
+2026-09-20 历史文档整理轮仅更新“不考虑历史兼容”的设计范围、五个实施包及对应验收要求；未修改业务代码或删除数据，未重跑上述功能测试。文档检查结果见本次交付记录，该轮文档改动当时未提交。
 
-B-01 实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治理集成 17/17（专用可丢弃 PostgreSQL）、server/workbench-web/admin-web `tsc --noEmit` 通过；限额字段更名涉及的原生 SQL 夹具已同步。未跑浏览器 E2E 与真实 DSH/OIDC 验收；模型能力要求暂无运行时消费方。
+B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治理集成 17/17（专用可丢弃 PostgreSQL）、server/workbench-web/admin-web `tsc --noEmit` 通过；限额字段更名涉及的原生 SQL 夹具已同步。未跑浏览器 E2E 与真实 DSH/OIDC 验收；模型能力要求暂无运行时消费方。
+
+**2026-09-20 当前模型准入实施轮（基于 `06ed52c`，改动尚未提交）：**
+
+- 单测：模型治理、执行能力、Manifest Schema/编译器、HTTP 错误体验合计 27/27；Runtime Adapter 42/42，共 69 项通过。Adapter 首次在沙箱内因 Unix socket 监听权限失败，在允许本地 socket 的环境复跑通过；使用受控 ACP Worker，未调用真实模型。
+- PostgreSQL：发布治理 20/20；编排 20/20（含三入口 × 模型/Runtime 不匹配的六个子用例及恢复拒绝），均使用专用可丢弃数据库。正例固定能力快照；负例不创建 Attempt、不留排队 Run；恢复拒绝记录错误码且不启动 Worker。
+- `pnpm typecheck`、`pnpm lint`（含架构和 UI 契约检查）、`pnpm verify`、`git diff --check` 通过。
+- 未执行浏览器 E2E、真实 DSH/OIDC/P2；未推送或发布。高级模型能力仍需实际接通及验收。
+
+**2026-09-20 I-05 工具契约实施轮（与上述改动同一未提交工作区）：**
+
+- Runtime 73/73：平台桥覆盖严格 Schema、输入/输出错误、调用上限、当前授权、读超时/写结果未知、串行冲突、超时后底层处理器未结束时保持串行锁、受管冲突/不可用传播、执行前失败与处理器启动后的写入不确定性，并验证 Python Runner 最坏 JSON 转义输出不超出契约预算；DSH 政策 9/9 覆盖目录 v2、超时语义、非 2xx 错误及其模型可见语义传播。
+- PostgreSQL 工具治理集成 1/1，使用专用可丢弃数据库验证迁移及新增/读取 Tool Version 契约字段；管理端测试 17 文件 92 项通过。
+- `pnpm typecheck`、`pnpm lint`（含架构和 UI 契约检查）、`pnpm verify`、`git diff --check` 通过。
+- 未执行浏览器 E2E、真实 DSH/OIDC/P2；未提交、推送或发布。下一项为 I-06 任务结果外层；外部异步写操作的操作键、受理回执和状态核对随具体能力接入。

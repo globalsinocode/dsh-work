@@ -346,6 +346,11 @@
         "additionalProperties": false
       }
     },
+    "model_requirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["long-context", "structured-output"] }
+    },
     "model_route_id": {
       "type": [
         "string",

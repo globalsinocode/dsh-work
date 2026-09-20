@@ -130,6 +130,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
       baseUrl: provider.baseUrl,
       modelId: model.id,
       modelKey: model.modelKey,
+      modelCapabilities: [...model.capabilities],
       credentialRefId: provider.credential.id,
       credentialBackend: provider.credential.backend,
       credentialExternalRef: provider.credential.externalRef,

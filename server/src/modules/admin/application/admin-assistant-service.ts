@@ -220,7 +220,7 @@ export class AdminAssistantService {
 
   async proposeTask(input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) {
     signal.throwIfAborted()
-    if (manifest.purpose !== 'admin-assistant') throw new Error('当前 Run 不能创建管理任务提案')
+    if (manifest.purpose !== 'admin-assistant') throw authorizationDenied('当前 Run 不能创建管理任务提案')
     await this.authorization.requireAdminReader(manifest.user_context.user_id)
     await this.requireActiveAttempt(manifest)
     const kind = readEnum(input, 'kind', ['skill-install', 'agent-management', 'platform-operations'] as const)
@@ -228,7 +228,7 @@ export class AdminAssistantService {
     const impact = readString(input, 'impact', 4, 500)
     const purpose = purposeFor(kind)
     const source = kind === 'skill-install' ? parseManifestSource(manifest.installation_source) : null
-    if (kind === 'skill-install' && !source) throw new Error('安装 Skill 前必须由管理员提供有效来源')
+    if (kind === 'skill-install' && !source) throw requestInvalid('安装 Skill 前必须由管理员提供有效来源')
     const immutable = { kind, purpose, request: manifest.input.message, summary, impact, source }
     const digest = sha256(canonicalJson(immutable))
     const id = `admin-proposal-${manifest.run_id}`
@@ -480,7 +480,7 @@ export class AdminAssistantService {
         ...(changes['schedulingStatus'] === undefined ? {} : { schedulingStatus: readEnum(changes, 'schedulingStatus', ['accepting', 'draining', 'disabled'] as const) }),
         revision: before.revision + 1,
       }
-      if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(omitKeys(after, ['revision']))) throw new Error('Runtime 操作计划没有实际变更')
+      if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(omitKeys(after, ['revision']))) throw requestInvalid('Runtime 操作计划没有实际变更')
       return { actionType, before, after }
     }
 
@@ -490,7 +490,7 @@ export class AdminAssistantService {
     if (actionType === 'agent-set-status') {
       assertOnlyKeys(changes, ['status'])
       const status = readEnum(changes, 'status', ['published', 'disabled'] as const)
-      if (agent.status === status) throw new Error('Agent 已处于目标状态')
+      if (agent.status === status) throw requestInvalid('Agent 已处于目标状态')
       return {
         actionType,
         before: { id: agent.id, status: agent.status, version: agent.version, revision: mutation.revision },
@@ -523,7 +523,7 @@ export class AdminAssistantService {
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
     delete (comparableAfter as Partial<typeof comparableAfter>)['agentId']
     delete (comparableAfter as Partial<typeof comparableAfter>)['changeSummary']
-    if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(comparableAfter)) throw new Error('Agent 操作计划没有实际变更')
+    if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(comparableAfter)) throw requestInvalid('Agent 操作计划没有实际变更')
     return { actionType, before, after }
   }
 
@@ -578,7 +578,7 @@ export class AdminAssistantService {
   private async requireManifestAuthorization(manifest: RuntimeManifest) {
     if (manifest.purpose === 'admin-assistant') return this.authorization.requireAdminReader(manifest.user_context.user_id)
     if (manifest.purpose === 'admin-agent-manage' || manifest.purpose === 'admin-platform-operations') return this.authorization.requirePlatformAdmin(manifest.user_context.user_id)
-    throw new Error('当前 Run 不能查询管理状态')
+    throw authorizationDenied('当前 Run 不能查询管理状态')
   }
 
   private async requireSession(userId: string, sessionId: string) {
@@ -888,19 +888,19 @@ function selectAdminItems<T extends { id: string; name?: string }>(items: T[], q
 function findUnique<T extends { id: string; name?: string }>(items: T[], target: string, label: string): T {
   const normalized = target.trim().toLocaleLowerCase('zh-CN')
   const exact = items.filter(item => item.id.toLocaleLowerCase('zh-CN') === normalized || item.name?.toLocaleLowerCase('zh-CN') === normalized)
-  if (exact.length !== 1) throw new Error(exact.length ? `${label} 目标不唯一：${target}` : `${label} 不存在：${target}`)
+  if (exact.length !== 1) throw requestInvalid(exact.length ? `${label} 目标不唯一：${target}` : `${label} 不存在：${target}`)
   return exact[0]!
 }
 
 function readRecord(input: Record<string, unknown>, key: string) {
   const value = input[key]
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${key} 必须是对象`)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw requestInvalid(`${key} 必须是对象`)
   return value as Record<string, unknown>
 }
 
 function readString(input: Record<string, unknown>, key: string, minimum: number, maximum: number) {
   const value = input[key]
-  if (typeof value !== 'string' || value.trim().length < minimum || value.trim().length > maximum) throw new Error(`${key} 长度必须为 ${minimum}～${maximum} 个字符`)
+  if (typeof value !== 'string' || value.trim().length < minimum || value.trim().length > maximum) throw requestInvalid(`${key} 长度必须为 ${minimum}～${maximum} 个字符`)
   return value.trim()
 }
 
@@ -911,13 +911,13 @@ function readOptionalString(input: Record<string, unknown>, key: string, maximum
 
 function readEnum<const T extends readonly string[]>(input: Record<string, unknown>, key: string, values: T): T[number] {
   const value = input[key]
-  if (typeof value !== 'string' || !values.includes(value)) throw new Error(`${key} 必须是 ${values.join('、')} 之一`)
+  if (typeof value !== 'string' || !values.includes(value)) throw requestInvalid(`${key} 必须是 ${values.join('、')} 之一`)
   return value as T[number]
 }
 
 function readInteger(input: Record<string, unknown>, key: string, minimum: number, maximum: number) {
   const value = input[key]
-  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) throw new Error(`${key} 必须是 ${minimum}～${maximum} 的整数`)
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) throw requestInvalid(`${key} 必须是 ${minimum}～${maximum} 的整数`)
   return value as number
 }
 
@@ -928,14 +928,14 @@ function readChangedString(input: Record<string, unknown>, key: string, fallback
 function readChangedStringArray(input: Record<string, unknown>, key: string, fallback: string[], maximum: number) {
   const value = input[key]
   if (value === undefined) return [...fallback]
-  if (!Array.isArray(value) || value.length > maximum || value.some(item => typeof item !== 'string' || !item.trim())) throw new Error(`${key} 必须是最多 ${maximum} 个非空字符串`)
+  if (!Array.isArray(value) || value.length > maximum || value.some(item => typeof item !== 'string' || !item.trim())) throw requestInvalid(`${key} 必须是最多 ${maximum} 个非空字符串`)
   return [...new Set(value.map(item => (item as string).trim()))]
 }
 
 function assertOnlyKeys(input: Record<string, unknown>, allowed: string[]) {
   const unexpected = Object.keys(input).filter(key => !allowed.includes(key))
-  if (unexpected.length) throw new Error(`操作计划包含未支持字段：${unexpected.join('、')}`)
-  if (!Object.keys(input).length) throw new Error('操作计划没有提供变更字段')
+  if (unexpected.length) throw requestInvalid(`操作计划包含未支持字段：${unexpected.join('、')}`)
+  if (!Object.keys(input).length) throw requestInvalid('操作计划没有提供变更字段')
 }
 
 function omitKeys(input: object, keys: string[]): Record<string, unknown> {

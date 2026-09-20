@@ -38,13 +38,24 @@ const runtime: AgentRuntimePort = {
   },
   async listTools() {
     return [
-      { id: 'edit', description: 'Edit an existing file.', inputSchema: { type: 'object' } },
-      { id: 'todo_write', description: 'Update the task list.', inputSchema: { type: 'object' } },
-      { id: 'bash', description: 'Execute a shell command.', inputSchema: { type: 'object' } },
-      { id: 'subagent', description: 'Delegate work.', inputSchema: { type: 'object' } },
+      runtimeTool('edit', 'Edit an existing file.', 'write'),
+      runtimeTool('todo_write', 'Update the task list.', 'write'),
+      runtimeTool('bash', 'Execute a shell command.', 'write'),
+      runtimeTool('subagent', 'Delegate work.', 'write'),
     ]
   },
   async close() {},
+}
+
+function runtimeTool(id: string, description: string, effect: 'read' | 'write') {
+  return {
+    id, description, effect, inputSchema: { type: 'object' },
+    outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    outputValidation: 'unavailable' as const,
+    retryPolicy: effect === 'read' ? 'safe' as const : 'never' as const,
+    concurrencyPolicy: effect === 'read' ? 'concurrent' as const : 'serialized' as const,
+    completionSemantics: 'completed' as const, timeoutSeconds: 30,
+  }
 }
 
 before(async () => {
@@ -65,6 +76,15 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   assert.deepEqual(catalog.map(tool => tool.id).sort(), ['glob', 'grep', 'read', 'write'])
   assert.ok(catalog.every(tool => tool.version === '1.0.0'))
   assert.equal(catalog.find(tool => tool.id === 'write')?.mode, 'write')
+  assert.equal(catalog.find(tool => tool.id === 'read')?.outputValidation, 'unavailable')
+  assert.equal(catalog.find(tool => tool.id === 'read')?.retryPolicy, 'safe')
+  assert.equal(catalog.find(tool => tool.id === 'read')?.concurrencyPolicy, 'concurrent')
+  assert.equal(catalog.find(tool => tool.id === 'write')?.retryPolicy, 'never')
+  assert.equal(catalog.find(tool => tool.id === 'write')?.concurrencyPolicy, 'serialized')
+  assert.equal(catalog.find(tool => tool.id === 'write')?.completionSemantics, 'completed')
+  assert.deepEqual(JSON.parse(catalog.find(tool => tool.id === 'write')?.outputSchema ?? '{}'), {
+    'x-dsh-work-output-validation': 'unavailable',
+  })
 
   const [connector] = await tools.getConnectors()
   assert.equal(connector?.id, 'connector-dsh-workspace')
@@ -92,6 +112,10 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   assert.equal(added.id, 'edit')
   assert.equal(added.mode, 'write')
   assert.equal(added.approvalPolicy, 'none')
+  assert.equal(added.outputValidation, 'unavailable')
+  assert.equal(added.retryPolicy, 'never')
+  assert.equal(added.concurrencyPolicy, 'serialized')
+  assert.equal(added.completionSemantics, 'completed')
   await tools.assertAvailableReferences(['edit@1.0.0'])
   assert.equal(await tools.resolveRuntimeApprovalMode(['edit@1.0.0']), 'never')
   await assert.rejects(tools.addTool({

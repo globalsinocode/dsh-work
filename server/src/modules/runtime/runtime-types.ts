@@ -87,6 +87,8 @@ export interface RuntimeManifest {
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
   model_route_id?: string | null
+  /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
+  model_requirements?: Array<'long-context' | 'structured-output'>
   input: {
     message: string
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
@@ -183,6 +185,13 @@ export interface RuntimeToolDescriptor {
   id: string
   description: string
   inputSchema: Record<string, unknown>
+  outputSchema: Record<string, unknown>
+  outputValidation: 'runtime' | 'platform' | 'unavailable'
+  effect: 'read' | 'write'
+  retryPolicy: 'safe' | 'never' | 'verify-first'
+  concurrencyPolicy: 'concurrent' | 'serialized'
+  completionSemantics: 'completed' | 'accepted'
+  timeoutSeconds: number
 }
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void
@@ -192,6 +201,11 @@ export type RuntimeCancelCause = 'user' | 'system_revoke'
 export interface AgentRuntimePort {
   /** Optional capability admission gate; negative ports must fail without accepting work. */
   assertAvailable?(manifest?: RuntimeManifest): Promise<void>
+  /** Must verify the actual execution model/endpoint and requirements, not just catalog labels.
+   * Absence means that no additional model capability can be guaranteed. */
+  assertModelRequirements?(requirements: NonNullable<RuntimeManifest['model_requirements']>, target: {
+    providerKey: string; modelKey: string; baseUrl: string
+  }): Promise<void>
   /** Execute a manifest that the durable scheduler has already admitted. */
   execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle>
   subscribe(runId: string, listener: RuntimeEventListener): () => void

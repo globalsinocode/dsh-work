@@ -547,7 +547,31 @@ test('导入定义经配置保存及发布后分叉保留未编辑字段，已�
   const savedSpec = await readSpec('0.1.0')
   assert.deepEqual(savedSpec, { ...original, metadata: { ...original.metadata, description } })
 
-  await publishReviewedDraft(agentId)
+  assert.deepEqual((await agents.getRuntimeSnapshot(saved.version.id)).modelRequirements, ['long-context', 'structured-output'])
+  // 仅受控 Runtime 声明测试能力；不得由此推断真实 DSH 支持这些要求。
+  const [model] = await database<{ id: string; capabilities: string[] }[]>`
+    select m.id, m.capabilities from provider_models m join model_routes r
+      on r.tenant_id = m.tenant_id and r.provider_model_id = m.id
+     where r.tenant_id = ${tenantId} and r.key = 'default' and r.enabled order by r.priority limit 1
+  `
+  assert.ok(model)
+  trialRuntime.modelRequirementsEnabled = true
+  try {
+    await database`update provider_models set capabilities = ${database.json([...model.capabilities, 'long-context', 'structured-output'])} where id = ${model.id} and tenant_id = ${tenantId}`
+    await publishReviewedDraft(agentId)
+    const attempts = await database<{ manifest: RuntimeManifest; route: { modelCapabilities: string[] } }[]>`
+      select manifest, model_route_snapshot as route from run_attempts
+       where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${saved.version.id}
+    `
+    assert.ok(attempts.length > 0)
+    for (const attempt of attempts) {
+      assert.deepEqual(attempt.manifest.model_requirements, ['long-context', 'structured-output'])
+      assert.ok(attempt.route.modelCapabilities.includes('structured-output'))
+    }
+  } finally {
+    trialRuntime.modelRequirementsEnabled = false
+    await database`update provider_models set capabilities = ${database.json(model.capabilities)} where id = ${model.id} and tenant_id = ${tenantId}`
+  }
   const systemPrompt = `${PROMPT}请标注每项结论的数据来源。`
   const forked = await agents.updateAgent({ ...saved.agent, agentId, systemPrompt, actor: ADMIN, changeSummary: '新版本调整指令' })
   assert.equal(forked.version.version, '0.2.0')
@@ -846,6 +870,13 @@ interface TrialExecution {
 }
 
 class TrialStubRuntime implements AgentRuntimePort {
+  modelRequirementsEnabled = false
+  async assertModelRequirements(requirements: NonNullable<RuntimeManifest['model_requirements']>, target: { providerKey: string; modelKey: string; baseUrl: string }) {
+    assert.equal(this.modelRequirementsEnabled, true, '测试能力必须显式启用')
+    assert.deepEqual(requirements, ['long-context', 'structured-output'])
+    assert.equal(target.providerKey, 'deepseek-official')
+    assert.equal(target.modelKey, 'deepseek-v4-pro')
+  }
   private readonly executions = new Map<string, TrialExecution>()
   /** 测试可让指定输入失败（断言负路径）。 */
   failOnMessage = ''

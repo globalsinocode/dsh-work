@@ -231,6 +231,10 @@ function inspectTool(tool: ToolDefinition) {
     { label: '数据范围', value: tool.dataScopes.join('、') },
     { label: '审批策略', value: approvalLabel(tool.approvalPolicy) },
     { label: '调用超时', value: `${tool.timeoutSeconds} 秒` },
+    { label: '结果校验', value: tool.outputValidation === 'unavailable' ? '平台不可验证' : tool.outputValidation === 'platform' ? '平台校验' : 'Runtime 校验' },
+    { label: '重试策略', value: tool.retryPolicy === 'safe' ? '可安全重试' : tool.retryPolicy === 'verify-first' ? '核对结果后重试' : '不可自动重试' },
+    { label: '并发策略', value: tool.concurrencyPolicy === 'concurrent' ? '允许并发' : '串行执行' },
+    { label: '完成语义', value: tool.completionSemantics === 'completed' ? '同步完成' : '仅表示已受理' },
     { label: '输入 Schema', value: tool.inputSchema },
     { label: '输出 Schema', value: tool.outputSchema },
   ], 'tool', tool.id)
@@ -905,6 +909,7 @@ onUnmounted(() => clearSkillTestPoll())
             <strong>{{ selectedToolCandidate.name }}</strong>
             <span :class="`tool-catalog-summary__status--${selectedToolCandidate.status}`">{{ selectedToolCandidate.availabilityMessage }}</span>
             <p>运行要求：{{ selectedToolCandidate.requirements.join('、') }}</p>
+            <p>执行契约：{{ selectedToolCandidate.outputValidation === 'unavailable' ? '输出不可由平台验证' : '输出已校验' }} · {{ selectedToolCandidate.retryPolicy === 'safe' ? '可安全重试' : selectedToolCandidate.retryPolicy === 'verify-first' ? '先核对后重试' : '不可自动重试' }} · {{ selectedToolCandidate.completionSemantics === 'completed' ? '同步完成' : '仅已受理' }}</p>
           </div>
           <el-form label-position="top" :disabled="selectedToolCandidate.status !== 'ready'">
             <el-form-item label="授权角色" required>

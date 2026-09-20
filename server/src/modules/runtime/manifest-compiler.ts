@@ -19,6 +19,11 @@ function assertId(name: string, value: string): void {
 
 export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeManifest {
   if (input.manifest_version !== '1.0') throw new TypeError('manifest_version must be 1.0')
+  if (input.model_requirements !== undefined && (!Array.isArray(input.model_requirements)
+    || input.model_requirements.some(requirement => !['long-context', 'structured-output'].includes(requirement))
+    || new Set(input.model_requirements).size !== input.model_requirements.length)) {
+    throw new TypeError('model_requirements must contain unique supported requirement names')
+  }
   assertId('run_id', input.run_id)
   assertId('attempt_id', input.attempt_id)
   assertId('session_id', input.session_id)

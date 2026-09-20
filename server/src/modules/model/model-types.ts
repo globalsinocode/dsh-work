@@ -59,6 +59,7 @@ export interface ModelRouteSnapshot {
   modelId: string
   modelKey: string
   credentialRefId: string
+  modelCapabilities: string[]
   credentialBackend: CredentialBackend
   credentialExternalRef: string
   resolvedAt: string

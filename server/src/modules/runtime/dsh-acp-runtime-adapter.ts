@@ -9,7 +9,15 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
+import { platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
+import {
+  PlatformToolError,
+  toolPreconditionFailed,
+  toolUnavailable,
+  type PlatformToolRegistration,
+} from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
 import type {
   AgentRuntimePort,
@@ -103,7 +111,18 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     this.acceptingRuns = configuration.acceptingRuns ?? true
   }
 
+  async assertModelRequirements(requirements: NonNullable<RuntimeManifest['model_requirements']>): Promise<void> {
+    // ACP currently uses a fixed Profile model and has no verified context-capacity
+    // or constrained-output contract. Catalog labels cannot establish support.
+    if (requirements.length) throw new ExecutionCapabilityUnavailableError('model')
+  }
+
+  async assertAvailable(manifest?: RuntimeManifest): Promise<void> {
+    await this.assertModelRequirements(manifest?.model_requirements ?? [])
+  }
+
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
+    await this.assertAvailable(manifest)
     if (this.closed) throw new Error('Runtime Adapter is closed')
     const acceptedMono = performance.now()
     // The Postgres scheduler is the admission gate. A manifest reaching this
@@ -271,20 +290,28 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const path = this.configuration.toolCatalogPath
     if (!path) throw new Error('DSH Runtime 未配置工具目录输出')
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
-    if (!isRecord(parsed) || parsed['formatVersion'] !== 1 || !Array.isArray(parsed['tools'])) {
+    if (!isRecord(parsed) || parsed['formatVersion'] !== 2 || !Array.isArray(parsed['tools'])) {
       throw new Error('DSH Runtime 工具目录格式无效')
     }
     return parsed['tools'].map((value) => {
       if (!isRecord(value)
         || typeof value['name'] !== 'string'
         || typeof value['description'] !== 'string'
-        || !isRecord(value['parameters'])) {
+        || !isRecord(value['parameters'])
+        || !isRuntimeToolContract(value['contract'])) {
         throw new Error('DSH Runtime 工具目录包含无效条目')
       }
       return {
         id: value['name'],
         description: value['description'],
         inputSchema: value['parameters'],
+        outputSchema: value['contract']['outputSchema'],
+        outputValidation: value['contract']['outputValidation'],
+        effect: value['contract']['effect'],
+        retryPolicy: value['contract']['retryPolicy'],
+        concurrencyPolicy: value['contract']['concurrencyPolicy'],
+        completionSemantics: value['contract']['completionSemantics'],
+        timeoutSeconds: value['contract']['timeoutSeconds'],
       }
     })
   }
@@ -319,37 +346,42 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.terminal) return
       this.setStatus(record, 'starting')
       this.armDeadline(record, 'setup', this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
-      const platformTools: Record<string, import('./platform-tool-bridge.ts').PlatformToolHandler> = {}
+      const platformTools: Partial<Record<PlatformToolName, PlatformToolRegistration>> = {}
+      const registerPlatformTool = (name: PlatformToolName, handler: PlatformToolRegistration['handler']) => {
+        platformTools[name] = { handler, contract: platformToolContracts[name] }
+      }
       if (record.manifest.purpose === 'admin-skill-install') {
         const prepare = this.configuration.prepareSkillInstallation
         if (!prepare) throw new Error('安装助手不可用：未配置平台安装工具')
-        platformTools['prepare_skill_installation'] = (_input, signal) => prepare(record.manifest, signal)
+        registerPlatformTool('prepare_skill_installation', (_input, signal) => prepare(record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'inspect_admin_state')) {
         const inspect = this.configuration.inspectAdminState
         if (!inspect) throw new Error('管理助手不可用：未配置平台查询工具')
-        platformTools['inspect_admin_state'] = (input, signal) => inspect(input, record.manifest, signal)
+        registerPlatformTool('inspect_admin_state', (input, signal) => inspect(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'propose_admin_task')) {
         const propose = this.configuration.proposeAdminTask
         if (!propose) throw new Error('管理助手不可用：未配置任务提案工具')
-        platformTools['propose_admin_task'] = (input, signal) => propose(input, record.manifest, signal)
+        registerPlatformTool('propose_admin_task', (input, signal) => propose(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'prepare_admin_action')) {
         const prepare = this.configuration.prepareAdminAction
         if (!prepare) throw new Error('管理助手不可用：未配置操作计划工具')
-        platformTools['prepare_admin_action'] = (input, signal) => prepare(input, record.manifest, signal)
+        registerPlatformTool('prepare_admin_action', (input, signal) => prepare(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'activate_skill')) {
-        platformTools['activate_skill'] = async (input) => {
+        registerPlatformTool('activate_skill', async (input) => {
           const requested = typeof input['name'] === 'string' ? input['name'].trim() : ''
           const matches = record.manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === requested || skill.id === requested)
-          if (!requested || matches.length !== 1) throw new Error(`当前 Run 中没有唯一匹配的 Skill：${requested || '未提供名称'}`)
+          if (!requested || matches.length !== 1) throw toolPreconditionFailed(`当前 Run 中没有唯一匹配的 Skill：${requested || '未提供名称'}`)
           const skill = matches[0]!
           const exactName = skill.name ?? skill.id
-          if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) throw new Error(`Skill ${exactName} 只允许用户显式激活`)
+          if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) {
+            throw new PlatformToolError({ status: 403, code: 'TOOL_PERMISSION_DENIED', message: `Skill ${exactName} 只允许用户显式激活` })
+          }
           const materialized = record.materializedSkills.get(skill.id)
-          if (!materialized) throw new Error(`Skill 文件夹未装载：${exactName}`)
+          if (!materialized) throw toolUnavailable(`Skill 文件夹未装载：${exactName}`)
           const contentSha256 = createHash('sha256').update(JSON.stringify({ instructions: materialized.instructions, files: skill.files ?? [] })).digest('hex')
           await this.configuration.recordSkillActivation?.(record.manifest, skill, contentSha256)
           record.activatedSkills.add(skill.id)
@@ -363,23 +395,23 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             pythonEntries: materialized.files.filter(file => file.path.endsWith('.py')).map(file => file.path),
             contentSha256,
           }
-        }
+        })
       }
       if (record.manifest.tools.some(tool => tool.id === 'python_execute')) {
         const executePython = this.configuration.executePython
         if (!executePython) throw new Error('Python Skill 不可用：未配置平台脚本沙箱')
-        platformTools['python_execute'] = async (input, signal) => {
+        registerPlatformTool('python_execute', async (input, signal) => {
           const requested = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
           const skill = record.manifest.agent_configuration.skill_instructions.find(item => item.id === requested || (item.name ?? item.id) === requested)
-          if (!skill || !record.activatedSkills.has(skill.id)) throw new Error('执行 Python 前必须先激活对应 Skill')
+          if (!skill || !record.activatedSkills.has(skill.id)) throw toolPreconditionFailed('执行 Python 前必须先激活对应 Skill')
           const result = await executePython(input, record.manifest, workspaceDirectory, signal)
           const succeeded = typeof result === 'object' && result !== null && 'exitCode' in result && (result as { exitCode: unknown }).exitCode === 0
           await this.configuration.recordPythonExecution?.(record.manifest, skill.id, String(input['entry'] ?? ''), succeeded)
           return result
-        }
+        })
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
-        record.bridge = await createPlatformToolBridge(platformTools, record.manifest.limits.max_tool_calls,
+        record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
           this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined)
       }
       if (record.cancelCause !== undefined) {
@@ -730,6 +762,25 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private now(): string {
     return (this.configuration.now?.() ?? new Date()).toISOString()
   }
+}
+
+function isRuntimeToolContract(value: unknown): value is {
+  outputSchema: Record<string, unknown>
+  outputValidation: RuntimeToolDescriptor['outputValidation']
+  effect: RuntimeToolDescriptor['effect']
+  retryPolicy: RuntimeToolDescriptor['retryPolicy']
+  concurrencyPolicy: RuntimeToolDescriptor['concurrencyPolicy']
+  completionSemantics: RuntimeToolDescriptor['completionSemantics']
+  timeoutSeconds: number
+} {
+  return isRecord(value)
+    && isRecord(value['outputSchema'])
+    && ['runtime', 'platform', 'unavailable'].includes(String(value['outputValidation']))
+    && ['read', 'write'].includes(String(value['effect']))
+    && ['safe', 'never', 'verify-first'].includes(String(value['retryPolicy']))
+    && ['concurrent', 'serialized'].includes(String(value['concurrencyPolicy']))
+    && ['completed', 'accepted'].includes(String(value['completionSemantics']))
+    && Number.isInteger(value['timeoutSeconds']) && Number(value['timeoutSeconds']) > 0 && Number(value['timeoutSeconds']) <= 600
 }
 
 export function renderUserPrompt(manifest: RuntimeManifest) {

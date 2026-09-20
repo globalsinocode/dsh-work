@@ -2,12 +2,22 @@ import type { AgentRuntimePort, RuntimeManifest, RuntimeEventListener, RuntimeCa
 
 export class ExecutionCapabilityUnavailableError extends Error {
   readonly status = 503
-  readonly code: 'RUNTIME_UNAVAILABLE' | 'PYTHON_UNAVAILABLE'
-  constructor(capability: 'dsh' | 'python') {
-    super(capability === 'dsh' ? 'DSH 执行能力不可用，请管理员检查配置并重启服务后重试' : 'Python 执行能力不可用，其他不依赖 Python 的任务可继续')
+  readonly code: 'RUNTIME_UNAVAILABLE' | 'PYTHON_UNAVAILABLE' | 'MODEL_CAPABILITY_UNAVAILABLE'
+  constructor(capability: 'dsh' | 'python' | 'model') {
+    super(capability === 'dsh' ? 'DSH 执行能力不可用，请管理员检查配置并重启服务后重试' : capability === 'python' ? 'Python 执行能力不可用，其他不依赖 Python 的任务可继续' : '当前 DSH 链路尚不能保证 Agent 声明的模型能力，请管理员核对 Agent 要求与 Runtime 支持情况')
     this.name = 'ExecutionCapabilityUnavailableError'
-    this.code = capability === 'dsh' ? 'RUNTIME_UNAVAILABLE' : 'PYTHON_UNAVAILABLE'
+    this.code = capability === 'dsh' ? 'RUNTIME_UNAVAILABLE' : capability === 'python' ? 'PYTHON_UNAVAILABLE' : 'MODEL_CAPABILITY_UNAVAILABLE'
   }
+}
+
+export async function assertRuntimeModelRequirements(
+  runtime: AgentRuntimePort,
+  requirements: NonNullable<RuntimeManifest['model_requirements']>,
+  target: Parameters<NonNullable<AgentRuntimePort['assertModelRequirements']>>[1],
+) {
+  if (!requirements.length) return
+  if (!runtime.assertModelRequirements) throw new ExecutionCapabilityUnavailableError('model')
+  await runtime.assertModelRequirements(requirements, target)
 }
 
 /** Negative capability only: never creates a Worker, model call, event or answer. */
@@ -50,6 +60,9 @@ export class CapabilityGuardedRuntime implements AgentRuntimePort {
   private readonly delegate: AgentRuntimePort
   private readonly python: CapabilityState
   constructor(delegate: AgentRuntimePort, python: CapabilityState) { this.delegate = delegate; this.python = python }
+  async assertModelRequirements(...args: Parameters<NonNullable<AgentRuntimePort['assertModelRequirements']>>) {
+    await assertRuntimeModelRequirements(this.delegate, ...args)
+  }
   async assertAvailable(manifest?: RuntimeManifest) {
     await this.delegate.assertAvailable?.(manifest)
     if (this.python.status !== 'available' && (manifest?.test_scenario ? manifest.test_scenario.requiredPythonEntries.length > 0 : manifest?.tools?.some(tool => tool.id === 'python_execute'))) {

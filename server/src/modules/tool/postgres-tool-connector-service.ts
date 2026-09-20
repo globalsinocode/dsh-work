@@ -58,6 +58,10 @@ interface ToolRow {
   status: ToolDefinition['status']
   inputSchema: unknown
   outputSchema: unknown
+  outputValidation: ToolDefinition['outputValidation']
+  retryPolicy: ToolDefinition['retryPolicy']
+  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
+  completionSemantics: ToolDefinition['completionSemantics']
   timeoutSeconds: number
   allowedRoleIds: string[]
   dataScopes: string[]
@@ -96,12 +100,15 @@ export class PostgresToolConnectorService {
       select t.id, tv.version, t.name, t.system, t.description,
              t.connector_id as "connectorId", tv.risk_level as risk, t.mode, t.status,
              tv.input_schema as "inputSchema", tv.output_schema as "outputSchema",
+             tv.output_validation as "outputValidation", tv.retry_policy as "retryPolicy",
+             tv.concurrency_policy as "concurrencyPolicy", tv.completion_semantics as "completionSemantics",
              t.timeout_seconds as "timeoutSeconds", t.allowed_role_ids as "allowedRoleIds",
              t.data_scopes as "dataScopes", t.approval_policy as "approvalPolicy",
              t.last_checked_at as "lastCheckedAt"
         from tools t
         join lateral (
-          select version, risk_level, input_schema, output_schema
+          select version, risk_level, input_schema, output_schema, output_validation,
+                 retry_policy, concurrency_policy, completion_semantics
             from tool_versions
            where tenant_id = t.tenant_id and tool_id = t.id and status = 'published'
            order by created_at desc limit 1
@@ -122,6 +129,10 @@ export class PostgresToolConnectorService {
       status: row.status,
       inputSchema: JSON.stringify(row.inputSchema, null, 2),
       outputSchema: JSON.stringify(row.outputSchema, null, 2),
+      outputValidation: row.outputValidation,
+      retryPolicy: row.retryPolicy,
+      concurrencyPolicy: row.concurrencyPolicy,
+      completionSemantics: row.completionSemantics,
       timeoutSeconds: row.timeoutSeconds,
       allowedRoles: row.allowedRoleIds.map(id => roleNames.get(id) ?? id),
       dataScopes: row.dataScopes,
@@ -195,11 +206,13 @@ export class PostgresToolConnectorService {
       if (!inserted.length) throw new Error(`工具已存在：${entry.name}`)
       await transaction`
         insert into tool_versions (
-          id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status
+          id, tenant_id, tool_id, version, input_schema, output_schema, risk_level,
+          output_validation, retry_policy, concurrency_policy, completion_semantics, status
         ) values (
           ${`tool-version-${entry.id}-1`}, ${tenantId}, ${entry.id}, ${entry.version},
           ${JSON.stringify(entry.inputSchemaObject)}::jsonb, ${JSON.stringify(entry.outputSchemaObject)}::jsonb,
-          ${entry.risk}, 'published'
+          ${entry.risk}, ${entry.outputValidation}, ${entry.retryPolicy},
+          ${entry.concurrencyPolicy}, ${entry.completionSemantics}, 'published'
         )
       `
       // 初始绑定修订：批准连接/凭据槽位/身份策略/授权范围的真实依据。

@@ -9,6 +9,7 @@ import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/a
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
+import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
@@ -246,6 +247,7 @@ test('compilation failure converges the Run instead of leaving it queued without
   const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
   const resource = (content: string) => ({ path: 'reference.txt', content, size: content.length, sha256: createHash('sha256').update(content).digest('hex') })
   const snapshot: RuntimeAgentSnapshot = {
+    modelRequirements: [],
     versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
@@ -272,6 +274,72 @@ test('compilation failure converges the Run instead of leaving it queued without
   const manifest = attempt!.manifest as unknown as RuntimeManifest
   assert.equal(manifest.agent_configuration.skill_instructions.length, 2)
   assert.equal(manifest.agent_configuration.skill_instructions.reduce((total, skill) => total + skill.files![0]!.content!.length, 0), 1200 * 1024)
+})
+
+test('model admission rejects employee, automation and release trial preparation without ghost Attempts', async t => {
+  const models = new ModelGovernanceService(new PostgresModelGovernanceRepository(database))
+  const route = await models.resolveRoute('default')
+  try {
+    for (const stage of ['model', 'runtime'] as const) {
+      await database`update provider_models set capabilities = ${database.json(stage === 'model' ? [] : ['structured-output'])}
+        where tenant_id = 'tenant-dsh-work' and id = ${route.modelId}`
+      for (const purpose of ['employee', 'automation', 'trial'] as const) {
+        await t.test(`${purpose}: ${stage} mismatch`, async () => {
+          const session = await orchestration.createSession({ userId: 'U00001', title: `模型准入 ${purpose} ${stage}` })
+          assert.ok(session.agentVersionId)
+          const snapshot: RuntimeAgentSnapshot = {
+            versionId: session.agentVersionId, modelRequirements: ['structured-output'],
+            systemPrompt: '请根据当前授权范围内的信息回答用户问题，并标注结论依据。',
+            skills: [], skillInstructions: [], tools: [], runtimeTools: [], toolBindings: [],
+            approvalMode: 'risk_based', roleIds: [], dataScopes: [],
+            maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+          }
+          const service = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
+            getRuntimeSnapshot: async () => snapshot,
+          } as unknown as PostgresAgentService)
+          const submit = async () => {
+            if (purpose === 'trial') return service.runReleaseTrialCase({ userId: 'U00001', sessionId: session.id, draftVersionId: session.agentVersionId!, message: '测试能力准入', idempotencyKey: randomUUID() })
+            if (purpose === 'employee') return service.startRun({ userId: 'U00001', sessionId: session.id, prompt: '测试能力准入', idempotencyKey: randomUUID() })
+            const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
+            return service.dispatchAutomation(run, { userId: 'U00001', workspaceId: session.workspaceId, agentVersionId: session.agentVersionId!, prompt: '测试能力准入', fileIds: [], attemptId: `attempt-${randomUUID()}` })
+          }
+          await assert.rejects(submit(), { code: stage === 'model' ? 'MODEL_CAPABILITY_MISMATCH' : 'MODEL_CAPABILITY_UNAVAILABLE' })
+          const [run] = await database<{ status: string; attempt: string | null; count: number }[]>`
+            select r.status, r.current_attempt_id as attempt, (select count(*)::integer from run_attempts a where a.run_id = r.id) as count
+              from runs r where r.session_id = ${session.id}
+          `
+          assert.equal(run?.status, 'failed')
+          assert.equal(run?.attempt, null)
+          assert.equal(run?.count, 0)
+        })
+      }
+    }
+  } finally {
+    await database`update provider_models set capabilities = ${database.json(route.modelCapabilities)} where tenant_id = 'tenant-dsh-work' and id = ${route.modelId}`
+  }
+})
+
+test('restart recovery rejects pinned model requirements when the current Runtime cannot verify them', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '恢复模型能力校验' })
+  const [source] = await database<{ manifest: RuntimeManifest }[]>`
+    select manifest from run_attempts where tenant_id = 'tenant-dsh-work' and status = 'succeeded' order by created_at limit 1
+  `
+  assert.ok(source)
+  const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
+  const attemptId = `attempt-${randomUUID()}`
+  const manifest = { ...source.manifest, run_id: run.id, attempt_id: attemptId, session_id: session.id, model_requirements: ['long-context'] } as RuntimeManifest
+  const compiled = compileRuntimeManifest(manifest)
+  const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveRoute()
+  await runs.createAttempt({ tenantId: 'tenant-dsh-work', runId: run.id, attemptId, runtimeId: 'runtime-local-01',
+    manifest: JSON.parse(compiled.canonicalJson), manifestSha256: compiled.sha256,
+    modelRouteSnapshot: JSON.parse(JSON.stringify({ ...route, modelCapabilities: ['long-context'] })),
+  })
+  await orchestration.recoverAfterServiceRestart()
+  await waitForTask(run.id, 'failed')
+  const attempt = await runs.getAttempt('tenant-dsh-work', attemptId)
+  assert.equal(attempt?.status, 'failed')
+  assert.equal(attempt?.errorCode, 'MODEL_CAPABILITY_UNAVAILABLE')
+  assert.equal(runtime.status(run.id), undefined, '不可恢复的能力不得启动 Worker')
 })
 
 test('cancel and retry keep one Run and create a new immutable Attempt', async () => {

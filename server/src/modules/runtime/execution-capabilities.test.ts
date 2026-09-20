@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CapabilityGuardedRuntime, ExecutionCapabilityUnavailableError, UnavailableRuntime, probeExecutionCapability } from './execution-capabilities.ts'
+import { assertRuntimeModelRequirements, CapabilityGuardedRuntime, ExecutionCapabilityUnavailableError, UnavailableRuntime, probeExecutionCapability } from './execution-capabilities.ts'
 import type { AgentRuntimePort, RuntimeManifest } from './runtime-types.ts'
 
 test('unavailable port never admits work or fabricates tools/events/results', async () => {
@@ -41,4 +41,21 @@ test('healthy probe and Python capability delegate without changing the Manifest
 test('capability errors are typed as temporary dependency failures, not authorization denials', () => {
   const error = new ExecutionCapabilityUnavailableError('dsh')
   assert.equal(error.status, 503); assert.notEqual(error.code, 'AUTHORIZATION_REVOKED')
+})
+
+test('model admission fails closed without a verifier and forwards the exact target through wrappers', async () => {
+  const target = { providerKey: 'test-provider', modelKey: 'test-model', baseUrl: 'https://example.invalid' }
+  const absent = new CapabilityGuardedRuntime({} as AgentRuntimePort, { status: 'available' })
+  await assertRuntimeModelRequirements(absent, [], target)
+  await assert.rejects(assertRuntimeModelRequirements(absent, ['long-context'], target), { code: 'MODEL_CAPABILITY_UNAVAILABLE', status: 503 })
+  let checks = 0
+  const verifier: Pick<AgentRuntimePort, 'assertModelRequirements'> = { async assertModelRequirements(requirements, received) {
+    checks++
+    assert.deepEqual(requirements, ['structured-output'])
+    assert.equal(received, target)
+    throw new ExecutionCapabilityUnavailableError('model')
+  } }
+  const guarded = new CapabilityGuardedRuntime(verifier as AgentRuntimePort, { status: 'available' })
+  await assert.rejects(assertRuntimeModelRequirements(guarded, ['structured-output'], target), { code: 'MODEL_CAPABILITY_UNAVAILABLE' })
+  assert.equal(checks, 1)
 })

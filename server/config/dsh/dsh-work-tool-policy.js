@@ -75,9 +75,9 @@ function publishRuntimeToolCatalog(ctx, path) {
       const temporary = `${target}.${process.pid}.tmp`
       mkdirSync(dirname(target), { recursive: true })
       writeFileSync(temporary, `${JSON.stringify({
-        formatVersion: 1,
+        formatVersion: 2,
         generatedAt: new Date().toISOString(),
-        tools: ctx.tools.schemas(),
+        tools: ctx.tools.schemas().map(publishToolContract),
       })}\n`, { encoding: 'utf8', mode: 0o600 })
       renameSync(temporary, target)
     } catch {
@@ -86,6 +86,31 @@ function publishRuntimeToolCatalog(ctx, path) {
     }
   }
   publish()
+}
+
+const readTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
+const retrySafeTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill'])
+const concurrentTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
+const toolTimeoutSeconds = new Map([
+  ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
+  ['job_list', 10], ['job_kill', 10], ['bash', 60],
+  ['prepare_skill_installation', 120], ['python_execute', 300],
+])
+
+function publishToolContract(schema) {
+  const name = typeof schema?.name === 'string' ? schema.name : ''
+  return {
+    ...schema,
+    contract: {
+      effect: readTools.has(name) ? 'read' : 'write',
+      retryPolicy: retrySafeTools.has(name) ? 'safe' : 'never',
+      concurrencyPolicy: concurrentTools.has(name) ? 'concurrent' : 'serialized',
+      completionSemantics: 'completed',
+      timeoutSeconds: toolTimeoutSeconds.get(name) ?? 30,
+      outputValidation: 'unavailable',
+      outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    },
+  }
 }
 
 function parseAllowedTools(value) {
@@ -259,7 +284,7 @@ function registerPlatformTools(ctx) {
     description: 'Activate one Skill from the immutable catalog attached to this Run. Returns its exact instructions and resource directory. It cannot download or change a Skill.',
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string', description: 'Exact Skill name from the current Run catalog.' } },
+      properties: { name: { type: 'string', minLength: 1, maxLength: 160, description: 'Exact Skill name from the current Run catalog.' } },
       required: ['name'],
       additionalProperties: false,
     },
@@ -270,9 +295,9 @@ function registerPlatformTools(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        skill: { type: 'string' },
-        entry: { type: 'string' },
-        args: { type: 'array', items: { type: 'string' }, maxItems: 32 },
+        skill: { type: 'string', minLength: 1, maxLength: 160 },
+        entry: { type: 'string', minLength: 1, maxLength: 500 },
+        args: { type: 'array', items: { type: 'string', maxLength: 1000 }, maxItems: 32 },
       },
       required: ['skill', 'entry'],
       additionalProperties: false,
@@ -293,7 +318,19 @@ function registerPlatformTool(ctx, socketPath, definition) {
           let responseBody = ''
           response.setEncoding('utf8')
           response.on('data', chunk => { responseBody += chunk })
-          response.on('end', () => resolve(responseBody))
+          response.on('end', () => {
+            if ((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300) {
+              resolve(responseBody)
+              return
+            }
+            try {
+              const parsed = JSON.parse(responseBody)
+              const error = parsed?.error
+              reject(platformToolFailure(error))
+            } catch {
+              reject(platformToolFailure())
+            }
+          })
           response.on('error', reject)
         })
         req.on('error', reject)
@@ -301,6 +338,19 @@ function registerPlatformTool(ctx, socketPath, definition) {
       })
     },
   })
+}
+
+/**
+ * DSH normalizes ordinary tool errors to their message. Keep typed properties
+ * for direct callers and project the same stable semantics into that message.
+ */
+function platformToolFailure(error) {
+  const code = typeof error?.code === 'string' ? error.code : 'TOOL_EXECUTION_FAILED'
+  const retryable = error?.retryable === true
+  const effectState = error?.effect_state === 'unknown' ? 'unknown' : 'not_started'
+  const message = typeof error?.message === 'string' ? error.message : '平台工具调用失败'
+  const envelope = JSON.stringify({ code, retryable, effect_state: effectState })
+  return Object.assign(new Error(`DSH_WORK_TOOL_ERROR ${envelope}\n${message}`), { code, retryable, effectState })
 }
 
 /** A product-owned Unix-socket check, not a model tool or external network request. */

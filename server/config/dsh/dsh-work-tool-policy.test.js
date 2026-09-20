@@ -1,4 +1,5 @@
 import { createPlatformToolBridge } from '../../src/modules/runtime/platform-tool-bridge.ts'
+import { platformToolContracts } from '../../src/modules/runtime/platform-tool-contracts.ts'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -152,6 +153,27 @@ test('DSH registers only the fixed governed platform tool contracts when an Atte
   assert.deepEqual(registered.find(tool => tool.name === 'prepare_admin_action').parameters.properties.actionType.enum, ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'])
   assert.deepEqual(registered.find(tool => tool.name === 'activate_skill').parameters.required, ['name'])
   assert.equal(registered.find(tool => tool.name === 'python_execute').parameters.additionalProperties, false)
+  for (const tool of registered) assert.deepEqual(stripDescriptions(tool.parameters), stripDescriptions(platformToolContracts[tool.name].inputSchema))
+})
+
+test('DSH platform tools reject non-success responses with the stable bridge error', async () => {
+  const bridge = await createPlatformToolBridge({ inspect_admin_state: {
+    contract: platformToolContracts.inspect_admin_state,
+    handler: async () => 'invalid output',
+  } }, 1)
+  try {
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    const { registered } = capturePolicy()
+    const tool = registered.find(candidate => candidate.name === 'inspect_admin_state')
+    await assert.rejects(
+      tool.execute({ domain: 'overview' }, { signal: new globalThis.AbortController().signal }),
+      error => error.code === 'TOOL_OUTPUT_INVALID'
+        && error.retryable === false
+        && error.effectState === 'not_started'
+        && error.message.startsWith('DSH_WORK_TOOL_ERROR {"code":"TOOL_OUTPUT_INVALID","retryable":false,"effect_state":"not_started"}\n')
+        && error.message.includes('工具返回值不符合契约'),
+    )
+  } finally { await bridge.close() }
 })
 
 test('DSH publishes the tools loaded by the active Profile for platform discovery', async () => {
@@ -165,8 +187,17 @@ test('DSH publishes the tools loaded by the active Profile for platform discover
   capturePolicy(schemas)
 
   const catalog = JSON.parse(await readFile(path, 'utf8'))
-  assert.equal(catalog.formatVersion, 1)
-  assert.deepEqual(catalog.tools, schemas)
+  assert.equal(catalog.formatVersion, 2)
+  assert.deepEqual(catalog.tools.map(tool => ({ name: tool.name, contract: tool.contract })), [
+    { name: 'read', contract: {
+      effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', completionSemantics: 'completed',
+      timeoutSeconds: 30, outputValidation: 'unavailable', outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    } },
+    { name: 'todo_write', contract: {
+      effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
+      timeoutSeconds: 10, outputValidation: 'unavailable', outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    } },
+  ])
 })
 
 function capturePolicy(schemas = []) {
@@ -195,6 +226,14 @@ function capturePolicy(schemas = []) {
 function restoreEnvironment(key, value) {
   if (value === undefined) delete process.env[key]
   else process.env[key] = value
+}
+
+function stripDescriptions(value) {
+  if (Array.isArray(value)) return value.map(stripDescriptions)
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== 'description').map(([key, item]) => [key, stripDescriptions(item)]),
+  )
+  return value
 }
 
 

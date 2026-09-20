@@ -131,6 +131,7 @@ describe('Skill installation sibling tab', () => {
       risk: 'low', mode: 'write', timeoutSeconds: 30,
       defaultAllowedRoles: ['普通员工', '平台管理员'],
       defaultDataScopes: ['workspace:authorized'], defaultApprovalPolicy: 'none',
+      outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
       requirements: ['当前 Run 工作区', '仅允许 output 成果目录'],
       status: 'ready', availabilityMessage: '当前部署已批准该工具，DSH Runtime 健康检查通过',
     })
@@ -138,6 +139,7 @@ describe('Skill installation sibling tab', () => {
       id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
       description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
       risk: 'low', mode: 'write', status: 'available', inputSchema: '{}', outputSchema: '{}',
+      outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
       timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
       dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
     })

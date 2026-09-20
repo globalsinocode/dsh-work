@@ -252,6 +252,14 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.throws(() => compileRuntimeManifest(manifest), /摘要不匹配/)
   })
 
+  it('pins model requirements and rejects unknown, repeated or malformed declarations', () => {
+    assertBothAccept({ ...baseManifest(), model_requirements: ['long-context', 'structured-output'] }, 'declared requirements')
+    assertBothAccept({ ...baseManifest(), model_requirements: [] }, 'no extra requirements')
+    for (const value of [['unknown'], ['long-context', 'long-context'], 'structured-output', null]) {
+      assertBothReject({ ...baseManifest(), model_requirements: value } as RuntimeManifest, /model_requirements/, 'invalid model requirements')
+    }
+  })
+
   it('B-03/I-04: pins platform tool bindings at both boundaries without crossing the tools[] namespace', () => {
     const pin = () => ({
       tool: 'tool-erp-read@1.0.0',
