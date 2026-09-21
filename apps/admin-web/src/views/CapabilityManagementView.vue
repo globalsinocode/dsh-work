@@ -51,9 +51,12 @@ const mcpReviewDialogOpen = ref(false)
 const selectedMcpReviewConnectorId = ref('')
 const mcpAccessDialogOpen = ref(false)
 const selectedMcpConnectorId = ref('')
+const mcpCredentialDialogOpen = ref(false)
+const selectedMcpCredentialConnectorId = ref('')
+const mcpCredentialToken = ref('')
+const mcpCredentialRotating = ref(false)
 const mcpCreateForm = reactive({
-  id: '', name: '', system: '', serverName: '', endpoint: '',
-  authType: 'none' as 'none' | 'bearer', credentialRef: '', scopeDescription: '',
+  name: '', endpoint: '', authType: 'none' as 'none' | 'bearer', bearerToken: '', scopeDescription: '',
 })
 const toolCatalogDialogOpen = ref(false)
 const toolCatalogQuery = ref('')
@@ -147,6 +150,7 @@ const filteredConnectors = computed(() => {
 })
 const selectedMcpConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpConnectorId.value))
 const selectedMcpReviewConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpReviewConnectorId.value))
+const selectedMcpCredentialConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpCredentialConnectorId.value))
 const toolRoleOptions = computed(() => [...new Set([
   ...contentStore.tools.flatMap(tool => tool.allowedRoles),
   ...contentStore.toolCatalog.flatMap(tool => tool.defaultAllowedRoles),
@@ -362,11 +366,11 @@ async function inspectConnector(connector: ConnectorDefinition) {
   }
   showDetail(connector.name, [
     { label: '连接器标识', value: connector.id },
-    { label: '企业系统', value: connector.system },
+    ...(connector.mcp ? [] : [{ label: '企业系统', value: connector.system }]),
     { label: '协议', value: protocolLabel(connector.protocol) },
     { label: '服务地址', value: connector.endpoint },
     { label: '认证方式', value: connector.authType },
-    { label: '凭据引用', value: connector.credentialRef },
+    { label: '认证凭据', value: connector.credentialRef },
     { label: '数据范围', value: connector.scopeDescription },
     { label: '提供工具', value: `${connector.toolCount} 个` },
     { label: '当前延迟', value: connector.latency },
@@ -694,16 +698,52 @@ async function registerMcpConnector() {
   mcpCreating.value = true
   try {
     const connector = await contentStore.registerMcpConnector({
-      ...mcpCreateForm,
-      ...(mcpCreateForm.authType === 'bearer' ? { credentialRef: mcpCreateForm.credentialRef.trim() } : {}),
+      name: mcpCreateForm.name.trim(),
+      endpoint: mcpCreateForm.endpoint.trim(),
+      authType: mcpCreateForm.authType,
+      scopeDescription: mcpCreateForm.scopeDescription.trim(),
+      ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
     })
     mcpCreateDialogOpen.value = false
+    Object.assign(mcpCreateForm, { name: '', endpoint: '', authType: 'none', bearerToken: '', scopeDescription: '' })
     ElMessage.success('MCP Connector 已登记，正在通过 DSH 发现 Tool')
     await checkConnector(connector)
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : 'MCP Connector 登记失败')
   } finally {
+    mcpCreateForm.bearerToken = ''
     mcpCreating.value = false
+  }
+}
+
+function openMcpCredentialRotation(connector: ConnectorDefinition) {
+  selectedMcpCredentialConnectorId.value = connector.id
+  mcpCredentialToken.value = ''
+  mcpCredentialDialogOpen.value = true
+}
+
+function mcpCredentialActionLabel(connector: ConnectorDefinition | undefined) {
+  return connector?.credentialRef === 'Bearer Token 需要重新录入' ? '录入 Token' : '轮换 Token'
+}
+
+function clearMcpTokenForNoAuth() {
+  if (mcpCreateForm.authType === 'none') mcpCreateForm.bearerToken = ''
+}
+
+async function rotateMcpCredential() {
+  const connector = selectedMcpCredentialConnector.value
+  if (!connector || !mcpCredentialToken.value) return
+  mcpCredentialRotating.value = true
+  try {
+    await contentStore.rotateMcpCredential(connector.id, mcpCredentialToken.value)
+    mcpCredentialDialogOpen.value = false
+    ElMessage.success('Bearer Token 已轮换，正在重新检查连接器')
+    await checkConnector(contentStore.connectors.find(item => item.id === connector.id) ?? connector)
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'Bearer Token 轮换失败')
+  } finally {
+    mcpCredentialToken.value = ''
+    mcpCredentialRotating.value = false
   }
 }
 
@@ -999,33 +1039,36 @@ onUnmounted(() => clearSkillTestPoll())
 
       <template v-else>
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的连接器">
-        <el-table-column label="连接器" min-width="225"><template #default="scope"><div class="connector-cell"><span><el-icon><Connection /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.system }} · {{ protocolLabel(scope.row.protocol) }}</small></div></div></template></el-table-column>
+        <el-table-column label="连接器" min-width="225"><template #default="scope"><div class="connector-cell"><span><el-icon><Connection /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.mcp ? 'Streamable HTTP MCP' : `${scope.row.system} · ${protocolLabel(scope.row.protocol)}` }}</small></div></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
         <el-table-column label="能力" width="125"><template #default="scope"><template v-if="scope.row.mcp"><el-tag size="small" :type="scope.row.mcp.approvalStatus === 'approved' ? 'success' : 'warning'">{{ mcpApprovalLabel(scope.row.mcp.approvalStatus) }}</el-tag><small class="connector-capability-count">{{ scope.row.mcp.capabilityCount }} 个 Tool</small></template><template v-else>{{ scope.row.toolCount }} 个工具</template></template></el-table-column>
         <el-table-column prop="authType" label="认证与范围" min-width="175" />
         <el-table-column prop="latency" label="延迟" width="90" />
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="300" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">{{ scope.row.protocol === 'mcp' ? '发现' : '检查' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && ['pending_review', 'changes_pending'].includes(scope.row.mcp.approvalStatus)" link type="primary" :loading="actionLoading === `mcp-approve:${scope.row.id}`" data-action="approve-mcp-connector" @click="approveMcpConnector(scope.row)">整体审核</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="primary" data-action="manage-mcp-agent-access" @click="openMcpAccess(scope.row)">Agent 权限</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :loading="actionLoading === `mcp-status:${scope.row.id}`" @click="toggleMcpConnector(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="340" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">{{ scope.row.protocol === 'mcp' ? '发现' : '检查' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && scope.row.authType === 'bearer'" link type="primary" data-action="rotate-mcp-credential" @click="openMcpCredentialRotation(scope.row)">{{ mcpCredentialActionLabel(scope.row) }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && ['pending_review', 'changes_pending'].includes(scope.row.mcp.approvalStatus)" link type="primary" :loading="actionLoading === `mcp-approve:${scope.row.id}`" data-action="approve-mcp-connector" @click="approveMcpConnector(scope.row)">整体审核</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="primary" data-action="manage-mcp-agent-access" @click="openMcpAccess(scope.row)">Agent 权限</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :loading="actionLoading === `mcp-status:${scope.row.id}`" @click="toggleMcpConnector(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="connectorPage" background layout="prev, pager, next" :total="filteredConnectors.length" :page-size="10" /></div>
       </template>
     </section>
 
-    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close>
+    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="mcpCreateForm.bearerToken = ''">
       <el-form label-position="top" :model="mcpCreateForm">
-        <div class="mcp-form-grid">
-          <el-form-item label="连接器标识" required><el-input v-model="mcpCreateForm.id" class="mono" placeholder="例如：connector-erp-query" /></el-form-item>
-          <el-form-item label="MCP serverName" required><el-input v-model="mcpCreateForm.serverName" class="mono" placeholder="例如：erp_query" /></el-form-item>
-          <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
-          <el-form-item label="所属系统" required><el-input v-model="mcpCreateForm.system" placeholder="例如：ERP" /></el-form-item>
-        </div>
+        <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
         <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
-        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer 凭据引用</el-radio></el-radio-group></el-form-item>
-        <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="受管凭据引用" required><el-input v-model="mcpCreateForm.credentialRef" class="mono" placeholder="例如：DSH_MCP_CREDENTIAL_CRM" /><small>只接受 DSH_MCP_CREDENTIAL_ 前缀的运行环境引用，不保存密钥正文。</small></el-form-item>
+        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio></el-radio-group></el-form-item>
+        <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="Bearer Token" required><el-input v-model="mcpCreateForm.bearerToken" type="password" autocomplete="new-password" placeholder="输入 MCP 服务签发的 Token" /><small>Token 使用 AES-256-GCM 加密后存入数据库，保存后不再回显。</small></el-form-item>
         <el-form-item label="整体权限范围" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明该 MCP 内全部 Tool 共同适用的系统、数据范围和只读边界" /></el-form-item>
       </el-form>
       <el-alert type="info" :closable="false" show-icon title="一个 MCP Connector 是最小授权边界。登记后先通过 DSH 发现全部 Tool，再整体审核；能力清单变化会暂停使用并要求重新审核。" />
-      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCreateForm.id.trim() || !mcpCreateForm.serverName.trim() || !mcpCreateForm.name.trim() || !mcpCreateForm.system.trim() || !mcpCreateForm.endpoint.trim() || !mcpCreateForm.scopeDescription.trim() || (mcpCreateForm.authType === 'bearer' && !mcpCreateForm.credentialRef.trim())" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">登记并发现</el-button></template>
+      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCreateForm.name.trim() || !mcpCreateForm.endpoint.trim() || !mcpCreateForm.scopeDescription.trim() || (mcpCreateForm.authType === 'bearer' && !mcpCreateForm.bearerToken)" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">登记并发现</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="mcpCredentialDialogOpen" :title="`轮换 Bearer Token · ${selectedMcpCredentialConnector?.name ?? ''}`" width="min(520px, calc(100vw - 32px))" destroy-on-close @closed="mcpCredentialToken = ''">
+      <el-form label-position="top">
+        <el-form-item label="新 Bearer Token" required><el-input v-model="mcpCredentialToken" type="password" autocomplete="new-password" placeholder="输入新的 Token" /><small>提交后将覆盖旧 Token；密文写入数据库，明文不会回显。</small></el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="轮换后连接器会重新检查。人工停用状态不会被自动解除。" />
+      <template #footer><el-button @click="mcpCredentialDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCredentialRotating" :disabled="!mcpCredentialToken" data-action="confirm-rotate-mcp-credential" @click="rotateMcpCredential">轮换并检查</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="mcpReviewDialogOpen" :title="`审核通过“${selectedMcpReviewConnector?.name ?? ''}”？`" width="min(760px, calc(100vw - 32px))" destroy-on-close>

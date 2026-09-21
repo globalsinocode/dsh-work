@@ -89,7 +89,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | --- | --- | --- | --- |
 | PF-01（已完成，2026-09-21） | 任务与外部操作基础 | 与 Session 解耦但兼容现有会话的 Task/触发来源；稳定关联键；外部动作 operation id、幂等键、参数摘要、`accepted/completed/failed/unknown` 回执及状态查询 | 相同事件/动作不重复生效；结果与 Artifact 有明确归属和读取授权；同步、异步和结果未知可区分 |
 | PF-02（已完成，2026-09-21） | 用量与累计预算 | Task 预算范围内的 Attempt/Run 时长、工具与输出累计；Token/成本能力状态；预算预占、结算、并发检查、超限拒绝及不支持能力的明确状态 | 并发不越过总预算；缺少可靠 Runtime 计量时不能宣称硬限制；取消和恢复不重复结算 |
-| PF-03（代码级与 P1 已完成，2026-09-21） | MCP 受控接入 | 复用 Connector 的 Streamable HTTP MCP Server 登记、凭据引用、完整 Tool 清单发现、Connector 整体审核、Agent→Connector 二元 Grant、能力摘要漂移门禁、DSH 调用和 Tool 级审计；不生成平台 Tool Version/Binding | P1 服务集成与管理端浏览器旅程完成；真实批准服务的发现→审核→授权→调用→撤权、真实凭据和目标 DSH 证据留 PF-07 P2；Resources/Prompts/stdio 不在当前支持范围 |
+| PF-03（代码级与 P1 已完成，2026-09-21） | MCP 受控接入 | 复用 Connector 的 Streamable HTTP MCP Server 登记、平台生成内部标识、Bearer Token 加密入库与轮换、完整 Tool 清单发现、Connector 整体审核、Agent→Connector 二元 Grant、能力摘要漂移门禁、DSH 调用和 Tool 级审计；不生成平台 Tool Version/Binding | P1 服务集成与管理端浏览器旅程完成；真实批准服务的发现→审核→授权→调用→撤权、真实凭据和目标 DSH 证据留 PF-07 P2；Resources/Prompts/stdio 不在当前支持范围 |
 | PF-04 | 持久化等待与审批恢复 | Run 等待状态、检查点引用、事件关联、动作绑定审批、超时/取消、恢复前重新鉴权及旧 Attempt 隔离 | 服务重启、重复/迟到事件和重复决定不重复动作；长期等待释放 Worker；副作用未知时先查询 PF-01 操作状态 |
 | PF-05 | 受控记忆与经验 | 来源授权、候选、审核、独立版本、ACL、检索引用、冲突/保留、撤回传播和审计 | 未同意内容不进入共享记忆；撤回后新运行不再引用；记忆不覆盖指令、权限或权威业务事实 |
 | PF-06 | 受控 Agent 委派 | 父子 Task/Run、固定 Agent Version、最小上下文、权限交集、PF-02 总预算、取消传播和结果合并 | 子任务不扩大权限或预算；循环有界；父任务取消后不能产生新动作；子任务失败不合并为无依据成功 |
@@ -113,9 +113,11 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **PF-03 完成记录（2026-09-21，代码级与 P1）：** `0053_mcp_connector_governance.sql` 在既有 `connectors` 和 `credential_refs` 上增加一对一 MCP Profile、Agent→Connector Grant 与逐调用审计。一个 MCP Server/Connector 是最小审核和授权单元：管理员登记 Streamable HTTP 服务并发现完整 Tool 清单，审核固定规范化清单摘要；Agent 只获得“整个 Connector 可用/不可用”的二元授权。MCP Tool 不复制为平台 Tool/Tool Version/Tool Binding，Grant 不进入 Agent Version、候选封存或发布事务，发布 Agent 也不会自动产生 Grant。
 
-运行准备把当前已审核 Connector 和摘要写入 Attempt `mcp_connections`，领取、活动授权复核和 Worker 启动解析均检查 Connector 健康、当前 Grant 及摘要一致性。能力列表变化使 Connector 进入 `changes_pending/degraded`，重新整体审核前不再解析为可用连接；停用或撤权同样使既有快照在下一次复核失败。Adapter 不使用 ACP `session/new.mcpServers`，而是通过官方 DSH Cordis MCP 插件生成每 Attempt Patch；Patch 只保存环境变量引用，凭据值经子进程环境传递。DSH 工具策略按 `mcp__<serverName>__*` 放行整个已授权 Server 命名空间，真实调用从 DSH Session Log 投影为 Tool 名、参数摘要、Run/Attempt 和结果审计，成功、失败或取消路径均尝试收集。
+`0054_encrypted_connector_credentials.sql` 在同一 Connector 模块内增加应用层加密凭据表，没有新建凭据管理模块或第二套连接器。MCP 登记接口不再接收人工 Connector ID、`serverName`、所属系统或凭据引用；平台生成内部字段，管理员直接输入一次 Bearer Token。开发和生产均使用 PostgreSQL 密文存储与环境主密钥方案，区别仅在密钥值；Token 可从管理端轮换，查询、详情、审计和运行快照都不返回明文。升级时旧 `dsh-managed` Bearer Connector 保留原 ID、Profile 和 Agent Grant 并进入 `degraded`；管理端显示“需要重新录入”。重新录入为目标 Connector 建立独立加密凭据并改绑，旧版共用同一环境变量引用的其他 Connector 继续保留旧引用及降级状态，不会随本次轮换改变。发现开始时固定凭据引用、后端和密文版本；写回事务先锁 Connector，再用独立查询读取锁后版本，轮换期间返回的旧检查结果只留健康检查记录，不覆盖当前状态或能力快照。
 
-代码级验收覆盖：Manifest 类型/Schema/编译一致性、只接受 Streamable HTTP、秘密字段拒绝、Patch 不落凭据、Server 命名空间隔离、Connector 登记/发现/整体审核、Agent 授权、能力漂移阻断、重新审核、调用审计和撤权。`admin-mcp-connector.integration.spec.ts` 使用一次性 PostgreSQL 与合成发现 Runtime 固化管理端登记、整体审核、整 Connector 授权、Tool 不复制、漂移待审、重新审核和撤权旅程。当前 DSH MCP 插件只提供 Tools，因此 Resources、Prompts、stdio 和包内服务进程明确未支持。目标企业 MCP 服务、真实受管凭据、实际模型触发调用、超时/取消及运行中撤权仍须在 PF-07 P2 环境留证；本记录不把合成 Runtime 或一次性 PostgreSQL 测试称为真实联调。
+运行准备把当前已审核 Connector 和摘要写入 Attempt `mcp_connections`，领取、活动授权复核和 Worker 启动解析均检查 Connector 健康、当前 Grant 及摘要一致性。能力列表变化使 Connector 进入 `changes_pending/degraded`，重新整体审核前不再解析为可用连接；停用或撤权同样使既有快照在下一次复核失败。管理员只填写名称、端点、认证方式、整体权限范围和可选 Bearer Token；平台生成 Connector ID 与 `serverName`，MCP 不再要求“所属系统”。Bearer Token 由环境主密钥使用 AES-256-GCM 加密后写入 `credential_secrets`，API 仅返回已配置状态；轮换覆盖密文并保留人工停用。Adapter 不使用 ACP `session/new.mcpServers`，而是通过官方 DSH Cordis MCP 插件生成每 Attempt Patch；服务端只在运行边界解密，Patch 只保存环境变量引用，明文经子进程环境传递。DSH 工具策略按 `mcp__<serverName>__*` 放行整个已授权 Server 命名空间，真实调用从 DSH Session Log 投影为 Tool 名、参数摘要、Run/Attempt 和结果审计，成功、失败或取消路径均尝试收集。
+
+代码级验收覆盖：Manifest 类型/Schema/编译一致性、只接受 Streamable HTTP、平台生成标识、Bearer Token 密文存储/运行时解密/轮换、不回显、旧引用原地升级、轮换与发现并发隔离、Patch 不落凭据、Server 命名空间隔离、Connector 登记/发现/整体审核、Agent 授权、能力漂移阻断、重新审核、调用审计和撤权。`admin-mcp-connector.integration.spec.ts` 使用一次性 PostgreSQL 与合成发现 Runtime 固化管理端简化登记、Token 轮换、整体审核、整 Connector 授权、Tool 不复制、漂移待审、重新审核和撤权旅程。当前 DSH MCP 插件只提供 Tools，因此 Resources、Prompts、stdio 和包内服务进程明确未支持。目标企业 MCP 服务、真实 Bearer Token、实际模型触发调用、超时/取消及运行中撤权仍须在 PF-07 P2 环境留证；本记录不把合成 Runtime 或一次性 PostgreSQL 测试称为真实联调。
 
 评审修复补充：生产使用的 `CapabilityGuardedRuntime` 转发 MCP 发现到原 DSH Adapter。每个 Worker 同时获得已审核 Server 摘要，DSH 策略在 Profile 加载、`tools/change` 及调用前按实际 Tool 名称、说明和输入 Schema 重算整体摘要，未重新执行管理端发现时出现的新 Tool 或 Schema 变化也会立即拒绝。发现/健康检查只更新观测结果和能力快照，不覆盖人工 `disabled`，恢复必须显式启用。首次发现会先创建 Runtime 根目录；Session Log 中只有 MCP 调用而没有 usage 时，调用审计继续记录，但 Token 保持 `null/unavailable`，不会作为零消耗上报或结算。
 
@@ -334,11 +336,11 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **状态与归属：** PF-03 代码级平台能力已完成；具体 Agent 仍须满足生命周期模板触发条件并由管理员显式授予 Connector。不预设同时支持 REST、MCP 和所有沙箱执行器。
 
-**已实施契约：** 管理员在现有 Connector 模块登记 Streamable HTTP MCP Server 与受管凭据引用；发现完整 Tool 清单并固定整体摘要，经人工整体审核后才可向 Agent 授予整个 Connector。Agent Grant 与 Agent Version/发布解耦，不细分逐 Tool 权限，也不创建平台 Tool Version/Binding。调用经 Runtime Manifest 当前复核和 DSH Server 命名空间策略执行，实际 Tool 调用单独记录参数摘要及结果。清单漂移使整个 Connector 待重新审核；Resources/Prompts 不因 Tools 接通而开放。
+**已实施契约：** 管理员在现有 Connector 模块登记 Streamable HTTP MCP Server，直接输入可选 Bearer Token；平台生成内部标识与命名空间，Token 加密入库且不回显。发现完整 Tool 清单并固定整体摘要，经人工整体审核后才可向 Agent 授予整个 Connector。Agent Grant 与 Agent Version/发布解耦，不细分逐 Tool 权限，也不创建平台 Tool Version/Binding。调用经 Runtime Manifest 当前复核和 DSH Server 命名空间策略执行，实际 Tool 调用单独记录参数摘要及结果。清单漂移使整个 Connector 待重新审核；Resources/Prompts 不因 Tools 接通而开放。
 
 **评审修复：** 整体审核窗口与 Connector 详情展示每项 Tool 的名称、描述及输入 Schema；策略与审计按 Attempt 已配置的 serverName 命名空间解析包含双下划线的合法 Tool 名称。发现和重新审核均保留人工停用状态；`changes_pending`、离线、降级或停用时仍可撤销已有 Agent Grant，仅健康且摘要已审核的 Connector 可以新增授权。
 
-**改动范围与依赖：** Connector、受管凭据引用、Runtime Manifest/Adapter、DSH 工具策略、管理 API/UI 和调用审计。平台 Tool 继续使用 I-04/I-05；MCP Connector 不复用其逐 Tool 版本与 Binding。禁止包内命令启动任意 MCP 进程。
+**改动范围与依赖：** Connector、应用层加密凭据存储、Runtime Manifest/Adapter、DSH 工具策略、管理 API/UI 和调用审计。平台 Tool 继续使用 I-04/I-05；MCP Connector 不复用其逐 Tool 版本与 Binding。禁止包内命令启动任意 MCP 进程。
 
 **完成标准：** 代码级门禁已覆盖新增能力不自动获权、Server 命名空间隔离、摘要变化复核、错误服务/凭据、撤权和逐调用审计。真实批准服务的发现→审核→授权→调用→撤权链路及超时/取消在 PF-07 P2 完成；其他传输和 MCP Resources/Prompts 明确显示未支持。
 

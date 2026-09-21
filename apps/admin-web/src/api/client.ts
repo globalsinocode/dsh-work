@@ -273,15 +273,14 @@ export const adminApi = {
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   registerMcpConnector: (input: {
-    id: string
     name: string
-    system: string
-    serverName: string
     endpoint: string
     authType: 'none' | 'bearer'
-    credentialRef?: string
+    bearerToken?: string
     scopeDescription: string
   }) => request<ConnectorDefinition>('/connectors/mcp', { method: 'POST', body: JSON.stringify(input) }),
+  rotateMcpCredential: (input: { connectorId: string; bearerToken: string }) =>
+    request<ConnectorDefinition>('/connectors/mcp/credential', { method: 'PATCH', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>
     request<ConnectorDefinition>('/connectors/check', { method: 'POST', body: JSON.stringify(input) }),
   approveMcpConnector: (input: { connectorId: string; capabilityDigest: string }) =>

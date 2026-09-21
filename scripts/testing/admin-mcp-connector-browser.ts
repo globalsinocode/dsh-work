@@ -13,6 +13,7 @@ import { createThrowawayDatabase } from '../../server/src/infrastructure/postgre
 import { prototypeApiAuthenticator } from '../../server/src/modules/identity/prototype-authenticator.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { envelope, readJsonBody, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
@@ -43,7 +44,11 @@ const runtime: AgentRuntimePort = {
   async close() {},
 }
 
-const connectorService = new PostgresToolConnectorService(database.client, runtime)
+const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, {
+  masterKeyBase64: Buffer.alloc(32, 9).toString('base64'),
+  keyId: 'p1-browser-v1',
+})
+const connectorService = new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets)
 const router = new Router({ authenticateApi: prototypeApiAuthenticator })
 const base = '/api/admin/v1'
 

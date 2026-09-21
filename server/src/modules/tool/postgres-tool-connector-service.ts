@@ -21,6 +21,7 @@ import {
   runtimeToolToCatalogEntry,
   type CatalogEntry,
 } from './dsh-built-in-tool-catalog.ts'
+import { PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 
 const tenantId = 'tenant-dsh-work'
 const hiddenRuntimeCatalogTools = new Set(['activate_skill', 'prepare_skill_installation', 'python_execute'])
@@ -78,6 +79,7 @@ interface ConnectorRow {
   endpoint: string
   authType: string
   credentialRef: string | null
+  credentialBackend: string | null
   scopeDescription: string
   latencyMs: number | null
   lastCheckedAt: Date | null
@@ -98,15 +100,28 @@ interface McpProfileRow {
   grantedAgentIds: string[]
 }
 
+interface McpCredentialRevision {
+  credentialRefId: string | null
+  credentialBackend: string | null
+  credentialVersion: number | null
+}
+
 export class PostgresToolConnectorService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
   private readonly operations?: PostgresOperationsService
+  private readonly credentialSecrets?: PostgresEncryptedCredentialStore
 
-  constructor(database: DatabaseClient, runtime?: AgentRuntimePort, operations?: PostgresOperationsService) {
+  constructor(
+    database: DatabaseClient,
+    runtime?: AgentRuntimePort,
+    operations?: PostgresOperationsService,
+    credentialSecrets?: PostgresEncryptedCredentialStore,
+  ) {
     this.database = database
     this.runtime = runtime
     this.operations = operations
+    this.credentialSecrets = credentialSecrets
   }
 
   async getTools(): Promise<ToolDefinition[]> {
@@ -250,13 +265,14 @@ export class PostgresToolConnectorService {
       this.database<ConnectorRow[]>`
       select c.id, c.name, c.system, c.status, c.protocol, c.endpoint,
              c.auth_type as "authType", cr.external_ref as "credentialRef",
+             cr.backend as "credentialBackend",
              c.scope_description as "scopeDescription", c.latency_ms as "latencyMs",
              c.last_checked_at as "lastCheckedAt", count(t.id)::int as "toolCount"
         from connectors c
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join tools t on t.tenant_id = c.tenant_id and t.connector_id = c.id
        where c.tenant_id = ${tenantId}
-       group by c.id, cr.external_ref
+       group by c.id, cr.external_ref, cr.backend
        order by c.name
       `,
       this.database<McpProfileRow[]>`
@@ -279,30 +295,29 @@ export class PostgresToolConnectorService {
 
   async registerMcpConnector(input: RegisterMcpConnectorInput): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
-    const id = normalizeConnectorId(input.id)
-    const serverName = input.serverName.trim()
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(serverName)) throw new Error('MCP serverName 必须为 1-32 位字母、数字、下划线或连字符')
+    const id = `connector-mcp-${randomUUID()}`
+    const serverName = createMcpServerName(input.name, id)
     const endpoint = normalizeMcpEndpoint(input.endpoint)
-    if (!input.name.trim() || !input.system.trim() || !input.scopeDescription.trim()) throw new Error('连接器名称、系统和范围说明不能为空')
+    if (!input.name.trim() || !input.scopeDescription.trim()) throw new Error('连接器名称和范围说明不能为空')
     if (!['none', 'bearer'].includes(input.authType)) throw new Error('MCP 仅支持 none 或 bearer 认证')
-    const credentialRef = input.credentialRef?.trim() ?? ''
-    if (input.authType === 'bearer' && !credentialRef) throw new Error('Bearer MCP 必须提供受管凭据引用')
-    if (credentialRef && !/^DSH_MCP_CREDENTIAL_[A-Z0-9_]{1,80}$/.test(credentialRef)) {
-      throw new Error('MCP 受管凭据引用必须使用 DSH_MCP_CREDENTIAL_ 前缀')
-    }
-    if (credentialRef && !process.env[credentialRef]?.trim()) throw new Error(`受管凭据引用尚未在运行环境配置：${credentialRef}`)
+    if (input.authType === 'bearer' && !input.bearerToken) throw new Error('Bearer MCP 必须提供 Token')
+    if (input.authType === 'none' && input.bearerToken) throw new Error('无认证 MCP 不能提交 Bearer Token')
+    if (input.authType === 'bearer' && !this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
 
     await this.database.begin(async transaction => {
       let credentialId: string | null = null
-      if (credentialRef) {
-        const [credential] = await transaction<{ id: string }[]>`
+      if (input.authType === 'bearer') {
+        credentialId = `credential-mcp-${randomUUID()}`
+        await transaction`
           insert into credential_refs (id, tenant_id, backend, external_ref, status, last_verified_at, updated_by)
-          values (${`credential-mcp-${randomUUID()}`}, ${tenantId}, 'dsh-managed', ${credentialRef}, 'configured', now(), ${actor.id})
-          on conflict (tenant_id, backend, external_ref) do update
-            set status = 'configured', last_verified_at = now(), updated_by = excluded.updated_by, updated_at = now()
-          returning id
+          values (${credentialId}, ${tenantId}, 'postgres-encrypted', ${credentialId}, 'configured', now(), ${actor.id})
         `
-        credentialId = credential!.id
+        await this.credentialSecrets!.create(transaction, {
+          tenantId,
+          credentialRefId: credentialId,
+          bearerToken: input.bearerToken!,
+          actorId: actor.id,
+        })
       }
       await transaction`
         insert into connectors (
@@ -310,7 +325,7 @@ export class PostgresToolConnectorService {
           system, protocol, endpoint, auth_type, scope_description, updated_at
         ) values (
           ${id}, ${tenantId}, ${serverName}, ${input.name.trim()}, 'mcp', ${credentialId}, 'degraded',
-          ${input.system.trim()}, 'mcp', ${endpoint}, ${input.authType}, ${input.scopeDescription.trim()}, now()
+          'MCP', 'mcp', ${endpoint}, ${input.authType}, ${input.scopeDescription.trim()}, now()
         )
       `
       await transaction`
@@ -322,20 +337,106 @@ export class PostgresToolConnectorService {
     return this.requireConnector(id)
   }
 
+  async rotateMcpCredential(input: { connectorId: string; bearerToken: string; actor: string }): Promise<ConnectorDefinition> {
+    const actor = await this.requireActor(input.actor)
+    if (!this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
+    await this.database.begin(async transaction => {
+      const [connector] = await transaction<{ credentialRefId: string | null; status: ConnectorDefinition['status'] }[]>`
+        select c.credential_ref_id as "credentialRefId", c.status
+          from connectors c
+         where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
+           and c.protocol = 'mcp' and c.auth_type = 'bearer'
+         for update
+      `
+      if (!connector?.credentialRefId) throw new Error('目标不是已配置 Bearer 认证的 MCP Connector')
+      const [credential] = await transaction<{ backend: string }[]>`
+        select backend from credential_refs
+         where tenant_id = ${tenantId} and id = ${connector.credentialRefId}
+         for update
+      `
+      if (!credential) throw new Error('MCP Bearer 凭据引用不存在')
+      const [secret] = await transaction<{ version: number }[]>`
+        select version from credential_secrets
+         where tenant_id = ${tenantId} and credential_ref_id = ${connector.credentialRefId}
+         for update
+      `
+      const [usage] = await transaction<{ connectorCount: number }[]>`
+        select count(*)::int as "connectorCount"
+          from connectors
+         where tenant_id = ${tenantId} and credential_ref_id = ${connector.credentialRefId}
+      `
+      const mustSplitCredential = credential.backend !== 'postgres-encrypted'
+        || !secret
+        || (usage?.connectorCount ?? 0) > 1
+      let targetCredentialId = connector.credentialRefId
+      if (mustSplitCredential) {
+        if (!['dsh-managed', 'postgres-encrypted'].includes(credential.backend)) {
+          throw new Error('MCP Bearer 凭据后端不支持页面轮换')
+        }
+        targetCredentialId = `credential-mcp-${randomUUID()}`
+        await transaction`
+          insert into credential_refs (id, tenant_id, backend, external_ref, status, last_verified_at, updated_by)
+          values (${targetCredentialId}, ${tenantId}, 'postgres-encrypted', ${targetCredentialId}, 'configured', now(), ${actor.id})
+        `
+        await this.credentialSecrets!.create(transaction, {
+          tenantId,
+          credentialRefId: targetCredentialId,
+          bearerToken: input.bearerToken,
+          actorId: actor.id,
+        })
+      } else {
+        await this.credentialSecrets!.rotate(transaction, {
+          tenantId,
+          credentialRefId: targetCredentialId,
+          bearerToken: input.bearerToken,
+          actorId: actor.id,
+        })
+        await transaction`
+          update credential_refs
+             set status = 'configured', last_verified_at = now(), updated_by = ${actor.id}, updated_at = now()
+           where tenant_id = ${tenantId} and id = ${targetCredentialId}
+        `
+      }
+      await transaction`
+        update connectors
+           set credential_ref_id = ${targetCredentialId},
+               status = case when status = 'disabled' then 'disabled' else 'degraded' end,
+               updated_at = now()
+         where tenant_id = ${tenantId} and id = ${input.connectorId}
+      `
+    })
+    await this.audit(actor.id, 'connector.mcp.credential.rotate', input.connectorId, 'success', '录入或轮换 MCP Bearer 凭据；等待重新检查')
+    return this.requireConnector(input.connectorId)
+  }
+
   async approveMcpConnector(input: { connectorId: string; capabilityDigest: string; actor: string }): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
     let approvedCount = 0
     await this.database.begin(async transaction => {
-      const [profile] = await transaction<{ digest: string | null; count: number; connectorStatus: string }[]>`
+      const [profile] = await transaction<{
+        digest: string | null
+        count: number
+        connectorStatus: string
+        authType: string
+        credentialBackend: string | null
+        credentialVersion: number | null
+      }[]>`
         select p.capability_digest as digest, jsonb_array_length(p.capability_snapshot)::int as count,
-               c.status as "connectorStatus"
+               c.status as "connectorStatus", c.auth_type as "authType",
+               cr.backend as "credentialBackend", cs.version as "credentialVersion"
           from mcp_connector_profiles p
           join connectors c on c.tenant_id = p.tenant_id and c.id = p.connector_id
+          left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
+          left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
          where p.tenant_id = ${tenantId} and p.connector_id = ${input.connectorId}
          for update of p, c
       `
       if (!profile?.digest || profile.count < 1) throw new Error('MCP 尚未成功发现 Tool，不能审核')
       if (profile.connectorStatus === 'offline') throw new Error('MCP 当前离线，不能审核')
+      if (profile.authType === 'bearer'
+        && (profile.credentialBackend !== 'postgres-encrypted' || profile.credentialVersion === null)) {
+        throw new Error('旧版 MCP Bearer 凭据需要先在管理端重新录入 Token')
+      }
       if (profile.digest !== input.capabilityDigest) throw new Error('MCP 能力清单已变化，请刷新并重新审核')
       approvedCount = profile.count
       await transaction`
@@ -359,6 +460,10 @@ export class PostgresToolConnectorService {
     const actor = await this.requireActor(input.actor)
     const connector = await this.requireConnector(input.connectorId)
     if (connector.protocol !== 'mcp' || !connector.mcp) throw new Error('目标不是 MCP Connector')
+    if (input.status === 'enabled' && connector.authType === 'bearer'
+      && connector.credentialRef !== 'Bearer Token 已加密存储') {
+      throw new Error('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
+    }
     if (input.status === 'enabled' && (connector.mcp.approvalStatus !== 'approved'
       || connector.mcp.capabilityDigest !== connector.mcp.approvedDigest)) {
       throw new Error('MCP 当前能力清单尚未审核，不能启用')
@@ -486,10 +591,23 @@ export class PostgresToolConnectorService {
 
   async checkConnector(input: { connectorId: string; actor: string }) {
     const actor = await this.requireActor(input.actor)
-    const [connector] = await this.database<{ id: string; protocol: ConnectorDefinition['protocol'] }[]>`
-      select id, protocol from connectors where tenant_id = ${tenantId} and id = ${input.connectorId}
+    const [connector] = await this.database<Array<{
+      id: string
+      protocol: ConnectorDefinition['protocol']
+    } & McpCredentialRevision>>`
+      select c.id, c.protocol, c.credential_ref_id as "credentialRefId",
+             cr.backend as "credentialBackend", cs.version as "credentialVersion"
+        from connectors c
+        left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
+        left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
+       where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
     `
     if (!connector) throw new Error(`连接器不存在：${input.connectorId}`)
+    const checkedCredential: McpCredentialRevision = {
+      credentialRefId: connector.credentialRefId,
+      credentialBackend: connector.credentialBackend,
+      credentialVersion: connector.credentialVersion,
+    }
     const started = performance.now()
     let status: 'healthy' | 'degraded' | 'offline' = 'offline'
     let message = '连接器没有可用的健康检查适配器'
@@ -517,17 +635,21 @@ export class PostgresToolConnectorService {
     }
     const latencyMs = Math.max(0, Math.round(performance.now() - started))
     await this.database.begin(async transaction => {
+      let profile: { approvalStatus: McpProfileRow['approvalStatus']; approvedDigest: string | null } | undefined
+      let digest: string | undefined
+      let approvalStatus: McpProfileRow['approvalStatus'] | undefined
       if (connector.protocol === 'mcp' && capabilities) {
-        const digest = mcpCapabilityDigest(capabilities)
-        const [profile] = await transaction<{ approvalStatus: McpProfileRow['approvalStatus']; approvedDigest: string | null }[]>`
+        digest = mcpCapabilityDigest(capabilities)
+        const profiles = await transaction<{ approvalStatus: McpProfileRow['approvalStatus']; approvedDigest: string | null }[]>`
           select approval_status as "approvalStatus", approved_digest as "approvedDigest"
             from mcp_connector_profiles
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
            for update
         `
+        profile = profiles[0]
         if (!profile) throw new Error('MCP Connector 缺少治理配置')
         const unchangedApproval = profile.approvalStatus === 'approved' && profile.approvedDigest === digest
-        const approvalStatus = unchangedApproval
+        approvalStatus = unchangedApproval
           ? 'approved'
           : profile.approvedDigest === null ? 'pending_review' : 'changes_pending'
         status = unchangedApproval ? 'healthy' : 'degraded'
@@ -536,12 +658,6 @@ export class PostgresToolConnectorService {
           : profile.approvedDigest === null
             ? `已发现 ${capabilities.length} 个 MCP Tool，等待整体审核`
             : `MCP 能力清单已变化，共 ${capabilities.length} 个 Tool，需要重新审核`
-        await transaction`
-          update mcp_connector_profiles
-             set capability_snapshot = ${transaction.json(asJson(capabilities))}, capability_digest = ${digest},
-                 approval_status = ${approvalStatus}, discovered_at = now(), updated_at = now()
-           where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
-        `
       }
       const [lockedConnector] = await transaction<{ status: ConnectorDefinition['status'] }[]>`
         select status from connectors
@@ -549,6 +665,36 @@ export class PostgresToolConnectorService {
          for update
       `
       if (!lockedConnector) throw new Error(`连接器不存在：${input.connectorId}`)
+      const [currentCredential] = await transaction<McpCredentialRevision[]>`
+        select c.credential_ref_id as "credentialRefId", cr.backend as "credentialBackend",
+               cs.version as "credentialVersion"
+          from connectors c
+          left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
+          left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
+         where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
+      `
+      if (!currentCredential) throw new Error(`连接器不存在：${input.connectorId}`)
+      if (connector.protocol === 'mcp' && !sameMcpCredentialRevision(checkedCredential, currentCredential)) {
+        status = 'degraded'
+        message = 'MCP Bearer 凭据已在检查期间更新；本次旧凭据检查结果已丢弃，请重新检查'
+        await transaction`
+          insert into connector_health_checks (
+            id, tenant_id, connector_id, status, latency_ms, message, checked_by
+          ) values (
+            ${`connector-check-${randomUUID()}`}, ${tenantId}, ${input.connectorId},
+            ${status}, ${latencyMs}, ${message}, ${actor.id}
+          )
+        `
+        return
+      }
+      if (connector.protocol === 'mcp' && capabilities && profile && digest && approvalStatus) {
+        await transaction`
+          update mcp_connector_profiles
+             set capability_snapshot = ${transaction.json(asJson(capabilities))}, capability_digest = ${digest},
+                 approval_status = ${approvalStatus}, discovered_at = now(), updated_at = now()
+           where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+        `
+      }
       const connectorStatus = lockedConnector.status === 'disabled' ? 'disabled' : status
       if (lockedConnector.status === 'disabled') message = `${message}；连接器保持人工停用，需显式启用`
       await transaction`
@@ -578,25 +724,37 @@ export class PostgresToolConnectorService {
 
   /** Agent version only selects its owning Agent. Grants remain outside Agent Version/release data. */
   async resolveMcpConnectionsForAgentVersion(versionId: string): Promise<McpConnectionSnapshot[]> {
-    const rows = await this.database<Array<McpConnectionSnapshot & { credentialStatus: string | null }>>`
+    const rows = await this.database<Array<McpConnectionSnapshot & {
+      credentialStatus: string | null
+      credentialBackend: string | null
+      credentialVersion: number | null
+    }>>`
       select c.id as connector_id, p.server_name, p.transport, c.endpoint,
              c.auth_type as auth_type, p.capability_digest as capability_digest,
-             cr.status as "credentialStatus"
+             cr.status as "credentialStatus", cr.backend as "credentialBackend",
+             cs.version as "credentialVersion"
         from agent_versions av
         join agent_mcp_grants g on g.tenant_id = av.tenant_id and g.agent_id = av.agent_id and g.status = 'active'
         join connectors c on c.tenant_id = g.tenant_id and c.id = g.connector_id
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
+        left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
          and c.protocol = 'mcp' and c.status = 'healthy'
          and p.approval_status = 'approved' and p.capability_digest = p.approved_digest
        order by p.server_name
     `
     return rows.map(row => {
-      if (row.auth_type === 'bearer' && row.credentialStatus !== 'configured') {
-        throw new Error(`MCP Connector 凭据不可用：${row.connector_id}`)
+      if (row.auth_type === 'bearer' && (row.credentialStatus !== 'configured'
+        || row.credentialBackend !== 'postgres-encrypted' || row.credentialVersion === null)) {
+        throw new Error(`MCP Connector Bearer 凭据尚未完成加密升级：${row.connector_id}`)
       }
-      const { credentialStatus: _credentialStatus, ...snapshot } = row
+      const {
+        credentialStatus: _credentialStatus,
+        credentialBackend: _credentialBackend,
+        credentialVersion: _credentialVersion,
+        ...snapshot
+      } = row
       return snapshot
     })
   }
@@ -664,13 +822,13 @@ export class PostgresToolConnectorService {
     const [row] = await this.database<{
       connectorId: string; serverName: string; transport: 'streamable-http'; endpoint: string;
       authType: 'none' | 'bearer'; capabilityDigest: string | null; capabilitySnapshot: McpInspectionResult['capabilities']; approvalStatus: string;
-      connectorStatus: string; credentialRef: string | null; credentialStatus: string | null
+      connectorStatus: string; credentialRefId: string | null; credentialStatus: string | null; credentialBackend: string | null
     }[]>`
       select c.id as "connectorId", p.server_name as "serverName", p.transport, c.endpoint,
              c.auth_type as "authType", p.capability_digest as "capabilityDigest",
              p.capability_snapshot as "capabilitySnapshot",
              p.approval_status as "approvalStatus", c.status as "connectorStatus",
-             cr.external_ref as "credentialRef", cr.status as "credentialStatus"
+             cr.id as "credentialRefId", cr.status as "credentialStatus", cr.backend as "credentialBackend"
         from connectors c
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
@@ -692,10 +850,13 @@ export class PostgresToolConnectorService {
     }
     const headers: Record<string, string> = {}
     if (row.authType === 'bearer') {
-      if (row.credentialStatus !== 'configured' || !row.credentialRef) throw new Error('MCP Bearer 凭据引用不可用')
-      const secret = process.env[row.credentialRef]
-      if (!secret?.trim()) throw new Error(`MCP 受管凭据未在运行环境提供：${row.credentialRef}`)
-      headers['Authorization'] = `Bearer ${secret.trim()}`
+      if (row.credentialStatus !== 'configured' || !row.credentialRefId) throw new Error('MCP Bearer 凭据不可用')
+      if (row.credentialBackend !== 'postgres-encrypted') {
+        throw new Error('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
+      }
+      if (!this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
+      const secret = await this.credentialSecrets.readBearerToken(tenantId, row.credentialRefId)
+      headers['Authorization'] = `Bearer ${secret}`
     }
     return {
       snapshot,
@@ -1083,7 +1244,11 @@ function toConnectorDefinition(row: ConnectorRow, profile?: McpProfileRow): Conn
     protocol: row.protocol,
     endpoint: row.endpoint,
     authType: row.authType,
-    credentialRef: row.credentialRef ?? '无独立凭据',
+    credentialRef: row.protocol === 'mcp' && row.authType === 'bearer'
+      ? row.credentialBackend === 'postgres-encrypted'
+        ? 'Bearer Token 已加密存储'
+        : 'Bearer Token 需要重新录入'
+      : row.credentialRef ?? '无独立凭据',
     scopeDescription: row.scopeDescription,
     latency: row.latencyMs === null ? '未检查' : `${row.latencyMs} ms`,
     lastCheckedAt: formatRelative(row.lastCheckedAt),
@@ -1106,10 +1271,20 @@ function toConnectorDefinition(row: ConnectorRow, profile?: McpProfileRow): Conn
   return definition
 }
 
-function normalizeConnectorId(value: string) {
-  const id = value.trim()
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) throw new Error('连接器标识格式无效')
-  return id
+function createMcpServerName(name: string, connectorId: string) {
+  const slug = name.trim().toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 20) || 'mcp'
+  const suffix = connectorId.replace(/[^a-f0-9]/gi, '').slice(-8).toLowerCase()
+  return `${slug}_${suffix}`
+}
+
+function sameMcpCredentialRevision(left: McpCredentialRevision, right: McpCredentialRevision) {
+  return left.credentialRefId === right.credentialRefId
+    && left.credentialBackend === right.credentialBackend
+    && left.credentialVersion === right.credentialVersion
 }
 
 function normalizeMcpEndpoint(value: string) {

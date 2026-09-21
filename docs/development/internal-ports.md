@@ -10,7 +10,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 | Run、Attempt、事件与重启恢复 | [RunRepository](../../server/src/modules/run/run-repository.ts) | 租户隔离、幂等、终态不可回退；事件先落库后发送 |
 | Task、触发来源、累计预算与外部操作回执 | [TaskRepository](../../server/src/modules/task/task-repository.ts) | Task 关联键和操作键租户内幂等；预算账户固定范围与可执行上限，Attempt 原子预占、终态只结算一次；API/event 请求摘要与外部动作参数摘要固定；`unknown` 必须查询实际效果后才能收敛为完成或失败；不以 Run 成功代替外部操作完成 |
 | 模型 Provider、路由与凭据引用 | [ModelGovernanceRepository](../../server/src/modules/model/model-governance-repository.ts) | Attempt 固定路由快照；Agent 不单独配置模型策略 |
-| 凭据存储 | [SecretStorePort](../../server/src/modules/model/secret-store-port.ts) | 当前 DSH 适配器不读取或覆盖实际密钥，引用存在不等于凭据已验证 |
+| 凭据存储 | [SecretStorePort](../../server/src/modules/model/secret-store-port.ts)、[PostgresEncryptedCredentialStore](../../server/src/modules/tool/postgres-encrypted-credential-store.ts) | 模型 Provider 继续使用外部引用；MCP Bearer Token 以 AES-256-GCM 密文存入 PostgreSQL，主密钥由服务环境提供，明文只在受控运行时解析 |
 | 身份与本地授权上下文 | [RequestIdentity](../../server/src/modules/identity/types.ts) | 用户、角色、数据范围和操作人只从服务端产生 |
 | 对象与执行授权 | [PostgresAuthorizationService](../../server/src/modules/authorization/postgres-authorization-service.ts) | Workspace、Agent/Skill/Tool Version 与数据范围逐层校验，默认拒绝 |
 | Skill 安装计划 | [AdminSkillInstallationService](../../server/src/modules/skill/admin-skill-installation-service.ts) | 固定来源、生成依赖计划、绑定管理员确认、原子保存草稿并记录激活/脚本试运行证据；C7 prepareLink 无 Run，确定性导入与助手共用平台实现，发布能力独立复核 |
@@ -37,7 +37,7 @@ PF-02 的预算账户以 `tasks.budget_scope_task_id` 标识共享范围；当�
 
 `cumulativeBudget` 可用于会话 Run 与无 Session Task；自动任务既有 `inputTemplate.budget` 同时固定为该次 Task 的累计上限并收紧单 Attempt limits。时长、工具和输出字节为 hard；Token 只接受 Runtime 完整上报，缺失时返回 `unavailable` 和 null，不从文本估算；成本保持 unavailable。`maxTokens`、`maxCostAmount`/`costCurrency` 返回 422 `TASK_BUDGET_UNSUPPORTED`，超出剩余额度返回 409 `TASK_BUDGET_EXCEEDED`。
 
-PF-03 的 MCP 契约使用现有 Connector 作为配置、健康和启停入口，`mcp_connector_profiles` 保存 Server 命名空间、发现快照及已审核摘要，`agent_mcp_grants` 保存 Agent 对整个 Connector 的二元授权。Runtime Manifest 的 `mcp_connections` 只固定连接标识、公开端点、认证类型及能力摘要，不包含密钥；执行前和活动期以当前 Grant、Connector 状态及摘要重新鉴权。Adapter 从受管凭据引用解析值，以环境变量注入每 Attempt DSH MCP Patch；DSH 策略只放行获准 `mcp__<serverName>__*` 命名空间。`mcp_invocation_audits` 记录实际 Tool 名、参数摘要、Run/Attempt 和结果。当前只支持 Streamable HTTP Tools；Resources、Prompts 与 stdio 明确不可用。
+PF-03 的 MCP 契约使用现有 Connector 作为配置、健康和启停入口，`mcp_connector_profiles` 保存平台生成的 Server 命名空间、发现快照及已审核摘要，`agent_mcp_grants` 保存 Agent 对整个 Connector 的二元授权。`credential_secrets` 保存由 `DSH_CREDENTIAL_MASTER_KEY` 加密的 Bearer Token 密文、随机 nonce、认证标签及密钥版本；查询接口只返回“已加密存储”或“需要重新录入”状态。旧 `dsh-managed` 引用保留 Connector 和 Grant 并降级，重新录入时为目标 Connector 建立新的独立凭据引用；历史上共享同一引用的其他 Connector 不受本次 Token 变化影响。Runtime Manifest 的 `mcp_connections` 只固定连接标识、公开端点、认证类型及能力摘要，不包含密钥；执行前和活动期以当前 Grant、Connector 状态及摘要重新鉴权。服务端按凭据 ID 解密 Token，并以环境变量注入每 Attempt DSH MCP Patch；DSH 策略只放行获准 `mcp__<serverName>__*` 命名空间。轮换覆盖独占密文并递增版本，人工停用状态保持不变；发现写回事务先锁 Connector，再独立读取最新凭据版本，旧版本结果不得改变 Connector 或能力快照。`mcp_invocation_audits` 记录实际 Tool 名、参数摘要、Run/Attempt 和结果。当前只支持 Streamable HTTP Tools；Resources、Prompts 与 stdio 明确不可用。
 
 员工与管理端 Agent 均通过同一 Run/Attempt、AgentRuntimePort 和 DSH 适配链路执行，不能通过新增 API、Gateway 或业务服务另建直接调用模型的 Agent Loop。职责与评审要求见 [架构总览：Agent 执行引擎统一](overview.md)。
 

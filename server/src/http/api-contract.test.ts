@@ -92,6 +92,7 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
   assert.match(workbench.components.schemas['TaskCumulativeBudgetInput']?.description ?? '', /不支持的硬预算会明确失败/)
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
   assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
+  assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
   assert.equal(admin.paths['/connectors/mcp/approve']?.post?.operationId, 'approveMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/status']?.patch?.operationId, 'setMcpConnectorStatus')

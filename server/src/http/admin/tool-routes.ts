@@ -55,6 +55,13 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.patch(`${basePath}/connectors/mcp/credential`, async (request, context) => {
+    const input = await readJsonBody<{ connectorId: string; bearerToken: string }>(request)
+    return envelope('admin', await service.rotateMcpCredential({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)
     return envelope('admin', await service.checkConnector({

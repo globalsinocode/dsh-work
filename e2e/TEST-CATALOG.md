@@ -520,14 +520,15 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **spec：** `e2e/admin-mcp-connector.integration.spec.ts`
 
-1. 在现有“连接器”页面登记 MCP Server 和凭据引用，执行发现，在详情与审核窗口查看每个 Tool 的名称、描述、输入 Schema 和待审核状态。
-2. 核对完整能力信息后整体审核 Connector，向 Agent A 授予使用权；确认没有逐 Tool 权限选择，也没有在平台 Tool 列表生成 MCP Tool。
-3. 向测试 Agent 授予整个 Connector；数据库证据确认只有一条 Connector Grant，平台 Tool 表没有复制 MCP Tool。
-4. 合成发现 Runtime 新增一个 Tool 后重新发现；确认 Connector 进入“能力已变化，待重新审核”，不可新增 Grant，但仍可进入 Agent 权限并撤销已有 Grant。
-5. 重新整体审核后确认可以新增 Grant；数据库证据与页面状态一致。
-6. 人工停用 Connector 后再次执行发现，状态保持“已停用”；能力变化后重新整体审核仍保持“已停用”，且已有 Grant 仍可撤销。只有显式启用操作才能恢复健康状态。
+1. 在现有“连接器”页面填写名称、Streamable HTTP 地址、Bearer Token 和整体权限范围；平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显。执行发现，并在详情与审核窗口查看每个 Tool 的名称、描述、输入 Schema 和待审核状态。
+2. 从列表轮换 Bearer Token，确认旧值不回显、连接器重新检查且能力仍需按既有审核规则处理。
+3. 核对完整能力信息后整体审核 Connector，向 Agent A 授予使用权；确认没有逐 Tool 权限选择，也没有在平台 Tool 列表生成 MCP Tool。
+4. 向测试 Agent 授予整个 Connector；数据库证据确认只有一条 Connector Grant，平台 Tool 表没有复制 MCP Tool。
+5. 合成发现 Runtime 新增一个 Tool 后重新发现；确认 Connector 进入“能力已变化，待重新审核”，不可新增 Grant，但仍可进入 Agent 权限并撤销已有 Grant。
+6. 重新整体审核后确认可以新增 Grant；数据库证据与页面状态一致。
+7. 人工停用 Connector 后再次执行发现，状态保持“已停用”；能力变化后重新整体审核仍保持“已停用”，且已有 Grant 仍可撤销。只有显式启用操作才能恢复健康状态。
 
-**验收：** MCP 复用现有 Connector 管理；一个 Server 是最小审核与授权单元。审核前可检查 Tool 名称、描述和输入 Schema；发现或 Agent 发布均不自动授权，能力摘要变化必须整体复核。健康检查和重新审核都不能覆盖人工停用；任何连接器状态下都能撤销已有 Grant，只有健康且整体审核通过时才能新增。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；凭据、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
+**验收：** MCP 复用现有 Connector 管理；一个 Server 是最小审核与授权单元。管理员无需填写内部标识、命名空间或所属系统；Bearer Token 只在新增或轮换时输入，查询与详情不回显。审核前可检查 Tool 名称、描述和输入 Schema；发现或 Agent 发布均不自动授权，能力摘要变化必须整体复核。健康检查、凭据轮换和重新审核都不能覆盖人工停用；任何连接器状态下都能撤销已有 Grant，只有健康且整体审核通过时才能新增。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；加密密文、运行时解密、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
 
 ### PF-MCP-P2 真实 MCP 与 DSH 发布前验收
 

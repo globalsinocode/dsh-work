@@ -487,13 +487,10 @@ export interface ConnectorConfiguration {
 }
 
 export interface RegisterMcpConnectorInput {
-  id: string
   name: string
-  system: string
-  serverName: string
   endpoint: string
   authType: 'none' | 'bearer'
-  credentialRef?: string
+  bearerToken?: string
   scopeDescription: string
   actor: string
 }

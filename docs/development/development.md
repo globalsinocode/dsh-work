@@ -36,6 +36,8 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；需要真实员工与权限管理时按 [身份指南](../release/ai-hub-sso-integration.md) 切换 `oidc`。身份管理路由只在 OIDC 与数据库都启用时注册。
 5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
+使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
+
 本地完整模式与生产部署使用两套环境文件，且允许 DSH Runtime 目标不同：
 
 - 本地开发使用仓库根目录 `.env`，默认对应 [`.env.example`](../../.env.example) 中的开发兼容 Runtime，可显式设置 `DSH_RUNTIME_COMPATIBILITY=legacy-0.1.1-rc.2`。
@@ -92,7 +94,7 @@ DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:543
 
 其他 `test:*:integration` 使用同一测试变量，按修改模块选择。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 另启动 PostgreSQL Service、运行各集成套件，再执行 E2E。
 
-PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证整体发现/审核、Agent→Connector Grant、能力摘要漂移、逐调用审计和撤权；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
+PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现/审核、Agent→Connector Grant、能力摘要漂移、逐调用审计和撤权；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
 Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验原型页面，先停掉不匹配的开发实例，并用上述原型环境变量运行 `pnpm test:e2e`。不要将复用的真实环境误认为隔离测试。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 

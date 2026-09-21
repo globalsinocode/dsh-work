@@ -611,7 +611,17 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "在现有连接器模块登记 Streamable HTTP MCP Server",
+        "summary": "登记 Streamable HTTP MCP Server；平台生成标识和命名空间，Bearer Token 加密入库且不回显",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/connectors/mcp/credential": {
+      "patch": {
+        "operationId": "rotateMcpCredential",
+        "summary": "轮换 MCP Connector 的 Bearer Token，并要求重新检查连接状态",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" }

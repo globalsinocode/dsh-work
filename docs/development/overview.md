@@ -256,7 +256,7 @@ flowchart LR
 - API 不信任浏览器提交的 `actor`、用户 ID、角色或数据范围；
 - Workspace、Agent、Skill、Tool、Connector、文件和 Artifact 都在服务端执行对象级授权；
 - DSH 子进程使用环境白名单，应用数据库变量和敏感覆盖项不传入；
-- 模型与 Connector 凭据只保存引用，由受管凭据层在服务端或 DSH 边界解析；
+- 模型 Provider 凭据保存外部引用；MCP Bearer Token 由平台使用环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
 - 文件执行扩展名、MIME、大小、签名、路径和工作空间校验，正式环境仍需企业级恶意文件扫描；
 - Tool/Connector 默认只读、固定 Schema、超时、字段过滤并记录脱敏审计；
 - L2 数据、模型出口、日志保留、备份和销毁参数必须在试点前完成企业评审。

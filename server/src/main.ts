@@ -65,6 +65,7 @@ import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { FileSystemSkillArtifactStore } from './modules/skill/file-system-skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
+import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
 import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
@@ -238,7 +239,13 @@ async function start() {
     )
     const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
-    const toolService = new PostgresToolConnectorService(database, runtime, operations)
+    const credentialSecrets = process.env.DSH_CREDENTIAL_MASTER_KEY
+      ? new PostgresEncryptedCredentialStore(database, {
+          masterKeyBase64: process.env.DSH_CREDENTIAL_MASTER_KEY,
+          keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
+        })
+      : undefined
+    const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets)
     toolServiceRef.current = toolService
     const skills = new PostgresSkillService(database, operations, toolService, skillArtifacts)
     // C7 only inspects execution capability; it never starts a Worker/model call.

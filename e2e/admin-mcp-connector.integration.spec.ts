@@ -8,23 +8,33 @@ async function data<T>(response: APIResponse): Promise<T> {
 
 test('PF-MCP-01: one Connector is the review and Agent authorization boundary', async ({ page }) => {
   const suffix = randomUUID().slice(0, 8)
-  const connectorId = `connector-mcp-${suffix}`
   const connectorName = `P1 CRM MCP ${suffix}`
+  const initialToken = `p1-initial-${suffix}`
 
   await page.goto('/connectors')
   await page.getByRole('button', { name: '新增 MCP', exact: true }).click()
   const createDialog = page.getByRole('dialog', { name: '新增 MCP Connector' })
-  await createDialog.getByLabel('连接器标识').fill(connectorId)
-  await createDialog.getByLabel('MCP serverName').fill(`crm_${suffix}`)
   await createDialog.getByLabel('连接器名称').fill(connectorName)
-  await createDialog.getByLabel('所属系统').fill('CRM')
   await createDialog.getByLabel('Streamable HTTP 地址').fill('https://mcp.example.test/rpc')
+  await createDialog.locator('.el-radio').filter({ hasText: 'Bearer Token' }).click()
+  await createDialog.getByLabel('Bearer Token', { exact: true }).last().fill(initialToken)
   await createDialog.getByLabel('整体权限范围').fill('P1 合成客户主数据，只读范围')
   await createDialog.getByRole('button', { name: '登记并发现', exact: true }).click()
 
   const row = page.getByRole('row').filter({ hasText: connectorName })
   await expect(row).toContainText('待审核')
   await expect(row).toContainText('2 个 Tool')
+  const connectors = await data<Array<{ id: string; name: string }>>(
+    await page.request.get('/api/admin/v1/connectors'),
+  )
+  const connectorId = connectors.find(item => item.name === connectorName)?.id
+  expect(connectorId).toMatch(/^connector-mcp-/)
+
+  await row.getByRole('button', { name: '轮换 Token', exact: true }).click()
+  const rotateDialog = page.getByRole('dialog', { name: `轮换 Bearer Token · ${connectorName}` })
+  await rotateDialog.getByLabel('新 Bearer Token').fill(`p1-rotated-${suffix}`)
+  await rotateDialog.getByRole('button', { name: '轮换并检查', exact: true }).click()
+  await expect(row).toContainText('待审核')
   await row.getByRole('button', { name: '查看', exact: true }).click()
   const detail = page.locator('.el-drawer').filter({ hasText: connectorName })
   await expect(detail).toContainText('读取一个客户')
@@ -48,7 +58,7 @@ test('PF-MCP-01: one Connector is the review and Agent authorization boundary', 
   await expect(accessSwitch).toBeChecked()
 
   let evidence = await data<{ platformToolCount: number; activeGrantCount: number }>(
-    await page.request.get(`/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId)}`),
+    await page.request.get(`/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`),
   )
   expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 1 })
   await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
@@ -65,7 +75,7 @@ test('PF-MCP-01: one Connector is the review and Agent authorization boundary', 
   await revocableGrant.locator('..').click()
   await expect(revocableGrant).not.toBeChecked()
   evidence = await data(await page.request.get(
-    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId)}`,
+    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
   expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 0 })
   await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
@@ -86,7 +96,7 @@ test('PF-MCP-01: one Connector is the review and Agent authorization boundary', 
   await restoredGrant.locator('..').click()
   await expect(restoredGrant).toBeChecked()
   evidence = await data(await page.request.get(
-    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId)}`,
+    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
   expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 1 })
   await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
