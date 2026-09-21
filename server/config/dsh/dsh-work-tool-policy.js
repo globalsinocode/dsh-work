@@ -314,7 +314,13 @@ function registerPlatformTool(ctx, socketPath, definition) {
       return new Promise((resolve, reject) => {
         const body = JSON.stringify(args ?? {})
         const req = request({ socketPath, path: `/tools/${definition.name}`, method: 'POST', signal: execution.signal,
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            ...(typeof execution.callId === 'string' && execution.callId.length
+              ? { 'X-DSH-Tool-Call-ID': execution.callId }
+              : {}),
+          } }, response => {
           let responseBody = ''
           response.setEncoding('utf8')
           response.on('data', chunk => { responseBody += chunk })

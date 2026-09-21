@@ -1,7 +1,7 @@
 # Agent 全生命周期实现映射
 
 **状态：** 当前平台实现与[通用 Agent 全生命周期模板](agent-lifecycle-template.md)的核对基线。  
-**代码基线：** `8b3982d`。  
+**代码基线：** 与本文件所在提交一致。
 **用途：** 说明每个阶段由什么对象承载、哪里执行门禁，以及仍有哪些真实缺口；不把目标设计描述成已支持能力。
 
 ## 1. 映射结论
@@ -22,7 +22,7 @@
 | 6. 评测设计 | `AgentEvaluationSuite v1` | [评测模板](agent-evaluation-template.yaml)、包解析器、发布服务 | 五类案例、固定机器断言和必需人工 rubric | **已实现契约**。平台生成案例必须替换为具体 Agent 的目标输入 |
 | 7. 候选检查与试运行 | `agent_release_submissions`、`agent_trial_runs`、Run/Attempt | 发布服务、发布路由、管理端发布工作台 | 固定候选修订与 Binding；统一 Runtime Adapter → DSH；逐项机器和人工判定；旧证据失效 | **已实现**。真实 DSH 结果属于具体 Agent 的 P2 |
 | 8. 审核与发布 | 不可变 Agent Version、Submission、`agent_version_evidence` | 发布服务与管理端发布工作台 | 职责分离、发布事务内复核定义/绑定/试运行证据 | **已实现**。人工批准不覆盖失败的机器断言 |
-| 9. 运行与结果 | Session、Run、Attempt、Runtime Manifest、`task-result/v1` | Run 编排、DSH Adapter、当前授权、结果投影 | 执行前/中/提交前重新鉴权；执行终态与业务结果分离；Artifact/回执缺失时不标记达成 | **已实现基础链路**。具体业务完成仍需 Agent rubric 或工具证据 |
+| 9. 运行与结果 | Task、可选 Session、Run、Attempt、Runtime Manifest、`task-result/v1` | Task/API 入口、Run 编排、DSH Adapter、当前授权、结果投影 | 执行前/中/提交前重新鉴权；执行终态与业务结果分离；Artifact/回执缺失时不标记达成 | **已实现基础链路**。具体业务完成仍需 Agent rubric 或工具证据 |
 | 10. 监控与演进 | Run/Event/工具审计、版本和发布证据、重新分叉的草稿 | 管理端治理视图、审计与版本服务 | 定义、依赖、Binding 或 Runtime 变化创建新候选并重做受影响证据 | **基础可用**。跨版本质量和成本趋势聚合是后续可选运维能力，不阻塞通用流程 |
 | 11. 停用与退役 | Agent `disabled` 状态、不可变历史、自动任务和 Binding 状态 | Agent 状态服务、执行授权、自动任务与 Tool 治理 | 停用后阻止新执行；撤销 Binding；有权用户仍可读取既有审计与结果 | **已实现停用语义**。当前不提供删除不可变版本和审计的“硬退役” |
 
@@ -47,10 +47,8 @@
 - 跨 Attempt 的持久化等待状态机；
 - 跨 Session 受控记忆；
 - Agent 委派及父子预算；
-- 无 Session 的新执行入口；
-- 外部异步写操作的操作键、受理回执和效果核对；
 - 跨版本质量或成本趋势聚合。
 
 平台建设顺序和完成门槛以[差异清单](agent-design-gap-analysis.md)第 4.2 节为准。在 PF-07 完成前，这些项目仍是目标能力，不能作为 Agent 已可使用的现行能力。已有 P2 被报告为手工执行，但环境、版本、Run/Attempt、验收人和限制尚未写入仓库；在这些字段归档前，其仓库状态仍是“已执行，证据待归档”。
 
-PF-01 当前已建立 Task/Operation 数据契约并将新 Run 固定到 Task；无 Session 的 Runtime Manifest、授权、成果归属、公开触发/查询 API 和工具桥 Operation 登记尚未接通。因此它仍处于实施中，不能据此发布依赖无 Session 或异步外部写入的 Agent。
+PF-01 已完成平台基础实现：Task 可由 Session、API 或事件来源幂等受理；无 Session 执行使用同一 Run/Attempt、Runtime Adapter 与 DSH；Manifest、结果和 Artifact 固定 Task 归属；写入平台工具自动登记 Operation，并区分同步完成、异步受理、失败和效果未知；员工端提供受权的 Task/Operation 查询、取消和重试，管理员可在核对权威外部状态后收敛 Operation。具体外部系统仍须在 PF-03 接入批准连接，并在 PF-07 留存真实 P2 证据。

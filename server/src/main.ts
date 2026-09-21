@@ -34,6 +34,8 @@ import { PostgresModelGovernanceRepository } from './modules/model/postgres-mode
 import { WorkbenchQueryService } from './modules/workbench/application/workbench-query-service.ts'
 import { PostgresConversationRepository } from './modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresRunRepository } from './modules/run/postgres-run-repository.ts'
+import type { JsonObject } from './modules/run/run-types.ts'
+import { PostgresTaskRepository, taskOperationParameterDigest } from './modules/task/postgres-task-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
@@ -70,6 +72,8 @@ import { AutomationService } from './modules/automation/automation-service.ts'
 import { AutomationTriggerSweep } from './modules/automation/automation-trigger-sweep.ts'
 import { defaultAutomationConfig } from './modules/automation/automation-types.ts'
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
+import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from './http/workbench/task-execution-routes.ts'
+import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
@@ -157,6 +161,7 @@ async function start() {
     })
     const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
     const runs = new PostgresRunRepository(database)
+    const tasks = new PostgresTaskRepository(database)
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -182,6 +187,32 @@ async function start() {
       recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
       recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
       collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
+      operationLifecycle: manifest => ({
+        async begin(input) {
+          const parameterDigest = taskOperationParameterDigest(input.parameters)
+          const accepted = await tasks.acceptOperation({
+            tenantId: manifest.user_context.tenant_id,
+            taskId: manifest.task_id,
+            runId: manifest.run_id,
+            attemptId: manifest.attempt_id,
+            operationKey: `tool:${taskOperationParameterDigest({ tool: input.toolName, parameterDigest })}`,
+            actionType: 'platform-tool-write',
+            actionRef: input.toolName,
+            parameterDigest,
+            receipt: { callId: input.callId },
+          })
+          return { ...accepted.operation, execute: accepted.created }
+        },
+        async resolve(input) {
+          await tasks.resolveOperation({
+            tenantId: manifest.user_context.tenant_id,
+            operationId: input.operationId,
+            status: input.status,
+            receipt: JSON.parse(JSON.stringify(input.receipt)) as JsonObject,
+            errorCode: input.errorCode,
+          })
+        },
+      }),
       ...(pythonRunner ? { executePython: (input, manifest, workspace, signal) => pythonRunner.execute(input, manifest, workspace, signal) } : {}),
     }) : new UnavailableRuntime('runtime-local-01')
     const runtime = new CapabilityGuardedRuntime(dshAdapter, pythonCapability)
@@ -233,6 +264,7 @@ async function start() {
         automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
         // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
         toolBindings: tools,
+        tasks,
       },
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
@@ -275,6 +307,8 @@ async function start() {
     )
     await automationSweep.start()
     registerAutomationRoutes(router, automationService)
+    registerTaskExecutionRoutes(router, new PostgresTaskQueryService(database, tasks, runs), orchestration, authorization)
+    registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
     registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)

@@ -11,6 +11,7 @@ export interface TaskRecord {
   sourceType: TaskSourceType
   sourceRef: string | null
   correlationKey: string
+  requestDigest: string | null
   workspaceId: string | null
   sessionId: string | null
   status: TaskStatus
@@ -25,6 +26,7 @@ export interface CreateTaskInput {
   sourceType: TaskSourceType
   sourceRef?: string | null
   correlationKey: string
+  requestDigest?: string | null
   workspaceId?: string | null
   sessionId?: string | null
 }
@@ -63,7 +65,8 @@ export interface RegisterTaskOperationInput {
 export interface ResolveTaskOperationInput {
   tenantId: string
   operationId: string
-  status: Exclude<TaskOperationStatus, 'accepted'>
+  /** accepted records an asynchronous system's acknowledgement without claiming completion. */
+  status: TaskOperationStatus
   receipt: JsonObject
   errorCode?: string | null
 }

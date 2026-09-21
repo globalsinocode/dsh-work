@@ -231,7 +231,7 @@ export class AdminSkillInstallationService {
     await this.requireActiveAttempt(manifest)
     if (!manifest.installation_source) return { message: '未提供已有 Skill 来源，请向管理员索取链接或支持的安装命令。' }
     const source = JSON.parse(manifest.installation_source) as SkillSource
-    const existing = (await this.readInstallations(manifest.session_id)).find(row => row.runId === manifest.run_id)
+    const existing = (await this.readInstallations(manifest.session_id!)).find(row => row.runId === manifest.run_id)
     if (existing?.status === 'cancelled') throw new Error('本次安装已取消，请重新发送来源')
     if (existing?.plan) return this.preview(existing)
     try {
@@ -252,11 +252,11 @@ export class AdminSkillInstallationService {
           where skill_installations.status = 'pending' and skill_installations.plan is null
         `
       })
-      const row = (await this.readInstallations(manifest.session_id)).find(row => row.runId === manifest.run_id)!
+      const row = (await this.readInstallations(manifest.session_id!)).find(row => row.runId === manifest.run_id)!
       if (row.status === 'cancelled') throw new Error('本次安装已取消')
       return this.preview(row)
     } catch (cause) {
-      await this.recordFailureReply(manifest.session_id, manifest.run_id, 'prepare', cause)
+      await this.recordFailureReply(manifest.session_id!, manifest.run_id, 'prepare', cause)
       throw cause
     }
   }

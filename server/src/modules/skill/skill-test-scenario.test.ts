@@ -84,6 +84,7 @@ test('scenario expectations are immutable Manifest input and only accepted for t
   const input = fixture()
   const manifest: RuntimeManifest = {
     manifest_version: '1.0', purpose: 'admin-skill-test', run_id: 'run-scenario', attempt_id: input.attemptId,
+    task_id: 'task-scenario',
     session_id: 'admin-session-scenario', workspace_id: '', agent_version_id: null,
     agent_configuration: { system_prompt: 'A deterministic scenario test system instruction.', skill_instructions: [
       { id: 'root', version: '1.0.0', instructions: 'Follow the declared test input and report the exact result.' },

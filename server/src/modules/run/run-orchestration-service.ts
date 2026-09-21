@@ -30,6 +30,8 @@ import {
 import type { PostgresWorkspaceAgentMemberService } from '../workbench/application/postgres-workspace-agent-member-service.ts'
 import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
+import type { TaskRepository } from '../task/task-repository.ts'
+import type { TaskSourceType } from '../task/task-types.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
@@ -56,6 +58,7 @@ export class RunOrchestrationService {
   private readonly authorization?: PostgresAuthorizationService
   private readonly agentMembers?: PostgresWorkspaceAgentMemberService
   private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+  private readonly tasks?: TaskRepository
 
   private readonly automationMaxConcurrent: number
   private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
@@ -82,6 +85,8 @@ export class RunOrchestrationService {
       automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
       /** B-03/I-04：Attempt 固定绑定修订的执行期复核端口；未接线且 Manifest 带 pin 时 fail-closed。 */
       toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+      /** PF-01 stable Task ownership for non-conversation execution. */
+      tasks?: TaskRepository
     },
   ) {
     this.runs = runs
@@ -97,6 +102,7 @@ export class RunOrchestrationService {
     this.automationMaxConcurrent = options?.automationMaxConcurrent ?? 2
     this.automationStatusLookup = options?.automationStatusLookup
     this.toolBindings = options?.toolBindings
+    this.tasks = options?.tasks
   }
 
   async startAdminRun(input: { userId: string; sessionId: string; prompt: string; idempotencyKey: string; source: string; purpose?: AdminPurpose; testSkill?: RuntimeSkillConfiguration; history?: RuntimeManifest['input']['conversation_history'] }) {
@@ -108,7 +114,7 @@ export class RunOrchestrationService {
     await this.runtime.assertAvailable?.()
     const run = await this.runs.createRun({ tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey })
     if (run.currentAttemptId || run.status !== 'queued') return run
-    await this.conversations.appendMessage({ sessionId: run.sessionId, runId: run.id, role: 'user', content: input.prompt, messageId: `message-user-${run.id}` })
+    await this.conversations.appendMessage({ sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.prompt, messageId: `message-user-${run.id}` })
     await this.failUndispatchedRun(run, () => this.dispatchAdmin(run, input.prompt, input.source, purpose, input.testSkill, input.history))
     return (await this.runs.getRun(tenantId, run.id))!
   }
@@ -150,7 +156,7 @@ export class RunOrchestrationService {
       // 部分输出，再次基于它构造会重复。始终回到稳定来源——Run 的原始用户问题与 Run 之前
       // 的会话历史，再由 withContinuationOutputs 统一追加全部已提交的部分输出。
       const continued = await this.withContinuationOutputs(
-        await this.conversations.getConversationHistory(run.sessionId, run.id),
+        await this.conversations.getConversationHistory(run.sessionId!, run.id),
         run.id,
         await this.conversations.getRunPrompt(run.id),
       )
@@ -167,7 +173,7 @@ export class RunOrchestrationService {
     const purpose = (attempt?.manifest as RuntimeManifest | undefined)?.purpose
     if (purpose === 'admin-assistant') await this.authorization?.requireAdminReader(userId)
     else await this.authorization?.requirePlatformAdmin(userId)
-    await this.conversations.requireSession(run.sessionId, userId, 'admin')
+    await this.conversations.requireSession(run.sessionId!, userId, 'admin')
     return run
   }
 
@@ -176,7 +182,7 @@ export class RunOrchestrationService {
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
     const manifest: RuntimeManifest = {
       manifest_version: '1.0', purpose, installation_source: source,
-      run_id: run.id, attempt_id: `attempt-${randomUUID()}`, session_id: run.sessionId,
+      run_id: run.id, attempt_id: `attempt-${randomUUID()}`, task_id: run.taskId, session_id: run.sessionId,
       workspace_id: '', agent_version_id: null,
       agent_configuration: {
         system_prompt: adminSystemPrompt(purpose),
@@ -232,7 +238,7 @@ export class RunOrchestrationService {
     })
     if (!run.currentAttemptId && run.status === 'queued') {
       await this.conversations.appendMessage({
-        sessionId: run.sessionId, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
+        sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
       })
       await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(run, input.userId, input.draftVersionId, input.message))
     }
@@ -268,6 +274,7 @@ export class RunOrchestrationService {
       model_requirements: agent.modelRequirements,
       run_id: run.id,
       attempt_id: `attempt-${randomUUID()}`,
+      task_id: run.taskId,
       session_id: run.sessionId,
       workspace_id: '',
       agent_version_id: draftVersionId,
@@ -514,6 +521,64 @@ export class RunOrchestrationService {
     return this.runs.getRun(tenantId, run.id)
   }
 
+  /** PF-01 entry for API/event work that has no product-conversation semantics. */
+  async startTaskExecution(input: {
+    userId: string
+    workspaceId: string
+    agentVersionId: string
+    prompt: unknown
+    correlationKey: string
+    sourceType: Extract<TaskSourceType, 'api' | 'event' | 'system'>
+    sourceRef?: string | null
+    authorizationContext?: SessionAuthorizationContext
+  }) {
+    if (!this.tasks) throw new Error('Task 仓储未接线')
+    if (!this.authorization) throw new AuthorizationCheckUnavailableError()
+    const prompt = assertPrompt(input.prompt)
+    const correlationKey = input.correlationKey?.trim()
+    if (!correlationKey) throw requestInvalid('correlationKey 必须是非空字符串')
+    const workspaceType = await this.authorization.workspaceTypeOf(input.workspaceId)
+    if (!workspaceType) throw authorizationDenied('工作空间不存在或已归档')
+    const authorization = workspaceType === 'team'
+      ? await this.authorization.authorizeTeamRunExecution({
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          agentVersionId: input.agentVersionId,
+          requireAgentMember: true,
+          ...input.authorizationContext,
+        })
+      : await this.authorization.authorizeRuntime({
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          agentVersionId: input.agentVersionId,
+          ...input.authorizationContext,
+        })
+    await this.runtime.assertAvailable?.()
+    const run = await this.runs.createRun({
+      tenantId,
+      sessionId: null,
+      workspaceId: input.workspaceId,
+      requestedBy: input.userId,
+      idempotencyKey: correlationKey,
+      taskSourceType: input.sourceType,
+      taskSourceRef: input.sourceRef,
+      taskCorrelationKey: correlationKey,
+      taskRequestDigest: createHash('sha256').update(`${input.agentVersionId}\0${prompt}`).digest('hex'),
+    })
+    if (run.currentAttemptId || run.status !== 'queued') return run
+    await this.failUndispatchedRun(run, () => this.dispatch(run, {
+      prompt,
+      workspaceId: input.workspaceId,
+      agentVersionId: input.agentVersionId,
+      userId: input.userId,
+      fileIds: [],
+      preparedFiles: [],
+      authorization,
+    }))
+    await this.operations?.appendAudit(input.userId, 'task.run.create', run.taskId, 'success', `trace-${run.id}`, `${input.sourceType} Task 创建真实 Run`)
+    return this.runs.getRun(tenantId, run.id)
+  }
+
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
@@ -621,6 +686,36 @@ export class RunOrchestrationService {
     const lastAttempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
       throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
+    }
+    if (run.sessionId === null) {
+      const manifest = lastAttempt?.manifest as RuntimeManifest | undefined
+      if (!manifest?.workspace_id || !manifest.agent_version_id) throw requestInvalid('原 Task 缺少固定执行上下文，无法重试')
+      const workspaceType = await this.authorization?.workspaceTypeOf(manifest.workspace_id)
+      const authorization = workspaceType === 'team'
+        ? await this.authorization?.authorizeTeamRunExecution({
+            userId,
+            workspaceId: manifest.workspace_id,
+            agentVersionId: manifest.agent_version_id,
+            requireAgentMember: true,
+            ...authorizationContext,
+          })
+        : await this.authorization?.authorizeRuntime({
+            userId,
+            workspaceId: manifest.workspace_id,
+            agentVersionId: manifest.agent_version_id,
+            ...authorizationContext,
+          })
+      await this.dispatch(run, {
+        prompt: manifest.input.message,
+        workspaceId: manifest.workspace_id,
+        agentVersionId: manifest.agent_version_id,
+        userId,
+        fileIds: [],
+        preparedFiles: [],
+        authorization,
+      })
+      await this.operations?.appendAudit(userId, 'task.run.retry', run.id, 'success', `trace-${run.id}`, 'Task 创建新的不可变 Attempt')
+      return this.runs.getRun(tenantId, run.id)
     }
     const session = await this.conversations.findSessionRow(run.sessionId)
     if (!session) throw authorizationDenied(`Session 不存在或不可访问：${run.sessionId}`)
@@ -745,7 +840,7 @@ export class RunOrchestrationService {
     // 只能等下次重启收敛。
     await this.failUndispatchedRun(run, async () => {
       await this.conversations.appendMessage({
-        sessionId: run.sessionId,
+        sessionId: run.sessionId!,
         runId: run.id,
         role: 'user',
         content: input.prompt,
@@ -999,7 +1094,7 @@ export class RunOrchestrationService {
           roleIds: authorization?.roleIds,
         })
       : []
-    const preparedFiles = input.preparedFiles ?? (this.content
+    const preparedFiles = input.preparedFiles ?? (this.content && run.sessionId
       ? await this.content.prepareRuntimeFiles({
           sessionId: run.sessionId,
           fileIds: input.fileIds,
@@ -1013,6 +1108,7 @@ export class RunOrchestrationService {
       model_requirements: agent.modelRequirements,
       run_id: run.id,
       attempt_id: attemptId,
+      task_id: run.taskId,
       session_id: run.sessionId,
       workspace_id: input.workspaceId,
       agent_version_id: input.agentVersionId,
@@ -1270,7 +1366,7 @@ export class RunOrchestrationService {
     if (!this.authorization) throw new AuthorizationCheckUnavailableError()
     try {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
-      if (!run || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
+      if (!run || run.taskId !== manifest.task_id || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
         || run.status !== 'running') throw authorizationDenied('Attempt 已结束、取消或被替代')
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
@@ -1279,14 +1375,21 @@ export class RunOrchestrationService {
       // 真值：purpose='automation' 是绑定工作空间的员工 Run，其会话为
       // workbench 受众，走 admin 门禁会必然失败。
       if (isAdminRunPurpose(manifest.purpose)) {
+        if (!manifest.session_id) throw authorizationDenied('管理运行缺少 Session')
         await this.conversations.requireSession(manifest.session_id, manifest.user_context.user_id, 'admin')
-      } else {
+      } else if (manifest.session_id) {
         const session = await this.conversations.findSessionRow(manifest.session_id)
         if (!session) throw authorizationDenied(`Session 不存在或不可访问：${manifest.session_id}`)
         if (session.workspaceId !== manifest.workspace_id
           || (session.workspaceType !== 'team'
             && (session.createdBy !== manifest.user_context.user_id || session.agentVersionId !== manifest.agent_version_id))) {
           throw authorizationDenied('会话归属或固定 Agent 已变化')
+        }
+      } else {
+        if (!this.tasks) throw new AuthorizationCheckUnavailableError()
+        const task = await this.tasks.getTask(tenantId, manifest.task_id)
+        if (!task || task.requestedBy !== manifest.user_context.user_id || task.workspaceId !== manifest.workspace_id) {
+          throw authorizationDenied('Task 归属或固定工作空间已变化')
         }
       }
       await assertCurrentExecutionAuthorization(this.authorization, this.content, manifest, this.toolBindings, toolBindingsChecked)
@@ -1503,13 +1606,15 @@ export class RunOrchestrationService {
         ? await this.knowledge.addCitationFooter(event.attempt_id, event.display_message)
         : event.display_message
       this.assistantOutputs.set(event.attempt_id, assistantContent)
-      await this.conversations.appendMessage({
-        sessionId: run.sessionId,
-        runId: run.id,
-        role: 'assistant',
-        content: assistantContent,
-        messageId: `message-assistant-${event.event_id}`,
-      })
+      if (run.sessionId) {
+        await this.conversations.appendMessage({
+          sessionId: run.sessionId,
+          runId: run.id,
+          role: 'assistant',
+          content: assistantContent,
+          messageId: `message-assistant-${event.event_id}`,
+        })
+      }
     } else if (event.event_type === 'run.cancel_requested') {
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancel_requested')
     } else if (event.event_type === 'run.cancelled') {
@@ -1524,7 +1629,7 @@ export class RunOrchestrationService {
       if (attempt) await this.operations?.recordModelUsage({
         run,
         attempt,
-        prompt: await this.conversations.getRunPrompt(run.id),
+        prompt: await this.getRunPrompt(run, event.attempt_id),
         output: this.assistantOutputs.get(event.attempt_id) ?? '',
         status: 'failed',
         traceId: event.trace_id,
@@ -1538,7 +1643,7 @@ export class RunOrchestrationService {
       if (attempt) await this.operations?.recordModelUsage({
         run,
         attempt,
-        prompt: await this.conversations.getRunPrompt(run.id),
+        prompt: await this.getRunPrompt(run, event.attempt_id),
         output: assistantOutput,
         status: 'success',
         traceId: event.trace_id,
@@ -1590,8 +1695,22 @@ export class RunOrchestrationService {
   private async requireWritableRun(runId: string, userId: string) {
     const run = await this.runs.getRun(tenantId, runId)
     if (!run) throw new Error(`Run 不存在或不可访问：${runId}`)
-    await this.requireSessionAccess(run.sessionId, userId, 'write')
+    if (run.sessionId) await this.requireSessionAccess(run.sessionId, userId, 'write')
+    else {
+      if (!this.tasks || !this.authorization) throw new AuthorizationCheckUnavailableError()
+      const task = await this.tasks.getTask(tenantId, run.taskId)
+      if (!task || task.requestedBy !== userId || !task.workspaceId) throw authorizationDenied('Task 不存在或不可访问')
+      await this.authorization.authorizeWorkbench({ userId, workspaceId: task.workspaceId })
+    }
     return run
+  }
+
+  private async getRunPrompt(run: RunRecord, attemptId: string): Promise<string> {
+    if (run.sessionId) return this.conversations.getRunPrompt(run.id)
+    const attempt = await this.runs.getAttempt(tenantId, attemptId)
+    const manifest = attempt?.manifest as RuntimeManifest | undefined
+    if (!manifest?.input?.message) throw new Error(`Run 没有关联的输入：${run.id}`)
+    return manifest.input.message
   }
 }
 

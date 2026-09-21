@@ -49,7 +49,8 @@ export interface RuntimeManifest {
   installation_source?: string
   run_id: string
   attempt_id: string
-  session_id: string
+  task_id: string
+  session_id: string | null
   workspace_id: string
   agent_version_id: string | null
   agent_configuration: {

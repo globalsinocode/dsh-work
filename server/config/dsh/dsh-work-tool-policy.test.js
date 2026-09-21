@@ -176,6 +176,30 @@ test('DSH platform tools reject non-success responses with the stable bridge err
   } finally { await bridge.close() }
 })
 
+test('DSH forwards the stable tool call id to the PF-01 write Operation boundary', async () => {
+  let acceptedCallId = ''
+  const bridge = await createPlatformToolBridge({ propose_admin_task: {
+    contract: platformToolContracts.propose_admin_task,
+    handler: async () => ({ accepted: true }),
+  } }, 1, undefined, {
+    async begin(input) {
+      acceptedCallId = input.callId
+      return { id: 'operation-policy-test', status: 'accepted', receipt: {}, errorCode: null, execute: true }
+    },
+    async resolve() {},
+  })
+  try {
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    const tool = capturePolicy().registered.find(candidate => candidate.name === 'propose_admin_task')
+    const result = await tool.execute(
+      { kind: 'agent-management', summary: '创建测试提案', impact: '仅验证 Operation 关联' },
+      { signal: new globalThis.AbortController().signal, callId: 'call-operation-1' },
+    )
+    assert.deepEqual(JSON.parse(result), { accepted: true })
+    assert.equal(acceptedCallId, 'call-operation-1')
+  } finally { await bridge.close() }
+})
+
 test('DSH publishes the tools loaded by the active Profile for platform discovery', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-work-tool-catalog-'))
   const path = join(root, 'runtime-tools.json')

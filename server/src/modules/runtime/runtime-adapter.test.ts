@@ -856,6 +856,7 @@ function manifest(runId: string, attemptId: string, message = 'summarize invento
     manifest_version: '1.0',
     run_id: runId,
     attempt_id: attemptId,
+    task_id: `task-${runId}`,
     session_id: `session-${runId}`,
     workspace_id: 'ws-supply-analysis',
     agent_version_id: 'agent-supply-v1',

@@ -1520,9 +1520,12 @@ export class PostgresContentService {
 
   /** Reauthorize immutable inputs without loading or replacing their snapshotted bytes. */
   async recheckRuntimeFiles(manifest: import('../../runtime/runtime-types.ts').RuntimeManifest): Promise<void> {
+    if (manifest.session_id === null && manifest.input.file_mounts.length) {
+      throw authorizationDenied('无 Session Task 尚未固定输入文件归属')
+    }
     for (const mount of manifest.input.file_mounts) {
       const row = await this.resolveRuntimeFile({
-        sessionId: manifest.session_id, fileId: mount.file_id, userId: manifest.user_context.user_id,
+        sessionId: manifest.session_id!, fileId: mount.file_id, userId: manifest.user_context.user_id,
       })
       if (row.textSha256 !== mount.content_sha256) throw authorizationDenied('输入文件解析版本已变化，不能执行旧快照')
     }
@@ -1692,7 +1695,7 @@ export class PostgresContentService {
         mimeType: artifactMimeType(type),
         bytes,
         sha256: contentSha256,
-        storageKey: join('artifact-files', manifest.session_id, `file-artifact-${identity}${extension}`),
+        storageKey: join('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
       })
     }
 
@@ -1720,16 +1723,18 @@ export class PostgresContentService {
       }
       const [run] = await transaction<{ id: string; status: string }[]>`
         select r.id, r.status from runs r
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+        left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
          where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}
            and r.current_attempt_id = ${manifest.attempt_id}
-           and r.session_id = ${manifest.session_id}
+           and r.task_id = ${manifest.task_id}
+           and r.session_id is not distinct from ${manifest.session_id}
            and r.requested_by = ${manifest.user_context.user_id}
-           and s.workspace_id = ${manifest.workspace_id}
+           and t.workspace_id = ${manifest.workspace_id}
            -- TW-10：共享会话中 Run 发起人未必是会话创建者（成员可在他人讨论串中
            -- @ 触发）；Run↔Session↔Manifest 的三方绑定已构成一致性校验，
            -- 不再要求发起人等于创建者。
-           and s.status = 'active'
+           and (r.session_id is null or s.status = 'active')
            -- H5：成果属于「成功执行」的一部分。取消/失败的 Run 即便产物目录里
            -- 有文件也不得发布；'succeeded' 保留给已确认成功后的幂等重发布。
            and r.status in ('running', 'succeeded')
@@ -1772,9 +1777,9 @@ export class PostgresContentService {
         `
         await transaction`
           insert into artifacts (
-            id, tenant_id, workspace_id, session_id, name, artifact_type, created_by
+            id, tenant_id, workspace_id, session_id, task_id, name, artifact_type, created_by
           ) values (
-            ${artifact.artifactId}, ${tenantId}, ${manifest.workspace_id}, ${manifest.session_id},
+            ${artifact.artifactId}, ${tenantId}, ${manifest.workspace_id}, ${manifest.session_id}, ${manifest.task_id},
             ${artifact.name}, ${artifact.type}, ${manifest.user_context.user_id}
           )
           on conflict (id) do nothing
@@ -1993,15 +1998,16 @@ export class PostgresContentService {
       select av.file_object_id as "fileId", a.workspace_id as "workspaceId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
-        join sessions s on s.tenant_id = a.tenant_id and s.id = a.session_id
+        left join tasks t on t.tenant_id = a.tenant_id and t.id = a.task_id
        where av.tenant_id = ${tenantId} and av.artifact_id = ${artifactId}
-         -- TW-10：共享会话成果对会话所属空间的现任成员可读（canReadWorkspaceObject
-         -- 后置复核移出/归档）；个人空间成员行即 owner，口径不变。
+         -- 会话成果沿用 Workspace 现任成员读取；无 Session Task 成果只向
+         -- Task 发起者暴露。两条路径都在下方复核当前 Workspace 读权限。
          and exists (
            select 1 from workspace_members sm
-            where sm.tenant_id = s.tenant_id and sm.workspace_id = s.workspace_id
+            where sm.tenant_id = a.tenant_id and sm.workspace_id = a.workspace_id
               and sm.user_id = ${actorUserId}
          )
+         and (a.session_id is not null or t.requested_by = ${actorUserId})
          and (${version ?? null}::integer is null or av.version_no = ${version ?? null})
        order by av.version_no desc limit 1
     `

@@ -263,6 +263,68 @@ test('serialized lock remains held after timeout until the underlying write hand
   }
 })
 
+test('PF-01 write operations persist completion and replay the receipt without a second side effect', async () => {
+  let calls = 0
+  let stored: import('./platform-tool-bridge.ts').PlatformToolOperationRecord | undefined
+  const bridge = await createPlatformToolBridge({ write: {
+    contract: { ...baseContract, effect: 'write', retryPolicy: 'verify-first' },
+    async handler(input) { calls += 1; return { result: input['value'] } },
+  } }, 3, undefined, {
+    async begin() {
+      if (stored) return { ...stored, execute: false }
+      stored = { id: 'operation-1', status: 'accepted', receipt: {}, errorCode: null, execute: true }
+      return stored
+    },
+    async resolve(input) {
+      stored = { id: input.operationId, status: input.status, receipt: input.receipt, errorCode: input.errorCode ?? null, execute: false }
+    },
+  })
+  try {
+    assert.deepEqual(await call(bridge.socket, 'write', { value: 'once' }, 'call-1'), {
+      status: 200, body: { result: 'once' },
+    })
+    assert.deepEqual(await call(bridge.socket, 'write', { value: 'once' }, 'call-2'), {
+      status: 200, body: { result: 'once' },
+    })
+    assert.equal(calls, 1)
+    assert.equal(stored?.status, 'completed')
+  } finally {
+    await bridge.close()
+  }
+})
+
+test('PF-01 asynchronous writes remain accepted after acknowledgement and cannot execute twice', async () => {
+  let calls = 0
+  let stored: import('./platform-tool-bridge.ts').PlatformToolOperationRecord | undefined
+  const bridge = await createPlatformToolBridge({ write: {
+    contract: { ...baseContract, effect: 'write', retryPolicy: 'verify-first', completionSemantics: 'accepted' },
+    async handler(input) { calls += 1; return { result: input['value'] } },
+  } }, 2, undefined, {
+    async begin() {
+      if (stored) return { ...stored, execute: false }
+      stored = { id: 'operation-async', status: 'accepted', receipt: {}, errorCode: null, execute: true }
+      return stored
+    },
+    async resolve(input) {
+      stored = { id: input.operationId, status: input.status, receipt: input.receipt, errorCode: input.errorCode ?? null, execute: false }
+    },
+  })
+  try {
+    assert.deepEqual(await call(bridge.socket, 'write', { value: 'queued' }, 'call-1'), {
+      status: 200, body: { result: 'queued' },
+    })
+    assert.equal(stored?.status, 'accepted')
+    assert.deepEqual(stored?.receipt, { result: { result: 'queued' } })
+    const repeated = await call(bridge.socket, 'write', { value: 'queued' }, 'call-2')
+    assert.equal(repeated.status, 409)
+    assert.equal(requireError(repeated.body).code, 'TOOL_OPERATION_IN_PROGRESS')
+    assert.equal(calls, 1)
+    assert.equal(stored?.status, 'accepted', 'duplicate delivery must not corrupt the pending operation')
+  } finally {
+    await bridge.close()
+  }
+})
+
 interface ToolHttpBody {
   result?: string
   error?: { code: string; message: string; retryable: boolean; effect_state: string }
@@ -273,11 +335,12 @@ function requireError(body: ToolHttpBody): NonNullable<ToolHttpBody['error']> {
   return body.error
 }
 
-function call(socketPath: string, tool: string, input: unknown): Promise<{ status: number; body: ToolHttpBody }> {
+function call(socketPath: string, tool: string, input: unknown, callId?: string): Promise<{ status: number; body: ToolHttpBody }> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(input)
     const req = request({ socketPath, path: `/tools/${tool}`, method: 'POST', headers: {
       'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
+      ...(callId ? { 'X-DSH-Tool-Call-ID': callId } : {}),
     } }, response => {
       let text = ''
       response.setEncoding('utf8')

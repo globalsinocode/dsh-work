@@ -98,7 +98,7 @@ flowchart TB
   end
 
   subgraph App[dsh-work 模块化单体]
-    Workspace[Workspace / Session / File / Artifact]
+    Workspace[Workspace / Task / Session / File / Artifact]
     Authorization[本地身份映射 / 角色 / 权限 / 数据范围]
     Governance[Agent / Skill / Tool / Model 治理]
     Orchestration[Run / Attempt / Scheduler / Audit]
@@ -151,6 +151,7 @@ flowchart TB
 - `/api/workbench/v1` 与 `/api/admin/v1` 是两个独立 Audience；
 - `/auth/workbench/*` 与 `/auth/admin/*` 分别完成登录、回调和退出；
 - 服务端在 API 边界建立身份，随后由应用服务执行对象级和数据范围授权；
+- `/api/workbench/v1/task-executions` 为 API/event 提供无产品 Session 的 Task 入口，仍复用同一 Run/Attempt 与 DSH 执行链路；
 - Run 编排、Agent/Skill/Tool 治理、知识、文件、模型、运营和身份模块都位于同一 Node.js 模块化单体。
 
 ### 4.3 Runtime 与执行层
@@ -200,9 +201,9 @@ flowchart LR
 
 1. 用户通过对应 Portal 发起 AI Hub OIDC Authorization Code + PKCE 登录；
 2. 服务端校验 `state`、`nonce`、Issuer、Audience、签名和 Scope，建立加密的服务端 Session；
-3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；需要时从员工端 Skill 广场选择一个已发布 Skill；个人空间未显式指定 Agent 时，服务端优先使用平台默认 Agent，并跳过无法满足所选 Skill 工具依赖的候选；
+3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；API/event 也可在 Workspace 中直接受理无 Session Task。需要时从员工端 Skill 广场选择一个已发布 Skill；个人空间未显式指定 Agent 时，服务端优先使用平台默认 Agent，并跳过无法满足所选 Skill 工具依赖的候选；
 4. 服务端在创建 Session 前校验应用权限、Workspace 成员关系、Agent 可见性、有效数据范围及 Agent/Skill 工具闭包；`activate_skill`、`python_execute` 由 Attempt Manifest 内建授权，其余工具必须由 Agent 显式授权；
-5. 创建 Run 和不可变 Attempt，固定 Agent/Skill/Tool/Model、文件、知识来源与权限快照；
+5. 幂等创建 Task、Run 和不可变 Attempt，固定 Task、Agent/Skill/Tool/Model、文件、知识来源与权限快照；
 6. PostgreSQL 调度在 Runtime 容量内原子认领 Attempt；
 7. Runtime Adapter 写入 Manifest 和隔离输入，启动独立 DSH ACP Worker；
 8. DSH 执行 Agent Loop，并通过 Allowlist 使用批准的模型与只读 Tool；
@@ -221,7 +222,7 @@ flowchart LR
 | Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由、权限、文件与来源快照；终态不可回退 |
 | Run Event | 面向产品的标准运行事件 | 先落库后发送；稳定 ID 与全 Run 顺序；不暴露隐藏推理 |
 | Agent/Skill/Tool Version | 已发布治理版本 | 发布后不可修改或删除；运行引用精确版本 |
-| File/Artifact Version | 输入与交付成果 | 存储键不使用用户文件名；版本不可覆盖；下载再次鉴权 |
+| File/Artifact Version | 输入与交付成果 | 存储键不使用用户文件名；版本不可覆盖；Artifact 明确归属 Session 或 Task，下载再次鉴权 |
 | External Operation | 一次可能产生外部效果的受控动作 | Task 内操作键唯一；参数摘要固定；受理、完成、失败和效果未知分开记录 |
 | Audit/Operational Event | 安全与运营事实 | 结构化、可追踪、脱敏；不保存业务正文和凭据 |
 

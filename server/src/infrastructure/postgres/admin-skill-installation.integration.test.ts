@@ -580,7 +580,7 @@ test('legacy packaged versions migrate to folders without weakening published-ve
   const runId = `run-${randomUUID()}`
   const attemptId = `attempt-${randomUUID()}`
   const oldManifest: RuntimeManifest = {
-    manifest_version: '1.0', run_id: runId, attempt_id: attemptId, session_id: sessionId, workspace_id: '', agent_version_id: null,
+    manifest_version: '1.0', run_id: runId, attempt_id: attemptId, task_id: `task-${runId}`, session_id: sessionId, workspace_id: '', agent_version_id: null,
     agent_configuration: { system_prompt: '这是旧版 Skill 文件内联迁移测试，只验证存储迁移行为。', skill_instructions: [{ id: skillId, name: legacy.name, description: legacy.description, version: '0.1.0', instructions: legacy.instructions, files: legacy.files }] },
     user_context: { user_id: actor, tenant_id: tenant, role_ids: [] }, permission_policy: { approval_mode: 'always', network_policy: 'deny', write_policy: 'deny' },
     skills: [{ id: skillId, version: '0.1.0' }], tools: [{ id: 'read', version: '1.0.0' }], data_scopes: [], knowledge_context: [],
@@ -625,7 +625,7 @@ test('review 8a: same-version resource change cannot relabel a completed trial o
   })
   const started = await skills.startSkillTest({ skillId, actor })
   const session = await runs.getRun(tenant, started.runId)
-  await wait(session!.sessionId)
+  await wait(session!.sessionId!)
   const finished = await skills.getSkillTestProgress({ skillId, runId: started.runId, actor })
   assert.equal(finished.status, 'passed')
   const [original] = await database.client<{ versionId: string; manifest: { artifact: import('../../modules/skill/skill-package.ts').SkillPackageArtifact } }[]>`
@@ -658,7 +658,7 @@ test('review 8a: retry preserves every pinned Skill and original model route', {
   assert.ok(oldAttempt)
   await waitForAttemptStart(oldAttempt.id)
   await orchestration.cancelAdminRun(started.runId, actor)
-  await wait(run!.sessionId)
+  await wait(run!.sessionId!)
   await orchestration.retryAdminRun(started.runId, actor)
   const retried = await runs.getRun(tenant, started.runId)
   const newAttempt = await runs.getAttempt(tenant, retried!.currentAttemptId!)
@@ -673,7 +673,7 @@ test('review 8a: retry preserves every pinned Skill and original model route', {
   } finally {
     if (newAttempt) await waitForAttemptStart(newAttempt.id)
     await orchestration.cancelAdminRun(started.runId, actor)
-    await wait(run!.sessionId)
+    await wait(run!.sessionId!)
   }
 })
 

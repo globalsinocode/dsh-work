@@ -757,7 +757,7 @@ test('并发互斥：归档后重试（创建 Attempt）必须被拒绝', async 
       tenantId,
       runId,
       runtimeId,
-      manifest: { manifest_version: '1.0', run_id: runId, attempt_id: `${runId}-attempt-2` },
+      manifest: { manifest_version: '1.0', run_id: runId, task_id: `task-${runId}`, attempt_id: `${runId}-attempt-2` },
       manifestSha256: 'lifecycle-test',
       modelRouteSnapshot: {},
     }),
@@ -897,6 +897,7 @@ async function createRunWithAttempt(input: {
   const manifest = {
     manifest_version: '1.0',
     run_id: input.runId,
+    task_id: `task-${input.runId}`,
     attempt_id: attemptId,
     session_id: input.sessionId,
     agent_version_id: input.agentVersionId,

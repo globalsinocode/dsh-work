@@ -122,18 +122,21 @@ test('PF-01 Task 与外部操作按关联键和参数摘要幂等，未知效果
   const run = await runs.createRun({
     tenantId: task.tenantId,
     taskId: task.id,
-    sessionId,
+    sessionId: null,
+    workspaceId: task.workspaceId,
     requestedBy: task.requestedBy,
     idempotencyKey: `event-run-${suffix}`,
   })
   const repeatedRun = await runs.createRun({
     tenantId: task.tenantId,
     taskId: task.id,
-    sessionId,
+    sessionId: null,
+    workspaceId: task.workspaceId,
     requestedBy: task.requestedBy,
     idempotencyKey: `event-run-repeated-${suffix}`,
   })
   assert.equal(run.taskId, task.id)
+  assert.equal(run.sessionId, null)
   assert.equal(repeatedRun.id, run.id)
 
   const parameterDigest = taskOperationParameterDigest({ quantity: 5, material: 'A-01' })
@@ -170,6 +173,15 @@ test('PF-01 Task 与外部操作按关联键和参数摘要幂等，未知效果
     TaskContractConflictError,
   )
 
+  const acknowledged = await tasks.resolveOperation({
+    tenantId: task.tenantId,
+    operationId: operation.id,
+    status: 'accepted',
+    receipt: { providerRequestId: 'provider-42', providerStatus: 'accepted' },
+  })
+  assert.equal(acknowledged.status, 'accepted')
+  assert.equal(acknowledged.resolvedAt, null)
+
   const unknown = await tasks.resolveOperation({
     tenantId: task.tenantId,
     operationId: operation.id,
@@ -197,6 +209,33 @@ test('PF-01 Task 与外部操作按关联键和参数摘要幂等，未知效果
     }),
     TaskContractConflictError,
   )
+})
+
+test('PF-01 无 Session Task 与 Run 在一次受理事务中创建并按关联键复用', async () => {
+  const correlationKey = `api-atomic-${suffix}`
+  const first = await runs.createRun({
+    tenantId: 'tenant-dsh-work',
+    sessionId: null,
+    workspaceId: 'ws-personal-U00001',
+    requestedBy: 'U00001',
+    idempotencyKey: correlationKey,
+    taskSourceType: 'api',
+    taskSourceRef: 'api://tests/pf01',
+    taskCorrelationKey: correlationKey,
+  })
+  const repeated = await runs.createRun({
+    tenantId: 'tenant-dsh-work',
+    sessionId: null,
+    workspaceId: 'ws-personal-U00001',
+    requestedBy: 'U00001',
+    idempotencyKey: `ignored-after-task-dedupe-${suffix}`,
+    taskSourceType: 'api',
+    taskSourceRef: 'api://tests/pf01',
+    taskCorrelationKey: correlationKey,
+  })
+  assert.equal(repeated.id, first.id)
+  assert.equal(first.sessionId, null)
+  assert.equal((await tasks.getTask(first.tenantId, first.taskId))?.sourceType, 'api')
 })
 
 test('PF-01 数据库边界拒绝无归属 Run：原生写入也自动固定 Task', async () => {

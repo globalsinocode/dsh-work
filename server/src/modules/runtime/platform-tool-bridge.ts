@@ -14,8 +14,32 @@ import {
 
 export type PlatformToolHandler = (input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
 
+export interface PlatformToolOperationRecord {
+  id: string
+  status: 'accepted' | 'completed' | 'failed' | 'unknown'
+  receipt: Record<string, unknown>
+  errorCode: string | null
+  /** True only for the transaction that first accepted this operation. */
+  execute: boolean
+}
+
+export interface PlatformToolOperationLifecycle {
+  begin(input: { callId: string; toolName: string; parameters: Record<string, unknown> }): Promise<PlatformToolOperationRecord>
+  resolve(input: {
+    operationId: string
+    status: 'accepted' | 'completed' | 'failed' | 'unknown'
+    receipt: Record<string, unknown>
+    errorCode?: string
+  }): Promise<void>
+}
+
 /** Per-Attempt local transport. No credentials, model calls or agent loop live here. */
-export async function createPlatformToolBridge(tools: Record<string, PlatformToolRegistration>, limit: number, authorize?: () => Promise<void>) {
+export async function createPlatformToolBridge(
+  tools: Record<string, PlatformToolRegistration>,
+  limit: number,
+  authorize?: () => Promise<void>,
+  operations?: PlatformToolOperationLifecycle,
+) {
   const prepared = Object.fromEntries(Object.entries(tools).map(([name, registration]) => [
     name,
     { ...registration, validators: compileToolContract(registration.contract) },
@@ -58,11 +82,54 @@ export async function createPlatformToolBridge(tools: Record<string, PlatformToo
         writeError(response, new PlatformToolError({ status: 429, code: 'TOOL_CALL_LIMIT_EXCEEDED', message: '当前 Attempt 工具调用次数已达上限' }))
         return
       }
+      let operation: PlatformToolOperationRecord | undefined
       try {
         const input = await readBody(request)
         if (!registration.validators.input(input)) throw toolInputInvalid(ajvErrors(registration.validators.input.errors))
         await authorizeTool(authorize, 'not_started', registration.contract.retryPolicy === 'safe')
         controller.signal.throwIfAborted()
+        if (registration.contract.effect === 'write' && operations) {
+          const callIdHeader = request.headers['x-dsh-tool-call-id']
+          const callId = (Array.isArray(callIdHeader) ? callIdHeader[0] : callIdHeader)?.trim()
+          if (!callId) throw toolInputInvalid('写入工具缺少 DSH tool call id')
+          try {
+            operation = await operations.begin({ callId, toolName: toolName!, parameters: input })
+          } catch {
+            throw new PlatformToolError({
+              status: 503,
+              code: 'TOOL_OPERATION_REGISTRY_UNAVAILABLE',
+              message: '外部操作登记不可用，工具未执行',
+              effectState: 'not_started',
+            })
+          }
+          if (operation.status === 'accepted' && !operation.execute) {
+            throw new PlatformToolError({
+              status: 409,
+              code: 'TOOL_OPERATION_IN_PROGRESS',
+              message: '相同外部操作已经受理；请查询状态，不能重复执行',
+              effectState: 'unknown',
+            })
+          }
+          if (operation.status === 'completed') {
+            response.end(JSON.stringify(operation.receipt['result'] ?? operation.receipt))
+            return
+          }
+          if (operation.status === 'failed') {
+            throw new PlatformToolError({
+              status: 409,
+              code: operation.errorCode ?? 'TOOL_OPERATION_FAILED',
+              message: '相同外部操作已失败；请检查既有回执后再决定后续动作',
+            })
+          }
+          if (operation.status === 'unknown') {
+            throw new PlatformToolError({
+              status: 409,
+              code: 'TOOL_RESULT_UNKNOWN',
+              message: '相同外部操作的实际效果未知；必须先查询外部状态，不能重复执行',
+              effectState: 'unknown',
+            })
+          }
+        }
         const value = await executeWithConcurrencyPolicy(toolName!, registration, input, controller.signal, activeSerializedTools)
         await authorizeTool(
           authorize,
@@ -78,9 +145,35 @@ export async function createPlatformToolBridge(tools: Record<string, PlatformToo
         if (serialized === undefined || Buffer.byteLength(serialized) > registration.contract.maxOutputBytes) {
           throw toolOutputInvalid(`结果超过 ${registration.contract.maxOutputBytes} 字节或无法序列化`, outputEffectState)
         }
+        if (operation) {
+          await operations!.resolve({
+            operationId: operation.id,
+            status: registration.contract.completionSemantics,
+            receipt: { result: JSON.parse(serialized) as unknown },
+          })
+        }
         response.end(serialized)
       } catch (error) {
-        writeError(response, classifyPlatformToolError(error, registration.contract))
+        const classified = classifyPlatformToolError(error, registration.contract)
+        if (operation?.execute && operation.status === 'accepted') {
+          try {
+            await operations!.resolve({
+              operationId: operation.id,
+              status: classified.effectState === 'unknown' ? 'unknown' : 'failed',
+              receipt: { error: { code: classified.code, message: classified.message } },
+              ...(classified.effectState === 'unknown' ? {} : { errorCode: classified.code }),
+            })
+          } catch {
+            writeError(response, new PlatformToolError({
+              status: 500,
+              code: 'TOOL_RESULT_UNKNOWN',
+              message: '工具执行后的操作回执无法持久化；必须先核对实际效果',
+              effectState: 'unknown',
+            }))
+            return
+          }
+        }
+        writeError(response, classified)
       }
     })()
     active.add(task)

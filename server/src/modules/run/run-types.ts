@@ -8,7 +8,8 @@ export interface RunRecord {
   tenantId: string
   /** PF-01 stable business task envelope. */
   taskId: string
-  sessionId: string
+  /** Product conversation context. Null for API/event/system Task execution. */
+  sessionId: string | null
   requestedBy: string
   idempotencyKey: string
   status: RunState
@@ -49,7 +50,7 @@ export interface StoredRunEvent {
 
 export interface CreateRunInput {
   tenantId: string
-  sessionId: string
+  sessionId: string | null
   requestedBy: string
   idempotencyKey: string
   /** Existing callers omit this and receive an idempotent session-backed Task. */
@@ -57,6 +58,9 @@ export interface CreateRunInput {
   taskSourceType?: 'session' | 'automation' | 'api' | 'event' | 'system'
   taskSourceRef?: string | null
   taskCorrelationKey?: string
+  taskRequestDigest?: string | null
+  /** Required when sessionId is null; checked against the Task owner workspace. */
+  workspaceId?: string | null
 }
 
 export interface CreateAttemptInput {

@@ -38,6 +38,17 @@ export function registerUnavailableWorkbenchCommandRoutes(router: Router) {
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
   router.post(`${basePath}/runs/:runId/retry`, async (_request, context) =>
     unavailable(`运行 ${context.params['runId'] ?? ''}`))
+  router.post(`${basePath}/task-executions`, async () => unavailable('无 Session Task 执行（需要 PostgreSQL）'))
+  router.get(`${basePath}/task-executions/:taskId`, async (_request, context) =>
+    unavailable(`Task ${context.params['taskId'] ?? ''}`))
+  router.get(`${basePath}/task-executions/:taskId/operations`, async (_request, context) =>
+    unavailable(`Task ${context.params['taskId'] ?? ''} 的外部操作`))
+  router.post(`${basePath}/task-executions/:taskId/cancel`, async (_request, context) =>
+    unavailable(`Task ${context.params['taskId'] ?? ''}`))
+  router.post(`${basePath}/task-executions/:taskId/retry`, async (_request, context) =>
+    unavailable(`Task ${context.params['taskId'] ?? ''}`))
+  router.post('/api/admin/v1/task-executions/:taskId/operations/:operationId/resolve', async (_request, context) =>
+    unavailable(`Task ${context.params['taskId'] ?? ''} 的外部操作核对（需要 PostgreSQL）`))
 
   // AG-03 自动任务：原型模式无持久化与调度，读侧给空集合让页面呈现空态，
   // 写侧一律 503——不伪造可执行的假数据。

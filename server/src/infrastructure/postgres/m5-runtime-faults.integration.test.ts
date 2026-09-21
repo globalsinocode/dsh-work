@@ -157,6 +157,7 @@ function runtimeManifest(run: RunRecord, attemptId: string, message: string): Ru
     manifest_version: '1.0',
     run_id: run.id,
     attempt_id: attemptId,
+    task_id: run.taskId,
     session_id: run.sessionId,
     workspace_id: 'ws-personal-U00001',
     agent_version_id: 'agent-version-dsh-work-assistant-1',

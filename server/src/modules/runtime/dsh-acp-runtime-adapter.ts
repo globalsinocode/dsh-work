@@ -8,7 +8,7 @@ import {
   type AcpProcessConfiguration,
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
-import { createPlatformToolBridge } from './platform-tool-bridge.ts'
+import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
 import { platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
 import {
   PlatformToolError,
@@ -97,6 +97,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
     manifest: RuntimeManifest,
     workspaceDirectory: string,
   ) => Promise<Array<{ name: string; size: number }>>
+  /** PF-01 durable receipts for write-effect platform tools. */
+  operationLifecycle?: (manifest: RuntimeManifest) => PlatformToolOperationLifecycle
   now?: () => Date
 }
 
@@ -412,7 +414,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
-          this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined)
+          this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
+          this.configuration.operationLifecycle?.(record.manifest))
       }
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)

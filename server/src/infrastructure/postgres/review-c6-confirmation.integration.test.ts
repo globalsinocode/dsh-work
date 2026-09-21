@@ -53,7 +53,7 @@ async function seedRun(purpose: NonNullable<RuntimeManifest['purpose']>, session
     values (${sessionId}, ${tenant}, ${actor}, 'C6 synthetic tool session', 'active', 'admin', null, null) on conflict do nothing`
   await db.client`insert into runs (id, tenant_id, session_id, requested_by, idempotency_key, status)
     values (${runId}, ${tenant}, ${sessionId}, ${actor}, ${randomUUID()}, 'queued')`
-  const manifest = { manifest_version: '1.0', purpose, run_id: runId, attempt_id: attemptId, session_id: sessionId,
+  const manifest = { manifest_version: '1.0', purpose, run_id: runId, task_id: `task-${runId}`, attempt_id: attemptId, session_id: sessionId,
     workspace_id: '', agent_version_id: null, agent_configuration: { system_prompt: 'Synthetic fixture', skill_instructions: [] },
     user_context: { user_id: actor, tenant_id: tenant, role_ids: [] }, input: { message: '准备合成管理计划', file_mounts: [] },
     tools: [{ id: 'prepare_admin_action', version: '1.0.0' }], skills: [], data_scopes: [], knowledge_context: [],
@@ -85,7 +85,7 @@ test('C6 RED: one general run prepares a display-only draft plan; only final con
   const plan = await prepare(manifest, agent.id, { name: '新草稿标题', welcomeMessage: '新的欢迎文案' })
   assert.equal((await agents.getMutationSnapshot(agent.id)).agent.name, agent.name)
   assert.equal(delegatedCalls, calls)
-  assert.equal((await service.detail(actor, manifest.session_id)).proposals.length, 0)
+  assert.equal((await service.detail(actor, manifest.session_id!)).proposals.length, 0)
   await assert.rejects(service.confirmAction(actor, plan.id, plan.planSha256))
   await finish(manifest)
   await service.confirmAction(actor, plan.id, plan.planSha256)

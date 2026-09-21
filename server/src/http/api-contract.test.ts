@@ -62,6 +62,24 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
+test('PF-01 OpenAPI publishes session-neutral Task execution and operation reconciliation', async () => {
+  const workbench = JSON.parse(await readFile(
+    new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
+    'utf8',
+  )) as { paths: Record<string, { get?: { operationId?: string }; post?: { operationId?: string } }> }
+  const admin = JSON.parse(await readFile(
+    new URL('../../../docs/development/openapi-admin.json', import.meta.url),
+    'utf8',
+  )) as { paths: Record<string, { post?: { operationId?: string } }> }
+
+  assert.equal(workbench.paths['/task-executions']?.post?.operationId, 'createTaskExecution')
+  assert.equal(workbench.paths['/task-executions/{taskId}']?.get?.operationId, 'getTaskExecution')
+  assert.equal(workbench.paths['/task-executions/{taskId}/operations']?.get?.operationId, 'listTaskOperations')
+  assert.equal(workbench.paths['/task-executions/{taskId}/cancel']?.post?.operationId, 'cancelTaskExecution')
+  assert.equal(workbench.paths['/task-executions/{taskId}/retry']?.post?.operationId, 'retryTaskExecution')
+  assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
+})
+
 before(async () => {
   const repository = new PrototypeRepository()
   const router = new Router({ authenticateApi: prototypeApiAuthenticator })
@@ -286,6 +304,22 @@ test('prototype run result route reports unavailable persistence rather than a r
   assert.equal(result.response.status, 503)
   assert.equal(result.body.error.code, 'workbench_runtime_not_configured')
   assert.equal('data' in result.body, false)
+})
+
+test('prototype Task execution routes report unavailable persistence rather than version skew', async () => {
+  for (const [method, path] of [
+    ['POST', '/api/workbench/v1/task-executions'],
+    ['GET', '/api/workbench/v1/task-executions/task-example'],
+    ['GET', '/api/workbench/v1/task-executions/task-example/operations'],
+    ['POST', '/api/workbench/v1/task-executions/task-example/cancel'],
+    ['POST', '/api/workbench/v1/task-executions/task-example/retry'],
+    ['POST', '/api/admin/v1/task-executions/task-example/operations/operation-example/resolve'],
+  ] as const) {
+    const response = await fetch(`${baseUrl}${path}`, { method })
+    const body = await response.json() as ErrorEnvelope
+    assert.equal(response.status, 503, `${method} ${path}`)
+    assert.equal(body.error.code, 'workbench_runtime_not_configured')
+  }
 })
 
 test('malformed management payloads use the shared actionable error contract', async () => {

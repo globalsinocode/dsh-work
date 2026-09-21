@@ -65,7 +65,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 ## 4. 具体需要实施的工作
 
-2026-09-20 起按“不考虑历史兼容”组织实施：I-01～I-08 合并为 B-01～B-05。2026-09-21 进一步决定在继续开发具体 Agent 前完成平台基础能力计划，原按需暂缓的 I-09～I-13 与外部异步动作、累计预算纳入 PF-01～PF-07；这些能力在平台层建设完成，但具体 Agent 仍按触发条件选择，不默认启用。B-01/B-02 已清理旧包别名、双格式与旧引用接受，B-03 已落地 default 环境绑定修订。保留 I 编号用于差异追踪；未标完成的要求不能当作已支持能力。工程归属沿用 [AG-03 实施方案](../design/automation-implementation-plan.md)及 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)。
+2026-09-20 起按“不考虑历史兼容”组织实施：I-01～I-08 合并为 B-01～B-05。2026-09-21 进一步决定在继续开发具体 Agent 前完成平台基础能力计划，原按需暂缓的 I-09～I-13 与外部异步动作、累计预算纳入 PF-01～PF-07；这些能力先在平台层依序建设，具体 Agent 仍按触发条件选择，不默认启用。B-01/B-02 已清理旧包别名、双格式与旧引用接受，B-03 已落地 default 环境绑定修订。保留 I 编号用于差异追踪；未标完成的要求不能当作已支持能力。工程归属沿用 [AG-03 实施方案](../design/automation-implementation-plan.md)及 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)。
 
 为便于追踪已有代码和验收目录，保留阶段编号：AG-01 表示 Agent 包与发布，AG-02 表示工具扩展，AG-03 表示轻量自动任务，AG-04 表示受控经验。AG-01/02/04 的后续工作直接以本文 I 编号为入口，无需查阅已删除的总方案；AG-03 与 EX 的细节使用上述现存文档。阶段编号不表示能力已实现或已授权启动。
 
@@ -87,7 +87,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 | 顺序 | 实施包 | 统一平台交付物 | 完成门槛 |
 | --- | --- | --- | --- |
-| PF-01 | 任务与外部操作基础 | 与 Session 解耦但兼容现有会话的 Task/触发来源；稳定关联键；外部动作 operation id、幂等键、参数摘要、`accepted/completed/failed/unknown` 回执及状态查询 | 相同事件/动作不重复生效；结果与 Artifact 有明确归属和读取授权；同步、异步和结果未知可区分 |
+| PF-01（已完成，2026-09-21） | 任务与外部操作基础 | 与 Session 解耦但兼容现有会话的 Task/触发来源；稳定关联键；外部动作 operation id、幂等键、参数摘要、`accepted/completed/failed/unknown` 回执及状态查询 | 相同事件/动作不重复生效；结果与 Artifact 有明确归属和读取授权；同步、异步和结果未知可区分 |
 | PF-02 | 用量与累计预算 | Attempt、Run、Task 和委派树的 Token/成本/时长/工具/输出计量；预算预占、结算、并发检查、超限停止及不支持能力的明确状态 | 并发不越过总预算；缺少可靠 Runtime 计量时不能宣称硬限制；取消和恢复不重复结算 |
 | PF-03 | MCP 受控接入 | MCP Server 登记、传输与网络策略、凭据引用、发现候选、Tool/Resource/Prompt Allowlist、契约摘要、Binding、调用和审计 | 完成一个真实批准服务的发现→审核→授权→调用→撤权链路；新增能力不自动获权；不启动包内任意服务进程 |
 | PF-04 | 持久化等待与审批恢复 | Run 等待状态、检查点引用、事件关联、动作绑定审批、超时/取消、恢复前重新鉴权及旧 Attempt 隔离 | 服务重启、重复/迟到事件和重复决定不重复动作；长期等待释放 Worker；副作用未知时先查询 PF-01 操作状态 |
@@ -95,13 +95,13 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | PF-06 | 受控 Agent 委派 | 父子 Task/Run、固定 Agent Version、最小上下文、权限交集、PF-02 总预算、取消传播和结果合并 | 子任务不扩大权限或预算；循环有界；父任务取消后不能产生新动作；子任务失败不合并为无依据成功 |
 | PF-07 | 平台基线验收 | 无 Session、MCP、异步动作、等待/审批、记忆、委派和累计预算的 P0/P1/P2 套件；版本化能力矩阵与运维手册 | 每项有代码版本、身份、环境、Runtime、故障/撤权和结果证据；真实 DSH/OIDC/批准连接通过后才开放给 Agent 发布 |
 
-**下一步：先实施 PF-01。** 它提供后续等待、审批、MCP 异步动作和委派共同依赖的任务归属与操作回执。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
+**下一步：实施 PF-02。** 它在 PF-01 的 Task/Run/Attempt 归属上增加累计计量、预算预占与结算，为后续持久化等待和 Agent 委派提供不会因重试或并发而失真的总预算。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
 
-**PF-01 第一阶段进展（2026-09-21）：** 迁移 `0050_task_operation_foundation.sql` 新增 `tasks` 与 `task_operations`。所有新 Run 由仓储创建或固定一个 Task；数据库边界也为绕过仓储的原生 Run 写入补齐 Task 并强制 `runs.task_id` 非空。Task 以 `source_type + correlation_key` 幂等，固定请求身份、Workspace、可选 Session 和来源；同一 Task 当前只绑定一个 Run，Run 终态同步到 Task。外部 Operation 以 Task + `operation_key` 唯一，固定 action、来源 Run/Attempt 和规范化参数摘要，使用 `accepted/completed/failed/unknown` 四态；相同键换参或换来源拒绝，`unknown` 只允许在状态核对后收敛为完成或失败，终态回执不可改写。PostgreSQL 集成覆盖 Session Task、无 Session 事件 Task 复用现有执行 Session、原生 Run Task 兜底、重复受理、同键换参、未知效果核对、终态不可回退及租户隔离。
+**PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
-验证：PF-01 所在 PostgreSQL 仓储集成 8/8（专用可丢弃数据库），M2 单元 5/5，SSE/收权相关单元 10/10；全仓 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。没有运行浏览器 E2E、真实 DSH/OIDC 或外部系统写入，本阶段也未开放新 API。
+写入平台工具在执行前自动登记 Operation，Task + 动作/参数摘要形成稳定幂等边界；重复投递不会再次进入处理器。同步完成记为 `completed`，异步系统确认受理后保持 `accepted`，明确失败记为 `failed`，执行后无法确认记为 `unknown`。员工端可查询 Task 的 Operation；平台管理员核对权威外部状态后可把 `accepted/unknown` 收敛为 `completed/failed`，终态回执不可改写。
 
-PF-01 尚未完成：Runtime Manifest 和执行授权仍要求 Session；无 Session API/事件尚不能直接启动 DSH Attempt；Artifact/File 仍以 Session 为必需归属；平台工具桥尚未自动登记 Operation，员工/管理员也没有受权的 Task/Operation 状态查询 API。下一阶段先完成这些消费者的 Task 化，再移除“事件 Task 复用执行 Session”的过渡路径。
+代码级验收覆盖：Session 与无 Session Task、Task/Run 原子受理、关联键复用、同键换参拒绝、平台工具同步回执重放、异步受理不重复执行、未知效果核对、Runtime Manifest、无 Session DSH 编排、Task Artifact 生成/查询/下载及公开 HTTP 契约。真实 OIDC、真实外部写入和目标环境 DSH 属 PF-07 P2 证据，不由单元或一次性 PostgreSQL 绿灯替代。
 
 ### 4.3 原工作项映射与完成记录
 

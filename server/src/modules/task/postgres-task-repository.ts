@@ -21,6 +21,7 @@ interface TaskRow {
   sourceType: TaskSourceType
   sourceRef: string | null
   correlationKey: string
+  requestDigest: string | null
   workspaceId: string | null
   sessionId: string | null
   status: TaskStatus
@@ -75,23 +76,23 @@ export class PostgresTaskRepository implements TaskRepository {
       const [created] = await sql<TaskRow[]>`
         insert into tasks (
           id, tenant_id, requested_by, source_type, source_ref, correlation_key,
-          workspace_id, session_id, status
+          request_digest, workspace_id, session_id, status
         ) values (
           ${taskId}, ${normalized.tenantId}, ${normalized.requestedBy}, ${normalized.sourceType},
-          ${normalized.sourceRef}, ${normalized.correlationKey}, ${normalized.workspaceId},
+          ${normalized.sourceRef}, ${normalized.correlationKey}, ${normalized.requestDigest}, ${normalized.workspaceId},
           ${normalized.sessionId}, 'accepted'
         )
         on conflict (tenant_id, source_type, correlation_key) do nothing
         returning id, tenant_id as "tenantId", requested_by as "requestedBy",
                   source_type as "sourceType", source_ref as "sourceRef",
-                  correlation_key as "correlationKey", workspace_id as "workspaceId",
+                  correlation_key as "correlationKey", request_digest as "requestDigest", workspace_id as "workspaceId",
                   session_id as "sessionId", status, created_at as "createdAt", updated_at as "updatedAt"
       `
       if (created) return mapTask(created)
       const [existing] = await sql<TaskRow[]>`
         select id, tenant_id as "tenantId", requested_by as "requestedBy",
                source_type as "sourceType", source_ref as "sourceRef",
-               correlation_key as "correlationKey", workspace_id as "workspaceId",
+               correlation_key as "correlationKey", request_digest as "requestDigest", workspace_id as "workspaceId",
                session_id as "sessionId", status, created_at as "createdAt", updated_at as "updatedAt"
           from tasks
          where tenant_id = ${normalized.tenantId} and source_type = ${normalized.sourceType}
@@ -101,6 +102,7 @@ export class PostgresTaskRepository implements TaskRepository {
       if (!existing) throw new Error('幂等 Task 查询失败')
       if (existing.requestedBy !== normalized.requestedBy
         || existing.sourceRef !== normalized.sourceRef
+        || existing.requestDigest !== normalized.requestDigest
         || existing.workspaceId !== normalized.workspaceId
         || existing.sessionId !== normalized.sessionId) {
         throw new TaskContractConflictError('相同 Task 关联键对应的身份、来源或资源归属不一致')
@@ -115,7 +117,7 @@ export class PostgresTaskRepository implements TaskRepository {
     const [row] = await sql<TaskRow[]>`
       select id, tenant_id as "tenantId", requested_by as "requestedBy",
              source_type as "sourceType", source_ref as "sourceRef",
-             correlation_key as "correlationKey", workspace_id as "workspaceId",
+             correlation_key as "correlationKey", request_digest as "requestDigest", workspace_id as "workspaceId",
              session_id as "sessionId", status, created_at as "createdAt", updated_at as "updatedAt"
         from tasks where tenant_id = ${tenantId} and id = ${taskId}
     `
@@ -123,6 +125,10 @@ export class PostgresTaskRepository implements TaskRepository {
   }
 
   async registerOperation(input: RegisterTaskOperationInput, tx?: DatabaseTransaction): Promise<TaskOperationRecord> {
+    return (await this.acceptOperation(input, tx)).operation
+  }
+
+  async acceptOperation(input: RegisterTaskOperationInput, tx?: DatabaseTransaction): Promise<{ operation: TaskOperationRecord; created: boolean }> {
     const normalized = normalizeOperationInput(input)
     const operationId = input.operationId ?? `operation-${randomUUID()}`
     const body = async (sql: DatabaseTransaction) => {
@@ -142,7 +148,7 @@ export class PostgresTaskRepository implements TaskRepository {
                   error_code as "errorCode", created_at as "createdAt", updated_at as "updatedAt",
                   resolved_at as "resolvedAt"
       `
-      if (created) return mapOperation(created)
+      if (created) return { operation: mapOperation(created), created: true }
       const [existing] = await sql<OperationRow[]>`
         select id, tenant_id as "tenantId", task_id as "taskId", run_id as "runId",
                attempt_id as "attemptId", operation_key as "operationKey", action_type as "actionType",
@@ -155,12 +161,11 @@ export class PostgresTaskRepository implements TaskRepository {
          for update
       `
       if (!existing) throw new Error('幂等外部操作查询失败')
-      if (existing.runId !== normalized.runId || existing.attemptId !== normalized.attemptId
-        || existing.actionType !== normalized.actionType || existing.actionRef !== normalized.actionRef
+      if (existing.actionType !== normalized.actionType || existing.actionRef !== normalized.actionRef
         || existing.parameterDigest !== normalized.parameterDigest) {
-        throw new TaskContractConflictError('相同操作键对应的动作、参数或执行来源不一致')
+        throw new TaskContractConflictError('相同操作键对应的动作或参数不一致')
       }
-      return mapOperation(existing)
+      return { operation: mapOperation(existing), created: false }
     }
     return tx ? body(tx) : this.database.begin(body)
   }
@@ -210,7 +215,7 @@ export class PostgresTaskRepository implements TaskRepository {
          for update
       `
       if (!current) throw new Error(`外部操作不存在：${input.operationId}`)
-      if (current.status === input.status) {
+      if (current.status === input.status && input.status !== 'accepted') {
         if (current.errorCode !== (input.errorCode ?? null) || canonicalJson(current.receipt) !== canonicalJson(input.receipt)) {
           throw new TaskContractConflictError('外部操作终态已记录且回执不同')
         }
@@ -244,11 +249,14 @@ function normalizeTaskInput(input: CreateTaskInput) {
   if (!correlationKey || correlationKey.length > 200) throw new TypeError('Task correlationKey 长度必须为 1～200')
   const sourceRef = input.sourceRef?.trim() || null
   const sessionId = input.sessionId?.trim() || null
+  const requestDigest = input.requestDigest?.trim() || null
   if (input.sourceType === 'session' && !sessionId) throw new TypeError('session 来源的 Task 必须固定 sessionId')
+  if (requestDigest && !/^[a-f0-9]{64}$/.test(requestDigest)) throw new TypeError('Task requestDigest 必须是小写 sha256')
   return {
     ...input,
     sourceRef,
     correlationKey,
+    requestDigest,
     workspaceId: input.workspaceId?.trim() || null,
     sessionId,
   }

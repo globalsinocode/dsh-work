@@ -20,7 +20,7 @@ interface RunRow {
   id: string
   tenantId: string
   taskId: string
-  sessionId: string
+  sessionId: string | null
   requestedBy: string
   idempotencyKey: string
   status: RunState
@@ -61,7 +61,7 @@ interface EventRow {
 
 interface RecoveryRow extends AttemptRow {
   runTaskId: string
-  runSessionId: string
+  runSessionId: string | null
   runRequestedBy: string
   runIdempotencyKey: string
   runStatus: RunState
@@ -105,14 +105,22 @@ export class PostgresRunRepository implements RunRepository {
       // 角色的成员都能在他人发起的会话中创建 Run；授权由调用方
       // （RunOrchestrationService.requireSessionAccess / requireSession）
       // 在受理前完成，这里只校验会话存在且活跃。
-      await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId)
-      const [session] = await transaction<{ id: string; workspaceId: string | null }[]>`
-        select id, workspace_id as "workspaceId" from sessions
-         where tenant_id = ${input.tenantId} and id = ${input.sessionId}
-           and status = 'active'
-         for update
-      `
-      if (!session) throw new Error(`Session 不存在或不可访问：${input.sessionId}`)
+      if (input.sessionId) await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId)
+      else if (input.workspaceId) await lockActiveWorkspace(transaction, input.tenantId, input.workspaceId)
+      const [session] = input.sessionId
+        ? await transaction<{ id: string; workspaceId: string | null }[]>`
+            select id, workspace_id as "workspaceId" from sessions
+             where tenant_id = ${input.tenantId} and id = ${input.sessionId}
+               and status = 'active'
+             for update
+          `
+        : []
+      if (input.sessionId && !session) throw new Error(`Session 不存在或不可访问：${input.sessionId}`)
+      const workspaceId = session?.workspaceId ?? input.workspaceId ?? null
+      if (!input.sessionId && !workspaceId) throw new TypeError('无 Session Run 必须提供 workspaceId')
+      if (!input.sessionId && !input.taskId && (!input.taskSourceType || input.taskSourceType === 'session')) {
+        throw new TypeError('无 Session Run 必须提供非 Session 的 Task 来源')
+      }
 
       const tasks = new PostgresTaskRepository(this.database)
       const task = input.taskId
@@ -124,13 +132,14 @@ export class PostgresRunRepository implements RunRepository {
             sourceRef: input.taskSourceRef ?? input.sessionId,
             correlationKey: input.taskCorrelationKey
               ?? `${input.sessionId}:${input.requestedBy}:${input.idempotencyKey}`,
-            workspaceId: session.workspaceId,
+            requestDigest: input.taskRequestDigest,
+            workspaceId,
             sessionId: input.sessionId,
           }, transaction)
       if (!task) throw new Error(`Task 不存在：${input.taskId}`)
       if (task.requestedBy !== input.requestedBy
         || (task.sessionId !== null && task.sessionId !== input.sessionId)
-        || (task.workspaceId !== null && task.workspaceId !== session.workspaceId)) {
+        || (task.workspaceId !== null && task.workspaceId !== workspaceId)) {
         throw new TaskContractConflictError('Run 与 Task 的身份、Session 或 Workspace 归属不一致')
       }
       const [taskRun] = await transaction<RunRow[]>`
@@ -195,6 +204,16 @@ export class PostgresRunRepository implements RunRepository {
     return row ? mapRun(row) : null
   }
 
+  async getRunForTask(tenantId: string, taskId: string) {
+    const [row] = await this.database<RunRow[]>`
+      select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
+             idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
+             created_at as "createdAt", updated_at as "updatedAt"
+        from runs where tenant_id = ${tenantId} and task_id = ${taskId}
+    `
+    return row ? mapRun(row) : null
+  }
+
   async getAttempt(tenantId: string, attemptId: string) {
     const [row] = await this.database<AttemptRow[]>`
       select id, tenant_id as "tenantId", run_id as "runId", attempt_no as "attemptNo",
@@ -212,13 +231,15 @@ export class PostgresRunRepository implements RunRepository {
       // failed/cancelled run into a new queued attempt, so it is a real
       // "start a run" path and must not slip past an archive.
       await lockActiveWorkspaceForRun(transaction, input.tenantId, input.runId)
-      const [run] = await transaction<{ status: RunState; sessionId: string; workspaceId: string | null; requestedBy: string }[]>`
-        select r.status, r.session_id as "sessionId", s.workspace_id as "workspaceId",
+      const [run] = await transaction<{ status: RunState; sessionId: string | null; workspaceId: string | null; requestedBy: string }[]>`
+        select r.status, r.session_id as "sessionId", t.workspace_id as "workspaceId",
                r.requested_by as "requestedBy"
           from runs r
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-        where r.tenant_id = ${input.tenantId} and r.id = ${input.runId} and s.status = 'active'
-        for update of s, r
+          join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+          left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        where r.tenant_id = ${input.tenantId} and r.id = ${input.runId}
+          and (r.session_id is null or s.status = 'active')
+        for update of r
       `
       if (!run) throw new Error(`Run 不存在或所属 Session 已归档：${input.runId}`)
       if (!['queued', 'failed', 'cancelled'].includes(run.status)) {
@@ -344,8 +365,8 @@ export class PostgresRunRepository implements RunRepository {
       select w.status
         from run_attempts a
         join runs r on r.tenant_id = a.tenant_id and r.id = a.run_id
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+        join workspaces w on w.tenant_id = t.tenant_id and w.id = t.workspace_id
        where a.tenant_id = ${tenantIdValue} and a.id = ${attemptId}
     `
     return row?.status ?? null
@@ -774,9 +795,9 @@ export class PostgresRunRepository implements RunRepository {
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt"
         from runs r
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
        where r.tenant_id = ${tenantId}
-         and s.workspace_id = ${workspaceId}
+         and t.workspace_id = ${workspaceId}
          and r.requested_by = ${userId}
          and r.status in ('queued', 'running', 'cancel_requested')
        order by r.created_at asc
@@ -791,14 +812,17 @@ export class PostgresRunRepository implements RunRepository {
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt"
         from runs r
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+        left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
         join workspace_agent_members wam
-          on wam.tenant_id = s.tenant_id
-         and wam.workspace_id = s.workspace_id
+          on wam.tenant_id = t.tenant_id
+         and wam.workspace_id = t.workspace_id
          and wam.id = ${agentMemberId}
+        join agent_versions av on av.tenant_id = wam.tenant_id and av.agent_id = wam.agent_id
        where r.tenant_id = ${tenantId}
-         and s.workspace_id = ${workspaceId}
-         and s.agent_version_id = wam.agent_version_id
+         and t.workspace_id = ${workspaceId}
+         and av.id = coalesce(s.agent_version_id, ra.manifest->>'agent_version_id')
          and r.status in ('queued', 'running', 'cancel_requested')
        order by r.created_at asc
     `
@@ -811,11 +835,14 @@ export class PostgresRunRepository implements RunRepository {
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt",
-             s.agent_version_id as "agentVersionId"
+             coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') as "agentVersionId"
         from runs r
-        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+        left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
        where r.tenant_id = ${tenantId}
-         and s.workspace_id = ${workspaceId}
+         and t.workspace_id = ${workspaceId}
+         and coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') is not null
          and r.status in ('queued', 'running', 'cancel_requested')
        order by r.created_at asc
     `
@@ -863,6 +890,19 @@ async function lockActiveWorkspaceForSession(
   assertWorkspaceActive(workspace)
 }
 
+async function lockActiveWorkspace(
+  transaction: DatabaseTransaction,
+  tenantIdValue: string,
+  workspaceId: string,
+): Promise<void> {
+  const [workspace] = await transaction<{ status: string }[]>`
+    select status from workspaces
+     where tenant_id = ${tenantIdValue} and id = ${workspaceId}
+     for update
+  `
+  assertWorkspaceActive(workspace)
+}
+
 async function lockActiveWorkspaceForRun(
   transaction: DatabaseTransaction,
   tenantIdValue: string,
@@ -871,8 +911,8 @@ async function lockActiveWorkspaceForRun(
   const [workspace] = await transaction<{ status: string }[]>`
     select w.status
       from runs r
-      join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-      join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+      join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+      join workspaces w on w.tenant_id = t.tenant_id and w.id = t.workspace_id
      where r.tenant_id = ${tenantIdValue} and r.id = ${runId}
      for update of w
   `
@@ -889,8 +929,8 @@ async function lockActiveWorkspaceForAttempt(
     select w.status
       from run_attempts a
       join runs r on r.tenant_id = a.tenant_id and r.id = a.run_id
-      join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
-      join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+      join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+      join workspaces w on w.tenant_id = t.tenant_id and w.id = t.workspace_id
      where a.tenant_id = ${tenantIdValue} and a.id = ${attemptId}
      for update of w
   `

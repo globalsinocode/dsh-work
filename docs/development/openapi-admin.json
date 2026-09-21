@@ -1490,6 +1490,28 @@
           }
         ]
       }
+    },
+    "/task-executions/{taskId}/operations/{operationId}/resolve": {
+      "post": {
+        "operationId": "resolveTaskOperation",
+        "summary": "核对外部系统后收敛 Task Operation 状态",
+        "description": "仅平台管理员可用。用于把 accepted 或 unknown 操作收敛为 completed/failed；receipt 必须来自权威外部系统核对结果。",
+        "parameters": [
+          { "$ref": "#/components/parameters/TaskId" },
+          { "$ref": "#/components/parameters/OperationId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveTaskOperationInput" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -1533,7 +1555,9 @@
         "schema": {
           "type": "string"
         }
-      }
+      },
+      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } },
+      "OperationId": { "name": "operationId", "in": "path", "required": true, "schema": { "type": "string" } }
     },
     "requestBodies": {
       "Agent": {
@@ -2283,6 +2307,21 @@
             }
           }
         }
+      },
+      "ResolveTaskOperationInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "receipt"],
+        "properties": {
+          "status": { "type": "string", "enum": ["completed", "failed"] },
+          "receipt": { "type": "object", "additionalProperties": true },
+          "errorCode": { "type": "string", "minLength": 1, "description": "status=failed 时必填；completed 时禁止。" }
+        },
+        "allOf": [{
+          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+          "then": { "required": ["errorCode"] },
+          "else": { "not": { "required": ["errorCode"] } }
+        }]
       }
     }
   },

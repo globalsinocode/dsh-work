@@ -8,7 +8,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 | --- | --- | --- |
 | Runtime 启动、取消、事件、健康与关闭 | [AgentRuntimePort](../../server/src/modules/runtime/runtime-types.ts) | 一个 Attempt 一个隔离 Worker；DSH 版本由 Runtime Lock 决定 |
 | Run、Attempt、事件与重启恢复 | [RunRepository](../../server/src/modules/run/run-repository.ts) | 租户隔离、幂等、终态不可回退；事件先落库后发送 |
-| Task、触发来源与外部操作回执 | [TaskRepository](../../server/src/modules/task/task-repository.ts) | Task 关联键和操作键租户内幂等；参数摘要固定；`unknown` 必须查询实际效果后才能收敛为完成或失败；不以 Run 成功代替外部操作完成 |
+| Task、触发来源与外部操作回执 | [TaskRepository](../../server/src/modules/task/task-repository.ts) | Task 关联键和操作键租户内幂等；API/event 请求摘要与外部动作参数摘要固定；`unknown` 必须查询实际效果后才能收敛为完成或失败；不以 Run 成功代替外部操作完成 |
 | 模型 Provider、路由与凭据引用 | [ModelGovernanceRepository](../../server/src/modules/model/model-governance-repository.ts) | Attempt 固定路由快照；Agent 不单独配置模型策略 |
 | 凭据存储 | [SecretStorePort](../../server/src/modules/model/secret-store-port.ts) | 当前 DSH 适配器不读取或覆盖实际密钥，引用存在不等于凭据已验证 |
 | 身份与本地授权上下文 | [RequestIdentity](../../server/src/modules/identity/types.ts) | 用户、角色、数据范围和操作人只从服务端产生 |
@@ -28,9 +28,9 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 Tool Version 持久化 `outputValidation`、`retryPolicy`、`concurrencyPolicy` 和 `completionSemantics`。平台工具由契约目录编译严格 JSON Schema，并在 Unix socket 桥两侧执行校验；DSH 包装器对非 2xx 响应抛出错误，不把错误正文当成成功结果。由于 DSH ToolRuntime 对普通 `Error` 只保留 `message`，包装器同时把 `code/retryable/effect_state` 以 `DSH_WORK_TOOL_ERROR` 前缀投影到模型可见消息，并保留同名属性供直接调用方使用。DSH 原生文件/任务工具的输入由 DSH 与平台路径策略约束，但结构化输出尚未穿过平台验证边界，目录明确发布 `outputValidation=unavailable` 及不可验证标记 Schema。提升验证级别前须接通实际输出校验，不能只修改目录字段。
 
-平台桥错误外层为 `error.code/message/retryable/effect_state`。处理器在任何写入前发现的参数或业务前置条件失败必须抛出有类型错误，才能保留可纠正消息和 `not_started`；未标记的写入处理器异常保守记为 `TOOL_RESULT_UNKNOWN`。只读安全工具超时可标记重试；写入超时、取消或执行后冲突按契约表达未知效果。`serialized` 表示同一 Attempt 内同名工具不允许重叠执行，冲突在第二个处理器启动前返回。当前完成语义均为 `completed`；未来异步外部操作使用 `accepted` 时，还须提供业务操作标识和状态查询接口。
+平台桥错误外层为 `error.code/message/retryable/effect_state`。处理器在任何写入前发现的参数或业务前置条件失败必须抛出有类型错误，才能保留可纠正消息和 `not_started`；未标记的写入处理器异常保守记为 `TOOL_RESULT_UNKNOWN`。只读安全工具超时可标记重试；写入超时、取消或执行后冲突按契约表达未知效果。`serialized` 表示同一 Attempt 内同名工具不允许重叠执行，冲突在第二个处理器启动前返回。写入平台工具按 Task 自动登记 Operation：`completionSemantics=completed` 落完成回执，`accepted` 保留异步受理状态，超时或执行后无法确认落 `unknown`；重复动作不会再次进入处理器。
 
-PF-01 的 Task/Operation 仓储提供外部动作的持久化事实：`operation_key` 防止同一 Task 重复受理，`parameter_digest` 防止同键换参，`accepted/completed/failed/unknown` 区分受理、完成、失败和效果未知。`unknown` 不是失败或可安全重试的同义词，只能由外部状态核对转为 `completed` 或 `failed`。当前该端口已接入新 Run 的 Task 归属；面向无 Session 触发的公开 API、执行授权、Artifact 归属和平台工具自动登记仍属于 PF-01 后续接线。
+PF-01 的 Task/Operation 仓储提供外部动作的持久化事实：`operation_key` 防止同一 Task 重复受理，`parameter_digest` 防止同键换参，`accepted/completed/failed/unknown` 区分受理、完成、失败和效果未知。`unknown` 不是失败或可安全重试的同义词，只能由平台管理员依据权威外部状态核对转为 `completed` 或 `failed`。`POST /task-executions` 受理无 Session 的 API/event Task，查询、取消和重试接口沿用现有 Run/Attempt/Runtime Adapter/DSH；Runtime Manifest 固定 `task_id`，Artifact 可归属 Task 并按当前 Workspace 与 Task 所有人重新鉴权。
 
 员工与管理端 Agent 均通过同一 Run/Attempt、AgentRuntimePort 和 DSH 适配链路执行，不能通过新增 API、Gateway 或业务服务另建直接调用模型的 Agent Loop。职责与评审要求见 [架构总览：Agent 执行引擎统一](overview.md)。
 

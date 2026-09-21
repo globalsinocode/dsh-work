@@ -2388,6 +2388,135 @@
           }
         }
       }
+    },
+    "/task-executions": {
+      "post": {
+        "operationId": "createTaskExecution",
+        "summary": "创建无 Session 的受控 Task 执行",
+        "description": "使用 correlationKey 或 Idempotency-Key 幂等受理 API/event Task，并通过既有 Run/Attempt、Runtime Adapter 与 DSH 链路执行。相同来源类型与关联键不会创建第二个 Task 或重复执行。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "未在请求体提供 correlationKey 时必填。",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskExecutionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/task-executions/{taskId}": {
+      "get": {
+        "operationId": "getTaskExecution",
+        "summary": "查询 Task、Run、结果、Artifact、Operation 与事件",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/task-executions/{taskId}/operations": {
+      "get": {
+        "operationId": "listTaskOperations",
+        "summary": "查询外部动作的 accepted/completed/failed/unknown 回执",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/task-executions/{taskId}/cancel": {
+      "post": {
+        "operationId": "cancelTaskExecution",
+        "summary": "取消无 Session Task 的当前执行",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/task-executions/{taskId}/retry": {
+      "post": {
+        "operationId": "retryTaskExecution",
+        "summary": "以新 Attempt 重试无 Session Task",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2432,6 +2561,14 @@
           "type": "string"
         },
         "description": "自动任务 ID"
+      },
+      "TaskId": {
+        "name": "taskId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "responses": {
@@ -3686,6 +3823,49 @@
               null
             ],
             "description": "关联 Run 的业务结果核验状态（task-result/v1 outcome 投影）；未受理或投影缺失为 null。"
+          }
+        }
+      },
+      "CreateTaskExecutionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspaceId",
+          "agentVersionId",
+          "prompt"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentVersionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "api",
+              "event"
+            ],
+            "default": "api"
+          },
+          "sourceRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlationKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "可改由 Idempotency-Key 请求头提供。"
           }
         }
       }

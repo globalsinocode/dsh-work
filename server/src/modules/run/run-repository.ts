@@ -32,6 +32,7 @@ export interface AppendSystemEventInput {
 export interface RunRepository {
   createRun(input: CreateRunInput, tx?: DatabaseTransaction): Promise<RunRecord>
   getRun(tenantId: string, runId: string): Promise<RunRecord | null>
+  getRunForTask(tenantId: string, taskId: string): Promise<RunRecord | null>
   getAttempt(tenantId: string, attemptId: string): Promise<RunAttemptRecord | null>
   createAttempt(input: CreateAttemptInput): Promise<RunAttemptRecord>
   claimAttempt(

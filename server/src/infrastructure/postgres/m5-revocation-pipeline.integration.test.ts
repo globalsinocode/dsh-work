@@ -1467,6 +1467,7 @@ async function createRunWithAttempt(input: {
   const manifest = {
     manifest_version: '1.0',
     run_id: input.id,
+    task_id: `task-${input.id}`,
     attempt_id: attemptId,
     session_id: input.sessionId,
     workspace_id: input.workspaceId,

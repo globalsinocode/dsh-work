@@ -14,7 +14,7 @@ const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructi
 const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
 
 function assertId(name: string, value: string): void {
-  if (!ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
+  if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
 }
 
 export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeManifest {
@@ -26,7 +26,8 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   }
   assertId('run_id', input.run_id)
   assertId('attempt_id', input.attempt_id)
-  assertId('session_id', input.session_id)
+  assertId('task_id', input.task_id)
+  if (input.session_id !== null) assertId('session_id', input.session_id)
   assertId('user_context.user_id', input.user_context.user_id)
   assertId('user_context.tenant_id', input.user_context.tenant_id)
 

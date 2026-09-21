@@ -232,6 +232,7 @@ test('team member removed before the artifact transaction cannot publish a resul
     manifest_version: '1.0' as const,
     run_id: runId,
     attempt_id: attemptId,
+    task_id: `task-${runId}`,
     session_id: sessionId,
     workspace_id: workspaceId,
     agent_version_id: 'agent-version-dsh-work-assistant-1',

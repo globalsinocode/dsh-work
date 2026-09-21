@@ -242,7 +242,7 @@ export class AdminAssistantService {
         ${source ? this.database.json(JSON.parse(JSON.stringify(source))) : null}, ${digest}
       ) on conflict (tenant_id, run_id) do nothing
     `
-    const proposal = (await this.readProposals(manifest.session_id)).find(item => item.runId === manifest.run_id)
+    const proposal = (await this.readProposals(manifest.session_id!)).find(item => item.runId === manifest.run_id)
     if (!proposal) throw new Error('管理任务提案保存失败')
     return toTaskProposal(proposal)
   }
@@ -328,7 +328,7 @@ export class AdminAssistantService {
         ) on conflict (tenant_id, run_id) do nothing
       `
     })
-    const action = (await this.readActions(manifest.session_id)).find(item => item.runId === manifest.run_id)
+    const action = (await this.readActions(manifest.session_id!)).find(item => item.runId === manifest.run_id)
     if (!action || action.planSha256 !== digest) throw requestInvalid('本次 Run 已有不同计划，请先取消后重新生成')
     return toActionPlan(action)
   }

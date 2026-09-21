@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
+import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from '../../http/workbench/task-execution-routes.ts'
+import { Router } from '../../http/router.ts'
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
@@ -23,6 +27,8 @@ import type {
 } from '../../modules/runtime/runtime-types.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
+import { PostgresTaskRepository, TaskContractConflictError, taskOperationParameterDigest } from '../../modules/task/postgres-task-repository.ts'
+import { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
@@ -37,6 +43,10 @@ let conversations: PostgresConversationRepository
 let content: PostgresContentService
 let orchestration: RunOrchestrationService
 let operations: PostgresOperationsService
+let tasks: PostgresTaskRepository
+let taskQueries: PostgresTaskQueryService
+let apiServer: Server
+let apiBaseUrl = ''
 
 before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
@@ -47,6 +57,9 @@ before(async () => {
   conversations = new PostgresConversationRepository(database)
   content = new PostgresContentService(database, `/tmp/dsh-work-m3-test-${randomUUID()}`, new PostgresAuthorizationService(database))
   operations = new PostgresOperationsService(database)
+  tasks = new PostgresTaskRepository(database)
+  taskQueries = new PostgresTaskQueryService(database, tasks, runs)
+  const authorization = new PostgresAuthorizationService(database)
   orchestration = new RunOrchestrationService(
     runs,
     conversations,
@@ -54,10 +67,33 @@ before(async () => {
     runtime,
     content,
     operations,
+    undefined,
+    undefined,
+    authorization,
+    { tasks },
   )
+  const router = new Router({ authenticateApi: async (request, audience) => {
+    const identity = await prototypeApiAuthenticator(request, audience)
+    const header = request.headers['x-test-user-id']
+    const userId = Array.isArray(header) ? header[0] : header
+    return audience === 'workbench' && userId
+      ? { ...identity, userId, subject: `test:${userId}`, profile: { ...identity.profile, id: userId, name: userId } }
+      : identity
+  } })
+  registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)
+  registerTaskOperationAdminRoutes(router, tasks, authorization)
+  apiServer = createServer((request, response) => void router.handle(request, response))
+  await new Promise<void>((resolve, reject) => {
+    apiServer.once('error', reject)
+    apiServer.listen(0, '127.0.0.1', resolve)
+  })
+  const address = apiServer.address()
+  if (!address || typeof address === 'string') throw new Error('PF-01 测试 HTTP Server 未获得端口')
+  apiBaseUrl = `http://127.0.0.1:${address.port}`
 })
 
 after(async () => {
+  if (apiServer?.listening) await new Promise<void>((resolve, reject) => apiServer.close(error => error ? reject(error) : resolve()))
   await orchestration.close()
   await throwaway.dispose()
 })
@@ -106,6 +142,129 @@ test('real PostgreSQL orchestration persists the assistant result without publis
   assert.equal(usageRecord.employeeId, 'U00001')
   assert.equal(usageRecord.employeeName, '林岚')
   assert.equal(usageRecord.department, '供应链中心')
+})
+
+test('PF-01 API Task executes through the governed Runtime without creating a Session', async () => {
+  const correlationKey = `api-task-${randomUUID()}`
+  const created = await orchestration.startTaskExecution({
+    userId: 'U00001',
+    workspaceId: 'ws-personal-U00001',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    prompt: '执行无会话 API Task',
+    correlationKey,
+    sourceType: 'api',
+  })
+  assert.ok(created)
+  assert.equal(created.sessionId, null)
+  const repeated = await orchestration.startTaskExecution({
+    userId: 'U00001',
+    workspaceId: 'ws-personal-U00001',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    prompt: '执行无会话 API Task',
+    correlationKey,
+    sourceType: 'api',
+  })
+  assert.equal(repeated?.id, created.id)
+  await assert.rejects(orchestration.startTaskExecution({
+    userId: 'U00001',
+    workspaceId: 'ws-personal-U00001',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    prompt: '相同关联键不能换请求内容',
+    correlationKey,
+    sourceType: 'api',
+  }), TaskContractConflictError)
+  await waitForRun(created.id, 'succeeded')
+  const execution = await taskQueries.get(created.taskId)
+  assert.equal(execution?.task.sessionId, null)
+  assert.equal(execution?.run?.status, 'succeeded')
+  assert.equal(execution?.result.answer, 'M3 真实回答')
+})
+
+test('PF-01 HTTP contract creates and queries a Task and lets an administrator reconcile an Operation', async () => {
+  const correlationKey = `api-route-${randomUUID()}`
+  const createdResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': correlationKey },
+    body: JSON.stringify({
+      workspaceId: 'ws-personal-U00001',
+      agentVersionId: 'agent-version-dsh-work-assistant-1',
+      prompt: '通过公开 API 执行 Task',
+      sourceType: 'api',
+    }),
+  })
+  assert.equal(createdResponse.status, 202)
+  const createdEnvelope = await createdResponse.json() as { data: { task: { id: string }; run: { id: string } } }
+  await waitForRun(createdEnvelope.data.run.id, 'succeeded')
+
+  const readResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions/${createdEnvelope.data.task.id}`)
+  assert.equal(readResponse.status, 200)
+  const readEnvelope = await readResponse.json() as { data: { task: { correlationKey: string }; result: { answer: string } } }
+  assert.equal(readEnvelope.data.task.correlationKey, correlationKey)
+  assert.equal(readEnvelope.data.result.answer, 'M3 真实回答')
+  const deniedResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions/${createdEnvelope.data.task.id}`, {
+    headers: { 'x-test-user-id': 'U99999' },
+  })
+  assert.equal(deniedResponse.status, 403)
+
+  const operation = await tasks.registerOperation({
+    tenantId: 'tenant-dsh-work',
+    taskId: createdEnvelope.data.task.id,
+    runId: createdEnvelope.data.run.id,
+    operationKey: `api-route-operation-${randomUUID()}`,
+    actionType: 'external-write',
+    actionRef: 'test.external-write@1.0.0',
+    parameterDigest: taskOperationParameterDigest({ value: 'once' }),
+  })
+  await tasks.resolveOperation({
+    tenantId: 'tenant-dsh-work', operationId: operation.id, status: 'unknown', receipt: { reason: 'timeout_after_send' },
+  })
+  const resolveResponse = await fetch(
+    `${apiBaseUrl}/api/admin/v1/task-executions/${createdEnvelope.data.task.id}/operations/${operation.id}/resolve`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed', receipt: { externalStatus: 'completed' } }) },
+  )
+  assert.equal(resolveResponse.status, 200)
+  assert.equal((await tasks.getOperation('tenant-dsh-work', operation.id))?.status, 'completed')
+})
+
+test('PF-01 session-neutral Artifact is owned by Task and readable from the Task result', async () => {
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-task-artifact-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  await writeFile(join(workspaceDirectory, 'output', 'API任务结果.md'), '# API Task result\n')
+  let release: () => void = () => undefined
+  runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+  try {
+    const created = await orchestration.startTaskExecution({
+      userId: 'U00001',
+      workspaceId: 'ws-personal-U00001',
+      agentVersionId: 'agent-version-dsh-work-assistant-1',
+      prompt: '生成无会话成果',
+      correlationKey: `api-artifact-${randomUUID()}`,
+      sourceType: 'api',
+    })
+    assert.ok(created)
+    await waitForRun(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
+    assert.equal(manifest.session_id, null)
+    await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    release()
+    await waitForRun(created.id, 'succeeded')
+    const execution = await taskQueries.get(created.taskId)
+    assert.equal(execution?.result.artifacts.length, 1)
+    assert.equal(execution?.result.artifacts[0]?.name, 'API任务结果.md')
+    const artifact = execution!.result.artifacts[0]!
+    const fileId = await content.artifactFileId(artifact.id, artifact.version, 'U00001')
+    const downloaded = await content.readFile(fileId, 'U00001')
+    assert.equal(downloaded.bytes.toString('utf8'), '# API Task result\n')
+    await assert.rejects(content.artifactFileId(artifact.id, artifact.version, 'U99999'), /不存在或不可访问/)
+    const [owner] = await database<{ taskId: string; sessionId: string | null }[]>`
+      select task_id as "taskId", session_id as "sessionId" from artifacts
+       where tenant_id = 'tenant-dsh-work' and task_id = ${created.taskId}
+    `
+    assert.deepEqual(owner, { taskId: created.taskId, sessionId: null })
+  } finally {
+    release()
+  }
 })
 
 test('validated Runtime output is published once as a downloadable Artifact', async () => {
@@ -636,6 +795,16 @@ async function waitForTask(runId: string, expected: 'running' | 'succeeded' | 'c
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   throw new Error(`等待 Run 状态超时：${expected}`)
+}
+
+async function waitForRun(runId: string, expected: 'running' | 'succeeded' | 'cancelled' | 'failed') {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const run = await runs.getRun('tenant-dsh-work', runId)
+    if (run?.status === expected) return run
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error(`等待无 Session Run 状态超时：${expected}`)
 }
 
 function beginSessionArchive(sessionId: string) {

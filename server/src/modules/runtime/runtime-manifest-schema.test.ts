@@ -43,6 +43,7 @@ function baseManifest(): RuntimeManifest {
     manifest_version: '1.0',
     run_id: 'run-schema-check',
     attempt_id: 'attempt-1',
+    task_id: 'task-schema-check',
     session_id: 'session-schema-check',
     workspace_id: 'ws-supply-analysis',
     agent_version_id: 'agent-supply-v1',
@@ -119,6 +120,17 @@ function assertBothAccept(manifest: RuntimeManifest, label: string) {
 }
 
 describe('Runtime Manifest Schema / compiler boundary', () => {
+  it('accepts a Task manifest without a product Session and still requires task_id', () => {
+    const manifest = baseManifest()
+    manifest.session_id = null
+    assertBothAccept(manifest, 'session-neutral Task')
+    const missingTask: Partial<RuntimeManifest> = structuredClone(manifest)
+    delete missingTask.task_id
+    const { valid } = schemaErrors(missingTask as RuntimeManifest)
+    assert.equal(valid, false)
+    assert.throws(() => compileRuntimeManifest(missingTask as RuntimeManifest), /task_id/)
+  })
+
   it('accepts inline Skills with and without content-bearing files at both boundaries', () => {
     assertBothAccept(applySkill(() => undefined), 'inline Skill')
     const content = 'reference-content'
