@@ -7,7 +7,7 @@
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
-Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进；代码支持程度及未实现项见[差异清单](agent-design-gap-analysis.md)。本文保留系统职责与执行链的架构边界。
+Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进，并用[生命周期实现映射](agent-lifecycle-implementation-map.md)定位平台对象和门禁；代码支持程度及未实现项见[差异清单](agent-design-gap-analysis.md)。本文保留系统职责与执行链的架构边界。
 
 ## 1. 产品定位与范围
 
@@ -287,6 +287,8 @@ flowchart LR
 - [文档导航](../index/README.md)
 - [Agent 设计规范](agent-design-standard.md)
 - [通用 Agent 全生命周期模板](agent-lifecycle-template.md)
+- [Agent 全生命周期实现映射](agent-lifecycle-implementation-map.md)
+- [通用文本整理助手参考记录](reference-agent-lifecycle-record.md)
 - [Agent 规范与当前实现差异清单](agent-design-gap-analysis.md)
 - [开发与测试](development.md)
 - [数据模型](../design/data-model.md)

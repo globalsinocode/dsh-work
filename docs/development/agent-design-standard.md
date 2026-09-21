@@ -21,7 +21,7 @@ Agent 定义与执行进程分离；声明不授予权限；使用业务状态�
 
 [架构总览](overview.md)维护系统边界；本文维护 Agent 的通用规则；[内部端口与契约](internal-ports.md)、源码类型、Schema 和迁移维护接口事实；阶段交付与验收按[差异清单](agent-design-gap-analysis.md)及各专项实施文档推进。目标字段不能直接当作当前 API 使用。
 
-新建或重大调整 Agent 时，使用[通用 Agent 全生命周期模板](agent-lifecycle-template.md)形成工作定义、扩展决策、发布与验收记录。模板不改变本规范的约束，也不把未实现的扩展变成已支持能力。
+新建或重大调整 Agent 时，使用[通用 Agent 全生命周期模板](agent-lifecycle-template.md)形成工作定义、扩展决策、发布与验收记录，并通过[生命周期实现映射](agent-lifecycle-implementation-map.md)核对每个阶段的现行承载对象和门禁。[通用文本整理助手参考记录](reference-agent-lifecycle-record.md)只示范如何填写模板及验证严格包契约，不代表生产发布或 P2。模板不改变本规范的约束，也不把未实现的扩展变成已支持能力。
 
 ## 2. 对象语义与统一契约决策
 

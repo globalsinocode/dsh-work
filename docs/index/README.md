@@ -9,6 +9,7 @@
 | 启动开发、选择测试、准备验收 | [开发与测试](../development/development.md) |
 | 理解业务、权限和系统边界 | [架构总览](../development/overview.md) |
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
+| 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md)、[实现映射](../development/agent-lifecycle-implementation-map.md) |
 | 核对十二条规范的代码证据、测试覆盖和实施缺口 | [Agent 规范与当前实现差异清单](../development/agent-design-gap-analysis.md) |
 | 逐步优化执行观测、工具适配、上下文延续、恢复与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
 | 实施轻量自动任务及核对 AC-20～24 验收 | [AG-03 轻量自动任务实施方案](../design/automation-implementation-plan.md) |
@@ -30,6 +31,7 @@
 - [管理端 OpenAPI](../development/openapi-admin.json)
 - [Runtime Manifest Schema](../development/runtime-manifest.schema.json)
 - [Run Event Schema](../development/run-event.schema.json)
+- [通用参考 Agent 包](../development/fixtures/reference-text-agent/agent.yaml)
 - [合成测试数据](../development/fixtures/mvp-fixtures.json)
 
 维护规则：

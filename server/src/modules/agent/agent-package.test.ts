@@ -17,6 +17,7 @@ import { AGENT_PACKAGE_SCHEMA } from './agent-package.schema.ts'
  */
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
+const referencePackageDirectory = resolve(moduleDirectory, '../../../../docs/development/fixtures/reference-text-agent')
 
 const PROMPT = '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。'
 
@@ -92,6 +93,34 @@ cases:
 test('Schema 文档与代码常量保持同步', () => {
   const published = JSON.parse(readFileSync(resolve(moduleDirectory, '../../../../docs/development/agent-package.schema.json'), 'utf8'))
   assert.deepEqual(published, JSON.parse(JSON.stringify(AGENT_PACKAGE_SCHEMA)))
+})
+
+test('仓库中的通用参考 Agent 包符合当前严格契约', () => {
+  const paths = ['agent.yaml', 'prompts/system.md', 'evals/cases.yaml', 'checksums.json']
+  const files = Object.fromEntries(paths.map(path => [path, readFileSync(resolve(referencePackageDirectory, path))]))
+  const parsed = parseAgentPackage(zipSync(files, { level: 0 }))
+
+  assert.equal(parsed.checksumsVerified, true)
+  assert.deepEqual(parsed.warnings, [])
+  assert.equal(parsed.spec.metadata.id, 'reference-text-agent')
+  assert.deepEqual(parsed.spec.capabilities, { skills: [], tools: [] })
+  assert.deepEqual(parsed.spec.model.requirements, [])
+  assert.deepEqual(parsed.spec.limits, { timeoutSeconds: 120, maxToolCalls: 1, maxOutputBytes: 32768 })
+  assert.deepEqual(parsed.cases.map(item => item.kind), [
+    'success',
+    'invalid_input',
+    'permission_denied',
+    'prompt_injection',
+    'capability_failure',
+  ])
+  assert.ok(parsed.cases.every(item => item.manualReview.required && item.manualReview.rubric.length > 0))
+  for (const item of parsed.cases) {
+    assert.deepEqual(item.automatedAssertions, [
+      'run_attempt_recorded',
+      'execution_succeeded',
+      'output_non_empty',
+    ])
+  }
 })
 
 test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆盖时无警告', () => {

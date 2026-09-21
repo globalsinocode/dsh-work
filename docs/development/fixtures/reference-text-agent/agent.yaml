@@ -1,0 +1,28 @@
+apiVersion: dsh-work.ai/v1
+kind: AgentPackage
+metadata:
+  id: reference-text-agent
+  name: 通用文本整理助手
+  version: 0.1.0
+  description: 将用户直接提供的文本整理为可核对的摘要、要点和待确认信息。
+spec:
+  instructions: prompts/system.md
+  input:
+    type: text
+  output:
+    type: text
+  context:
+    conversationHistory: recent
+  catalog:
+    welcomeMessage: 请提供要整理的文本和期望的输出重点。
+    examplePrompts:
+      - 将下面的文本整理为摘要、要点和待确认事项
+      - 检查这段说明中哪些信息仍然缺失
+  limits:
+    timeoutSeconds: 120
+    maxToolCalls: 1
+    maxOutputBytes: 32768
+  evaluation:
+    cases: evals/cases.yaml
+  model:
+    requirements: []
