@@ -6,7 +6,7 @@
 **阶段依赖：** 使用 AG-01 已发布、已有批准工具的 Agent；不等待 AG-02 新工具或 AG-04 经验能力。<br>
 **执行边界：** [内部端口与契约](../development/internal-ports.md)、[架构总览](../development/overview.md)、[Runtime 执行架构渐进优化方案](runtime-execution-optimization-plan.md)。
 
-通用规则见 [Agent 设计规范](../development/agent-design-standard.md)。其中持久化等待、累计硬预算和委派属于后续要求或可选扩展，不改变本方案已经确认的轻量行为。下文以要求和设计说明为主，不作为逐项实现完成记录。
+通用规则见 [Agent 设计规范](../development/agent-design-standard.md)。持久化等待和委派属于后续要求或可选扩展；PF-02 已为自动任务复用的 Task 增加可执行维度累计预算，不改变本方案已经确认的轻量调度行为。下文以要求和设计说明为主，完成状态以[差异清单](../development/agent-design-gap-analysis.md)为准。
 
 ## 1. 产品定位与首版范围
 
@@ -95,7 +95,7 @@ automation_executions
 - `execution_config` 在受理时冻结版本、身份、Workspace、授权上限、模板、固定文件版本及查询窗口。恢复读取关联与已有 Attempt，不读取可变任务内容重建输入。输入引用需保留且重新鉴权。
 - 执行状态不存第二份 `running/succeeded/failed`：通过 run_id 读取 Run。`admission_status` 仅说明触发受理、跳过或准备中断；无 Run 时不得假装执行成功。
 - 每任务判重叠在锁定任务行后查询已受理且未终结的 Run，包括无 Attempt 的 queued Run 及 cancel_requested；任何手动和定时受理都走此锁。重叠直接写终态 skipped，不依赖活动状态部分唯一索引制造冲突。
-- 不新增 `delivery_status`、审批快照比较状态机、强制 `trial_evidence` 门禁或跨阶段 claim token。`input_template.budget` 允许以可选字段携带 `timeoutSeconds`/`maxToolCalls`/`maxOutputBytes`，受理时冻结并钳制进 Manifest limits（不得超过 Agent 与运行时政策上限），不是独立计费或硬预算承诺。审批按当前实际能力在准入时判定，不允许通过删除快照放松策略。
+- 不新增 `delivery_status`、审批快照比较状态机、强制 `trial_evidence` 门禁或跨阶段 claim token。`input_template.budget` 允许以可选字段携带 `timeoutSeconds`/`maxToolCalls`/`maxOutputBytes`，受理时既冻结为该次 Task 的累计硬上限，也钳制进 Manifest limits（不得超过 Agent 与运行时政策上限）；它不是金额计费或 Token 硬预算。审批按当前实际能力在准入时判定，不允许通过删除快照放松策略。
 - config revision 是经规范化的执行配置摘要，日历单独修订。上限变更须展示并确认，不因暂停后重启或重新获权而悄悄扩大。
 
 ## 5. 身份、权限与能力准入
@@ -153,7 +153,7 @@ Run 模块提供可组合的自动任务受理入口，conversations.createSessi
 
 ## 7. 默认限制与交互容量
 
-- 不开放任务级 token/磁盘预算表单或独立累计计费控制；`input_template.budget` 三个可选上限仅作为 Manifest limits 的收紧钳制，超出平台/执行器默认限制的部分不生效。准入只开放限制机制可执行的工具。
+- 不开放任务级 Token、金额或磁盘预算表单；`input_template.budget` 三个可选上限进入 PF-02 Task 预算账户，并同时收紧 Manifest limits。超出平台/执行器默认限制的部分不扩大单次能力。准入只开放限制机制可执行的工具。
 - 现有 Manifest limits 为 timeout_seconds、max_output_bytes、max_tool_calls；输出字节上限不是模型 token 或磁盘硬预算。文件/沙箱沿用各自大小、配额和资源限制，用量仍按现有链路记录；未实现的硬预算不得展示为已强制执行。
 - 模块配置每用户/全局 pending 上限及自动任务并发限额；超 pending 上限明确跳过或拒绝并留证，不无限排队。
 - 自动任务并发上限不得占用全部 Runtime 容量。使用总容量与交互保留量计算有效上限，计数与领取在现有数据库事务中完成；尚未释放的取消中 Worker 计入占用。总容量不足以同时保留交互余量时，自动任务显示容量不足，不静默吞掉交互容量。

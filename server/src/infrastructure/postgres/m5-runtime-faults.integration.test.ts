@@ -170,6 +170,7 @@ function runtimeManifest(run: RunRecord, attemptId: string, message: string): Ru
     knowledge_context: [],
     model_route_id: 'dsh-default',
     input: { message, file_mounts: [] },
+    budget: { scope_task_id: run.taskId, cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 30000, tool_calls: 10, output_bytes: 64 * 1024 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
     limits: { timeout_seconds: 30, max_output_bytes: 64 * 1024, max_tool_calls: 10 },
     created_at: new Date().toISOString(),
     trace_id: `trace-${run.id}-${attemptId}`,

@@ -62,11 +62,14 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('PF-01 OpenAPI publishes session-neutral Task execution and operation reconciliation', async () => {
+test('PF-01/PF-02 OpenAPI publishes Task execution, cumulative budgets, and operation reconciliation', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
-  )) as { paths: Record<string, { get?: { operationId?: string }; post?: { operationId?: string } }> }
+  )) as {
+    paths: Record<string, { get?: { operationId?: string; summary?: string }; post?: { operationId?: string; description?: string } }>
+    components: { schemas: Record<string, { properties?: Record<string, unknown>; description?: string }> }
+  }
   const admin = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-admin.json', import.meta.url),
     'utf8',
@@ -77,6 +80,12 @@ test('PF-01 OpenAPI publishes session-neutral Task execution and operation recon
   assert.equal(workbench.paths['/task-executions/{taskId}/operations']?.get?.operationId, 'listTaskOperations')
   assert.equal(workbench.paths['/task-executions/{taskId}/cancel']?.post?.operationId, 'cancelTaskExecution')
   assert.equal(workbench.paths['/task-executions/{taskId}/retry']?.post?.operationId, 'retryTaskExecution')
+  assert.match(workbench.paths['/task-executions']?.post?.description ?? '', /Token 与成本硬预算当前明确拒绝/)
+  assert.match(workbench.paths['/task-executions/{taskId}']?.get?.summary ?? '', /累计预算/)
+  assert.deepEqual(Object.keys(workbench.components.schemas['TaskCumulativeBudgetInput']?.properties ?? {}), [
+    'maxDurationMs', 'maxToolCalls', 'maxOutputBytes', 'maxTokens', 'maxCostAmount', 'costCurrency',
+  ])
+  assert.match(workbench.components.schemas['TaskCumulativeBudgetInput']?.description ?? '', /不支持的硬预算会明确失败/)
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
 })
 

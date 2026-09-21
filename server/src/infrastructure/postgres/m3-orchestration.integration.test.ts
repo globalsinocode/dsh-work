@@ -180,6 +180,120 @@ test('PF-01 API Task executes through the governed Runtime without creating a Se
   assert.equal(execution?.result.answer, 'M3 真实回答')
 })
 
+test('PF-02 keeps the PF-01 request digest for budgetless API idempotency replays', async () => {
+  const correlationKey = `api-legacy-digest-${randomUUID()}`
+  const prompt = '重放升级前已经受理的 API Task'
+  const agentVersionId = 'agent-version-dsh-work-assistant-1'
+  const historical = await tasks.createTask({
+    tenantId: 'tenant-dsh-work',
+    requestedBy: 'U00001',
+    sourceType: 'api',
+    correlationKey,
+    workspaceId: 'ws-personal-U00001',
+    requestDigest: createHash('sha256').update(`${agentVersionId}\0${prompt}`).digest('hex'),
+  })
+  const replayed = await orchestration.startTaskExecution({
+    userId: 'U00001',
+    workspaceId: 'ws-personal-U00001',
+    agentVersionId,
+    prompt,
+    correlationKey,
+    sourceType: 'api',
+  })
+  assert.ok(replayed)
+  assert.equal(replayed.taskId, historical.id)
+  await waitForRun(replayed.id, 'succeeded')
+})
+
+test('PF-02 HTTP contract clamps the Attempt, exposes cumulative usage, and rejects unsupported hard budgets', async () => {
+  const correlationKey = `api-budget-${randomUUID()}`
+  const budget = { maxDurationMs: 60_000, maxToolCalls: 5, maxOutputBytes: 4096 }
+  const createdResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': correlationKey },
+    body: JSON.stringify({
+      workspaceId: 'ws-personal-U00001',
+      agentVersionId: 'agent-version-dsh-work-assistant-1',
+      prompt: '按累计预算执行 API Task',
+      sourceType: 'api',
+      cumulativeBudget: budget,
+    }),
+  })
+  assert.equal(createdResponse.status, 202)
+  const createdEnvelope = await createdResponse.json() as { data: { task: { id: string }; run: { id: string } } }
+  await waitForRun(createdEnvelope.data.run.id, 'succeeded')
+
+  const [attempt] = await database<{ manifest: RuntimeManifest }[]>`
+    select manifest from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${createdEnvelope.data.run.id}
+  `
+  assert.deepEqual(attempt?.manifest.limits, {
+    timeout_seconds: 60,
+    max_tool_calls: 5,
+    max_output_bytes: 4096,
+  })
+  assert.deepEqual(attempt?.manifest.budget.reservation, {
+    duration_ms: 60_000,
+    tool_calls: 5,
+    output_bytes: 4096,
+  })
+
+  const readResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions/${createdEnvelope.data.task.id}`)
+  assert.equal(readResponse.status, 200)
+  const readEnvelope = await readResponse.json() as {
+    data: {
+      budget: {
+        limits: { maxDurationMs: number; maxToolCalls: number; maxOutputBytes: number }
+        capabilities: { tokens: { enforcement: string }; cost: { enforcement: string } }
+        usage: { toolCalls: number; outputBytes: number; inputTokens: number | null; outputTokens: number | null; tokenMeasurement: string }
+        reserved: { durationMs: number; toolCalls: number; outputBytes: number }
+        attempts: Array<{ status: string; measurement: { tokens: string; cost: string } }>
+      }
+    }
+  }
+  assert.deepEqual(readEnvelope.data.budget.limits, budget)
+  assert.deepEqual(readEnvelope.data.budget.reserved, { durationMs: 0, toolCalls: 0, outputBytes: 0 })
+  assert.equal(readEnvelope.data.budget.usage.toolCalls, budget.maxToolCalls)
+  assert.equal(readEnvelope.data.budget.usage.outputBytes, Buffer.byteLength('M3 真实回答'))
+  assert.equal(readEnvelope.data.budget.usage.inputTokens, null)
+  assert.equal(readEnvelope.data.budget.usage.outputTokens, null)
+  assert.equal(readEnvelope.data.budget.usage.tokenMeasurement, 'unavailable')
+  assert.equal(readEnvelope.data.budget.capabilities.tokens.enforcement, 'unsupported')
+  assert.equal(readEnvelope.data.budget.capabilities.cost.enforcement, 'unsupported')
+  assert.equal(readEnvelope.data.budget.attempts[0]?.status, 'settled')
+  assert.deepEqual(readEnvelope.data.budget.attempts[0]?.measurement, {
+    tokens: 'unavailable',
+    cost: 'unavailable',
+    duration: 'timestamps',
+    toolCalls: 'reserved',
+    outputBytes: 'platform',
+  })
+
+  const changedReplay = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': correlationKey },
+    body: JSON.stringify({
+      workspaceId: 'ws-personal-U00001', agentVersionId: 'agent-version-dsh-work-assistant-1',
+      prompt: '按累计预算执行 API Task', sourceType: 'api',
+      cumulativeBudget: { ...budget, maxToolCalls: 6 },
+    }),
+  })
+  assert.equal(changedReplay.status, 409)
+  assert.equal(((await changedReplay.json()) as { error: { code: string } }).error.code, 'TASK_CONTRACT_CONFLICT')
+
+  const unsupported = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `api-budget-token-${randomUUID()}` },
+    body: JSON.stringify({
+      workspaceId: 'ws-personal-U00001', agentVersionId: 'agent-version-dsh-work-assistant-1',
+      prompt: '要求不受支持的 Token 硬预算', sourceType: 'api',
+      cumulativeBudget: { maxTokens: 1000 },
+    }),
+  })
+  assert.equal(unsupported.status, 422)
+  assert.equal(((await unsupported.json()) as { error: { code: string } }).error.code, 'TASK_BUDGET_UNSUPPORTED')
+})
+
 test('PF-01 HTTP contract creates and queries a Task and lets an administrator reconcile an Operation', async () => {
   const correlationKey = `api-route-${randomUUID()}`
   const createdResponse = await fetch(`${apiBaseUrl}/api/workbench/v1/task-executions`, {
@@ -597,7 +711,25 @@ test('restart recovery rejects pinned model requirements when the current Runtim
   assert.ok(source)
   const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
   const attemptId = `attempt-${randomUUID()}`
-  const manifest = { ...source.manifest, run_id: run.id, attempt_id: attemptId, session_id: session.id, model_requirements: ['long-context'] } as RuntimeManifest
+  const budget = await tasks.getBudgetSnapshot('tenant-dsh-work', run.taskId)
+  assert.ok(budget)
+  const manifest = {
+    ...source.manifest,
+    run_id: run.id,
+    attempt_id: attemptId,
+    task_id: run.taskId,
+    session_id: session.id,
+    model_requirements: ['long-context'],
+    budget: {
+      ...source.manifest.budget,
+      scope_task_id: budget.budgetScopeTaskId,
+      cumulative_limits: {
+        max_duration_ms: budget.limits.maxDurationMs,
+        max_tool_calls: budget.limits.maxToolCalls,
+        max_output_bytes: budget.limits.maxOutputBytes,
+      },
+    },
+  } as RuntimeManifest
   const compiled = compileRuntimeManifest(manifest)
   const route = await new ModelGovernanceService(new PostgresModelGovernanceRepository(database)).resolveRoute()
   await runs.createAttempt({ tenantId: 'tenant-dsh-work', runId: run.id, attemptId, runtimeId: 'runtime-local-01',
@@ -610,6 +742,48 @@ test('restart recovery rejects pinned model requirements when the current Runtim
   assert.equal(attempt?.status, 'failed')
   assert.equal(attempt?.errorCode, 'MODEL_CAPABILITY_UNAVAILABLE')
   assert.equal(runtime.status(run.id), undefined, '不可恢复的能力不得启动 Worker')
+})
+
+test('PF-02 restart recovery upgrades a queued pre-budget Manifest before Runtime execution', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '恢复旧版预算清单' })
+  const [source] = await database<{ manifest: RuntimeManifest }[]>`
+    select manifest from run_attempts where tenant_id = 'tenant-dsh-work' and status = 'succeeded' order by created_at limit 1
+  `
+  assert.ok(source)
+  const run = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID(),
+  })
+  await conversations.appendMessage({
+    sessionId: session.id, runId: run.id, role: 'user', content: '恢复升级前排队任务',
+  })
+  const attemptId = `attempt-${randomUUID()}`
+  const manifest = structuredClone(source.manifest)
+  manifest.run_id = run.id
+  manifest.attempt_id = attemptId
+  manifest.task_id = run.taskId
+  manifest.session_id = session.id
+  manifest.workspace_id = 'ws-personal-U00001'
+  manifest.user_context.user_id = 'U00001'
+  manifest.budget = {
+    ...manifest.budget,
+    scope_task_id: run.taskId,
+    cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null },
+  }
+  const compiled = compileRuntimeManifest(manifest)
+  await runs.createAttempt({
+    tenantId: run.tenantId, runId: run.id, attemptId, runtimeId: 'runtime-local-01',
+    manifest: JSON.parse(compiled.canonicalJson), manifestSha256: compiled.sha256,
+    modelRouteSnapshot: {},
+  })
+  await database`update run_attempts set manifest = manifest - 'budget' where tenant_id = 'tenant-dsh-work' and id = ${attemptId}`
+
+  await orchestration.recoverAfterServiceRestart()
+  await waitForTask(run.id, 'succeeded')
+  const usage = await tasks.getBudgetView('tenant-dsh-work', run.taskId)
+  assert.equal(usage?.attempts.find(item => item.attemptId === attemptId)?.status, 'settled')
+  const upgraded = await runs.getAttempt('tenant-dsh-work', attemptId)
+  assert.ok((upgraded?.manifest as RuntimeManifest | undefined)?.budget)
+  assert.equal(upgraded?.manifestSha256, compileRuntimeManifest(upgraded!.manifest as unknown as RuntimeManifest).sha256)
 })
 
 test('cancel and retry keep one Run and create a new immutable Attempt', async () => {
@@ -814,6 +988,12 @@ function beginSessionArchive(sessionId: string) {
   const continueSignal = new Promise<void>((resolve) => { continueArchive = resolve })
   const done = database.begin(async (transaction) => {
     await transaction`
+      select w.id from sessions s
+      join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+       where s.tenant_id = 'tenant-dsh-work' and s.id = ${sessionId}
+       for update of w
+    `
+    await transaction`
       select id from sessions
        where tenant_id = 'tenant-dsh-work' and id = ${sessionId}
        for update
@@ -910,7 +1090,10 @@ class DeterministicRuntime implements AgentRuntimePort {
         if (execution.snapshot.status !== 'running') return
         this.emit(execution, 'assistant.completed', 'M3 真实回答')
         execution.snapshot.status = 'completed'
-        this.emit(execution, 'run.completed', '已完成')
+        this.emit(execution, 'run.completed', '已完成', {
+          tool_call_count: 0,
+          usage_source: 'unavailable',
+        })
         this.finish(execution)
       }
       void complete()

@@ -95,6 +95,27 @@ export interface RuntimeManifest {
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
     file_mounts: FileMount[]
   }
+  /** PF-02 immutable cumulative budget scope and this Attempt's reservation. */
+  budget: {
+    scope_task_id: string
+    cumulative_limits: {
+      max_duration_ms: number | null
+      max_tool_calls: number | null
+      max_output_bytes: number | null
+    }
+    reservation: {
+      duration_ms: number
+      tool_calls: number
+      output_bytes: number
+    }
+    enforcement: {
+      duration: 'hard'
+      tool_calls: 'hard'
+      output_bytes: 'hard'
+      tokens: 'unsupported'
+      cost: 'unsupported'
+    }
+  }
   limits: {
     timeout_seconds: number
     max_output_bytes: number

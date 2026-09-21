@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 import Ajv2020Module from 'ajv/dist/2020.js'
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { normalizePersistedRuntimeManifest } from './runtime-manifest-compatibility.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
 // ajv is a CommonJS package: under NodeNext the default import types as the
@@ -59,6 +60,7 @@ function baseManifest(): RuntimeManifest {
     knowledge_context: [],
     model_route_id: null,
     input: { message: 'summarize inventory', file_mounts: [] },
+    budget: { scope_task_id: 'task-schema-check', cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 5000, tool_calls: 10, output_bytes: 64 * 1024 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
     limits: { timeout_seconds: 5, max_output_bytes: 64 * 1024, max_tool_calls: 10 },
     created_at: '2026-08-29T10:00:00.000Z',
     trace_id: 'trace-schema-check',
@@ -129,6 +131,22 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     const { valid } = schemaErrors(missingTask as RuntimeManifest)
     assert.equal(valid, false)
     assert.throws(() => compileRuntimeManifest(missingTask as RuntimeManifest), /task_id/)
+  })
+
+  it('requires an immutable PF-02 budget snapshot and rejects reservations that differ from Attempt limits', () => {
+    const missingBudget: Partial<RuntimeManifest> = baseManifest()
+    delete missingBudget.budget
+    const missingResult = schemaErrors(missingBudget as RuntimeManifest)
+    assert.equal(missingResult.valid, false)
+    assert.throws(() => compileRuntimeManifest(missingBudget as RuntimeManifest), /budget/)
+    assert.doesNotThrow(() => compileRuntimeManifest(normalizePersistedRuntimeManifest(
+      missingBudget as RuntimeManifest,
+    )), 'the explicit persisted-record upgrade bridge keeps pre-PF-02 Attempts executable')
+
+    const mismatched = baseManifest()
+    mismatched.budget.reservation.tool_calls = mismatched.limits.max_tool_calls - 1
+    assert.equal(schemaErrors(mismatched).valid, true, 'JSON Schema owns structure; compiler owns cross-field equality')
+    assert.throws(() => compileRuntimeManifest(mismatched), /reservation must match/)
   })
 
   it('accepts inline Skills with and without content-bearing files at both boundaries', () => {

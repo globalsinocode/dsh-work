@@ -562,6 +562,14 @@ export class AutomationService {
         sessionId: session.id,
         requestedBy: task.ownerUserId,
         idempotencyKey: `automation-${request.triggerId}`,
+        taskSourceType: 'automation',
+        taskSourceRef: task.id,
+        taskCorrelationKey: request.triggerId,
+        taskBudget: {
+          ...(frozen.budget.timeoutSeconds === undefined ? {} : { maxDurationMs: frozen.budget.timeoutSeconds * 1000 }),
+          ...(frozen.budget.maxToolCalls === undefined ? {} : { maxToolCalls: frozen.budget.maxToolCalls }),
+          ...(frozen.budget.maxOutputBytes === undefined ? {} : { maxOutputBytes: frozen.budget.maxOutputBytes }),
+        },
       }, transaction)
       const execution = await this.automations.insertExecution(transaction, {
         automationId: task.id,

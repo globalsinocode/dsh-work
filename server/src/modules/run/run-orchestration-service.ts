@@ -9,6 +9,7 @@ import type { ModelGovernanceService } from '../model/model-governance-service.t
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { AdminRunPurpose, AgentRuntimePort, RuntimeEvent, RuntimeManifest } from '../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../runtime/manifest-compiler.ts'
+import { normalizePersistedRuntimeManifest } from '../runtime/runtime-manifest-compatibility.ts'
 import { toManifestToolBinding } from '../../domain/tool-binding.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService, PreparedRuntimeFile } from '../workbench/application/postgres-content-service.ts'
@@ -32,6 +33,7 @@ import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 import type { TaskRepository } from '../task/task-repository.ts'
 import type { TaskSourceType } from '../task/task-types.ts'
+import { normalizeTaskBudget, type TaskBudgetInput, type TaskBudgetLimits } from '../task/task-budget-types.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
@@ -133,7 +135,7 @@ export class RunOrchestrationService {
     if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的运行可以重试')
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     if (!attempt) throw new Error('管理助手运行缺少原始输入，请重新发送请求')
-    const manifest = attempt.manifest as unknown as RuntimeManifest
+    const manifest = normalizePersistedRuntimeManifest(attempt.manifest as unknown as RuntimeManifest)
     // 试运行 Run 属于发布治理证据：失败应在工作台重新发起完整试运行（封存/案例/确认
     // 全链路），不能按管理助手语义单独重试——那会用 Skill 安装工具集重放治理输入。
     if (manifest.purpose === 'agent-release-trial') {
@@ -180,6 +182,7 @@ export class RunOrchestrationService {
   private async dispatchAdmin(run: RunRecord, prompt: string, source: string, purpose: AdminPurpose, testSkill?: RuntimeSkillConfiguration, history?: RuntimeManifest['input']['conversation_history']) {
     const route = await this.models.resolveRoute('default')
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
+    const limits = { timeout_seconds: Math.min(180, runtimePolicy?.timeoutSeconds ?? 180), max_output_bytes: 65536, max_tool_calls: purpose === 'admin-assistant' ? 5 : 4 }
     const manifest: RuntimeManifest = {
       manifest_version: '1.0', purpose, installation_source: source,
       run_id: run.id, attempt_id: `attempt-${randomUUID()}`, task_id: run.taskId, session_id: run.sessionId,
@@ -192,7 +195,8 @@ export class RunOrchestrationService {
       permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
       skills: [], tools: adminTools(purpose), data_scopes: [], knowledge_context: [],
       model_route_id: route.routeId, input: { message: prompt, file_mounts: [], ...(history?.length ? { conversation_history: history } : {}) },
-      limits: { timeout_seconds: Math.min(180, runtimePolicy?.timeoutSeconds ?? 180), max_output_bytes: 65536, max_tool_calls: purpose === 'admin-assistant' ? 5 : 4 },
+      budget: await this.taskBudgetManifest(run, limits),
+      limits,
       created_at: new Date().toISOString(), trace_id: `trace-${run.id}`,
     }
     if (testSkill) {
@@ -211,6 +215,7 @@ export class RunOrchestrationService {
       manifest.skills = testCatalog.map(skill => ({ id: skill.id, version: skill.version }))
       manifest.tools = [...new Set(testCatalog.flatMap(skill => skill.tools))].map(toCapabilityReference).concat({ id: 'activate_skill', version: '1.0.0' })
     }
+    manifest.budget = await this.taskBudgetManifest(run, manifest.limits)
     await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({ attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
@@ -268,6 +273,11 @@ export class RunOrchestrationService {
     const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
     const route = await this.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
+    const limits = {
+      timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
+      max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
+      max_tool_calls: agent.maxToolCalls,
+    }
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
       purpose: 'agent-release-trial',
@@ -293,11 +303,8 @@ export class RunOrchestrationService {
       knowledge_context: [],
       model_route_id: route.routeId,
       input: { message, file_mounts: [] },
-      limits: {
-        timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
-        max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
-        max_tool_calls: agent.maxToolCalls,
-      },
+      budget: await this.taskBudgetManifest(run, limits),
+      limits,
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-trial`,
     }
@@ -441,9 +448,11 @@ export class RunOrchestrationService {
      * 执行的 Agent 版本；个人/独立会话忽略此字段，沿用会话绑定版本。
      */
     workspaceAgentMemberId?: string
+    cumulativeBudget?: TaskBudgetInput
     authorizationContext?: SessionAuthorizationContext
   }) {
     const prompt = assertPrompt(input.prompt)
+    const normalizedBudget = normalizeTaskBudget(input.cumulativeBudget)
     if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) {
       throw requestInvalid('idempotencyKey 必须是非空字符串')
     }
@@ -493,6 +502,7 @@ export class RunOrchestrationService {
       sessionId: session.id,
       requestedBy: input.userId,
       idempotencyKey: input.idempotencyKey,
+      taskBudget: input.cumulativeBudget,
     })
     if (run.currentAttemptId || run.status !== 'queued') return run
     await this.conversations.appendMessage({
@@ -515,6 +525,7 @@ export class RunOrchestrationService {
         authorization,
         additionalSkillReferences,
         history,
+        limits: attemptLimitsForBudget(normalizedBudget),
       })
     })
     await this.operations?.appendAudit(input.userId, 'run.create', run.id, 'success', `trace-${run.id}`, '员工创建真实 Run')
@@ -530,11 +541,13 @@ export class RunOrchestrationService {
     correlationKey: string
     sourceType: Extract<TaskSourceType, 'api' | 'event' | 'system'>
     sourceRef?: string | null
+    cumulativeBudget?: TaskBudgetInput
     authorizationContext?: SessionAuthorizationContext
   }) {
     if (!this.tasks) throw new Error('Task 仓储未接线')
     if (!this.authorization) throw new AuthorizationCheckUnavailableError()
     const prompt = assertPrompt(input.prompt)
+    const normalizedBudget = normalizeTaskBudget(input.cumulativeBudget)
     const correlationKey = input.correlationKey?.trim()
     if (!correlationKey) throw requestInvalid('correlationKey 必须是非空字符串')
     const workspaceType = await this.authorization.workspaceTypeOf(input.workspaceId)
@@ -563,7 +576,12 @@ export class RunOrchestrationService {
       taskSourceType: input.sourceType,
       taskSourceRef: input.sourceRef,
       taskCorrelationKey: correlationKey,
-      taskRequestDigest: createHash('sha256').update(`${input.agentVersionId}\0${prompt}`).digest('hex'),
+      taskRequestDigest: input.cumulativeBudget === undefined
+        ? createHash('sha256').update(`${input.agentVersionId}\0${prompt}`).digest('hex')
+        : createHash('sha256').update(JSON.stringify([
+            'task-contract/v2', input.agentVersionId, prompt, normalizedBudget,
+          ])).digest('hex'),
+      taskBudget: input.cumulativeBudget,
     })
     if (run.currentAttemptId || run.status !== 'queued') return run
     await this.failUndispatchedRun(run, () => this.dispatch(run, {
@@ -574,6 +592,7 @@ export class RunOrchestrationService {
       fileIds: [],
       preparedFiles: [],
       authorization,
+      limits: attemptLimitsForBudget(normalizedBudget),
     }))
     await this.operations?.appendAudit(input.userId, 'task.run.create', run.taskId, 'success', `trace-${run.id}`, `${input.sourceType} Task 创建真实 Run`)
     return this.runs.getRun(tenantId, run.id)
@@ -713,6 +732,7 @@ export class RunOrchestrationService {
         fileIds: [],
         preparedFiles: [],
         authorization,
+        limits: manifestLimitsForRetry(manifest),
       })
       await this.operations?.appendAudit(userId, 'task.run.retry', run.id, 'success', `trace-${run.id}`, 'Task 创建新的不可变 Attempt')
       return this.runs.getRun(tenantId, run.id)
@@ -811,6 +831,9 @@ export class RunOrchestrationService {
       authorization,
       additionalSkillReferences,
       history: continued.history,
+      limits: lastAttempt?.manifest
+        ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
+        : undefined,
     })
     await this.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.runs.getRun(tenantId, run.id)
@@ -933,9 +956,20 @@ export class RunOrchestrationService {
       )
     }
     for (const item of recovery.queued) {
+      const persisted = item.attempt.manifest as unknown as RuntimeManifest
+      const manifest = normalizePersistedRuntimeManifest(persisted)
+      if (!persisted.budget) {
+        const compiled = compileRuntimeManifest(manifest)
+        await this.runs.upgradeQueuedAttemptManifest(
+          tenantId,
+          item.attempt.id,
+          JSON.parse(compiled.canonicalJson) as JsonObject,
+          compiled.sha256,
+        )
+      }
       this.pendingExecutions.push({
         run: item.run,
-        manifest: item.attempt.manifest as unknown as RuntimeManifest,
+        manifest,
       })
     }
     if (recovery.queued.length > 0) this.triggerPump()
@@ -1102,6 +1136,11 @@ export class RunOrchestrationService {
         })
       : [])
     const attemptId = input.attemptId ?? `attempt-${randomUUID()}`
+    const limits = {
+      timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
+      max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
+      max_tool_calls: Math.min(agent.maxToolCalls, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
+    }
     const manifest: RuntimeManifest = {
       manifest_version: '1.0',
       ...(input.purpose ? { purpose: input.purpose } : {}),
@@ -1146,11 +1185,8 @@ export class RunOrchestrationService {
         file_mounts: preparedFiles.map(file => file.mount),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
       },
-      limits: {
-        timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
-        max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024, input.limits?.maxOutputBytes ?? Number.POSITIVE_INFINITY),
-        max_tool_calls: Math.min(agent.maxToolCalls, input.limits?.maxToolCalls ?? Number.POSITIVE_INFINITY),
-      },
+      budget: await this.taskBudgetManifest(run, limits),
+      limits,
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-${attemptId}`,
     }
@@ -1618,11 +1654,13 @@ export class RunOrchestrationService {
     } else if (event.event_type === 'run.cancel_requested') {
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancel_requested')
     } else if (event.event_type === 'run.cancelled') {
+      await this.settleAttemptBudget(event, 'cancelled')
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
         : 'RUNTIME_EXECUTION_FAILED'
+      await this.settleAttemptBudget(event, 'failed')
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'failed', code)
       await this.runs.transitionRun(tenantId, run.id, 'failed')
       const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
@@ -1638,6 +1676,7 @@ export class RunOrchestrationService {
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
+      await this.settleAttemptBudget(event, 'succeeded')
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'succeeded')
       await this.runs.transitionRun(tenantId, run.id, 'succeeded')
       if (attempt) await this.operations?.recordModelUsage({
@@ -1712,10 +1751,91 @@ export class RunOrchestrationService {
     if (!manifest?.input?.message) throw new Error(`Run 没有关联的输入：${run.id}`)
     return manifest.input.message
   }
+
+  private async settleAttemptBudget(
+    event: RuntimeEvent,
+    terminalStatus: 'succeeded' | 'failed' | 'cancelled',
+  ): Promise<void> {
+    if (!this.tasks) return
+    const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
+    if (!attempt) throw new Error(`Attempt 不存在，不能结算预算：${event.attempt_id}`)
+    const output = this.assistantOutputs.get(event.attempt_id) ?? ''
+    const reportedInput = nonNegativeInteger(event.safe_metadata['input_tokens'])
+    const reportedOutput = nonNegativeInteger(event.safe_metadata['output_tokens'])
+    const hasReportedTokens = reportedInput !== null && reportedOutput !== null
+    const elapsed = nonNegativeInteger(event.safe_metadata['elapsed_ms'])
+    const toolUsageAvailable = event.safe_metadata['usage_source'] === 'dsh-session-log'
+    const toolCalls = toolUsageAvailable
+      ? nonNegativeInteger(event.safe_metadata['tool_call_count'])
+      : null
+    const startedAt = attempt.startedAt ? new Date(attempt.startedAt).getTime() : new Date(attempt.createdAt).getTime()
+    const timestampDuration = Math.max(0, Date.parse(event.occurred_at) - startedAt)
+    await this.tasks.settleAttemptBudget(tenantId, event.attempt_id, {
+      durationMs: elapsed ?? timestampDuration,
+      toolCalls,
+      outputBytes: Buffer.byteLength(output),
+      inputTokens: hasReportedTokens ? reportedInput : null,
+      outputTokens: hasReportedTokens ? reportedOutput : null,
+      tokenMeasurement: hasReportedTokens ? 'reported' : 'unavailable',
+      durationMeasurement: elapsed === null ? 'timestamps' : 'runtime',
+      toolMeasurement: toolCalls === null ? 'reserved' : 'runtime',
+      outputMeasurement: 'platform',
+      terminalStatus,
+    })
+  }
+
+  private async taskBudgetManifest(run: RunRecord, limits: RuntimeManifest['limits']): Promise<RuntimeManifest['budget']> {
+    const snapshot = await this.tasks?.getBudgetSnapshot(tenantId, run.taskId)
+    return {
+      scope_task_id: snapshot?.budgetScopeTaskId ?? run.taskId,
+      cumulative_limits: {
+        max_duration_ms: snapshot?.limits.maxDurationMs ?? null,
+        max_tool_calls: snapshot?.limits.maxToolCalls ?? null,
+        max_output_bytes: snapshot?.limits.maxOutputBytes ?? null,
+      },
+      reservation: {
+        duration_ms: limits.timeout_seconds * 1000,
+        tool_calls: limits.max_tool_calls,
+        output_bytes: limits.max_output_bytes,
+      },
+      enforcement: {
+        duration: 'hard', tool_calls: 'hard', output_bytes: 'hard',
+        tokens: 'unsupported', cost: 'unsupported',
+      },
+    }
+  }
 }
 
 function flattenSkillDependencies(skill: RuntimeSkillConfiguration): RuntimeSkillConfiguration[] {
   return (skill.dependencySkills ?? []).flatMap(item => [item, ...flattenSkillDependencies(item)])
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null
+}
+
+function attemptLimitsForBudget(limits: TaskBudgetLimits): {
+  timeoutSeconds?: number
+  maxToolCalls?: number
+  maxOutputBytes?: number
+} {
+  return {
+    ...(limits.maxDurationMs === null ? {} : { timeoutSeconds: Math.floor(limits.maxDurationMs / 1000) }),
+    ...(limits.maxToolCalls === null ? {} : { maxToolCalls: limits.maxToolCalls }),
+    ...(limits.maxOutputBytes === null ? {} : { maxOutputBytes: limits.maxOutputBytes }),
+  }
+}
+
+function manifestLimitsForRetry(manifest: RuntimeManifest): {
+  timeoutSeconds: number
+  maxToolCalls: number
+  maxOutputBytes: number
+} {
+  return {
+    timeoutSeconds: manifest.limits.timeout_seconds,
+    maxToolCalls: manifest.limits.max_tool_calls,
+    maxOutputBytes: manifest.limits.max_output_bytes,
+  }
 }
 
 function toRuntimeManifestSkill(skill: RuntimeSkillConfiguration): RuntimeManifest['agent_configuration']['skill_instructions'][number] {

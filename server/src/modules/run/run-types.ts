@@ -1,3 +1,5 @@
+import type { TaskBudgetInput } from '../task/task-budget-types.ts'
+
 export type RunState = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 export type AttemptState = RunState
 export type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue }
@@ -59,6 +61,7 @@ export interface CreateRunInput {
   taskSourceRef?: string | null
   taskCorrelationKey?: string
   taskRequestDigest?: string | null
+  taskBudget?: TaskBudgetInput | null
   /** Required when sessionId is null; checked against the Task owner workspace. */
   workspaceId?: string | null
 }

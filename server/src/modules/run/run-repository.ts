@@ -34,6 +34,13 @@ export interface RunRepository {
   getRun(tenantId: string, runId: string): Promise<RunRecord | null>
   getRunForTask(tenantId: string, taskId: string): Promise<RunRecord | null>
   getAttempt(tenantId: string, attemptId: string): Promise<RunAttemptRecord | null>
+  /** One-time PF-02 upgrade for a trusted queued manifest persisted before budget snapshots existed. */
+  upgradeQueuedAttemptManifest(
+    tenantId: string,
+    attemptId: string,
+    manifest: JsonObject,
+    manifestSha256: string,
+  ): Promise<void>
   createAttempt(input: CreateAttemptInput): Promise<RunAttemptRecord>
   claimAttempt(
     tenantId: string,

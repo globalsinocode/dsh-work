@@ -25,6 +25,7 @@ export class PostgresTaskQueryService {
     if (!task) return null
     const run = await this.runs.getRunForTask(tenantId, taskId)
     const operations = await this.tasks.listOperations(tenantId, taskId)
+    const budget = await this.tasks.getBudgetView(tenantId, taskId)
     const events = run ? await this.runs.readEvents(tenantId, run.id) : []
     const artifacts = await this.database<{
       id: string
@@ -52,6 +53,7 @@ export class PostgresTaskQueryService {
         artifacts: artifacts.map(item => ({ ...item, createdAt: item.createdAt.toISOString() })),
         operations,
       },
+      budget,
       events,
     }
   }

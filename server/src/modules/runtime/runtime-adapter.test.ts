@@ -486,6 +486,7 @@ describe('DSH ACP Runtime Adapter', () => {
     const adapter = await createAdapter()
     const input = manifest('run-truncated-output', 'attempt-1', '[large-output] emit oversized answer')
     input.limits.max_output_bytes = 1024
+    input.budget.reservation.output_bytes = 1024
     const handle = await adapter.execute(input)
     const events: RuntimeEvent[] = []
     adapter.subscribe(input.run_id, event => { events.push(event) })
@@ -609,6 +610,7 @@ describe('DSH ACP Runtime Adapter', () => {
     const adapter = await createAdapter(100)
     const first = manifest('run-timeout', 'attempt-1', '[hang] exceed deadline')
     first.limits.timeout_seconds = 1
+    first.budget.reservation.duration_ms = 1000
     const second = manifest('run-other', 'attempt-1', 'finish independently')
     const firstHandle = await adapter.execute(first)
     const events: RuntimeEvent[] = []
@@ -640,6 +642,7 @@ describe('DSH ACP Runtime Adapter', () => {
     })
     const input = manifest('run-setup-timeout', 'attempt-1', 'finish normally')
     input.limits.timeout_seconds = 5
+    input.budget.reservation.duration_ms = 5000
     const handle = await adapter.execute(input)
     const events: RuntimeEvent[] = []
     adapter.subscribe(input.run_id, event => { events.push(event) })
@@ -659,6 +662,7 @@ describe('DSH ACP Runtime Adapter', () => {
     const adapter = await createAdapter(100)
     const input = manifest('run-partial-timeout', 'attempt-1', '[partial-hang] exceed deadline')
     input.limits.timeout_seconds = 1
+    input.budget.reservation.duration_ms = 1000
     const handle = await adapter.execute(input)
     const events: RuntimeEvent[] = []
     adapter.subscribe(input.run_id, event => { events.push(event) })
@@ -884,6 +888,7 @@ function manifest(runId: string, attemptId: string, message = 'summarize invento
     knowledge_context: [],
     model_route_id: null,
     input: { message, file_mounts: [] },
+    budget: { scope_task_id: `task-${runId}`, cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 5000, tool_calls: 10, output_bytes: 64 * 1024 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
     limits: { timeout_seconds: 5, max_output_bytes: 64 * 1024, max_tool_calls: 10 },
     created_at: '2026-08-29T10:00:00.000Z',
     trace_id: `trace-${runId}`,

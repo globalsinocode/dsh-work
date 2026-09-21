@@ -927,6 +927,9 @@
                   "workspaceAgentMemberId": {
                     "type": "string",
                     "description": "TW-10：团队会话每次执行必须携带的 Agent 成员关联 ID（@ 触发），服务端按其固定版本执行并复核成员可用性；个人会话忽略该字段。"
+                  },
+                  "cumulativeBudget": {
+                    "$ref": "#/components/schemas/TaskCumulativeBudgetInput"
                   }
                 }
               }
@@ -938,6 +941,9 @@
             "$ref": "#/components/responses/Ok"
           },
           "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
             "$ref": "#/components/responses/Error"
           }
         }
@@ -1041,7 +1047,7 @@
       ],
       "post": {
         "operationId": "retryRun",
-        "summary": "基于原输入创建新的 Run Attempt",
+        "summary": "基于原输入创建新的 Run Attempt；累计预算不足时返回 409 TASK_BUDGET_EXCEEDED",
         "responses": {
           "202": {
             "$ref": "#/components/responses/Ok"
@@ -2393,7 +2399,7 @@
       "post": {
         "operationId": "createTaskExecution",
         "summary": "创建无 Session 的受控 Task 执行",
-        "description": "使用 correlationKey 或 Idempotency-Key 幂等受理 API/event Task，并通过既有 Run/Attempt、Runtime Adapter 与 DSH 链路执行。相同来源类型与关联键不会创建第二个 Task 或重复执行。",
+        "description": "使用 correlationKey 或 Idempotency-Key 幂等受理 API/event Task，并通过既有 Run/Attempt、Runtime Adapter 与 DSH 链路执行。相同来源类型与关联键不会创建第二个 Task 或重复执行。可选累计预算在创建 Task 时固定；时长、工具次数和输出字节按 Attempt 原子预占与终态结算，Token 与成本硬预算当前明确拒绝。",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -2439,7 +2445,7 @@
     "/task-executions/{taskId}": {
       "get": {
         "operationId": "getTaskExecution",
-        "summary": "查询 Task、Run、结果、Artifact、Operation 与事件",
+        "summary": "查询 Task、Run、结果、Artifact、Operation、累计预算与事件",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskId"
@@ -2499,7 +2505,7 @@
     "/task-executions/{taskId}/retry": {
       "post": {
         "operationId": "retryTaskExecution",
-        "summary": "以新 Attempt 重试无 Session Task",
+        "summary": "以新 Attempt 重试无 Session Task；累计预算不足时返回 409 TASK_BUDGET_EXCEEDED",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskId"
@@ -2510,6 +2516,9 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
             "$ref": "#/components/responses/Error"
           },
           "422": {
@@ -3866,8 +3875,50 @@
             "minLength": 1,
             "maxLength": 200,
             "description": "可改由 Idempotency-Key 请求头提供。"
+          },
+          "cumulativeBudget": {
+            "$ref": "#/components/schemas/TaskCumulativeBudgetInput"
           }
         }
+      },
+      "TaskCumulativeBudgetInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxDurationMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 86400000,
+            "description": "Task 预算范围内所有 Attempt 的累计可计费执行时长；单次 Attempt 限额同时收紧到该值的整秒部分。"
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Task 预算范围内所有 Attempt 的累计工具调用次数。"
+          },
+          "maxOutputBytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 1073741824,
+            "description": "Task 预算范围内所有 Attempt 的累计 UTF-8 输出字节数。"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "保留的能力探测字段；当前 Runtime 无可靠执行中停机计量，传入后返回 422 TASK_BUDGET_UNSUPPORTED。"
+          },
+          "maxCostAmount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "保留的能力探测字段；当前无可核验价格与成本回报，传入后返回 422 TASK_BUDGET_UNSUPPORTED。"
+          },
+          "costCurrency": {
+            "type": "string",
+            "description": "与 maxCostAmount 同属当前不支持的成本硬预算。"
+          }
+        },
+        "description": "PF-02 Task 累计预算。省略字段表示该维度不设累计上限；不支持的硬预算会明确失败，不会静默降级。"
       }
     }
   },

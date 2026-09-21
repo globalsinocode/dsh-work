@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import type { AttemptBudgetSettlement, TaskBudgetSnapshot, TaskBudgetView } from './task-budget-types.ts'
 import type {
   CreateTaskInput,
   RegisterTaskOperationInput,
@@ -10,6 +11,9 @@ import type {
 export interface TaskRepository {
   createTask(input: CreateTaskInput, tx?: DatabaseTransaction): Promise<TaskRecord>
   getTask(tenantId: string, taskId: string, tx?: DatabaseTransaction): Promise<TaskRecord | null>
+  getBudgetSnapshot(tenantId: string, taskId: string, tx?: DatabaseTransaction): Promise<TaskBudgetSnapshot | null>
+  getBudgetView(tenantId: string, taskId: string): Promise<TaskBudgetView | null>
+  settleAttemptBudget(tenantId: string, attemptId: string, settlement: AttemptBudgetSettlement): Promise<void>
   registerOperation(input: RegisterTaskOperationInput, tx?: DatabaseTransaction): Promise<TaskOperationRecord>
   acceptOperation(input: RegisterTaskOperationInput, tx?: DatabaseTransaction): Promise<{ operation: TaskOperationRecord; created: boolean }>
   getOperation(tenantId: string, operationId: string): Promise<TaskOperationRecord | null>

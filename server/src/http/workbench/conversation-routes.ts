@@ -8,6 +8,7 @@ import { authorizationDenied, canReadWorkspaceObject } from '../../modules/autho
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import type { TaskRun } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
+import type { TaskBudgetInput } from '../../modules/task/task-budget-types.ts'
 import {
   envelope,
   httpResult,
@@ -281,6 +282,7 @@ export function registerConversationRoutes(
       fileIds?: unknown
       /** TW-10：团队会话 @ 触发的 Agent 成员关联；个人会话忽略。 */
       workspaceAgentMemberId?: unknown
+      cumulativeBudget?: unknown
     } | null>(request)
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw routeValidationFailed('请求体必须是 JSON 对象')
@@ -309,6 +311,7 @@ export function registerConversationRoutes(
       idempotencyKey,
       fileIds: body.fileIds ?? [],
       workspaceAgentMemberId: body.workspaceAgentMemberId,
+      cumulativeBudget: parseTaskBudget(body.cumulativeBudget),
       authorizationContext: sessionAuthorizationContext(identity),
     })
     if (!run) throw new Error('Run 创建失败')
@@ -426,6 +429,21 @@ export function registerConversationRoutes(
     await streamWorkspaceSessionEvents(response, workspaceId, sharedSessionActivitySource(conversations), 500, 15_000,
       authorization ? { workspaceId, userId, authorization } : undefined, clientSince)
   })
+}
+
+function parseTaskBudget(value: unknown): TaskBudgetInput | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw routeValidationFailed('cumulativeBudget 必须是 JSON 对象')
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['maxDurationMs', 'maxToolCalls', 'maxOutputBytes', 'maxTokens', 'maxCostAmount', 'costCurrency'])
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw routeValidationFailed(`cumulativeBudget 不支持字段 ${key}`)
+  for (const key of ['maxDurationMs', 'maxToolCalls', 'maxOutputBytes', 'maxTokens', 'maxCostAmount'] as const) {
+    if (record[key] !== undefined && typeof record[key] !== 'number') throw routeValidationFailed(`cumulativeBudget.${key} 必须是数字`)
+  }
+  if (record['costCurrency'] !== undefined && typeof record['costCurrency'] !== 'string') {
+    throw routeValidationFailed('cumulativeBudget.costCurrency 必须是字符串')
+  }
+  return record as TaskBudgetInput
 }
 
 /**

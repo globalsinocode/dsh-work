@@ -11,6 +11,7 @@ import { PostgresAuthorizationService } from '../modules/authorization/postgres-
 import { AuthorizationDeniedError, isAuthorizationDenial } from '../modules/authorization/authorization-errors.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { testAttemptManifest } from '../infrastructure/postgres/test-attempt-manifest.ts'
 import { PostgresContentService } from '../modules/workbench/application/postgres-content-service.ts'
 import { PostgresRunRepository } from '../modules/run/postgres-run-repository.ts'
 import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
@@ -789,7 +790,7 @@ test('跨会话挂载的附件可进入 Attempt 且被引用后阻止回收（�
   const attempt = await runRepository.createAttempt({
     tenantId,
     runId: run.id,
-    manifest: { purpose: 'workbench', session_id: targetSession, workspace_id: workspaceId },
+    manifest: testAttemptManifest(run.taskId, run.id, { purpose: 'workbench', session_id: targetSession, workspace_id: workspaceId }),
     manifestSha256: 'x',
     modelRouteSnapshot: {},
     inputFiles: prepared.map(file => ({
@@ -829,7 +830,7 @@ test('createAttempt 范围兜底：跨空间他人附件与已移除文件不得
     runRepository.createAttempt({
       tenantId,
       runId: run.id,
-      manifest: { session_id: sessionId, workspace_id: workspaceId },
+      manifest: testAttemptManifest(run.taskId, run.id, { session_id: sessionId, workspace_id: workspaceId }),
       manifestSha256: 'x',
       modelRouteSnapshot: {},
       inputFiles: [mount(fileId)],

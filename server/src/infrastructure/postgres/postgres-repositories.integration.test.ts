@@ -14,6 +14,7 @@ import {
   TaskContractConflictError,
   taskOperationParameterDigest,
 } from '../../modules/task/postgres-task-repository.ts'
+import { TaskBudgetExceededError, TaskBudgetUnsupportedError } from '../../modules/task/task-budget-types.ts'
 
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
@@ -265,7 +266,7 @@ test('retry creates a new immutable Attempt and events are idempotent', async ()
   const first = await runs.createAttempt({
     tenantId: run.tenantId,
     runId: run.id,
-    manifest: { runId: run.id, version: 1 },
+    manifest: attemptManifest(run.taskId, run.id, 30, 10, 65536),
     manifestSha256: 'a'.repeat(64),
     modelRouteSnapshot: routeSnapshot,
   })
@@ -277,7 +278,7 @@ test('retry creates a new immutable Attempt and events are idempotent', async ()
   const second = await runs.createAttempt({
     tenantId: run.tenantId,
     runId: run.id,
-    manifest: { runId: run.id, version: 1 },
+    manifest: attemptManifest(run.taskId, run.id, 30, 10, 65536),
     manifestSha256: 'a'.repeat(64),
     modelRouteSnapshot: routeSnapshot,
   })
@@ -337,7 +338,7 @@ test('Attempt creation rolls back when an immutable input association cannot be 
       attemptId,
       tenantId: run.tenantId,
       runId: run.id,
-      manifest: { runId: run.id },
+      manifest: attemptManifest(run.taskId, run.id, 30, 10, 65536),
       manifestSha256: 'b'.repeat(64),
       modelRouteSnapshot: {},
       knowledgeSources: [{
@@ -366,6 +367,208 @@ test('published governance versions reject in-place mutation', async () => {
     /published versions are immutable/i,
   )
 })
+
+test('PF-02 累计预算按 Attempt 预占并按实际用量结算，重放不重复扣减', async () => {
+  const run = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId, requestedBy: 'U00001',
+    idempotencyKey: `pf02-settle-${suffix}`,
+    taskBudget: { maxDurationMs: 60_000, maxToolCalls: 7, maxOutputBytes: 10_000 },
+  })
+  const first = await runs.createAttempt({
+    tenantId: run.tenantId, runId: run.id,
+    manifest: attemptManifest(run.taskId, run.id, 30, 5, 6_000, run.taskId, { maxDurationMs: 60_000, maxToolCalls: 7, maxOutputBytes: 10_000 }),
+    manifestSha256: 'c'.repeat(64), modelRouteSnapshot: {},
+  })
+  let view = await tasks.getBudgetView(run.tenantId, run.taskId)
+  assert.deepEqual(view?.reserved, { durationMs: 30_000, toolCalls: 5, outputBytes: 6_000 })
+  await tasks.settleAttemptBudget(run.tenantId, first.id, {
+    durationMs: 1_200, toolCalls: 2, outputBytes: 800,
+    inputTokens: 120, outputTokens: 40, tokenMeasurement: 'reported',
+    durationMeasurement: 'runtime', toolMeasurement: 'runtime', outputMeasurement: 'platform',
+    terminalStatus: 'failed',
+  })
+  await runs.transitionAttempt(run.tenantId, first.id, 'failed', 'SYNTHETIC')
+  await runs.transitionRun(run.tenantId, run.id, 'failed')
+  await tasks.settleAttemptBudget(run.tenantId, first.id, {
+    durationMs: 9_999, toolCalls: 7, outputBytes: 9_999,
+    inputTokens: 999, outputTokens: 999, tokenMeasurement: 'unavailable',
+    durationMeasurement: 'timestamps', toolMeasurement: 'runtime', outputMeasurement: 'platform',
+    terminalStatus: 'failed',
+  })
+  const second = await runs.createAttempt({
+    tenantId: run.tenantId, runId: run.id,
+    manifest: attemptManifest(run.taskId, run.id, 30, 5, 6_000, run.taskId, { maxDurationMs: 60_000, maxToolCalls: 7, maxOutputBytes: 10_000 }),
+    manifestSha256: 'd'.repeat(64), modelRouteSnapshot: {},
+  })
+  assert.equal(second.attemptNo, 2)
+  view = await tasks.getBudgetView(run.tenantId, run.taskId)
+  assert.equal(view?.usage.toolCalls, 2)
+  assert.equal(view?.usage.inputTokens, 120)
+  assert.equal(view?.reserved.toolCalls, 5)
+  assert.equal(view?.remaining.toolCalls, 0)
+  await tasks.settleAttemptBudget(run.tenantId, second.id, {
+    durationMs: 90_000, toolCalls: 99, outputBytes: 90_000,
+    inputTokens: null, outputTokens: null, tokenMeasurement: 'unavailable',
+    durationMeasurement: 'timestamps', toolMeasurement: 'runtime', outputMeasurement: 'platform',
+    terminalStatus: 'succeeded',
+  })
+  view = await tasks.getBudgetView(run.tenantId, run.taskId)
+  assert.deepEqual(view?.usage, {
+    durationMs: 31_200, toolCalls: 7, outputBytes: 6_800,
+    inputTokens: null, outputTokens: null, tokenMeasurement: 'unavailable',
+    costAmount: null, costCurrency: null,
+  })
+  assert.deepEqual(view?.attempts.find(item => item.attemptId === second.id)?.measurement, {
+    tokens: 'unavailable', cost: 'unavailable',
+    duration: 'reserved', toolCalls: 'reserved', outputBytes: 'reserved',
+  })
+})
+
+test('PF-02 共享预算范围串行化并发预占，且未开始的取消只释放一次', async () => {
+  const root = await tasks.createTask({
+    tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'system',
+    correlationKey: `pf02-root-${suffix}`, workspaceId: 'ws-personal-U00001',
+    budget: { maxDurationMs: 60_000, maxToolCalls: 10, maxOutputBytes: 20_000 },
+  })
+  await assert.rejects(tasks.createTask({
+    tenantId: root.tenantId, requestedBy: root.requestedBy, sourceType: 'system',
+    correlationKey: `pf02-child-redefines-${suffix}`, workspaceId: root.workspaceId,
+    budgetScopeTaskId: root.id, budget: { maxToolCalls: 1 },
+  }), TaskContractConflictError)
+  const children = await Promise.all([1, 2].map(index => tasks.createTask({
+    tenantId: root.tenantId, requestedBy: root.requestedBy, sourceType: 'system',
+    correlationKey: `pf02-child-${index}-${suffix}`, workspaceId: root.workspaceId,
+    budgetScopeTaskId: root.id,
+  })))
+  const childRuns = await Promise.all(children.map((task, index) => runs.createRun({
+    tenantId: task.tenantId, taskId: task.id, sessionId: null, workspaceId: task.workspaceId,
+    requestedBy: task.requestedBy, idempotencyKey: `pf02-child-run-${index}-${suffix}`,
+  })))
+  const reservations = await Promise.allSettled(childRuns.map((run, index) => runs.createAttempt({
+    tenantId: run.tenantId, runId: run.id,
+    manifest: attemptManifest(run.taskId, run.id, 30, 6, 8_000, root.id, { maxDurationMs: 60_000, maxToolCalls: 10, maxOutputBytes: 20_000 }),
+    manifestSha256: String(index + 1).repeat(64), modelRouteSnapshot: {},
+  })))
+  assert.equal(reservations.filter(result => result.status === 'fulfilled').length, 1)
+  const rejected = reservations.find(result => result.status === 'rejected') as PromiseRejectedResult
+  assert.ok(rejected.reason instanceof TaskBudgetExceededError)
+  const accepted = (reservations.find(result => result.status === 'fulfilled') as PromiseFulfilledResult<Awaited<ReturnType<PostgresRunRepository['createAttempt']>>>).value
+  await runs.transitionAttempt(root.tenantId, accepted.id, 'cancelled')
+  await runs.transitionAttempt(root.tenantId, accepted.id, 'cancelled')
+  const view = await tasks.getBudgetView(root.tenantId, root.id)
+  assert.equal(view?.attempts[0]?.status, 'released')
+  assert.deepEqual(view?.usage, {
+    durationMs: 0, toolCalls: 0, outputBytes: 0,
+    inputTokens: null, outputTokens: null, tokenMeasurement: 'unavailable',
+    costAmount: null, costCurrency: null,
+  })
+  assert.deepEqual(view?.reserved, { durationMs: 0, toolCalls: 0, outputBytes: 0 })
+})
+
+test('PF-02 precise settlement and queued cancellation use one lock order without deadlock', async () => {
+  const run = await runs.createRun({
+    tenantId: 'tenant-dsh-work', sessionId, requestedBy: 'U00001',
+    idempotencyKey: `pf02-lock-order-${suffix}`,
+  })
+  const attempt = await runs.createAttempt({
+    tenantId: run.tenantId, runId: run.id,
+    manifest: attemptManifest(run.taskId, run.id, 30, 5, 6_000),
+    manifestSha256: 'e'.repeat(64), modelRouteSnapshot: {},
+  })
+  let releaseAccount: () => void = () => undefined
+  let accountLocked: () => void = () => undefined
+  const accountLockedSignal = new Promise<void>(resolve => { accountLocked = resolve })
+  const releaseAccountSignal = new Promise<void>(resolve => { releaseAccount = resolve })
+  const blocker = database.begin(async transaction => {
+    await transaction`select 1 from task_budget_accounts
+      where tenant_id = ${run.tenantId} and budget_scope_task_id = ${run.taskId} for update`
+    accountLocked()
+    await releaseAccountSignal
+  })
+  await accountLockedSignal
+
+  let cancellation: Promise<unknown> | undefined
+  let settlement: Promise<unknown> | undefined
+  try {
+    cancellation = runs.transitionAttempt(run.tenantId, attempt.id, 'cancelled')
+    await waitForBlockedTransactions(1)
+    settlement = tasks.settleAttemptBudget(run.tenantId, attempt.id, {
+      durationMs: 10, toolCalls: 1, outputBytes: 10,
+      inputTokens: null, outputTokens: null, tokenMeasurement: 'unavailable',
+      durationMeasurement: 'runtime', toolMeasurement: 'runtime', outputMeasurement: 'platform',
+      terminalStatus: 'cancelled',
+    })
+    await waitForBlockedTransactions(2)
+    releaseAccount()
+    await Promise.all([blocker, cancellation, settlement])
+  } finally {
+    releaseAccount()
+    await Promise.allSettled([blocker, cancellation, settlement].filter((value): value is Promise<unknown> => value !== undefined))
+  }
+
+  const view = await tasks.getBudgetView(run.tenantId, run.taskId)
+  assert.equal(view?.attempts.find(item => item.attemptId === attempt.id)?.status, 'released')
+})
+
+test('PF-02 明确拒绝当前无法可靠执行的 Token 与成本硬预算', async () => {
+  await assert.rejects(tasks.createTask({
+    tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'api',
+    correlationKey: `pf02-token-${suffix}`, workspaceId: 'ws-personal-U00001',
+    budget: { maxTokens: 1_000 },
+  }), TaskBudgetUnsupportedError)
+  await assert.rejects(tasks.createTask({
+    tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'api',
+    correlationKey: `pf02-cost-${suffix}`, workspaceId: 'ws-personal-U00001',
+    budget: { maxCostAmount: 10, costCurrency: 'CNY' },
+  }), TaskBudgetUnsupportedError)
+})
+
+async function waitForBlockedTransactions(expected: number): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const [row] = await database<{ count: number }[]>`
+      select count(*)::integer as count
+        from pg_stat_activity
+       where datname = current_database() and pid <> pg_backend_pid()
+         and wait_event_type = 'Lock'
+    `
+    if ((row?.count ?? 0) >= expected) return
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error(`等待 ${expected} 个锁等待事务超时`)
+}
+
+function attemptManifest(
+  taskId: string,
+  runId: string,
+  timeoutSeconds: number,
+  toolCalls: number,
+  outputBytes: number,
+  budgetScopeTaskId = taskId,
+  cumulative: { maxDurationMs: number | null; maxToolCalls: number | null; maxOutputBytes: number | null } = {
+    maxDurationMs: null, maxToolCalls: null, maxOutputBytes: null,
+  },
+): JsonObject {
+  return {
+    run_id: runId,
+    task_id: taskId,
+    limits: {
+      timeout_seconds: timeoutSeconds,
+      max_tool_calls: toolCalls,
+      max_output_bytes: outputBytes,
+    },
+    budget: {
+      scope_task_id: budgetScopeTaskId,
+      cumulative_limits: {
+        max_duration_ms: cumulative.maxDurationMs,
+        max_tool_calls: cumulative.maxToolCalls,
+        max_output_bytes: cumulative.maxOutputBytes,
+      },
+      reservation: { duration_ms: timeoutSeconds * 1000, tool_calls: toolCalls, output_bytes: outputBytes },
+      enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' },
+    },
+  }
+}
 
 async function seedRunDependencies(sql: DatabaseClient) {
   await sql`

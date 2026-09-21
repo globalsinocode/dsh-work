@@ -151,13 +151,14 @@ flowchart TB
 - `/api/workbench/v1` 与 `/api/admin/v1` 是两个独立 Audience；
 - `/auth/workbench/*` 与 `/auth/admin/*` 分别完成登录、回调和退出；
 - 服务端在 API 边界建立身份，随后由应用服务执行对象级和数据范围授权；
-- `/api/workbench/v1/task-executions` 为 API/event 提供无产品 Session 的 Task 入口，仍复用同一 Run/Attempt 与 DSH 执行链路；
+- `/api/workbench/v1/task-executions` 为 API/event 提供无产品 Session 的 Task 入口，仍复用同一 Run/Attempt 与 DSH 执行链路，并可在受理时固定 Task 累计预算；
 - Run 编排、Agent/Skill/Tool 治理、知识、文件、模型、运营和身份模块都位于同一 Node.js 模块化单体。
 
 ### 4.3 Runtime 与执行层
 
 - Runtime Adapter 只依赖固定的 ACP JSON-RPC stdio 协议；
 - Runtime Manifest 使用规范化 JSON 与 SHA-256 固定运行输入；
+- Runtime Manifest 同时固定 Task 预算范围、累计上限和本 Attempt 预占；PostgreSQL 在 Attempt 创建事务中完成并发预算检查，终态结算或释放预占；
 - 一个 Attempt 默认对应一个隔离目录和一个 DSH Worker 进程；
 - Adapter 负责启动、取消、超时、回收、事件转换和错误分类；
 - 调度容量、排空/停用、重启恢复和 SSE 游标由 dsh-work 持久化控制。

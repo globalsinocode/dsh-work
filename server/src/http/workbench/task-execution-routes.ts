@@ -4,6 +4,7 @@ import type { RunOrchestrationService } from '../../modules/run/run-orchestratio
 import type { JsonObject } from '../../modules/run/run-types.ts'
 import type { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
 import type { TaskRepository } from '../../modules/task/task-repository.ts'
+import type { TaskBudgetInput } from '../../modules/task/task-budget-types.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, sessionAuthorizationContext, type Router } from '../router.ts'
 
 const basePath = '/api/workbench/v1/task-executions'
@@ -23,6 +24,7 @@ export function registerTaskExecutionRoutes(
       sourceType?: unknown
       sourceRef?: unknown
       correlationKey?: unknown
+      cumulativeBudget?: unknown
     } | null>(request)
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw requestInvalid('请求体必须是 JSON 对象')
     const workspaceId = requiredString(body.workspaceId, 'workspaceId')
@@ -42,6 +44,7 @@ export function registerTaskExecutionRoutes(
       sourceType,
       sourceRef: body.sourceRef as string | null | undefined,
       correlationKey: requiredString(correlationKey, 'correlationKey 或 Idempotency-Key'),
+      cumulativeBudget: parseTaskBudget(body.cumulativeBudget),
       authorizationContext: sessionAuthorizationContext(identity),
     })
     if (!run) throw new Error('Task Run 创建失败')
@@ -137,4 +140,19 @@ async function requireReadableTask(
 function requiredString(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value.trim()) throw requestInvalid(`${name} 必须是非空字符串`)
   return value.trim()
+}
+
+function parseTaskBudget(value: unknown): TaskBudgetInput | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw requestInvalid('cumulativeBudget 必须是 JSON 对象')
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['maxDurationMs', 'maxToolCalls', 'maxOutputBytes', 'maxTokens', 'maxCostAmount', 'costCurrency'])
+  for (const key of Object.keys(record)) if (!allowed.has(key)) throw requestInvalid(`cumulativeBudget 不支持字段 ${key}`)
+  for (const key of ['maxDurationMs', 'maxToolCalls', 'maxOutputBytes', 'maxTokens', 'maxCostAmount'] as const) {
+    if (record[key] !== undefined && typeof record[key] !== 'number') throw requestInvalid(`cumulativeBudget.${key} 必须是数字`)
+  }
+  if (record['costCurrency'] !== undefined && typeof record['costCurrency'] !== 'string') {
+    throw requestInvalid('cumulativeBudget.costCurrency 必须是字符串')
+  }
+  return record as TaskBudgetInput
 }

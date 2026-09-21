@@ -584,7 +584,9 @@ test('legacy packaged versions migrate to folders without weakening published-ve
     agent_configuration: { system_prompt: '这是旧版 Skill 文件内联迁移测试，只验证存储迁移行为。', skill_instructions: [{ id: skillId, name: legacy.name, description: legacy.description, version: '0.1.0', instructions: legacy.instructions, files: legacy.files }] },
     user_context: { user_id: actor, tenant_id: tenant, role_ids: [] }, permission_policy: { approval_mode: 'always', network_policy: 'deny', write_policy: 'deny' },
     skills: [{ id: skillId, version: '0.1.0' }], tools: [{ id: 'read', version: '1.0.0' }], data_scopes: [], knowledge_context: [],
-    input: { message: '迁移测试', file_mounts: [] }, limits: { timeout_seconds: 30, max_output_bytes: 65536, max_tool_calls: 3 }, created_at: new Date().toISOString(),
+    input: { message: '迁移测试', file_mounts: [] },
+    budget: { scope_task_id: `task-${runId}`, cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 30000, tool_calls: 3, output_bytes: 65536 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
+    limits: { timeout_seconds: 30, max_output_bytes: 65536, max_tool_calls: 3 }, created_at: new Date().toISOString(),
   }
   const oldCompiled = compileRuntimeManifest(oldManifest)
   await database.client.begin(async transaction => {
@@ -659,6 +661,7 @@ test('review 8a: retry preserves every pinned Skill and original model route', {
   await waitForAttemptStart(oldAttempt.id)
   await orchestration.cancelAdminRun(started.runId, actor)
   await wait(run!.sessionId!)
+  await database.client`update run_attempts set manifest = manifest - 'budget' where tenant_id = ${tenant} and id = ${oldAttempt.id}`
   await orchestration.retryAdminRun(started.runId, actor)
   const retried = await runs.getRun(tenant, started.runId)
   const newAttempt = await runs.getAttempt(tenant, retried!.currentAttemptId!)
@@ -670,6 +673,7 @@ test('review 8a: retry preserves every pinned Skill and original model route', {
     assert.deepEqual(newAttempt.manifest.tools, oldAttempt.manifest.tools)
     assert.deepEqual(newAttempt.manifest.input, oldAttempt.manifest.input)
     assert.deepEqual(newAttempt.modelRouteSnapshot, oldAttempt.modelRouteSnapshot)
+    assert.ok(newAttempt.manifest.budget, 'pre-PF-02 Skill trial retries must receive an upgraded budget snapshot')
   } finally {
     if (newAttempt) await waitForAttemptStart(newAttempt.id)
     await orchestration.cancelAdminRun(started.runId, actor)

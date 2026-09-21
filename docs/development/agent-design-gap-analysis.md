@@ -1,7 +1,7 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-21<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本轮实现核对基于 `8b3982d`，本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-04 已落地；B-05 代码级基础已完成，P2 已由用户确认为手工执行完成，仓库内审计证据仍待按通用模板归档。完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；PF-02 实施基于 `8785995`，并包含当前未提交的 PF-02 工作区改动；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-04 已落地；B-05 代码级基础已完成，P2 已由用户确认为手工执行完成，仓库内审计证据仍待按通用模板归档。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
@@ -28,7 +28,7 @@
 | AS-06 工具效果契约 | **基础已实现；外部写操作协议待具体能力接入**。Tool Version 持久化输出验证、重试、并发和完成语义；Runtime 目录携带同一契约。平台桥严格校验输入/输出、大小、当前授权、超时与同名串行调用，并区分冲突、不可用、取消及写入结果未知。DSH 原生工具输出明确标为不可验证 | 平台桥单测覆盖严格 Schema、输入/输出错误、收权、调用上限、串行冲突、读超时与写结果未知；DSH 政策测试覆盖目录和错误传播；工具治理集成验证版本契约持久化。尚未用真实外部异步写操作验证业务操作键与状态查询 | I-06 消费动作结果；新增外部写动作时实现业务幂等键、`accepted` 回执/查询和跨 Attempt 核对，不能仅靠 Run 幂等 |
 | AS-07 当前权限 | **部分实现（当前执行复核已接线；通用持久化审批未实现）**。main 的 `authorizeExecution` → 编排 `assertCurrentRunAuthorization` → [当前授权函数](../../server/src/modules/run/current-execution-authorization.ts)；平台桥前后复核。main 的 ACP `permissionDecision` 默认拒绝；目录明确阻塞尚需逐次审批的工具 | [当前授权](../../server/src/modules/run/current-execution-authorization.test.ts)、[用途分流](../../server/src/modules/run/run-orchestration-authorization.test.ts)、Adapter 活动撤权/成果收集时撤权用例已存在；真实多账号收权及每类工具仍需 P2 | 保持个人/团队共同安全门槛；不把 `approval.required/resolved` 当作持久化人工批准；外部能力和审批接入再逐条验证 |
 | AS-08 持久化恢复 | **部分实现；等待/检查点未实现（Run 契约）**。RunState 只有 queued/running/cancel_requested/succeeded/failed/cancelled；[Run 仓储](../../server/src/modules/run/postgres-run-repository.ts) `recoverAfterRestart` 收敛活动 Attempt、恢复排队；[自动任务服务](../../server/src/modules/automation/automation-service.ts)处理中断准备 | [编排集成](../../server/src/infrastructure/postgres/m3-orchestration.integration.test.ts)、[故障集成](../../server/src/infrastructure/postgres/m5-runtime-faults.integration.test.ts)、[自动任务集成](../../server/src/infrastructure/postgres/automation.integration.test.ts)覆盖相关状态与竞态；未证明通用副作用恢复 | 维持 AG-03 轻量语义；有长流程需求后随 EX-03 设计等待/恢复/动作核对，不把聊天重放作为恢复 |
-| AS-09 预算与委派 | **基础已实现；累计预算与委派未启用**。定义直接声明 timeoutSeconds/maxOutputBytes/maxToolCalls，映射到 Manifest；Adapter 限时、限制收集文本并报告截断，平台桥和 DSH 政策约束工具次数；调度为自动任务保留交互容量 | I-07 有边界与截断回归，自动任务集成有取消/领取竞态；没有累计 Token/成本、跨 Attempt 总预算或父子任务预算契约。输出字节上限不等于模型 Token 拦截 | 保留现有限额执行矩阵；累计预算与委派按明确需求另行实施 |
+| AS-09 预算与委派 | **PF-02 已实现可执行维度的累计预算；委派未启用**。Task 预算账户累计时长、工具次数和输出字节；Attempt 创建事务原子预占，终态按 Runtime/平台证据结算，取消、重放与重启兜底只收敛一次。Manifest 固定预算范围、累计上限和本次预留；超额返回 `TASK_BUDGET_EXCEEDED` | PostgreSQL 用例覆盖跨 Attempt 累计、并发共享范围、重复结算和排队取消释放；Runtime/HTTP 用例覆盖预算快照、单次限额收紧、查询投影及不支持能力。Token 仅接受 Runtime 完整上报，否则为 unavailable；成本不可用，两者硬预算返回 422 | PF-06 启用委派时把子 Task 接入已预留的共享范围并补取消传播；可靠 Token/成本执行中计量出现前保持不支持 |
 | AS-10 真实结果 | **基础已实现（B-04）**。[任务结果领域投影](../../server/src/domain/task-result.ts)与仓储/API/前端以 `task-result/v1` 区分执行终态、业务结果、回执、证据和待处理项；成果引用固定到来源 Attempt 与不可变版本 | 领域、PostgreSQL、HTTP、前端及 [P1 浏览器用例](../../e2e/personal-integration/task-result.spec.ts)覆盖已登记成果、仅回答、成果登记缺口和失败路径；仍不能替代具体 Agent 的目标质量评测或真实外部写回执 | 具体 Agent 补目标案例；外部异步写能力接入时补 `accepted` 后状态核对；真实 DSH/OIDC 留 P2 |
 | AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；发布事务复核 sealedRevision/最新试运行；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖修改候选使证据失效、人工判失败阻塞发布、同版本不同内容冲突；覆盖真实绑定修订与封存后漂移拒绝；跨环境变更验证未覆盖 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
 | AS-12 评测与审计 | **基础契约已实现**。发布服务采用 [`AgentEvaluationSuite v1`](agent-evaluation-template.yaml)，要求 success/invalid_input/permission_denied/prompt_injection/capability_failure 五类案例；候选与版本证据记录契约版本、case Run/Attempt、机器断言和人工 rubric 结论 | 包解析拒绝旧数组、未知版本/字段/断言；发布集成使用 `TrialStubRuntime` 验证五类案例和逐项人工判定。平台故障/安全测试独立维护，真实目标质量与成本仍需具体 Agent/P2 证明 | 为每个拟发布 Agent 替换通用输入/rubric并留 P2；不复制平台通用故障套件，也不将平台生成五案例视为业务验收完成 |
@@ -51,9 +51,9 @@
 
 ### D-04 Session、恢复和预算不因文档改名升级
 
-当前 `CreateRunInput.sessionId` 与 `RuntimeManifest.session_id` 必填，自动任务事务中创建独立 Session。此模式继续受支持；不强制为了目标概念移除 Session。Run 没有等待状态，ACP 审批回调也不提供跨进程等待机制。长期等待与无 Session 入口属于明确需求后的扩展。
+PF-01 已使 Task/Run 支持有 Session 与无 Session 两种入口；自动任务仍创建独立 Session，现有会话模式继续受支持。Run 没有等待状态，ACP 审批回调也不提供跨进程等待机制。长期等待仍属于 PF-04。
 
-Manifest 的输出字节限制只截断收集的文本，工具次数还依赖目标 DSH 政策执行；累计 Token、金额、磁盘或跨 Attempt 总预算不能由这些字段推导。目标 Runtime 的执行约束仍需实测。
+PF-02 在 Task 预算账户上累计跨 Attempt 的可执行时长、工具次数与输出字节，并在 Attempt 创建事务中预占；Manifest limits 继续由 Runtime/DSH 执行。Token 只有 Runtime 同时上报输入和输出时才记录，否则明确为 unavailable；金额和 Token 硬预算均拒绝，不能由文本或输出字节推导。目标 Runtime 的真实执行约束仍需 PF-07 实测。
 
 ### D-05 结果状态与证据已独立建模
 
@@ -88,20 +88,28 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | 顺序 | 实施包 | 统一平台交付物 | 完成门槛 |
 | --- | --- | --- | --- |
 | PF-01（已完成，2026-09-21） | 任务与外部操作基础 | 与 Session 解耦但兼容现有会话的 Task/触发来源；稳定关联键；外部动作 operation id、幂等键、参数摘要、`accepted/completed/failed/unknown` 回执及状态查询 | 相同事件/动作不重复生效；结果与 Artifact 有明确归属和读取授权；同步、异步和结果未知可区分 |
-| PF-02 | 用量与累计预算 | Attempt、Run、Task 和委派树的 Token/成本/时长/工具/输出计量；预算预占、结算、并发检查、超限停止及不支持能力的明确状态 | 并发不越过总预算；缺少可靠 Runtime 计量时不能宣称硬限制；取消和恢复不重复结算 |
+| PF-02（已完成，2026-09-21） | 用量与累计预算 | Task 预算范围内的 Attempt/Run 时长、工具与输出累计；Token/成本能力状态；预算预占、结算、并发检查、超限拒绝及不支持能力的明确状态 | 并发不越过总预算；缺少可靠 Runtime 计量时不能宣称硬限制；取消和恢复不重复结算 |
 | PF-03 | MCP 受控接入 | MCP Server 登记、传输与网络策略、凭据引用、发现候选、Tool/Resource/Prompt Allowlist、契约摘要、Binding、调用和审计 | 完成一个真实批准服务的发现→审核→授权→调用→撤权链路；新增能力不自动获权；不启动包内任意服务进程 |
 | PF-04 | 持久化等待与审批恢复 | Run 等待状态、检查点引用、事件关联、动作绑定审批、超时/取消、恢复前重新鉴权及旧 Attempt 隔离 | 服务重启、重复/迟到事件和重复决定不重复动作；长期等待释放 Worker；副作用未知时先查询 PF-01 操作状态 |
 | PF-05 | 受控记忆与经验 | 来源授权、候选、审核、独立版本、ACL、检索引用、冲突/保留、撤回传播和审计 | 未同意内容不进入共享记忆；撤回后新运行不再引用；记忆不覆盖指令、权限或权威业务事实 |
 | PF-06 | 受控 Agent 委派 | 父子 Task/Run、固定 Agent Version、最小上下文、权限交集、PF-02 总预算、取消传播和结果合并 | 子任务不扩大权限或预算；循环有界；父任务取消后不能产生新动作；子任务失败不合并为无依据成功 |
 | PF-07 | 平台基线验收 | 无 Session、MCP、异步动作、等待/审批、记忆、委派和累计预算的 P0/P1/P2 套件；版本化能力矩阵与运维手册 | 每项有代码版本、身份、环境、Runtime、故障/撤权和结果证据；真实 DSH/OIDC/批准连接通过后才开放给 Agent 发布 |
 
-**下一步：实施 PF-02。** 它在 PF-01 的 Task/Run/Attempt 归属上增加累计计量、预算预占与结算，为后续持久化等待和 Agent 委派提供不会因重试或并发而失真的总预算。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
+**下一步：实施 PF-03。** 在 PF-02 已形成跨 Attempt 的原子累计预算边界后，按批准连接、候选发现、Allowlist、Binding、调用审计与撤权顺序接入 MCP，不给 Agent 自动授予新能力。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
 写入平台工具在执行前自动登记 Operation，Task + 动作/参数摘要形成稳定幂等边界；重复投递不会再次进入处理器。同步完成记为 `completed`，异步系统确认受理后保持 `accepted`，明确失败记为 `failed`，执行后无法确认记为 `unknown`。员工端可查询 Task 的 Operation；平台管理员核对权威外部状态后可把 `accepted/unknown` 收敛为 `completed/failed`，终态回执不可改写。
 
 代码级验收覆盖：Session 与无 Session Task、Task/Run 原子受理、关联键复用、同键换参拒绝、平台工具同步回执重放、异步受理不重复执行、未知效果核对、Runtime Manifest、无 Session DSH 编排、Task Artifact 生成/查询/下载及公开 HTTP 契约。真实 OIDC、真实外部写入和目标环境 DSH 属 PF-07 P2 证据，不由单元或一次性 PostgreSQL 绿灯替代。
+
+**PF-02 完成记录（2026-09-21）：** `0052_task_cumulative_budgets.sql` 为每个 Task 建立预算范围和账户，并为每个 Attempt 保存一条预占/结算记录。当前根 Task 自成范围；数据结构允许 PF-06 的子 Task 显式共享根范围，但本项不实现委派。可执行维度为累计时长、工具次数和 UTF-8 输出字节：创建 Attempt 时锁定账户并按 Manifest limits 原子预占，终态按 Runtime/平台证据释放未用额度；排队取消释放全部，活动执行缺少精确回报时按时间戳和预占上限保守结算。重复终态、重复事件或恢复兜底不会二次扣减。
+
+会话 Run、无 Session API/event Task 与自动任务均复用同一账户、Attempt 和 DSH 链路。`cumulativeBudget` 固定在 Task 请求摘要中，时长/工具/输出上限同时收紧单次 Manifest limits；Manifest 固定范围、累计限额、预占和执行能力，编译与持久化边界拒绝不一致。Task 查询返回 limits、usage、reserved、remaining、能力状态及逐 Attempt 来源。Token 只有 Runtime 同时上报输入/输出时才记录；缺失时为 null + `unavailable`，不从回答文本估算。成本没有可核验价格来源，保持 unavailable；Token/成本硬预算明确返回 422，不伪装成已执行。
+
+代码级验收覆盖：迁移幂等、跨 Attempt 结算与重放、共享范围并发预占、取消释放、不支持能力、Runtime Schema/编译一致性、API 单次限额收紧与预算查询、自动任务、故障恢复、安全、共享文件及团队生命周期回归。真实 DSH 的 Token 回报、真实模型成本和 PF-06 委派树仍属于后续能力/验收，不由当前合成 Runtime 或 PostgreSQL 测试推定。
+
+评审修复补充：升级迁移为既有 queued/running/cancel_requested Attempt 按其固定 limits 建立预占，恢复入口只对可信的历史持久化 Manifest 补无上限累计预算快照，并在重新入队前保存新摘要；新建 Manifest 仍由 Schema 和编译器严格要求 `budget`。精确结算与取消兜底统一按“预算账户 → Attempt 用量”加锁。未声明累计预算的 API 请求保留 PF-01 请求摘要算法，带预算请求使用显式 v2 摘要域。`tool_call_count` 仅在 `usage_source=dsh-session-log` 时作为 Runtime 实测值，证据不可用时按本 Attempt 预占工具上限保守结算。
 
 ### 4.3 原工作项映射与完成记录
 
@@ -442,3 +450,10 @@ B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治�
 - 明确不为未触发的 MCP、持久化等待、记忆、委派和无 Session 入口新增数据库状态或 AgentSpec 空开关；跨版本质量/成本趋势聚合保留为可选运维增强。
 - 新增场景无关的通用文本整理助手生命周期记录和受版本控制的严格 Agent 包。参考包无 Skill/Tool、无外部 Binding、无额外模型能力要求，包含五类 v1 评测与完整 checksums；它只证明第 1～6 阶段的文档和包契约，不宣称候选、发布、真实运行或 P2。
 - 当前验证：Agent 包解析 69/69（新增仓库参考包解析、摘要和五类案例断言）；全仓 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。未运行浏览器 E2E、真实 DSH/OIDC 或新增 P2；本轮没有改变前端旅程和生产执行路径。
+
+**2026-09-21 PF-02 用量与累计预算（当前工作区，未提交）：**
+
+- PostgreSQL 仓储与编排验证通过：M2 仓储及升级集成 14/14、M3 编排集成 28/28、自动任务集成 13/13、M4 审计 5/5、通知/错误体验 2/2、Runtime 配置 1/1、M5 安全 4/4、Runtime 故障 2/2、生命周期 20/20、共享文件 18/18、启动恢复 3/3。升级用例从 0051 基线构造旧排队 Attempt；并发用例确定性交错取消与精确结算。测试使用专用可丢弃 PostgreSQL；不等同于真实环境验收。
+- 契约与 Runtime 验证通过：Runtime 82/82、M5 API 23/23、全仓 `pnpm typecheck`、`pnpm lint`、`pnpm verify`、`pnpm build`、OpenAPI/Runtime Schema JSON 解析及 `git diff --check`。构建仅有既有 Vite 分块大小提示。
+- Skill 安装 PostgreSQL 集成 12 项中 11 项通过、1 项真实 DSH 按标记跳过；覆盖旧版 Skill Attempt 缺少预算快照时的重试升级，新 Attempt 固定完整依赖、模型路由与预算快照。
+- 未执行真实 DSH Token 回报、成本计量、真实 OIDC、浏览器 E2E、部署或 P2。Token/成本硬预算仍按能力契约明确拒绝；PF-02 改动保持未提交、未推送，后续提交不得把这些未覆盖项描述为已验收。

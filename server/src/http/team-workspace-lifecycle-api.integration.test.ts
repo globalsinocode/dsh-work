@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
+import { testAttemptManifest } from '../infrastructure/postgres/test-attempt-manifest.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
@@ -757,7 +758,7 @@ test('并发互斥：归档后重试（创建 Attempt）必须被拒绝', async 
       tenantId,
       runId,
       runtimeId,
-      manifest: { manifest_version: '1.0', run_id: runId, task_id: `task-${runId}`, attempt_id: `${runId}-attempt-2` },
+      manifest: testAttemptManifest(`task-${runId}`, runId, { manifest_version: '1.0', attempt_id: `${runId}-attempt-2` }),
       manifestSha256: 'lifecycle-test',
       modelRouteSnapshot: {},
     }),

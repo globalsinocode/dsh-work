@@ -99,6 +99,28 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   if (input.limits.max_tool_calls < 0 || input.limits.max_tool_calls > 1000) {
     throw new RangeError('limits.max_tool_calls must be between 0 and 1000')
   }
+  if (!input.budget || typeof input.budget !== 'object'
+    || !input.budget.cumulative_limits || typeof input.budget.cumulative_limits !== 'object'
+    || !input.budget.reservation || typeof input.budget.reservation !== 'object'
+    || !input.budget.enforcement || typeof input.budget.enforcement !== 'object') {
+    throw new TypeError('budget is required')
+  }
+  assertId('budget.scope_task_id', input.budget.scope_task_id)
+  if (input.budget.reservation.duration_ms !== input.limits.timeout_seconds * 1000
+    || input.budget.reservation.tool_calls !== input.limits.max_tool_calls
+    || input.budget.reservation.output_bytes !== input.limits.max_output_bytes) {
+    throw new TypeError('budget reservation must match the enforceable Attempt limits')
+  }
+  assertOptionalBudgetLimit(input.budget.cumulative_limits.max_duration_ms, 'max_duration_ms', 1_000, 86_400_000)
+  assertOptionalBudgetLimit(input.budget.cumulative_limits.max_tool_calls, 'max_tool_calls', 0, 100_000)
+  assertOptionalBudgetLimit(input.budget.cumulative_limits.max_output_bytes, 'max_output_bytes', 1_024, 1_073_741_824)
+  if (input.budget.enforcement.duration !== 'hard'
+    || input.budget.enforcement.tool_calls !== 'hard'
+    || input.budget.enforcement.output_bytes !== 'hard'
+    || input.budget.enforcement.tokens !== 'unsupported'
+    || input.budget.enforcement.cost !== 'unsupported') {
+    throw new TypeError('budget enforcement capabilities are invalid')
+  }
 
   if (input.input.file_mounts.length > 5) throw new RangeError('input.file_mounts must contain at most 5 files')
   let mountedBytes = 0
@@ -145,4 +167,10 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   const manifest = structuredClone(input)
   const serialized = canonicalJson(manifest)
   return { manifest, canonicalJson: serialized, sha256: sha256(serialized) }
+}
+
+function assertOptionalBudgetLimit(value: number | null, name: string, minimum: number, maximum: number): void {
+  if (value !== null && (!Number.isSafeInteger(value) || value < minimum || value > maximum)) {
+    throw new TypeError(`budget.cumulative_limits.${name} must be null or an integer between ${minimum} and ${maximum}`)
+  }
 }

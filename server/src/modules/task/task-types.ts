@@ -1,4 +1,5 @@
 import type { JsonObject } from '../run/run-types.ts'
+import type { TaskBudgetInput } from './task-budget-types.ts'
 
 export type TaskSourceType = 'session' | 'automation' | 'api' | 'event' | 'system'
 export type TaskStatus = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
@@ -12,6 +13,7 @@ export interface TaskRecord {
   sourceRef: string | null
   correlationKey: string
   requestDigest: string | null
+  budgetScopeTaskId: string
   workspaceId: string | null
   sessionId: string | null
   status: TaskStatus
@@ -27,6 +29,9 @@ export interface CreateTaskInput {
   sourceRef?: string | null
   correlationKey: string
   requestDigest?: string | null
+  /** PF-06 delegated Tasks will point at the root Task's shared budget scope. */
+  budgetScopeTaskId?: string
+  budget?: TaskBudgetInput | null
   workspaceId?: string | null
   sessionId?: string | null
 }

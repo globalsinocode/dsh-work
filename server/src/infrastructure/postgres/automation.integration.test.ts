@@ -24,6 +24,7 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -427,7 +428,7 @@ test('暂停收敛已受理但未开始的执行：queued Run/Attempt 一并取�
     tenantId,
     runId: run.id,
     runtimeId: 'runtime-local-01',
-    manifest: { purpose: 'automation' },
+    manifest: testAttemptManifest(run.taskId, run.id, { purpose: 'automation' }),
     manifestSha256: 'test-manifest-sha',
     modelRouteSnapshot: {},
   })
@@ -550,7 +551,7 @@ test('cancelQueuedRun 与领取竞态：Attempt 被先锁走时不取消', async
     tenantId,
     runId: run.id,
     runtimeId: 'runtime-local-01',
-    manifest: { purpose: 'automation' },
+    manifest: testAttemptManifest(run.taskId, run.id, { purpose: 'automation' }),
     manifestSha256: 'test-manifest-sha',
     modelRouteSnapshot: {},
   })

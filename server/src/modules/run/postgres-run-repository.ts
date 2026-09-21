@@ -15,6 +15,7 @@ import type {
   StoredRunEvent,
 } from './run-types.ts'
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
+import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
 
 interface RunRow {
   id: string
@@ -133,6 +134,7 @@ export class PostgresRunRepository implements RunRepository {
             correlationKey: input.taskCorrelationKey
               ?? `${input.sessionId}:${input.requestedBy}:${input.idempotencyKey}`,
             requestDigest: input.taskRequestDigest,
+            budget: input.taskBudget,
             workspaceId,
             sessionId: input.sessionId,
           }, transaction)
@@ -225,15 +227,39 @@ export class PostgresRunRepository implements RunRepository {
     return row ? mapAttempt(row) : null
   }
 
+  async upgradeQueuedAttemptManifest(
+    tenantId: string,
+    attemptId: string,
+    manifest: JsonObject,
+    manifestSha256: string,
+  ): Promise<void> {
+    await this.database`
+      update run_attempts
+         set manifest = ${this.database.json(manifest)},
+             legacy_manifest_sha256 = coalesce(legacy_manifest_sha256, manifest_sha256),
+             manifest_sha256 = ${manifestSha256}
+       where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
+         and not (manifest ? 'budget')
+    `
+  }
+
   async createAttempt(input: CreateAttemptInput): Promise<RunAttemptRecord> {
     return this.database.begin(async (transaction) => {
       // 3-T2: same workspace lock as createRun. Retry/续写 resurrects a
       // failed/cancelled run into a new queued attempt, so it is a real
       // "start a run" path and must not slip past an archive.
       await lockActiveWorkspaceForRun(transaction, input.tenantId, input.runId)
-      const [run] = await transaction<{ status: RunState; sessionId: string | null; workspaceId: string | null; requestedBy: string }[]>`
+      const [run] = await transaction<{
+        status: RunState
+        sessionId: string | null
+        workspaceId: string | null
+        requestedBy: string
+        taskId: string
+        budgetScopeTaskId: string
+      }[]>`
         select r.status, r.session_id as "sessionId", t.workspace_id as "workspaceId",
-               r.requested_by as "requestedBy"
+               r.requested_by as "requestedBy", r.task_id as "taskId",
+               t.budget_scope_task_id as "budgetScopeTaskId"
           from runs r
           join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
           left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
@@ -333,6 +359,14 @@ export class PostgresRunRepository implements RunRepository {
         `
       }
       if (!created) throw new Error('Attempt 创建失败')
+      await reserveAttemptBudget(transaction, {
+        tenantId: input.tenantId,
+        budgetScopeTaskId: run.budgetScopeTaskId,
+        taskId: run.taskId,
+        runId: input.runId,
+        attemptId,
+        manifest: input.manifest,
+      })
       return mapAttempt(created)
     })
   }
@@ -936,6 +970,92 @@ async function lockActiveWorkspaceForAttempt(
   `
   if (!workspace) return true
   return workspace.status === 'active'
+}
+
+async function reserveAttemptBudget(
+  transaction: DatabaseTransaction,
+  input: {
+    tenantId: string
+    budgetScopeTaskId: string
+    taskId: string
+    runId: string
+    attemptId: string
+    manifest: JsonObject
+  },
+): Promise<void> {
+  const limits = input.manifest['limits']
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+    throw new TypeError('Runtime Manifest 缺少 limits，不能预占 Task 预算')
+  }
+  const timeoutSeconds = requiredBudgetInteger(limits['timeout_seconds'], 'timeout_seconds')
+  const toolCalls = requiredBudgetInteger(limits['max_tool_calls'], 'max_tool_calls')
+  const outputBytes = requiredBudgetInteger(limits['max_output_bytes'], 'max_output_bytes')
+  const durationMs = timeoutSeconds * 1000
+  const budget = input.manifest['budget']
+  if (!budget || typeof budget !== 'object' || Array.isArray(budget)
+    || budget['scope_task_id'] !== input.budgetScopeTaskId) {
+    throw new TypeError('Runtime Manifest 的预算范围与 Task 不一致')
+  }
+  const reservation = budget['reservation']
+  if (!reservation || typeof reservation !== 'object' || Array.isArray(reservation)
+    || reservation['duration_ms'] !== durationMs
+    || reservation['tool_calls'] !== toolCalls
+    || reservation['output_bytes'] !== outputBytes) {
+    throw new TypeError('Runtime Manifest 的预算预占与 Attempt limits 不一致')
+  }
+  const [account] = await transaction<{
+    maxDurationMs: number | null
+    maxToolCalls: number | null
+    maxOutputBytes: number | null
+  }[]>`
+    select max_duration_ms::integer as "maxDurationMs",
+           max_tool_calls::integer as "maxToolCalls",
+           max_output_bytes::integer as "maxOutputBytes"
+      from task_budget_accounts
+     where tenant_id = ${input.tenantId} and budget_scope_task_id = ${input.budgetScopeTaskId}
+     for update
+  `
+  if (!account) throw new Error(`Task 预算账户不存在：${input.budgetScopeTaskId}`)
+  const cumulative = budget['cumulative_limits']
+  if (!cumulative || typeof cumulative !== 'object' || Array.isArray(cumulative)
+    || cumulative['max_duration_ms'] !== account.maxDurationMs
+    || cumulative['max_tool_calls'] !== account.maxToolCalls
+    || cumulative['max_output_bytes'] !== account.maxOutputBytes) {
+    throw new TypeError('Runtime Manifest 的累计预算快照与 Task 预算账户不一致')
+  }
+  const [used] = await transaction<{ durationMs: number; toolCalls: number; outputBytes: number }[]>`
+    select coalesce(sum(case when status = 'reserved' then reserved_duration_ms else actual_duration_ms end), 0)::integer as "durationMs",
+           coalesce(sum(case when status = 'reserved' then reserved_tool_calls else actual_tool_calls end), 0)::integer as "toolCalls",
+           coalesce(sum(case when status = 'reserved' then reserved_output_bytes else actual_output_bytes end), 0)::integer as "outputBytes"
+      from attempt_budget_usage
+     where tenant_id = ${input.tenantId} and budget_scope_task_id = ${input.budgetScopeTaskId}
+  `
+  assertBudgetAvailable('durationMs', account.maxDurationMs, used?.durationMs ?? 0, durationMs)
+  assertBudgetAvailable('toolCalls', account.maxToolCalls, used?.toolCalls ?? 0, toolCalls)
+  assertBudgetAvailable('outputBytes', account.maxOutputBytes, used?.outputBytes ?? 0, outputBytes)
+  await transaction`
+    insert into attempt_budget_usage (
+      id, tenant_id, budget_scope_task_id, task_id, run_id, attempt_id, status,
+      reserved_duration_ms, reserved_tool_calls, reserved_output_bytes
+    ) values (
+      ${`budget-usage-${input.attemptId}`}, ${input.tenantId}, ${input.budgetScopeTaskId},
+      ${input.taskId}, ${input.runId}, ${input.attemptId}, 'reserved',
+      ${durationMs}, ${toolCalls}, ${outputBytes}
+    )
+  `
+}
+
+function requiredBudgetInteger(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new TypeError(`Runtime Manifest ${name} 必须是非负安全整数`)
+  }
+  return Number(value)
+}
+
+function assertBudgetAvailable(name: string, maximum: number | null, consumed: number, requested: number): void {
+  if (maximum !== null && consumed + requested > maximum) {
+    throw new TaskBudgetExceededError(`${name} 累计预算不足：上限 ${maximum}，已结算或预占 ${consumed}，本次需要 ${requested}`)
+  }
 }
 
 function mapRun(row: RunRow): RunRecord {

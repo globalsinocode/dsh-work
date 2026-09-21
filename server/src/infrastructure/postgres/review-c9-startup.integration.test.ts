@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { after, before, test } from 'node:test'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -103,7 +104,7 @@ test('restored queues fail explicitly when Runtime is unavailable even if schedu
   const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
   const attemptId = `attempt-${randomUUID()}`
   await runs.createAttempt({ tenantId: 'tenant-dsh-work', runId: run.id, attemptId, runtimeId: 'runtime-local-01',
-    manifest: { attempt_id: attemptId, tools: [] }, manifestSha256: 'fixture', modelRouteSnapshot: {} })
+    manifest: testAttemptManifest(run.taskId, run.id, { attempt_id: attemptId, tools: [] }), manifestSha256: 'fixture', modelRouteSnapshot: {} })
   await db.client`update runtimes set scheduling_status = 'disabled' where id = 'runtime-local-01'`
   try {
     await orchestration.recoverAfterServiceRestart()

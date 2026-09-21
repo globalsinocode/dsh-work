@@ -12,6 +12,7 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 let throwaway: ThrowawayDatabase
 
@@ -120,7 +121,7 @@ test('audit and Tool metadata are redacted before persistence and on read', asyn
     tenantId: run.tenantId,
     runId: run.id,
     runtimeId: 'runtime-local-01',
-    manifest: {},
+    manifest: testAttemptManifest(run.taskId, run.id),
     manifestSha256: randomUUID().replaceAll('-', ''),
     modelRouteSnapshot: { providerKey: 'dsh-default', modelKey: 'dsh-default' },
   })

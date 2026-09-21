@@ -9,7 +9,6 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
-import type { JsonObject } from '../../modules/run/run-types.ts'
 import type {
   AgentRuntimePort,
   RuntimeEvent,
@@ -23,6 +22,7 @@ import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-c
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -117,7 +117,6 @@ test('Runtime configuration controls timeout, capacity and scheduling with versi
   const session = await orchestration.createSession({
     userId: 'U00001',
     title: 'Runtime 超时策略验证',
-    workspaceId: 'ws-supply',
     agentVersionId: 'agent-version-dsh-work-assistant-1',
   })
   const created = await orchestration.startRun({
@@ -213,7 +212,7 @@ async function createQueuedAttempt(source: RuntimeManifest | undefined) {
     tenantId: 'tenant-dsh-work',
     runId: run.id,
     runtimeId: 'runtime-local-01',
-    manifest: JSON.parse(JSON.stringify({ ...source, run_id: run.id, attempt_id: attemptId })) as JsonObject,
+    manifest: testAttemptManifest(run.taskId, run.id, JSON.parse(JSON.stringify({ ...source, attempt_id: attemptId }))),
     manifestSha256: randomUUID().replaceAll('-', ''),
     modelRouteSnapshot: {},
   })

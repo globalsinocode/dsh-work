@@ -20,6 +20,7 @@
     "data_scopes",
     "knowledge_context",
     "input",
+    "budget",
     "limits",
     "created_at"
   ],
@@ -406,6 +407,46 @@
             },
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "required": ["scope_task_id", "cumulative_limits", "reservation", "enforcement"],
+      "properties": {
+        "scope_task_id": { "type": "string", "minLength": 1 },
+        "cumulative_limits": {
+          "type": "object",
+          "required": ["max_duration_ms", "max_tool_calls", "max_output_bytes"],
+          "properties": {
+            "max_duration_ms": { "type": ["integer", "null"], "minimum": 1000, "maximum": 86400000 },
+            "max_tool_calls": { "type": ["integer", "null"], "minimum": 0, "maximum": 100000 },
+            "max_output_bytes": { "type": ["integer", "null"], "minimum": 1024, "maximum": 1073741824 }
+          },
+          "additionalProperties": false
+        },
+        "reservation": {
+          "type": "object",
+          "required": ["duration_ms", "tool_calls", "output_bytes"],
+          "properties": {
+            "duration_ms": { "type": "integer", "minimum": 0 },
+            "tool_calls": { "type": "integer", "minimum": 0 },
+            "output_bytes": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "enforcement": {
+          "type": "object",
+          "required": ["duration", "tool_calls", "output_bytes", "tokens", "cost"],
+          "properties": {
+            "duration": { "const": "hard" },
+            "tool_calls": { "const": "hard" },
+            "output_bytes": { "const": "hard" },
+            "tokens": { "const": "unsupported" },
+            "cost": { "const": "unsupported" }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

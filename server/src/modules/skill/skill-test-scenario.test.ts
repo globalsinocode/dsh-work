@@ -93,6 +93,7 @@ test('scenario expectations are immutable Manifest input and only accepted for t
     permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
     skills: [{ id: 'root', version: '1.0.0' }], tools: [], data_scopes: [], knowledge_context: [],
     input: { message: 'Calculate a fixture total', file_mounts: [] },
+    budget: { scope_task_id: 'task-scenario', cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 30000, tool_calls: 8, output_bytes: 4096 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
     limits: { timeout_seconds: 30, max_output_bytes: 4096, max_tool_calls: 8 },
     created_at: new Date().toISOString(), test_scenario: input.manifest.test_scenario,
   }

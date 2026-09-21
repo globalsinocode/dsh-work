@@ -11,7 +11,7 @@
     "db:migrate": "node --env-file-if-exists=../.env --experimental-strip-types src/infrastructure/postgres/migrate.ts",
     "db:migrate:skill-files": "node --env-file-if-exists=../.env --experimental-strip-types src/infrastructure/postgres/migrate-skill-files.ts",
     "test:m2": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/run/run-state-machine.test.ts src/modules/model/model-governance-service.test.ts",
-    "test:m2:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/postgres-repositories.integration.test.ts",
+    "test:m2:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/postgres-repositories.integration.test.ts src/infrastructure/postgres/task-budget-upgrade.integration.test.ts",
     "test:m3:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m3-orchestration.integration.test.ts",
     "test:m4:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-agent-management.integration.test.ts",
     "test:m4:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-skill-management.integration.test.ts",

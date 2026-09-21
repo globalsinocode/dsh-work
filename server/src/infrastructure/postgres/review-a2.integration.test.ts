@@ -13,7 +13,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
-import type { AgentRuntimePort } from '../../modules/runtime/runtime-types.ts'
+import type { AgentRuntimePort, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
@@ -228,7 +228,7 @@ test('team member removed before the artifact transaction cannot publish a resul
       },
     },
   )
-  const manifest = {
+  const manifest: RuntimeManifest = {
     manifest_version: '1.0' as const,
     run_id: runId,
     attempt_id: attemptId,
@@ -244,6 +244,7 @@ test('team member removed before the artifact transaction cannot publish a resul
     data_scopes: [],
     knowledge_context: [],
     input: { message: '生成成果', file_mounts: [] },
+    budget: { scope_task_id: `task-${runId}`, cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null }, reservation: { duration_ms: 300000, tool_calls: 20, output_bytes: 65536 }, enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' } },
     limits: { timeout_seconds: 300, max_output_bytes: 65536, max_tool_calls: 20 },
     created_at: new Date().toISOString(),
   }
@@ -273,7 +274,7 @@ test('team member removed before the artifact transaction cannot publish a resul
           id, tenant_id, run_id, attempt_no, runtime_id, manifest, manifest_sha256, model_route_snapshot, status
         ) values (
           ${attemptId}, 'tenant-dsh-work', ${runId}, 1, 'runtime-local-01',
-          ${transaction.json(manifest)}, 'review-a2-artifact', ${transaction.json({})}, 'running'
+          ${transaction.json(JSON.parse(JSON.stringify(manifest)))}, 'review-a2-artifact', ${transaction.json({})}, 'running'
         )
       `
     })

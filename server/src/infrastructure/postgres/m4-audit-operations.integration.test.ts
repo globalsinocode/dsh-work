@@ -9,6 +9,7 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -46,7 +47,7 @@ before(async () => {
     tenantId: 'tenant-dsh-work',
     runId,
     runtimeId: 'runtime-local-01',
-    manifest: {},
+    manifest: testAttemptManifest(run.taskId, run.id),
     manifestSha256: randomUUID().replaceAll('-', ''),
     modelRouteSnapshot: { providerKey: 'dsh-default', modelKey: 'dsh-default' },
   })
