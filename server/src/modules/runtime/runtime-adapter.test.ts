@@ -922,6 +922,26 @@ describe('current execution authorization', () => {
     assert.equal(events.some(event => event.event_type === 'assistant.completed'), false)
   })
 
+  it('stops a live Worker when the authorization service is unavailable, without misreporting revocation', async () => {
+    let unavailable = false
+    const events: RuntimeEvent[] = []
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: async () => { if (unavailable) throw new Error('authorization database unavailable') },
+    })
+    const input = manifest('run-current-authorization-outage', 'attempt-1', '[hang]')
+    const handle = await adapter.execute(input)
+    const unsubscribe = adapter.subscribe(input.run_id, event => {
+      events.push(event)
+      if (event.event_type === 'run.started') unavailable = true
+    })
+    const result = await handle.done
+    unsubscribe()
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE')
+    assert.equal(events.some(event => event.event_type === 'run.completed'), false)
+    assert.equal(events.some(event => event.event_type === 'assistant.completed'), false)
+  })
+
   it('does not commit a completed response if permission was revoked during artifact collection', async () => {
     let revoked = false
     const events: RuntimeEvent[] = []
@@ -933,6 +953,21 @@ describe('current execution authorization', () => {
     const handle = await adapter.execute(input)
     const unsubscribe = adapter.subscribe(input.run_id, event => events.push(event))
     assert.equal((await handle.done).errorCode, 'AUTHORIZATION_REVOKED')
+    unsubscribe()
+    assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
+  })
+
+  it('does not commit a completed response when authorization is unavailable during artifact collection', async () => {
+    let unavailable = false
+    const events: RuntimeEvent[] = []
+    const adapter = await createAdapter(200, undefined, async () => { unavailable = true; return [] }, {
+      authorizeExecution: async () => { if (unavailable) throw new Error('authorization database unavailable') },
+    })
+    const input = manifest('run-authorization-outage-at-output', 'attempt-1', '[artifact]')
+    input.tools = [{ id: 'write', version: '1.0.0' }]
+    const handle = await adapter.execute(input)
+    const unsubscribe = adapter.subscribe(input.run_id, event => events.push(event))
+    assert.equal((await handle.done).errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE')
     unsubscribe()
     assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
   })

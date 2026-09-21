@@ -38,6 +38,7 @@ let storageRoot: string
 let server: Server
 let baseUrl = ''
 let agentMembers: PostgresWorkspaceAgentMemberService
+let authorization: PostgresAuthorizationService
 
 // ---------------------------------------------------------------------------
 // TW-10 空间共享讨论与 @Agent 触发
@@ -431,7 +432,7 @@ test('@Agent 触发：成员在共享会话中按成员固定版本发起 Run，
   assert.ok(runMessages.every(message => message.runId === task.id), 'Run 详情消息必须带 runId 供共享流归因')
 })
 
-test('被移出成员不得再读共享 Run 详情（含其本人发起的 Run）', async () => {
+test('结果读取区分账号停用、授权故障和团队成员移除', async () => {
   const workspaceId = 'ws-tw10-removed'
   const ownerId = `${workspaceId}-owner`
   const memberId = `${workspaceId}-member`
@@ -474,6 +475,25 @@ test('被移出成员不得再读共享 Run 详情（含其本人发起的 Run�
   assert.equal(result.version, 'task-result/v1')
   assert.ok(['queued', 'running'].includes(result.execution))
   assert.equal(result.outcome, 'pending')
+
+  // 当前账号停用属于显式授权拒绝：已知 Run 也必须返回 403，不能继续读取结果。
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${ownerId}`
+  const disabledResult = await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: ownerId })
+  assert.equal(disabledResult.status, 403)
+  assert.equal(disabledResult.body.error?.code, 'permission_denied')
+  await database`update users set status = 'active' where tenant_id = ${tenantId} and id = ${ownerId}`
+
+  // 授权基础设施故障必须走服务错误，不能伪装成对象不存在的 404。
+  const authorizeWorkbench = authorization.authorizeWorkbench.bind(authorization)
+  authorization.authorizeWorkbench = async () => { throw new Error('synthetic authorization database outage') }
+  try {
+    const unavailableResult = await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: ownerId })
+    assert.equal(unavailableResult.status, 500)
+    assert.equal(unavailableResult.body.error?.code, 'operation_failed')
+  } finally {
+    authorization.authorizeWorkbench = authorizeWorkbench
+  }
+
   // 从未加入的外部人读不到（正文、来源与成果均不可见）。
   assert.equal((await api('GET', `/api/workbench/v1/runs/${runId}`, { as: outsiderId })).status, 404)
   assert.equal((await api('GET', `/api/workbench/v1/runs/${runId}/result`, { as: outsiderId })).status, 404)
@@ -911,7 +931,7 @@ before(async () => {
   database = throwaway.client
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-tw10-'))
 
-  const authorization = new PostgresAuthorizationService(database)
+  authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   const content = new PostgresContentService(database, storageRoot, authorization)

@@ -3,8 +3,8 @@ import { expect, test } from '@playwright/test'
 test('P0: personal Workspace is implicit, navigation exposes work entries', async ({ page }) => {
   await page.goto('/workbench')
   const navigation = page.getByRole('navigation', { name: '员工工作台主导航' })
-  // D12 收敛的四个工作入口 + AG-03 既有「自动任务」（已决定保留为第五入口）。
-  await expect(navigation.getByRole('button')).toHaveText(['新对话', '历史对话', '我的文件', '团队空间', '自动任务'])
+  // 历史对话与我的文件保留上下文入口和直达路由，不进入员工主导航。
+  await expect(navigation.getByRole('button')).toHaveText(['新对话', '团队空间', '自动任务'])
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)
   await expect(page.getByLabel('当前工作空间')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '选择 Skill', exact: true })).toBeVisible()

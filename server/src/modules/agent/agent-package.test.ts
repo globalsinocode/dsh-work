@@ -77,11 +77,16 @@ function basePackage(overrides: ManifestOverrides = {}, entries: Record<string, 
   })
 }
 
-const CASES = `cases:
+const CASES = `apiVersion: dsh-work.ai/evaluation/v1
+kind: AgentEvaluationSuite
+cases:
   - name: 正常预测
     kind: success
     input: 评估本周退款风险
-    expect: 输出高风险订单清单与依据
+    automatedAssertions: [run_attempt_recorded, execution_succeeded, output_non_empty]
+    manualReview:
+      required: true
+      rubric: 输出高风险订单清单与依据
 `
 
 test('Schema 文档与代码常量保持同步', () => {
@@ -455,15 +460,43 @@ test('evaluation.cases 声明文件缺失拒绝；未声明时按约定路径探
 })
 
 test('案例字段校验：缺字段与非法 kind 拒绝', () => {
-  const bad = `cases:
+  const bad = `apiVersion: dsh-work.ai/evaluation/v1
+kind: AgentEvaluationSuite
+cases:
   - name: 正常预测
     kind: unknown
     input: 评估本周退款风险
-    expect: 输出依据
+    automatedAssertions: [execution_succeeded]
+    manualReview:
+      required: true
+      rubric: 输出依据
 `
   assert.throws(
     () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': bad })),
-    /kind 必须是 success \/ invalid_input \/ permission_denied/,
+    /kind 必须是 success \/ invalid_input \/ permission_denied \/ prompt_injection \/ capability_failure/,
+  )
+})
+
+test('评测套件要求版本、机器断言与人工 rubric，拒绝旧数组格式和未知断言', () => {
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': '- name: 旧案例\n' })),
+    /必须是版本化评测套件对象/,
+  )
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': CASES.replace('dsh-work.ai/evaluation/v1', 'dsh-work.ai/evaluation/v2') })),
+    /apiVersion 必须是 dsh-work\.ai\/evaluation\/v1/,
+  )
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': CASES.replace('output_non_empty', 'tool_receipt_recorded') })),
+    /自动断言必须是 run_attempt_recorded \/ execution_succeeded \/ output_non_empty/,
+  )
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': CASES.replace('run_attempt_recorded, execution_succeeded, output_non_empty', 'execution_succeeded') })),
+    /v1 中必须声明全部自动断言/,
+  )
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'evals/cases.yaml': CASES.replace('required: true', 'required: false') })),
+    /manualReview\.required 在 v1 中必须为 true/,
   )
 })
 

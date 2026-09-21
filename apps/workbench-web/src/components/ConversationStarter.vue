@@ -323,10 +323,10 @@ defineExpose({ useWorkspaceFile })
           </button>
         </nav>
 
-        <div v-if="!workspaceLocked" class="personal-capability-actions">
+        <!--<div v-if="!workspaceLocked" class="personal-capability-actions">
           <el-button link @click="router.push('/skills')">选择 Skill</el-button>
           <el-button link @click="router.push('/files')">从我的文件引用</el-button>
-        </div>
+        </div>-->
         <p v-if="referenceName">已引用：{{ referenceName }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <p v-if="referenceError" role="alert">{{ referenceError }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <TaskComposer

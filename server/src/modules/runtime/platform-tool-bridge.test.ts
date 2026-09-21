@@ -35,6 +35,27 @@ test('python output budget accepts the runner maximum after JSON serialization',
   assert.ok(Buffer.byteLength(JSON.stringify(result)) <= platformToolContracts.python_execute.maxOutputBytes)
 })
 
+test('authorization probe distinguishes revocation from an unavailable authorization service', async () => {
+  let authorization: 'revoked' | 'unavailable' | 'allowed' = 'revoked'
+  const bridge = await createPlatformToolBridge({}, 1, async () => {
+    if (authorization === 'revoked') throw Object.assign(new Error('revoked'), { code: 'permission_denied' })
+    if (authorization === 'unavailable') throw new Error('authorization database unavailable')
+  })
+  try {
+    assert.deepEqual(await probeAuthorization(bridge.socket), {
+      status: 403, body: { error: '当前执行授权已撤销' },
+    })
+    authorization = 'unavailable'
+    assert.deepEqual(await probeAuthorization(bridge.socket), {
+      status: 503, body: { error: '当前执行授权检查暂不可用' },
+    })
+    authorization = 'allowed'
+    assert.deepEqual(await probeAuthorization(bridge.socket), {
+      status: 200, body: { authorized: true },
+    })
+  } finally { await bridge.close() }
+})
+
 test('platform bridge validates input and output with stable error envelopes', async () => {
   let calls = 0
   const bridge = await createPlatformToolBridge({ sample: {
@@ -66,16 +87,25 @@ test('platform bridge distinguishes authorization, safe read timeout and unknown
     await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }))
     return { result: 'never' }
   }
-  let authorized = false
+  let authorization: 'revoked' | 'unavailable' | 'allowed' = 'revoked'
   const bridge = await createPlatformToolBridge({
     read: { contract: { ...baseContract, timeoutMs: 10 }, handler: waitForever },
     write: { contract: { ...baseContract, effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 10 }, handler: waitForever },
-  }, 3, async () => { if (!authorized) throw new Error('revoked') })
+  }, 4, async () => {
+    if (authorization === 'revoked') throw Object.assign(new Error('revoked'), { code: 'permission_denied' })
+    if (authorization === 'unavailable') throw new Error('authorization database unavailable')
+  })
   try {
     const denied = await call(bridge.socket, 'read', { value: 'x' })
     assert.equal(denied.status, 403)
     assert.equal(requireError(denied.body).code, 'TOOL_PERMISSION_DENIED')
-    authorized = true
+    authorization = 'unavailable'
+    const unavailable = await call(bridge.socket, 'read', { value: 'x' })
+    assert.deepEqual(requireError(unavailable.body), {
+      code: 'TOOL_AUTHORIZATION_UNAVAILABLE', message: '当前工具授权检查暂不可用，工具未执行',
+      retryable: true, effect_state: 'not_started',
+    })
+    authorization = 'allowed'
     const readTimeout = await call(bridge.socket, 'read', { value: 'x' })
     assert.deepEqual(requireError(readTimeout.body), {
       code: 'TOOL_TIMEOUT', message: '工具调用超时', retryable: true, effect_state: 'not_started',
@@ -85,6 +115,29 @@ test('platform bridge distinguishes authorization, safe read timeout and unknown
     assert.equal(writeError.code, 'TOOL_RESULT_UNKNOWN')
     assert.equal(writeError.retryable, false)
     assert.equal(writeError.effect_state, 'unknown')
+  } finally { await bridge.close() }
+})
+
+test('write completion stays unknown when the post-effect authorization check is unavailable', async () => {
+  let checks = 0
+  let calls = 0
+  const bridge = await createPlatformToolBridge({ write: {
+    contract: { ...baseContract, effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized' },
+    handler: async input => { calls++; return { result: input['value'] } },
+  } }, 1, async () => {
+    checks++
+    if (checks === 2) throw new Error('authorization database unavailable')
+  })
+  try {
+    const response = await call(bridge.socket, 'write', { value: 'x' })
+    assert.equal(response.status, 503)
+    assert.deepEqual(requireError(response.body), {
+      code: 'TOOL_AUTHORIZATION_UNAVAILABLE',
+      message: '工具执行后授权复核暂不可用，写入效果可能已发生；核对实际效果后再决定后续操作',
+      retryable: false,
+      effect_state: 'unknown',
+    })
+    assert.equal(calls, 1)
   } finally { await bridge.close() }
 })
 
@@ -145,7 +198,7 @@ test('platform bridge marks write failures after handler start as an unknown eff
     revoked_after: { contract: writeContract, handler: async input => ({ result: input['value'] }) },
   }, 3, async () => {
     checks++
-    if (checks === 5) throw new Error('revoked after execution')
+    if (checks === 5) throw Object.assign(new Error('revoked after execution'), { code: 'permission_denied' })
   })
   try {
     const invalid = requireError((await call(bridge.socket, 'invalid_output', { value: 'x' })).body)
@@ -234,6 +287,26 @@ function call(socketPath: string, tool: string, input: unknown): Promise<{ statu
     })
     req.on('error', reject)
     req.end(body)
+  })
+}
+
+function probeAuthorization(socketPath: string): Promise<{
+  status: number
+  body: { authorized?: boolean; error?: string }
+}> {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path: '/authorize-execution', method: 'POST' }, response => {
+      let text = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { text += chunk })
+      response.on('end', () => resolve({
+        status: response.statusCode ?? 0,
+        body: JSON.parse(text) as { authorized?: boolean; error?: string },
+      }))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end()
   })
 }
 

@@ -16,6 +16,13 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { AgentDefinition, AgentTrialRun } from '@/types/domain'
+import {
+  automatedAssertionSummary,
+  hasV1CaseEvidence,
+  trialCaseRuns,
+  trialHasLegacyEvidence,
+  trialHasPublishableV1Evidence,
+} from '@/utils/agent-evaluation-evidence'
 
 type ReleaseStep = 'definition' | 'checks' | 'trial' | 'review'
 
@@ -150,6 +157,7 @@ const canStartTrial = computed(() => authStore.canManage
   && !trialActive.value
   && !definitionChanged.value)
 const canPublish = computed(() => latestTrial.value?.status === 'passed'
+  && trialHasPublishableV1Evidence(latestTrial.value)
   && candidate.value?.sealedRevision === candidate.value?.revision
   && !definitionChanged.value)
 /** 试运行通过且封存一致 → 可提交审核；提交后（submitted）才能确认发布。 */
@@ -191,7 +199,13 @@ const trialStatusLabel: Record<TrialRunStatus, string> = {
   failed: '已失败',
   cancelled: '已取消',
 }
-const caseKindLabel = { success: '正常任务', invalid_input: '无效输入', permission_denied: '越权请求' } as const
+const caseKindLabel = {
+  success: '正常任务',
+  invalid_input: '无效输入',
+  permission_denied: '越权请求',
+  prompt_injection: '提示注入',
+  capability_failure: '能力不可用',
+} as const
 const checkIcon: Record<CheckStatus, string> = { passed: '✓', failed: '✕', pending: '·' }
 const planActionLabel = { create: '新建', reuse: '复用', upgrade: '升级', blocked: '阻塞' } as const
 const planActionName = (action: PlanAction) => planActionLabel[action]
@@ -271,11 +285,6 @@ async function startTrial() {
   }
 }
 
-/** 试运行待确认的案例集合（dsh 步骤携带的执行记录）。 */
-function trialCaseRuns(trial: AgentTrialRun) {
-  return trial.steps.flatMap(step => step.caseRuns ?? [])
-}
-
 /** 案例来源回查：TrialCaseRun 不带 origin，按 caseId 对照候选案例标记平台生成。 */
 function caseOrigin(caseId: string) {
   return candidate.value?.cases.find(item => item.id === caseId)?.origin
@@ -288,7 +297,8 @@ function verdictKey(trialId: string, caseId: string) {
 /** 全部案例都已选择判定后才允许提交逐项确认。 */
 function verdictsComplete(trial: AgentTrialRun) {
   const runs = trialCaseRuns(trial)
-  return runs.length > 0 && runs.every(run => Boolean(caseVerdicts.value[verdictKey(trial.id, run.caseId)]))
+  return runs.length > 0
+    && runs.every(run => hasV1CaseEvidence(run) && Boolean(caseVerdicts.value[verdictKey(trial.id, run.caseId)]))
 }
 
 async function confirmTrial(trial: AgentTrialRun) {
@@ -526,8 +536,8 @@ onMounted(async () => {
               <div><span class="card-kicker">步骤 2</span><h2>运行检查</h2></div>
               <el-button v-if="authStore.canManage" size="small" :loading="governance.busy === 'checks'" :disabled="candidateLocked" @click="runCandidateChecks">运行检查</el-button>
             </div>
-            <p class="section-intro">候选随附 {{ candidate.cases.length }} 个试运行案例（覆盖成功、无效输入、权限拒绝三类<template v-if="generatedCaseCount">，其中 {{ generatedCaseCount }} 条由平台按定义生成</template>），试运行断言阶段将逐条核对。</p>
-            <p v-if="generatedCaseCount" class="hint">平台生成案例只提供通用预期，请在逐项确认与审核时核对并补充实际业务预期。</p>
+            <p class="section-intro">候选随附 {{ candidate.cases.length }} 个 v1 试运行案例，覆盖目标质量、无效输入、越权、提示注入和能力特有失败<template v-if="generatedCaseCount">；其中 {{ generatedCaseCount }} 条由平台按定义生成</template>。</p>
+            <p class="hint">Run/Attempt、执行终态与非空输出由平台自动断言；业务质量由审核人按案例 rubric 判断。平台生成案例仍需结合实际职责核对。</p>
             <el-empty v-if="!candidate.checks.length" description="尚未运行检查" :image-size="60" />
             <ul v-else class="check-list">
               <li v-for="check in candidate.checks" :key="check.id" :class="`check--${check.status}`">
@@ -582,20 +592,40 @@ onMounted(async () => {
                 </li>
               </ol>
               <div v-if="trialCaseRuns(trial).length" class="case-runs">
+                <el-alert
+                  v-if="trialHasLegacyEvidence(trial)"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  title="旧版评测证据不可用于 v1 发布"
+                  description="请重新运行五类 v1 评测；已提交候选可在此撤回后重建。"
+                >
+                  <template v-if="candidate.status === 'submitted' && authStore.canManage" #default>
+                    <el-button size="small" type="warning" plain :loading="governance.busy === 'submit'" @click="withdrawCandidate">撤回候选并重建</el-button>
+                  </template>
+                </el-alert>
                 <div v-for="run in trialCaseRuns(trial)" :key="run.caseId" class="case-run">
                   <div class="case-run__head">
                     <strong>{{ run.name }}</strong>
                     <el-tag size="small" effect="plain">{{ caseKindLabel[run.kind] }}</el-tag>
                     <el-tag v-if="caseOrigin(run.caseId) === 'generated'" size="small" type="info" effect="plain">平台生成</el-tag>
+                    <el-tag v-if="!hasV1CaseEvidence(run)" size="small" type="warning">旧版证据</el-tag>
                     <el-tag size="small" :type="run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info' : 'danger'" effect="plain">{{ run.status }}</el-tag>
                     <el-tag v-if="run.verdict" size="small" :type="run.verdict === 'passed' ? 'success' : 'danger'">{{ run.verdict === 'passed' ? '已确认符合预期' : '判定不符合预期' }}</el-tag>
                     <span v-if="run.runId" class="case-run__meta mono">{{ run.runId }}</span>
                   </div>
                   <dl class="case-run__io">
-                    <div><dt>预期</dt><dd>{{ run.expect }}</dd></div>
+                    <template v-if="hasV1CaseEvidence(run)">
+                      <div><dt>人工判定标准</dt><dd>{{ run.manualReview!.rubric }}</dd></div>
+                      <div><dt>自动断言</dt><dd>{{ automatedAssertionSummary(run) }}</dd></div>
+                    </template>
+                    <template v-else>
+                      <div><dt>旧版预期</dt><dd>{{ run.expect || '未记录' }}</dd></div>
+                      <div><dt>证据状态</dt><dd>缺少 AgentEvaluationSuite v1 的机器断言和人工 rubric，请重新试运行。</dd></div>
+                    </template>
                     <div><dt>实际输出</dt><dd>{{ run.outputExcerpt || run.error || '（无输出）' }}</dd></div>
                   </dl>
-                  <div v-if="trial.status === 'asserting' && authStore.canManage" class="case-run__verdict">
+                  <div v-if="trial.status === 'asserting' && authStore.canManage && hasV1CaseEvidence(run)" class="case-run__verdict">
                     <el-radio-group v-model="caseVerdicts[verdictKey(trial.id, run.caseId)]" size="small">
                       <el-radio-button value="passed">符合预期</el-radio-button>
                       <el-radio-button value="failed">不符合预期</el-radio-button>

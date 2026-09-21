@@ -37,11 +37,32 @@ import { manifestSchemaErrors, type AgentPackageManifestDocument } from './agent
 
 export interface AgentPackageCapabilityRef { id: string; version: string; path: string }
 
+export const AGENT_EVALUATION_API_VERSION = 'dsh-work.ai/evaluation/v1' as const
+export const AGENT_EVALUATION_KIND = 'AgentEvaluationSuite' as const
+export const AGENT_EVALUATION_CASE_KINDS = [
+  'success',
+  'invalid_input',
+  'permission_denied',
+  'prompt_injection',
+  'capability_failure',
+] as const
+export const AGENT_EVALUATION_ASSERTIONS = [
+  'run_attempt_recorded',
+  'execution_succeeded',
+  'output_non_empty',
+] as const
+
+export type AgentEvaluationCaseKind = typeof AGENT_EVALUATION_CASE_KINDS[number]
+export type AgentEvaluationAssertion = typeof AGENT_EVALUATION_ASSERTIONS[number]
+
 export interface AgentPackageCase {
+  /** 案例随候选持久化时保留其解释契约，避免脱离套件文件后丢失版本。 */
+  evaluationApiVersion: typeof AGENT_EVALUATION_API_VERSION
   name: string
-  kind: 'success' | 'invalid_input' | 'permission_denied'
+  kind: AgentEvaluationCaseKind
   input: string
-  expect: string
+  automatedAssertions: AgentEvaluationAssertion[]
+  manualReview: { required: true; rubric: string }
 }
 
 export interface AgentPackageParseResult {
@@ -64,7 +85,8 @@ export const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{2,47}$/
 export const VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 // 依赖引用的能力标识：与包内 skills/、tools/ 目录及平台能力 ID 字符集一致
 const DEP_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/
-const CASE_KINDS = new Set(['success', 'invalid_input', 'permission_denied'])
+const CASE_KINDS = new Set<string>(AGENT_EVALUATION_CASE_KINDS)
+const CASE_ASSERTIONS = new Set<string>(AGENT_EVALUATION_ASSERTIONS)
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
 /**
@@ -218,8 +240,14 @@ function stringField(source: Record<string, unknown>, key: string, { required = 
   }
   if (typeof value !== 'string') fail(`字段 ${key} 必须是字符串`)
   const text = (value as string).trim()
+  if (required && !text) fail(`字段 ${key} 不能为空`)
   if (text.length > max) fail(`字段 ${key} 长度不能超过 ${max} 个字符`)
   return text
+}
+
+function assertOnlyFields(source: Record<string, unknown>, allowed: string[], location: string) {
+  const unknown = Object.keys(source).filter(key => !allowed.includes(key))
+  if (unknown.length) fail(`${location} 含未定义字段：${unknown.join('、')}`)
 }
 
 function parseCases(files: Record<string, Uint8Array>, rootDir: string, declaredPath: string | undefined): AgentPackageCase[] {
@@ -231,17 +259,48 @@ function parseCases(files: Record<string, Uint8Array>, rootDir: string, declared
     return []
   }
   const value = parseYamlValue(files, full)
-  const items: unknown = Array.isArray(value) ? value : (value as Record<string, unknown> | null)?.['cases']
-  if (!Array.isArray(items)) fail(`${path} 必须是案例数组或含 cases 数组的对象`)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${path} 必须是版本化评测套件对象`)
+  const suite = value as Record<string, unknown>
+  assertOnlyFields(suite, ['apiVersion', 'kind', 'cases'], path)
+  if (suite['apiVersion'] !== AGENT_EVALUATION_API_VERSION) fail(`${path} apiVersion 必须是 ${AGENT_EVALUATION_API_VERSION}`)
+  if (suite['kind'] !== AGENT_EVALUATION_KIND) fail(`${path} kind 必须是 ${AGENT_EVALUATION_KIND}`)
+  const items = suite['cases']
+  if (!Array.isArray(items) || !items.length) fail(`${path} cases 必须是非空数组`)
   return (items as unknown[]).map((item: unknown, index: number) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) fail(`${path} 第 ${index + 1} 个案例必须是对象`)
     const entry = item as Record<string, unknown>
+    assertOnlyFields(entry, ['name', 'kind', 'input', 'automatedAssertions', 'manualReview'], `${path} 第 ${index + 1} 个案例`)
     const name = stringField(entry, 'name', { required: true, max: 120 })
     const kind = stringField(entry, 'kind', { required: true, max: 40 })
-    if (!CASE_KINDS.has(kind)) fail(`${path} 第 ${index + 1} 个案例 kind 必须是 success / invalid_input / permission_denied`)
+    if (!CASE_KINDS.has(kind)) fail(`${path} 第 ${index + 1} 个案例 kind 必须是 ${AGENT_EVALUATION_CASE_KINDS.join(' / ')}`)
     const input = stringField(entry, 'input', { required: true, max: 8000 })
-    const expect = stringField(entry, 'expect', { required: true, max: 4000 })
-    return { name, kind: kind as AgentPackageCase['kind'], input, expect }
+    const rawAssertions = entry['automatedAssertions']
+    if (!Array.isArray(rawAssertions) || !rawAssertions.length) fail(`${path} 第 ${index + 1} 个案例 automatedAssertions 必须是非空数组`)
+    const automatedAssertions = (rawAssertions as unknown[]).map((assertion) => {
+      if (typeof assertion !== 'string' || !CASE_ASSERTIONS.has(assertion)) {
+        fail(`${path} 第 ${index + 1} 个案例自动断言必须是 ${AGENT_EVALUATION_ASSERTIONS.join(' / ')}`)
+      }
+      return assertion as AgentEvaluationAssertion
+    })
+    if (new Set(automatedAssertions).size !== automatedAssertions.length) fail(`${path} 第 ${index + 1} 个案例自动断言不能重复`)
+    if (automatedAssertions.length !== AGENT_EVALUATION_ASSERTIONS.length
+      || AGENT_EVALUATION_ASSERTIONS.some(assertion => !automatedAssertions.includes(assertion))) {
+      fail(`${path} 第 ${index + 1} 个案例在 v1 中必须声明全部自动断言：${AGENT_EVALUATION_ASSERTIONS.join(' / ')}`)
+    }
+    const rawReview = entry['manualReview']
+    if (!rawReview || typeof rawReview !== 'object' || Array.isArray(rawReview)) fail(`${path} 第 ${index + 1} 个案例 manualReview 必须是对象`)
+    const manualReview = rawReview as Record<string, unknown>
+    assertOnlyFields(manualReview, ['required', 'rubric'], `${path} 第 ${index + 1} 个案例 manualReview`)
+    if (manualReview['required'] !== true) fail(`${path} 第 ${index + 1} 个案例 manualReview.required 在 v1 中必须为 true`)
+    const rubric = stringField(manualReview, 'rubric', { required: true, max: 4000 })
+    return {
+      evaluationApiVersion: AGENT_EVALUATION_API_VERSION,
+      name,
+      kind: kind as AgentPackageCase['kind'],
+      input,
+      automatedAssertions,
+      manualReview: { required: true, rubric },
+    }
   })
 }
 

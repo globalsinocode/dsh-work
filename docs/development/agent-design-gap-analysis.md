@@ -1,13 +1,13 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-21<br>
-**代码基线：** 初次核对为 `3f4f4bf`；当前已提交基线为 `a263a06`，叠加 B-05/I-08 第一批未提交改动。B-01～B-04 已落地；B-05 已启动自动任务 P1 浏览器验收，完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；当前已提交基线为 `5268fe3`，叠加 B-05/I-08 权限、故障与 Agent 专属评测的未提交改动。B-01～B-04 已落地；B-05 已完成自动任务 P1 第一批，正在补齐阶段化授权与目标环境证据，完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
 ## 1. 结论与状态口径
 
-已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。B-05/I-08 第一批已补自动任务 AC-20～24 的 P1 浏览器证据；更细的团队/文件/能力撤权、授权服务故障、平台与 Agent 专属评测矩阵，以及真实 DSH/OIDC P2 仍待完成。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
+已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。B-05/I-08 已补自动任务 AC-20～24 的 P1 浏览器证据，并形成账号、团队成员、输入文件、固定能力和授权服务故障的阶段矩阵；本轮新增文件/工具绑定领取边界、活动期文件撤权、成果提交前团队撤权、授权故障分类及结果端点直接证据。平台通用权限/故障矩阵及 Agent 专属 `AgentEvaluationSuite v1` 发布门禁已达到代码级闭环；具体 Agent 的真实目标评测与 DSH/OIDC P2 仍待完成。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
 
 | 状态 | 本文含义 |
 | --- | --- |
@@ -31,7 +31,7 @@
 | AS-09 预算与委派 | **基础已实现；累计预算与委派未启用**。定义直接声明 timeoutSeconds/maxOutputBytes/maxToolCalls，映射到 Manifest；Adapter 限时、限制收集文本并报告截断，平台桥和 DSH 政策约束工具次数；调度为自动任务保留交互容量 | I-07 有边界与截断回归，自动任务集成有取消/领取竞态；没有累计 Token/成本、跨 Attempt 总预算或父子任务预算契约。输出字节上限不等于模型 Token 拦截 | 保留现有限额执行矩阵；累计预算与委派按明确需求另行实施 |
 | AS-10 真实结果 | **基础已实现（B-04）**。[任务结果领域投影](../../server/src/domain/task-result.ts)与仓储/API/前端以 `task-result/v1` 区分执行终态、业务结果、回执、证据和待处理项；成果引用固定到来源 Attempt 与不可变版本 | 领域、PostgreSQL、HTTP、前端及 [P1 浏览器用例](../../e2e/personal-integration/task-result.spec.ts)覆盖已登记成果、仅回答、成果登记缺口和失败路径；仍不能替代具体 Agent 的目标质量评测或真实外部写回执 | 具体 Agent 补目标案例；外部异步写能力接入时补 `accepted` 后状态核对；真实 DSH/OIDC 留 P2 |
 | AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；发布事务复核 sealedRevision/最新试运行；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖修改候选使证据失效、人工判失败阻塞发布、同版本不同内容冲突；覆盖真实绑定修订与封存后漂移拒绝；跨环境变更验证未覆盖 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
-| AS-12 评测与审计 | **部分实现**。发布服务要求 success/invalid_input/permission_denied 三类案例，记录 case Run 与人工判定；运行事件关联 trace/Attempt，记录工具和模型用量 | 发布用例使用 `TrialStubRuntime`；成功终态及非空输出后仍由人判业务预期。平台有故障/安全测试，尚未形成覆盖质量、注入、可靠性和成本的统一 Agent 评测契约 | 分清平台测试与 Agent 专属案例，补评测分层、可复现证据和 P2；不将默认三案例作为完整质量证明 |
+| AS-12 评测与审计 | **基础契约已实现**。发布服务采用 [`AgentEvaluationSuite v1`](agent-evaluation-template.yaml)，要求 success/invalid_input/permission_denied/prompt_injection/capability_failure 五类案例；候选与版本证据记录契约版本、case Run/Attempt、机器断言和人工 rubric 结论 | 包解析拒绝旧数组、未知版本/字段/断言；发布集成使用 `TrialStubRuntime` 验证五类案例和逐项人工判定。平台故障/安全测试独立维护，真实目标质量与成本仍需具体 Agent/P2 证明 | 为每个拟发布 Agent 替换通用输入/rubric并留 P2；不复制平台通用故障套件，也不将平台生成五案例视为业务验收完成 |
 
 ## 3. 已确定的契约决策与具体缺口
 
@@ -79,9 +79,9 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | **已实施（2026-09-20，见 I-04 完成记录）**：`tool_binding_revisions` 持久化 + Manifest `tool_bindings` 固定 + 执行复核 + 封存/发布漂移拒绝；多环境独立发布与跨环境差异待真实环境验收 |
 | B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | **I-05、I-06 已实施（2026-09-20）**。平台工具执行契约已贯通；`task-result/v1` 读时投影区分执行终态与业务结果（见 I-06 记录）；DSH 原生输出明确标出不可验证边界；外部异步写协议随实际能力接入 |
-| B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | **进行中**：自动任务 P1 第一批 5/5 已落地；平台/Agent 评测矩阵细化、其余撤权/故障场景及 P2 待补 |
+| B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | **代码级基础已完成，P2 待验收**：自动任务 P1 第一批 5/5 已提交；平台权限/故障阶段矩阵已闭环；Agent 专属 `AgentEvaluationSuite v1` 已接入包解析、发布试跑、版本证据与管理端 |
 
-**下一步：继续 B-05/I-08 的权限与故障矩阵。** 自动任务 P1 第一批已完成；下一批优先补团队成员移除、文件来源移除、固定能力撤销和授权服务故障在受理/排队/活动工具/成果提交/结果读取各阶段的缺口，并把已有平台通用约束与 Agent 专属目标案例形成可追踪矩阵。P2 保持待验收；外部异步写协议随具体能力接入。
+**下一步：选择首个拟发布 Agent 执行 B-05/I-08 的 P2。** 将平台生成的五类案例替换为该 Agent 的真实输入和能力特有失败，记录目标 DSH Lock/Adapter/模型、真实身份、批准工具及结果/成果证据；绑定、定义或关键依赖变化后重做受影响证据。没有目标环境或拟发布 Agent 时保持未验收，不以合成 Runtime 补写通过。I-09～I-13 仍按明确需求启动，不因清单顺序自动实施。
 
 ### 4.2 原工作项映射与完成记录
 
@@ -276,11 +276,23 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 | 层级 | 证据入口 | 当前状态 | 尚缺 |
 | --- | --- | --- | --- |
-| 平台通用约束 | Runtime、授权、故障、包格式、自动任务服务单元/集成套件 | 已有分散证据；自动任务关键机制已有服务级覆盖 | 将个人/团队/文件/能力撤权及授权服务故障按执行阶段映射并补缺 |
-| Agent 专属目标 | 发布治理的正常、无效输入、权限拒绝案例 | 有基础三类案例及人工判定 | 按具体 Agent 增加目标质量、注入和能力特有失败案例，不复制平台通用测试 |
+| 平台通用约束 | Runtime、授权、故障、包格式、自动任务服务单元/集成套件 | 阶段矩阵见下表；受理、领取、活动执行、成果提交与结果读取已有代码级证据 | 真实身份、目标 DSH 和批准工具留待 P2 |
+| Agent 专属目标 | 发布治理的 `AgentEvaluationSuite v1` 与[模板](agent-evaluation-template.yaml) | 五类案例、契约版本、机器断言、Run/Attempt/输出证据及人工 rubric 已接入发布链路 | 平台生成案例仅作起点；每个拟发布 Agent 仍需补真实目标输入、能力特有失败和 P2 结果 |
 | P0 浏览器 | `e2e/automation-smoke.spec.ts` | 已实现，验证入口与表单反馈 | 不证明 PostgreSQL、Runtime、OIDC 或 DSH |
 | P1 浏览器 | `e2e/automation.integration.spec.ts` | 第一批 5/5 通过；一次性 PostgreSQL + 合成 Runtime/身份 | 继续补第 2、3 条未覆盖的阶段化安全/故障场景 |
 | P2 真实验收 | `e2e/automation.acceptance.spec.ts` | 计划路径，未创建、未运行 | 真实 DSH Lock/Adapter/模型、OIDC、多账号、批准工具与目标环境容量/故障证据 |
+
+**平台当前授权与故障阶段矩阵（代码级/P1，非 P2）：**
+
+| 对象或故障 | 受理/排队 | 领取后、Runtime 前 | 活动 Worker/工具 | 成果提交 | 结果读取 | 结论与下一缺口 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 个人账号停用 | `automation.integration.test.ts` 验证触发跳过且不移动游标；自动任务 P1 验证受理拒绝 | `review-a2.integration.test.ts` 验证领取后停用不进入 Runtime | `runtime-adapter.test.ts` 用当前授权门禁验证活动 Worker 停止 | 同一 Adapter 门禁在完成提交前复核 | `team-workspace-discussion-api.integration.test.ts` 验证停用账号读取已知 Run 结果返回 403/`permission_denied` | 代码级闭环；真实 OIDC 会话待 P2 |
+| 团队成员移除 | 会话/API 检查成员身份；`m5-revocation-pipeline.integration.test.ts` 清扫 queued/running Run | m5 执行前复核验证不调用 Runtime | m5 清扫取消运行中任务；Adapter 负责停止 Worker | `review-a2.integration.test.ts` 在成果扫描与数据库事务之间移除成员，验证事务拒绝且无 Artifact 版本 | `team-workspace-discussion-api.integration.test.ts` 验证已知 Run 详情与结果均 404 | 代码级闭环；真实 OIDC 多账号仍待 P2 |
+| 输入文件移除 | `current-execution-authorization.test.ts` 验证缺失/移除输入 fail-closed | `review-a2.integration.test.ts` 使用真实内容服务验证领取后移除不进入 Runtime | 同一集成套件使用合成 ACP Worker 验证活动期移除后 Worker 停止并以 `AUTHORIZATION_REVOKED` 收敛 | 活动期对象特定用例断言无 `assistant.completed`/`run.completed`；Adapter 另有提交前通用门禁 | 已提交结果保留不可变证据；原输入文件读取继续按文件授权，不因结果存在恢复访问 | 代码级闭环；真实 DSH 与文件存储待 P2 |
+| 固定 Agent/工具绑定撤销 | Agent/Tool 发布与运行准备校验固定版本/修订 | `review-a2.integration.test.ts` 验证 Agent 停用及真实工具绑定撤销均不进入 Runtime | `platform-tool-bridge.test.ts` 验证工具执行前后复核及 403 撤权；Adapter 验证活动执行撤权停止 | Adapter 提交前门禁阻止完成事件 | 撤权阻止后续执行，不隐藏有权用户对既有不可变结果的读取 | 代码级闭环；真实批准工具仍待 P2 |
+| 授权服务故障 | `automation.integration.test.ts` 验证不写成 skipped、游标不动且恢复后可重试 | `review-a2.integration.test.ts` 验证 503 类故障记为 `AUTHORIZATION_CHECK_UNAVAILABLE`，不伪装撤权 | Adapter 停止 Worker并保留故障分类；平台桥读操作执行前返回可重试 503 | Adapter 阻止完成提交；平台桥写操作执行后返回效果未知、不可自动重试 | HTTP 集成验证授权故障返回 500/`operation_failed`，不伪装为 404 | 代码级边界已固定；目标环境故障注入待 P2 |
+
+固定能力撤销后的既有结果读取、输入文件移除后的结果证据保留是设计行为，不应把能力或来源重新授予给读取者。上述活动期文件用例使用仓库内合成 ACP Worker，证明 Adapter 与 PostgreSQL 授权组合行为，仍不等同于目标 DSH 部署的 P2 证据。
 
 ### I-09 按需接入外部能力与 MCP
 
@@ -373,10 +385,27 @@ B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治�
 - P1 浏览器旅程 `e2e/personal-integration/task-result.spec.ts` 3/3：专用可丢弃 PostgreSQL + 显式合成 Runtime/身份，覆盖已登记成果、仅回答与 `P1-成果缺口` 三条链路。
 - 未执行真实 DSH/OIDC/P2 验收；本次只核对到本地提交，未核对推送或发布。外部异步写操作的 `accepted` 回执核对随具体能力接入。
 
-**2026-09-21 B-05/I-08 自动任务 P1 第一批（当前未提交工作区）：**
+**2026-09-21 B-05/I-08 自动任务 P1 第一批（已提交为 `5268fe3`）：**
 
 - 新增独立 `playwright.automation.config.ts`、`scripts/testing/automation-workbench-browser.ts` 与 `e2e/automation.integration.spec.ts`；专用夹具创建并销毁一次性 PostgreSQL，使用受控身份和合成 Runtime，不接 OIDC、真实 DSH 或模型。
 - P1 浏览器 5/5：覆盖同键并发只产生一组 Execution/Session/Run、无 Attempt 准备中断可见；失败不自动重试、遗漏区间可见并须明确再次运行；账号停用在受理时拒绝、另一员工读取 404；发布 v2 后任务仍按钉住版本运行及暂停入口；自动任务车道占满时交互 Run 仍成功，取消后排队自动任务继续。
 - 工作台任务卡增加可访问区域名称，测试通过用户可感知角色与名称定位；`PersonalBrowserRuntime` 仅增加测试标记的确定性失败、保持运行和取消收敛，不进入生产装配。
 - 可见浏览器预演确认 `/automations` 首屏、空态、导航与新建表单布局正常，必填字段具有可访问名称且未填时创建按钮禁用。自动任务 P1 5/5、既有个人工作台 P1 7/7、自动任务服务集成 13/13、Server 与 workbench-web typecheck、`pnpm lint`、`pnpm verify`、改动文件 eslint、`git diff --check` 均通过。
-- 尚未覆盖团队成员/文件来源/固定能力撤权、授权服务故障及活动工具/成果提交阶段的完整矩阵；未执行真实 DSH/OIDC/P2，未提交、推送或发布。
+- 尚未执行真实 DSH/OIDC/P2；该提交未推送或发布。阶段化授权缺口由下一实施轮继续处理。
+
+**2026-09-21 B-05/I-08 权限与故障矩阵（当前未提交工作区）：**
+
+- `review-a2.integration.test.ts` 的真实 PostgreSQL 领取边界从账号/Agent 扩展到输入文件和平台工具绑定：领取后删除输入文件或撤销固定工具修订均不进入 Runtime；授权服务故障保持 `AUTHORIZATION_CHECK_UNAVAILABLE`，不写成撤权。
+- 平台工具桥将授权拒绝与授权基础设施故障分开：明确 `permission_denied` 才返回 403/`TOOL_PERMISSION_DENIED`；其他检查故障返回 503/`TOOL_AUTHORIZATION_UNAVAILABLE`。安全读在执行前失败可重试；写处理器已经开始后复核失败标为效果未知且不可自动重试。
+- Runtime Adapter 增加活动 Worker 和成果收集阶段的授权服务故障回归：停止执行、无 `assistant.completed`/`run.completed`，错误码保持 `AUTHORIZATION_CHECK_UNAVAILABLE`。阶段矩阵已列出受理、领取、活动执行、成果提交和结果读取的证据及剩余对象特定缺口。
+- `review-a2.integration.test.ts` 进一步组合真实 PostgreSQL 与合成 ACP Worker：活动期移除输入文件后 Worker 停止、无完成事件；阻塞成果扫描后移除团队成员，数据库发布事务拒绝且未登记 Artifact 版本。
+- `team-workspace-discussion-api.integration.test.ts` 直接覆盖已知 Run 结果端点：账号停用为 403/`permission_denied`，授权基础设施故障为 500/`operation_failed`，团队成员移除为 404/`run_not_found`，三种状态不混淆。
+- 当前验证：Runtime 授权相关定向测试 55/55，完整 `@dsh-work/server test:runtime` 77/77；`review-a2.integration.test.ts` 7/7、团队讨论 HTTP 集成 7/7，均使用专用可丢弃 PostgreSQL；完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。未执行真实 DSH/OIDC/P2；本轮尚未提交、推送或发布。
+
+**2026-09-21 B-05/I-08 Agent 专属评测契约（当前未提交工作区）：**
+
+- 新增 `dsh-work.ai/evaluation/v1` / `AgentEvaluationSuite` 严格格式及可复制模板；拒绝旧数组、未知版本/字段/类型/断言。五类必需案例为正常目标、无效输入、越权、提示注入和能力特有失败。
+- 每个案例固定声明 Run/Attempt 已记录、执行成功、输出非空三项机器断言，并提供必需的人工 rubric。试跑保存契约版本、断言结果、Run/Attempt 与输出摘录；机器断言失败直接阻塞，不能由人工结论覆盖。
+- 默认候选、ZIP 导入、案例编辑、发布检查、真实 Run/Attempt 试跑、版本证据和管理端展示已同步；提交审核和发布事务均重新验证五类 v1 运行证据，升级前通过的三案例旧记录不能复用。管理端把旧 JSON 识别为不可用证据，保持页面可读并提供重新试运行及已提交候选撤回入口。平台通用权限/故障套件不复制进 Agent 包，通用默认案例仍不是具体 Agent 的业务验收结果。
+- 员工主导航契约同步为“新对话、团队空间、自动任务”三个入口；历史对话与我的文件保留受权路由、数据和上下文入口，不在主导航展示。根规范、设计说明、测试目录及 P0 导航断言已同步。
+- 当前验证：Agent 包解析 68/68；发布治理集成 22/22（专用可丢弃 PostgreSQL + 合成 Runtime，含机器断言失败和旧证据失效门禁）；管理端治理 Store 12/12、评测证据工具 2/2；隔离 Prototype 个人工作台 P0 2/2。完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。未执行真实 DSH/OIDC/P2；本轮尚未提交、推送或发布。

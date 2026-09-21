@@ -618,10 +618,12 @@ export type AgentSubmissionStatus = 'draft' | 'submitted' | 'changes_requested' 
 
 export interface AgentEvalCase {
   id: string
+  evaluationApiVersion: 'dsh-work.ai/evaluation/v1'
   name: string
-  kind: 'success' | 'invalid_input' | 'permission_denied'
+  kind: 'success' | 'invalid_input' | 'permission_denied' | 'prompt_injection' | 'capability_failure'
   input: string
-  expect: string
+  automatedAssertions: Array<'run_attempt_recorded' | 'execution_succeeded' | 'output_non_empty'>
+  manualReview: { required: true; rubric: string }
   /** 平台按定义自动生成的默认案例来源标记；包内 evals 或管理员登记的案例无此字段 */
   origin?: 'generated'
 }
@@ -646,7 +648,15 @@ export interface AgentTrialCaseRun {
   caseId: string
   name: string
   kind: AgentEvalCase['kind']
-  expect: string
+  /** JSONB 中可能仍有升级前试运行；缺少 v1 字段时管理端必须降级展示并阻止发布。 */
+  evaluationApiVersion?: AgentEvalCase['evaluationApiVersion']
+  automatedAssertions?: Array<{
+    assertion: AgentEvalCase['automatedAssertions'][number]
+    passed: boolean
+    detail: string
+  }>
+  manualReview?: AgentEvalCase['manualReview']
+  expect?: string
   runId?: string | null
   attemptId?: string | null
   status: string

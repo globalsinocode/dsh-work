@@ -38,8 +38,11 @@ export async function createPlatformToolBridge(tools: Record<string, PlatformToo
         try {
           await authorize()
           response.end(JSON.stringify({ authorized: true }))
-        } catch {
-          response.writeHead(403).end(JSON.stringify({ error: '当前执行授权不可用或已撤销' }))
+        } catch (error) {
+          const revoked = isAuthorizationDenied(error)
+          response.writeHead(revoked ? 403 : 503).end(JSON.stringify({
+            error: revoked ? '当前执行授权已撤销' : '当前执行授权检查暂不可用',
+          }))
         }
         return
       }
@@ -58,10 +61,14 @@ export async function createPlatformToolBridge(tools: Record<string, PlatformToo
       try {
         const input = await readBody(request)
         if (!registration.validators.input(input)) throw toolInputInvalid(ajvErrors(registration.validators.input.errors))
-        await authorizeTool(authorize)
+        await authorizeTool(authorize, 'not_started', registration.contract.retryPolicy === 'safe')
         controller.signal.throwIfAborted()
         const value = await executeWithConcurrencyPolicy(toolName!, registration, input, controller.signal, activeSerializedTools)
-        await authorizeTool(authorize, registration.contract.effect === 'write' ? 'unknown' : 'not_started')
+        await authorizeTool(
+          authorize,
+          registration.contract.effect === 'write' ? 'unknown' : 'not_started',
+          registration.contract.retryPolicy === 'safe',
+        )
         controller.signal.throwIfAborted()
         const outputEffectState = registration.contract.effect === 'write' ? 'unknown' : 'not_started'
         if (!registration.validators.output(value)) throw toolOutputInvalid(ajvErrors(registration.validators.output.errors), outputEffectState)
@@ -115,19 +122,34 @@ async function executeWithConcurrencyPolicy(
   return executeWithTimeout(registration, input, attemptSignal, () => activeSerializedTools.delete(toolName))
 }
 
-async function authorizeTool(authorize?: () => Promise<void>, effectState: PlatformToolError['effectState'] = 'not_started') {
+async function authorizeTool(
+  authorize?: () => Promise<void>,
+  effectState: PlatformToolError['effectState'] = 'not_started',
+  retrySafe = false,
+) {
   if (!authorize) return
   try { await authorize() }
-  catch {
+  catch (error) {
+    const revoked = isAuthorizationDenied(error)
     throw new PlatformToolError({
-      status: 403,
-      code: 'TOOL_PERMISSION_DENIED',
+      status: revoked ? 403 : 503,
+      code: revoked ? 'TOOL_PERMISSION_DENIED' : 'TOOL_AUTHORIZATION_UNAVAILABLE',
       message: effectState === 'unknown'
-        ? '工具执行后授权复核失败，写入效果可能已发生；核对实际效果后再决定后续操作'
-        : '当前工具执行授权不可用或已撤销',
+        ? revoked
+          ? '工具执行后授权已撤销，写入效果可能已发生；核对实际效果后再决定后续操作'
+          : '工具执行后授权复核暂不可用，写入效果可能已发生；核对实际效果后再决定后续操作'
+        : revoked
+          ? '当前工具执行授权已撤销'
+          : '当前工具授权检查暂不可用，工具未执行',
+      retryable: !revoked && retrySafe && effectState === 'not_started',
       effectState,
     })
   }
+}
+
+function isAuthorizationDenied(error: unknown): boolean {
+  return typeof error === 'object' && error !== null
+    && 'code' in error && error.code === 'permission_denied'
 }
 
 async function executeWithTimeout(

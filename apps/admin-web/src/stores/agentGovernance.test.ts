@@ -6,6 +6,16 @@ import type { AgentReleaseState, AgentDefinition, AgentVersionRecord } from '../
 import { useAgentGovernanceStore } from './agentGovernance'
 import { useContentStore } from './content'
 
+const evalCase = (id: string, name: string, kind: 'success' | 'invalid_input' | 'permission_denied', input: string, rubric: string) => ({
+  id,
+  evaluationApiVersion: 'dsh-work.ai/evaluation/v1' as const,
+  name,
+  kind,
+  input,
+  automatedAssertions: ['run_attempt_recorded', 'execution_succeeded', 'output_non_empty'] as Array<'run_attempt_recorded' | 'execution_succeeded' | 'output_non_empty'>,
+  manualReview: { required: true as const, rubric },
+})
+
 function makeCandidate(agentId: string, overrides: Partial<NonNullable<AgentReleaseState['candidate']>> = {}) {
   return {
     id: 'submission-1',
@@ -16,9 +26,9 @@ function makeCandidate(agentId: string, overrides: Partial<NonNullable<AgentRele
     status: 'draft' as const,
     source: 'config' as const,
     cases: [
-      { id: 'case-1', name: '正常任务', kind: 'success' as const, input: '生成摘要', expect: '返回摘要' },
-      { id: 'case-2', name: '无效输入', kind: 'invalid_input' as const, input: '开始', expect: '提示补充范围' },
-      { id: 'case-3', name: '越权请求', kind: 'permission_denied' as const, input: '读取薪酬', expect: '拒绝访问' },
+      evalCase('case-1', '正常任务', 'success', '生成摘要', '返回摘要'),
+      evalCase('case-2', '无效输入', 'invalid_input', '开始', '提示补充范围'),
+      evalCase('case-3', '越权请求', 'permission_denied', '读取薪酬', '拒绝访问'),
     ],
     packageRefs: { skills: [], tools: [] },
     bindingRefs: [],

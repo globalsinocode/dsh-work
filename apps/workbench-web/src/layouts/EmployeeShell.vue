@@ -4,11 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   AlarmClock,
-  Clock,
   Collection,
   Delete as DeleteIcon,
   Download,
-  Files,
   HomeFilled,
   Menu,
   Monitor,
@@ -39,10 +37,7 @@ const deletingSessionId = ref<string>()
 
 const navigation = [
   { label: '新对话', path: '/workbench', icon: HomeFilled },
-  { label: '历史对话', path: '/history', icon: Clock },
-  { label: '我的文件', path: '/files', icon: Files },
   { label: '团队空间', path: '/workspaces', icon: Collection },
-  // AG-03 既有功能入口保留：不属于个人空间概念，不因 D12 收敛被摘掉。
   { label: '自动任务', path: '/automations', icon: AlarmClock },
 ]
 
