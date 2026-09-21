@@ -2,7 +2,7 @@
 
 按任务影响选择文档：涉及服务职责或 Agent 执行链路时读[架构总览](docs/development/overview.md)，涉及模块接口时读[内部端口与契约](docs/development/internal-ports.md)，选择本地运行或验证命令时读[开发与测试](docs/development/development.md)。纯文案和局部样式修改无需预读全部文档。
 
-新增或调整 Agent 定义、能力依赖、发布与执行行为时，遵守[Agent 设计规范](docs/development/agent-design-standard.md)，并参考[当前实现差异清单](docs/development/agent-design-gap-analysis.md)区分现行约束、待实施要求与可选扩展；不得把目标设计当作已支持能力。
+新增或调整 Agent 定义、能力依赖、发布与执行行为时，遵守[Agent 设计规范](docs/development/agent-design-standard.md)，按[通用 Agent 全生命周期模板](docs/development/agent-lifecycle-template.md)记录工作定义、扩展决策、发布与验收，并参考[当前实现差异清单](docs/development/agent-design-gap-analysis.md)区分现行约束、待实施要求与可选扩展；不得把目标设计当作已支持能力。MCP、持久化等待、记忆、委派和无 Session 入口仅在模板触发条件成立后启动，不作为所有 Agent 的默认组件。
 
 在已授权范围内完成实现、相关验证与失败修复；只有缺少关键决策、需要扩大范围或触及明确审批边界时暂停。
 
