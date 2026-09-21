@@ -600,7 +600,7 @@
     "/connectors": {
       "get": {
         "operationId": "listConnectors",
-        "summary": "查询平台预置连接器；一期只读",
+        "summary": "查询连接器及 MCP 整体审核和 Agent 授权状态",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -608,15 +608,56 @@
         }
       }
     },
+    "/connectors/mcp": {
+      "post": {
+        "operationId": "registerMcpConnector",
+        "summary": "在现有连接器模块登记 Streamable HTTP MCP Server",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/connectors/mcp/invocations": {
+      "get": {
+        "operationId": "listMcpInvocationAudits",
+        "summary": "查询一个 MCP Connector 最近 50 条实际 Tool 调用审计",
+        "parameters": [
+          { "name": "connector_id", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "执行连接器健康检查并联动 Tool 可用状态",
+        "summary": "执行连接器健康检查；MCP 同时通过 DSH 发现 Tool 并检测整体摘要漂移",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
           }
         }
+      }
+    },
+    "/connectors/mcp/approve": {
+      "post": {
+        "operationId": "approveMcpConnector",
+        "summary": "整体审核当前发现的 MCP Tool 清单",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/connectors/mcp/status": {
+      "patch": {
+        "operationId": "setMcpConnectorStatus",
+        "summary": "启用或停用 MCP Connector；重新启用要求审核摘要仍一致",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/connectors/mcp/agent-access": {
+      "patch": {
+        "operationId": "setAgentMcpAccess",
+        "summary": "按整个 MCP Connector 向 Agent 授权或撤权，不细分 Tool",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
     "/runtimes": {

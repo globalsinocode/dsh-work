@@ -59,7 +59,7 @@ export class RunOrchestrationService {
   private readonly knowledge?: PostgresKnowledgeService
   private readonly authorization?: PostgresAuthorizationService
   private readonly agentMembers?: PostgresWorkspaceAgentMemberService
-  private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+  private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
   private readonly tasks?: TaskRepository
 
   private readonly automationMaxConcurrent: number
@@ -86,7 +86,7 @@ export class RunOrchestrationService {
        */
       automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
       /** B-03/I-04：Attempt 固定绑定修订的执行期复核端口；未接线且 Manifest 带 pin 时 fail-closed。 */
-      toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+      toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
       /** PF-01 stable Task ownership for non-conversation execution. */
       tasks?: TaskRepository
     },
@@ -293,12 +293,13 @@ export class RunOrchestrationService {
         skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
       },
       user_context: { user_id: userId, tenant_id: tenantId, role_ids: agent.roleIds },
-      // 试运行是治理动作：不触发人工审批、不写工作区、不访问网络
-      permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
+      // MCP 网络只来自已批准 Connector；不触发人工审批，也不写工作区。
+      permission_policy: { approval_mode: 'never', network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny', write_policy: 'deny' },
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
       // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
+      ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: agent.dataScopes,
       knowledge_context: [],
       model_route_id: route.routeId,
@@ -1103,6 +1104,7 @@ export class RunOrchestrationService {
           tools: [],
           runtimeTools: [],
           toolBindings: [],
+          mcpConnections: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
           dataScopes: ['enterprise:authorized'],
@@ -1162,13 +1164,14 @@ export class RunOrchestrationService {
       },
       permission_policy: {
         approval_mode: agent.approvalMode,
-        network_policy: 'deny',
+        network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
         write_policy: 'workspace_only',
       },
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
+      ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: effectiveDataScopes,
       knowledge_context: knowledgeContext.map(document => ({
         documentId: document.documentId,
@@ -1452,6 +1455,17 @@ export class RunOrchestrationService {
         throw error
       }
     }
+    if (manifest.mcp_connections?.length) {
+      if (!this.toolBindings || !manifest.agent_version_id) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
+      try {
+        await this.toolBindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+      } catch (error) {
+        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
+          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+        }
+        throw error
+      }
+    }
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
     // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权
     // 仍会进入 DSH 执行。权限失效时 Run/Attempt 在此收敛为 failed。
@@ -1686,8 +1700,10 @@ export class RunOrchestrationService {
         output: assistantOutput,
         status: 'success',
         traceId: event.trace_id,
-        inputTokens: typeof event.safe_metadata['input_tokens'] === 'number' ? event.safe_metadata['input_tokens'] : undefined,
-        outputTokens: typeof event.safe_metadata['output_tokens'] === 'number' ? event.safe_metadata['output_tokens'] : undefined,
+        inputTokens: event.safe_metadata['token_usage_source'] === 'dsh-session-log'
+          && typeof event.safe_metadata['input_tokens'] === 'number' ? event.safe_metadata['input_tokens'] : undefined,
+        outputTokens: event.safe_metadata['token_usage_source'] === 'dsh-session-log'
+          && typeof event.safe_metadata['output_tokens'] === 'number' ? event.safe_metadata['output_tokens'] : undefined,
       })
       await this.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       this.assistantOutputs.delete(event.attempt_id)
@@ -1762,7 +1778,8 @@ export class RunOrchestrationService {
     const output = this.assistantOutputs.get(event.attempt_id) ?? ''
     const reportedInput = nonNegativeInteger(event.safe_metadata['input_tokens'])
     const reportedOutput = nonNegativeInteger(event.safe_metadata['output_tokens'])
-    const hasReportedTokens = reportedInput !== null && reportedOutput !== null
+    const hasReportedTokens = event.safe_metadata['token_usage_source'] === 'dsh-session-log'
+      && reportedInput !== null && reportedOutput !== null
     const elapsed = nonNegativeInteger(event.safe_metadata['elapsed_ms'])
     const toolUsageAvailable = event.safe_metadata['usage_source'] === 'dsh-session-log'
     const toolCalls = toolUsageAvailable

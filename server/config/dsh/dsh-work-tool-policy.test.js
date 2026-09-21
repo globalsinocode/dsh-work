@@ -1,6 +1,7 @@
 import { createPlatformToolBridge } from '../../src/modules/runtime/platform-tool-bridge.ts'
 import { platformToolContracts } from '../../src/modules/runtime/platform-tool-contracts.ts'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,8 @@ const originalEnvironment = {
   approvalMode: process.env.DSH_TOOL_APPROVAL_MODE,
   approvalLog: process.env.DSH_TOOL_APPROVAL_LOG,
   maximumCalls: process.env.DSH_MAX_TOOL_CALLS,
+  allowedMcpServers: process.env.DSH_ALLOWED_MCP_SERVERS_JSON,
+  approvedMcpCapabilities: process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON,
   platformSocket: process.env.DSH_PLATFORM_TOOL_SOCKET,
   toolCatalogPath: process.env.DSH_TOOL_CATALOG_PATH,
 }
@@ -27,6 +30,8 @@ afterEach(() => {
   restoreEnvironment('DSH_TOOL_APPROVAL_MODE', originalEnvironment.approvalMode)
   restoreEnvironment('DSH_TOOL_APPROVAL_LOG', originalEnvironment.approvalLog)
   restoreEnvironment('DSH_MAX_TOOL_CALLS', originalEnvironment.maximumCalls)
+  restoreEnvironment('DSH_ALLOWED_MCP_SERVERS_JSON', originalEnvironment.allowedMcpServers)
+  restoreEnvironment('DSH_APPROVED_MCP_CAPABILITIES_JSON', originalEnvironment.approvedMcpCapabilities)
   restoreEnvironment('DSH_PLATFORM_TOOL_SOCKET', originalEnvironment.platformSocket)
   restoreEnvironment('DSH_TOOL_CATALOG_PATH', originalEnvironment.toolCatalogPath)
 })
@@ -227,10 +232,12 @@ test('DSH publishes the tools loaded by the active Profile for platform discover
 function capturePolicy(schemas = []) {
   let guard
   let preExecute
+  let toolsChanged
   const registered = []
   apply({
     on: (event, candidate) => {
       if (event === 'tools/pre-execute') preExecute = candidate
+      if (event === 'tools/change') toolsChanged = candidate
       return () => undefined
     },
     tools: {
@@ -244,8 +251,42 @@ function capturePolicy(schemas = []) {
   })
   assert.ok(guard)
   assert.ok(preExecute)
-  return { guard, preExecute, registered }
+  return { guard, preExecute, registered, toolsChanged }
 }
+
+test('MCP permission requires the exact reviewed server capability digest', () => {
+  const capability = { name: 'query_inventory', description: 'Query inventory.', inputSchema: { type: 'object' } }
+  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
+  process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp_read"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp_read', digest }])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  const schemas = [{ name: 'mcp__erp_read__query_inventory', description: capability.description, parameters: capability.inputSchema }]
+  const { guard, toolsChanged } = capturePolicy(schemas)
+
+  assert.equal(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), undefined)
+  assert.match(guard({ name: 'mcp__erp_write__update_inventory', arguments: {} }), /未授权工具/)
+  assert.match(guard({ name: 'mcp__erp_read_extra__query_inventory', arguments: {} }), /未授权工具/)
+  schemas.push({ name: 'mcp__erp_read__export_inventory', description: 'Export inventory.', parameters: { type: 'object' } })
+  toolsChanged()
+  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
+  schemas.pop()
+  schemas[0].parameters = { type: 'object', required: ['warehouse'] }
+  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
+})
+
+test('MCP permission resolves tool names from configured server namespaces', () => {
+  const capability = { name: 'customer__get', description: 'Read one customer.', inputSchema: { type: 'object' } }
+  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
+  process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'crm', digest }])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  const schemas = [{ name: 'mcp__crm__customer__get', description: capability.description, parameters: capability.inputSchema }]
+  const { guard } = capturePolicy(schemas)
+
+  assert.equal(guard({ name: 'mcp__crm__customer__get', arguments: {} }), undefined)
+})
 
 function restoreEnvironment(key, value) {
   if (value === undefined) delete process.env[key]

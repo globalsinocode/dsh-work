@@ -115,6 +115,13 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[mcp-log-no-usage]')) {
+      void writeMcpLogWithoutUsage().then(
+        () => finishPrompt(pending, 'end_turn'),
+        () => failPrompt(pending, 'Session log write failed', 'tool'),
+      )
+      return
+    }
     if (text.includes('[permission]')) {
       const requestId = permissionSequence++
       permissionPrompts.set(requestId, pending)
@@ -213,6 +220,18 @@ lines.on('line', (line) => {
     if (pending !== undefined) finishPrompt(pending, 'end_turn')
   }
 })
+
+async function writeMcpLogWithoutUsage() {
+  const root = process.env.DSH_SNAPSHOT_SESSIONS_ROOT
+  if (!root) throw new Error('DSH_SNAPSHOT_SESSIONS_ROOT is missing')
+  const directory = join(root, 'mock-mcp-session')
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'session.jsonl'), [
+    JSON.stringify({ type: 'tool/call', data: { callId: 'mcp-call-no-usage', name: 'mcp__crm__customer__get', arguments: { id: 'customer-1' } } }),
+    JSON.stringify({ type: 'tool/result', data: { callId: 'mcp-call-no-usage', isError: false } }),
+    '',
+  ].join('\n'))
+}
 
 function finishPrompt(pending: PendingPrompt, stopReason: string, includeAnswer = true): void {
   pendingPrompts.delete(pending.sessionId)

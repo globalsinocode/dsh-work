@@ -312,6 +312,34 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
+  async function registerMcpConnector(input: Parameters<typeof adminApi.registerMcpConnector>[0]) {
+    const connector = await adminApi.registerMcpConnector(input)
+    connectors.value.push(connector)
+    return connector
+  }
+
+  async function approveMcpConnector(connectorId: string, capabilityDigest: string) {
+    const connector = await adminApi.approveMcpConnector({ connectorId, capabilityDigest })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
+  async function setMcpConnectorStatus(connectorId: string, status: 'enabled' | 'disabled') {
+    const connector = await adminApi.setMcpConnectorStatus({ connectorId, status })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
+  async function setAgentMcpAccess(connectorId: string, agentId: string, enabled: boolean) {
+    const connector = await adminApi.setAgentMcpAccess({ connectorId, agentId, enabled })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
+  function getMcpInvocationAudits(connectorId: string) {
+    return adminApi.getMcpInvocationAudits(connectorId)
+  }
+
   async function checkRuntime(runtimeId: string) {
     const runtime = await adminApi.checkRuntime({ runtimeId })
     replaceById(runtimes.value, runtime)
@@ -365,6 +393,11 @@ export const useContentStore = defineStore('admin-content', () => {
     rollbackSkill,
     setToolStatus,
     checkConnector,
+    registerMcpConnector,
+    approveMcpConnector,
+    setMcpConnectorStatus,
+    setAgentMcpAccess,
+    getMcpInvocationAudits,
     checkRuntime,
     updateRuntimeConfiguration,
     updateToolPermissions,

@@ -62,12 +62,12 @@ MCP、持久化等待、受控记忆、Agent 委派和无 Session 入口是 Agen
 
 - 目标外部系统已经提供必须使用的 MCP Server；
 - 需要以 MCP 标准发现、固定和调用多个远端 Tool；
-- 需要受控使用 MCP Resource 或 Prompt，普通平台 Tool/知识来源无法表达；
+- 需要受控使用 MCP Tool，普通平台 Tool/固定 API 适配器无法表达；
 - 同一能力必须在多个环境绑定不同 MCP 服务，同时复用 Agent 定义。
 
 “需要查询外部系统”本身不是 MCP 触发条件。已有受控 Tool 或固定 API 适配器能够满足时继续使用现有路径。
 
-选择 MCP 后必须补：服务身份、传输与网络范围、凭据引用、能力 Allowlist、契约摘要/版本、同名冲突处理、超时取消、权限过滤、审计、漂移复核以及错误服务/凭据和撤权测试。MCP 不获得第二套授权系统，也不能启动包内任意服务进程。
+选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及整体摘要、Connector 整体审核、Agent→Connector 二元 Grant、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移复核以及错误服务/凭据和撤权测试。首期一个 MCP Server/Connector 是最小审核和授权单元，不拆成逐 Tool 权限，也不生成平台 Tool Version/Binding；Agent 发布不自动授予或封存该 Grant。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。
 
 ### 4.2 持久化等待与长流程
 

@@ -87,3 +87,27 @@ test('B-03/I-04: pinned tool bindings recheck before any purpose branch, fail-cl
   // 无 pin 的 Manifest 不触碰复核端口。
   await assertCurrentExecutionAuthorization(ports(), undefined, manifest, rejecting)
 })
+
+test('PF-03: pinned MCP Connectors require the current Agent grant before every purpose branch', async () => {
+  const pin = {
+    connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http' as const,
+    endpoint: 'https://mcp.example.test/rpc', auth_type: 'none' as const, capability_digest: 'a'.repeat(64),
+  }
+  const pinned = { ...manifest, mcp_connections: [pin] } as RuntimeManifest
+  await assert.rejects(
+    assertCurrentExecutionAuthorization(ports(), undefined, pinned),
+    AuthorizationCheckUnavailableError,
+  )
+  let checked = 0
+  await assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
+    async assertActiveMcpConnections(pins, agentVersionId) {
+      checked += 1
+      assert.deepEqual(pins, [pin])
+      assert.equal(agentVersionId, 'agent-v1')
+    },
+  })
+  assert.equal(checked, 1)
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
+    async assertActiveMcpConnections() { throw authorizationDenied('MCP grant revoked') },
+  }), { code: 'permission_denied' })
+})

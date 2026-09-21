@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { assertRuntimeModelRequirements, CapabilityGuardedRuntime, ExecutionCapabilityUnavailableError, UnavailableRuntime, probeExecutionCapability } from './execution-capabilities.ts'
-import type { AgentRuntimePort, RuntimeManifest } from './runtime-types.ts'
+import type { AgentRuntimePort, McpRuntimeConnection, RuntimeManifest } from './runtime-types.ts'
 
 test('unavailable port never admits work or fabricates tools/events/results', async () => {
   const runtime = new UnavailableRuntime('runtime-fixture')
@@ -58,4 +58,25 @@ test('model admission fails closed without a verifier and forwards the exact tar
   const guarded = new CapabilityGuardedRuntime(verifier as AgentRuntimePort, { status: 'available' })
   await assert.rejects(assertRuntimeModelRequirements(guarded, ['structured-output'], target), { code: 'MODEL_CAPABILITY_UNAVAILABLE' })
   assert.equal(checks, 1)
+})
+
+test('production capability wrapper forwards MCP discovery to the DSH adapter', async () => {
+  const connection: McpRuntimeConnection = {
+    snapshot: {
+      connector_id: 'connector-mcp-test', server_name: 'mcp_test', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+    },
+    headers: {},
+  }
+  let received: McpRuntimeConnection | undefined
+  const delegate = {
+    async inspectMcpConnection(input: McpRuntimeConnection) {
+      received = input
+      return { latencyMs: 7, capabilities: [{ name: 'read', description: 'Read.', inputSchema: { type: 'object' } }] }
+    },
+  } as unknown as AgentRuntimePort
+  const guarded = new CapabilityGuardedRuntime(delegate, { status: 'available' })
+  const result = await guarded.inspectMcpConnection(connection)
+  assert.equal(received, connection)
+  assert.equal(result.capabilities[0]?.name, 'read')
 })

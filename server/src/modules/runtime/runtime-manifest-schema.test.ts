@@ -122,6 +122,24 @@ function assertBothAccept(manifest: RuntimeManifest, label: string) {
 }
 
 describe('Runtime Manifest Schema / compiler boundary', () => {
+  it('accepts a bounded MCP Connector snapshot and rejects secret or unsupported transport fields', () => {
+    const manifest = baseManifest()
+    manifest.permission_policy.network_policy = 'allowlist'
+    manifest.mcp_connections = [{
+      connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc', auth_type: 'bearer', capability_digest: 'a'.repeat(64),
+    }]
+    assertBothAccept(manifest, 'approved MCP Connector snapshot')
+
+    const secret = structuredClone(manifest) as RuntimeManifest & { mcp_connections: Array<Record<string, unknown>> }
+    secret.mcp_connections[0]!['credential'] = 'must-not-enter-manifest'
+    assertBothReject(secret, /未声明字段/, 'MCP snapshot containing a secret field')
+
+    const unsupported = structuredClone(manifest)
+    unsupported.mcp_connections![0]!.transport = 'stdio' as 'streamable-http'
+    assertBothReject(unsupported, /仅支持 streamable-http/, 'unsupported MCP transport')
+  })
+
   it('accepts a Task manifest without a product Session and still requires task_id', () => {
     const manifest = baseManifest()
     manifest.session_id = null

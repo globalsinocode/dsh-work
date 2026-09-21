@@ -1,7 +1,7 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-21<br>
-**代码基线：** 初次核对为 `3f4f4bf`；PF-02 实施基于 `8785995`，并包含当前未提交的 PF-02 工作区改动；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-04 已落地；B-05 代码级基础已完成，P2 已由用户确认为手工执行完成，仓库内审计证据仍待按通用模板归档。完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；PF-03 记录包含当前未提交的工作区实现；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-04 已落地；B-05 代码级基础已完成，P2 已由用户确认为手工执行完成，仓库内审计证据仍待按通用模板归档。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
@@ -24,7 +24,7 @@
 | AS-02 精简定义 | **基础已实现，高级能力待启用**。[包解析器](../../server/src/modules/agent/agent-package.ts)仅接受分层清单；配置与 ZIP 共用持久化 AgentSpec。当前输入/输出为 text，上下文为 recent；未知字段、旧别名与冲突直接拒绝。模型要求已进入路由和 Runtime 准入、Attempt 固定及恢复复核 | 解析与发布用例覆盖严格格式、依赖、定义保存/分叉；编排集成覆盖三入口的模型/Runtime 不匹配。受控 Runtime 正例验证快照，不证明真实高级能力 | 真实 DSH 目前拒绝 long-context/structured-output；启用前接通实际执行约束并留证。任务结果语义由 B-04 补齐 |
 | AS-03 统一执行 | **已实现（现有生产接线）**。[main](../../server/src/main.ts)组装 Runtime；[编排服务](../../server/src/modules/run/run-orchestration-service.ts)的员工、管理、发布试运行均创建 Attempt；[Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts)启动 ACP Worker | [执行能力测试](../../server/src/modules/runtime/execution-capabilities.test.ts)、[Adapter 测试](../../server/src/modules/runtime/runtime-adapter.test.ts)覆盖不可用、取消和故障；本次未运行真实 DSH | 维持单链路；每种新增入口均追踪实际接线，发布前验证目标 Runtime |
 | AS-04 状态与上下文 | **部分实现；长期记忆不适用当前范围**。[Manifest 编译器](../../server/src/modules/runtime/manifest-compiler.ts)限制历史、文件和知识；Adapter 的 `renderSystemPrompt` 按需展示 Skill 目录；[内容服务](../../server/src/modules/workbench/application/postgres-content-service.ts)复核输入；[知识服务](../../server/src/modules/knowledge/postgres-knowledge-service.ts)提供来源 | Adapter 测试覆盖授权知识投影、渐进 Skill、外置资源和历史上限；通用跨任务记忆的来源撤回未在当前链路实现 | 保持现有分层；保持 text/recent 基础策略与 Schema 一致（见 D-03）；记忆随 AG-04 单独设计 |
-| AS-05 Skill/Tool/MCP | **部分实现；外部 MCP 未实现（当前 ACP 入口）**。[工具目录](../../server/src/modules/tool/dsh-built-in-tool-catalog.ts)将未知工具标为不支持；[ACP 客户端](../../server/src/modules/runtime/acp-json-rpc-client.ts) `newSession` 提交 `mcpServers: []`；[平台工具桥](../../server/src/modules/runtime/platform-tool-bridge.ts)为本地受控传输 | 发布用例明确包内 Tool 候选阻塞发布；没有外部 MCP 服务绑定、发现变更及调用验收证据 | 保留当前准入；有外部接入需求再按 AG-02 实现，同一能力治理，不新增 MCP 权限体系 |
+| AS-05 Skill/Tool/MCP | **PF-03 代码级已实现；真实服务 P2 待 PF-07**。[Connector 服务](../../server/src/modules/tool/postgres-tool-connector-service.ts)复用现有连接器管理，按 MCP Server 整体发现、审核、启停及 Agent 二元 Grant；[DSH Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts)生成每 Attempt MCP Patch；[DSH 策略](../../server/config/dsh/dsh-work-tool-policy.js)按 Server 命名空间放行；Manifest 固定能力摘要但不含凭据 | [MCP 治理集成用例](../../server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts)覆盖登记→发现→整体审核→授权→漂移阻断→重新审核→调用审计→撤权；Runtime/Schema/策略单测覆盖秘密不落 Patch、仅 Streamable HTTP 和命名空间隔离。尚无目标企业 MCP、真实凭据及真实 DSH 调用 P2 | 保持 Connector 为最小审核/授权单元；不生成 Tool Version/Binding，不耦合 Agent 发布；Resources/Prompts/stdio 保持未支持，真实链路纳入 PF-07 |
 | AS-06 工具效果契约 | **基础已实现；外部写操作协议待具体能力接入**。Tool Version 持久化输出验证、重试、并发和完成语义；Runtime 目录携带同一契约。平台桥严格校验输入/输出、大小、当前授权、超时与同名串行调用，并区分冲突、不可用、取消及写入结果未知。DSH 原生工具输出明确标为不可验证 | 平台桥单测覆盖严格 Schema、输入/输出错误、收权、调用上限、串行冲突、读超时与写结果未知；DSH 政策测试覆盖目录和错误传播；工具治理集成验证版本契约持久化。尚未用真实外部异步写操作验证业务操作键与状态查询 | I-06 消费动作结果；新增外部写动作时实现业务幂等键、`accepted` 回执/查询和跨 Attempt 核对，不能仅靠 Run 幂等 |
 | AS-07 当前权限 | **部分实现（当前执行复核已接线；通用持久化审批未实现）**。main 的 `authorizeExecution` → 编排 `assertCurrentRunAuthorization` → [当前授权函数](../../server/src/modules/run/current-execution-authorization.ts)；平台桥前后复核。main 的 ACP `permissionDecision` 默认拒绝；目录明确阻塞尚需逐次审批的工具 | [当前授权](../../server/src/modules/run/current-execution-authorization.test.ts)、[用途分流](../../server/src/modules/run/run-orchestration-authorization.test.ts)、Adapter 活动撤权/成果收集时撤权用例已存在；真实多账号收权及每类工具仍需 P2 | 保持个人/团队共同安全门槛；不把 `approval.required/resolved` 当作持久化人工批准；外部能力和审批接入再逐条验证 |
 | AS-08 持久化恢复 | **部分实现；等待/检查点未实现（Run 契约）**。RunState 只有 queued/running/cancel_requested/succeeded/failed/cancelled；[Run 仓储](../../server/src/modules/run/postgres-run-repository.ts) `recoverAfterRestart` 收敛活动 Attempt、恢复排队；[自动任务服务](../../server/src/modules/automation/automation-service.ts)处理中断准备 | [编排集成](../../server/src/infrastructure/postgres/m3-orchestration.integration.test.ts)、[故障集成](../../server/src/infrastructure/postgres/m5-runtime-faults.integration.test.ts)、[自动任务集成](../../server/src/infrastructure/postgres/automation.integration.test.ts)覆盖相关状态与竞态；未证明通用副作用恢复 | 维持 AG-03 轻量语义；有长流程需求后随 EX-03 设计等待/恢复/动作核对，不把聊天重放作为恢复 |
@@ -89,13 +89,13 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | --- | --- | --- | --- |
 | PF-01（已完成，2026-09-21） | 任务与外部操作基础 | 与 Session 解耦但兼容现有会话的 Task/触发来源；稳定关联键；外部动作 operation id、幂等键、参数摘要、`accepted/completed/failed/unknown` 回执及状态查询 | 相同事件/动作不重复生效；结果与 Artifact 有明确归属和读取授权；同步、异步和结果未知可区分 |
 | PF-02（已完成，2026-09-21） | 用量与累计预算 | Task 预算范围内的 Attempt/Run 时长、工具与输出累计；Token/成本能力状态；预算预占、结算、并发检查、超限拒绝及不支持能力的明确状态 | 并发不越过总预算；缺少可靠 Runtime 计量时不能宣称硬限制；取消和恢复不重复结算 |
-| PF-03 | MCP 受控接入 | MCP Server 登记、传输与网络策略、凭据引用、发现候选、Tool/Resource/Prompt Allowlist、契约摘要、Binding、调用和审计 | 完成一个真实批准服务的发现→审核→授权→调用→撤权链路；新增能力不自动获权；不启动包内任意服务进程 |
+| PF-03（代码级与 P1 已完成，2026-09-21） | MCP 受控接入 | 复用 Connector 的 Streamable HTTP MCP Server 登记、凭据引用、完整 Tool 清单发现、Connector 整体审核、Agent→Connector 二元 Grant、能力摘要漂移门禁、DSH 调用和 Tool 级审计；不生成平台 Tool Version/Binding | P1 服务集成与管理端浏览器旅程完成；真实批准服务的发现→审核→授权→调用→撤权、真实凭据和目标 DSH 证据留 PF-07 P2；Resources/Prompts/stdio 不在当前支持范围 |
 | PF-04 | 持久化等待与审批恢复 | Run 等待状态、检查点引用、事件关联、动作绑定审批、超时/取消、恢复前重新鉴权及旧 Attempt 隔离 | 服务重启、重复/迟到事件和重复决定不重复动作；长期等待释放 Worker；副作用未知时先查询 PF-01 操作状态 |
 | PF-05 | 受控记忆与经验 | 来源授权、候选、审核、独立版本、ACL、检索引用、冲突/保留、撤回传播和审计 | 未同意内容不进入共享记忆；撤回后新运行不再引用；记忆不覆盖指令、权限或权威业务事实 |
 | PF-06 | 受控 Agent 委派 | 父子 Task/Run、固定 Agent Version、最小上下文、权限交集、PF-02 总预算、取消传播和结果合并 | 子任务不扩大权限或预算；循环有界；父任务取消后不能产生新动作；子任务失败不合并为无依据成功 |
 | PF-07 | 平台基线验收 | 无 Session、MCP、异步动作、等待/审批、记忆、委派和累计预算的 P0/P1/P2 套件；版本化能力矩阵与运维手册 | 每项有代码版本、身份、环境、Runtime、故障/撤权和结果证据；真实 DSH/OIDC/批准连接通过后才开放给 Agent 发布 |
 
-**下一步：实施 PF-03。** 在 PF-02 已形成跨 Attempt 的原子累计预算边界后，按批准连接、候选发现、Allowlist、Binding、调用审计与撤权顺序接入 MCP，不给 Agent 自动授予新能力。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
+**下一步：实施 PF-04。** PF-03 已形成独立于 Agent 发布的 Connector 级 MCP 审核与二元 Grant，并通过 Attempt 摘要、活动复核和 DSH 命名空间策略执行；接下来建设持久化等待与审批恢复。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
@@ -111,6 +111,14 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 评审修复补充：升级迁移为既有 queued/running/cancel_requested Attempt 按其固定 limits 建立预占，恢复入口只对可信的历史持久化 Manifest 补无上限累计预算快照，并在重新入队前保存新摘要；新建 Manifest 仍由 Schema 和编译器严格要求 `budget`。精确结算与取消兜底统一按“预算账户 → Attempt 用量”加锁。未声明累计预算的 API 请求保留 PF-01 请求摘要算法，带预算请求使用显式 v2 摘要域。`tool_call_count` 仅在 `usage_source=dsh-session-log` 时作为 Runtime 实测值，证据不可用时按本 Attempt 预占工具上限保守结算。
 
+**PF-03 完成记录（2026-09-21，代码级与 P1）：** `0053_mcp_connector_governance.sql` 在既有 `connectors` 和 `credential_refs` 上增加一对一 MCP Profile、Agent→Connector Grant 与逐调用审计。一个 MCP Server/Connector 是最小审核和授权单元：管理员登记 Streamable HTTP 服务并发现完整 Tool 清单，审核固定规范化清单摘要；Agent 只获得“整个 Connector 可用/不可用”的二元授权。MCP Tool 不复制为平台 Tool/Tool Version/Tool Binding，Grant 不进入 Agent Version、候选封存或发布事务，发布 Agent 也不会自动产生 Grant。
+
+运行准备把当前已审核 Connector 和摘要写入 Attempt `mcp_connections`，领取、活动授权复核和 Worker 启动解析均检查 Connector 健康、当前 Grant 及摘要一致性。能力列表变化使 Connector 进入 `changes_pending/degraded`，重新整体审核前不再解析为可用连接；停用或撤权同样使既有快照在下一次复核失败。Adapter 不使用 ACP `session/new.mcpServers`，而是通过官方 DSH Cordis MCP 插件生成每 Attempt Patch；Patch 只保存环境变量引用，凭据值经子进程环境传递。DSH 工具策略按 `mcp__<serverName>__*` 放行整个已授权 Server 命名空间，真实调用从 DSH Session Log 投影为 Tool 名、参数摘要、Run/Attempt 和结果审计，成功、失败或取消路径均尝试收集。
+
+代码级验收覆盖：Manifest 类型/Schema/编译一致性、只接受 Streamable HTTP、秘密字段拒绝、Patch 不落凭据、Server 命名空间隔离、Connector 登记/发现/整体审核、Agent 授权、能力漂移阻断、重新审核、调用审计和撤权。`admin-mcp-connector.integration.spec.ts` 使用一次性 PostgreSQL 与合成发现 Runtime 固化管理端登记、整体审核、整 Connector 授权、Tool 不复制、漂移待审、重新审核和撤权旅程。当前 DSH MCP 插件只提供 Tools，因此 Resources、Prompts、stdio 和包内服务进程明确未支持。目标企业 MCP 服务、真实受管凭据、实际模型触发调用、超时/取消及运行中撤权仍须在 PF-07 P2 环境留证；本记录不把合成 Runtime 或一次性 PostgreSQL 测试称为真实联调。
+
+评审修复补充：生产使用的 `CapabilityGuardedRuntime` 转发 MCP 发现到原 DSH Adapter。每个 Worker 同时获得已审核 Server 摘要，DSH 策略在 Profile 加载、`tools/change` 及调用前按实际 Tool 名称、说明和输入 Schema 重算整体摘要，未重新执行管理端发现时出现的新 Tool 或 Schema 变化也会立即拒绝。发现/健康检查只更新观测结果和能力快照，不覆盖人工 `disabled`，恢复必须显式启用。首次发现会先创建 Runtime 根目录；Session Log 中只有 MCP 调用而没有 usage 时，调用审计继续记录，但 Token 保持 `null/unavailable`，不会作为零消耗上报或结算。
+
 ### 4.3 原工作项映射与完成记录
 
 | 工作项 | 对应规范/差异 | 具体交付物 | 前置依赖及归属 |
@@ -123,7 +131,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | I-06 增加任务结果外层 | AS-10，D-05 | 区分执行终态与业务结果的存储/API/前端投影 **已完成（2026-09-20，`task-result/v1` 读时投影）** | I-03 的输出要求、I-05 的动作结果；EX-01/02 |
 | I-07 核实并补齐预算执行 | AS-09，D-04 | 限额执行矩阵、现有限额漏洞修复及边界测试 | 现有时长/工具/输出上限可独立；EX-00、AG-03 |
 | I-08 补齐评测和验收证据 | AS-03/07/08/12，D-06 | 评测分层、现有安全/故障回归、自动任务 P1 浏览器旅程、P2 记录 | 现有路径可先验证；新增契约随 I-01～07 增补；AG/EX 共同门禁 |
-| I-09 接入外部能力/MCP | AS-05/06/07 | 一种批准接入类型及完整准入、调用、撤权验证 | 纳入 PF-03；I-04/05/08、PF-01；AG-02 |
+| I-09 接入外部能力/MCP | AS-05/06/07 | Streamable HTTP MCP Connector 的整体发现/审核、Agent 二元 Grant、DSH 调用、漂移与撤权验证 | **PF-03 代码级已完成**；独立于 I-04 平台 Tool Binding 和 Agent 发布，真实服务证据纳入 PF-07；AG-02 |
 | I-10 持久化等待与审批恢复 | AS-07/08，D-04 | 安全检查点、等待/恢复协议、动作绑定审批和恢复测试 | 纳入 PF-04；DSH 能力验证、I-04～08、PF-01/02；EX-03A/B |
 | I-11 受控记忆与经验 | AS-04/11/12 | 来源授权、候选审核、独立版本、检索及撤回机制 | 纳入 PF-05；I-03/04/08；AG-04 |
 | I-12 受控 Agent 委派 | AS-09 | 父子运行关系、权限/预算传播及取消协议 | 纳入 PF-06；I-04/06/07/08、PF-01/02 |
@@ -324,13 +332,15 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 ### I-09 按需接入外部能力与 MCP
 
-**启动条件与归属：** 有明确外部能力需求后进入 AG-02；不自动恢复已推迟的全量工具扩展。不预设同时支持 REST、MCP 和所有沙箱执行器。
+**状态与归属：** PF-03 代码级平台能力已完成；具体 Agent 仍须满足生命周期模板触发条件并由管理员显式授予 Connector。不预设同时支持 REST、MCP 和所有沙箱执行器。
 
-**具体实施：** 管理员登记批准连接与凭据引用；只接通选定的执行器/传输类型；将发现结果保存为候选并固定服务标识、能力名、契约摘要和版本；经检查/试运行/审核进入既有 Tool Version。调用时由平台过滤 Allowlist、资源范围和网络目标，再经统一 DSH 工具路径执行，记录回执及审计。MCP Resources/Prompts 单独定义访问和信任边界，不因 Tools 接通而默认开放。
+**已实施契约：** 管理员在现有 Connector 模块登记 Streamable HTTP MCP Server 与受管凭据引用；发现完整 Tool 清单并固定整体摘要，经人工整体审核后才可向 Agent 授予整个 Connector。Agent Grant 与 Agent Version/发布解耦，不细分逐 Tool 权限，也不创建平台 Tool Version/Binding。调用经 Runtime Manifest 当前复核和 DSH Server 命名空间策略执行，实际 Tool 调用单独记录参数摘要及结果。清单漂移使整个 Connector 待重新审核；Resources/Prompts 不因 Tools 接通而开放。
 
-**改动范围与依赖：** Tool/Connector、受管凭据、Runtime 工具适配、管理 API/UI；使用 I-04 绑定及 I-05 契约。确认 DSH 实际支持的接入能力，禁止包内命令启动任意 MCP 进程。
+**评审修复：** 整体审核窗口与 Connector 详情展示每项 Tool 的名称、描述及输入 Schema；策略与审计按 Attempt 已配置的 serverName 命名空间解析包含双下划线的合法 Tool 名称。发现和重新审核均保留人工停用状态；`changes_pending`、离线、降级或停用时仍可撤销已有 Agent Grant，仅健康且摘要已审核的 Connector 可以新增授权。
 
-**完成标准：** 服务新增工具不能自动获权；同名工具不混淆；契约变更需复核；错误服务凭据、撤权、超时和取消明确失败。完成一个真实批准能力的发现→审核→授权→调用→结果链路，其他类型显示未支持。
+**改动范围与依赖：** Connector、受管凭据引用、Runtime Manifest/Adapter、DSH 工具策略、管理 API/UI 和调用审计。平台 Tool 继续使用 I-04/I-05；MCP Connector 不复用其逐 Tool 版本与 Binding。禁止包内命令启动任意 MCP 进程。
+
+**完成标准：** 代码级门禁已覆盖新增能力不自动获权、Server 命名空间隔离、摘要变化复核、错误服务/凭据、撤权和逐调用审计。真实批准服务的发现→审核→授权→调用→撤权链路及超时/取消在 PF-07 P2 完成；其他传输和 MCP Resources/Prompts 明确显示未支持。
 
 ### I-10 按需增加持久化等待、人工审批与恢复
 

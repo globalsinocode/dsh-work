@@ -28,12 +28,15 @@ export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavaila
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin'>
 
+type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
+  'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
+
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
 export async function assertCurrentExecutionAuthorization(
   authorization: AuthorizationPort,
   content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
   manifest: RuntimeManifest,
-  bindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>,
+  bindings?: ExecutionBindingAuthorizationPort,
   toolBindingsChecked = false,
 ): Promise<void> {
   try {
@@ -42,8 +45,12 @@ export async function assertCurrentExecutionAuthorization(
     // Manifest 声明了 pin 而复核端口未接线时 fail-closed 为不可用。
     // 队列认领点已做同一检查时可跳过，避免每次认领重复查询。
     if (!toolBindingsChecked && manifest.tool_bindings?.length) {
-      if (!bindings) throw new ToolBindingCheckUnavailableError()
+      if (!bindings?.assertActiveToolBindings) throw new ToolBindingCheckUnavailableError()
       await bindings.assertActiveToolBindings(manifest.tool_bindings)
+    }
+    if (manifest.mcp_connections?.length) {
+      if (!bindings?.assertActiveMcpConnections || !manifest.agent_version_id) throw new ToolBindingCheckUnavailableError()
+      await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
     }
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
     // 前缀但同样是管理侧（无工作空间绑定），漏判会落入下方通用分支被

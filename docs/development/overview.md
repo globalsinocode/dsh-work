@@ -43,6 +43,7 @@ MVP 明确不包含：
 - Skill 的 `SKILL.md`、参考文件和脚本保存在 `DSH_WORK_DATA_ROOT/skills` 的内容寻址文件夹中；PostgreSQL 只保存相对引用和校验索引，数据库与该数据目录必须成组备份和恢复；
 - 企业身份由服务端建立，浏览器传入的用户、角色或操作人字段不能作为授权事实；
 - DSH 只能通过受控适配器和平台能力调用模型、Tool 与成果存储；
+- MCP 复用 Connector 控制面，以整个 MCP Server 作为审核和 Agent 授权边界；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
 - AI Hub 不可用时不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
 
 ## 3. 架构原则

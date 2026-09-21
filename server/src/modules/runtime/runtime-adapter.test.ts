@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
-import { DshAcpRuntimeAdapter, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
+import { DshAcpRuntimeAdapter, prepareMcpProcess, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
@@ -19,6 +19,78 @@ const adapters: DshAcpRuntimeAdapter[] = []
 
 afterEach(async () => {
   await Promise.all(adapters.splice(0).map(adapter => adapter.close()))
+})
+
+describe('PF-03 DSH MCP process patch', () => {
+  it('passes secret values through the child environment and authorizes the whole server namespace', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-patch-'))
+    try {
+      const patchPath = join(directory, 'mcp.patch.yml')
+      const prepared = await prepareMcpProcess({
+        command: process.execPath,
+        args: ['dsh.js', '--profile', 'worker'],
+        cwd: process.cwd(),
+        env: { BASE: 'value' },
+      }, [{
+        snapshot: {
+          connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http',
+          endpoint: 'https://mcp.example.test/rpc', auth_type: 'bearer', capability_digest: 'a'.repeat(64),
+        },
+        headers: { Authorization: 'Bearer top-secret' },
+        capabilities: [{ name: 'customer_get', description: 'Read one customer.', inputSchema: { type: 'object' } }],
+      }], patchPath)
+      const content = await readFile(patchPath, 'utf8')
+      assert.match(content, /@deepseek-ai\/dsh-mcp-client/)
+      assert.match(content, /process\.env\.DSH_MCP_VALUE_0_0/)
+      assert.doesNotMatch(content, /top-secret/)
+      assert.equal(prepared.env?.['DSH_MCP_VALUE_0_0'], 'Bearer top-secret')
+      assert.equal(prepared.env?.['DSH_ALLOWED_MCP_SERVERS_JSON'], '["crm"]')
+      assert.equal(prepared.env?.['DSH_APPROVED_MCP_CAPABILITIES_JSON'], JSON.stringify([{
+        serverName: 'crm', digest: 'a'.repeat(64),
+      }]))
+      assert.deepEqual(prepared.args.slice(-2), ['--patch', patchPath])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('renders an empty header mapping for no-auth connectors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-patch-'))
+    try {
+      const patchPath = join(directory, 'mcp.patch.yml')
+      await prepareMcpProcess({ command: process.execPath, args: ['dsh.js', '--profile', 'worker'], cwd: process.cwd() }, [{
+        snapshot: {
+          connector_id: 'connector-read', server_name: 'readonly', transport: 'streamable-http',
+          endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'b'.repeat(64),
+        }, headers: {},
+      }], patchPath)
+      assert.match(await readFile(patchPath, 'utf8'), /headers: \{\}/)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('creates the runtime root before the first MCP discovery', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-first-discovery-'))
+    const runtimeRoot = join(parent, 'runtime-root-not-created')
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-mcp-first-discovery', runtimeRoot, dshRepository: process.cwd(), setupTimeoutMs: 2_000,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--profile', 'test'],
+        cwd: process.cwd(),
+      },
+    })
+    adapters.push(adapter)
+    await assert.rejects(adapter.inspectMcpConnection({
+      snapshot: {
+        connector_id: 'connector-first', server_name: 'first', transport: 'streamable-http',
+        endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+      },
+      headers: {},
+    }), /MCP 发现失败/)
+    assert.equal((await stat(runtimeRoot)).isDirectory(), true)
+  })
 })
 
 describe('Runtime Manifest compiler', () => {
@@ -456,6 +528,39 @@ describe('DSH ACP Runtime Adapter', () => {
     const resourcePath = join(result.attemptDirectory, 'workspace/skills', resourceDirectory, 'references/value.txt')
     assert.equal(await readFile(resourcePath, 'utf8'), resource)
     assert.equal((await stat(resourcePath)).mode & 0o777, 0o400)
+  })
+
+  it('keeps Token usage unavailable when only MCP call evidence exists', async () => {
+    const audited: Array<{ serverName: string; capabilityName: string }> = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--profile', 'test'],
+        cwd: process.cwd(),
+      },
+      resolveMcpConnections: async manifest => manifest.mcp_connections?.map(snapshot => ({ snapshot, headers: {} })) ?? [],
+      recordMcpInvocation: async (_manifest, invocation) => {
+        audited.push({ serverName: invocation.serverName, capabilityName: invocation.capabilityName })
+      },
+    })
+    const input = manifest('run-mcp-log-no-usage', 'attempt-1', '[mcp-log-no-usage] finish normally')
+    input.mcp_connections = [{
+      connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+    }]
+    input.permission_policy.network_policy = 'allowlist'
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['input_tokens'], null)
+    assert.equal(completed?.safe_metadata['output_tokens'], null)
+    assert.equal(completed?.safe_metadata['tool_call_count'], 1)
+    assert.equal(completed?.safe_metadata['usage_source'], 'dsh-session-log')
+    assert.equal(completed?.safe_metadata['token_usage_source'], 'unavailable')
+    assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
   })
 
   it('collects generated output before committing a successful Run', async () => {

@@ -302,6 +302,14 @@
         "$ref": "#/$defs/toolBindingRef"
       }
     },
+    "mcp_connections": {
+      "type": "array",
+      "description": "PF-03：本 Attempt 获准使用的 MCP Connector 快照。授权仍按当前 Agent→Connector Grant 实时复核；快照不包含凭据值。",
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/mcpConnectionRef"
+      }
+    },
     "data_scopes": {
       "type": "array",
       "items": {
@@ -644,6 +652,42 @@
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "description": "绑定修订的语义摘要；修订行不可变保存完整快照（连接/凭据槽位/身份策略/环境/授权范围），Attempt 凭此引用追溯。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpConnectionRef": {
+      "type": "object",
+      "required": [
+        "connector_id",
+        "server_name",
+        "transport",
+        "endpoint",
+        "auth_type",
+        "capability_digest"
+      ],
+      "properties": {
+        "connector_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "server_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$"
+        },
+        "transport": {
+          "const": "streamable-http"
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "auth_type": {
+          "enum": ["none", "bearer"]
+        },
+        "capability_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       },
       "additionalProperties": false

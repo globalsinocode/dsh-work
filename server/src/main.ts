@@ -162,6 +162,7 @@ async function start() {
     const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
     const runs = new PostgresRunRepository(database)
     const tasks = new PostgresTaskRepository(database)
+    const toolServiceRef: { current?: PostgresToolConnectorService } = {}
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -175,6 +176,14 @@ async function start() {
       authorizeExecution: async manifest => {
         if (!orchestration) throw new Error('运行授权服务尚未就绪')
         await orchestration.assertCurrentRunAuthorization(manifest)
+      },
+      resolveMcpConnections: async manifest => {
+        if (!toolServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
+        return toolServiceRef.current.resolveMcpRuntimeConnections(manifest)
+      },
+      recordMcpInvocation: async (manifest, invocation) => {
+        if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+        await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
       },
       // No durable human-approval channel is wired to ACP yet. Manifests that
       // require approval therefore fail closed instead of silently escalating.
@@ -229,8 +238,9 @@ async function start() {
     )
     const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
-    const tools = new PostgresToolConnectorService(database, runtime, operations)
-    const skills = new PostgresSkillService(database, operations, tools, skillArtifacts)
+    const toolService = new PostgresToolConnectorService(database, runtime, operations)
+    toolServiceRef.current = toolService
+    const skills = new PostgresSkillService(database, operations, toolService, skillArtifacts)
     // C7 only inspects execution capability; it never starts a Worker/model call.
     const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
       await runtime.assertAvailable()
@@ -243,7 +253,7 @@ async function start() {
       }
     }
     skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
-    const agents = new PostgresAgentService(database, operations, skills, tools)
+    const agents = new PostgresAgentService(database, operations, skills, toolService)
     const knowledge = new PostgresKnowledgeService(database)
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
     // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
@@ -263,12 +273,12 @@ async function start() {
         agentMembers: workspaceAgentMembers,
         automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
         // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
-        toolBindings: tools,
+        toolBindings: toolService,
         tasks,
       },
     )
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, tools, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+    const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
     const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
     skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
     skills.setPackageTestLifecycle({
@@ -318,9 +328,9 @@ async function start() {
     registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
-    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, tools, resolve(dataRoot, 'agent-packages'), orchestration))
+    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, resolve(dataRoot, 'agent-packages'), orchestration))
     registerSkillRoutes(router, skills)
-    registerToolRoutes(router, tools)
+    registerToolRoutes(router, toolService)
     registerWorkbenchAgentRoutes(router, agents, authorization)
   } else {
     registerUnavailableWorkbenchCommandRoutes(router)

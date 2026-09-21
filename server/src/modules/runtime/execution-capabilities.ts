@@ -1,4 +1,4 @@
-import type { AgentRuntimePort, RuntimeManifest, RuntimeEventListener, RuntimeCancelCause } from './runtime-types.ts'
+import type { AgentRuntimePort, McpRuntimeConnection, RuntimeManifest, RuntimeEventListener, RuntimeCancelCause } from './runtime-types.ts'
 
 export class ExecutionCapabilityUnavailableError extends Error {
   readonly status = 503
@@ -75,6 +75,11 @@ export class CapabilityGuardedRuntime implements AgentRuntimePort {
   status(runId: string) { return this.delegate.status(runId) }
   health() { return this.delegate.health() }
   async listTools() { await this.assertAvailable(); return this.delegate.listTools?.() ?? [] }
+  async inspectMcpConnection(connection: McpRuntimeConnection) {
+    await this.assertAvailable()
+    if (!this.delegate.inspectMcpConnection) throw new ExecutionCapabilityUnavailableError('dsh')
+    return this.delegate.inspectMcpConnection(connection)
+  }
   async configureScheduling(status: 'accepting' | 'draining' | 'disabled') { await this.delegate.configureScheduling?.(status) }
   close() { return this.delegate.close() }
 }

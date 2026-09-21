@@ -505,3 +505,44 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 - C7 / P1 / 有写权限管理员：进入新增 Skill 的链接入口，提供受支持 HTTPS 地址，解析后查看来源/摘要/依赖/阻断原因，确认保存草稿。DSH 不可用时仍能存可解析草稿，界面显示不可发布而不声称测试通过。对应 `e2e/admin-review.spec.ts`（受控下载、不访问真实企业资源；真实外网与 DSH 验收另行记录）。
 
 前置数据：隔离一次性 PostgreSQL、合成管理员及受控公共下载制品；按“来源 → 固定摘要 → 显式保存草稿 → 试运行未通过或 DSH 不可用时发布拒绝”验收。禁止连接真实企业库。当前 Chromium 首次导航被 ERR_BLOCKED_BY_ADMINISTRATOR 拒绝，未通过浏览器 Verify，不创建伪通过 spec；上述文件名为待实现旅程目标。现阶段 HTTP/组件测试已进入 CI，不能代替该旅程。
+
+## PF-03 MCP Connector 治理
+
+### PF-MCP-01 Connector 整体审核与 Agent 授权
+
+**优先级：** P0（治理边界）
+
+**角色：** 平台管理员
+
+**运行层级：** P1 集成用户旅程
+
+**前置数据：** 隔离一次性 PostgreSQL、受控管理员、可改变 Tool 清单的合成 MCP 发现 Runtime、一个已发布 Agent；不得连接开发业务库或生产服务
+
+**spec：** `e2e/admin-mcp-connector.integration.spec.ts`
+
+1. 在现有“连接器”页面登记 MCP Server 和凭据引用，执行发现，在详情与审核窗口查看每个 Tool 的名称、描述、输入 Schema 和待审核状态。
+2. 核对完整能力信息后整体审核 Connector，向 Agent A 授予使用权；确认没有逐 Tool 权限选择，也没有在平台 Tool 列表生成 MCP Tool。
+3. 向测试 Agent 授予整个 Connector；数据库证据确认只有一条 Connector Grant，平台 Tool 表没有复制 MCP Tool。
+4. 合成发现 Runtime 新增一个 Tool 后重新发现；确认 Connector 进入“能力已变化，待重新审核”，不可新增 Grant，但仍可进入 Agent 权限并撤销已有 Grant。
+5. 重新整体审核后确认可以新增 Grant；数据库证据与页面状态一致。
+6. 人工停用 Connector 后再次执行发现，状态保持“已停用”；能力变化后重新整体审核仍保持“已停用”，且已有 Grant 仍可撤销。只有显式启用操作才能恢复健康状态。
+
+**验收：** MCP 复用现有 Connector 管理；一个 Server 是最小审核与授权单元。审核前可检查 Tool 名称、描述和输入 Schema；发现或 Agent 发布均不自动授权，能力摘要变化必须整体复核。健康检查和重新审核都不能覆盖人工停用；任何连接器状态下都能撤销已有 Grant，只有健康且整体审核通过时才能新增。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；凭据、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
+
+### PF-MCP-P2 真实 MCP 与 DSH 发布前验收
+
+**优先级：** P0（发布门禁）
+
+**角色：** 连接器管理员、Agent 管理员、真实员工
+
+**运行层级：** P2 真实验收
+
+**前置数据：** 目标 DSH Lock/Adapter、真实 OIDC、批准的 Streamable HTTP MCP 服务、受管凭据、可撤销的测试 Agent Grant
+
+**spec：** 受控发布环境验收记录（不纳入普通 CI）
+
+1. 留存服务身份、发现清单摘要、审核人和 Agent Grant，使用真实员工触发一次成功 MCP Tool 调用并核对业务只读结果和审计。
+2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和 Agent 撤权；核对 Run/Attempt 终态及后续调用是否停止。
+3. 检查 DSH Worker Patch 和环境边界，确认密钥正文未进入 PostgreSQL、Manifest、前端响应、Patch 文件或普通日志。
+
+**验收：** 真实 DSH 只加载已审核 Connector；调用、失败和撤权均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。

@@ -15,6 +15,7 @@ import type {
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
+  McpInvocationAudit,
   DirectorySyncState,
   EmployeeModelUsageSummary,
   GrantSourceReconciliationView,
@@ -269,8 +270,26 @@ export const adminApi = {
   setToolStatus: (input: { toolId: string; status: 'available' | 'disabled' }) =>
     request<ToolDefinition>('/tools/status', { method: 'PATCH', body: JSON.stringify(input) }),
   getConnectors: () => request<ConnectorDefinition[]>('/connectors'),
+  getMcpInvocationAudits: (connectorId: string) =>
+    request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
+  registerMcpConnector: (input: {
+    id: string
+    name: string
+    system: string
+    serverName: string
+    endpoint: string
+    authType: 'none' | 'bearer'
+    credentialRef?: string
+    scopeDescription: string
+  }) => request<ConnectorDefinition>('/connectors/mcp', { method: 'POST', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>
     request<ConnectorDefinition>('/connectors/check', { method: 'POST', body: JSON.stringify(input) }),
+  approveMcpConnector: (input: { connectorId: string; capabilityDigest: string }) =>
+    request<ConnectorDefinition>('/connectors/mcp/approve', { method: 'POST', body: JSON.stringify(input) }),
+  setMcpConnectorStatus: (input: { connectorId: string; status: 'enabled' | 'disabled' }) =>
+    request<ConnectorDefinition>('/connectors/mcp/status', { method: 'PATCH', body: JSON.stringify(input) }),
+  setAgentMcpAccess: (input: { connectorId: string; agentId: string; enabled: boolean }) =>
+    request<ConnectorDefinition>('/connectors/mcp/agent-access', { method: 'PATCH', body: JSON.stringify(input) }),
   updateToolPermissions: (input: {
     toolId: string
     allowedRoles: string[]

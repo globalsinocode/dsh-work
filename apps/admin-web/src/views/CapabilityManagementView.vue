@@ -45,6 +45,16 @@ const detailTargetId = ref('')
 const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
 const actionLoading = ref('')
 const healthRefreshing = ref(false)
+const mcpCreateDialogOpen = ref(false)
+const mcpCreating = ref(false)
+const mcpReviewDialogOpen = ref(false)
+const selectedMcpReviewConnectorId = ref('')
+const mcpAccessDialogOpen = ref(false)
+const selectedMcpConnectorId = ref('')
+const mcpCreateForm = reactive({
+  id: '', name: '', system: '', serverName: '', endpoint: '',
+  authType: 'none' as 'none' | 'bearer', credentialRef: '', scopeDescription: '',
+})
 const toolCatalogDialogOpen = ref(false)
 const toolCatalogQuery = ref('')
 const toolCatalogFilter = ref<'ready' | 'all'>('ready')
@@ -135,6 +145,8 @@ const filteredConnectors = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   return contentStore.connectors.filter((item) => !keyword || `${item.name} ${item.system} ${item.id}`.toLowerCase().includes(keyword))
 })
+const selectedMcpConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpConnectorId.value))
+const selectedMcpReviewConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpReviewConnectorId.value))
 const toolRoleOptions = computed(() => [...new Set([
   ...contentStore.tools.flatMap(tool => tool.allowedRoles),
   ...contentStore.toolCatalog.flatMap(tool => tool.defaultAllowedRoles),
@@ -338,7 +350,16 @@ async function revokeCurrentTool() {
   }
 }
 
-function inspectConnector(connector: ConnectorDefinition) {
+async function inspectConnector(connector: ConnectorDefinition) {
+  let invocationSummary = ''
+  if (connector.mcp) {
+    try {
+      const invocations = await contentStore.getMcpInvocationAudits(connector.id)
+      invocationSummary = invocations.map(item => `${item.capabilityName}（${item.result}，${new Date(item.occurredAt).toLocaleString('zh-CN')}）`).join('；') || '暂无调用审计'
+    } catch {
+      invocationSummary = '调用审计加载失败，请稍后重试'
+    }
+  }
   showDetail(connector.name, [
     { label: '连接器标识', value: connector.id },
     { label: '企业系统', value: connector.system },
@@ -349,6 +370,14 @@ function inspectConnector(connector: ConnectorDefinition) {
     { label: '数据范围', value: connector.scopeDescription },
     { label: '提供工具', value: `${connector.toolCount} 个` },
     { label: '当前延迟', value: connector.latency },
+    ...(connector.mcp ? [
+      { label: 'MCP 命名空间', value: connector.mcp.serverName },
+      { label: '整体审核', value: mcpApprovalLabel(connector.mcp.approvalStatus) },
+      { label: '能力摘要', value: connector.mcp.capabilityDigest ?? '尚未发现' },
+      { label: 'Tool 描述与输入 Schema', value: formatMcpCapabilities(connector) },
+      { label: '获权 Agent', value: connector.mcp.grantedAgentIds.map(id => contentStore.agents.find(agent => agent.id === id)?.name ?? id).join('、') || '无' },
+      { label: '最近调用', value: invocationSummary },
+    ] : []),
   ], 'connector', connector.id)
 }
 
@@ -643,6 +672,7 @@ async function checkConnector(connector: ConnectorDefinition) {
   try {
     const updated = await contentStore.checkConnector(connector.id)
     if (updated.status === 'healthy') ElMessage.success(`${connector.name}健康检查通过`)
+    else if (updated.status === 'disabled') ElMessage.info(`${connector.name}检查完成，仍保持人工停用；需要恢复时请显式启用`)
     else ElNotification.error({
       title: `连接器异常：${connector.name}`,
       message: `原因：健康检查结果为${updated.status === 'offline' ? '离线' : '性能下降'}。下一步：检查 ${updated.endpoint}、凭据引用和 DSH Runtime 状态，恢复后重新检查。`,
@@ -655,6 +685,114 @@ async function checkConnector(connector: ConnectorDefinition) {
       message: `原因：${failure.message ?? '健康检查未完成'}。下一步：${failure.suggestion ?? '检查连接器配置和系统健康后重试。'}${failure.traceId && failure.traceId !== '—' ? ` 链路编号：${failure.traceId}` : ''}`,
       duration: 8000,
     })
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+async function registerMcpConnector() {
+  mcpCreating.value = true
+  try {
+    const connector = await contentStore.registerMcpConnector({
+      ...mcpCreateForm,
+      ...(mcpCreateForm.authType === 'bearer' ? { credentialRef: mcpCreateForm.credentialRef.trim() } : {}),
+    })
+    mcpCreateDialogOpen.value = false
+    ElMessage.success('MCP Connector 已登记，正在通过 DSH 发现 Tool')
+    await checkConnector(connector)
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'MCP Connector 登记失败')
+  } finally {
+    mcpCreating.value = false
+  }
+}
+
+function approveMcpConnector(connector: ConnectorDefinition) {
+  const capabilityDigest = connector.mcp?.capabilityDigest
+  if (!capabilityDigest) {
+    ElMessage.error('MCP 尚无可审核的能力摘要，请先执行发现')
+    return
+  }
+  selectedMcpReviewConnectorId.value = connector.id
+  mcpReviewDialogOpen.value = true
+}
+
+async function confirmMcpConnectorApproval() {
+  const connector = selectedMcpReviewConnector.value
+  const capabilityDigest = connector?.mcp?.capabilityDigest
+  if (!connector || !capabilityDigest) {
+    ElMessage.error('MCP 尚无可审核的能力摘要，请重新执行发现')
+    return
+  }
+  try {
+    actionLoading.value = `mcp-approve:${connector.id}`
+    await contentStore.approveMcpConnector(connector.id, capabilityDigest)
+    mcpReviewDialogOpen.value = false
+    ElMessage.success('MCP Connector 已整体审核通过')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'MCP Connector 审核失败')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+function formatMcpInputSchema(schema: Record<string, unknown>) {
+  return JSON.stringify(schema, null, 2)
+}
+
+function formatMcpCapabilities(connector: ConnectorDefinition) {
+  return connector.mcp?.capabilities.map(capability => [
+    capability.name,
+    capability.description || '无描述',
+    `输入 Schema：\n${formatMcpInputSchema(capability.inputSchema)}`,
+  ].join('\n')).join('\n\n') || '尚未发现'
+}
+
+function openMcpAccess(connector: ConnectorDefinition) {
+  selectedMcpConnectorId.value = connector.id
+  mcpAccessDialogOpen.value = true
+}
+
+function hasAgentMcpAccess(connector: ConnectorDefinition | undefined, agentId: string) {
+  return connector?.mcp?.grantedAgentIds.includes(agentId) ?? false
+}
+
+function canGrantAgentMcpAccess(connector: ConnectorDefinition | undefined) {
+  return connector?.status === 'healthy'
+    && connector.mcp?.approvalStatus === 'approved'
+    && connector.mcp.capabilityDigest === connector.mcp.approvedDigest
+}
+
+function agentMcpAccessDisabled(connector: ConnectorDefinition | undefined, agentId: string) {
+  return !hasAgentMcpAccess(connector, agentId) && !canGrantAgentMcpAccess(connector)
+}
+
+async function changeAgentMcpAccess(agentId: string, enabled: boolean) {
+  const connector = selectedMcpConnector.value
+  if (!connector) return
+  actionLoading.value = `mcp-agent:${agentId}`
+  try {
+    await contentStore.setAgentMcpAccess(connector.id, agentId, enabled)
+    ElMessage.success(enabled ? 'Agent 已获得整个 MCP Connector 的使用权' : 'Agent 的 MCP Connector 使用权已撤销')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'MCP 授权更新失败')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+async function toggleMcpConnector(connector: ConnectorDefinition) {
+  const disabling = connector.status !== 'disabled'
+  try {
+    await ElMessageBox.confirm(
+      disabling ? '停用后，已有 Agent Grant 会保留记录，但新运行和在途调用都会被拒绝。' : '仅能力摘要仍与审核记录一致时才能重新启用。',
+      `${disabling ? '停用' : '启用'}“${connector.name}”？`,
+      { confirmButtonText: `确认${disabling ? '停用' : '启用'}`, cancelButtonText: '取消', type: 'warning' },
+    )
+    actionLoading.value = `mcp-status:${connector.id}`
+    await contentStore.setMcpConnectorStatus(connector.id, disabling ? 'disabled' : 'enabled')
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
   } finally {
     actionLoading.value = ''
   }
@@ -720,6 +858,10 @@ function protocolLabel(protocol: ConnectorDefinition['protocol']) {
   return { runtime: 'Runtime', rest: 'REST API', openapi: 'OpenAPI', mcp: 'MCP', database: '数据库代理' }[protocol]
 }
 
+function mcpApprovalLabel(status: NonNullable<ConnectorDefinition['mcp']>['approvalStatus']) {
+  return { draft: '待发现', pending_review: '待审核', approved: '已审核', changes_pending: '变更待审' }[status]
+}
+
 onMounted(() => {
   void contentStore.load()
   // B-03/I-04：工具绑定修订为服务端真实记录（/tools/bindings）。
@@ -757,7 +899,10 @@ onUnmounted(() => clearSkillTestPoll())
           <el-button type="primary" :icon="Plus" data-action="add-tool" @click="openToolCatalog">添加工具</el-button>
           <el-button v-if="toolCandidatePrototype" data-action="register-tool-candidate" @click="toolCandidateDialogOpen = true">接入候选</el-button>
         </div>
-        <el-button v-if="authStore.canManage && activeTab === 'connectors'" :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
+        <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
+          <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
+          <el-button :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
+        </div>
       </div>
     </section>
 
@@ -856,15 +1001,57 @@ onUnmounted(() => clearSkillTestPoll())
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的连接器">
         <el-table-column label="连接器" min-width="225"><template #default="scope"><div class="connector-cell"><span><el-icon><Connection /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.system }} · {{ protocolLabel(scope.row.protocol) }}</small></div></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
-        <el-table-column prop="toolCount" label="工具数" width="110" />
+        <el-table-column label="能力" width="125"><template #default="scope"><template v-if="scope.row.mcp"><el-tag size="small" :type="scope.row.mcp.approvalStatus === 'approved' ? 'success' : 'warning'">{{ mcpApprovalLabel(scope.row.mcp.approvalStatus) }}</el-tag><small class="connector-capability-count">{{ scope.row.mcp.capabilityCount }} 个 Tool</small></template><template v-else>{{ scope.row.toolCount }} 个工具</template></template></el-table-column>
         <el-table-column prop="authType" label="认证与范围" min-width="175" />
         <el-table-column prop="latency" label="延迟" width="90" />
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="145" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">检查</el-button></template></el-table-column>
+        <el-table-column label="操作" width="300" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">{{ scope.row.protocol === 'mcp' ? '发现' : '检查' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && ['pending_review', 'changes_pending'].includes(scope.row.mcp.approvalStatus)" link type="primary" :loading="actionLoading === `mcp-approve:${scope.row.id}`" data-action="approve-mcp-connector" @click="approveMcpConnector(scope.row)">整体审核</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="primary" data-action="manage-mcp-agent-access" @click="openMcpAccess(scope.row)">Agent 权限</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :loading="actionLoading === `mcp-status:${scope.row.id}`" @click="toggleMcpConnector(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="connectorPage" background layout="prev, pager, next" :total="filteredConnectors.length" :page-size="10" /></div>
       </template>
     </section>
+
+    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close>
+      <el-form label-position="top" :model="mcpCreateForm">
+        <div class="mcp-form-grid">
+          <el-form-item label="连接器标识" required><el-input v-model="mcpCreateForm.id" class="mono" placeholder="例如：connector-erp-query" /></el-form-item>
+          <el-form-item label="MCP serverName" required><el-input v-model="mcpCreateForm.serverName" class="mono" placeholder="例如：erp_query" /></el-form-item>
+          <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
+          <el-form-item label="所属系统" required><el-input v-model="mcpCreateForm.system" placeholder="例如：ERP" /></el-form-item>
+        </div>
+        <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
+        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer 凭据引用</el-radio></el-radio-group></el-form-item>
+        <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="受管凭据引用" required><el-input v-model="mcpCreateForm.credentialRef" class="mono" placeholder="例如：DSH_MCP_CREDENTIAL_CRM" /><small>只接受 DSH_MCP_CREDENTIAL_ 前缀的运行环境引用，不保存密钥正文。</small></el-form-item>
+        <el-form-item label="整体权限范围" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明该 MCP 内全部 Tool 共同适用的系统、数据范围和只读边界" /></el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon title="一个 MCP Connector 是最小授权边界。登记后先通过 DSH 发现全部 Tool，再整体审核；能力清单变化会暂停使用并要求重新审核。" />
+      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCreateForm.id.trim() || !mcpCreateForm.serverName.trim() || !mcpCreateForm.name.trim() || !mcpCreateForm.system.trim() || !mcpCreateForm.endpoint.trim() || !mcpCreateForm.scopeDescription.trim() || (mcpCreateForm.authType === 'bearer' && !mcpCreateForm.credentialRef.trim())" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">登记并发现</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="mcpReviewDialogOpen" :title="`审核通过“${selectedMcpReviewConnector?.name ?? ''}”？`" width="min(760px, calc(100vw - 32px))" destroy-on-close>
+      <el-alert type="warning" :closable="false" show-icon :title="`将把当前发现的 ${selectedMcpReviewConnector?.mcp?.capabilityCount ?? 0} 个 Tool 作为一个整体授权边界。请核对每项 Tool 的名称、描述和输入 Schema。`" />
+      <div class="mcp-review-list" aria-label="待审核 MCP Tool 清单">
+        <article v-for="capability in selectedMcpReviewConnector?.mcp?.capabilities ?? []" :key="capability.name" class="mcp-review-item">
+          <code>{{ capability.name }}</code>
+          <p>{{ capability.description || '无描述' }}</p>
+          <strong>输入 Schema</strong>
+          <pre>{{ formatMcpInputSchema(capability.inputSchema) }}</pre>
+        </article>
+      </div>
+      <template #footer><el-button @click="mcpReviewDialogOpen = false">取消</el-button><el-button type="primary" :loading="actionLoading === `mcp-approve:${selectedMcpReviewConnector?.id}`" data-action="confirm-approve-mcp-connector" @click="confirmMcpConnectorApproval">审核通过</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="mcpAccessDialogOpen" :title="`Agent 权限 · ${selectedMcpConnector?.name ?? ''}`" width="min(640px, calc(100vw - 32px))" destroy-on-close>
+      <el-alert type="warning" :closable="false" show-icon title="获得权限的 Agent 可以使用该 MCP 当前审核通过的全部 Tool；已有 Grant 始终可以撤销，只有整体审核通过且连接器健康时才能新增授权。这里不提供单 Tool 授权。" />
+      <div class="mcp-agent-list">
+        <div v-for="agent in contentStore.agents" :key="agent.id" class="mcp-agent-row">
+          <div><strong>{{ agent.name }}</strong><small>{{ agent.id }} · {{ agent.status }}</small></div>
+          <el-switch :model-value="hasAgentMcpAccess(selectedMcpConnector, agent.id)" :loading="actionLoading === `mcp-agent:${agent.id}`" :disabled="agentMcpAccessDisabled(selectedMcpConnector, agent.id)" :aria-label="`${agent.name} MCP 权限`" @change="changeAgentMcpAccess(agent.id, Boolean($event))" />
+        </div>
+        <el-empty v-if="!contentStore.agents.length" description="暂无 Agent" :image-size="64" />
+      </div>
+      <template #footer><el-button type="primary" @click="mcpAccessDialogOpen = false">完成</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="toolCatalogDialogOpen" title="添加 DSH 工具" width="min(920px, calc(100vw - 32px))" destroy-on-close>
       <div class="tool-catalog-toolbar">
@@ -1154,6 +1341,19 @@ onUnmounted(() => clearSkillTestPoll())
 .connector-cell > div { display: flex; flex-direction: column; }
 .connector-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .connector-cell small { margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.connector-capability-count { display: block; margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.mcp-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.mcp-agent-list { display: flex; max-height: 440px; flex-direction: column; gap: 8px; margin-top: 16px; overflow-y: auto; }
+.mcp-agent-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); }
+.mcp-agent-row > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.mcp-agent-row strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.mcp-agent-row small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.mcp-review-list { display: flex; max-height: min(56vh, 560px); flex-direction: column; gap: 12px; margin-top: 16px; overflow-y: auto; }
+.mcp-review-item { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
+.mcp-review-item > code { color: var(--color-primary); font-weight: 700; }
+.mcp-review-item p { margin: 8px 0 12px; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.6; }
+.mcp-review-item strong { color: var(--color-text-heading); font-size: var(--font-size-badge); }
+.mcp-review-item pre { margin: 6px 0 0; padding: 10px; overflow: auto; border-radius: var(--radius-button); color: var(--color-text-primary); background: var(--color-bg); font-size: var(--font-size-badge); line-height: 1.5; white-space: pre-wrap; }
 .tool-catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .tool-catalog-toolbar .el-input { max-width: 420px; }
 .tool-catalog-toolbar .el-radio-group { flex: none; }
@@ -1204,5 +1404,5 @@ onUnmounted(() => clearSkillTestPoll())
 .version-summary small,
 .release-record small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .release-record p { margin: 6px 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
-@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } }
+@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .mcp-form-grid { grid-template-columns: 1fr; } }
 </style>

@@ -85,6 +85,8 @@ export interface RuntimeManifest {
    * 执行边界复核据此验证绑定仍 active 且语义未漂移；无平台工具的清单省略该字段。
    */
   tool_bindings?: ManifestToolBinding[]
+  /** PF-03 Attempt snapshot. Grants remain live and are rechecked before and during execution. */
+  mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
   model_route_id?: string | null
@@ -123,6 +125,27 @@ export interface RuntimeManifest {
   }
   created_at: string
   trace_id?: string
+}
+
+export interface McpConnectionSnapshot {
+  connector_id: string
+  server_name: string
+  transport: 'streamable-http'
+  endpoint: string
+  auth_type: 'none' | 'bearer'
+  capability_digest: string
+}
+
+export interface McpRuntimeConnection {
+  snapshot: McpConnectionSnapshot
+  headers: Record<string, string>
+  /** Current reviewed capability set. Absent only during management-plane discovery. */
+  capabilities?: McpInspectionResult['capabilities']
+}
+
+export interface McpInspectionResult {
+  latencyMs: number
+  capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
 }
 
 export interface RuntimeKnowledgeDocument {
@@ -243,6 +266,8 @@ export interface AgentRuntimePort {
   health(): Promise<RuntimeHealth>
   /** Return the model-facing tools registered by the active DSH deployment. */
   listTools?(): Promise<RuntimeToolDescriptor[]>
+  /** Inspect one approved Streamable HTTP target through the locked DSH MCP client. */
+  inspectMcpConnection?(connection: McpRuntimeConnection): Promise<McpInspectionResult>
   /** Mirror scheduler state for health reporting; admission remains database-owned. */
   configureScheduling?(status: 'accepting' | 'draining' | 'disabled'): Promise<void>
   close(): Promise<void>

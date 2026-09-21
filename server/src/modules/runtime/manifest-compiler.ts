@@ -7,6 +7,7 @@ import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.t
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const BINDING_FIELDS = new Set(['tool', 'binding_id', 'revision', 'digest'])
+const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest'])
 // 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 FileSystemSkillArtifactStore
 // 读写同口径；runtime-manifest.schema.json 中的等价 pattern 由 contracts 静态检查固定。
 const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
@@ -162,6 +163,32 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!binding.binding_id?.trim()) throw new TypeError('tool_bindings[].binding_id 不允许为空')
     if (!Number.isInteger(binding.revision) || binding.revision < 1) throw new TypeError('tool_bindings[].revision 必须是正整数')
     if (!/^[a-f0-9]{64}$/.test(binding.digest ?? '')) throw new TypeError('tool_bindings[].digest 必须是 sha256 摘要')
+  }
+
+  if ((input.mcp_connections?.length ?? 0) > 20) throw new TypeError('mcp_connections 最多包含 20 个 Connector')
+  const pinnedMcpConnectors = new Set<string>()
+  const pinnedMcpNames = new Set<string>()
+  for (const connection of input.mcp_connections ?? []) {
+    for (const key of Object.keys(connection)) {
+      if (!MCP_CONNECTION_FIELDS.has(key)) throw new TypeError(`mcp_connections 存在未声明字段：${key}`)
+    }
+    assertId('mcp_connections[].connector_id', connection.connector_id)
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(connection.server_name)) throw new TypeError('mcp_connections[].server_name 无效')
+    if (connection.transport !== 'streamable-http') throw new TypeError('mcp_connections 仅支持 streamable-http')
+    const endpoint = new URL(connection.endpoint)
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) {
+      throw new TypeError('mcp_connections[].endpoint 无效')
+    }
+    if (!['none', 'bearer'].includes(connection.auth_type)) throw new TypeError('mcp_connections[].auth_type 无效')
+    if (!/^[a-f0-9]{64}$/.test(connection.capability_digest)) throw new TypeError('mcp_connections[].capability_digest 必须是 sha256 摘要')
+    if (pinnedMcpConnectors.has(connection.connector_id) || pinnedMcpNames.has(connection.server_name)) {
+      throw new TypeError('mcp_connections 不允许重复连接器或 server_name')
+    }
+    pinnedMcpConnectors.add(connection.connector_id)
+    pinnedMcpNames.add(connection.server_name)
+  }
+  if (input.mcp_connections?.length && input.permission_policy.network_policy !== 'allowlist') {
+    throw new TypeError('mcp_connections 要求 network_policy=allowlist')
   }
 
   const manifest = structuredClone(input)

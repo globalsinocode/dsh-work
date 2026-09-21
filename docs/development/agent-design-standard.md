@@ -87,11 +87,11 @@ DSH 不可用必须明确失败或拒绝受理，不自动降级到直连模型�
 
 ### AS-05 Skill、Tool 与 MCP 职责明确
 
-**现行约束：** Skill 提供方法；Tool 提供可校验动作；MCP 是外部能力接入协议。Skill 声明依赖不等于获得工具权限；平台统一治理能力，发现结果不能自动进入生产 Allowlist。
+**现行约束：** Skill 提供方法；平台 Tool 提供逐能力、版本化的可校验动作；MCP 是外部能力接入协议。两种能力边界并行存在，不要求把 MCP Server 暴露的每个 Tool 复制为平台 Tool Version 或 Tool Binding。MCP 复用 Connector 管理，以一个 MCP Server/Connector 作为最小审核和授权单元：Agent 要么获得整个 Connector 当前已审核 Tool 集合的使用权，要么没有权限。该 Grant 独立于 Agent Version 和发布链路，运行时写入 Attempt 快照并持续复核当前授权。Skill 声明依赖、发现成功或 Agent 发布均不能自动产生 MCP Grant。
 
-**可选扩展：** MCP Tools、Resources、Prompts 按需分别接入。启用前固定服务/能力标识、审核过的契约、版本或内容摘要；解决同名冲突、身份与凭据目标绑定、网络范围、超时及审计。远端 Prompt 或描述不能覆盖平台指令和授权。MCP 不另建权限系统，Tool 也不强制全部通过 MCP 提供。
+**现行 MCP 范围：** 首期只支持管理员登记的 Streamable HTTP MCP Server 和 Tools。管理员先发现完整 Tool 清单，再按 Connector 整体审核其名称、描述和输入 Schema 摘要；清单摘要变化后 Connector 进入 `changes_pending`，在重新整体审核前既有 Agent Grant 不可执行。DSH 通过每 Attempt 受控 Patch 装载获准 Connector，策略按 `mcp__<serverName>__*` 命名空间放行；凭据值只经受控运行环境传给 Worker，不进入数据库、Manifest、前端或 Patch 文件。平台按实际 MCP Tool 调用记录名称、参数摘要、Run/Attempt 和结果审计。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持，不能因 Tools 已接通推定可用。
 
-**验收：** 发现新工具不自动可调用；契约变化触发重新核验；不能把 ACP 或本地平台工具桥接的存在当作外部 MCP 已接通。
+**验收：** 新登记或新发现的能力在整个 Connector 审核前不可调用；Agent 授权和撤权以 Connector 为单位；契约摘要变化立即阻止新领取及后续调用；调用仍经过统一 DSH 链路并产生实际 Tool 级审计；不能把 ACP、本地平台工具桥接或数据库记录的存在当作真实 MCP 已接通。
 
 ### AS-06 工具具有效果与失败语义
 

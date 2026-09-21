@@ -441,6 +441,31 @@ export interface ConnectorDefinition {
   scopeDescription: string
   latency: string
   lastCheckedAt: string
+  mcp?: {
+    serverName: string
+    transport: 'streamable-http'
+    approvalStatus: 'draft' | 'pending_review' | 'approved' | 'changes_pending'
+    capabilityDigest: string | null
+    approvedDigest: string | null
+    capabilityCount: number
+    capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    grantedAgentIds: string[]
+    discoveredAt: string | null
+    reviewedAt: string | null
+    reviewedBy: string | null
+  }
+}
+
+export interface McpInvocationAudit {
+  id: string
+  runId: string
+  attemptId: string
+  connectorId: string
+  actorUserId: string
+  capabilityName: string
+  parameterDigest: string
+  result: 'success' | 'failed' | 'unknown'
+  occurredAt: string
 }
 
 export interface AuditEvent {

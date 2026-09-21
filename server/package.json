@@ -16,6 +16,7 @@
     "test:m4:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-agent-management.integration.test.ts",
     "test:m4:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-skill-management.integration.test.ts",
     "test:m4:tool:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts",
+    "test:mcp:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/mcp-connector-governance.integration.test.ts",
     "test:tool-binding:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/tool-binding.integration.test.ts",
     "test:m4:knowledge:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-enterprise-knowledge.integration.test.ts",
     "test:m4:file": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/workbench/application/document-extractor.test.ts",

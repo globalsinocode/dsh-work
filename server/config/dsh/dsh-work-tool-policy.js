@@ -1,5 +1,6 @@
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { request } from 'node:http'
 import { appendFileSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
@@ -22,6 +23,8 @@ export function apply(ctx) {
   registerPlatformTools(ctx)
   publishRuntimeToolCatalog(ctx, process.env.DSH_TOOL_CATALOG_PATH)
   const allowedTools = parseAllowedTools(process.env.DSH_ALLOWED_TOOLS_JSON)
+  const allowedMcpServers = parseAllowedMcpServers(process.env.DSH_ALLOWED_MCP_SERVERS_JSON)
+  const approvedMcpCapabilities = parseApprovedMcpCapabilities(process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON)
   const workspaceRoot = parseWorkspaceRoot(process.env.DSH_WORKSPACE_ROOT)
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
   const approvalLog = parseApprovalLog(process.env.DSH_TOOL_APPROVAL_LOG)
@@ -30,7 +33,17 @@ export function apply(ctx) {
 
   const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
   let calls = 0
-  const denialReason = execution => validateExecution(execution, allowedTools, workspaceRoot)
+  let verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
+  const refreshMcpCapabilityDigests = () => {
+    verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
+  }
+  ctx.on('tools/change', refreshMcpCapabilityDigests)
+  const denialReason = execution => {
+    // Recompute here as a fail-closed fallback in case a third-party plugin
+    // mutates its catalog without emitting tools/change.
+    refreshMcpCapabilityDigests()
+    return validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot)
+  }
 
   ctx.on('tools/pre-execute', async (execution, next) => {
     const denial = denialReason(execution)
@@ -86,6 +99,7 @@ function publishRuntimeToolCatalog(ctx, path) {
     }
   }
   publish()
+  ctx.on('tools/change', publish)
 }
 
 const readTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
@@ -126,6 +140,39 @@ function parseAllowedTools(value) {
   }
 }
 
+function parseAllowedMcpServers(value) {
+  if (!value) return new Set()
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(item))) {
+      return new Set()
+    }
+    return new Set(parsed)
+  } catch {
+    return new Set()
+  }
+}
+
+function parseApprovedMcpCapabilities(value) {
+  const approved = new Map()
+  if (!value) return approved
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return approved
+    for (const item of parsed) {
+      if (!isRecord(item)
+        || typeof item.serverName !== 'string'
+        || !/^[A-Za-z0-9_-]{1,32}$/.test(item.serverName)
+        || typeof item.digest !== 'string'
+        || !/^[a-f0-9]{64}$/.test(item.digest)) return new Map()
+      approved.set(item.serverName, { digest: item.digest })
+    }
+    return approved
+  } catch {
+    return new Map()
+  }
+}
+
 function parseWorkspaceRoot(value) {
   if (!value || !isAbsolute(value)) return undefined
   try {
@@ -157,9 +204,13 @@ function recordApprovalRequest(path, execution) {
   }
 }
 
-function validateExecution(execution, allowedTools, workspaceRoot) {
-  if (!allowedTools.has(execution.name)) {
+function validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot) {
+  const mcpServer = matchConfiguredMcpServer(execution.name, allowedMcpServers)
+  if (!allowedTools.has(execution.name) && !(mcpServer && allowedMcpServers.has(mcpServer))) {
     return `dsh-work Runtime Manifest 未授权工具：${execution.name}`
+  }
+  if (mcpServer && !verifiedMcpServers.has(mcpServer)) {
+    return `dsh-work MCP 能力清单与已审核摘要不一致：${mcpServer}`
   }
 
   const argumentName = pathArguments.get(execution.name)
@@ -195,6 +246,36 @@ function validateExecution(execution, allowedTools, workspaceRoot) {
     return `dsh-work 无法安全解析文件路径：${rawPath}`
   }
   return undefined
+}
+
+function matchConfiguredMcpServer(toolName, serverNames) {
+  if (typeof toolName !== 'string') return undefined
+  return [...serverNames]
+    .sort((left, right) => right.length - left.length || left.localeCompare(right))
+    .find(serverName => toolName.startsWith(`mcp__${serverName}__`))
+}
+
+function verifyMcpCapabilityDigests(allowedServers, approved, schemas) {
+  const verified = new Set()
+  for (const serverName of allowedServers) {
+    const expected = approved.get(serverName)
+    if (!expected) continue
+    const prefix = `mcp__${serverName}__`
+    const capabilities = schemas.flatMap(schema => {
+      if (!isRecord(schema) || typeof schema.name !== 'string' || !schema.name.startsWith(prefix)
+        || typeof schema.description !== 'string' || !isRecord(schema.parameters)) return []
+      return [{
+        name: schema.name.slice(prefix.length),
+        description: schema.description.trim().slice(0, 2000),
+        inputSchema: JSON.parse(JSON.stringify(schema.parameters)),
+      }]
+    }).sort((left, right) => left.name.localeCompare(right.name))
+    if (capabilities.length
+      && createHash('sha256').update(JSON.stringify(capabilities)).digest('hex') === expected.digest) {
+      verified.add(serverName)
+    }
+  }
+  return verified
 }
 
 function realpathWithMissingTail(candidate) {

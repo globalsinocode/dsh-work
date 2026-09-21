@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { access, chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
   AcpJsonRpcClient,
@@ -28,6 +28,8 @@ import type {
   RuntimeExecutionSnapshot,
   RuntimeHealth,
   RuntimeManifest,
+  McpInspectionResult,
+  McpRuntimeConnection,
   RuntimeRunStatus,
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
@@ -55,6 +57,7 @@ interface ExecutionRecord {
   promptStartMono?: number
   firstOutputMs?: number
   activatedSkills: Set<string>
+  auditedMcpCallIds: Set<string>
   materializedSkills: Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
 }
@@ -99,7 +102,19 @@ export interface DshAcpRuntimeAdapterConfiguration {
   ) => Promise<Array<{ name: string; size: number }>>
   /** PF-01 durable receipts for write-effect platform tools. */
   operationLifecycle?: (manifest: RuntimeManifest) => PlatformToolOperationLifecycle
+  /** Resolve current connector grants and credentials immediately before Worker spawn. */
+  resolveMcpConnections?: (manifest: RuntimeManifest) => Promise<McpRuntimeConnection[]>
+  /** Persist one settled MCP Tool call reconstructed from the DSH session log. */
+  recordMcpInvocation?: (manifest: RuntimeManifest, invocation: McpInvocationEvidence) => Promise<void>
   now?: () => Date
+}
+
+export interface McpInvocationEvidence {
+  serverName: string
+  callId: string
+  capabilityName: string
+  parameterDigest: string
+  result: 'success' | 'failed' | 'unknown'
 }
 
 export class DshAcpRuntimeAdapter implements AgentRuntimePort {
@@ -204,6 +219,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       terminal: false,
       acceptedMono,
       activatedSkills: new Set(),
+      auditedMcpCallIds: new Set(),
       materializedSkills,
     }
     this.executions.set(manifest.run_id, record)
@@ -318,6 +334,44 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     })
   }
 
+  async inspectMcpConnection(connection: McpRuntimeConnection): Promise<McpInspectionResult> {
+    const started = performance.now()
+    await mkdir(this.configuration.runtimeRoot, { recursive: true })
+    const directory = await mkdtemp(join(this.configuration.runtimeRoot, 'mcp-inspection-'))
+    const workspace = join(directory, 'workspace')
+    const catalogPath = join(directory, 'runtime-tools.json')
+    await mkdir(workspace, { recursive: true })
+    const prepared = await prepareMcpProcess(this.configuration.process, [connection], join(directory, 'mcp.cordis.patch.yml'), {
+      DSH_TOOL_CATALOG_PATH: catalogPath,
+      DSH_ALLOWED_TOOLS_JSON: '[]',
+    })
+    const diagnostics: string[] = []
+    const client = AcpJsonRpcClient.launch(prepared, {
+      onSessionUpdate: () => undefined,
+      onPermissionRequest: async () => ({ outcome: { outcome: 'cancelled' } }),
+      onDiagnostic: message => { diagnostics.push(message) },
+    })
+    try {
+      const prefix = `mcp__${connection.snapshot.server_name}__`
+      const catalog = await withTimeout((async () => {
+        await client.initialize()
+        await client.newSession(workspace)
+        return waitForRuntimeToolCatalog(catalogPath, prefix)
+      })(), this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS, 'MCP 发现超时')
+      const capabilities = catalog
+        .filter(tool => tool.id.startsWith(prefix))
+        .map(tool => ({ name: tool.id.slice(prefix.length), description: tool.description, inputSchema: tool.inputSchema }))
+      if (!capabilities.length) throw new Error('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
+      return { latencyMs: Math.max(0, Math.round(performance.now() - started)), capabilities }
+    } catch (error) {
+      const detail = diagnostics.join('\n').slice(-2000)
+      throw new Error(`MCP 发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
+    } finally {
+      await client.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+
   async configureScheduling(status: 'accepting' | 'draining' | 'disabled'): Promise<void> {
     if (this.closed && status === 'accepting') throw new Error('已关闭的 Runtime Adapter 不能重新接收任务')
     this.acceptingRuns = status === 'accepting' && !this.closed
@@ -421,12 +475,23 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         this.finishFromCancellationCause(record)
         return
       }
+      const mcpConnections = record.manifest.mcp_connections?.length
+        ? await this.configuration.resolveMcpConnections?.(record.manifest)
+        : []
+      if (record.manifest.mcp_connections?.length && !mcpConnections) {
+        throw new Error('MCP 连接解析服务未接入')
+      }
+      const processConfiguration = await prepareMcpProcess(
+        this.configuration.process,
+        mcpConnections ?? [],
+        join(record.snapshot.attemptDirectory, 'mcp.cordis.patch.yml'),
+      )
       const client = AcpJsonRpcClient.launch(
         {
-          ...this.configuration.process,
+          ...processConfiguration,
           shutdownGraceMs: this.configuration.shutdownGraceMs ?? this.configuration.process.shutdownGraceMs,
           env: {
-            ...this.configuration.process.env,
+            ...processConfiguration.env,
             ...(record.bridge ? { DSH_PLATFORM_TOOL_SOCKET: record.bridge.socket } : {}),
             DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution)),
             DSH_PERMISSION_MODE: 'workspace-write',
@@ -501,7 +566,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
       }
       if (record.terminal) return
-      const evidence = await waitForSessionEvidence(join(record.snapshot.attemptDirectory, 'sessions'))
+      const evidence = await waitForSessionEvidence(
+        join(record.snapshot.attemptDirectory, 'sessions'),
+        record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
+      )
+      await this.recordMcpInvocations(record, evidence)
       await this.verifyExecutionAuthorization(record)
       if (record.terminal) return
       if (record.assistantText.length > 0) {
@@ -522,6 +591,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         tool_result_count: evidence?.toolResultCount ?? 0,
         artifact_count: artifacts.length,
         usage_source: evidence ? 'dsh-session-log' : 'unavailable',
+        token_usage_source: evidence?.inputTokens !== null && evidence?.inputTokens !== undefined
+          && evidence.outputTokens !== null && evidence.outputTokens !== undefined
+          ? 'dsh-session-log'
+          : 'unavailable',
         ...(record.outputTruncated ? { output_truncated: true } : {}),
       })
       this.finish(record)
@@ -536,6 +609,28 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.timeout !== undefined) clearTimeout(record.timeout)
       await record.client?.close().catch(() => undefined)
       await record.bridge?.close()
+      if (record.manifest.mcp_connections?.length) {
+        try {
+          await this.recordMcpInvocations(
+            record,
+            await waitForSessionEvidence(
+              join(record.snapshot.attemptDirectory, 'sessions'),
+              record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
+            ),
+          )
+        } catch (error) {
+          console.warn('mcp invocation audit failed', safeErrorMessage(error))
+        }
+      }
+    }
+  }
+
+  private async recordMcpInvocations(record: ExecutionRecord, evidence: SessionEvidence | undefined): Promise<void> {
+    if (!evidence?.mcpInvocations.length || !this.configuration.recordMcpInvocation) return
+    for (const invocation of evidence.mcpInvocations) {
+      if (record.auditedMcpCallIds.has(invocation.callId)) continue
+      await this.configuration.recordMcpInvocation(record.manifest, invocation)
+      record.auditedMcpCallIds.add(invocation.callId)
     }
   }
 
@@ -925,36 +1020,52 @@ export function classifyRuntimeFailure(error: unknown): { code: string; message:
 }
 
 interface SessionEvidence {
-  inputTokens: number
-  outputTokens: number
+  inputTokens: number | null
+  outputTokens: number | null
   toolCallCount: number
   toolResultCount: number
+  mcpInvocations: McpInvocationEvidence[]
 }
 
-async function waitForSessionEvidence(root: string): Promise<SessionEvidence | undefined> {
+async function waitForSessionEvidence(root: string, mcpServerNames: string[]): Promise<SessionEvidence | undefined> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const evidence = await readSessionEvidence(root)
+    const evidence = await readSessionEvidence(root, mcpServerNames)
     if (evidence) return evidence
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   return undefined
 }
 
-async function readSessionEvidence(root: string): Promise<SessionEvidence | undefined> {
+async function readSessionEvidence(root: string, mcpServerNames: string[]): Promise<SessionEvidence | undefined> {
   const paths = await findSessionLogs(root)
   let inputTokens = 0
   let outputTokens = 0
   let usageFound = false
   let toolCallCount = 0
   let toolResultCount = 0
+  const mcpCalls = new Map<string, { name: string; parameterDigest: string }>()
+  const mcpResults = new Map<string, 'success' | 'failed'>()
   for (const path of paths) {
     const content = await readFile(path, 'utf8')
     for (const line of content.split('\n')) {
       if (!line) continue
       const event = JSON.parse(line) as unknown
       if (!isRecord(event) || typeof event['type'] !== 'string') continue
-      if (event['type'] === 'tool/call') toolCallCount += 1
-      if (event['type'] === 'tool/result') toolResultCount += 1
+      if (event['type'] === 'tool/call') {
+        toolCallCount += 1
+        const data = isRecord(event['data']) ? event['data'] : undefined
+        const callId = typeof data?.['callId'] === 'string' ? data['callId'] : ''
+        const name = typeof data?.['name'] === 'string' ? data['name'] : ''
+        if (callId && name.startsWith('mcp__')) {
+          const parameters = typeof data?.['arguments'] === 'string' ? data['arguments'] : JSON.stringify(data?.['arguments'] ?? {})
+          mcpCalls.set(callId, { name, parameterDigest: createHash('sha256').update(parameters).digest('hex') })
+        }
+      }
+      if (event['type'] === 'tool/result') {
+        toolResultCount += 1
+        const result = readToolResult(event['data'])
+        if (result) mcpResults.set(result.callId, result.failed ? 'failed' : 'success')
+      }
       if (event['type'] !== 'assistant/message' || !isRecord(event['data'])) continue
       const usage = event['data']['usage']
       if (!isRecord(usage) || typeof usage['inputTokens'] !== 'number' || typeof usage['outputTokens'] !== 'number') continue
@@ -963,7 +1074,130 @@ async function readSessionEvidence(root: string): Promise<SessionEvidence | unde
       outputTokens += usage['outputTokens']
     }
   }
-  return usageFound ? { inputTokens, outputTokens, toolCallCount, toolResultCount } : undefined
+  const mcpInvocations = [...mcpCalls].flatMap(([callId, call]) => {
+    const parsed = parseMcpPublicToolName(call.name, mcpServerNames)
+    if (!parsed) return []
+    return [{
+      serverName: parsed.serverName,
+      callId,
+      capabilityName: parsed.capabilityName,
+      parameterDigest: call.parameterDigest,
+      result: mcpResults.get(callId) ?? 'unknown',
+    } satisfies McpInvocationEvidence]
+  })
+  return usageFound || toolCallCount > 0 ? {
+    inputTokens: usageFound ? inputTokens : null,
+    outputTokens: usageFound ? outputTokens : null,
+    toolCallCount,
+    toolResultCount,
+    mcpInvocations,
+  } : undefined
+}
+
+function readToolResult(value: unknown): { callId: string; failed: boolean } | undefined {
+  if (!isRecord(value)) return undefined
+  if (typeof value['callId'] === 'string') return { callId: value['callId'], failed: value['isError'] === true }
+  const message = isRecord(value['message']) ? value['message'] : undefined
+  const content = Array.isArray(message?.['content']) ? message['content'] : []
+  for (const block of content) {
+    if (isRecord(block) && block['type'] === 'tool-result' && typeof block['toolCallId'] === 'string') {
+      return { callId: block['toolCallId'], failed: block['isError'] === true }
+    }
+  }
+  return undefined
+}
+
+function parseMcpPublicToolName(name: string, serverNames: string[]): { serverName: string; capabilityName: string } | undefined {
+  const serverName = [...serverNames]
+    .sort((left, right) => right.length - left.length || left.localeCompare(right))
+    .find(candidate => name.startsWith(`mcp__${candidate}__`))
+  if (!serverName) return undefined
+  const capabilityName = name.slice(`mcp__${serverName}__`.length)
+  return capabilityName ? { serverName, capabilityName } : undefined
+}
+
+async function waitForRuntimeToolCatalog(path: string, requiredPrefix?: string): Promise<RuntimeToolDescriptor[]> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+      if (isRecord(parsed) && parsed['formatVersion'] === 2 && Array.isArray(parsed['tools'])) {
+        const tools: RuntimeToolDescriptor[] = parsed['tools'].map(value => {
+          if (!isRecord(value) || typeof value['name'] !== 'string' || typeof value['description'] !== 'string' || !isRecord(value['parameters'])) {
+            throw new Error('DSH Runtime 工具目录包含无效 MCP 条目')
+          }
+          return {
+            id: value['name'], description: value['description'], inputSchema: value['parameters'],
+            outputSchema: {}, outputValidation: 'unavailable', effect: 'read', retryPolicy: 'safe',
+            concurrencyPolicy: 'concurrent', completionSemantics: 'completed', timeoutSeconds: 60,
+          }
+        })
+        if (!requiredPrefix || tools.some(tool => tool.id.startsWith(requiredPrefix))) return tools
+      }
+    } catch (error) {
+      if (attempt === 19) throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error('DSH Runtime 未生成 MCP 工具目录')
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+  try {
+    return await Promise.race([operation, deadline])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+export async function prepareMcpProcess(
+  base: DshAcpRuntimeAdapterConfiguration['process'],
+  connections: McpRuntimeConnection[],
+  patchPath: string,
+  extraEnvironment: Record<string, string> = {},
+): Promise<AcpProcessConfiguration> {
+  if (!connections.length) return { ...base, env: { ...base.env, ...extraEnvironment } }
+  if (!base.args.includes('--profile')) throw new Error('当前 DSH 兼容模式不支持受控 MCP Patch')
+  const environment: Record<string, string> = { ...base.env, ...extraEnvironment }
+  const rows: string[] = ['- insert:']
+  connections.forEach((connection, connectionIndex) => {
+    const snapshot = connection.snapshot
+    rows.push(
+      `    - id: ${JSON.stringify(`mcp-${snapshot.server_name}`)}`,
+      "      name: '@deepseek-ai/dsh-mcp-client'",
+      '      config:',
+      "        transport: 'streamable-http'",
+      `        serverName: ${JSON.stringify(snapshot.server_name)}`,
+      `        url: ${JSON.stringify(snapshot.endpoint)}`,
+    )
+    const headers = Object.entries(connection.headers)
+    if (!headers.length) rows.push('        headers: {}')
+    else {
+      rows.push('        headers:')
+      headers.forEach(([name, value], headerIndex) => {
+        if (!/^[A-Za-z0-9-]{1,80}$/.test(name) || /[\r\n]/.test(value)) throw new Error('MCP 请求头配置无效')
+        const environmentName = `DSH_MCP_VALUE_${connectionIndex}_${headerIndex}`
+        environment[environmentName] = value
+        rows.push(`          ${JSON.stringify(name)}: !!js process.env.${environmentName}`)
+      })
+    }
+    rows.push(
+      '        toolCallTimeoutMs: 60000',
+      '        failOnStartupError: true',
+      '        reconnect:',
+      '          enabled: false',
+    )
+  })
+  await writeFile(patchPath, `${rows.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
+  environment['DSH_ALLOWED_MCP_SERVERS_JSON'] = JSON.stringify(connections.map(connection => connection.snapshot.server_name))
+  environment['DSH_APPROVED_MCP_CAPABILITIES_JSON'] = JSON.stringify(connections.flatMap(connection => connection.capabilities ? [{
+    serverName: connection.snapshot.server_name,
+    digest: connection.snapshot.capability_digest,
+  }] : []))
+  return { ...base, args: [...base.args, '--patch', patchPath], env: environment }
 }
 
 async function findSessionLogs(directory: string): Promise<string[]> {

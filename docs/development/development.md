@@ -92,6 +92,8 @@ DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:543
 
 其他 `test:*:integration` 使用同一测试变量，按修改模块选择。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 另启动 PostgreSQL Service、运行各集成套件，再执行 E2E。
 
+PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证整体发现/审核、Agent→Connector Grant、能力摘要漂移、逐调用审计和撤权；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
+
 Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验原型页面，先停掉不匹配的开发实例，并用上述原型环境变量运行 `pnpm test:e2e`。不要将复用的真实环境误认为隔离测试。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
@@ -104,6 +106,7 @@ Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验�
 - 取消、超时、Worker 崩溃、模型/Tool/网络故障；幂等请求不重复执行，只有失败 Run 可重试并生成新 Attempt。
 - 服务重启后活动 Attempt 失败收敛、排队任务恢复；SSE 使用 `Last-Event-ID` 重放，旧 Attempt 事件不能覆盖当前重试状态。
 - 审计脱敏、凭据隔离、DSH 子进程环境白名单、权限变化即时生效。
+- MCP 以整个 Connector 为审核和 Agent 授权单元；发现清单漂移、停用或撤权后新领取与后续调用拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
 - 容量测试覆盖 1/3/5 并发与 50 Run 排队，记录受理/完成延迟、CPU、RSS、磁盘和失败率。模拟 Runtime 跑分不能推导真实模型吞吐或生产并发。
 
 测试时间用带时区 ISO 8601，业务 ID 尽量稳定；不提交真实员工、业务正文、凭据或敏感二进制附件。真实模型探针及升级验证命令统一见 Runtime 指南。

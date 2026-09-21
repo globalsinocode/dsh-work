@@ -16,6 +16,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 | Skill 安装计划 | [AdminSkillInstallationService](../../server/src/modules/skill/admin-skill-installation-service.ts) | 固定来源、生成依赖计划、绑定管理员确认、原子保存草稿并记录激活/脚本试运行证据；C7 prepareLink 无 Run，确定性导入与助手共用平台实现，发布能力独立复核 |
 | 通用管理对话与任务调度 | [AdminAssistantService](../../server/src/modules/admin/application/admin-assistant-service.ts) | 通过 DSH 进行普通对话；已有草稿展示文案允许一次最终确认，其他变更绑定委派确认与最终计划确认；行锁内版本复核及重启结果收敛不变 |
 | Attempt 平台工具 | [platform-tool-bridge](../../server/src/modules/runtime/platform-tool-bridge.ts)与[契约目录](../../server/src/modules/runtime/platform-tool-contracts.ts) | 为当前 Attempt 暴露显式授权处理器；严格校验输入/输出、当前授权、超时、输出大小和串行约束，返回稳定错误；不承载 Agent Loop |
+| MCP Connector 治理与执行 | [PostgresToolConnectorService](../../server/src/modules/tool/postgres-tool-connector-service.ts)、[AgentRuntimePort](../../server/src/modules/runtime/runtime-types.ts)与[DSH Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) | 复用 Connector 管理；Streamable HTTP Server 整体发现/审核，Agent→Connector 二元 Grant；Attempt 固定能力摘要并复核当前授权；凭据值只进入 Worker 环境，实际调用由 DSH 执行并按 MCP Tool 留审计；不创建平台 Tool Version/Binding |
 
 ## API 与运行契约
 
@@ -35,6 +36,8 @@ PF-01 的 Task/Operation 仓储提供外部动作的持久化事实：`operation
 PF-02 的预算账户以 `tasks.budget_scope_task_id` 标识共享范围；当前根 Task 指向自身，PF-06 可让已授权子 Task 指向根范围。`task_budget_accounts` 保存累计时长、工具次数和输出字节上限，`attempt_budget_usage` 保存每次预占、结算/释放、测量来源与终态。`RunRepository.createAttempt` 在同一事务锁定账户、汇总已结算与活动预占并拒绝超额；Runtime 终态事件在状态转换前精确结算，数据库触发器为取消、重启和异常路径提供一次性保守兜底。Runtime Manifest 的 `budget` 快照必须与 Task 账户及 `limits` 一致。
 
 `cumulativeBudget` 可用于会话 Run 与无 Session Task；自动任务既有 `inputTemplate.budget` 同时固定为该次 Task 的累计上限并收紧单 Attempt limits。时长、工具和输出字节为 hard；Token 只接受 Runtime 完整上报，缺失时返回 `unavailable` 和 null，不从文本估算；成本保持 unavailable。`maxTokens`、`maxCostAmount`/`costCurrency` 返回 422 `TASK_BUDGET_UNSUPPORTED`，超出剩余额度返回 409 `TASK_BUDGET_EXCEEDED`。
+
+PF-03 的 MCP 契约使用现有 Connector 作为配置、健康和启停入口，`mcp_connector_profiles` 保存 Server 命名空间、发现快照及已审核摘要，`agent_mcp_grants` 保存 Agent 对整个 Connector 的二元授权。Runtime Manifest 的 `mcp_connections` 只固定连接标识、公开端点、认证类型及能力摘要，不包含密钥；执行前和活动期以当前 Grant、Connector 状态及摘要重新鉴权。Adapter 从受管凭据引用解析值，以环境变量注入每 Attempt DSH MCP Patch；DSH 策略只放行获准 `mcp__<serverName>__*` 命名空间。`mcp_invocation_audits` 记录实际 Tool 名、参数摘要、Run/Attempt 和结果。当前只支持 Streamable HTTP Tools；Resources、Prompts 与 stdio 明确不可用。
 
 员工与管理端 Agent 均通过同一 Run/Attempt、AgentRuntimePort 和 DSH 适配链路执行，不能通过新增 API、Gateway 或业务服务另建直接调用模型的 Agent Loop。职责与评审要求见 [架构总览：Agent 执行引擎统一](overview.md)。
 

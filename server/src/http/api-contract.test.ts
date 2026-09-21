@@ -62,7 +62,7 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('PF-01/PF-02 OpenAPI publishes Task execution, cumulative budgets, and operation reconciliation', async () => {
+test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation, and Connector-level MCP governance', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
@@ -73,7 +73,11 @@ test('PF-01/PF-02 OpenAPI publishes Task execution, cumulative budgets, and oper
   const admin = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-admin.json', import.meta.url),
     'utf8',
-  )) as { paths: Record<string, { post?: { operationId?: string } }> }
+  )) as { paths: Record<string, {
+    get?: { operationId?: string; summary?: string }
+    post?: { operationId?: string; summary?: string }
+    patch?: { operationId?: string; summary?: string }
+  }> }
 
   assert.equal(workbench.paths['/task-executions']?.post?.operationId, 'createTaskExecution')
   assert.equal(workbench.paths['/task-executions/{taskId}']?.get?.operationId, 'getTaskExecution')
@@ -87,6 +91,13 @@ test('PF-01/PF-02 OpenAPI publishes Task execution, cumulative budgets, and oper
   ])
   assert.match(workbench.components.schemas['TaskCumulativeBudgetInput']?.description ?? '', /不支持的硬预算会明确失败/)
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
+  assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
+  assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
+  assert.equal(admin.paths['/connectors/mcp/approve']?.post?.operationId, 'approveMcpConnector')
+  assert.equal(admin.paths['/connectors/mcp/status']?.patch?.operationId, 'setMcpConnectorStatus')
+  assert.equal(admin.paths['/connectors/mcp/agent-access']?.patch?.operationId, 'setAgentMcpAccess')
+  assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
+  assert.match(admin.paths['/connectors/mcp/agent-access']?.patch?.summary ?? '', /整个 MCP Connector/)
 })
 
 before(async () => {

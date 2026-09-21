@@ -15,6 +15,7 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { RUNTIME_INTRINSIC_TOOL_REFS, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
+import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { agentSpecFromConfiguration, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 
@@ -139,6 +140,8 @@ export interface RuntimeAgentSnapshot {
   runtimeTools: string[]
   /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
   toolBindings: ResolvedToolBinding[]
+  /** PF-03 current Agent→Connector grants, fixed only in the Attempt snapshot. */
+  mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
   roleIds: string[]
   dataScopes: string[]
@@ -646,7 +649,7 @@ export class PostgresAgentService {
   }
 
   async getRuntimeSnapshot(versionId: string, additionalSkillReferences: string[] = []): Promise<RuntimeAgentSnapshot> {
-    const [row] = await this.database<Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode'>[]>`
+    const [row] = await this.database<Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'>[]>`
       select id as "versionId", system_prompt as "systemPrompt", skill_refs as skills,
              tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes",
              max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
@@ -676,10 +679,13 @@ export class PostgresAgentService {
     const toolBindings = this.toolService
       ? await this.toolService.resolveToolBindings(tools)
       : []
+    const mcpConnections = this.toolService
+      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
+      : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
-    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, approvalMode }
+    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
   }
 
   /**
