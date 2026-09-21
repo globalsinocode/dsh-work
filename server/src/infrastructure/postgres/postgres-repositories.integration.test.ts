@@ -9,10 +9,16 @@ import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import type { JsonObject } from '../../modules/run/run-types.ts'
+import {
+  PostgresTaskRepository,
+  TaskContractConflictError,
+  taskOperationParameterDigest,
+} from '../../modules/task/postgres-task-repository.ts'
 
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
 let runs: PostgresRunRepository
+let tasks: PostgresTaskRepository
 const suffix = randomUUID()
 const agentId = `agent-m2-${suffix}`
 const agentVersionId = `agent-version-m2-${suffix}`
@@ -23,6 +29,7 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m2_repositories_test', maxConnections: 4 })
   database = throwaway.client
   runs = new PostgresRunRepository(database)
+  tasks = new PostgresTaskRepository(database)
   await seedRunDependencies(database)
 })
 
@@ -70,7 +77,141 @@ test('run creation is idempotent and tenant-scoped', async () => {
   const first = await runs.createRun(input)
   const repeated = await runs.createRun(input)
   assert.equal(repeated.id, first.id)
+  assert.ok(first.taskId)
+  const task = await tasks.getTask(first.tenantId, first.taskId!)
+  assert.equal(task?.sourceType, 'session')
+  assert.equal(task?.sessionId, sessionId)
+  assert.equal(task?.workspaceId, 'ws-personal-U00001')
   assert.equal((await runs.getRun('tenant-other', first.id)), null)
+  await runs.transitionRun(first.tenantId, first.id, 'failed')
+  assert.equal((await tasks.getTask(first.tenantId, first.taskId!))?.status, 'failed')
+})
+
+test('PF-01 Task 与外部操作按关联键和参数摘要幂等，未知效果可核对后收敛', async () => {
+  const correlationKey = `erp-event-${suffix}`
+  const task = await tasks.createTask({
+    tenantId: 'tenant-dsh-work',
+    requestedBy: 'U00001',
+    sourceType: 'event',
+    sourceRef: 'erp://delivery/42',
+    correlationKey,
+    workspaceId: 'ws-personal-U00001',
+  })
+  const repeatedTask = await tasks.createTask({
+    tenantId: 'tenant-dsh-work',
+    requestedBy: 'U00001',
+    sourceType: 'event',
+    sourceRef: 'erp://delivery/42',
+    correlationKey,
+    workspaceId: 'ws-personal-U00001',
+  })
+  assert.equal(repeatedTask.id, task.id)
+  assert.equal(task.sessionId, null)
+  await assert.rejects(
+    tasks.createTask({
+      tenantId: 'tenant-dsh-work',
+      requestedBy: 'U00001',
+      sourceType: 'event',
+      sourceRef: 'erp://delivery/changed',
+      correlationKey,
+      workspaceId: 'ws-personal-U00001',
+    }),
+    TaskContractConflictError,
+  )
+
+  const run = await runs.createRun({
+    tenantId: task.tenantId,
+    taskId: task.id,
+    sessionId,
+    requestedBy: task.requestedBy,
+    idempotencyKey: `event-run-${suffix}`,
+  })
+  const repeatedRun = await runs.createRun({
+    tenantId: task.tenantId,
+    taskId: task.id,
+    sessionId,
+    requestedBy: task.requestedBy,
+    idempotencyKey: `event-run-repeated-${suffix}`,
+  })
+  assert.equal(run.taskId, task.id)
+  assert.equal(repeatedRun.id, run.id)
+
+  const parameterDigest = taskOperationParameterDigest({ quantity: 5, material: 'A-01' })
+  const operation = await tasks.registerOperation({
+    tenantId: task.tenantId,
+    taskId: task.id,
+    runId: run.id,
+    operationKey: 'confirm-delivery-42',
+    actionType: 'external-write',
+    actionRef: 'erp.confirm-delivery@1.0.0',
+    parameterDigest,
+    receipt: { providerRequestId: 'provider-42' },
+  })
+  const repeatedOperation = await tasks.registerOperation({
+    tenantId: task.tenantId,
+    taskId: task.id,
+    runId: run.id,
+    operationKey: 'confirm-delivery-42',
+    actionType: 'external-write',
+    actionRef: 'erp.confirm-delivery@1.0.0',
+    parameterDigest,
+  })
+  assert.equal(repeatedOperation.id, operation.id)
+  await assert.rejects(
+    tasks.registerOperation({
+      tenantId: task.tenantId,
+      taskId: task.id,
+      runId: run.id,
+      operationKey: 'confirm-delivery-42',
+      actionType: 'external-write',
+      actionRef: 'erp.confirm-delivery@1.0.0',
+      parameterDigest: taskOperationParameterDigest({ quantity: 6, material: 'A-01' }),
+    }),
+    TaskContractConflictError,
+  )
+
+  const unknown = await tasks.resolveOperation({
+    tenantId: task.tenantId,
+    operationId: operation.id,
+    status: 'unknown',
+    receipt: { providerRequestId: 'provider-42', reason: 'timeout_after_send' },
+  })
+  assert.equal(unknown.status, 'unknown')
+  assert.equal(unknown.resolvedAt, null)
+  const completed = await tasks.resolveOperation({
+    tenantId: task.tenantId,
+    operationId: operation.id,
+    status: 'completed',
+    receipt: { providerRequestId: 'provider-42', providerStatus: 'completed' },
+  })
+  assert.equal(completed.status, 'completed')
+  assert.ok(completed.resolvedAt)
+  assert.equal((await tasks.getOperation('tenant-other', operation.id)), null)
+  await assert.rejects(
+    tasks.resolveOperation({
+      tenantId: task.tenantId,
+      operationId: operation.id,
+      status: 'failed',
+      receipt: { providerStatus: 'failed' },
+      errorCode: 'LATE_FAILURE',
+    }),
+    TaskContractConflictError,
+  )
+})
+
+test('PF-01 数据库边界拒绝无归属 Run：原生写入也自动固定 Task', async () => {
+  const runId = `run-raw-pf01-${suffix}`
+  const [row] = await database<{ taskId: string }[]>`
+    insert into runs (id, tenant_id, session_id, requested_by, idempotency_key, status)
+    values (${runId}, 'tenant-dsh-work', ${sessionId}, 'U00001', ${`raw-pf01-${suffix}`}, 'queued')
+    returning task_id as "taskId"
+  `
+  assert.equal(row?.taskId, `task-${runId}`)
+  const task = await tasks.getTask('tenant-dsh-work', row!.taskId)
+  assert.equal(task?.sourceType, 'session')
+  assert.equal(task?.sessionId, sessionId)
+  await database`update runs set status = 'failed' where tenant_id = 'tenant-dsh-work' and id = ${runId}`
+  assert.equal((await tasks.getTask('tenant-dsh-work', row!.taskId))?.status, 'failed')
 })
 
 test('retry creates a new immutable Attempt and events are idempotent', async () => {

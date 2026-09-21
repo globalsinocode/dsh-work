@@ -33,7 +33,7 @@ test('SSE reconnect forwards Last-Event-ID and emits only later persisted events
     },
     async getRun() {
       return {
-        id: 'run-reconnect', tenantId: 'tenant-dsh-work', sessionId: 'session-reconnect',
+        id: 'run-reconnect', tenantId: 'tenant-dsh-work', taskId: 'task-reconnect', sessionId: 'session-reconnect',
         requestedBy: 'U00001', idempotencyKey: 'idempotency-reconnect', status: 'failed' as const,
         currentAttemptId: 'attempt-reconnect', createdAt: '2026-08-30T00:00:00.000Z',
         updatedAt: '2026-08-30T00:00:01.000Z',
@@ -77,7 +77,7 @@ test('personal SSE stops before delivering the next batch after current access i
         displayMessage: `batch-${batches}`, safeMetadata: {}, traceId: 'trace-personal', occurredAt: new Date().toISOString() }]
     },
     async getRun() {
-      return { id: 'run-personal', tenantId: 'tenant-dsh-work', sessionId: 'session-personal',
+      return { id: 'run-personal', tenantId: 'tenant-dsh-work', taskId: 'task-personal', sessionId: 'session-personal',
         requestedBy: 'U00001', idempotencyKey: 'id-personal', status: 'running' as const,
         currentAttemptId: 'attempt-personal', createdAt: '', updatedAt: '' }
     },

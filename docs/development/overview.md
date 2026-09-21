@@ -216,11 +216,13 @@ flowchart LR
 |---|---|---|
 | Workspace | 个人或团队工作上下文 | Session、文件、成果必须归属一个 Workspace；团队资源受成员关系约束 |
 | Product Session | 用户可继续的业务对话 | 不等于 DSH Runtime Session；锁定 Agent Version，可选锁定一个已发布 Skill Version |
+| Task | 一次来自会话、自动任务、API、事件或系统的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属 |
 | Run | 一次用户任务 | 幂等创建；拥有一个或多个按序 Attempt |
 | Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由、权限、文件与来源快照；终态不可回退 |
 | Run Event | 面向产品的标准运行事件 | 先落库后发送；稳定 ID 与全 Run 顺序；不暴露隐藏推理 |
 | Agent/Skill/Tool Version | 已发布治理版本 | 发布后不可修改或删除；运行引用精确版本 |
 | File/Artifact Version | 输入与交付成果 | 存储键不使用用户文件名；版本不可覆盖；下载再次鉴权 |
+| External Operation | 一次可能产生外部效果的受控动作 | Task 内操作键唯一；参数摘要固定；受理、完成、失败和效果未知分开记录 |
 | Audit/Operational Event | 安全与运营事实 | 结构化、可追踪、脱敏；不保存业务正文和凭据 |
 
 详细逻辑关系见 [数据模型](../design/data-model.md)，物理约束见 `server/migrations/`。

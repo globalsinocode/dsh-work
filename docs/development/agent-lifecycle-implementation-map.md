@@ -52,3 +52,5 @@
 - 跨版本质量或成本趋势聚合。
 
 平台建设顺序和完成门槛以[差异清单](agent-design-gap-analysis.md)第 4.2 节为准。在 PF-07 完成前，这些项目仍是目标能力，不能作为 Agent 已可使用的现行能力。已有 P2 被报告为手工执行，但环境、版本、Run/Attempt、验收人和限制尚未写入仓库；在这些字段归档前，其仓库状态仍是“已执行，证据待归档”。
+
+PF-01 当前已建立 Task/Operation 数据契约并将新 Run 固定到 Task；无 Session 的 Runtime Manifest、授权、成果归属、公开触发/查询 API 和工具桥 Operation 登记尚未接通。因此它仍处于实施中，不能据此发布依赖无 Session 或异步外部写入的 Agent。

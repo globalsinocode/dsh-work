@@ -6,6 +6,8 @@ export type JsonObject = { [key: string]: JsonValue }
 export interface RunRecord {
   id: string
   tenantId: string
+  /** PF-01 stable business task envelope. */
+  taskId: string
   sessionId: string
   requestedBy: string
   idempotencyKey: string
@@ -50,6 +52,11 @@ export interface CreateRunInput {
   sessionId: string
   requestedBy: string
   idempotencyKey: string
+  /** Existing callers omit this and receive an idempotent session-backed Task. */
+  taskId?: string
+  taskSourceType?: 'session' | 'automation' | 'api' | 'event' | 'system'
+  taskSourceRef?: string | null
+  taskCorrelationKey?: string
 }
 
 export interface CreateAttemptInput {

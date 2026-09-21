@@ -9,7 +9,9 @@ flowchart LR
   Users[本地用户 / 外部身份映射] --> Roles[角色 / 权限 / 数据范围]
   Users --> Workspace[个人或团队 Workspace]
   Workspace --> Session[产品 Session]
-  Session --> Run[Run]
+  Workspace --> Task[Task / 触发来源]
+  Session -. 可选关联 .-> Task
+  Task --> Run[Run]
   Run --> Attempt[Attempt / 不可变 Manifest]
   Agent[Agent Version] --> Session
   Skill[Skill Version] --> Agent
@@ -17,6 +19,7 @@ flowchart LR
   Attempt --> Events[Run Event / 审计 / 用量]
   Attempt --> Sources[文件与知识快照]
   Attempt --> Artifact[成果 Version]
+  Task --> Operation[外部 Operation / 回执]
 ```
 
 ## 存储与约束
@@ -28,6 +31,7 @@ flowchart LR
 | 身份同步 | `application_admin_bootstrap_claims`、`identity_directory_sync_state` | Bootstrap 按应用/环境幂等消费；目录持久化 opaque cursor，停用撤销 Session，保留本地角色历史 |
 | 空间 | `workspaces`、`workspace_members`、`workspace_capability_grants` | 每位用户唯一默认个人空间；团队资源按成员及能力授权，默认拒绝 |
 | 会话 | `sessions`、`messages` | 对话必须归属空间并锁定 Agent Version；产品 Session 不等于 DSH Session |
+| 任务与外部操作 | `tasks`、`task_operations` | Task 用来源类型和关联键幂等受理，可选关联 Session；每个 Run 必须归属 Task。外部动作按 Task + 操作键唯一，参数摘要不可漂移，效果未知必须查询后收敛 |
 | 能力版本 | `agents`、`agent_versions`、`skills`、`skill_versions`、`tools`、`tool_versions`、绑定表 | 发布版本不可覆盖；Agent 引用精确 Skill/Tool 版本，Skill 依赖不能扩大 Tool Allowlist |
 | 模型 | `model_providers`、`provider_models`、`model_routes`、`credential_refs` | 只存凭据引用；平台解析路由，Attempt 固定快照，Agent 不配置模型策略 |
 | 运行 | `runs`、`run_attempts`、`run_events` | 幂等创建、按序 Attempt、不可变 Manifest；事件先落库，再按持久化全 Run 顺序推送与续传 |
@@ -51,6 +55,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败 Run �
 - [对象授权](../../server/migrations/0010_m4_authorization.sql)、[个人空间](../../server/migrations/0013_m5_personal_workspaces.sql)。
 - [服务端 Session](../../server/migrations/0014_m6_ai_hub_sso.sql)、[本地授权](../../server/migrations/0016_identity_owned_authorization.sql)、[业务员工](../../server/migrations/0017_business_user_directory.sql)、[升级对账](../../server/migrations/0018_fail_closed_directory_reconciliation.sql)。
 - [多入口 OIDC 事务](../../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../../server/migrations/0025_workspace_file_versions.sql)。
+- [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)。
 
 新增变更使用新的顺序迁移，保留已应用迁移。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

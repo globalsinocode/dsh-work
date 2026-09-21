@@ -97,6 +97,12 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **下一步：先实施 PF-01。** 它提供后续等待、审批、MCP 异步动作和委派共同依赖的任务归属与操作回执。平台基础能力全部通过 PF-07 后，再按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)开发具体 Agent；Agent 仍只声明实际需要的能力，不因平台已支持而自动获得 MCP、记忆、委派或长期执行权限。已手工执行的既有 P2 仍须补录为可审计验收包。
 
+**PF-01 第一阶段进展（2026-09-21）：** 迁移 `0050_task_operation_foundation.sql` 新增 `tasks` 与 `task_operations`。所有新 Run 由仓储创建或固定一个 Task；数据库边界也为绕过仓储的原生 Run 写入补齐 Task 并强制 `runs.task_id` 非空。Task 以 `source_type + correlation_key` 幂等，固定请求身份、Workspace、可选 Session 和来源；同一 Task 当前只绑定一个 Run，Run 终态同步到 Task。外部 Operation 以 Task + `operation_key` 唯一，固定 action、来源 Run/Attempt 和规范化参数摘要，使用 `accepted/completed/failed/unknown` 四态；相同键换参或换来源拒绝，`unknown` 只允许在状态核对后收敛为完成或失败，终态回执不可改写。PostgreSQL 集成覆盖 Session Task、无 Session 事件 Task 复用现有执行 Session、原生 Run Task 兜底、重复受理、同键换参、未知效果核对、终态不可回退及租户隔离。
+
+验证：PF-01 所在 PostgreSQL 仓储集成 8/8（专用可丢弃数据库），M2 单元 5/5，SSE/收权相关单元 10/10；全仓 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。没有运行浏览器 E2E、真实 DSH/OIDC 或外部系统写入，本阶段也未开放新 API。
+
+PF-01 尚未完成：Runtime Manifest 和执行授权仍要求 Session；无 Session API/事件尚不能直接启动 DSH Attempt；Artifact/File 仍以 Session 为必需归属；平台工具桥尚未自动登记 Operation，员工/管理员也没有受权的 Task/Operation 状态查询 API。下一阶段先完成这些消费者的 Task 化，再移除“事件 Task 复用执行 Session”的过渡路径。
+
 ### 4.3 原工作项映射与完成记录
 
 | 工作项 | 对应规范/差异 | 具体交付物 | 前置依赖及归属 |

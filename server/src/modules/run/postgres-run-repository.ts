@@ -14,10 +14,12 @@ import type {
   RunState,
   StoredRunEvent,
 } from './run-types.ts'
+import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 
 interface RunRow {
   id: string
   tenantId: string
+  taskId: string
   sessionId: string
   requestedBy: string
   idempotencyKey: string
@@ -58,6 +60,7 @@ interface EventRow {
 }
 
 interface RecoveryRow extends AttemptRow {
+  runTaskId: string
   runSessionId: string
   runRequestedBy: string
   runIdempotencyKey: string
@@ -103,28 +106,70 @@ export class PostgresRunRepository implements RunRepository {
       // （RunOrchestrationService.requireSessionAccess / requireSession）
       // 在受理前完成，这里只校验会话存在且活跃。
       await lockActiveWorkspaceForSession(transaction, input.tenantId, input.sessionId)
-      const [session] = await transaction<{ id: string }[]>`
-        select id from sessions
+      const [session] = await transaction<{ id: string; workspaceId: string | null }[]>`
+        select id, workspace_id as "workspaceId" from sessions
          where tenant_id = ${input.tenantId} and id = ${input.sessionId}
            and status = 'active'
          for update
       `
       if (!session) throw new Error(`Session 不存在或不可访问：${input.sessionId}`)
 
+      const tasks = new PostgresTaskRepository(this.database)
+      const task = input.taskId
+        ? await tasks.getTask(input.tenantId, input.taskId, transaction)
+        : await tasks.createTask({
+            tenantId: input.tenantId,
+            requestedBy: input.requestedBy,
+            sourceType: input.taskSourceType ?? 'session',
+            sourceRef: input.taskSourceRef ?? input.sessionId,
+            correlationKey: input.taskCorrelationKey
+              ?? `${input.sessionId}:${input.requestedBy}:${input.idempotencyKey}`,
+            workspaceId: session.workspaceId,
+            sessionId: input.sessionId,
+          }, transaction)
+      if (!task) throw new Error(`Task 不存在：${input.taskId}`)
+      if (task.requestedBy !== input.requestedBy
+        || (task.sessionId !== null && task.sessionId !== input.sessionId)
+        || (task.workspaceId !== null && task.workspaceId !== session.workspaceId)) {
+        throw new TaskContractConflictError('Run 与 Task 的身份、Session 或 Workspace 归属不一致')
+      }
+      const [taskRun] = await transaction<RunRow[]>`
+        select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId",
+               requested_by as "requestedBy", idempotency_key as "idempotencyKey", status,
+               current_attempt_id as "currentAttemptId", created_at as "createdAt", updated_at as "updatedAt"
+          from runs
+         where tenant_id = ${input.tenantId} and task_id = ${task.id}
+         for update
+      `
+      if (taskRun) {
+        if (taskRun.sessionId !== input.sessionId || taskRun.requestedBy !== input.requestedBy) {
+          throw new TaskContractConflictError('Task 已绑定到不同的 Run 执行上下文')
+        }
+        return mapRun(taskRun)
+      }
+
       const [created] = await transaction<RunRow[]>`
         insert into runs (
-          id, tenant_id, session_id, requested_by, idempotency_key, status
+          id, tenant_id, task_id, session_id, requested_by, idempotency_key, status
         ) values (
-          ${runId}, ${input.tenantId}, ${input.sessionId}, ${input.requestedBy}, ${input.idempotencyKey}, 'queued'
+          ${runId}, ${input.tenantId}, ${task.id}, ${input.sessionId}, ${input.requestedBy}, ${input.idempotencyKey}, 'queued'
         )
-        on conflict (tenant_id, session_id, requested_by, idempotency_key) do nothing
-        returning id, tenant_id as "tenantId", session_id as "sessionId", requested_by as "requestedBy",
+        on conflict do nothing
+        returning id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
                   idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
                   created_at as "createdAt", updated_at as "updatedAt"
       `
       if (created) return mapRun(created)
+      const [concurrentTaskRun] = await transaction<RunRow[]>`
+        select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId",
+               requested_by as "requestedBy", idempotency_key as "idempotencyKey", status,
+               current_attempt_id as "currentAttemptId", created_at as "createdAt", updated_at as "updatedAt"
+          from runs
+         where tenant_id = ${input.tenantId} and task_id = ${task.id}
+      `
+      if (concurrentTaskRun) return mapRun(concurrentTaskRun)
       const [existing] = await transaction<RunRow[]>`
-        select id, tenant_id as "tenantId", session_id as "sessionId", requested_by as "requestedBy",
+        select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
                idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
                created_at as "createdAt", updated_at as "updatedAt"
           from runs
@@ -132,6 +177,7 @@ export class PostgresRunRepository implements RunRepository {
            and requested_by = ${input.requestedBy} and idempotency_key = ${input.idempotencyKey}
       `
       if (!existing) throw new Error('幂等 Run 查询失败')
+      if (existing.taskId !== task.id) throw new TaskContractConflictError('相同 Run 幂等键对应的 Task 不一致')
       return mapRun(existing)
     }
     // AG-03：调用方提供事务时并入受理事务（Session/Run/执行关联原子提交）；
@@ -141,7 +187,7 @@ export class PostgresRunRepository implements RunRepository {
 
   async getRun(tenantId: string, runId: string) {
     const [row] = await this.database<RunRow[]>`
-      select id, tenant_id as "tenantId", session_id as "sessionId", requested_by as "requestedBy",
+      select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
              idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
              created_at as "createdAt", updated_at as "updatedAt"
         from runs where tenant_id = ${tenantId} and id = ${runId}
@@ -273,7 +319,7 @@ export class PostgresRunRepository implements RunRepository {
   async transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord> {
     return this.database.begin(async (transaction) => {
       const [current] = await transaction<RunRow[]>`
-        select id, tenant_id as "tenantId", session_id as "sessionId", requested_by as "requestedBy",
+        select id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
                idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
                created_at as "createdAt", updated_at as "updatedAt"
           from runs where tenant_id = ${tenantId} and id = ${runId} for update
@@ -284,7 +330,7 @@ export class PostgresRunRepository implements RunRepository {
       const [updated] = await transaction<RunRow[]>`
         update runs set status = ${to}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${runId}
-         returning id, tenant_id as "tenantId", session_id as "sessionId", requested_by as "requestedBy",
+         returning id, tenant_id as "tenantId", task_id as "taskId", session_id as "sessionId", requested_by as "requestedBy",
                    idempotency_key as "idempotencyKey", status, current_attempt_id as "currentAttemptId",
                    created_at as "createdAt", updated_at as "updatedAt"
       `
@@ -638,7 +684,7 @@ export class PostgresRunRepository implements RunRepository {
                a.runtime_id as "runtimeId", a.manifest, a.manifest_sha256 as "manifestSha256",
                a.model_route_snapshot as "modelRouteSnapshot", a.status, a.started_at as "startedAt",
                a.ended_at as "endedAt", a.error_code as "errorCode", a.created_at as "createdAt",
-               r.session_id as "runSessionId", r.requested_by as "runRequestedBy",
+               r.task_id as "runTaskId", r.session_id as "runSessionId", r.requested_by as "runRequestedBy",
                r.idempotency_key as "runIdempotencyKey", r.status as "runStatus",
                r.current_attempt_id as "runCurrentAttemptId", r.created_at as "runCreatedAt",
                r.updated_at as "runUpdatedAt"
@@ -689,7 +735,7 @@ export class PostgresRunRepository implements RunRepository {
                a.runtime_id as "runtimeId", a.manifest, a.manifest_sha256 as "manifestSha256",
                a.model_route_snapshot as "modelRouteSnapshot", a.status, a.started_at as "startedAt",
                a.ended_at as "endedAt", a.error_code as "errorCode", a.created_at as "createdAt",
-               r.session_id as "runSessionId", r.requested_by as "runRequestedBy",
+               r.task_id as "runTaskId", r.session_id as "runSessionId", r.requested_by as "runRequestedBy",
                r.idempotency_key as "runIdempotencyKey", r.status as "runStatus",
                r.current_attempt_id as "runCurrentAttemptId", r.created_at as "runCreatedAt",
                r.updated_at as "runUpdatedAt"
@@ -706,6 +752,7 @@ export class PostgresRunRepository implements RunRepository {
           run: mapRun({
             id: row.runId,
             tenantId: row.tenantId,
+            taskId: row.runTaskId,
             sessionId: row.runSessionId,
             requestedBy: row.runRequestedBy,
             idempotencyKey: row.runIdempotencyKey,
@@ -722,7 +769,7 @@ export class PostgresRunRepository implements RunRepository {
 
   async listActiveRunsForWorkspaceUser(tenantId: string, workspaceId: string, userId: string) {
     const rows = await this.database<RunRow[]>`
-      select r.id, r.tenant_id as "tenantId", r.session_id as "sessionId",
+      select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt"
@@ -739,7 +786,7 @@ export class PostgresRunRepository implements RunRepository {
 
   async listActiveRunsForAgentMember(tenantId: string, workspaceId: string, agentMemberId: string) {
     const rows = await this.database<RunRow[]>`
-      select r.id, r.tenant_id as "tenantId", r.session_id as "sessionId",
+      select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt"
@@ -760,7 +807,7 @@ export class PostgresRunRepository implements RunRepository {
 
   async listActiveRunsInWorkspace(tenantId: string, workspaceId: string): Promise<WorkspaceActiveRun[]> {
     const rows = await this.database<(RunRow & { agentVersionId: string })[]>`
-      select r.id, r.tenant_id as "tenantId", r.session_id as "sessionId",
+      select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt",
