@@ -456,6 +456,20 @@ export interface ConnectorDefinition {
   }
 }
 
+export interface McpConnectionTestResult {
+  status: 'reachable'
+  endpoint: string
+  latencyMs: number
+  capabilityCount: number
+  capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+}
+
+export interface McpConnectorDeletionResult {
+  connectorId: string
+  revokedGrantCount: number
+  credentialDestroyed: boolean
+}
+
 export interface McpInvocationAudit {
   id: string
   runId: string

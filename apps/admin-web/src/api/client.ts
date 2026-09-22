@@ -15,6 +15,8 @@ import type {
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
+  McpConnectionTestResult,
+  McpConnectorDeletionResult,
   McpInvocationAudit,
   DirectorySyncState,
   EmployeeModelUsageSummary,
@@ -272,6 +274,12 @@ export const adminApi = {
   getConnectors: () => request<ConnectorDefinition[]>('/connectors'),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
+  testMcpConnection: (input: {
+    name: string
+    endpoint: string
+    authType: 'none' | 'bearer'
+    bearerToken?: string
+  }) => request<McpConnectionTestResult>('/connectors/mcp/test', { method: 'POST', body: JSON.stringify(input) }),
   registerMcpConnector: (input: {
     name: string
     endpoint: string
@@ -279,6 +287,8 @@ export const adminApi = {
     bearerToken?: string
     scopeDescription: string
   }) => request<ConnectorDefinition>('/connectors/mcp', { method: 'POST', body: JSON.stringify(input) }),
+  deleteMcpConnector: (connectorId: string) =>
+    request<McpConnectorDeletionResult>(`/connectors/mcp/${encodeURIComponent(connectorId)}`, { method: 'DELETE' }),
   rotateMcpCredential: (input: { connectorId: string; bearerToken: string }) =>
     request<ConnectorDefinition>('/connectors/mcp/credential', { method: 'PATCH', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>

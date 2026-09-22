@@ -34,6 +34,7 @@ import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 import type { TaskRepository } from '../task/task-repository.ts'
 import type { TaskSourceType } from '../task/task-types.ts'
 import { normalizeTaskBudget, type TaskBudgetInput, type TaskBudgetLimits } from '../task/task-budget-types.ts'
+import { platformToolsForPurpose } from '../runtime/platform-tool-contracts.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
@@ -1889,22 +1890,7 @@ function toCapabilityReference(reference: string) {
     : { id: reference, version: 'current' }
 }
 
-function adminTools(purpose: AdminPurpose): RuntimeManifest['tools'] {
-  if (purpose === 'admin-assistant') {
-    return [
-      { id: 'inspect_admin_state', version: '1.0.0' },
-      { id: 'propose_admin_task', version: '1.0.0' },
-      { id: 'prepare_admin_action', version: '1.0.0' },
-    ]
-  }
-  if (purpose === 'admin-agent-manage' || purpose === 'admin-platform-operations') {
-    return [
-      { id: 'inspect_admin_state', version: '1.0.0' },
-      { id: 'prepare_admin_action', version: '1.0.0' },
-    ]
-  }
-  return [{ id: 'prepare_skill_installation', version: '1.0.0' }]
-}
+const adminTools = platformToolsForPurpose
 
 function adminSystemPrompt(purpose: AdminPurpose): string {
   if (purpose === 'admin-assistant') {

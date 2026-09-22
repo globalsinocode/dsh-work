@@ -88,9 +88,55 @@ test('Tool and Connector management gates immutable Agent and Skill references',
 
   const [connector] = await tools.getConnectors()
   assert.equal(connector?.id, 'connector-dsh-workspace')
-  assert.equal(connector?.name, 'DSH 工作空间文件连接器')
+  assert.equal(connector?.name, 'DSH Runtime 内置工具连接器')
   assert.equal(connector?.protocol, 'runtime')
   assert.equal(connector?.toolCount, 4)
+
+  await database`
+    insert into connectors (
+      id, tenant_id, key, name, connector_type, system, protocol, endpoint, auth_type,
+      scope_description, status, latency_ms, last_checked_at
+    ) values (
+      'connector-external-test', 'tenant-dsh-work', 'external-test', '外部测试连接器',
+      'enterprise', '外部系统', 'rest', 'https://example.invalid/tools', 'none',
+      '验证普通工具管理边界', 'healthy', 1, now()
+    )
+  `
+  await database`
+    insert into tools (
+      id, tenant_id, key, name, source, status, connector_id, system, description,
+      mode, timeout_seconds, allowed_role_ids, data_scopes, approval_policy
+    ) values (
+      'external-tool-test', 'tenant-dsh-work', 'external-tool-test', '外部测试工具',
+      'platform', 'available', 'connector-external-test', '外部系统', '不应进入 DSH 工具管理列表',
+      'read', 30, '["role-platform-admin"]'::jsonb, '["external:test"]'::jsonb, 'none'
+    )
+  `
+  await database`
+    insert into tool_versions (
+      id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status
+    ) values (
+      'tool-version-external-test', 'tenant-dsh-work', 'external-tool-test', '1.0.0',
+      '{}'::jsonb, '{}'::jsonb, 'low', 'published'
+    )
+  `
+  await database`
+    insert into tool_binding_revisions (
+      id, tenant_id, tool_id, tool_version, revision, connector_id, executor, endpoint,
+      identity_policy, environment, allowed_role_ids, data_scopes, approval_policy,
+      content_digest, status, created_by
+    ) values (
+      'binding-external-test', 'tenant-dsh-work', 'external-tool-test', '1.0.0', 1,
+      'connector-external-test', 'external-test', 'https://example.invalid/tools',
+      'service', 'default', '["role-platform-admin"]'::jsonb, '["external:test"]'::jsonb,
+      'none', ${'0'.repeat(64)}, 'active', 'U00008'
+    )
+  `
+  assert.deepEqual((await tools.getTools()).map(tool => tool.id).sort(), ['glob', 'grep', 'read', 'write'])
+  assert.equal((await tools.listToolBindings()).some(binding => binding.tool === 'external-tool-test@1.0.0'), false)
+  await assert.rejects(tools.assertAvailableReferences(['external-tool-test@1.0.0']), /不符合受控运行策略/)
+  await assert.rejects(tools.resolveToolBindings(['external-tool-test@1.0.0']), /不符合受控运行策略/)
+  await assert.rejects(tools.setToolStatus({ toolId: 'external-tool-test', status: 'disabled', actor: 'U00008' }), /只允许操作 DSH 内置工具/)
 
   const candidates = await tools.getToolCatalog()
   assert.deepEqual(candidates.map(candidate => candidate.id).sort(), ['bash', 'edit', 'subagent', 'todo_write'])

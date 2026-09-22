@@ -68,7 +68,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     items: [
       { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'admin' },
       { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
-      { label: '工具管理', path: '/tools', icon: Tools, permission: 'admin' },
+      { label: 'DSH 工具管理', path: '/tools', icon: Tools, permission: 'admin' },
       { label: '连接器管理', path: '/connectors', icon: Connection, permission: 'admin' },
     ],
   },

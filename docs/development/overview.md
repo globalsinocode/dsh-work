@@ -83,6 +83,12 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 新增 Agent 功能评审必须追踪到实际 DSH 调用和工具结果回传路径，并检查 Run/Attempt、权限、取消、重试和审计接线。设计稿、安装入库或 Mock 测试通过不能替代真实 DSH 执行验证。本约束同时由仓库根目录 [AGENTS.md](../../AGENTS.md) 提供开发入口。
 
+### 3.6 工具分类与管理边界
+
+运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 内置工具进入 Tool Version、`connector-dsh-workspace` Binding 和 Agent 精确引用；dsh-work 内置执行工具由 Agent/Skill Manifest 声明；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为完整审核与授权单元。管理端 `DSH 工具管理` 只展示第一类，MCP 进入 `连接器管理`，其余两类通过代码契约、对应业务流程和运行审计治理。
+
+该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不获得平台 Tool Version/Binding，平台内置工具也不能借 Connector 或普通 Tool 配置扩大用途。
+
 ## 4. 逻辑架构
 
 ```mermaid

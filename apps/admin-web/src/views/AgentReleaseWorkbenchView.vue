@@ -492,7 +492,7 @@ onMounted(async () => {
                 <el-tag v-if="pendingPackageCount" size="small" type="warning">{{ pendingPackageCount }} 项候选待准入</el-tag>
                 <el-tag v-if="!missingDependencyCount && !pendingPackageCount" size="small" type="success">依赖已就绪</el-tag>
                 <el-button v-if="candidate.missingDeps.skills.length" size="small" @click="router.push('/skills')">Skill 管理</el-button>
-                <el-button v-if="candidate.missingDeps.tools.length" size="small" @click="router.push('/tools?view=candidates')">工具管理</el-button>
+                <el-button v-if="candidate.missingDeps.tools.length" size="small" @click="router.push('/tools')">DSH 工具管理</el-button>
                 <el-button v-if="missingDependencyCount" size="small" type="primary" :loading="governance.busy === 'checks'" :disabled="candidateLocked" @click="runCandidateChecks">重新解析</el-button>
               </div>
             </div>

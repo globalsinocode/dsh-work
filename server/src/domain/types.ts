@@ -495,6 +495,28 @@ export interface RegisterMcpConnectorInput {
   actor: string
 }
 
+export interface TestMcpConnectionInput {
+  name: string
+  endpoint: string
+  authType: 'none' | 'bearer'
+  bearerToken?: string
+  actor: string
+}
+
+export interface McpConnectionTestResult {
+  status: 'reachable'
+  endpoint: string
+  latencyMs: number
+  capabilityCount: number
+  capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+}
+
+export interface McpConnectorDeletionResult {
+  connectorId: string
+  revokedGrantCount: number
+  credentialDestroyed: boolean
+}
+
 export interface McpInvocationAudit {
   id: string
   runId: string

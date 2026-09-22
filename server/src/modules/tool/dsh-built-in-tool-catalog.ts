@@ -1,4 +1,5 @@
 import type { ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
+import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import type { RuntimeToolDescriptor } from '../runtime/runtime-types.ts'
 
 export type CatalogEntry = Omit<ToolCatalogCandidate, 'status' | 'availabilityMessage'> & {
@@ -115,7 +116,7 @@ export function runtimeToolToCatalogEntry(tool: RuntimeToolDescriptor): CatalogE
     name: policy?.name ?? tool.id,
     system: 'DSH Runtime',
     description: tool.description,
-    connectorId: 'connector-dsh-workspace',
+    connectorId: DSH_RUNTIME_CONNECTOR_ID,
     risk: policy?.risk ?? 'high',
     mode: policy?.mode ?? 'write',
     timeoutSeconds: tool.timeoutSeconds,

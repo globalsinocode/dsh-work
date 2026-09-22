@@ -1,12 +1,6 @@
 import { createHash } from 'node:crypto'
 
 /**
- * DSH Runtime 内生工具引用：由 Manifest 直接声明，不经平台连接器绑定，
- * 因此不产生 tool_binding_revisions 记录。
- */
-export const RUNTIME_INTRINSIC_TOOL_REFS = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
-
-/**
  * 工具绑定修订契约（B-03 / I-04）：平台批准的连接、凭据槽位、执行身份策略、
  * 数据范围与环境的语义快照。任一字段变化产生新修订；凭据槽位标识入摘要，
  * 槽位背后的密钥值轮换不进入绑定语义（等价轮换不产生新修订）。

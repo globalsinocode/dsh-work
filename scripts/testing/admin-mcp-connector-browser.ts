@@ -38,7 +38,13 @@ const runtime: AgentRuntimePort = {
       transport: 'acp-stdio', message: 'PF-03 deterministic inspection Runtime',
     }
   },
-  async inspectMcpConnection() {
+  async inspectMcpConnection(connection) {
+    if (connection.snapshot.endpoint.includes('auth-required')) {
+      throw Object.assign(new Error('MCP 认证失败：该服务要求 Bearer Token，请选择 Bearer Token 认证并填写有效 Token'), {
+        status: 422,
+        code: 'MCP_AUTHENTICATION_REQUIRED',
+      })
+    }
     return { latencyMs: 5, capabilities: structuredClone(capabilities) }
   },
   async close() {},
@@ -96,6 +102,26 @@ router.get(`${base}/test/mcp/evidence`, async (_request, context) => {
   `
   assert.ok(counts)
   return envelope('admin', counts, 'postgres')
+})
+router.get(`${base}/test/mcp/deletion-evidence`, async (_request, context) => {
+  const connectorId = context.url.searchParams.get('connector_id') ?? ''
+  const [evidence] = await database.client<{
+    deleted: boolean; credentialDetached: boolean; activeGrantCount: number;
+    revokedGrantCount: number; profileCount: number
+  }[]>`
+    select c.deleted_at is not null as deleted,
+           c.credential_ref_id is null as "credentialDetached",
+           (select count(*)::int from agent_mcp_grants g
+             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "activeGrantCount",
+           (select count(*)::int from agent_mcp_grants g
+             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'revoked') as "revokedGrantCount",
+           (select count(*)::int from mcp_connector_profiles p
+             where p.tenant_id = c.tenant_id and p.connector_id = c.id) as "profileCount"
+      from connectors c
+     where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
+  `
+  assert.ok(evidence)
+  return envelope('admin', evidence, 'postgres')
 })
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-mcp-inspection' }))
 

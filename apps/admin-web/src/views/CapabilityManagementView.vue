@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Check, Clock, Close, Connection, DocumentCopy, Loading, Plus, Refresh, Search, View } from '@element-plus/icons-vue'
+import { Check, Clock, Close, Connection, Delete, DocumentCopy, Loading, Plus, Refresh, Search, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
@@ -9,19 +9,14 @@ import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import { useToolGovernanceStore, type ToolCandidate, type ToolExecutorType } from '@/stores/toolGovernance'
-import type { ConnectorDefinition, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolCatalogCandidate, ToolDefinition } from '@/types/domain'
+import { useToolGovernanceStore } from '@/stores/toolGovernance'
+import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolCatalogCandidate, ToolDefinition } from '@/types/domain'
 
 type CapabilityTab = 'skills' | 'install' | 'tools' | 'connectors'
 
 const authStore = useAuthStore()
 const contentStore = useContentStore()
 const toolStore = useToolGovernanceStore()
-/**
- * 工具候选治理仍是内存原型：仅开发构建可见；正式路由不出现伪造的
- * 测试准入、DSH 验证、发布结果与治理数据（绑定修订/撤销/证据）。
- */
-const toolCandidatePrototype = import.meta.env.DEV
 const router = useRouter()
 const route = useRoute()
 const activeTab = computed<CapabilityTab>(() => {
@@ -46,7 +41,11 @@ const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
 const actionLoading = ref('')
 const healthRefreshing = ref(false)
 const mcpCreateDialogOpen = ref(false)
+const mcpTesting = ref(false)
 const mcpCreating = ref(false)
+const mcpTestResult = ref<McpConnectionTestResult | null>(null)
+const mcpTestError = ref<{ title: string; description: string } | null>(null)
+const testedMcpSignature = ref('')
 const mcpReviewDialogOpen = ref(false)
 const selectedMcpReviewConnectorId = ref('')
 const mcpAccessDialogOpen = ref(false)
@@ -58,20 +57,35 @@ const mcpCredentialRotating = ref(false)
 const mcpCreateForm = reactive({
   name: '', endpoint: '', authType: 'none' as 'none' | 'bearer', bearerToken: '', scopeDescription: '',
 })
+const mcpConnectionSignature = computed(() => JSON.stringify({
+  name: mcpCreateForm.name.trim(),
+  endpoint: mcpCreateForm.endpoint.trim(),
+  authType: mcpCreateForm.authType,
+  bearerToken: mcpCreateForm.authType === 'bearer' ? mcpCreateForm.bearerToken : '',
+}))
+const mcpConnectionInputReady = computed(() => Boolean(
+  mcpCreateForm.name.trim()
+  && mcpCreateForm.endpoint.trim()
+  && (mcpCreateForm.authType !== 'bearer' || mcpCreateForm.bearerToken),
+))
+const mcpCanRegister = computed(() => Boolean(
+  mcpConnectionInputReady.value
+  && mcpCreateForm.scopeDescription.trim()
+  && mcpTestResult.value
+  && testedMcpSignature.value === mcpConnectionSignature.value,
+))
+watch(mcpConnectionSignature, (signature) => {
+  if (testedMcpSignature.value && signature !== testedMcpSignature.value) {
+    mcpTestResult.value = null
+    mcpTestError.value = null
+    testedMcpSignature.value = ''
+  }
+})
 const toolCatalogDialogOpen = ref(false)
 const toolCatalogQuery = ref('')
 const toolCatalogFilter = ref<'ready' | 'all'>('ready')
 const selectedToolCandidate = ref<ToolCatalogCandidate | null>(null)
 const toolAdding = ref(false)
-const toolView = ref<'published' | 'candidates'>('published')
-const toolCandidateDialogOpen = ref(false)
-const toolCandidateSaving = ref(false)
-const toolCandidateForm = reactive({
-  name: '',
-  id: '',
-  executorType: 'interface_wrapper' as ToolExecutorType,
-  schemaSummary: '',
-})
 const toolCreateForm = reactive({
   allowedRoles: [] as string[],
   dataScopes: [] as string[],
@@ -116,31 +130,16 @@ const filteredSkills = computed(() => {
 })
 const filteredTools = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  return [...contentStore.tools, ...(toolCandidatePrototype ? toolStore.publishedFromCandidates : [])]
+  return contentStore.tools
     .filter((item) => !keyword || `${item.name} ${item.id} ${item.system} ${item.description}`.toLowerCase().includes(keyword))
 })
-const filteredToolCandidates = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return toolStore.candidates.filter((item) =>
-    !keyword || `${item.name} ${item.id} ${item.sourceAgent?.agentName ?? ''} ${item.schemaSummary}`.toLowerCase().includes(keyword),
-  )
-})
-const detailToolCandidate = computed(() =>
-  toolCandidatePrototype && detailType.value === 'tool'
-    ? toolStore.candidates.find((item) => item.id === detailTargetId.value)
-    : undefined,
-)
 const detailToolGovernance = computed(() =>
-  toolCandidatePrototype && detailType.value === 'tool' && !detailToolCandidate.value
+  detailType.value === 'tool'
     ? toolStore.governanceOf(detailTargetId.value)
     : undefined,
 )
-/** 原型的撤销态只作用于开发构建，不影响正式工具的状态展示与操作。 */
-function toolRevoked(id: string) {
-  return toolCandidatePrototype && toolStore.governanceOf(id).revoked
-}
 const toolReferences = computed(() =>
-  detailType.value === 'tool' && !detailToolCandidate.value
+  detailType.value === 'tool'
     ? toolStore.referencesOf(detailTargetId.value, contentStore.agents, contentStore.agentVersions)
     : [],
 )
@@ -173,8 +172,6 @@ const { currentPage: skillPage, pagedItems: pagedSkills } =
   useListPagination(filteredSkills, { resetOn: query })
 const { currentPage: toolPage, pagedItems: pagedTools } =
   useListPagination(filteredTools, { resetOn: query })
-const { currentPage: toolCandidatePage, pagedItems: pagedToolCandidates } =
-  useListPagination(filteredToolCandidates, { resetOn: query })
 const { currentPage: connectorPage, pagedItems: pagedConnectors } =
   useListPagination(filteredConnectors, { resetOn: query })
 const { currentPage: toolCatalogPage, pagedItems: pagedToolCatalog } =
@@ -254,104 +251,6 @@ function inspectTool(tool: ToolDefinition) {
     { label: '输入 Schema', value: tool.inputSchema },
     { label: '输出 Schema', value: tool.outputSchema },
   ], 'tool', tool.id)
-}
-
-function inspectToolCandidate(candidate: ToolCandidate) {
-  showDetail(`${candidate.name}（候选）`, [
-    { label: '工具标识', value: candidate.id },
-    { label: '来源', value: candidate.sourceAgent ? `随包提交 · ${candidate.sourceAgent.agentName}（${candidate.sourceAgent.agentId}）` : '管理员独立接入' },
-    { label: '执行器类型', value: executorTypeLabel[candidate.executorType] },
-    { label: '来源版本', value: `v${candidate.sourceVersion}` },
-    { label: '候选状态', value: toolCandidateStatusLabel[candidate.status] },
-    ...(candidate.blockedReason ? [{ label: '暂缓原因', value: candidate.blockedReason }] : []),
-    { label: 'Schema 摘要', value: candidate.schemaSummary },
-    ...(candidate.admission ? [
-      { label: '准入环境', value: candidate.admission.environment },
-      { label: '测试身份', value: candidate.admission.identity },
-      { label: '用量上限', value: `${candidate.admission.quota} 次` },
-      { label: '有效期至', value: new Date(candidate.admission.expiresAt).toLocaleString('zh-CN') },
-      { label: '批准依据', value: candidate.admission.basis },
-    ] : []),
-    ...(candidate.binding ? [
-      { label: '绑定修订', value: candidate.binding.id },
-      { label: '端点', value: candidate.binding.endpoint },
-      { label: '执行器', value: candidate.binding.executor },
-      { label: '凭据槽位', value: candidate.binding.credentialSlot },
-      { label: '过滤策略', value: candidate.binding.filterPolicy },
-      { label: '封存时间', value: candidate.binding.sealedAt },
-    ] : []),
-    { label: '最近事件', value: candidate.lastEvent },
-  ], 'tool', candidate.id)
-}
-
-async function registerToolCandidate() {
-  const name = toolCandidateForm.name.trim()
-  const id = toolCandidateForm.id.trim()
-  if (!name || !id) return
-  toolCandidateSaving.value = true
-  try {
-    await toolStore.registerCandidate({
-      name,
-      id,
-      executorType: toolCandidateForm.executorType,
-      schemaSummary: toolCandidateForm.schemaSummary.trim(),
-    })
-    toolCandidateDialogOpen.value = false
-    toolCandidateForm.name = ''
-    toolCandidateForm.id = ''
-    toolCandidateForm.schemaSummary = ''
-    toolView.value = 'candidates'
-    ElMessage.success('已登记为候选；正式发布需测试准入与验证')
-  } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : '登记失败')
-  } finally {
-    toolCandidateSaving.value = false
-  }
-}
-
-async function admitToolCandidate(id: string) {
-  try {
-    await toolStore.admitCandidate(id)
-    ElMessage.success('已签发测试准入')
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  }
-}
-
-async function verifyToolCandidate(id: string) {
-  try {
-    await toolStore.verifyCandidate(id)
-    ElMessage.success('DSH 链路验证通过')
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  }
-}
-
-async function publishToolCandidate(id: string) {
-  try {
-    await toolStore.publishCandidate(id)
-    toolView.value = 'published'
-    ElMessage.success('已发布为正式 Tool 版本，并入已发布列表')
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  }
-}
-
-async function revokeCurrentTool() {
-  const tool = [...contentStore.tools, ...toolStore.publishedFromCandidates]
-    .find(item => item.id === detailTargetId.value)
-  if (!tool) return
-  try {
-    await ElMessageBox.confirm(
-      '紧急撤销将立即阻止全部引用方的新执行与领取，取消队列并拒绝后续工具调用。',
-      `紧急撤销“${tool.name}”？`,
-      { confirmButtonText: '确认撤销', cancelButtonText: '取消', type: 'error' },
-    )
-    await toolStore.revokeTool(tool.id)
-    ElMessage.success('已撤销；引用方的新执行将被拒绝')
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  }
 }
 
 async function inspectConnector(connector: ConnectorDefinition) {
@@ -675,11 +574,26 @@ async function checkConnector(connector: ConnectorDefinition) {
   actionLoading.value = `connector:${connector.id}`
   try {
     const updated = await contentStore.checkConnector(connector.id)
-    if (updated.status === 'healthy') ElMessage.success(`${connector.name}健康检查通过`)
+    if (updated.status === 'offline') ElNotification.error({
+      title: `连接器异常：${connector.name}`,
+      message: `原因：健康检查结果为离线。下一步：检查 ${updated.endpoint}、凭据引用和 DSH Runtime 状态，恢复后重新检查。`,
+      duration: 8000,
+    })
     else if (updated.status === 'disabled') ElMessage.info(`${connector.name}检查完成，仍保持人工停用；需要恢复时请显式启用`)
+    else if (updated.mcp?.approvalStatus === 'pending_review') ElNotification.info({
+      title: `MCP 已连通，等待审核：${connector.name}`,
+      message: `已发现 ${updated.mcp.capabilityCount} 个 Tool。下一步：检查 Tool 名称、描述和输入 Schema 后执行整体审核。`,
+      duration: 8000,
+    })
+    else if (updated.mcp?.approvalStatus === 'changes_pending') ElNotification.warning({
+      title: `MCP 能力已变化：${connector.name}`,
+      message: `当前发现 ${updated.mcp.capabilityCount} 个 Tool。能力摘要变化已暂停使用，下一步：核对差异并重新整体审核。`,
+      duration: 8000,
+    })
+    else if (updated.status === 'healthy') ElMessage.success(`${connector.name}健康检查通过`)
     else ElNotification.error({
       title: `连接器异常：${connector.name}`,
-      message: `原因：健康检查结果为${updated.status === 'offline' ? '离线' : '性能下降'}。下一步：检查 ${updated.endpoint}、凭据引用和 DSH Runtime 状态，恢复后重新检查。`,
+      message: `原因：健康检查结果为性能下降。下一步：检查 ${updated.endpoint}、凭据引用和 DSH Runtime 状态，恢复后重新检查。`,
       duration: 8000,
     })
   } catch (cause) {
@@ -695,6 +609,10 @@ async function checkConnector(connector: ConnectorDefinition) {
 }
 
 async function registerMcpConnector() {
+  if (!mcpCanRegister.value) {
+    ElMessage.warning('请先完成连通测试，且测试后不要修改连接信息')
+    return
+  }
   mcpCreating.value = true
   try {
     const connector = await contentStore.registerMcpConnector({
@@ -705,15 +623,49 @@ async function registerMcpConnector() {
       ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
     })
     mcpCreateDialogOpen.value = false
-    Object.assign(mcpCreateForm, { name: '', endpoint: '', authType: 'none', bearerToken: '', scopeDescription: '' })
-    ElMessage.success('MCP Connector 已登记，正在通过 DSH 发现 Tool')
-    await checkConnector(connector)
+    resetMcpCreateForm()
+    ElMessage.success(`MCP Connector 已添加，发现 ${connector.mcp?.capabilityCount ?? 0} 个 Tool，等待整体审核`)
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : 'MCP Connector 登记失败')
   } finally {
-    mcpCreateForm.bearerToken = ''
     mcpCreating.value = false
   }
+}
+
+async function testMcpConnection() {
+  if (!mcpConnectionInputReady.value) return
+  const testedSignature = mcpConnectionSignature.value
+  mcpTesting.value = true
+  mcpTestResult.value = null
+  mcpTestError.value = null
+  try {
+    const result = await contentStore.testMcpConnection({
+      name: mcpCreateForm.name.trim(),
+      endpoint: mcpCreateForm.endpoint.trim(),
+      authType: mcpCreateForm.authType,
+      ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
+    })
+    if (testedSignature !== mcpConnectionSignature.value) return
+    mcpTestResult.value = result
+    testedMcpSignature.value = testedSignature
+    ElMessage.success(`连通测试成功，发现 ${result.capabilityCount} 个 Tool`)
+  } catch (cause) {
+    if (testedSignature !== mcpConnectionSignature.value) return
+    const code = cause instanceof Error && 'code' in cause ? String(cause.code) : ''
+    mcpTestError.value = {
+      title: code === 'MCP_AUTHENTICATION_REQUIRED' || code === 'MCP_AUTHENTICATION_FAILED' ? '认证失败' : '连通测试失败',
+      description: cause instanceof Error ? cause.message : 'MCP 连通测试失败',
+    }
+  } finally {
+    mcpTesting.value = false
+  }
+}
+
+function resetMcpCreateForm() {
+  Object.assign(mcpCreateForm, { name: '', endpoint: '', authType: 'none', bearerToken: '', scopeDescription: '' })
+  mcpTestResult.value = null
+  mcpTestError.value = null
+  testedMcpSignature.value = ''
 }
 
 function openMcpCredentialRotation(connector: ConnectorDefinition) {
@@ -838,17 +790,42 @@ async function toggleMcpConnector(connector: ConnectorDefinition) {
   }
 }
 
+async function deleteMcpConnector(connector: ConnectorDefinition) {
+  try {
+    await ElMessageBox.confirm(
+      '删除后会立即撤销全部 Agent 权限并销毁该连接器独占的 Bearer 凭据；审核和调用审计继续保留。此操作不能从管理页面恢复。',
+      `删除“${connector.name}”？`,
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
+    )
+    actionLoading.value = `mcp-delete:${connector.id}`
+    const result = await contentStore.deleteMcpConnector(connector.id)
+    if (detailType.value === 'connector' && detailTargetId.value === connector.id) detailOpen.value = false
+    ElMessage.success(`MCP Connector 已删除，撤销 ${result.revokedGrantCount} 条 Agent 权限`)
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
 async function refreshHealth() {
   healthRefreshing.value = true
   try {
     const results = await Promise.all(contentStore.connectors.map((connector) => contentStore.checkConnector(connector.id)))
-    const abnormal = results.filter((connector) => connector.status !== 'healthy')
-    if (!abnormal.length) ElMessage.success(`全部 ${results.length} 个连接器健康检查通过`)
-    else ElNotification.warning({
-      title: `${abnormal.length} 个连接器需要处理`,
-      message: `对象：${abnormal.map((connector) => connector.name).join('、')}。下一步：逐项检查端点、凭据引用和依赖状态。`,
+    const unavailable = results.filter(connectorNeedsRecovery)
+    const reviewRequired = results.filter(connectorNeedsMcpReview)
+    const disabledCount = results.filter(connector => connector.status === 'disabled').length
+    if (unavailable.length) ElNotification.error({
+      title: `${unavailable.length} 个连接器异常`,
+      message: `对象：${unavailable.map((connector) => connector.name).join('、')}。下一步：逐项检查端点、凭据引用和依赖状态。${reviewRequired.length ? `另有 ${reviewRequired.length} 个 MCP 已连通并等待审核。` : ''}`,
       duration: 8000,
     })
+    else if (reviewRequired.length) ElNotification.info({
+      title: `${reviewRequired.length} 个 MCP 已连通并等待审核`,
+      message: `对象：${reviewRequired.map((connector) => connector.name).join('、')}。下一步：检查能力清单并执行整体审核。${disabledCount ? `另有 ${disabledCount} 个连接器保持人工停用。` : ''}`,
+      duration: 8000,
+    })
+    else ElMessage.success(`检查完成：${results.length - disabledCount} 个连接器健康${disabledCount ? `，${disabledCount} 个保持人工停用` : ''}`)
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : '批量健康检查失败')
   } finally {
@@ -864,28 +841,6 @@ function toolNames(references: string[]) {
   }).join('、')
 }
 
-const executorTypeLabel: Record<ToolExecutorType, string> = {
-  dsh_builtin: 'DSH 内置',
-  interface_wrapper: '接口封装',
-  sandbox_code: '沙箱代码',
-}
-const toolCandidateStatusLabel: Record<ToolCandidate['status'], string> = {
-  draft: '草稿',
-  admitted: '已准入',
-  verified: '已验证',
-}
-const evidenceLabel = {
-  configuration_checked: '配置检查',
-  runtime_verified: '真实试运行',
-  business_accepted: '业务确认',
-} as const
-
-function toolCandidateTagStatus(candidate: ToolCandidate) {
-  return { draft: 'draft', admitted: 'running', verified: 'awaiting_approval' }[candidate.status]
-}
-const executorTypeName = (type: ToolExecutorType) => executorTypeLabel[type]
-const toolCandidateStatusName = (status: ToolCandidate['status']) => toolCandidateStatusLabel[status]
-
 function riskLabel(risk: ToolDefinition['risk']) {
   return { low: '低风险', medium: '中风险', high: '高风险' }[risk]
 }
@@ -900,6 +855,23 @@ function protocolLabel(protocol: ConnectorDefinition['protocol']) {
 
 function mcpApprovalLabel(status: NonNullable<ConnectorDefinition['mcp']>['approvalStatus']) {
   return { draft: '待发现', pending_review: '待审核', approved: '已审核', changes_pending: '变更待审' }[status]
+}
+
+function connectorStatusLabel(connector: ConnectorDefinition) {
+  if (connector.status === 'offline' || connector.status === 'disabled') return undefined
+  if (connector.mcp?.approvalStatus === 'pending_review') return '连通，待审核'
+  if (connector.mcp?.approvalStatus === 'changes_pending') return '能力变更待审'
+  return undefined
+}
+
+function connectorNeedsMcpReview(connector: ConnectorDefinition) {
+  return connector.status !== 'offline' && connector.status !== 'disabled'
+    && ['pending_review', 'changes_pending'].includes(connector.mcp?.approvalStatus ?? '')
+}
+
+function connectorNeedsRecovery(connector: ConnectorDefinition) {
+  return connector.status === 'offline'
+    || (connector.status === 'degraded' && !connectorNeedsMcpReview(connector))
 }
 
 onMounted(() => {
@@ -932,12 +904,12 @@ onUnmounted(() => clearSkillTestPoll())
         <button v-for="tab in tabs" :id="`capability-tab-${tab.id}`" :key="tab.id" class="status-tab" :class="{ active: activeTab === tab.id }" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`capability-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" @click="switchTab(tab.id)">{{ tab.label }} <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span></button>
       </div>
       <div v-if="activeTab !== 'install'" class="filter-bar capability-toolbar">
-        <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索工具名称、标识或系统' : '搜索连接器或企业系统'" />
+        <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索 DSH 内置工具名称、标识或说明' : '搜索连接器或企业系统'" />
         <div v-if="activeTab === 'skills'" class="capability-toolbar__legend"><span>版本发布后不可变</span></div>
+        <div v-if="activeTab === 'tools'" class="capability-toolbar__legend"><span>仅管理 DSH 内置工具；MCP 工具在连接器中整体审核</span></div>
         <el-button v-if="activeTab === 'skills'" @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
         <div v-if="authStore.canManage && activeTab === 'tools'" class="capability-toolbar__actions">
           <el-button type="primary" :icon="Plus" data-action="add-tool" @click="openToolCatalog">添加工具</el-button>
-          <el-button v-if="toolCandidatePrototype" data-action="register-tool-candidate" @click="toolCandidateDialogOpen = true">接入候选</el-button>
         </div>
         <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
           <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
@@ -950,14 +922,7 @@ onUnmounted(() => clearSkillTestPoll())
       <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
-    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? '工具列表' : activeTab === 'connectors' ? '连接器列表' : undefined">
-      <div v-if="activeTab === 'tools' && toolCandidatePrototype" class="tool-view-switch">
-        <el-radio-group v-model="toolView" aria-label="工具治理视图">
-          <el-radio-button value="published">已发布 {{ filteredTools.length }}</el-radio-button>
-          <el-radio-button value="candidates">候选 {{ filteredToolCandidates.length }}</el-radio-button>
-        </el-radio-group>
-        <el-tag size="small" type="warning" effect="plain">候选与治理数据为原型（仅开发构建可见）</el-tag>
-      </div>
+    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? 'DSH 内置工具列表' : activeTab === 'connectors' ? '连接器列表' : undefined">
       <template v-if="activeTab === 'skills'">
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedSkills" empty-text="暂无匹配的 Skill">
         <el-table-column label="Skill" min-width="360">
@@ -998,60 +963,36 @@ onUnmounted(() => clearSkillTestPoll())
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
       </template>
 
-      <template v-else-if="activeTab === 'tools' && (toolView === 'published' || !toolCandidatePrototype)">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的工具">
+      <template v-else-if="activeTab === 'tools'">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的 DSH 内置工具">
         <el-table-column label="工具" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small><code>{{ scope.row.id }}</code></div></template></el-table-column>
         <el-table-column prop="system" label="所属系统" min-width="130" />
         <el-table-column label="模式" width="90"><template #default="scope"><span class="mode-label" :class="`mode-label--${scope.row.mode}`">{{ scope.row.mode === 'read' ? '只读' : '写入' }}</span></template></el-table-column>
         <el-table-column label="风险" width="100"><template #default="scope"><StatusTag :status="scope.row.risk" /></template></el-table-column>
-        <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="toolRevoked(scope.row.id) ? 'disabled' : scope.row.status" :label="toolRevoked(scope.row.id) ? '已撤销' : undefined" dot /></template></el-table-column>
+        <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
         <el-table-column label="授权角色" min-width="190"><template #default="scope"><span class="role-text">{{ scope.row.allowedRoles.join('、') }}</span></template></el-table-column>
-        <el-table-column v-if="toolCandidatePrototype" label="绑定修订" width="120"><template #default="scope"><span class="mono">{{ toolStore.governanceOf(scope.row.id).bindingRevision.id }}</span></template></el-table-column>
+        <el-table-column label="绑定修订" min-width="190"><template #default="scope"><span class="mono">{{ toolStore.governanceOf(scope.row.id).bindingRevision.id }}</span></template></el-table-column>
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" data-action="configure-tool-permissions" @click="openToolPermissions(scope.row.id)">权限</el-button><el-button v-if="authStore.canManage && !toolRevoked(scope.row.id)" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" data-action="configure-tool-permissions" @click="openToolPermissions(scope.row.id)">权限</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
-      </template>
-
-      <template v-else-if="activeTab === 'tools' && toolCandidatePrototype">
-      <el-table class="data-table" :data="pagedToolCandidates" empty-text="暂无工具候选" aria-label="工具候选列表" @row-click="inspectToolCandidate">
-        <el-table-column label="工具" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.schemaSummary }}</small><code>{{ scope.row.id }}</code></div></template></el-table-column>
-        <el-table-column label="来源" min-width="180"><template #default="scope">{{ scope.row.sourceAgent ? `随包提交 · ${scope.row.sourceAgent.agentName}` : '独立接入' }}</template></el-table-column>
-        <el-table-column label="执行器" width="110"><template #default="scope">{{ executorTypeName(scope.row.executorType) }}</template></el-table-column>
-        <el-table-column label="状态" width="140">
-          <template #default="scope">
-            <StatusTag :status="toolCandidateTagStatus(scope.row)" :label="toolCandidateStatusName(scope.row.status)" />
-            <el-tag v-if="scope.row.blockedReason" class="blocked-tag" size="small" type="warning" :title="scope.row.blockedReason">{{ scope.row.blockedReason }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="lastEvent" label="最近事件" min-width="190" />
-        <el-table-column label="操作" width="260" fixed="right">
-          <template #default="scope">
-            <el-button link type="primary" :icon="View" data-action="view-tool-candidate" @click.stop="inspectToolCandidate(scope.row)">查看</el-button>
-            <el-button v-if="authStore.canManage && scope.row.status === 'draft' && !scope.row.blockedReason" link type="primary" :loading="toolStore.busy === 'admit'" data-action="admit-tool-candidate" @click.stop="admitToolCandidate(scope.row.id)">签发测试准入</el-button>
-            <el-button v-if="authStore.canManage && scope.row.status === 'admitted'" link type="primary" :loading="toolStore.busy === 'verify'" data-action="verify-tool-candidate" @click.stop="verifyToolCandidate(scope.row.id)">DSH 验证</el-button>
-            <el-button v-if="authStore.canManage && scope.row.status === 'verified'" link type="primary" :loading="toolStore.busy === 'publish'" data-action="publish-tool-candidate" @click.stop="publishToolCandidate(scope.row.id)">发布</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolCandidatePage" background layout="prev, pager, next" :total="filteredToolCandidates.length" :page-size="10" /></div>
       </template>
 
       <template v-else>
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的连接器">
         <el-table-column label="连接器" min-width="225"><template #default="scope"><div class="connector-cell"><span><el-icon><Connection /></el-icon></span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.mcp ? 'Streamable HTTP MCP' : `${scope.row.system} · ${protocolLabel(scope.row.protocol)}` }}</small></div></div></template></el-table-column>
-        <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
+        <el-table-column label="状态" width="130"><template #default="scope"><StatusTag :status="scope.row.status" :label="connectorStatusLabel(scope.row)" dot /></template></el-table-column>
         <el-table-column label="能力" width="125"><template #default="scope"><template v-if="scope.row.mcp"><el-tag size="small" :type="scope.row.mcp.approvalStatus === 'approved' ? 'success' : 'warning'">{{ mcpApprovalLabel(scope.row.mcp.approvalStatus) }}</el-tag><small class="connector-capability-count">{{ scope.row.mcp.capabilityCount }} 个 Tool</small></template><template v-else>{{ scope.row.toolCount }} 个工具</template></template></el-table-column>
         <el-table-column prop="authType" label="认证与范围" min-width="175" />
         <el-table-column prop="latency" label="延迟" width="90" />
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="340" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">{{ scope.row.protocol === 'mcp' ? '发现' : '检查' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && scope.row.authType === 'bearer'" link type="primary" data-action="rotate-mcp-credential" @click="openMcpCredentialRotation(scope.row)">{{ mcpCredentialActionLabel(scope.row) }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && ['pending_review', 'changes_pending'].includes(scope.row.mcp.approvalStatus)" link type="primary" :loading="actionLoading === `mcp-approve:${scope.row.id}`" data-action="approve-mcp-connector" @click="approveMcpConnector(scope.row)">整体审核</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="primary" data-action="manage-mcp-agent-access" @click="openMcpAccess(scope.row)">Agent 权限</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :loading="actionLoading === `mcp-status:${scope.row.id}`" @click="toggleMcpConnector(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="415" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-connector" @click="inspectConnector(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `connector:${scope.row.id}`" data-action="check-connector" @click="checkConnector(scope.row)">{{ scope.row.protocol === 'mcp' ? '发现' : '检查' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && scope.row.authType === 'bearer'" link type="primary" data-action="rotate-mcp-credential" @click="openMcpCredentialRotation(scope.row)">{{ mcpCredentialActionLabel(scope.row) }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp && ['pending_review', 'changes_pending'].includes(scope.row.mcp.approvalStatus)" link type="primary" :loading="actionLoading === `mcp-approve:${scope.row.id}`" data-action="approve-mcp-connector" @click="approveMcpConnector(scope.row)">整体审核</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="primary" data-action="manage-mcp-agent-access" @click="openMcpAccess(scope.row)">Agent 权限</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :loading="actionLoading === `mcp-status:${scope.row.id}`" @click="toggleMcpConnector(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button><el-button v-if="authStore.canManage && scope.row.mcp" link type="danger" :icon="Delete" :loading="actionLoading === `mcp-delete:${scope.row.id}`" data-action="delete-mcp-connector" @click="deleteMcpConnector(scope.row)">删除</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="connectorPage" background layout="prev, pager, next" :total="filteredConnectors.length" :page-size="10" /></div>
       </template>
     </section>
 
-    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="mcpCreateForm.bearerToken = ''">
+    <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="resetMcpCreateForm">
       <el-form label-position="top" :model="mcpCreateForm">
         <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
         <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
@@ -1059,8 +1000,10 @@ onUnmounted(() => clearSkillTestPoll())
         <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="Bearer Token" required><el-input v-model="mcpCreateForm.bearerToken" type="password" autocomplete="new-password" placeholder="输入 MCP 服务签发的 Token" /><small>Token 使用 AES-256-GCM 加密后存入数据库，保存后不再回显。</small></el-form-item>
         <el-form-item label="整体权限范围" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明该 MCP 内全部 Tool 共同适用的系统、数据范围和只读边界" /></el-form-item>
       </el-form>
-      <el-alert type="info" :closable="false" show-icon title="一个 MCP Connector 是最小授权边界。登记后先通过 DSH 发现全部 Tool，再整体审核；能力清单变化会暂停使用并要求重新审核。" />
-      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCreateForm.name.trim() || !mcpCreateForm.endpoint.trim() || !mcpCreateForm.scopeDescription.trim() || (mcpCreateForm.authType === 'bearer' && !mcpCreateForm.bearerToken)" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">登记并发现</el-button></template>
+      <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />
+      <el-alert v-else-if="mcpTestError" type="error" :closable="false" show-icon :title="mcpTestError.title" :description="mcpTestError.description" />
+      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；成功后才能添加。添加后仍需整体审核和 Agent 授权。" />
+      <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button :loading="mcpTesting" :disabled="!mcpConnectionInputReady || mcpCreating" data-action="test-mcp-connection" @click="testMcpConnection">测试连接</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCanRegister || mcpTesting" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">添加 MCP</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="mcpCredentialDialogOpen" :title="`轮换 Bearer Token · ${selectedMcpCredentialConnector?.name ?? ''}`" width="min(520px, calc(100vw - 32px))" destroy-on-close @closed="mcpCredentialToken = ''">
@@ -1229,24 +1172,6 @@ onUnmounted(() => clearSkillTestPoll())
       </template>
     </el-dialog>
 
-    <el-dialog v-model="toolCandidateDialogOpen" title="接入工具候选" width="min(560px, calc(100vw - 32px))" destroy-on-close>
-      <el-form label-position="top">
-        <el-form-item label="工具名称" required><el-input v-model="toolCandidateForm.name" placeholder="例如：对账脚本" /></el-form-item>
-        <el-form-item label="工具标识" required><el-input v-model="toolCandidateForm.id" class="mono" placeholder="例如：fin.reconcile（小写字母、数字、. - _）" /></el-form-item>
-        <el-form-item label="执行器类型" required>
-          <el-select v-model="toolCandidateForm.executorType">
-            <el-option v-for="(label, kind) in executorTypeLabel" :key="kind" :label="label" :value="kind" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Schema 摘要"><el-input v-model="toolCandidateForm.schemaSummary" type="textarea" :rows="2" placeholder="输入/输出契约的一句话描述" /></el-form-item>
-      </el-form>
-      <el-alert type="info" :closable="false" show-icon title="候选需签发测试准入并通过 DSH 验证后才能发布；接入信息登记为候选记录。" />
-      <template #footer>
-        <el-button @click="toolCandidateDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="toolCandidateSaving" :disabled="!toolCandidateForm.name.trim() || !toolCandidateForm.id.trim()" data-action="confirm-register-tool-candidate" @click="registerToolCandidate">登记为候选</el-button>
-      </template>
-    </el-dialog>
-
     <el-drawer v-model="detailOpen" size="min(620px, 100vw)" :title="detailTitle">
       <div v-if="detailType === 'skill'" class="capability-detail__notice"><el-icon><Connection /></el-icon><p>Skill 发布后当前版本不可原地编辑，Agent 引用时锁定具体版本。</p></div>
       <div v-if="detailType === 'skill'" class="status-tabs capability-detail__tabs" role="tablist" aria-label="Skill 详情类型">
@@ -1282,7 +1207,7 @@ onUnmounted(() => clearSkillTestPoll())
           <el-pagination v-model:current-page="skillReleasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillReleases.length" :page-size="10" />
         </template>
       </section>
-      <template v-if="detailType === 'tool' && !detailToolCandidate">
+      <template v-if="detailType === 'tool'">
         <template v-if="detailToolGovernance">
           <section class="tool-gov-section">
             <h3>绑定修订</h3>
@@ -1296,13 +1221,6 @@ onUnmounted(() => clearSkillTestPoll())
             </dl>
             <p class="tool-gov-note">包数据不能改写端点、凭据槽位、执行器与权限范围。</p>
           </section>
-          <section class="tool-gov-section">
-            <h3>证据</h3>
-            <div v-if="detailToolGovernance.evidence.length" class="evidence-chips">
-              <el-tag v-for="item in detailToolGovernance.evidence" :key="item.kind + item.at" size="small" type="success" effect="plain" :title="`${item.summary} · ${item.by}`">{{ evidenceLabel[item.kind] }}</el-tag>
-            </div>
-            <p v-else class="tool-gov-note">暂无运行证据</p>
-          </section>
         </template>
         <section class="tool-gov-section">
           <h3>引用方</h3>
@@ -1314,7 +1232,7 @@ onUnmounted(() => clearSkillTestPoll())
           <p v-else class="tool-gov-note">暂无 Agent 引用</p>
         </section>
       </template>
-      <div v-if="authStore.canManage" class="capability-detail__actions"><template v-if="detailType === 'skill' && selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template><template v-if="detailType === 'tool'"><el-button v-if="detailToolCandidate?.status === 'draft' && !detailToolCandidate.blockedReason" :loading="toolStore.busy === 'admit'" @click="admitToolCandidate(detailTargetId)">签发测试准入</el-button><el-button v-if="detailToolCandidate?.status === 'admitted'" :loading="toolStore.busy === 'verify'" @click="verifyToolCandidate(detailTargetId)">DSH 验证</el-button><el-button v-if="detailToolCandidate?.status === 'verified'" type="primary" :loading="toolStore.busy === 'publish'" @click="publishToolCandidate(detailTargetId)">发布</el-button><el-button v-if="!detailToolCandidate" type="primary" @click="openToolPermissions()">配置权限与数据范围</el-button><el-button v-if="toolCandidatePrototype && !detailToolCandidate && !detailToolGovernance?.revoked" type="danger" plain @click="revokeCurrentTool">紧急撤销</el-button></template></div>
+      <div v-if="authStore.canManage" class="capability-detail__actions"><template v-if="detailType === 'skill' && selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template><template v-if="detailType === 'tool'"><el-button type="primary" @click="openToolPermissions()">配置权限与数据范围</el-button></template></div>
     </el-drawer>
 
   </div>
@@ -1431,14 +1349,11 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-detail__identifier code { color: var(--color-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .capability-detail__code { padding: 9px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge) !important; }
 .capability-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-.tool-view-switch { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--color-border); }
 .tool-gov-section { margin-top: 22px; }
 .tool-gov-section h3 { margin: 0 0 10px; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .capability-detail__rows--compact { margin-top: 0; }
 .tool-gov-note { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.evidence-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
-.blocked-tag { display: inline-flex; margin-top: 5px; }
 .cell-sub { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .muted { color: var(--color-text-muted); }
 .capability-detail__table { margin-top: 14px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-card); }

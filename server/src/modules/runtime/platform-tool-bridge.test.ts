@@ -4,7 +4,12 @@ import { test } from 'node:test'
 
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { compileToolContract, toolPreconditionFailed, type PlatformToolContract } from './platform-tool-contract.ts'
-import { platformToolContracts } from './platform-tool-contracts.ts'
+import {
+  assertPlatformToolPurpose,
+  dshWorkBuiltInToolDefinitions,
+  platformToolContracts,
+  platformToolsForPurpose,
+} from './platform-tool-contracts.ts'
 
 const baseContract: PlatformToolContract = {
   inputSchema: {
@@ -21,6 +26,45 @@ const baseContract: PlatformToolContract = {
 
 test('all governed platform tool contracts compile in strict JSON Schema mode', () => {
   for (const contract of Object.values(platformToolContracts)) assert.doesNotThrow(() => compileToolContract(contract))
+})
+
+test('dsh-work built-in tools use one explicit category and governance registry', () => {
+  assert.deepEqual(
+    Object.entries(dshWorkBuiltInToolDefinitions)
+      .filter(([, definition]) => definition.category === 'dsh_work_execution')
+      .map(([name]) => name)
+      .sort(),
+    ['activate_skill', 'python_execute'],
+  )
+  assert.deepEqual(
+    platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),
+    ['inspect_admin_state', 'prepare_admin_action', 'propose_admin_task'],
+  )
+  assert.deepEqual(
+    platformToolsForPurpose('admin-agent-manage').map(tool => tool.id).sort(),
+    ['inspect_admin_state', 'prepare_admin_action'],
+  )
+  assert.deepEqual(platformToolsForPurpose('admin-skill-install'), [
+    { id: 'prepare_skill_installation', version: '1.0.0' },
+  ])
+  assert.deepEqual(platformToolsForPurpose('admin-skill-test'), [])
+})
+
+test('dsh-work platform tools are rejected outside their approved run purpose', () => {
+  assert.doesNotThrow(() => assertPlatformToolPurpose({
+    purpose: 'admin-assistant',
+    tools: [{ id: 'inspect_admin_state', version: '1.0.0' }],
+  }))
+  assert.doesNotThrow(() => assertPlatformToolPurpose({
+    tools: [{ id: 'activate_skill', version: '1.0.0' }],
+  }))
+  assert.throws(() => assertPlatformToolPurpose({
+    purpose: 'admin-agent-manage',
+    tools: [{ id: 'propose_admin_task', version: '1.0.0' }],
+  }), /不允许用于当前运行用途/)
+  assert.throws(() => assertPlatformToolPurpose({
+    tools: [{ id: 'inspect_admin_state', version: '1.0.0' }],
+  }), /employee/)
 })
 
 test('python output budget accepts the runner maximum after JSON serialization', () => {

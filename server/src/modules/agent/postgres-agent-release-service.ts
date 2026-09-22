@@ -19,7 +19,8 @@ import {
   type AgentPackageCase,
 } from './agent-package.ts'
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
-import { bindingBasisKey, RUNTIME_INTRINSIC_TOOL_REFS, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
+import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
+import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -595,7 +596,7 @@ export class PostgresAgentReleaseService {
        where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
     `
     const platformTools = (version?.tools ?? [])
-      .filter(reference => !RUNTIME_INTRINSIC_TOOL_REFS.has(reference))
+      .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
     const pins = submission.bindingRefs ?? []
     if (platformTools.length && !pins.length) {
       throw new Error('缺少平台工具绑定依据，请重新封存试运行')

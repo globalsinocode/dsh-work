@@ -15,7 +15,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 | 对象与执行授权 | [PostgresAuthorizationService](../../server/src/modules/authorization/postgres-authorization-service.ts) | Workspace、Agent/Skill/Tool Version 与数据范围逐层校验，默认拒绝 |
 | Skill 安装计划 | [AdminSkillInstallationService](../../server/src/modules/skill/admin-skill-installation-service.ts) | 固定来源、生成依赖计划、绑定管理员确认、原子保存草稿并记录激活/脚本试运行证据；C7 prepareLink 无 Run，确定性导入与助手共用平台实现，发布能力独立复核 |
 | 通用管理对话与任务调度 | [AdminAssistantService](../../server/src/modules/admin/application/admin-assistant-service.ts) | 通过 DSH 进行普通对话；已有草稿展示文案允许一次最终确认，其他变更绑定委派确认与最终计划确认；行锁内版本复核及重启结果收敛不变 |
-| Attempt 平台工具 | [platform-tool-bridge](../../server/src/modules/runtime/platform-tool-bridge.ts)与[契约目录](../../server/src/modules/runtime/platform-tool-contracts.ts) | 为当前 Attempt 暴露显式授权处理器；严格校验输入/输出、当前授权、超时、输出大小和串行约束，返回稳定错误；不承载 Agent Loop |
+| dsh-work 内置执行/平台工具 | [platform-tool-bridge](../../server/src/modules/runtime/platform-tool-bridge.ts)、[分类与契约目录](../../server/src/modules/runtime/platform-tool-contracts.ts) | 执行工具由 Manifest 声明，平台工具按 Run purpose 注入；为当前 Attempt 暴露显式授权处理器，严格校验输入/输出、当前授权、超时、输出大小和串行约束；不进入普通 Tool Binding，不承载 Agent Loop |
 | MCP Connector 治理与执行 | [PostgresToolConnectorService](../../server/src/modules/tool/postgres-tool-connector-service.ts)、[AgentRuntimePort](../../server/src/modules/runtime/runtime-types.ts)与[DSH Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) | 复用 Connector 管理；Streamable HTTP Server 整体发现/审核，Agent→Connector 二元 Grant；Attempt 固定能力摘要并复核当前授权；凭据值只进入 Worker 环境，实际调用由 DSH 执行并按 MCP Tool 留审计；不创建平台 Tool Version/Binding |
 
 ## API 与运行契约
@@ -27,7 +27,9 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 接口修改必须同步消费者、Schema 和相应测试。公开 API、内部 TypeScript 类型和 DSH ACP 是不同边界，不应直接复用上游内部对象代替产品契约。
 
-Tool Version 持久化 `outputValidation`、`retryPolicy`、`concurrencyPolicy` 和 `completionSemantics`。平台工具由契约目录编译严格 JSON Schema，并在 Unix socket 桥两侧执行校验；DSH 包装器对非 2xx 响应抛出错误，不把错误正文当成成功结果。由于 DSH ToolRuntime 对普通 `Error` 只保留 `message`，包装器同时把 `code/retryable/effect_state` 以 `DSH_WORK_TOOL_ERROR` 前缀投影到模型可见消息，并保留同名属性供直接调用方使用。DSH 原生文件/任务工具的输入由 DSH 与平台路径策略约束，但结构化输出尚未穿过平台验证边界，目录明确发布 `outputValidation=unavailable` 及不可验证标记 Schema。提升验证级别前须接通实际输出校验，不能只修改目录字段。
+`GET /tools`、`GET /tools/catalog` 与 `GET /tools/bindings` 是 DSH 内置工具的管理边界，只返回稳定 Connector `connector-dsh-workspace` 下的记录。dsh-work 内置执行/平台工具由代码契约目录管理；MCP 外部工具由 Connector 的发现快照、整体审核和 Agent Grant 管理，二者均不写入普通工具列表。
+
+DSH Tool Version 持久化 `outputValidation`、`retryPolicy`、`concurrencyPolicy` 和 `completionSemantics`。dsh-work 内置执行/平台工具由契约目录编译严格 JSON Schema，并在 Unix socket 桥两侧执行校验；DSH 包装器对非 2xx 响应抛出错误，不把错误正文当成成功结果。由于 DSH ToolRuntime 对普通 `Error` 只保留 `message`，包装器同时把 `code/retryable/effect_state` 以 `DSH_WORK_TOOL_ERROR` 前缀投影到模型可见消息，并保留同名属性供直接调用方使用。DSH 原生文件/任务工具的输入由 DSH 与平台路径策略约束，但结构化输出尚未穿过平台验证边界，目录明确发布 `outputValidation=unavailable` 及不可验证标记 Schema。提升验证级别前须接通实际输出校验，不能只修改目录字段。
 
 平台桥错误外层为 `error.code/message/retryable/effect_state`。处理器在任何写入前发现的参数或业务前置条件失败必须抛出有类型错误，才能保留可纠正消息和 `not_started`；未标记的写入处理器异常保守记为 `TOOL_RESULT_UNKNOWN`。只读安全工具超时可标记重试；写入超时、取消或执行后冲突按契约表达未知效果。`serialized` 表示同一 Attempt 内同名工具不允许重叠执行，冲突在第二个处理器启动前返回。写入平台工具按 Task 自动登记 Operation：`completionSemantics=completed` 落完成回执，`accepted` 保留异步受理状态，超时或执行后无法确认落 `unknown`；重复动作不会再次进入处理器。
 
@@ -37,7 +39,7 @@ PF-02 的预算账户以 `tasks.budget_scope_task_id` 标识共享范围；当�
 
 `cumulativeBudget` 可用于会话 Run 与无 Session Task；自动任务既有 `inputTemplate.budget` 同时固定为该次 Task 的累计上限并收紧单 Attempt limits。时长、工具和输出字节为 hard；Token 只接受 Runtime 完整上报，缺失时返回 `unavailable` 和 null，不从文本估算；成本保持 unavailable。`maxTokens`、`maxCostAmount`/`costCurrency` 返回 422 `TASK_BUDGET_UNSUPPORTED`，超出剩余额度返回 409 `TASK_BUDGET_EXCEEDED`。
 
-PF-03 的 MCP 契约使用现有 Connector 作为配置、健康和启停入口，`mcp_connector_profiles` 保存平台生成的 Server 命名空间、发现快照及已审核摘要，`agent_mcp_grants` 保存 Agent 对整个 Connector 的二元授权。`credential_secrets` 保存由 `DSH_CREDENTIAL_MASTER_KEY` 加密的 Bearer Token 密文、随机 nonce、认证标签及密钥版本；查询接口只返回“已加密存储”或“需要重新录入”状态。旧 `dsh-managed` 引用保留 Connector 和 Grant 并降级，重新录入时为目标 Connector 建立新的独立凭据引用；历史上共享同一引用的其他 Connector 不受本次 Token 变化影响。Runtime Manifest 的 `mcp_connections` 只固定连接标识、公开端点、认证类型及能力摘要，不包含密钥；执行前和活动期以当前 Grant、Connector 状态及摘要重新鉴权。服务端按凭据 ID 解密 Token，并以环境变量注入每 Attempt DSH MCP Patch；DSH 策略只放行获准 `mcp__<serverName>__*` 命名空间。轮换覆盖独占密文并递增版本，人工停用状态保持不变；发现写回事务先锁 Connector，再独立读取最新凭据版本，旧版本结果不得改变 Connector 或能力快照。`mcp_invocation_audits` 记录实际 Tool 名、参数摘要、Run/Attempt 和结果。当前只支持 Streamable HTTP Tools；Resources、Prompts 与 stdio 明确不可用。
+PF-03 的 MCP 契约使用现有 Connector 作为配置、健康、启停和删除入口，`mcp_connector_profiles` 保存平台生成的 Server 命名空间、发现快照及已审核摘要，`agent_mcp_grants` 保存 Agent 对整个 Connector 的二元授权。新增页面先调用不落库的连通测试；正式登记必须再次通过 DSH 发现至少一个 Tool，成功后才在一个事务中保存 Connector、能力快照和可选凭据，客户端不能提交“测试通过”标记绕过复核。`credential_secrets` 保存由 `DSH_CREDENTIAL_MASTER_KEY` 加密的 Bearer Token 密文、随机 nonce、认证标签及密钥版本；查询接口只返回“已加密存储”或“需要重新录入”状态。旧 `dsh-managed` 引用保留 Connector 和 Grant 并降级，重新录入时为目标 Connector 建立新的独立凭据引用；历史上共享同一引用的其他 Connector 不受本次 Token 变化影响。Runtime Manifest 的 `mcp_connections` 只固定连接标识、公开端点、认证类型及能力摘要，不包含密钥；执行前和活动期以当前 Grant、Connector 状态及摘要重新鉴权。服务端按凭据 ID 解密 Token，并以环境变量注入每 Attempt DSH MCP Patch；DSH 策略只放行获准 `mcp__<serverName>__*` 命名空间。轮换覆盖独占密文并递增版本，人工停用状态保持不变；发现写回事务先锁 Connector，再独立读取最新凭据版本，旧版本结果不得改变 Connector 或能力快照。删除采用受控软删除：活动 Grant 与 Binding 立即撤销、关联 Tool 停用、独占密文删除；Connector/Profile/健康检查及 `mcp_invocation_audits` 保留，所有活动查询和 Runtime 解析过滤 `deleted_at`。`mcp_invocation_audits` 记录实际 Tool 名、参数摘要、Run/Attempt 和结果。当前只支持 Streamable HTTP Tools；Resources、Prompts 与 stdio 明确不可用。
 
 员工与管理端 Agent 均通过同一 Run/Attempt、AgentRuntimePort 和 DSH 适配链路执行，不能通过新增 API、Gateway 或业务服务另建直接调用模型的 Agent Loop。职责与评审要求见 [架构总览：Agent 执行引擎统一](overview.md)。
 

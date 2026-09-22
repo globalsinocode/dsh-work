@@ -1,4 +1,4 @@
-import type { RegisterMcpConnectorInput, ToolDefinition } from '../../domain/types.ts'
+import type { RegisterMcpConnectorInput, TestMcpConnectionInput, ToolDefinition } from '../../domain/types.ts'
 import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
@@ -48,6 +48,13 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
     await service.listMcpInvocationAudits(context.url.searchParams.get('connector_id') ?? ''),
     'postgres',
   ))
+  router.post(`${basePath}/connectors/mcp/test`, async (request, context) => {
+    const input = await readJsonBody<Omit<TestMcpConnectionInput, 'actor'>>(request)
+    return envelope('admin', await service.testMcpConnection({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
   router.post(`${basePath}/connectors/mcp`, async (request, context) => {
     const input = await readJsonBody<Omit<RegisterMcpConnectorInput, 'actor'>>(request)
     return envelope('admin', await service.registerMcpConnector({
@@ -55,6 +62,14 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
+  router.delete(`${basePath}/connectors/mcp/:connectorId`, async (_request, context) => envelope(
+    'admin',
+    await service.deleteMcpConnector({
+      connectorId: context.params['connectorId'] ?? '',
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }),
+    'postgres',
+  ))
   router.patch(`${basePath}/connectors/mcp/credential`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string; bearerToken: string }>(request)
     return envelope('admin', await service.rotateMcpCredential({

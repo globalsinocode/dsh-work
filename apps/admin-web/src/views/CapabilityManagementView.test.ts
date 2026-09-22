@@ -1,4 +1,4 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElNotification } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import CapabilityManagementView from './CapabilityManagementView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useContentStore } from '../stores/content'
+import { useToolGovernanceStore } from '../stores/toolGovernance'
 
 const wrappers: VueWrapper[] = []
 afterEach(() => {
@@ -21,6 +22,8 @@ async function render(canManage = true, initial = '/skills') {
   useAuthStore().$patch({ permissions: canManage ? ['admin:write'] : ['admin:read'] })
   const content = useContentStore()
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
+  const toolGovernance = useToolGovernanceStore()
+  vi.spyOn(toolGovernance, 'loadBindings').mockResolvedValue(undefined)
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/skills', component: CapabilityManagementView },
     { path: '/skills/install', component: CapabilityManagementView },
@@ -41,7 +44,7 @@ async function render(canManage = true, initial = '/skills') {
   })
   wrappers.push(wrapper)
   await flushPromises()
-  return { wrapper, router, auth: useAuthStore(), content }
+  return { wrapper, router, auth: useAuthStore(), content, toolGovernance }
 }
 
 function strictDraftSkill(): import('../types/domain').SkillDefinition {
@@ -58,6 +61,31 @@ function strictDraftSkill(): import('../types/domain').SkillDefinition {
     toolIds: [],
     testPrompt: '验证当前 Skill',
     updatedAt: '2026-09-13 15:00',
+  }
+}
+
+function disabledDshTool(): import('../types/domain').ToolDefinition {
+  return {
+    id: 'read', version: '1.0.0', name: '读取文件', system: 'DSH Runtime',
+    description: '读取当前 Run 已授权的文件。', connectorId: 'connector-dsh-workspace',
+    risk: 'low', mode: 'read', status: 'disabled', inputSchema: '{}', outputSchema: '{}',
+    outputValidation: 'unavailable', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
+    completionSemantics: 'completed', timeoutSeconds: 30, allowedRoles: ['平台管理员'],
+    dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
+  }
+}
+
+function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
+  return {
+    id: 'connector-mcp-offline', name: '离线待审核 MCP', system: 'MCP', status: 'offline',
+    toolCount: 1, protocol: 'mcp', endpoint: 'https://mcp.example.invalid/mcp', authType: 'bearer',
+    credentialRef: '已加密存储', scopeDescription: '只读测试范围', latency: '—', lastCheckedAt: '刚刚',
+    mcp: {
+      serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
+      capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
+      capabilities: [{ name: 'query', description: '查询', inputSchema: { type: 'object' } }],
+      grantedAgentIds: [], discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
+    },
   }
 }
 
@@ -112,10 +140,12 @@ describe('Skill installation sibling tab', () => {
   it('renders tools and connectors as independent pages without the Skill tabs', async () => {
     const { wrapper, router } = await render(true, '/tools')
     expect(wrapper.find('[role="tablist"][aria-label="Skill 管理"]').exists()).toBe(false)
-    expect(wrapper.get('[aria-label="工具列表"]').attributes('aria-label')).toBe('工具列表')
-    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索工具名称、标识或系统')
+    expect(wrapper.get('[aria-label="DSH 内置工具列表"]').attributes('aria-label')).toBe('DSH 内置工具列表')
+    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 DSH 内置工具名称、标识或说明')
+    expect(wrapper.text()).toContain('MCP 工具在连接器中整体审核')
     expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
     expect(wrapper.get('[data-action="add-tool"]').text()).toContain('添加工具')
+    expect(wrapper.find('[data-action="register-tool-candidate"]').exists()).toBe(false)
 
     await router.push('/connectors')
     await flushPromises()
@@ -163,6 +193,42 @@ describe('Skill installation sibling tab', () => {
   it('does not expose tool creation to read-only administrators', async () => {
     const { wrapper } = await render(false, '/tools')
     expect(wrapper.find('[data-action="add-tool"]').exists()).toBe(false)
+  })
+
+  it('keeps the enable action when a disabled tool has revoked binding history', async () => {
+    const { wrapper, content, toolGovernance } = await render(true, '/tools')
+    content.tools.push(disabledDshTool())
+    toolGovernance.serverBindings.read = {
+      revoked: true,
+      bindingRevision: {
+        id: 'tool-binding-read rev2', endpoint: 'dsh://workspace', executor: 'read',
+        credentialSlot: '—（无凭据槽位）', filterPolicy: 'Runtime Manifest + Sandbox · default', sealedAt: '刚刚',
+      },
+    }
+    await flushPromises()
+
+    expect(wrapper.get('[data-action="enable-tool"]').text()).toBe('启用')
+    expect(wrapper.get('.el-table__row').text()).toContain('已停用')
+    expect(wrapper.get('.el-table__row').text()).not.toContain('已撤销')
+  })
+
+  it('keeps offline status ahead of a retained MCP review state', async () => {
+    const { wrapper, content } = await render(true, '/connectors')
+    const connector = offlinePendingMcp()
+    content.connectors.push(connector)
+    const check = vi.spyOn(content, 'checkConnector').mockResolvedValue(connector)
+    const error = vi.spyOn(ElNotification, 'error').mockImplementation(() => ({ close: () => undefined }))
+    const info = vi.spyOn(ElNotification, 'info').mockImplementation(() => ({ close: () => undefined }))
+    await flushPromises()
+
+    expect(wrapper.get('.el-table__row').text()).toContain('离线')
+    expect(wrapper.get('.el-table__row').text()).not.toContain('连通，待审核')
+    await wrapper.get('[data-action="check-connector"]').trigger('click')
+    await flushPromises()
+
+    expect(check).toHaveBeenCalledWith(connector.id)
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ title: `连接器异常：${connector.name}` }))
+    expect(info).not.toHaveBeenCalled()
   })
 
   it('groups dependency Skills under their installation entry', async () => {

@@ -53,8 +53,8 @@ insert into connectors (
   scope_description, status, latency_ms, last_checked_at
 ) values (
   'connector-dsh-workspace', 'tenant-dsh-work', 'dsh-workspace',
-  'DSH 工作空间文件连接器', 'runtime', 'DSH Runtime', 'runtime', 'dsh://workspace',
-  'Runtime Manifest + Sandbox', '仅访问当前 Run 显式挂载的工作空间与输入文件。',
+  'DSH Runtime 内置工具连接器', 'runtime', 'DSH Runtime', 'runtime', 'dsh://workspace',
+  'Runtime Manifest + Sandbox', '承载 DSH Runtime 普通内置工具；仅访问当前 Run 显式挂载的工作空间与输入文件。',
   'healthy', 0, now()
 )
 on conflict (id) do nothing;

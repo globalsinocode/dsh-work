@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
-import { DshAcpRuntimeAdapter, prepareMcpProcess, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
+import { diagnoseMcpAuthenticationFailure, DshAcpRuntimeAdapter, prepareMcpProcess, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
@@ -22,6 +22,44 @@ afterEach(async () => {
 })
 
 describe('PF-03 DSH MCP process patch', () => {
+  it('recovers authentication failures hidden by an opaque DSH Internal error', async () => {
+    const requests: Array<{ input: string; authorization?: string; body?: string }> = []
+    const connection = {
+      snapshot: {
+        connector_id: 'connector-auth', server_name: 'auth', transport: 'streamable-http' as const,
+        endpoint: 'https://mcp.example.test/rpc', auth_type: 'none' as const, capability_digest: 'a'.repeat(64),
+      },
+      headers: {},
+    }
+    const missing = await diagnoseMcpAuthenticationFailure(connection, 'Internal error', async (input, init) => {
+      const headers = new Headers(init?.headers)
+      requests.push({ input: String(input), authorization: headers.get('Authorization') ?? undefined, body: String(init?.body) })
+      return new Response(null, { status: 401 })
+    })
+    assert.equal(missing?.status, 422)
+    assert.equal(missing?.code, 'MCP_AUTHENTICATION_REQUIRED')
+    assert.match(missing?.message ?? '', /要求 Bearer Token/)
+    assert.deepEqual(requests, [{
+      input: 'https://mcp.example.test/rpc', authorization: undefined,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'dsh-work-auth-probe', method: 'ping' }),
+    }])
+
+    const token = 'secret-token-value'
+    const invalid = await diagnoseMcpAuthenticationFailure({
+      ...connection,
+      snapshot: { ...connection.snapshot, auth_type: 'bearer' as const },
+      headers: { Authorization: `Bearer ${token}` },
+    }, 'Internal error', async (_input, init) => {
+      assert.equal(new Headers(init?.headers).get('Authorization'), `Bearer ${token}`)
+      return new Response(null, { status: 403 })
+    })
+    assert.equal(invalid?.code, 'MCP_AUTHENTICATION_FAILED')
+    assert.doesNotMatch(invalid?.message ?? '', new RegExp(token))
+
+    const unrelated = await diagnoseMcpAuthenticationFailure(connection, 'Internal error', async () => new Response(null, { status: 500 }))
+    assert.equal(unrelated, undefined, 'non-authentication failures must retain the original DSH error')
+  })
+
   it('passes secret values through the child environment and authorizes the whole server namespace', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-patch-'))
     try {

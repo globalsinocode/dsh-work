@@ -103,7 +103,7 @@ const router = createRouter({
       path: '/tools',
       name: 'tools',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: '工具管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'DSH 工具管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/connectors',

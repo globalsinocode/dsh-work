@@ -77,6 +77,7 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
     get?: { operationId?: string; summary?: string }
     post?: { operationId?: string; summary?: string }
     patch?: { operationId?: string; summary?: string }
+    delete?: { operationId?: string; summary?: string }
   }> }
 
   assert.equal(workbench.paths['/task-executions']?.post?.operationId, 'createTaskExecution')
@@ -92,6 +93,8 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
   assert.match(workbench.components.schemas['TaskCumulativeBudgetInput']?.description ?? '', /不支持的硬预算会明确失败/)
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
   assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
+  assert.equal(admin.paths['/connectors/mcp/test']?.post?.operationId, 'testMcpConnection')
+  assert.equal(admin.paths['/connectors/mcp/{connectorId}']?.delete?.operationId, 'deleteMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
   assert.equal(admin.paths['/connectors/mcp/approve']?.post?.operationId, 'approveMcpConnector')

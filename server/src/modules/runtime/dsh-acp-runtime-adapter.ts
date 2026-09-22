@@ -9,7 +9,7 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
-import { platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
+import { assertPlatformToolPurpose, platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
 import {
   PlatformToolError,
   toolPreconditionFailed,
@@ -365,6 +365,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       return { latencyMs: Math.max(0, Math.round(performance.now() - started)), capabilities }
     } catch (error) {
       const detail = diagnostics.join('\n').slice(-2000)
+      const authenticationFailure = await diagnoseMcpAuthenticationFailure(
+        connection,
+        `${error instanceof Error ? error.message : String(error)}\n${detail}`,
+      )
+      if (authenticationFailure) throw authenticationFailure
       throw new Error(`MCP 发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
     } finally {
       await client.close().catch(() => undefined)
@@ -402,11 +407,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.terminal) return
       this.setStatus(record, 'starting')
       this.armDeadline(record, 'setup', this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
+      assertPlatformToolPurpose(record.manifest)
       const platformTools: Partial<Record<PlatformToolName, PlatformToolRegistration>> = {}
       const registerPlatformTool = (name: PlatformToolName, handler: PlatformToolRegistration['handler']) => {
         platformTools[name] = { handler, contract: platformToolContracts[name] }
       }
-      if (record.manifest.purpose === 'admin-skill-install') {
+      if (record.manifest.tools.some(tool => tool.id === 'prepare_skill_installation')) {
         const prepare = this.configuration.prepareSkillInstallation
         if (!prepare) throw new Error('安装助手不可用：未配置平台安装工具')
         registerPlatformTool('prepare_skill_installation', (_input, signal) => prepare(record.manifest, signal))
@@ -1151,6 +1157,56 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message:
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+type McpAuthenticationFailure = Error & {
+  status: 422
+  code: 'MCP_AUTHENTICATION_REQUIRED' | 'MCP_AUTHENTICATION_FAILED'
+}
+
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+/**
+ * DSH/ACP can collapse an MCP transport 401/403 into JSON-RPC "Internal error".
+ * Recover only the authentication classification with a side-effect-free ping;
+ * capability discovery and all successful MCP traffic remain DSH-owned.
+ */
+export async function diagnoseMcpAuthenticationFailure(
+  connection: McpRuntimeConnection,
+  failureText: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<McpAuthenticationFailure | undefined> {
+  const explicitStatus = /(?:\b401\b|\b403\b|unauthori[sz]ed|forbidden|authentication (?:required|failed)|认证失败|未认证|令牌无效)/i
+  if (explicitStatus.test(failureText)) return mcpAuthenticationFailure(connection.snapshot.auth_type)
+  if (!/internal error/i.test(failureText)) return undefined
+  try {
+    const response = await fetchImpl(connection.snapshot.endpoint, {
+      method: 'POST',
+      headers: {
+        ...connection.headers,
+        Accept: 'application/json, text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'dsh-work-auth-probe', method: 'ping' }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const authenticationFailed = response.status === 401 || response.status === 403
+    await response.body?.cancel().catch(() => undefined)
+    return authenticationFailed
+      ? mcpAuthenticationFailure(connection.snapshot.auth_type)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function mcpAuthenticationFailure(authType: McpRuntimeConnection['snapshot']['auth_type']): McpAuthenticationFailure {
+  return Object.assign(new Error(authType === 'none'
+    ? 'MCP 认证失败：该服务要求 Bearer Token，请选择 Bearer Token 认证并填写有效 Token'
+    : 'MCP 认证失败：Bearer Token 无效、已过期或无权访问该服务，请检查 Token 后重试'), {
+    status: 422 as const,
+    code: authType === 'none' ? 'MCP_AUTHENTICATION_REQUIRED' as const : 'MCP_AUTHENTICATION_FAILED' as const,
+  })
 }
 
 export async function prepareMcpProcess(

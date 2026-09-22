@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
+import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from './authorization-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
-const runtimeIntrinsicToolReferences = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
 
 export interface IdentityRow {
   id: string
@@ -513,7 +513,7 @@ export class PostgresAuthorizationService {
     )
     const authorizedToolReferences = new Set(unique(agent.toolReferences))
     const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
-      .filter(reference => !runtimeIntrinsicToolReferences.has(reference) && !authorizedToolReferences.has(reference))
+      .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference) && !authorizedToolReferences.has(reference))
     if (missingSkillTools.length) {
       throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`)
     }

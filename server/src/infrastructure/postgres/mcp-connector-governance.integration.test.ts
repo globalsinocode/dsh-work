@@ -19,6 +19,8 @@ let discovered: McpInspectionResult['capabilities'] = []
 let lastInspectedConnection: McpRuntimeConnection | undefined
 let inspectionGate: Promise<void> | undefined
 let notifyInspectionStarted: (() => void) | undefined
+let inspectionFailure: Error | undefined
+let inspectionCount = 0
 
 const runtime: AgentRuntimePort = {
   async execute() { throw new Error('此测试不执行 Agent Loop') },
@@ -33,9 +35,11 @@ const runtime: AgentRuntimePort = {
     }
   },
   async inspectMcpConnection(connection) {
+    inspectionCount += 1
     lastInspectedConnection = structuredClone(connection)
     notifyInspectionStarted?.()
     if (inspectionGate) await inspectionGate
+    if (inspectionFailure) throw inspectionFailure
     return { latencyMs: 5, capabilities: structuredClone(discovered) }
   },
   async close() {},
@@ -69,6 +73,92 @@ before(async () => {
   service = new PostgresToolConnectorService(database, runtime, undefined, credentialSecrets)
 })
 
+test('PF-03 tests connection without persistence and registration rechecks before saving', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  const token = `mcp-preflight-${suffix}`
+  discovered = [{
+    name: 'preflight_read', description: 'Read preflight data.',
+    inputSchema: { type: 'object', properties: {} },
+  }]
+  const [before] = await database<{ connectorCount: number; credentialCount: number }[]>`
+    select
+      (select count(*)::int from connectors where tenant_id = 'tenant-dsh-work' and protocol = 'mcp') as "connectorCount",
+      (select count(*)::int from credential_refs where tenant_id = 'tenant-dsh-work' and backend = 'postgres-encrypted') as "credentialCount"
+  `
+  const countBeforeTest = inspectionCount
+  const tested = await service.testMcpConnection({
+    name: `预检 MCP ${suffix}`,
+    endpoint: 'https://preflight-mcp.example.test/rpc',
+    authType: 'bearer',
+    bearerToken: token,
+    actor: 'U00008',
+  })
+  assert.equal(tested.status, 'reachable')
+  assert.equal(tested.capabilityCount, 1)
+  assert.equal(inspectionCount, countBeforeTest + 1)
+  assert.equal(lastInspectedConnection?.headers.Authorization, `Bearer ${token}`)
+  const [afterTest] = await database<{ connectorCount: number; credentialCount: number }[]>`
+    select
+      (select count(*)::int from connectors where tenant_id = 'tenant-dsh-work' and protocol = 'mcp') as "connectorCount",
+      (select count(*)::int from credential_refs where tenant_id = 'tenant-dsh-work' and backend = 'postgres-encrypted') as "credentialCount"
+  `
+  assert.deepEqual(afterTest, before, 'connection test must not persist a Connector or credential')
+
+  const registered = await service.registerMcpConnector({
+    name: `预检 MCP ${suffix}`,
+    endpoint: 'https://preflight-mcp.example.test/rpc',
+    authType: 'bearer',
+    bearerToken: token,
+    scopeDescription: '预检后登记仍需服务端复核',
+    actor: 'U00008',
+  })
+  assert.equal(inspectionCount, countBeforeTest + 2, 'registration must not trust a previous browser test')
+  assert.equal(registered.mcp?.approvalStatus, 'pending_review')
+  assert.equal(registered.mcp?.capabilityCount, 1)
+
+  await assert.rejects(service.testMcpConnection({
+    name: '无效地址', endpoint: 'not-a-url', authType: 'none', actor: 'U00008',
+  }), { status: 422, code: 'MCP_CONNECTION_INVALID' })
+
+  inspectionFailure = Object.assign(new Error('MCP 认证失败：该服务要求 Bearer Token'), {
+    status: 422,
+    code: 'MCP_AUTHENTICATION_REQUIRED',
+  })
+  try {
+    await assert.rejects(service.testMcpConnection({
+      name: '需要认证的 MCP', endpoint: 'https://auth-required.example.test/rpc', authType: 'none', actor: 'U00008',
+    }), {
+      status: 422,
+      code: 'MCP_AUTHENTICATION_REQUIRED',
+      message: 'MCP 认证失败：该服务要求 Bearer Token',
+    })
+  } finally {
+    inspectionFailure = undefined
+  }
+
+  const [beforeFailure] = await database<{ connectorCount: number }[]>`
+    select count(*)::int as "connectorCount" from connectors
+     where tenant_id = 'tenant-dsh-work' and protocol = 'mcp'
+  `
+  inspectionFailure = new Error('合成 MCP 离线')
+  try {
+    await assert.rejects(service.registerMcpConnector({
+      name: `离线 MCP ${suffix}`,
+      endpoint: 'https://offline-mcp.example.test/rpc',
+      authType: 'none',
+      scopeDescription: '失败时不得落库',
+      actor: 'U00008',
+    }), { status: 503, code: 'MCP_CONNECTION_TEST_FAILED' })
+  } finally {
+    inspectionFailure = undefined
+  }
+  const [afterFailure] = await database<{ connectorCount: number }[]>`
+    select count(*)::int as "connectorCount" from connectors
+     where tenant_id = 'tenant-dsh-work' and protocol = 'mcp'
+  `
+  assert.deepEqual(afterFailure, beforeFailure, 'failed registration recheck must not persist a Connector')
+})
+
 test('PF-03 encrypts, resolves, and rotates a Bearer Token without returning plaintext', async () => {
   const initialToken = `mcp-initial-${randomUUID()}`
   const rotatedToken = `mcp-rotated-${randomUUID()}`
@@ -84,7 +174,11 @@ test('PF-03 encrypts, resolves, and rotates a Bearer Token without returning pla
     bearerToken: initialToken,
     scopeDescription: '不得回退明文或环境引用',
     actor: 'U00008',
-  }), /加密凭据存储未配置/)
+  }), {
+    status: 503,
+    code: 'MCP_CREDENTIAL_STORE_UNAVAILABLE',
+    message: 'MCP 加密凭据存储不可用：请配置 DSH_CREDENTIAL_MASTER_KEY 并重启服务',
+  })
 
   const registered = await service.registerMcpConnector({
     name: '安全数据 MCP',
@@ -300,7 +394,8 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
   assert.equal(registered.protocol, 'mcp')
   const connectorId = registered.id
   const serverName = registered.mcp!.serverName
-  assert.equal(registered.mcp?.approvalStatus, 'draft')
+  assert.equal(registered.mcp?.approvalStatus, 'pending_review')
+  assert.equal(registered.mcp?.capabilityCount, 2)
   assert.equal(registered.toolCount, 0, 'MCP capabilities must not create platform Tool rows')
 
   const discoveredConnector = await service.checkConnector({ connectorId, actor: 'U00008' })
@@ -434,4 +529,81 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
     service.assertActiveMcpConnections(finalPins, 'agent-version-dsh-work-assistant-1'),
     /授权已撤销或能力摘要已变化/,
   )
+
+  const deletion = await service.deleteMcpConnector({ connectorId, actor: 'U00008' })
+  assert.equal(deletion.revokedGrantCount, 0)
+  assert.equal(deletion.credentialDestroyed, false)
+  assert.equal((await service.getConnectors()).some(connector => connector.id === connectorId), false)
+  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'), [])
+  const retainedAudits = await service.listMcpInvocationAudits(connectorId)
+  assert.equal(retainedAudits[0]?.attemptId, attemptId, 'deletion must retain invocation evidence')
+})
+
+test('PF-03 deletion revokes active grants and destroys an exclusive encrypted credential', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  discovered = [{
+    name: 'deletion_read', description: 'Read deletion fixture.',
+    inputSchema: { type: 'object', properties: {} },
+  }]
+  const registered = await service.registerMcpConnector({
+    name: `待删除 MCP ${suffix}`,
+    endpoint: 'https://delete-mcp.example.test/rpc',
+    authType: 'bearer',
+    bearerToken: `delete-token-${suffix}`,
+    scopeDescription: '删除治理测试',
+    actor: 'U00008',
+  })
+  const connectorId = registered.id
+  await service.approveMcpConnector({
+    connectorId,
+    capabilityDigest: registered.mcp!.capabilityDigest!,
+    actor: 'U00008',
+  })
+  await service.setAgentMcpAccess({
+    connectorId,
+    agentId: 'agent-dsh-work-assistant',
+    enabled: true,
+    actor: 'U00008',
+  })
+  const [before] = await database<{ credentialRefId: string }[]>`
+    select credential_ref_id as "credentialRefId" from connectors
+     where tenant_id = 'tenant-dsh-work' and id = ${connectorId}
+  `
+  assert.ok(before?.credentialRefId)
+
+  const result = await service.deleteMcpConnector({ connectorId, actor: 'U00008' })
+  assert.deepEqual(result, { connectorId, revokedGrantCount: 1, credentialDestroyed: true })
+  const [evidence] = await database<{
+    status: string; deletedAt: Date | null; deletedBy: string | null; credentialRefId: string | null;
+    activeGrantCount: number; revokedGrantCount: number; profileCount: number; healthCount: number;
+    credentialRefCount: number; secretCount: number
+  }[]>`
+    select c.status, c.deleted_at as "deletedAt", c.deleted_by as "deletedBy",
+           c.credential_ref_id as "credentialRefId",
+           (select count(*)::int from agent_mcp_grants g
+             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "activeGrantCount",
+           (select count(*)::int from agent_mcp_grants g
+             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'revoked') as "revokedGrantCount",
+           (select count(*)::int from mcp_connector_profiles p
+             where p.tenant_id = c.tenant_id and p.connector_id = c.id) as "profileCount",
+           (select count(*)::int from connector_health_checks h
+             where h.tenant_id = c.tenant_id and h.connector_id = c.id) as "healthCount",
+           (select count(*)::int from credential_refs cr
+             where cr.tenant_id = c.tenant_id and cr.id = ${before!.credentialRefId}) as "credentialRefCount",
+           (select count(*)::int from credential_secrets cs
+             where cs.tenant_id = c.tenant_id and cs.credential_ref_id = ${before!.credentialRefId}) as "secretCount"
+      from connectors c
+     where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
+  `
+  assert.equal(evidence?.status, 'disabled')
+  assert.ok(evidence?.deletedAt)
+  assert.equal(evidence?.deletedBy, 'U00008')
+  assert.equal(evidence?.credentialRefId, null)
+  assert.equal(evidence?.activeGrantCount, 0)
+  assert.equal(evidence?.revokedGrantCount, 1)
+  assert.equal(evidence?.profileCount, 1)
+  assert.ok((evidence?.healthCount ?? 0) >= 1)
+  assert.equal(evidence?.credentialRefCount, 0)
+  assert.equal(evidence?.secretCount, 0)
+  await assert.rejects(service.deleteMcpConnector({ connectorId, actor: 'U00008' }), /不存在/)
 })

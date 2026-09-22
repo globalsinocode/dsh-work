@@ -611,10 +611,36 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "登记 Streamable HTTP MCP Server；平台生成标识和命名空间，Bearer Token 加密入库且不回显",
+        "summary": "重新执行连通与 Tool 发现后登记 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/connectors/mcp/test": {
+      "post": {
+        "operationId": "testMcpConnection",
+        "summary": "使用待登记配置通过 DSH 测试 MCP 连通性并发现 Tool；不持久化 Token 或 Connector",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "422": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/connectors/mcp/{connectorId}": {
+      "delete": {
+        "operationId": "deleteMcpConnector",
+        "summary": "删除 MCP Connector，撤销 Agent Grant、销毁独占凭据并保留审核与调用证据",
+        "parameters": [
+          { "name": "connectorId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "404": { "$ref": "#/components/responses/Error" }
         }
       }
     },

@@ -318,6 +318,17 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
+  function testMcpConnection(input: Parameters<typeof adminApi.testMcpConnection>[0]) {
+    return adminApi.testMcpConnection(input)
+  }
+
+  async function deleteMcpConnector(connectorId: string) {
+    const result = await adminApi.deleteMcpConnector(connectorId)
+    const index = connectors.value.findIndex(connector => connector.id === connectorId)
+    if (index >= 0) connectors.value.splice(index, 1)
+    return result
+  }
+
   async function rotateMcpCredential(connectorId: string, bearerToken: string) {
     const connector = await adminApi.rotateMcpCredential({ connectorId, bearerToken })
     replaceById(connectors.value, connector)
@@ -399,7 +410,9 @@ export const useContentStore = defineStore('admin-content', () => {
     rollbackSkill,
     setToolStatus,
     checkConnector,
+    testMcpConnection,
     registerMcpConnector,
+    deleteMcpConnector,
     rotateMcpCredential,
     approveMcpConnector,
     setMcpConnectorStatus,

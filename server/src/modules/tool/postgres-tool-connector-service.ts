@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import {
-  RUNTIME_INTRINSIC_TOOL_REFS,
   toolBindingDigest,
   type ManifestToolBinding,
   type ResolvedToolBinding,
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
-import type { AddToolInput, ConnectorDefinition, McpInvocationAudit, RegisterMcpConnectorInput, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
+import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import type { AddToolInput, ConnectorDefinition, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -21,7 +21,7 @@ import {
   runtimeToolToCatalogEntry,
   type CatalogEntry,
 } from './dsh-built-in-tool-catalog.ts'
-import { PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
+import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 
 const tenantId = 'tenant-dsh-work'
 const hiddenRuntimeCatalogTools = new Set(['activate_skill', 'prepare_skill_installation', 'python_execute'])
@@ -106,6 +106,13 @@ interface McpCredentialRevision {
   credentialVersion: number | null
 }
 
+interface McpRegistrationInspection {
+  endpoint: string
+  serverName: string
+  latencyMs: number
+  capabilities: McpInspectionResult['capabilities']
+}
+
 export class PostgresToolConnectorService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
@@ -135,6 +142,7 @@ export class PostgresToolConnectorService {
              t.data_scopes as "dataScopes", t.approval_policy as "approvalPolicy",
              t.last_checked_at as "lastCheckedAt"
         from tools t
+        join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
         join lateral (
           select version, risk_level, input_schema, output_schema, output_validation,
                  retry_policy, concurrency_policy, completion_semantics
@@ -142,7 +150,8 @@ export class PostgresToolConnectorService {
            where tenant_id = t.tenant_id and tool_id = t.id and status = 'published'
            order by created_at desc limit 1
         ) tv on true
-       where t.tenant_id = ${tenantId} and t.connector_id is not null
+       where t.tenant_id = ${tenantId} and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         and c.deleted_at is null
        order by t.name
     `
     const roleNames = await this.roleNameMap()
@@ -271,7 +280,7 @@ export class PostgresToolConnectorService {
         from connectors c
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join tools t on t.tenant_id = c.tenant_id and t.connector_id = c.id
-       where c.tenant_id = ${tenantId}
+       where c.tenant_id = ${tenantId} and c.deleted_at is null
        group by c.id, cr.external_ref, cr.backend
        order by c.name
       `,
@@ -283,6 +292,7 @@ export class PostgresToolConnectorService {
                reviewer.display_name as "reviewedBy",
                coalesce(array_agg(g.agent_id order by g.agent_id) filter (where g.status = 'active'), '{}') as "grantedAgentIds"
           from mcp_connector_profiles p
+          join connectors c on c.tenant_id = p.tenant_id and c.id = p.connector_id and c.deleted_at is null
           left join users reviewer on reviewer.tenant_id = p.tenant_id and reviewer.id = p.reviewed_by
           left join agent_mcp_grants g on g.tenant_id = p.tenant_id and g.connector_id = p.connector_id
          where p.tenant_id = ${tenantId}
@@ -293,16 +303,38 @@ export class PostgresToolConnectorService {
     return rows.map(row => toConnectorDefinition(row, profileByConnector.get(row.id)))
   }
 
+  async testMcpConnection(input: TestMcpConnectionInput): Promise<McpConnectionTestResult> {
+    const actor = await this.requireActor(input.actor)
+    try {
+      const inspected = await this.inspectMcpRegistrationInput(input)
+      await this.audit(
+        actor.id,
+        'connector.mcp.test',
+        `mcp-test-${createHash('sha256').update(inspected.endpoint).digest('hex').slice(0, 16)}`,
+        'success',
+        `MCP 连通测试通过；通过 DSH 发现 ${inspected.capabilities.length} 个 Tool`,
+      )
+      return {
+        status: 'reachable',
+        endpoint: inspected.endpoint,
+        latencyMs: inspected.latencyMs,
+        capabilityCount: inspected.capabilities.length,
+        capabilities: inspected.capabilities,
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'MCP 连通测试失败'
+      await this.audit(actor.id, 'connector.mcp.test', 'mcp-test-failed', 'failed', message)
+      if (isTypedServiceError(cause)) throw cause
+      throw Object.assign(new Error(message), { status: 503 as const, code: 'MCP_CONNECTION_TEST_FAILED' })
+    }
+  }
+
   async registerMcpConnector(input: RegisterMcpConnectorInput): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
     const id = `connector-mcp-${randomUUID()}`
-    const serverName = createMcpServerName(input.name, id)
-    const endpoint = normalizeMcpEndpoint(input.endpoint)
-    if (!input.name.trim() || !input.scopeDescription.trim()) throw new Error('连接器名称和范围说明不能为空')
-    if (!['none', 'bearer'].includes(input.authType)) throw new Error('MCP 仅支持 none 或 bearer 认证')
-    if (input.authType === 'bearer' && !input.bearerToken) throw new Error('Bearer MCP 必须提供 Token')
-    if (input.authType === 'none' && input.bearerToken) throw new Error('无认证 MCP 不能提交 Bearer Token')
-    if (input.authType === 'bearer' && !this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
+    if (!input.scopeDescription.trim()) throw new Error('整体权限范围不能为空')
+    const inspected = await this.inspectMcpRegistrationInput(input, id)
+    const digest = mcpCapabilityDigest(inspected.capabilities)
 
     await this.database.begin(async transaction => {
       let credentialId: string | null = null
@@ -322,30 +354,103 @@ export class PostgresToolConnectorService {
       await transaction`
         insert into connectors (
           id, tenant_id, key, name, connector_type, credential_ref_id, status,
-          system, protocol, endpoint, auth_type, scope_description, updated_at
+          system, protocol, endpoint, auth_type, scope_description,
+          latency_ms, last_checked_at, updated_at
         ) values (
-          ${id}, ${tenantId}, ${serverName}, ${input.name.trim()}, 'mcp', ${credentialId}, 'degraded',
-          'MCP', 'mcp', ${endpoint}, ${input.authType}, ${input.scopeDescription.trim()}, now()
+          ${id}, ${tenantId}, ${inspected.serverName}, ${input.name.trim()}, 'mcp', ${credentialId}, 'degraded',
+          'MCP', 'mcp', ${inspected.endpoint}, ${input.authType}, ${input.scopeDescription.trim()},
+          ${inspected.latencyMs}, now(), now()
         )
       `
       await transaction`
-        insert into mcp_connector_profiles (tenant_id, connector_id, server_name)
-        values (${tenantId}, ${id}, ${serverName})
+        insert into mcp_connector_profiles (
+          tenant_id, connector_id, server_name, approval_status,
+          capability_digest, capability_snapshot, discovered_at, updated_at
+        ) values (
+          ${tenantId}, ${id}, ${inspected.serverName}, 'pending_review',
+          ${digest}, ${transaction.json(asJson(inspected.capabilities))}, now(), now()
+        )
+      `
+      await transaction`
+        insert into connector_health_checks (
+          id, tenant_id, connector_id, status, latency_ms, message, checked_by
+        ) values (
+          ${`connector-check-${randomUUID()}`}, ${tenantId}, ${id}, 'degraded',
+          ${inspected.latencyMs}, ${`已通过 DSH 发现 ${inspected.capabilities.length} 个 MCP Tool，等待整体审核`}, ${actor.id}
+        )
       `
     })
-    await this.audit(actor.id, 'connector.mcp.register', id, 'success', '登记 Streamable HTTP MCP Connector；等待发现与整体审核')
+    await this.audit(actor.id, 'connector.mcp.register', id, 'success', `连通复核通过并登记 MCP Connector；发现 ${inspected.capabilities.length} 个 Tool，等待整体审核`)
     return this.requireConnector(id)
+  }
+
+  async deleteMcpConnector(input: { connectorId: string; actor: string }): Promise<McpConnectorDeletionResult> {
+    const actor = await this.requireActor(input.actor)
+    let revokedGrantCount = 0
+    let credentialDestroyed = false
+    await this.database.begin(async transaction => {
+      const [connector] = await transaction<{ credentialRefId: string | null }[]>`
+        select credential_ref_id as "credentialRefId"
+          from connectors
+         where tenant_id = ${tenantId} and id = ${input.connectorId}
+           and protocol = 'mcp' and deleted_at is null
+         for update
+      `
+      if (!connector) throw new Error(`MCP Connector 不存在：${input.connectorId}`)
+      const revoked = await transaction<{ connectorId: string }[]>`
+        update agent_mcp_grants
+           set status = 'revoked', revoked_by = ${actor.id}, revoked_at = now(), updated_at = now()
+         where tenant_id = ${tenantId} and connector_id = ${input.connectorId} and status = 'active'
+         returning connector_id as "connectorId"
+      `
+      revokedGrantCount = revoked.length
+      await transaction`
+        update tool_binding_revisions
+           set status = 'revoked'
+         where tenant_id = ${tenantId} and connector_id = ${input.connectorId} and status = 'active'
+      `
+      await transaction`
+        update tools set status = 'disabled', updated_at = now()
+         where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+      `
+      await transaction`
+        update connectors
+           set status = 'disabled', credential_ref_id = null,
+               deleted_at = now(), deleted_by = ${actor.id}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${input.connectorId}
+      `
+      if (connector.credentialRefId) {
+        const deletedCredential = await transaction<{ id: string }[]>`
+          delete from credential_refs cr
+           where cr.tenant_id = ${tenantId} and cr.id = ${connector.credentialRefId}
+             and not exists (
+               select 1 from connectors c
+                where c.tenant_id = cr.tenant_id and c.credential_ref_id = cr.id
+             )
+           returning id
+        `
+        credentialDestroyed = deletedCredential.length > 0
+      }
+    })
+    await this.audit(
+      actor.id,
+      'connector.mcp.delete',
+      input.connectorId,
+      'success',
+      `删除 MCP Connector；撤销 ${revokedGrantCount} 条 Agent Grant；${credentialDestroyed ? '已销毁独占凭据' : '未删除共享或空凭据'}`,
+    )
+    return { connectorId: input.connectorId, revokedGrantCount, credentialDestroyed }
   }
 
   async rotateMcpCredential(input: { connectorId: string; bearerToken: string; actor: string }): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
-    if (!this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
+    if (!this.credentialSecrets) throw mcpCredentialStoreUnavailable()
     await this.database.begin(async transaction => {
       const [connector] = await transaction<{ credentialRefId: string | null; status: ConnectorDefinition['status'] }[]>`
         select c.credential_ref_id as "credentialRefId", c.status
           from connectors c
          where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
-           and c.protocol = 'mcp' and c.auth_type = 'bearer'
+           and c.protocol = 'mcp' and c.auth_type = 'bearer' and c.deleted_at is null
          for update
       `
       if (!connector?.credentialRefId) throw new Error('目标不是已配置 Bearer 认证的 MCP Connector')
@@ -429,6 +534,7 @@ export class PostgresToolConnectorService {
           left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
           left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
          where p.tenant_id = ${tenantId} and p.connector_id = ${input.connectorId}
+           and c.deleted_at is null
          for update of p, c
       `
       if (!profile?.digest || profile.count < 1) throw new Error('MCP 尚未成功发现 Tool，不能审核')
@@ -449,7 +555,8 @@ export class PostgresToolConnectorService {
         update connectors
            set status = case when status = 'disabled' then 'disabled' else 'healthy' end,
                updated_at = now()
-         where tenant_id = ${tenantId} and id = ${input.connectorId} and protocol = 'mcp'
+         where tenant_id = ${tenantId} and id = ${input.connectorId}
+           and protocol = 'mcp' and deleted_at is null
       `
     })
     await this.audit(actor.id, 'connector.mcp.approve', input.connectorId, 'success', `按连接器整体审核 ${approvedCount} 个 MCP Tool`)
@@ -517,11 +624,12 @@ export class PostgresToolConnectorService {
        where t.tenant_id = ${tenantId} and t.id = ${input.toolId}
     `
     if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (tool.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
     if (input.status === 'available' && tool.connectorStatus !== 'healthy') {
       throw new Error('连接器未处于健康状态，不能启用工具')
     }
     if (input.status === 'available'
-      && tool.connectorId === 'connector-dsh-workspace'
+      && tool.connectorId === DSH_RUNTIME_CONNECTOR_ID
       && tool.dshToolName
       && requiredDshToolApprovalPolicy(tool.dshToolName) === undefined) {
       throw new Error('该 DSH 工具所需的逐次审批尚未接入，不能启用')
@@ -559,7 +667,8 @@ export class PostgresToolConnectorService {
         from tools where tenant_id = ${tenantId} and id = ${input.toolId}
     `
     if (!current) throw new Error(`工具不存在：${input.toolId}`)
-    if (current.connectorId === 'connector-dsh-workspace' && current.dshToolName) {
+    if (current.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
+    if (current.connectorId === DSH_RUNTIME_CONNECTOR_ID && current.dshToolName) {
       const requiredPolicy = requiredDshToolApprovalPolicy(current.dshToolName)
       if (requiredPolicy === undefined) throw new Error('该 DSH 工具尚未接入所需的逐次审批，不能配置为可用')
       if (input.approvalPolicy !== requiredPolicy) {
@@ -600,7 +709,7 @@ export class PostgresToolConnectorService {
         from connectors c
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
-       where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
+       where c.tenant_id = ${tenantId} and c.id = ${input.connectorId} and c.deleted_at is null
     `
     if (!connector) throw new Error(`连接器不存在：${input.connectorId}`)
     const checkedCredential: McpCredentialRevision = {
@@ -661,7 +770,7 @@ export class PostgresToolConnectorService {
       }
       const [lockedConnector] = await transaction<{ status: ConnectorDefinition['status'] }[]>`
         select status from connectors
-         where tenant_id = ${tenantId} and id = ${input.connectorId}
+         where tenant_id = ${tenantId} and id = ${input.connectorId} and deleted_at is null
          for update
       `
       if (!lockedConnector) throw new Error(`连接器不存在：${input.connectorId}`)
@@ -740,7 +849,7 @@ export class PostgresToolConnectorService {
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
-         and c.protocol = 'mcp' and c.status = 'healthy'
+         and c.protocol = 'mcp' and c.status = 'healthy' and c.deleted_at is null
          and p.approval_status = 'approved' and p.capability_digest = p.approved_digest
        order by p.server_name
     `
@@ -818,6 +927,51 @@ export class PostgresToolConnectorService {
     `
   }
 
+  private async inspectMcpRegistrationInput(
+    input: Pick<TestMcpConnectionInput, 'name' | 'endpoint' | 'authType' | 'bearerToken'>,
+    connectorId = `connector-mcp-test-${randomUUID()}`,
+  ): Promise<McpRegistrationInspection> {
+    const name = input.name.trim()
+    if (!name) throw invalidMcpConnectionInput('连接器名称不能为空')
+    let endpoint: string
+    try { endpoint = normalizeMcpEndpoint(input.endpoint) }
+    catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'MCP 服务地址无效') }
+    if (!['none', 'bearer'].includes(input.authType)) throw invalidMcpConnectionInput('MCP 仅支持 none 或 bearer 认证')
+    if (input.authType === 'bearer' && !input.bearerToken) throw invalidMcpConnectionInput('Bearer MCP 必须提供 Token')
+    if (input.authType === 'none' && input.bearerToken) throw invalidMcpConnectionInput('无认证 MCP 不能提交 Bearer Token')
+    if (input.authType === 'bearer' && !this.credentialSecrets) throw mcpCredentialStoreUnavailable()
+    if (!this.runtime?.inspectMcpConnection) {
+      throw Object.assign(new Error('当前 DSH Runtime 未接入 MCP 检查能力'), {
+        status: 503 as const,
+        code: 'MCP_DISCOVERY_UNAVAILABLE',
+      })
+    }
+    const serverName = createMcpServerName(name, connectorId)
+    let bearerToken: string | undefined
+    try { bearerToken = input.authType === 'bearer' ? normalizeBearerToken(input.bearerToken!) : undefined }
+    catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'Bearer Token 无效') }
+    try {
+      const inspected = await this.runtime.inspectMcpConnection({
+        snapshot: {
+          connector_id: connectorId,
+          server_name: serverName,
+          transport: 'streamable-http',
+          endpoint,
+          auth_type: input.authType,
+          capability_digest: '0'.repeat(64),
+        },
+        headers: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {},
+      })
+      const capabilities = normalizeMcpCapabilities(inspected.capabilities)
+      if (!capabilities.length) throw new Error('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
+      return { endpoint, serverName, latencyMs: inspected.latencyMs, capabilities }
+    } catch (cause) {
+      if (isTypedServiceError(cause)) throw cause
+      const message = cause instanceof Error ? cause.message : 'MCP 连通测试失败'
+      throw Object.assign(new Error(message), { status: 503 as const, code: 'MCP_CONNECTION_TEST_FAILED' })
+    }
+  }
+
   private async resolveMcpRuntimeConnection(connectorId: string, expected?: McpConnectionSnapshot): Promise<McpRuntimeConnection> {
     const [row] = await this.database<{
       connectorId: string; serverName: string; transport: 'streamable-http'; endpoint: string;
@@ -832,7 +986,8 @@ export class PostgresToolConnectorService {
         from connectors c
         join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
-       where c.tenant_id = ${tenantId} and c.id = ${connectorId} and c.protocol = 'mcp'
+       where c.tenant_id = ${tenantId} and c.id = ${connectorId}
+         and c.protocol = 'mcp' and c.deleted_at is null
     `
     if (!row) throw new Error(`MCP Connector 不存在：${connectorId}`)
     if (expected && (row.connectorStatus !== 'healthy' || row.approvalStatus !== 'approved'
@@ -854,7 +1009,7 @@ export class PostgresToolConnectorService {
       if (row.credentialBackend !== 'postgres-encrypted') {
         throw new Error('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
       }
-      if (!this.credentialSecrets) throw new Error('MCP 加密凭据存储未配置')
+      if (!this.credentialSecrets) throw mcpCredentialStoreUnavailable()
       const secret = await this.credentialSecrets.readBearerToken(tenantId, row.credentialRefId)
       headers['Authorization'] = `Bearer ${secret}`
     }
@@ -876,14 +1031,15 @@ export class PostgresToolConnectorService {
 
   private async assertReferences(references: string[], requireHealthy: boolean, sql: DatabaseClient | DatabaseTransaction = this.database): Promise<void> {
     for (const reference of unique(references)) {
-      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
+      if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await sql<{ id: string }[]>`
         select tv.id from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id}
-           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
+           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and (t.mode = 'read' or (t.mode = 'write'
                 and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
            and ${requireHealthy ? sql` t.status = 'available' and c.status = 'healthy'` : sql`t.status in ('available', 'degraded')`}
            and tv.version = ${version} and tv.status = 'published'
@@ -899,13 +1055,14 @@ export class PostgresToolConnectorService {
   ): Promise<void> {
     const scopeSet = new Set(agentDataScopes)
     for (const reference of unique(references)) {
-      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
+      if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ allowedRoleIds: string[]; dataScopes: string[] }[]>`
         select t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes"
           from tools t
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
+           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
       `
       if (!row) throw new Error(`工具授权配置不存在：${reference}`)
       const allowedRoleSet = new Set(row.allowedRoleIds)
@@ -924,11 +1081,12 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const names: string[] = []
     for (const reference of unique(references)) {
-      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) { names.push(parseReference(reference).id); continue }
+      if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) { names.push(parseReference(reference).id); continue }
       const { id } = parseReference(reference)
       const [row] = await this.database<{ name: string }[]>`
         select dsh_tool_name as name from tools
-         where tenant_id = ${tenantId} and id = ${id} and dsh_tool_name is not null
+         where tenant_id = ${tenantId} and id = ${id}
+           and connector_id = ${DSH_RUNTIME_CONNECTOR_ID} and dsh_tool_name is not null
       `
       if (!row) throw new Error(`工具没有 DSH Runtime 映射：${reference}`)
       names.push(row.name)
@@ -942,12 +1100,13 @@ export class PostgresToolConnectorService {
     await this.assertAvailableReferences(references)
     const policies: ToolDefinition['approvalPolicy'][] = []
     for (const reference of unique(references)) {
-      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) { policies.push('none'); continue }
+      if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) { policies.push('none'); continue }
       const { id, version } = parseReference(reference)
       const [row] = await this.database<{ approvalPolicy: ToolDefinition['approvalPolicy'] }[]>`
         select t.approval_policy as "approvalPolicy" from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
+           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
            and tv.status = 'published'
       `
       if (!row) throw new Error(`工具审批策略不存在：${reference}`)
@@ -966,9 +1125,10 @@ export class PostgresToolConnectorService {
    * 不得自带绑定——没有已发布版本或已停用工具的工具直接拒绝。
    */
   async resolveToolBindings(references: string[], actor = PLATFORM_BOOTSTRAP_ACTOR): Promise<ResolvedToolBinding[]> {
+    await this.assertDraftReferences(references)
     const resolved: ResolvedToolBinding[] = []
     for (const reference of unique(references)) {
-      if (RUNTIME_INTRINSIC_TOOL_REFS.has(reference)) continue
+      if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
       resolved.push(await this.ensureToolBinding(id, version, actor))
     }
@@ -1013,7 +1173,7 @@ export class PostgresToolConnectorService {
              approval_policy as "approvalPolicy", content_digest as "contentDigest",
              status, created_at as "createdAt"
         from tool_binding_revisions
-       where tenant_id = ${tenantId}
+       where tenant_id = ${tenantId} and connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
        order by tool_id, revision
     `
     return rows.map(toResolvedBinding)
@@ -1144,6 +1304,7 @@ export class PostgresToolConnectorService {
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
        where t.tenant_id = ${tenantId} and t.id = ${toolId}
+         and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
          and tv.version = ${toolVersion} and tv.status = 'published'
        ${lock ? db`for update of t` : db``}
     `
@@ -1279,6 +1440,23 @@ function createMcpServerName(name: string, connectorId: string) {
     .slice(0, 20) || 'mcp'
   const suffix = connectorId.replace(/[^a-f0-9]/gi, '').slice(-8).toLowerCase()
   return `${slug}_${suffix}`
+}
+
+function mcpCredentialStoreUnavailable() {
+  return Object.assign(
+    new Error('MCP 加密凭据存储不可用：请配置 DSH_CREDENTIAL_MASTER_KEY 并重启服务'),
+    { status: 503 as const, code: 'MCP_CREDENTIAL_STORE_UNAVAILABLE' },
+  )
+}
+
+function invalidMcpConnectionInput(message: string) {
+  return Object.assign(new Error(message), { status: 422 as const, code: 'MCP_CONNECTION_INVALID' })
+}
+
+function isTypedServiceError(error: unknown): error is Error & { status: number; code: string } {
+  if (!(error instanceof Error)) return false
+  const candidate = error as Error & { status?: unknown; code?: unknown }
+  return typeof candidate.status === 'number' && typeof candidate.code === 'string'
 }
 
 function sameMcpCredentialRevision(left: McpCredentialRevision, right: McpCredentialRevision) {

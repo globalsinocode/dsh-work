@@ -14,7 +14,8 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import { RUNTIME_INTRINSIC_TOOL_REFS, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
+import type { ManifestToolBinding, ResolvedToolBinding } from '../../domain/tool-binding.ts'
+import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { agentSpecFromConfiguration, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
@@ -663,7 +664,7 @@ export class PostgresAgentService {
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
-    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => RUNTIME_INTRINSIC_TOOL_REFS.has(reference))])
+    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))])
     const runtimeToolNames = this.toolService
       ? await this.toolService.resolveRuntimeToolNames(tools)
       : tools.map(reference => parseReference(reference).id)
