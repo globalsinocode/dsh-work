@@ -1,13 +1,13 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-23<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；既有 P2 已由用户确认为手工执行完成，仓库内审计证据仍待按通用模板归档，PF-07 尚未完成。完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；当前版本的 PF-07 P2 尚未留证，门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
 ## 1. 结论与状态口径
 
-已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。B-05/I-08 已补自动任务 AC-20～24 的 P1 浏览器证据，并形成账号、团队成员、输入文件、固定能力和授权服务故障的阶段矩阵；文件/工具绑定领取边界、活动期文件撤权、成果提交前团队撤权、授权故障分类及结果端点直接证据均已进入 `12435b0`。平台通用权限/故障矩阵及 Agent 专属 `AgentEvaluationSuite v1` 发布门禁已达到代码级闭环；P2 已手工执行，环境、版本、Run/Attempt、验收人与限制等记录尚未进入仓库，因此当前仅标记“已执行，证据待归档”。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
+已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。B-05/I-08 已补自动任务 AC-20～24 的 P1 浏览器证据，并形成账号、团队成员、输入文件、固定能力和授权服务故障的阶段矩阵；文件/工具绑定领取边界、活动期文件撤权、成果提交前团队撤权、授权故障分类及结果端点直接证据均已进入 `12435b0`。平台通用权限/故障矩阵及 Agent 专属 `AgentEvaluationSuite v1` 发布门禁已达到代码级闭环；此前 P2 只有口头结论，无可复核的环境、版本、Run/Attempt、验收人和限制记录。当前 PF-07 P2 不能据此标为通过。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
 
 | 状态 | 本文含义 |
 | --- | --- |
@@ -79,7 +79,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | B-02 统一运行契约与预算 | I-01 + I-07 | 选定唯一引用规则，Schema/类型/编译/存储同口径；同步清理旧读取分支，验证可执行限额和交互容量 | 旧持久化引用接受、存量预算字段转换及旧 Manifest 运行兼容 | I-01 漂移修复完成；`artifact_ref` 唯一引用规则已实施（2026-09-20，Schema/编译器/存储层读写同口径严格模式，旧生成器首尾符号引用不再接受）；I-07 限额核查已实施（2026-09-20，执行矩阵见 I-07 记录；实证修复输出截断静默缺口） |
 | B-03 真实绑定与发布追溯 | I-04 | 真实绑定修订、定义/发布/Attempt 关联、变更影响与证据失效；新契约内多版本追溯与回滚 | 旧绑定还原、历史发布记录回填和跨旧格式回滚 | **已实施（2026-09-20，见 I-04 完成记录）**：`tool_binding_revisions` 持久化 + Manifest `tool_bindings` 固定 + 执行复核 + 封存/发布漂移拒绝；多环境独立发布与跨环境差异待真实环境验收 |
 | B-04 工具及任务结果契约 | I-05 + I-06 | 工具输入输出/效果/错误、结果外层、回执/成果、统一 API 与 UI；既有工具同步适配 | 新旧工具协议并存、旧 API 适配、旧 Run 展示及从历史文本补结果 | **I-05、I-06 已实施（2026-09-20）**。平台工具执行契约已贯通；`task-result/v1` 读时投影区分执行终态与业务结果（见 I-06 记录）；DSH 原生输出明确标出不可验证边界；外部异步写协议随实际能力接入 |
-| B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | **代码级基础已完成；P2 已手工执行、证据待归档**：自动任务 P1 第一批 5/5 已提交；平台权限/故障阶段矩阵已闭环；Agent 专属 `AgentEvaluationSuite v1` 已接入包解析、发布试跑、版本证据与管理端 |
+| B-05 分层评测与验收 | I-08 | 新格式拒绝、任务质量、实时权限、故障/预算、P1 浏览器及真实 P2 证据 | 旧版本兼容、历史回填及迁移正确性测试 | **代码级基础已完成；此前 P2 仅有口头结论**：自动任务 P1 第一批 5/5 已提交；平台权限/故障阶段矩阵已闭环；Agent 专属 `AgentEvaluationSuite v1` 已接入包解析、发布试跑、版本证据与管理端；PF-07 当前版本仍需真实 P2 |
 
 ### 4.2 平台基础能力建设顺序
 
@@ -93,9 +93,9 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | PF-04（代码级与管理端已完成，2026-09-22） | 持久化等待与审批恢复 | Run 等待状态、有界完整检查点、事件关联、动作绑定审批、批准消费有效期、并发决定冲突、遗留审批清理、超时/取消、恢复前重新鉴权、输出文件恢复及旧 Attempt 隔离；无需审批不捕获检查点 | 一次性 PostgreSQL、Runtime Adapter、员工端和管理端测试覆盖重启保留、批准后过期、并发相反决定、旧审批与重试隔离、重复决定、新 Attempt 前端切换、终态事件、迟到旧 Attempt、Worker 释放及未知副作用阻断；真实 DSH 动作审批与真实撤权故障留 PF-07 P2 |
 | PF-05（代码级、P1 服务与 P0 页面已完成，2026-09-22） | 受控记忆与经验 | 员工从本人成功 Attempt 明确提交候选和来源授权；管理员审核、独立不可变版本、当前 ACL 与精确 Agent Version 检索、Manifest 固定引用、冲突/保留、撤回传播和审计 | 一次性 PostgreSQL、Runtime/Schema、员工端与管理端组件及 P0 页面旅程覆盖授权、审核、ACL、版本、引用和撤回；真实 DSH Prompt、OIDC 身份变化和等待中撤回留 PF-07 P2 |
 | PF-06（代码级与管理端已完成，2026-09-23） | 受控 Agent 委派 | 平台受管的精确目标版本允许列表；无 Session 父子 Task/Run；最小显式上下文；当前授权与父快照上限交集；PF-02 根预算；深度/并行/容量预留/超时门禁；委派 Task 禁止通用重试；取消、重启对账和全回执 `task-result/v1` 合并 | 一次性 PostgreSQL、Runtime/Schema/策略、当前授权和管理端组件测试覆盖版本固定、幂等、边界、预算、撤权、重试隔离、满载拒绝与子席位预留、取消、恢复及混合回执结果真值；真实 DSH 多 Agent、真实身份撤权和容量故障留 PF-07 P2 |
-| PF-07 | 平台基线验收 | 无 Session、MCP、异步动作、等待/审批、记忆、委派和累计预算的 P0/P1/P2 套件；版本化能力矩阵与运维手册 | 每项有代码版本、身份、环境、Runtime、故障/撤权和结果证据；真实 DSH/OIDC/批准连接通过后才开放给 Agent 发布 |
+| PF-07（部分完成） | 平台基线验收 | [版本化能力矩阵](agent-platform-capabilities.v1.json)、P0/P1 入口和 [验收手册](pf07-platform-acceptance.md)已建立；覆盖无 Session、外部动作、累计预算、MCP、等待/审批、记忆和委派 | P1 已在本地隔离环境运行，目标提交与 CI 结果仍需固定；当前版本 P2 尚须在真实 DSH/OIDC/批准连接上执行并留代码版本、身份、环境、Runtime、Run/Attempt、故障/撤权和结果证据，复核通过后才开放给 Agent 发布 |
 
-**下一步：实施 PF-07。** PF-01～PF-06 已形成平台代码级基础。接下来建立版本化能力矩阵和统一 P0/P1/P2 验收包，补录既有手工 P2 的环境、身份、Runtime、Run/Attempt、故障与验收人证据，再决定哪些能力可开放给具体 Agent 发布。
+**下一步：完成 PF-07 的目标版本真实验收。** PF-01～PF-06 已形成平台代码级基础；矩阵、测试入口和记录模板已建立，本地 P1 回归已运行。此前手工 P2 无原始记录且早于当前能力，须在目标部署重新执行真实 DSH/OIDC/批准连接场景，归档环境、身份、Runtime、Run/Attempt、故障与验收人证据，再决定哪些能力可开放给具体 Agent 发布。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
@@ -322,7 +322,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | Agent 专属目标 | 发布治理的 `AgentEvaluationSuite v1` 与[模板](agent-evaluation-template.yaml) | 五类案例、契约版本、机器断言、Run/Attempt/输出证据及人工 rubric 已接入发布链路 | 平台生成案例仅作起点；每个拟发布 Agent 仍需补真实目标输入、能力特有失败和 P2 结果 |
 | P0 浏览器 | `e2e/automation-smoke.spec.ts` | 已实现，验证入口与表单反馈 | 不证明 PostgreSQL、Runtime、OIDC 或 DSH |
 | P1 浏览器 | `e2e/automation.integration.spec.ts` | 第一批 5/5 通过；一次性 PostgreSQL + 合成 Runtime/身份 | 继续补第 2、3 条未覆盖的阶段化安全/故障场景 |
-| P2 真实验收 | 手工验收记录；自动化路径预留为 `e2e/automation.acceptance.spec.ts` | 用户确认已手工执行；仓库内证据尚未归档，自动化 spec 未创建 | 按生命周期模板补录真实 DSH Lock/Adapter/模型、OIDC、多账号、批准工具、目标环境容量/故障结果及验收结论 |
+| P2 真实验收 | 手工验收记录；自动化路径预留为 `e2e/automation.acceptance.spec.ts` | 此前仅有口头完成结论，无可归档原始记录；自动化 spec 未创建 | 在当前目标版本重新执行真实 DSH Lock/Adapter/模型、OIDC、多账号、批准工具、目标环境容量/故障场景并留验收结论 |
 
 **平台当前授权与故障阶段矩阵（代码级/P1，非 P2）：**
 
@@ -454,7 +454,7 @@ B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治�
 - Runtime Adapter 增加活动 Worker 和成果收集阶段的授权服务故障回归：停止执行、无 `assistant.completed`/`run.completed`，错误码保持 `AUTHORIZATION_CHECK_UNAVAILABLE`。阶段矩阵已列出受理、领取、活动执行、成果提交和结果读取的证据及剩余对象特定缺口。
 - `review-a2.integration.test.ts` 进一步组合真实 PostgreSQL 与合成 ACP Worker：活动期移除输入文件后 Worker 停止、无完成事件；阻塞成果扫描后移除团队成员，数据库发布事务拒绝且未登记 Artifact 版本。
 - `team-workspace-discussion-api.integration.test.ts` 直接覆盖已知 Run 结果端点：账号停用为 403/`permission_denied`，授权基础设施故障为 500/`operation_failed`，团队成员移除为 404/`run_not_found`，三种状态不混淆。
-- 当前验证：Runtime 授权相关定向测试 55/55，完整 `@dsh-work/server test:runtime` 77/77；`review-a2.integration.test.ts` 7/7、团队讨论 HTTP 集成 7/7，均使用专用可丢弃 PostgreSQL；完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。该代码提交未推送或发布；P2 后续由用户确认为手工执行完成，仓库内证据待归档。
+- 当前验证：Runtime 授权相关定向测试 55/55，完整 `@dsh-work/server test:runtime` 77/77；`review-a2.integration.test.ts` 7/7、团队讨论 HTTP 集成 7/7，均使用专用可丢弃 PostgreSQL；完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。该代码提交未推送或发布；后续曾有 P2 手工完成的口头结论，但没有可复核记录，不能用于当前 PF-07。
 
 **2026-09-21 B-05/I-08 Agent 专属评测契约（已提交为 `12435b0`）：**
 
@@ -462,7 +462,7 @@ B-01 原实施轮（同日随后）：`agent-package.test.ts` 67/67、发布治�
 - 每个案例固定声明 Run/Attempt 已记录、执行成功、输出非空三项机器断言，并提供必需的人工 rubric。试跑保存契约版本、断言结果、Run/Attempt 与输出摘录；机器断言失败直接阻塞，不能由人工结论覆盖。
 - 默认候选、ZIP 导入、案例编辑、发布检查、真实 Run/Attempt 试跑、版本证据和管理端展示已同步；提交审核和发布事务均重新验证五类 v1 运行证据，升级前通过的三案例旧记录不能复用。管理端把旧 JSON 识别为不可用证据，保持页面可读并提供重新试运行及已提交候选撤回入口。平台通用权限/故障套件不复制进 Agent 包，通用默认案例仍不是具体 Agent 的业务验收结果。
 - 员工主导航契约同步为“新对话、团队空间、自动任务”三个入口；历史对话与我的文件保留受权路由、数据和上下文入口，不在主导航展示。根规范、设计说明、测试目录及 P0 导航断言已同步。
-- 当前验证：Agent 包解析 68/68；发布治理集成 22/22（专用可丢弃 PostgreSQL + 合成 Runtime，含机器断言失败和旧证据失效门禁）；管理端治理 Store 12/12、评测证据工具 2/2；隔离 Prototype 个人工作台 P0 2/2。完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。该代码提交未推送或发布；P2 后续由用户确认为手工执行完成，环境、版本、Run/Attempt、验收人与限制等审计证据待按生命周期模板补录。
+- 当前验证：Agent 包解析 68/68；发布治理集成 22/22（专用可丢弃 PostgreSQL + 合成 Runtime，含机器断言失败和旧证据失效门禁）；管理端治理 Store 12/12、评测证据工具 2/2；隔离 Prototype 个人工作台 P0 2/2。完整 typecheck、lint、`pnpm verify` 与 `git diff --check` 通过。该代码提交未推送或发布；后续曾有 P2 手工完成的口头结论，未留下环境、版本、Run/Attempt、验收人和限制记录，不能用于当前 PF-07。
 
 **2026-09-21 通用 Agent 全生命周期模板（已提交为 `8b3982d`）：**
 

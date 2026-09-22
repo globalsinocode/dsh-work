@@ -49,7 +49,7 @@
 - Agent 委派及父子预算；
 - 跨版本质量或成本趋势聚合。
 
-平台建设顺序和完成门槛以[差异清单](agent-design-gap-analysis.md)第 4.2 节为准。在 PF-07 完成前，这些项目仍是目标能力，不能作为 Agent 已可使用的现行能力。已有 P2 被报告为手工执行，但环境、版本、Run/Attempt、验收人和限制尚未写入仓库；在这些字段归档前，其仓库状态仍是“已执行，证据待归档”。
+平台建设顺序和完成门槛以[差异清单](agent-design-gap-analysis.md)第 4.2 节为准。在 PF-07 完成前，这些项目仍是目标能力，不能作为 Agent 已可使用的现行能力。此前 P2 只有口头结论，且早于 PF-01～PF-06；当前平台版本的 PF-07 P2 尚无可复核证据，应按目标版本重新执行并归档。
 
 PF-01 已完成平台基础实现：Task 可由 Session、API 或事件来源幂等受理；无 Session 执行使用同一 Run/Attempt、Runtime Adapter 与 DSH；Manifest、结果和 Artifact 固定 Task 归属；写入平台工具自动登记 Operation，并区分同步完成、异步受理、失败和效果未知；员工端提供受权的 Task/Operation 查询、取消和重试，管理员可在核对权威外部状态后收敛 Operation。
 

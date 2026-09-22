@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "agent-platform-capabilities/v1",
+  "baseline": "PF-01 through PF-06 implementation at 3217cbb; P2 evidence is assessed separately",
+  "capabilities": [
+    {
+      "id": "session-neutral-task",
+      "package": "PF-01",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m3:integration"],
+      "p2Scenarios": ["real-oidc-task", "real-dsh-task-result", "revocation", "runtime-failure"]
+    },
+    {
+      "id": "external-action",
+      "package": "PF-01",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m3:integration"],
+      "p2Scenarios": ["accepted-receipt", "unknown-reconciliation", "duplicate-delivery", "revocation"]
+    },
+    {
+      "id": "cumulative-budget",
+      "package": "PF-02",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:m2:integration"],
+      "p2Scenarios": ["concurrent-limit", "missing-metering", "cancel-and-resume", "runtime-failure"]
+    },
+    {
+      "id": "mcp-connector",
+      "package": "PF-03",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:mcp:integration", "pnpm test:e2e:mcp-admin"],
+      "p2Scenarios": ["real-discovery-and-call", "credential-failure", "catalog-change", "disable-and-delete", "secret-boundary"]
+    },
+    {
+      "id": "persistent-wait",
+      "package": "PF-04",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:pf04:integration"],
+      "p2Scenarios": ["real-approval-and-resume", "revocation-while-waiting", "restart-and-replay", "unknown-action"]
+    },
+    {
+      "id": "controlled-memory",
+      "package": "PF-05",
+      "p0": ["pnpm test:m1"],
+      "p1": ["pnpm test:pf05:integration"],
+      "p2Scenarios": ["real-recall", "identity-and-role-change", "revocation-while-waiting", "version-isolation"]
+    },
+    {
+      "id": "agent-delegation",
+      "package": "PF-06",
+      "p0": ["pnpm test:m1", "pnpm test:review:unit"],
+      "p1": ["pnpm test:pf06:integration"],
+      "p2Scenarios": ["real-parent-child-dsh", "identity-revocation", "capacity-exhaustion", "cancel-and-restart", "receipt-truth"]
+    }
+  ]
+}
