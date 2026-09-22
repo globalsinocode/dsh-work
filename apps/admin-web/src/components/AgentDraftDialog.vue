@@ -65,6 +65,12 @@ const publishedSkills = computed(() => contentStore.skills.filter((skill) =>
   Boolean(skill.activeVersion) && skill.status !== 'disabled',
 ))
 const usableTools = computed(() => contentStore.tools.filter((tool) => tool.status === 'available'))
+const delegationTargets = computed(() => contentStore.agentVersions.filter((version) =>
+  version.status === 'published',
+).map((version) => ({
+  id: version.id,
+  label: `${contentStore.agents.find(agent => agent.id === version.agentId)?.name ?? version.agentId} · v${version.version}`,
+})))
 const dataScopeOptions = computed(() => unique([
   'enterprise:authorized',
   'workspace:authorized',
@@ -132,8 +138,13 @@ function emptyDraft(): AgentDraftConfiguration {
     timeoutSeconds: 300,
     skills: [],
     tools: [],
+    delegationPolicy: defaultDelegationPolicy(),
     changeSummary: '创建初始草稿版本',
   }
+}
+
+function defaultDelegationPolicy() {
+  return { allowedAgentVersionIds: [] as string[], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 }
 }
 
 function resetEditor() {
@@ -155,6 +166,10 @@ function resetEditor() {
         timeoutSeconds: props.agent.timeoutSeconds,
         skills: [...props.agent.skills],
         tools: props.agent.tools.map(toVersionedToolReference),
+        delegationPolicy: (() => {
+          const policy = props.agent.delegationPolicy ?? defaultDelegationPolicy()
+          return { ...policy, allowedAgentVersionIds: [...policy.allowedAgentVersionIds] }
+        })(),
         changeSummary: `更新 ${props.agent.name} 草稿配置`,
       }
     : emptyDraft()
@@ -256,6 +271,10 @@ function cloneDraft(value: AgentDraftConfiguration): AgentDraftConfiguration {
     examplePrompts: [...value.examplePrompts],
     skills: [...value.skills],
     tools: [...value.tools],
+    delegationPolicy: {
+      ...value.delegationPolicy,
+      allowedAgentVersionIds: [...value.delegationPolicy.allowedAgentVersionIds],
+    },
   }
 }
 
@@ -407,6 +426,24 @@ function toVersionedToolReference(reference: string) {
           <div><span>Skill</span><strong>{{ form.skills.length }}</strong><small>个已选择</small></div>
           <div><span>工具</span><strong>{{ form.tools.length }}</strong><small>个已允许</small></div>
         </div>
+        <div class="configuration-section-heading configuration-section-heading--permissions"><strong>受控委派（选填）</strong><span>只允许调用固定的已发布 Agent Version</span></div>
+        <el-form-item label="允许委派的 Agent Version">
+          <el-select v-model="form.delegationPolicy.allowedAgentVersionIds" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="不选择则不开放 Agent 委派">
+            <el-option v-for="target in delegationTargets" :key="target.id" :label="target.label" :value="target.id" />
+          </el-select>
+          <p class="field-help">子任务沿用当前员工、工作空间和根任务累计预算，权限只会继续收窄。</p>
+        </el-form-item>
+        <div class="form-grid form-grid--three">
+          <el-form-item label="最大深度">
+            <el-input-number v-model="form.delegationPolicy.maxDepth" :min="1" :max="4" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
+          </el-form-item>
+          <el-form-item label="并行上限">
+            <el-input-number v-model="form.delegationPolicy.maxParallel" :min="1" :max="4" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
+          </el-form-item>
+          <el-form-item label="单次超时（秒）">
+            <el-input-number v-model="form.delegationPolicy.timeoutSeconds" :min="10" :max="300" :step="10" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
+          </el-form-item>
+        </div>
         <div class="configuration-section-heading configuration-section-heading--permissions"><strong>权限配置</strong><span>Agent 权限只能收窄员工原有权限</span></div>
         <div class="form-grid form-grid--two">
           <el-form-item label="可见角色" prop="roleIds">
@@ -456,6 +493,7 @@ function toVersionedToolReference(reference: string) {
               <div><span>Agent</span><strong>{{ form.name }}</strong><small>{{ form.description }}</small></div>
               <div v-if="props.agent"><span>负责人</span><strong>{{ form.owner }}</strong><small>负责配置维护与发布</small></div>
               <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>{{ form.tools.length }} 个工具</small></div>
+              <div><span>委派</span><strong>{{ form.delegationPolicy.allowedAgentVersionIds.length }} 个目标</strong><small>深度 {{ form.delegationPolicy.maxDepth }} · 并行 {{ form.delegationPolicy.maxParallel }}</small></div>
               <div><span>权限</span><strong>{{ selectedRoleNames.length }} 个可见角色</strong><small>{{ form.dataScopes.length }} 个数据范围</small></div>
             </div>
           </section>
@@ -517,6 +555,7 @@ function toVersionedToolReference(reference: string) {
 .step-badge { padding: 4px 9px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); font-weight: var(--font-weight-badge); }
 .form-grid { display: grid; gap: 0 20px; }
 .form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.form-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field-help { width: 100%; margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .creator-owner { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: var(--spacing-card); padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .creator-owner__avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 50%; color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-body); font-weight: var(--font-weight-title); }
@@ -548,7 +587,7 @@ function toVersionedToolReference(reference: string) {
 .employee-preview__capabilities span { padding: 4px 8px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); }
 .draft-summary { background: var(--color-bg-subtle); }
 .draft-summary__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.draft-summary__grid--create { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.draft-summary__grid--create { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .draft-summary__grid > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .draft-summary strong { overflow: hidden; color: var(--color-text-heading); font-size: var(--font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
 .draft-summary small { overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
@@ -561,7 +600,7 @@ function toVersionedToolReference(reference: string) {
 :deep(.el-step__description) { font-size: var(--font-size-badge); }
 :deep(.el-empty) { padding: 24px 0 8px; }
 @media (max-width: 800px) {
-  .form-grid--two, .review-grid, .draft-summary__grid, .draft-completion__summary { grid-template-columns: 1fr; }
+  .form-grid--two, .form-grid--three, .review-grid, .draft-summary__grid, .draft-completion__summary { grid-template-columns: 1fr; }
   .draft-completion__summary > div:nth-last-child(2) { border-bottom: 1px solid var(--color-border); }
   .agent-editor__pane { min-height: 0; }
   .creation-mode { align-items: stretch; flex-direction: column; }

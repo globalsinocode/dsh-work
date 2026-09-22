@@ -21,6 +21,7 @@
     "test:mcp:integration": "pnpm --filter @dsh-work/server test:mcp:integration",
     "test:pf04:integration": "pnpm --filter @dsh-work/server test:pf04:integration",
     "test:pf05:integration": "pnpm --filter @dsh-work/server test:pf05:integration",
+    "test:pf06:integration": "pnpm --filter @dsh-work/server test:pf06:integration",
     "test:m4:knowledge:integration": "pnpm --filter @dsh-work/server test:m4:knowledge:integration",
     "test:m4:file": "pnpm --filter @dsh-work/server test:m4:file",
     "test:m4:file:integration": "pnpm --filter @dsh-work/server test:m4:file:integration",

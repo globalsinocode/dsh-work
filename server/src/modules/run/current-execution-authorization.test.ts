@@ -111,3 +111,42 @@ test('PF-03: pinned MCP Connectors require current connector availability before
     async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
   }), { code: 'permission_denied' })
 })
+
+test('PF-06: delegated execution rechecks the frozen role/data ceiling and team Agent membership', async () => {
+  const delegated = {
+    ...manifest,
+    workspace_id: 'ws-team-1',
+    user_context: { ...manifest.user_context, role_ids: ['role-employee'] },
+    data_scopes: ['scope:one'],
+    delegation_context: {
+      delegation_id: 'delegation-1', root_task_id: 'task-root', parent_task_id: 'task-parent',
+      parent_run_id: 'run-parent', parent_attempt_id: 'attempt-parent', depth: 1, max_depth: 2,
+      role_ceiling: ['role-employee'], data_scope_ceiling: ['scope:one'],
+    },
+  } as RuntimeManifest
+  let runtimeCalls = 0
+  await assertCurrentExecutionAuthorization(ports({
+    async workspaceTypeOf() { return 'team' },
+    async authorizeRuntime() { throw new Error('team delegation must use the team execution gate') },
+    async authorizeTeamRunExecution(input) {
+      runtimeCalls += 1
+      assert.equal(input.requireAgentMember, true)
+      assert.deepEqual(input.scopeCeiling, { roleIds: ['role-employee'], dataScopes: ['scope:one'] })
+      return {
+        userId: 'u1', workspaceId: 'ws-team-1', roleIds: ['role-employee'], permissions: [],
+        dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
+      }
+    },
+  }), undefined, delegated)
+  assert.equal(runtimeCalls, 1)
+
+  await assert.rejects(assertCurrentExecutionAuthorization(ports({
+    async workspaceTypeOf() { return 'team' },
+    async authorizeTeamRunExecution() {
+      return {
+        userId: 'u1', workspaceId: 'ws-team-1', roleIds: [], permissions: [],
+        dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
+      }
+    },
+  }), undefined, delegated), { code: 'permission_denied' })
+})

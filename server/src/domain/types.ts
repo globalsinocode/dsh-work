@@ -242,6 +242,13 @@ export interface Workspace {
 
 export type PublishStatus = 'draft' | 'published' | 'disabled'
 
+export interface AgentDelegationPolicy {
+  allowedAgentVersionIds: string[]
+  maxDepth: number
+  maxParallel: number
+  timeoutSeconds: number
+}
+
 export interface AgentDefinition {
   id: string
   name: string
@@ -263,6 +270,7 @@ export interface AgentDefinition {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
 }
 
@@ -283,6 +291,7 @@ export interface AgentDraftConfiguration {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  delegationPolicy?: AgentDelegationPolicy
   changeSummary: string
 }
 
@@ -322,6 +331,7 @@ export interface AgentVersionRecord {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  delegationPolicy?: AgentDelegationPolicy
 }
 
 export interface AgentReleaseRecord {

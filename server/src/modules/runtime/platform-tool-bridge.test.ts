@@ -26,6 +26,8 @@ const baseContract: PlatformToolContract = {
 
 test('all governed platform tool contracts compile in strict JSON Schema mode', () => {
   for (const contract of Object.values(platformToolContracts)) assert.doesNotThrow(() => compileToolContract(contract))
+  assert.equal(platformToolContracts.delegate_agent.completionSemantics, 'accepted',
+    'parent Task must not treat transport-level delegation success as proof that the child goal was achieved')
 })
 
 test('dsh-work built-in tools use one explicit category and governance registry', () => {
@@ -34,7 +36,7 @@ test('dsh-work built-in tools use one explicit category and governance registry'
       .filter(([, definition]) => definition.category === 'dsh_work_execution')
       .map(([name]) => name)
       .sort(),
-    ['activate_skill', 'python_execute'],
+    ['activate_skill', 'delegate_agent', 'python_execute'],
   )
   assert.deepEqual(
     platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),

@@ -691,6 +691,34 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(calls[1]?.input['kind'], 'agent-management')
   })
 
+  it('bridges a governed Agent delegation and preserves the structured task result', async () => {
+    const calls: Record<string, unknown>[] = []
+    const adapter = await createAdapter(500, undefined, undefined, {
+      delegateAgent: async (input) => {
+        calls.push(input)
+        return {
+          contract: 'task-result/v1', delegationId: 'delegation-adapter-1',
+          childTaskId: 'task-child-1', childRunId: 'run-child-1',
+          targetAgentVersionId: input['targetAgentVersionId'], execution: 'succeeded',
+          outcome: 'unverified', summary: '只有文本回答，缺少可核验交付证据。',
+          answer: '子任务文本回答', receipts: [],
+        }
+      },
+    })
+    const input = manifest('run-delegation-bridge', 'attempt-1', '执行一个边界明确的子任务')
+    input.tools.push({ id: 'delegate_agent', version: '1.0.0' })
+    input.delegation_policy = {
+      allowed_agent_version_ids: ['agent-child-v1'], max_depth: 1, max_parallel: 1, timeout_seconds: 120,
+    }
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.deepEqual(calls, [{
+      targetAgentVersionId: 'agent-child-v1', task: '执行一个边界明确的子任务',
+      context: '只传递当前测试任务所需的最小上下文。',
+    }])
+    assert.match(renderSystemPrompt(input), /unverified 或 not_achieved 不得汇总为已验证成功/)
+  })
+
   it('loads an externalized Skill folder without putting its body in the persisted manifest', async () => {
     const instructions = 'Read references/value.txt and return the exact immutable value.'
     const skillMarkdown = `---\nname: externalized-skill\ndescription: Verify filesystem-backed Skill loading.\n---\n${instructions}\n`

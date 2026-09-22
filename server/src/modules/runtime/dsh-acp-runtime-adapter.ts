@@ -117,6 +117,7 @@ export interface DshAcpRuntimeAdapterConfiguration {
   ) => Promise<{ instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
+  delegateAgent?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   collectArtifacts?: (
     manifest: RuntimeManifest,
@@ -500,6 +501,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           await this.configuration.recordPythonExecution?.(record.manifest, skill.id, String(input['entry'] ?? ''), succeeded)
           return result
         })
+      }
+      if (record.manifest.tools.some(tool => tool.id === 'delegate_agent')) {
+        const delegate = this.configuration.delegateAgent
+        if (!delegate) throw new Error('Agent 委派不可用：未配置受控委派服务')
+        registerPlatformTool('delegate_agent', (input, signal) => delegate(input, record.manifest, signal))
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
@@ -1032,6 +1038,15 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       '# 成果文件',
       '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',
       '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
+    ].join('\n'))
+  }
+  if (manifest.delegation_policy?.allowed_agent_version_ids.length) {
+    sections.push([
+      '# 受控 Agent 委派',
+      '只有在独立的有界子任务确实需要另一个 Agent 时才调用 delegate_agent。只传递完成子任务所需的最小上下文，不复制整段会话。',
+      `允许的目标 Agent Version ID：${manifest.delegation_policy.allowed_agent_version_ids.join('、')}`,
+      `最大深度 ${manifest.delegation_policy.max_depth}，单父任务并行上限 ${manifest.delegation_policy.max_parallel}，单次等待上限 ${manifest.delegation_policy.timeout_seconds} 秒。`,
+      '必须检查返回的 task-result/v1 outcome；unverified 或 not_achieved 不得汇总为已验证成功。',
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

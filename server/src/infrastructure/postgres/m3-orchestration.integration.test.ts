@@ -820,6 +820,26 @@ test('cancel and retry keep one Run and create a new immutable Attempt', async (
   assert.deepEqual(attempts[1]?.manifest.input.conversation_history, expectedHistory)
 })
 
+test('generic retry rejects a delegated Task even when its Attempt lost delegation context', async () => {
+  const task = await tasks.createTask({
+    tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'delegation',
+    sourceRef: 'task-parent-retry-guard', correlationKey: `delegation-retry-guard-${randomUUID()}`,
+    workspaceId: 'ws-personal-U00001',
+  })
+  const run = await runs.createRun({
+    tenantId: 'tenant-dsh-work', taskId: task.id, sessionId: null,
+    workspaceId: task.workspaceId, requestedBy: task.requestedBy,
+    idempotencyKey: `delegation-retry-guard-${randomUUID()}`,
+  })
+  await runs.transitionRun('tenant-dsh-work', run.id, 'cancelled')
+
+  await assert.rejects(
+    orchestration.retry(run.id, 'U00001'),
+    /委派子任务不支持通用重试/,
+  )
+  assert.equal((await runs.getRun('tenant-dsh-work', run.id))?.currentAttemptId, null)
+})
+
 test('a retry continues from the partial output preserved by a timed-out Attempt', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 超时续跑' })
   const created = await orchestration.startRun({

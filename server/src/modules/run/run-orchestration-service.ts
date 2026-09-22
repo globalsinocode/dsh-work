@@ -35,6 +35,7 @@ import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 import type { TaskRepository } from '../task/task-repository.ts'
 import type { TaskSourceType } from '../task/task-types.ts'
 import type { PostgresPersistentWaitService } from './postgres-persistent-wait-service.ts'
+import type { PostgresAgentDelegationService } from './postgres-agent-delegation-service.ts'
 import { normalizeTaskBudget, type TaskBudgetInput, type TaskBudgetLimits } from '../task/task-budget-types.ts'
 import { platformToolsForPurpose } from '../runtime/platform-tool-contracts.ts'
 
@@ -66,6 +67,7 @@ export class RunOrchestrationService {
   private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
   private readonly tasks?: TaskRepository
   private persistentWait?: Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>
+  private delegation?: Pick<PostgresAgentDelegationService, 'assertActiveDelegation' | 'markChildRunning' | 'observeChildTerminal' | 'cancelActiveDescendants'>
 
   private readonly automationMaxConcurrent: number
   private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
@@ -116,6 +118,10 @@ export class RunOrchestrationService {
 
   setPersistentWaitService(service: Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>): void {
     this.persistentWait = service
+  }
+
+  setDelegationService(service: Pick<PostgresAgentDelegationService, 'assertActiveDelegation' | 'markChildRunning' | 'observeChildTerminal' | 'cancelActiveDescendants'>): void {
+    this.delegation = service
   }
 
   enqueueResumedAttempt(run: RunRecord, manifest: RuntimeManifest): void {
@@ -624,6 +630,7 @@ export class RunOrchestrationService {
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
+    await this.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
     if (run.status === 'waiting') {
       if (!this.persistentWait) throw new Error('持久化等待服务未接线')
       await this.persistentWait.cancelRun(run.id, userId)
@@ -657,6 +664,7 @@ export class RunOrchestrationService {
   async systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     const run = await this.runs.getRun(tenantId, runId)
     if (!run) throw new Error(`Run 不存在：${runId}`)
+    await this.delegation?.cancelActiveDescendants(run.taskId, reason ?? '父任务授权已撤销，终止所有活动子任务')
     if (run.status === 'waiting') {
       if (!this.persistentWait) throw new Error('持久化等待服务未接线')
       await this.persistentWait.cancelRun(run.id, 'system')
@@ -738,6 +746,17 @@ export class RunOrchestrationService {
   async retry(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     const run = await this.requireWritableRun(runId, userId)
     if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的 Run 可以重试')
+    if (run.sessionId === null) {
+      if (!this.tasks) throw requestInvalid('Task 重试服务未接线')
+      const task = await this.tasks.getTask(tenantId, run.taskId)
+      if (!task) throw requestInvalid('原 Task 不存在，无法重试')
+      // PF-06 子任务的安全边界来自持久化父子关系、父 Attempt 活性、深度和
+      // 权限上限。通用 retry 只会重建普通 Manifest，无法合法延续这些约束；
+      // 因此必须由仍在运行的父 Agent 重新发起委派，而不是脱离父任务重跑。
+      if (task.sourceType === 'delegation') {
+        throw requestInvalid('委派子任务不支持通用重试；请由仍在运行的父 Agent 重新发起委派')
+      }
+    }
     // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
     // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
     const lastAttempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
@@ -922,6 +941,36 @@ export class RunOrchestrationService {
     })
   }
 
+  /** PF-06 child admission already created the Task/Run and narrowed authorization. */
+  async dispatchDelegatedRun(input: {
+    run: RunRecord
+    prompt: string
+    context: string
+    workspaceId: string
+    targetAgentVersionId: string
+    userId: string
+    authorization: RuntimeAuthorizationDecision
+    delegation: NonNullable<RuntimeManifest['delegation_context']>
+  }): Promise<void> {
+    const message = input.context
+      ? `子任务：${input.prompt}\n\n最小必要上下文（仅作输入，不授予额外权限）：\n${input.context}`
+      : input.prompt
+    await this.failUndispatchedRun(input.run, () => this.dispatch(input.run, {
+      prompt: input.prompt,
+      message,
+      workspaceId: input.workspaceId,
+      agentVersionId: input.targetAgentVersionId,
+      userId: input.userId,
+      fileIds: [],
+      authorization: input.authorization,
+      delegation: input.delegation,
+    }))
+    await this.operations?.appendAudit(
+      input.userId, 'agent.delegation.start', input.delegation.delegation_id, 'success',
+      `trace-${input.run.id}`, `创建受控子任务 ${input.run.taskId}`,
+    )
+  }
+
   /**
    * 自动任务受理中断收敛：Run 停在「无 Attempt 的 queued」。与
    * failUndispatchedRun 同一先例——run_events 的 attempt_id 有 FK，
@@ -1098,6 +1147,8 @@ export class RunOrchestrationService {
       safeMetadata: { error_code: 'AUTOMATION_CAPACITY_EXHAUSTED' },
       traceId: `trace-${run.id}`,
     })
+    await this.delegation?.cancelActiveDescendants(run.taskId, '父任务因容量不足失败，终止所有活动子任务')
+    await this.delegation?.observeChildTerminal(run.id)
   }
 
   private async failUndispatchedRun(run: RunRecord, dispatch: () => Promise<void>) {
@@ -1128,6 +1179,8 @@ export class RunOrchestrationService {
     attemptId?: string
     /** 任务预算对 limits 的上限钳制（AG-03 budget）。 */
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+    /** PF-06 immutable parent/root lineage. */
+    delegation?: NonNullable<RuntimeManifest['delegation_context']>
   }) {
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
     const agent = this.agents
@@ -1148,7 +1201,14 @@ export class RunOrchestrationService {
           maxOutputBytes: 65536,
           maxToolCalls: 20,
           timeoutSeconds: 300,
+          delegationPolicy: { allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 },
         }
+    const delegationPolicy = agent.delegationPolicy ?? {
+      allowedAgentVersionIds: [],
+      maxDepth: 1,
+      maxParallel: 1,
+      timeoutSeconds: 120,
+    }
     const route = await this.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
     const authorization = input.authorization ?? await this.authorization?.authorizeRuntime({
@@ -1214,7 +1274,11 @@ export class RunOrchestrationService {
         write_policy: 'workspace_only',
       },
       skills: agent.skills.map(toCapabilityReference),
-      tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
+      tools: [
+        ...agent.runtimeTools.map(toCapabilityReference),
+        ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
+        ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
+      ],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
@@ -1237,6 +1301,15 @@ export class RunOrchestrationService {
         contentDigest: memory.contentDigest,
         excerpt: memory.excerpt,
       })) } : {}),
+      ...(delegationPolicy.allowedAgentVersionIds.length ? {
+        delegation_policy: {
+          allowed_agent_version_ids: [...delegationPolicy.allowedAgentVersionIds],
+          max_depth: delegationPolicy.maxDepth,
+          max_parallel: delegationPolicy.maxParallel,
+          timeout_seconds: delegationPolicy.timeoutSeconds,
+        },
+      } : {}),
+      ...(input.delegation ? { delegation_context: input.delegation } : {}),
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
@@ -1367,6 +1440,15 @@ export class RunOrchestrationService {
               continue
             }
           }
+          // PF-06: an ordinary item may be ahead of a child whose Worker slot is
+          // already reserved. Keep the ordinary item queued and scan later items;
+          // breaking here would strand the child behind it until the parent times out.
+          // Full capacity and paused Runtimes still take the normal retry path.
+          if (!next.manifest.delegation_context
+            && await this.runs.isBlockedByDelegationReservation(tenantId, runtimeId)) {
+            index += 1
+            continue
+          }
           this.schedulePump()
           break
         }
@@ -1441,6 +1523,8 @@ export class RunOrchestrationService {
           eventType: 'run.failed', displayMessage: '授权检查暂不可用，任务未执行',
           safeMetadata: { error_code: error.code }, traceId: `trace-${run.id}` })
       }
+      await this.delegation?.cancelActiveDescendants(run.taskId, '父任务执行异常，终止所有活动子任务')
+      await this.delegation?.observeChildTerminal(run.id)
       console.error('runtime dispatch failed', error)
     } finally {
       // 事件链 settle 后清掉本 Attempt 的内存痕迹：assistantOutputs 只有
@@ -1480,6 +1564,7 @@ export class RunOrchestrationService {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
       if (!run || run.taskId !== manifest.task_id || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
         || !allowedStates.includes(run.status)) throw authorizationDenied('Attempt 已结束、取消或被替代')
+      await this.delegation?.assertActiveDelegation(manifest)
       await this.memory?.assertCurrentReferences(manifest)
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
@@ -1665,6 +1750,8 @@ export class RunOrchestrationService {
       safeMetadata: { error_code: 'AUTHORIZATION_REVOKED', reason },
       traceId: `trace-${run.id}`,
     })
+    await this.delegation?.cancelActiveDescendants(run.taskId, '父任务授权已撤销，终止所有活动子任务')
+    await this.delegation?.observeChildTerminal(run.id)
   }
 
   /**
@@ -1725,6 +1812,7 @@ export class RunOrchestrationService {
     if (event.event_type === 'run.started') {
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'running')
       await this.runs.transitionRun(tenantId, run.id, 'running')
+      await this.delegation?.markChildRunning(run.id)
     } else if (event.event_type === 'run.waiting') {
       const approvalId = event.safe_metadata['approval_id']
       if (this.persistentWait && typeof approvalId === 'string') {
@@ -1758,6 +1846,8 @@ export class RunOrchestrationService {
       await this.settleAttemptBudget(event, 'cancelled')
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
       await this.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
+      await this.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
+      await this.delegation?.observeChildTerminal(run.id)
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
@@ -1776,6 +1866,8 @@ export class RunOrchestrationService {
         traceId: event.trace_id,
       })
       await this.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
+      await this.delegation?.cancelActiveDescendants(run.taskId, '父任务失败，终止所有活动子任务')
+      await this.delegation?.observeChildTerminal(run.id)
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
@@ -1796,6 +1888,8 @@ export class RunOrchestrationService {
           && typeof event.safe_metadata['output_tokens'] === 'number' ? event.safe_metadata['output_tokens'] : undefined,
       })
       await this.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
+      await this.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
+      await this.delegation?.observeChildTerminal(run.id)
       this.assistantOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {

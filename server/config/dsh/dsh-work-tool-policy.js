@@ -104,11 +104,12 @@ function publishRuntimeToolCatalog(ctx, path) {
 
 const readTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
 const retrySafeTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill'])
-const concurrentTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
+const concurrentTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
   ['job_list', 10], ['job_kill', 10], ['bash', 60],
   ['prepare_skill_installation', 120], ['python_execute', 300],
+  ['delegate_agent', 300],
 ])
 
 function publishToolContract(schema) {
@@ -391,6 +392,21 @@ function registerPlatformTools(ctx) {
     },
   })
   registerPlatformTool(ctx, socketPath, {
+    name: 'delegate_agent',
+    description: 'Delegate one bounded subtask to an explicitly allowed published Agent Version. The child uses the same user, workspace, cumulative budget and narrowed permission ceiling. Returns a task-result/v1 outcome; failed or unverified child work must not be presented as verified success.',
+    parameters: {
+      type: 'object',
+      properties: {
+        targetAgentVersionId: { type: 'string', minLength: 1, maxLength: 128, description: 'Exact Agent Version ID from the current Run delegation policy.' },
+        task: { type: 'string', minLength: 1, maxLength: 12000, description: 'Bounded subtask with an explicit expected result.' },
+        context: { type: 'string', maxLength: 4000, description: 'Optional minimal context needed by the child. Do not copy the whole conversation.' },
+      },
+      required: ['targetAgentVersionId', 'task'],
+      additionalProperties: false,
+    },
+    concurrencySafe: true,
+  })
+  registerPlatformTool(ctx, socketPath, {
     name: 'activate_skill',
     description: 'Activate one Skill from the immutable catalog attached to this Run. Returns its exact instructions and resource directory. It cannot download or change a Skill.',
     parameters: {
@@ -420,7 +436,7 @@ function registerPlatformTool(ctx, socketPath, definition) {
   ctx.tools.register({
     ...definition,
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: () => definition.concurrencySafe === true,
     async execute(args, execution) {
       return new Promise((resolve, reject) => {
         const body = JSON.stringify(args ?? {})

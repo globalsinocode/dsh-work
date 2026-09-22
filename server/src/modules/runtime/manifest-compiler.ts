@@ -184,6 +184,46 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!memory.excerpt.trim() || memory.excerpt.length > 4000) throw new TypeError('memory excerpt is invalid')
   }
 
+  if (input.delegation_policy !== undefined) {
+    const policy = input.delegation_policy
+    if (!Array.isArray(policy.allowed_agent_version_ids) || policy.allowed_agent_version_ids.length > 16
+      || policy.allowed_agent_version_ids.some(id => typeof id !== 'string' || !ID_PATTERN.test(id))
+      || new Set(policy.allowed_agent_version_ids).size !== policy.allowed_agent_version_ids.length) {
+      throw new TypeError('delegation_policy.allowed_agent_version_ids is invalid')
+    }
+    if (!Number.isInteger(policy.max_depth) || policy.max_depth < 1 || policy.max_depth > 4
+      || !Number.isInteger(policy.max_parallel) || policy.max_parallel < 1 || policy.max_parallel > 4
+      || !Number.isInteger(policy.timeout_seconds) || policy.timeout_seconds < 10 || policy.timeout_seconds > 300) {
+      throw new TypeError('delegation_policy limits are invalid')
+    }
+    const hasTool = input.tools.some(tool => tool.id === 'delegate_agent')
+    if (hasTool !== (policy.allowed_agent_version_ids.length > 0)) {
+      throw new TypeError('delegate_agent tool and non-empty delegation_policy must be declared together')
+    }
+  } else if (input.tools.some(tool => tool.id === 'delegate_agent')) {
+    throw new TypeError('delegate_agent requires delegation_policy')
+  }
+  if (input.delegation_context !== undefined) {
+    const context = input.delegation_context
+    assertId('delegation_context.delegation_id', context.delegation_id)
+    assertId('delegation_context.root_task_id', context.root_task_id)
+    assertId('delegation_context.parent_task_id', context.parent_task_id)
+    assertId('delegation_context.parent_run_id', context.parent_run_id)
+    assertId('delegation_context.parent_attempt_id', context.parent_attempt_id)
+    if (!Number.isInteger(context.depth) || context.depth < 1 || context.depth > 4
+      || !Number.isInteger(context.max_depth) || context.max_depth < context.depth || context.max_depth > 4) {
+      throw new TypeError('delegation_context depth is invalid')
+    }
+    if (!Array.isArray(context.role_ceiling) || !Array.isArray(context.data_scope_ceiling)
+      || context.role_ceiling.some(value => typeof value !== 'string')
+      || context.data_scope_ceiling.some(value => typeof value !== 'string')) {
+      throw new TypeError('delegation_context permission ceiling is invalid')
+    }
+    if (input.budget.scope_task_id !== context.root_task_id) {
+      throw new TypeError('delegated Attempt must share the root Task budget scope')
+    }
+  }
+
   // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。
   const pinnedTools = new Set<string>()
   for (const binding of input.tool_bindings ?? []) {

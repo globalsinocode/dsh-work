@@ -39,6 +39,7 @@ import { PostgresTaskRepository, taskOperationParameterDigest } from './modules/
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { PostgresPersistentWaitService } from './modules/run/postgres-persistent-wait-service.ts'
+import { PostgresAgentDelegationService } from './modules/run/postgres-agent-delegation-service.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
@@ -169,6 +170,8 @@ async function start() {
     const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
     const runs = new PostgresRunRepository(database)
     const tasks = new PostgresTaskRepository(database)
+    const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
+    const delegation = new PostgresAgentDelegationService(database, runs, tasks, authorization, taskQueries)
     const toolServiceRef: { current?: PostgresToolConnectorService } = {}
     const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
@@ -197,6 +200,7 @@ async function start() {
         if (!persistentWaitRef.current) return 'reject_once'
         return persistentWaitRef.current.decidePermission(manifest, context)
       },
+      delegateAgent: (input, manifest, signal) => delegation.delegate(input, manifest, signal),
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
       inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
       proposeAdminTask: (input, manifest, signal) => assistantService.proposeTask(input, manifest, signal),
@@ -300,6 +304,11 @@ async function start() {
     }, dshInstallation?.version ?? 'unavailable')
     persistentWaitRef.current = persistentWait
     orchestration.setPersistentWaitService(persistentWait)
+    orchestration.setDelegationService(delegation)
+    delegation.setExecutor({
+      dispatchChild: input => orchestration!.dispatchDelegatedRun(input),
+      cancelRun: async (runId, reason) => { await orchestration!.systemCancelRun(runId, 'system_revoke', reason) },
+    })
     persistentWait.start()
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
     const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
@@ -312,9 +321,13 @@ async function start() {
     registerAssistantRoutes(router, assistantService)
     registerSkillInstallationRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()
+    const delegationRecovery = await delegation.reconcileAfterRestart()
     await persistentWait.reconcileOrphans()
     if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
       console.warn('service restart recovery completed', restartRecovery)
+    }
+    if (delegationRecovery.cancelled > 0 || delegationRecovery.finalized > 0) {
+      console.warn('agent delegation recovery completed', delegationRecovery)
     }
     const assistantRecovery = await assistantService.recoverInterruptedActions()
     if (assistantRecovery.inspected > 0) {
@@ -342,7 +355,7 @@ async function start() {
     )
     await automationSweep.start()
     registerAutomationRoutes(router, automationService)
-    registerTaskExecutionRoutes(router, new PostgresTaskQueryService(database, tasks, runs), orchestration, authorization)
+    registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerPersistentApprovalRoutes(router, persistentWait, authorization)
     registerAdminMemoryRoutes(router, controlledMemory, authorization)

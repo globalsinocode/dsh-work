@@ -96,6 +96,8 @@ DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:543
 
 PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现与自动生效、全部 Agent 默认可用、已准备 Attempt 的能力摘要漂移、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
+PF-06 受控 Agent 委派使用 `pnpm test:pf06:integration`，在一次性数据库中验证精确发布版本策略、幂等父子 Task/Run、根预算范围、权限上限、深度/并行/Runtime 容量、父任务失效、取消、启动恢复对账和 `task-result/v1` 结果真值；配合 `pnpm test:m1` 与 `pnpm test:review:unit` 验证 Manifest、平台工具桥、DSH 策略和执行期当前授权。以上均使用受控执行，不替代真实多 Agent DSH、OIDC 收权和容量故障的 PF-07 P2 验收。
+
 Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验原型页面，先停掉不匹配的开发实例，并用上述原型环境变量运行 `pnpm test:e2e`。不要将复用的真实环境误认为隔离测试。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据

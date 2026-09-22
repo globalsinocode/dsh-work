@@ -407,4 +407,38 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
       memory_context: [{ ...manifest.memory_context[0]!, contentDigest: 'not-a-digest' }],
     } as RuntimeManifest, /contentDigest/, 'invalid memory digest')
   })
+
+  it('PF-06 binds delegation policy, lineage and the root budget scope', () => {
+    const manifest = baseManifest()
+    manifest.tools.push({ id: 'delegate_agent', version: '1.0.0' })
+    manifest.delegation_policy = {
+      allowed_agent_version_ids: ['agent-version-child-1'],
+      max_depth: 2,
+      max_parallel: 2,
+      timeout_seconds: 120,
+    }
+    assertBothAccept(manifest, 'delegation policy')
+
+    const withoutTool = structuredClone(manifest)
+    withoutTool.tools = withoutTool.tools.filter(tool => tool.id !== 'delegate_agent')
+    assert.equal(schemaErrors(withoutTool).valid, true, 'the compiler owns the policy/tool relationship')
+    assert.throws(() => compileRuntimeManifest(withoutTool), /declared together/)
+
+    const child = structuredClone(manifest)
+    child.task_id = 'task-delegated-child'
+    child.run_id = 'run-delegated-child'
+    child.attempt_id = 'attempt-delegated-child'
+    child.agent_version_id = 'agent-version-child-1'
+    child.budget.scope_task_id = 'task-schema-check'
+    child.delegation_context = {
+      delegation_id: 'delegation-1', root_task_id: 'task-schema-check',
+      parent_task_id: 'task-schema-check', parent_run_id: 'run-schema-check',
+      parent_attempt_id: 'attempt-1', depth: 1, max_depth: 2,
+      role_ceiling: ['role-employee'], data_scope_ceiling: ['region:east'],
+    }
+    assertBothAccept(child, 'delegated child lineage')
+    child.budget.scope_task_id = child.task_id
+    assert.equal(schemaErrors(child).valid, true, 'the compiler owns the lineage/budget relationship')
+    assert.throws(() => compileRuntimeManifest(child), /root Task budget scope/)
+  })
 })

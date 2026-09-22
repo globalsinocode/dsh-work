@@ -65,18 +65,29 @@ export async function assertCurrentExecutionAuthorization(
     }
     const type = await authorization.workspaceTypeOf(manifest.workspace_id)
     if (type === null) throw authorizationDenied('工作空间不存在或已归档')
+    const delegationCeiling = manifest.delegation_context
+      ? {
+          roleIds: manifest.delegation_context.role_ceiling,
+          dataScopes: manifest.delegation_context.data_scope_ceiling,
+        }
+      : undefined
     const input = {
       userId: manifest.user_context.user_id,
       workspaceId: manifest.workspace_id,
       agentVersionId: manifest.agent_version_id,
       additionalSkillReferences: (manifest.skills ?? []).map(skill => `${skill.id}@${skill.version}`),
+      ...(delegationCeiling ? { scopeCeiling: delegationCeiling } : {}),
     }
     const current = type === 'team'
-      ? await authorization.authorizeTeamRunExecution(input)
+      ? await authorization.authorizeTeamRunExecution({ ...input, requireAgentMember: Boolean(manifest.delegation_context) })
       : await authorization.authorizeRuntime(input)
     const scopes = new Set(current.dataScopes)
     if ((manifest.data_scopes ?? []).some(scope => !scopes.has(scope))) {
       throw authorizationDenied('任务快照包含当前已撤销的数据范围')
+    }
+    const roles = new Set(current.roleIds)
+    if ((manifest.user_context.role_ids ?? []).some(role => !roles.has(role))) {
+      throw authorizationDenied('任务快照包含当前已撤销的角色')
     }
     if (manifest.input.file_mounts.length) {
       if (!content) throw new AuthorizationCheckUnavailableError()

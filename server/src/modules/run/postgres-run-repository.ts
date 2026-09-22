@@ -439,6 +439,13 @@ export class PostgresRunRepository implements RunRepository {
           from runtimes where tenant_id = ${tenantId} and id = ${runtimeId} for update
       `
       if (!runtime || runtime.schedulingStatus !== 'accepting') return false
+      const [pending] = await transaction<{ purpose: string | null; delegated: boolean }[]>`
+        select manifest->>'purpose' as purpose,
+               (manifest->'delegation_context') is not null as delegated
+          from run_attempts
+         where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
+      `
+      if (!pending) return false
       // AC-24：cancel_requested 的 Attempt 尚未释放 Worker，仍计入占用。
       const [usage] = await transaction<{ active: number }[]>`
         select count(*)::integer as active from run_attempts
@@ -446,15 +453,26 @@ export class PostgresRunRepository implements RunRepository {
            and status in ('running', 'cancel_requested')
       `
       if ((usage?.active ?? 0) >= runtime.capacity) return false
+      // PF-06: an admitted synchronous delegation reserves a Worker from the
+      // moment its relationship is committed until its child Attempt is claimed.
+      // Ordinary work cannot consume those reserved slots; the delegated child
+      // itself may claim one. The Runtime row lock serializes this with admission.
+      if (!pending.delegated) {
+        const [delegationReservations] = await transaction<{ reserved: number }[]>`
+          select count(*)::integer as reserved from task_delegations d
+          join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
+          left join run_attempts child_attempt
+            on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
+         where d.tenant_id = ${tenantId} and d.status in ('accepted', 'running')
+           and (child.current_attempt_id is null or child_attempt.status = 'queued')
+        `
+        if ((usage?.active ?? 0) + (delegationReservations?.reserved ?? 0) >= runtime.capacity) return false
+      }
       // AG-03：自动任务并发车道——计数与领取在同一 Runtime 行锁内完成。
       // 有效上限 = min(配置上限, capacity - 1)：始终为交互执行保留一路 Worker；
       // capacity ≤ 1 时车道为 0，超限返回 false 由调度泵区分「车道满跳过」
       // 「容量满停泵」与「容量不足收敛」。
       if (options?.automationMaxConcurrent !== undefined) {
-        const [pending] = await transaction<{ purpose: string | null }[]>`
-          select manifest->>'purpose' as purpose from run_attempts
-           where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
-        `
         if (pending?.purpose === 'automation') {
           const laneLimit = Math.max(0, Math.min(options.automationMaxConcurrent, runtime.capacity - 1))
           const [lane] = await transaction<{ active: number }[]>`
@@ -478,6 +496,25 @@ export class PostgresRunRepository implements RunRepository {
       `
       return true
     })
+  }
+
+  async isBlockedByDelegationReservation(tenantId: string, runtimeId: string): Promise<boolean> {
+    const [usage] = await this.database<{ capacity: number; schedulingStatus: string; active: number; reserved: number }[]>`
+      select r.capacity, r.scheduling_status as "schedulingStatus",
+             (select count(*)::integer from run_attempts a
+               where a.tenant_id = r.tenant_id and a.runtime_id = r.id
+                 and a.status in ('running', 'cancel_requested')) as active,
+             (select count(*)::integer from task_delegations d
+               join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
+               left join run_attempts child_attempt
+                 on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
+              where d.tenant_id = r.tenant_id and d.status in ('accepted', 'running')
+                and (child.current_attempt_id is null or child_attempt.status = 'queued')) as reserved
+        from runtimes r
+       where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
+    `
+    return Boolean(usage && usage.schedulingStatus === 'accepting' && usage.reserved > 0
+      && usage.active < usage.capacity && usage.active + usage.reserved >= usage.capacity)
   }
 
   /**

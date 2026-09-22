@@ -152,7 +152,7 @@ test('DSH tool policy enforces the immutable Attempt tool-call budget', async ()
 test('DSH registers only the fixed governed platform tool contracts when an Attempt bridge exists', () => {
   process.env.DSH_PLATFORM_TOOL_SOCKET = '/tmp/attempt-only.sock'
   const { registered } = capturePolicy()
-  assert.deepEqual(registered.map(tool => tool.name), ['prepare_skill_installation', 'inspect_admin_state', 'propose_admin_task', 'prepare_admin_action', 'activate_skill', 'python_execute'])
+  assert.deepEqual(registered.map(tool => tool.name), ['prepare_skill_installation', 'inspect_admin_state', 'propose_admin_task', 'prepare_admin_action', 'delegate_agent', 'activate_skill', 'python_execute'])
   assert.match(registered.find(tool => tool.name === 'inspect_admin_state').parameters.properties.query.description, /literal object name or ID/)
   assert.deepEqual(registered.find(tool => tool.name === 'propose_admin_task').parameters.required, ['kind', 'summary', 'impact'])
   assert.deepEqual(registered.find(tool => tool.name === 'prepare_admin_action').parameters.properties.actionType.enum, ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'])

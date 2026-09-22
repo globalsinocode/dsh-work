@@ -163,7 +163,7 @@ export class PostgresAuthorizationService {
     dataScopes?: string[]
     additionalSkillReferences?: string[]
     /**
-     * AG-03 自动任务授权上限：与当前授权求交后生效。交集后的角色与数据
+     * 自动任务和 PF-06 子任务的授权上限：与当前授权求交后生效。交集后的角色与数据
      * 范围同时参与可见性、必需 Scope、工具授权检查，并写入返回的
      * decision（随后进入 Manifest）。缺省表示不设上限（交互路径现状）。
      */

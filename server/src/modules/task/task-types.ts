@@ -1,7 +1,7 @@
 import type { JsonObject } from '../run/run-types.ts'
 import type { TaskBudgetInput } from './task-budget-types.ts'
 
-export type TaskSourceType = 'session' | 'automation' | 'api' | 'event' | 'system'
+export type TaskSourceType = 'session' | 'automation' | 'api' | 'event' | 'system' | 'delegation'
 export type TaskStatus = 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
 export type TaskOperationStatus = 'accepted' | 'completed' | 'failed' | 'unknown'
 

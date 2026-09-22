@@ -145,13 +145,21 @@ lines.on('line', (line) => {
       void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
-    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action'].includes(name))) {
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'delegate_agent'].includes(name))) {
       const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
       const activating = allowedTools.includes('activate_skill')
       const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''
       void (async () => {
         try {
-          if (activating) {
+          if (allowedTools.includes('delegate_agent')) {
+            const targetAgentVersionId = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/允许的目标 Agent Version ID：([^、\n]+)/)?.[1]?.trim()
+            if (!targetAgentVersionId) throw new Error('No delegation target in system prompt')
+            pending.answer = await callPlatformTool('delegate_agent', {
+              targetAgentVersionId,
+              task: currentText,
+              context: '只传递当前测试任务所需的最小上下文。',
+            })
+          } else if (activating) {
             const activated = new Set<string>()
             const activate = async (name: string): Promise<void> => {
               if (activated.has(name)) return

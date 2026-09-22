@@ -2,11 +2,12 @@ import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h, ref } from 'vue'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import AgentDraftDialog from './AgentDraftDialog.vue'
 import type { ZipInspection } from '../stores/agentGovernance'
-import type { AgentDefinition } from '../types/domain'
+import { useContentStore } from '../stores/content'
+import type { AgentDefinition, AgentVersionRecord } from '../types/domain'
 
 const wrappers: VueWrapper[] = []
 
@@ -34,6 +35,7 @@ const importedAgent: AgentDefinition = {
   timeoutSeconds: 300,
   skills: ['refund-risk@0.1.0'],
   tools: [],
+  delegationPolicy: { allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 },
   updatedAt: '2026-09-16 14:00',
 }
 
@@ -109,5 +111,52 @@ describe('AgentDraftDialog import completion', () => {
 
     expect(wrapper.emitted('continue-release')).toEqual([[importedAgent]])
     expect(wrapper.emitted('update:modelValue')).toEqual([[false]])
+  })
+
+  it('preserves an exact published-version delegation policy when saving a draft', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const contentStore = useContentStore()
+    const targetVersion = {
+      id: 'agent-version-specialist-1', agentId: 'specialist', version: '1.2.0', status: 'published',
+    } as AgentVersionRecord
+    contentStore.agentVersions = [targetVersion]
+    contentStore.agents = [{ ...importedAgent, id: 'specialist', name: '专项分析 Agent', status: 'published', version: '1.2.0' }]
+    const editable = {
+      ...importedAgent,
+      tools: ['tool-runtime-file-read@1.0.0'],
+      delegationPolicy: {
+        allowedAgentVersionIds: [targetVersion.id], maxDepth: 2, maxParallel: 3, timeoutSeconds: 90,
+      },
+    }
+    const update = vi.spyOn(contentStore, 'updateAgentDraft').mockResolvedValue(editable)
+    const wrapper = mount(AgentDraftDialog, {
+      props: { modelValue: false, agent: editable },
+      global: {
+        plugins: [pinia, ElementPlus],
+        stubs: {
+          teleport: true,
+          AgentZipImportPanel: ZipImportStub,
+          ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+          ElOption: true,
+        },
+      },
+    })
+    wrappers.push(wrapper)
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    const next = () => wrapper.findAll('button').find(button => button.text() === '下一步')!
+    await next().trigger('click')
+    await flushPromises()
+    await next().trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('1 个目标')
+    expect(wrapper.text()).toContain('深度 2 · 并行 3')
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+
+    expect(update).toHaveBeenCalledOnce()
+    expect(update.mock.calls[0]?.[0].delegationPolicy).toEqual(editable.delegationPolicy)
   })
 })

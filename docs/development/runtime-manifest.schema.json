@@ -389,6 +389,41 @@
         "additionalProperties": false
       }
     },
+    "delegation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_agent_version_ids", "max_depth", "max_parallel", "timeout_seconds"],
+      "properties": {
+        "allowed_agent_version_ids": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "max_depth": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "max_parallel": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "timeout_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
+      }
+    },
+    "delegation_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delegation_id", "root_task_id", "parent_task_id", "parent_run_id",
+        "parent_attempt_id", "depth", "max_depth", "role_ceiling", "data_scope_ceiling"
+      ],
+      "properties": {
+        "delegation_id": { "type": "string", "minLength": 1 },
+        "root_task_id": { "type": "string", "minLength": 1 },
+        "parent_task_id": { "type": "string", "minLength": 1 },
+        "parent_run_id": { "type": "string", "minLength": 1 },
+        "parent_attempt_id": { "type": "string", "minLength": 1 },
+        "depth": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "max_depth": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "role_ceiling": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "data_scope_ceiling": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    },
     "model_requirements": {
       "type": "array",
       "uniqueItems": true,

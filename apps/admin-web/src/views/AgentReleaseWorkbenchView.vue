@@ -65,6 +65,14 @@ const candidateVersion = computed(() => draftVersion.value?.version ?? candidate
 const skillReferences = computed(() => draftVersion.value?.skills ?? [])
 const toolReferences = computed(() => draftVersion.value?.tools ?? [])
 const candidateDataScopes = computed(() => draftVersion.value?.dataScopes ?? [])
+const delegationPolicy = computed(() => draftVersion.value?.delegationPolicy ?? {
+  allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
+})
+const delegationTargetLabels = computed(() => delegationPolicy.value.allowedAgentVersionIds.map((versionId) => {
+  const version = contentStore.agentVersions.find(item => item.id === versionId)
+  const target = version && contentStore.agents.find(item => item.id === version.agentId)
+  return version ? `${target?.name ?? version.agentId} · v${version.version}` : versionId
+}))
 const missingDependencyCount = computed(() => (
   candidate.value?.missingDeps.skills.length ?? 0
 ) + (
@@ -470,6 +478,10 @@ onMounted(async () => {
               <span class="definition-meta__divider" aria-hidden="true" />
               <span class="definition-meta__label">限制</span>
               <strong>{{ draftVersion?.timeoutSeconds ?? '—' }} 秒 · {{ draftVersion?.maxToolCalls ?? '—' }} 次工具调用 · {{ (draftVersion?.maxOutputBytes ?? 0).toLocaleString() }} 字节输出</strong>
+              <span class="definition-meta__divider" aria-hidden="true" />
+              <span class="definition-meta__label">委派</span>
+              <strong v-if="delegationTargetLabels.length">{{ delegationTargetLabels.length }} 个固定版本 · 深度 {{ delegationPolicy.maxDepth }} · 并行 {{ delegationPolicy.maxParallel }} · {{ delegationPolicy.timeoutSeconds }} 秒</strong>
+              <strong v-else>未启用</strong>
             </div>
             <el-collapse class="definition-details">
               <el-collapse-item title="版本与变更详情" name="version-details">
@@ -478,6 +490,7 @@ onMounted(async () => {
                   <div><dt>封存状态</dt><dd>{{ candidate.sealedRevision ? `已封存 rev ${candidate.sealedRevision}` : '未封存' }}</dd></div>
                   <div v-if="candidate.sealedAt"><dt>封存时间</dt><dd>{{ formatTimestamp(candidate.sealedAt) }}</dd></div>
                   <div v-if="candidate.reviewNote"><dt>审核意见</dt><dd>{{ candidate.reviewNote }}</dd></div>
+                  <div><dt>委派目标</dt><dd>{{ delegationTargetLabels.join('、') || '未启用' }}</dd></div>
                 </dl>
               </el-collapse-item>
             </el-collapse>

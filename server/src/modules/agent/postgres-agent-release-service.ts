@@ -21,6 +21,7 @@ import {
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import type { AgentDelegationPolicy } from '../../domain/types.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -171,6 +172,7 @@ interface DraftVersionShape {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  delegationPolicy?: AgentDelegationPolicy
 }
 
 interface AgentContext {
@@ -359,6 +361,9 @@ function draftFingerprint(draft: DraftVersionShape) {
     maxOutputBytes: draft.maxOutputBytes,
     maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
+    delegationPolicy: draft.delegationPolicy ?? {
+      allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
+    },
   })
 }
 
@@ -1765,6 +1770,7 @@ export class PostgresAgentReleaseService {
       draftTimeoutSeconds: number | null
       draftSkills: string[] | null
       draftTools: string[] | null
+      draftDelegationPolicy: AgentDelegationPolicy | null
     }[]>`
       select a.id, a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId",
@@ -1774,7 +1780,8 @@ export class PostgresAgentReleaseService {
              draft.data_scopes as "draftDataScopes", draft.example_prompts as "draftExamplePrompts",
              draft.max_output_bytes as "draftMaxOutputBytes", draft.max_tool_calls as "draftMaxToolCalls",
              draft.timeout_seconds as "draftTimeoutSeconds",
-             draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools"
+             draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools",
+             draft.delegation_policy as "draftDelegationPolicy"
         from agents a
         left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
@@ -1801,6 +1808,9 @@ export class PostgresAgentReleaseService {
           timeoutSeconds: row.draftTimeoutSeconds ?? 300,
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],
+          delegationPolicy: row.draftDelegationPolicy ?? {
+            allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
+          },
         },
       } : {}),
     }

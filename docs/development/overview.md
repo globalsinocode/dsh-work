@@ -77,6 +77,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 - **禁止第二套 Agent 执行逻辑。** 不得在前端、业务后端或独立服务中绕过 DSH，直接调用模型 API 实现 Agent 对话、工具调用循环、多步推理、模型上下文推进或循环内重试；不得为安装助手等场景另引入并行 Agent 执行框架。
 - **DSH 持有单次 Attempt 内的执行循环。** 模型交互、工具调用编排与循环上下文由 DSH 负责；平台复用现有 Runtime Adapter 处理启动、取消、超时、事件转换和进程回收。
 - **平台持有业务事实和工具实现。** 身份与权限、会话和安装记录、队列调度、Attempt 重试、断线恢复、幂等及审计由平台负责。下载、解包、校验、入库和版本发布是受控业务工具；其确定性流程与事务恢复不属于另一套 Agent Loop。管理端安装工具按管理身份授权，不扩大员工 Agent 的工具权限。
+- **Agent 委派仍是同一链路的子任务。** `delegate_agent` 只创建受控的无 Session 子 Task/Run；目标固定到已发布 Agent Version，子 Attempt 仍由 Runtime Adapter 启动 DSH。平台只负责父子关系、权限上限、根预算、容量、取消、恢复和结果契约，不在父子 Task 之间运行模型编排循环。
 - **模型治理不承担 Agent 执行。** Model 模块及 Gateway 可承担路由、凭据引用、计量和 DSH 调用所需的协议传输，不能自行发起一条绕过 DSH 的业务 Agent 路线。
 - **DSH 不可用时禁止绕过。** 需要 Agent 的对话和试运行明确报告不可用，不能自动降级到直接调用模型。已有安装记录和确定性平台管理操作可按自身权限继续工作；这不代表 Agent 仍可运行。
 - **扩展现有链路。** 安装助手所需工具调用或资源能力不足时，应扩展现有 Run/Runtime 契约和 DSH 能力。Runtime 可替换表示通过既有端口统一迁移执行内核，不表示允许各业务场景自行选择或维护第二套引擎。Mock Runtime 仅供测试与原型使用，不是生产回退方案。
@@ -85,7 +86,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 ### 3.6 工具分类与管理边界
 
-运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 内置工具进入 Tool Version、`connector-dsh-workspace` Binding 和 Agent 精确引用；dsh-work 内置执行工具由 Agent/Skill Manifest 声明；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
+运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 内置工具进入 Tool Version、`connector-dsh-workspace` Binding 和 Agent 精确引用；dsh-work 内置执行工具由 Agent/Skill Manifest 声明，其中 `delegate_agent` 只有在版本配置受控目标时才注入；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不获得平台 Tool Version/Binding，平台内置工具也不能借 Connector 或普通 Tool 配置扩大用途。
 
@@ -166,6 +167,7 @@ flowchart TB
 - Runtime Adapter 只依赖固定的 ACP JSON-RPC stdio 协议；
 - Runtime Manifest 使用规范化 JSON 与 SHA-256 固定运行输入；
 - Runtime Manifest 同时固定 Task 预算范围、累计上限和本 Attempt 预占；PostgreSQL 在 Attempt 创建事务中完成并发预算检查，终态结算或释放预占；
+- 委派子 Manifest 固定父子关系、深度和父权限上限；子 Task 的预算范围指向根 Task，执行前及活动期复核当前权限与父 Attempt 活性；
 - 一个 Attempt 默认对应一个隔离目录和一个 DSH Worker 进程；
 - Adapter 负责启动、取消、超时、回收、事件转换和错误分类；
 - 调度容量、排空/停用、重启恢复和 SSE 游标由 dsh-work 持久化控制。
@@ -225,7 +227,7 @@ flowchart LR
 |---|---|---|
 | Workspace | 个人或团队工作上下文 | Session、文件、成果必须归属一个 Workspace；团队资源受成员关系约束 |
 | Product Session | 用户可继续的业务对话 | 不等于 DSH Runtime Session；锁定 Agent Version，可选锁定一个已发布 Skill Version |
-| Task | 一次来自会话、自动任务、API、事件或系统的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属 |
+| Task | 一次来自会话、自动任务、API、事件、系统或受控委派的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属；委派子 Task 共用根预算范围 |
 | Run | 一次用户任务 | 幂等创建；拥有一个或多个按序 Attempt |
 | Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由、权限、文件与来源快照；终态不可回退 |
 | Run Event | 面向产品的标准运行事件 | 先落库后发送；稳定 ID 与全 Run 顺序；不暴露隐藏推理 |

@@ -93,6 +93,10 @@ export interface RuntimeManifest {
   knowledge_context: RuntimeKnowledgeDocument[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
+  /** PF-06 platform-owned delegation allow-list fixed with the Agent Version. */
+  delegation_policy?: RuntimeDelegationPolicy
+  /** PF-06 immutable parent/root lineage for a delegated child Attempt. */
+  delegation_context?: RuntimeDelegationContext
   model_route_id?: string | null
   /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
   model_requirements?: Array<'long-context' | 'structured-output'>
@@ -145,6 +149,25 @@ export interface RuntimeManifest {
   }
   created_at: string
   trace_id?: string
+}
+
+export interface RuntimeDelegationPolicy {
+  allowed_agent_version_ids: string[]
+  max_depth: number
+  max_parallel: number
+  timeout_seconds: number
+}
+
+export interface RuntimeDelegationContext {
+  delegation_id: string
+  root_task_id: string
+  parent_task_id: string
+  parent_run_id: string
+  parent_attempt_id: string
+  depth: number
+  max_depth: number
+  role_ceiling: string[]
+  data_scope_ceiling: string[]
 }
 
 export interface RuntimeResumeCheckpointContext {
