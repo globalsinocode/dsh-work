@@ -12,6 +12,7 @@ import type {
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
+  DshRuntimeToolConnectorStatus,
   GrantSourceReconciliationView,
   HealthComponent,
   ManagedWorkspaceDefinition,
@@ -42,6 +43,7 @@ export const useContentStore = defineStore('admin-content', () => {
   const tools = ref<ToolDefinition[]>([])
   const toolCatalog = ref<ToolCatalogCandidate[]>([])
   const connectors = ref<ConnectorDefinition[]>([])
+  const dshRuntimeToolConnector = ref<DshRuntimeToolConnectorStatus | null>(null)
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
@@ -96,6 +98,7 @@ export const useContentStore = defineStore('admin-content', () => {
       toolData,
       toolCatalogData,
       connectorData,
+      dshRuntimeToolConnectorData,
       healthData,
       usageData,
       statusData,
@@ -111,7 +114,8 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getSkillReleaseRecords(),
       adminApi.getTools(),
       adminApi.getToolCatalog(),
-      adminApi.getConnectors(),
+      adminApi.getMcpConnectors(),
+      adminApi.getDshRuntimeToolConnector(),
       adminApi.getHealth(),
       adminApi.getUsage(),
       adminApi.getPlatformStatus(),
@@ -128,6 +132,7 @@ export const useContentStore = defineStore('admin-content', () => {
     tools.value = toolData
     toolCatalog.value = toolCatalogData
     connectors.value = connectorData
+    dshRuntimeToolConnector.value = dshRuntimeToolConnectorData
     health.value = healthData
     usage.value = usageData
     platformStatus.value = statusData
@@ -335,12 +340,6 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
-  async function approveMcpConnector(connectorId: string, capabilityDigest: string) {
-    const connector = await adminApi.approveMcpConnector({ connectorId, capabilityDigest })
-    replaceById(connectors.value, connector)
-    return connector
-  }
-
   async function setMcpConnectorStatus(connectorId: string, status: 'enabled' | 'disabled') {
     const connector = await adminApi.setMcpConnectorStatus({ connectorId, status })
     replaceById(connectors.value, connector)
@@ -363,6 +362,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return runtime
   }
 
+  async function checkDshRuntimeToolConnector() {
+    const connector = await adminApi.checkDshRuntimeToolConnector()
+    dshRuntimeToolConnector.value = connector
+    return connector
+  }
+
   async function updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
     const runtime = await adminApi.updateRuntimeConfiguration(input)
     replaceById(runtimes.value, runtime)
@@ -382,6 +387,7 @@ export const useContentStore = defineStore('admin-content', () => {
     tools,
     toolCatalog,
     connectors,
+    dshRuntimeToolConnector,
     auditEvents,
     operationsSummary,
     health,
@@ -414,11 +420,11 @@ export const useContentStore = defineStore('admin-content', () => {
     registerMcpConnector,
     deleteMcpConnector,
     rotateMcpCredential,
-    approveMcpConnector,
     setMcpConnectorStatus,
     setAgentMcpAccess,
     getMcpInvocationAudits,
     checkRuntime,
+    checkDshRuntimeToolConnector,
     updateRuntimeConfiguration,
     updateToolPermissions,
     addTool,

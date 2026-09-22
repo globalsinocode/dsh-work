@@ -146,9 +146,25 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 2. 添加受 output 目录约束的 `edit`，使用平台固定的无需审批策略。
 3. 尝试添加 `bash` 或未知工具。
 4. 尝试从权限页把 DSH 内置工具改为其他审批策略。
-5. 查询普通工具列表与绑定列表，检查非 DSH 工具未混入；进入连接器管理查看 MCP 能力。
+5. 查询普通工具列表与绑定列表，检查非 DSH 工具未混入；进入 MCP 连接器查看外部 MCP 能力。
 
-**验收：** `edit` 可添加并锁定版本；`bash` 明确显示因任意 Shell/逐次审批能力未就绪而不可用；未知工具不可添加；客户端输入不能覆盖平台审批策略；被拒工具不能进入 Agent Runtime 授权闭包；`DSH 工具管理` 仅显示 `connector-dsh-workspace` 下的 DSH 内置工具，MCP 外部工具只在连接器整体审核中出现。
+**验收：** `edit` 可添加并锁定版本；`bash` 明确显示因任意 Shell/逐次审批能力未就绪而不可用；未知工具不可添加；客户端输入不能覆盖平台审批策略；被拒工具不能进入 Agent Runtime 授权闭包；`DSH 工具管理` 仅显示 `connector-dsh-workspace` 下的 DSH 内置工具，MCP 外部工具只在 MCP 连接器详情中出现。
+
+### ADMIN-E2E-03 DSH 内置连接与 MCP 管理入口分离
+
+**优先级：** P0
+**角色：** 平台管理员
+**运行层级：** Prototype 浏览器与管理端组件测试；PostgreSQL 服务测试补充接口边界
+**前置数据：** 一个 DSH Runtime、稳定内置连接 `connector-dsh-workspace`、至少一个 MCP Connector
+**spec：** `e2e/mvp-smoke.spec.ts`、`apps/admin-web/src/views/RuntimeManagementView.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`server/src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts`
+
+1. 进入“Agent 治理 → MCP 连接器”，检查列表只包含外部 MCP Connector，不出现 `connector-dsh-workspace` 或其他平台内部连接。
+2. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情。
+3. 查看“DSH Runtime 内置工具连接”区域中的连接标识、状态、工具数量、目录摘要、活动 Binding、最近检查及故障信息。
+4. 从 Runtime 详情执行内置工具连接检查；该操作不出现 MCP 的新增、Token、整体审核、Agent Grant 或删除能力。
+5. 在系统健康页确认只保留 Runtime/连接依赖的汇总告警，不增加第二套连接配置入口。
+
+**验收：** MCP 页面与接口只返回外部 MCP Connector；DSH 内置连接仍保留 Tool Version、Connector Binding 和审计事实，但只在 Runtime 运维详情中展示与检查。两个入口不重复提供编辑动作，页面位置不改变底层执行与授权模型。
 
 ### ADMIN-E2E-02 管理操作在并发和重启后确定性收敛
 
@@ -509,7 +525,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 ## PF-03 MCP Connector 治理
 
-### PF-MCP-01 Connector 整体审核与 Agent 授权
+### PF-MCP-01 Connector 自动生效与 Agent 授权
 
 **优先级：** P0（治理边界）
 
@@ -519,18 +535,19 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **前置数据：** 隔离一次性 PostgreSQL、受控管理员、可改变 Tool 清单的合成 MCP 发现 Runtime、一个已发布 Agent；不得连接开发业务库或生产服务
 
-**spec：** `e2e/admin-mcp-connector.integration.spec.ts`
+**spec：** `e2e/admin-mcp-connector.integration.spec.ts`、`server/src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts`
 
-1. 在现有“连接器”页面填写名称与 Streamable HTTP 地址；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，并在详情与审核窗口显示每个 Tool 的名称、描述、输入 Schema 和待审核状态。
-2. 从列表轮换 Bearer Token，确认旧值不回显、连接器重新检查且能力仍需按既有审核规则处理。
-3. 核对完整能力信息后整体审核 Connector，向 Agent A 授予使用权；确认没有逐 Tool 权限选择，也没有在平台 Tool 列表生成 MCP Tool。
-4. 向测试 Agent 授予整个 Connector；数据库证据确认只有一条 Connector Grant，平台 Tool 表没有复制 MCP Tool。
-5. 合成发现 Runtime 新增一个 Tool 后重新发现；确认 Connector 进入“能力已变化，待重新审核”，不可新增 Grant，但仍可进入 Agent 权限并撤销已有 Grant。
-6. 重新整体审核后确认可以新增 Grant；数据库证据与页面状态一致。
-7. 人工停用 Connector 后再次执行发现，状态保持“已停用”；能力变化后重新整体审核仍保持“已停用”，且已有 Grant 仍可撤销。只有显式启用操作才能恢复健康状态。
-8. 从列表删除 Connector 并二次确认；列表立即移除该项，活动 Agent Grant 全部撤销，独占 Bearer 凭据销毁，运行时不能再解析该连接；Connector 行、能力审核、健康检查和调用审计继续保留用于追溯。
+1. 在“MCP 连接器”页面填写名称与 Streamable HTTP 地址；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，连接器与当前 Tool 清单立即生效。
+2. 列表保持与 Skill 管理一致的工具栏、表格和分页结构，不增加统计卡片；列按“名称、Endpoint、认证方式、工具数量、状态、更新时间、添加时间、添加人员、操作”排列。“工具数量”可打开 Tool 名称、描述和输入 Schema 清单；操作列直接提供查看、检查，其余 Agent 权限、凭据轮换、停用或启用、删除收进“更多”；页面不出现整体审核入口。
+3. 向 Agent A 授予整个 Connector；确认没有逐 Tool 权限选择，也没有在平台 Tool 列表生成 MCP Tool。数据库证据确认只有一条 Connector Grant。
+4. 合成发现 Runtime 新增一个 Tool 后重新检查；确认新清单与摘要自动生效，连接器保持健康，已有 Grant 继续覆盖整个 Connector，详情显示每个 Tool 的名称、描述和输入 Schema。
+5. 从列表轮换 Bearer Token，确认旧值不回显；新 Token 检查成功后自动恢复生效，检查失败时保持异常且不可新增 Agent Grant。人工停用状态不会被检查自动解除。
+6. 撤销已有 Agent Grant 后确认调用被拒绝；删除 Connector 后凭据和 Grant 按治理规则清理。
+7. 人工停用 Connector 后再次执行检查，状态保持“已停用”；清单会自动同步，但已有 Grant 仍不可执行且可以撤销。只有显式启用操作才能恢复健康状态。
+8. 从列表删除 Connector 并二次确认；列表立即移除该项，活动 Agent Grant 全部撤销，独占 Bearer 凭据销毁，运行时不能再解析该连接；Connector 行、能力快照、健康检查和调用审计继续保留用于追溯。
+9. 从旧版“等待审核/需要重新审核”状态升级时，分别构造“当前 Bearer 凭据晚于最近检查”和“当前凭据已有后续检查”两种记录；前者保持 `degraded` 且已有 Grant 不可执行，后者才允许自动生效。对已经被旧迁移错误恢复的记录，纠正迁移应重新要求检查且不得伪造健康检查证据。
 
-**验收：** MCP 复用现有 Connector 管理；一个 Server 是最小审核与授权单元。管理员无需填写内部标识、命名空间或所属系统；Bearer Token 只在新增或轮换时输入，查询与详情不回显。连通测试不持久化 Connector 或 Token，测试成功后才能添加，添加时仍由服务端重新测试，不能只依赖页面状态。审核前可检查 Tool 名称、描述和输入 Schema；发现或 Agent 发布均不自动授权，能力摘要变化必须整体复核。健康检查、凭据轮换和重新审核都不能覆盖人工停用；任何连接器状态下都能撤销已有 Grant，只有健康且整体审核通过时才能新增。删除操作撤销运行权限和独占密钥，但保留治理证据。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；加密密文、运行时解密、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
+**验收：** MCP 复用现有 Connector 管理；一个 Server 是最小授权单元。管理员无需填写内部标识、命名空间或所属系统；Bearer Token 只在新增或轮换时输入，查询与详情不回显。连通测试不持久化 Connector 或 Token，测试成功后才能添加，添加时仍由服务端重新测试，不能只依赖页面状态。成功发现的 Tool 名称、描述、输入 Schema 与摘要自动成为当前生效快照；能力变化不需要人工审核，也不自动授予任何 Agent。健康检查和凭据轮换不能覆盖人工停用；任何连接器状态下都能撤销已有 Grant，只有健康且能力快照已同步时才能新增。升级迁移只能使用晚于当前凭据的检查证据，无法确定检查与凭据版本顺序时保持 `degraded`。删除操作撤销运行权限和独占密钥，但保留治理证据。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；加密密文、运行时解密、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
 
 ### PF-MCP-P2 真实 MCP 与 DSH 发布前验收
 
@@ -548,4 +565,4 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 2. 分别演练错误凭据、MCP 超时/取消、服务新增 Tool、Connector 停用和 Agent 撤权；核对 Run/Attempt 终态及后续调用是否停止。
 3. 检查 DSH Worker Patch 和环境边界，确认密钥正文未进入 PostgreSQL、Manifest、前端响应、Patch 文件或普通日志。
 
-**验收：** 真实 DSH 只加载已审核 Connector；调用、失败和撤权均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。
+**验收：** 真实 DSH 只加载健康、能力快照已同步且 Agent 已获权的 Connector；调用、失败和撤权均可追溯。P1 合成 Runtime、一次性 PostgreSQL和管理页面绿灯不能替代本层证据。

@@ -91,13 +91,19 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await skillTabs.getByRole('tab', { name: '新增 Skill' }).click()
   await expect(page).toHaveURL(/\/skills\/install$/)
 
-  await page.getByRole('button', { name: '连接器管理', exact: true }).click()
+  await page.getByRole('button', { name: 'MCP 连接器', exact: true }).click()
   await expect(page).toHaveURL(/\/connectors$/)
   await expect(page.getByRole('button', { name: '全部检查' })).toBeVisible()
+  await expect(page.getByText('企业知识 MCP', { exact: true })).toBeVisible()
+  await expect(page.getByText('DSH Runtime 内置工具连接器', { exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Runtimes', exact: true }).click()
   await expect(page).toHaveURL(/\/runtimes$/)
   await expect(page.getByText('Runtimes', { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: '查看' }).first().click()
+  const dshConnector = page.getByRole('region', { name: 'DSH Runtime 内置工具连接' })
+  await expect(dshConnector.getByText('connector-dsh-workspace', { exact: true })).toBeVisible()
+  await expect(dshConnector.getByRole('button', { name: '检查工具连接' })).toBeVisible()
 })
 
 test('administrator can open system information from the user menu', async ({ page }) => {

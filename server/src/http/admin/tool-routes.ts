@@ -42,7 +42,13 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
     }), 'postgres')
   })
   router.get(`${basePath}/tools/bindings`, async () => envelope('admin', { items: await service.listToolBindings() }, 'postgres'))
-  router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getConnectors(), 'postgres'))
+  router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors(), 'postgres'))
+  router.get(`${basePath}/runtimes/dsh-tool-connector`, async () =>
+    envelope('admin', await service.getDshRuntimeToolConnectorStatus(), 'postgres'))
+  router.post(`${basePath}/runtimes/dsh-tool-connector/check`, async (_request, context) =>
+    envelope('admin', await service.checkDshRuntimeToolConnector({
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres'))
   router.get(`${basePath}/connectors/mcp/invocations`, async (_request, context) => envelope(
     'admin',
     await service.listMcpInvocationAudits(context.url.searchParams.get('connector_id') ?? ''),
@@ -79,14 +85,7 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
   })
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)
-    return envelope('admin', await service.checkConnector({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres')
-  })
-  router.post(`${basePath}/connectors/mcp/approve`, async (request, context) => {
-    const input = await readJsonBody<{ connectorId: string; capabilityDigest: string }>(request)
-    return envelope('admin', await service.approveMcpConnector({
+    return envelope('admin', await service.checkMcpConnector({
       ...input,
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')

@@ -47,7 +47,7 @@ describe('global management conversation history', () => {
     const agentGovernance = navigation.findAll('section').find(section => section.text().includes('Agent 治理'))
     expect(agentGovernance?.text()).toContain('Skill 管理')
     expect(agentGovernance?.text()).toContain('DSH 工具管理')
-    expect(agentGovernance?.text()).toContain('连接器管理')
+    expect(agentGovernance?.text()).toContain('MCP 连接器')
     expect(agentGovernance?.text()).not.toContain('Skill 与工具')
     expect(navigation.findAll('section').at(-1)?.attributes('aria-label')).toBe('对话记录')
     const history = navigation.get('[aria-label="对话记录"]')

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../agent/agent-spec.ts'
 
@@ -12,6 +12,7 @@ import type {
   ConnectorConfiguration,
   CreateAgentDraftInput,
   CreateSkillInput,
+  DshRuntimeToolConnectorStatus,
   EmployeeModelUsageSummary,
   ListPage,
   ManagedWorkspaceDefinition,
@@ -30,6 +31,7 @@ import type {
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
 } from '../../../domain/types.ts'
+import { DSH_RUNTIME_CONNECTOR_ID } from '../../../domain/tool-category.ts'
 import {
   assertDshToolApprovalPolicy,
   catalogEntryToToolDefinition,
@@ -482,6 +484,50 @@ export class AdminQueryService {
 
   getConnectors() {
     return this.repository.read('connectors')
+  }
+
+  async getMcpConnectors() {
+    return (await this.getConnectors()).filter(connector => connector.protocol === 'mcp')
+  }
+
+  async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
+    const [connectors, runtimes, tools] = await Promise.all([
+      this.repository.read('connectors'),
+      this.repository.read('runtimes'),
+      this.repository.read('tools'),
+    ])
+    const connector = connectors.find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
+    if (!connector) throw new Error('DSH Runtime 内置工具连接器不存在')
+    const catalog = tools
+      .filter(tool => tool.connectorId === DSH_RUNTIME_CONNECTOR_ID)
+      .map(tool => ({ id: tool.id, version: tool.version, status: tool.status }))
+      .sort((left, right) => `${left.id}@${left.version}`.localeCompare(`${right.id}@${right.version}`))
+    return {
+      runtimeId: runtimes[0]?.id ?? null,
+      connectorId: connector.id,
+      name: connector.name,
+      status: connector.status,
+      endpoint: connector.endpoint,
+      toolCount: catalog.length,
+      activeBindingCount: catalog.filter(tool => tool.status !== 'disabled').length,
+      latestBindingRevision: catalog.length ? 1 : null,
+      catalogDigest: createHash('sha256').update(JSON.stringify(catalog)).digest('hex'),
+      lastCheckedAt: connector.lastCheckedAt,
+      lastHealthMessage: connector.status === 'disabled'
+        ? '内置工具连接已人工停用。'
+        : 'Prototype 模式使用确定性内置工具目录。',
+    }
+  }
+
+  async checkDshRuntimeToolConnector(input: { actor: string }) {
+    await this.checkConnector({ connectorId: DSH_RUNTIME_CONNECTOR_ID, actor: input.actor })
+    return this.getDshRuntimeToolConnectorStatus()
+  }
+
+  async checkMcpConnector(input: { connectorId: string; actor: string }) {
+    const connector = (await this.getMcpConnectors()).find(item => item.id === input.connectorId)
+    if (!connector) throw new Error(`MCP Connector 不存在：${input.connectorId}`)
+    return this.checkConnector(input)
   }
 
   async checkConnector(input: { connectorId: string; actor: string }) {

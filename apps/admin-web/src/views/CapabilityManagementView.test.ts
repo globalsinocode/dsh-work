@@ -39,6 +39,9 @@ async function render(canManage = true, initial = '/skills') {
         teleport: true,
         ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
         ElOption: true,
+        ElDropdown: { template: '<div class="el-dropdown-stub"><slot /><slot name="dropdown" /></div>' },
+        ElDropdownMenu: { template: '<div class="el-dropdown-menu-stub"><slot /></div>' },
+        ElDropdownItem: { template: '<button type="button"><slot /></button>' },
       },
     },
   })
@@ -80,6 +83,8 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
     id: 'connector-mcp-offline', name: '离线待审核 MCP', system: 'MCP', status: 'offline',
     toolCount: 1, protocol: 'mcp', endpoint: 'https://mcp.example.invalid/mcp', authType: 'bearer',
     credentialRef: '已加密存储', scopeDescription: '只读测试范围', latency: '—', lastCheckedAt: '刚刚',
+    lastHealthMessage: 'MCP 认证失败：Bearer Token 已过期',
+    createdAt: '2026-09-20T02:30:00.000Z', createdBy: '陈默', updatedAt: '2026-09-22T00:05:00.000Z',
     mcp: {
       serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
       capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
@@ -142,15 +147,15 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.find('[role="tablist"][aria-label="Skill 管理"]').exists()).toBe(false)
     expect(wrapper.get('[aria-label="DSH 内置工具列表"]').attributes('aria-label')).toBe('DSH 内置工具列表')
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 DSH 内置工具名称、标识或说明')
-    expect(wrapper.text()).toContain('MCP 工具在连接器中整体审核')
+    expect(wrapper.text()).toContain('MCP 工具随连接器清单自动同步')
     expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
     expect(wrapper.get('[data-action="add-tool"]').text()).toContain('添加工具')
     expect(wrapper.find('[data-action="register-tool-candidate"]').exists()).toBe(false)
 
     await router.push('/connectors')
     await flushPromises()
-    expect(wrapper.get('[aria-label="连接器列表"]').attributes('aria-label')).toBe('连接器列表')
-    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索连接器或企业系统')
+    expect(wrapper.get('[aria-label="MCP 连接器列表"]').attributes('aria-label')).toBe('MCP 连接器列表')
+    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 MCP 名称、标识或 serverName')
   })
 
   it('adds a ready DSH tool with explicit role, scope and approval defaults', async () => {
@@ -212,7 +217,7 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('.el-table__row').text()).not.toContain('已撤销')
   })
 
-  it('keeps offline status ahead of a retained MCP review state', async () => {
+  it('keeps offline status ahead of a retained legacy MCP review state', async () => {
     const { wrapper, content } = await render(true, '/connectors')
     const connector = offlinePendingMcp()
     content.connectors.push(connector)
@@ -221,14 +226,51 @@ describe('Skill installation sibling tab', () => {
     const info = vi.spyOn(ElNotification, 'info').mockImplementation(() => ({ close: () => undefined }))
     await flushPromises()
 
+    expect(wrapper.find('.mcp-summary').exists()).toBe(false)
+    const headers = wrapper.findAll('.el-table__header th')
+    expect(headers.map(header => header.text())).toEqual([
+      '名称', 'Endpoint', '认证方式', '工具数量', '状态', '更新时间', '添加时间', '添加人员', '操作',
+    ])
+    expect(headers[3]?.classes()).toContain('is-center')
+    expect(headers[7]?.classes()).toContain('is-center')
     expect(wrapper.get('.el-table__row').text()).toContain('离线')
+    expect(wrapper.get('.el-table__row').text()).toContain('https://mcp.example.invalid/mcp')
+    expect(wrapper.get('.el-table__row').text()).toContain('Bearer Token')
+    expect(wrapper.get('.el-table__row').text()).toContain('陈默')
+    expect(wrapper.get('.el-table__row').findAll('td')[7]?.classes()).toContain('is-center')
+    expect(wrapper.find('.mcp-row-actions').exists()).toBe(true)
+    expect(wrapper.get('[data-action="mcp-more"]').text()).toContain('更多')
     expect(wrapper.get('.el-table__row').text()).not.toContain('连通，待审核')
+    expect(wrapper.find('[data-action="approve-mcp-connector"]').exists()).toBe(false)
+    await wrapper.get('[data-action="view-mcp-tools"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('query')
+    expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('查询')
+    expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('"type": "object"')
     await wrapper.get('[data-action="check-connector"]').trigger('click')
     await flushPromises()
 
     expect(check).toHaveBeenCalledWith(connector.id)
-    expect(error).toHaveBeenCalledWith(expect.objectContaining({ title: `连接器异常：${connector.name}` }))
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({
+      title: `连接器异常：${connector.name}`,
+      message: expect.stringContaining('原因：MCP 认证失败：Bearer Token 已过期。'),
+    }))
     expect(info).not.toHaveBeenCalled()
+  })
+
+  it('does not expose the DSH Runtime internal connector in MCP management', async () => {
+    const { wrapper, content } = await render(true, '/connectors')
+    content.connectors.push({
+      id: 'connector-dsh-workspace', name: 'DSH Runtime 内置工具连接器', system: 'DSH Runtime',
+      status: 'healthy', toolCount: 4, protocol: 'runtime', endpoint: 'dsh://workspace',
+      authType: 'Runtime Manifest + Sandbox', credentialRef: '无独立凭据',
+      scopeDescription: '当前 Run 工作区', latency: '0 ms', lastCheckedAt: '刚刚',
+    }, offlinePendingMcp())
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('离线待审核 MCP')
+    expect(wrapper.text()).not.toContain('DSH Runtime 内置工具连接器')
+    expect(wrapper.findAll('.el-table__row')).toHaveLength(1)
   })
 
   it('groups dependency Skills under their installation entry', async () => {

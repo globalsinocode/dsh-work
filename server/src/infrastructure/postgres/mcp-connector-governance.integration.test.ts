@@ -113,8 +113,25 @@ test('PF-03 tests connection without persistence and registration rechecks befor
     actor: 'U00008',
   })
   assert.equal(inspectionCount, countBeforeTest + 2, 'registration must not trust a previous browser test')
-  assert.equal(registered.mcp?.approvalStatus, 'pending_review')
+  assert.equal(registered.status, 'healthy')
+  assert.equal(registered.createdBy, '陈默')
+  assert.match(registered.createdAt!, /^\d{4}-\d{2}-\d{2}T/)
+  assert.match(registered.updatedAt!, /^\d{4}-\d{2}-\d{2}T/)
+  assert.equal(registered.mcp?.approvalStatus, 'approved')
+  assert.equal(registered.mcp?.approvedDigest, registered.mcp?.capabilityDigest)
   assert.equal(registered.mcp?.capabilityCount, 1)
+
+  const activeDigest = registered.mcp?.capabilityDigest
+  discovered = []
+  const emptyDiscovery = await service.checkConnector({ connectorId: registered.id, actor: 'U00008' })
+  assert.equal(emptyDiscovery.status, 'offline')
+  assert.match(emptyDiscovery.lastHealthMessage ?? '', /未发现任何 Tool/)
+  assert.equal(emptyDiscovery.mcp?.capabilityDigest, activeDigest, 'an empty discovery must not replace the effective snapshot')
+  discovered = [{
+    name: 'preflight_read', description: 'Read preflight data.',
+    inputSchema: { type: 'object', properties: {} },
+  }]
+  assert.equal((await service.checkConnector({ connectorId: registered.id, actor: 'U00008' })).status, 'healthy')
 
   await assert.rejects(service.testMcpConnection({
     name: '无效地址', endpoint: 'not-a-url', authType: 'none', actor: 'U00008',
@@ -194,13 +211,8 @@ test('PF-03 encrypts, resolves, and rotates a Bearer Token without returning pla
   assert.equal(registered.credentialRef, 'Bearer Token 已加密存储')
   assert.doesNotMatch(JSON.stringify(registered), new RegExp(initialToken))
 
-  const firstCheck = await service.checkConnector({ connectorId: registered.id, actor: 'U00008' })
+  await service.checkConnector({ connectorId: registered.id, actor: 'U00008' })
   assert.equal(lastInspectedConnection?.headers.Authorization, `Bearer ${initialToken}`)
-  await service.approveMcpConnector({
-    connectorId: registered.id,
-    capabilityDigest: firstCheck.mcp!.capabilityDigest!,
-    actor: 'U00008',
-  })
   const [stored] = await database<{
     backend: string; externalRef: string; credentialRefId: string; ciphertext: Uint8Array; version: number
   }[]>`
@@ -291,12 +303,12 @@ test('PF-03 upgrades a legacy Connector without rotating another Connector that 
     await transaction`
       insert into connectors (
         id, tenant_id, key, name, connector_type, credential_ref_id, status,
-        system, protocol, endpoint, auth_type, scope_description, updated_at
+        system, protocol, endpoint, auth_type, scope_description, updated_at, created_by
       ) values
         (${connectorId}, 'tenant-dsh-work', ${serverName}, '旧版 Bearer MCP', 'mcp', ${credentialId}, 'degraded',
-         'MCP', 'mcp', 'https://legacy-mcp.example.test/rpc', 'bearer', '升级兼容测试', now()),
+         'MCP', 'mcp', 'https://legacy-mcp.example.test/rpc', 'bearer', '升级兼容测试', now(), 'U00008'),
         (${siblingConnectorId}, 'tenant-dsh-work', ${siblingServerName}, '共享旧凭据 MCP', 'mcp', ${credentialId}, 'degraded',
-         'MCP', 'mcp', 'https://legacy-mcp-sibling.example.test/rpc', 'bearer', '共享凭据隔离测试', now())
+         'MCP', 'mcp', 'https://legacy-mcp-sibling.example.test/rpc', 'bearer', '共享凭据隔离测试', now(), 'U00008')
     `
     await transaction`
       insert into mcp_connector_profiles (tenant_id, connector_id, server_name)
@@ -377,7 +389,7 @@ after(async () => {
   await throwaway?.dispose()
 })
 
-test('PF-03 governs an MCP server as one Connector grant and blocks capability drift', async () => {
+test('PF-03 activates discovered MCP capabilities and governs access as one Connector grant', async () => {
   const suffix = randomUUID().slice(0, 8)
   discovered = [
     { name: 'customer_get', description: 'Read one customer.', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
@@ -394,21 +406,17 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
   assert.equal(registered.protocol, 'mcp')
   const connectorId = registered.id
   const serverName = registered.mcp!.serverName
-  assert.equal(registered.mcp?.approvalStatus, 'pending_review')
+  assert.equal(registered.status, 'healthy')
+  assert.equal(registered.mcp?.approvalStatus, 'approved')
+  assert.equal(registered.mcp?.approvedDigest, registered.mcp?.capabilityDigest)
   assert.equal(registered.mcp?.capabilityCount, 2)
   assert.equal(registered.toolCount, 0, 'MCP capabilities must not create platform Tool rows')
 
   const discoveredConnector = await service.checkConnector({ connectorId, actor: 'U00008' })
-  assert.equal(discoveredConnector.status, 'degraded')
-  assert.equal(discoveredConnector.mcp?.approvalStatus, 'pending_review')
+  assert.equal(discoveredConnector.status, 'healthy')
+  assert.equal(discoveredConnector.mcp?.approvalStatus, 'approved')
   assert.equal(discoveredConnector.mcp?.capabilityCount, 2)
-
-  const approved = await service.approveMcpConnector({
-    connectorId, capabilityDigest: discoveredConnector.mcp!.capabilityDigest!, actor: 'U00008',
-  })
-  assert.equal(approved.status, 'healthy')
-  assert.equal(approved.mcp?.approvalStatus, 'approved')
-  assert.equal(approved.mcp?.approvedDigest, approved.mcp?.capabilityDigest)
+  assert.equal(discoveredConnector.mcp?.approvedDigest, discoveredConnector.mcp?.capabilityDigest)
 
   await service.setAgentMcpAccess({
     connectorId,
@@ -416,7 +424,8 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
     enabled: true,
     actor: 'U00008',
   })
-  const pins = await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
+  const pins = (await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .filter(connection => connection.connector_id === connectorId)
   assert.equal(pins.length, 1)
   assert.equal(pins[0]?.connector_id, connectorId)
   assert.equal(pins[0]?.server_name, serverName)
@@ -427,24 +436,18 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
     inputSchema: { type: 'object', properties: {} },
   }]
   const changed = await service.checkConnector({ connectorId, actor: 'U00008' })
-  assert.equal(changed.status, 'degraded')
-  assert.equal(changed.mcp?.approvalStatus, 'changes_pending')
-  assert.notEqual(changed.mcp?.capabilityDigest, changed.mcp?.approvedDigest)
-  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'), [])
+  assert.equal(changed.status, 'healthy')
+  assert.equal(changed.mcp?.approvalStatus, 'approved')
+  assert.equal(changed.mcp?.capabilityDigest, changed.mcp?.approvedDigest)
+  const currentPins = (await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .filter(connection => connection.connector_id === connectorId)
+  assert.equal(currentPins.length, 1)
+  assert.equal(currentPins[0]?.capability_digest, changed.mcp?.approvedDigest)
   await assert.rejects(
     service.assertActiveMcpConnections(pins, 'agent-version-dsh-work-assistant-1'),
     /授权已撤销或能力摘要已变化/,
+    'an already prepared Attempt remains pinned to its original capability digest',
   )
-  await assert.rejects(service.approveMcpConnector({
-    connectorId, capabilityDigest: approved.mcp!.approvedDigest!, actor: 'U00008',
-  }), /能力清单已变化/)
-
-  const reapproved = await service.approveMcpConnector({
-    connectorId, capabilityDigest: changed.mcp!.capabilityDigest!, actor: 'U00008',
-  })
-  const currentPins = await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
-  assert.equal(currentPins.length, 1)
-  assert.equal(currentPins[0]?.capability_digest, reapproved.mcp?.approvedDigest)
 
   const disabled = await service.setMcpConnectorStatus({
     connectorId, status: 'disabled', actor: 'U00008',
@@ -453,12 +456,14 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
   const checkedWhileDisabled = await service.checkConnector({ connectorId, actor: 'U00008' })
   assert.equal(checkedWhileDisabled.status, 'disabled', 'discovery must not undo an explicit administrative disable')
   assert.equal(checkedWhileDisabled.mcp?.approvalStatus, 'approved')
-  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'), [])
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .some(connection => connection.connector_id === connectorId), false)
   const explicitlyEnabled = await service.setMcpConnectorStatus({
     connectorId, status: 'enabled', actor: 'U00008',
   })
   assert.equal(explicitlyEnabled.status, 'healthy')
-  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')).length, 1)
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .filter(connection => connection.connector_id === connectorId).length, 1)
 
   await service.setMcpConnectorStatus({ connectorId, status: 'disabled', actor: 'U00008' })
   discovered = discovered.map((capability, index) => index === 0
@@ -466,15 +471,13 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
     : capability)
   const changedWhileDisabled = await service.checkConnector({ connectorId, actor: 'U00008' })
   assert.equal(changedWhileDisabled.status, 'disabled')
-  assert.equal(changedWhileDisabled.mcp?.approvalStatus, 'changes_pending')
-  const reapprovedWhileDisabled = await service.approveMcpConnector({
-    connectorId, capabilityDigest: changedWhileDisabled.mcp!.capabilityDigest!, actor: 'U00008',
-  })
-  assert.equal(reapprovedWhileDisabled.status, 'disabled', 'review must not undo an explicit administrative disable')
-  assert.equal(reapprovedWhileDisabled.mcp?.approvalStatus, 'approved')
-  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'), [])
+  assert.equal(changedWhileDisabled.mcp?.approvalStatus, 'approved')
+  assert.equal(changedWhileDisabled.mcp?.capabilityDigest, changedWhileDisabled.mcp?.approvedDigest)
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .some(connection => connection.connector_id === connectorId), false)
   await service.setMcpConnectorStatus({ connectorId, status: 'enabled', actor: 'U00008' })
-  const finalPins = await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
+  const finalPins = (await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .filter(connection => connection.connector_id === connectorId)
   assert.equal(finalPins.length, 1)
 
   const runId = `run-mcp-${suffix}`
@@ -534,7 +537,8 @@ test('PF-03 governs an MCP server as one Connector grant and blocks capability d
   assert.equal(deletion.revokedGrantCount, 0)
   assert.equal(deletion.credentialDestroyed, false)
   assert.equal((await service.getConnectors()).some(connector => connector.id === connectorId), false)
-  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'), [])
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .some(connection => connection.connector_id === connectorId), false)
   const retainedAudits = await service.listMcpInvocationAudits(connectorId)
   assert.equal(retainedAudits[0]?.attemptId, attemptId, 'deletion must retain invocation evidence')
 })
@@ -554,11 +558,6 @@ test('PF-03 deletion revokes active grants and destroys an exclusive encrypted c
     actor: 'U00008',
   })
   const connectorId = registered.id
-  await service.approveMcpConnector({
-    connectorId,
-    capabilityDigest: registered.mcp!.capabilityDigest!,
-    actor: 'U00008',
-  })
   await service.setAgentMcpAccess({
     connectorId,
     agentId: 'agent-dsh-work-assistant',

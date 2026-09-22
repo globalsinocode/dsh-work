@@ -49,7 +49,7 @@ requireFragments('../../packages/admin-components/src/AdminShell.vue', [
   'Agent 治理',
   'Skill 管理',
   'DSH 工具管理',
-  '连接器管理',
+  'MCP 连接器',
   '组织与权限',
   '工具权限',
   '模型用量',
@@ -90,7 +90,7 @@ requireFragments('src/router/index.ts', [
   "path: '/agents/:agentId/release/review'",
   "meta: { title: 'Skill 管理'",
   "meta: { title: 'DSH 工具管理'",
-  "meta: { title: '连接器管理'",
+  "meta: { title: 'MCP 连接器'",
   "meta: { title: '模型用量'",
   "meta: { title: '模型治理'",
   "meta: { title: 'Runtimes'",
@@ -169,7 +169,7 @@ requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-tool"',
   'data-action="view-connector"',
   '工具列表',
-  '连接器列表',
+  'MCP 连接器列表',
   '新增 Skill',
 ])
 forbidFragments('src/views/CapabilityManagementView.vue', [

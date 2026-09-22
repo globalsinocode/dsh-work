@@ -109,7 +109,7 @@ const router = createRouter({
       path: '/connectors',
       name: 'connectors',
       component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: '连接器管理', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'MCP 连接器', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/model-governance',

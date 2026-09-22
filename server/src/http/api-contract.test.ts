@@ -92,15 +92,18 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
   ])
   assert.match(workbench.components.schemas['TaskCumulativeBudgetInput']?.description ?? '', /不支持的硬预算会明确失败/)
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
+  assert.equal(admin.paths['/connectors']?.get?.operationId, 'listMcpConnectors')
   assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/test']?.post?.operationId, 'testMcpConnection')
   assert.equal(admin.paths['/connectors/mcp/{connectorId}']?.delete?.operationId, 'deleteMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
-  assert.equal(admin.paths['/connectors/mcp/approve']?.post?.operationId, 'approveMcpConnector')
+  assert.equal(admin.paths['/connectors/mcp/approve'], undefined)
   assert.equal(admin.paths['/connectors/mcp/status']?.patch?.operationId, 'setMcpConnectorStatus')
   assert.equal(admin.paths['/connectors/mcp/agent-access']?.patch?.operationId, 'setAgentMcpAccess')
   assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
+  assert.equal(admin.paths['/runtimes/dsh-tool-connector']?.get?.operationId, 'getDshRuntimeToolConnector')
+  assert.equal(admin.paths['/runtimes/dsh-tool-connector/check']?.post?.operationId, 'checkDshRuntimeToolConnector')
   assert.match(admin.paths['/connectors/mcp/agent-access']?.patch?.summary ?? '', /整个 MCP Connector/)
 })
 
@@ -296,6 +299,23 @@ test('prototype admin lists and adds approved DSH tools without allowing duplica
     }),
   })
   assert.equal(duplicate.status, 409)
+})
+
+test('prototype admin separates MCP management from the DSH Runtime tool connector', async () => {
+  const connectors = await getJson<{ data: Array<{ id: string; protocol: string }> }>('/api/admin/v1/connectors')
+  assert.equal(connectors.response.status, 200)
+  assert.ok(connectors.body.data.length > 0)
+  assert.ok(connectors.body.data.every(connector => connector.protocol === 'mcp'))
+  assert.equal(connectors.body.data.some(connector => connector.id === 'connector-dsh-workspace'), false)
+
+  const runtimeConnector = await getJson<{
+    data: { runtimeId: string | null; connectorId: string; catalogDigest: string; toolCount: number }
+  }>('/api/admin/v1/runtimes/dsh-tool-connector')
+  assert.equal(runtimeConnector.response.status, 200)
+  assert.equal(runtimeConnector.body.data.connectorId, 'connector-dsh-workspace')
+  assert.ok(runtimeConnector.body.data.runtimeId)
+  assert.ok(runtimeConnector.body.data.toolCount > 0)
+  assert.match(runtimeConnector.body.data.catalogDigest, /^[a-f0-9]{64}$/)
 })
 
 test('unavailable conversation commands return an actionable 503 instead of a route 404', async () => {

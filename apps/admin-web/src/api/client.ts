@@ -15,6 +15,7 @@ import type {
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
+  DshRuntimeToolConnectorStatus,
   McpConnectionTestResult,
   McpConnectorDeletionResult,
   McpInvocationAudit,
@@ -271,7 +272,9 @@ export const adminApi = {
   }) => request<ToolDefinition>('/tools', { method: 'POST', body: JSON.stringify(input) }),
   setToolStatus: (input: { toolId: string; status: 'available' | 'disabled' }) =>
     request<ToolDefinition>('/tools/status', { method: 'PATCH', body: JSON.stringify(input) }),
-  getConnectors: () => request<ConnectorDefinition[]>('/connectors'),
+  getMcpConnectors: () => request<ConnectorDefinition[]>('/connectors'),
+  getDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector'),
+  checkDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector/check', { method: 'POST' }),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {
@@ -293,8 +296,6 @@ export const adminApi = {
     request<ConnectorDefinition>('/connectors/mcp/credential', { method: 'PATCH', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>
     request<ConnectorDefinition>('/connectors/check', { method: 'POST', body: JSON.stringify(input) }),
-  approveMcpConnector: (input: { connectorId: string; capabilityDigest: string }) =>
-    request<ConnectorDefinition>('/connectors/mcp/approve', { method: 'POST', body: JSON.stringify(input) }),
   setMcpConnectorStatus: (input: { connectorId: string; status: 'enabled' | 'disabled' }) =>
     request<ConnectorDefinition>('/connectors/mcp/status', { method: 'PATCH', body: JSON.stringify(input) }),
   setAgentMcpAccess: (input: { connectorId: string; agentId: string; enabled: boolean }) =>

@@ -18,7 +18,7 @@
 | 2. 能力分解 | 设计记录；随后固化为 Skill、Tool 和业务服务契约 | Skill/Tool 治理服务、`AgentSpec.capabilities` | 能力版本独立发布；Agent 只引用精确版本 | **已实现基础对象**。能力清单仍由 Agent 负责人填写 |
 | 3. 扩展判定 | 设计记录中的逐项决定 | 生命周期模板第 4 节 | 没有触发事实时不进入实现和发布声明 | **流程已定义**。不新增空字段或预建服务 |
 | 4. AgentSpec 定义 | 规范化 `AgentSpec` 和不可变 Agent Version | [`agent-spec.ts`](../../server/src/modules/agent/agent-spec.ts)、[`agent-package.ts`](../../server/src/modules/agent/agent-package.ts)、[包 Schema](agent-package.schema.json) | 唯一分层包格式；严格 Schema、路径、摘要、精确依赖和受管字段检查 | **已实现**。配置入口与 ZIP 入口归一化到同一对象 |
-| 5. 能力准入与绑定 | 已发布 Skill/Tool Version、`tool_binding_revisions`、MCP Connector/Profile 与 Agent→Connector Grant | Agent、Skill、Tool/Connector 服务与 Runtime 快照 | 平台 Tool 固定精确版本及绑定修订；MCP 按整个 Connector 审核和授权，Attempt 固定清单摘要并复核当前 Grant | **已实现基础链路**。MCP 不生成 Tool Version/Binding，也不耦合 Agent 发布；真实外部服务仍需 P2 |
+| 5. 能力准入与绑定 | 已发布 Skill/Tool Version、`tool_binding_revisions`、MCP Connector/Profile 与 Agent→Connector Grant | Agent、Skill、Tool/Connector 服务与 Runtime 快照 | 平台 Tool 固定精确版本及绑定修订；MCP 按整个 Connector 自动生效能力快照并授权，Attempt 固定清单摘要并复核当前 Grant | **已实现基础链路**。MCP 不生成 Tool Version/Binding，也不耦合 Agent 发布；真实外部服务仍需 P2 |
 | 6. 评测设计 | `AgentEvaluationSuite v1` | [评测模板](agent-evaluation-template.yaml)、包解析器、发布服务 | 五类案例、固定机器断言和必需人工 rubric | **已实现契约**。平台生成案例必须替换为具体 Agent 的目标输入 |
 | 7. 候选检查与试运行 | `agent_release_submissions`、`agent_trial_runs`、Run/Attempt | 发布服务、发布路由、管理端发布工作台 | 固定候选修订与 Binding；统一 Runtime Adapter → DSH；逐项机器和人工判定；旧证据失效 | **已实现**。真实 DSH 结果属于具体 Agent 的 P2 |
 | 8. 审核与发布 | 不可变 Agent Version、Submission、`agent_version_evidence` | 发布服务与管理端发布工作台 | 职责分离、发布事务内复核定义/绑定/试运行证据 | **已实现**。人工批准不覆盖失败的机器断言 |
@@ -43,7 +43,7 @@
 
 以下项目已进入平台 PF-01～PF-07 建设计划，但对具体 Agent 仍保持条件触发：
 
-- MCP Streamable HTTP Server 登记、整体发现/审核、Agent→Connector 授权、DSH 调用和 Tool 级审计（PF-03 代码级已完成，真实服务 P2 待 PF-07）；
+- MCP Streamable HTTP Server 登记、整体发现与自动生效、Agent→Connector 授权、DSH 调用和 Tool 级审计（PF-03 代码级已完成，真实服务 P2 待 PF-07）；
 - 跨 Attempt 的持久化等待状态机；
 - 跨 Session 受控记忆；
 - Agent 委派及父子预算；
@@ -53,4 +53,4 @@
 
 PF-01 已完成平台基础实现：Task 可由 Session、API 或事件来源幂等受理；无 Session 执行使用同一 Run/Attempt、Runtime Adapter 与 DSH；Manifest、结果和 Artifact 固定 Task 归属；写入平台工具自动登记 Operation，并区分同步完成、异步受理、失败和效果未知；员工端提供受权的 Task/Operation 查询、取消和重试，管理员可在核对权威外部状态后收敛 Operation。
 
-PF-03 已完成代码级平台实现：管理员在现有 Connector 模块登记 Streamable HTTP MCP Server，发现完整 Tools 后按 Connector 整体审核；Agent 只持有整个 Connector 的二元 Grant，Grant 不进入 Agent Version/发布链路；能力摘要漂移、停用或撤权会在领取、活动授权复核和调用解析处拒绝；DSH 通过每 Attempt Patch 装载批准连接并按 Server 命名空间放行；调用审计仍细化到实际 MCP Tool。MCP 不生成平台 Tool Version/Binding。真实批准服务、真实凭据、目标 DSH 和撤权演练仍在 PF-07 留存 P2 证据。
+PF-03 已完成代码级平台实现：管理员在现有 Connector 模块登记 Streamable HTTP MCP Server，发现完整 Tools 后自动固定并生效当前摘要；Agent 只持有整个 Connector 的二元 Grant，Grant 不进入 Agent Version/发布链路；已准备 Attempt 的摘要漂移、停用或撤权会在活动授权复核和调用解析处拒绝；新 Attempt 使用检查后自动生效的最新摘要；DSH 通过每 Attempt Patch 装载获权连接并按 Server 命名空间放行；调用审计仍细化到实际 MCP Tool。MCP 不生成平台 Tool Version/Binding。真实批准服务、真实凭据、目标 DSH 和撤权演练仍在 PF-07 留存 P2 证据。

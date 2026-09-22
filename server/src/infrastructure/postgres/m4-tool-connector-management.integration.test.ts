@@ -91,15 +91,21 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   assert.equal(connector?.name, 'DSH Runtime 内置工具连接器')
   assert.equal(connector?.protocol, 'runtime')
   assert.equal(connector?.toolCount, 4)
+  assert.deepEqual(await tools.getMcpConnectors(), [])
+  const runtimeConnector = await tools.getDshRuntimeToolConnectorStatus()
+  assert.equal(runtimeConnector.runtimeId, 'runtime-local-01')
+  assert.equal(runtimeConnector.connectorId, 'connector-dsh-workspace')
+  assert.equal(runtimeConnector.toolCount, 4)
+  assert.match(runtimeConnector.catalogDigest, /^[a-f0-9]{64}$/)
 
   await database`
     insert into connectors (
       id, tenant_id, key, name, connector_type, system, protocol, endpoint, auth_type,
-      scope_description, status, latency_ms, last_checked_at
+      scope_description, status, latency_ms, last_checked_at, created_by
     ) values (
       'connector-external-test', 'tenant-dsh-work', 'external-test', '外部测试连接器',
       'enterprise', '外部系统', 'rest', 'https://example.invalid/tools', 'none',
-      '验证普通工具管理边界', 'healthy', 1, now()
+      '验证普通工具管理边界', 'healthy', 1, now(), 'U00008'
     )
   `
   await database`

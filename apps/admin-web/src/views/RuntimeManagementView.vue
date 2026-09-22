@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Cpu, Refresh, Search, Setting, View } from '@element-plus/icons-vue'
+import { Connection, Cpu, Refresh, Search, Setting, View } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { useListPagination } from '@/composables/use-list-pagination'
@@ -27,6 +27,7 @@ const drawerOpen = ref(false)
 const configurationDialogOpen = ref(false)
 const configurationFormRef = ref<FormInstance>()
 const checkingId = ref('')
+const checkingToolConnector = ref(false)
 const savingConfiguration = ref(false)
 const configurationForm = reactive<RuntimeConfigurationForm>({
   maxConcurrentWorkers: 1,
@@ -64,6 +65,12 @@ const healthyCount = computed(() => contentStore.runtimes.filter((runtime) => ru
 const totalCapacity = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.maxConcurrentWorkers, 0))
 const activeWorkers = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.activeWorkers, 0))
 const queuedRuns = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.queuedRuns, 0))
+const selectedRuntimeToolConnector = computed(() => {
+  const connector = contentStore.dshRuntimeToolConnector
+  if (!connector || !selectedRuntime.value) return null
+  if (connector.runtimeId && connector.runtimeId !== selectedRuntime.value.id) return null
+  return connector
+})
 
 function schedulingLabel(status: RuntimeDefinition['schedulingStatus']) {
   return {
@@ -106,6 +113,19 @@ async function check(runtime: RuntimeDefinition) {
     ElMessage.error(cause instanceof Error ? cause.message : 'Runtime 检查失败')
   } finally {
     checkingId.value = ''
+  }
+}
+
+async function checkToolConnector() {
+  checkingToolConnector.value = true
+  try {
+    const connector = await contentStore.checkDshRuntimeToolConnector()
+    if (connector.status === 'offline') ElMessage.warning(connector.lastHealthMessage)
+    else ElMessage.success('DSH 内置工具连接检查完成')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'DSH 内置工具连接检查失败')
+  } finally {
+    checkingToolConnector.value = false
   }
 }
 
@@ -234,6 +254,25 @@ onMounted(() => contentStore.load())
           <div><dt>检查时间</dt><dd>{{ selectedRuntime.checkedAt }}</dd></div>
         </dl>
         <section class="runtime-detail__section"><h3>运行能力</h3><div class="runtime-chip-list"><span v-for="capability in selectedRuntime.capabilities" :key="capability">{{ capability }}</span></div></section>
+        <section v-if="selectedRuntimeToolConnector" class="runtime-detail__section runtime-tool-connector" aria-label="DSH Runtime 内置工具连接">
+          <div class="runtime-tool-connector__header">
+            <div><span><el-icon><Connection /></el-icon></span><div><h3>{{ selectedRuntimeToolConnector.name }}</h3><p>平台级内置连接，由 Runtime 和 Tool Binding 共同治理。</p></div></div>
+            <StatusTag :status="selectedRuntimeToolConnector.status" dot />
+          </div>
+          <el-alert :type="selectedRuntimeToolConnector.status === 'offline' ? 'warning' : 'info'" :closable="false" show-icon :title="selectedRuntimeToolConnector.lastHealthMessage" />
+          <dl class="runtime-tool-connector__rows">
+            <div><dt>连接器标识</dt><dd class="mono">{{ selectedRuntimeToolConnector.connectorId }}</dd></div>
+            <div><dt>连接地址</dt><dd class="mono">{{ selectedRuntimeToolConnector.endpoint }}</dd></div>
+            <div><dt>内置工具</dt><dd>{{ selectedRuntimeToolConnector.toolCount }} 个</dd></div>
+            <div><dt>活动 Binding</dt><dd>{{ selectedRuntimeToolConnector.activeBindingCount }} 个<span v-if="selectedRuntimeToolConnector.latestBindingRevision !== null"> · 最高 rev{{ selectedRuntimeToolConnector.latestBindingRevision }}</span></dd></div>
+            <div><dt>目录摘要</dt><dd class="mono" :title="selectedRuntimeToolConnector.catalogDigest">{{ selectedRuntimeToolConnector.catalogDigest.slice(0, 12) }}</dd></div>
+            <div><dt>最近检查</dt><dd>{{ selectedRuntimeToolConnector.lastCheckedAt }}</dd></div>
+          </dl>
+          <div v-if="authStore.canManage" class="runtime-tool-connector__actions">
+            <el-button :loading="checkingToolConnector" data-action="check-dsh-tool-connector" @click="checkToolConnector">检查工具连接</el-button>
+          </div>
+        </section>
+        <el-alert v-else-if="selectedRuntime.mode === 'dsh-worker'" type="info" :closable="false" show-icon title="当前 Runtime 未绑定平台的 DSH 内置工具连接。" />
         <div class="runtime-detail__actions">
           <el-button v-if="authStore.canManage" :icon="Setting" data-action="configure-runtime-detail" @click="openConfiguration(selectedRuntime)">配置 Runtime</el-button>
           <el-button v-if="authStore.canManage" type="primary" :loading="checkingId === selectedRuntime.id" data-action="check-runtime" @click="check(selectedRuntime)">执行健康检查</el-button>
@@ -294,11 +333,22 @@ onMounted(() => contentStore.load())
 .runtime-detail__section h3 { margin: 0 0 9px; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .runtime-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .runtime-chip-list span { padding: 4px 7px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); }
+.runtime-tool-connector { margin-top: 20px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
+.runtime-tool-connector__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.runtime-tool-connector__header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.runtime-tool-connector__header > div > span { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
+.runtime-tool-connector__header h3 { margin: 0; }
+.runtime-tool-connector__header p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
+.runtime-tool-connector__rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 12px 0 0; }
+.runtime-tool-connector__rows div { min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--color-border); }
+.runtime-tool-connector__rows dt { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.runtime-tool-connector__rows dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-size: var(--font-size-caption); }
+.runtime-tool-connector__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .runtime-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .runtime-configuration-form { margin-top: 20px; }
 .configuration-number { width: 100%; }
 .field-help { width: 100%; margin: 6px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .scheduling-help { display: flex; width: 100%; gap: 6px; margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-button); color: var(--color-text-secondary); background: var(--color-bg-subtle); font-size: var(--font-size-badge); }
 .scheduling-help strong { color: var(--color-text-heading); }
-@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } }
+@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .runtime-tool-connector__rows { grid-template-columns: 1fr; } }
 </style>

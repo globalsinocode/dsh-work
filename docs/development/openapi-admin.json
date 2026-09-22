@@ -599,8 +599,8 @@
     },
     "/connectors": {
       "get": {
-        "operationId": "listConnectors",
-        "summary": "查询连接器及 MCP 整体审核和 Agent 授权状态",
+        "operationId": "listMcpConnectors",
+        "summary": "只查询外部 MCP Connector 及其生效能力快照和 Agent 授权状态",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -611,7 +611,7 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "重新执行连通与 Tool 发现后登记 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显",
+        "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" },
@@ -634,7 +634,7 @@
     "/connectors/mcp/{connectorId}": {
       "delete": {
         "operationId": "deleteMcpConnector",
-        "summary": "删除 MCP Connector，撤销 Agent Grant、销毁独占凭据并保留审核与调用证据",
+        "summary": "删除 MCP Connector，撤销 Agent Grant、销毁独占凭据并保留能力快照与调用证据",
         "parameters": [
           { "name": "connectorId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -667,7 +667,7 @@
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "执行连接器健康检查；MCP 同时通过 DSH 发现 Tool 并检测整体摘要漂移",
+        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -675,17 +675,10 @@
         }
       }
     },
-    "/connectors/mcp/approve": {
-      "post": {
-        "operationId": "approveMcpConnector",
-        "summary": "整体审核当前发现的 MCP Tool 清单",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
     "/connectors/mcp/status": {
       "patch": {
         "operationId": "setMcpConnectorStatus",
-        "summary": "启用或停用 MCP Connector；重新启用要求审核摘要仍一致",
+        "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步",
         "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
@@ -704,6 +697,25 @@
           "200": {
             "$ref": "#/components/responses/Ok"
           }
+        }
+      }
+    },
+    "/runtimes/dsh-tool-connector": {
+      "get": {
+        "operationId": "getDshRuntimeToolConnector",
+        "summary": "查询 DSH Runtime 内置工具连接、目录摘要和 Binding 状态",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
+        }
+      }
+    },
+    "/runtimes/dsh-tool-connector/check": {
+      "post": {
+        "operationId": "checkDshRuntimeToolConnector",
+        "summary": "从 Runtime 运维入口检查 DSH 内置工具连接并刷新目录状态",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "$ref": "#/components/responses/Error" }
         }
       }
     },

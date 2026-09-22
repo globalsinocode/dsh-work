@@ -87,7 +87,7 @@ DSH 不可用必须明确失败或拒绝受理，不自动降级到直连模型�
 
 ### AS-05 Skill、Tool 与 MCP 职责明确
 
-**现行约束：** Skill 提供方法；平台 Tool 提供逐能力、版本化的可校验动作；MCP 是外部能力接入协议。两种能力边界并行存在，不要求把 MCP Server 暴露的每个 Tool 复制为平台 Tool Version 或 Tool Binding。MCP 复用 Connector 管理，以一个 MCP Server/Connector 作为最小审核和授权单元：Agent 要么获得整个 Connector 当前已审核 Tool 集合的使用权，要么没有权限。该 Grant 独立于 Agent Version 和发布链路，运行时写入 Attempt 快照并持续复核当前授权。Skill 声明依赖、发现成功或 Agent 发布均不能自动产生 MCP Grant。
+**现行约束：** Skill 提供方法；平台 Tool 提供逐能力、版本化的可校验动作；MCP 是外部能力接入协议。两种能力边界并行存在，不要求把 MCP Server 暴露的每个 Tool 复制为平台 Tool Version 或 Tool Binding。MCP 复用 Connector 管理，以一个 MCP Server/Connector 作为最小授权单元：成功发现的 Tool 集合与摘要自动生效，Agent 要么获得整个 Connector 当前生效 Tool 集合的使用权，要么没有权限。该 Grant 独立于 Agent Version 和发布链路，运行时写入 Attempt 快照并持续复核当前授权。Skill 声明依赖、发现成功或 Agent 发布均不能自动产生 MCP Grant。
 
 工具按提供方和治理路径分为四类；分类决定配置入口，不能仅凭执行时都表现为“工具调用”而混用治理模型：
 
@@ -96,17 +96,19 @@ DSH 不可用必须明确失败或拒绝受理，不自动降级到直连模型�
 | DSH 内置工具 | DSH Runtime | Tool Version + Connector Binding + Agent 精确引用 | `DSH 工具管理` |
 | dsh-work 内置执行工具 | dsh-work Platform Tool Bridge，DSH 在 Attempt 内调用 | Agent/Skill Manifest 精确声明；不进入普通 Tool Binding | Agent/Skill 定义与运行证据 |
 | dsh-work 内置平台工具 | dsh-work Platform Tool Bridge，DSH 在管理 Attempt 内调用 | 由平台按 Run purpose 注入并强制校验；不提供 Agent 自由选配 | 对应平台流程与审计 |
-| MCP 外部工具 | 外部 MCP Server，DSH MCP Client 调用 | Connector 整体发现、审核、Agent Grant 和持续复核；不复制为平台 Tool Version/Binding | `连接器管理` |
+| MCP 外部工具 | 外部 MCP Server，DSH MCP Client 调用 | Connector 整体发现、自动生效快照、Agent Grant 和持续复核；不复制为平台 Tool Version/Binding | `MCP 连接器` |
 
 `activate_skill`、`python_execute` 属于 dsh-work 内置执行工具；`inspect_admin_state`、`propose_admin_task`、`prepare_admin_action`、`prepare_skill_installation` 属于 dsh-work 内置平台工具。普通工具列表只返回 `connector-dsh-workspace` 下的 DSH 内置工具；不得把平台桥工具、MCP 发现项或旧的自定义候选原型混入该列表。
 
-**现行 MCP 范围：** 首期只支持管理员登记的 Streamable HTTP MCP Server 和 Tools。管理员填写名称、端点、认证方式、整体权限范围及可选 Bearer Token；Connector 标识和 `serverName` 由平台生成，“所属系统”不属于 MCP 登记契约。新增前必须先通过 DSH 执行不落库的连通测试并发现至少一个 Tool；名称、端点、认证方式或 Token 变化使页面测试结果失效，登记接口仍须独立重新测试，不能信任客户端的“已测试”状态。DSH/ACP 若将上游 HTTP 401/403 折叠为 `Internal error`，平台只发起无副作用的 `ping` 恢复认证失败分类；无认证时提示改用 Bearer Token，Bearer 认证时提示 Token 无效、过期或无权，不读取远端错误正文、不回显 Token。测试或登记复核失败时不得写入 Connector、凭据或授权。Bearer Token 以 AES-256-GCM 密文存入 PostgreSQL，主密钥由服务环境中的 `DSH_CREDENTIAL_MASTER_KEY` 提供，开发与生产使用同一实现但使用不同密钥；明文不进入查询响应、Manifest、前端持久状态、Patch 或日志。旧版环境变量引用升级后保留 Connector、审核记录和 Agent Grant，但 Connector 降级并阻止执行，管理员须通过同一轮换入口重新录入 Token 才能恢复；旧版共享引用在重新录入时为目标 Connector 拆分独立加密凭据，不能静默改变其他 Connector。每次发现固定凭据 ID、存储后端和密文版本；写回时先取得 Connector 行锁，再以独立语句读取锁后的最新凭据版本。检查完成前发生轮换时丢弃旧结果，不能用旧 Token 的成功结果恢复健康状态。管理员先发现完整 Tool 清单，再按 Connector 整体审核其名称、描述和输入 Schema 摘要；清单摘要变化后 Connector 进入 `changes_pending`，在重新整体审核前既有 Agent Grant 不可执行。删除 Connector 时立即撤销活动 Agent Grant、停用关联平台 Tool/Binding，并销毁仅由该 Connector 使用的加密凭据；Connector、能力审核、健康检和调用审计保留为不可执行的治理证据，活动列表与 Runtime 解析不再返回该 Connector。DSH 通过每 Attempt 受控 Patch 装载获准 Connector，策略按 `mcp__<serverName>__*` 命名空间放行。平台按实际 MCP Tool 调用记录名称、参数摘要、Run/Attempt 和结果审计。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持，不能因 Tools 已接通推定可用。
+`connector-dsh-workspace` 是平台创建的 DSH Runtime 基础设施，不是管理员登记的外部连接。其健康、工具目录摘要和 Binding 状态只进入 `安全与运维 → Runtimes`；`MCP 连接器` 页面与列表接口只返回外部 MCP Connector。页面入口分离不改变底层 Connector、Tool Version、Binding 和审计模型。
 
-**验收：** 新登记或新发现的能力在整个 Connector 审核前不可调用；Agent 授权和撤权以 Connector 为单位；契约摘要变化立即阻止新领取及后续调用；调用仍经过统一 DSH 链路并产生实际 Tool 级审计；不能把 ACP、本地平台工具桥接或数据库记录的存在当作真实 MCP 已接通。
+**现行 MCP 范围：** 首期只支持管理员登记的 Streamable HTTP MCP Server 和 Tools。管理员填写名称、端点、认证方式、整体权限范围及可选 Bearer Token；Connector 标识和 `serverName` 由平台生成，“所属系统”不属于 MCP 登记契约。新增前必须先通过 DSH 执行不落库的连通测试并发现至少一个 Tool；名称、端点、认证方式或 Token 变化使页面测试结果失效，登记接口仍须独立重新测试，不能信任客户端的“已测试”状态。DSH/ACP 若将上游 HTTP 401/403 折叠为 `Internal error`，平台只发起无副作用的 `ping` 恢复认证失败分类；无认证时提示改用 Bearer Token，Bearer 认证时提示 Token 无效、过期或无权，不读取远端错误正文、不回显 Token。测试或登记复核失败时不得写入 Connector、凭据或授权。Bearer Token 以 AES-256-GCM 密文存入 PostgreSQL，主密钥由服务环境中的 `DSH_CREDENTIAL_MASTER_KEY` 提供，开发与生产使用同一实现但使用不同密钥；明文不进入查询响应、Manifest、前端持久状态、Patch 或日志。旧版环境变量引用升级后保留 Connector、能力快照和 Agent Grant，但 Connector 降级并阻止执行，管理员须通过同一轮换入口重新录入 Token 才能恢复；旧版共享引用在重新录入时为目标 Connector 拆分独立加密凭据，不能静默改变其他 Connector。每次发现固定凭据 ID、存储后端和密文版本；写回时先取得 Connector 行锁，再以独立语句读取锁后的最新凭据版本。检查完成前发生轮换时丢弃旧结果，不能用旧 Token 的成功结果恢复健康状态。管理员成功发现完整 Tool 清单后，平台立即把名称、描述、输入 Schema 及摘要保存为当前生效快照；清单变化在成功检查后自动替换生效快照，无需人工整体审核。Agent 使用权仍由管理员按 Connector 单独授予，发现和 Agent 发布都不会自动产生 Grant。删除 Connector 时立即撤销活动 Agent Grant、停用关联平台 Tool/Binding，并销毁仅由该 Connector 使用的加密凭据；Connector、能力快照、健康检查和调用审计保留为不可执行的治理证据，活动列表与 Runtime 解析不再返回该 Connector。DSH 通过每 Attempt 受控 Patch 装载获准 Connector，策略按 `mcp__<serverName>__*` 命名空间放行。平台按实际 MCP Tool 调用记录名称、参数摘要、Run/Attempt 和结果审计。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持，不能因 Tools 已接通推定可用。
+
+**验收：** 新登记或新发现的能力在成功检查后自动生效；Agent 授权和撤权以 Connector 为单位；已准备 Attempt 继续固定原摘要并在摘要变化后拒绝执行，新 Attempt 使用最新生效摘要；调用仍经过统一 DSH 链路并产生实际 Tool 级审计；不能把 ACP、本地平台工具桥接或数据库记录的存在当作真实 MCP 已接通。
 
 ### AS-06 工具具有效果与失败语义
 
-**现行约束：** 纳入 DSH 工具管理的每个不可变 Tool Version 须声明输入/输出 Schema、输出是否由 Runtime 或平台实际校验、只读/写入性质、执行身份与资源范围、审批、超时、重试、并发及完成语义。dsh-work 内置执行/平台工具使用同等严格的代码契约目录，但不因此创建普通 Tool Version 或 Binding；MCP 外部工具遵循 Connector 整体审核与能力摘要。实现负责参数及业务约束，不能只靠 Skill 或 Prompt。平台桥接工具在调用前后复核当前授权，严格校验输入和输出并限制输出字节；`serialized` 工具拒绝同名重叠调用。DSH 原生工具尚无穿过平台验证边界的结构化输出，因此目录必须显式标为 `outputValidation=unavailable`，不能用空 Schema 宣称已校验。
+**现行约束：** 纳入 DSH 工具管理的每个不可变 Tool Version 须声明输入/输出 Schema、输出是否由 Runtime 或平台实际校验、只读/写入性质、执行身份与资源范围、审批、超时、重试、并发及完成语义。dsh-work 内置执行/平台工具使用同等严格的代码契约目录，但不因此创建普通 Tool Version 或 Binding；MCP 外部工具遵循 Connector 生效能力快照与 Agent 授权。实现负责参数及业务约束，不能只靠 Skill 或 Prompt。平台桥接工具在调用前后复核当前授权，严格校验输入和输出并限制输出字节；`serialized` 工具拒绝同名重叠调用。DSH 原生工具尚无穿过平台验证边界的结构化输出，因此目录必须显式标为 `outputValidation=unavailable`，不能用空 Schema 宣称已校验。
 
 **现行失败语义：** 参数无效、输出无效、无权限、调用上限、冲突、暂时不可用、取消、超时、结果未知和普通执行失败使用稳定错误码。错误携带 `retryable` 与 `effect_state`；写入工具超时返回结果未知且不可自动重试，只读工具仅在契约声明安全时标记可重试。该标记是调用方判断依据，不会触发平台自动重试。
 

@@ -140,10 +140,16 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     const input = await readJsonBody<{ toolId: string; status: 'available' | 'disabled' }>(request)
     return envelope('admin', await service.setToolStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
-  router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getConnectors()))
+  router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors()))
+  router.get(`${basePath}/runtimes/dsh-tool-connector`, async () =>
+    envelope('admin', await service.getDshRuntimeToolConnectorStatus()))
+  router.post(`${basePath}/runtimes/dsh-tool-connector/check`, async (_request, context) =>
+    envelope('admin', await service.checkDshRuntimeToolConnector({
+      actor: requireRequestIdentity(context, 'admin').userId,
+    })))
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)
-    return envelope('admin', await service.checkConnector({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
+    return envelope('admin', await service.checkMcpConnector({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
   })
   router.patch(`${basePath}/tools/permissions`, async (request, context) => {
     const input = await readJsonBody<Parameters<AdminQueryService['updateToolPermissions']>[0]>(request)

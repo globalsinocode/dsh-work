@@ -110,6 +110,20 @@ export interface RuntimeDefinition {
   capabilities: string[]
 }
 
+export interface DshRuntimeToolConnectorStatus {
+  runtimeId: string | null
+  connectorId: string
+  name: string
+  status: 'healthy' | 'degraded' | 'offline' | 'disabled'
+  endpoint: string
+  toolCount: number
+  activeBindingCount: number
+  latestBindingRevision: number | null
+  catalogDigest: string
+  lastCheckedAt: string
+  lastHealthMessage: string
+}
+
 export interface UpdateRuntimeConfigurationInput {
   runtimeId: string
   maxConcurrentWorkers: number
@@ -441,6 +455,10 @@ export interface ConnectorDefinition {
   scopeDescription: string
   latency: string
   lastCheckedAt: string
+  lastHealthMessage?: string
+  createdAt?: string
+  createdBy?: string
+  updatedAt?: string
   mcp?: {
     serverName: string
     transport: 'streamable-http'

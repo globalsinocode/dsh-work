@@ -7,7 +7,7 @@ import {
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
 import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AddToolInput, ConnectorDefinition, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
+import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -83,7 +83,11 @@ interface ConnectorRow {
   scopeDescription: string
   latencyMs: number | null
   lastCheckedAt: Date | null
+  lastHealthMessage: string | null
   toolCount: number
+  createdAt: Date
+  createdBy: string
+  updatedAt: Date
 }
 
 interface McpProfileRow {
@@ -276,12 +280,23 @@ export class PostgresToolConnectorService {
              c.auth_type as "authType", cr.external_ref as "credentialRef",
              cr.backend as "credentialBackend",
              c.scope_description as "scopeDescription", c.latency_ms as "latencyMs",
-             c.last_checked_at as "lastCheckedAt", count(t.id)::int as "toolCount"
+             c.last_checked_at as "lastCheckedAt", hc.message as "lastHealthMessage",
+             c.created_at as "createdAt", creator.display_name as "createdBy",
+             c.updated_at as "updatedAt",
+             count(t.id)::int as "toolCount"
         from connectors c
+        join users creator on creator.tenant_id = c.tenant_id and creator.id = c.created_by
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
         left join tools t on t.tenant_id = c.tenant_id and t.connector_id = c.id
+        left join lateral (
+          select message
+            from connector_health_checks
+           where tenant_id = c.tenant_id and connector_id = c.id
+           order by checked_at desc, id desc
+           limit 1
+        ) hc on true
        where c.tenant_id = ${tenantId} and c.deleted_at is null
-       group by c.id, cr.external_ref, cr.backend
+       group by c.id, cr.external_ref, cr.backend, hc.message, creator.display_name
        order by c.name
       `,
       this.database<McpProfileRow[]>`
@@ -301,6 +316,67 @@ export class PostgresToolConnectorService {
     ])
     const profileByConnector = new Map(profiles.map(profile => [profile.connectorId, profile]))
     return rows.map(row => toConnectorDefinition(row, profileByConnector.get(row.id)))
+  }
+
+  async getMcpConnectors(): Promise<ConnectorDefinition[]> {
+    return (await this.getConnectors()).filter(connector => connector.protocol === 'mcp')
+  }
+
+  async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
+    const connector = (await this.getConnectors()).find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
+    if (!connector) throw new Error('DSH Runtime 内置工具连接器不存在')
+
+    const [catalogRows, bindingRows, healthRows, liveHealth] = await Promise.all([
+      this.database<{ id: string; version: string; status: string }[]>`
+        select t.id, tv.version, t.status
+          from tools t
+          join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
+         where t.tenant_id = ${tenantId}
+           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and tv.status = 'published'
+         order by t.id, tv.version
+      `,
+      this.database<{ activeBindingCount: number; latestBindingRevision: number | null }[]>`
+        select count(*) filter (where status = 'active')::integer as "activeBindingCount",
+               max(revision) filter (where status = 'active')::integer as "latestBindingRevision"
+          from tool_binding_revisions
+         where tenant_id = ${tenantId} and connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+      `,
+      this.database<{ message: string }[]>`
+        select message
+          from connector_health_checks
+         where tenant_id = ${tenantId} and connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         order by checked_at desc
+         limit 1
+      `,
+      this.runtime?.health().catch(() => undefined),
+    ])
+    const bindings = bindingRows[0]
+    return {
+      runtimeId: liveHealth?.runtimeId ?? null,
+      connectorId: connector.id,
+      name: connector.name,
+      status: connector.status,
+      endpoint: connector.endpoint,
+      toolCount: connector.toolCount,
+      activeBindingCount: bindings?.activeBindingCount ?? 0,
+      latestBindingRevision: bindings?.latestBindingRevision ?? null,
+      catalogDigest: createHash('sha256').update(JSON.stringify(catalogRows)).digest('hex'),
+      lastCheckedAt: connector.lastCheckedAt,
+      lastHealthMessage: healthRows[0]?.message
+        ?? (connector.status === 'disabled' ? '内置工具连接已人工停用。' : '尚无独立工具连接检查记录。'),
+    }
+  }
+
+  async checkDshRuntimeToolConnector(input: { actor: string }): Promise<DshRuntimeToolConnectorStatus> {
+    await this.checkConnector({ connectorId: DSH_RUNTIME_CONNECTOR_ID, actor: input.actor })
+    return this.getDshRuntimeToolConnectorStatus()
+  }
+
+  async checkMcpConnector(input: { connectorId: string; actor: string }) {
+    const connector = await this.requireConnector(input.connectorId)
+    if (connector.protocol !== 'mcp') throw new Error(`不是 MCP Connector：${input.connectorId}`)
+    return this.checkConnector(input)
   }
 
   async testMcpConnection(input: TestMcpConnectionInput): Promise<McpConnectionTestResult> {
@@ -353,11 +429,11 @@ export class PostgresToolConnectorService {
       }
       await transaction`
         insert into connectors (
-          id, tenant_id, key, name, connector_type, credential_ref_id, status,
+          id, tenant_id, key, name, connector_type, credential_ref_id, status, created_by,
           system, protocol, endpoint, auth_type, scope_description,
           latency_ms, last_checked_at, updated_at
         ) values (
-          ${id}, ${tenantId}, ${inspected.serverName}, ${input.name.trim()}, 'mcp', ${credentialId}, 'degraded',
+          ${id}, ${tenantId}, ${inspected.serverName}, ${input.name.trim()}, 'mcp', ${credentialId}, 'healthy', ${actor.id},
           'MCP', 'mcp', ${inspected.endpoint}, ${input.authType}, ${input.scopeDescription.trim()},
           ${inspected.latencyMs}, now(), now()
         )
@@ -365,22 +441,24 @@ export class PostgresToolConnectorService {
       await transaction`
         insert into mcp_connector_profiles (
           tenant_id, connector_id, server_name, approval_status,
-          capability_digest, capability_snapshot, discovered_at, updated_at
+          capability_digest, approved_digest, capability_snapshot,
+          reviewed_by, reviewed_at, discovered_at, updated_at
         ) values (
-          ${tenantId}, ${id}, ${inspected.serverName}, 'pending_review',
-          ${digest}, ${transaction.json(asJson(inspected.capabilities))}, now(), now()
+          ${tenantId}, ${id}, ${inspected.serverName}, 'approved',
+          ${digest}, ${digest}, ${transaction.json(asJson(inspected.capabilities))},
+          ${actor.id}, now(), now(), now()
         )
       `
       await transaction`
         insert into connector_health_checks (
           id, tenant_id, connector_id, status, latency_ms, message, checked_by
         ) values (
-          ${`connector-check-${randomUUID()}`}, ${tenantId}, ${id}, 'degraded',
-          ${inspected.latencyMs}, ${`已通过 DSH 发现 ${inspected.capabilities.length} 个 MCP Tool，等待整体审核`}, ${actor.id}
+          ${`connector-check-${randomUUID()}`}, ${tenantId}, ${id}, 'healthy',
+          ${inspected.latencyMs}, ${`已通过 DSH 发现并自动生效 ${inspected.capabilities.length} 个 MCP Tool`}, ${actor.id}
         )
       `
     })
-    await this.audit(actor.id, 'connector.mcp.register', id, 'success', `连通复核通过并登记 MCP Connector；发现 ${inspected.capabilities.length} 个 Tool，等待整体审核`)
+    await this.audit(actor.id, 'connector.mcp.register', id, 'success', `连通复核通过并登记 MCP Connector；自动生效 ${inspected.capabilities.length} 个 Tool`)
     return this.requireConnector(id)
   }
 
@@ -514,55 +592,6 @@ export class PostgresToolConnectorService {
     return this.requireConnector(input.connectorId)
   }
 
-  async approveMcpConnector(input: { connectorId: string; capabilityDigest: string; actor: string }): Promise<ConnectorDefinition> {
-    const actor = await this.requireActor(input.actor)
-    let approvedCount = 0
-    await this.database.begin(async transaction => {
-      const [profile] = await transaction<{
-        digest: string | null
-        count: number
-        connectorStatus: string
-        authType: string
-        credentialBackend: string | null
-        credentialVersion: number | null
-      }[]>`
-        select p.capability_digest as digest, jsonb_array_length(p.capability_snapshot)::int as count,
-               c.status as "connectorStatus", c.auth_type as "authType",
-               cr.backend as "credentialBackend", cs.version as "credentialVersion"
-          from mcp_connector_profiles p
-          join connectors c on c.tenant_id = p.tenant_id and c.id = p.connector_id
-          left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
-          left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
-         where p.tenant_id = ${tenantId} and p.connector_id = ${input.connectorId}
-           and c.deleted_at is null
-         for update of p, c
-      `
-      if (!profile?.digest || profile.count < 1) throw new Error('MCP 尚未成功发现 Tool，不能审核')
-      if (profile.connectorStatus === 'offline') throw new Error('MCP 当前离线，不能审核')
-      if (profile.authType === 'bearer'
-        && (profile.credentialBackend !== 'postgres-encrypted' || profile.credentialVersion === null)) {
-        throw new Error('旧版 MCP Bearer 凭据需要先在管理端重新录入 Token')
-      }
-      if (profile.digest !== input.capabilityDigest) throw new Error('MCP 能力清单已变化，请刷新并重新审核')
-      approvedCount = profile.count
-      await transaction`
-        update mcp_connector_profiles
-           set approval_status = 'approved', approved_digest = capability_digest,
-               reviewed_by = ${actor.id}, reviewed_at = now(), updated_at = now()
-         where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
-      `
-      await transaction`
-        update connectors
-           set status = case when status = 'disabled' then 'disabled' else 'healthy' end,
-               updated_at = now()
-         where tenant_id = ${tenantId} and id = ${input.connectorId}
-           and protocol = 'mcp' and deleted_at is null
-      `
-    })
-    await this.audit(actor.id, 'connector.mcp.approve', input.connectorId, 'success', `按连接器整体审核 ${approvedCount} 个 MCP Tool`)
-    return this.requireConnector(input.connectorId)
-  }
-
   async setMcpConnectorStatus(input: { connectorId: string; status: 'enabled' | 'disabled'; actor: string }): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
     const connector = await this.requireConnector(input.connectorId)
@@ -573,7 +602,7 @@ export class PostgresToolConnectorService {
     }
     if (input.status === 'enabled' && (connector.mcp.approvalStatus !== 'approved'
       || connector.mcp.capabilityDigest !== connector.mcp.approvedDigest)) {
-      throw new Error('MCP 当前能力清单尚未审核，不能启用')
+      throw new Error('MCP 当前能力清单尚未成功同步，不能启用')
     }
     await this.database`
       update connectors set status = ${input.status === 'enabled' ? 'healthy' : 'disabled'}, updated_at = now()
@@ -589,7 +618,7 @@ export class PostgresToolConnectorService {
     if (connector.protocol !== 'mcp' || !connector.mcp) throw new Error('目标不是 MCP Connector')
     if (input.enabled && (connector.status !== 'healthy' || connector.mcp.approvalStatus !== 'approved'
       || connector.mcp.capabilityDigest !== connector.mcp.approvedDigest)) {
-      throw new Error('只能向 Agent 授予已经整体审核且当前健康的 MCP Connector')
+      throw new Error('只能向 Agent 授予当前健康且能力清单已同步生效的 MCP Connector')
     }
     const [agent] = await this.database<{ id: string }[]>`
       select id from agents where tenant_id = ${tenantId} and id = ${input.agentId}
@@ -733,9 +762,13 @@ export class PostgresToolConnectorService {
         try {
           const runtimeConnection = await this.resolveMcpRuntimeConnection(input.connectorId)
           const inspected = await this.runtime.inspectMcpConnection(runtimeConnection)
-          capabilities = normalizeMcpCapabilities(inspected.capabilities)
-          status = 'degraded'
-          message = `已通过 DSH 发现 ${capabilities.length} 个 MCP Tool，等待整体审核`
+          const discoveredCapabilities = normalizeMcpCapabilities(inspected.capabilities)
+          if (!discoveredCapabilities.length) {
+            throw new Error('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
+          }
+          capabilities = discoveredCapabilities
+          status = 'healthy'
+          message = `已通过 DSH 发现并自动生效 ${capabilities.length} 个 MCP Tool`
         } catch (error) {
           status = 'offline'
           message = error instanceof Error ? error.message : 'MCP 发现失败'
@@ -744,29 +777,18 @@ export class PostgresToolConnectorService {
     }
     const latencyMs = Math.max(0, Math.round(performance.now() - started))
     await this.database.begin(async transaction => {
-      let profile: { approvalStatus: McpProfileRow['approvalStatus']; approvedDigest: string | null } | undefined
       let digest: string | undefined
-      let approvalStatus: McpProfileRow['approvalStatus'] | undefined
       if (connector.protocol === 'mcp' && capabilities) {
         digest = mcpCapabilityDigest(capabilities)
-        const profiles = await transaction<{ approvalStatus: McpProfileRow['approvalStatus']; approvedDigest: string | null }[]>`
-          select approval_status as "approvalStatus", approved_digest as "approvedDigest"
+        const profiles = await transaction<{ connectorId: string }[]>`
+          select connector_id as "connectorId"
             from mcp_connector_profiles
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
            for update
         `
-        profile = profiles[0]
-        if (!profile) throw new Error('MCP Connector 缺少治理配置')
-        const unchangedApproval = profile.approvalStatus === 'approved' && profile.approvedDigest === digest
-        approvalStatus = unchangedApproval
-          ? 'approved'
-          : profile.approvedDigest === null ? 'pending_review' : 'changes_pending'
-        status = unchangedApproval ? 'healthy' : 'degraded'
-        message = unchangedApproval
-          ? `MCP 整体审核摘要保持一致，共 ${capabilities.length} 个 Tool`
-          : profile.approvedDigest === null
-            ? `已发现 ${capabilities.length} 个 MCP Tool，等待整体审核`
-            : `MCP 能力清单已变化，共 ${capabilities.length} 个 Tool，需要重新审核`
+        if (!profiles[0]) throw new Error('MCP Connector 缺少治理配置')
+        status = 'healthy'
+        message = `MCP 能力清单已同步并自动生效，共 ${capabilities.length} 个 Tool`
       }
       const [lockedConnector] = await transaction<{ status: ConnectorDefinition['status'] }[]>`
         select status from connectors
@@ -796,11 +818,12 @@ export class PostgresToolConnectorService {
         `
         return
       }
-      if (connector.protocol === 'mcp' && capabilities && profile && digest && approvalStatus) {
+      if (connector.protocol === 'mcp' && capabilities && digest) {
         await transaction`
           update mcp_connector_profiles
              set capability_snapshot = ${transaction.json(asJson(capabilities))}, capability_digest = ${digest},
-                 approval_status = ${approvalStatus}, discovered_at = now(), updated_at = now()
+                 approval_status = 'approved', approved_digest = ${digest},
+                 reviewed_by = ${actor.id}, reviewed_at = now(), discovered_at = now(), updated_at = now()
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
         `
       }
@@ -1411,8 +1434,12 @@ function toConnectorDefinition(row: ConnectorRow, profile?: McpProfileRow): Conn
         : 'Bearer Token 需要重新录入'
       : row.credentialRef ?? '无独立凭据',
     scopeDescription: row.scopeDescription,
+    createdAt: row.createdAt.toISOString(),
+    createdBy: row.createdBy,
+    updatedAt: row.updatedAt.toISOString(),
     latency: row.latencyMs === null ? '未检查' : `${row.latencyMs} ms`,
     lastCheckedAt: formatRelative(row.lastCheckedAt),
+    ...(row.lastHealthMessage ? { lastHealthMessage: row.lastHealthMessage } : {}),
   }
   if (profile) {
     definition.mcp = {
