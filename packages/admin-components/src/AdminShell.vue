@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ChatDotRound,
   Collection,
+  CircleCheck,
   Connection,
   Cpu,
   DataAnalysis,
@@ -98,6 +99,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     label: '安全与运维',
     items: [
       { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'admin' },
+      { label: '动作审批', path: '/approvals', icon: CircleCheck, permission: 'admin' },
       { label: '审计记录', path: '/audit', icon: Tickets, permission: 'audit' },
       { label: '系统健康', path: '/health', icon: Monitor, permission: 'admin' },
     ],

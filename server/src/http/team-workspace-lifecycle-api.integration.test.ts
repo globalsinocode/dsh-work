@@ -152,7 +152,7 @@ test('负责人归档：写入 archived_at 与审计事实，恢复清空归档�
   assert.equal(restoreAudit.safeContext.detail, '负责人恢复团队空间')
 })
 
-test('有排队/运行中/取消中的任务时拒绝归档，任务终态后允许归档', async () => {
+test('有排队/运行中/等待审批/取消中的任务时拒绝归档，任务终态后允许归档', async () => {
   const ws = uniqueWorkspace('busy')
   const ownerId = `${ws}-owner`
   const userId = `${ws}-user`
@@ -167,7 +167,7 @@ test('有排队/运行中/取消中的任务时拒绝归档，任务终态后允
   const runId = `${ws}-run`
   await createRunWithAttempt({ runId, sessionId, userId, status: 'queued', agentVersionId: versionId })
 
-  for (const status of ['queued', 'running', 'cancel_requested'] as const) {
+  for (const status of ['queued', 'running', 'waiting', 'cancel_requested'] as const) {
     await setRunStatus(runId, status)
     const blocked = await api('POST', `/api/workbench/v1/workspaces/${ws}/archive`, { as: ownerId })
     assert.equal(blocked.status, 409, `${status} 必须阻止归档`)
@@ -502,7 +502,7 @@ test('并发互斥：归档与开跑最多一方成功，归档空间内不得�
   )
 
   const row = await workspaceRow(ws)
-  const nonTerminal = (await sessionRuns(sessionId)).filter(item => ['queued', 'running', 'cancel_requested'].includes(item.status))
+  const nonTerminal = (await sessionRuns(sessionId)).filter(item => ['queued', 'running', 'waiting', 'cancel_requested'].includes(item.status))
   if (row.status === 'archived') {
     assert.equal(archiveResult.status, 'fulfilled')
     assert.equal(nonTerminal.length, 0, '归档空间内不得存在排队或运行中的 Run')
@@ -891,18 +891,41 @@ async function createRunWithAttempt(input: {
   runId: string
   sessionId: string
   userId: string
-  status: 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+  status: 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
   agentVersionId: string
 }) {
   const attemptId = `${input.runId}-attempt`
+  const [session] = await database<{ workspaceId: string }[]>`
+    select workspace_id as "workspaceId" from sessions
+     where tenant_id = ${tenantId} and id = ${input.sessionId}
+  `
+  if (!session) throw new Error(`测试 Session 不存在：${input.sessionId}`)
+  const taskId = `task-${input.runId}`
   const manifest = {
     manifest_version: '1.0',
     run_id: input.runId,
-    task_id: `task-${input.runId}`,
+    task_id: taskId,
     attempt_id: attemptId,
     session_id: input.sessionId,
+    workspace_id: session.workspaceId,
     agent_version_id: input.agentVersionId,
+    agent_configuration: { system_prompt: 'Team workspace lifecycle integration fixture.', skill_instructions: [] },
     user_context: { user_id: input.userId, tenant_id: tenantId, role_ids: [] },
+    permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'workspace_only' },
+    skills: [],
+    tools: [],
+    data_scopes: [],
+    knowledge_context: [],
+    input: { message: 'Lifecycle integration fixture.', file_mounts: [] },
+    budget: {
+      scope_task_id: taskId,
+      cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null },
+      reservation: { duration_ms: 300_000, tool_calls: 8, output_bytes: 65_536 },
+      enforcement: { duration: 'hard', tool_calls: 'hard', output_bytes: 'hard', tokens: 'unsupported', cost: 'unsupported' },
+    },
+    limits: { timeout_seconds: 300, max_tool_calls: 8, max_output_bytes: 65_536 },
+    created_at: new Date().toISOString(),
+    trace_id: `trace-${input.runId}`,
   }
   await database.begin(async transaction => {
     await transaction`

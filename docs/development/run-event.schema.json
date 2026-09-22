@@ -21,6 +21,7 @@
         "tool.completed",
         "approval.required",
         "approval.resolved",
+        "run.waiting",
         "artifact.created",
         "run.cancel_requested",
         "run.cancelled",

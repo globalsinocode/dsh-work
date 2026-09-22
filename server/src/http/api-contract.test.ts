@@ -62,7 +62,7 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation, and Connector-level MCP governance', async () => {
+test('PF-01 through PF-04 OpenAPI publishes Task, MCP and persistent approval governance', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
@@ -107,6 +107,9 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
   assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
   assert.equal(admin.paths['/runtimes/dsh-tool-connector']?.get?.operationId, 'getDshRuntimeToolConnector')
   assert.equal(admin.paths['/runtimes/dsh-tool-connector/check']?.post?.operationId, 'checkDshRuntimeToolConnector')
+  assert.equal(admin.paths['/approvals']?.get?.operationId, 'listPersistentApprovals')
+  assert.equal(admin.paths['/approvals/{approvalId}']?.get?.operationId, 'getPersistentApproval')
+  assert.equal(admin.paths['/approvals/{approvalId}/resolve']?.post?.operationId, 'resolvePersistentApproval')
 })
 
 before(async () => {

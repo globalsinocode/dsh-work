@@ -313,7 +313,7 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
     assert.ok(['queued', 'running', 'passed'].includes(startedTest.status))
     assert.equal(startedTest.steps[0]?.title, '创建严格试运行')
     let testProgress = startedTest
-    for (let index = 0; index < 150 && ['queued', 'running', 'cancel_requested'].includes(testProgress.status); index++) {
+    for (let index = 0; index < 150 && ['queued', 'running', 'waiting', 'cancel_requested'].includes(testProgress.status); index++) {
       await delay(100)
       testProgress = await skills.getSkillTestProgress({ skillId, runId: startedTest.runId, actor })
     }

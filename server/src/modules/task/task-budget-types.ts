@@ -54,7 +54,7 @@ export interface AttemptBudgetUsageRecord {
     toolCalls: 'runtime' | 'reserved' | 'zero'
     outputBytes: 'platform' | 'reserved' | 'zero'
   }
-  terminalStatus: 'succeeded' | 'failed' | 'cancelled' | null
+  terminalStatus: 'waiting' | 'succeeded' | 'failed' | 'cancelled' | null
   createdAt: string
   settledAt: string | null
 }
@@ -69,7 +69,7 @@ export interface AttemptBudgetSettlement {
   durationMeasurement: 'runtime' | 'timestamps'
   toolMeasurement: 'runtime' | 'reserved'
   outputMeasurement: 'platform'
-  terminalStatus: 'succeeded' | 'failed' | 'cancelled'
+  terminalStatus: 'waiting' | 'succeeded' | 'failed' | 'cancelled'
 }
 
 export interface TaskBudgetView {

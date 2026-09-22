@@ -14,7 +14,7 @@ export const useAdminAssistantStore = defineStore('admin-assistant', () => {
   const error = ref('')
   const busyIds = ref<string[]>([])
   const current = computed(() => conversations.value.find(item => item.id === selectedId.value)!)
-  const active = computed(() => current.value.runs.some(run => ['queued', 'running', 'cancel_requested'].includes(run.status)))
+  const active = computed(() => current.value.runs.some(run => ['queued', 'running', 'waiting', 'cancel_requested'].includes(run.status)))
   const requests = new Map<string, { text: string; id: string }>()
   let generation = 0
   let selection = 0

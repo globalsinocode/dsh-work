@@ -193,7 +193,15 @@ function parseApprovalLog(value) {
 function recordApprovalRequest(path, execution) {
   if (path === undefined || typeof execution.callId !== 'string' || execution.callId.length === 0) return false
   try {
-    appendFileSync(path, `${JSON.stringify({ call_id: execution.callId, tool_name: execution.name })}\n`, {
+    const parameters = isRecord(execution.arguments) ? execution.arguments : {}
+    appendFileSync(path, `${JSON.stringify({
+      call_id: execution.callId,
+      tool_name: execution.name,
+      arguments: parameters,
+      parameter_digest: createHash('sha256').update(canonicalJson(parameters)).digest('hex'),
+      resource_ref: approvalResourceRef(parameters, execution.name),
+      data_version: approvalDataVersion(parameters),
+    })}\n`, {
       encoding: 'utf8',
       flag: 'a',
       mode: 0o600,
@@ -202,6 +210,28 @@ function recordApprovalRequest(path, execution) {
   } catch {
     return false
   }
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
+function approvalResourceRef(parameters, toolName) {
+  for (const key of ['resource', 'resourceRef', 'resource_id', 'target', 'file_path', 'path']) {
+    const value = parameters[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 500)
+  }
+  return `tool:${toolName}`
+}
+
+function approvalDataVersion(parameters) {
+  for (const key of ['dataVersion', 'data_version', 'etag', 'revision']) {
+    const value = parameters[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 200)
+  }
+  return 'unspecified'
 }
 
 function validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot) {

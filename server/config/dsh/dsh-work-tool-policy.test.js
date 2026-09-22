@@ -119,8 +119,8 @@ test('DSH tool policy asks before every governed tool call unless approval is di
   const approvalRequests = (await readFile(process.env.DSH_TOOL_APPROVAL_LOG, 'utf8'))
     .trim().split('\n').map(line => JSON.parse(line))
   assert.deepEqual(approvalRequests, [
-    { call_id: 'call-always', tool_name: 'read' },
-    { call_id: 'call-risk_based', tool_name: 'read' },
+    { call_id: 'call-always', tool_name: 'read', arguments: { file_path: 'inside.txt' }, parameter_digest: createHash('sha256').update('{"file_path":"inside.txt"}').digest('hex'), resource_ref: 'inside.txt', data_version: 'unspecified' },
+    { call_id: 'call-risk_based', tool_name: 'read', arguments: { file_path: 'inside.txt' }, parameter_digest: createHash('sha256').update('{"file_path":"inside.txt"}').digest('hex'), resource_ref: 'inside.txt', data_version: 'unspecified' },
   ])
 
   delete process.env.DSH_TOOL_APPROVAL_LOG

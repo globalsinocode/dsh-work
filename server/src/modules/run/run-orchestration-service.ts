@@ -33,6 +33,7 @@ import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord, StoredRunEvent } from './run-types.ts'
 import type { TaskRepository } from '../task/task-repository.ts'
 import type { TaskSourceType } from '../task/task-types.ts'
+import type { PostgresPersistentWaitService } from './postgres-persistent-wait-service.ts'
 import { normalizeTaskBudget, type TaskBudgetInput, type TaskBudgetLimits } from '../task/task-budget-types.ts'
 import { platformToolsForPurpose } from '../runtime/platform-tool-contracts.ts'
 
@@ -62,6 +63,7 @@ export class RunOrchestrationService {
   private readonly agentMembers?: PostgresWorkspaceAgentMemberService
   private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
   private readonly tasks?: TaskRepository
+  private persistentWait?: Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>
 
   private readonly automationMaxConcurrent: number
   private readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
@@ -108,6 +110,15 @@ export class RunOrchestrationService {
     this.tasks = options?.tasks
   }
 
+  setPersistentWaitService(service: Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>): void {
+    this.persistentWait = service
+  }
+
+  enqueueResumedAttempt(run: RunRecord, manifest: RuntimeManifest): void {
+    this.pendingExecutions.push({ run, manifest })
+    this.triggerPump()
+  }
+
   async startAdminRun(input: { userId: string; sessionId: string; prompt: string; idempotencyKey: string; source: string; purpose?: AdminPurpose; testSkill?: RuntimeSkillConfiguration; history?: RuntimeManifest['input']['conversation_history'] }) {
     assertPrompt(input.prompt)
     const purpose = input.testSkill ? 'admin-skill-test' : input.purpose ?? 'admin-skill-install'
@@ -124,6 +135,12 @@ export class RunOrchestrationService {
 
   async cancelAdminRun(runId: string, userId: string) {
     const run = await this.requireAdminRun(runId, userId)
+    if (run.status === 'waiting') {
+      if (!this.persistentWait) throw new Error('持久化等待服务未接线')
+      await this.persistentWait.cancelRun(run.id, userId)
+      await this.operations?.appendAudit(userId, 'run.wait.cancel', runId, 'success', `trace-${runId}`, '管理员取消等待中的审批')
+      return this.runs.getRun(tenantId, runId)
+    }
     if (!['queued', 'running', 'cancel_requested'].includes(run.status)) return run
     const result = await this.runtime.cancel(runId, userId)
     if (!result.accepted) return this.convergeCancelledRun(runId, current => ({ attemptId: current.currentAttemptId!, displayMessage: '管理助手运行已取消', safeMetadata: { cause: 'user' } }))
@@ -603,6 +620,12 @@ export class RunOrchestrationService {
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
+    if (run.status === 'waiting') {
+      if (!this.persistentWait) throw new Error('持久化等待服务未接线')
+      await this.persistentWait.cancelRun(run.id, userId)
+      await this.operations?.appendAudit(userId, 'run.wait.cancel', runId, 'success', `trace-${runId}`, '员工取消等待中的审批')
+      return this.runs.getRun(tenantId, runId)
+    }
     if (!['queued', 'running', 'cancel_requested'].includes(run.status)) return run
     const result = await this.runtime.cancel(runId, userId)
     await this.operations?.appendAudit(userId, 'run.cancel.request', runId, 'success', `trace-${runId}`, '员工请求取消当前 Attempt')
@@ -630,6 +653,12 @@ export class RunOrchestrationService {
   async systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     const run = await this.runs.getRun(tenantId, runId)
     if (!run) throw new Error(`Run 不存在：${runId}`)
+    if (run.status === 'waiting') {
+      if (!this.persistentWait) throw new Error('持久化等待服务未接线')
+      await this.persistentWait.cancelRun(run.id, 'system')
+      await this.operations?.appendAudit('system', 'run.wait.cancel', runId, 'blocked', `trace-${runId}`, `系统撤权终止等待：${reason ?? '授权已撤销'}`)
+      return (await this.runs.getRun(tenantId, runId)) ?? run
+    }
     if (!['queued', 'running', 'cancel_requested'].includes(run.status)) return run
 
     const result = await this.runtime.cancel(runId, 'system', cause)
@@ -686,6 +715,9 @@ export class RunOrchestrationService {
       }
     }
     const cancelled = await this.runs.transitionRun(tenantId, runId, 'cancelled')
+    if (current.currentAttemptId) {
+      await this.persistentWait?.cancelPreparingForAttempt({ runId, attemptId: current.currentAttemptId })
+    }
     const note = buildNote(current)
     await this.runs.appendSystemEvent({
       tenantId,
@@ -1376,6 +1408,7 @@ export class RunOrchestrationService {
       if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
         await this.runs.transitionRun(tenantId, run.id, 'failed')
       }
+      await this.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: manifest.attempt_id })
       if (error instanceof AuthorizationCheckUnavailableError && attempt) {
         await this.runs.appendSystemEvent({ tenantId, runId: run.id, attemptId: attempt.id,
           eventType: 'run.failed', displayMessage: '授权检查暂不可用，任务未执行',
@@ -1403,11 +1436,23 @@ export class RunOrchestrationService {
 
   /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
   async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false): Promise<void> {
+    return this.assertRunAuthorizationInState(manifest, ['running'], toolBindingsChecked)
+  }
+
+  async assertWaitingRunAuthorization(manifest: RuntimeManifest): Promise<void> {
+    return this.assertRunAuthorizationInState(manifest, ['waiting'], false)
+  }
+
+  private async assertRunAuthorizationInState(
+    manifest: RuntimeManifest,
+    allowedStates: Array<RunRecord['status']>,
+    toolBindingsChecked: boolean,
+  ): Promise<void> {
     if (!this.authorization) throw new AuthorizationCheckUnavailableError()
     try {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
       if (!run || run.taskId !== manifest.task_id || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
-        || run.status !== 'running') throw authorizationDenied('Attempt 已结束、取消或被替代')
+        || !allowedStates.includes(run.status)) throw authorizationDenied('Attempt 已结束、取消或被替代')
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
       // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
@@ -1652,6 +1697,18 @@ export class RunOrchestrationService {
     if (event.event_type === 'run.started') {
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'running')
       await this.runs.transitionRun(tenantId, run.id, 'running')
+    } else if (event.event_type === 'run.waiting') {
+      const approvalId = event.safe_metadata['approval_id']
+      if (this.persistentWait && typeof approvalId === 'string') {
+        const activated = await this.persistentWait.activateWaiting({
+          approvalId, runId: run.id, attemptId: event.attempt_id,
+        })
+        if (!activated) return
+      } else {
+        await this.runs.transitionAttempt(tenantId, event.attempt_id, 'waiting')
+        await this.runs.transitionRun(tenantId, run.id, 'waiting')
+      }
+      await this.operations?.appendAudit(run.requestedBy, 'run.waiting', run.id, 'success', event.trace_id, 'Worker 已释放，等待动作审批')
     } else if (event.event_type === 'assistant.completed' && event.display_message) {
       const assistantContent = this.knowledge
         ? await this.knowledge.addCitationFooter(event.attempt_id, event.display_message)
@@ -1671,6 +1728,7 @@ export class RunOrchestrationService {
     } else if (event.event_type === 'run.cancelled') {
       await this.settleAttemptBudget(event, 'cancelled')
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
+      await this.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
@@ -1678,6 +1736,7 @@ export class RunOrchestrationService {
       await this.settleAttemptBudget(event, 'failed')
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'failed', code)
       await this.runs.transitionRun(tenantId, run.id, 'failed')
+      await this.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
       const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
       if (attempt) await this.operations?.recordModelUsage({
         run,
@@ -1694,6 +1753,7 @@ export class RunOrchestrationService {
       await this.settleAttemptBudget(event, 'succeeded')
       await this.runs.transitionAttempt(tenantId, event.attempt_id, 'succeeded')
       await this.runs.transitionRun(tenantId, run.id, 'succeeded')
+      await this.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
       if (attempt) await this.operations?.recordModelUsage({
         run,
         attempt,

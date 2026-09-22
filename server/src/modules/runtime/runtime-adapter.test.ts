@@ -7,10 +7,18 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
 import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
-import { diagnoseMcpAuthenticationFailure, DshAcpRuntimeAdapter, prepareMcpProcess, renderSystemPrompt, renderUserPrompt } from './dsh-acp-runtime-adapter.ts'
+import {
+  diagnoseMcpAuthenticationFailure,
+  DshAcpRuntimeAdapter,
+  prepareMcpProcess,
+  renderSystemPrompt,
+  renderUserPrompt,
+  type DurablePermissionContext,
+} from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { canonicalJson } from './canonical-json.ts'
 import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -721,6 +729,79 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.status, 'completed')
     const resolved = events.find(event => event.event_type === 'approval.resolved')
     assert.equal(resolved?.safe_metadata['decision'], 'allow_once')
+  })
+
+  it('does not capture a durable checkpoint for approval_mode never', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-no-approval-large-partial', 'attempt-1', '[large-partial-permission] read inventory')
+    input.permission_policy.approval_mode = 'never'
+    input.limits.max_output_bytes = 128 * 1024
+    input.budget.reservation.output_bytes = 128 * 1024
+    const result = await (await adapter.execute(input)).done
+
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+  })
+
+  it('uses the trusted policy log when DSH 0.1.1-rc.2 sends only a tool call id for durable approval', async () => {
+    let capturedContext: DurablePermissionContext | undefined
+    const adapter = await createAdapter(500, undefined, undefined, {
+      permissionDecision: async (_request, _manifest, context) => {
+        capturedContext = context
+        return {
+          decision: 'wait', approvalId: 'approval-test', checkpointId: 'checkpoint-test',
+          checkpointDigest: 'd'.repeat(64), expiresAt: '2026-09-23T00:00:00.000Z',
+        }
+      },
+    })
+    const input = manifest('run-durable-wait', 'attempt-1', '[permission] read inventory')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'waiting')
+    const waiting = events.find(event => event.event_type === 'run.waiting')
+    assert.equal(waiting?.safe_metadata['approval_id'], 'approval-test')
+    assert.equal(waiting?.safe_metadata['worker_released'], true)
+    const required = events.find(event => event.event_type === 'approval.required')
+    assert.match(String(required?.safe_metadata['parameter_digest']), /^[a-f0-9]{64}$/)
+    assert.deepEqual(capturedContext?.checkpointState.pending_action.arguments, {})
+    assert.deepEqual(capturedContext?.checkpointState.workspace_files, [])
+  })
+
+  it('restores bounded checkpoint files and renders pending action and prior tool results', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-resume-context', 'attempt-2', 'Continue the approved operation.')
+    const actionArguments = { orderId: '42', expectedVersion: 'etag-v1' }
+    const context = {
+      pending_action: { arguments: actionArguments },
+      completed_tool_results: [{
+        call_id: 'call-read-1', tool_name: 'tool-inventory-read',
+        parameter_digest: createHash('sha256').update(canonicalJson({ orderId: '42' })).digest('hex'),
+        result: { status: 'open' },
+      }],
+      workspace_files: [{
+        path: 'output/库存报告.md', content: '# Existing draft\n',
+        sha256: createHash('sha256').update('# Existing draft\n').digest('hex'),
+      }],
+      assistant_output: '订单已经读取，等待执行获批更新。',
+    }
+    input.resume = {
+      strategy: 'new-attempt-context-v1', checkpoint_id: 'checkpoint-test', checkpoint_digest: 'd'.repeat(64),
+      source_attempt_id: 'attempt-1', approval_id: 'approval-test', action_name: 'tool-inventory-read',
+      parameter_digest: createHash('sha256').update(canonicalJson(actionArguments)).digest('hex'),
+      resource_ref: 'erp://orders/42', data_version: 'etag-v1', approved_by: 'usr-admin',
+      approved_at: '2026-09-22T10:00:00.000Z',
+      checkpoint_context_sha256: createHash('sha256').update(canonicalJson(context)).digest('hex'),
+      checkpoint_context: context,
+    }
+
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.equal(await readFile(join(result.attemptDirectory, 'workspace/output/库存报告.md'), 'utf8'), '# Existing draft\n')
+    const systemPrompt = renderSystemPrompt(input)
+    assert.match(systemPrompt, /expectedVersion/)
+    assert.match(systemPrompt, /call-read-1/)
+    assert.match(systemPrompt, /output\/库存报告\.md/)
   })
 
   it('cancels an active ACP prompt and reaches a single terminal state', async () => {

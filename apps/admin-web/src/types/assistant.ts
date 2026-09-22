@@ -48,7 +48,7 @@ export interface AdminConversation {
   id: string
   title: string
   messages: Array<{ id: string; role: 'user' | 'assistant'; text: string; runId: string }>
-  runs: Array<{ id: string; status: 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'; error: string | null }>
+  runs: Array<{ id: string; status: 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'; error: string | null }>
   installations: SkillInstallation[]
   proposals: AdminTaskProposal[]
   actions: AdminActionPlan[]

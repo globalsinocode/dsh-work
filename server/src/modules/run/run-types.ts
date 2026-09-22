@@ -1,6 +1,6 @@
 import type { TaskBudgetInput } from '../task/task-budget-types.ts'
 
-export type RunState = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+export type RunState = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 export type AttemptState = RunState
 export type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue }
 export type JsonObject = { [key: string]: JsonValue }

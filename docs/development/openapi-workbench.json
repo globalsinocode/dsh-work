@@ -3428,6 +3428,7 @@
             "enum": [
               "queued",
               "running",
+              "waiting",
               "cancel_requested",
               "succeeded",
               "failed",

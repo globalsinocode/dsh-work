@@ -104,7 +104,7 @@ const skillTestError = ref('')
 let skillTestPollTimer: ReturnType<typeof setTimeout> | undefined
 let skillTestPollEpoch = 0
 
-const skillTestActive = computed(() => ['queued', 'running', 'cancel_requested'].includes(skillTestProgress.value?.status ?? ''))
+const skillTestActive = computed(() => ['queued', 'running', 'waiting', 'cancel_requested'].includes(skillTestProgress.value?.status ?? ''))
 const skillTestResultTitle = computed(() => skillTestProgress.value?.status === 'passed' ? '可以发布' : '暂不能发布')
 const skillTestResultDescription = computed(() => {
   const progress = skillTestProgress.value
@@ -452,7 +452,7 @@ function clearSkillTestPoll() {
 }
 
 function isActiveTestStatus(status: SkillTestRunProgress['status']) {
-  return ['queued', 'running', 'cancel_requested'].includes(status)
+  return ['queued', 'running', 'waiting', 'cancel_requested'].includes(status)
 }
 
 function syncSkillTestFeedback(skill: SkillDefinition, progress: SkillTestRunProgress) {
@@ -489,7 +489,7 @@ function retryStrictSkillTest() {
 }
 
 function skillTestStatusLabel(status?: SkillTestRunProgress['status']) {
-  return { queued: '等待调度', running: '试运行中', cancel_requested: '正在停止', passed: '试运行通过', failed: '试运行失败', cancelled: '已取消' }[status ?? 'queued']
+  return { queued: '等待调度', running: '试运行中', waiting: '等待动作审批', cancel_requested: '正在停止', passed: '试运行通过', failed: '试运行失败', cancelled: '已取消' }[status ?? 'queued']
 }
 
 function skillTestStepIcon(status: SkillTestRunProgress['steps'][number]['status']) {

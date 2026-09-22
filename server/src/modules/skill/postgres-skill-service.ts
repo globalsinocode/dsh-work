@@ -103,7 +103,7 @@ export interface SkillTestRunProgress {
   runId: string
   skillId: string
   version: string
-  status: 'queued' | 'running' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
+  status: 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
   resultSummary?: string
   testedAt?: string
   steps: Array<{
@@ -1073,7 +1073,7 @@ function normalizeConfiguration(input: SkillConfiguration): SkillConfiguration {
 }
 
 function normalizeTestRunStatus(status: string): SkillTestRunProgress['status'] {
-  if (status === 'queued' || status === 'running' || status === 'cancel_requested' || status === 'failed' || status === 'cancelled') return status
+  if (status === 'queued' || status === 'running' || status === 'waiting' || status === 'cancel_requested' || status === 'failed' || status === 'cancelled') return status
   return 'failed'
 }
 

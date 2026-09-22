@@ -160,7 +160,7 @@ async function countActiveRuns(transaction: DatabaseTransaction, workspaceId: st
       from runs r
       join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
      where r.tenant_id = ${tenantId} and s.workspace_id = ${workspaceId}
-       and r.status in ('queued', 'running', 'cancel_requested')
+       and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
   `
   return row?.count ?? 0
 }

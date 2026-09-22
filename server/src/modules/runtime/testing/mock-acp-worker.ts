@@ -1,5 +1,5 @@
 import { request } from 'node:http'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -83,6 +83,23 @@ lines.on('line', (line) => {
       })
       return
     }
+    if (text.includes('[large-partial-permission]')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'P'.repeat(70 * 1024) },
+          },
+        },
+      })
+      const requestId = permissionSequence++
+      permissionPrompts.set(requestId, pending)
+      void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
+      return
+    }
     if (text.includes('[large-output]')) {
       for (const chunk of ['A'.repeat(1000), `界${'B'.repeat(100)}`, 'C'.repeat(50)]) {
         send({
@@ -125,19 +142,7 @@ lines.on('line', (line) => {
     if (text.includes('[permission]')) {
       const requestId = permissionSequence++
       permissionPrompts.set(requestId, pending)
-      send({
-        jsonrpc: '2.0',
-        id: requestId,
-        method: 'session/request_permission',
-        params: {
-          sessionId,
-          options: [
-            { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
-            { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
-          ],
-          toolCall: { toolCallId: 'mock-tool-call', title: 'Mock read-only tool' },
-        },
-      })
+      void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
     if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action'].includes(name))) {
@@ -220,6 +225,37 @@ lines.on('line', (line) => {
     if (pending !== undefined) finishPrompt(pending, 'end_turn')
   }
 })
+
+async function emitPermissionRequest(requestId: number, sessionId: string) {
+  const callId = 'mock-tool-call'
+  const parameters = {}
+  const toolName = (JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[])[0] ?? 'read'
+  const approvalLog = process.env.DSH_TOOL_APPROVAL_LOG
+  if (!approvalLog) throw new Error('DSH_TOOL_APPROVAL_LOG is missing')
+  await appendFile(approvalLog, `${JSON.stringify({
+    call_id: callId,
+    tool_name: toolName,
+    arguments: parameters,
+    parameter_digest: '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    resource_ref: `tool:${toolName}`,
+    data_version: 'unspecified',
+  })}\n`, { encoding: 'utf8', mode: 0o600 })
+  send({
+    jsonrpc: '2.0',
+    id: requestId,
+    method: 'session/request_permission',
+    params: {
+      sessionId,
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+      ],
+      // DSH 0.1.1-rc.2 sends only the stable call id. dsh-work obtains the
+      // governed arguments from the policy log written before asking.
+      toolCall: { toolCallId: callId },
+    },
+  })
+}
 
 async function writeMcpLogWithoutUsage() {
   const root = process.env.DSH_SNAPSHOT_SESSIONS_ROOT

@@ -419,6 +419,80 @@
       },
       "additionalProperties": false
     },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy", "checkpoint_id", "checkpoint_digest", "source_attempt_id",
+        "approval_id", "action_name", "parameter_digest", "resource_ref",
+        "data_version", "approved_by", "approved_at", "checkpoint_context_sha256",
+        "checkpoint_context"
+      ],
+      "properties": {
+        "strategy": { "const": "new-attempt-context-v1" },
+        "checkpoint_id": { "type": "string", "minLength": 1 },
+        "checkpoint_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "source_attempt_id": { "type": "string", "minLength": 1 },
+        "approval_id": { "type": "string", "minLength": 1 },
+        "action_name": { "type": "string", "minLength": 1 },
+        "parameter_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "resource_ref": { "type": "string", "minLength": 1 },
+        "data_version": { "type": "string", "minLength": 1 },
+        "approved_by": { "type": "string", "minLength": 1 },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "checkpoint_context_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "checkpoint_context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pending_action", "completed_tool_results", "workspace_files", "assistant_output"],
+          "properties": {
+            "pending_action": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["arguments"],
+              "properties": {
+                "arguments": { "type": "object" }
+              }
+            },
+            "completed_tool_results": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["call_id", "tool_name", "parameter_digest", "result"],
+                "properties": {
+                  "call_id": { "type": "string", "minLength": 1 },
+                  "tool_name": { "type": "string", "minLength": 1 },
+                  "parameter_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                  "result": {}
+                }
+              }
+            },
+            "workspace_files": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "content", "sha256"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 1024,
+                    "pattern": "^output/(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)[^\\u0000-\\u001F]+$"
+                  },
+                  "content": { "type": "string" },
+                  "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                }
+              }
+            },
+            "assistant_output": { "type": "string", "maxLength": 65536 }
+          }
+        }
+      }
+    },
     "budget": {
       "type": "object",
       "required": ["scope_task_id", "cumulative_limits", "reservation", "enforcement"],

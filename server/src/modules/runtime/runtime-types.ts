@@ -5,6 +5,7 @@ export type RuntimeRunStatus =
   | 'queued'
   | 'starting'
   | 'running'
+  | 'waiting'
   | 'cancel_requested'
   | 'completed'
   | 'failed'
@@ -17,6 +18,7 @@ export type RuntimeEventType =
   | 'assistant.completed'
   | 'approval.required'
   | 'approval.resolved'
+  | 'run.waiting'
   | 'run.cancel_requested'
   | 'run.cancelled'
   | 'run.failed'
@@ -97,6 +99,22 @@ export interface RuntimeManifest {
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
     file_mounts: FileMount[]
   }
+  /** PF-04 immutable proof used to reconstruct work in a new Attempt. */
+  resume?: {
+    strategy: 'new-attempt-context-v1'
+    checkpoint_id: string
+    checkpoint_digest: string
+    source_attempt_id: string
+    approval_id: string
+    action_name: string
+    parameter_digest: string
+    resource_ref: string
+    data_version: string
+    approved_by: string
+    approved_at: string
+    checkpoint_context_sha256: string
+    checkpoint_context: RuntimeResumeCheckpointContext
+  }
   /** PF-02 immutable cumulative budget scope and this Attempt's reservation. */
   budget: {
     scope_task_id: string
@@ -125,6 +143,24 @@ export interface RuntimeManifest {
   }
   created_at: string
   trace_id?: string
+}
+
+export interface RuntimeResumeCheckpointContext {
+  pending_action: {
+    arguments: Record<string, unknown>
+  }
+  completed_tool_results: Array<{
+    call_id: string
+    tool_name: string
+    parameter_digest: string
+    result: unknown
+  }>
+  workspace_files: Array<{
+    path: string
+    content: string
+    sha256: string
+  }>
+  assistant_output: string
 }
 
 export interface McpConnectionSnapshot {

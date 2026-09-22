@@ -106,6 +106,41 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(dshConnector.getByRole('button', { name: '检查工具连接' })).toBeVisible()
 })
 
+test('platform administrator can inspect and resolve an action-bound approval', async ({ page }) => {
+  const approval = {
+    id: 'approval-e2e', runId: 'run-e2e', taskId: 'task-e2e', sourceAttemptId: 'attempt-source',
+    checkpointId: 'checkpoint-e2e', checkpointDigest: 'a'.repeat(64), actionName: 'erp.update',
+    parameterDigest: 'b'.repeat(64), resourceRef: 'erp://orders/42', executionIdentity: 'U00008',
+    dataVersion: 'etag-v1', riskLevel: 'high', status: 'pending',
+    expiresAt: '2026-09-23T00:00:00.000Z', requestedAt: '2026-09-22T00:00:00.000Z',
+    resolvedBy: null, resolvedAt: null, resumedAttemptId: null, actionConsumedAt: null,
+  }
+  let resolved = false
+  await page.route('**/api/admin/v1/approvals**', async (route) => {
+    if (route.request().method() === 'POST') {
+      resolved = true
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
+        ...approval, status: 'approved', resolvedBy: 'U00008', resolvedAt: '2026-09-22T00:01:00.000Z', resumedAttemptId: 'attempt-resumed',
+      }, meta: { api: 'admin', adapter: 'prototype-memory', timestamp: new Date().toISOString() } }) })
+      return
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: resolved ? [{ ...approval, status: 'approved', resolvedBy: 'U00008', resolvedAt: '2026-09-22T00:01:00.000Z', resumedAttemptId: 'attempt-resumed' }] : [approval],
+      meta: { api: 'admin', adapter: 'prototype-memory', timestamp: new Date().toISOString() },
+    }) })
+  })
+  await page.goto(`${adminUrl}/approvals`)
+  await expect(page.locator('.admin-topbar').getByText('动作审批', { exact: true })).toBeVisible()
+  const row = page.getByRole('row').filter({ hasText: 'erp.update' })
+  await expect(row).toContainText('erp://orders/42')
+  await expect(row).toContainText('bbbbbbbbbbbb')
+  await row.getByRole('button', { name: '批准', exact: true }).click()
+  await page.getByRole('dialog', { name: '批准动作' }).getByRole('button', { name: '批准', exact: true }).click()
+  await expect(page.getByText('已批准并创建恢复 Attempt', { exact: true })).toBeVisible()
+  await expect(row).toHaveCount(0)
+  expect(resolved).toBe(true)
+})
+
 test('administrator can open system information from the user menu', async ({ page }) => {
   await page.goto(`${adminUrl}/overview`)
 

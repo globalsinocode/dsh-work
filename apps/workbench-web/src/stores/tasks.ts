@@ -23,7 +23,7 @@ const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
 let sessionEventSeq = 0
 const runtimeEventTypes = [
   'run.queued', 'run.started', 'assistant.delta', 'assistant.completed',
-  'approval.required', 'approval.resolved', 'run.cancel_requested',
+  'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
   'run.cancelled', 'run.failed', 'run.completed',
 ]
 
@@ -31,6 +31,7 @@ export const useTaskStore = defineStore('tasks', () => {
   const tasks = ref<TaskRun[]>([])
   const loading = ref(false)
   const initialized = ref(false)
+  const runtimeEventQueues = new Map<string, Promise<void>>()
   let generation = 0
   function reset() {
     generation++
@@ -39,6 +40,7 @@ export const useTaskStore = defineStore('tasks', () => {
     // 否则旧凭据的 SSE 继续挂着消耗服务端轮询、还会向新账号视图写标记。
     for (const entry of sessionStreams.values()) entry.source.close()
     sessionStreams.clear()
+    runtimeEventQueues.clear()
     sessionActivity.value = {}
     tasks.value = []; loading.value = false; initialized.value = false
   }
@@ -266,7 +268,16 @@ export const useTaskStore = defineStore('tasks', () => {
         } catch {
           return
         }
-        void applyEvent(event).catch(() => closeStream(runId))
+        const previous = runtimeEventQueues.get(runId) ?? Promise.resolve()
+        const next = previous
+          .then(async () => {
+            if (current === generation) await applyEvent(event)
+          })
+          .catch(() => { closeStream(runId) })
+        runtimeEventQueues.set(runId, next)
+        void next.finally(() => {
+          if (runtimeEventQueues.get(runId) === next) runtimeEventQueues.delete(runId)
+        })
       })
     }
     stream.onerror = () => {
@@ -356,24 +367,41 @@ export const useTaskStore = defineStore('tasks', () => {
 
   async function applyEvent(event: RuntimeEvent) {
     const current = generation
-    const task = getTask(event.run_id)
+    let task = getTask(event.run_id)
     if (!task) return
-    if (task.attemptId !== null && event.attempt_id !== task.attemptId) return
+    if (task.attemptId !== null && event.attempt_id !== task.attemptId) {
+      // PF-04 resumes a waiting Run with a new Attempt while keeping the same
+      // Run-level SSE stream. Confirm the authoritative current Attempt before
+      // accepting its first event; unrelated late events from older Attempts
+      // remain ignored.
+      if (task.status !== 'awaiting_approval') return
+      const refreshed = await workbenchApi.getRun(event.run_id)
+      if (current !== generation) return
+      upsert(refreshed)
+      task = getTask(event.run_id)
+      if (!task || task.attemptId !== event.attempt_id) return
+    }
     if (event.event_type === 'run.queued') task.status = 'queued'
     if (event.event_type === 'run.started') task.status = 'running'
     if (event.event_type === 'approval.required') {
       task.status = 'awaiting_approval'
+      const durable = typeof event.safe_metadata['approval_id'] === 'string'
       const toolName = typeof event.safe_metadata['tool_name'] === 'string'
         ? event.safe_metadata['tool_name']
         : '受控工具'
       task.approval = {
         object: `工具 ${toolName}`,
-        reason: 'DSH 请求本轮一次性工具权限，服务端正在校验 Agent、角色和数据范围。',
-        nextStep: '当前项目采用自动确认策略，无需手动操作；确认结果会自动更新。',
+        reason: durable
+          ? '本轮动作、参数摘要、资源和数据版本已固定，当前执行已释放 Worker。'
+          : 'DSH 请求本轮一次性工具权限，服务端正在校验 Agent、角色和数据范围。',
+        nextStep: durable
+          ? '平台管理员处理后会创建新的 Attempt 继续执行；无需重复提交。'
+          : '当前动作正在自动确认，无需手动操作；确认结果会自动更新。',
         toolName,
         dataScope: task.workspaceName === '我的空间' ? '当前员工个人授权范围' : `${task.workspaceName}成员授权范围`,
       }
     }
+    if (event.event_type === 'run.waiting') task.status = 'awaiting_approval'
     if (event.event_type === 'approval.resolved') {
       task.status = 'running'
       task.approval = undefined
@@ -449,6 +477,7 @@ function eventTitle(eventType: string) {
     'run.started': 'DSH Worker 开始执行',
     'approval.required': '等待权限确认',
     'approval.resolved': '权限确认完成',
+    'run.waiting': '等待动作审批',
     'run.cancel_requested': '正在取消',
     'run.cancelled': '执行已取消',
     'run.failed': '执行失败',
@@ -458,7 +487,7 @@ function eventTitle(eventType: string) {
 }
 
 function eventStepStatus(eventType: string) {
-  if (eventType === 'approval.required') return 'awaiting_approval' as const
+  if (eventType === 'approval.required' || eventType === 'run.waiting') return 'awaiting_approval' as const
   if (['run.failed', 'run.cancelled'].includes(eventType)) return 'failed' as const
   if (eventType === 'run.completed') return 'succeeded' as const
   return 'running' as const

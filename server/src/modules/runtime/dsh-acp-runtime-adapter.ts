@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import {
   AcpJsonRpcClient,
   AcpProtocolError,
@@ -17,6 +17,8 @@ import {
   type PlatformToolRegistration,
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { canonicalJson } from './canonical-json.ts'
+import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
 import type {
@@ -31,6 +33,7 @@ import type {
   McpInspectionResult,
   McpRuntimeConnection,
   RuntimeRunStatus,
+  RuntimeResumeCheckpointContext,
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
@@ -60,6 +63,24 @@ interface ExecutionRecord {
   auditedMcpCallIds: Set<string>
   materializedSkills: Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
+  durableWait?: DurableWaitDecision
+}
+
+export interface DurablePermissionContext {
+  toolName: string
+  toolCallId: string
+  parameterDigest: string
+  resourceRef: string
+  dataVersion: string
+  checkpointState: RuntimeResumeCheckpointContext
+}
+
+export interface DurableWaitDecision {
+  decision: 'wait'
+  approvalId: string
+  checkpointId: string
+  checkpointDigest: string
+  expiresAt: string
 }
 
 export interface DshAcpRuntimeAdapterConfiguration {
@@ -85,7 +106,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
-  ) => Promise<'allow_once' | 'reject_once'>
+    context: DurablePermissionContext,
+  ) => Promise<'allow_once' | 'reject_once' | DurableWaitDecision>
   prepareSkillInstallation?: (manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   inspectAdminState?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   proposeAdminTask?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
@@ -160,6 +182,13 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const outputDirectory = join(workspaceDirectory, 'output')
     await mkdir(workspaceDirectory, { recursive: true })
     await mkdir(outputDirectory, { recursive: true })
+    for (const file of compiled.manifest.resume?.checkpoint_context.workspace_files ?? []) {
+      if (!isSafeResumeWorkspacePath(file.path)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
+      const target = resolve(workspaceDirectory, file.path)
+      if (!target.startsWith(`${outputDirectory}/`)) throw new Error(`Unsafe checkpoint workspace path: ${file.path}`)
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, file.content, { flag: 'wx', mode: 0o600 })
+    }
     for (const mount of compiled.manifest.input.file_mounts) {
       const relativePath = mount.mount_path.slice('/workspace/'.length)
       const target = resolve(workspaceDirectory, relativePath)
@@ -557,6 +586,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         this.finishFromCancellationCause(record)
         return
       }
+      if (record.durableWait) {
+        this.finishWaiting(record)
+        return
+      }
       if (stopReason === 'cancelled') {
         this.finishFailed(
           record,
@@ -605,7 +638,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       })
       this.finish(record)
     } catch (error) {
-      if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
+      if (record.durableWait) this.finishWaiting(record)
+      else if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
       else {
         const failure = classifyRuntimeFailure(error)
         this.finishFailed(record, failure.code, failure.message)
@@ -711,15 +745,65 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const toolCallId = typeof request.toolCall?.['toolCallId'] === 'string'
       ? request.toolCall['toolCallId']
       : null
-    const toolName = await resolvePermissionToolName(record, request, toolCallId)
+    const logged = await readPermissionApprovalContext(record, toolCallId)
+    const toolName = logged?.toolName ?? await resolvePermissionToolName(record, request, toolCallId)
+    const parameterDigest = logged?.parameterDigest ?? permissionParameterDigest(request)
+    const requestArguments = permissionParameters(request)
+    const actionArguments = logged?.arguments ?? requestArguments
+    const requestDigestMatches = requestArguments === null
+      || createHash('sha256').update(canonicalJson(requestArguments)).digest('hex') === parameterDigest
+    if (record.manifest.permission_policy.approval_mode !== 'never'
+      && (!actionArguments || !requestDigestMatches
+        || createHash('sha256').update(canonicalJson(actionArguments)).digest('hex') !== parameterDigest)) {
+      this.emit(record, 'approval.required', 'DSH 请求一次性工具权限', {
+        tool_name: toolName, tool_call_id: toolCallId, parameter_evidence: 'unavailable_or_mismatched',
+      })
+      this.emit(record, 'approval.resolved', '缺少可验证的动作参数，权限请求已安全拒绝', {
+        decision: 'cancelled', tool_name: toolName, tool_call_id: toolCallId,
+      })
+      return { outcome: { outcome: 'cancelled' } }
+    }
+    const stableToolCallId = toolCallId ?? `permission-${parameterDigest.slice(0, 16)}`
+    const resourceRef = logged?.resourceRef ?? permissionResourceRef(request, toolName)
+    const dataVersion = logged?.dataVersion ?? permissionDataVersion(request, record.manifest)
+    const context: DurablePermissionContext | null = record.manifest.permission_policy.approval_mode === 'never'
+      ? null
+      : {
+          toolName,
+          toolCallId: stableToolCallId,
+          parameterDigest,
+          resourceRef,
+          dataVersion,
+          checkpointState: await captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId),
+        }
+    const decision = context === null
+      ? 'allow_once'
+      : await this.configuration.permissionDecision?.(request, record.manifest, context) ?? 'reject_once'
+    if (typeof decision === 'object' && decision.decision === 'wait') {
+      if (!context) throw new Error('无需审批的工具调用不能进入持久化等待')
+      record.durableWait = decision
+      this.emit(record, 'approval.required', '操作等待人工审批，当前 Worker 已释放', {
+        approval_id: decision.approvalId,
+        checkpoint_id: decision.checkpointId,
+        checkpoint_digest: decision.checkpointDigest,
+        expires_at: decision.expiresAt,
+        tool_name: toolName,
+        tool_call_id: stableToolCallId,
+        parameter_digest: parameterDigest,
+        resource_ref: resourceRef,
+        data_version: dataVersion,
+      })
+      queueMicrotask(() => { void record.client?.cancel(record.acpSessionId ?? '').catch(() => undefined) })
+      return { outcome: { outcome: 'cancelled' } }
+    }
     this.emit(record, 'approval.required', 'DSH 请求一次性工具权限', {
       option_kinds: request.options?.map(option => option.kind).filter(Boolean) ?? [],
       tool_name: toolName,
       tool_call_id: toolCallId,
+      parameter_digest: parameterDigest,
+      resource_ref: resourceRef,
+      data_version: dataVersion,
     })
-    const decision = record.manifest.permission_policy.approval_mode === 'never'
-      ? 'allow_once'
-      : await this.configuration.permissionDecision?.(request, record.manifest) ?? 'reject_once'
     const desiredKind = decision
     const option = request.options?.find(candidate => candidate.kind === desiredKind)
     if (option?.optionId === undefined) {
@@ -774,6 +858,19 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.terminal) return
     this.setStatus(record, 'cancelled')
     this.emit(record, 'run.cancelled', '任务已取消', { cause: record.cancelCause ?? 'user' })
+    this.finish(record)
+  }
+
+  private finishWaiting(record: ExecutionRecord): void {
+    if (record.terminal || !record.durableWait) return
+    this.setStatus(record, 'waiting')
+    this.emit(record, 'run.waiting', '任务已进入持久化等待，审批后将创建新的 Attempt', {
+      approval_id: record.durableWait.approvalId,
+      checkpoint_id: record.durableWait.checkpointId,
+      checkpoint_digest: record.durableWait.checkpointDigest,
+      expires_at: record.durableWait.expiresAt,
+      worker_released: true,
+    })
     this.finish(record)
   }
 
@@ -901,6 +998,24 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
 
 export function renderSystemPrompt(manifest: RuntimeManifest) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
+  if (manifest.resume) {
+    sections.push([
+      '# 已批准动作恢复',
+      `这是检查点 ${manifest.resume.checkpoint_id} 创建的新 Attempt。来源 Attempt 已结束，不得把其未确认输出当成完成事实。`,
+      `批准仅适用于动作 ${manifest.resume.action_name}、资源 ${manifest.resume.resource_ref}、参数摘要 ${manifest.resume.parameter_digest} 和数据版本 ${manifest.resume.data_version}。`,
+      `必须先使用以下固定参数请求同一个已批准动作；不得自行补充、删除或改写字段：\n${JSON.stringify(manifest.resume.checkpoint_context.pending_action.arguments)}`,
+      manifest.resume.checkpoint_context.completed_tool_results.length
+        ? `来源 Attempt 已完成的工具结果如下；继续使用这些结果，不要为了重建上下文重复执行对应工具：\n${JSON.stringify(manifest.resume.checkpoint_context.completed_tool_results)}`
+        : '来源 Attempt 在审批前没有可复用的已完成工具结果。',
+      manifest.resume.checkpoint_context.workspace_files.length
+        ? `以下工作文件已按摘要校验并恢复到新工作区：${manifest.resume.checkpoint_context.workspace_files.map(file => file.path).join('、')}`
+        : '来源 Attempt 在审批前没有需要恢复的工作文件。',
+      manifest.resume.checkpoint_context.assistant_output
+        ? `来源 Attempt 已生成但尚未提交的部分回答，仅作续办上下文，不代表任务完成：\n${manifest.resume.checkpoint_context.assistant_output}`
+        : '来源 Attempt 没有未提交的部分回答。',
+      '继续任务时如动作、参数、资源或数据版本变化，必须重新请求审批。',
+    ].join('\n'))
+  }
   if (manifest.input.file_mounts.length > 0) {
     sections.push([
       '# 当前 Run 输入文件',
@@ -949,6 +1064,159 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
   return sections.join('\n\n')
 }
 
+export function permissionParameterDigest(request: AcpPermissionRequest): string {
+  return createHash('sha256').update(canonicalJson(permissionParameters(request) ?? {})).digest('hex')
+}
+
+function permissionParameters(request: AcpPermissionRequest): Record<string, unknown> | null {
+  const toolCall = request.toolCall ?? {}
+  for (const key of ['rawInput', 'input', 'arguments', 'args']) {
+    if (!Object.hasOwn(toolCall, key)) continue
+    const value = toolCall[key]
+    return isRecord(value) ? jsonClone(value) as Record<string, unknown> : null
+  }
+  return null
+}
+
+async function captureResumeCheckpointContext(
+  record: ExecutionRecord,
+  actionArguments: Record<string, unknown>,
+  pendingCallId: string | null,
+): Promise<RuntimeResumeCheckpointContext> {
+  const previous = record.manifest.resume?.checkpoint_context
+  const currentResults = await readCompletedToolResults(
+    join(record.snapshot.attemptDirectory, 'sessions'),
+    pendingCallId,
+  )
+  const completedByCall = new Map(
+    [...(previous?.completed_tool_results ?? []), ...currentResults]
+      .map(result => [result.call_id, result] as const),
+  )
+  const completedToolResults = [...completedByCall.values()]
+  if (completedToolResults.length > 50
+    || Buffer.byteLength(canonicalJson(completedToolResults)) > 256 * 1024) {
+    throw new Error('累计工具结果超过安全恢复上限，无法创建持久化检查点')
+  }
+  const assistantOutput = [previous?.assistant_output, record.assistantText].filter(Boolean).join('\n')
+  if (Buffer.byteLength(assistantOutput) > 64 * 1024) {
+    throw new Error('累计未提交回答超过安全恢复上限，无法创建持久化检查点')
+  }
+  return {
+    pending_action: { arguments: jsonClone(actionArguments) as Record<string, unknown> },
+    completed_tool_results: completedToolResults,
+    workspace_files: await readCheckpointWorkspaceFiles(join(record.snapshot.attemptDirectory, 'workspace', 'output')),
+    assistant_output: assistantOutput,
+  }
+}
+
+async function readCompletedToolResults(
+  sessionRoot: string,
+  pendingCallId: string | null,
+): Promise<RuntimeResumeCheckpointContext['completed_tool_results']> {
+  const calls = new Map<string, { toolName: string; parameterDigest: string }>()
+  const completed: RuntimeResumeCheckpointContext['completed_tool_results'] = []
+  let totalBytes = 0
+  for (const path of await findSessionLogs(sessionRoot)) {
+    const content = await readFile(path, 'utf8')
+    for (const line of content.split('\n')) {
+      if (!line) continue
+      const event = JSON.parse(line) as unknown
+      if (!isRecord(event) || typeof event['type'] !== 'string') continue
+      const data = isRecord(event['data']) ? event['data'] : undefined
+      if (event['type'] === 'tool/call' && data) {
+        const callId = typeof data['callId'] === 'string' ? data['callId'] : ''
+        const toolName = typeof data['name'] === 'string' ? data['name'] : ''
+        if (!callId || !toolName) continue
+        const args = typeof data['arguments'] === 'string'
+          ? parseJsonOrString(data['arguments'])
+          : jsonClone(data['arguments'] ?? {})
+        calls.set(callId, {
+          toolName,
+          parameterDigest: createHash('sha256').update(canonicalJson(args)).digest('hex'),
+        })
+      }
+      if (event['type'] !== 'tool/result' || !data) continue
+      const result = readToolResult(data)
+      if (!result || result.callId === pendingCallId) continue
+      const call = calls.get(result.callId)
+      if (!call) continue
+      const item = {
+        call_id: result.callId,
+        tool_name: call.toolName,
+        parameter_digest: call.parameterDigest,
+        result: jsonClone(data),
+      }
+      totalBytes += Buffer.byteLength(canonicalJson(item))
+      if (completed.length >= 50 || totalBytes > 256 * 1024) {
+        throw new Error('等待审批前的工具结果超过安全恢复上限，无法创建持久化检查点')
+      }
+      completed.push(item)
+    }
+  }
+  return completed
+}
+
+async function readCheckpointWorkspaceFiles(
+  outputRoot: string,
+): Promise<RuntimeResumeCheckpointContext['workspace_files']> {
+  const result: RuntimeResumeCheckpointContext['workspace_files'] = []
+  let totalBytes = 0
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        await visit(path)
+        continue
+      }
+      if (!entry.isFile()) throw new Error('输出目录包含无法安全恢复的非普通文件')
+      const bytes = await readFile(path)
+      const content = bytes.toString('utf8')
+      if (!Buffer.from(content, 'utf8').equals(bytes)) throw new Error('输出目录包含无法安全恢复的非文本文件')
+      totalBytes += bytes.length
+      if (result.length >= 64 || totalBytes > 1024 * 1024) {
+        throw new Error('等待审批前的输出文件超过安全恢复上限，无法创建持久化检查点')
+      }
+      result.push({
+        path: `output/${relative(outputRoot, path).split('\\').join('/')}`,
+        content,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      })
+      if (!isSafeResumeWorkspacePath(result.at(-1)!.path)) {
+        throw new Error('输出目录包含无法安全恢复的文件路径')
+      }
+    }
+  }
+  await visit(outputRoot)
+  return result.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function parseJsonOrString(value: string): unknown {
+  try { return JSON.parse(value) as unknown } catch { return value }
+}
+
+function jsonClone(value: unknown): unknown {
+  if (value === undefined) return null
+  return JSON.parse(JSON.stringify(value)) as unknown
+}
+
+function permissionResourceRef(request: AcpPermissionRequest, toolName: string): string {
+  const toolCall = request.toolCall ?? {}
+  for (const key of ['resource', 'resourceRef', 'resource_id', 'target']) {
+    const value = toolCall[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 500)
+  }
+  return `tool:${toolName}`
+}
+
+function permissionDataVersion(request: AcpPermissionRequest, manifest: RuntimeManifest): string {
+  const toolCall = request.toolCall ?? {}
+  for (const key of ['dataVersion', 'data_version', 'etag', 'revision']) {
+    const value = toolCall[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 200)
+  }
+  return manifest.resume?.data_version ?? `attempt:${manifest.attempt_id}`
+}
+
 async function resolvePermissionToolName(
   record: ExecutionRecord,
   request: AcpPermissionRequest,
@@ -979,6 +1247,40 @@ async function resolvePermissionToolName(
     if (exactId) return exactId
   }
   return record.manifest.tools.length === 1 ? record.manifest.tools[0]!.id : 'dsh-runtime-tool'
+}
+
+async function readPermissionApprovalContext(
+  record: ExecutionRecord,
+  toolCallId: string | null,
+): Promise<{ toolName: string; arguments: Record<string, unknown>; parameterDigest: string; resourceRef: string; dataVersion: string } | null> {
+  if (toolCallId === null) return null
+  try {
+    const approvalLog = await readFile(join(record.snapshot.attemptDirectory, 'tool-approval-requests.jsonl'), 'utf8')
+    for (const entry of approvalLog.trim().split('\n').reverse()) {
+      const parsed = JSON.parse(entry) as unknown
+      if (!isRecord(parsed) || parsed['call_id'] !== toolCallId) continue
+      if (typeof parsed['tool_name'] !== 'string'
+        || !isManifestToolName(record.manifest, parsed['tool_name'])
+        || !isRecord(parsed['arguments'])
+        || typeof parsed['parameter_digest'] !== 'string' || !/^[a-f0-9]{64}$/.test(parsed['parameter_digest'])
+        || typeof parsed['resource_ref'] !== 'string' || !parsed['resource_ref']
+        || typeof parsed['data_version'] !== 'string' || !parsed['data_version']) return null
+      const argumentsCopy = jsonClone(parsed['arguments']) as Record<string, unknown>
+      if (createHash('sha256').update(canonicalJson(argumentsCopy)).digest('hex') !== parsed['parameter_digest']) return null
+      return {
+        toolName: parsed['tool_name'], arguments: argumentsCopy, parameterDigest: parsed['parameter_digest'],
+        resourceRef: parsed['resource_ref'], dataVersion: parsed['data_version'],
+      }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function isManifestToolName(manifest: RuntimeManifest, toolName: string): boolean {
+  if (manifest.tools.some(tool => tool.id === toolName)) return true
+  return (manifest.mcp_connections ?? []).some(connection => toolName.startsWith(`mcp__${connection.server_name}__`))
 }
 
 function safeSegment(value: string): string {

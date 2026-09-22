@@ -2,7 +2,8 @@ import type { AttemptState, RunState } from './run-types.ts'
 
 const transitions: Readonly<Record<RunState, readonly RunState[]>> = {
   queued: ['running', 'cancel_requested', 'failed', 'cancelled'],
-  running: ['cancel_requested', 'succeeded', 'failed', 'cancelled'],
+  running: ['waiting', 'cancel_requested', 'succeeded', 'failed', 'cancelled'],
+  waiting: ['queued', 'failed', 'cancelled'],
   cancel_requested: ['cancelled', 'failed'],
   succeeded: [],
   failed: [],
@@ -15,9 +16,14 @@ export function assertRunTransition(from: RunState, to: RunState) {
 }
 
 export function assertAttemptTransition(from: AttemptState, to: AttemptState) {
-  assertRunTransition(from, to)
+  if (from === to) return
+  if (from === 'waiting' || !transitions[from].includes(to)) throw new Error(`非法 Attempt 状态转换：${from} → ${to}`)
 }
 
-export function isTerminalState(status: RunState) {
+export function isRunTerminalState(status: RunState) {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled'
+}
+
+export function isAttemptTerminalState(status: AttemptState) {
+  return status === 'waiting' || isRunTerminalState(status)
 }

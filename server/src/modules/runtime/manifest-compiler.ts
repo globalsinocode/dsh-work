@@ -2,12 +2,19 @@ import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
-import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type CompiledRuntimeManifest, type RuntimeManifest } from './runtime-types.ts'
+import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
+import {
+  MAX_MCP_CONNECTIONS_PER_ATTEMPT,
+  type CompiledRuntimeManifest,
+  type RuntimeManifest,
+  type RuntimeResumeCheckpointContext,
+} from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const BINDING_FIELDS = new Set(['tool', 'binding_id', 'revision', 'digest'])
 const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest'])
+const RESUME_FIELDS = new Set(['strategy', 'checkpoint_id', 'checkpoint_digest', 'source_attempt_id', 'approval_id', 'action_name', 'parameter_digest', 'resource_ref', 'data_version', 'approved_by', 'approved_at', 'checkpoint_context_sha256', 'checkpoint_context'])
 // 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 FileSystemSkillArtifactStore
 // 读写同口径；runtime-manifest.schema.json 中的等价 pattern 由 contracts 静态检查固定。
 const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
@@ -93,6 +100,21 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     throw new TypeError('conversation_history exceeds the bounded conversation context')
   }
   if (input.input.message.trim().length === 0) throw new TypeError('input.message must not be blank')
+  if (input.resume !== undefined) {
+    for (const key of Object.keys(input.resume)) if (!RESUME_FIELDS.has(key)) throw new TypeError(`resume contains unsupported field: ${key}`)
+    if (input.resume.strategy !== 'new-attempt-context-v1') throw new TypeError('resume strategy is unsupported')
+    for (const [name, value] of Object.entries(input.resume)) {
+      if (name === 'strategy' || name === 'approved_at' || name === 'checkpoint_context') continue
+      if (typeof value !== 'string' || value.trim().length === 0) throw new TypeError(`resume.${name} must not be blank`)
+    }
+    if (!/^[a-f0-9]{64}$/.test(input.resume.checkpoint_digest)
+      || !/^[a-f0-9]{64}$/.test(input.resume.parameter_digest)
+      || !/^[a-f0-9]{64}$/.test(input.resume.checkpoint_context_sha256)) {
+      throw new TypeError('resume digests are invalid')
+    }
+    if (!Number.isFinite(Date.parse(input.resume.approved_at))) throw new TypeError('resume.approved_at is invalid')
+    validateResumeCheckpointContext(input.resume.checkpoint_context, input.resume.parameter_digest, input.resume.checkpoint_context_sha256)
+  }
   if (input.limits.timeout_seconds < 1 || input.limits.timeout_seconds > 3600) {
     throw new RangeError('limits.timeout_seconds must be between 1 and 3600')
   }
@@ -196,6 +218,63 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   const manifest = structuredClone(input)
   const serialized = canonicalJson(manifest)
   return { manifest, canonicalJson: serialized, sha256: sha256(serialized) }
+}
+
+function validateResumeCheckpointContext(
+  context: RuntimeResumeCheckpointContext,
+  parameterDigest: string,
+  contextDigest: string,
+): void {
+  if (!context || typeof context !== 'object') throw new TypeError('resume.checkpoint_context is required')
+  const fields = Object.keys(context)
+  if (fields.some(field => !['pending_action', 'completed_tool_results', 'workspace_files', 'assistant_output'].includes(field))) {
+    throw new TypeError('resume.checkpoint_context contains unsupported field')
+  }
+  if (!context.pending_action || typeof context.pending_action !== 'object'
+    || Object.keys(context.pending_action).some(field => field !== 'arguments')
+    || !context.pending_action.arguments || typeof context.pending_action.arguments !== 'object'
+    || Array.isArray(context.pending_action.arguments)) {
+    throw new TypeError('resume checkpoint pending action is invalid')
+  }
+  if (sha256(canonicalJson(context.pending_action.arguments)) !== parameterDigest) {
+    throw new TypeError('resume checkpoint pending action digest mismatch')
+  }
+  if (!Array.isArray(context.completed_tool_results) || context.completed_tool_results.length > 50) {
+    throw new TypeError('resume checkpoint tool results exceed the bounded context')
+  }
+  let toolResultBytes = 0
+  for (const result of context.completed_tool_results) {
+    if (!result || typeof result !== 'object'
+      || Object.keys(result).some(field => !['call_id', 'tool_name', 'parameter_digest', 'result'].includes(field))
+      || typeof result.call_id !== 'string' || !result.call_id
+      || typeof result.tool_name !== 'string' || !result.tool_name
+      || typeof result.parameter_digest !== 'string' || !/^[a-f0-9]{64}$/.test(result.parameter_digest)) {
+      throw new TypeError('resume checkpoint tool result is invalid')
+    }
+    toolResultBytes += Buffer.byteLength(canonicalJson(result))
+  }
+  if (toolResultBytes > 256 * 1024) throw new TypeError('resume checkpoint tool results exceed 256 KB')
+  if (!Array.isArray(context.workspace_files) || context.workspace_files.length > 64) {
+    throw new TypeError('resume checkpoint workspace files exceed the bounded context')
+  }
+  let workspaceBytes = 0
+  const paths = new Set<string>()
+  for (const file of context.workspace_files) {
+    if (!file || typeof file !== 'object'
+      || Object.keys(file).some(field => !['path', 'content', 'sha256'].includes(field))
+      || typeof file.path !== 'string' || !isSafeResumeWorkspacePath(file.path) || paths.has(file.path)
+      || typeof file.content !== 'string'
+      || typeof file.sha256 !== 'string' || sha256(file.content) !== file.sha256) {
+      throw new TypeError('resume checkpoint workspace file is invalid')
+    }
+    paths.add(file.path)
+    workspaceBytes += Buffer.byteLength(file.content)
+  }
+  if (workspaceBytes > 1024 * 1024) throw new TypeError('resume checkpoint workspace files exceed 1 MB')
+  if (typeof context.assistant_output !== 'string' || Buffer.byteLength(context.assistant_output) > 64 * 1024) {
+    throw new TypeError('resume checkpoint assistant output exceeds 64 KB')
+  }
+  if (sha256(canonicalJson(context)) !== contextDigest) throw new TypeError('resume checkpoint context digest mismatch')
 }
 
 function assertOptionalBudgetLimit(value: number | null, name: string, minimum: number, maximum: number): void {

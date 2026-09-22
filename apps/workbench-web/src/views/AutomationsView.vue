@@ -45,6 +45,7 @@ const admissionLabels: Record<string, string> = {
 const runStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '运行中',
+  waiting: '待审批',
   cancel_requested: '取消中',
   succeeded: '成功',
   failed: '失败',
@@ -342,7 +343,7 @@ function openConversation(execution: AutomationExecution) {
   if (execution.runId) void router.push(`/conversations/${execution.runId}`)
 }
 
-const cancellableRunStatuses = new Set(['queued', 'running', 'cancel_requested'])
+const cancellableRunStatuses = new Set(['queued', 'running', 'waiting', 'cancel_requested'])
 
 async function cancelExecution(execution: AutomationExecution) {
   if (!execution.runId || actingId.value) return

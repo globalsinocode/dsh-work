@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.7.1-identity-owned-authorization",
+    "version": "0.8.0-persistent-approval",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,6 +16,41 @@
     }
   ],
   "paths": {
+    "/approvals": {
+      "get": {
+        "operationId": "listPersistentApprovals",
+        "summary": "查询持久化动作审批",
+        "parameters": [{ "name": "status", "in": "query", "required": false, "schema": { "enum": ["pending", "approved", "rejected", "expired", "cancelled"] } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/approvals/{approvalId}": {
+      "get": {
+        "operationId": "getPersistentApproval",
+        "summary": "查询动作审批详情",
+        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/approvals/{approvalId}/resolve": {
+      "post": {
+        "operationId": "resolvePersistentApproval",
+        "summary": "批准或拒绝动作快照",
+        "parameters": [{ "name": "approvalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "additionalProperties": false, "required": ["decision", "resolutionKey"],
+            "properties": {
+              "decision": { "enum": ["approved", "rejected"] },
+              "resolutionKey": { "type": "string", "minLength": 1 },
+              "comment": { "type": "string", "maxLength": 1000 }
+            }
+          } } }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/session": {
       "get": {
         "operationId": "getAdminSession",
@@ -2265,6 +2300,7 @@
                   "enum": [
                     "queued",
                     "running",
+                    "waiting",
                     "cancel_requested",
                     "succeeded",
                     "failed",

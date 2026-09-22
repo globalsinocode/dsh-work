@@ -353,7 +353,7 @@ export class PostgresConversationRepository {
       const [activeRun] = await transaction<{ id: string }[]>`
         select id from runs
          where tenant_id = ${tenantId} and session_id = ${sessionId}
-           and status in ('queued', 'running', 'cancel_requested')
+           and status in ('queued', 'running', 'waiting', 'cancel_requested')
          limit 1
       `
       if (activeRun) throw new Error('对话当前状态不能删除：仍有运行正在执行，请先停止当前运行')
@@ -664,7 +664,7 @@ export class PostgresConversationRepository {
                 select 1 from workspace_members rm where rm.tenant_id = w.tenant_id and rm.workspace_id = w.id
                   and rm.user_id = ${input.actorUserId} and rm.member_role <> 'viewer'))
               and not exists (select 1 from runs live where live.tenant_id = s.tenant_id
-               and live.session_id = s.id and live.status in ('queued', 'running', 'cancel_requested'))) as "canRemove"
+               and live.session_id = s.id and live.status in ('queued', 'running', 'waiting', 'cancel_requested'))) as "canRemove"
         from sessions s
         join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
         join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
@@ -1390,6 +1390,7 @@ function eventTitle(eventType: string) {
     'run.started': '执行服务开始运行',
     'approval.required': '等待权限确认',
     'approval.resolved': '权限确认完成',
+    'run.waiting': '等待动作审批',
     'run.cancel_requested': '正在取消',
     'run.cancelled': '执行已取消',
     'run.failed': '执行失败',
@@ -1402,12 +1403,13 @@ function eventStepStatus(eventType: string, status: RunState, isLast: boolean): 
   if (eventType === 'approval.required') return 'awaiting_approval'
   if (eventType === 'run.failed' || eventType === 'run.cancelled') return 'failed'
   if (eventType === 'run.completed') return 'succeeded'
-  if (isLast && ['queued', 'running', 'cancel_requested'].includes(status)) return 'running'
+  if (isLast && ['queued', 'running', 'waiting', 'cancel_requested'].includes(status)) return status === 'waiting' ? 'awaiting_approval' : 'running'
   return 'succeeded'
 }
 
 function mapStatus(status: RunState): TaskRun['status'] {
   if (status === 'cancel_requested') return 'running'
+  if (status === 'waiting') return 'awaiting_approval'
   return status
 }
 

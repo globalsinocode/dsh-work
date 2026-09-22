@@ -15,7 +15,7 @@ import type {
 } from './automation-types.ts'
 
 const tenantId = 'tenant-dsh-work'
-const NON_TERMINAL_RUN_STATES = ['queued', 'running', 'cancel_requested']
+const NON_TERMINAL_RUN_STATES = ['queued', 'running', 'waiting', 'cancel_requested']
 
 interface AutomationRow {
   id: string

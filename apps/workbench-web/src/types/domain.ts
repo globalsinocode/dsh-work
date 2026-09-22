@@ -62,8 +62,8 @@ export interface Artifact {
  */
 export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_achieved'
 
-/** Run 执行状态原文（含 cancel_requested）；比展示用 RunStatus 更原始。 */
-export type TaskResultExecution = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+/** Run 执行状态原文（含 waiting/cancel_requested）；比展示用 RunStatus 更原始。 */
+export type TaskResultExecution = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 
 export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
 

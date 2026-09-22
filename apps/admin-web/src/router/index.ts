@@ -25,6 +25,7 @@ const router = createRouter({
     { path: '/admin/identity', redirect: '/identity' },
     { path: '/admin/audit', redirect: '/audit' },
     { path: '/admin/health', redirect: '/health' },
+    { path: '/admin/approvals', redirect: '/approvals' },
     {
       path: '/login-error',
       name: 'auth-error',
@@ -157,6 +158,12 @@ const router = createRouter({
       name: 'permissions',
       component: () => import('@/views/PermissionManagementView.vue'),
       meta: { title: '工具权限', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/approvals',
+      name: 'approvals',
+      component: () => import('@/views/ApprovalManagementView.vue'),
+      meta: { title: '动作审批', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/audit',

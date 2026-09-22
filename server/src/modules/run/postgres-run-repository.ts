@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import type { AppendSystemEventInput, RestartRecoveryResult, RunRepository, WorkspaceActiveRun } from './run-repository.ts'
-import { assertAttemptTransition, assertRunTransition, isTerminalState } from './run-state-machine.ts'
+import { assertAttemptTransition, assertRunTransition, isAttemptTerminalState } from './run-state-machine.ts'
 import type {
   AttemptState,
   CreateAttemptInput,
@@ -244,7 +244,14 @@ export class PostgresRunRepository implements RunRepository {
   }
 
   async createAttempt(input: CreateAttemptInput): Promise<RunAttemptRecord> {
-    return this.database.begin(async (transaction) => {
+    return this.database.begin(transaction => this.createAttemptWithinTransaction(transaction, input))
+  }
+
+  /** PF-04 composes approval consumption and Attempt creation in one transaction. */
+  async createAttemptWithinTransaction(
+    transaction: DatabaseTransaction,
+    input: CreateAttemptInput,
+  ): Promise<RunAttemptRecord> {
       // 3-T2: same workspace lock as createRun. Retry/续写 resurrects a
       // failed/cancelled run into a new queued attempt, so it is a real
       // "start a run" path and must not slip past an archive.
@@ -268,7 +275,7 @@ export class PostgresRunRepository implements RunRepository {
         for update of r
       `
       if (!run) throw new Error(`Run 不存在或所属 Session 已归档：${input.runId}`)
-      if (!['queued', 'failed', 'cancelled'].includes(run.status)) {
+      if (!['queued', 'waiting', 'failed', 'cancelled'].includes(run.status)) {
         throw new Error(`Run 当前状态不能创建 Attempt：${run.status}`)
       }
       // 管理侧与自动任务运行同一 Run 只允许一个活动 Attempt；自动化重放必须
@@ -368,7 +375,6 @@ export class PostgresRunRepository implements RunRepository {
         manifest: input.manifest,
       })
       return mapAttempt(created)
-    })
   }
 
   async transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord> {
@@ -570,7 +576,7 @@ export class PostgresRunRepository implements RunRepository {
       assertAttemptTransition(current.status, to)
       if (current.status === to) return mapAttempt(current)
       const startedAt = to === 'running' && !current.startedAt ? new Date() : current.startedAt
-      const endedAt = isTerminalState(to) ? new Date() : null
+      const endedAt = isAttemptTerminalState(to) ? new Date() : null
       const [updated] = await transaction<AttemptRow[]>`
         update run_attempts
            set status = ${to}, started_at = ${startedAt}, ended_at = ${endedAt},
@@ -833,7 +839,7 @@ export class PostgresRunRepository implements RunRepository {
        where r.tenant_id = ${tenantId}
          and t.workspace_id = ${workspaceId}
          and r.requested_by = ${userId}
-         and r.status in ('queued', 'running', 'cancel_requested')
+         and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
        order by r.created_at asc
     `
     return rows.map(mapRun)
@@ -857,7 +863,7 @@ export class PostgresRunRepository implements RunRepository {
        where r.tenant_id = ${tenantId}
          and t.workspace_id = ${workspaceId}
          and av.id = coalesce(s.agent_version_id, ra.manifest->>'agent_version_id')
-         and r.status in ('queued', 'running', 'cancel_requested')
+         and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
        order by r.created_at asc
     `
     return rows.map(mapRun)
@@ -877,7 +883,7 @@ export class PostgresRunRepository implements RunRepository {
        where r.tenant_id = ${tenantId}
          and t.workspace_id = ${workspaceId}
          and coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') is not null
-         and r.status in ('queued', 'running', 'cancel_requested')
+         and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
        order by r.created_at asc
     `
     return rows.map(row => ({ ...mapRun(row), agentVersionId: row.agentVersionId }))

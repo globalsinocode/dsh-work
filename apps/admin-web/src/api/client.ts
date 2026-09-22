@@ -35,6 +35,7 @@ import type {
   ModelRoutePurpose,
   OperationsSummary,
   PlatformStatus,
+  PersistentApproval,
   RuntimeDefinition,
   SessionListPage,
   SkillDefinition,
@@ -127,6 +128,9 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
+  getApprovals: (status?: PersistentApproval['status']) => request<PersistentApproval[]>(`/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  resolveApproval: (approvalId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
+    request<PersistentApproval>(`/approvals/${encodeURIComponent(approvalId)}/resolve`, { method: 'POST', body: JSON.stringify(input) }),
   getAssistantConversations: () => request<Array<{ id: string; title: string }>>('/assistant/sessions'),
   getAssistantConversation: (id: string) => request<AdminConversation>(`/assistant/sessions/${encodeURIComponent(id)}`),
   sendAssistantMessage: (input: { sessionId: string; message: string; requestId: string }) => request<AdminConversation>('/assistant/messages', { method: 'POST', body: JSON.stringify(input) }),

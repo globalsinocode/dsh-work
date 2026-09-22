@@ -15,13 +15,19 @@ function fixture(t) {
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts',
-    'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',
+    'scripts/checks/contracts.mjs',
+    'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
+    'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/automation-smoke.spec.ts',
+    'e2e/automation.integration.spec.ts', 'e2e/personal-integration/task-result.spec.ts',
     // 文档（如 docs/design/team-workspace-plan.md）会链接到员工端与共享包的具体文件，
     // 夹具必须提供这些路径，否则 project 检查会把真实存在的链接报成悬空。
     'apps/workbench-web/src/stores/content.ts', 'apps/workbench-web/src/stores/tasks.ts',
     'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/stores/admin-assistant.ts',
     'apps/admin-web/src/components/SkillInstallationPanel.vue', 'apps/admin-web/src/components/SkillPackagePreview.vue',
+    'apps/admin-web/src/components/AgentDraftDialog.vue', 'apps/admin-web/src/types/domain.ts',
+    'apps/admin-web/src/views/AgentReleaseWorkbenchView.vue',
     'apps/workbench-web/src/views/WorkspacesView.vue', 'apps/workbench-web/src/views/WorkspaceDetailView.vue',
+    'apps/workbench-web/src/views/ConversationView.vue',
     'packages/workbench-components/src/WorkspaceInfoPanel.vue', 'packages/design-tokens/src/tokens.css',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true })

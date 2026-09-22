@@ -286,7 +286,7 @@ describe('task store', () => {
     expect(api.createSession).toHaveBeenCalledWith({ title: '整理个人材料' })
   })
 
-  it('projects permission requests as automatic confirmation without local approval actions', async () => {
+  it('projects durable permission requests as administrator approval without employee actions', async () => {
     const { useTaskStore } = await import('./tasks')
     const approvalTask = { ...structuredClone(baseTask), id: 'run-approval-001' }
     api.getTasks.mockResolvedValue([approvalTask])
@@ -301,7 +301,7 @@ describe('task store', () => {
       event_type: 'approval.required',
       occurred_at: new Date().toISOString(),
       display_message: '请求 read 权限',
-      safe_metadata: { tool_name: 'read' },
+      safe_metadata: { tool_name: 'read', approval_id: 'approval-001', checkpoint_id: 'checkpoint-001' },
       trace_id: 'trace-001',
     })
     await Promise.resolve()
@@ -311,6 +311,7 @@ describe('task store', () => {
       object: '工具 read',
       toolName: 'read',
       dataScope: '供应链经营分析成员授权范围',
+      nextStep: expect.stringContaining('平台管理员'),
     })
     expect(Object.keys(store)).not.toContain('approveTask')
   })
@@ -360,6 +361,108 @@ describe('task store', () => {
 
     expect(api.getRun).toHaveBeenCalledWith(baseTask.id)
     expect(store.tasks[0]?.status).toBe('succeeded')
+  })
+
+  it('switches a waiting Run to its server-confirmed resumed Attempt before applying events', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const waiting = {
+      ...structuredClone(baseTask),
+      status: 'awaiting_approval' as const,
+      approval: {
+        object: '工具 erp.update', reason: '等待管理员审批', nextStep: '审批后继续',
+        toolName: 'erp.update', dataScope: '当前员工个人授权范围',
+      },
+    }
+    const resumed = {
+      ...structuredClone(waiting),
+      status: 'queued' as const,
+      attemptId: 'attempt-resumed-002',
+      approval: undefined,
+    }
+    api.getTasks.mockResolvedValue([waiting])
+    api.getRun.mockResolvedValue(resumed)
+    const store = useTaskStore()
+    await store.load()
+
+    FakeEventSource.instances[0]?.emit('run.started', {
+      event_id: 'event-resumed-started',
+      run_id: baseTask.id,
+      attempt_id: 'attempt-resumed-002',
+      sequence: 1,
+      event_type: 'run.started',
+      occurred_at: new Date().toISOString(),
+      display_message: '恢复 Attempt 已开始',
+      safe_metadata: {},
+      trace_id: 'trace-resumed',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(api.getRun).toHaveBeenCalledWith(baseTask.id)
+    expect(store.tasks[0]?.attemptId).toBe('attempt-resumed-002')
+    expect(store.tasks[0]?.status).toBe('running')
+
+    FakeEventSource.instances[0]?.emit('run.failed', {
+      event_id: 'event-late-old',
+      run_id: baseTask.id,
+      attempt_id: 'attempt-001',
+      sequence: 99,
+      event_type: 'run.failed',
+      occurred_at: new Date().toISOString(),
+      display_message: '旧 Attempt 迟到事件',
+      safe_metadata: {},
+      trace_id: 'trace-old',
+    })
+    await Promise.resolve()
+    expect(store.tasks[0]?.status).toBe('running')
+    store.reset()
+  })
+
+  it('serializes the first resumed Attempt events behind one authoritative refresh', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const waiting = {
+      ...structuredClone(baseTask),
+      status: 'awaiting_approval' as const,
+      approval: {
+        object: '工具 erp.update', reason: '等待管理员审批', nextStep: '审批后继续',
+        toolName: 'erp.update', dataScope: '当前员工个人授权范围',
+      },
+    }
+    const resumed = {
+      ...structuredClone(waiting), status: 'queued' as const,
+      attemptId: 'attempt-resumed-003', approval: undefined, messages: [],
+    }
+    let releaseRefresh!: (task: TaskRun) => void
+    api.getTasks.mockResolvedValue([waiting])
+    api.getRun.mockImplementation(() => new Promise<TaskRun>(resolve => { releaseRefresh = resolve }))
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances[0]
+
+    stream?.emit('run.queued', {
+      event_id: 'event-resumed-queued', run_id: baseTask.id, attempt_id: 'attempt-resumed-003',
+      sequence: 1, event_type: 'run.queued', occurred_at: new Date().toISOString(),
+      display_message: '恢复 Attempt 已排队', safe_metadata: {}, trace_id: 'trace-resumed',
+    })
+    stream?.emit('assistant.delta', {
+      event_id: 'event-resumed-output', run_id: baseTask.id, attempt_id: 'attempt-resumed-003',
+      sequence: 2, event_type: 'assistant.delta', occurred_at: new Date().toISOString(),
+      display_message: '恢复后的回复', safe_metadata: {}, trace_id: 'trace-resumed',
+    })
+    stream?.emit('run.started', {
+      event_id: 'event-resumed-started-2', run_id: baseTask.id, attempt_id: 'attempt-resumed-003',
+      sequence: 3, event_type: 'run.started', occurred_at: new Date().toISOString(),
+      display_message: '恢复 Attempt 已开始', safe_metadata: {}, trace_id: 'trace-resumed',
+    })
+
+    await vi.waitFor(() => expect(api.getRun).toHaveBeenCalledTimes(1))
+    releaseRefresh(resumed)
+    await vi.waitFor(() => {
+      expect(store.tasks[0]?.status).toBe('running')
+      expect(store.tasks[0]?.messages.at(-1)?.content).toBe('恢复后的回复')
+    })
+    expect(api.getRun).toHaveBeenCalledTimes(1)
+    store.reset()
   })
 
   it('deletes every Run in the archived conversation and closes their event streams', async () => {

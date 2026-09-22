@@ -772,15 +772,15 @@ watch(
           <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
             <span class="conversation-notice__icon"><el-icon><Lock /></el-icon></span>
             <div>
-              <strong>正在确认本轮工具权限</strong>
-              <p>{{ task.approval?.reason ?? '服务端正在校验本轮工具、角色和数据范围。' }}</p>
+              <strong>等待本轮工具权限确认</strong>
+              <p>{{ task.approval?.reason ?? '服务端已暂停当前执行并保留审批所需的动作边界。' }}</p>
               <dl>
                 <div><dt>对象</dt><dd class="mono">{{ task.approval?.object ?? '受控工具' }}</dd></div>
                 <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
               </dl>
-              <p>{{ task.approval?.nextStep ?? '确认结果会自动更新，无需重复提交。' }}</p>
+              <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
             </div>
-            <StatusTag status="awaiting_approval" label="自动确认中" />
+            <StatusTag status="awaiting_approval" label="等待确认" />
           </section>
 
           <section v-if="task.result.error" class="conversation-notice error-notice">
@@ -887,7 +887,7 @@ watch(
           <div class="result-verification">
             <p class="result-verification__head">
               <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" dot />
-              <StatusTag :status="task.result.execution === 'cancel_requested' ? 'running' : task.result.execution" />
+              <StatusTag :status="task.result.execution === 'cancel_requested' ? 'running' : task.result.execution === 'waiting' ? 'awaiting_approval' : task.result.execution" />
             </p>
             <p>{{ task.result.summary }}</p>
             <ul v-if="task.result.pendingItems.length" class="result-pending">

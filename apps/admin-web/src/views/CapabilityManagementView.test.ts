@@ -221,6 +221,7 @@ describe('Skill installation sibling tab', () => {
     const { wrapper, content } = await render(true, '/connectors')
     const connector = offlinePendingMcp()
     content.connectors.push(connector)
+    vi.spyOn(content, 'getMcpInvocationAudits').mockResolvedValue([])
     const check = vi.spyOn(content, 'checkConnector').mockResolvedValue(connector)
     const error = vi.spyOn(ElNotification, 'error').mockImplementation(() => ({ close: () => undefined }))
     const info = vi.spyOn(ElNotification, 'info').mockImplementation(() => ({ close: () => undefined }))

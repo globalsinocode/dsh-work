@@ -15,10 +15,10 @@ const router = useRouter()
 const composer = ref<{ focus: () => void }>()
 const messageList = ref<HTMLElement>()
 const busy = computed(() => assistant.busyIds.includes(assistant.selectedId))
-const activeRun = computed(() => [...assistant.current.runs].reverse().find(run => ['queued', 'running', 'cancel_requested'].includes(run.status)))
+const activeRun = computed(() => [...assistant.current.runs].reverse().find(run => ['queued', 'running', 'waiting', 'cancel_requested'].includes(run.status)))
 const pendingDecision = computed(() => assistant.current.proposals.some(item => item.status === 'pending') || assistant.current.actions.some(item => item.status === 'pending'))
 const hasConversationContent = computed(() => assistant.current.messages.length > 0 || assistant.current.proposals.length > 0 || assistant.current.actions.length > 0)
-const statuses: Record<string, string> = { queued: '等待执行', running: '管理助手处理中', cancel_requested: '正在取消', succeeded: '处理完成', failed: '处理失败', cancelled: '已取消' }
+const statuses: Record<string, string> = { queued: '等待执行', running: '管理助手处理中', waiting: '等待动作审批', cancel_requested: '正在取消', succeeded: '处理完成', failed: '处理失败', cancelled: '已取消' }
 const installationFor = (runId: string) => assistant.current.installations.find(item => item.runId === runId)
 const proposalFor = (runId: string) => assistant.current.proposals.find(item => item.runId === runId)
 const actionFor = (runId: string) => assistant.current.actions.find(item => item.runId === runId)

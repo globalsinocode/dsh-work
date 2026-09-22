@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 import Ajv2020Module from 'ajv/dist/2020.js'
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
+import { canonicalJson } from './canonical-json.ts'
 import { normalizePersistedRuntimeManifest } from './runtime-manifest-compatibility.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
@@ -339,5 +340,49 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assertBothReject(applyBindings(pins => { pins[0]!.revision = 0 }), /revision/, 'binding pin with non-positive revision')
     assertBothReject(applyBindings(pins => { pins[0]!.digest = 'A'.repeat(64) }), /digest/, 'binding pin with uppercase digest')
     assertBothReject(applyBindings(pins => { pins[0]!.digest = 'abc' }), /digest/, 'binding pin with short digest')
+  })
+
+  it('PF-04 pins a bounded approval checkpoint in a resumed Attempt', () => {
+    const manifest = baseManifest()
+    manifest.attempt_id = 'attempt-resumed'
+    const checkpointContext = {
+      pending_action: { arguments: { orderId: '42', expectedVersion: 'etag-v1' } },
+      completed_tool_results: [{
+        call_id: 'call-read-1', tool_name: 'erp.read', parameter_digest: 'c'.repeat(64),
+        result: { status: 'open' },
+      }],
+      workspace_files: [{
+        path: 'output/库存报告.md', content: '# Draft\n',
+        sha256: createHash('sha256').update('# Draft\n').digest('hex'),
+      }],
+      assistant_output: '已读取订单，等待更新审批。',
+    }
+    const parameterDigest = createHash('sha256').update(canonicalJson(checkpointContext.pending_action.arguments)).digest('hex')
+    const checkpointContextSha256 = createHash('sha256').update(canonicalJson(checkpointContext)).digest('hex')
+    manifest.resume = {
+      strategy: 'new-attempt-context-v1', checkpoint_id: 'checkpoint-1', checkpoint_digest: 'a'.repeat(64),
+      source_attempt_id: 'attempt-1', approval_id: 'approval-1', action_name: 'erp.update',
+      parameter_digest: parameterDigest, resource_ref: 'erp://orders/42', data_version: 'etag-v1',
+      approved_by: 'usr-admin', approved_at: '2026-09-22T10:00:00.000Z',
+      checkpoint_context_sha256: checkpointContextSha256,
+      checkpoint_context: checkpointContext,
+    }
+    assertBothAccept(manifest, 'persistent approval resume')
+    const traversal = structuredClone(manifest)
+    traversal.resume!.checkpoint_context.workspace_files[0]!.path = 'output/../库存报告.md'
+    assertBothReject(traversal, /workspace file|pattern/, 'checkpoint traversal path')
+    assertBothReject({ ...manifest, resume: { ...manifest.resume, parameter_digest: 'changed' } } as RuntimeManifest, /digest/, 'invalid resume digest')
+    const tampered = {
+      ...manifest,
+      resume: {
+        ...manifest.resume,
+        checkpoint_context: {
+          ...manifest.resume.checkpoint_context,
+          pending_action: { arguments: { orderId: 'changed' } },
+        },
+      },
+    } as RuntimeManifest
+    assert.equal(schemaErrors(tampered).valid, true, 'JSON Schema owns structure; compiler owns checkpoint digest integrity')
+    assert.throws(() => compileRuntimeManifest(tampered), /digest/, 'tampered checkpoint action should fail content integrity')
   })
 })

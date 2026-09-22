@@ -90,7 +90,7 @@ export interface RunRepository {
   readEventsAfterEvent(tenantId: string, runId: string, afterEventId?: string): Promise<StoredRunEvent[]>
   recoverAfterRestart(tenantId: string, runtimeId: string): Promise<RestartRecoveryResult>
   /**
-   * Active (queued/running/cancel_requested) runs of one user in one
+   * Active (queued/running/waiting/cancel_requested) runs of one user in one
    * workspace, joined through sessions (1A-T5 revocation sweep).
    */
   listActiveRunsForWorkspaceUser(tenantId: string, workspaceId: string, userId: string): Promise<RunRecord[]>

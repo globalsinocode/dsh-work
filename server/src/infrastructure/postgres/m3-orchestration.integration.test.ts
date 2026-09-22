@@ -1001,7 +1001,7 @@ function beginSessionArchive(sessionId: string) {
     const [activeRun] = await transaction<{ id: string }[]>`
       select id from runs
        where tenant_id = 'tenant-dsh-work' and session_id = ${sessionId}
-         and status in ('queued', 'running', 'cancel_requested')
+         and status in ('queued', 'running', 'waiting', 'cancel_requested')
        limit 1
     `
     if (activeRun) throw new Error(`测试前置条件失败，仍有活动 Run：${activeRun.id}`)

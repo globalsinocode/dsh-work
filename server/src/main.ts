@@ -38,6 +38,7 @@ import type { JsonObject } from './modules/run/run-types.ts'
 import { PostgresTaskRepository, taskOperationParameterDigest } from './modules/task/postgres-task-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
+import { PostgresPersistentWaitService } from './modules/run/postgres-persistent-wait-service.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
@@ -74,6 +75,7 @@ import { AutomationTriggerSweep } from './modules/automation/automation-trigger-
 import { defaultAutomationConfig } from './modules/automation/automation-types.ts'
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
 import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from './http/workbench/task-execution-routes.ts'
+import { registerPersistentApprovalRoutes } from './http/admin/persistent-approval-routes.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
@@ -125,6 +127,7 @@ async function start() {
   let automationSweep: AutomationTriggerSweep | null = null
   let dshInstallation: DshRuntimeInstallation | null = null
   let executionRuntime: AgentRuntimePort | null = null
+  let persistentWait: PostgresPersistentWaitService | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   if (database) {
@@ -164,6 +167,7 @@ async function start() {
     const runs = new PostgresRunRepository(database)
     const tasks = new PostgresTaskRepository(database)
     const toolServiceRef: { current?: PostgresToolConnectorService } = {}
+    const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -186,9 +190,10 @@ async function start() {
         if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
         await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
       },
-      // No durable human-approval channel is wired to ACP yet. Manifests that
-      // require approval therefore fail closed instead of silently escalating.
-      permissionDecision: async () => 'reject_once',
+      permissionDecision: async (_request, manifest, context) => {
+        if (!persistentWaitRef.current) return 'reject_once'
+        return persistentWaitRef.current.decidePermission(manifest, context)
+      },
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
       inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
       proposeAdminTask: (input, manifest, signal) => assistantService.proposeTask(input, manifest, signal),
@@ -284,6 +289,13 @@ async function start() {
         tasks,
       },
     )
+    persistentWait = new PostgresPersistentWaitService(database, runs, {
+      reauthorize: manifest => orchestration!.assertWaitingRunAuthorization(manifest),
+      enqueue: (run, manifest) => orchestration!.enqueueResumedAttempt(run, manifest),
+    }, dshInstallation?.version ?? 'unavailable')
+    persistentWaitRef.current = persistentWait
+    orchestration.setPersistentWaitService(persistentWait)
+    persistentWait.start()
     const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
     const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
     const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
@@ -295,6 +307,7 @@ async function start() {
     registerAssistantRoutes(router, assistantService)
     registerSkillInstallationRoutes(router, installationService)
     const restartRecovery = await orchestration.recoverAfterServiceRestart()
+    await persistentWait.reconcileOrphans()
     if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
       console.warn('service restart recovery completed', restartRecovery)
     }
@@ -326,6 +339,7 @@ async function start() {
     registerAutomationRoutes(router, automationService)
     registerTaskExecutionRoutes(router, new PostgresTaskQueryService(database, tasks, runs), orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
+    registerPersistentApprovalRoutes(router, persistentWait, authorization)
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
     registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)
@@ -396,6 +410,7 @@ async function start() {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
+        persistentWait?.close()
         if (orchestration) await orchestration.close()
         if (database) await database.end()
         process.exit(0)

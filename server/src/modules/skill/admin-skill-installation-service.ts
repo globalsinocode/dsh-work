@@ -17,7 +17,7 @@ import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLi
 import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
 const tenant = 'tenant-dsh-work'
-type SkillTestRunStatus = 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
+type SkillTestRunStatus = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 export interface SkillTestProgressStep {
   id: string
   title: string

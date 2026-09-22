@@ -1,6 +1,28 @@
 /** Admin API DTOs. They are intentionally owned by the management application. */
 export type AdminRole = 'business_admin' | 'platform_admin' | 'auditor'
 
+export interface PersistentApproval {
+  id: string
+  runId: string
+  taskId: string
+  sourceAttemptId: string
+  checkpointId: string
+  checkpointDigest: string
+  actionName: string
+  parameterDigest: string
+  resourceRef: string
+  executionIdentity: string
+  dataVersion: string
+  riskLevel: 'medium' | 'high'
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled'
+  expiresAt: string
+  requestedAt: string
+  resolvedBy: string | null
+  resolvedAt: string | null
+  resumedAttemptId: string | null
+  actionConsumedAt: string | null
+}
+
 export interface AdminUserProfile {
   id: string
   name: string
@@ -369,7 +391,7 @@ export interface SkillTestRunProgress {
   runId: string
   skillId: string
   version: string
-  status: 'queued' | 'running' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
+  status: 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'passed' | 'failed' | 'cancelled'
   resultSummary?: string
   testedAt?: string
   steps: Array<{
