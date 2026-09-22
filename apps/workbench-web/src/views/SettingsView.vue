@@ -1,18 +1,57 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { workbenchApi } from '@/api/client'
-import { User } from '@element-plus/icons-vue'
+import { Notebook, User } from '@element-plus/icons-vue'
+import type { ControlledMemoryConsent } from '@/types/domain'
 
 import { roleLabels, useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 const policy = ref('')
 const policyError = ref('')
+const memoryConsents = ref<ControlledMemoryConsent[]>([])
+const memoryLoading = ref(false)
+const memoryError = ref('')
 async function loadPolicy() {
   try { policy.value = (await workbenchApi.getContentPolicy()).notice; policyError.value = '' }
   catch { policyError.value = '暂时无法加载内容保留规则，请重试。' }
 }
-onMounted(loadPolicy)
+async function loadMemoryConsents() {
+  memoryLoading.value = true
+  try {
+    memoryConsents.value = await workbenchApi.listMemoryConsents()
+    memoryError.value = ''
+  } catch {
+    memoryError.value = '暂时无法加载记忆授权，请重试。'
+  } finally {
+    memoryLoading.value = false
+  }
+}
+async function withdrawConsent(consent: ControlledMemoryConsent) {
+  await ElMessageBox.confirm(
+    `撤回“${consent.title}”的授权？撤回后新的运行和等待中的恢复都不会再引用它，历史审核与引用记录仍会保留。`,
+    '撤回记忆授权',
+    { confirmButtonText: '撤回授权', cancelButtonText: '取消', type: 'warning' },
+  )
+  try {
+    await workbenchApi.withdrawMemoryConsent(consent.id)
+    ElMessage.success('记忆授权已撤回')
+    await loadMemoryConsents()
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : String(cause))
+  }
+}
+function formatTime(value: string | null) {
+  return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' }).format(new Date(value)) : '—'
+}
+const candidateStatusLabels: Record<ControlledMemoryConsent['candidateStatus'], string> = {
+  pending: '待审核', approved: '已发布', rejected: '已拒绝', withdrawn: '已撤回',
+}
+const visibilityLabels: Record<ControlledMemoryConsent['visibility'], string> = {
+  private: '仅本人', workspace: '当前工作空间', organization: '组织范围',
+}
+onMounted(() => { void loadPolicy(); void loadMemoryConsents() })
 </script>
 
 <template>
@@ -45,12 +84,43 @@ onMounted(loadPolicy)
         <p v-if="policyError" role="alert">{{ policyError }} <el-button @click="loadPolicy">重试</el-button></p>
         <p>默认仅本人在员工工作台访问个人内容；企业授权审计、运维和备份按公司规则执行，不因个人入口而豁免。</p>
       </section>
+
+      <section class="panel settings-section memory-consents">
+        <div class="settings-section__heading">
+          <span><el-icon><Notebook /></el-icon></span>
+          <div><h2>受控记忆授权</h2><p>管理你明确提交的稳定偏好和可复用经验</p></div>
+        </div>
+        <el-alert
+          title="记忆候选经过管理员审核后才可使用，并始终作为非权威参考。撤回会立即阻止后续运行和恢复继续引用。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <p v-if="memoryError" class="memory-error" role="alert">
+          {{ memoryError }} <el-button link type="primary" @click="loadMemoryConsents">重试</el-button>
+        </p>
+        <el-table v-else v-loading="memoryLoading" :data="memoryConsents" empty-text="暂无记忆授权">
+          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+          <el-table-column label="范围" min-width="120"><template #default="{ row }">{{ visibilityLabels[row.visibility as ControlledMemoryConsent['visibility']] }}</template></el-table-column>
+          <el-table-column label="候选状态" min-width="105"><template #default="{ row }">{{ candidateStatusLabels[row.candidateStatus as ControlledMemoryConsent['candidateStatus']] }}</template></el-table-column>
+          <el-table-column label="可使用至" min-width="130"><template #default="{ row }">{{ formatTime(row.retentionUntil) }}</template></el-table-column>
+          <el-table-column label="授权状态" min-width="105">
+            <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '有效' : '已撤回' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="操作" width="110" fixed="right">
+            <template #default="{ row }"><el-button v-if="row.status === 'active'" link type="danger" @click="withdrawConsent(row)">撤回授权</el-button></template>
+          </el-table-column>
+        </el-table>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
 .retention-notice { margin-top: 20px; padding: 20px; }
+.memory-consents { margin-top: 20px; }
+.memory-consents :deep(.el-alert) { margin: 16px 18px 0; width: auto; }
+.memory-error { margin: 16px 18px; color: var(--dsh-color-danger); }
 .settings-layout {
   display: block;
 }

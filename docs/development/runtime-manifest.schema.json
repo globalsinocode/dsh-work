@@ -362,6 +362,33 @@
         "additionalProperties": false
       }
     },
+    "memory_context": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "PF-05：经来源授权、人工审核及当前 ACL 过滤后，为本 Attempt 固定的非权威偏好或经验版本。",
+      "items": {
+        "type": "object",
+        "required": [
+          "memoryVersionId",
+          "title",
+          "version",
+          "kind",
+          "visibility",
+          "contentDigest",
+          "excerpt"
+        ],
+        "properties": {
+          "memoryVersionId": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "version": { "type": "integer", "minimum": 1 },
+          "kind": { "enum": ["preference", "experience"] },
+          "visibility": { "enum": ["private", "workspace", "organization"] },
+          "contentDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "excerpt": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        },
+        "additionalProperties": false
+      }
+    },
     "model_requirements": {
       "type": "array",
       "uniqueItems": true,

@@ -170,6 +170,20 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!document.excerpt.trim() || document.excerpt.length > 4000) throw new TypeError('knowledge document excerpt is invalid')
   }
 
+  if ((input.memory_context?.length ?? 0) > 3) throw new RangeError('memory_context must contain at most 3 memories')
+  const memoryVersions = new Set<string>()
+  for (const memory of input.memory_context ?? []) {
+    assertId('memory_context.memoryVersionId', memory.memoryVersionId)
+    if (memoryVersions.has(memory.memoryVersionId)) throw new TypeError('memory_context contains duplicate versions')
+    memoryVersions.add(memory.memoryVersionId)
+    if (!memory.title.trim() || memory.title.length > 120) throw new TypeError('memory title is invalid')
+    if (!Number.isInteger(memory.version) || memory.version < 1) throw new TypeError('memory version is invalid')
+    if (!['preference', 'experience'].includes(memory.kind)) throw new TypeError('memory kind is invalid')
+    if (!['private', 'workspace', 'organization'].includes(memory.visibility)) throw new TypeError('memory visibility is invalid')
+    if (!/^[a-f0-9]{64}$/.test(memory.contentDigest)) throw new TypeError('memory contentDigest is invalid')
+    if (!memory.excerpt.trim() || memory.excerpt.length > 4000) throw new TypeError('memory excerpt is invalid')
+  }
+
   // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。
   const pinnedTools = new Set<string>()
   for (const binding of input.tool_bindings ?? []) {

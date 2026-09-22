@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.8.0-persistent-approval",
+    "version": "0.9.0-controlled-memory",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,6 +16,50 @@
     }
   ],
   "paths": {
+    "/memory/candidates": {
+      "get": {
+        "operationId": "listControlledMemoryCandidates",
+        "summary": "按状态查询受控记忆候选",
+        "parameters": [{
+          "name": "status",
+          "in": "query",
+          "required": false,
+          "schema": { "enum": ["pending", "approved", "rejected", "withdrawn"] }
+        }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/memory/candidates/{candidateId}/review": {
+      "post": {
+        "operationId": "reviewControlledMemoryCandidate",
+        "summary": "审核并发布或拒绝受控记忆候选",
+        "description": "发布创建独立不可变记忆版本；相同决定和 resolutionKey 可幂等重放，其他并发决定返回冲突。来源授权已撤回或过期时禁止发布。",
+        "parameters": [{
+          "name": "candidateId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["decision", "resolutionKey"],
+            "properties": {
+              "decision": { "enum": ["approved", "rejected"] },
+              "resolutionKey": { "type": "string", "minLength": 1 },
+              "comment": { "type": "string", "maxLength": 1000 }
+            }
+          } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/approvals": {
       "get": {
         "operationId": "listPersistentApprovals",
@@ -2447,5 +2491,5 @@
       }
     }
   },
-  "x-contract-status": "identity-owned-authorization-implemented"
+  "x-contract-status": "controlled-memory-governance-implemented"
 }

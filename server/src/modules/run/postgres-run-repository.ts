@@ -319,6 +319,16 @@ export class PostgresRunRepository implements RunRepository {
           ) on conflict (tenant_id, attempt_id, document_id) do nothing
         `
       }
+      for (const source of input.memorySources ?? []) {
+        await transaction`
+          insert into run_memory_sources (
+            id, tenant_id, run_id, attempt_id, memory_version_id, relevance_score, excerpt
+          ) values (
+            ${`run-memory-${randomUUID()}`}, ${input.tenantId}, ${input.runId}, ${attemptId},
+            ${source.memoryVersionId}, ${source.relevanceScore}, ${source.excerpt}
+          ) on conflict (tenant_id, attempt_id, memory_version_id) do nothing
+        `
+      }
       for (const file of input.inputFiles ?? []) {
         // TW-10 附件回收序列化：discardSessionFile 只先取同一 file_objects
         // 行锁、再检查 run_input_files 引用；本路径虽有更长的

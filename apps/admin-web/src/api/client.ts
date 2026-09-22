@@ -36,6 +36,7 @@ import type {
   OperationsSummary,
   PlatformStatus,
   PersistentApproval,
+  ControlledMemoryCandidate,
   RuntimeDefinition,
   SessionListPage,
   SkillDefinition,
@@ -128,6 +129,12 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
+  getMemoryCandidates: (status?: ControlledMemoryCandidate['status']) =>
+    request<ControlledMemoryCandidate[]>(`/memory/candidates${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  reviewMemoryCandidate: (candidateId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
+    request<ControlledMemoryCandidate>(`/memory/candidates/${encodeURIComponent(candidateId)}/review`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
   getApprovals: (status?: PersistentApproval['status']) => request<PersistentApproval[]>(`/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   resolveApproval: (approvalId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
     request<PersistentApproval>(`/approvals/${encodeURIComponent(approvalId)}/resolve`, { method: 'POST', body: JSON.stringify(input) }),

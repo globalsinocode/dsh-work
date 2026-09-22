@@ -26,6 +26,7 @@ const router = createRouter({
     { path: '/admin/audit', redirect: '/audit' },
     { path: '/admin/health', redirect: '/health' },
     { path: '/admin/approvals', redirect: '/approvals' },
+    { path: '/admin/memories', redirect: '/memories' },
     {
       path: '/login-error',
       name: 'auth-error',
@@ -158,6 +159,12 @@ const router = createRouter({
       name: 'permissions',
       component: () => import('@/views/PermissionManagementView.vue'),
       meta: { title: '工具权限', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
+    {
+      path: '/memories',
+      name: 'memories',
+      component: () => import('@/views/MemoryGovernanceView.vue'),
+      meta: { title: '受控记忆', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/approvals',

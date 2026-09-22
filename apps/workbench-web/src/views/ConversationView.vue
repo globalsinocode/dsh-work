@@ -10,6 +10,7 @@ import {
   DataLine,
   Document,
   Lock,
+  Notebook,
   RefreshRight,
   Share,
   Warning,
@@ -34,6 +35,16 @@ const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
 const stopping = ref(false)
+const memoryDialogOpen = ref(false)
+const memorySubmitting = ref(false)
+const memorySubmissionKey = ref('')
+const memoryForm = ref({
+  kind: 'preference' as 'preference' | 'experience',
+  title: '',
+  content: '',
+  visibility: 'private' as 'private' | 'workspace' | 'organization',
+  retentionDays: null as number | null,
+})
 
 /**
  * TW-10 会话模式：路由 id 不是任何 Run 时，按 Session 直接加载共享线程；
@@ -253,6 +264,38 @@ function copyAnswer(content: string) {
 function copyConversationLink() {
   void navigator.clipboard.writeText(window.location.href)
   ElMessage.success('对话链接已复制')
+}
+
+function openMemoryDialog() {
+  if (!task.value?.attemptId || task.value.status !== 'succeeded' || !canOperateRun.value || !isRequester.value) return
+  memoryForm.value = { kind: 'preference', title: '', content: '', visibility: 'private', retentionDays: null }
+  memorySubmissionKey.value = `memory:${task.value.attemptId}:${Date.now()}`
+  memoryDialogOpen.value = true
+}
+
+async function submitMemoryCandidate() {
+  if (!task.value?.attemptId || memorySubmitting.value || !isRequester.value) return
+  const input = memoryForm.value
+  if (input.title.trim().length < 3) return void ElMessage.warning('标题至少需要 3 个字符')
+  if (input.content.trim().length < 20) return void ElMessage.warning('候选内容至少需要 20 个字符')
+  if (!input.retentionDays) return void ElMessage.warning('请选择可使用期限')
+  memorySubmitting.value = true
+  try {
+    await workbenchApi.submitMemoryCandidate({
+      attemptId: task.value.attemptId,
+      kind: input.kind,
+      title: input.title.trim(),
+      content: input.content.trim(),
+      visibility: input.visibility,
+      retentionDays: input.retentionDays,
+    }, memorySubmissionKey.value)
+    ElMessage.success('记忆候选已提交，管理员审核通过后才会用于后续运行')
+    memoryDialogOpen.value = false
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : String(cause))
+  } finally {
+    memorySubmitting.value = false
+  }
 }
 
 function download(item: Artifact) {
@@ -742,6 +785,15 @@ watch(
                   >
                     <el-icon><Share /></el-icon>
                   </button>
+                  <button
+                    v-if="belongsToCurrentRun(message) && task.status === 'succeeded' && task.attemptId && canOperateRun && isRequester"
+                    type="button"
+                    aria-label="提交受控记忆候选"
+                    title="提交受控记忆候选"
+                    @click="openMemoryDialog"
+                  >
+                    <el-icon><Notebook /></el-icon>
+                  </button>
                   <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
                     {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
                     · {{ task.agentVersion.split('@')[0] }}
@@ -950,6 +1002,56 @@ watch(
           <el-empty v-else :image-size="56" description="本轮暂未生成成果" />
         </section>
       </el-drawer>
+
+      <el-dialog v-model="memoryDialogOpen" title="提交受控记忆候选" width="min(620px, 92vw)">
+        <el-alert
+          title="请只填写可复用的稳定偏好或经验。业务事实、文档原文和聊天历史不应作为记忆提交；管理员审核通过前不会被使用。"
+          type="info"
+          show-icon
+          :closable="false"
+        />
+        <el-form class="memory-form" label-position="top">
+          <el-form-item label="类型" required>
+            <el-radio-group v-model="memoryForm.kind">
+              <el-radio-button value="preference">稳定偏好</el-radio-button>
+              <el-radio-button value="experience">可复用经验</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="标题" required>
+            <el-input v-model="memoryForm.title" maxlength="120" show-word-limit placeholder="例如：分析报告展示偏好" />
+          </el-form-item>
+          <el-form-item label="候选内容" required>
+            <el-input
+              v-model="memoryForm.content"
+              type="textarea"
+              :rows="5"
+              maxlength="4000"
+              show-word-limit
+              placeholder="请用自己的话写明可在后续任务中复用的偏好或经验"
+            />
+          </el-form-item>
+          <div class="memory-form__row">
+            <el-form-item label="使用范围" required>
+              <el-radio-group v-model="memoryForm.visibility" aria-label="记忆使用范围">
+                <el-radio-button value="private">仅本人</el-radio-button>
+                <el-radio-button value="workspace">当前工作空间</el-radio-button>
+                <el-radio-button value="organization">组织范围</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="可使用期限" required>
+              <el-radio-group v-model="memoryForm.retentionDays" aria-label="记忆可使用期限">
+                <el-radio-button :value="30">30 天</el-radio-button>
+                <el-radio-button :value="90">90 天</el-radio-button>
+                <el-radio-button :value="365">1 年</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </div>
+        </el-form>
+        <template #footer>
+          <el-button @click="memoryDialogOpen = false">取消</el-button>
+          <el-button type="primary" :loading="memorySubmitting" @click="submitMemoryCandidate">提交审核</el-button>
+        </template>
+      </el-dialog>
 
     </template>
   </div>
@@ -1255,6 +1357,9 @@ watch(
   color: #949994;
   font-size: var(--dsh-font-size-micro);
 }
+
+.memory-form { margin-top: 18px; }
+.memory-form__row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 
 .answer-artifacts {
   display: flex;
@@ -1777,6 +1882,8 @@ watch(
   .assistant-run-meta {
     display: none;
   }
+
+  .memory-form__row { grid-template-columns: 1fr; gap: 0; }
 
   .answer-artifacts button {
     width: 100%;

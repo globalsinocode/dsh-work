@@ -372,6 +372,11 @@ export class PostgresPersistentWaitService {
           manifest: JSON.parse(compiled.canonicalJson) as JsonObject,
           manifestSha256: compiled.sha256,
           modelRouteSnapshot: current.modelRouteSnapshot,
+          memorySources: resumedManifest.memory_context?.map(memory => ({
+            memoryVersionId: memory.memoryVersionId,
+            relevanceScore: 1,
+            excerpt: memory.excerpt,
+          })),
         })
         const [approval] = await transaction<{ status: string; checkpointDigest: string; checkpointContextSha256: string; expiresAt: Date }[]>`
           select a.status, a.expires_at as "expiresAt", c.checkpoint_digest as "checkpointDigest",

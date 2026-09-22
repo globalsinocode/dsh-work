@@ -62,7 +62,7 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('PF-01 through PF-04 OpenAPI publishes Task, MCP and persistent approval governance', async () => {
+test('PF-01 through PF-05 OpenAPI publishes Task, MCP, approval and controlled-memory governance', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
@@ -110,6 +110,11 @@ test('PF-01 through PF-04 OpenAPI publishes Task, MCP and persistent approval go
   assert.equal(admin.paths['/approvals']?.get?.operationId, 'listPersistentApprovals')
   assert.equal(admin.paths['/approvals/{approvalId}']?.get?.operationId, 'getPersistentApproval')
   assert.equal(admin.paths['/approvals/{approvalId}/resolve']?.post?.operationId, 'resolvePersistentApproval')
+  assert.equal(workbench.paths['/memory/consents']?.get?.operationId, 'listMyMemoryConsents')
+  assert.equal(workbench.paths['/memory/candidates']?.post?.operationId, 'submitControlledMemoryCandidate')
+  assert.equal(workbench.paths['/memory/consents/{consentId}/withdraw']?.post?.operationId, 'withdrawMyMemoryConsent')
+  assert.equal(admin.paths['/memory/candidates']?.get?.operationId, 'listControlledMemoryCandidates')
+  assert.equal(admin.paths['/memory/candidates/{candidateId}/review']?.post?.operationId, 'reviewControlledMemoryCandidate')
 })
 
 before(async () => {

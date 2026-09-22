@@ -385,4 +385,26 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assert.equal(schemaErrors(tampered).valid, true, 'JSON Schema owns structure; compiler owns checkpoint digest integrity')
     assert.throws(() => compileRuntimeManifest(tampered), /digest/, 'tampered checkpoint action should fail content integrity')
   })
+
+  it('PF-05 pins only bounded reviewed memory versions', () => {
+    const manifest = baseManifest()
+    manifest.memory_context = [{
+      memoryVersionId: 'memory-version-1',
+      title: '报告展示偏好',
+      version: 2,
+      kind: 'preference',
+      visibility: 'private',
+      contentDigest: 'd'.repeat(64),
+      excerpt: '报告先给结论，再列证据和待确认项。',
+    }]
+    assertBothAccept(manifest, 'controlled memory context')
+    const duplicate = structuredClone(manifest)
+    duplicate.memory_context!.push(structuredClone(duplicate.memory_context![0]!))
+    assert.equal(schemaErrors(duplicate).valid, true, 'field-level uniqueness belongs to the compiler')
+    assert.throws(() => compileRuntimeManifest(duplicate), /duplicate versions/)
+    assertBothReject({
+      ...manifest,
+      memory_context: [{ ...manifest.memory_context[0]!, contentDigest: 'not-a-digest' }],
+    } as RuntimeManifest, /contentDigest/, 'invalid memory digest')
+  })
 })

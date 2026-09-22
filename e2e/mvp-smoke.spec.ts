@@ -141,6 +141,77 @@ test('platform administrator can inspect and resolve an action-bound approval', 
   expect(resolved).toBe(true)
 })
 
+test('platform administrator can review and publish a controlled-memory candidate', async ({ page }) => {
+  const candidate = {
+    id: 'memory-candidate-e2e', consentId: 'memory-consent-e2e', memoryKey: 'a'.repeat(64),
+    kind: 'experience', title: '异常分析核对方法',
+    content: '分析异常时先核对当前数据版本、缺失字段和外部操作回执，再形成可复核的结论。',
+    contentDigest: 'b'.repeat(64), visibility: 'workspace', scopeRef: 'ws-supply',
+    retentionUntil: '2026-12-31T00:00:00.000Z', status: 'pending', submittedBy: 'U00001',
+    reviewedBy: null, reviewedAt: null, reviewComment: null, approvedEntryId: null,
+    approvedVersionId: null, createdAt: '2026-09-22T00:00:00.000Z',
+  }
+  let published = false
+  await page.route('**/api/admin/v1/memory/candidates**', async (route) => {
+    if (route.request().method() === 'POST') {
+      published = true
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        data: { ...candidate, status: 'approved', approvedEntryId: 'memory-entry-e2e', approvedVersionId: 'memory-version-e2e' },
+        meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
+      }) })
+      return
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: published ? [] : [candidate],
+      meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
+    }) })
+  })
+
+  await page.goto(`${adminUrl}/memories`)
+  await expect(page.locator('.admin-topbar').getByText('受控记忆', { exact: true })).toBeVisible()
+  const row = page.getByRole('row').filter({ hasText: '异常分析核对方法' })
+  await expect(row).toContainText('工作空间')
+  await row.getByRole('button', { name: '发布', exact: true }).click()
+  await page.getByRole('dialog', { name: '发布记忆候选' }).getByRole('button', { name: '发布', exact: true }).click()
+  await expect(page.getByText('已发布受控记忆版本', { exact: true })).toBeVisible()
+  expect(published).toBe(true)
+})
+
+test('employee can inspect and withdraw a controlled-memory consent', async ({ page }) => {
+  const consent = {
+    id: 'memory-consent-e2e', sourceRunId: 'run-e2e', sourceAttemptId: 'attempt-e2e',
+    workspaceId: 'ws-supply', agentVersionId: 'agent-version-e2e', visibility: 'private',
+    retentionUntil: '2026-12-31T00:00:00.000Z', purpose: '用户明确提交稳定偏好候选',
+    status: 'active', withdrawnAt: null, createdAt: '2026-09-22T00:00:00.000Z',
+    candidateId: 'memory-candidate-e2e', candidateStatus: 'approved', title: '分析报告展示偏好',
+  }
+  let withdrawn = false
+  await page.route('**/api/workbench/v1/memory/consents**', async (route) => {
+    if (route.request().method() === 'POST') {
+      withdrawn = true
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        data: { ...consent, status: 'withdrawn', withdrawnAt: new Date().toISOString() },
+        meta: { api: 'workbench', adapter: 'postgres', timestamp: new Date().toISOString() },
+      }) })
+      return
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: [{ ...consent, ...(withdrawn ? { status: 'withdrawn', withdrawnAt: new Date().toISOString() } : {}) }],
+      meta: { api: 'workbench', adapter: 'postgres', timestamp: new Date().toISOString() },
+    }) })
+  })
+
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '受控记忆授权' })).toBeVisible()
+  const row = page.getByRole('row').filter({ hasText: '分析报告展示偏好' })
+  await expect(row).toContainText('仅本人')
+  await row.getByRole('button', { name: '撤回授权', exact: true }).click()
+  await page.getByRole('dialog', { name: '撤回记忆授权' }).getByRole('button', { name: '撤回授权', exact: true }).click()
+  await expect(page.getByText('记忆授权已撤回', { exact: true })).toBeVisible()
+  await expect(row).toContainText('已撤回')
+  expect(withdrawn).toBe(true)
+})
+
 test('administrator can open system information from the user menu', async ({ page }) => {
   await page.goto(`${adminUrl}/overview`)
 

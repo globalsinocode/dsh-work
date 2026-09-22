@@ -79,6 +79,11 @@ export interface CreateAttemptInput {
     relevanceScore: number
     excerpt: string
   }>
+  memorySources?: Array<{
+    memoryVersionId: string
+    relevanceScore: number
+    excerpt: string
+  }>
   inputFiles?: Array<{
     fileId: string
     extractionId: string

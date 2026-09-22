@@ -91,6 +91,8 @@ export interface RuntimeManifest {
   mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
+  /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
+  memory_context?: RuntimeControlledMemory[]
   model_route_id?: string | null
   /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
   model_requirements?: Array<'long-context' | 'structured-output'>
@@ -161,6 +163,16 @@ export interface RuntimeResumeCheckpointContext {
     sha256: string
   }>
   assistant_output: string
+}
+
+export interface RuntimeControlledMemory {
+  memoryVersionId: string
+  title: string
+  version: number
+  kind: 'preference' | 'experience'
+  visibility: 'private' | 'workspace' | 'organization'
+  contentDigest: string
+  excerpt: string
 }
 
 export interface McpConnectionSnapshot {

@@ -10,6 +10,10 @@ import type {
   AutomationExecution,
   AutomationInputTemplate,
   AutomationSchedule,
+  ControlledMemoryCandidate,
+  ControlledMemoryConsent,
+  ControlledMemoryKind,
+  ControlledMemoryVisibility,
   MemberCandidatePage,
   SessionThread,
   TaskResult,
@@ -122,6 +126,23 @@ async function parseApiError(response: Response, fallback: string) {
 
 export const workbenchApi = {
   getContentPolicy: () => request<{ version: string; physicalDeletion: false; retentionDays: null; notice: string }>('/content-policy'),
+  listMemoryConsents: () => request<ControlledMemoryConsent[]>('/memory/consents'),
+  submitMemoryCandidate: (input: {
+    attemptId: string
+    kind: ControlledMemoryKind
+    title: string
+    content: string
+    visibility: ControlledMemoryVisibility
+    retentionDays: number
+  }, idempotencyKey: string) => request<ControlledMemoryCandidate>('/memory/candidates', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(input),
+  }),
+  withdrawMemoryConsent: (consentId: string) => request<ControlledMemoryConsent>(
+    `/memory/consents/${encodeURIComponent(consentId)}/withdraw`,
+    { method: 'POST' },
+  ),
   listPersonalFiles: (query: PersonalFileQuery = {}) => {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))

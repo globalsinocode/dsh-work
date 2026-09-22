@@ -23,6 +23,27 @@ export interface PersistentApproval {
   actionConsumedAt: string | null
 }
 
+export interface ControlledMemoryCandidate {
+  id: string
+  consentId: string
+  memoryKey: string
+  kind: 'preference' | 'experience'
+  title: string
+  content: string
+  contentDigest: string
+  visibility: 'private' | 'workspace' | 'organization'
+  scopeRef: string
+  retentionUntil: string
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  submittedBy: string
+  reviewedBy: string | null
+  reviewedAt: string | null
+  reviewComment: string | null
+  approvedEntryId: string | null
+  approvedVersionId: string | null
+  createdAt: string
+}
+
 export interface AdminUserProfile {
   id: string
   name: string

@@ -17,6 +17,7 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresKnowledgeService } from '../knowledge/postgres-knowledge-service.ts'
+import type { PostgresControlledMemoryService } from '../memory/postgres-controlled-memory-service.ts'
 import type {
   PostgresAuthorizationService,
   RuntimeAuthorizationDecision,
@@ -59,6 +60,7 @@ export class RunOrchestrationService {
   private readonly operations?: PostgresOperationsService
   private readonly agents?: PostgresAgentService
   private readonly knowledge?: PostgresKnowledgeService
+  private readonly memory?: PostgresControlledMemoryService
   private readonly authorization?: PostgresAuthorizationService
   private readonly agentMembers?: PostgresWorkspaceAgentMemberService
   private readonly toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
@@ -92,6 +94,7 @@ export class RunOrchestrationService {
       toolBindings?: Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
       /** PF-01 stable Task ownership for non-conversation execution. */
       tasks?: TaskRepository
+      memory?: PostgresControlledMemoryService
     },
   ) {
     this.runs = runs
@@ -108,6 +111,7 @@ export class RunOrchestrationService {
     this.automationStatusLookup = options?.automationStatusLookup
     this.toolBindings = options?.toolBindings
     this.tasks = options?.tasks
+    this.memory = options?.memory
   }
 
   setPersistentWaitService(service: Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>): void {
@@ -1163,6 +1167,15 @@ export class RunOrchestrationService {
           roleIds: authorization?.roleIds,
         })
       : []
+    const memoryContext = this.memory
+      ? await this.memory.resolveContext({
+          query: input.prompt,
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          agentVersionId: input.agentVersionId,
+          roleIds: authorization?.roleIds ?? agent.roleIds,
+        })
+      : []
     const preparedFiles = input.preparedFiles ?? (this.content && run.sessionId
       ? await this.content.prepareRuntimeFiles({
           sessionId: run.sessionId,
@@ -1215,6 +1228,15 @@ export class RunOrchestrationService {
         contentChecksum: document.contentChecksum,
         excerpt: document.excerpt,
       })),
+      ...(memoryContext.length ? { memory_context: memoryContext.map(memory => ({
+        memoryVersionId: memory.memoryVersionId,
+        title: memory.title,
+        version: memory.version,
+        kind: memory.kind,
+        visibility: memory.visibility,
+        contentDigest: memory.contentDigest,
+        excerpt: memory.excerpt,
+      })) } : {}),
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
@@ -1240,6 +1262,11 @@ export class RunOrchestrationService {
         documentId: document.documentId,
         relevanceScore: document.relevanceScore,
         excerpt: document.excerpt,
+      })),
+      memorySources: memoryContext.map(memory => ({
+        memoryVersionId: memory.memoryVersionId,
+        relevanceScore: memory.relevanceScore,
+        excerpt: memory.excerpt,
       })),
       inputFiles: preparedFiles.map(file => ({
         fileId: file.fileId,
@@ -1453,6 +1480,7 @@ export class RunOrchestrationService {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
       if (!run || run.taskId !== manifest.task_id || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
         || !allowedStates.includes(run.status)) throw authorizationDenied('Attempt 已结束、取消或被替代')
+      await this.memory?.assertCurrentReferences(manifest)
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
       // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
@@ -1710,9 +1738,10 @@ export class RunOrchestrationService {
       }
       await this.operations?.appendAudit(run.requestedBy, 'run.waiting', run.id, 'success', event.trace_id, 'Worker 已释放，等待动作审批')
     } else if (event.event_type === 'assistant.completed' && event.display_message) {
-      const assistantContent = this.knowledge
+      let assistantContent = this.knowledge
         ? await this.knowledge.addCitationFooter(event.attempt_id, event.display_message)
         : event.display_message
+      if (this.memory) assistantContent = await this.memory.addCitationFooter(event.attempt_id, assistantContent)
       this.assistantOutputs.set(event.attempt_id, assistantContent)
       if (run.sessionId) {
         await this.conversations.appendMessage({

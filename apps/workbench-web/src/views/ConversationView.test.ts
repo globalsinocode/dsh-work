@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   createSession: vi.fn(),
   uploadSessionFile: vi.fn(),
   deleteSessionFile: vi.fn(),
+  submitMemoryCandidate: vi.fn(),
   runEventsUrl: vi.fn((runId: string) => `/events/${runId}`),
   workspaceSessionEventsUrl: vi.fn((workspaceId: string) => `/session-events/${workspaceId}`),
 }))
@@ -173,7 +174,7 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
   const wrapper = mount(ConversationView, {
     global: {
       plugins: [pinia, ElementPlus],
-      stubs: { TaskComposer: true, RunTimeline: true },
+      stubs: { TaskComposer: true, RunTimeline: true, teleport: true },
     },
   })
   await flushPromises()
@@ -304,6 +305,50 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('button[aria-label="朗读回答"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="复制回答"]').exists()).toBe(true)
     expect(wrapper.find('button[aria-label="复制对话链接"]').exists()).toBe(true)
+  })
+
+  it('requires explicit employee content and retention before submitting a controlled-memory candidate', async () => {
+    api.submitMemoryCandidate.mockResolvedValue({ id: 'memory-candidate-1', status: 'pending' })
+    const { wrapper } = await mountView({
+      item: task({
+        status: 'succeeded',
+        result: result({ execution: 'succeeded', outcome: 'achieved', error: null }),
+        messages: [{ id: 'm-current', role: 'assistant', content: '本轮回答不会被自动复制', createdAt: '10:01', runId: 'run-001' }],
+      }),
+    })
+
+    await wrapper.get('button[aria-label="提交受控记忆候选"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('管理员审核通过前不会被使用')
+
+    const title = wrapper.get('input[placeholder="例如：分析报告展示偏好"]')
+    const content = wrapper.get('textarea[placeholder="请用自己的话写明可在后续任务中复用的偏好或经验"]')
+    await title.setValue('分析报告展示偏好')
+    await content.setValue('生成分析报告时优先使用简洁表格，并明确列出仍待确认的数据。')
+    await wrapper.get('input[value="30"]').setValue(true)
+    await wrapper.findAll('button').find(button => button.text() === '提交审核')!.trigger('click')
+    await flushPromises()
+
+    expect(api.submitMemoryCandidate).toHaveBeenCalledWith({
+      attemptId: 'attempt-001', kind: 'preference', title: '分析报告展示偏好',
+      content: '生成分析报告时优先使用简洁表格，并明确列出仍待确认的数据。',
+      visibility: 'private', retentionDays: 30,
+    }, expect.stringContaining('memory:attempt-001:'))
+  })
+
+  it('does not offer controlled-memory submission for another member\'s shared run', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        requestedBy: 'U00002',
+        currentUserRole: 'member',
+        status: 'succeeded',
+        result: result({ execution: 'succeeded', outcome: 'achieved', error: null }),
+        messages: [{ id: 'm-current', role: 'assistant', content: '其他成员发起的回答', createdAt: '10:01', runId: 'run-001' }],
+      }),
+    })
+
+    expect(wrapper.find('button[aria-label="提交受控记忆候选"]').exists()).toBe(false)
+    expect(api.submitMemoryCandidate).not.toHaveBeenCalled()
   })
 
   it('loads a shared run by id even when it is absent from the requester task list', async () => {

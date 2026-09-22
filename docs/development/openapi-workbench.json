@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 员工工作台 API",
-    "version": "0.6.0-m6",
+    "version": "0.7.0-controlled-memory",
     "description": "请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session；AI Hub 只提供用户身份，工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
   },
   "servers": [
@@ -16,6 +16,68 @@
     }
   ],
   "paths": {
+    "/memory/consents": {
+      "get": {
+        "operationId": "listMyMemoryConsents",
+        "summary": "查询当前员工明确授予的受控记忆授权",
+        "description": "仅返回当前员工自己的来源授权及候选状态；撤回后保留审核和历史引用证据，但不再允许新的检索或等待恢复引用。",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/memory/candidates": {
+      "post": {
+        "operationId": "submitControlledMemoryCandidate",
+        "summary": "从本人成功 Attempt 提交受控记忆候选并明确授权",
+        "description": "内容由员工主动填写；平台不会把回答、Session 历史、业务记录或文档原文自动转成记忆。候选经管理员审核前不进入 Runtime。",
+        "parameters": [{
+          "name": "Idempotency-Key",
+          "in": "header",
+          "required": true,
+          "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attemptId", "kind", "title", "content", "visibility", "retentionDays"],
+            "properties": {
+              "attemptId": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["preference", "experience"] },
+              "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+              "content": { "type": "string", "minLength": 20, "maxLength": 4000 },
+              "visibility": { "enum": ["private", "workspace", "organization"] },
+              "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+            }
+          } } }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Ok" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/memory/consents/{consentId}/withdraw": {
+      "post": {
+        "operationId": "withdrawMyMemoryConsent",
+        "summary": "撤回当前员工自己的受控记忆授权",
+        "parameters": [{
+          "name": "consentId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/session": {
       "get": {
         "operationId": "getCurrentSession",
@@ -3923,5 +3985,5 @@
       }
     }
   },
-  "x-contract-status": "m6-implemented"
+  "x-contract-status": "pf05-controlled-memory-implemented"
 }

@@ -76,6 +76,9 @@ import { defaultAutomationConfig } from './modules/automation/automation-types.t
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
 import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from './http/workbench/task-execution-routes.ts'
 import { registerPersistentApprovalRoutes } from './http/admin/persistent-approval-routes.ts'
+import { registerAdminMemoryRoutes } from './http/admin/memory-routes.ts'
+import { registerWorkbenchMemoryRoutes } from './http/workbench/memory-routes.ts'
+import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
@@ -267,6 +270,7 @@ async function start() {
     skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
     const agents = new PostgresAgentService(database, operations, skills, toolService)
     const knowledge = new PostgresKnowledgeService(database)
+    const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
     // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
     const automationRepository = new PostgresAutomationRepository(database)
@@ -287,6 +291,7 @@ async function start() {
         // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
         toolBindings: toolService,
         tasks,
+        memory: controlledMemory,
       },
     )
     persistentWait = new PostgresPersistentWaitService(database, runs, {
@@ -340,6 +345,8 @@ async function start() {
     registerTaskExecutionRoutes(router, new PostgresTaskQueryService(database, tasks, runs), orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerPersistentApprovalRoutes(router, persistentWait, authorization)
+    registerAdminMemoryRoutes(router, controlledMemory, authorization)
+    registerWorkbenchMemoryRoutes(router, controlledMemory)
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
     registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)

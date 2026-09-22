@@ -71,6 +71,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
       { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
       { label: 'DSH 工具管理', path: '/tools', icon: Tools, permission: 'admin' },
       { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'admin' },
+      { label: '受控记忆', path: '/memories', icon: Notebook, permission: 'admin' },
     ],
   },
   {
