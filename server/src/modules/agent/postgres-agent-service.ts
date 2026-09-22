@@ -141,7 +141,7 @@ export interface RuntimeAgentSnapshot {
   runtimeTools: string[]
   /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
   toolBindings: ResolvedToolBinding[]
-  /** PF-03 current Agent→Connector grants, fixed only in the Attempt snapshot. */
+  /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
   roleIds: string[]

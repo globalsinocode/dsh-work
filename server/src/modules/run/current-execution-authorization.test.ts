@@ -88,7 +88,7 @@ test('B-03/I-04: pinned tool bindings recheck before any purpose branch, fail-cl
   await assertCurrentExecutionAuthorization(ports(), undefined, manifest, rejecting)
 })
 
-test('PF-03: pinned MCP Connectors require the current Agent grant before every purpose branch', async () => {
+test('PF-03: pinned MCP Connectors require current connector availability before every purpose branch', async () => {
   const pin = {
     connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http' as const,
     endpoint: 'https://mcp.example.test/rpc', auth_type: 'none' as const, capability_digest: 'a'.repeat(64),
@@ -108,6 +108,6 @@ test('PF-03: pinned MCP Connectors require the current Agent grant before every 
   })
   assert.equal(checked, 1)
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertActiveMcpConnections() { throw authorizationDenied('MCP grant revoked') },
+    async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
   }), { code: 'permission_denied' })
 })

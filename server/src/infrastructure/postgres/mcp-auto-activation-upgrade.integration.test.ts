@@ -18,11 +18,13 @@ let throwaway: ThrowawayDatabase
 let baselineDirectory = ''
 let activationDirectory = ''
 let correctionDirectory = ''
+let grantRemovalDirectory = ''
 
 before(async () => {
   baselineDirectory = await mkdtemp(resolve(tmpdir(), 'dsh-work-mcp-baseline-'))
   activationDirectory = await mkdtemp(resolve(tmpdir(), 'dsh-work-mcp-activation-'))
   correctionDirectory = await mkdtemp(resolve(tmpdir(), 'dsh-work-mcp-correction-'))
+  grantRemovalDirectory = await mkdtemp(resolve(tmpdir(), 'dsh-work-mcp-grant-removal-'))
   for (const file of (await readdir(migrationsDirectory)).sort()) {
     if (file < '0057_mcp_auto_activation.sql') {
       await copyFile(resolve(migrationsDirectory, file), resolve(baselineDirectory, file))
@@ -35,6 +37,10 @@ before(async () => {
   await copyFile(
     resolve(migrationsDirectory, '0059_mcp_credential_recheck_guard.sql'),
     resolve(correctionDirectory, '0059_mcp_credential_recheck_guard.sql'),
+  )
+  await copyFile(
+    resolve(migrationsDirectory, '0060_remove_agent_mcp_grants.sql'),
+    resolve(grantRemovalDirectory, '0060_remove_agent_mcp_grants.sql'),
   )
 
   throwaway = await createThrowawayDatabase({
@@ -53,6 +59,7 @@ after(async () => {
     rm(baselineDirectory, { recursive: true, force: true }),
     rm(activationDirectory, { recursive: true, force: true }),
     rm(correctionDirectory, { recursive: true, force: true }),
+    rm(grantRemovalDirectory, { recursive: true, force: true }),
   ])
 })
 
@@ -65,7 +72,7 @@ test('0057 only activates a Bearer Connector when its current credential has a l
     { id: staleConnectorId, status: 'degraded' },
     { id: verifiedConnectorId, status: 'healthy' },
   ])
-  assert.equal(await availableGrantCount(), 1, 'the grant using an unchecked rotated credential must remain unavailable')
+  assert.equal(await availableConnectorCount(), 1, 'the Connector using an unchecked rotated credential must remain unavailable')
   assert.equal(await healthCheckCount(), checksBefore, 'a migration must not fabricate a discovery check')
 
   const profiles = await database<{ connectorId: string; approvalStatus: string }[]>`
@@ -86,7 +93,7 @@ test('0059 returns a Connector incorrectly activated by the old 0057 migration t
     update connectors set status = 'healthy'
      where tenant_id = ${tenantId} and id = ${staleConnectorId}
   `
-  assert.equal(await availableGrantCount(), 2, 'fixture reproduces the old migration exposure')
+  assert.equal(await availableConnectorCount(), 2, 'fixture reproduces the old migration exposure')
   const checksBefore = await healthCheckCount()
 
   const results = await runMigrations(database, correctionDirectory)
@@ -95,8 +102,31 @@ test('0059 returns a Connector incorrectly activated by the old 0057 migration t
     { id: staleConnectorId, status: 'degraded' },
     { id: verifiedConnectorId, status: 'healthy' },
   ])
-  assert.equal(await availableGrantCount(), 1)
+  assert.equal(await availableConnectorCount(), 1)
   assert.equal(await healthCheckCount(), checksBefore, 'the corrective migration must require a real recheck')
+})
+
+test('0060 removes the obsolete per-Agent MCP grant table without preserving rows', async () => {
+  await database.unsafe(`
+    create table agent_mcp_grants (
+      tenant_id text not null,
+      agent_id text not null,
+      connector_id text not null,
+      status text not null,
+      primary key (tenant_id, agent_id, connector_id)
+    )
+  `)
+  await database`
+    insert into agent_mcp_grants (tenant_id, agent_id, connector_id, status)
+    values (${tenantId}, 'agent-dsh-work-assistant', ${verifiedConnectorId}, 'active')
+  `
+
+  const results = await runMigrations(database, grantRemovalDirectory)
+  assert.equal(results.find(result => result.version === '0060_remove_agent_mcp_grants.sql')?.applied, true)
+  const [evidence] = await database<{ grantTable: string | null }[]>`
+    select to_regclass('public.agent_mcp_grants')::text as "grantTable"
+  `
+  assert.equal(evidence?.grantTable, null)
 })
 
 async function seedUpgradeFixtures() {
@@ -142,12 +172,6 @@ async function seedUpgradeFixtures() {
       ('check-mcp-upgrade-stale', ${tenantId}, ${staleConnectorId}, 'degraded', 5, '能力变化，需要重新审核', 'U00008', '2026-09-01T00:00:00Z'),
       ('check-mcp-upgrade-verified', ${tenantId}, ${verifiedConnectorId}, 'degraded', 5, '已发现工具，等待整体审核', 'U00008', '2026-09-02T00:00:00Z')
   `
-  await database`
-    insert into agent_mcp_grants (tenant_id, agent_id, connector_id, status, granted_by)
-    values
-      (${tenantId}, 'agent-dsh-work-assistant', ${staleConnectorId}, 'active', 'U00008'),
-      (${tenantId}, 'agent-dsh-work-assistant', ${verifiedConnectorId}, 'active', 'U00008')
-  `
 }
 
 async function connectorStatuses() {
@@ -159,15 +183,13 @@ async function connectorStatuses() {
   return [...rows]
 }
 
-async function availableGrantCount() {
+async function availableConnectorCount() {
   const [row] = await database<{ count: number }[]>`
     select count(*)::integer as count
-      from agent_mcp_grants g
-      join connectors c on c.tenant_id = g.tenant_id and c.id = g.connector_id
+      from connectors c
       join mcp_connector_profiles p on p.tenant_id = c.tenant_id and p.connector_id = c.id
-     where g.tenant_id = ${tenantId}
-       and g.connector_id in (${staleConnectorId}, ${verifiedConnectorId})
-       and g.status = 'active'
+     where c.tenant_id = ${tenantId}
+       and c.id in (${staleConnectorId}, ${verifiedConnectorId})
        and c.status = 'healthy'
        and c.deleted_at is null
        and p.approval_status = 'approved'

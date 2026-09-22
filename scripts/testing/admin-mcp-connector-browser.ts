@@ -95,33 +95,36 @@ router.post(`${base}/test/mcp/capabilities`, async (request) => {
 })
 router.get(`${base}/test/mcp/evidence`, async (_request, context) => {
   const connectorId = context.url.searchParams.get('connector_id') ?? ''
-  const [counts] = await database.client<{ platformToolCount: number; activeGrantCount: number }[]>`
-    select
-      (select count(*)::int from tools where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId}) as "platformToolCount",
-      (select count(*)::int from agent_mcp_grants where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId} and status = 'active') as "activeGrantCount"
+  const connections = await connectorService.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
+  const [counts] = await database.client<{ platformToolCount: number }[]>`
+    select count(*)::int as "platformToolCount"
+      from tools
+     where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId}
   `
   assert.ok(counts)
-  return envelope('admin', counts, 'postgres')
+  return envelope('admin', {
+    ...counts,
+    resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
+  }, 'postgres')
 })
 router.get(`${base}/test/mcp/deletion-evidence`, async (_request, context) => {
   const connectorId = context.url.searchParams.get('connector_id') ?? ''
   const [evidence] = await database.client<{
-    deleted: boolean; credentialDetached: boolean; activeGrantCount: number;
-    revokedGrantCount: number; profileCount: number
+    deleted: boolean; credentialDetached: boolean; profileCount: number
   }[]>`
     select c.deleted_at is not null as deleted,
            c.credential_ref_id is null as "credentialDetached",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "activeGrantCount",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'revoked') as "revokedGrantCount",
            (select count(*)::int from mcp_connector_profiles p
              where p.tenant_id = c.tenant_id and p.connector_id = c.id) as "profileCount"
       from connectors c
      where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
   `
   assert.ok(evidence)
-  return envelope('admin', evidence, 'postgres')
+  const connections = await connectorService.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
+  return envelope('admin', {
+    ...evidence,
+    resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
+  }, 'postgres')
 })
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-mcp-inspection' }))
 

@@ -1,7 +1,7 @@
--- PF-03: MCP extends the existing Connector control plane. Authorization is
--- intentionally connector-scoped: an Agent can use every Tool exposed by an
--- approved MCP server, or none of them. Per-tool platform grants are not
--- created and MCP capabilities never become tool_versions implicitly.
+-- PF-03: MCP extends the existing Connector control plane. Every Agent can use
+-- every healthy Connector with a synchronized capability snapshot. Per-Agent
+-- or per-tool grants are not created and MCP capabilities never become
+-- tool_versions implicitly.
 
 create table mcp_connector_profiles (
   tenant_id text not null references tenants(id),
@@ -26,26 +26,6 @@ create table mcp_connector_profiles (
   check (capability_digest is null or capability_digest ~ '^[a-f0-9]{64}$'),
   check (approved_digest is null or approved_digest ~ '^[a-f0-9]{64}$')
 );
-
-create table agent_mcp_grants (
-  tenant_id text not null references tenants(id),
-  agent_id text not null,
-  connector_id text not null,
-  status text not null check (status in ('active', 'revoked')),
-  granted_by text not null,
-  granted_at timestamptz not null default now(),
-  revoked_by text,
-  revoked_at timestamptz,
-  updated_at timestamptz not null default now(),
-  primary key (tenant_id, agent_id, connector_id),
-  foreign key (tenant_id, agent_id) references agents(tenant_id, id),
-  foreign key (tenant_id, connector_id) references connectors(tenant_id, id),
-  foreign key (tenant_id, granted_by) references users(tenant_id, id),
-  foreign key (tenant_id, revoked_by) references users(tenant_id, id)
-);
-
-create index agent_mcp_grants_by_connector
-  on agent_mcp_grants (tenant_id, connector_id, status);
 
 create table mcp_invocation_audits (
   id text primary key,

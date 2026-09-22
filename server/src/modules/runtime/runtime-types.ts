@@ -136,6 +136,9 @@ export interface McpConnectionSnapshot {
   capability_digest: string
 }
 
+/** Runtime Manifest 与租户当前可用 MCP Connector 共用的硬上限。 */
+export const MAX_MCP_CONNECTIONS_PER_ATTEMPT = 20
+
 export interface McpRuntimeConnection {
   snapshot: McpConnectionSnapshot
   headers: Record<string, string>

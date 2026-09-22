@@ -75,8 +75,8 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
     'utf8',
   )) as { paths: Record<string, {
     get?: { operationId?: string; summary?: string }
-    post?: { operationId?: string; summary?: string }
-    patch?: { operationId?: string; summary?: string }
+    post?: { operationId?: string; summary?: string; responses?: Record<string, unknown> }
+    patch?: { operationId?: string; summary?: string; responses?: Record<string, unknown> }
     delete?: { operationId?: string; summary?: string }
   }> }
 
@@ -94,17 +94,19 @@ test('PF-01/PF-02/PF-03 OpenAPI publishes Task budgets, operation reconciliation
   assert.equal(admin.paths['/task-executions/{taskId}/operations/{operationId}/resolve']?.post?.operationId, 'resolveTaskOperation')
   assert.equal(admin.paths['/connectors']?.get?.operationId, 'listMcpConnectors')
   assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
+  assert.ok(admin.paths['/connectors/mcp']?.post?.responses?.['409'])
   assert.equal(admin.paths['/connectors/mcp/test']?.post?.operationId, 'testMcpConnection')
   assert.equal(admin.paths['/connectors/mcp/{connectorId}']?.delete?.operationId, 'deleteMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
+  assert.ok(admin.paths['/connectors/check']?.post?.responses?.['409'])
   assert.equal(admin.paths['/connectors/mcp/approve'], undefined)
   assert.equal(admin.paths['/connectors/mcp/status']?.patch?.operationId, 'setMcpConnectorStatus')
-  assert.equal(admin.paths['/connectors/mcp/agent-access']?.patch?.operationId, 'setAgentMcpAccess')
+  assert.ok(admin.paths['/connectors/mcp/status']?.patch?.responses?.['409'])
+  assert.equal(admin.paths['/connectors/mcp/agent-access'], undefined)
   assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
   assert.equal(admin.paths['/runtimes/dsh-tool-connector']?.get?.operationId, 'getDshRuntimeToolConnector')
   assert.equal(admin.paths['/runtimes/dsh-tool-connector/check']?.post?.operationId, 'checkDshRuntimeToolConnector')
-  assert.match(admin.paths['/connectors/mcp/agent-access']?.patch?.summary ?? '', /整个 MCP Connector/)
 })
 
 before(async () => {

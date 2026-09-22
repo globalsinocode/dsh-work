@@ -467,7 +467,6 @@ export interface ConnectorDefinition {
     approvedDigest: string | null
     capabilityCount: number
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
-    grantedAgentIds: string[]
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null
@@ -484,7 +483,6 @@ export interface McpConnectionTestResult {
 
 export interface McpConnectorDeletionResult {
   connectorId: string
-  revokedGrantCount: number
   credentialDestroyed: boolean
 }
 

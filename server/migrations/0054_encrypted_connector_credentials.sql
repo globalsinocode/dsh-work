@@ -27,7 +27,7 @@ comment on table credential_secrets is
 
 -- Legacy MCP Bearer connectors used dsh-managed environment-variable references.
 -- SQL cannot safely import those process values, so preserve the Connector,
--- review history, and Agent grants while blocking execution until an
+-- and review history while blocking execution until an
 -- administrator re-enters the Token through the rotation endpoint.
 update connectors c
    set status = case when c.status = 'disabled' then 'disabled' else 'degraded' end,

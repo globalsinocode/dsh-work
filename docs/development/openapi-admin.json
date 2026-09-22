@@ -600,7 +600,7 @@
     "/connectors": {
       "get": {
         "operationId": "listMcpConnectors",
-        "summary": "只查询外部 MCP Connector 及其生效能力快照和 Agent 授权状态",
+        "summary": "只查询外部 MCP Connector 及其当前生效能力快照",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -611,7 +611,7 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显",
+        "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显；租户最多启用 20 个",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" },
@@ -634,7 +634,7 @@
     "/connectors/mcp/{connectorId}": {
       "delete": {
         "operationId": "deleteMcpConnector",
-        "summary": "删除 MCP Connector，撤销 Agent Grant、销毁独占凭据并保留能力快照与调用证据",
+        "summary": "删除 MCP Connector，停止所有 Agent 使用、销毁独占凭据并保留能力快照与调用证据",
         "parameters": [
           { "name": "connectorId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -667,26 +667,23 @@
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要",
+        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要；恢复健康时校验 20 个容量上限",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
-          }
+          },
+          "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
     "/connectors/mcp/status": {
       "patch": {
         "operationId": "setMcpConnectorStatus",
-        "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
-      }
-    },
-    "/connectors/mcp/agent-access": {
-      "patch": {
-        "operationId": "setAgentMcpAccess",
-        "summary": "按整个 MCP Connector 向 Agent 授权或撤权，不细分 Tool",
-        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步且未超过 20 个容量上限",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/runtimes": {

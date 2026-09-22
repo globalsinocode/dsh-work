@@ -2,7 +2,7 @@ import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
-import type { CompiledRuntimeManifest, RuntimeManifest } from './runtime-types.ts'
+import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type CompiledRuntimeManifest, type RuntimeManifest } from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
@@ -165,7 +165,9 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!/^[a-f0-9]{64}$/.test(binding.digest ?? '')) throw new TypeError('tool_bindings[].digest 必须是 sha256 摘要')
   }
 
-  if ((input.mcp_connections?.length ?? 0) > 20) throw new TypeError('mcp_connections 最多包含 20 个 Connector')
+  if ((input.mcp_connections?.length ?? 0) > MAX_MCP_CONNECTIONS_PER_ATTEMPT) {
+    throw new TypeError(`mcp_connections 最多包含 ${MAX_MCP_CONNECTIONS_PER_ATTEMPT} 个 Connector`)
+  }
   const pinnedMcpConnectors = new Set<string>()
   const pinnedMcpNames = new Set<string>()
   for (const connection of input.mcp_connections ?? []) {

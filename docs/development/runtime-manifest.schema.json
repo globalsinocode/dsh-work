@@ -304,7 +304,7 @@
     },
     "mcp_connections": {
       "type": "array",
-      "description": "PF-03：本 Attempt 获准使用的 MCP Connector 快照。授权仍按当前 Agent→Connector Grant 实时复核；快照不包含凭据值。",
+      "description": "PF-03：本 Attempt 固定的 MCP Connector 快照。运行时按当前连接器状态和能力摘要持续复核；快照不包含凭据值。",
       "maxItems": 20,
       "items": {
         "$ref": "#/$defs/mcpConnectionRef"

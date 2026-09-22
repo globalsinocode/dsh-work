@@ -67,50 +67,27 @@ test('PF-MCP-01: Connector registration and capability changes take effect autom
   await expect(detail).toContainText('读取一个客户')
   await expect(detail).toContainText('输入 Schema')
   await expect(detail).toContainText('"id"')
+  await expect(detail).toContainText('适用 Agent')
+  await expect(detail).toContainText('全部 Agent')
   await page.keyboard.press('Escape')
-  await chooseMoreAction('Agent 权限')
-  let accessDialog = page.getByRole('dialog', { name: `Agent 权限 · ${connectorName}` })
-  await expect(accessDialog).toContainText('这里不提供单 Tool 授权')
-  const accessSwitch = accessDialog.getByRole('switch', { name: 'dsh-work 助手 MCP 权限' })
-  await accessSwitch.locator('..').click()
-  await expect(accessSwitch).toBeChecked()
+  await row.getByRole('button', { name: '更多', exact: true }).click()
+  await expect(page.getByRole('menuitem', { name: 'Agent 权限', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
-  let evidence = await data<{ platformToolCount: number; activeGrantCount: number }>(
+  let evidence = await data<{ platformToolCount: number; resolvedConnectionCount: number }>(
     await page.request.get(`/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`),
   )
-  expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 1 })
-  await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
+  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
 
   await data(await page.request.post('/api/admin/v1/test/mcp/capabilities', { data: { changed: true } }))
   await row.getByRole('button', { name: '检查', exact: true }).click()
   await expect(page.getByText(`${connectorName}检查通过，3 个 Tool 已同步生效`, { exact: true })).toBeVisible()
   await expect(row).toContainText('已生效')
   await expect(row).toContainText('3')
-  await chooseMoreAction('Agent 权限')
-  accessDialog = page.getByRole('dialog', { name: `Agent 权限 · ${connectorName}` })
-  const revocableGrant = accessDialog.getByRole('switch', { name: 'dsh-work 助手 MCP 权限' })
-  await expect(revocableGrant).toBeChecked()
-  await expect(revocableGrant).toBeEnabled()
-  await revocableGrant.locator('..').click()
-  await expect(revocableGrant).not.toBeChecked()
   evidence = await data(await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
-  expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 0 })
-  await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
-
-  await chooseMoreAction('Agent 权限')
-  accessDialog = page.getByRole('dialog', { name: `Agent 权限 · ${connectorName}` })
-  const restoredGrant = accessDialog.getByRole('switch', { name: 'dsh-work 助手 MCP 权限' })
-  await expect(restoredGrant).not.toBeChecked()
-  await expect(restoredGrant).toBeEnabled()
-  await restoredGrant.locator('..').click()
-  await expect(restoredGrant).toBeChecked()
-  evidence = await data(await page.request.get(
-    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
-  ))
-  expect(evidence).toEqual({ platformToolCount: 0, activeGrantCount: 1 })
-  await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
+  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
 
   await chooseMoreAction('停用')
   await page.getByRole('dialog', { name: `停用“${connectorName}”？` })
@@ -123,45 +100,34 @@ test('PF-MCP-01: Connector registration and capability changes take effect autom
   await data(await page.request.post('/api/admin/v1/test/mcp/capabilities', { data: { changed: false } }))
   await row.getByRole('button', { name: '检查', exact: true }).click()
   await expect(row).toContainText('已停用')
-
-  await chooseMoreAction('Agent 权限')
-  accessDialog = page.getByRole('dialog', { name: `Agent 权限 · ${connectorName}` })
-  const disabledConnectorGrant = accessDialog.getByRole('switch', { name: 'dsh-work 助手 MCP 权限' })
-  await expect(disabledConnectorGrant).toBeChecked()
-  await expect(disabledConnectorGrant).toBeEnabled()
-  await disabledConnectorGrant.locator('..').click()
-  await expect(disabledConnectorGrant).not.toBeChecked()
-  await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
+  evidence = await data(await page.request.get(
+    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
+  ))
+  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 0 })
 
   await chooseMoreAction('启用')
   await page.getByRole('dialog', { name: `启用“${connectorName}”？` })
     .getByRole('button', { name: '确认启用', exact: true }).click()
   await expect(row).toContainText('已生效')
-
-  await chooseMoreAction('Agent 权限')
-  accessDialog = page.getByRole('dialog', { name: `Agent 权限 · ${connectorName}` })
-  const grantBeforeDeletion = accessDialog.getByRole('switch', { name: 'dsh-work 助手 MCP 权限' })
-  await expect(grantBeforeDeletion).not.toBeChecked()
-  await grantBeforeDeletion.locator('..').click()
-  await expect(grantBeforeDeletion).toBeChecked()
-  await accessDialog.getByRole('button', { name: '完成', exact: true }).click()
+  evidence = await data(await page.request.get(
+    `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
+  ))
+  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
 
   await chooseMoreAction('删除')
   const deleteDialog = page.getByRole('dialog', { name: `删除“${connectorName}”？` })
-  await expect(deleteDialog).toContainText('立即撤销全部 Agent 权限')
+  await expect(deleteDialog).toContainText('立即停止所有 Agent 使用该连接器')
   await deleteDialog.getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(row).toHaveCount(0)
   const deletionEvidence = await data<{
-    deleted: boolean; credentialDetached: boolean; activeGrantCount: number;
-    revokedGrantCount: number; profileCount: number
+    deleted: boolean; credentialDetached: boolean; profileCount: number; resolvedConnectionCount: number
   }>(await page.request.get(
     `/api/admin/v1/test/mcp/deletion-evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
   expect(deletionEvidence).toEqual({
     deleted: true,
     credentialDetached: true,
-    activeGrantCount: 0,
-    revokedGrantCount: 1,
     profileCount: 1,
+    resolvedConnectionCount: 0,
   })
 })

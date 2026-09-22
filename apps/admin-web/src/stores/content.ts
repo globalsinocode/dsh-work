@@ -346,12 +346,6 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
-  async function setAgentMcpAccess(connectorId: string, agentId: string, enabled: boolean) {
-    const connector = await adminApi.setAgentMcpAccess({ connectorId, agentId, enabled })
-    replaceById(connectors.value, connector)
-    return connector
-  }
-
   function getMcpInvocationAudits(connectorId: string) {
     return adminApi.getMcpInvocationAudits(connectorId)
   }
@@ -421,7 +415,6 @@ export const useContentStore = defineStore('admin-content', () => {
     deleteMcpConnector,
     rotateMcpCredential,
     setMcpConnectorStatus,
-    setAgentMcpAccess,
     getMcpInvocationAudits,
     checkRuntime,
     checkDshRuntimeToolConnector,

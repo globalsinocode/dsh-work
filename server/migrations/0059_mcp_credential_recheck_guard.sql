@@ -1,7 +1,7 @@
 -- 0057 originally trusted a successful discovery message without proving that
 -- it was produced after the current Bearer credential was stored. Correct any
 -- already-upgraded Connector conservatively: an active encrypted credential
--- must have a later health check before its retained Agent grants can execute.
+-- must have a later health check before the Connector becomes available to Agents.
 update connectors c
    set status = 'degraded', updated_at = now()
  where c.protocol = 'mcp'

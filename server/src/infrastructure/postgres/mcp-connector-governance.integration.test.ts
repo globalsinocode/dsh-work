@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test'
 
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../modules/tool/postgres-encrypted-credential-store.ts'
-import type { AgentRuntimePort, McpInspectionResult, McpRuntimeConnection, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
+import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpInspectionResult, type McpRuntimeConnection, type RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
@@ -316,12 +316,6 @@ test('PF-03 upgrades a legacy Connector without rotating another Connector that 
         ('tenant-dsh-work', ${connectorId}, ${serverName}),
         ('tenant-dsh-work', ${siblingConnectorId}, ${siblingServerName})
     `
-    await transaction`
-      insert into agent_mcp_grants (tenant_id, agent_id, connector_id, status, granted_by)
-      values
-        ('tenant-dsh-work', 'agent-dsh-work-assistant', ${connectorId}, 'active', 'U00008'),
-        ('tenant-dsh-work', 'agent-dsh-work-assistant', ${siblingConnectorId}, 'active', 'U00008')
-    `
   })
 
   const beforeUpgrade = (await service.getConnectors()).find(item => item.id === connectorId)
@@ -346,13 +340,10 @@ test('PF-03 upgrades a legacy Connector without rotating another Connector that 
     credentialRefId: string
     backend: string
     secretCount: number
-    grantCount: number
   }[]>`
     select c.credential_ref_id as "credentialRefId", cr.backend,
            (select count(*)::int from credential_secrets cs
-             where cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id) as "secretCount",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "grantCount"
+             where cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id) as "secretCount"
       from connectors c
       join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
      where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
@@ -360,13 +351,10 @@ test('PF-03 upgrades a legacy Connector without rotating another Connector that 
   assert.equal(evidence?.backend, 'postgres-encrypted')
   assert.notEqual(evidence?.credentialRefId, credentialId)
   assert.equal(evidence?.secretCount, 1)
-  assert.equal(evidence?.grantCount, 1)
-  const [siblingEvidence] = await database<{ credentialRefId: string; backend: string; secretCount: number; grantCount: number }[]>`
+  const [siblingEvidence] = await database<{ credentialRefId: string; backend: string; secretCount: number }[]>`
     select c.credential_ref_id as "credentialRefId", cr.backend,
            (select count(*)::int from credential_secrets cs
-             where cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id) as "secretCount",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "grantCount"
+             where cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id) as "secretCount"
       from connectors c
       join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
      where c.tenant_id = 'tenant-dsh-work' and c.id = ${siblingConnectorId}
@@ -375,7 +363,6 @@ test('PF-03 upgrades a legacy Connector without rotating another Connector that 
     credentialRefId: credentialId,
     backend: 'dsh-managed',
     secretCount: 0,
-    grantCount: 1,
   })
   const siblingAfterUpgrade = (await service.getConnectors()).find(item => item.id === siblingConnectorId)
   assert.equal(siblingAfterUpgrade?.credentialRef, 'Bearer Token 需要重新录入')
@@ -389,7 +376,7 @@ after(async () => {
   await throwaway?.dispose()
 })
 
-test('PF-03 activates discovered MCP capabilities and governs access as one Connector grant', async () => {
+test('PF-03 makes every healthy MCP Connector available to every Agent', async () => {
   const suffix = randomUUID().slice(0, 8)
   discovered = [
     { name: 'customer_get', description: 'Read one customer.', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
@@ -418,17 +405,36 @@ test('PF-03 activates discovered MCP capabilities and governs access as one Conn
   assert.equal(discoveredConnector.mcp?.capabilityCount, 2)
   assert.equal(discoveredConnector.mcp?.approvedDigest, discoveredConnector.mcp?.capabilityDigest)
 
-  await service.setAgentMcpAccess({
-    connectorId,
-    agentId: 'agent-dsh-work-assistant',
-    enabled: true,
-    actor: 'U00008',
-  })
+  const secondAgentId = `agent-mcp-default-${suffix}`
+  const secondVersionId = `agent-version-mcp-default-${suffix}`
+  await database`
+    insert into agents (
+      id, tenant_id, name, description, owner_user_id, created_by, status
+    ) values (
+      ${secondAgentId}, 'tenant-dsh-work', 'MCP 默认开放验证 Agent', '验证 MCP 对全部 Agent 默认可用',
+      'U00008', 'U00008', 'published'
+    )
+  `
+  await database`
+    insert into agent_versions (
+      id, tenant_id, agent_id, version, system_prompt, status, published_at, created_by, published_by
+    ) values (
+      ${secondVersionId}, 'tenant-dsh-work', ${secondAgentId}, '1.0.0', '验证 MCP 默认开放。',
+      'published', now(), 'U00008', 'U00008'
+    )
+  `
+  const [schemaEvidence] = await database<{ grantTable: string | null }[]>`
+    select to_regclass('public.agent_mcp_grants')::text as "grantTable"
+  `
+  assert.equal(schemaEvidence?.grantTable, null, 'per-Agent MCP grant storage must not exist')
+
   const pins = (await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
     .filter(connection => connection.connector_id === connectorId)
   assert.equal(pins.length, 1)
   assert.equal(pins[0]?.connector_id, connectorId)
   assert.equal(pins[0]?.server_name, serverName)
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion(secondVersionId))
+    .filter(connection => connection.connector_id === connectorId).length, 1)
   assert.equal((await service.getTools()).some(tool => tool.connectorId === connectorId), false)
 
   discovered = [...discovered, {
@@ -445,7 +451,7 @@ test('PF-03 activates discovered MCP capabilities and governs access as one Conn
   assert.equal(currentPins[0]?.capability_digest, changed.mcp?.approvedDigest)
   await assert.rejects(
     service.assertActiveMcpConnections(pins, 'agent-version-dsh-work-assistant-1'),
-    /授权已撤销或能力摘要已变化/,
+    /已停用、删除或能力摘要已变化/,
     'an already prepared Attempt remains pinned to its original capability digest',
   )
 
@@ -522,19 +528,13 @@ test('PF-03 activates discovered MCP capabilities and governs access as one Conn
   assert.equal(projectedAudits[0]?.attemptId, attemptId)
   assert.equal(projectedAudits[0]?.parameterDigest, 'b'.repeat(64))
 
-  await service.setAgentMcpAccess({
-    connectorId,
-    agentId: 'agent-dsh-work-assistant',
-    enabled: false,
-    actor: 'U00008',
-  })
+  await service.setMcpConnectorStatus({ connectorId, status: 'disabled', actor: 'U00008' })
   await assert.rejects(
     service.assertActiveMcpConnections(finalPins, 'agent-version-dsh-work-assistant-1'),
-    /授权已撤销或能力摘要已变化/,
+    /已停用、删除或能力摘要已变化/,
   )
 
   const deletion = await service.deleteMcpConnector({ connectorId, actor: 'U00008' })
-  assert.equal(deletion.revokedGrantCount, 0)
   assert.equal(deletion.credentialDestroyed, false)
   assert.equal((await service.getConnectors()).some(connector => connector.id === connectorId), false)
   assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
@@ -543,7 +543,7 @@ test('PF-03 activates discovered MCP capabilities and governs access as one Conn
   assert.equal(retainedAudits[0]?.attemptId, attemptId, 'deletion must retain invocation evidence')
 })
 
-test('PF-03 deletion revokes active grants and destroys an exclusive encrypted credential', async () => {
+test('PF-03 deletion removes default Agent availability and destroys an exclusive encrypted credential', async () => {
   const suffix = randomUUID().slice(0, 8)
   discovered = [{
     name: 'deletion_read', description: 'Read deletion fixture.',
@@ -558,12 +558,8 @@ test('PF-03 deletion revokes active grants and destroys an exclusive encrypted c
     actor: 'U00008',
   })
   const connectorId = registered.id
-  await service.setAgentMcpAccess({
-    connectorId,
-    agentId: 'agent-dsh-work-assistant',
-    enabled: true,
-    actor: 'U00008',
-  })
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .some(connection => connection.connector_id === connectorId), true)
   const [before] = await database<{ credentialRefId: string }[]>`
     select credential_ref_id as "credentialRefId" from connectors
      where tenant_id = 'tenant-dsh-work' and id = ${connectorId}
@@ -571,18 +567,14 @@ test('PF-03 deletion revokes active grants and destroys an exclusive encrypted c
   assert.ok(before?.credentialRefId)
 
   const result = await service.deleteMcpConnector({ connectorId, actor: 'U00008' })
-  assert.deepEqual(result, { connectorId, revokedGrantCount: 1, credentialDestroyed: true })
+  assert.deepEqual(result, { connectorId, credentialDestroyed: true })
   const [evidence] = await database<{
     status: string; deletedAt: Date | null; deletedBy: string | null; credentialRefId: string | null;
-    activeGrantCount: number; revokedGrantCount: number; profileCount: number; healthCount: number;
+    profileCount: number; healthCount: number;
     credentialRefCount: number; secretCount: number
   }[]>`
     select c.status, c.deleted_at as "deletedAt", c.deleted_by as "deletedBy",
            c.credential_ref_id as "credentialRefId",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'active') as "activeGrantCount",
-           (select count(*)::int from agent_mcp_grants g
-             where g.tenant_id = c.tenant_id and g.connector_id = c.id and g.status = 'revoked') as "revokedGrantCount",
            (select count(*)::int from mcp_connector_profiles p
              where p.tenant_id = c.tenant_id and p.connector_id = c.id) as "profileCount",
            (select count(*)::int from connector_health_checks h
@@ -598,11 +590,100 @@ test('PF-03 deletion revokes active grants and destroys an exclusive encrypted c
   assert.ok(evidence?.deletedAt)
   assert.equal(evidence?.deletedBy, 'U00008')
   assert.equal(evidence?.credentialRefId, null)
-  assert.equal(evidence?.activeGrantCount, 0)
-  assert.equal(evidence?.revokedGrantCount, 1)
   assert.equal(evidence?.profileCount, 1)
   assert.ok((evidence?.healthCount ?? 0) >= 1)
   assert.equal(evidence?.credentialRefCount, 0)
   assert.equal(evidence?.secretCount, 0)
+  assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
+    .some(connection => connection.connector_id === connectorId), false)
   await assert.rejects(service.deleteMcpConnector({ connectorId, actor: 'U00008' }), /不存在/)
+})
+
+test('PF-03 keeps tenant MCP availability within the Runtime Manifest limit across concurrent activation paths', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  discovered = [{
+    name: 'capacity_read', description: 'Read capacity test data.',
+    inputSchema: { type: 'object', properties: {} },
+  }]
+  const recoverable = await service.registerMcpConnector({
+    name: `待恢复 MCP ${suffix}`,
+    endpoint: `https://recover-${suffix}.example.test/rpc`,
+    authType: 'none',
+    scopeDescription: '容量检查恢复路径',
+    actor: 'U00008',
+  })
+  inspectionFailure = new Error('合成离线状态')
+  try {
+    assert.equal((await service.checkConnector({ connectorId: recoverable.id, actor: 'U00008' })).status, 'offline')
+  } finally {
+    inspectionFailure = undefined
+  }
+  const disabled = await service.registerMcpConnector({
+    name: `待启用 MCP ${suffix}`,
+    endpoint: `https://enable-${suffix}.example.test/rpc`,
+    authType: 'none',
+    scopeDescription: '容量检查启用路径',
+    actor: 'U00008',
+  })
+  await service.setMcpConnectorStatus({ connectorId: disabled.id, status: 'disabled', actor: 'U00008' })
+
+  const [initial] = await database<{ connectorCount: number }[]>`
+    select count(*)::int as "connectorCount" from connectors
+     where tenant_id = 'tenant-dsh-work' and protocol = 'mcp'
+       and status = 'healthy' and deleted_at is null
+  `
+  assert.ok(initial)
+  for (let index = initial.connectorCount; index < MAX_MCP_CONNECTIONS_PER_ATTEMPT - 1; index += 1) {
+    await service.registerMcpConnector({
+      name: `容量 MCP ${index} ${suffix}`,
+      endpoint: `https://capacity-${index}-${suffix}.example.test/rpc`,
+      authType: 'none',
+      scopeDescription: '容量并发门禁测试',
+      actor: 'U00008',
+    })
+  }
+
+  const concurrent = await Promise.allSettled([0, 1].map(index => service.registerMcpConnector({
+    name: `并发容量 MCP ${index} ${suffix}`,
+    endpoint: `https://concurrent-${index}-${suffix}.example.test/rpc`,
+    authType: 'none',
+    scopeDescription: '并发登记不得突破容量',
+    actor: 'U00008',
+  })))
+  assert.equal(concurrent.filter(result => result.status === 'fulfilled').length, 1)
+  const rejected = concurrent.find(result => result.status === 'rejected') as PromiseRejectedResult | undefined
+  assert.equal(rejected?.reason?.status, 409)
+  assert.equal(rejected?.reason?.code, 'MCP_CONNECTOR_CAPACITY_EXCEEDED')
+
+  await assert.rejects(service.registerMcpConnector({
+    name: `超限 MCP ${suffix}`,
+    endpoint: `https://overflow-${suffix}.example.test/rpc`,
+    authType: 'none',
+    scopeDescription: '第 21 个连接器必须拒绝',
+    actor: 'U00008',
+  }), {
+    status: 409,
+    code: 'MCP_CONNECTOR_CAPACITY_EXCEEDED',
+  })
+  await assert.rejects(
+    service.setMcpConnectorStatus({ connectorId: disabled.id, status: 'enabled', actor: 'U00008' }),
+    { status: 409, code: 'MCP_CONNECTOR_CAPACITY_EXCEEDED' },
+  )
+  await assert.rejects(
+    service.checkConnector({ connectorId: recoverable.id, actor: 'U00008' }),
+    { status: 409, code: 'MCP_CONNECTOR_CAPACITY_EXCEEDED' },
+  )
+
+  const [final] = await database<{ connectorCount: number }[]>`
+    select count(*)::int as "connectorCount" from connectors
+     where tenant_id = 'tenant-dsh-work' and protocol = 'mcp'
+       and status = 'healthy' and deleted_at is null
+  `
+  assert.equal(final?.connectorCount, MAX_MCP_CONNECTIONS_PER_ATTEMPT)
+  assert.equal(
+    (await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')).length,
+    MAX_MCP_CONNECTIONS_PER_ATTEMPT,
+  )
+  assert.equal((await service.getConnectors()).find(item => item.id === disabled.id)?.status, 'disabled')
+  assert.equal((await service.getConnectors()).find(item => item.id === recoverable.id)?.status, 'offline')
 })

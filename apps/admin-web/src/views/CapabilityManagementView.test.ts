@@ -89,7 +89,7 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
       serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
       capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
       capabilities: [{ name: 'query', description: '查询', inputSchema: { type: 'object' } }],
-      grantedAgentIds: [], discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
+      discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
     },
   }
 }
@@ -240,8 +240,13 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('.el-table__row').findAll('td')[7]?.classes()).toContain('is-center')
     expect(wrapper.find('.mcp-row-actions').exists()).toBe(true)
     expect(wrapper.get('[data-action="mcp-more"]').text()).toContain('更多')
+    expect(wrapper.find('[data-action="manage-mcp-agent-access"]').exists()).toBe(false)
     expect(wrapper.get('.el-table__row').text()).not.toContain('连通，待审核')
     expect(wrapper.find('[data-action="approve-mcp-connector"]').exists()).toBe(false)
+    await wrapper.get('[data-action="view-connector"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('适用 Agent')
+    expect(wrapper.text()).toContain('全部 Agent')
     await wrapper.get('[data-action="view-mcp-tools"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('query')

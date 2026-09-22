@@ -1,5 +1,5 @@
 -- MCP Connector deletion is a governed soft-delete. Runtime authorization,
--- grants and credentials are revoked immediately, while review and invocation
+-- current Agent availability and credentials are revoked immediately, while review and invocation
 -- evidence remains available for audit and incident investigation.
 
 alter table connectors

@@ -97,11 +97,4 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
-  router.patch(`${basePath}/connectors/mcp/agent-access`, async (request, context) => {
-    const input = await readJsonBody<{ connectorId: string; agentId: string; enabled: boolean }>(request)
-    return envelope('admin', await service.setAgentMcpAccess({
-      ...input,
-      actor: requireRequestIdentity(context, 'admin').userId,
-    }), 'postgres')
-  })
 }
