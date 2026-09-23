@@ -85,7 +85,7 @@ async function createAdminUser(id: string) {
   `
 }
 
-async function createDraftAgent(id: string) {
+async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], tools = ['read@1.0.0']) {
   return agents.createAgent({
     id,
     name: '退款预测助手',
@@ -100,8 +100,8 @@ async function createDraftAgent(id: string) {
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
     maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
-    skills: ['skill-document@1.0.0'],
-    tools: ['read@1.0.0'],
+    skills,
+    tools,
     changeSummary: '创建初始草稿版本',
     actor: ADMIN,
   })
@@ -111,7 +111,7 @@ function buildAgentYaml(overrides: { id?: string; name?: string; version?: strin
   // tools 为逗号分隔的 id@x.y.z 精确引用；specLines 追加在 spec 内，topLines 追加在顶层。
   const tools = (overrides.tools ?? 'read@1.0.0').split(',').map(item => item.trim()).filter(Boolean)
   return [
-    'apiVersion: dsh-work.ai/v1',
+    'apiVersion: dsh-work.ai/v2',
     'kind: AgentPackage',
     'metadata:',
     `  id: ${overrides.id ?? 'zip-agent'}`,
@@ -119,13 +119,15 @@ function buildAgentYaml(overrides: { id?: string; name?: string; version?: strin
     `  version: ${overrides.version ?? '0.1.0'}`,
     `  description: ${overrides.description ?? '基于历史退款记录预测高风险订单。'}`,
     'spec:',
-    `  instructions: ${overrides.instructions ?? 'prompts/system.md'}`,
-    '  capabilities:',
-    '    tools:',
-    ...tools.map(reference => {
-      const separator = reference.lastIndexOf('@')
-      return `      - id: ${reference.slice(0, separator)}\n        version: ${reference.slice(separator + 1)}`
-    }),
+    `  instructions: ${overrides.instructions ?? 'SOUL.md'}`,
+    ...(tools.length ? [
+      '  capabilities:',
+      '    tools:',
+      ...tools.map(reference => {
+        const separator = reference.lastIndexOf('@')
+        return `      - id: ${reference.slice(0, separator)}\n        version: ${reference.slice(separator + 1)}`
+      }),
+    ] : []),
     ...(overrides.specLines ?? []),
     ...(overrides.topLines ?? []),
     '',
@@ -308,6 +310,41 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const records = await agents.getReleaseRecords()
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
+})
+
+test('无 Skill/Tool 的 Soul Agent 可从配置或 ZIP 创建并通过候选检查', async () => {
+  const configuredId = 'agent-soul-config'
+  const configured = await createDraftAgent(configuredId, [], [])
+  const [configSpec] = await database<{ spec: AgentSpec }[]>`
+    select agent_spec as spec from agent_versions
+     where tenant_id = ${tenantId} and id = ${configured.version.id}
+  `
+  assert.ok(configSpec)
+  assert.equal(configSpec.spec.apiVersion, 'dsh-work.ai/v2')
+  assert.deepEqual(configSpec.spec.instructions, { path: 'SOUL.md', body: PROMPT })
+  assert.deepEqual(configSpec.spec.capabilities, { skills: [], tools: [] })
+  await release.ensureCandidate(configuredId, ADMIN)
+  const configChecks = await release.runChecks(configuredId, ADMIN)
+  assert.ok(configChecks.candidate?.checks.every(item => item.status === 'passed'))
+  await release.startTrial(configuredId, ADMIN)
+  const configTrial = await confirmLatestTrial(configuredId)
+  assert.equal(configTrial.trialRuns[0]?.status, 'passed')
+
+  const importedId = 'agent-soul-zip'
+  const imported = await release.importPackage(ADMIN, 'soul-agent.zip', createZip({
+    'agent.yaml': buildAgentYaml({ id: importedId, tools: '' }),
+    'SOUL.md': PROMPT,
+  }))
+  assert.deepEqual(imported.candidate?.missingDeps, { skills: [], tools: [] })
+  const [zipSpec] = await database<{ spec: AgentSpec }[]>`
+    select agent_spec as spec from agent_versions
+     where tenant_id = ${tenantId} and agent_id = ${importedId}
+  `
+  assert.ok(zipSpec)
+  assert.deepEqual(zipSpec.spec.instructions, configSpec.spec.instructions)
+  assert.deepEqual(zipSpec.spec.capabilities, configSpec.spec.capabilities)
+  const zipChecks = await release.runChecks(importedId, ADMIN)
+  assert.ok(zipChecks.candidate?.checks.every(item => item.status === 'passed'))
 })
 
 test('定义修改推进修订并作废检查与封存，发布要求最新封存试运行通过', async () => {
@@ -502,7 +539,7 @@ test('提交审核后候选封存：退回解锁修订推进，发布必须经 s
   await assert.rejects(release.startTrial(agentId, ADMIN), /不能发起试运行/)
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: agentId, version: '0.2.0' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   await assert.rejects(release.importPackage(ADMIN, 'submitted.zip', zip), /提交审核/)
@@ -577,7 +614,7 @@ test('撤回使候选进入终态并保留历史，再次同步创建新候选',
 test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-zip' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   const state = await release.importPackage(ADMIN, 'refund-agent.zip', zip)
@@ -617,7 +654,6 @@ test('导入定义经配置保存及发布后分叉保留未编辑字段，已�
   const imported = await release.importPackage(ADMIN, 'preserve-spec.zip', createZip({
     'agent.yaml': buildAgentYaml({
       id: agentId,
-      instructions: 'prompts/custom.md',
       specLines: [
         '    skills: [{ id: skill-document, version: 1.0.0 }]',
         '  catalog:',
@@ -629,7 +665,7 @@ test('导入定义经配置保存及发布后分叉保留未编辑字段，已�
         '    cases: evals/custom.yaml',
       ],
     }),
-    'prompts/custom.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/custom.yaml': PACKAGE_CASES,
   }))
   assert.ok(imported.candidate)
@@ -701,7 +737,7 @@ test('回滚后导入继承当前活动版本的角色与数据范围，重复�
 
   const importVersion = (version: string) => release.importPackage(ADMIN, `${version}.zip`, createZip({
     'agent.yaml': buildAgentYaml({ id: agentId, version }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   }))
   await importVersion('0.3.0')
@@ -729,7 +765,7 @@ test('回滚后导入继承当前活动版本的角色与数据范围，重复�
 test('ZIP 缺少 evals/cases.yaml 时自动生成五类 v1 默认案例，不因缺文件失败', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-nocases' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   }, { checksums: false })
   const state = await release.importPackage(ADMIN, 'no-cases.zip', zip)
   assert.equal(state.candidate?.cases.length, 5)
@@ -748,7 +784,7 @@ test('ZIP 缺少 evals/cases.yaml 时自动生成五类 v1 默认案例，不因
 test('checksums.json 必须精确覆盖包内文件集合，版本号拒绝预发布后缀', async () => {
   const base = {
     'agent.yaml': buildAgentYaml({ id: 'agent-checksums' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   }
   const digest = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -769,7 +805,7 @@ test('checksums.json 必须精确覆盖包内文件集合，版本号拒绝预�
   )
   // 摘要错误
   await assert.rejects(
-    release.inspectPackage('wrong-digest.zip', createZip({ ...base, 'checksums.json': manifestFor({ ...fullTable, 'prompts/system.md': digest('tampered') }) })),
+    release.inspectPackage('wrong-digest.zip', createZip({ ...base, 'checksums.json': manifestFor({ ...fullTable, 'SOUL.md': digest('tampered') }) })),
     /摘要与 checksums\.json 不一致/,
   )
   // 版本号预发布/构建后缀：排序 SQL 会把第 3 段转整数，必须拒绝
@@ -782,7 +818,7 @@ test('checksums.json 必须精确覆盖包内文件集合，版本号拒绝预�
 test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引用后放行', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-missing', tools: 'read@1.0.0, knowledge.search@1.0.0' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   const state = await release.importPackage(ADMIN, 'missing.zip', zip)
@@ -808,7 +844,7 @@ test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引�
 test('声明工具版本与平台可用版本不一致标记缺失，不静默改写为平台版本', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-toolver', tools: 'read@9.9.9' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   })
   const info = await release.inspectPackage('toolver.zip', zip)
   assert.deepEqual(info.missing.tools, ['read@9.9.9'])
@@ -828,7 +864,7 @@ test('包内 Tool 候选阻塞测试授权检查与发布放行', async () => {
       id: 'agent-release-pkgtool',
       tools: 'read@1.0.0, refund-risk-score@0.1.0',
     }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
     'tools/refund-risk-score/tool.yaml': 'id: refund-risk-score\nversion: 0.1.0\nname: 退款风险评分\n',
   })
@@ -849,7 +885,7 @@ test('包内 Tool 候选阻塞测试授权检查与发布放行', async () => {
 test('ZIP 重复导入同内容幂等返回，同版本不同内容明确版本冲突', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-idem' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   const first = await release.importPackage(ADMIN, 'idem.zip', zip)
@@ -867,7 +903,7 @@ test('ZIP 重复导入同内容幂等返回，同版本不同内容明确版本�
   // 同版本不同内容：明确 409 冲突，不自动改写声明版本
   const altered = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-idem' }),
-    'prompts/system.md': `${PROMPT}（改）`,
+    'SOUL.md': `${PROMPT}（改）`,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   await assert.rejects(
@@ -880,13 +916,13 @@ test('ZIP 重复导入同内容幂等返回，同版本不同内容明确版本�
   await createDraftAgent('agent-release-cfgver')
   const cfgZip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-cfgver', version: '9.9.9' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   })
   // 先以 9.9.9 导入占据版本，再以同号不同内容重导 → 冲突
   await release.importPackage(ADMIN, 'cfg.zip', cfgZip)
   const cfgAltered = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-cfgver', version: '9.9.9' }),
-    'prompts/system.md': `${PROMPT}（内容已变更的另一套提示词）`,
+    'SOUL.md': `${PROMPT}（内容已变更的另一套提示词）`,
   })
   await assert.rejects(release.importPackage(ADMIN, 'cfg.zip', cfgAltered), /不同内容|version_conflict/)
 })
@@ -894,7 +930,7 @@ test('ZIP 重复导入同内容幂等返回，同版本不同内容明确版本�
 test('inspectPackage 只解析不落库', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-inspect', tools: 'read@1.0.0, ghost.tool@1.0.0' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   })
   const info = await release.inspectPackage('inspect.zip', zip)
   assert.equal(info.manifest.id, 'agent-release-inspect')
@@ -914,13 +950,13 @@ test('inspectPackage 只解析不落库', async () => {
 test('平台受管字段与旧扁平清单在解析期拒绝', async () => {
   const reserved = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-denied', topLines: ['api_key: sk-test'] }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   })
   await assert.rejects(release.inspectPackage('denied.zip', reserved), /平台受管字段：api_key/)
 
   const legacy = createZip({
-    'agent.yaml': ['id: agent-release-denied', 'name: 退款预测助手', 'version: 0.1.0', 'description: 基于历史退款记录预测高风险订单。', 'system_prompt_file: prompts/system.md', ''].join('\n'),
-    'prompts/system.md': PROMPT,
+    'agent.yaml': ['id: agent-release-denied', 'name: 退款预测助手', 'version: 0.1.0', 'description: 基于历史退款记录预测高风险订单。', 'system_prompt_file: SOUL.md', ''].join('\n'),
+    'SOUL.md': PROMPT,
   })
   await assert.rejects(release.inspectPackage('legacy.zip', legacy), /旧扁平清单字段|apiVersion/)
 
@@ -932,7 +968,7 @@ test('平台受管字段与旧扁平清单在解析期拒绝', async () => {
 test('声明版本与包内候选版本冲突拒绝导入', async () => {
   const zip = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-depconflict', tools: 'refund-risk-score@0.2.0' }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'tools/refund-risk-score/tool.yaml': 'id: refund-risk-score\nversion: 0.1.0\nname: 退款风险评分\n',
   })
   await assert.rejects(
@@ -946,13 +982,13 @@ test('声明版本与包内候选版本冲突拒绝导入', async () => {
 test('旧别名与未识别字段在严格 Schema 下直接拒绝导入', async () => {
   const conflict = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-alias', topLines: ['display_name: 另一个名称'] }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
   })
   await assert.rejects(release.inspectPackage('alias.zip', conflict), /未定义字段 display_name|结构校验未通过/)
 
   const unknown = createZip({
     'agent.yaml': buildAgentYaml({ id: 'agent-release-unknown', topLines: ['author: ops-team'] }),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'evals/cases.yaml': PACKAGE_CASES,
   })
   await assert.rejects(release.importPackage(ADMIN, 'unknown.zip', unknown), /未定义字段 author|结构校验未通过/)

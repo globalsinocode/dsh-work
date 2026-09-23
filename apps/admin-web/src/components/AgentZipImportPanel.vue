@@ -79,7 +79,7 @@ defineExpose({ parsed, importing, importAsDraft })
       <el-icon class="zip-import__icon"><UploadFilled /></el-icon>
       <div class="el-upload__text">拖拽 agent-package ZIP 到此处，或 <em>点击选择文件</em></div>
       <template #tip>
-        <div class="el-upload__tip">最小包：agent.yaml + prompts/system.md；可选 evals/cases.yaml（缺省时平台自动生成试运行案例）。服务端安全解包，不执行安装钩子。</div>
+        <div class="el-upload__tip">最小包：agent.yaml + 根目录 SOUL.md；可选 evals/cases.yaml（缺省时平台自动生成试运行案例）。服务端安全解包，不执行安装钩子。</div>
       </template>
     </el-upload>
 
@@ -99,7 +99,8 @@ defineExpose({ parsed, importing, importAsDraft })
         <el-collapse-item title="已解析引用（agent.yaml 声明的依赖）" name="resolved">
           <div class="zip-import__files">
             <span v-for="reference in [...info.resolved.skills, ...info.resolved.tools]" :key="reference" class="mono">{{ reference }}</span>
-            <span v-if="!info.resolved.skills.length && !info.resolved.tools.length" class="muted">声明的依赖均未在平台解析到已发布版本</span>
+            <span v-if="!info.resolved.skills.length && !info.resolved.tools.length && !info.missing.skills.length && !info.missing.tools.length" class="muted">未声明 Skill 或工具依赖</span>
+            <span v-else-if="!info.resolved.skills.length && !info.resolved.tools.length" class="muted">声明的依赖均未解析到已发布版本</span>
           </div>
           <div v-if="info.missing.skills.length || info.missing.tools.length" class="zip-import__missing">
             <span class="zip-import__missing-label">缺少：</span>

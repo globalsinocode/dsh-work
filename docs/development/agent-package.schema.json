@@ -12,7 +12,7 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "dsh-work.ai/v1"
+      "const": "dsh-work.ai/v2"
     },
     "kind": {
       "const": "AgentPackage"
@@ -55,8 +55,7 @@
       ],
       "properties": {
         "instructions": {
-          "type": "string",
-          "pattern": "^prompts/[A-Za-z0-9._-]+\\.md$"
+          "const": "SOUL.md"
         },
         "capabilities": {
           "type": "object",

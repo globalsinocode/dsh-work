@@ -736,10 +736,8 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.dataScopes.length === 0) throw new Error('请配置至少一个业务数据范围')
   if (input.welcomeMessage.trim().length > 120) throw new Error('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw new Error('请配置至少一个示例问题')
-  if (input.systemPrompt.trim().length < 20) throw new Error('System Prompt 至少需要 20 个字符')
+  if (input.systemPrompt.trim().length < 20) throw new Error('SOUL.md 正文至少需要 20 个字符')
   assertAgentSpecLimits({ timeoutSeconds: input.timeoutSeconds, maxToolCalls: input.maxToolCalls, maxOutputBytes: input.maxOutputBytes })
-  if (input.skills.length === 0) throw new Error('请至少引用一个已发布 Skill')
-  if (input.tools.length === 0) throw new Error('请至少选择一个可用工具')
 }
 
 function assertAgentReady(agent: AgentDefinition) {

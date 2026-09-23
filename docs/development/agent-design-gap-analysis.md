@@ -1,7 +1,8 @@
 # Agent 规范与当前实现差异清单
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-23<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。当前提交的[本地真实链路核对](pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
+**阶段状态：** 平台基础能力的代码建设阶段收口；本清单保留为规范差异与实施记录。PF-07 全量 P2 仍是独立的目标版本发布验收事项，不标记为完成，也不阻止无关新任务的开发。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。[双账号隔离环境的本轮进度](pf07-oidc-isolated-progress-2026-09-23.md)已覆盖一个真实 OIDC 身份的 MCP 写入/回执，以及私人受控记忆的发布、检索与撤回；第二身份的实际 Run、其他能力和故障撤权矩阵仍待验收。[较早的本地真实链路核对](pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
@@ -15,6 +16,19 @@
 | 部分实现 | 存在基础，但尚未覆盖该条规范的全部要求 |
 | 未实现（核对范围内） | 相关契约/入口缺少该能力，不能以规划或展示字段推定存在 |
 | 不适用当前范围 | 可选能力尚未启用，不作为基础 Agent 的缺陷；启用前须完成门槛 |
+
+### AI 员工目标增量（2026-09-23）
+
+[规范第 3 节](agent-design-standard.md#3-ai-员工统一目标架构)已确认独立 AI 员工的目标架构。以下是该目标相对既有 PF-01～PF-07 的新增实施项；PF-07 真实验收仍单独开放。实施时每项同步契约、消费者、必要迁移及分层证据，不能因本表或规范文字标为已支持。
+
+| 编号 | 状态与实施内容 | 验收边界 |
+| --- | --- | --- |
+| AE-01 定义与 Soul | **已实现（代码级）。** 包与配置入口统一到根目录 `SOUL.md`，`dsh-work.ai/v2` 严格 Schema 只接受该文件；配置编辑生成相同 AgentSpec，试运行/发布固定正文与摘要；无 Skill/Tool 的基础 Agent 可创建，其他授权字段仍独立管理 | 包解析 71/71、发布治理专用 PostgreSQL 集成 23/23、管理端组件 102/102、P0 原型浏览器 1/1 通过；覆盖旧路径、缺失文件和空依赖的草稿/检查/试运行。P1 浏览器与真实 DSH/OIDC 验收仍待留证 |
+| AE-02 独立 Principal | **待实施。** 增加 `human/agent/system` 主体及 Agent 独立授权；Task 区分发起、执行和批准主体；联动身份、Workspace、Run/Manifest、工具、审批、审计、结果读取与撤权 | 负责人不能代替 Agent 身份；员工不能借 Agent 越权；独立主体停用、收权及授权故障在入队、领取、调用和结果访问时阻断 |
+| AE-03 Agent Data | **待实施。** 发布数据集 JSON Schema 与 ACL，建立记录/不可变版本及来源引用；经受控工具查询、提案、更新和状态转换，`task-result` 增加可核验记录版本引用 | Schema、范围、并发期望版本、幂等、保留期及结果授权均可复现；外部权威数据与 `unknown` 回执不被误标完成 |
+| AE-04 Agent-owned Memory | **待实施。** 在 PF-05 员工主动提交的基础上支持 Agent 提出候选、按稳定 Agent 身份使用、跨版本继承复核和按授权生成 `memory.md` 只读投影 | 同意、审核、当前来源与目标 ACL、私人/团队隔离、撤回、保留期、版本及恢复复核通过；运行不能直接写长期记忆 |
+| AE-05 主动任务 | **待实施。** 复用现有 Task/预算/调度/DSH，增加 Agent Principal 拥有的版本化 routine；心跳仅为可选巡检预设 | 时间/事件去重、授权上限、并发、停用、跳过原因、结果接收及审计可核验；不改变现有员工个人自动任务语义 |
+| AE-06 管理与发布验收 | **待实施。** 统一展示身份/Soul/能力/数据/记忆/主动任务/发布及运行审计；扩展版本固定、评测和 P1/P2 验收 | 新旧入口均遵守单一 Run/Attempt → DSH 链路，合成环境与真实 DSH/OIDC 证据分开；PF-07 未完成项仍独立追踪 |
 
 ## 2. 十二条逐项核对
 
@@ -41,7 +55,7 @@
 
 ### D-02 包的当前支持与目标格式分开
 
-**2026-09-20 起（B-01 已实施）：** `parseAgentPackage` 只接受分层 `agent.yaml`（`apiVersion: dsh-work.ai/v1`、`kind: AgentPackage`、`metadata`、`spec`），经 [agent-package.schema.json](agent-package.schema.json)（Ajv，`additionalProperties: false`）严格校验后归一化为 `AgentSpec`。指令必须经 `spec.instructions` 文件引用；能力依赖为 `capabilities.skills/tools` 下的 `id@x.y.z` 精确引用；`input`/`output`/`context`/`limits`/`model.requirements`/`evaluation` 均有版本化契约。旧扁平清单、字段别名（display_name、prompt_file、role_ids、skill_refs、tool_refs、max_tokens 等）、未知字段、重复 YAML 键与平台受管字段（凭据、端点、模型路由、执行环境、绑定、授权范围、调度、安装钩子等）一律在解析阶段拒绝，不再有警告后忽略或双格式解析。无 `evals/cases.yaml` 时发布服务仍生成默认案例（带 `origin` 来源标记）；缺少 checksums 时解析给警告，发布检查阻塞；提供清单时须覆盖全部文件（除清单自身）。解析、候选检查与发布是不同阶段，不支持用“平台自动生成摘要”替代 ZIP 发布门禁。配置入口与 ZIP 归一化为同一 `AgentSpec` 并持久化于 `agent_versions.agent_spec`；限额列由 `max_tokens` 更换为 `max_output_bytes` + `max_tool_calls`（迁移 0046），既有行按平台默认值补齐、不回填定义。
+**当前契约（B-01 基础上由 AE-01 更新）：** `parseAgentPackage` 只接受分层 `agent.yaml`（`apiVersion: dsh-work.ai/v2`、`kind: AgentPackage`、`metadata`、`spec`），经 [agent-package.schema.json](agent-package.schema.json)（Ajv，`additionalProperties: false`）严格校验后归一化为 `AgentSpec`。指令必须经 `spec.instructions` 固定引用包根目录 `SOUL.md`；能力依赖为 `capabilities.skills/tools` 下可为空的 `id@x.y.z` 精确引用；`input`/`output`/`context`/`limits`/`model.requirements`/`evaluation` 均有版本化契约。旧扁平清单、字段别名（display_name、prompt_file、role_ids、skill_refs、tool_refs、max_tokens 等）、未知字段、重复 YAML 键与平台受管字段（凭据、端点、模型路由、执行环境、绑定、授权范围、调度、安装钩子等）一律在解析阶段拒绝，不再有警告后忽略或双格式解析。无 `evals/cases.yaml` 时发布服务仍生成默认案例（带 `origin` 来源标记）；缺少 checksums 时解析给警告，发布检查阻塞；提供清单时须覆盖全部文件（除清单自身）。解析、候选检查与发布是不同阶段，不支持用“平台自动生成摘要”替代 ZIP 发布门禁。配置入口与 ZIP 归一化为同一 `AgentSpec` 并持久化于 `agent_versions.agent_spec`；限额列由 `max_tokens` 更换为 `max_output_bytes` + `max_tool_calls`（迁移 0046），既有行按平台默认值补齐、不回填定义。
 
 **历史记录（2026-09-19，已被 B-01 取代）：** 原基线曾接受扁平清单与字段别名并做冲突校验，详见 I-02 完成记录。2026-09-20“不考虑历史兼容”决策生效后，别名接受、未知字段警告、双格式解析均已移除，不做旧包兼容或渐进迁移。
 
@@ -83,7 +97,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 ### 4.2 平台基础能力建设顺序
 
-在继续开发具体 Agent 前，按下表顺序完成平台通用能力。每项都必须使用既有 Run/Attempt、Runtime Adapter 与 DSH 链路，不得建立第二套 Agent Loop。前一项的契约和验收未稳定前，不并行固化依赖它的后续语义。
+下表保留平台通用能力的建设顺序与完成边界。PF-01～PF-06 已达到列出的代码级范围；PF-07 的目标版本 P2 验收由独立[运行手册](pf07-platform-acceptance.md)和[能力矩阵](agent-platform-capabilities.v1.json)继续跟踪。新任务仍须使用既有 Run/Attempt、Runtime Adapter 与 DSH 链路，不得建立第二套 Agent Loop；使用尚未完成真实验收的能力时，应在该任务发布前完成适用场景的 P2，不以代码级完成代替发布准入。
 
 | 顺序 | 实施包 | 统一平台交付物 | 完成门槛 |
 | --- | --- | --- | --- |
@@ -95,7 +109,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | PF-06（代码级与管理端已完成，2026-09-23） | 受控 Agent 委派 | 平台受管的精确目标版本允许列表；无 Session 父子 Task/Run；最小显式上下文；当前授权与父快照上限交集；PF-02 根预算；深度/并行/容量预留/超时门禁；委派 Task 禁止通用重试；取消、重启对账和全回执 `task-result/v1` 合并 | 一次性 PostgreSQL、Runtime/Schema/策略、当前授权和管理端组件测试覆盖版本固定、幂等、边界、预算、撤权、重试隔离、满载拒绝与子席位预留、取消、恢复及混合回执结果真值；真实 DSH 多 Agent、真实身份撤权和容量故障留 PF-07 P2 |
 | PF-07（部分完成） | 平台基线验收 | [版本化能力矩阵](agent-platform-capabilities.v1.json)、P0/P1 入口和 [验收手册](pf07-platform-acceptance.md)已建立；覆盖无 Session、外部动作、累计预算、MCP、等待/审批、记忆和委派 | P1 已在本地隔离环境运行，目标提交与 CI 结果仍需固定；当前版本 P2 尚须在真实 DSH/OIDC/批准连接上执行并留代码版本、身份、环境、Runtime、Run/Attempt、故障/撤权和结果证据，复核通过后才开放给 Agent 发布 |
 
-**下一步：完成 PF-07 的目标版本真实验收。** PF-01～PF-06 已形成平台代码级基础；矩阵、测试入口和记录模板已建立，本地 P1 回归已运行。此前手工 P2 无原始记录且早于当前能力，须在目标部署重新执行真实 DSH/OIDC/批准连接场景，归档环境、身份、Runtime、Run/Attempt、故障与验收人证据，再决定哪些能力可开放给具体 Agent 发布。
+**阶段移交：** 本清单不再作为继续新功能开发的排队清单。PF-07 的目标版本真实验收继续开放，由[运行手册](pf07-platform-acceptance.md)跟踪环境、身份、Runtime、Run/Attempt、故障与验收人证据；[本地隔离环境进度](pf07-oidc-isolated-progress-2026-09-23.md)仅覆盖部分场景。此前手工 P2 无原始记录且早于当前能力，不能作为通过依据。发布依赖这些能力的 Agent 时，须完成适用场景并经复核后再开放；平台整体 PF-07 仍未通过。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
@@ -190,7 +204,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **完成标准：** 相同配置和 ZIP 生成等价规范化定义；无效输入、来源撤回和能力不兼容均有明确拒绝；修改执行字段后必须重新验证。使用新契约 Agent 完成配置→发布→运行回归。
 
-**B-01 原实施记录（2026-09-20；模型准入的后续进展见下文）：**
+**B-01 原实施记录（2026-09-20；原 v1 指令路径已由 AE-01 替换，模型准入的后续进展见下文）：**
 
 - **唯一包格式与严格 Schema：** [agent-package.ts](../../server/src/modules/agent/agent-package.ts) 只接受 `apiVersion/kind/metadata/spec` 分层清单，由 [agent-package.schema.ts](../../server/src/modules/agent/agent-package.schema.ts) 与 [agent-package.schema.json](agent-package.schema.json)（Ajv 2020，`additionalProperties: false`，TS 常量导出保证零漂移）校验；旧扁平清单、全部字段别名、未知字段、重复 YAML 键、锚点别名及平台受管字段（凭据/端点/模型路由/执行环境/绑定/授权/调度/安装钩子等保留关键字）直接 422 拒绝。
 - **规范化 AgentSpec：** 新增 [agent-spec.ts](../../server/src/modules/agent/agent-spec.ts) 定义 `AgentSpec`（metadata、instructions 文件引用+正文、capabilities 精确引用、input/output/context、catalog、limits、evaluation、model.requirements）；`agentSpecFromConfiguration` 将配置表单归一化为 `prompts/system.md` 文件表示，与 ZIP 解析结果同构。

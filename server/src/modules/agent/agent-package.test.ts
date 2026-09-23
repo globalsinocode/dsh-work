@@ -36,7 +36,7 @@ interface ManifestOverrides {
 
 function agentYaml(overrides: ManifestOverrides = {}) {
   return [
-    `apiVersion: ${overrides.apiVersion ?? 'dsh-work.ai/v1'}`,
+    `apiVersion: ${overrides.apiVersion ?? 'dsh-work.ai/v2'}`,
     `kind: ${overrides.kind ?? 'AgentPackage'}`,
     'metadata:',
     `  id: ${overrides.id ?? 'zip-agent'}`,
@@ -45,7 +45,7 @@ function agentYaml(overrides: ManifestOverrides = {}) {
     `  description: ${overrides.description ?? '基于历史退款记录预测高风险订单。'}`,
     ...(overrides.metadataLines ?? []),
     'spec:',
-    `  instructions: ${overrides.instructions ?? 'prompts/system.md'}`,
+    `  instructions: ${overrides.instructions ?? 'SOUL.md'}`,
     ...(overrides.specLines ?? []),
     ...(overrides.topLines ?? []),
     '',
@@ -73,7 +73,7 @@ function buildZip(entries: Record<string, string>, options: { checksums?: boolea
 function basePackage(overrides: ManifestOverrides = {}, entries: Record<string, string> = {}) {
   return buildZip({
     'agent.yaml': agentYaml(overrides),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     ...entries,
   })
 }
@@ -96,7 +96,7 @@ test('Schema 文档与代码常量保持同步', () => {
 })
 
 test('仓库中的通用参考 Agent 包符合当前严格契约', () => {
-  const paths = ['agent.yaml', 'prompts/system.md', 'evals/cases.yaml', 'checksums.json']
+  const paths = ['agent.yaml', 'SOUL.md', 'evals/cases.yaml', 'checksums.json']
   const files = Object.fromEntries(paths.map(path => [path, readFileSync(resolve(referencePackageDirectory, path))]))
   const parsed = parseAgentPackage(zipSync(files, { level: 0 }))
 
@@ -126,10 +126,10 @@ test('仓库中的通用参考 Agent 包符合当前严格契约', () => {
 test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆盖时无警告', () => {
   const parsed = parseAgentPackage(basePackage())
   const { spec } = parsed
-  assert.equal(spec.apiVersion, 'dsh-work.ai/v1')
+  assert.equal(spec.apiVersion, 'dsh-work.ai/v2')
   assert.equal(spec.metadata.id, 'zip-agent')
   assert.equal(spec.metadata.version, '0.1.0')
-  assert.deepEqual(spec.instructions, { path: 'prompts/system.md', body: PROMPT })
+  assert.deepEqual(spec.instructions, { path: 'SOUL.md', body: PROMPT })
   assert.deepEqual(spec.input, { type: 'text' })
   assert.deepEqual(spec.output, { type: 'text' })
   assert.deepEqual(spec.context, { conversationHistory: 'recent' })
@@ -172,7 +172,7 @@ test('嵌套顶层目录与完整 spec 字段解析', () => {
         '    requirements: [long-context]',
       ],
     }),
-    'pkg/prompts/system.md': PROMPT,
+    'pkg/SOUL.md': PROMPT,
     'pkg/evals/cases.yaml': CASES,
   }, { rootDir: 'pkg/' }))
   const { spec } = parsed
@@ -195,7 +195,7 @@ test('limits 部分声明时其余字段按平台默认值展开', () => {
 })
 
 test('不支持的 apiVersion 与 kind 明确拒绝', () => {
-  assert.throws(() => parseAgentPackage(basePackage({ apiVersion: 'dsh-work.ai/v2' })), /apiVersion 必须为 "dsh-work\.ai\/v1"/)
+  assert.throws(() => parseAgentPackage(basePackage({ apiVersion: 'dsh-work.ai/v1' })), /apiVersion 必须为 "dsh-work\.ai\/v2"/)
   assert.throws(() => parseAgentPackage(basePackage({ kind: 'Agent' })), /kind 必须为 "AgentPackage"/)
   assert.throws(() => parseAgentPackage(basePackage({ apiVersion: 'dsh-work/v1' })), /apiVersion 必须为/)
 })
@@ -212,23 +212,23 @@ test('旧扁平清单按格式错误明确拒绝，不做双格式解析', () =>
     '',
   ].join('\n')
   assert.throws(
-    () => parseAgentPackage(buildZip({ 'agent.yaml': legacy, 'prompts/system.md': PROMPT })),
+    () => parseAgentPackage(buildZip({ 'agent.yaml': legacy, 'SOUL.md': PROMPT })),
     /旧扁平清单字段.*apiVersion.*metadata\/spec/,
   )
   // 只有 spec 没有 apiVersion/kind 同样按旧格式提示拒绝。
   assert.throws(
-    () => parseAgentPackage(buildZip({ 'agent.yaml': 'spec:\n  instructions: prompts/system.md\n', 'prompts/system.md': PROMPT })),
+    () => parseAgentPackage(buildZip({ 'agent.yaml': 'spec:\n  instructions: SOUL.md\n', 'SOUL.md': PROMPT })),
     /旧扁平清单字段|结构校验未通过/,
   )
 })
 
 for (const [label, yaml, pattern] of [
-  ['顶层未知字段', 'apiVersion: dsh-work.ai/v1\nkind: AgentPackage\nauthor: ops-team\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\nspec:\n  instructions: prompts/system.md\n', /agent\.yaml 包含未定义字段 author/],
+  ['顶层未知字段', 'apiVersion: dsh-work.ai/v2\nkind: AgentPackage\nauthor: ops-team\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\nspec:\n  instructions: SOUL.md\n', /agent\.yaml 包含未定义字段 author/],
   ['metadata 未知字段', null, /metadata 包含未定义字段 display_name/],
   ['spec 未知字段', null, /spec 包含未定义字段 system_prompt/],
-  ['缺少 metadata', 'apiVersion: dsh-work.ai/v1\nkind: AgentPackage\nspec:\n  instructions: prompts/system.md\n', /缺少必填字段 metadata/],
-  ['缺少 spec', 'apiVersion: dsh-work.ai/v1\nkind: AgentPackage\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\n', /缺少必填字段 spec/],
-  ['缺少 spec.instructions', 'apiVersion: dsh-work.ai/v1\nkind: AgentPackage\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\nspec:\n  input:\n    type: text\n', /spec 缺少必填字段 instructions/],
+  ['缺少 metadata', 'apiVersion: dsh-work.ai/v2\nkind: AgentPackage\nspec:\n  instructions: SOUL.md\n', /缺少必填字段 metadata/],
+  ['缺少 spec', 'apiVersion: dsh-work.ai/v2\nkind: AgentPackage\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\n', /缺少必填字段 spec/],
+  ['缺少 spec.instructions', 'apiVersion: dsh-work.ai/v2\nkind: AgentPackage\nmetadata:\n  id: zip-agent\n  name: 退款预测助手\n  version: 0.1.0\n  description: 基于历史退款记录预测高风险订单。\nspec:\n  input:\n    type: text\n', /spec 缺少必填字段 instructions/],
 ] as const) {
   test(`严格结构校验拒绝：${label}`, () => {
     const document = label === 'metadata 未知字段'
@@ -237,7 +237,7 @@ for (const [label, yaml, pattern] of [
         ? agentYaml({ specLines: [`  system_prompt: ${PROMPT}`] })
         : yaml
     assert.throws(
-      () => parseAgentPackage(buildZip({ 'agent.yaml': document!, 'prompts/system.md': PROMPT })),
+      () => parseAgentPackage(buildZip({ 'agent.yaml': document!, 'SOUL.md': PROMPT })),
       pattern,
     )
   })
@@ -245,7 +245,7 @@ for (const [label, yaml, pattern] of [
 
 test('YAML 重复键拒绝', () => {
   const yaml = [
-    'apiVersion: dsh-work.ai/v1',
+    'apiVersion: dsh-work.ai/v2',
     'kind: AgentPackage',
     'metadata:',
     '  id: zip-agent',
@@ -254,18 +254,18 @@ test('YAML 重复键拒绝', () => {
     '  version: 0.1.0',
     '  description: 基于历史退款记录预测高风险订单。',
     'spec:',
-    '  instructions: prompts/system.md',
+    '  instructions: SOUL.md',
     '',
   ].join('\n')
   assert.throws(
-    () => parseAgentPackage(buildZip({ 'agent.yaml': yaml, 'prompts/system.md': PROMPT })),
+    () => parseAgentPackage(buildZip({ 'agent.yaml': yaml, 'SOUL.md': PROMPT })),
     /不是有效的 YAML/,
   )
 })
 
 test('YAML 锚点/别名在对象化阶段被捕获并映射为包校验错误', () => {
   const yaml = [
-    'apiVersion: dsh-work.ai/v1',
+    'apiVersion: dsh-work.ai/v2',
     'kind: AgentPackage',
     'metadata:',
     '  id: zip-agent',
@@ -273,12 +273,12 @@ test('YAML 锚点/别名在对象化阶段被捕获并映射为包校验错误',
     '  version: 0.1.0',
     '  description: *anchor',
     'spec:',
-    '  instructions: prompts/system.md',
+    '  instructions: SOUL.md',
     '',
   ].join('\n')
   let error: unknown
   try {
-    parseAgentPackage(buildZip({ 'agent.yaml': yaml, 'prompts/system.md': PROMPT }))
+    parseAgentPackage(buildZip({ 'agent.yaml': yaml, 'SOUL.md': PROMPT }))
   } catch (cause) {
     error = cause
   }
@@ -291,32 +291,40 @@ test('YAML 锚点/别名在对象化阶段被捕获并映射为包校验错误',
 for (const [instructions, label] of [
   ['../secrets/system.md', '路径遍历'],
   ['/abs/system.md', '绝对路径'],
-  ['system.md', '非 prompts/ 目录'],
+  ['system.md', '非 SOUL.md 文件'],
+  ['prompts/system.md', '旧指令路径'],
   ['prompts/system.txt', '非 .md 文件'],
   ['prompts/sub dir/system.md', '含空格路径'],
 ] as const) {
   test(`spec.instructions 拒绝非法文件引用：${label}`, () => {
-    assert.throws(() => parseAgentPackage(basePackage({ instructions })), /instructions.*pattern|结构校验未通过/)
+    assert.throws(() => parseAgentPackage(basePackage({ instructions })), /instructions.*SOUL\.md|结构校验未通过/)
   })
 }
+
+test('SOUL.md 为唯一指令来源，不能同时携带旧 prompts 目录', () => {
+  assert.throws(
+    () => parseAgentPackage(basePackage({}, { 'prompts/system.md': PROMPT })),
+    /不能同时包含旧 prompts\/ 指令目录/,
+  )
+})
 
 test('spec.instructions 必须是文件路径字符串，内联指令对象拒绝', () => {
   const yaml = agentYaml({ instructions: '' }) + ''
   const inline = yaml.replace('  instructions: \n', '  instructions:\n    body: 内联指令内容不得出现在包清单中\n')
   assert.throws(
-    () => parseAgentPackage(buildZip({ 'agent.yaml': inline, 'prompts/system.md': PROMPT })),
+    () => parseAgentPackage(buildZip({ 'agent.yaml': inline, 'SOUL.md': PROMPT })),
     /结构校验未通过/,
   )
 })
 
 test('spec.instructions 指定文件不存在或正文过短拒绝', () => {
   assert.throws(
-    () => parseAgentPackage(basePackage({ instructions: 'prompts/missing.md' })),
-    /spec\.instructions 指定的 prompts\/missing\.md 不存在/,
+    () => parseAgentPackage(buildZip({ 'agent.yaml': agentYaml() })),
+    /spec\.instructions 指定的 SOUL\.md 不存在/,
   )
   assert.throws(
-    () => parseAgentPackage(buildZip({ 'agent.yaml': agentYaml(), 'prompts/system.md': '太短' })),
-    /System Prompt 长度必须为 20～20000 个字符/,
+    () => parseAgentPackage(buildZip({ 'agent.yaml': agentYaml(), 'SOUL.md': '太短' })),
+    /SOUL\.md 正文长度必须为 20～20000 个字符/,
   )
 })
 
@@ -532,20 +540,20 @@ test('评测套件要求版本、机器断言与人工 rubric，拒绝旧数组�
 test('checksums 仅证明文件完整性：缺失警告、覆盖不全与摘要不一致拒绝', () => {
   const noChecksums = parseAgentPackage(basePackage({}, {}))
   assert.equal(noChecksums.checksumsVerified, true)
-  const withoutChecksums = parseAgentPackage(buildZip({ 'agent.yaml': agentYaml(), 'prompts/system.md': PROMPT }, { checksums: false }))
+  const withoutChecksums = parseAgentPackage(buildZip({ 'agent.yaml': agentYaml(), 'SOUL.md': PROMPT }, { checksums: false }))
   assert.equal(withoutChecksums.checksumsVerified, false)
   assert.ok(withoutChecksums.warnings.some(item => /未做文件摘要校验/.test(item)))
 
   const tampered = buildZip({
     'agent.yaml': agentYaml(),
-    'prompts/system.md': PROMPT,
-    'checksums.json': JSON.stringify({ files: { 'agent.yaml': '0'.repeat(64), 'prompts/system.md': createHash('sha256').update(PROMPT).digest('hex') } }),
+    'SOUL.md': PROMPT,
+    'checksums.json': JSON.stringify({ files: { 'agent.yaml': '0'.repeat(64), 'SOUL.md': createHash('sha256').update(PROMPT).digest('hex') } }),
   })
   assert.throws(() => parseAgentPackage(tampered), /摘要与 checksums\.json 不一致/)
 
   const uncovered = buildZip({
     'agent.yaml': agentYaml(),
-    'prompts/system.md': PROMPT,
+    'SOUL.md': PROMPT,
     'checksums.json': JSON.stringify({ files: { 'agent.yaml': createHash('sha256').update(agentYaml()).digest('hex') } }),
   })
   assert.throws(() => parseAgentPackage(uncovered), /未覆盖全部文件/)

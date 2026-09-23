@@ -47,7 +47,7 @@ const inspection: ZipInspection = {
     version: importedAgent.version,
     description: importedAgent.description,
   },
-  files: ['agent.yaml', 'prompts/system.md'],
+  files: ['agent.yaml', 'SOUL.md'],
   systemPrompt: importedAgent.systemPrompt,
   resolved: { skills: [], tools: [] },
   missing: { skills: [], tools: ['refund.lookup@1.0.0'] },
@@ -158,5 +158,39 @@ describe('AgentDraftDialog import completion', () => {
 
     expect(update).toHaveBeenCalledOnce()
     expect(update.mock.calls[0]?.[0].delegationPolicy).toEqual(editable.delegationPolicy)
+  })
+
+  it('allows a Soul-only Agent draft without Skill or tool references', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const contentStore = useContentStore()
+    const editable = { ...importedAgent, skills: [], tools: [] }
+    const update = vi.spyOn(contentStore, 'updateAgentDraft').mockResolvedValue(editable)
+    const wrapper = mount(AgentDraftDialog, {
+      props: { modelValue: false, agent: editable },
+      global: {
+        plugins: [pinia, ElementPlus],
+        stubs: {
+          teleport: true,
+          AgentZipImportPanel: ZipImportStub,
+          ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+          ElOption: true,
+        },
+      },
+    })
+    wrappers.push(wrapper)
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(wrapper.text()).toContain('SOUL.md（人格与工作原则）')
+    const next = () => wrapper.findAll('button').find(button => button.text() === '下一步')!
+    await next().trigger('click')
+    await flushPromises()
+    await next().trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
+    await flushPromises()
+    expect(update).toHaveBeenCalledOnce()
+    expect(update.mock.calls[0]?.[0].skills).toEqual([])
+    expect(update.mock.calls[0]?.[0].tools).toEqual([])
   })
 })

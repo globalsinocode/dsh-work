@@ -930,7 +930,6 @@ function assertConfiguration(input: AgentDraftConfiguration) {
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
   if (!input.roleIds.length || !input.dataScopes.length) throw new Error('必须配置可见角色和数据范围')
   if (!input.examplePrompts.length) throw new Error('必须配置至少一个示例问题')
-  if (!input.skills.length || !input.tools.length) throw new Error('必须配置至少一个 Skill 和工具')
   assertDelegationPolicy(normalizeDelegationPolicy(input.delegationPolicy))
 }
 

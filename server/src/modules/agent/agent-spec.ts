@@ -10,7 +10,7 @@
  *     后续调整不影响已生成版本的定义。
  */
 
-export const AGENT_SPEC_API_VERSION = 'dsh-work.ai/v1'
+export const AGENT_SPEC_API_VERSION = 'dsh-work.ai/v2'
 
 /** AgentSpec 的版本化格式标识；包清单 kind 为 AgentPackage（交付物），此处为归一化定义。 */
 export interface AgentSpecLimits {
@@ -22,7 +22,7 @@ export interface AgentSpecLimits {
 export interface AgentSpec {
   apiVersion: typeof AGENT_SPEC_API_VERSION
   metadata: { id: string; name: string; version: string; description: string }
-  /** 指令唯一来源：包内文件路径 + 正文；配置入口的文本归一化为 prompts/system.md 表示。 */
+  /** 指令唯一来源：包根目录 SOUL.md + 正文；配置与 ZIP 共用该路径。 */
   instructions: { path: string; body: string }
   /** 能力依赖：规范化 `id@x.y.z` 精确引用（含包内候选），不做版本解析或 latest 语义。 */
   capabilities: { skills: string[]; tools: string[] }
@@ -60,10 +60,13 @@ export const AGENT_SPEC_BOUNDS = {
   maxOutputBytes: { min: 1024, max: 1048576 },
 } as const
 
-export const AGENT_SPEC_INSTRUCTIONS_PATH = 'prompts/system.md'
+export const AGENT_SPEC_INSTRUCTIONS_PATH = 'SOUL.md'
 
 /** 规范化定义的公共内容校验：Schema 未覆盖的正文长度与配置入口共用此关口。 */
 export function assertAgentSpecContent(spec: AgentSpec) {
+  if (spec.instructions.path !== AGENT_SPEC_INSTRUCTIONS_PATH) {
+    throw new Error(`Agent 指令必须使用包根目录 ${AGENT_SPEC_INSTRUCTIONS_PATH}`)
+  }
   const { name, description } = spec.metadata
   const bounds = AGENT_SPEC_BOUNDS
   if (name.length < bounds.name.min || name.length > bounds.name.max) {
@@ -74,7 +77,7 @@ export function assertAgentSpecContent(spec: AgentSpec) {
   }
   const body = spec.instructions.body
   if (body.length < bounds.instructions.min || body.length > bounds.instructions.max) {
-    throw new Error('System Prompt 长度必须为 20～20000 个字符')
+    throw new Error('SOUL.md 正文长度必须为 20～20000 个字符')
   }
   if (spec.catalog.welcomeMessage.length > bounds.welcomeMessage.max) {
     throw new Error('欢迎语不能超过 120 个字符')
@@ -111,12 +114,12 @@ export interface AgentSpecConfiguration {
   maxOutputBytes: number
 }
 
-/** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义及指令文件路径。 */
+/** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义，统一生成 SOUL.md。 */
 export function agentSpecFromConfiguration(input: AgentSpecConfiguration, version: string, existing?: AgentSpec | null): AgentSpec {
   return {
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: { id: input.id, name: input.name, version, description: input.description },
-    instructions: { path: existing?.instructions.path ?? AGENT_SPEC_INSTRUCTIONS_PATH, body: input.systemPrompt },
+    instructions: { path: AGENT_SPEC_INSTRUCTIONS_PATH, body: input.systemPrompt },
     capabilities: { skills: [...input.skills], tools: [...input.tools] },
     input: existing ? { ...existing.input } : { type: 'text' },
     output: existing ? { ...existing.output } : { type: 'text' },

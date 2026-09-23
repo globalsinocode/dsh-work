@@ -1,7 +1,7 @@
 import Ajv2020Module from 'ajv/dist/2020.js'
 import type { ErrorObject } from 'ajv'
 
-import { AGENT_MODEL_REQUIREMENTS, AGENT_SPEC_API_VERSION, AGENT_SPEC_BOUNDS } from './agent-spec.ts'
+import { AGENT_MODEL_REQUIREMENTS, AGENT_SPEC_API_VERSION, AGENT_SPEC_BOUNDS, AGENT_SPEC_INSTRUCTIONS_PATH } from './agent-spec.ts'
 
 // ajv is a CommonJS package: under NodeNext the default import types as the
 // module namespace; unwrap `.default` for the construct signature.
@@ -46,7 +46,7 @@ export const AGENT_PACKAGE_SCHEMA = {
       additionalProperties: false,
       required: ['instructions'],
       properties: {
-        instructions: { type: 'string', pattern: `^prompts/[A-Za-z0-9._-]+\\.md$` },
+        instructions: { const: AGENT_SPEC_INSTRUCTIONS_PATH },
         capabilities: {
           type: 'object',
           additionalProperties: false,

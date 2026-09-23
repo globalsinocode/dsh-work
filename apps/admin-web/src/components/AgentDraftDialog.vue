@@ -52,11 +52,9 @@ const rules: FormRules = {
     { min: 10, max: 200, message: '说明长度为 10～200 个字符', trigger: 'blur' },
   ],
   systemPrompt: [
-    { required: true, message: '请输入 System Prompt', trigger: 'blur' },
-    { min: 20, message: 'System Prompt 至少需要 20 个字符', trigger: 'blur' },
+    { required: true, message: '请输入 SOUL.md 内容', trigger: 'blur' },
+    { min: 20, message: 'SOUL.md 内容至少需要 20 个字符', trigger: 'blur' },
   ],
-  skills: [{ type: 'array', required: true, min: 1, message: '请至少引用一个已发布 Skill', trigger: 'change' }],
-  tools: [{ type: 'array', required: true, min: 1, message: '请至少选择一个可用工具', trigger: 'change' }],
   roleIds: [{ type: 'array', required: true, min: 1, message: '请至少选择一个可见角色', trigger: 'change' }],
   dataScopes: [{ type: 'array', required: true, min: 1, message: '请至少配置一个业务数据范围', trigger: 'change' }],
 }
@@ -103,7 +101,7 @@ const savedMissingCount = computed(() => {
 
 const stepFields: string[][] = [
   ['name', 'description'],
-  ['systemPrompt', 'skills', 'tools', 'roleIds', 'dataScopes'],
+  ['systemPrompt', 'roleIds', 'dataScopes'],
 ]
 
 watch(dialogOpen, (open) => {
@@ -225,7 +223,7 @@ async function saveAgent() {
 
 function findFirstInvalidStep() {
   if (!form.name || !form.description) return 0
-  if (!form.systemPrompt || !form.skills.length || !form.tools.length || !form.roleIds.length || !form.dataScopes.length) return 1
+  if (!form.systemPrompt || !form.roleIds.length || !form.dataScopes.length) return 1
   return -1
 }
 
@@ -370,7 +368,7 @@ function toVersionedToolReference(reference: string) {
       <div v-if="props.agent || creationMode === 'config'" class="agent-editor__steps">
       <el-steps :active="activeStep" finish-status="success" align-center>
         <el-step title="定义 Agent" description="名称、说明和欢迎语" />
-        <el-step title="配置能力和权限" description="Prompt、Skill、工具和权限" />
+        <el-step title="配置能力和权限" description="Soul、可选能力和权限" />
         <el-step :title="props.agent ? '确认并保存' : '确认并创建'" description="确认员工端展示和配置摘要" />
       </el-steps>
       </div>
@@ -403,23 +401,23 @@ function toVersionedToolReference(reference: string) {
           <div><h3>配置能力和权限</h3><p>定义 Agent 如何工作，以及哪些员工可以在什么数据范围内使用。</p></div>
           <span class="step-badge">2 / 3</span>
         </header>
-        <div class="configuration-section-heading"><strong>能力配置</strong><span>组合 System Prompt、Skill 和工具</span></div>
-        <el-form-item label="System Prompt" prop="systemPrompt">
-          <el-input v-model="form.systemPrompt" type="textarea" :rows="6" maxlength="2000" show-word-limit placeholder="定义 Agent 的角色、目标、执行边界、输出要求和禁止事项" />
-          <p class="field-help">不得包含凭证或密钥；发布后随 Agent 版本锁定。</p>
+        <div class="configuration-section-heading"><strong>能力配置</strong><span>定义 Soul，按需引用 Skill 和工具</span></div>
+        <el-form-item label="SOUL.md（人格与工作原则）" prop="systemPrompt">
+          <el-input v-model="form.systemPrompt" type="textarea" :rows="6" maxlength="20000" show-word-limit placeholder="定义 Agent 的稳定职责、工作原则、沟通风格、禁止事项和转人工条件" />
+          <p class="field-help">包内统一保存为根目录 SOUL.md；不得包含凭证或密钥，发布后随 Agent 版本锁定。</p>
         </el-form-item>
         <div class="form-grid form-grid--two">
-          <el-form-item label="引用 Skill" prop="skills">
+          <el-form-item label="引用 Skill（选填）" prop="skills">
             <el-select v-model="form.skills" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择已发布 Skill">
               <el-option v-for="skill in publishedSkills" :key="skill.id" :label="`${skill.name} · v${skill.activeVersion}`" :value="`${skill.id}@${skill.activeVersion}`" />
             </el-select>
-            <p class="field-help">仅允许引用已发布版本，运行时锁定具体版本。</p>
+            <p class="field-help">仅允许引用已发布版本，运行时锁定具体版本；无需 Skill 时可留空。</p>
           </el-form-item>
-          <el-form-item label="工具允许列表" prop="tools">
+          <el-form-item label="工具允许列表（选填）" prop="tools">
             <el-select v-model="form.tools" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择 Agent 可调用的工具">
               <el-option v-for="tool in usableTools" :key="tool.id" :label="`${tool.name} · v${tool.version ?? '1.0.0'} · ${tool.system}`" :value="`${tool.id}@${tool.version ?? '1.0.0'}`" />
             </el-select>
-            <p class="field-help">这里只声明允许列表，实际调用仍需通过员工和数据权限检查。</p>
+            <p class="field-help">无需工具时可留空；实际调用仍需通过员工和数据权限检查。</p>
           </el-form-item>
         </div>
         <div class="selection-overview">

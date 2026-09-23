@@ -1,4 +1,4 @@
-apiVersion: dsh-work.ai/v1
+apiVersion: dsh-work.ai/v2
 kind: AgentPackage
 metadata:
   id: reference-text-agent
@@ -6,7 +6,7 @@ metadata:
   version: 0.1.0
   description: 将用户直接提供的文本整理为可核对的摘要、要点和待确认信息。
 spec:
-  instructions: prompts/system.md
+  instructions: SOUL.md
   input:
     type: text
   output:

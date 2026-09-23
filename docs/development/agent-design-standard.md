@@ -1,7 +1,7 @@
 # Agent 设计规范
 
 **状态：** Agent 设计与评审的统一规范入口；现行约束、待实施要求和可选扩展分别标注。本文不声明所有要求均已实现。<br>
-**更新日期：** 2026-09-21<br>
+**更新日期：** 2026-09-23<br>
 **适用范围：** 员工 Agent、管理助手、发布试运行及自动任务中的 Agent 执行，不绑定具体业务场景。<br>
 **实现核对：** [Agent 规范与当前实现差异清单](agent-design-gap-analysis.md)。
 
@@ -10,6 +10,8 @@
 dsh-work Agent 是一种可发布、可复用的受控智能执行定义：声明职责与指令、模型能力要求、能力依赖、上下文规则、输入输出契约和执行边界，由平台通过统一 Runtime 实例化，在任务与环境反馈下选择和执行获准动作。
 
 Agent 定义与执行进程分离；声明不授予权限；使用业务状态不意味着自行实现存储、调度或身份系统。确定性计算、事务和数据服务可由受控程序执行，业务规则放在扩展或领域服务中。
+
+**产品定位与待实施目标：** Agent 是有稳定身份、职责和人格的独立 AI 员工，不代表某一位员工。人格、记忆、能力、工作数据和主动触发按第 3 节统一设计，但分别治理；Skill、Tool、记忆和主动任务不因创建 Agent 而全部成为必填。现有以人类用户为中心的执行身份与配置入口尚不等于该目标身份模型。
 
 本文中的要求分为：
 
@@ -49,7 +51,91 @@ Agent 定义与执行进程分离；声明不授予权限；使用业务状态�
 - 模型路由由平台管理，当前沿用默认路由；Agent 可声明 `model.requirements`，准备阶段须同时通过模型目录和实际 Runtime 的能力校验，不允许包携带 Provider 凭据或自建模型调用路径。当前 DSH 固定 Profile 尚不能保证 `long-context` 或 `structured-output`，声明这些要求的任务明确拒绝执行；空要求的文本 Agent 继续使用现有链路。
 - 当前 Run 和 Manifest 依赖 Session；自动任务每次创建独立 Session。无 Session 的事件/API 执行是可选演进，必须先改契约及消费者，不能删除当前必填字段或伪造员工身份。
 
-## 3. 十二条设计规范
+## 3. AI 员工统一目标架构
+
+**状态：目标架构，AE-01 已达到代码级。** 本节是已确认的目标设计；除下文明确标注的 AE-01 范围外，不表示现有 API、Schema、数据库、管理端或 Runtime 已支持。目标字段和示例路径不得直接当作当前契约使用。每项能力落地时按第 4 节相应 AS 条款、[生命周期模板](agent-lifecycle-template.md)和[差异清单](agent-design-gap-analysis.md)同步更新生产者、消费者与验收。
+
+AI 员工是稳定的 Agent 身份，拥有经发布的职责与人格、获准能力、独立授权、可治理的长期经验、可管理的工作数据和主动任务规则。它可以被员工请求协作，也可以在批准范围内由时间或事件唤醒。一次唤醒创建 Task/Run/Attempt，不是启动常驻模型进程；模型执行仍唯一经过 Run/Attempt → Runtime Adapter → DSH。
+
+```text
+AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
+        + 已批准 Skill/Tool 与当前 MCP 能力 + 工作数据集 + 主动任务规则
+一次工作 = 触发来源 + 发起人/执行主体 + 固定 Agent Version
+        + 当前授权 + Task/Run/Attempt + 可核验结果
+```
+
+这些对象的权威存储与生命周期必须分开。独立身份不等于无人负责：管理负责人、发布审核人和停用责任人负责治理，不成为 Agent 的执行身份；发布、记忆审核、数据 Schema 发布和主动任务启用分别留痕。
+
+| 对象 | 目标语义 | 当前差异 |
+| --- | --- | --- |
+| Agent 身份 | `agents` 保留稳定目录身份；增加独立的 `agent` Principal、状态和授权，负责人另记为治理关系 | 当前 `users`、`user_roles`、Task `requested_by` 和执行授权主要围绕人类用户；不能用负责人 ID 充作 Agent 身份 |
+| Soul | Agent 定义版本根目录的唯一可信指令文件 `SOUL.md`；结构化标识、目标、边界和评测仍由 AgentSpec/发布记录管理 | AE-01 已把包 Schema、解析器及配置入口切换至根目录 `SOUL.md`（代码级）；独立身份与后续治理仍待实施 |
+| Memory | Agent 稳定身份下的受控记忆条目和不可变版本，按来源、同意、作用域、保留期及当前 ACL 检索；`memory.md` 只是只读视图 | PF-05 当前仅接受员工从本人成功 Attempt 主动提交，按精确 Agent Version 使用；无 Agent 自主候选或跨版本连续继承 |
+| Skill 与内置 Tool | Agent Version 固定所需的精确依赖，按当前状态和权限复核；没有需求时允许空集合 | AE-01 已使配置创建和 ZIP 均允许空集合（代码级）；业务能力仍须按需显式声明 |
+| MCP Tool | 保留 Connector 整体发现、租户内全部 Agent 默认可见及每 Attempt 能力摘要复核；调用归因到 Agent Principal、Task 和 Attempt | 当前共享 Connector 凭据不能证明上游区分各 Agent 身份 |
+| 工作数据 | 数据集定义、记录当前指针及不可变记录版本；写入绑定 Agent Principal、Workspace、Task/Run/Attempt、来源和 Schema 版本 | 当前 `task-result/v1` 只有文本、Artifact 与工具回执，无通用结构化业务记录或记录引用 |
+| 主动任务 | Agent 拥有的版本化 routine，受触发条件、Workspace、身份、授权上限和预算约束 | 当前 `agent_automations` 由员工本人拥有，不能当作 AI 员工心跳 |
+
+### 3.1 独立身份与授权
+
+目标 Principal 类型统一为 `human`、`agent`、`system`。人类仍经 OIDC 登录；Agent Principal 由平台创建并绑定稳定 Agent ID，不借用真人会话、员工 OIDC Token、默认员工角色或管理负责人 Cookie。外部系统接受工作负载身份时可签发或交换短期凭据；只接受共享服务凭据时，平台仍记录真实 Agent 调用者，并明确上游无法区分各 Agent 的限制。
+
+Task 分别记录 `initiated_by`、`executed_as`、`approved_by`（可空）和治理负责人引用。员工请求由 `human` 发起、`agent` 执行；定时/事件任务可由 `system` 发起、Agent 执行。高风险动作仍由有权的人类批准。当前人类外键、Run Manifest、审计及结果读取须作为一个契约变更同步处理，不能将 `agent_id` 偷写入 `user_id` 或静默混用两类身份。
+
+Agent Principal 的角色与数据授权独立、可撤销，并满足 Workspace 当前准入。员工交互请求的输入与结果披露还受发起人当前授权上限约束，防止借 Agent 越权读取；这不改变 Agent 的执行身份。主动任务只使用 Agent 当前授权与启用时批准上限的交集。停用、收权或授权服务不可用时拒绝新动作；历史快照不能恢复已撤销权限，读写和结果访问均须复核。现行 MCP“对全部 Agent 默认开放”只表示可装载 Connector，不替代目标系统数据授权；需要上游独立身份时另设计可核验的工作负载凭据，不默认增加逐 Agent MCP Grant。
+
+### 3.2 Soul、Memory 与目录
+
+每个 Agent 定义版本的唯一人格与指令文件采用包根目录 `SOUL.md`，只写稳定职责、工作原则、沟通风格、禁止事项和转人工条件。名称、所属部门、发布版本、依赖、权限、预算、调度和凭据仍属于结构化契约或平台绑定。改变 Soul 要创建新定义版本并重新评测，不能运行时自动改写。AE-01 已使 `agent.yaml` 的 `spec.instructions` 唯一指向根目录 `SOUL.md`，配置创建与 ZIP 导入归一化为同一个 AgentSpec；原 `prompts/*.md` 路径在新包中拒绝。该代码级变更不代表独立 Agent Principal、Agent-owned Memory 或主动任务已实现。
+
+目标记忆包含 Agent 自身经验、Workspace 共享经验和经个人明确同意的偏好。每条记录保留来源、提出者、批准人、范围、保留期、版本和撤回状态。Agent 只能在正常 DSH Run 后提出经验候选，不能自行修改文件发布长期指令；发布仍受相应审核策略约束。新 Attempt 按稳定 Agent 身份与当前授权选择记忆版本，将实际引用固定进 Manifest；跨 Agent Version 的继承须复核范围，不改写已完成 Attempt。私人记忆不得进入团队输出，Memory 不可覆盖 Soul、权限、工具策略或权威业务事实。对具体 Agent，记忆仍是按需使用的能力。
+
+每个 Agent 可拥有按稳定 `agent_id` 命名的逻辑目录，方便导入、导出、审阅和定位版本；目录不是身份、授权、记忆和业务数据的唯一存储：
+
+```text
+agents/<agent-id>/
+  versions/<agent-version-id>/
+    agent.yaml
+    SOUL.md
+    evals/cases.yaml
+    checksums.json
+  exports/memory.md                 # 可选，只读的已批准记忆导出
+
+attempts/<attempt-id>/
+  memory.md                         # 本次身份、Workspace 和权限过滤后的临时视图
+```
+
+已发布 `agent_versions.agent_spec` 是运行权威，包文件用于导入、审阅和内容核对；摘要不一致则拒绝使用，不能分别更新。记忆权威是数据库条目、版本、来源和 ACL；`memory.md` 仅为管理员可读导出或本次 Attempt 的有界只读投影，不汇总所有私人、团队及组织记忆，也不存业务台账、文件原文或检查点。工作记录属于第 3.3 节数据集。生产存储经受控包/成果端口访问，不依赖单机绝对路径；Agent 公共目录不得存 Token、Cookie、模型凭据或员工私人记忆。
+
+### 3.3 通用结构化工作数据
+
+目标 Agent Data 能力采用先发布 Schema、再受控读写的模型，仅承载工作记录、分析结果、提案和跟进状态。外部 ERP 等仍保有权威主数据；通用 JSONB 记录不能接管外部系统事务。
+
+| 对象 | 最小字段与约束 |
+| --- | --- |
+| `agent_data_collections` | `tenant_id`、稳定 key、负责 Agent、Workspace/可用范围、JSON Schema ID 与不可变版本、读写策略、保留期、可查询字段、状态 |
+| `agent_data_records` | `tenant_id`、collection、Workspace、稳定 `record_key`、当前版本指针、状态、创建主体和时间；`(tenant, collection, workspace, record_key)` 唯一 |
+| `agent_data_record_versions` | 不可变版本号、Schema 版本、校验后的 JSONB 内容及摘要、写入 Agent Principal、来源 Task/Run/Attempt、输入来源引用、审核/工具回执、创建时间 |
+
+管理员发布数据集 Schema 与授权；Agent Version 只声明需要的数据集与动作，不通过 Prompt 动态建表。Agent 经平台受控工具 `data.query`、`data.propose`、`data.update`、`data.transition` 操作；写入检查 Schema、大小、当前身份、Workspace、业务键及期望版本，并以 Task 操作键去重。查询仅开放获准的过滤、排序、分页字段，不给模型任意 SQL；常用字段建索引，大文件放 Artifact 并仅保留受权引用。
+
+模型生成的 JSON 首先是提案；Schema 合法不等于业务事实正确。确认为工作记录或触发外部写动作须满足数据集审核与回执策略。成功写入返回可核验 `recordVersionId`，供未来结果契约增加结构化交付引用；Run `succeeded` 不单独证明外部效果完成。复杂查询、强事务或已有权威系统对象由领域服务承接，仍使用相同 Agent Tool 与结果引用契约。
+
+### 3.4 Agent 主动任务与心跳
+
+Agent-owned routine 是经批准的工作规则，不是无限模型循环。规则固定 Agent Version 或明确升级策略、时间/事件触发、时区、Workspace、输入模板、身份与授权上限、预算、重叠策略及结果接收范围。调度器先做确定性资格和去重检查，需要工作时创建 Task，随后走现有 Run/Attempt → DSH。每次触发留下关联键、执行记录、跳过原因、结果和告警；Agent 停用立即阻止新触发。
+
+“巡检心跳”只是可选 routine 预设；由管理员批准启用，不随 Agent 创建自动运行。现有个人自动任务继续保持个人语义；目标复用其调度、预算与 Run 基础设施，但增加 Agent Principal 拥有的规则，不把 `owner_user_id` 偷换为 Agent ID。通知员工或团队须有明确接收人和信息披露策略。
+
+### 3.5 管理端与目标验收
+
+管理端按“身份与 Soul → 能力 → 数据集 → 记忆策略 → 主动任务 → 评测与发布 → 运行和审计”呈现 AI 员工。基础 Agent 仅要求身份、目标、Soul、负责人及最小授权；Skill、工具、记忆和主动任务按需启用。数据写入和主动任务各自经过治理，不因 Soul 发布自动授权。
+
+实施依赖顺序为：独立 Principal 与 Task/审计身份契约 → Agent Data Schema 与受控工具 → Agent-owned Memory 和 routine → 管理端、评测及 P1/P2 验收。每项须同步现有消费者和数据库约束；文档、Prototype 或合成 Runtime 测试均不能宣称目标能力上线。
+
+至少验证：Agent 身份与负责人不混淆；员工不能借 Agent 越权读取；停用或收权阻止主动任务；Soul 升级不改写已固定 Attempt；记忆撤回阻止新使用；无 Skill/Tool Agent 可发布；结构化记录经 Schema、并发和幂等校验并追溯真实 Attempt；未知外部回执不标记完成；共享 MCP 凭据不被误称为上游独立 Agent 身份。
+
+## 4. 十二条设计规范
 
 ### AS-01 身份、版本、绑定与执行分离
 
@@ -176,7 +262,7 @@ DSH 不可用必须明确失败或拒绝受理，不自动降级到直连模型�
 
 **验收：** 测试报告标明代码版本、数据/身份/Runtime、验证层级及结果；P0 原型、P1 隔离集成、P2 真实验收不互相替代；生产不得用测试替身作成功回退。
 
-## 4. 评审与分阶段应用
+## 5. 评审与分阶段应用
 
 | 门槛 | 必须检查 | 不随本规范自动增加的范围 |
 | --- | --- | --- |

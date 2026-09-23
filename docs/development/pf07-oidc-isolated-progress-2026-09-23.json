@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "pf07-oidc-isolated-progress/v1",
+  "capturedAt": "2026-09-23T02:37:06.360Z",
+  "codeRevision": "fd045d256bfe7e444f6cd4e16e340fc87b4ed4b1",
+  "dshVersion": "0.1.2-rc.1",
+  "dshCommit": "76fda729799fe9b3848dbe2c211d4b231032b81e",
+  "environment": {
+    "kind": "local-disposable-postgres",
+    "databaseName": "dsh_work_pf07_oidc_f1eb4318f7bf4215b9ef343eeed7abee",
+    "frontend": [
+      "localhost:4174",
+      "localhost:4180"
+    ],
+    "api": "localhost:4190"
+  },
+  "run": {
+    "id": "run-f9fca5d7-d9ee-442f-acc7-6546f77d7245",
+    "status": "succeeded",
+    "createdAt": "2026-09-23T02:06:22.516Z",
+    "hasConversationSession": true,
+    "oidcSessionRecordedForRequester": true
+  },
+  "attempts": [
+    {
+      "id": "attempt-5535915a-c62b-405d-9861-a5886261338a",
+      "status": "succeeded",
+      "createdAt": "2026-09-23T02:06:22.625Z",
+      "mcpConnectorIds": [
+        "connector-mcp-c66c1872-99f1-481b-8bc5-36fd081ff452"
+      ]
+    }
+  ],
+  "mcpInvocationAudits": [
+    {
+      "id": "mcp-audit-3d27e318-a3f6-4df3-8365-69b17cf07c30",
+      "attemptId": "attempt-5535915a-c62b-405d-9861-a5886261338a",
+      "connectorId": "connector-mcp-c66c1872-99f1-481b-8bc5-36fd081ff452",
+      "capabilityName": "put_receipt",
+      "result": "success",
+      "occurredAt": "2026-09-23T02:06:29.505Z"
+    },
+    {
+      "id": "mcp-audit-517137a3-562c-4591-bc48-f79e707f1fe4",
+      "attemptId": "attempt-5535915a-c62b-405d-9861-a5886261338a",
+      "connectorId": "connector-mcp-c66c1872-99f1-481b-8bc5-36fd081ff452",
+      "capabilityName": "get_receipt",
+      "result": "success",
+      "occurredAt": "2026-09-23T02:06:29.510Z"
+    }
+  ],
+  "receipt": {
+    "id": "receipt-0d1c32d9-6776-4fad-8bf5-ceccc6a7abae",
+    "operationKey": "pf07-oidc-real-a-01",
+    "status": "completed"
+  },
+  "connector": {
+    "id": "connector-mcp-c66c1872-99f1-481b-8bc5-36fd081ff452",
+    "status": "disabled",
+    "deletedAt": "2026-09-23T02:19:41.710Z"
+  },
+  "memoryCandidates": [
+    {
+      "id": "memory-candidate-d010f8ac-e42d-4f45-9f6d-175a91cd3167",
+      "consentId": "memory-consent-c8fa22cc-b7ca-45f6-be08-edb65ef055b9",
+      "status": "approved",
+      "visibility": "private",
+      "retentionUntil": "2026-10-23T02:22:43.090Z",
+      "createdAt": "2026-09-23T02:22:43.089Z"
+    }
+  ],
+  "memoryRecall": {
+    "runId": "run-2750498e-1292-4862-8964-4a4d28e88edf",
+    "runStatus": "succeeded",
+    "createdAt": "2026-09-23T02:30:34.147Z",
+    "attemptId": "attempt-ae81471a-20c5-4c56-b2d7-011ef45cf37c",
+    "attemptStatus": "succeeded",
+    "pinnedMemoryVersions": [
+      "memory-version-d38c9e62-cd65-4f00-9665-efaf8ee9b0c1"
+    ],
+    "sources": [
+      {
+        "id": "run-memory-d609a7c9-b7b9-47d6-8f90-07bc5c3566ae",
+        "memoryVersionId": "memory-version-d38c9e62-cd65-4f00-9665-efaf8ee9b0c1",
+        "contentDigest": "fb483cc89910699bca9ed6325ec3dd08c02daac4a919aa692c2f9ab25e19050a",
+        "version": 1,
+        "visibility": "private",
+        "sourceAttemptId": "attempt-5535915a-c62b-405d-9861-a5886261338a"
+      }
+    ]
+  },
+  "memoryWithdrawal": {
+    "consentId": "memory-consent-c8fa22cc-b7ca-45f6-be08-edb65ef055b9",
+    "consentStatus": "withdrawn",
+    "withdrawnAt": "2026-09-23T02:33:50.523Z",
+    "laterRunId": "run-19be241d-8f6d-4e20-95ba-f29f4f31492c",
+    "laterRunStatus": "succeeded",
+    "laterAttemptId": "attempt-0d8d2a72-138b-41eb-9db7-d8fb465a7443",
+    "laterAttemptStatus": "succeeded",
+    "pinnedMemoryCount": 0,
+    "memorySourceCount": 0
+  }
+}

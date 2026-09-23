@@ -14,7 +14,7 @@ import { manifestSchemaErrors, type AgentPackageManifestDocument } from './agent
  * Agent 发布包（ZIP）服务端解包与清单解析。
  * 约定结构（允许全部文件包在唯一一层顶层目录下）：
  *   agent.yaml            必填清单：apiVersion/kind/metadata/spec 分层结构
- *   prompts/*.md          spec.instructions 指定的指令文件
+ *   SOUL.md               spec.instructions 唯一指定的根目录指令文件
  *   skills/<name>/SKILL.md  包内新 Skill 候选（走联合发布）
  *   tools/<name>/tool.yaml  包内新 Tool 候选（走准入流水线）
  *   evals/cases.yaml        试运行案例（缺省时由系统按定义生成默认案例）
@@ -22,9 +22,9 @@ import { manifestSchemaErrors, type AgentPackageManifestDocument } from './agent
  *                         仅证明文件完整性，不构成信任、授权或来源证明
  *
  * 清单格式规则（agent.yaml，由 agent-package.schema.ts 严格校验）：
- *   apiVersion: dsh-work.ai/v1；kind: AgentPackage；
+ *   apiVersion: dsh-work.ai/v2；kind: AgentPackage；
  *   metadata: { id, name, version, description }；spec 唯一入口：
- *   instructions（必填，包内 prompts/*.md 文件引用）、capabilities.skills/tools
+ *   instructions（必填，固定引用包根目录 SOUL.md）、capabilities.skills/tools
  *   （{ id, version } 对象数组，version 必须精确 x.y.z）、input/output/context、
  *   catalog、limits、evaluation、model.requirements。
  *   - 未知字段、旧扁平字段、旧别名一律拒绝；YAML 重复键拒绝；不做警告后忽略。
@@ -348,6 +348,9 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
 
   const warnings: string[] = []
   const instructionsPath = document.spec.instructions
+  if (Object.keys(files).some(path => path.startsWith(`${rootDir}prompts/`))) {
+    fail('发布包不能同时包含旧 prompts/ 指令目录；请只保留根目录 SOUL.md')
+  }
   const instructionsBody = readText(files, `${rootDir}${instructionsPath}`)
     ?? fail(`spec.instructions 指定的 ${instructionsPath} 不存在`)
   const checksumsVerified = verifyChecksums(files, rootDir, warnings)
