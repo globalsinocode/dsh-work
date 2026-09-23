@@ -7,6 +7,7 @@ import type {
   AdminTaskSummary,
   AgentDefinition,
   AgentDraftConfiguration,
+  CreateAgentDraftInput,
   AgentJoinedWorkspaceRecord,
   AgentReleaseRecord,
   AgentVersionRecord,
@@ -163,7 +164,7 @@ export const useContentStore = defineStore('admin-content', () => {
     return result.agent
   }
 
-  async function createAgentDraft(input: AgentDraftConfiguration) {
+  async function createAgentDraft(input: CreateAgentDraftInput) {
     const result = await adminApi.createAgentDraft(input)
     agents.value.unshift(result.agent)
     agentVersions.value.unshift(result.version)

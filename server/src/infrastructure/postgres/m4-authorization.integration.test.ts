@@ -80,7 +80,7 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   assert.ok(allowed.permissions.includes('workbench:use'))
   assert.ok(allowed.dataScopes.includes('enterprise:authorized'))
   assert.ok(allowed.dataScopes.includes('workspace:authorized'))
-  assert.ok(allowed.dataScopes.includes('domain:supply-chain'))
+  assert.ok(!allowed.dataScopes.includes('domain:supply-chain'), '员工空间授权不能扩大 Agent 自身数据授权')
 
   const personalWorkspaceId = await conversations.resolveWorkspaceId(undefined, 'U00001')
   assert.equal(personalWorkspaceId, 'ws-personal-U00001')
@@ -195,7 +195,13 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   await waitForRun(run.id)
   const manifest = runtime.manifest(run.id)
   assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
-  assert.ok(manifest?.data_scopes.includes('domain:supply-chain'))
+  assert.deepEqual(manifest?.principal_context, {
+    initiated_by: 'principal-human-U00001',
+    executed_as: 'principal-agent-agent-dsh-work-assistant',
+    disclosure_user_id: 'U00001',
+    executor_authorization_version: allowed.executorAuthorizationVersion,
+  })
+  assert.ok(!manifest?.data_scopes.includes('domain:supply-chain'))
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
   assert.deepEqual(manifest?.tools, [
     { id: 'read', version: '1.0.0' },

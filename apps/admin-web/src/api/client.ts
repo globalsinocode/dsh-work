@@ -5,6 +5,7 @@ import type {
   AgentDefinition,
   AgentEvalCase,
   AgentJoinedWorkspaceRecord,
+  AgentPrincipalGovernance,
   AgentPackageInspection,
   AgentReleaseState,
   AgentSubmissionSummary,
@@ -24,6 +25,7 @@ import type {
   GrantSourceReconciliationView,
   HealthComponent,
   IdentityRoleSummary,
+  AgentPrincipalRoleOption,
   IdentityUserPage,
   IdentityUserSummary,
   ListPage,
@@ -195,6 +197,15 @@ export const adminApi = {
     request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ allowWorkspaceJoin: input.allowWorkspaceJoin }),
+    }),
+  getAgentPrincipal: (agentId: string) =>
+    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(agentId)}/principal`),
+  getAgentPrincipalRoleOptions: () => request<AgentPrincipalRoleOption[]>('/agents/principal-role-options'),
+  updateAgentPrincipal: (input: AgentPrincipalGovernance) =>
+    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(input.agentId)}/principal`, {
+      method: 'PATCH',
+      body: JSON.stringify({ expectedAuthorizationVersion: input.authorizationVersion,
+        status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes }),
     }),
   getAgentReleaseSubmissions: () => request<{ items: AgentSubmissionSummary[] }>('/agent-release-submissions'),
   getAgentVersionEvidence: () => request<{ items: AgentVersionEvidenceEntry[] }>('/agent-version-evidence'),

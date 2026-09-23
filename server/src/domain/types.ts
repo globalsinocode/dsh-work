@@ -297,6 +297,8 @@ export interface AgentDraftConfiguration {
 
 export interface CreateAgentDraftInput extends AgentDraftConfiguration {
   actor: string
+  executionRoleIds?: string[]
+  executionDataScopes?: string[]
 }
 
 export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id'> {
@@ -549,6 +551,7 @@ export interface McpInvocationAudit {
   attemptId: string
   connectorId: string
   actorUserId: string
+  executorPrincipalId?: string | null
   capabilityName: string
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'

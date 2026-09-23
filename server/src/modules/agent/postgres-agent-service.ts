@@ -137,6 +137,9 @@ export interface AgentJoinedWorkspaceRecord {
 
 export interface RuntimeAgentSnapshot {
   versionId: string
+  /** Identity supplied by the platform directory, never the governance owner. */
+  principalId?: string
+  principalAuthorizationVersion?: number
   modelRequirements: AgentSpec['model']['requirements']
   systemPrompt: string
   skills: string[]
@@ -154,6 +157,15 @@ export interface RuntimeAgentSnapshot {
   maxToolCalls: number
   timeoutSeconds: number
   delegationPolicy?: AgentDelegationPolicy
+}
+
+export interface AgentPrincipalGovernance {
+  principalId: string
+  agentId: string
+  status: 'active' | 'disabled'
+  authorizationVersion: number
+  roleIds: string[]
+  dataScopes: string[]
 }
 
 export interface AgentMutationSnapshot {
@@ -182,6 +194,104 @@ export class PostgresAgentService {
   async getAgents(): Promise<AgentDefinition[]> {
     const rows = await this.readAgentRows()
     return rows.map(toAgentDefinition)
+  }
+
+  async getAgentPrincipal(agentId: string): Promise<AgentPrincipalGovernance> {
+    const [row] = await this.database<{
+      principalId: string; agentId: string; status: 'active' | 'disabled'; authorizationVersion: number
+      roleIds: string[]; dataScopes: string[]
+    }[]>`
+      select ep.id as "principalId", ep.agent_id as "agentId", ep.status,
+             ep.authorization_version as "authorizationVersion",
+             coalesce((select jsonb_agg(g.role_id order by g.role_id) from agent_principal_role_grants g
+                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "roleIds",
+             coalesce((select jsonb_agg(g.scope_value order by g.scope_value) from agent_principal_scope_grants g
+                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "dataScopes"
+        from execution_principals ep
+       where ep.tenant_id = ${tenantId} and ep.kind = 'agent' and ep.agent_id = ${agentId}
+    `
+    if (!row) throw new Error(`Agent 执行身份不存在：${agentId}`)
+    return row
+  }
+
+  async listPrincipalRoleOptions(): Promise<Array<{ id: string; name: string; status: 'active' | 'disabled' }>> {
+    return this.database<Array<{ id: string; name: string; status: 'active' | 'disabled' }>>`
+      select id, name, status from roles
+       where tenant_id = ${tenantId}
+       order by name, id
+    `
+  }
+
+  async updateAgentPrincipal(input: {
+    agentId: string; actor: string; expectedAuthorizationVersion: number
+    status: 'active' | 'disabled'; roleIds: string[]; dataScopes: string[]
+  }): Promise<AgentPrincipalGovernance> {
+    const actor = await this.requireActor(input.actor)
+    if (!Number.isSafeInteger(input.expectedAuthorizationVersion) || input.expectedAuthorizationVersion < 1
+      || !['active', 'disabled'].includes(input.status)
+      || !Array.isArray(input.roleIds) || !Array.isArray(input.dataScopes)
+      || input.roleIds.some(value => typeof value !== 'string' || !value.trim())
+      || input.dataScopes.some(value => typeof value !== 'string' || !value.trim() || value.length > 128)
+      || new Set(input.roleIds).size !== input.roleIds.length
+      || new Set(input.dataScopes).size !== input.dataScopes.length) {
+      throw new Error('Agent 身份授权参数无效')
+    }
+    await this.database.begin(async transaction => {
+      const [principal] = await transaction<{ id: string; authorizationVersion: number }[]>`
+        select id, authorization_version as "authorizationVersion" from execution_principals
+         where tenant_id = ${tenantId} and kind = 'agent' and agent_id = ${input.agentId}
+         for update
+      `
+      if (!principal) throw new Error(`Agent 执行身份不存在：${input.agentId}`)
+      if (principal.authorizationVersion !== input.expectedAuthorizationVersion) {
+        throw Object.assign(new Error('Agent 身份授权已变化，请刷新后重试'), {
+          status: 409, code: 'AGENT_PRINCIPAL_REVISION_CONFLICT',
+        })
+      }
+      const requestedRoles = input.roleIds.length ? input.roleIds : ['__none__']
+      const existingRoles = await transaction<{ roleId: string }[]>`
+        select role_id as "roleId" from agent_principal_role_grants
+         where tenant_id = ${tenantId} and principal_id = ${principal.id}
+      `
+      const existingRoleIds = new Set(existingRoles.map(row => row.roleId))
+      const addedRoles = input.roleIds.filter(roleId => !existingRoleIds.has(roleId))
+      const knownRoles = await transaction<{ id: string }[]>`
+        select id from roles where tenant_id = ${tenantId} and status = 'active'
+          and id in ${transaction(addedRoles.length ? addedRoles : ['__none__'])}
+      `
+      if (knownRoles.length !== addedRoles.length) throw new Error('Agent 身份包含无效或停用角色')
+      await transaction`
+        delete from agent_principal_role_grants where tenant_id = ${tenantId} and principal_id = ${principal.id}
+          and role_id not in ${transaction(requestedRoles)}
+      `
+      for (const roleId of input.roleIds) await transaction`
+        insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+        values (${tenantId}, ${principal.id}, ${roleId}) on conflict do nothing
+      `
+      const requestedScopes = input.dataScopes.length ? input.dataScopes : ['__none__']
+      await transaction`
+        delete from agent_principal_scope_grants where tenant_id = ${tenantId} and principal_id = ${principal.id}
+          and scope_value not in ${transaction(requestedScopes)}
+      `
+      for (const scope of input.dataScopes) await transaction`
+        insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+        values (${tenantId}, ${principal.id}, ${scope}) on conflict do nothing
+      `
+      await transaction`
+        update execution_principals set status = ${input.status}, updated_at = now(),
+          authorization_version = authorization_version + case when status <> ${input.status} then 1 else 0 end
+         where tenant_id = ${tenantId} and id = ${principal.id}
+      `
+      await transaction`
+        insert into audit_events (id, tenant_id, actor_type, actor_id, action,
+          object_type, object_id, result, trace_id, safe_context)
+        values (${`audit-agent-principal-${randomUUID()}`}, ${tenantId}, 'user', ${actor.id},
+          'agent.principal.update', 'agent', ${input.agentId}, 'success',
+          ${`trace-agent-principal-${randomUUID()}`},
+          ${transaction.json({ status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes })})
+      `
+    })
+    return this.getAgentPrincipal(input.agentId)
   }
 
   async getAgentVersions(): Promise<AgentVersionRecord[]> {
@@ -225,6 +335,18 @@ export class PostgresAgentService {
     const actor = await this.requireActor(input.actor)
     const configuration = normalizeConfiguration(input, actor.displayName, actor.department)
     assertConfiguration(configuration)
+    if (!Array.isArray(input.executionRoleIds ?? []) || !Array.isArray(input.executionDataScopes ?? [])
+      || (input.executionRoleIds ?? []).some(role => typeof role !== 'string' || !role.trim())
+      || (input.executionDataScopes ?? []).some(scope => typeof scope !== 'string' || !scope.trim() || scope.length > 128)) {
+      throw new Error('Agent 执行授权参数无效')
+    }
+    const executionRoleIds = unique(input.executionRoleIds ?? [])
+    const executionDataScopes = unique(input.executionDataScopes ?? [])
+    if (executionRoleIds.some(role => !configuration.roleIds.includes(role))
+      || executionDataScopes.some(scope => !configuration.dataScopes.includes(scope))) {
+      throw new Error('Agent 执行授权必须显式配置，且不能超过当前定义的角色和数据范围')
+    }
+    await this.assertInitialAgentGrants(executionRoleIds)
     await this.assertCapabilityReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
     const versionId = `agent-version-${randomUUID()}`
@@ -256,6 +378,16 @@ export class PostgresAgentService {
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
+      // Visibility is not execution authorization. Empty grants fail closed;
+      // only explicit creation grants or a later Principal update can enable it.
+      for (const roleId of executionRoleIds) await transaction`
+        insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+        values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${roleId})
+      `
+      for (const scope of executionDataScopes) await transaction`
+        insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+        values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${scope})
+      `
       await transaction`
         update agents set draft_version_id = ${versionId}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${configuration.id}
@@ -263,6 +395,15 @@ export class PostgresAgentService {
     })
     await this.audit(actor.id, 'agent.create', configuration.id, 'success', `创建 Agent ${version}`)
     return this.requireAgentResult(configuration.id, versionId)
+  }
+
+  private async assertInitialAgentGrants(roleIds: string[]) {
+    if (roleIds.length === 0) return
+    const rows = await this.database<{ id: string }[]>`
+      select id from roles where tenant_id = ${tenantId} and status = 'active'
+        and id in ${this.database(roleIds)}
+    `
+    if (rows.length !== roleIds.length) throw new Error('Agent 执行授权包含无效或停用角色')
   }
 
   async getMutationSnapshot(agentId: string): Promise<AgentMutationSnapshot> {
@@ -556,6 +697,8 @@ export class PostgresAgentService {
              av.version, av.example_prompts as "examplePrompts"
         from agents a
         join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+        join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
+          and ep.kind = 'agent' and ep.status = 'active'
         join users u on u.tenant_id = a.tenant_id and u.id = ${userId} and u.status = 'active'
        where a.tenant_id = ${tenantId} and a.status = 'published'
          and av.status = 'published'
@@ -634,6 +777,8 @@ export class PostgresAgentService {
              av.id as "versionId", av.version, av.status as "versionStatus"
         from agents a
         join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+        join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
+          and ep.kind = 'agent' and ep.status = 'active'
         join users u on u.tenant_id = a.tenant_id and u.id = ${requesterUserId} and u.status = 'active'
        where a.tenant_id = ${tenantId}
          and a.status = 'published'
@@ -661,15 +806,20 @@ export class PostgresAgentService {
 
   async getRuntimeSnapshot(versionId: string, additionalSkillReferences: string[] = []): Promise<RuntimeAgentSnapshot> {
     const [row] = await this.database<Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'>[]>`
-      select id as "versionId", system_prompt as "systemPrompt", skill_refs as skills,
-             tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes",
-             max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
-             timeout_seconds as "timeoutSeconds",
-             coalesce(agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
-             delegation_policy as "delegationPolicy"
-        from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
+      select av.id as "versionId", ep.id as "principalId",
+             ep.authorization_version as "principalAuthorizationVersion",
+             av.system_prompt as "systemPrompt", av.skill_refs as skills,
+             av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
+             av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
+             av.timeout_seconds as "timeoutSeconds",
+             coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
+             av.delegation_policy as "delegationPolicy"
+        from agent_versions av
+        join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
+          and ep.kind = 'agent' and ep.status = 'active'
+       where av.tenant_id = ${tenantId} and av.id = ${versionId}
     `
-    if (!row) throw new Error(`Agent Version 不存在：${versionId}`)
+    if (!row) throw new Error(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     await this.assertCapabilityReferences(skills, row.tools, row.roleIds, row.dataScopes)
     const skillInstructions = this.skillService
@@ -875,6 +1025,8 @@ export class PostgresAgentService {
     const rows = await this.database<{ id: string }[]>`
       select av.id from agent_versions av
       join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
+      join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
+        and ep.kind = 'agent' and ep.status = 'active'
        where av.tenant_id = ${tenantId}
          and av.id = any(${policy.allowedAgentVersionIds})
          and av.status = 'published' and a.status = 'published'

@@ -249,6 +249,17 @@
       },
       "additionalProperties": false
     },
+    "principal_context": {
+      "type": "object",
+      "required": ["initiated_by", "executed_as", "disclosure_user_id", "executor_authorization_version"],
+      "properties": {
+        "initiated_by": { "type": "string", "minLength": 1 },
+        "executed_as": { "type": "string", "minLength": 1 },
+        "disclosure_user_id": { "type": "string", "minLength": 1 },
+        "executor_authorization_version": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
     "permission_policy": {
       "type": "object",
       "required": [

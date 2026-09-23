@@ -909,11 +909,15 @@ export class PostgresToolConnectorService {
     if (!pin) throw authorizationDenied(`MCP 调用不属于当前 Attempt 固定清单：${input.serverName}`)
     await this.database`
       insert into mcp_invocation_audits (
-        id, tenant_id, run_id, attempt_id, connector_id, actor_user_id,
+        id, tenant_id, run_id, attempt_id, connector_id, actor_user_id, executor_principal_id,
         call_id, capability_name, parameter_digest, result
       ) values (
         ${`mcp-audit-${randomUUID()}`}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id},
-        ${pin.connector_id}, ${manifest.user_context.user_id}, ${input.callId}, ${input.capabilityName},
+        ${pin.connector_id}, ${manifest.user_context.user_id},
+        (select t.executed_as_principal_id from runs r join tasks t
+           on t.tenant_id = r.tenant_id and t.id = r.task_id
+          where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}),
+        ${input.callId}, ${input.capabilityName},
         ${input.parameterDigest}, ${input.result}
       )
       on conflict (tenant_id, attempt_id, call_id) do update
@@ -929,7 +933,8 @@ export class PostgresToolConnectorService {
     if (!connector) throw new Error(`MCP Connector 不存在：${connectorId}`)
     return this.database<McpInvocationAudit[]>`
       select id, run_id as "runId", attempt_id as "attemptId", connector_id as "connectorId",
-             actor_user_id as "actorUserId", capability_name as "capabilityName",
+             actor_user_id as "actorUserId", executor_principal_id as "executorPrincipalId",
+             capability_name as "capabilityName",
              parameter_digest as "parameterDigest", result, occurred_at as "occurredAt"
         from mcp_invocation_audits
        where tenant_id = ${tenantId} and connector_id = ${connectorId}

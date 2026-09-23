@@ -11,12 +11,14 @@ const manifest = { workspace_id: 'ws-personal-u1', agent_version_id: 'agent-v1',
   input: { message: 'synthetic', file_mounts: [] },
 } as unknown as RuntimeManifest
 function ports(changes: Partial<Port> = {}): Port {
-  const decision = { userId: 'u1', workspaceId: 'ws-personal-u1', roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' }
+  const decision = { userId: 'u1', workspaceId: 'ws-personal-u1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' }
   return {
     async workspaceTypeOf() { return 'personal' }, async authorizeRuntime() { return decision },
     async authorizeTeamRunExecution() { return decision },
     async requireAdminReader() { return { id: 'u1', displayName: '', department: '' } },
-    async requirePlatformAdmin() { return { id: 'u1', displayName: '', department: '' } }, ...changes,
+    async requirePlatformAdmin() { return { id: 'u1', displayName: '', department: '' } },
+    async requireActiveAgentPrincipal() {},
+    async assertAgentPrincipalSnapshot() {}, ...changes,
   }
 }
 test('personal checks exact Agent and extra Skill references without mutating the Manifest', async () => {
@@ -41,6 +43,13 @@ test('pinned scopes cannot survive revoked grants', async () => {
     return { ...await auth.authorizeRuntime(input), dataScopes: [] }
   } }), undefined, manifest), { code: 'permission_denied' })
 })
+test('pinned Agent Principal cannot be replaced by a different live executor', async () => {
+  const pinned = { ...manifest, principal_context: {
+    initiated_by: 'principal-human-u1', executed_as: 'principal-agent-other',
+    disclosure_user_id: 'u1', executor_authorization_version: 1,
+  } } as RuntimeManifest
+  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned), { code: 'permission_denied' })
+})
 test('missing space, removed files and missing input checker all fail closed', async () => {
   await assert.rejects(assertCurrentExecutionAuthorization(ports({ async workspaceTypeOf() { return null } }), undefined, manifest), { code: 'permission_denied' })
   const input = { ...manifest, input: { ...manifest.input, file_mounts: [{ file_id: 'file-1' }] as RuntimeManifest['input']['file_mounts'] } }
@@ -59,11 +68,17 @@ test('agent-release-trial is admin-side: platform-admin check, never workspace c
   }), undefined, trial)
   assert.equal(adminCalls, 1)
 })
+test('disabled Agent principal blocks both ordinary and admin trial Attempts', async () => {
+  const disabled = ports({ async requireActiveAgentPrincipal() { throw authorizationDenied('Agent 执行身份已停用') } })
+  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, manifest), { code: 'permission_denied' })
+  const trial = { ...manifest, purpose: 'agent-release-trial', workspace_id: '' } as RuntimeManifest
+  await assert.rejects(assertCurrentExecutionAuthorization(disabled, undefined, trial), { code: 'permission_denied' })
+})
 test('automation purpose is workspace-bound: never reaches the admin branch', async () => {
   const automation = { ...manifest, purpose: 'automation' } as RuntimeManifest
   let runtimeCalls = 0
   await assertCurrentExecutionAuthorization(ports({
-    async authorizeRuntime() { runtimeCalls += 1; return { userId: 'u1', workspaceId: 'ws-personal-u1', roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' } },
+    async authorizeRuntime() { runtimeCalls += 1; return { userId: 'u1', workspaceId: 'ws-personal-u1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: [], permissions: [], dataScopes: ['scope:one'], agentVersionId: 'agent-v1' } },
     async requirePlatformAdmin() { throw new Error('automation is not an admin purpose') },
   }), undefined, automation)
   assert.equal(runtimeCalls, 1)
@@ -133,7 +148,7 @@ test('PF-06: delegated execution rechecks the frozen role/data ceiling and team 
       assert.equal(input.requireAgentMember, true)
       assert.deepEqual(input.scopeCeiling, { roleIds: ['role-employee'], dataScopes: ['scope:one'] })
       return {
-        userId: 'u1', workspaceId: 'ws-team-1', roleIds: ['role-employee'], permissions: [],
+        userId: 'u1', workspaceId: 'ws-team-1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: ['role-employee'], permissions: [],
         dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
       }
     },
@@ -144,7 +159,7 @@ test('PF-06: delegated execution rechecks the frozen role/data ceiling and team 
     async workspaceTypeOf() { return 'team' },
     async authorizeTeamRunExecution() {
       return {
-        userId: 'u1', workspaceId: 'ws-team-1', roleIds: [], permissions: [],
+        userId: 'u1', workspaceId: 'ws-team-1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: [], permissions: [],
         dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
       }
     },

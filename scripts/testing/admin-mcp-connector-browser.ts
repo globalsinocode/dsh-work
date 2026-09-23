@@ -16,11 +16,14 @@ import { PostgresToolConnectorService } from '../../server/src/modules/tool/post
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
+import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { envelope, readJsonBody, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
 
 const port = Number(process.env.DSH_WORK_MCP_ADMIN_SERVER_PORT ?? 4392)
 const database = await createThrowawayDatabase({ namePrefix: 'dsh_pf03_admin_browser', maxConnections: 4 })
 const agents = new PostgresAgentService(database.client)
+const authorization = new PostgresAuthorizationService(database.client)
 let capabilities: McpInspectionResult['capabilities'] = [
   { name: 'customer_get', description: '读取一个客户', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
   { name: 'customer_search', description: '搜索客户', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
@@ -70,9 +73,12 @@ router.get(`${base}/session`, (_request, context) => {
 router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
-router.get(`${base}/agents`, async () => envelope('admin', await agents.getAgents(), 'postgres'))
-router.get(`${base}/agent-versions`, () => envelope('admin', [], 'postgres'))
-router.get(`${base}/agent-release-records`, () => envelope('admin', [], 'postgres'))
+registerAgentRoutes(router, agents)
+router.get(`${base}/identity/roles`, async () => envelope('admin', await database.client`
+  select id, code, name, description, status, permissions,
+    '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
+    from roles where tenant_id = 'tenant-dsh-work' order by name
+`, 'postgres'))
 router.get(`${base}/skills`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/skill-versions`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/skill-release-records`, () => envelope('admin', [], 'postgres'))
@@ -83,6 +89,19 @@ router.get(`${base}/platform-status`, () => envelope('admin', {
 }, 'postgres'))
 router.get(`${base}/assistant/sessions`, () => envelope('admin', [], 'postgres'))
 registerToolRoutes(router, connectorService)
+
+router.get(`${base}/test/agent-principal/evidence`, async (_request, context) => {
+  const agentVersionId = context.url.searchParams.get('agent_version_id') ?? ''
+  try {
+    const decision = await authorization.authorizeRuntime({
+      userId: 'U00001', agentVersionId,
+    })
+    return envelope('admin', { allowed: true, executorPrincipalId: decision.executorPrincipalId,
+      dataScopes: decision.dataScopes }, 'postgres')
+  } catch {
+    return envelope('admin', { allowed: false }, 'postgres')
+  }
+})
 
 router.post(`${base}/test/mcp/capabilities`, async (request) => {
   const input = await readJsonBody<{ changed?: boolean }>(request)

@@ -33,7 +33,8 @@ function orchestration(overrides: {
   teamExecutionCalls?: { count: number }
 }) {
   const decision = {
-    userId: 'u-owner', workspaceId: 'ws-1', roleIds: [], permissions: [],
+    userId: 'u-owner', workspaceId: 'ws-1', executorPrincipalId: 'principal-agent-1',
+    executorAuthorizationVersion: 1, roleIds: [], permissions: [],
     dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
   }
   const runs = {
@@ -52,6 +53,8 @@ function orchestration(overrides: {
     async authorizeTeamRunExecution() { if (overrides.teamExecutionCalls) overrides.teamExecutionCalls.count += 1; return decision },
     async requireAdminReader() { if (overrides.adminReaderCalls) overrides.adminReaderCalls.count += 1; return { id: 'u-owner' } },
     async requirePlatformAdmin() { if (overrides.platformAdminCalls) overrides.platformAdminCalls.count += 1; return { id: 'u-owner' } },
+    async requireActiveAgentPrincipal() {},
+    async assertAgentPrincipalSnapshot() {},
   }
   const service = new RunOrchestrationService(
     runs as unknown as RunRepository,

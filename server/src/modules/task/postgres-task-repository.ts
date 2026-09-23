@@ -25,6 +25,9 @@ interface TaskRow {
   id: string
   tenantId: string
   requestedBy: string
+  initiatedByPrincipalId: string
+  executedAsPrincipalId: string | null
+  approvedByPrincipalId: string | null
   sourceType: TaskSourceType
   sourceRef: string | null
   correlationKey: string
@@ -129,6 +132,9 @@ export class PostgresTaskRepository implements TaskRepository {
         )
         on conflict (tenant_id, source_type, correlation_key) do nothing
         returning id, tenant_id as "tenantId", requested_by as "requestedBy",
+                  initiated_by_principal_id as "initiatedByPrincipalId",
+                  executed_as_principal_id as "executedAsPrincipalId",
+                  approved_by_principal_id as "approvedByPrincipalId",
                   source_type as "sourceType", source_ref as "sourceRef",
                   correlation_key as "correlationKey", request_digest as "requestDigest",
                   budget_scope_task_id as "budgetScopeTaskId", workspace_id as "workspaceId",
@@ -140,6 +146,9 @@ export class PostgresTaskRepository implements TaskRepository {
       }
       const [existing] = await sql<TaskRow[]>`
         select id, tenant_id as "tenantId", requested_by as "requestedBy",
+               initiated_by_principal_id as "initiatedByPrincipalId",
+               executed_as_principal_id as "executedAsPrincipalId",
+               approved_by_principal_id as "approvedByPrincipalId",
                source_type as "sourceType", source_ref as "sourceRef",
                correlation_key as "correlationKey", request_digest as "requestDigest",
                budget_scope_task_id as "budgetScopeTaskId", workspace_id as "workspaceId",
@@ -168,6 +177,9 @@ export class PostgresTaskRepository implements TaskRepository {
     const sql = tx ?? this.database
     const [row] = await sql<TaskRow[]>`
       select id, tenant_id as "tenantId", requested_by as "requestedBy",
+             initiated_by_principal_id as "initiatedByPrincipalId",
+             executed_as_principal_id as "executedAsPrincipalId",
+             approved_by_principal_id as "approvedByPrincipalId",
              source_type as "sourceType", source_ref as "sourceRef",
              correlation_key as "correlationKey", request_digest as "requestDigest",
              budget_scope_task_id as "budgetScopeTaskId", workspace_id as "workspaceId",
@@ -316,11 +328,12 @@ export class PostgresTaskRepository implements TaskRepository {
       const [created] = await sql<OperationRow[]>`
         insert into task_operations (
           id, tenant_id, task_id, run_id, attempt_id, operation_key,
-          action_type, action_ref, parameter_digest, status, receipt
+          action_type, action_ref, parameter_digest, status, receipt, executor_principal_id
         ) values (
           ${operationId}, ${normalized.tenantId}, ${normalized.taskId}, ${normalized.runId},
           ${normalized.attemptId}, ${normalized.operationKey}, ${normalized.actionType},
-          ${normalized.actionRef}, ${normalized.parameterDigest}, 'accepted', ${sql.json(normalized.receipt)}
+          ${normalized.actionRef}, ${normalized.parameterDigest}, 'accepted', ${sql.json(normalized.receipt)},
+          ${normalized.attemptId ? sql`(select executed_as_principal_id from tasks where tenant_id = ${normalized.tenantId} and id = ${normalized.taskId})` : null}
         )
         on conflict (tenant_id, task_id, operation_key) do nothing
         returning id, tenant_id as "tenantId", task_id as "taskId", run_id as "runId",

@@ -13,6 +13,7 @@ import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-c
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
+import { assertCurrentExecutionAuthorization } from '../../modules/run/current-execution-authorization.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
@@ -85,7 +86,8 @@ async function createAdminUser(id: string) {
   `
 }
 
-async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], tools = ['read@1.0.0']) {
+async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], tools = ['read@1.0.0'],
+  dataScopes = ['workspace:authorized']) {
   return agents.createAgent({
     id,
     name: '退款预测助手',
@@ -94,7 +96,9 @@ async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], t
     department: '平台治理',
     visibility: '指定角色',
     roleIds: ['role-employee'],
-    dataScopes: ['workspace:authorized'],
+    dataScopes,
+    executionRoleIds: ['role-employee'],
+    executionDataScopes: dataScopes,
     welcomeMessage: '',
     examplePrompts: ['评估本周退款风险订单'],
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
@@ -231,6 +235,20 @@ async function confirmLatestTrial(agentId: string, verdict: 'passed' | 'failed' 
   return release.confirmTrial(agentId, trial.id, caseRuns.map(run => ({ caseId: run.caseId, verdict })), ADMIN)
 }
 
+async function grantTrialExecution(agentId: string) {
+  const principal = await agents.getAgentPrincipal(agentId)
+  const [version] = await database<{ roleIds: string[]; dataScopes: string[] }[]>`
+    select visible_role_ids as "roleIds", data_scopes as "dataScopes"
+      from agent_versions av join agents a on a.tenant_id = av.tenant_id and a.draft_version_id = av.id
+     where a.tenant_id = ${tenantId} and a.id = ${agentId}
+  `
+  assert.ok(version)
+  await agents.updateAgentPrincipal({ agentId, actor: ADMIN,
+    expectedAuthorizationVersion: principal.authorizationVersion,
+    status: 'active', roleIds: version.roleIds, dataScopes: version.dataScopes,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // 配置创建主线：候选懒建 → 检查 → 封存试运行 → 逐项确认 → 审核发布 → 版本证据
 // ---------------------------------------------------------------------------
@@ -310,6 +328,35 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const records = await agents.getReleaseRecords()
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
+})
+
+test('试运行缩小 Agent 授权后拒绝不再获准的工具，不产生 Runtime Attempt', async () => {
+  const agentId = `agent-trial-narrow-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, [], ['read@1.0.0'],
+    ['workspace:authorized', 'enterprise:authorized'])
+  await release.ensureCandidate(agentId, ADMIN)
+  const checked = await release.runChecks(agentId, ADMIN)
+  assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'))
+  const principal = await agents.getAgentPrincipal(agentId)
+  await agents.updateAgentPrincipal({ agentId, actor: ADMIN,
+    expectedAuthorizationVersion: principal.authorizationVersion,
+    status: 'active', roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
+  })
+  await assert.rejects(assertCurrentExecutionAuthorization(new PostgresAuthorizationService(database), undefined, {
+    purpose: 'agent-release-trial', agent_version_id: created.version.id, workspace_id: '',
+    user_context: { user_id: ADMIN, tenant_id: tenantId, role_ids: ['role-employee'] },
+    data_scopes: ['enterprise:authorized'], input: { message: 'test', file_mounts: [] },
+  } as unknown as RuntimeManifest), /工具 read@1\.0\.0/)
+  const trial = await release.startTrial(agentId, ADMIN)
+  assert.equal(trial.trialRuns[0]?.status, 'failed')
+  const caseRuns = trial.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? []) ?? []
+  assert.ok(caseRuns.length > 0)
+  assert.ok(caseRuns.every(run => !run.attemptId))
+  const attempts = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${created.version.id}
+  `
+  assert.equal(attempts[0]?.count, 0)
 })
 
 test('无 Skill/Tool 的 Soul Agent 可从配置或 ZIP 创建并通过候选检查', async () => {
@@ -628,6 +675,7 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
 
   const checked = await release.runChecks('agent-release-zip', ADMIN)
   assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'), checked.candidate?.checks.map(item => item.detail).join(' | '))
+  await grantTrialExecution('agent-release-zip')
   await release.startTrial('agent-release-zip', ADMIN)
   const trialed = await confirmLatestTrial('agent-release-zip')
   assert.equal(trialed.trialRuns[0]?.status, 'passed')
@@ -640,6 +688,7 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
 })
 
 async function publishReviewedDraft(agentId: string) {
+  await grantTrialExecution(agentId)
   await release.ensureCandidate(agentId, ADMIN)
   const checked = await release.runChecks(agentId, ADMIN)
   assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'), checked.candidate?.checks.map(item => item.detail).join(' | '))

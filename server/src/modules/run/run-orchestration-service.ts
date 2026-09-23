@@ -220,6 +220,7 @@ export class RunOrchestrationService {
         skill_instructions: [],
       },
       user_context: { user_id: run.requestedBy, tenant_id: tenantId, role_ids: [] },
+      principal_context: await this.principalContextForRun(run, `principal-system-${tenantId}`, 1),
       permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'deny' },
       skills: [], tools: adminTools(purpose), data_scopes: [], knowledge_context: [],
       model_route_id: route.routeId, input: { message: prompt, file_mounts: [], ...(history?.length ? { conversation_history: history } : {}) },
@@ -244,6 +245,7 @@ export class RunOrchestrationService {
       manifest.tools = [...new Set(testCatalog.flatMap(skill => skill.tools))].map(toCapabilityReference).concat({ id: 'activate_skill', version: '1.0.0' })
     }
     manifest.budget = await this.taskBudgetManifest(run, manifest.limits)
+    this.assertPrincipalContextForDispatch(manifest)
     await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({ attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId,
@@ -299,6 +301,10 @@ export class RunOrchestrationService {
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
     const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
+    const trialScope = await this.authorization?.resolveAgentPrincipalTrialScope(
+      draftVersionId, agent.roleIds, agent.dataScopes,
+    ) ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
+    await this.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
     const limits = {
@@ -320,7 +326,10 @@ export class RunOrchestrationService {
         system_prompt: agent.systemPrompt,
         skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
       },
-      user_context: { user_id: userId, tenant_id: tenantId, role_ids: agent.roleIds },
+      user_context: { user_id: userId, tenant_id: tenantId, role_ids: trialScope.roleIds },
+      ...(agent.principalId && agent.principalAuthorizationVersion ? {
+        principal_context: await this.principalContextForRun(run, agent.principalId, agent.principalAuthorizationVersion),
+      } : {}),
       // MCP 网络只来自已批准 Connector；不触发人工审批，也不写工作区。
       permission_policy: { approval_mode: 'never', network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny', write_policy: 'deny' },
       skills: agent.skills.map(toCapabilityReference),
@@ -328,7 +337,7 @@ export class RunOrchestrationService {
       // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
-      data_scopes: agent.dataScopes,
+      data_scopes: trialScope.dataScopes,
       knowledge_context: [],
       model_route_id: route.routeId,
       input: { message, file_mounts: [] },
@@ -337,6 +346,7 @@ export class RunOrchestrationService {
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-trial`,
     }
+    this.assertPrincipalContextForDispatch(manifest)
     await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({
@@ -1268,6 +1278,13 @@ export class RunOrchestrationService {
         tenant_id: tenantId,
         role_ids: authorization?.roleIds ?? agent.roleIds,
       },
+      ...((authorization?.executorPrincipalId ?? agent.principalId) ? {
+        principal_context: await this.principalContextForRun(
+          run,
+          (authorization?.executorPrincipalId ?? agent.principalId)!,
+          authorization?.executorAuthorizationVersion ?? agent.principalAuthorizationVersion ?? 1,
+        ),
+      } : {}),
       permission_policy: {
         approval_mode: agent.approvalMode,
         network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
@@ -1321,6 +1338,7 @@ export class RunOrchestrationService {
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-${attemptId}`,
     }
+    this.assertPrincipalContextForDispatch(manifest)
     await this.runtime.assertAvailable?.(manifest)
     const compiled = compileRuntimeManifest(manifest)
     await this.runs.createAttempt({
@@ -1564,6 +1582,14 @@ export class RunOrchestrationService {
       const run = await this.runs.getRun(tenantId, manifest.run_id)
       if (!run || run.taskId !== manifest.task_id || run.currentAttemptId !== manifest.attempt_id || run.requestedBy !== manifest.user_context.user_id
         || !allowedStates.includes(run.status)) throw authorizationDenied('Attempt 已结束、取消或被替代')
+      if (manifest.principal_context && this.tasks) {
+        const task = await this.tasks.getTask(tenantId, manifest.task_id)
+        if (!task || task.initiatedByPrincipalId !== manifest.principal_context.initiated_by
+          || task.executedAsPrincipalId !== manifest.principal_context.executed_as
+          || task.requestedBy !== manifest.principal_context.disclosure_user_id) {
+          throw authorizationDenied('Task 与 Attempt 固定身份不一致')
+        }
+      }
       await this.delegation?.assertActiveDelegation(manifest)
       await this.memory?.assertCurrentReferences(manifest)
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
@@ -1633,6 +1659,9 @@ export class RunOrchestrationService {
       try {
         if (manifest.purpose === 'admin-assistant') await this.authorization.requireAdminReader(manifest.user_context.user_id)
         else await this.authorization.requirePlatformAdmin(manifest.user_context.user_id)
+        if (manifest.agent_version_id) await this.authorization.assertAgentPrincipalSnapshot(
+          manifest.agent_version_id, manifest.user_context.role_ids, manifest.data_scopes,
+        )
         return { denied: false }
       } catch {
         return { denied: true, reason: manifest.purpose === 'admin-assistant' ? '管理读取权限已撤销' : '管理写权限已撤销' }
@@ -2003,6 +2032,30 @@ export class RunOrchestrationService {
         duration: 'hard', tool_calls: 'hard', output_bytes: 'hard',
         tokens: 'unsupported', cost: 'unsupported',
       },
+    }
+  }
+
+  private async principalContextForRun(
+    run: RunRecord,
+    executorPrincipalId: string,
+    executorAuthorizationVersion: number,
+  ): Promise<NonNullable<RuntimeManifest['principal_context']>> {
+    const task = await this.tasks?.getTask(tenantId, run.taskId)
+    if (this.tasks && !task) throw authorizationDenied('Task 身份记录不存在')
+    if (task && task.requestedBy !== run.requestedBy) throw authorizationDenied('Task 披露用户与 Run 不一致')
+    return {
+      initiated_by: task?.initiatedByPrincipalId ?? `principal-human-${run.requestedBy}`,
+      executed_as: executorPrincipalId,
+      disclosure_user_id: run.requestedBy,
+      executor_authorization_version: executorAuthorizationVersion,
+    }
+  }
+
+  private assertPrincipalContextForDispatch(manifest: RuntimeManifest): void {
+    // The production Task repository is the authoritative origin. Test and
+    // Prototype ports may omit it; they cannot create a persisted Agent run.
+    if (this.tasks && !manifest.principal_context) {
+      throw authorizationDenied('执行清单缺少独立 Principal 身份')
     }
   }
 }

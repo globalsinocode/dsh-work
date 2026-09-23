@@ -257,7 +257,7 @@ async function inspectConnector(connector: ConnectorDefinition) {
   if (connector.mcp) {
     try {
       const invocations = await contentStore.getMcpInvocationAudits(connector.id)
-      invocationSummary = invocations.map(item => `${item.capabilityName}（${item.result}，${new Date(item.occurredAt).toLocaleString('zh-CN')}）`).join('；') || '暂无调用审计'
+      invocationSummary = invocations.map(item => `${item.capabilityName}（${item.result}，执行者 ${item.executorPrincipalId ?? '历史记录未归因'}，${new Date(item.occurredAt).toLocaleString('zh-CN')}）`).join('；') || '暂无调用审计'
     } catch {
       invocationSummary = '调用审计加载失败，请稍后重试'
     }

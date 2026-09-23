@@ -1203,6 +1203,27 @@ async function waitForStatus(
 
 
 describe('current execution authorization', () => {
+  it('rechecks authorization before answering a tool permission request', async () => {
+    let revoked = false
+    let approved = false
+    const adapter = await createAdapter(200, undefined, undefined, {
+      authorizeExecution: async () => {
+        if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' })
+      },
+      permissionDecision: async () => { approved = true; return 'allow_once' },
+    })
+    const input = manifest('run-permission-revoked', 'attempt-1', '[permission] read inventory')
+    const handle = await adapter.execute(input)
+    const unsubscribe = adapter.subscribe(input.run_id, event => {
+      if (event.event_type === 'run.started') revoked = true
+    })
+    const result = await handle.done
+    unsubscribe()
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'AUTHORIZATION_REVOKED')
+    assert.equal(approved, false)
+  })
+
   it('stops a live Worker after authorization is revoked, without a later completion', async () => {
     let revoked = false
     const events: RuntimeEvent[] = []

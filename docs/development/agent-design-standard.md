@@ -53,7 +53,7 @@ Agent 定义与执行进程分离；声明不授予权限；使用业务状态�
 
 ## 3. AI 员工统一目标架构
 
-**状态：目标架构，AE-01 已达到代码级。** 本节是已确认的目标设计；除下文明确标注的 AE-01 范围外，不表示现有 API、Schema、数据库、管理端或 Runtime 已支持。目标字段和示例路径不得直接当作当前契约使用。每项能力落地时按第 4 节相应 AS 条款、[生命周期模板](agent-lifecycle-template.md)和[差异清单](agent-design-gap-analysis.md)同步更新生产者、消费者与验收。
+**状态：目标架构，AE-01 与 AE-02 已达到代码级，真实验收另记。** 本节是已确认的目标设计；除下文明确标注的已实现范围外，不表示现有 API、Schema、数据库、管理端或 Runtime 已支持。目标字段和示例路径不得直接当作当前契约使用。每项能力落地时按第 4 节相应 AS 条款、[生命周期模板](agent-lifecycle-template.md)和[差异清单](agent-design-gap-analysis.md)同步更新生产者、消费者与验收。
 
 AI 员工是稳定的 Agent 身份，拥有经发布的职责与人格、获准能力、独立授权、可治理的长期经验、可管理的工作数据和主动任务规则。它可以被员工请求协作，也可以在批准范围内由时间或事件唤醒。一次唤醒创建 Task/Run/Attempt，不是启动常驻模型进程；模型执行仍唯一经过 Run/Attempt → Runtime Adapter → DSH。
 
@@ -68,7 +68,7 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 
 | 对象 | 目标语义 | 当前差异 |
 | --- | --- | --- |
-| Agent 身份 | `agents` 保留稳定目录身份；增加独立的 `agent` Principal、状态和授权，负责人另记为治理关系 | 当前 `users`、`user_roles`、Task `requested_by` 和执行授权主要围绕人类用户；不能用负责人 ID 充作 Agent 身份 |
+| Agent 身份 | `agents` 保留稳定目录身份；增加独立的 `agent` Principal、状态和授权，负责人另记为治理关系 | AE-02 已将 human/agent/system Principal、独立角色/数据授权及 Task/Manifest/动作与审计归因接入统一执行链（代码级）；真实 DSH/OIDC 验收仍需单独留证 |
 | Soul | Agent 定义版本根目录的唯一可信指令文件 `SOUL.md`；结构化标识、目标、边界和评测仍由 AgentSpec/发布记录管理 | AE-01 已把包 Schema、解析器及配置入口切换至根目录 `SOUL.md`（代码级）；独立身份与后续治理仍待实施 |
 | Memory | Agent 稳定身份下的受控记忆条目和不可变版本，按来源、同意、作用域、保留期及当前 ACL 检索；`memory.md` 只是只读视图 | PF-05 当前仅接受员工从本人成功 Attempt 主动提交，按精确 Agent Version 使用；无 Agent 自主候选或跨版本连续继承 |
 | Skill 与内置 Tool | Agent Version 固定所需的精确依赖，按当前状态和权限复核；没有需求时允许空集合 | AE-01 已使配置创建和 ZIP 均允许空集合（代码级）；业务能力仍须按需显式声明 |
@@ -82,7 +82,7 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 
 Task 分别记录 `initiated_by`、`executed_as`、`approved_by`（可空）和治理负责人引用。员工请求由 `human` 发起、`agent` 执行；定时/事件任务可由 `system` 发起、Agent 执行。高风险动作仍由有权的人类批准。当前人类外键、Run Manifest、审计及结果读取须作为一个契约变更同步处理，不能将 `agent_id` 偷写入 `user_id` 或静默混用两类身份。
 
-Agent Principal 的角色与数据授权独立、可撤销，并满足 Workspace 当前准入。员工交互请求的输入与结果披露还受发起人当前授权上限约束，防止借 Agent 越权读取；这不改变 Agent 的执行身份。主动任务只使用 Agent 当前授权与启用时批准上限的交集。停用、收权或授权服务不可用时拒绝新动作；历史快照不能恢复已撤销权限，读写和结果访问均须复核。现行 MCP“对全部 Agent 默认开放”只表示可装载 Connector，不替代目标系统数据授权；需要上游独立身份时另设计可核验的工作负载凭据，不默认增加逐 Agent MCP Grant。
+Agent Principal 的角色与数据授权独立、可撤销，并满足 Workspace 当前准入。员工交互请求的输入与新结果披露还受发起人当前授权上限约束，防止借 Agent 越权读取；这不改变 Agent 的执行身份。主动任务只使用 Agent 当前授权与启用时批准上限的交集。停用、收权或授权服务不可用时拒绝新动作；历史快照不能恢复已撤销权限，活动读写与结果提交均须复核。已完成结果按当前人类账号和 Workspace 读取授权保留为不可变证据，Agent 事后停用不撤销历史结果读取。现行 MCP“对全部 Agent 默认开放”只表示可装载 Connector，不替代目标系统数据授权；需要上游独立身份时另设计可核验的工作负载凭据，不默认增加逐 Agent MCP Grant。
 
 ### 3.2 Soul、Memory 与目录
 

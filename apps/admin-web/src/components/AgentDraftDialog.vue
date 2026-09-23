@@ -6,7 +6,7 @@ import AgentZipImportPanel from '@/components/AgentZipImportPanel.vue'
 import type { ZipInspection } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentDraftConfiguration } from '@/types/domain'
+import type { AgentDefinition, AgentDraftConfiguration, CreateAgentDraftInput } from '@/types/domain'
 
 const props = defineProps<{
   agent?: AgentDefinition
@@ -31,6 +31,7 @@ const savedResult = ref<{
   agent: AgentDefinition
   source: 'config' | 'zip'
   inspection?: ZipInspection
+  executionGrantMissing?: boolean
 }>()
 const roleLabels: Record<string, string> = {
   'role-platform-admin': '平台管理员',
@@ -41,6 +42,8 @@ const roleLabels: Record<string, string> = {
 }
 
 const form = reactive<AgentDraftConfiguration>(emptyDraft())
+const executionRoleIds = ref<string[]>([])
+const executionDataScopes = ref<string[]>([])
 
 const rules: FormRules = {
   name: [
@@ -85,6 +88,7 @@ const dataScopeLabels: Record<string, string> = {
 }
 const roleOptions = computed(() => unique([
   'role-employee',
+  ...Object.keys(roleLabels),
   ...contentStore.agents.flatMap((agent) => agent.roleIds),
   ...form.roleIds,
 ]).map((id) => ({ id, name: roleName(id) })))
@@ -116,6 +120,12 @@ watch(() => [...form.skills], (references) => {
     return skill?.toolIds.map(toVersionedToolReference) ?? []
   })
   form.tools = unique([...form.tools, ...requiredTools])
+})
+watch(() => [...form.roleIds], roles => {
+  executionRoleIds.value = executionRoleIds.value.filter(role => roles.includes(role))
+})
+watch(() => [...form.dataScopes], scopes => {
+  executionDataScopes.value = executionDataScopes.value.filter(scope => scopes.includes(scope))
 })
 
 function emptyDraft(): AgentDraftConfiguration {
@@ -172,6 +182,8 @@ function resetEditor() {
       }
     : emptyDraft()
   Object.assign(form, source)
+  executionRoleIds.value = []
+  executionDataScopes.value = []
   savedResult.value = undefined
   creationMode.value = 'config'
   activeStep.value = 0
@@ -210,9 +222,14 @@ async function saveAgent() {
     const payload = preparePayload(form)
     const saved = props.agent
       ? await contentStore.updateAgentDraft(payload)
-      : await contentStore.createAgentDraft(payload)
+      : await contentStore.createAgentDraft({
+          ...payload,
+          executionRoleIds: executionRoleIds.value.filter(role => payload.roleIds.includes(role)),
+          executionDataScopes: executionDataScopes.value.filter(scope => payload.dataScopes.includes(scope)),
+        } satisfies CreateAgentDraftInput)
     initialSnapshot.value = JSON.stringify(form)
-    savedResult.value = { agent: saved, source: 'config' }
+    savedResult.value = { agent: saved, source: 'config',
+      executionGrantMissing: !props.agent && (!executionRoleIds.value.length || !executionDataScopes.value.length) }
     emit('saved', saved, 'config')
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : 'Agent 保存失败')
@@ -228,7 +245,7 @@ function findFirstInvalidStep() {
 }
 
 function handleZipSaved(agent: AgentDefinition, inspection: ZipInspection) {
-  savedResult.value = { agent, source: 'zip', inspection }
+  savedResult.value = { agent, source: 'zip', inspection, executionGrantMissing: !props.agent }
   emit('saved', agent, 'zip')
 }
 
@@ -344,6 +361,14 @@ function toVersionedToolReference(reference: string) {
         <div><dt>能力引用</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · {{ savedResult.agent.tools.length }} 个工具</dd></div>
       </dl>
       <el-alert
+        v-if="savedResult.executionGrantMissing"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="尚未授予 AI 员工执行角色或数据范围"
+        description="请在 Agent 管理详情的“独立执行身份”中配置授权，再进行发布试运行。可见角色不会自动授予执行权限。"
+      />
+      <el-alert
         v-if="savedMissingCount"
         type="warning"
         :closable="false"
@@ -442,7 +467,7 @@ function toVersionedToolReference(reference: string) {
             <el-input-number v-model="form.delegationPolicy.timeoutSeconds" :min="10" :max="300" :step="10" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
           </el-form-item>
         </div>
-        <div class="configuration-section-heading configuration-section-heading--permissions"><strong>权限配置</strong><span>Agent 权限只能收窄员工原有权限</span></div>
+        <div class="configuration-section-heading configuration-section-heading--permissions"><strong>可见性与定义范围</strong><span>控制员工可选范围和此版本的数据上限</span></div>
         <div class="form-grid form-grid--two">
           <el-form-item label="可见角色" prop="roleIds">
             <el-select v-model="form.roleIds" multiple filterable placeholder="选择可以使用此 Agent 的角色">
@@ -455,6 +480,21 @@ function toVersionedToolReference(reference: string) {
               <el-option v-for="scope in dataScopeOptions" :key="scope" :label="dataScopeLabels[scope] ? `${dataScopeLabels[scope]} · ${scope}` : scope" :value="scope" />
             </el-select>
             <p class="field-help">最终权限取 Agent 范围、员工角色、工作空间和工具审批策略的交集。</p>
+          </el-form-item>
+        </div>
+        <div v-if="!props.agent" class="configuration-section-heading configuration-section-heading--permissions"><strong>AI 员工执行授权</strong><span>独立授权；留空时无法执行，可在创建后治理</span></div>
+        <div v-if="!props.agent" class="form-grid form-grid--two">
+          <el-form-item label="执行角色">
+            <el-select v-model="executionRoleIds" multiple filterable placeholder="选择 Agent 本身获准使用的角色">
+              <el-option v-for="role in roleOptions.filter(item => form.roleIds.includes(item.id))" :key="role.id" :label="role.name" :value="role.id" />
+            </el-select>
+            <p class="field-help">与员工当前角色取交集；不会从可见角色自动继承。</p>
+          </el-form-item>
+          <el-form-item label="执行数据范围">
+            <el-select v-model="executionDataScopes" multiple filterable placeholder="选择 Agent 本身获准使用的数据范围">
+              <el-option v-for="scope in form.dataScopes" :key="scope" :label="scope" :value="scope" />
+            </el-select>
+            <p class="field-help">与员工、工作空间及版本范围取交集；留空默认拒绝。</p>
           </el-form-item>
         </div>
         <el-alert type="info" :closable="false" show-icon title="涉及敏感数据或写操作时，工具自身的审批策略仍然生效。" />
@@ -493,6 +533,7 @@ function toVersionedToolReference(reference: string) {
               <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>{{ form.tools.length }} 个工具</small></div>
               <div><span>委派</span><strong>{{ form.delegationPolicy.allowedAgentVersionIds.length }} 个目标</strong><small>深度 {{ form.delegationPolicy.maxDepth }} · 并行 {{ form.delegationPolicy.maxParallel }}</small></div>
               <div><span>权限</span><strong>{{ selectedRoleNames.length }} 个可见角色</strong><small>{{ form.dataScopes.length }} 个数据范围</small></div>
+              <div v-if="!props.agent"><span>执行授权</span><strong>{{ executionRoleIds.length }} 个角色</strong><small>{{ executionDataScopes.length }} 个数据范围；留空时不能试运行</small></div>
             </div>
           </section>
         </div>

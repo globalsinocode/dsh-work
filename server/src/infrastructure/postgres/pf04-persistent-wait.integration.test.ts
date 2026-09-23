@@ -285,7 +285,7 @@ async function runningFixture(label: string) {
   const manifest: RuntimeManifest = {
     manifest_version: '1.0', run_id: run.id, attempt_id: `attempt-${randomUUID()}`,
     task_id: task.id, session_id: null, workspace_id: task.workspaceId!,
-    agent_version_id: 'agent-version-dsh-work-assistant-v1',
+    agent_version_id: 'agent-version-dsh-work-assistant-1',
     agent_configuration: { system_prompt: 'You are a controlled test agent for durable waiting.', skill_instructions: [] },
     user_context: { user_id: task.requestedBy, tenant_id: tenantId, role_ids: ['employee'] },
     permission_policy: { approval_mode: 'always', network_policy: 'deny', write_policy: 'workspace_only' },

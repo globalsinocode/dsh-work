@@ -24,7 +24,7 @@
     "test:m4:knowledge:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-enterprise-knowledge.integration.test.ts",
     "test:m4:file": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/workbench/application/document-extractor.test.ts",
     "test:m4:file:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts",
-    "test:m4:authorization:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-authorization.integration.test.ts",
+    "test:m4:authorization:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-authorization.integration.test.ts src/infrastructure/postgres/agent-principal.integration.test.ts",
     "test:m4:team-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/team-workspace-authorization.integration.test.ts",
     "test:m4:runtime:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-runtime-operations.integration.test.ts",
     "test:m4:audit:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-audit-operations.integration.test.ts",

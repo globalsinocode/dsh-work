@@ -30,6 +30,8 @@ interface CapabilityVersion {
 export interface RuntimeAuthorizationDecision {
   userId: string
   workspaceId: string | null
+  executorPrincipalId: string
+  executorAuthorizationVersion: number
   roleIds: string[]
   permissions: string[]
   dataScopes: string[]
@@ -200,22 +202,22 @@ export class PostgresAuthorizationService {
       roleIds: input.roleIds,
       dataScopes: input.dataScopes,
     })
-    const roleIds = input.scopeCeiling?.roleIds === undefined
-      ? context.roleIds
-      : context.roleIds.filter(id => input.scopeCeiling!.roleIds!.includes(id))
-    const dataScopes = input.scopeCeiling?.dataScopes === undefined
-      ? context.dataScopes
-      : context.dataScopes.filter(scope => input.scopeCeiling!.dataScopes!.includes(scope))
+    const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
+    const roleIds = context.roleIds.filter(id => principal.roleIds.includes(id)
+      && (input.scopeCeiling?.roleIds === undefined || input.scopeCeiling.roleIds.includes(id)))
+    const principalDataScopes = context.dataScopes.filter(scope => principal.dataScopes.includes(scope)
+      && (input.scopeCeiling?.dataScopes === undefined || input.scopeCeiling.dataScopes.includes(scope)))
     // AG-03：permissions 由角色派生，上限裁掉角色后必须重算——否则被裁
     // 角色的权限仍随完整集合进入 Manifest，「后来涨权不扩大旧任务」在
     // permissions 维度失守。
-    const permissions = input.scopeCeiling?.roleIds === undefined
-      ? context.permissions
-      : await this.permissionsForRoles(roleIds)
+    const permissions = await this.permissionsForRoles(roleIds)
     const { agent, skillVersions } = await this.assertAgentDependencyClosure(
       input.agentVersionId,
       input.additionalSkillReferences ?? [],
     )
+    // A grant added for another Agent Version cannot expand this immutable
+    // version's declared data boundary.
+    const dataScopes = principalDataScopes.filter(scope => agent.dataScopes.includes(scope))
     if (!intersects(roleIds, agent.visibleRoleIds)) {
       // 5-T4 发现、父代理修复：这是真授权拒绝，但文案不含 403 正则里的任何片段
       // （「不可使用」不在 `/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/`），
@@ -241,6 +243,8 @@ export class PostgresAuthorizationService {
     return {
       userId: input.userId,
       workspaceId,
+      executorPrincipalId: principal.id,
+      executorAuthorizationVersion: principal.authorizationVersion,
       roleIds,
       permissions,
       dataScopes,
@@ -518,6 +522,86 @@ export class PostgresAuthorizationService {
       throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`)
     }
     return { agent, skillVersions }
+  }
+
+  /** Includes draft trial Attempts, whose admin purpose skips normal Workspace authorization. */
+  async requireActiveAgentPrincipal(agentVersionId: string): Promise<void> {
+    const [row] = await this.database<{ id: string }[]>`
+      select ep.id from agent_versions av
+      join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
+       where av.tenant_id = ${tenantId} and av.id = ${agentVersionId}
+         and ep.kind = 'agent' and ep.status = 'active'
+    `
+    if (!row) throw authorizationDenied('Agent 执行身份不存在或已停用')
+  }
+
+  /** Admin release trials have no employee Workspace but still run as the Agent. */
+  async assertAgentPrincipalSnapshot(agentVersionId: string, roleIds: string[], dataScopes: string[]): Promise<void> {
+    const principal = await this.requireAgentPrincipalGrants(agentVersionId)
+    if (roleIds.some(role => !principal.roleIds.includes(role))
+      || dataScopes.some(scope => !principal.dataScopes.includes(scope))) {
+      throw authorizationDenied('Agent 身份的角色或数据授权已撤销')
+    }
+    const [version] = await this.database<{
+      roleIds: string[]; dataScopes: string[]; tools: string[]; skills: string[]
+    }[]>`
+      select visible_role_ids as "roleIds", data_scopes as "dataScopes",
+             tool_refs as tools, skill_refs as skills
+        from agent_versions
+       where tenant_id = ${tenantId} and id = ${agentVersionId}
+    `
+    if (!version || roleIds.some(role => !version.roleIds.includes(role))
+      || dataScopes.some(scope => !version.dataScopes.includes(scope))) {
+      throw authorizationDenied('试运行权限超出 Agent Version 声明范围')
+    }
+    const skillVersions = await this.resolveSkillVersions(version.skills)
+    const allowedTools = new Set(version.tools)
+    const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
+      .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference) && !allowedTools.has(reference))
+    if (missingSkillTools.length) {
+      throw authorizationDenied(`Agent 未授权 Skill 依赖的工具：${missingSkillTools.join('、')}`)
+    }
+    await this.resolveAndAuthorizeTools(version.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference)), roleIds, dataScopes)
+  }
+
+  /** Release trials run within current Agent grants, not every visible role or declared scope. */
+  async resolveAgentPrincipalTrialScope(agentVersionId: string, declaredRoles: string[], declaredScopes: string[]): Promise<{
+    roleIds: string[]; dataScopes: string[]
+  }> {
+    const principal = await this.requireAgentPrincipalGrants(agentVersionId)
+    const roleIds = declaredRoles.filter(role => principal.roleIds.includes(role))
+    const dataScopes = declaredScopes.filter(scope => principal.dataScopes.includes(scope))
+    if (!roleIds.length || !dataScopes.length) {
+      throw authorizationDenied('Agent 身份尚未获得试运行所需的角色和数据授权')
+    }
+    return { roleIds, dataScopes }
+  }
+
+  private async requireAgentPrincipalGrants(agentVersionId: string): Promise<{
+    id: string
+    authorizationVersion: number
+    roleIds: string[]
+    dataScopes: string[]
+  }> {
+    const [row] = await this.database<{
+      id: string
+      authorizationVersion: number
+      roleIds: string[]
+      dataScopes: string[]
+    }[]>`
+      select ep.id, ep.authorization_version as "authorizationVersion",
+             coalesce((select jsonb_agg(g.role_id) from agent_principal_role_grants g
+                        join roles r on r.tenant_id = g.tenant_id and r.id = g.role_id and r.status = 'active'
+                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "roleIds",
+             coalesce((select jsonb_agg(g.scope_value) from agent_principal_scope_grants g
+                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "dataScopes"
+        from agent_versions av
+        join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
+       where av.tenant_id = ${tenantId} and av.id = ${agentVersionId}
+         and ep.kind = 'agent' and ep.status = 'active'
+    `
+    if (!row) throw authorizationDenied('Agent 执行身份不存在或已停用')
+    return row
   }
 
   /**
@@ -804,10 +888,12 @@ export class PostgresAuthorizationService {
              av.data_scopes as "dataScopes"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
+        join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
+          and ep.kind = 'agent' and ep.status = 'active'
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
          and av.status = 'published' and a.status = 'published'
     `
-    if (!row) throw new Error('Agent Version 不存在、未发布或所属 Agent 已停用')
+    if (!row) throw authorizationDenied('Agent Version 不存在、未发布或 Agent 执行身份已停用')
     return row
   }
 
@@ -903,11 +989,14 @@ export class PostgresAuthorizationService {
     await this.database`
       insert into audit_events (
         id, tenant_id, actor_type, actor_id, action, object_type, object_id,
-        result, trace_id, safe_context
+        result, trace_id, safe_context, executor_principal_id
       ) values (
         ${`audit-authorization-${randomUUID()}`}, ${tenantId}, 'user', ${actorId}, ${action},
         'authorization', ${objectId}, ${result}, ${`trace-authorization-${randomUUID()}`},
-        ${this.database.json({ detail: redactSensitiveText(detail) })}
+        ${this.database.json({ detail: redactSensitiveText(detail) })},
+        (select ep.id from agent_versions av
+          join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
+         where av.tenant_id = ${tenantId} and av.id = ${objectId})
       )
     `
   }

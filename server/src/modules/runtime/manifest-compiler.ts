@@ -38,6 +38,24 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   if (input.session_id !== null) assertId('session_id', input.session_id)
   assertId('user_context.user_id', input.user_context.user_id)
   assertId('user_context.tenant_id', input.user_context.tenant_id)
+  if (input.principal_context) {
+    const context = input.principal_context
+    for (const key of Object.keys(context)) {
+      if (!['initiated_by', 'executed_as', 'disclosure_user_id', 'executor_authorization_version'].includes(key)) {
+        throw new TypeError(`principal_context contains unsupported field: ${key}`)
+      }
+    }
+    assertId('principal_context.initiated_by', context.initiated_by)
+    assertId('principal_context.executed_as', context.executed_as)
+    assertId('principal_context.disclosure_user_id', context.disclosure_user_id)
+    if (context.disclosure_user_id !== input.user_context.user_id) throw new TypeError('principal_context disclosure user mismatch')
+    if (!Number.isSafeInteger(context.executor_authorization_version) || context.executor_authorization_version < 1) {
+      throw new TypeError('principal_context executor authorization version is invalid')
+    }
+    if (input.agent_version_id && !context.executed_as.startsWith('principal-agent-')) {
+      throw new TypeError('principal_context executor must be an Agent Principal')
+    }
+  }
 
   if (input.agent_configuration.system_prompt.trim().length < 20) {
     throw new TypeError('agent_configuration.system_prompt must be at least 20 characters')

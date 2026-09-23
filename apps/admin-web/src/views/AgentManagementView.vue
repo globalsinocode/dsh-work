@@ -5,6 +5,7 @@ import { Plus, Search, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
+import { adminApi } from '@/api/client'
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import {
@@ -14,7 +15,7 @@ import {
 } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentReleaseRecord, AgentVersionRecord } from '@/types/domain'
+import type { AgentDefinition, AgentPrincipalGovernance, AgentPrincipalRoleOption, AgentReleaseRecord, AgentVersionRecord } from '@/types/domain'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -30,6 +31,12 @@ const activeDetailTab = ref<'overview' | 'versions' | 'releases'>('overview')
 const actionLoading = ref('')
 const workspaceJoinSaving = ref(false)
 const joinedWorkspacesLoading = ref(false)
+const principal = ref<AgentPrincipalGovernance>()
+const principalDraft = ref<AgentPrincipalGovernance>()
+const principalLoading = ref(false)
+const principalSaving = ref(false)
+const availableRoles = ref<AgentPrincipalRoleOption[]>([])
+const principalRolesUnavailable = ref(false)
 const agentRoleLabels: Record<string, string> = {
   'role-platform-admin': '平台管理员',
   'role-employee': '试点员工',
@@ -120,7 +127,61 @@ function inspect(agent: AgentDefinition) {
   activeDetailTab.value = 'overview'
   drawerOpen.value = true
   void loadJoinedWorkspaces(agent.id)
+  void loadPrincipal(agent.id)
 }
+
+async function loadPrincipal(agentId: string) {
+  principal.value = undefined
+  principalDraft.value = undefined
+  availableRoles.value = []
+  principalRolesUnavailable.value = false
+  principalLoading.value = true
+  try {
+    const [recordResult, rolesResult] = await Promise.allSettled([
+      adminApi.getAgentPrincipal(agentId), adminApi.getAgentPrincipalRoleOptions(),
+    ])
+    if (selectedAgentId.value !== agentId) return
+    if (recordResult.status === 'rejected') throw recordResult.reason
+    const record = recordResult.value
+    principal.value = record
+    principalDraft.value = { ...record, roleIds: [...record.roleIds], dataScopes: [...record.dataScopes] }
+    if (rolesResult.status === 'fulfilled') {
+      availableRoles.value = rolesResult.value
+    } else {
+      principalRolesUnavailable.value = true
+      availableRoles.value = record.roleIds.map(id => ({ id, name: agentRoleLabels[id] ?? id, status: 'disabled' }))
+    }
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    if (selectedAgentId.value === agentId) principalLoading.value = false
+  }
+}
+
+async function savePrincipal() {
+  const draft = principalDraft.value
+  if (!draft || principalSaving.value) return
+  try {
+    await ElMessageBox.confirm(
+      '更新后新执行按当前授权运行；撤销授权或停用身份会阻止排队及后续动作。',
+      '确认更新 Agent 独立执行身份？',
+      { confirmButtonText: '确认更新', cancelButtonText: '取消', type: 'warning' },
+    )
+    principalSaving.value = true
+    const updated = await adminApi.updateAgentPrincipal(draft)
+    principal.value = updated
+    principalDraft.value = { ...updated, roleIds: [...updated.roleIds], dataScopes: [...updated.dataScopes] }
+    ElMessage.success('Agent 身份授权已更新')
+  } catch (cause) {
+    if (cause instanceof Error) ElMessage.error(cause.message)
+  } finally {
+    principalSaving.value = false
+  }
+}
+
+const principalScopeOptions = computed(() => [...new Set([
+  ...(selectedAgent.value?.dataScopes ?? []), ...(principal.value?.dataScopes ?? []),
+])].sort())
 
 function openCandidate(agent: AgentDefinition) {
   void router.push(`/agents/${encodeURIComponent(agent.id)}/release/definition`)
@@ -329,6 +390,21 @@ onMounted(async () => {
         </div>
 
         <template v-if="activeDetailTab === 'overview'">
+          <section class="agent-detail__section" v-loading="principalLoading">
+            <h3>独立执行身份</h3>
+            <p class="muted">Agent 以自己的身份执行；负责人只负责治理。员工发起的任务仍受员工当前数据授权约束。</p>
+            <template v-if="principalDraft">
+              <dl class="agent-detail__meta"><div><dt>Principal</dt><dd class="mono">{{ principalDraft.principalId }}</dd></div><div><dt>授权修订</dt><dd>{{ principalDraft.authorizationVersion }}</dd></div></dl>
+              <el-alert v-if="principalRolesUnavailable" type="warning" :closable="false" title="角色目录暂不可用；仍可停用身份或撤销已有角色，恢复后可新增授权。" />
+              <el-form label-position="top">
+                <el-form-item label="执行身份状态"><el-switch v-model="principalDraft.status" active-value="active" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="!authStore.canManage" /></el-form-item>
+                <el-form-item label="执行角色"><el-select v-model="principalDraft.roleIds" multiple filterable placeholder="请选择授权角色" :disabled="!authStore.canManage || (principalRolesUnavailable && !principalDraft.roleIds.length)"><el-option v-for="role in availableRoles" :key="role.id" :label="role.name" :value="role.id" :disabled="role.status === 'disabled' && !principalDraft.roleIds.includes(role.id)" /></el-select></el-form-item>
+                <el-form-item label="数据范围"><el-select v-model="principalDraft.dataScopes" multiple filterable placeholder="请选择数据范围" :disabled="!authStore.canManage"><el-option v-for="scope in principalScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
+              </el-form>
+              <el-button v-if="authStore.canManage" type="primary" :loading="principalSaving" @click="savePrincipal">保存身份授权</el-button>
+            </template>
+            <p v-else-if="!principalLoading" class="muted">当前无法读取 Agent 身份授权，请稍后刷新。</p>
+          </section>
           <section class="agent-detail__section governance-status">
             <h3>治理状态</h3>
             <dl class="agent-detail__meta">

@@ -75,6 +75,13 @@ export interface RuntimeManifest {
     tenant_id: string
     role_ids: string[]
   }
+  /** Distinct origin, executor and human disclosure subject, pinned per Attempt. */
+  principal_context?: {
+    initiated_by: string
+    executed_as: string
+    disclosure_user_id: string
+    executor_authorization_version: number
+  }
   permission_policy: {
     approval_mode: 'always' | 'risk_based' | 'never'
     network_policy: 'deny' | 'allowlist'

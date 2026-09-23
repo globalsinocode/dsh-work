@@ -9,6 +9,12 @@ export interface TaskRecord {
   id: string
   tenantId: string
   requestedBy: string
+  /** Server-derived human or system origin; requestedBy remains the human disclosure owner. */
+  initiatedByPrincipalId: string
+  /** Pinned by the first Attempt; null while a Task has no Attempt. */
+  executedAsPrincipalId: string | null
+  /** Reserved for Task-level approval; action approvals are recorded per action. */
+  approvedByPrincipalId: string | null
   sourceType: TaskSourceType
   sourceRef: string | null
   correlationKey: string

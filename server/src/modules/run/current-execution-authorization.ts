@@ -26,7 +26,7 @@ export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavaila
 }
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
-  'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin'>
+  'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
 
 type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
   'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
@@ -52,12 +52,18 @@ export async function assertCurrentExecutionAuthorization(
       if (!bindings?.assertActiveMcpConnections || !manifest.agent_version_id) throw new ToolBindingCheckUnavailableError()
       await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
     }
+    if (manifest.agent_version_id) await authorization.requireActiveAgentPrincipal(manifest.agent_version_id)
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
     // 前缀但同样是管理侧（无工作空间绑定），漏判会落入下方通用分支被
     // 「缺少固定工作空间」误拒；automation 不在集合内，继续走工作空间复核。
     if (isAdminRunPurpose(manifest.purpose)) {
       if (manifest.purpose === 'admin-assistant') await authorization.requireAdminReader(manifest.user_context.user_id)
       else await authorization.requirePlatformAdmin(manifest.user_context.user_id)
+      if (manifest.agent_version_id) {
+        await authorization.assertAgentPrincipalSnapshot(
+          manifest.agent_version_id, manifest.user_context.role_ids, manifest.data_scopes,
+        )
+      }
       return
     }
     if (!manifest.workspace_id || !manifest.agent_version_id) {
@@ -81,6 +87,12 @@ export async function assertCurrentExecutionAuthorization(
     const current = type === 'team'
       ? await authorization.authorizeTeamRunExecution({ ...input, requireAgentMember: Boolean(manifest.delegation_context) })
       : await authorization.authorizeRuntime(input)
+    if (manifest.principal_context && (
+      manifest.principal_context.executed_as !== current.executorPrincipalId
+      || manifest.principal_context.disclosure_user_id !== manifest.user_context.user_id
+    )) {
+      throw authorizationDenied('任务快照的执行身份或披露用户已变化')
+    }
     const scopes = new Set(current.dataScopes)
     if ((manifest.data_scopes ?? []).some(scope => !scopes.has(scope))) {
       throw authorizationDenied('任务快照包含当前已撤销的数据范围')

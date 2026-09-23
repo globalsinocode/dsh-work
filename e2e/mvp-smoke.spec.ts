@@ -45,7 +45,8 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
   const filesPanel = page.locator('#workspace-panel-files')
   await expect(filesPanel.getByText('八月生产计划_v3.xlsx', { exact: true })).toBeVisible()
   await expect(filesPanel.getByText('华东区交付口径说明.docx', { exact: true })).toBeVisible()
-  await expect(filesPanel.getByRole('button', { name: '引用到对话' })).toHaveCount(2)
+  // Prototype 文件没有服务端确认的 canReference，团队文件不得提供引用入口。
+  await expect(filesPanel.getByRole('button', { name: '引用到对话' })).toHaveCount(0)
 
   await workspaceTabs.getByRole('tab', { name: /^成果/ }).click()
   await expect(page.getByRole('heading', { name: '成果', exact: true })).toBeVisible()

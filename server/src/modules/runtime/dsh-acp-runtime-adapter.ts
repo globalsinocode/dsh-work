@@ -682,7 +682,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     }
   }
 
-  private async verifyExecutionAuthorization(record: ExecutionRecord): Promise<void> {
+  private async verifyExecutionAuthorization(record: ExecutionRecord, closeClientOnFailure = true): Promise<void> {
     if (record.terminal) throw new Error('Attempt 已结束')
     const authorize = this.configuration.authorizeExecution
     if (!authorize) return
@@ -703,7 +703,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           ? 'AUTHORIZATION_REVOKED' : 'AUTHORIZATION_CHECK_UNAVAILABLE'
         if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
         else this.finishFailed(record, code, code === 'AUTHORIZATION_REVOKED' ? '当前执行授权已撤销' : '当前授权检查不可用')
-        void record.client?.close().catch(() => undefined)
+        if (closeClientOnFailure) void record.client?.close().catch(() => undefined)
       }
       throw error
     } finally {
@@ -750,6 +750,16 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     record: ExecutionRecord,
     request: AcpPermissionRequest,
   ): Promise<{ outcome: Record<string, unknown> }> {
+    // A queued/long-running Attempt may lose either its human disclosure
+    // ceiling or Agent Principal grant between periodic checks. Recheck at
+    // the exact permission boundary before allowing any proposed action.
+    try {
+      // Let ACP receive a cancelled response before its client is closed.
+      // The execution loop closes the client after the prompt settles.
+      await this.verifyExecutionAuthorization(record, false)
+    } catch {
+      return { outcome: { outcome: 'cancelled' } }
+    }
     const toolCallId = typeof request.toolCall?.['toolCallId'] === 'string'
       ? request.toolCall['toolCallId']
       : null

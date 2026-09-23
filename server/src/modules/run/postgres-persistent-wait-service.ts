@@ -23,6 +23,8 @@ export interface PersistentApprovalRecord {
   parameterDigest: string
   resourceRef: string
   executionIdentity: string
+  executorPrincipalId?: string | null
+  resolverPrincipalId?: string | null
   dataVersion: string
   riskLevel: 'medium' | 'high'
   status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled'
@@ -180,12 +182,16 @@ export class PostgresPersistentWaitService {
       await transaction`
         insert into run_approval_requests (
           id, tenant_id, run_id, source_attempt_id, checkpoint_id, correlation_key,
-          action_name, parameter_digest, resource_ref, execution_identity, data_version,
+          action_name, parameter_digest, resource_ref, execution_identity, executor_principal_id, data_version,
           risk_level, status, expires_at
         ) values (
           ${approvalId}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id}, ${checkpointId},
           ${correlationKey}, ${context.toolName}, ${context.parameterDigest}, ${context.resourceRef},
-          ${manifest.user_context.user_id}, ${context.dataVersion}, 'high', 'preparing', ${expiresAt}
+          ${manifest.user_context.user_id},
+          (select t.executed_as_principal_id from runs r join tasks t
+             on t.tenant_id = r.tenant_id and t.id = r.task_id
+            where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}),
+          ${context.dataVersion}, 'high', 'preparing', ${expiresAt}
         )
       `
       return { approvalId, checkpointId, checkpointDigest, expiresAt }
@@ -205,6 +211,7 @@ export class PostgresPersistentWaitService {
              a.checkpoint_id as "checkpointId", c.checkpoint_digest as "checkpointDigest",
              a.action_name as "actionName", a.parameter_digest as "parameterDigest",
              a.resource_ref as "resourceRef", a.execution_identity as "executionIdentity",
+             a.executor_principal_id as "executorPrincipalId", a.resolver_principal_id as "resolverPrincipalId",
              a.data_version as "dataVersion", a.risk_level as "riskLevel", a.status,
              a.expires_at as "expiresAt", a.requested_at as "requestedAt",
              a.resolved_by as "resolvedBy", a.resolved_at as "resolvedAt",
@@ -393,7 +400,10 @@ export class PostgresPersistentWaitService {
         }
         await transaction`
           update run_approval_requests
-             set status = 'approved', resolved_by = ${input.actor}, resolved_at = now(),
+             set status = 'approved', resolved_by = ${input.actor},
+                 resolver_principal_id = (select id from execution_principals
+                   where tenant_id = ${tenantId} and kind = 'human' and human_user_id = ${input.actor}),
+                 resolved_at = now(),
                  resolution_key = ${input.resolutionKey}, resolution_comment = ${input.comment ?? null},
                  resumed_attempt_id = ${attempt.id}
            where tenant_id = ${tenantId} and id = ${current.id}
@@ -423,7 +433,10 @@ export class PostgresPersistentWaitService {
       `
       if (!run || run.status !== 'waiting' || !run.currentAttemptId) return null
       await transaction`
-        update run_approval_requests set status = 'cancelled', resolved_by = ${actor}, resolved_at = now()
+        update run_approval_requests set status = 'cancelled', resolved_by = ${actor},
+          resolver_principal_id = (select id from execution_principals
+            where tenant_id = ${tenantId} and kind = 'human' and human_user_id = ${actor}),
+          resolved_at = now()
          where tenant_id = ${tenantId} and run_id = ${runId} and status = 'pending'
       `
       await transaction`
@@ -542,7 +555,10 @@ export class PostgresPersistentWaitService {
       `
       if (!approval || approval.status !== 'pending') return false
       await transaction`
-        update run_approval_requests set status = 'rejected', resolved_by = ${input.actor}, resolved_at = now(),
+        update run_approval_requests set status = 'rejected', resolved_by = ${input.actor},
+          resolver_principal_id = (select id from execution_principals
+            where tenant_id = ${tenantId} and kind = 'human' and human_user_id = ${input.actor}),
+          resolved_at = now(),
           resolution_key = ${input.resolutionKey}, resolution_comment = ${input.comment ?? null}
          where tenant_id = ${tenantId} and id = ${current.id}
       `
@@ -624,6 +640,7 @@ export class PostgresPersistentWaitService {
              a.checkpoint_id as "checkpointId", c.checkpoint_digest as "checkpointDigest",
              a.action_name as "actionName", a.parameter_digest as "parameterDigest",
              a.resource_ref as "resourceRef", a.execution_identity as "executionIdentity",
+             a.executor_principal_id as "executorPrincipalId", a.resolver_principal_id as "resolverPrincipalId",
              a.data_version as "dataVersion", a.risk_level as "riskLevel", a.status,
              a.expires_at as "expiresAt", a.requested_at as "requestedAt", a.resolved_by as "resolvedBy",
              a.resolved_at as "resolvedAt", a.resumed_attempt_id as "resumedAttemptId",
@@ -668,7 +685,9 @@ function toRecord(row: ApprovalRow): PersistentApprovalRecord {
     id: row.id, runId: row.runId, taskId: row.taskId, sourceAttemptId: row.sourceAttemptId,
     checkpointId: row.checkpointId, checkpointDigest: row.checkpointDigest,
     actionName: row.actionName, parameterDigest: row.parameterDigest, resourceRef: row.resourceRef,
-    executionIdentity: row.executionIdentity, dataVersion: row.dataVersion, riskLevel: row.riskLevel,
+    executionIdentity: row.executionIdentity, executorPrincipalId: row.executorPrincipalId,
+    resolverPrincipalId: row.resolverPrincipalId,
+    dataVersion: row.dataVersion, riskLevel: row.riskLevel,
     status: row.status, expiresAt: row.expiresAt.toISOString(), requestedAt: row.requestedAt.toISOString(),
     resolvedBy: row.resolvedBy, resolvedAt: row.resolvedAt?.toISOString() ?? null,
     resumedAttemptId: row.resumedAttemptId,

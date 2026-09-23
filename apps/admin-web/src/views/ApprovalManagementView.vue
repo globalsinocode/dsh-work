@@ -76,7 +76,8 @@ onMounted(load)
         <el-table-column prop="actionName" label="动作" min-width="170" />
         <el-table-column prop="resourceRef" label="资源" min-width="180" show-overflow-tooltip />
         <el-table-column label="参数摘要" min-width="145"><template #default="{ row }"><code>{{ row.parameterDigest.slice(0, 12) }}</code></template></el-table-column>
-        <el-table-column prop="executionIdentity" label="执行身份" min-width="130" />
+        <el-table-column prop="executionIdentity" label="发起员工" min-width="130" />
+        <el-table-column prop="executorPrincipalId" label="Agent 执行身份" min-width="210"><template #default="scope">{{ scope.row.executorPrincipalId ?? '历史记录未归因' }}</template></el-table-column>
         <el-table-column prop="dataVersion" label="数据版本" min-width="145" show-overflow-tooltip />
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="申请时间" min-width="165"><template #default="{ row }">{{ formatTime(row.requestedAt) }}</template></el-table-column>

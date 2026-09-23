@@ -8,6 +8,8 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
   router.get(`${basePath}/agents`, async () => envelope('admin', await service.getAgents(), 'postgres'))
   router.get(`${basePath}/agent-versions`, async () => envelope('admin', await service.getAgentVersions(), 'postgres'))
   router.get(`${basePath}/agent-release-records`, async () => envelope('admin', await service.getReleaseRecords(), 'postgres'))
+  router.get(`${basePath}/agents/principal-role-options`, async () =>
+    envelope('admin', await service.listPrincipalRoleOptions(), 'postgres'))
   router.post(`${basePath}/agents`, async (request, context) => {
     const input = await readJsonBody<Omit<CreateAgentDraftInput, 'actor'>>(request)
     return httpResult(201, envelope('admin', await service.createAgent({
@@ -55,4 +57,19 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
     envelope('admin', {
       items: await service.listAgentJoinedWorkspaces(context.params.agentId ?? ''),
     }, 'postgres'))
+  router.get(`${basePath}/agents/:agentId/principal`, async (_request, context) =>
+    envelope('admin', await service.getAgentPrincipal(context.params.agentId ?? ''), 'postgres'))
+  router.patch(`${basePath}/agents/:agentId/principal`, async (request, context) => {
+    const input = await readJsonBody<{
+      expectedAuthorizationVersion: number
+      status: 'active' | 'disabled'
+      roleIds: string[]
+      dataScopes: string[]
+    }>(request)
+    return envelope('admin', await service.updateAgentPrincipal({
+      ...input,
+      agentId: context.params.agentId ?? '',
+      actor: requireRequestIdentity(context, 'admin').userId,
+    }), 'postgres')
+  })
 }

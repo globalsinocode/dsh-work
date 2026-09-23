@@ -12,6 +12,8 @@ export interface PersistentApproval {
   parameterDigest: string
   resourceRef: string
   executionIdentity: string
+  executorPrincipalId?: string | null
+  resolverPrincipalId?: string | null
   dataVersion: string
   riskLevel: 'medium' | 'high'
   status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled'
@@ -72,6 +74,12 @@ export interface IdentityRoleSummary {
   userCount: number
   system: boolean
   updatedAt: string
+}
+
+export interface AgentPrincipalRoleOption {
+  id: string
+  name: string
+  status: 'active' | 'disabled'
 }
 
 export interface IdentityUserSummary {
@@ -251,6 +259,15 @@ export interface AgentJoinedWorkspaceRecord {
   createdAt: string
 }
 
+export interface AgentPrincipalGovernance {
+  principalId: string
+  agentId: string
+  status: 'active' | 'disabled'
+  authorizationVersion: number
+  roleIds: string[]
+  dataScopes: string[]
+}
+
 export interface GrantSourceReconciliationItem {
   sourceId: string
   workspaceId: string
@@ -296,7 +313,10 @@ export interface AgentDraftConfiguration {
   changeSummary: string
 }
 
-export type CreateAgentDraftInput = AgentDraftConfiguration
+export interface CreateAgentDraftInput extends AgentDraftConfiguration {
+  executionRoleIds?: string[]
+  executionDataScopes?: string[]
+}
 
 export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id'> {
   agentId: string
@@ -545,6 +565,7 @@ export interface McpInvocationAudit {
   attemptId: string
   connectorId: string
   actorUserId: string
+  executorPrincipalId?: string | null
   capabilityName: string
   parameterDigest: string
   result: 'success' | 'failed' | 'unknown'
