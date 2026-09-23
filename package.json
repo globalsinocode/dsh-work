@@ -23,6 +23,9 @@
     "test:pf05:integration": "pnpm --filter @dsh-work/server test:pf05:integration",
     "test:pf06:integration": "pnpm --filter @dsh-work/server test:pf06:integration",
     "test:pf07:matrix": "node --test scripts/acceptance/pf07.test.mjs && node scripts/acceptance/pf07.mjs",
+    "test:pf07:fixture": "node --test scripts/acceptance/pf07-mcp-fixture.test.mjs",
+    "probe:pf07:mcp": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-runtime-probe.ts",
+    "probe:pf07:mcp:platform": "node --experimental-strip-types --env-file-if-exists=.env scripts/acceptance/pf07-mcp-platform-probe.ts",
     "test:pf07:p1": "pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration && pnpm test:pf06:integration",
     "test:m4:knowledge:integration": "pnpm --filter @dsh-work/server test:m4:knowledge:integration",
     "test:m4:file": "pnpm --filter @dsh-work/server test:m4:file",
@@ -54,7 +57,7 @@
     "probe:cancel": "pnpm probe -- cancel",
     "probe:concurrency": "pnpm probe -- concurrency",
     "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/runtime/probe.test.mjs",
-    "ci:check": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm check:secrets && pnpm typecheck && pnpm test:m1 && pnpm test:skill-install && pnpm test:agent-package && pnpm test:m2 && pnpm test:m4:file && pnpm test:m4:error && pnpm test:m5:frontend && pnpm test:m5:api && pnpm test:m5:security && pnpm test:m5:faults && pnpm test:m5:revocation && pnpm test:sso && pnpm lint && pnpm build",
+    "ci:check": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm test:pf07:fixture && pnpm check:secrets && pnpm typecheck && pnpm test:m1 && pnpm test:skill-install && pnpm test:agent-package && pnpm test:m2 && pnpm test:m4:file && pnpm test:m4:error && pnpm test:m5:frontend && pnpm test:m5:api && pnpm test:m5:security && pnpm test:m5:faults && pnpm test:m5:revocation && pnpm test:sso && pnpm lint && pnpm build",
     "check:architecture": "node scripts/check-architecture.mjs",
     "validate:ui": "pnpm --filter @dsh-work/admin-web --filter @dsh-work/workbench-web validate:ui",
     "lint": "pnpm check:architecture && pnpm validate:ui && eslint apps packages server scripts --max-warnings=0",
@@ -96,6 +99,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@playwright/test": "^1.62.1",
     "@vue/test-utils": "^2.5.0",
     "eslint": "^9.37.0",
@@ -104,6 +108,7 @@
     "happy-dom": "^20.11.15",
     "typescript-eslint": "^8.46.1",
     "vitest": "^4.1.11",
-    "vue-eslint-parser": "^10.2.0"
+    "vue-eslint-parser": "^10.2.0",
+    "zod": "4.4.3"
   }
 }
