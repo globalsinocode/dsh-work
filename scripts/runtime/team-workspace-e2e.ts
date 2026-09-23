@@ -121,6 +121,7 @@ try {
   const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
   const runs = new PostgresRunRepository(database)
   const agents = new PostgresAgentService(database)
+  const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   // operations 必须接线：否则 approval.resolved 触发的工具审计被静默跳过（?），
   // 而这个审计正是「工具返回数据来源」的可追溯落点（T2 关注点）。
   const operations = new PostgresOperationsService(database, runtime, authorization, 'mock')
@@ -134,6 +135,7 @@ try {
     agents,
     undefined,
     authorization,
+    { agentMembers },
   )
   // TW-07 / TW-08 / 空间用量（批次 3 与批次 4）需要的服务：全部走真实实现。
   const workspaceService = new PostgresWorkspaceService(database)
@@ -164,8 +166,7 @@ try {
   if (!file) throw new Error('上传后未在共享文件列表中找到该文件')
 
   // --- 团队 Agent 成员关联：走真实服务（同时建立 Agent/Skill/Tool 授权来源） ---
-  const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
-  await agentMembers.addAgentMember(workspaceId, 'agent-dsh-work-assistant', ownerId, ['role-employee'])
+  const agentMember = await agentMembers.addAgentMember(workspaceId, 'agent-dsh-work-assistant', ownerId, ['role-employee'])
   // 迁移可能会将默认 Agent 的活动版本升级（例如增加受控成果写入工具）。
   // 会话必须使用成员关联时实际锁定的版本，而不能假定历史版本 ID。
   const [activeAgent] = await database<{ activeVersionId: string | null }[]>`
@@ -189,6 +190,7 @@ try {
     prompt: `请读取我提供的共享文件，并且只回复文件中的完整标记（形如 ${marker.slice(0, 4)}... 的大写串）。不要猜测。`,
     idempotencyKey: `e2e-${suffix}-1`,
     fileIds: [file.id],
+    workspaceAgentMemberId: agentMember.id,
   })
   if (!started) throw new Error('Run 创建失败')
   const finished = await waitForRun(runs, started.id, 240_000)
@@ -202,6 +204,7 @@ try {
     sessionId: session.id,
     prompt: '再回复一次同一个标记，确认会话可以继续。',
     idempotencyKey: `e2e-${suffix}-2`,
+    workspaceAgentMemberId: agentMember.id,
   })
   if (!second) throw new Error('第二个 Run 创建失败')
   const secondFinished = await waitForRun(runs, second.id, 240_000)
@@ -280,6 +283,7 @@ try {
     prompt: '请读取我提供的共享文件，并且只回复文件中的完整标记。不要猜测，也不要读取其他版本。',
     idempotencyKey: `e2e-${suffix}-pinned-v1`,
     fileIds: [v1.fileId],
+    workspaceAgentMemberId: agentMember.id,
   })
   if (!pinned) throw new Error('引用 v1 的 Run 创建失败')
   const pinnedFinished = await waitForRun(runs, pinned.id, 240_000)
@@ -485,6 +489,7 @@ try {
       sessionId: session.id,
       prompt: '归档后不应再执行。',
       idempotencyKey: `e2e-${suffix}-archived`,
+      workspaceAgentMemberId: agentMember.id,
     })
   } catch (error) {
     archivedExecuteDenied = true
