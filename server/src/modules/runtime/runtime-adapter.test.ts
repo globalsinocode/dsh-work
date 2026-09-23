@@ -288,26 +288,25 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(await readdir(root), [])
     await adapter.assertAvailable(manifest('run-standard', 'attempt-standard'))
   })
-  it('reads the tool schemas published by the active DSH Profile', async () => {
+  it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
-    const toolCatalogPath = join(root, 'runtime-tools.json')
-    await writeFile(toolCatalogPath, JSON.stringify({
-      formatVersion: 2,
-      tools: [{
-        name: 'read', description: 'Read a file.', parameters: { type: 'object' },
-        contract: {
-          outputSchema: { 'x-dsh-work-output-validation': 'unavailable' }, outputValidation: 'unavailable',
-          effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
-          completionSemantics: 'completed', timeoutSeconds: 30,
-        },
-      }],
-    }))
     const adapter = new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-catalog-test',
       runtimeRoot: root,
       dshRepository: process.cwd(),
-      toolCatalogPath,
-      process: { command: process.execPath, args: ['--version'], cwd: process.cwd() },
+      setupTimeoutMs: 2_000,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker],
+        cwd: process.cwd(),
+        env: {
+          DSH_PLATFORM_TOOL_SOCKET: '/tmp/must-not-be-inherited.sock',
+          DSH_ALLOWED_MCP_SERVERS_JSON: '["must-not-be-inherited"]',
+          MOCK_RUNTIME_TOOL_SCHEMAS_JSON: JSON.stringify([
+            { name: 'read', description: 'Read a file.', parameters: { type: 'object' } },
+          ]),
+        },
+      },
     })
     adapters.push(adapter)
 
@@ -319,6 +318,40 @@ describe('DSH ACP Runtime Adapter', () => {
         completionSemantics: 'completed', timeoutSeconds: 30,
       },
     ])
+  })
+
+  it('fails closed when the isolated DSH tool catalog digest is invalid', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-digest-test-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-catalog-digest-test', runtimeRoot: root, dshRepository: process.cwd(), setupTimeoutMs: 2_000,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker],
+        cwd: process.cwd(),
+        env: { MOCK_RUNTIME_CATALOG_DIGEST: '0'.repeat(64) },
+      },
+    })
+    adapters.push(adapter)
+
+    await assert.rejects(adapter.listTools(), /工具目录摘要不匹配/)
+  })
+
+  it('does not let an ordinary Attempt inherit tool catalog publication settings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-attempt-no-catalog-test-'))
+    const catalogPath = join(root, 'must-not-exist.json')
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-attempt-no-catalog-test', runtimeRoot: root, dshRepository: process.cwd(), setupTimeoutMs: 2_000,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker],
+        cwd: process.cwd(),
+        env: { DSH_TOOL_CATALOG_PATH: catalogPath, DSH_WORK_TOOL_CATALOG_MODE: 'management' },
+      },
+    })
+    adapters.push(adapter)
+
+    assert.equal((await (await adapter.execute(manifest('run-no-catalog', 'attempt-no-catalog'))).done).status, 'completed')
+    await assert.rejects(stat(catalogPath), error => error instanceof Error && 'code' in error && error.code === 'ENOENT')
   })
 
   it('passes only an explicit non-secret environment baseline to DSH workers', () => {
@@ -413,7 +446,8 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(installation.process.args.slice(0, 4), ['--version', '--profile', 'acp', '--patch'])
     assert.equal(installation.process.args[4], join(dataRoot, 'dsh-config/acp-managed-credentials.cordis.yml'))
     assert.equal(installation.process.env?.['DSH_WORK_DSH_SESSIONS_ROOT'], sessionsRoot)
-    assert.equal(installation.process.env?.['DSH_TOOL_CATALOG_PATH'], join(dataRoot, 'dsh-config/runtime-tools.json'))
+    assert.equal(installation.process.env?.['DSH_TOOL_CATALOG_PATH'], undefined)
+    assert.equal(installation.process.env?.['DSH_WORK_TOOL_CATALOG_MODE'], undefined)
     const generatedOverlay = join(dataRoot, 'dsh-config/acp-managed-credentials.cordis.yml')
     await stat(generatedOverlay)
     assert.doesNotMatch(await readFile(generatedOverlay, 'utf8'), /__DSH_WORK_TOOL_POLICY_MODULE__/)
@@ -543,7 +577,6 @@ describe('DSH ACP Runtime Adapter', () => {
   it('negotiates ACP and creates a disposable Session before serving traffic', async () => {
     await preflightDshRuntime({
       home: process.cwd(),
-      toolCatalogPath: join(tmpdir(), 'unused-runtime-tools.json'),
       version: 'test',
       commit: '0'.repeat(40),
       protocolVersion: 1,
@@ -762,7 +795,7 @@ describe('DSH ACP Runtime Adapter', () => {
     const adapter = await createAdapter(500, undefined, undefined, {
       proposeMemory: async (input, manifest) => {
         calls.push({ input, attemptId: manifest.attempt_id })
-        return { proposalId: 'memory-proposal-test', status: 'pending_human_consent' }
+        return { proposalId: 'memory-proposal-test', status: 'pending_admin_review' }
       },
     })
     const input = manifest('run-memory-proposal-bridge', 'attempt-1', '请提出可复用的资料核对经验')

@@ -86,7 +86,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 ### 3.6 工具分类与管理边界
 
-运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 内置工具进入 Tool Version、`connector-dsh-workspace` Binding 和 Agent 精确引用；dsh-work 内置执行工具由 Agent/Skill Manifest 声明，其中 `delegate_agent` 只有在版本配置受控目标时才注入；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
+运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 普通内置工具从当前 Profile 批量同步进入平台目录：普通业务工具都有 Tool/Tool Version 记录，但只有完成平台安全准入的工具才获得 `connector-dsh-workspace` 活动 Binding，并可由 Agent Version 精确引用；尚未准入或已从当前 Profile 消失的普通工具记录保留可见、保持停用且不能授权。文件工具 `read_image`、`str_replace_editor` 和网络工具 `web_search` 在平台路径/查询参数约束下自动准入；`web_fetch` 在 DSH 实现连接层私网地址与重定向防护前保持不可准入且禁止执行。DSH Agent 协作与 Runtime 控制工具不进入普通工具列表，分别通过受控委派、Skill、工作流等平台流程治理。dsh-work 内置执行工具由 Agent/Skill Manifest 声明，其中 `delegate_agent` 只有在版本配置受控目标时才注入；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不获得平台 Tool Version/Binding，平台内置工具也不能借 Connector 或普通 Tool 配置扩大用途。
 
@@ -149,7 +149,7 @@ flowchart TB
 
 ### 4.1 体验层
 
-- `apps/workbench-web`：主导航提供新对话、团队空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见 [个人工作闭环](review-batch03.md)；
+- `apps/workbench-web`：主导航提供新对话、Skill 广场、AI 同事、团队空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见 [个人工作闭环](review-batch03.md)；
 - `apps/admin-web`：运营、Agent、Skill/Tool、Runtime、Session、权限、模型用量、审计和健康；
 - 两个应用拥有独立路由、Pinia、API 客户端、DTO 和构建产物；
 - `packages/` 只共享 Design Token 和无业务状态组件，不共享认证状态或业务 Store。

@@ -10,7 +10,7 @@ import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useToolGovernanceStore } from '@/stores/toolGovernance'
-import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolCatalogCandidate, ToolDefinition } from '@/types/domain'
+import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
 
 type CapabilityTab = 'skills' | 'install' | 'tools' | 'connectors'
 
@@ -32,6 +32,8 @@ const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }
 ])
 const skillSection = computed(() => activeTab.value === 'skills' || activeTab.value === 'install')
 const query = ref('')
+const toolRuntimeStatusFilter = ref<'all' | ToolDefinition['status']>('all')
+const toolAdmissionFilter = ref<'all' | NonNullable<ToolDefinition['admissionStatus']>>('all')
 const detailOpen = ref(false)
 const detailTitle = ref('')
 const detailRows = ref<Array<{ label: string; value: string }>>([])
@@ -79,16 +81,7 @@ watch(mcpConnectionSignature, (signature) => {
     testedMcpSignature.value = ''
   }
 })
-const toolCatalogDialogOpen = ref(false)
-const toolCatalogQuery = ref('')
-const toolCatalogFilter = ref<'ready' | 'all'>('ready')
-const selectedToolCandidate = ref<ToolCatalogCandidate | null>(null)
-const toolAdding = ref(false)
-const toolCreateForm = reactive({
-  allowedRoles: [] as string[],
-  dataScopes: [] as string[],
-  approvalPolicy: 'none' as ToolDefinition['approvalPolicy'],
-})
+const toolCatalogSyncing = ref(false)
 const skillActionFeedback = ref<{
   type: 'info' | 'success' | 'warning' | 'error'
   title: string
@@ -130,6 +123,12 @@ const filteredTools = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   return contentStore.tools
     .filter((item) => !keyword || `${item.name} ${item.id} ${item.system} ${item.description}`.toLowerCase().includes(keyword))
+    .filter(item => toolRuntimeStatusFilter.value === 'all' || item.status === toolRuntimeStatusFilter.value)
+    .filter((item) => {
+      if (toolAdmissionFilter.value === 'all') return true
+      const admissionStatus = item.admissionStatus ?? 'approved'
+      return admissionStatus === toolAdmissionFilter.value
+    })
 })
 const detailToolGovernance = computed(() =>
   detailType.value === 'tool'
@@ -149,32 +148,12 @@ const filteredConnectors = computed(() => {
 })
 const selectedMcpToolsConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpToolsConnectorId.value))
 const selectedMcpCredentialConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpCredentialConnectorId.value))
-const toolRoleOptions = computed(() => [...new Set([
-  ...contentStore.tools.flatMap(tool => tool.allowedRoles),
-  ...contentStore.toolCatalog.flatMap(tool => tool.defaultAllowedRoles),
-  ...toolCreateForm.allowedRoles,
-])].sort((left, right) => left.localeCompare(right, 'zh-CN')))
-const toolScopeOptions = computed(() => [...new Set([
-  ...contentStore.tools.flatMap(tool => tool.dataScopes),
-  ...contentStore.toolCatalog.flatMap(tool => tool.defaultDataScopes),
-  ...toolCreateForm.dataScopes,
-])])
-const readyToolCandidateCount = computed(() => contentStore.toolCatalog.filter(tool => tool.status === 'ready').length)
-const filteredToolCatalog = computed(() => {
-  const keyword = toolCatalogQuery.value.trim().toLowerCase()
-  return contentStore.toolCatalog.filter((candidate) => {
-    if (toolCatalogFilter.value === 'ready' && candidate.status !== 'ready') return false
-    return !keyword || `${candidate.name} ${candidate.id} ${candidate.description}`.toLowerCase().includes(keyword)
-  })
-})
 const { currentPage: skillPage, pagedItems: pagedSkills } =
   useListPagination(filteredSkills, { resetOn: query })
 const { currentPage: toolPage, pagedItems: pagedTools } =
-  useListPagination(filteredTools, { resetOn: query })
+  useListPagination(filteredTools, { resetOn: [query, toolRuntimeStatusFilter, toolAdmissionFilter] })
 const { currentPage: connectorPage, pagedItems: pagedConnectors } =
   useListPagination(filteredConnectors, { resetOn: query })
-const { currentPage: toolCatalogPage, pagedItems: pagedToolCatalog } =
-  useListPagination(filteredToolCatalog, { resetOn: [toolCatalogQuery, toolCatalogFilter] })
 const { currentPage: skillVersionPage, pagedItems: pagedSkillVersions } =
   useListPagination(selectedSkillVersions, { resetOn: detailTargetId })
 const { currentPage: skillReleasePage, pagedItems: pagedSkillReleases } =
@@ -239,6 +218,8 @@ function inspectTool(tool: ToolDefinition) {
     { label: '绑定连接器', value: connector?.name ?? '平台内置能力' },
     { label: '操作模式', value: tool.mode === 'read' ? '只读' : '写入' },
     { label: '风险等级', value: riskLabel(tool.risk) },
+    { label: '平台准入', value: tool.admissionStatus === 'unavailable' ? '尚未准入' : '可授权' },
+    { label: '准入说明', value: tool.admissionMessage ?? '已完成平台安全准入' },
     { label: '授权角色', value: tool.allowedRoles.join('、') },
     { label: '数据范围', value: tool.dataScopes.join('、') },
     { label: '审批策略', value: approvalLabel(tool.approvalPolicy) },
@@ -300,49 +281,17 @@ async function copySkillIdentifier(value: string) {
   }
 }
 
-function openToolPermissions(toolId = detailTargetId.value) {
-  detailOpen.value = false
-  void router.push({ path: '/permissions', query: { tool: toolId } })
-}
-
-function openToolCatalog() {
-  toolCatalogQuery.value = ''
-  toolCatalogFilter.value = contentStore.toolCatalog.some(item => item.status === 'ready') ? 'ready' : 'all'
-  const candidate = contentStore.toolCatalog.find(item => item.status === 'ready')
-    ?? contentStore.toolCatalog[0]
-    ?? null
-  selectToolCandidate(candidate)
-  toolCatalogDialogOpen.value = true
-}
-
-function selectToolCandidate(candidate: ToolCatalogCandidate | null) {
-  selectedToolCandidate.value = candidate
-  toolCreateForm.allowedRoles = candidate ? [...candidate.defaultAllowedRoles] : []
-  toolCreateForm.dataScopes = candidate ? [...candidate.defaultDataScopes] : []
-  toolCreateForm.approvalPolicy = candidate?.defaultApprovalPolicy ?? 'none'
-}
-
-async function addSelectedTool() {
-  const candidate = selectedToolCandidate.value
-  if (!candidate || candidate.status !== 'ready') return
-  if (!toolCreateForm.allowedRoles.length || !toolCreateForm.dataScopes.length) {
-    ElMessage.warning('请配置至少一个授权角色和数据范围')
-    return
-  }
-  toolAdding.value = true
+async function syncDshTools() {
+  if (toolCatalogSyncing.value) return
+  toolCatalogSyncing.value = true
   try {
-    await contentStore.addTool({
-      catalogId: candidate.id,
-      allowedRoles: [...toolCreateForm.allowedRoles],
-      dataScopes: [...toolCreateForm.dataScopes],
-      approvalPolicy: toolCreateForm.approvalPolicy,
-    })
-    toolCatalogDialogOpen.value = false
-    ElMessage.success(`工具“${candidate.name}”已添加`)
+    const result = await contentStore.syncDshTools()
+    await toolStore.loadBindings()
+    ElMessage.success(`已同步 ${result.discoveredCount} 个 DSH 工具，其中 ${result.admittedCount} 个可授权给 Agent`)
   } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : '工具添加失败')
+    ElMessage.error(cause instanceof Error ? cause.message : 'DSH 工具目录同步失败')
   } finally {
-    toolAdding.value = false
+    toolCatalogSyncing.value = false
   }
 }
 
@@ -839,17 +788,32 @@ onUnmounted(() => clearSkillTestPoll())
       </div>
       <div v-if="activeTab !== 'install'" class="filter-bar capability-toolbar">
         <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索 DSH 内置工具名称、标识或说明' : '搜索 MCP 名称、标识或 serverName'" />
+        <div v-if="activeTab === 'tools'" class="tool-filter-controls" aria-label="工具筛选">
+          <el-select v-model="toolRuntimeStatusFilter" aria-label="运行状态" data-testid="tool-runtime-status-filter">
+            <el-option label="全部运行状态" value="all" />
+            <el-option label="可用" value="available" />
+            <el-option label="性能下降" value="degraded" />
+            <el-option label="已停用" value="disabled" />
+          </el-select>
+          <el-select v-model="toolAdmissionFilter" aria-label="平台准入" data-testid="tool-admission-filter">
+            <el-option label="全部准入状态" value="all" />
+            <el-option label="可授权" value="approved" />
+            <el-option label="尚未准入" value="unavailable" />
+          </el-select>
+        </div>
         <div v-if="activeTab === 'skills'" class="capability-toolbar__legend"><span>版本发布后不可变</span></div>
-        <div v-if="activeTab === 'tools'" class="capability-toolbar__legend"><span>仅管理 DSH 内置工具；MCP 工具随连接器清单自动同步</span></div>
         <el-button v-if="activeTab === 'skills'" @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
         <div v-if="authStore.canManage && activeTab === 'tools'" class="capability-toolbar__actions">
-          <el-button type="primary" :icon="Plus" data-action="add-tool" @click="openToolCatalog">添加工具</el-button>
+          <el-button type="primary" :icon="Refresh" :loading="toolCatalogSyncing" data-action="sync-dsh-tools" @click="syncDshTools">同步 DSH 工具</el-button>
         </div>
         <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
           <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
           <el-button :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
         </div>
       </div>
+      <p v-if="activeTab === 'tools'" class="tool-admission-help" data-testid="tool-admission-help">
+        平台准入表示工具已完成平台安全策略、执行约束和结果证据接入，可以授权给 Agent；不代表任何 Agent 已经获得使用权。
+      </p>
     </section>
 
     <div v-if="authStore.canManage" v-show="activeTab === 'install'" id="capability-panel-install" role="tabpanel" aria-labelledby="capability-tab-install">
@@ -903,11 +867,12 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column prop="system" label="所属系统" min-width="130" />
         <el-table-column label="模式" width="90"><template #default="scope"><span class="mode-label" :class="`mode-label--${scope.row.mode}`">{{ scope.row.mode === 'read' ? '只读' : '写入' }}</span></template></el-table-column>
         <el-table-column label="风险" width="100"><template #default="scope"><StatusTag :status="scope.row.risk" /></template></el-table-column>
-        <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
-        <el-table-column label="授权角色" min-width="190"><template #default="scope"><span class="role-text">{{ scope.row.allowedRoles.join('、') }}</span></template></el-table-column>
-        <el-table-column label="绑定修订" min-width="190"><template #default="scope"><span class="mono">{{ toolStore.governanceOf(scope.row.id).bindingRevision.id }}</span></template></el-table-column>
+        <el-table-column label="平台准入" width="120"><template #default="scope"><StatusTag :status="scope.row.admissionStatus === 'unavailable' ? 'blocked' : 'available'" :label="scope.row.admissionStatus === 'unavailable' ? '尚未准入' : '可授权'" dot /></template></el-table-column>
+        <el-table-column label="运行状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
+        <el-table-column label="使用授权" min-width="170"><template #default="scope"><span class="role-text">{{ scope.row.admissionStatus === 'unavailable' ? '不可授权' : '在 Agent 版本中配置' }}</span></template></el-table-column>
+        <el-table-column label="绑定修订" min-width="190"><template #default="scope"><span class="mono">{{ scope.row.admissionStatus === 'unavailable' ? '—' : toolStore.governanceOf(scope.row.id).bindingRevision.id }}</span></template></el-table-column>
         <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" data-action="configure-tool-permissions" @click="openToolPermissions(scope.row.id)">权限</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="150" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage && scope.row.admissionStatus !== 'unavailable'" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
       </template>
@@ -978,81 +943,6 @@ onUnmounted(() => clearSkillTestPoll())
       </el-form>
       <el-alert type="info" :closable="false" show-icon title="轮换后连接器会重新检查。人工停用状态不会被自动解除。" />
       <template #footer><el-button @click="mcpCredentialDialogOpen = false">取消</el-button><el-button type="primary" :loading="mcpCredentialRotating" :disabled="!mcpCredentialToken" data-action="confirm-rotate-mcp-credential" @click="rotateMcpCredential">轮换并检查</el-button></template>
-    </el-dialog>
-
-    <el-dialog v-model="toolCatalogDialogOpen" title="添加 DSH 工具" width="min(920px, calc(100vw - 32px))" destroy-on-close>
-      <div class="tool-catalog-toolbar">
-        <el-input v-model="toolCatalogQuery" :prefix-icon="Search" clearable placeholder="搜索当前 DSH Profile 已加载的工具" />
-        <el-radio-group v-model="toolCatalogFilter" size="small">
-          <el-radio-button value="ready">可添加 {{ readyToolCandidateCount }}</el-radio-button>
-          <el-radio-button value="all">全部 {{ contentStore.toolCatalog.length }}</el-radio-button>
-        </el-radio-group>
-      </div>
-      <div class="tool-catalog-layout">
-        <div class="tool-catalog-column">
-        <div class="tool-catalog-list" aria-label="可添加工具">
-          <button
-            v-for="candidate in pagedToolCatalog"
-            :key="candidate.id"
-            type="button"
-            class="tool-catalog-card"
-            :class="{ 'is-selected': selectedToolCandidate?.id === candidate.id }"
-            :aria-pressed="selectedToolCandidate?.id === candidate.id"
-            @click="selectToolCandidate(candidate)"
-          >
-            <span class="tool-catalog-card__header">
-              <strong>{{ candidate.name }}</strong>
-              <el-tag v-if="candidate.status === 'ready'" type="success" effect="plain">可添加</el-tag>
-              <el-tag v-else-if="candidate.status === 'installed'" type="info" effect="plain">已添加</el-tag>
-              <el-tag v-else type="warning" effect="plain">暂不可用</el-tag>
-            </span>
-            <small>{{ candidate.id }}@{{ candidate.version }}</small>
-            <p>{{ candidate.description }}</p>
-          </button>
-          <el-empty
-            v-if="!filteredToolCatalog.length"
-            :description="toolCatalogFilter === 'ready' ? '当前没有可添加的工具，可切换到“全部”查看' : '当前 DSH Profile 没有可展示的工具'"
-            :image-size="72"
-          />
-        </div>
-        <el-pagination v-model:current-page="toolCatalogPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="filteredToolCatalog.length" :page-size="10" />
-        </div>
-
-        <div v-if="selectedToolCandidate" class="tool-catalog-config">
-          <div class="tool-catalog-summary">
-            <strong>{{ selectedToolCandidate.name }}</strong>
-            <span :class="`tool-catalog-summary__status--${selectedToolCandidate.status}`">{{ selectedToolCandidate.availabilityMessage }}</span>
-            <p>运行要求：{{ selectedToolCandidate.requirements.join('、') }}</p>
-            <p>执行契约：{{ selectedToolCandidate.outputValidation === 'unavailable' ? '输出不可由平台验证' : '输出已校验' }} · {{ selectedToolCandidate.retryPolicy === 'safe' ? '可安全重试' : selectedToolCandidate.retryPolicy === 'verify-first' ? '先核对后重试' : '不可自动重试' }} · {{ selectedToolCandidate.completionSemantics === 'completed' ? '同步完成' : '仅已受理' }}</p>
-          </div>
-          <el-form label-position="top" :disabled="selectedToolCandidate.status !== 'ready'">
-            <el-form-item label="授权角色" required>
-              <el-select v-model="toolCreateForm.allowedRoles" multiple filterable allow-create default-first-option>
-                <el-option v-for="role in toolRoleOptions" :key="role" :label="role" :value="role" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="数据范围" required>
-              <el-select v-model="toolCreateForm.dataScopes" multiple filterable allow-create default-first-option>
-                <el-option v-for="scope in toolScopeOptions" :key="scope" :label="scope" :value="scope" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="审批策略">
-              <span class="tool-catalog-fixed-policy">{{ approvalLabel(toolCreateForm.approvalPolicy) }}（平台安全策略固定）</span>
-            </el-form-item>
-          </el-form>
-          <el-alert type="info" :closable="false" show-icon title="添加后还需在 Agent 版本中显式授权，工具不会自动扩大现有 Agent 权限。" />
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="toolCatalogDialogOpen = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="toolAdding"
-          :disabled="selectedToolCandidate?.status !== 'ready'"
-          data-action="confirm-add-tool"
-          @click="addSelectedTool"
-        >添加到工具目录</el-button>
-      </template>
     </el-dialog>
 
     <el-dialog
@@ -1173,7 +1063,7 @@ onUnmounted(() => clearSkillTestPoll())
           <p v-else class="tool-gov-note">暂无 Agent 引用</p>
         </section>
       </template>
-      <div v-if="authStore.canManage" class="capability-detail__actions"><template v-if="detailType === 'skill' && selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template><template v-if="detailType === 'tool'"><el-button type="primary" @click="openToolPermissions()">配置权限与数据范围</el-button></template></div>
+      <div v-if="authStore.canManage && detailType === 'skill'" class="capability-detail__actions"><template v-if="selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template></div>
     </el-drawer>
 
   </div>
@@ -1219,6 +1109,9 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-toolbar__legend { margin-left: auto; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .capability-toolbar__actions { display: flex; gap: 8px; align-items: center; }
 .capability-toolbar__legend span { display: inline-flex; align-items: center; gap: 6px; }
+.tool-filter-controls { display: flex; min-width: 340px; flex: 1; gap: 8px; }
+.tool-filter-controls :deep(.el-select) { width: 166px; }
+.tool-admission-help { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.55; }
 .capability-panel :deep(.el-table__header .cell) { white-space: nowrap; }
 .primary-cell { display: flex; min-width: 0; flex-direction: column; }
 .primary-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
@@ -1252,29 +1145,6 @@ onUnmounted(() => clearSkillTestPoll())
 .mcp-tool-item strong { color: var(--color-text-secondary); font-size: var(--font-size-micro); }
 .mcp-tool-item pre { max-height: 220px; margin: 6px 0 0; padding: 10px; overflow: auto; border-radius: var(--radius-button); color: var(--color-text-primary); background: var(--color-bg-base); font-size: var(--font-size-micro); line-height: 1.5; white-space: pre-wrap; }
 .mcp-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
-.tool-catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.tool-catalog-toolbar .el-input { max-width: 420px; }
-.tool-catalog-toolbar .el-radio-group { flex: none; }
-.tool-catalog-layout { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr); gap: var(--spacing-section); }
-.tool-catalog-column { display: flex; min-width: 0; flex-direction: column; }
-.tool-catalog-list { display: flex; flex: 1; flex-direction: column; gap: 8px; max-height: 480px; overflow-y: auto; }
-.tool-catalog-card { width: 100%; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); color: var(--color-text-primary); background: var(--color-bg-base); text-align: left; cursor: pointer; }
-.tool-catalog-card:hover, .tool-catalog-card.is-selected { border-color: var(--color-primary); background: var(--color-primary-light); }
-.tool-catalog-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-.tool-catalog-card__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.tool-catalog-card small { display: block; margin-top: 4px; color: var(--color-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.tool-catalog-card p { display: -webkit-box; margin: 8px 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.tool-catalog-config { min-width: 0; }
-.tool-catalog-config .el-select { width: 100%; }
-.tool-catalog-fixed-policy { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
-.tool-catalog-summary { margin-bottom: var(--spacing-section); padding: 14px; border-radius: var(--radius-card); background: var(--color-bg-subtle); }
-.tool-catalog-summary strong, .tool-catalog-summary span { display: block; }
-.tool-catalog-summary span { margin-top: 5px; font-size: var(--font-size-badge); }
-.tool-catalog-summary__status--ready { color: var(--color-success); }
-.tool-catalog-summary__status--installed { color: var(--color-text-secondary); }
-.tool-catalog-summary__status--unavailable { color: var(--color-warning); }
-.tool-catalog-summary p { margin: 8px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.55; }
-@media (max-width: 720px) { .tool-catalog-toolbar { align-items: stretch; flex-direction: column; } .tool-catalog-toolbar .el-input { max-width: none; } .tool-catalog-layout { grid-template-columns: 1fr; } }
 .capability-detail__notice { display: flex; align-items: flex-start; gap: 9px; padding: 13px; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
 .capability-detail__notice p { margin: 0; font-size: var(--font-size-badge); line-height: 1.6; }
 .capability-detail__rows { margin: 18px 0 0; }
@@ -1299,5 +1169,5 @@ onUnmounted(() => clearSkillTestPoll())
 .version-summary small,
 .release-record small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .release-record p { margin: 6px 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
-@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .mcp-form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .tool-filter-controls { min-width: 0; } .tool-filter-controls :deep(.el-select) { width: 50%; } .mcp-form-grid { grid-template-columns: 1fr; } }
 </style>

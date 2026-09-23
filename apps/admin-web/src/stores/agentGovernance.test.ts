@@ -147,7 +147,7 @@ describe('agent governance store（服务端持久化）', () => {
     const reload = vi.spyOn(contentStore, 'load').mockResolvedValue(undefined)
     const store = useAgentGovernanceStore()
 
-    await store.reviewAndPublish('agent-3', '0.1.0', '测试管理员', '确认发布')
+    await store.reviewAndPublish('agent-3', '确认发布')
 
     expect(store.overlays['agent-3']?.candidate?.status).toBe('published')
     const governance = store.versionGovernance('agent-3', '0.1.0')
@@ -155,19 +155,13 @@ describe('agent governance store（服务端持久化）', () => {
     expect(reload).toHaveBeenCalledWith(true)
   })
 
-  it('提交/退回/撤回候选走服务端状态机并刷新索引', async () => {
-    const submitted = makeState('agent-5', { candidate: makeCandidate('agent-5', { status: 'submitted', sealedRevision: 1 }) })
+  it('既有待审核候选的退回与撤回走服务端状态机并刷新索引', async () => {
     const returned = makeState('agent-5', { candidate: makeCandidate('agent-5', { status: 'changes_requested', reviewNote: '补充说明' }) })
     const withdrawn = makeState('agent-5', { candidate: undefined })
-    const submit = vi.spyOn(adminApi, 'submitAgentRelease').mockResolvedValue(submitted)
     const requestChanges = vi.spyOn(adminApi, 'requestAgentReleaseChanges').mockResolvedValue(returned)
     const withdraw = vi.spyOn(adminApi, 'withdrawAgentRelease').mockResolvedValue(withdrawn)
     vi.spyOn(adminApi, 'getAgentReleaseSubmissions').mockResolvedValue({ items: [] })
     const store = useAgentGovernanceStore()
-
-    await store.submitCandidate('agent-5')
-    expect(submit).toHaveBeenCalledWith('agent-5')
-    expect(store.overlays['agent-5']?.candidate?.status).toBe('submitted')
 
     await store.requestCandidateChanges('agent-5', '补充说明')
     expect(requestChanges).toHaveBeenCalledWith('agent-5', '补充说明')

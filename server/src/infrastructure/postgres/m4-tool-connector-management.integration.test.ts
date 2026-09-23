@@ -16,6 +16,21 @@ if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
 let runtimeStatus: RuntimeHealth['status'] = 'healthy'
+let runtimeTools = [
+  runtimeTool('read', 'Read a file.', 'read'),
+  runtimeTool('glob', 'Find files.', 'read'),
+  runtimeTool('grep', 'Search files.', 'read'),
+  runtimeTool('write', 'Write an artifact.', 'write'),
+  runtimeTool('edit', 'Edit an existing file.', 'write'),
+  runtimeTool('todo_write', 'Update the task list.', 'write'),
+  runtimeTool('read_image', 'Read an image from the workspace.', 'read'),
+  runtimeTool('str_replace_editor', 'View or edit a workspace text file.', 'write'),
+  runtimeTool('web_fetch', 'Fetch a public web page.', 'read'),
+  runtimeTool('web_search', 'Search the public web.', 'read'),
+  runtimeTool('bash', 'Execute a shell command.', 'write'),
+  runtimeTool('subagent', 'Delegate work.', 'write'),
+  runtimeTool('workflow', 'Control a runtime workflow.', 'write'),
+]
 let tools: PostgresToolConnectorService
 let skills: PostgresSkillService
 let agents: PostgresAgentService
@@ -37,12 +52,7 @@ const runtime: AgentRuntimePort = {
     }
   },
   async listTools() {
-    return [
-      runtimeTool('edit', 'Edit an existing file.', 'write'),
-      runtimeTool('todo_write', 'Update the task list.', 'write'),
-      runtimeTool('bash', 'Execute a shell command.', 'write'),
-      runtimeTool('subagent', 'Delegate work.', 'write'),
-    ]
+    return runtimeTools
   },
   async close() {},
 }
@@ -138,6 +148,26 @@ test('Tool and Connector management gates immutable Agent and Skill references',
       'none', ${'0'.repeat(64)}, 'active', 'U00008'
     )
   `
+  await database`
+    insert into tools (
+      id, tenant_id, key, name, source, status, connector_id, system, description,
+      dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
+      approval_policy, admission_status, admission_message
+    ) values (
+      'subagent', 'tenant-dsh-work', 'dsh-subagent', 'subagent', 'platform', 'disabled',
+      'connector-dsh-workspace', 'DSH Runtime', '历史同步的 DSH 内部协作工具',
+      'subagent', 'write', 30, '["role-platform-admin"]'::jsonb,
+      '["workspace:authorized"]'::jsonb, 'always', 'unavailable', '历史记录'
+    )
+  `
+  await database`
+    insert into tool_versions (
+      id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status
+    ) values (
+      'tool-version-subagent-test', 'tenant-dsh-work', 'subagent', '1.0.0',
+      '{}'::jsonb, '{}'::jsonb, 'high', 'published'
+    )
+  `
   assert.deepEqual((await tools.getTools()).map(tool => tool.id).sort(), ['glob', 'grep', 'read', 'write'])
   assert.equal((await tools.listToolBindings()).some(binding => binding.tool === 'external-tool-test@1.0.0'), false)
   await assert.rejects(tools.assertAvailableReferences(['external-tool-test@1.0.0']), /不符合受控运行策略/)
@@ -145,59 +175,89 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   await assert.rejects(tools.setToolStatus({ toolId: 'external-tool-test', status: 'disabled', actor: 'U00008' }), /只允许操作 DSH 内置工具/)
 
   const candidates = await tools.getToolCatalog()
-  assert.deepEqual(candidates.map(candidate => candidate.id).sort(), ['bash', 'edit', 'subagent', 'todo_write'])
-  assert.deepEqual(candidates.filter(candidate => candidate.status === 'ready').map(candidate => candidate.id).sort(), ['edit', 'todo_write'])
-  assert.equal(candidates.find(candidate => candidate.id === 'subagent')?.status, 'unavailable')
+  assert.deepEqual(candidates.map(candidate => candidate.id).sort(), [
+    'bash', 'edit', 'glob', 'grep', 'read', 'read_image', 'str_replace_editor', 'todo_write', 'web_fetch', 'web_search', 'write',
+  ])
+  assert.deepEqual(candidates.filter(candidate => candidate.status === 'ready').map(candidate => candidate.id).sort(), [
+    'edit', 'read_image', 'str_replace_editor', 'todo_write', 'web_search',
+  ])
+  assert.equal(candidates.some(candidate => candidate.id === 'subagent'), false)
+  assert.equal(candidates.some(candidate => candidate.id === 'workflow'), false)
   assert.equal(candidates.find(candidate => candidate.id === 'bash')?.status, 'unavailable')
   assert.match(candidates.find(candidate => candidate.id === 'bash')?.availabilityMessage ?? '', /不开放任意 Shell/)
-  await assert.rejects(tools.addTool({
-    catalogId: 'subagent', allowedRoles: ['平台管理员'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'always', actor: 'U00008',
-  }), /尚未接入/)
-  const added = await tools.addTool({
-    catalogId: 'edit',
-    allowedRoles: ['普通员工', '平台管理员'],
-    dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none',
-    actor: 'U00008',
-  })
-  assert.equal(added.id, 'edit')
+  assert.equal(candidates.find(candidate => candidate.id === 'web_fetch')?.status, 'unavailable')
+
+  const synchronized = await tools.syncToolCatalog({ actor: 'U00008' })
+  assert.equal(synchronized.discoveredCount, 11)
+  assert.equal(synchronized.admittedCount, 9)
+  assert.equal(synchronized.unavailableCount, 2)
+  const synchronizedTools = await tools.getTools()
+  assert.deepEqual(synchronizedTools.map(tool => tool.id).sort(), [
+    'bash', 'edit', 'glob', 'grep', 'read', 'read_image', 'str_replace_editor', 'todo_write', 'web_fetch', 'web_search', 'write',
+  ])
+  const added = synchronizedTools.find(tool => tool.id === 'edit')!
   assert.equal(added.mode, 'write')
+  assert.equal(added.status, 'available')
+  assert.equal(added.admissionStatus, 'approved')
   assert.equal(added.approvalPolicy, 'none')
   assert.equal(added.outputValidation, 'unavailable')
   assert.equal(added.retryPolicy, 'never')
   assert.equal(added.concurrencyPolicy, 'serialized')
   assert.equal(added.completionSemantics, 'completed')
-  await tools.assertAvailableReferences(['edit@1.0.0'])
+  const [editStoredContract] = await database<Record<string, unknown>[]>`
+    select input_schema as "inputSchema", output_schema as "outputSchema", risk_level as risk,
+           output_validation as "outputValidation", retry_policy as "retryPolicy",
+           concurrency_policy as "concurrencyPolicy", completion_semantics as "completionSemantics"
+      from tool_versions where tenant_id = 'tenant-dsh-work' and tool_id = 'edit' and version = ${added.version}
+  `
+  assert.deepEqual(editStoredContract, {
+    inputSchema: { type: 'object' }, outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+    risk: 'low', outputValidation: 'unavailable', retryPolicy: 'never',
+    concurrencyPolicy: 'serialized', completionSemantics: 'completed',
+  })
+  const bash = synchronizedTools.find(tool => tool.id === 'bash')!
+  assert.equal(bash.status, 'disabled')
+  assert.equal(bash.admissionStatus, 'unavailable')
+  assert.match(bash.admissionMessage ?? '', /不开放任意 Shell/)
+  for (const id of ['read_image', 'str_replace_editor', 'web_search']) {
+    const admitted = synchronizedTools.find(tool => tool.id === id)!
+    assert.equal(admitted.status, 'available')
+    assert.equal(admitted.admissionStatus, 'approved')
+    assert.equal(admitted.approvalPolicy, 'none')
+  }
+  assert.equal(synchronizedTools.some(tool => tool.id === 'subagent'), false)
+  assert.equal(synchronizedTools.some(tool => tool.id === 'workflow'), false)
+  const [hiddenSubagent] = await database<{ status: string; admissionStatus: string; admissionMessage: string }[]>`
+    select status, admission_status as "admissionStatus", admission_message as "admissionMessage"
+      from tools where id = 'subagent'
+  `
+  assert.equal(hiddenSubagent?.status, 'disabled')
+  assert.equal(hiddenSubagent?.admissionStatus, 'unavailable')
+  assert.match(hiddenSubagent?.admissionMessage ?? '', /内部控制工具/)
+  assert.equal((await tools.listToolBindings()).some(binding => binding.tool.startsWith('bash@')), false)
+  assert.equal((await tools.listToolBindings()).some(binding => binding.tool.startsWith('subagent@')), false)
+  await tools.assertAvailableReferences(['edit@1.0.0', 'read_image@1.0.0', 'str_replace_editor@1.0.0', 'web_search@1.0.0'])
+  await assert.rejects(tools.assertAvailableReferences(['web_fetch@1.0.0']), /不可用/)
+  await database`
+    update tools set status = 'disabled', admission_status = 'unavailable', admission_message = '旧状态'
+     where id = 'web_fetch'
+  `
+  await tools.syncToolCatalog({ actor: 'U00008' })
+  const webFetch = (await tools.getTools()).find(tool => tool.id === 'web_fetch')!
+  assert.equal(webFetch.status, 'disabled')
+  assert.equal(webFetch.admissionStatus, 'unavailable')
+  assert.equal((await tools.listToolBindings()).some(binding => binding.tool.startsWith('web_fetch@')), false)
+  const editAfterResync = (await tools.getTools()).find(tool => tool.id === 'edit')!
+  assert.equal(editAfterResync.version, added.version, 'unchanged contracts must reuse the published Tool Version')
+  const [editVersionCount] = await database<{ count: number }[]>`
+    select count(*)::integer as count from tool_versions
+     where tenant_id = 'tenant-dsh-work' and tool_id = 'edit' and status = 'published'
+  `
+  assert.equal(editVersionCount?.count, 1)
   assert.equal(await tools.resolveRuntimeApprovalMode(['edit@1.0.0']), 'never')
-  await assert.rejects(tools.addTool({
-    catalogId: 'edit', allowedRoles: ['普通员工'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none', actor: 'U00008',
-  }), /已存在/)
   assert.equal((await tools.getToolCatalog()).find(candidate => candidate.id === 'edit')?.status, 'installed')
-  await assert.rejects(tools.addTool({
-    catalogId: 'bash',
-    allowedRoles: ['平台管理员'],
-    dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'always',
-    actor: 'U00008',
-  }), /不开放任意 Shell/)
-  await database`
-    insert into tools (
-      id, tenant_id, key, name, source, status, connector_id, system, description,
-      dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes, approval_policy
-    ) values (
-      'bash', 'tenant-dsh-work', 'dsh-bash-disabled-test', '执行 Shell 命令', 'platform', 'disabled',
-      'connector-dsh-workspace', 'DSH Runtime', '不可授权的测试记录', 'bash', 'write', 60,
-      '["role-platform-admin"]'::jsonb, '["workspace:authorized"]'::jsonb, 'always'
-    )
-  `
-  await database`
-    insert into tool_versions (id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status)
-    values ('tool-version-bash-disabled-test', 'tenant-dsh-work', 'bash', '1.0.0', '{}'::jsonb, '{}'::jsonb, 'high', 'published')
-  `
   assert.match((await tools.getToolCatalog()).find(candidate => candidate.id === 'bash')?.availabilityMessage ?? '', /已安装但不可授权/)
-  await assert.rejects(tools.setToolStatus({ toolId: 'bash', status: 'available', actor: 'U00008' }), /逐次审批尚未接入/)
+  await assert.rejects(tools.setToolStatus({ toolId: 'bash', status: 'available', actor: 'U00008' }), /不开放任意 Shell/)
   await assert.rejects(tools.assertAvailableReferences(['bash@1.0.0']), /不可用/)
 
   await tools.assertAvailableReferences(['read@1.0.0', 'glob@1.0.0', 'grep@1.0.0', 'write@1.0.0'])
@@ -233,6 +293,16 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   await tools.setToolStatus({ toolId: 'read', status: 'disabled', actor: 'U00008' })
   await assert.rejects(tools.assertAvailableReferences(['read@1.0.0']), /不可用/)
   await tools.setToolStatus({ toolId: 'read', status: 'available', actor: 'U00008' })
+
+  runtimeTools = runtimeTools.filter(tool => tool.id !== 'todo_write')
+  const afterRemoval = await tools.syncToolCatalog({ actor: 'U00008' })
+  assert.equal(afterRemoval.discoveredCount, 10)
+  const removedTool = (await tools.getTools()).find(tool => tool.id === 'todo_write')!
+  assert.equal(removedTool.status, 'disabled')
+  assert.equal(removedTool.admissionStatus, 'unavailable')
+  assert.match(removedTool.admissionMessage ?? '', /不再加载/)
+  assert.equal((await tools.listToolBindings()).some(binding => binding.tool.startsWith('todo_write@') && binding.status === 'active'), false)
+  await assert.rejects(tools.assertAvailableReferences(['todo_write@1.0.0']), /不可用/)
 
   runtimeStatus = 'degraded'
   const degraded = await tools.checkConnector({ connectorId: 'connector-dsh-workspace', actor: 'U00008' })

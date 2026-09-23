@@ -87,7 +87,6 @@ export interface DshAcpRuntimeAdapterConfiguration {
   runtimeId: string
   runtimeRoot: string
   dshRepository: string
-  toolCatalogPath?: string
   runtimeVersion?: string
   runtimeCommit?: string
   protocolVersion?: number
@@ -342,33 +341,35 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   }
 
   async listTools(): Promise<RuntimeToolDescriptor[]> {
-    const path = this.configuration.toolCatalogPath
-    if (!path) throw new Error('DSH Runtime 未配置工具目录输出')
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
-    if (!isRecord(parsed) || parsed['formatVersion'] !== 2 || !Array.isArray(parsed['tools'])) {
-      throw new Error('DSH Runtime 工具目录格式无效')
-    }
-    return parsed['tools'].map((value) => {
-      if (!isRecord(value)
-        || typeof value['name'] !== 'string'
-        || typeof value['description'] !== 'string'
-        || !isRecord(value['parameters'])
-        || !isRuntimeToolContract(value['contract'])) {
-        throw new Error('DSH Runtime 工具目录包含无效条目')
-      }
-      return {
-        id: value['name'],
-        description: value['description'],
-        inputSchema: value['parameters'],
-        outputSchema: value['contract']['outputSchema'],
-        outputValidation: value['contract']['outputValidation'],
-        effect: value['contract']['effect'],
-        retryPolicy: value['contract']['retryPolicy'],
-        concurrencyPolicy: value['contract']['concurrencyPolicy'],
-        completionSemantics: value['contract']['completionSemantics'],
-        timeoutSeconds: value['contract']['timeoutSeconds'],
-      }
+    const setupTimeoutMs = this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS
+    await mkdir(this.configuration.runtimeRoot, { recursive: true })
+    const directory = await mkdtemp(join(this.configuration.runtimeRoot, 'tool-catalog-inspection-'))
+    const workspace = join(directory, 'workspace')
+    const catalogPath = join(directory, 'runtime-tools.json')
+    await mkdir(workspace, { recursive: true })
+    const diagnostics: string[] = []
+    const client = AcpJsonRpcClient.launch({
+      ...this.configuration.process,
+      env: catalogProbeEnvironment(this.configuration.process.env, catalogPath, 'management', workspace),
+    }, {
+      onSessionUpdate: () => undefined,
+      onPermissionRequest: async () => ({ outcome: { outcome: 'cancelled' } }),
+      onDiagnostic: message => { diagnostics.push(message) },
     })
+    try {
+      const deadline = performance.now() + setupTimeoutMs
+      return await withTimeout((async () => {
+        await client.initialize()
+        const sessionId = await client.newSession(workspace)
+        return waitForRuntimeToolCatalog(catalogPath, '', sessionId, deadline, 'DSH Runtime 未生成工具目录')
+      })(), setupTimeoutMs, 'DSH Runtime 工具目录发现超时')
+    } catch (error) {
+      const detail = diagnostics.join('\n').slice(-2000)
+      throw new Error(`DSH Runtime 工具目录发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
+    } finally {
+      await client.close().catch(() => undefined)
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 
   async inspectMcpConnection(connection: McpRuntimeConnection): Promise<McpInspectionResult> {
@@ -379,10 +380,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     const workspace = join(directory, 'workspace')
     const catalogPath = join(directory, 'runtime-tools.json')
     await mkdir(workspace, { recursive: true })
-    const prepared = await prepareMcpProcess(this.configuration.process, [connection], join(directory, 'mcp.cordis.patch.yml'), {
-      DSH_TOOL_CATALOG_PATH: catalogPath,
-      DSH_ALLOWED_TOOLS_JSON: '[]',
-    })
+    const prepared = await prepareMcpProcess({
+      ...this.configuration.process,
+      env: catalogProbeEnvironment(this.configuration.process.env, catalogPath, 'mcp', workspace),
+    }, [connection], join(directory, 'mcp.cordis.patch.yml'))
     const diagnostics: string[] = []
     const client = AcpJsonRpcClient.launch(prepared, {
       onSessionUpdate: () => undefined,
@@ -394,8 +395,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       const deadline = performance.now() + setupTimeoutMs
       const catalog = await withTimeout((async () => {
         await client.initialize()
-        await client.newSession(workspace)
-        return waitForRuntimeToolCatalog(catalogPath, prefix, deadline)
+        const sessionId = await client.newSession(workspace)
+        return waitForRuntimeToolCatalog(catalogPath, prefix, sessionId, deadline, 'DSH Runtime 未生成 MCP 工具目录')
       })(), setupTimeoutMs, 'MCP 发现超时')
       const capabilities = catalog
         .filter(tool => tool.id.startsWith(prefix))
@@ -518,7 +519,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
       if (record.manifest.tools.some(tool => tool.id === 'propose_memory')) {
         const propose = this.configuration.proposeMemory
-        if (!propose) throw new Error('Agent 记忆提案不可用：未配置受控记忆服务')
+        if (!propose) throw new Error('Agent 经验迭代申请不可用：未配置经验迭代服务')
         registerPlatformTool('propose_memory', (input, signal) => propose(input, record.manifest, signal))
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
@@ -537,7 +538,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         throw new Error('MCP 连接解析服务未接入')
       }
       const processConfiguration = await prepareMcpProcess(
-        this.configuration.process,
+        {
+          ...this.configuration.process,
+          env: withoutToolCatalogEnvironment(this.configuration.process.env),
+        },
         mcpConnections ?? [],
         join(record.snapshot.attemptDirectory, 'mcp.cordis.patch.yml'),
       )
@@ -1502,24 +1506,27 @@ function parseMcpPublicToolName(name: string, serverNames: string[]): { serverNa
   return capabilityName ? { serverName, capabilityName } : undefined
 }
 
-async function waitForRuntimeToolCatalog(path: string, requiredPrefix: string, deadline: number): Promise<RuntimeToolDescriptor[]> {
+async function waitForRuntimeToolCatalog(
+  path: string,
+  requiredPrefix: string,
+  expectedSessionId: string,
+  deadline: number,
+  timeoutMessage: string,
+): Promise<RuntimeToolDescriptor[]> {
   let lastCatalog = ''
   let stableSince = 0
   while (performance.now() < deadline) {
     try {
       const content = await readFile(path, 'utf8')
       const parsed = JSON.parse(content) as unknown
-      if (isRecord(parsed) && parsed['formatVersion'] === 2 && Array.isArray(parsed['tools'])) {
-        const tools: RuntimeToolDescriptor[] = parsed['tools'].map(value => {
-          if (!isRecord(value) || typeof value['name'] !== 'string' || typeof value['description'] !== 'string' || !isRecord(value['parameters'])) {
-            throw new Error('DSH Runtime 工具目录包含无效 MCP 条目')
-          }
-          return {
-            id: value['name'], description: value['description'], inputSchema: value['parameters'],
-            outputSchema: {}, outputValidation: 'unavailable', effect: 'read', retryPolicy: 'safe',
-            concurrencyPolicy: 'concurrent', completionSemantics: 'completed', timeoutSeconds: 60,
-          }
-        })
+      if (isRecord(parsed)
+        && parsed['formatVersion'] === 3
+        && parsed['sessionId'] === expectedSessionId
+        && typeof parsed['catalogDigest'] === 'string'
+        && Array.isArray(parsed['tools'])) {
+        const digest = createHash('sha256').update(canonicalJson(parsed['tools'])).digest('hex')
+        if (digest !== parsed['catalogDigest']) throw new Error('DSH Runtime 工具目录摘要不匹配')
+        const tools = parseRuntimeToolCatalog(parsed['tools'])
         if (tools.some(tool => tool.id.startsWith(requiredPrefix))) {
           // DSH emits tools/change for each registration; an early snapshot can contain only part of one MCP generation.
           if (content !== lastCatalog) {
@@ -1533,7 +1540,72 @@ async function waitForRuntimeToolCatalog(path: string, requiredPrefix: string, d
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('DSH Runtime 未生成 MCP 工具目录')
+  throw new Error(timeoutMessage)
+}
+
+function parseRuntimeToolCatalog(values: unknown[]): RuntimeToolDescriptor[] {
+  const seen = new Set<string>()
+  return values.map((value) => {
+    if (!isRecord(value)
+      || typeof value['name'] !== 'string'
+      || !value['name'].trim()
+      || typeof value['description'] !== 'string'
+      || !isRecord(value['parameters'])
+      || !isRuntimeToolContract(value['contract'])
+      || seen.has(value['name'])) {
+      throw new Error('DSH Runtime 工具目录包含无效条目')
+    }
+    seen.add(value['name'])
+    return {
+      id: value['name'],
+      description: value['description'],
+      inputSchema: value['parameters'],
+      outputSchema: value['contract']['outputSchema'],
+      outputValidation: value['contract']['outputValidation'],
+      effect: value['contract']['effect'],
+      retryPolicy: value['contract']['retryPolicy'],
+      concurrencyPolicy: value['contract']['concurrencyPolicy'],
+      completionSemantics: value['contract']['completionSemantics'],
+      timeoutSeconds: value['contract']['timeoutSeconds'],
+    }
+  })
+}
+
+function withoutToolCatalogEnvironment(environment: Record<string, string> | undefined): Record<string, string> {
+  return Object.fromEntries(Object.entries(environment ?? {}).filter(([name]) => (
+    name !== 'DSH_TOOL_CATALOG_PATH' && name !== 'DSH_WORK_TOOL_CATALOG_MODE'
+  )))
+}
+
+function catalogProbeEnvironment(
+  environment: Record<string, string> | undefined,
+  catalogPath: string,
+  mode: 'management' | 'mcp',
+  workspace: string,
+): Record<string, string> {
+  const blocked = new Set([
+    'DSH_TOOL_CATALOG_PATH',
+    'DSH_WORK_TOOL_CATALOG_MODE',
+    'DSH_PLATFORM_TOOL_SOCKET',
+    'DSH_REQUIRE_CURRENT_AUTHORIZATION',
+  ])
+  if (mode === 'management') {
+    blocked.add('DSH_ALLOWED_MCP_SERVERS_JSON')
+    blocked.add('DSH_APPROVED_MCP_CAPABILITIES_JSON')
+  }
+  const baseline = Object.fromEntries(Object.entries(environment ?? {}).filter(([name]) => (
+    !blocked.has(name) && (mode === 'mcp' || !name.startsWith('DSH_MCP_VALUE_'))
+  )))
+  return {
+    ...baseline,
+    DSH_TOOL_CATALOG_PATH: catalogPath,
+    DSH_WORK_TOOL_CATALOG_MODE: mode,
+    DSH_WORK_DSH_SESSIONS_ROOT: join(dirname(catalogPath), 'sessions'),
+    DSH_SNAPSHOT_SESSIONS_ROOT: join(dirname(catalogPath), 'sessions'),
+    DSH_ALLOWED_TOOLS_JSON: '[]',
+    DSH_WORKSPACE_ROOT: workspace,
+    DSH_TOOL_APPROVAL_MODE: 'never',
+  }
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {

@@ -99,6 +99,24 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(page.getByText('企业知识 MCP', { exact: true })).toBeVisible()
   await expect(page.getByText('DSH Runtime 内置工具连接器', { exact: true })).toHaveCount(0)
 
+  await page.getByRole('button', { name: 'DSH 工具管理', exact: true }).click()
+  await expect(page).toHaveURL(/\/tools$/)
+  await page.getByRole('button', { name: '同步 DSH 工具', exact: true }).click()
+  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
+  await expect(page.getByText('任务进度清单', { exact: true })).toBeVisible()
+  await expect(page.getByText('在 Agent 版本中配置', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('不代表任何 Agent 已经获得使用权', { exact: false })).toBeVisible()
+
+  const admissionFilter = page.getByTestId('tool-admission-filter')
+  const runtimeStatusFilter = page.getByTestId('tool-runtime-status-filter')
+  await admissionFilter.click()
+  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '可授权', exact: true }).click()
+  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
+
+  await runtimeStatusFilter.click()
+  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '已停用', exact: true }).click()
+  await expect(page.getByText('暂无匹配的 DSH 内置工具', { exact: true })).toBeVisible()
+
   await page.getByRole('button', { name: 'Runtimes', exact: true }).click()
   await expect(page).toHaveURL(/\/runtimes$/)
   await expect(page.getByText('Runtimes', { exact: true }).first()).toBeVisible()
@@ -143,78 +161,59 @@ test('platform administrator can inspect and resolve an action-bound approval', 
   expect(resolved).toBe(true)
 })
 
-test('platform administrator can review and publish a controlled-memory candidate', async ({ page }) => {
-  const candidate = {
-    id: 'memory-candidate-e2e', consentId: 'memory-consent-e2e', memoryKey: 'a'.repeat(64),
-    kind: 'experience', title: '异常分析核对方法',
+test('platform administrator can review one Agent experience iteration application', async ({ page }) => {
+  const application = {
+    id: 'memory-proposal-e2e', agentId: 'agent-quality', agentName: '质量分析 Agent',
+    sourceAgentVersionId: 'agent-version-quality-2', sourceAgentVersion: '2.0.0',
+    sourceRunId: 'run-quality-e2e', sourceAttemptId: 'attempt-quality-e2e', proposedBy: 'principal-agent-quality',
+    title: '异常分析核对方法',
     content: '分析异常时先核对当前数据版本、缺失字段和外部操作回执，再形成可复核的结论。',
-    contentDigest: 'b'.repeat(64), visibility: 'workspace', scopeRef: 'ws-supply',
-    retentionUntil: '2026-12-31T00:00:00.000Z', status: 'pending', submittedBy: 'U00001',
-    reviewedBy: null, reviewedAt: null, reviewComment: null, approvedEntryId: null,
-    approvedVersionId: null, createdAt: '2026-09-22T00:00:00.000Z',
+    contentDigest: 'b'.repeat(64), status: 'pending', reviewedBy: null, reviewedAt: null,
+    reviewComment: null, publishedVersionId: null, createdAt: '2026-09-22T00:00:00.000Z',
   }
   let published = false
-  await page.route('**/api/admin/v1/memory/candidates**', async (route) => {
+  await page.route('**/api/admin/v1/experience-iterations/agents', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: [{
+        agentId: application.agentId, agentName: application.agentName, agentVersion: '2.1.0', agentStatus: 'published',
+        totalApplications: published ? 1 : 1, pendingApplications: published ? 0 : 1,
+        approvedApplications: published ? 1 : 0, rejectedApplications: 0, latestApplicationAt: application.createdAt,
+      }],
+      meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
+    }) })
+  })
+  await page.route('**/api/admin/v1/experience-iterations/applications**', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: published ? [] : [application],
+      meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
+    }) })
+  })
+  await page.route('**/api/admin/v1/experience-iterations/applications/*/review', async (route) => {
     if (route.request().method() === 'POST') {
       published = true
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-        data: { ...candidate, status: 'approved', approvedEntryId: 'memory-entry-e2e', approvedVersionId: 'memory-version-e2e' },
+        data: { ...application, status: 'approved', publishedVersionId: 'memory-version-e2e' },
         meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
       }) })
       return
     }
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-      data: published ? [] : [candidate],
-      meta: { api: 'admin', adapter: 'postgres', timestamp: new Date().toISOString() },
-    }) })
+    await route.continue()
   })
 
-  await page.goto(`${adminUrl}/memories`)
-  await expect(page.locator('.admin-topbar').getByText('受控记忆', { exact: true })).toBeVisible()
+  await page.goto(`${adminUrl}/experience-iterations`)
+  await expect(page.locator('.admin-topbar').getByText('经验迭代', { exact: true })).toBeVisible()
+  await expect(page.locator('.admin-topbar__subtitle')).toContainText('按稳定 Agent 归属')
+  await expect(page.getByRole('alert').filter({ hasText: '经验迭代按稳定 Agent 归属' })).toHaveCount(0)
   const row = page.getByRole('row').filter({ hasText: '异常分析核对方法' })
-  await expect(row).toContainText('工作空间')
-  await row.getByRole('button', { name: '发布', exact: true }).click()
-  await page.getByRole('dialog', { name: '发布记忆候选' }).getByRole('button', { name: '发布', exact: true }).click()
-  await expect(page.getByText('已发布受控记忆版本', { exact: true })).toBeVisible()
+  await expect(row).toContainText('质量分析 Agent')
+  await expect(row).toContainText('run-quality-e2e')
+  await row.getByRole('button', { name: '批准发布', exact: true }).click()
+  await page.getByRole('dialog', { name: '批准并发布经验迭代申请' }).getByRole('button', { name: '批准并发布', exact: true }).click()
+  await expect(page.getByText('已发布 Agent 经验版本', { exact: true })).toBeVisible()
   expect(published).toBe(true)
 })
 
-test('employee can inspect and withdraw a controlled-memory consent', async ({ page }) => {
-  const consent = {
-    id: 'memory-consent-e2e', sourceRunId: 'run-e2e', sourceAttemptId: 'attempt-e2e',
-    workspaceId: 'ws-supply', agentVersionId: 'agent-version-e2e', visibility: 'private',
-    retentionUntil: '2026-12-31T00:00:00.000Z', purpose: '用户明确提交稳定偏好候选',
-    status: 'active', withdrawnAt: null, createdAt: '2026-09-22T00:00:00.000Z',
-    candidateId: 'memory-candidate-e2e', candidateStatus: 'approved', title: '分析报告展示偏好',
-  }
-  let withdrawn = false
-  await page.route('**/api/workbench/v1/memory/consents**', async (route) => {
-    if (route.request().method() === 'POST') {
-      withdrawn = true
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-        data: { ...consent, status: 'withdrawn', withdrawnAt: new Date().toISOString() },
-        meta: { api: 'workbench', adapter: 'postgres', timestamp: new Date().toISOString() },
-      }) })
-      return
-    }
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-      data: [{ ...consent, ...(withdrawn ? { status: 'withdrawn', withdrawnAt: new Date().toISOString() } : {}) }],
-      meta: { api: 'workbench', adapter: 'postgres', timestamp: new Date().toISOString() },
-    }) })
-  })
-
-  await page.goto('/settings')
-  await expect(page.getByRole('heading', { name: '受控记忆授权' })).toBeVisible()
-  const row = page.getByRole('row').filter({ hasText: '分析报告展示偏好' })
-  await expect(row).toContainText('仅本人')
-  await row.getByRole('button', { name: '撤回授权', exact: true }).click()
-  await page.getByRole('dialog', { name: '撤回记忆授权' }).getByRole('button', { name: '撤回授权', exact: true }).click()
-  await expect(page.getByText('记忆授权已撤回', { exact: true })).toBeVisible()
-  await expect(row).toContainText('已撤回')
-  expect(withdrawn).toBe(true)
-})
-
-test('employee reviews an Agent memory proposal and explicitly chooses its scope and lifetime', async ({ page }) => {
+test('employee conversations do not expose controlled-memory submission', async ({ page }) => {
   const run = mockTasks.find(item => item.id === 'run-260827-002')
   if (!run) throw new Error('Missing succeeded personal Run fixture')
   const runDetail = {
@@ -224,55 +223,17 @@ test('employee reviews an Agent memory proposal and explicitly chooses its scope
       ? { ...message, runId: run.id }
       : message),
   }
-  const proposal = {
-    id: 'memory-proposal-00000000-0000-4000-8000-000000000001',
-    attemptId: run.attemptId,
-    kind: 'preference',
-    title: '简明回答偏好',
-    content: '回答制度问题时先给出直接结论，再列出适用条件和需要人工核对的依据。',
-    status: 'proposed',
-    createdAt: '2026-09-23T00:00:00.000Z',
-    expiresAt: '2026-09-30T00:00:00.000Z',
-  }
-  let submitted: Record<string, unknown> | null = null
   await page.route(`**/api/workbench/v1/runs/${run.id}`, async route => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
       data: runDetail, meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
     }) })
   })
-  await page.route('**/api/workbench/v1/memory/proposals**', async route => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-      data: [proposal], meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
-    }) })
-  })
-  await page.route('**/api/workbench/v1/memory/candidates', async route => {
-    submitted = route.request().postDataJSON() as Record<string, unknown>
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-      data: { id: 'memory-candidate-e2e', status: 'pending' },
-      meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
-    }) })
-  })
-
   await page.goto(`/conversations/${run.id}`)
-  await page.getByRole('button', { name: '提交受控记忆候选' }).click()
-  const dialog = page.getByRole('dialog', { name: '提交受控记忆候选' })
-  await expect(dialog.getByText(proposal.title, { exact: true })).toBeVisible()
-  await dialog.getByText(proposal.title, { exact: true }).click()
-  await expect(dialog.getByPlaceholder('请用自己的话写明可在后续任务中复用的偏好或经验')).toHaveValue(proposal.content)
-  await dialog.getByRole('button', { name: '提交审核' }).click()
-  await expect(page.getByText('请选择记忆使用范围')).toBeVisible()
-  expect(submitted).toBeNull()
-  await dialog.getByText('仅本人', { exact: true }).click()
-  await dialog.getByRole('button', { name: '提交审核' }).click()
-  await expect(page.getByText('请选择可使用期限')).toBeVisible()
-  expect(submitted).toBeNull()
-  await dialog.getByText('30 天', { exact: true }).click()
-  await dialog.getByRole('button', { name: '提交审核' }).click()
-  await expect(page.getByText('记忆候选已提交，管理员审核通过后才会用于后续运行')).toBeVisible()
-  expect(submitted).toMatchObject({
-    attemptId: run.attemptId, proposalId: proposal.id, kind: proposal.kind,
-    title: proposal.title, content: proposal.content, visibility: 'private', retentionDays: 30,
-  })
+  await expect(page.getByText('委外加工发料应依据已审核的委外订单执行', { exact: false })).toBeVisible()
+  await expect(page.getByRole('button', { name: '提交受控记忆候选' })).toHaveCount(0)
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: '用户中心' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '受控记忆授权' })).toHaveCount(0)
 })
 
 test('administrator can open system information from the user menu', async ({ page }) => {

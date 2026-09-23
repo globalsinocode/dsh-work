@@ -15,6 +15,7 @@ const conversationItems = computed(() => assistant.conversations
   .map(conversation => ({ id: conversation.id, title: conversation.title })))
 watch(() => authStore.canReadAdmin && authStore.user.id, (id) => { if (id) void assistant.load() }, { immediate: true })
 const routeTitle = computed(() => String(route.meta.title ?? '管理后台'))
+const routeSubtitle = computed(() => typeof route.meta.subtitle === 'string' ? route.meta.subtitle : undefined)
 const publicRoute = computed(() => Boolean(route.meta.public))
 const shellRoute = computed(() => route.matched.length > 0 && !publicRoute.value)
 
@@ -50,6 +51,7 @@ function logout() {
     v-else-if="shellRoute"
     :current-path="route.path"
     :route-title="routeTitle"
+    :route-subtitle="routeSubtitle"
     :user-name="authStore.user.name"
     :avatar-text="authStore.user.avatarText"
     :role-label="roleLabels[authStore.user.role]"

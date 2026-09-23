@@ -50,6 +50,13 @@ export const useContentStore = defineStore('workbench-content', () => {
     return current === generation ? loaded : []
   }
 
+  async function refreshAgents() {
+    const current = generation
+    const loaded = await workbenchApi.getAgents()
+    if (current === generation) agents.value = loaded
+    return current === generation ? loaded : []
+  }
+
   async function createTeamWorkspace(input: {
     name: string
     description: string
@@ -93,6 +100,7 @@ export const useContentStore = defineStore('workbench-content', () => {
     createTeamWorkspace,
     uploadWorkspaceFile,
     refreshArtifacts,
+    refreshAgents,
     refreshSkills,
   }
 })

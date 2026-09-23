@@ -97,7 +97,6 @@ export const useContentStore = defineStore('admin-content', () => {
       skillVersionData,
       skillReleaseData,
       toolData,
-      toolCatalogData,
       connectorData,
       dshRuntimeToolConnectorData,
       healthData,
@@ -114,7 +113,6 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getSkillVersions(),
       adminApi.getSkillReleaseRecords(),
       adminApi.getTools(),
-      adminApi.getToolCatalog(),
       adminApi.getMcpConnectors(),
       adminApi.getDshRuntimeToolConnector(),
       adminApi.getHealth(),
@@ -131,7 +129,6 @@ export const useContentStore = defineStore('admin-content', () => {
     skillVersions.value = skillVersionData
     skillReleaseRecords.value = skillReleaseData
     tools.value = toolData
-    toolCatalog.value = toolCatalogData
     connectors.value = connectorData
     dshRuntimeToolConnector.value = dshRuntimeToolConnectorData
     health.value = healthData
@@ -244,6 +241,18 @@ export const useContentStore = defineStore('admin-content', () => {
       candidate.availabilityMessage = '已添加到工具目录'
     }
     return tool
+  }
+
+  async function refreshToolCatalog() {
+    const candidates = await adminApi.getToolCatalog()
+    toolCatalog.value = candidates
+    return candidates
+  }
+
+  async function syncDshTools() {
+    const result = await adminApi.syncDshTools()
+    tools.value = result.tools
+    return result
   }
 
   async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
@@ -422,6 +431,8 @@ export const useContentStore = defineStore('admin-content', () => {
     updateRuntimeConfiguration,
     updateToolPermissions,
     addTool,
+    refreshToolCatalog,
+    syncDshTools,
   }
 })
 

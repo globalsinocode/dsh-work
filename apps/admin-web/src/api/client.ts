@@ -38,7 +38,8 @@ import type {
   OperationsSummary,
   PlatformStatus,
   PersistentApproval,
-  ControlledMemoryCandidate,
+  ExperienceIterationAgentSummary,
+  ExperienceIterationApplication,
   RuntimeDefinition,
   SessionListPage,
   SkillDefinition,
@@ -47,6 +48,7 @@ import type {
   SkillVersionRecord,
   ToolBindingRecord,
   ToolDefinition,
+  ToolCatalogSyncResult,
   ToolCatalogCandidate,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
@@ -131,10 +133,16 @@ function redirectToLogin() {
 }
 
 export const adminApi = {
-  getMemoryCandidates: (status?: ControlledMemoryCandidate['status']) =>
-    request<ControlledMemoryCandidate[]>(`/memory/candidates${status ? `?status=${encodeURIComponent(status)}` : ''}`),
-  reviewMemoryCandidate: (candidateId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
-    request<ControlledMemoryCandidate>(`/memory/candidates/${encodeURIComponent(candidateId)}/review`, {
+  getExperienceIterationAgents: () =>
+    request<ExperienceIterationAgentSummary[]>('/experience-iterations/agents'),
+  getExperienceIterationApplications: (agentId?: string, status?: ExperienceIterationApplication['status']) => {
+    const query = new URLSearchParams()
+    if (agentId) query.set('agentId', agentId)
+    if (status) query.set('status', status)
+    return request<ExperienceIterationApplication[]>(`/experience-iterations/applications${query.size ? `?${query}` : ''}`)
+  },
+  reviewExperienceIterationApplication: (applicationId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
+    request<ExperienceIterationApplication>(`/experience-iterations/applications/${encodeURIComponent(applicationId)}/review`, {
       method: 'POST', body: JSON.stringify(input),
     }),
   getApprovals: (status?: PersistentApproval['status']) => request<PersistentApproval[]>(`/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
@@ -231,8 +239,6 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
   cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cancel`, { method: 'POST' }),
-  submitAgentRelease: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/submit`, { method: 'POST' }),
   requestAgentReleaseChanges: (agentId: string, note: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/request-changes`, {
       method: 'POST',
@@ -286,6 +292,7 @@ export const adminApi = {
   getTools: () => request<ToolDefinition[]>('/tools'),
   getToolBindings: () => request<{ items: ToolBindingRecord[] }>('/tools/bindings'),
   getToolCatalog: () => request<ToolCatalogCandidate[]>('/tools/catalog'),
+  syncDshTools: () => request<ToolCatalogSyncResult>('/tools/sync', { method: 'POST' }),
   addTool: (input: {
     catalogId: string
     allowedRoles: string[]

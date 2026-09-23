@@ -63,6 +63,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
+| Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入原型冒烟） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：

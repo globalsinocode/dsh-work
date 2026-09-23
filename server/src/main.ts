@@ -77,8 +77,7 @@ import { defaultAutomationConfig } from './modules/automation/automation-types.t
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
 import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from './http/workbench/task-execution-routes.ts'
 import { registerPersistentApprovalRoutes } from './http/admin/persistent-approval-routes.ts'
-import { registerAdminMemoryRoutes } from './http/admin/memory-routes.ts'
-import { registerWorkbenchMemoryRoutes } from './http/workbench/memory-routes.ts'
+import { registerAdminExperienceIterationRoutes } from './http/admin/experience-iteration-routes.ts'
 import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
@@ -180,7 +179,6 @@ async function start() {
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
       dshRepository: dshInstallation.home,
-      toolCatalogPath: dshInstallation.toolCatalogPath,
       runtimeVersion: dshInstallation.version,
       runtimeCommit: dshInstallation.commit,
       protocolVersion: dshInstallation.protocolVersion,
@@ -204,7 +202,7 @@ async function start() {
       },
       delegateAgent: (input, manifest, signal) => delegation.delegate(input, manifest, signal),
       proposeMemory: (input, manifest, signal) => {
-        if (!controlledMemoryRef.current) throw new Error('受控记忆服务尚未就绪')
+        if (!controlledMemoryRef.current) throw new Error('经验迭代服务尚未就绪')
         return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
       },
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
@@ -265,6 +263,12 @@ async function start() {
       : undefined
     const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets)
     toolServiceRef.current = toolService
+    // Management-plane inventory refresh is best effort: execution capability
+    // failures must not prevent the core API from starting. Administrators can
+    // retry the same full reconciliation from the Tool management page.
+    void toolService.syncToolCatalog({ actor: 'U00008' }).catch(error => {
+      console.warn('DSH tool catalog startup sync skipped:', error)
+    })
     const skills = new PostgresSkillService(database, operations, toolService, skillArtifacts)
     // C7 only inspects execution capability; it never starts a Worker/model call.
     const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
@@ -371,8 +375,7 @@ async function start() {
     registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerPersistentApprovalRoutes(router, persistentWait, authorization)
-    registerAdminMemoryRoutes(router, controlledMemory, authorization)
-    registerWorkbenchMemoryRoutes(router, controlledMemory)
+    registerAdminExperienceIterationRoutes(router, controlledMemory, authorization)
     registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, operations, skills, workspaceAgentMembers)
     registerContentRoutes(router, content, authorization, workspaceAgentMembers)
     registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)

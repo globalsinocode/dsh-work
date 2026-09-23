@@ -25,24 +25,35 @@ export interface PersistentApproval {
   actionConsumedAt: string | null
 }
 
-export interface ControlledMemoryCandidate {
+export interface ExperienceIterationAgentSummary {
+  agentId: string
+  agentName: string
+  agentVersion: string
+  agentStatus: string
+  totalApplications: number
+  pendingApplications: number
+  approvedApplications: number
+  rejectedApplications: number
+  latestApplicationAt: string | null
+}
+
+export interface ExperienceIterationApplication {
   id: string
-  consentId: string
-  memoryKey: string
-  kind: 'preference' | 'experience'
+  agentId: string
+  agentName: string
+  sourceAgentVersionId: string
+  sourceAgentVersion: string
+  sourceRunId: string
+  sourceAttemptId: string
+  proposedBy: string
   title: string
   content: string
   contentDigest: string
-  visibility: 'private' | 'workspace' | 'organization'
-  scopeRef: string
-  retentionUntil: string
-  status: 'pending' | 'approved' | 'rejected' | 'withdrawn'
-  submittedBy: string
+  status: 'pending' | 'approved' | 'rejected'
   reviewedBy: string | null
   reviewedAt: string | null
   reviewComment: string | null
-  approvedEntryId: string | null
-  approvedVersionId: string | null
+  publishedVersionId: string | null
   createdAt: string
 }
 
@@ -480,6 +491,8 @@ export interface ToolDefinition {
   risk: 'low' | 'medium' | 'high'
   mode: 'read' | 'write'
   status: 'available' | 'degraded' | 'disabled'
+  admissionStatus?: 'approved' | 'unavailable'
+  admissionMessage?: string
   inputSchema: string
   outputSchema: string
   outputValidation: 'runtime' | 'platform' | 'unavailable'
@@ -491,6 +504,14 @@ export interface ToolDefinition {
   dataScopes: string[]
   approvalPolicy: 'none' | 'sensitive' | 'always'
   lastCheckedAt: string
+}
+
+export interface ToolCatalogSyncResult {
+  tools: ToolDefinition[]
+  discoveredCount: number
+  admittedCount: number
+  unavailableCount: number
+  synchronizedAt: string
 }
 
 export interface ToolCatalogCandidate {

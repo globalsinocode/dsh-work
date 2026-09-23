@@ -26,7 +26,7 @@ const router = createRouter({
     { path: '/admin/audit', redirect: '/audit' },
     { path: '/admin/health', redirect: '/health' },
     { path: '/admin/approvals', redirect: '/approvals' },
-    { path: '/admin/memories', redirect: '/memories' },
+    { path: '/admin/experience-iterations', redirect: '/experience-iterations' },
     {
       path: '/login-error',
       name: 'auth-error',
@@ -161,10 +161,15 @@ const router = createRouter({
       meta: { title: '工具权限', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
-      path: '/memories',
-      name: 'memories',
-      component: () => import('@/views/MemoryGovernanceView.vue'),
-      meta: { title: '受控记忆', requiresAdmin: true, requiredPermission: 'adminRead' },
+      path: '/experience-iterations',
+      name: 'experience-iterations',
+      component: () => import('@/views/ExperienceIterationView.vue'),
+      meta: {
+        title: '经验迭代',
+        subtitle: '按稳定 Agent 归属；申请来自成功的 Run/Attempt，经管理员审核后发布不可变经验版本，不会自动修改 Soul、Skill、Tool 或权限。',
+        requiresAdmin: true,
+        requiredPermission: 'adminRead',
+      },
     },
     {
       path: '/approvals',

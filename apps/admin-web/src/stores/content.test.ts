@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentDefinition, GrantSourceReconciliationView, SkillDefinition, SkillReleaseRecord, SkillVersionRecord } from '../types/domain'
+import type { AgentDefinition, GrantSourceReconciliationView, SkillDefinition, SkillReleaseRecord, SkillVersionRecord, ToolCatalogCandidate } from '../types/domain'
 
 const api = vi.hoisted(() => ({
   getAgentReleaseRecords: vi.fn(),
@@ -28,6 +28,7 @@ const api = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   reconcileGrantSources: vi.fn(),
   addTool: vi.fn(),
+  syncDshTools: vi.fn(),
   rollbackSkill: vi.fn(),
   setAgentWorkspaceJoin: vi.fn(),
   setSkillStatus: vi.fn(),
@@ -115,7 +116,55 @@ describe('admin content store Skill version state', () => {
     expect(api.getTasks).not.toHaveBeenCalled()
     expect(api.getAgents).not.toHaveBeenCalled()
   })
+
+  it('refreshes only the DSH tool catalog and replaces the cached candidates', async () => {
+    const { useContentStore } = await import('./content')
+    const store = useContentStore()
+    const candidate = makeToolCandidate()
+    store.$patch({ toolCatalog: [{ ...candidate, id: 'stale-tool', name: '旧工具' }] })
+    api.getToolCatalog.mockResolvedValue([candidate])
+
+    await expect(store.refreshToolCatalog()).resolves.toEqual([candidate])
+
+    expect(api.getToolCatalog).toHaveBeenCalledOnce()
+    expect(store.toolCatalog).toEqual([candidate])
+    expect(api.getTools).not.toHaveBeenCalled()
+  })
+
+  it('replaces the platform tool inventory after a full DSH synchronization', async () => {
+    const { useContentStore } = await import('./content')
+    const store = useContentStore()
+    const tool = {
+      id: 'read', version: '1.0.0', name: '读取文本文件', system: 'DSH Runtime',
+      description: '读取文本文件。', connectorId: 'connector-dsh-workspace', risk: 'low' as const,
+      mode: 'read' as const, status: 'available' as const, admissionStatus: 'approved' as const,
+      admissionMessage: '已完成平台安全准入，可在 Agent 版本中授权', inputSchema: '{}', outputSchema: '{}',
+      outputValidation: 'unavailable' as const, retryPolicy: 'safe' as const,
+      concurrencyPolicy: 'concurrent' as const, completionSemantics: 'completed' as const,
+      timeoutSeconds: 30, allowedRoles: ['普通员工'], dataScopes: ['workspace:authorized'],
+      approvalPolicy: 'none' as const, lastCheckedAt: '刚刚',
+    }
+    const result = { tools: [tool], discoveredCount: 1, admittedCount: 1, unavailableCount: 0, synchronizedAt: '2026-09-23T00:00:00.000Z' }
+    api.syncDshTools.mockResolvedValue(result)
+    await expect(store.syncDshTools()).resolves.toEqual(result)
+
+    expect(store.tools).toEqual([tool])
+    expect(api.syncDshTools).toHaveBeenCalledOnce()
+    expect(api.getToolCatalog).not.toHaveBeenCalled()
+  })
 })
+
+function makeToolCandidate(): ToolCatalogCandidate {
+  return {
+    id: 'read', version: '1.0.0', name: '读取文本文件', system: 'DSH Runtime',
+    description: '读取当前 Run 已授权的文本文件。', connectorId: 'connector-dsh-workspace',
+    risk: 'low', mode: 'read', timeoutSeconds: 30,
+    defaultAllowedRoles: ['普通员工', '平台管理员'], defaultDataScopes: ['workspace:authorized'],
+    defaultApprovalPolicy: 'none', requirements: ['当前 Run 工作区'],
+    outputValidation: 'unavailable', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
+    completionSemantics: 'completed', status: 'ready', availabilityMessage: '当前 DSH Profile 已加载该工具',
+  }
+}
 
 function makeSkill(overrides: Partial<SkillDefinition> = {}): SkillDefinition {
   return {

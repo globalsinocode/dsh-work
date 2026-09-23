@@ -146,6 +146,17 @@ describe('TaskComposer', () => {
     expect(wrapper.emitted('clear-skill')).toEqual([[]])
   })
 
+  it('shows the selected AI colleague inside the composer action row and can remove it', async () => {
+    const wrapper = mountComposer({ selectedAgentName: '腾讯云 API 专家' })
+
+    const selectedAgent = wrapper.get('[aria-label="已选择 AI 同事"]')
+    expect(selectedAgent.text()).toContain('腾讯云 API 专家')
+    expect(wrapper.get('.composer__leading-actions').element.contains(selectedAgent.element)).toBe(true)
+
+    await wrapper.get('[aria-label="移除已选择 AI 同事"]').trigger('click')
+    expect(wrapper.emitted('clear-agent')).toEqual([[]])
+  })
+
   it('keeps prompt and attachments when files require an @Agent mention (TW-10)', async () => {
     const wrapper = mountComposer({
       initialPrompt: '看看这个文件',

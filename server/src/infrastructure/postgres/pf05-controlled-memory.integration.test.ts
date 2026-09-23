@@ -170,7 +170,7 @@ test('AE-04 stages an Agent proposal but requires requester consent and admin re
   assert.equal(trial.status, 'trial_only', 'release trials cannot persist personal proposals')
   const replay = await memory.proposeFromAttempt(proposalInput, source.manifest, new AbortController().signal)
   assert.equal(replay.proposalId, first.proposalId)
-  assert.equal(first.status, 'pending_human_consent')
+  assert.equal(first.status, 'pending_admin_review')
   await assert.rejects(memory.listOwnProposals('U00002', source.manifest.attempt_id))
   await assert.rejects(memory.listOwnProposals('U00001', source.manifest.attempt_id),
     'a running attempt cannot expose proposals to the employee yet')
@@ -211,6 +211,85 @@ test('AE-04 stages an Agent proposal but requires requester consent and admin re
     query: '核对资料', userId: 'U00001', workspaceId: source.manifest.workspace_id,
     agentVersionId: source.manifest.agent_version_id, roleIds: ['role-employee'],
   })).length, 1)
+})
+
+test('experience iteration groups successful Agent applications by stable Agent identity', async () => {
+  const source = await succeededFixture('agent-experience-iteration', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-1', 'running')
+  const proposal = await memory.proposeFromAttempt({
+    kind: 'experience',
+    title: '按证据核对异常',
+    content: '处理异常时先核对来源 Run、数据版本和外部操作回执，再输出可以复核的结论。',
+  }, source.manifest, new AbortController().signal)
+  await runs.transitionAttempt(tenantId, source.manifest.attempt_id, 'succeeded')
+  await runs.transitionRun(tenantId, source.runId, 'succeeded')
+
+  const agents = await memory.listExperienceIterationAgents()
+  const owner = agents.find(agent => agent.agentId === 'agent-dsh-work-assistant')
+  assert.ok(owner)
+  assert.equal(owner.pendingApplications, 1)
+
+  const applications = await memory.listExperienceIterationApplications('agent-dsh-work-assistant', 'pending')
+  assert.equal(applications.length, 1)
+  assert.equal(applications[0]?.id, proposal.proposalId)
+  assert.equal(applications[0]?.sourceRunId, source.runId)
+  assert.equal(applications[0]?.sourceAttemptId, source.manifest.attempt_id)
+
+  const reviewed = await memory.reviewExperienceIterationApplication({
+    applicationId: proposal.proposalId,
+    decision: 'approved',
+    actor: 'U00001',
+    resolutionKey: `experience-review-${randomUUID()}`,
+  })
+  assert.equal(reviewed.status, 'approved')
+  assert.ok(reviewed.publishedVersionId)
+  assert.equal((await memory.listExperienceIterationApplications('agent-dsh-work-assistant', 'pending')).length, 0)
+  await database`
+    update memory_consents set retention_until = now() - interval '1 second'
+     where tenant_id = ${tenantId} and id in (
+       select consent_id from memory_candidates
+        where tenant_id = ${tenantId} and source_proposal_id = ${proposal.proposalId}
+     )
+  `
+  const [expired] = await memory.listExperienceIterationApplications('agent-dsh-work-assistant', 'approved')
+  assert.equal(expired?.id, proposal.proposalId)
+  assert.match(expired?.content ?? '', /内容已撤回或超过可使用期限/)
+  assert.equal(JSON.stringify(expired).includes('处理异常时先核对来源 Run'), false)
+  await database`
+    update memory_consents set retention_until = now() + interval '1 day', status = 'withdrawn'
+     where tenant_id = ${tenantId} and id in (
+       select consent_id from memory_candidates
+        where tenant_id = ${tenantId} and source_proposal_id = ${proposal.proposalId}
+     )
+  `
+  const [withdrawn] = await memory.listExperienceIterationApplications('agent-dsh-work-assistant', 'approved')
+  assert.match(withdrawn?.content ?? '', /内容已撤回或超过可使用期限/)
+})
+
+test('experience iteration keeps a submitted pending candidate visible and reviewable after interruption', async () => {
+  const source = await succeededFixture('agent-experience-interrupted', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-1', 'running')
+  const proposalInput = {
+    kind: 'experience' as const,
+    title: '中断后继续审核',
+    content: '审核中断时保留待审核项，恢复后继续完成审批。',
+  }
+  const proposal = await memory.proposeFromAttempt(proposalInput, source.manifest, new AbortController().signal)
+  await runs.transitionAttempt(tenantId, source.manifest.attempt_id, 'succeeded')
+  await runs.transitionRun(tenantId, source.runId, 'succeeded')
+  await memory.submitCandidate({
+    userId: 'U00001', attemptId: source.manifest.attempt_id,
+    submissionKey: `agent-experience:${proposal.proposalId}`,
+    ...proposalInput, visibility: 'organization', retentionDays: 3650,
+    proposalId: proposal.proposalId,
+  })
+  const pending = (await memory.listExperienceIterationApplications('agent-dsh-work-assistant', 'pending'))
+    .find(item => item.id === proposal.proposalId)
+  assert.equal(pending?.status, 'pending')
+  assert.equal(pending?.content, proposalInput.content)
+  const reviewed = await memory.reviewExperienceIterationApplication({
+    applicationId: proposal.proposalId,
+    decision: 'rejected', actor: 'U00001', resolutionKey: `experience-review-${randomUUID()}`,
+  })
+  assert.equal(reviewed.status, 'rejected')
 })
 
 test('AE-04 retries a failed Run with a fresh Attempt-owned proposal operation', async () => {

@@ -40,10 +40,10 @@ test('P1: verified result separates business outcome from execution state', asyn
 })
 
 test('P1: a committed answer alone stays unverified without verifiable deliverables', async ({ page }) => {
-  // P1 回归：回答落库 ≠ 目标达成；没有已登记成果时不出现「目标已达成」。
+  // P1 回归：回答落库 ≠ 目标达成；核验状态保留在接口中，但消息流不显示待核验警示。
   const runId = await sendTask(page, `P1-仅回答-${crypto.randomUUID().slice(0, 8)}`)
   await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible()
-  await expect(page.getByText('结果待核验').first()).toBeVisible()
+  await expect(page.getByTestId('run-result-unverified')).toHaveCount(0)
   await expect(page.getByText('目标已达成', { exact: true })).toHaveCount(0)
 
   const result = await runResult(page, runId)
@@ -56,9 +56,9 @@ test('P1: a committed answer alone stays unverified without verifiable deliverab
 test('P1: artifact registration gap shows unverified instead of achieved', async ({ page }) => {
   const runId = await sendTask(page, 'P1-成果缺口 生成两份报告')
   await expect(page.getByText(/成果登记缺口夹具/).first()).toBeVisible()
-  // 执行成功但证据缺口：显示待核验警示，绝不出现「目标已达成」
-  await expect(page.getByText('结果待核验').first()).toBeVisible()
-  await expect(page.getByText(/业务结果未验证/).first()).toBeVisible()
+  // 执行成功但证据缺口：消息流不显示待核验警示，也绝不误报「目标已达成」。
+  await expect(page.getByTestId('run-result-unverified')).toHaveCount(0)
+  await expect(page.getByText(/业务结果未验证/)).toHaveCount(0)
   await expect(page.getByText('目标已达成', { exact: true })).toHaveCount(0)
 
   const result = await runResult(page, runId)

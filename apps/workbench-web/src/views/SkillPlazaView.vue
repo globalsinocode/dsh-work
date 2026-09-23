@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, MagicStick, Refresh } from '@element-plus/icons-vue'
+import { ChatDotRound, MagicStick, Refresh } from '@element-plus/icons-vue'
 
 import { useContentStore } from '@/stores/content'
 import type { WorkbenchSkill } from '@/types/domain'
@@ -84,20 +84,27 @@ onMounted(loadSkills)
 
     <el-empty v-else-if="!visibleSkills.length" class="skill-state" description="当前分类没有已发布的 Skill" />
 
-    <div v-else class="skill-card-grid">
+    <div v-else class="skill-card-grid" aria-label="Skill 列表">
       <article v-for="skill in visibleSkills" :key="skill.id" class="skill-card">
         <div class="skill-card__heading">
           <span class="skill-card__icon" aria-hidden="true"><el-icon><MagicStick /></el-icon></span>
           <div class="skill-card__title">
             <h2>{{ skill.name }}</h2>
-            <span>v{{ skill.version }} · {{ skill.owner }}</span>
           </div>
-          <el-tag size="small" effect="plain">{{ skill.category }}</el-tag>
+          <button
+            type="button"
+            class="catalog-add-button"
+            :aria-label="`使用 Skill：${skill.name}`"
+            @click="useSkill(skill)"
+          >
+            <el-icon><ChatDotRound /></el-icon>
+            <span>去对话</span>
+          </button>
         </div>
         <p class="skill-card__description">{{ skill.description }}</p>
         <div class="skill-card__footer">
+          <el-tag size="small" effect="plain">{{ skill.category }}</el-tag>
           <button type="button" class="skill-card__detail" @click="showDetails(skill)">查看详情</button>
-          <el-button type="primary" size="small" @click="useSkill(skill)">使用 Skill <el-icon><ArrowRight /></el-icon></el-button>
         </div>
       </article>
     </div>
@@ -128,7 +135,7 @@ onMounted(loadSkills)
 <style scoped>
 .skill-plaza-page {
   min-height: 100vh;
-  padding: 22px clamp(18px, 3vw, 42px) 48px;
+  padding: 24px clamp(18px, 3vw, 44px) 48px;
   color: #282a29;
   background: #fff;
 }
@@ -156,8 +163,8 @@ onMounted(loadSkills)
   white-space: nowrap;
 }
 
-.skill-category-tab:hover { color: #205d4a; background: #f2f7f4; }
-.skill-category-tab.is-active { color: #17674f; background: #e7f4ed; font-weight: 650; }
+.skill-category-tab:hover { color: #222522; background: #f3f3f1; }
+.skill-category-tab.is-active { color: #171817; background: #ededeb; font-weight: 650; }
 
 .skill-card-grid {
   display: grid;
@@ -167,9 +174,9 @@ onMounted(loadSkills)
 
 .skill-card {
   display: flex;
-  min-height: 184px;
+  min-height: 172px;
   flex-direction: column;
-  padding: 17px 18px 15px;
+  padding: 20px;
   border: 1px solid #e8eae8;
   border-radius: 16px;
   background: #fff;
@@ -185,13 +192,15 @@ onMounted(loadSkills)
 .skill-card__icon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 11px; color: #19765a; background: #e5f5ed; font-size: var(--dsh-font-size-header); }
 .skill-card__title { min-width: 0; flex: 1; }
 .skill-card__title h2 { margin: 0; overflow: hidden; color: #222522; font-size: var(--dsh-font-size-body); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.skill-card__title span { display: block; margin-top: 4px; overflow: hidden; color: #929892; font-size: var(--dsh-font-size-micro); text-overflow: ellipsis; white-space: nowrap; }
-.skill-card__heading .el-tag { flex: 0 0 auto; }
+.catalog-add-button { display: inline-flex; min-width: 78px; height: 36px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border: 0; border-radius: 9px; color: #242624; background: #f1f2f0; cursor: pointer; font-size: var(--dsh-font-size-caption); font-weight: 620; transition: background 140ms ease, transform 140ms ease; }
+.catalog-add-button .el-icon { font-size: var(--dsh-font-size-body); }
+.catalog-add-button:hover { background: #e4eee9; transform: scale(1.04); }
+.catalog-add-button:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
 .skill-card__description { display: -webkit-box; min-height: 44px; margin: 15px 0 13px; overflow: hidden; color: #666c67; font-size: var(--dsh-font-size-caption); line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .skill-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; }
 .skill-card__detail { padding: 0; border: 0; color: #6a746d; background: transparent; cursor: pointer; font-size: var(--dsh-font-size-caption); }
 .skill-card__detail:hover { color: #17674f; }
-.skill-card__footer .el-button { border-radius: 8px; }
+.skill-card__footer .el-tag { border-color: #e3e7e4; color: #69716c; background: #f7f8f7; }
 .skill-state { min-height: 360px; }
 
 .skill-detail { display: flex; flex-direction: column; gap: 18px; }
@@ -204,8 +213,9 @@ onMounted(loadSkills)
 .skill-detail__use { align-self: flex-start; }
 
 @media (max-width: 1080px) { .skill-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 820px) { .skill-plaza-page { padding-top: 64px; } }
 @media (max-width: 640px) {
-  .skill-plaza-page { padding: 15px 13px 32px; }
+  .skill-plaza-page { padding: 64px 13px 32px; }
   .skill-card-grid { grid-template-columns: 1fr; gap: 12px; }
   .skill-card { min-height: 168px; }
 }

@@ -62,7 +62,7 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('PF-01 through PF-05 OpenAPI publishes Task, MCP, approval and controlled-memory governance', async () => {
+test('OpenAPI publishes governed platform capabilities and omits employee memory endpoints', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
@@ -110,11 +110,16 @@ test('PF-01 through PF-05 OpenAPI publishes Task, MCP, approval and controlled-m
   assert.equal(admin.paths['/approvals']?.get?.operationId, 'listPersistentApprovals')
   assert.equal(admin.paths['/approvals/{approvalId}']?.get?.operationId, 'getPersistentApproval')
   assert.equal(admin.paths['/approvals/{approvalId}/resolve']?.post?.operationId, 'resolvePersistentApproval')
-  assert.equal(workbench.paths['/memory/consents']?.get?.operationId, 'listMyMemoryConsents')
-  assert.equal(workbench.paths['/memory/candidates']?.post?.operationId, 'submitControlledMemoryCandidate')
-  assert.equal(workbench.paths['/memory/consents/{consentId}/withdraw']?.post?.operationId, 'withdrawMyMemoryConsent')
-  assert.equal(admin.paths['/memory/candidates']?.get?.operationId, 'listControlledMemoryCandidates')
-  assert.equal(admin.paths['/memory/candidates/{candidateId}/review']?.post?.operationId, 'reviewControlledMemoryCandidate')
+  assert.equal(workbench.paths['/memory/proposals'], undefined)
+  assert.equal(workbench.paths['/memory/candidates'], undefined)
+  assert.equal(workbench.paths['/memory/consents'], undefined)
+  assert.equal(workbench.paths['/memory/consents/{consentId}/withdraw'], undefined)
+  assert.equal(admin.paths['/memory/candidates'], undefined)
+  assert.equal(admin.paths['/memory/candidates/{candidateId}/review'], undefined)
+  assert.equal(admin.paths['/experience-iterations/agents']?.get?.operationId, 'listExperienceIterationAgents')
+  assert.equal(admin.paths['/experience-iterations/agents/{agentId}/applications'], undefined)
+  assert.equal(admin.paths['/experience-iterations/applications']?.get?.operationId, 'listExperienceIterationApplications')
+  assert.equal(admin.paths['/experience-iterations/applications/{applicationId}/review']?.post?.operationId, 'reviewExperienceIterationApplication')
 })
 
 before(async () => {
@@ -270,45 +275,15 @@ test('prototype admin exposes the asynchronous Skill test progress contract', as
   assert.equal(progress.body.data.status, 'passed')
 })
 
-test('prototype admin lists and adds approved DSH tools without allowing duplicates', async () => {
-  const catalog = await getJson<{ data: Array<{ id: string; status: string; defaultApprovalPolicy: string }> }>('/api/admin/v1/tools/catalog')
-  assert.equal(catalog.response.status, 200)
-  const candidate = catalog.body.data.find(item => item.status === 'ready')
-  assert.ok(candidate)
-
-  const invalid = await fetch(`${baseUrl}/api/admin/v1/tools`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ catalogId: candidate.id, allowedRoles: [], dataScopes: [], approvalPolicy: candidate.defaultApprovalPolicy }),
-  })
-  assert.equal(invalid.status, 422)
-
-  const response = await fetch(`${baseUrl}/api/admin/v1/tools`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      catalogId: candidate.id,
-      allowedRoles: ['试点员工'],
-      dataScopes: ['当前工作空间'],
-      approvalPolicy: candidate.defaultApprovalPolicy,
-    }),
-  })
-  const body = await response.json() as { data: { id: string; approvalPolicy: string } }
+test('prototype admin synchronizes the complete DSH tool inventory in one operation', async () => {
+  const response = await fetch(`${baseUrl}/api/admin/v1/tools/sync`, { method: 'POST' })
+  const body = await response.json() as {
+    data: { tools: Array<{ id: string; admissionStatus?: string }>; discoveredCount: number; admittedCount: number; unavailableCount: number }
+  }
   assert.equal(response.status, 200)
-  assert.equal(body.data.id, candidate.id)
-  assert.equal(body.data.approvalPolicy, candidate.defaultApprovalPolicy)
-
-  const duplicate = await fetch(`${baseUrl}/api/admin/v1/tools`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      catalogId: candidate.id,
-      allowedRoles: ['试点员工'],
-      dataScopes: ['当前工作空间'],
-      approvalPolicy: candidate.defaultApprovalPolicy,
-    }),
-  })
-  assert.equal(duplicate.status, 409)
+  assert.equal(body.data.discoveredCount, body.data.tools.length)
+  assert.equal(body.data.admittedCount + body.data.unavailableCount, body.data.discoveredCount)
+  assert.ok(body.data.tools.every(tool => tool.admissionStatus === 'approved' || tool.admissionStatus === 'unavailable'))
 })
 
 test('prototype admin separates MCP management from the DSH Runtime tool connector', async () => {

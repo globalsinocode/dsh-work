@@ -16,4 +16,12 @@ describe('workbench authentication routes', () => {
     expect(route.name).toBe('skills')
     expect(route.meta.section).toBe('员工工作台')
   })
+
+  it('routes employees to the AI colleague catalog', () => {
+    const route = router.resolve('/agents')
+
+    expect(route.name).toBe('agents')
+    expect(route.meta.title).toBe('AI 同事')
+    expect(route.meta.section).toBe('员工工作台')
+  })
 })

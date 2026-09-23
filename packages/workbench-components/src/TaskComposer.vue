@@ -30,6 +30,7 @@ const props = withDefaults(
     running?: boolean
     stopping?: boolean
     selectedSkillName?: string
+    selectedAgentName?: string
     /**
      * 团队空间尚未选中可用 Agent 成员时阻止提交（TW-02）：后端只接受带
      * workspaceAgentMemberId 的团队会话，前端先行拦住无意义的失败请求。
@@ -59,6 +60,7 @@ const props = withDefaults(
     running: false,
     stopping: false,
     selectedSkillName: '',
+    selectedAgentName: '',
     blockedReason: '',
     mentionOptions: () => [],
     filesRequireMention: false,
@@ -79,6 +81,7 @@ const emit = defineEmits<{
   }]
   stop: []
   'clear-skill': []
+  'clear-agent': []
   'open-files': []
 }>()
 
@@ -433,6 +436,13 @@ function performPrimaryAction() {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <span v-if="selectedAgentName" class="composer__agent-reference" aria-label="已选择 AI 同事">
+            <span class="composer__agent-avatar" aria-hidden="true"><el-icon><Cpu /></el-icon></span>
+            <span class="composer__agent-name">{{ selectedAgentName }}</span>
+            <button type="button" aria-label="移除已选择 AI 同事" @click="emit('clear-agent')">
+              <el-icon><Close /></el-icon>
+            </button>
+          </span>
           <span
             v-if="compact"
             class="composer__compact-trust"
@@ -807,6 +817,58 @@ function performPrimaryAction() {
   align-items: center;
   gap: 4px;
 }
+
+.composer__leading-actions { min-width: 0; }
+
+.composer__agent-reference {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(260px, 46vw);
+  align-items: center;
+  gap: 7px;
+  margin-left: 4px;
+  padding: 4px 6px 4px 5px;
+  border: 1px solid #dedfdd;
+  border-radius: 9px;
+  color: #4a4d4a;
+  background: #fafafa;
+  font-size: var(--dsh-font-size-caption);
+  font-weight: 620;
+}
+
+.composer__agent-avatar {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #17674f;
+  background: #ddf2e8;
+}
+
+.composer__agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer__agent-reference button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: #8a8d8a;
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer__agent-reference button:hover { color: #a6313e; background: #ffedef; }
 
 .composer__file-input {
   position: absolute;

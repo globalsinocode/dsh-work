@@ -116,23 +116,26 @@ onMounted(async () => {
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的工具权限">
         <el-table-column label="工具" min-width="250"><template #default="scope"><div class="tool-name"><strong>{{ scope.row.name }}</strong><code>{{ scope.row.id }}</code></div></template></el-table-column>
         <el-table-column prop="system" label="系统" min-width="110" />
+        <el-table-column label="平台准入" width="120"><template #default="scope"><StatusTag :status="scope.row.admissionStatus === 'unavailable' ? 'blocked' : 'available'" :label="scope.row.admissionStatus === 'unavailable' ? '尚未准入' : '可授权'" /></template></el-table-column>
         <el-table-column label="风险" width="100"><template #default="scope"><StatusTag :status="scope.row.risk" /></template></el-table-column>
         <el-table-column label="授权角色" min-width="220"><template #default="scope"><span class="cell-text">{{ scope.row.allowedRoles.join('、') || '无' }}</span></template></el-table-column>
         <el-table-column label="数据范围策略" min-width="240"><template #default="scope"><span class="scope-text"><el-icon><Lock /></el-icon>{{ scope.row.dataScopes.join('、') || '未配置' }}</span></template></el-table-column>
         <el-table-column label="审批策略" width="145"><template #default="scope"><span class="approval-label">{{ approvalLabel(scope.row.approvalPolicy) }}</span></template></el-table-column>
-        <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button link type="primary" data-action="configure-tool-permission" @click="editTool(scope.row)">{{ authStore.canManage ? '配置' : '查看' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" width="110" fixed="right"><template #default="scope"><el-button link type="primary" data-action="configure-tool-permission" @click="editTool(scope.row)">{{ authStore.canManage && scope.row.system !== 'DSH Runtime' && scope.row.admissionStatus !== 'unavailable' ? '配置' : '查看' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
     </section>
 
     <el-dialog v-model="toolDialogOpen" :title="`${authStore.canManage ? '配置' : '查看'}工具权限：${selectedTool?.name ?? ''}`" width="720px">
-      <el-form v-if="selectedTool" label-position="top" :disabled="!authStore.canManage">
+      <el-alert v-if="selectedTool?.admissionStatus === 'unavailable'" type="warning" :closable="false" show-icon title="该工具尚未完成平台安全准入，当前只能查看" :description="selectedTool.admissionMessage" />
+      <el-alert v-else-if="selectedTool?.system === 'DSH Runtime'" type="info" :closable="false" show-icon title="DSH 工具的使用权限在 Agent 版本中配置" description="这里展示平台固定的权限上限和审批策略；具体 Agent 只能在该上限内继续收窄。" />
+      <el-form v-if="selectedTool" label-position="top" :disabled="!authStore.canManage || selectedTool.system === 'DSH Runtime' || selectedTool.admissionStatus === 'unavailable'">
         <el-form-item label="允许使用的角色"><el-select v-model="toolForm.allowedRoles" multiple filterable allow-create default-first-option><el-option v-for="role in roleOptions" :key="role" :label="role" :value="role" /></el-select></el-form-item>
         <el-form-item label="允许的数据范围"><el-select v-model="toolForm.dataScopes" multiple filterable allow-create default-first-option><el-option v-for="scope in dataScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
         <el-form-item label="审批策略"><el-radio-group v-model="toolForm.approvalPolicy" :disabled="selectedTool.system === 'DSH Runtime'"><el-radio value="none">无需审批</el-radio><el-radio value="sensitive">敏感范围审批</el-radio><el-radio value="always">每次审批</el-radio></el-radio-group><small v-if="selectedTool.system === 'DSH Runtime'" class="policy-help">DSH 内置工具的审批策略由平台安全边界固定；需要逐次审批的工具在审批中心接入前不可授权。</small></el-form-item>
       </el-form>
       <el-alert type="warning" :closable="false" show-icon title="授权角色与数据范围必须同时满足；审批不能扩大后端注入的业务数据权限。" />
-      <template #footer><el-button @click="toolDialogOpen = false">{{ authStore.canManage ? '取消' : '关闭' }}</el-button><el-button v-if="authStore.canManage" type="primary" :loading="saving" @click="saveTool">保存工具策略</el-button></template>
+      <template #footer><el-button @click="toolDialogOpen = false">{{ authStore.canManage && selectedTool?.system !== 'DSH Runtime' && selectedTool?.admissionStatus !== 'unavailable' ? '取消' : '关闭' }}</el-button><el-button v-if="authStore.canManage && selectedTool?.system !== 'DSH Runtime' && selectedTool?.admissionStatus !== 'unavailable'" type="primary" :loading="saving" @click="saveTool">保存工具策略</el-button></template>
     </el-dialog>
   </div>
 </template>

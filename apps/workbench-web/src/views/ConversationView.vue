@@ -10,7 +10,6 @@ import {
   DataLine,
   Document,
   Lock,
-  Notebook,
   RefreshRight,
   Share,
   Warning,
@@ -21,7 +20,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { AgentMemoryProposal, Artifact, ChatMessage, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ChatMessage, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
@@ -35,20 +34,6 @@ const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
 const stopping = ref(false)
-const memoryDialogOpen = ref(false)
-const memorySubmitting = ref(false)
-const memorySubmissionKey = ref('')
-const memoryProposals = ref<AgentMemoryProposal[]>([])
-const memoryProposalId = ref<string | null>(null)
-const memoryProposalsLoading = ref(false)
-let memoryProposalLoadId = 0
-const memoryForm = ref({
-  kind: 'preference' as 'preference' | 'experience',
-  title: '',
-  content: '',
-  visibility: null as 'private' | 'workspace' | 'organization' | null,
-  retentionDays: null as number | null,
-})
 
 /**
  * TW-10 会话模式：路由 id 不是任何 Run 时，按 Session 直接加载共享线程；
@@ -268,68 +253,6 @@ function copyAnswer(content: string) {
 function copyConversationLink() {
   void navigator.clipboard.writeText(window.location.href)
   ElMessage.success('对话链接已复制')
-}
-
-async function openMemoryDialog() {
-  if (!task.value?.attemptId || task.value.status !== 'succeeded' || !canOperateRun.value || !isRequester.value) return
-  const attemptId = task.value.attemptId
-  const loadId = ++memoryProposalLoadId
-  memoryForm.value = { kind: 'preference', title: '', content: '', visibility: null, retentionDays: null }
-  memoryProposalId.value = null
-  memoryProposals.value = []
-  memorySubmissionKey.value = `memory:${attemptId}:${Date.now()}`
-  memoryDialogOpen.value = true
-  memoryProposalsLoading.value = true
-  try {
-    const proposals = await workbenchApi.listMemoryProposals(attemptId)
-    if (loadId === memoryProposalLoadId && memoryDialogOpen.value && task.value?.attemptId === attemptId) {
-      memoryProposals.value = proposals
-    }
-  } catch (error) {
-    if (loadId === memoryProposalLoadId && memoryDialogOpen.value) {
-      notifyActionFailure('读取记忆提案', `Attempt ${attemptId}`, error, '可继续手工填写候选；稍后重试查看 Agent 提案。')
-    }
-  } finally {
-    if (loadId === memoryProposalLoadId) memoryProposalsLoading.value = false
-  }
-}
-
-function selectMemoryProposal(value: string | number | boolean | undefined) {
-  const id = typeof value === 'string' && value ? value : null
-  memoryProposalId.value = id
-  const proposal = memoryProposals.value.find(item => item.id === id && item.status === 'proposed')
-  memoryForm.value = {
-    kind: proposal?.kind ?? 'preference', title: proposal?.title ?? '', content: proposal?.content ?? '',
-    visibility: null, retentionDays: null,
-  }
-  memorySubmissionKey.value = `memory:${task.value?.attemptId}:${Date.now()}:${crypto.randomUUID()}`
-}
-
-async function submitMemoryCandidate() {
-  if (!task.value?.attemptId || memorySubmitting.value || !isRequester.value) return
-  const input = memoryForm.value
-  if (input.title.trim().length < 3) return void ElMessage.warning('标题至少需要 3 个字符')
-  if (input.content.trim().length < 20) return void ElMessage.warning('候选内容至少需要 20 个字符')
-  if (!input.visibility) return void ElMessage.warning('请选择记忆使用范围')
-  if (!input.retentionDays) return void ElMessage.warning('请选择可使用期限')
-  memorySubmitting.value = true
-  try {
-    await workbenchApi.submitMemoryCandidate({
-      attemptId: task.value.attemptId,
-      kind: input.kind,
-      title: input.title.trim(),
-      content: input.content.trim(),
-      visibility: input.visibility,
-      retentionDays: input.retentionDays,
-      ...(memoryProposalId.value ? { proposalId: memoryProposalId.value } : {}),
-    }, memorySubmissionKey.value)
-    ElMessage.success('记忆候选已提交，管理员审核通过后才会用于后续运行')
-    memoryDialogOpen.value = false
-  } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : String(cause))
-  } finally {
-    memorySubmitting.value = false
-  }
 }
 
 function download(item: Artifact) {
@@ -819,15 +742,6 @@ watch(
                   >
                     <el-icon><Share /></el-icon>
                   </button>
-                  <button
-                    v-if="belongsToCurrentRun(message) && task.status === 'succeeded' && task.attemptId && canOperateRun && isRequester"
-                    type="button"
-                    aria-label="提交受控记忆候选"
-                    title="提交受控记忆候选"
-                    @click="openMemoryDialog"
-                  >
-                    <el-icon><Notebook /></el-icon>
-                  </button>
                   <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
                     {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
                     · {{ task.agentVersion.split('@')[0] }}
@@ -892,21 +806,7 @@ watch(
           </section>
 
           <section
-            v-if="isTerminalRun && task.result.outcome === 'unverified'"
-            class="conversation-notice verify-notice"
-            data-testid="run-result-unverified"
-          >
-            <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
-            <div>
-              <strong>{{ task.result.summary }}</strong>
-              <ul v-if="task.result.pendingItems.length">
-                <li v-for="item in task.result.pendingItems" :key="item.kind">{{ item.message }}</li>
-              </ul>
-            </div>
-            <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
-          </section>
-          <section
-            v-else-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
+            v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
             class="conversation-notice verify-notice verify-notice--neutral"
             data-testid="run-result-not-achieved"
           >
@@ -1036,69 +936,6 @@ watch(
           <el-empty v-else :image-size="56" description="本轮暂未生成成果" />
         </section>
       </el-drawer>
-
-      <el-dialog v-model="memoryDialogOpen" title="提交受控记忆候选" width="min(620px, 92vw)">
-        <el-alert
-          title="请只填写可复用的稳定偏好或经验。业务事实、文档原文和聊天历史不应作为记忆提交；管理员审核通过前不会被使用。"
-          type="info"
-          show-icon
-          :closable="false"
-        />
-        <div v-loading="memoryProposalsLoading" class="memory-proposals">
-          <p>候选来源</p>
-          <el-radio-group :model-value="memoryProposalId ?? ''" aria-label="记忆候选来源" @update:model-value="selectMemoryProposal">
-            <el-radio-button value="">自行填写</el-radio-button>
-            <el-radio-button
-              v-for="proposal in memoryProposals.filter(item => item.status === 'proposed')"
-              :key="proposal.id"
-              :value="proposal.id"
-            >{{ proposal.title }}</el-radio-button>
-          </el-radio-group>
-          <p v-if="memoryProposalId" class="memory-proposals__notice">Agent 仅提出内容。请先核对全文，再自行选择使用范围和期限；提交后仍需管理员审核。</p>
-        </div>
-        <el-form class="memory-form" label-position="top">
-          <el-form-item label="类型" required>
-            <el-radio-group v-model="memoryForm.kind" :disabled="Boolean(memoryProposalId)">
-              <el-radio-button value="preference">稳定偏好</el-radio-button>
-              <el-radio-button value="experience">可复用经验</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item label="标题" required>
-            <el-input v-model="memoryForm.title" :readonly="Boolean(memoryProposalId)" maxlength="120" show-word-limit placeholder="例如：分析报告展示偏好" />
-          </el-form-item>
-          <el-form-item label="候选内容" required>
-            <el-input
-              v-model="memoryForm.content"
-              :readonly="Boolean(memoryProposalId)"
-              type="textarea"
-              :rows="5"
-              maxlength="4000"
-              show-word-limit
-              placeholder="请用自己的话写明可在后续任务中复用的偏好或经验"
-            />
-          </el-form-item>
-          <div class="memory-form__row">
-            <el-form-item label="使用范围" required>
-              <el-radio-group v-model="memoryForm.visibility" aria-label="记忆使用范围">
-                <el-radio-button value="private">仅本人</el-radio-button>
-                <el-radio-button value="workspace">当前工作空间</el-radio-button>
-                <el-radio-button value="organization">组织范围</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="可使用期限" required>
-              <el-radio-group v-model="memoryForm.retentionDays" aria-label="记忆可使用期限">
-                <el-radio-button :value="30">30 天</el-radio-button>
-                <el-radio-button :value="90">90 天</el-radio-button>
-                <el-radio-button :value="365">1 年</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-          </div>
-        </el-form>
-        <template #footer>
-          <el-button @click="memoryDialogOpen = false">取消</el-button>
-          <el-button type="primary" :loading="memorySubmitting" @click="submitMemoryCandidate">提交审核</el-button>
-        </template>
-      </el-dialog>
 
     </template>
   </div>
@@ -1405,11 +1242,6 @@ watch(
   font-size: var(--dsh-font-size-micro);
 }
 
-.memory-form { margin-top: 18px; }
-.memory-proposals { margin-top: 18px; }
-.memory-proposals > p { margin: 0 0 8px; font-size: var(--dsh-font-size-caption); color: #606a64; }
-.memory-proposals .memory-proposals__notice { margin-top: 8px; color: #935f00; }
-.memory-form__row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 
 .answer-artifacts {
   display: flex;
@@ -1614,14 +1446,6 @@ watch(
 .verify-notice--neutral .conversation-notice__icon {
   color: #667085;
   background: #eceef1;
-}
-
-.verify-notice ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: #767069;
-  font-size: var(--dsh-font-size-badge);
-  line-height: 1.6;
 }
 
 .result-verification > p {
@@ -1933,7 +1757,6 @@ watch(
     display: none;
   }
 
-  .memory-form__row { grid-template-columns: 1fr; gap: 0; }
 
   .answer-artifacts button {
     width: 100%;

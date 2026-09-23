@@ -40,7 +40,7 @@ test('all governed platform tool contracts compile in strict JSON Schema mode', 
   assert.equal(platformToolContracts.delegate_agent.completionSemantics, 'accepted',
     'parent Task must not treat transport-level delegation success as proof that the child goal was achieved')
   assert.equal(platformToolContracts.propose_memory.completionSemantics, 'completed',
-    'only the staging operation completes; consent and publication are separate human actions')
+    'only the application staging completes; review and publication are separate human actions')
 })
 
 test('dsh-work built-in tools use one explicit category and governance registry', () => {

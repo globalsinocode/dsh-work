@@ -21,6 +21,21 @@ interface ToolPolicyMetadata {
   unsupportedReason?: string
 }
 
+/**
+ * DSH control-plane capabilities are not ordinary business tools. They stay
+ * governed by the platform's Skill, workflow and controlled-delegation paths
+ * instead of appearing in the Agent tool authorization directory.
+ */
+export const hiddenRuntimeCatalogTools = new Set([
+  'activate_skill', 'prepare_skill_installation', 'python_execute',
+  'list_agents', 'interrupt_agent', 'send_message', 'subagent', 'subagent_fork',
+  'exit_plan_mode', 'skill', 'workflow', 'ralph',
+])
+
+export function isVisibleDshCatalogTool(toolId: string) {
+  return !hiddenRuntimeCatalogTools.has(toolId)
+}
+
 const toolPolicies: Record<string, ToolPolicyMetadata> = {
   read: { name: '读取文本文件', mode: 'read', risk: 'low', timeoutSeconds: 30, approvalPolicy: 'none' },
   glob: { name: '查找文件', mode: 'read', risk: 'low', timeoutSeconds: 30, approvalPolicy: 'none' },
@@ -33,6 +48,24 @@ const toolPolicies: Record<string, ToolPolicyMetadata> = {
   update_goal: { name: '更新持续目标', mode: 'write', risk: 'low', timeoutSeconds: 10, approvalPolicy: 'none' },
   job_list: { name: '查看后台任务', mode: 'read', risk: 'low', timeoutSeconds: 10, approvalPolicy: 'none' },
   job_output: { name: '读取后台任务输出', mode: 'read', risk: 'low', timeoutSeconds: 30, approvalPolicy: 'none' },
+  read_image: {
+    name: '读取图片', mode: 'read', risk: 'low', timeoutSeconds: 30, approvalPolicy: 'none',
+    requirements: ['当前 Run 工作区', '仅允许读取工作区内图片文件'],
+  },
+  str_replace_editor: {
+    name: '查看与编辑文本文件', mode: 'write', risk: 'medium', timeoutSeconds: 30, approvalPolicy: 'none',
+    requirements: ['当前 Run 工作区', '读取限于工作区；创建和修改限于 output 文本成果目录'],
+  },
+  web_fetch: {
+    name: '获取网页', mode: 'read', risk: 'medium', timeoutSeconds: 30, approvalPolicy: 'none',
+    requirements: ['仅允许公开 HTTP(S) 地址'],
+    platformSupported: false,
+    unsupportedReason: 'DSH 网页获取尚未实现连接层私网地址与重定向防护，暂不允许授权',
+  },
+  web_search: {
+    name: '搜索互联网', mode: 'read', risk: 'medium', timeoutSeconds: 30, approvalPolicy: 'none',
+    requirements: ['每次 1 至 4 个非空查询', '查询内容受当前 Agent 数据权限约束'],
+  },
   job_kill: {
     name: '停止后台任务', mode: 'write', risk: 'medium', timeoutSeconds: 10, approvalPolicy: 'sensitive',
     platformSupported: false,
@@ -197,7 +230,11 @@ export function catalogEntryToToolDefinition(
     connectorId: entry.connectorId,
     risk: entry.risk,
     mode: entry.mode,
-    status: 'available',
+    status: entry.platformSupported ? 'available' : 'disabled',
+    admissionStatus: entry.platformSupported ? 'approved' : 'unavailable',
+    admissionMessage: entry.platformSupported
+      ? '已完成平台安全准入，可在 Agent 版本中授权'
+      : entry.unsupportedReason ?? '平台尚未完成该工具的安全准入',
     inputSchema: JSON.stringify(entry.inputSchemaObject, null, 2),
     outputSchema: JSON.stringify(entry.outputSchemaObject, null, 2),
     outputValidation: entry.outputValidation,

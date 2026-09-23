@@ -68,6 +68,38 @@ export interface AgentMemoryProposal {
   expiresAt: string
 }
 
+export interface ExperienceIterationAgentSummary {
+  agentId: string
+  agentName: string
+  agentVersion: string
+  agentStatus: string
+  totalApplications: number
+  pendingApplications: number
+  approvedApplications: number
+  rejectedApplications: number
+  latestApplicationAt: string | null
+}
+
+export interface ExperienceIterationApplication {
+  id: string
+  agentId: string
+  agentName: string
+  sourceAgentVersionId: string
+  sourceAgentVersion: string
+  sourceRunId: string
+  sourceAttemptId: string
+  proposedBy: string
+  title: string
+  content: string
+  contentDigest: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewedBy: string | null
+  reviewedAt: string | null
+  reviewComment: string | null
+  publishedVersionId: string | null
+  createdAt: string
+}
+
 interface CandidateRow {
   id: string
   consentId: string
@@ -116,7 +148,7 @@ export class PostgresControlledMemoryService {
 
   /** A DSH tool can only stage text. It cannot grant scope, publish memory or set retention. */
   async proposeFromAttempt(input: { kind: MemoryKind; title: string; content: string }, manifest: RuntimeManifest, signal: AbortSignal): Promise<{
-    proposalId: string; status: 'pending_human_consent' | 'trial_only'
+    proposalId: string; status: 'pending_admin_review' | 'trial_only'
   }> {
     signal.throwIfAborted()
     const title = input.title.trim()
@@ -177,7 +209,7 @@ export class PostgresControlledMemoryService {
     if (!created && (!existing || existing.status !== 'proposed' || existing.expiresAt.getTime() <= Date.now())) {
       throw Object.assign(new Error('相同记忆提案已提交或已过期'), { status: 409, code: 'MEMORY_PROPOSAL_CONFLICT' })
     }
-    return { proposalId: (created ?? existing)!.id, status: 'pending_human_consent' }
+    return { proposalId: (created ?? existing)!.id, status: 'pending_admin_review' }
   }
 
   async listOwnProposals(userId: string, attemptId: string): Promise<AgentMemoryProposal[]> {
@@ -416,12 +448,176 @@ export class PostgresControlledMemoryService {
     return rows.map(row => mapCandidate(sourceAccess.get(sourceAccessKey(row)) ? row : { ...row, content: unavailableContent }))
   }
 
+  async listExperienceIterationAgents(): Promise<ExperienceIterationAgentSummary[]> {
+    const [agents, applications] = await Promise.all([
+      this.database<Array<{ agentId: string; agentName: string; agentVersion: string; agentStatus: string }>>`
+        select a.id as "agentId", a.name as "agentName",
+               coalesce(active_version.version, draft_version.version, '—') as "agentVersion",
+               a.status as "agentStatus"
+          from agents a
+          left join agent_versions active_version
+            on active_version.tenant_id = a.tenant_id and active_version.id = a.active_version_id
+          left join agent_versions draft_version
+            on draft_version.tenant_id = a.tenant_id and draft_version.id = a.draft_version_id
+         where a.tenant_id = ${tenantId}
+         order by a.name, a.id
+      `,
+      this.listExperienceIterationApplications(),
+    ])
+    return agents.map(agent => {
+      const owned = applications.filter(application => application.agentId === agent.agentId)
+      return {
+        ...agent,
+        totalApplications: owned.length,
+        pendingApplications: owned.filter(application => application.status === 'pending').length,
+        approvedApplications: owned.filter(application => application.status === 'approved').length,
+        rejectedApplications: owned.filter(application => application.status === 'rejected').length,
+        latestApplicationAt: owned[0]?.createdAt ?? null,
+      }
+    })
+  }
+
+  async listExperienceIterationApplications(
+    agentId?: string,
+    status?: ExperienceIterationApplication['status'],
+  ): Promise<ExperienceIterationApplication[]> {
+    const proposals = await this.database<Array<{
+      id: string; agentId: string; agentName: string; sourceAgentVersionId: string; sourceAgentVersion: string;
+      sourceRunId: string; sourceAttemptId: string; proposedBy: string; title: string; content: string;
+      contentDigest: string; createdAt: Date; sourceUserId: string; sourceWorkspaceId: string
+    }>>`
+      select mp.id, av.agent_id as "agentId", a.name as "agentName",
+             mp.agent_version_id as "sourceAgentVersionId", av.version as "sourceAgentVersion",
+             mp.run_id as "sourceRunId", mp.attempt_id as "sourceAttemptId",
+             mp.agent_principal_id as "proposedBy", mp.title, mp.content,
+             mp.requested_by as "sourceUserId", mp.workspace_id as "sourceWorkspaceId",
+             mp.content_digest as "contentDigest", mp.created_at as "createdAt"
+        from memory_proposals mp
+        join run_attempts ra on ra.tenant_id = mp.tenant_id and ra.id = mp.attempt_id
+        join agent_versions av on av.tenant_id = mp.tenant_id and av.id = mp.agent_version_id
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
+       where mp.tenant_id = ${tenantId} and mp.kind = 'experience'
+         and mp.status = 'proposed' and mp.expires_at > now() and ra.status = 'succeeded'
+         ${agentId ? this.database`and av.agent_id = ${agentId}` : this.database``}
+       order by mp.created_at desc, mp.id
+    `
+    const reviewed = await this.database<Array<{
+      id: string; agentId: string; agentName: string; sourceAgentVersionId: string; sourceAgentVersion: string;
+      sourceRunId: string; sourceAttemptId: string; proposedBy: string; title: string; content: string;
+      contentDigest: string; status: 'pending' | 'approved' | 'rejected'; reviewedBy: string | null; reviewedAt: Date | null;
+      reviewComment: string | null; publishedVersionId: string | null; createdAt: Date;
+      sourceUserId: string; sourceWorkspaceId: string
+    }>>`
+      select mp.id, av.agent_id as "agentId", a.name as "agentName",
+             mp.agent_version_id as "sourceAgentVersionId", av.version as "sourceAgentVersion",
+             mp.run_id as "sourceRunId", mp.attempt_id as "sourceAttemptId",
+             mp.agent_principal_id as "proposedBy", mc.title,
+             case when c.status = 'active' and c.retention_until > now() and mc.retention_until > now()
+               then mc.content else ${unavailableContent} end as content,
+             c.source_user_id as "sourceUserId", c.workspace_id as "sourceWorkspaceId",
+             mc.content_digest as "contentDigest", mc.status, mc.reviewed_by as "reviewedBy",
+             mc.reviewed_at as "reviewedAt", mc.review_comment as "reviewComment",
+             mc.approved_version_id as "publishedVersionId", mp.created_at as "createdAt"
+        from memory_proposals mp
+        join memory_candidates mc
+          on mc.tenant_id = mp.tenant_id and mc.source_proposal_id = mp.id
+        join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
+        join agent_versions av on av.tenant_id = mp.tenant_id and av.id = mp.agent_version_id
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
+       where mp.tenant_id = ${tenantId} and mp.kind = 'experience'
+         and mc.status in ('pending', 'approved', 'rejected')
+         ${agentId ? this.database`and av.agent_id = ${agentId}` : this.database``}
+       order by mp.created_at desc, mp.id
+    `
+    const sourceAccess = await this.resolveSourceAccess([...proposals, ...reviewed])
+    const applications: ExperienceIterationApplication[] = [
+      ...proposals.map(row => ({
+        id: row.id, agentId: row.agentId, agentName: row.agentName,
+        sourceAgentVersionId: row.sourceAgentVersionId, sourceAgentVersion: row.sourceAgentVersion,
+        sourceRunId: row.sourceRunId, sourceAttemptId: row.sourceAttemptId,
+        proposedBy: row.proposedBy, title: row.title,
+        content: sourceAccess.get(sourceAccessKey(row)) ? row.content : unavailableContent,
+        contentDigest: row.contentDigest,
+        status: 'pending' as const,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewComment: null,
+        publishedVersionId: null,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      ...reviewed.map(row => ({
+        id: row.id, agentId: row.agentId, agentName: row.agentName,
+        sourceAgentVersionId: row.sourceAgentVersionId, sourceAgentVersion: row.sourceAgentVersion,
+        sourceRunId: row.sourceRunId, sourceAttemptId: row.sourceAttemptId,
+        proposedBy: row.proposedBy, title: row.title,
+        content: sourceAccess.get(sourceAccessKey(row)) ? row.content : unavailableContent,
+        contentDigest: row.contentDigest, status: row.status,
+        reviewedBy: row.reviewedBy, reviewComment: row.reviewComment,
+        publishedVersionId: row.publishedVersionId,
+        reviewedAt: row.reviewedAt?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    ].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+    return status ? applications.filter(application => application.status === status) : applications
+  }
+
+  async reviewExperienceIterationApplication(input: {
+    applicationId: string
+    decision: 'approved' | 'rejected'
+    actor: string
+    resolutionKey: string
+    comment?: string
+  }): Promise<ExperienceIterationApplication> {
+    const [proposal] = await this.database<{
+      requestedBy: string; attemptId: string; kind: MemoryKind; title: string; content: string; status: string
+    }[]>`
+      select requested_by as "requestedBy", attempt_id as "attemptId", kind, title, content, status
+        from memory_proposals
+       where tenant_id = ${tenantId} and id = ${input.applicationId}
+    `
+    if (!proposal || proposal.kind !== 'experience') throw requestInvalid('经验迭代申请不存在')
+
+    let [candidate] = await this.database<{ id: string }[]>`
+      select id from memory_candidates
+       where tenant_id = ${tenantId} and source_proposal_id = ${input.applicationId}
+    `
+    if (!candidate) {
+      if (proposal.status !== 'proposed') throw requestInvalid('经验迭代申请状态不可审核')
+      const created = await this.submitCandidate({
+        userId: proposal.requestedBy,
+        attemptId: proposal.attemptId,
+        submissionKey: `agent-experience:${input.applicationId}`,
+        kind: 'experience',
+        title: proposal.title,
+        content: proposal.content,
+        visibility: 'organization',
+        retentionDays: 3650,
+        proposalId: input.applicationId,
+      })
+      candidate = { id: created.id }
+    }
+    await this.reviewCandidate({
+      candidateId: candidate.id,
+      decision: input.decision,
+      actor: input.actor,
+      resolutionKey: input.resolutionKey,
+      comment: input.comment,
+      auditActionPrefix: 'experience.iteration.application',
+      auditTargetId: input.applicationId,
+    })
+    const application = (await this.listExperienceIterationApplications()).find(item => item.id === input.applicationId)
+    if (!application) throw new Error('审核后的经验迭代申请不存在')
+    return application
+  }
+
   async reviewCandidate(input: {
     candidateId: string
     decision: 'approved' | 'rejected'
     actor: string
     resolutionKey: string
     comment?: string
+    auditActionPrefix?: string
+    auditTargetId?: string
   }): Promise<ControlledMemoryCandidate> {
     const outcome = await this.database.begin(async (transaction) => {
       const [candidate] = await transaction<(CandidateRow & {
@@ -577,7 +773,15 @@ export class PostgresControlledMemoryService {
       `
       return approved!
     })
-    await this.operations?.appendAudit(input.actor, `memory.candidate.${input.decision}`, input.candidateId, 'success', `trace-${input.candidateId}`, input.comment ?? input.decision)
+    const auditTargetId = input.auditTargetId ?? input.candidateId
+    await this.operations?.appendAudit(
+      input.actor,
+      `${input.auditActionPrefix ?? 'memory.candidate'}.${input.decision}`,
+      auditTargetId,
+      'success',
+      `trace-${auditTargetId}`,
+      input.comment ?? input.decision,
+    )
     return mapCandidate(outcome)
   }
 

@@ -65,7 +65,8 @@ const rules: FormRules = {
 const publishedSkills = computed(() => contentStore.skills.filter((skill) =>
   Boolean(skill.activeVersion) && skill.status !== 'disabled',
 ))
-const usableTools = computed(() => contentStore.tools.filter((tool) => tool.status === 'available'))
+const usableTools = computed(() => contentStore.tools.filter((tool) =>
+  tool.status === 'available' && tool.admissionStatus !== 'unavailable'))
 const delegationTargets = computed(() => contentStore.agentVersions.filter((version) =>
   version.status === 'published',
 ).map((version) => ({
@@ -441,9 +442,9 @@ function toVersionedToolReference(reference: string) {
           <el-form-item label="工具允许列表（选填）" prop="tools">
             <el-select v-model="form.tools" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择 Agent 可调用的工具">
               <el-option v-for="tool in usableTools" :key="tool.id" :label="`${tool.name} · v${tool.version ?? '1.0.0'} · ${tool.system}`" :value="`${tool.id}@${tool.version ?? '1.0.0'}`" />
-              <el-option label="提出受控记忆候选 · v1.0.0 · dsh-work 内置执行工具" value="propose_memory@1.0.0" />
+              <el-option label="提出经验迭代申请 · v1.0.0 · dsh-work 内置执行工具" value="propose_memory@1.0.0" />
             </el-select>
-            <p class="field-help">无需工具时可留空；记忆提案只暂存内容，须员工确认使用范围和期限并经管理员审核，才可在后续运行中使用。</p>
+            <p class="field-help">无需工具时可留空；经验申请必须来自成功 Run/Attempt，按稳定 Agent 归属并经管理员审核后，才可在后续运行中作为非权威经验使用。</p>
           </el-form-item>
         </div>
         <div class="selection-overview">

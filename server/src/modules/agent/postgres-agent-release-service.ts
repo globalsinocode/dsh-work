@@ -1168,64 +1168,11 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
-  /* ---------- 提交与审核往返 ---------- */
-
-  /**
-   * 提交审核：draft/changes_requested → submitted。要求当前修订已有逐项确认通过的
-   * 封存试运行——"提交"即"自查与试运行完成，等待发布确认"。提交后候选封存：案例、
-   * 依赖、检查、试运行与 ZIP 重导均被拒绝，只能退回、撤回或发布；草稿漂移不推进
-   * 修订，发布门禁按 bound_fingerprint 复核自动挡下漂移内容。
-   */
-  async submitForReview(agentId: string, userId: string): Promise<AgentReleaseState> {
-    const actor = await this.requireActor(userId)
-    await this.database.begin(async (tx) => {
-      const [lockedAgent] = await tx<{ draftVersionId: string | null }[]>`
-        select draft_version_id as "draftVersionId" from agents
-         where tenant_id = ${tenantId} and id = ${agentId} for update
-      `
-      if (!lockedAgent) throw Object.assign(new Error(`Agent 不存在：${agentId}`), { status: 404, code: 'agent_not_found' })
-      const context = await this.loadContext(agentId)
-      let submission = await this.activeSubmission(agentId, tx)
-      if (!submission) throw new Error('当前 Agent 没有进行中的发布候选')
-      // 草稿漂移且候选仍可编辑：先推进修订，让随后的封存/试运行复核自然拒绝。
-      if (context?.draft && submission.status !== 'submitted') {
-        if (submission.agentVersionId !== context.draft.id) submission = await this.rebindSubmission(submission, context, tx)
-        else if (submission.boundFingerprint !== draftFingerprint(context.draft)) submission = await this.refreshSubmissionRevision(submission, context, tx)
-      }
-      if (submission.status !== 'draft' && submission.status !== 'changes_requested') {
-        throw new Error('候选已提交或已终态，不能重复提交')
-      }
-      if (submission.sealedRevision === null || submission.sealedRevision !== submission.revision) {
-        throw new Error('请先完成与当前修订一致的通过试运行再提交审核')
-      }
-      const [trial] = await tx<{ status: string; submissionRevision: number; steps: TrialRunStep[] }[]>`
-        select status, submission_revision as "submissionRevision", steps from agent_trial_runs
-         where tenant_id = ${tenantId} and submission_id = ${submission.id}
-         order by started_at desc limit 1
-      `
-      if (trial?.status !== 'passed' || trial.submissionRevision !== submission.sealedRevision) {
-        throw new Error('请先完成与当前修订一致的通过试运行再提交审核')
-      }
-      const trialEvidenceError = v1TrialEvidenceError(submission.cases, trial.steps)
-      if (trialEvidenceError) throw new Error(`旧版或无效试运行证据不能提交审核：${trialEvidenceError}，请重新运行 v1 评测`)
-      // B-03/I-04：封存绑定依据提交时复核——封存至提交间的绑定撤销/漂移
-      // 使试运行证据不再代表当前绑定，必须重新封存试运行。
-      await this.assertSealedBindings(submission, tx)
-      const updated = await tx<{ id: string }[]>`
-        update agent_release_submissions set status = 'submitted', updated_at = now()
-         where tenant_id = ${tenantId} and id = ${submission.id}
-           and status in ('draft', 'changes_requested')
-        returning id
-      `
-      if (!updated.length) throw new Error('候选状态已变化，请刷新后重试')
-    })
-    await this.audit(actor.id, 'agent.release.submit', agentId, 'success', '候选提交审核，定义与试运行证据封存')
-    return this.getReleaseState(agentId)
-  }
+  /* ---------- 既有待审核候选的处理 ---------- */
 
   /**
    * 退回修改：submitted → changes_requested，必须登记退回意见。
-   * 与 publish/ensureCandidate 同序加锁（先 agents 后 submission）：退回与并发提交、
+   * 与 publish/ensureCandidate 同序加锁（先 agents 后 submission）：退回与并发发布、
    * 发布、撤回在事务内串行，状态条件兜底防止审核意见写到已终态候选上。
    */
   async requestChanges(agentId: string, note: string, userId: string): Promise<AgentReleaseState> {
@@ -1290,7 +1237,7 @@ export class PostgresAgentReleaseService {
     const actor = await this.requireActor(userId)
     // 校验、发布与治理写入全部在同一事务内：先锁 agents（与 ensureCandidate 同序避免
     // 死锁），再锁 submission 行并复核封存/修订/试运行终态——并发修订推进后，旧的
-    // 试运行结果不能带病放行；终态更新带状态条件，并发修改要么先提交（被我们复核到），
+    // 试运行结果不能带病放行；终态更新带状态条件，并发修改要么先落库（被我们复核到），
     // 要么等锁后落空，不能把已发布提交改回草稿。
     const version = await this.database.begin(async (transaction) => {
       const [lockedAgent] = await transaction<{ draftVersionId: string | null }[]>`
@@ -1324,10 +1271,7 @@ export class PostgresAgentReleaseService {
       if (submission.missingDeps.skills.length || submission.missingDeps.tools.length) {
         throw new Error('仍存在无法解析的依赖，不能发布')
       }
-      // 发布是审核动作：候选必须先经 submit 进入 submitted，不能从草稿/退回态直达发布。
-      if (submission.status !== 'submitted') {
-        throw new Error('候选尚未提交审核，请先完成试运行并提交审核后再发布')
-      }
+      // 审核确认即发布：新候选无需先提交审核；保留已提交候选的完成路径。
       if (submission.sealedRevision === null || submission.sealedRevision !== submission.revision) {
         throw new Error('试运行对应的修订已被修改，请重新试运行')
       }
@@ -1341,6 +1285,9 @@ export class PostgresAgentReleaseService {
       }
       const trialEvidenceError = v1TrialEvidenceError(submission.cases, latestTrial.steps)
       if (trialEvidenceError) throw new Error(`旧版或无效试运行证据不能发布：${trialEvidenceError}，请退回或撤回候选后重新运行 v1 评测`)
+      if (!submission.checks.length || submission.checks.some(check => check.status !== 'passed')) {
+        throw new Error('候选检查未全部通过，请重新检查并试运行')
+      }
       // B-03/I-04：发布事务内复核封存绑定依据——并发绑定变更（撤销/轮换/语义
       // 漂移）在此拒绝，旧证据不能带病放行。
       await this.assertSealedBindings(submission, transaction)
@@ -1358,7 +1305,7 @@ export class PostgresAgentReleaseService {
         update agent_release_submissions
            set status = 'published', review_note = ${note.trim() || null}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${submission.id}
-           and status = 'submitted'
+           and status = ${submission.status}
         returning id
       `
       if (!closed.length) throw new Error('发布候选状态已变化，请刷新后重试')

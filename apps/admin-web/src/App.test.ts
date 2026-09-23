@@ -25,6 +25,7 @@ async function render() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/assistant', component: AdminAssistantView, meta: { title: '管理助手' } },
     { path: '/agents', component: { template: '<div>Agent 管理</div>' }, meta: { title: 'Agent 管理' } },
+    { path: '/experience-iterations', component: { template: '<div>经验迭代列表</div>' }, meta: { title: '经验迭代', subtitle: '按稳定 Agent 归属，经管理员审核后发布不可变经验版本。' } },
     { path: '/about', component: { template: '<div>关于 dsh-work</div>' }, meta: { title: '关于 dsh-work' } },
   ] })
   await router.push('/assistant?context=skills')
@@ -92,5 +93,14 @@ describe('global management conversation history', () => {
 
     expect(router.currentRoute.value.path).toBe('/about')
     expect(wrapper.text()).toContain('关于 dsh-work')
+  })
+
+  it('renders an optional route subtitle in the management topbar', async () => {
+    const { wrapper, router } = await render()
+    await router.push('/experience-iterations')
+    await flushPromises()
+
+    expect(wrapper.get('.admin-topbar__context strong').text()).toBe('经验迭代')
+    expect(wrapper.get('.admin-topbar__subtitle').text()).toBe('按稳定 Agent 归属，经管理员审核后发布不可变经验版本。')
   })
 })

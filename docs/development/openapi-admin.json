@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.9.0-controlled-memory",
+    "version": "0.10.0-agent-experience-iteration",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,26 +16,41 @@
     }
   ],
   "paths": {
-    "/memory/candidates": {
+    "/experience-iterations/agents": {
       "get": {
-        "operationId": "listControlledMemoryCandidates",
-        "summary": "按状态查询受控记忆候选",
-        "parameters": [{
-          "name": "status",
-          "in": "query",
-          "required": false,
-          "schema": { "enum": ["pending", "approved", "rejected", "withdrawn"] }
-        }],
+        "operationId": "listExperienceIterationAgents",
+        "summary": "查询每个 Agent 的经验迭代申请汇总",
         "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
-    "/memory/candidates/{candidateId}/review": {
+    "/experience-iterations/applications": {
+      "get": {
+        "operationId": "listExperienceIterationApplications",
+        "summary": "查询经验迭代申请列表，可按 Agent 和状态筛选",
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": { "enum": ["pending", "approved", "rejected"] }
+          }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/experience-iterations/applications/{applicationId}/review": {
       "post": {
-        "operationId": "reviewControlledMemoryCandidate",
-        "summary": "审核并发布或拒绝受控记忆候选",
-        "description": "发布创建独立不可变记忆版本；相同决定和 resolutionKey 可幂等重放，其他并发决定返回冲突。来源授权已撤回或过期时禁止发布。",
+        "operationId": "reviewExperienceIterationApplication",
+        "summary": "审核并发布或拒绝 Agent 经验迭代申请",
+        "description": "申请归属于稳定 Agent，来源固定到成功 Run/Attempt。批准后创建独立不可变经验版本；相同决定和 resolutionKey 可幂等重放，其他并发决定返回冲突。",
         "parameters": [{
-          "name": "candidateId",
+          "name": "applicationId",
           "in": "path",
           "required": true,
           "schema": { "type": "string" }
@@ -620,7 +635,7 @@
     "/tools": {
       "get": {
         "operationId": "listTools",
-        "summary": "查询已添加的平台工具",
+        "summary": "查询已同步的平台工具及其平台准入状态",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -630,6 +645,7 @@
       "post": {
         "operationId": "addTool",
         "summary": "从当前 DSH Profile 的已加载工具中添加平台支持项并配置初始权限",
+        "deprecated": true,
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -647,6 +663,20 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          }
+        }
+      }
+    },
+    "/tools/sync": {
+      "post": {
+        "operationId": "syncDshTools",
+        "summary": "发现当前 DSH Profile 的全部普通内置工具并同步到平台目录；未准入工具保持不可执行",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
           }
         }
       }
@@ -2517,5 +2547,5 @@
       }
     }
   },
-  "x-contract-status": "pf06-controlled-agent-delegation-implemented"
+  "x-contract-status": "agent-experience-iteration-by-agent"
 }

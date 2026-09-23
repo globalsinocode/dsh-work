@@ -1,4 +1,5 @@
 import { request } from 'node:http'
+import { createHash } from 'node:crypto'
 import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -42,25 +43,42 @@ lines.on('line', (line) => {
 
   if (message.method === 'session/new' && message.id !== undefined) {
     sessionSequence += 1
-    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: `mock-session-${sessionSequence}` } })
+    const sessionId = `mock-session-${sessionSequence}`
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId } })
     const delay = Number(process.env.MOCK_MCP_CATALOG_DELAY_MS ?? 0)
     const catalogPath = process.env.DSH_TOOL_CATALOG_PATH
-    if (delay > 0 && catalogPath) {
-      const [serverName] = JSON.parse(process.env.DSH_ALLOWED_MCP_SERVERS_JSON ?? '[]') as string[]
-      const tools = [{ name: `mcp__${serverName}__ping`, description: 'Read-only test tool', parameters: { type: 'object' } }]
-      const publishCatalog = async (entries: typeof tools) => {
-        const temporary = `${catalogPath}.${process.pid}.tmp`
-        await writeFile(temporary, JSON.stringify({ formatVersion: 2, tools: entries }))
-        await rename(temporary, catalogPath)
-      }
+    const catalogMode = process.env.DSH_WORK_TOOL_CATALOG_MODE
+    const isolatedManagementProbe = !process.env.DSH_PLATFORM_TOOL_SOCKET
+      && !process.env.DSH_ALLOWED_MCP_SERVERS_JSON
+      && !process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON
+    if (catalogMode === 'management' && catalogPath && isolatedManagementProbe) {
+      const schemas = JSON.parse(process.env.MOCK_RUNTIME_TOOL_SCHEMAS_JSON ?? JSON.stringify([
+        { name: 'read', description: 'Read a file.', parameters: { type: 'object' } },
+      ])) as Array<{ name: string; description: string; parameters: Record<string, unknown> }>
       setTimeout(() => {
-        void publishCatalog(tools).catch(() => undefined)
+        void publishToolCatalog(catalogPath, sessionId, schemas.map(tool => ({
+          ...tool,
+          contract: runtimeToolContract(tool.name),
+        }))).catch(() => undefined)
+      }, Number(process.env.MOCK_RUNTIME_CATALOG_DELAY_MS ?? 0))
+    }
+    if (catalogMode === 'mcp' && delay > 0 && catalogPath) {
+      const [serverName] = JSON.parse(process.env.DSH_ALLOWED_MCP_SERVERS_JSON ?? '[]') as string[]
+      const tools = [{
+        name: `mcp__${serverName}__ping`, description: 'Read-only test tool', parameters: { type: 'object' },
+        contract: runtimeToolContract(`mcp__${serverName}__ping`),
+      }]
+      setTimeout(() => {
+        void publishToolCatalog(catalogPath, sessionId, tools).catch(() => undefined)
       }, delay)
       const updateDelay = Number(process.env.MOCK_MCP_CATALOG_UPDATE_DELAY_MS ?? 0)
       if (updateDelay > delay) setTimeout(() => {
-        void publishCatalog([
+        void publishToolCatalog(catalogPath, sessionId, [
           ...tools,
-          { name: `mcp__${serverName}__pong`, description: 'Second test tool', parameters: { type: 'object' } },
+          {
+            name: `mcp__${serverName}__pong`, description: 'Second test tool', parameters: { type: 'object' },
+            contract: runtimeToolContract(`mcp__${serverName}__pong`),
+          },
         ]).catch(() => undefined)
       }, updateDelay)
     }
@@ -289,6 +307,43 @@ async function emitPermissionRequest(requestId: number, sessionId: string) {
       toolCall: { toolCallId: callId },
     },
   })
+}
+
+function runtimeToolContract(name: string) {
+  return {
+    effect: name === 'read' || name.startsWith('mcp__') ? 'read' : 'write',
+    retryPolicy: name === 'read' || name.startsWith('mcp__') ? 'safe' : 'never',
+    concurrencyPolicy: name === 'read' || name.startsWith('mcp__') ? 'concurrent' : 'serialized',
+    completionSemantics: 'completed',
+    timeoutSeconds: 30,
+    outputValidation: 'unavailable',
+    outputSchema: { 'x-dsh-work-output-validation': 'unavailable' },
+  }
+}
+
+async function publishToolCatalog(
+  catalogPath: string,
+  sessionId: string,
+  tools: Array<Record<string, unknown>>,
+) {
+  const temporary = `${catalogPath}.${process.pid}.tmp`
+  await writeFile(temporary, JSON.stringify({
+    formatVersion: 3,
+    sessionId: process.env.MOCK_RUNTIME_CATALOG_SESSION_ID ?? sessionId,
+    catalogDigest: process.env.MOCK_RUNTIME_CATALOG_DIGEST
+      ?? createHash('sha256').update(canonicalJson(tools)).digest('hex'),
+    tools,
+  }))
+  await rename(temporary, catalogPath)
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 async function writeMcpLogWithoutUsage() {

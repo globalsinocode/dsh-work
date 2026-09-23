@@ -430,6 +430,13 @@ export interface ToolDefinition {
   risk: 'low' | 'medium' | 'high'
   mode: 'read' | 'write'
   status: 'available' | 'degraded' | 'disabled'
+  /**
+   * Runtime discovery and platform execution admission are deliberately
+   * separate. Legacy/non-DSH tools omit these fields and remain approved by
+   * their existing connector-specific governance.
+   */
+  admissionStatus?: 'approved' | 'unavailable'
+  admissionMessage?: string
   inputSchema: string
   outputSchema: string
   outputValidation: 'runtime' | 'platform' | 'unavailable'
@@ -441,6 +448,14 @@ export interface ToolDefinition {
   dataScopes: string[]
   approvalPolicy: 'none' | 'sensitive' | 'always'
   lastCheckedAt: string
+}
+
+export interface ToolCatalogSyncResult {
+  tools: ToolDefinition[]
+  discoveredCount: number
+  admittedCount: number
+  unavailableCount: number
+  synchronizedAt: string
 }
 
 export interface ToolCatalogCandidate {

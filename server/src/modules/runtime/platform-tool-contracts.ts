@@ -142,7 +142,7 @@ export const platformToolContracts = {
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
-        kind: { type: 'string', enum: ['preference', 'experience'] },
+        kind: { type: 'string', enum: ['experience'] },
         title: { type: 'string', minLength: 3, maxLength: 120 },
         content: { type: 'string', minLength: 20, maxLength: 4000 },
       },
@@ -150,10 +150,10 @@ export const platformToolContracts = {
     },
     outputSchema: {
       type: 'object', additionalProperties: false,
-      properties: { proposalId: { type: 'string' }, status: { type: 'string', enum: ['pending_human_consent', 'trial_only'] } },
+      properties: { proposalId: { type: 'string' }, status: { type: 'string', enum: ['pending_admin_review', 'trial_only'] } },
       required: ['proposalId', 'status'],
     },
-    // Only staging is complete here; consent and publication are separate human actions.
+    // Only the application staging is complete here; administrative review and publication are separate actions.
     effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
   }),
 } satisfies Record<string, PlatformToolContract>

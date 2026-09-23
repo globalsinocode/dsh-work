@@ -29,8 +29,6 @@ const api = vi.hoisted(() => ({
   createSession: vi.fn(),
   uploadSessionFile: vi.fn(),
   deleteSessionFile: vi.fn(),
-  submitMemoryCandidate: vi.fn(),
-  listMemoryProposals: vi.fn(),
   runEventsUrl: vi.fn((runId: string) => `/events/${runId}`),
   workspaceSessionEventsUrl: vi.fn((workspaceId: string) => `/session-events/${workspaceId}`),
 }))
@@ -188,7 +186,6 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
-    api.listMemoryProposals.mockResolvedValue([])
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
@@ -309,8 +306,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('button[aria-label="复制对话链接"]').exists()).toBe(true)
   })
 
-  it('requires explicit employee content and retention before submitting a controlled-memory candidate', async () => {
-    api.submitMemoryCandidate.mockResolvedValue({ id: 'memory-candidate-1', status: 'pending' })
+  it('does not expose controlled-memory submission from a successful employee run', async () => {
     const { wrapper } = await mountView({
       item: task({
         status: 'succeeded',
@@ -319,72 +315,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       }),
     })
 
-    await wrapper.get('button[aria-label="提交受控记忆候选"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('管理员审核通过前不会被使用')
-
-    const title = wrapper.get('input[placeholder="例如：分析报告展示偏好"]')
-    const content = wrapper.get('textarea[placeholder="请用自己的话写明可在后续任务中复用的偏好或经验"]')
-    await title.setValue('分析报告展示偏好')
-    await content.setValue('生成分析报告时优先使用简洁表格，并明确列出仍待确认的数据。')
-    await wrapper.get('input[value="private"]').setValue(true)
-    await wrapper.get('input[value="30"]').setValue(true)
-    await wrapper.findAll('button').find(button => button.text() === '提交审核')!.trigger('click')
-    await flushPromises()
-
-    expect(api.submitMemoryCandidate).toHaveBeenCalledWith({
-      attemptId: 'attempt-001', kind: 'preference', title: '分析报告展示偏好',
-      content: '生成分析报告时优先使用简洁表格，并明确列出仍待确认的数据。',
-      visibility: 'private', retentionDays: 30,
-    }, expect.stringContaining('memory:attempt-001:'))
-  })
-
-  it('requires employee scope and retention even when selecting an Agent memory proposal', async () => {
-    api.listMemoryProposals.mockResolvedValue([{
-      id: 'memory-proposal-11111111-1111-4111-8111-111111111111', attemptId: 'attempt-001',
-      kind: 'experience', title: '来源核对经验',
-      content: '整理资料时，先核对来源与日期，再区分已验证事实和尚待确认的假设。',
-      status: 'proposed', createdAt: '2026-09-10T10:00:00Z', expiresAt: '2026-09-17T10:00:00Z',
-    }])
-    api.submitMemoryCandidate.mockResolvedValue({ id: 'memory-candidate-2', status: 'pending' })
-    const { wrapper } = await mountView({
-      item: task({
-        status: 'succeeded', result: result({ execution: 'succeeded', outcome: 'achieved', error: null }),
-        messages: [{ id: 'm-current', role: 'assistant', content: '已整理资料', createdAt: '10:01', runId: 'run-001' }],
-      }),
-    })
-    await wrapper.get('button[aria-label="提交受控记忆候选"]').trigger('click')
-    await flushPromises()
-    await wrapper.get('input[value="memory-proposal-11111111-1111-4111-8111-111111111111"]').setValue(true)
-    await flushPromises()
-    expect((wrapper.get('input[placeholder="例如：分析报告展示偏好"]').element as HTMLInputElement).readOnly).toBe(true)
-    await wrapper.findAll('button').find(button => button.text() === '提交审核')!.trigger('click')
-    expect(api.submitMemoryCandidate).not.toHaveBeenCalled()
-    await wrapper.get('input[value="private"]').setValue(true)
-    await wrapper.findAll('button').find(button => button.text() === '提交审核')!.trigger('click')
-    expect(api.submitMemoryCandidate).not.toHaveBeenCalled()
-    await wrapper.get('input[value="30"]').setValue(true)
-    await wrapper.findAll('button').find(button => button.text() === '提交审核')!.trigger('click')
-    await flushPromises()
-    expect(api.submitMemoryCandidate).toHaveBeenCalledWith(expect.objectContaining({
-      proposalId: 'memory-proposal-11111111-1111-4111-8111-111111111111',
-      kind: 'experience', title: '来源核对经验', visibility: 'private', retentionDays: 30,
-    }), expect.stringContaining('memory:attempt-001:'))
-  })
-
-  it('does not offer controlled-memory submission for another member\'s shared run', async () => {
-    const { wrapper } = await mountView({
-      item: task({
-        requestedBy: 'U00002',
-        currentUserRole: 'member',
-        status: 'succeeded',
-        result: result({ execution: 'succeeded', outcome: 'achieved', error: null }),
-        messages: [{ id: 'm-current', role: 'assistant', content: '其他成员发起的回答', createdAt: '10:01', runId: 'run-001' }],
-      }),
-    })
-
     expect(wrapper.find('button[aria-label="提交受控记忆候选"]').exists()).toBe(false)
-    expect(api.submitMemoryCandidate).not.toHaveBeenCalled()
+    expect(wrapper.find('[role="dialog"][aria-label="提交受控记忆候选"]').exists()).toBe(false)
   })
 
   it('loads a shared run by id even when it is absent from the requester task list', async () => {
@@ -573,8 +505,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(assistants[1]!.find('.assistant-run-meta').exists()).toBe(false)
   })
 
-  it('does not present a succeeded run with missing deliverables as goal achieved (I-06)', async () => {
-    // 执行终态 succeeded ≠ 业务达成：登记缺口时展示「结果待核验」与缺口明细。
+  it('does not show an inline verification warning for an unverified result', async () => {
+    // 核验状态仍由 I-06 投影保留，但普通问答和外部业务结果均不在消息流中展示警示横幅。
     const { wrapper } = await mountView({
       item: task({
         status: 'succeeded',
@@ -601,9 +533,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
       }),
     })
 
-    const notice = wrapper.get('[data-testid="run-result-unverified"]')
-    expect(notice.text()).toContain('结果待核验')
-    expect(notice.text()).toContain('缺失成果不视为已交付')
+    expect(wrapper.find('[data-testid="run-result-unverified"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('缺失成果不视为已交付')
     expect(wrapper.text()).not.toContain('目标已达成')
   })
 

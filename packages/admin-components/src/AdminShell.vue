@@ -28,6 +28,7 @@ import { AppLogo } from '@dsh-work/ui-core'
 const props = defineProps<{
   currentPath: string
   routeTitle: string
+  routeSubtitle?: string
   userName: string
   avatarText: string
   roleLabel: string
@@ -71,7 +72,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
       { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
       { label: 'DSH 工具管理', path: '/tools', icon: Tools, permission: 'admin' },
       { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'admin' },
-      { label: '受控记忆', path: '/memories', icon: Notebook, permission: 'admin' },
+      { label: '经验迭代', path: '/experience-iterations', icon: Notebook, permission: 'admin' },
     ],
   },
   {
@@ -212,7 +213,10 @@ watch(
       <header class="admin-topbar">
         <div class="admin-topbar__context">
           <el-button class="mobile-menu" text :icon="Menu" aria-label="打开导航" @click="mobileOpen = true" />
-          <strong>{{ routeTitle }}</strong>
+          <div class="admin-topbar__copy">
+            <strong>{{ routeTitle }}</strong>
+            <small v-if="routeSubtitle" class="admin-topbar__subtitle">{{ routeSubtitle }}</small>
+          </div>
         </div>
         <div class="admin-topbar__actions">
           <el-dropdown trigger="click" placement="bottom-end" @command="onRoleCommand">
@@ -260,7 +264,10 @@ watch(
 .admin-shell__body { min-width: 0; min-height: 100vh; margin-left: var(--dsh-sidebar-width); }
 .admin-topbar { position: sticky; z-index: 20; top: 0; display: flex; min-height: var(--dsh-topbar-height); align-items: center; justify-content: space-between; gap: 18px; padding: 0 20px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-base); }
 .admin-topbar__context, .admin-topbar__actions { display: flex; align-items: center; gap: 10px; }
+.admin-topbar__context { min-width: 0; }
+.admin-topbar__copy { display: flex; min-width: 0; align-items: baseline; gap: 10px; }
 .admin-topbar__context strong { color: var(--color-text-heading); font-size: var(--font-size-header); font-weight: var(--font-weight-heading); }
+.admin-topbar__subtitle { max-width: min(760px, 62vw); overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-micro); font-weight: var(--font-weight-body); text-overflow: ellipsis; white-space: nowrap; }
 .header-user-button { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 3px 7px; border: 0; border-radius: var(--radius-tag); color: var(--color-text-primary); background: transparent; cursor: pointer; text-align: left; }
 .header-user-button:hover { background: var(--color-bg-subtle); }
 .header-user-button__avatar { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--color-text-primary); background: var(--color-bg-subtle); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }

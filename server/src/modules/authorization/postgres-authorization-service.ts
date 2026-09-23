@@ -944,8 +944,9 @@ export class PostgresAuthorizationService {
           join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
            and t.status = 'available'
+           and t.admission_status = 'approved'
            and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
-                and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
+                and t.dsh_tool_name in ('write', 'edit', 'str_replace_editor', 'todo_write', 'create_goal', 'update_goal')))
            and tv.status = 'published' and c.status = 'healthy'
       `
       if (!row) throw authorizationDenied(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)

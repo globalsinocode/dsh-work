@@ -7,8 +7,8 @@ const basePath = '/api/admin/v1'
 const maxUploadBytes = 20 * 1024 * 1024
 
 /**
- * Agent 发布工作台的服务端接口：候选提交（修订/案例/依赖）、检查、试运行、
- * 审核发布与 ZIP 发布包导入。替代前端原型 overlay 内存态。
+ * Agent 发布工作台的服务端接口：候选修订、检查、试运行、单次审核发布与
+ * ZIP 发布包导入。替代前端原型 overlay 内存态。
  */
 export function registerAgentReleaseRoutes(router: Router, service?: PostgresAgentReleaseService) {
   const available = () => {
@@ -75,13 +75,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().cancelTrial(context.params['agentId'] ?? '', context.params['trialId'] ?? '', userId), 'postgres')
   })
 
-  // 提交/退回/撤回：候选状态机 draft|changes_requested → submitted → published，
-  // submitted 期间内容封存，发布只允许从 submitted 进入。
-  router.post(`${basePath}/agents/:agentId/release/submit`, async (_request, context) => {
-    const userId = requireRequestIdentity(context, 'admin').userId
-    return envelope('admin', await available().submitForReview(context.params['agentId'] ?? '', userId), 'postgres')
-  })
-
+  // 新候选试运行通过后直接审核并发布；既有 submitted 候选保留退回与撤回能力。
   router.post(`${basePath}/agents/:agentId/release/request-changes`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ note?: string }>(request)

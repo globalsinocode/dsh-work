@@ -132,6 +132,9 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   })
   router.get(`${basePath}/tools`, async () => envelope('admin', await service.getTools()))
   router.get(`${basePath}/tools/catalog`, async () => envelope('admin', await service.getToolCatalog()))
+  router.post(`${basePath}/tools/sync`, async (_request, context) => envelope('admin', await service.syncToolCatalog({
+    actor: requireRequestIdentity(context, 'admin').userId,
+  })))
   router.post(`${basePath}/tools`, async (request, context) => {
     const input = await readJsonBody<Omit<Parameters<AdminQueryService['addTool']>[0], 'actor'>>(request)
     return envelope('admin', await service.addTool({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))

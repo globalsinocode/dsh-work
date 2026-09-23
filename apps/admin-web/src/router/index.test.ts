@@ -34,4 +34,12 @@ describe('admin authentication routes', () => {
     expect(route.meta.requiresAdmin).toBe(true)
     expect(route.meta.requiredPermission).toBeUndefined()
   })
+
+  it('publishes the experience iteration context as a topbar subtitle', () => {
+    const route = router.resolve('/experience-iterations')
+
+    expect(route.meta.title).toBe('经验迭代')
+    expect(route.meta.subtitle).toContain('按稳定 Agent 归属')
+    expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill、Tool 或权限')
+  })
 })

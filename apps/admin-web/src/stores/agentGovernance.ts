@@ -286,19 +286,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
     mergeState(agentId, state)
   }
 
-  /** 提交审核：要求当前修订已有逐项确认通过的封存试运行；提交后内容封存。 */
-  async function submitCandidate(agentId: string) {
-    busy.value = 'submit'
-    try {
-      const state = await adminApi.submitAgentRelease(agentId)
-      mergeState(agentId, state)
-      await loadSubmissionIndex()
-    } finally {
-      busy.value = ''
-    }
-  }
-
-  /** 退回修改：仅 submitted 可退回，必须登记审核意见。 */
+  /** 退回既有 submitted 候选：必须登记审核意见。 */
   async function requestCandidateChanges(agentId: string, note: string) {
     busy.value = 'submit'
     try {
@@ -323,10 +311,10 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   }
 
   /**
-   * 审核并发布：服务端校验「候选已提交审核 + 最新通过试运行与封存修订一致」，
+   * 审核并发布：服务端校验「当前候选 + 最新通过试运行与封存修订一致」，
    * 通过 publishDraft 既有门禁完成发布并写入版本证据。
    */
-  async function reviewAndPublish(agentId: string, _version: string, _publishedBy: string, note: string) {
+  async function reviewAndPublish(agentId: string, note: string) {
     busy.value = 'submit'
     try {
       const state = await adminApi.publishAgentRelease(agentId, note)
@@ -373,7 +361,6 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
     noteDraftSaved,
     releaseStateFor,
     confirmTrialRun,
-    submitCandidate,
     requestCandidateChanges,
     withdrawCandidate,
     runChecks,

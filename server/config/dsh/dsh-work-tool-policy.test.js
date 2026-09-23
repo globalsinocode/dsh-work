@@ -21,6 +21,7 @@ const originalEnvironment = {
   approvedMcpCapabilities: process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON,
   platformSocket: process.env.DSH_PLATFORM_TOOL_SOCKET,
   toolCatalogPath: process.env.DSH_TOOL_CATALOG_PATH,
+  toolCatalogMode: process.env.DSH_WORK_TOOL_CATALOG_MODE,
 }
 
 afterEach(() => {
@@ -34,6 +35,7 @@ afterEach(() => {
   restoreEnvironment('DSH_APPROVED_MCP_CAPABILITIES_JSON', originalEnvironment.approvedMcpCapabilities)
   restoreEnvironment('DSH_PLATFORM_TOOL_SOCKET', originalEnvironment.platformSocket)
   restoreEnvironment('DSH_TOOL_CATALOG_PATH', originalEnvironment.toolCatalogPath)
+  restoreEnvironment('DSH_WORK_TOOL_CATALOG_MODE', originalEnvironment.toolCatalogMode)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -43,19 +45,23 @@ test('DSH tool policy confines read and search paths to the immutable Run worksp
   await mkdir(workspace)
   await mkdir(outside)
   await writeFile(join(workspace, 'inside.txt'), 'inside')
+  await writeFile(join(workspace, 'inside.png'), 'image')
   await writeFile(join(outside, 'secret.txt'), 'secret')
   await symlink(outside, join(workspace, 'outside-link'))
 
-  process.env.DSH_ALLOWED_TOOLS_JSON = '["read","glob"]'
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["read","read_image","glob"]'
   process.env.DSH_WORKSPACE_ROOT = workspace
   process.env.DSH_TOOL_APPROVAL_MODE = 'never'
   const { guard } = capturePolicy()
 
   assert.equal(guard({ name: 'read', arguments: { file_path: 'inside.txt' } }), undefined)
+  assert.equal(guard({ name: 'read_image', arguments: { file_path: 'inside.png' } }), undefined)
   assert.equal(guard({ name: 'glob', arguments: { pattern: '**/*.txt' } }), undefined)
   assert.match(guard({ name: 'read', arguments: { file_path: join(outside, 'secret.txt') } }), /工作区之外/)
   assert.match(guard({ name: 'glob', arguments: { pattern: '*', path: '..' } }), /工作区之外/)
   assert.match(guard({ name: 'read', arguments: { file_path: 'outside-link/secret.txt' } }), /符号链接/)
+  assert.match(guard({ name: 'read_image', arguments: { file_path: 'inside.txt' } }), /图片读取/)
+  assert.match(guard({ name: 'read_image', arguments: { file_path: join(outside, 'secret.png') } }), /工作区之外/)
   assert.match(guard({ name: 'write', arguments: {} }), /未授权工具/)
 })
 
@@ -70,7 +76,7 @@ test('DSH tool policy confines write and edit to supported files in the Run outp
   const workspace = await mkdtemp(join(tmpdir(), 'dsh-work-output-policy-'))
   await mkdir(join(workspace, 'output'))
   await mkdir(join(workspace, 'input'))
-  process.env.DSH_ALLOWED_TOOLS_JSON = '["write","edit"]'
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["write","edit","str_replace_editor"]'
   process.env.DSH_WORKSPACE_ROOT = workspace
   process.env.DSH_TOOL_APPROVAL_MODE = 'never'
   const { guard } = capturePolicy()
@@ -83,6 +89,24 @@ test('DSH tool policy confines write and edit to supported files in the Run outp
   assert.equal(guard({ name: 'edit', arguments: { file_path: 'output/report.md', old_string: '旧', new_string: '新' } }), undefined)
   assert.match(guard({ name: 'edit', arguments: { file_path: 'input/source.txt', old_string: '旧', new_string: '新' } }), /只允许.*output/)
   assert.match(guard({ name: 'edit', arguments: { file_path: 'output/report.html', old_string: '旧', new_string: '新' } }), /仅支持/)
+  assert.equal(guard({ name: 'str_replace_editor', arguments: { command: 'view', path: 'input/source.txt' } }), undefined)
+  assert.equal(guard({ name: 'str_replace_editor', arguments: { command: 'create', path: 'output/report.md', file_text: '# 报告' } }), undefined)
+  assert.match(guard({ name: 'str_replace_editor', arguments: { command: 'insert', path: 'input/source.txt', insert_line: 1, new_str: '新增' } }), /只允许.*output/)
+  assert.match(guard({ name: 'str_replace_editor', arguments: { command: 'delete', path: 'output/report.md' } }), /命令无效/)
+})
+
+test('DSH tool policy denies web fetch until connection-level SSRF protection exists', () => {
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["web_fetch","web_search"]'
+  process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+  const { guard } = capturePolicy()
+
+  for (const url of ['https://example.com/reference', 'http://127.0.0.1/admin',
+    'http://127.0.0.1.nip.io/admin', 'http://169.254.169.254/latest/meta-data']) {
+    assert.match(guard({ name: 'web_fetch', arguments: { url } }), /暂不允许执行/)
+  }
+  assert.equal(guard({ name: 'web_search', arguments: { queries: ['DSH runtime tools'] } }), undefined)
+  assert.match(guard({ name: 'web_search', arguments: { queries: [] } }), /1 至 4/)
+  assert.match(guard({ name: 'web_search', arguments: { queries: ['a', 'b', 'c', 'd', 'e'] } }), /1 至 4/)
 })
 
 test('DSH tool policy asks before every governed tool call unless approval is disabled', async () => {
@@ -205,18 +229,25 @@ test('DSH forwards the stable tool call id to the PF-01 write Operation boundary
   } finally { await bridge.close() }
 })
 
-test('DSH publishes the tools loaded by the active Profile for platform discovery', async () => {
+test('DSH publishes the session-scoped tools loaded by the active Profile only for an isolated catalog probe', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-work-tool-catalog-'))
   const path = join(root, 'runtime-tools.json')
   process.env.DSH_TOOL_CATALOG_PATH = path
+  process.env.DSH_WORK_TOOL_CATALOG_MODE = 'management'
   const schemas = [
     { name: 'read', description: 'Read a file.', parameters: { type: 'object' } },
     { name: 'todo_write', description: 'Update todos.', parameters: { type: 'object' } },
   ]
-  capturePolicy(schemas)
+  const policy = capturePolicy(schemas)
+  await assert.rejects(readFile(path, 'utf8'), error => error.code === 'ENOENT')
+  const agent = { id: 'catalog-session-1' }
+  policy.sessionStarted({ agent })
 
   const catalog = JSON.parse(await readFile(path, 'utf8'))
-  assert.equal(catalog.formatVersion, 2)
+  assert.equal(catalog.formatVersion, 3)
+  assert.equal(catalog.sessionId, 'catalog-session-1')
+  assert.equal(catalog.catalogDigest, createHash('sha256').update(stableJson(catalog.tools)).digest('hex'))
+  assert.equal(policy.schemaScopes.at(-1), agent)
   assert.deepEqual(catalog.tools.map(tool => ({ name: tool.name, contract: tool.contract })), [
     { name: 'read', contract: {
       effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', completionSemantics: 'completed',
@@ -229,15 +260,28 @@ test('DSH publishes the tools loaded by the active Profile for platform discover
   ])
 })
 
+test('DSH does not publish a tool catalog for ordinary Attempts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-work-no-tool-catalog-'))
+  const path = join(root, 'runtime-tools.json')
+  process.env.DSH_TOOL_CATALOG_PATH = path
+  const policy = capturePolicy([{ name: 'read', description: 'Read a file.', parameters: { type: 'object' } }])
+
+  assert.equal(policy.sessionStarted, undefined)
+  await assert.rejects(readFile(path, 'utf8'), error => error.code === 'ENOENT')
+})
+
 function capturePolicy(schemas = []) {
   let guard
   let preExecute
   let toolsChanged
+  let sessionStarted
+  const schemaScopes = []
   const registered = []
   apply({
     on: (event, candidate) => {
       if (event === 'tools/pre-execute') preExecute = candidate
       if (event === 'tools/change') toolsChanged = candidate
+      if (event === 'agent/session-start') sessionStarted = candidate
       return () => undefined
     },
     tools: {
@@ -246,12 +290,15 @@ function capturePolicy(schemas = []) {
         guard = candidate
         return () => undefined
       },
-      schemas: () => schemas,
+      schemas: scope => {
+        schemaScopes.push(scope)
+        return schemas
+      },
     },
   })
   assert.ok(guard)
   assert.ok(preExecute)
-  return { guard, preExecute, registered, toolsChanged }
+  return { guard, preExecute, registered, toolsChanged, sessionStarted, schemaScopes }
 }
 
 test('MCP permission requires the exact reviewed server capability digest', () => {
@@ -299,6 +346,14 @@ function stripDescriptions(value) {
     Object.entries(value).filter(([key]) => key !== 'description').map(([key, item]) => [key, stripDescriptions(item)]),
   )
   return value
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 

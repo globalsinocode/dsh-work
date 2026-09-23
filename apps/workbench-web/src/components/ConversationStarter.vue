@@ -14,7 +14,7 @@ import { TaskComposer } from '@dsh-work/workbench-components'
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { WorkbenchSkill, WorkspaceFile } from '@/types/domain'
+import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 
 const props = withDefaults(
@@ -86,6 +86,7 @@ const selectedTask = ref('')
 const presetPrompt = ref('')
 const composerKey = ref(0)
 const referencedWorkspaceFileIds = ref<string[]>([])
+const selectedAgentId = ref('')
 const selectedSkillId = ref('')
 
 // Global tasks are implicit personal tasks. Only an explicit locked origin
@@ -95,6 +96,9 @@ const composerWorkspaceName = computed(() => props.workspaceLocked ? props.works
 const composerReady = computed(() => true)
 const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
   contentStore.skills.find(skill => skill.id === selectedSkillId.value),
+)
+const selectedAgent = computed<WorkbenchAgent | undefined>(() =>
+  contentStore.agents.find(agent => agent.id === selectedAgentId.value),
 )
 /**
  * 唯一可发起 Agent 的自动预选（TW-02「只有一个可用 Agent 时可默认选中」）：
@@ -191,27 +195,16 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
       referencedWorkspaceFileIds.value = []
       return
     }
-    const task = selectedSkillId.value
-      ? await taskStore.createTask(
-          payload.prompt,
-          payload.files,
-          props.workspaceLocked ? props.workspaceId : undefined,
-          props.workspaceLocked ? props.workspaceName : composerWorkspaceName.value,
-          undefined,
-          referencedWorkspaceFileIds.value,
-          selectedSkillId.value,
-          workspaceAgentMemberId,
-        )
-      : await taskStore.createTask(
-          payload.prompt,
-          payload.files,
-          props.workspaceLocked ? props.workspaceId : undefined,
-          props.workspaceLocked ? props.workspaceName : composerWorkspaceName.value,
-          undefined,
-          referencedWorkspaceFileIds.value,
-          undefined,
-          workspaceAgentMemberId,
-        )
+    const task = await taskStore.createTask(
+      payload.prompt,
+      payload.files,
+      props.workspaceLocked ? props.workspaceId : undefined,
+      props.workspaceLocked ? props.workspaceName : composerWorkspaceName.value,
+      props.workspaceLocked ? undefined : selectedAgentId.value || undefined,
+      referencedWorkspaceFileIds.value,
+      selectedSkillId.value || undefined,
+      workspaceAgentMemberId,
+    )
     await router.push(conversationPath(payload.workspaceId, task.id))
     payload.confirm?.()
     referencedWorkspaceFileIds.value = []
@@ -232,6 +225,29 @@ function syncSkillFromRoute() {
   }
 }
 
+function syncAgentFromRoute() {
+  if (props.workspaceLocked) {
+    selectedAgentId.value = ''
+    return
+  }
+  const agentId = typeof route.query.agent === 'string' ? route.query.agent : ''
+  selectedAgentId.value = contentStore.agents.some(agent => agent.id === agentId) ? agentId : ''
+  const agent = selectedAgent.value
+  if (agent) {
+    selectedTask.value = ''
+    presetPrompt.value = agent.examplePrompts[0] ?? ''
+    composerKey.value += 1
+    focusComposer()
+  }
+}
+
+function clearSelectedAgent() {
+  selectedAgentId.value = ''
+  const query = { ...route.query }
+  delete query.agent
+  void router.replace({ query })
+}
+
 function clearSelectedSkill() {
   selectedSkillId.value = ''
   const query = { ...route.query }
@@ -246,12 +262,14 @@ onMounted(async () => {
       props.workspaceLocked && !route.query.skill ? Promise.resolve() : contentStore.refreshSkills(),
     ])
     syncSkillFromRoute()
+    syncAgentFromRoute()
   } catch (error) {
     notifyActionFailure('加载员工能力', 'Skill 广场', error, '仍可继续发送普通对话；稍后刷新页面重试 Skill。')
   }
 })
 
 watch(() => route.query.skill, syncSkillFromRoute)
+watch(() => route.query.agent, syncAgentFromRoute)
 
 let referenceSequence = 0
 function clearPersonalReference() {
@@ -340,11 +358,13 @@ defineExpose({ useWorkspaceFile })
           :workspace-locked="workspaceLocked"
           :show-workspace-context="workspaceLocked"
           :selected-skill-name="selectedSkill?.name"
+          :selected-agent-name="selectedAgent?.name"
           :blocked-reason="blockedReason"
           :mention-options="workspaceLocked ? mentionOptions : []"
           :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"
           @clear-skill="clearSelectedSkill"
+          @clear-agent="clearSelectedAgent"
           @open-files="router.push('/files')"
         />
         <el-skeleton v-else class="workbench-composer" :rows="3" animated />

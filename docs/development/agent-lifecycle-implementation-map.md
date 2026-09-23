@@ -21,7 +21,7 @@
 | 5. 能力准入与绑定 | 已发布 Skill/Tool Version、`tool_binding_revisions` 与 MCP Connector/Profile | Agent、Skill、Tool/Connector 服务与 Runtime 快照 | 平台 Tool 固定精确版本及绑定修订；MCP 能力快照自动生效并默认对全部 Agent 可用，Attempt 固定清单摘要并复核当前状态 | **已实现基础链路**。MCP 不生成 Tool Version/Binding，也不耦合 Agent 发布；真实外部服务仍需 P2 |
 | 6. 评测设计 | `AgentEvaluationSuite v1` | [评测模板](agent-evaluation-template.yaml)、包解析器、发布服务 | 五类案例、固定机器断言和必需人工 rubric | **已实现契约**。平台生成案例必须替换为具体 Agent 的目标输入 |
 | 7. 候选检查与试运行 | `agent_release_submissions`、`agent_trial_runs`、Run/Attempt | 发布服务、发布路由、管理端发布工作台 | 固定候选修订与 Binding；统一 Runtime Adapter → DSH；逐项机器和人工判定；旧证据失效 | **已实现**。真实 DSH 结果属于具体 Agent 的 P2 |
-| 8. 审核与发布 | 不可变 Agent Version、Submission、`agent_version_evidence` | 发布服务与管理端发布工作台 | 职责分离、发布事务内复核定义/绑定/试运行证据 | **已实现**。人工批准不覆盖失败的机器断言 |
+| 8. 审核与发布 | 不可变 Agent Version、Submission、`agent_version_evidence` | 发布服务与管理端发布工作台 | 试运行通过后一次审核确认并发布；发布事务内复核定义/依赖/绑定/试运行证据 | **已实现**。人工批准不覆盖失败的机器断言 |
 | 9. 运行与结果 | Task、可选 Session、Run、Attempt、Runtime Manifest、`task-result/v1` | Task/API 入口、Run 编排、DSH Adapter、当前授权、结果投影 | 执行前/中/提交前重新鉴权；执行终态与业务结果分离；Artifact/回执缺失时不标记达成 | **已实现基础链路**。具体业务完成仍需 Agent rubric 或工具证据 |
 | 10. 监控与演进 | Run/Event/工具审计、版本和发布证据、重新分叉的草稿 | 管理端治理视图、审计与版本服务 | 定义、依赖、Binding 或 Runtime 变化创建新候选并重做受影响证据 | **基础可用**。跨版本质量和成本趋势聚合是后续可选运维能力，不阻塞通用流程 |
 | 11. 停用与退役 | Agent `disabled` 状态、不可变历史、自动任务和 Binding 状态 | Agent 状态服务、执行授权、自动任务与 Tool 治理 | 停用后阻止新执行；撤销 Binding；有权用户仍可读取既有审计与结果 | **已实现停用语义**。当前不提供删除不可变版本和审计的“硬退役” |

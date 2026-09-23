@@ -26,6 +26,7 @@ import type {
   SkillConfiguration,
   SkillDefinition,
   ToolDefinition,
+  ToolCatalogSyncResult,
   AddToolInput,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
@@ -36,6 +37,7 @@ import {
   assertDshToolApprovalPolicy,
   catalogEntryToToolDefinition,
   dshBuiltInToolCatalog,
+  isVisibleDshCatalogTool,
   normalizeToolPolicyInput,
   publicCatalogCandidate,
 } from '../../tool/dsh-built-in-tool-catalog.ts'
@@ -441,7 +443,7 @@ export class AdminQueryService {
   }
 
   getTools() {
-    return this.repository.read('tools')
+    return this.repository.read('tools').then(tools => tools.filter(tool => isVisibleDshCatalogTool(tool.id)))
   }
 
   async getToolCatalog() {
@@ -452,6 +454,37 @@ export class AdminQueryService {
         ? publicCatalogCandidate(entry, 'installed', '已添加到工具目录')
         : publicCatalogCandidate(entry, 'ready', '原型模式可演示添加；真实环境仍会检查 DSH Runtime')
     })
+  }
+
+  async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
+    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    for (const entry of dshBuiltInToolCatalog) {
+      const definition = catalogEntryToToolDefinition(entry)
+      const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
+      if (existing) {
+        const { id: _id, ...definitionPatch } = definition
+        await this.repository.updateTool(entry.id, {
+          ...definitionPatch,
+          allowedRoles: existing.allowedRoles,
+          dataScopes: existing.dataScopes,
+          status: entry.platformSupported
+            ? existing.admissionStatus === 'unavailable' ? 'available' : existing.status
+            : 'disabled',
+          lastCheckedAt: '刚刚',
+        })
+      } else {
+        await this.repository.createTool(definition)
+      }
+    }
+    const tools = (await this.repository.read('tools'))
+      .filter(tool => tool.connectorId === DSH_RUNTIME_CONNECTOR_ID && isVisibleDshCatalogTool(tool.id))
+    return {
+      tools,
+      discoveredCount: dshBuiltInToolCatalog.length,
+      admittedCount: dshBuiltInToolCatalog.filter(entry => entry.platformSupported).length,
+      unavailableCount: dshBuiltInToolCatalog.filter(entry => !entry.platformSupported).length,
+      synchronizedAt: new Date().toISOString(),
+    }
   }
 
   async addTool(input: AddToolInput) {
@@ -476,6 +509,11 @@ export class AdminQueryService {
     actor: string
   }) {
     if (!input.actor.trim()) throw new Error('操作人不能为空')
+    const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
+    if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (input.status === 'available' && tool.admissionStatus === 'unavailable') {
+      throw new Error(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能启用')
+    }
     return this.repository.updateTool(input.toolId, {
       status: input.status,
       lastCheckedAt: '刚刚',
@@ -543,12 +581,17 @@ export class AdminQueryService {
     })
   }
 
-  updateToolPermissions(input: {
+  async updateToolPermissions(input: {
     toolId: string
     allowedRoles: ToolDefinition['allowedRoles']
     dataScopes: ToolDefinition['dataScopes']
     approvalPolicy: ToolDefinition['approvalPolicy']
   }) {
+    const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
+    if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (tool.admissionStatus === 'unavailable') {
+      throw new Error(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能配置权限')
+    }
     return this.repository.updateToolPermissions(input.toolId, {
       allowedRoles: input.allowedRoles,
       dataScopes: input.dataScopes,

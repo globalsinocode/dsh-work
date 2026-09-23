@@ -16,6 +16,7 @@
     "test:m2:integration": "pnpm --filter @dsh-work/server test:m2:integration",
     "test:m3:integration": "pnpm --filter @dsh-work/server test:m3:integration",
     "test:m4:integration": "pnpm --filter @dsh-work/server test:m4:integration",
+    "test:agent-release:integration": "pnpm --filter @dsh-work/server test:agent-release:integration",
     "test:m4:skill:integration": "pnpm --filter @dsh-work/server test:m4:skill:integration",
     "test:m4:tool:integration": "pnpm --filter @dsh-work/server test:m4:tool:integration",
     "test:mcp:integration": "pnpm --filter @dsh-work/server test:mcp:integration",

@@ -7,13 +7,16 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 
 const pathArguments = new Map([
   ['read', 'file_path'],
+  ['read_image', 'file_path'],
   ['glob', 'path'],
   ['grep', 'path'],
   ['write', 'file_path'],
   ['edit', 'file_path'],
+  ['str_replace_editor', 'path'],
 ])
 
 const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
+const readableImageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
 
 /**
  * Apply the immutable Runtime Manifest tool allow-list before DSH executes a tool.
@@ -21,7 +24,11 @@ const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
  */
 export function apply(ctx) {
   registerPlatformTools(ctx)
-  publishRuntimeToolCatalog(ctx, process.env.DSH_TOOL_CATALOG_PATH)
+  publishRuntimeToolCatalog(
+    ctx,
+    process.env.DSH_TOOL_CATALOG_PATH,
+    process.env.DSH_WORK_TOOL_CATALOG_MODE,
+  )
   const allowedTools = parseAllowedTools(process.env.DSH_ALLOWED_TOOLS_JSON)
   const allowedMcpServers = parseAllowedMcpServers(process.env.DSH_ALLOWED_MCP_SERVERS_JSON)
   const approvedMcpCapabilities = parseApprovedMcpCapabilities(process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON)
@@ -80,17 +87,22 @@ export function apply(ctx) {
 apply.inject = ['tools']
 export default apply
 
-function publishRuntimeToolCatalog(ctx, path) {
-  if (!path || !isAbsolute(path)) return
+function publishRuntimeToolCatalog(ctx, path, mode) {
+  if (!path || !isAbsolute(path) || (mode !== 'management' && mode !== 'mcp')) return
+  let activeAgent
   const publish = () => {
+    if (!activeAgent) return
     try {
       const target = resolve(path)
       const temporary = `${target}.${process.pid}.tmp`
+      const tools = JSON.parse(JSON.stringify(ctx.tools.schemas(activeAgent).map(publishToolContract)))
       mkdirSync(dirname(target), { recursive: true })
       writeFileSync(temporary, `${JSON.stringify({
-        formatVersion: 2,
+        formatVersion: 3,
         generatedAt: new Date().toISOString(),
-        tools: ctx.tools.schemas().map(publishToolContract),
+        sessionId: activeAgent.id,
+        catalogDigest: createHash('sha256').update(canonicalJson(tools)).digest('hex'),
+        tools,
       })}\n`, { encoding: 'utf8', mode: 0o600 })
       renameSync(temporary, target)
     } catch {
@@ -98,13 +110,16 @@ function publishRuntimeToolCatalog(ctx, path) {
       // not make an already admitted Agent attempt unavailable.
     }
   }
-  publish()
-  ctx.on('tools/change', publish)
+  ctx.on('agent/session-start', ({ agent }) => {
+    activeAgent = agent
+    publish()
+  }, { global: true })
+  ctx.on('tools/change', publish, { global: true })
 }
 
-const readTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory'])
-const concurrentTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent'])
+const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory'])
+const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
   ['job_list', 10], ['job_kill', 10], ['bash', 60],
@@ -244,6 +259,9 @@ function validateExecution(execution, allowedTools, allowedMcpServers, verifiedM
     return `dsh-work MCP 能力清单与已审核摘要不一致：${mcpServer}`
   }
 
+  const webDenial = validateWebExecution(execution)
+  if (webDenial !== undefined) return webDenial
+
   const argumentName = pathArguments.get(execution.name)
   if (argumentName === undefined) return undefined
   if (workspaceRoot === undefined) return 'dsh-work 当前 Run 工作区不可用，文件工具已拒绝执行'
@@ -257,7 +275,15 @@ function validateExecution(execution, allowedTools, allowedMcpServers, verifiedM
 
   const candidate = resolve(workspaceRoot, rawPath)
   if (!isWithin(workspaceRoot, candidate)) return `dsh-work 拒绝访问当前 Run 工作区之外的路径：${rawPath}`
-  if (execution.name === 'write' || execution.name === 'edit') {
+  const editorCommand = execution.name === 'str_replace_editor' ? argumentsRecord.command : undefined
+  if (execution.name === 'str_replace_editor'
+    && !['view', 'create', 'str_replace', 'insert'].includes(editorCommand)) {
+    return 'dsh-work 文本编辑工具命令无效'
+  }
+  const writesArtifact = execution.name === 'write'
+    || execution.name === 'edit'
+    || (execution.name === 'str_replace_editor' && editorCommand !== 'view')
+  if (writesArtifact) {
     const outputRoot = resolve(workspaceRoot, 'output')
     if (!isWithin(outputRoot, candidate) || candidate === outputRoot) {
       return `dsh-work 只允许在当前 Run 的 output 目录生成或编辑成果：${rawPath}`
@@ -267,6 +293,10 @@ function validateExecution(execution, allowedTools, allowedMcpServers, verifiedM
       return 'dsh-work 文本成果仅支持 Markdown、TXT 和 CSV 文件'
     }
   }
+  if (execution.name === 'read_image') {
+    const extension = candidate.slice(candidate.lastIndexOf('.')).toLowerCase()
+    if (!readableImageExtensions.has(extension)) return 'dsh-work 图片读取仅支持常见图片格式'
+  }
 
   try {
     const canonicalCandidate = realpathWithMissingTail(candidate)
@@ -275,6 +305,22 @@ function validateExecution(execution, allowedTools, allowedMcpServers, verifiedM
     }
   } catch {
     return `dsh-work 无法安全解析文件路径：${rawPath}`
+  }
+  return undefined
+}
+
+function validateWebExecution(execution) {
+  if (execution.name === 'web_fetch') {
+    return 'dsh-work 网页获取尚无连接层私网地址防护，暂不允许执行'
+  }
+  const parameters = isRecord(execution.arguments) ? execution.arguments : {}
+  if (execution.name === 'web_search') {
+    const queries = parameters.queries
+    if (!Array.isArray(queries) || queries.length < 1 || queries.length > 4
+      || queries.some(query => typeof query !== 'string' || !query.trim() || query.length > 500)) {
+      return 'dsh-work 网络搜索仅允许每次提交 1 至 4 个非空查询'
+    }
+    return undefined
   }
   return undefined
 }
@@ -408,11 +454,11 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'propose_memory',
-    description: 'Stage a short-lived preference or reusable experience for the requester to review. This does not grant consent, select visibility or retention, or publish memory. The requester must submit it and an administrator must approve it. Release trials return trial_only and do not persist a proposal.',
+    description: 'Submit a short-lived reusable-experience application for this stable Agent. The application must cite the current Run and Attempt, does not publish itself, and requires administrator review. Release trials return trial_only and do not persist an application.',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
-        kind: { type: 'string', enum: ['preference', 'experience'] },
+        kind: { type: 'string', enum: ['experience'] },
         title: { type: 'string', minLength: 3, maxLength: 120 },
         content: { type: 'string', minLength: 20, maxLength: 4000 },
       },

@@ -247,50 +247,6 @@ export interface TaskRun {
   }
 }
 
-export type ControlledMemoryKind = 'preference' | 'experience'
-export type ControlledMemoryVisibility = 'private' | 'workspace' | 'organization'
-export type ControlledMemoryCandidateStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
-
-export interface AgentMemoryProposal {
-  id: string
-  attemptId: string
-  kind: ControlledMemoryKind
-  title: string
-  content: string
-  status: 'proposed' | 'submitted'
-  createdAt: string
-  expiresAt: string
-}
-
-export interface ControlledMemoryCandidate {
-  id: string
-  consentId: string
-  kind: ControlledMemoryKind
-  title: string
-  content: string
-  visibility: ControlledMemoryVisibility
-  retentionUntil: string
-  status: ControlledMemoryCandidateStatus
-  approvedVersionId: string | null
-  createdAt: string
-}
-
-export interface ControlledMemoryConsent {
-  id: string
-  sourceRunId: string
-  sourceAttemptId: string
-  workspaceId: string
-  agentVersionId: string
-  visibility: ControlledMemoryVisibility
-  retentionUntil: string
-  purpose: string
-  status: 'active' | 'withdrawn'
-  withdrawnAt: string | null
-  createdAt: string
-  candidateId: string
-  candidateStatus: ControlledMemoryCandidateStatus
-  title: string
-}
 
 export interface WorkspaceFile {
   id: string

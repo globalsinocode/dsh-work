@@ -14,6 +14,7 @@
     "test:m2:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/postgres-repositories.integration.test.ts src/infrastructure/postgres/task-budget-upgrade.integration.test.ts",
     "test:m3:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m3-orchestration.integration.test.ts",
     "test:m4:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-agent-management.integration.test.ts",
+    "test:agent-release:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/agent-release-governance.integration.test.ts",
     "test:m4:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-skill-management.integration.test.ts",
     "test:m4:tool:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts",
     "test:mcp:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/mcp-connector-governance.integration.test.ts src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts",

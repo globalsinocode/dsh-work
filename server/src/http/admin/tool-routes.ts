@@ -7,6 +7,9 @@ const basePath = '/api/admin/v1'
 export function registerToolRoutes(router: Router, service: PostgresToolConnectorService) {
   router.get(`${basePath}/tools`, async () => envelope('admin', await service.getTools(), 'postgres'))
   router.get(`${basePath}/tools/catalog`, async () => envelope('admin', await service.getToolCatalog(), 'postgres'))
+  router.post(`${basePath}/tools/sync`, async (_request, context) => envelope('admin', await service.syncToolCatalog({
+    actor: requireRequestIdentity(context, 'admin').userId,
+  }), 'postgres'))
   router.post(`${basePath}/tools`, async (request, context) => {
     const input = await readJsonBody<{
       catalogId: string

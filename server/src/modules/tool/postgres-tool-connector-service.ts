@@ -7,7 +7,7 @@ import {
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
 import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
+import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -15,6 +15,8 @@ import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnect
 import {
   assertDshToolApprovalPolicy,
   dshBuiltInToolCatalog,
+  hiddenRuntimeCatalogTools,
+  isVisibleDshCatalogTool,
   normalizeToolPolicyInput,
   publicCatalogCandidate,
   requiredDshToolApprovalPolicy,
@@ -24,7 +26,6 @@ import {
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 
 const tenantId = 'tenant-dsh-work'
-const hiddenRuntimeCatalogTools = new Set(['activate_skill', 'prepare_skill_installation', 'python_execute'])
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
 const PLATFORM_BOOTSTRAP_ACTOR = 'U00008'
 
@@ -57,6 +58,8 @@ interface ToolRow {
   risk: ToolDefinition['risk']
   mode: ToolDefinition['mode']
   status: ToolDefinition['status']
+  admissionStatus: NonNullable<ToolDefinition['admissionStatus']>
+  admissionMessage: string
   inputSchema: unknown
   outputSchema: unknown
   outputValidation: ToolDefinition['outputValidation']
@@ -138,6 +141,7 @@ export class PostgresToolConnectorService {
     const rows = await this.database<ToolRow[]>`
       select t.id, tv.version, t.name, t.system, t.description,
              t.connector_id as "connectorId", tv.risk_level as risk, t.mode, t.status,
+             t.admission_status as "admissionStatus", t.admission_message as "admissionMessage",
              tv.input_schema as "inputSchema", tv.output_schema as "outputSchema",
              tv.output_validation as "outputValidation", tv.retry_policy as "retryPolicy",
              tv.concurrency_policy as "concurrencyPolicy", tv.completion_semantics as "completionSemantics",
@@ -158,7 +162,7 @@ export class PostgresToolConnectorService {
        order by t.name
     `
     const roleNames = await this.roleNameMap()
-    return rows.map(row => ({
+    return rows.filter(row => isVisibleDshCatalogTool(row.id)).map(row => ({
       id: row.id,
       version: row.version,
       name: row.name,
@@ -168,6 +172,8 @@ export class PostgresToolConnectorService {
       risk: row.risk,
       mode: row.mode,
       status: row.status,
+      admissionStatus: row.admissionStatus,
+      admissionMessage: row.admissionMessage,
       inputSchema: JSON.stringify(row.inputSchema, null, 2),
       outputSchema: JSON.stringify(row.outputSchema, null, 2),
       outputValidation: row.outputValidation,
@@ -214,6 +220,124 @@ export class PostgresToolConnectorService {
     })
   }
 
+  /**
+   * Discover the current DSH Profile once and reconcile the complete result
+   * into the platform inventory. Discovery never implies execution approval:
+   * unadmitted tools are persisted as disabled, without an active binding.
+   */
+  async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
+    const actor = await this.requireActor(input.actor)
+    if (!this.runtime?.listTools) throw new Error('DSH Runtime 未提供工具目录发现能力')
+    const health = await this.runtime.health()
+    if (health.status !== 'healthy' || !health.acceptingRuns) {
+      throw new Error(health.message || 'DSH Runtime 当前不可用，无法同步工具目录')
+    }
+    const entries = await this.loadRuntimeCatalogEntries()
+    const defaultRoleIds = new Map<string, string[]>()
+    for (const entry of entries) {
+      defaultRoleIds.set(entry.id, await this.resolveRoleIds(entry.defaultAllowedRoles))
+    }
+
+    await this.database.begin(async transaction => {
+      const existingRows = await transaction<{
+        id: string
+        connectorId: string | null
+        status: ToolDefinition['status']
+        admissionStatus: NonNullable<ToolDefinition['admissionStatus']>
+      }[]>`
+        select id, connector_id as "connectorId", status,
+               admission_status as "admissionStatus"
+          from tools
+         where tenant_id = ${tenantId}
+      `
+      const existingById = new Map(existingRows.map(row => [row.id, row]))
+      const discoveredIds = new Set(entries.map(entry => entry.id))
+
+      for (const row of existingRows) {
+        if (row.connectorId !== DSH_RUNTIME_CONNECTOR_ID) continue
+        const hidden = hiddenRuntimeCatalogTools.has(row.id)
+        if (!hidden && discoveredIds.has(row.id)) continue
+        await transaction`
+          update tools
+             set status = 'disabled', admission_status = 'unavailable',
+                 admission_message = ${hidden
+                   ? 'DSH 内部控制工具不进入普通工具授权目录'
+                   : '当前 DSH Profile 已不再加载该工具'},
+                 last_checked_at = now(), updated_at = now()
+           where tenant_id = ${tenantId} and id = ${row.id}
+        `
+        await this.revokeToolBindings(row.id, transaction)
+      }
+
+      for (const entry of entries) {
+        const existing = existingById.get(entry.id)
+        if (existing && existing.connectorId !== DSH_RUNTIME_CONNECTOR_ID) {
+          throw new Error(`DSH 工具标识与现有非 DSH 工具冲突：${entry.id}`)
+        }
+        const admissionStatus = entry.platformSupported ? 'approved' : 'unavailable'
+        const admissionMessage = entry.platformSupported
+          ? '已完成平台安全准入，可在 Agent 版本中授权'
+          : entry.unsupportedReason ?? '平台尚未完成该工具的安全准入'
+        const nextStatus: ToolDefinition['status'] = !entry.platformSupported
+          ? 'disabled'
+          : existing?.admissionStatus === 'unavailable'
+            ? 'available'
+            : existing?.status ?? 'available'
+        const roleIds = defaultRoleIds.get(entry.id)!
+
+        await transaction`
+          insert into tools (
+            id, tenant_id, key, name, source, status, connector_id, system, description,
+            dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
+            approval_policy, admission_status, admission_message, last_checked_at
+          ) values (
+            ${entry.id}, ${tenantId}, ${`dsh-${entry.id}`}, ${entry.name}, 'platform', ${nextStatus},
+            ${entry.connectorId}, ${entry.system}, ${entry.description}, ${entry.id}, ${entry.mode},
+            ${entry.timeoutSeconds}, ${transaction.json(roleIds)}, ${transaction.json(entry.defaultDataScopes)},
+            ${entry.defaultApprovalPolicy}, ${admissionStatus}, ${admissionMessage}, now()
+          )
+          on conflict (id) do update set
+            name = excluded.name,
+            system = excluded.system,
+            description = excluded.description,
+            dsh_tool_name = excluded.dsh_tool_name,
+            mode = excluded.mode,
+            timeout_seconds = excluded.timeout_seconds,
+            approval_policy = excluded.approval_policy,
+            admission_status = excluded.admission_status,
+            admission_message = excluded.admission_message,
+            status = excluded.status,
+            last_checked_at = now(),
+            updated_at = now()
+          where tools.tenant_id = excluded.tenant_id
+            and tools.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+        `
+
+        const version = await this.ensureSynchronizedToolVersion(transaction, entry)
+        if (!entry.platformSupported) {
+          await this.revokeToolBindings(entry.id, transaction)
+        } else if (nextStatus === 'available') {
+          await this.ensureToolBindingWithin(transaction, entry.id, version, actor.id)
+        }
+      }
+    })
+
+    await this.audit(
+      actor.id,
+      'tool.catalog.sync',
+      DSH_RUNTIME_CONNECTOR_ID,
+      'success',
+      `同步 DSH 工具目录：发现 ${entries.length} 个，可授权 ${entries.filter(entry => entry.platformSupported).length} 个`,
+    )
+    return {
+      tools: await this.getTools(),
+      discoveredCount: entries.length,
+      admittedCount: entries.filter(entry => entry.platformSupported).length,
+      unavailableCount: entries.filter(entry => !entry.platformSupported).length,
+      synchronizedAt: new Date().toISOString(),
+    }
+  }
+
   async addTool(input: AddToolInput): Promise<ToolDefinition> {
     const actor = await this.requireActor(input.actor)
     const policy = normalizeToolPolicyInput(input)
@@ -251,7 +375,7 @@ export class PostgresToolConnectorService {
           output_validation, retry_policy, concurrency_policy, completion_semantics, status
         ) values (
           ${`tool-version-${entry.id}-1`}, ${tenantId}, ${entry.id}, ${entry.version},
-          ${JSON.stringify(entry.inputSchemaObject)}::jsonb, ${JSON.stringify(entry.outputSchemaObject)}::jsonb,
+          ${transaction.json(asJson(entry.inputSchemaObject))}, ${transaction.json(asJson(entry.outputSchemaObject))},
           ${entry.risk}, ${entry.outputValidation}, ${entry.retryPolicy},
           ${entry.concurrencyPolicy}, ${entry.completionSemantics}, 'published'
         )
@@ -268,8 +392,59 @@ export class PostgresToolConnectorService {
     const tools = await this.runtime.listTools()
     if (!tools.length) throw new Error('DSH Runtime 返回了空工具目录')
     return tools
-      .filter(tool => !hiddenRuntimeCatalogTools.has(tool.id))
+      .filter(tool => isVisibleDshCatalogTool(tool.id))
       .map(runtimeToolToCatalogEntry)
+  }
+
+  private async ensureSynchronizedToolVersion(
+    transaction: DatabaseTransaction,
+    entry: CatalogEntry,
+  ): Promise<string> {
+    const versions = await transaction<{
+      version: string
+      inputSchema: unknown
+      outputSchema: unknown
+      risk: ToolDefinition['risk']
+      outputValidation: ToolDefinition['outputValidation']
+      retryPolicy: ToolDefinition['retryPolicy']
+      concurrencyPolicy: ToolDefinition['concurrencyPolicy']
+      completionSemantics: ToolDefinition['completionSemantics']
+    }[]>`
+      select version, input_schema as "inputSchema", output_schema as "outputSchema",
+             risk_level as risk, output_validation as "outputValidation",
+             retry_policy as "retryPolicy", concurrency_policy as "concurrencyPolicy",
+             completion_semantics as "completionSemantics"
+        from tool_versions
+       where tenant_id = ${tenantId} and tool_id = ${entry.id} and status = 'published'
+       order by created_at desc, version desc
+    `
+    const expectedDigest = synchronizedToolContractDigest({
+      inputSchema: entry.inputSchemaObject,
+      outputSchema: entry.outputSchemaObject,
+      risk: entry.risk,
+      outputValidation: entry.outputValidation,
+      retryPolicy: entry.retryPolicy,
+      concurrencyPolicy: entry.concurrencyPolicy,
+      completionSemantics: entry.completionSemantics,
+    })
+    const matching = versions.find(version => synchronizedToolContractDigest(version) === expectedDigest)
+    if (matching) return matching.version
+
+    const nextVersion = versions.length
+      ? `1.0.${Math.max(...versions.map(item => Number(/^1\.0\.(\d+)$/.exec(item.version)?.[1] ?? -1)), 0) + 1}`
+      : entry.version
+    await transaction`
+      insert into tool_versions (
+        id, tenant_id, tool_id, version, input_schema, output_schema, risk_level,
+        output_validation, retry_policy, concurrency_policy, completion_semantics, status
+      ) values (
+        ${`tool-version-${randomUUID()}`}, ${tenantId}, ${entry.id}, ${nextVersion},
+        ${transaction.json(asJson(entry.inputSchemaObject))}, ${transaction.json(asJson(entry.outputSchemaObject))},
+        ${entry.risk}, ${entry.outputValidation}, ${entry.retryPolicy},
+        ${entry.concurrencyPolicy}, ${entry.completionSemantics}, 'published'
+      )
+    `
+    return nextVersion
   }
 
   async getConnectors(): Promise<ConnectorDefinition[]> {
@@ -632,13 +807,19 @@ export class PostgresToolConnectorService {
       connectorStatus: ConnectorDefinition['status']
       connectorId: string | null
       dshToolName: string | null
+      admissionStatus: NonNullable<ToolDefinition['admissionStatus']>
+      admissionMessage: string
     }[]>`
-      select c.status as "connectorStatus", t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName" from tools t
+      select c.status as "connectorStatus", t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+             t.admission_status as "admissionStatus", t.admission_message as "admissionMessage" from tools t
       join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
        where t.tenant_id = ${tenantId} and t.id = ${input.toolId}
     `
     if (!tool) throw new Error(`工具不存在：${input.toolId}`)
     if (tool.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
+    if (input.status === 'available' && tool.admissionStatus !== 'approved') {
+      throw new Error(tool.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能启用')
+    }
     if (input.status === 'available' && tool.connectorStatus !== 'healthy') {
       throw new Error('连接器未处于健康状态，不能启用工具')
     }
@@ -676,12 +857,21 @@ export class PostgresToolConnectorService {
   }) {
     const actor = await this.requireActor(input.actor)
     if (!input.allowedRoles.length || !input.dataScopes.length) throw new Error('工具必须配置授权角色和数据范围')
-    const [current] = await this.database<{ connectorId: string | null; dshToolName: string | null }[]>`
-      select connector_id as "connectorId", dsh_tool_name as "dshToolName"
+    const [current] = await this.database<{
+      connectorId: string | null
+      dshToolName: string | null
+      admissionStatus: NonNullable<ToolDefinition['admissionStatus']>
+      admissionMessage: string
+    }[]>`
+      select connector_id as "connectorId", dsh_tool_name as "dshToolName",
+             admission_status as "admissionStatus", admission_message as "admissionMessage"
         from tools where tenant_id = ${tenantId} and id = ${input.toolId}
     `
     if (!current) throw new Error(`工具不存在：${input.toolId}`)
     if (current.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
+    if (current.admissionStatus !== 'approved') {
+      throw new Error(current.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能配置权限')
+    }
     if (current.connectorId === DSH_RUNTIME_CONNECTOR_ID && current.dshToolName) {
       const requiredPolicy = requiredDshToolApprovalPolicy(current.dshToolName)
       if (requiredPolicy === undefined) throw new Error('该 DSH 工具尚未接入所需的逐次审批，不能配置为可用')
@@ -1055,8 +1245,9 @@ export class PostgresToolConnectorService {
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id}
            and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and t.admission_status = 'approved'
            and (t.mode = 'read' or (t.mode = 'write'
-                and t.dsh_tool_name in ('write', 'edit', 'todo_write', 'create_goal', 'update_goal')))
+                and t.dsh_tool_name in ('write', 'edit', 'str_replace_editor', 'todo_write', 'create_goal', 'update_goal')))
            and ${requireHealthy ? sql` t.status = 'available' and c.status = 'healthy'` : sql`t.status in ('available', 'degraded')`}
            and tv.version = ${version} and tv.status = 'published'
       `
@@ -1079,6 +1270,7 @@ export class PostgresToolConnectorService {
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
            and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and t.admission_status = 'approved'
       `
       if (!row) throw new Error(`工具授权配置不存在：${reference}`)
       const allowedRoleSet = new Set(row.allowedRoleIds)
@@ -1305,6 +1497,7 @@ export class PostgresToolConnectorService {
       endpoint: string
       authType: string
       dshToolName: string | null
+      admissionStatus: NonNullable<ToolDefinition['admissionStatus']>
       credentialRef: string | null
       allowedRoleIds: string[]
       dataScopes: string[]
@@ -1312,6 +1505,7 @@ export class PostgresToolConnectorService {
     }[]>`
       select t.status as "toolStatus", c.id as "connectorId", c.protocol, c.endpoint,
              c.auth_type as "authType", t.dsh_tool_name as "dshToolName",
+             t.admission_status as "admissionStatus",
              cr.external_ref as "credentialRef",
              t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes",
              t.approval_policy as "approvalPolicy"
@@ -1324,7 +1518,7 @@ export class PostgresToolConnectorService {
          and tv.version = ${toolVersion} and tv.status = 'published'
        ${lock ? db`for update of t` : db``}
     `
-    if (!row || row.toolStatus === 'disabled') return undefined
+    if (!row || row.toolStatus === 'disabled' || row.admissionStatus !== 'approved') return undefined
     return {
       toolId,
       toolVersion,
@@ -1549,6 +1743,30 @@ function mcpCapabilityDigest(capabilities: Array<{ name: string; description: st
 }
 
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
+
+function synchronizedToolContractDigest(value: {
+  inputSchema: unknown
+  outputSchema: unknown
+  risk: ToolDefinition['risk']
+  outputValidation: ToolDefinition['outputValidation']
+  retryPolicy: ToolDefinition['retryPolicy']
+  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
+  completionSemantics: ToolDefinition['completionSemantics']
+}) {
+  const { inputSchema, outputSchema, risk, outputValidation, retryPolicy, concurrencyPolicy, completionSemantics } = value
+  return createHash('sha256').update(canonicalJson({
+    inputSchema, outputSchema, risk, outputValidation, retryPolicy, concurrencyPolicy, completionSemantics,
+  })).digest('hex')
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
 
 function sameMcpConnectionSnapshot(left: McpConnectionSnapshot, right: McpConnectionSnapshot) {
   return left.connector_id === right.connector_id

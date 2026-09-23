@@ -37,7 +37,11 @@ async function render(canManage = true, initial = '/skills') {
       plugins: [pinia, router, ElementPlus],
       stubs: {
         teleport: true,
-        ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+        ElSelect: {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template: '<div class="el-select-stub"><slot /></div>',
+        },
         ElOption: true,
         ElDropdown: { template: '<div class="el-dropdown-stub"><slot /><slot name="dropdown" /></div>' },
         ElDropdownMenu: { template: '<div class="el-dropdown-menu-stub"><slot /></div>' },
@@ -48,6 +52,11 @@ async function render(canManage = true, initial = '/skills') {
   wrappers.push(wrapper)
   await flushPromises()
   return { wrapper, router, auth: useAuthStore(), content, toolGovernance }
+}
+
+function updateStubbedSelect(wrapper: VueWrapper, selector: string, value: string) {
+  const select = wrapper.getComponent(selector) as unknown as VueWrapper
+  select.vm.$emit('update:modelValue', value)
 }
 
 function strictDraftSkill(): import('../types/domain').SkillDefinition {
@@ -147,9 +156,11 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.find('[role="tablist"][aria-label="Skill 管理"]').exists()).toBe(false)
     expect(wrapper.get('[aria-label="DSH 内置工具列表"]').attributes('aria-label')).toBe('DSH 内置工具列表')
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 DSH 内置工具名称、标识或说明')
-    expect(wrapper.text()).toContain('MCP 工具随连接器清单自动同步')
+    expect(wrapper.get('[data-testid="tool-runtime-status-filter"]').attributes('aria-label')).toBe('运行状态')
+    expect(wrapper.get('[data-testid="tool-admission-filter"]').attributes('aria-label')).toBe('平台准入')
+    expect(wrapper.get('[data-testid="tool-admission-help"]').text()).toContain('不代表任何 Agent 已经获得使用权')
     expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
-    expect(wrapper.get('[data-action="add-tool"]').text()).toContain('添加工具')
+    expect(wrapper.get('[data-action="sync-dsh-tools"]').text()).toContain('同步 DSH 工具')
     expect(wrapper.find('[data-action="register-tool-candidate"]').exists()).toBe(false)
 
     await router.push('/connectors')
@@ -158,46 +169,88 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 MCP 名称、标识或 serverName')
   })
 
-  it('adds a ready DSH tool with explicit role, scope and approval defaults', async () => {
+  it('synchronizes every discovered DSH tool and keeps unadmitted tools non-actionable', async () => {
     const { wrapper, content } = await render(true, '/tools')
-    content.toolCatalog.push({
-      id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
-      description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
-      risk: 'low', mode: 'write', timeoutSeconds: 30,
-      defaultAllowedRoles: ['普通员工', '平台管理员'],
-      defaultDataScopes: ['workspace:authorized'], defaultApprovalPolicy: 'none',
-      outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
-      requirements: ['当前 Run 工作区', '仅允许 output 成果目录'],
-      status: 'ready', availabilityMessage: '当前部署已批准该工具，DSH Runtime 健康检查通过',
-    })
-    const addTool = vi.spyOn(content, 'addTool').mockResolvedValue({
+    const edit: import('../types/domain').ToolDefinition = {
       id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
       description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
       risk: 'low', mode: 'write', status: 'available', inputSchema: '{}', outputSchema: '{}',
+      admissionStatus: 'approved', admissionMessage: '已完成平台安全准入，可在 Agent 版本中授权',
       outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
       timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
       dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
+    }
+    const bash: import('../types/domain').ToolDefinition = {
+      ...edit, id: 'bash', name: '执行 Shell 命令', risk: 'high', status: 'disabled',
+      admissionStatus: 'unavailable', admissionMessage: 'MVP 不开放任意 Shell',
+      allowedRoles: ['平台管理员'], approvalPolicy: 'always',
+    }
+    const sync = vi.spyOn(content, 'syncDshTools').mockImplementation(async () => {
+      content.$patch({ tools: [edit, bash] })
+      return { tools: [edit, bash], discoveredCount: 2, admittedCount: 1, unavailableCount: 1, synchronizedAt: '2026-09-23T00:00:00.000Z' }
     })
     await flushPromises()
 
-    await wrapper.get('[data-action="add-tool"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.get('.tool-catalog-card').text()).toContain('edit@1.0.0')
-    expect(wrapper.get('.tool-catalog-config').text()).toContain('仅允许 output 成果目录')
-    await wrapper.get('[data-action="confirm-add-tool"]').trigger('click')
+    await wrapper.get('[data-action="sync-dsh-tools"]').trigger('click')
     await flushPromises()
 
-    expect(addTool).toHaveBeenCalledWith({
-      catalogId: 'edit',
-      allowedRoles: ['普通员工', '平台管理员'],
-      dataScopes: ['workspace:authorized'],
-      approvalPolicy: 'none',
-    })
+    expect(sync).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('编辑文本文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+    expect(wrapper.text()).toContain('尚未准入')
+    expect(wrapper.find('[data-action="configure-tool-permissions"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('在 Agent 版本中配置')
+  })
+
+  it('filters tools independently by runtime status and platform admission', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    const available: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'glob', name: '搜索文件', status: 'available',
+      admissionStatus: 'approved', admissionMessage: '已完成平台安全准入',
+    }
+    const disabled: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'read', name: '读取文件', admissionStatus: 'approved',
+      admissionMessage: '已完成平台安全准入',
+    }
+    const unavailable: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'bash', name: '执行 Shell 命令', admissionStatus: 'unavailable',
+      admissionMessage: 'MVP 不开放任意 Shell',
+    }
+    content.$patch({ tools: [available, disabled, unavailable] })
+    await flushPromises()
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-runtime-status-filter"]', 'disabled')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('搜索文件')
+    expect(wrapper.text()).toContain('读取文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-admission-filter"]', 'unavailable')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('读取文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-runtime-status-filter"]', 'available')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('执行 Shell 命令')
+    expect(wrapper.text()).toContain('暂无匹配的 DSH 内置工具')
+  })
+
+  it('keeps the existing platform directory when DSH synchronization fails', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    content.tools.push(disabledDshTool())
+    vi.spyOn(content, 'syncDshTools').mockRejectedValue(new Error('DSH Runtime 工具目录发现失败'))
+    await flushPromises()
+
+    await wrapper.get('[data-action="sync-dsh-tools"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('读取文件')
   })
 
   it('does not expose tool creation to read-only administrators', async () => {
     const { wrapper } = await render(false, '/tools')
-    expect(wrapper.find('[data-action="add-tool"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="sync-dsh-tools"]').exists()).toBe(false)
   })
 
   it('keeps the enable action when a disabled tool has revoked binding history', async () => {
