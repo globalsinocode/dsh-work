@@ -14,6 +14,7 @@ import type {
   ControlledMemoryConsent,
   ControlledMemoryKind,
   ControlledMemoryVisibility,
+  AgentMemoryProposal,
   MemberCandidatePage,
   SessionThread,
   TaskResult,
@@ -127,6 +128,7 @@ async function parseApiError(response: Response, fallback: string) {
 export const workbenchApi = {
   getContentPolicy: () => request<{ version: string; physicalDeletion: false; retentionDays: null; notice: string }>('/content-policy'),
   listMemoryConsents: () => request<ControlledMemoryConsent[]>('/memory/consents'),
+  listMemoryProposals: (attemptId: string) => request<AgentMemoryProposal[]>(`/memory/proposals?attemptId=${encodeURIComponent(attemptId)}`),
   submitMemoryCandidate: (input: {
     attemptId: string
     kind: ControlledMemoryKind
@@ -134,6 +136,7 @@ export const workbenchApi = {
     content: string
     visibility: ControlledMemoryVisibility
     retentionDays: number
+    proposalId?: string
   }, idempotencyKey: string) => request<ControlledMemoryCandidate>('/memory/candidates', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

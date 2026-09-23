@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { mockTasks } from '../server/src/infrastructure/prototype/data.ts'
 
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 
@@ -211,6 +212,67 @@ test('employee can inspect and withdraw a controlled-memory consent', async ({ p
   await expect(page.getByText('记忆授权已撤回', { exact: true })).toBeVisible()
   await expect(row).toContainText('已撤回')
   expect(withdrawn).toBe(true)
+})
+
+test('employee reviews an Agent memory proposal and explicitly chooses its scope and lifetime', async ({ page }) => {
+  const run = mockTasks.find(item => item.id === 'run-260827-002')
+  if (!run) throw new Error('Missing succeeded personal Run fixture')
+  const runDetail = {
+    ...run,
+    requestedBy: 'U00001',
+    messages: run.messages.map(message => message.role === 'assistant'
+      ? { ...message, runId: run.id }
+      : message),
+  }
+  const proposal = {
+    id: 'memory-proposal-00000000-0000-4000-8000-000000000001',
+    attemptId: run.attemptId,
+    kind: 'preference',
+    title: '简明回答偏好',
+    content: '回答制度问题时先给出直接结论，再列出适用条件和需要人工核对的依据。',
+    status: 'proposed',
+    createdAt: '2026-09-23T00:00:00.000Z',
+    expiresAt: '2026-09-30T00:00:00.000Z',
+  }
+  let submitted: Record<string, unknown> | null = null
+  await page.route(`**/api/workbench/v1/runs/${run.id}`, async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: runDetail, meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
+    }) })
+  })
+  await page.route('**/api/workbench/v1/memory/proposals**', async route => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: [proposal], meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
+    }) })
+  })
+  await page.route('**/api/workbench/v1/memory/candidates', async route => {
+    submitted = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      data: { id: 'memory-candidate-e2e', status: 'pending' },
+      meta: { api: 'workbench', adapter: 'prototype', timestamp: new Date().toISOString() },
+    }) })
+  })
+
+  await page.goto(`/conversations/${run.id}`)
+  await page.getByRole('button', { name: '提交受控记忆候选' }).click()
+  const dialog = page.getByRole('dialog', { name: '提交受控记忆候选' })
+  await expect(dialog.getByText(proposal.title, { exact: true })).toBeVisible()
+  await dialog.getByText(proposal.title, { exact: true }).click()
+  await expect(dialog.getByPlaceholder('请用自己的话写明可在后续任务中复用的偏好或经验')).toHaveValue(proposal.content)
+  await dialog.getByRole('button', { name: '提交审核' }).click()
+  await expect(page.getByText('请选择记忆使用范围')).toBeVisible()
+  expect(submitted).toBeNull()
+  await dialog.getByText('仅本人', { exact: true }).click()
+  await dialog.getByRole('button', { name: '提交审核' }).click()
+  await expect(page.getByText('请选择可使用期限')).toBeVisible()
+  expect(submitted).toBeNull()
+  await dialog.getByText('30 天', { exact: true }).click()
+  await dialog.getByRole('button', { name: '提交审核' }).click()
+  await expect(page.getByText('记忆候选已提交，管理员审核通过后才会用于后续运行')).toBeVisible()
+  expect(submitted).toMatchObject({
+    attemptId: run.attemptId, proposalId: proposal.id, kind: proposal.kind,
+    title: proposal.title, content: proposal.content, visibility: 'private', retentionDays: 30,
+  })
 })
 
 test('administrator can open system information from the user menu', async ({ page }) => {

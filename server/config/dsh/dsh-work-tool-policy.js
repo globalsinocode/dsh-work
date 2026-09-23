@@ -103,7 +103,7 @@ function publishRuntimeToolCatalog(ctx, path) {
 }
 
 const readTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill'])
+const retrySafeTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory'])
 const concurrentTools = new Set(['read', 'glob', 'grep', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
@@ -405,6 +405,19 @@ function registerPlatformTools(ctx) {
       additionalProperties: false,
     },
     concurrencySafe: true,
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'propose_memory',
+    description: 'Stage a short-lived preference or reusable experience for the requester to review. This does not grant consent, select visibility or retention, or publish memory. The requester must submit it and an administrator must approve it. Release trials return trial_only and do not persist a proposal.',
+    parameters: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        kind: { type: 'string', enum: ['preference', 'experience'] },
+        title: { type: 'string', minLength: 3, maxLength: 120 },
+        content: { type: 'string', minLength: 20, maxLength: 4000 },
+      },
+      required: ['kind', 'title', 'content'],
+    },
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'activate_skill',

@@ -57,6 +57,17 @@ export interface ResolvedControlledMemory extends RuntimeControlledMemory {
   relevanceScore: number
 }
 
+export interface AgentMemoryProposal {
+  id: string
+  attemptId: string
+  kind: MemoryKind
+  title: string
+  content: string
+  status: 'proposed' | 'submitted'
+  createdAt: string
+  expiresAt: string
+}
+
 interface CandidateRow {
   id: string
   consentId: string
@@ -94,6 +105,105 @@ export class PostgresControlledMemoryService {
     this.operations = operations
   }
 
+  /** Submitted proposals remain linked to their consent; abandoned drafts are removed after seven days. */
+  async purgeExpiredProposals(): Promise<number> {
+    const removed = await this.database<{ id: string }[]>`
+      delete from memory_proposals where tenant_id = ${tenantId}
+        and status = 'proposed' and expires_at <= now() returning id
+    `
+    return removed.length
+  }
+
+  /** A DSH tool can only stage text. It cannot grant scope, publish memory or set retention. */
+  async proposeFromAttempt(input: { kind: MemoryKind; title: string; content: string }, manifest: RuntimeManifest, signal: AbortSignal): Promise<{
+    proposalId: string; status: 'pending_human_consent' | 'trial_only'
+  }> {
+    signal.throwIfAborted()
+    const title = input.title.trim()
+    const content = input.content.trim()
+    if ((input.kind !== 'preference' && input.kind !== 'experience')
+      || title.length < 3 || title.length > 120 || content.length < 20 || content.length > 4000) {
+      throw requestInvalid('记忆提案的类型、标题或内容无效')
+    }
+    if (!manifest.agent_version_id || !manifest.tools.some(tool => tool.id === 'propose_memory' && tool.version === '1.0.0')) {
+      throw authorizationDenied('当前 Agent Version 未声明记忆提案能力')
+    }
+    if (manifest.purpose === 'agent-release-trial') {
+      return {
+        proposalId: `trial-memory-proposal-${createHash('sha256').update(`${manifest.attempt_id}\n${input.kind}\n${title}\n${content}`).digest('hex').slice(0, 32)}`,
+        status: 'trial_only',
+      }
+    }
+    const [source] = await this.database<{
+      runId: string; requestedBy: string; workspaceId: string | null; attemptStatus: string;
+      runStatus: string; currentAttemptId: string | null; agentId: string; principalId: string; principalStatus: string
+    }[]>`
+      select r.id as "runId", r.requested_by as "requestedBy", t.workspace_id as "workspaceId",
+             ra.status as "attemptStatus", r.status as "runStatus", r.current_attempt_id as "currentAttemptId",
+             av.agent_id as "agentId", ep.id as "principalId", ep.status as "principalStatus"
+        from run_attempts ra
+        join runs r on r.tenant_id = ra.tenant_id and r.id = ra.run_id
+        join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+        join agent_versions av on av.tenant_id = ra.tenant_id and av.id = ra.manifest->>'agent_version_id'
+        join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id and ep.kind = 'agent'
+       where ra.tenant_id = ${tenantId} and ra.id = ${manifest.attempt_id}
+    `
+    if (!source || source.runId !== manifest.run_id || source.workspaceId !== manifest.workspace_id
+      || source.requestedBy !== manifest.user_context.user_id
+      || source.currentAttemptId !== manifest.attempt_id
+      || source.attemptStatus !== 'running' || source.runStatus !== 'running'
+      || source.principalStatus !== 'active'
+      || source.principalId !== manifest.principal_context?.executed_as) {
+      throw authorizationDenied('当前 Attempt 或 Agent 身份已失效，不能提出记忆候选')
+    }
+    const contentDigest = createHash('sha256').update(content).digest('hex')
+    const proposalKey = createHash('sha256').update(JSON.stringify({ kind: input.kind, title, contentDigest })).digest('hex')
+    const id = `memory-proposal-${randomUUID()}`
+    const [created] = await this.database<{ id: string }[]>`
+      insert into memory_proposals (
+        id, tenant_id, run_id, attempt_id, agent_version_id, agent_principal_id,
+        requested_by, workspace_id, proposal_key, kind, title, content, content_digest
+      ) values (
+        ${id}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id}, ${manifest.agent_version_id},
+        ${source.principalId}, ${source.requestedBy}, ${source.workspaceId}, ${proposalKey},
+        ${input.kind}, ${title}, ${content}, ${contentDigest}
+      ) on conflict (tenant_id, attempt_id, proposal_key) do nothing
+      returning id
+    `
+    const [existing] = created ? [] : await this.database<{ id: string; status: string; expiresAt: Date }[]>`
+      select id, status, expires_at as "expiresAt" from memory_proposals
+       where tenant_id = ${tenantId} and attempt_id = ${manifest.attempt_id} and proposal_key = ${proposalKey}
+    `
+    if (!created && (!existing || existing.status !== 'proposed' || existing.expiresAt.getTime() <= Date.now())) {
+      throw Object.assign(new Error('相同记忆提案已提交或已过期'), { status: 409, code: 'MEMORY_PROPOSAL_CONFLICT' })
+    }
+    return { proposalId: (created ?? existing)!.id, status: 'pending_human_consent' }
+  }
+
+  async listOwnProposals(userId: string, attemptId: string): Promise<AgentMemoryProposal[]> {
+    const [source] = await this.database<{ workspaceId: string | null }[]>`
+      select t.workspace_id as "workspaceId" from run_attempts ra
+      join runs r on r.tenant_id = ra.tenant_id and r.id = ra.run_id
+      join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+      where ra.tenant_id = ${tenantId} and ra.id = ${attemptId}
+        and r.requested_by = ${userId} and ra.status = 'succeeded'
+    `
+    if (!source?.workspaceId) throw authorizationDenied('来源 Attempt 不可访问或尚未成功完成')
+    await this.authorization.authorizeWorkbench({ userId, workspaceId: source.workspaceId })
+    const rows = await this.database<Array<{
+      id: string; attemptId: string; kind: MemoryKind; title: string; content: string;
+      status: 'proposed' | 'submitted'; createdAt: Date; expiresAt: Date
+    }>>`
+      select id, attempt_id as "attemptId", kind, title, content, status,
+             created_at as "createdAt", expires_at as "expiresAt"
+        from memory_proposals
+       where tenant_id = ${tenantId} and attempt_id = ${attemptId}
+         and requested_by = ${userId} and status = 'proposed' and expires_at > now()
+       order by created_at, id
+    `
+    return rows.map(row => ({ ...row, createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString() }))
+  }
+
   async submitCandidate(input: {
     userId: string
     attemptId: string
@@ -103,6 +213,7 @@ export class PostgresControlledMemoryService {
     content: string
     visibility: MemoryVisibility
     retentionDays: number
+    proposalId?: string
   }): Promise<ControlledMemoryCandidate> {
     const title = input.title.trim()
     const content = input.content.trim()
@@ -112,13 +223,17 @@ export class PostgresControlledMemoryService {
       throw requestInvalid('retentionDays 必须为 1～3650 的整数')
     }
     if (!input.submissionKey.trim() || input.submissionKey.length > 200) throw requestInvalid('submissionKey 无效')
+    if (input.proposalId !== undefined && (typeof input.proposalId !== 'string' || !/^memory-proposal-[0-9a-f-]{36}$/.test(input.proposalId))) {
+      throw requestInvalid('proposalId 无效')
+    }
     const [source] = await this.database<{
       runId: string; requestedBy: string; workspaceId: string | null; attemptStatus: string;
-      agentVersionId: string | null; roleIds: unknown; agentStatus: string | null
+      agentVersionId: string | null; agentId: string | null; roleIds: unknown; agentStatus: string | null
     }[]>`
       select r.id as "runId", r.requested_by as "requestedBy", t.workspace_id as "workspaceId",
              ra.status as "attemptStatus", ra.manifest->>'agent_version_id' as "agentVersionId",
-             ra.manifest->'user_context'->'role_ids' as "roleIds", av.status as "agentStatus"
+             ra.manifest->'user_context'->'role_ids' as "roleIds", av.status as "agentStatus",
+             av.agent_id as "agentId"
         from run_attempts ra
         join runs r on r.tenant_id = ra.tenant_id and r.id = ra.run_id
         join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
@@ -127,7 +242,7 @@ export class PostgresControlledMemoryService {
     `
     if (!source || source.requestedBy !== input.userId) throw authorizationDenied('来源 Attempt 不存在或不属于当前用户')
     if (source.attemptStatus !== 'succeeded') throw requestInvalid('只有成功完成的 Attempt 可以作为记忆候选来源')
-    if (!source.workspaceId || !source.agentVersionId || source.agentStatus !== 'published') {
+    if (!source.workspaceId || !source.agentVersionId || !source.agentId || source.agentStatus !== 'published') {
       throw requestInvalid('来源 Attempt 缺少可用 Workspace 或已发布 Agent Version')
     }
     await this.authorization.authorizeWorkbench({ userId: input.userId, workspaceId: source.workspaceId })
@@ -140,7 +255,7 @@ export class PostgresControlledMemoryService {
     const retentionUntil = new Date(Date.now() + input.retentionDays * 86_400_000)
     const normalizedTitle = title.toLocaleLowerCase('zh-CN').replaceAll(/\s+/g, ' ')
     const memoryKey = createHash('sha256')
-      .update(`${source.agentVersionId}\n${input.kind}\n${normalizedTitle}\n${input.visibility}\n${scopeRef}`)
+      .update(`${source.agentId}\n${input.kind}\n${normalizedTitle}\n${input.visibility}\n${scopeRef}`)
       .digest('hex')
     const contentDigest = createHash('sha256').update(content).digest('hex')
     const requestDigest = createHash('sha256').update(JSON.stringify({
@@ -154,6 +269,7 @@ export class PostgresControlledMemoryService {
       visibility: input.visibility,
       scopeRef,
       retentionDays: input.retentionDays,
+      proposalId: input.proposalId ?? null,
     })).digest('hex')
     const result = await this.database.begin(async (transaction) => {
       await transaction`
@@ -181,6 +297,18 @@ export class PostgresControlledMemoryService {
         }
         return existing
       }
+      if (input.proposalId) {
+        const [proposal] = await transaction<{ kind: MemoryKind; title: string; content: string; status: string }[]>`
+          select kind, title, content, status from memory_proposals
+           where tenant_id = ${tenantId} and id = ${input.proposalId}
+             and attempt_id = ${input.attemptId} and requested_by = ${input.userId}
+             and expires_at > now() for update
+        `
+        if (!proposal || proposal.status !== 'proposed'
+          || proposal.kind !== input.kind || proposal.title !== title || proposal.content !== content) {
+          throw Object.assign(new Error('记忆提案已过期、已提交或内容已改变'), { status: 409, code: 'MEMORY_PROPOSAL_CONFLICT' })
+        }
+      }
       const consentId = `memory-consent-${randomUUID()}`
       const candidateId = `memory-candidate-${randomUUID()}`
       await transaction`
@@ -196,11 +324,12 @@ export class PostgresControlledMemoryService {
       const [created] = await transaction<CandidateRow[]>`
         insert into memory_candidates (
           id, tenant_id, consent_id, submission_key, request_digest, memory_key, kind, title, content,
-          content_digest, visibility, scope_ref, allowed_role_ids, retention_until, status, submitted_by
+          content_digest, visibility, scope_ref, allowed_role_ids, retention_until, status, submitted_by,
+          source_proposal_id
         ) values (
           ${candidateId}, ${tenantId}, ${consentId}, ${input.submissionKey.trim()}, ${requestDigest}, ${memoryKey}, ${input.kind},
           ${title}, ${content}, ${contentDigest}, ${input.visibility}, ${scopeRef}, ${transaction.json(roles)},
-          ${retentionUntil}, 'pending', ${input.userId}
+          ${retentionUntil}, 'pending', ${input.userId}, ${input.proposalId ?? null}
         ) returning id, consent_id as "consentId", memory_key as "memoryKey", kind, title, content,
           content_digest as "contentDigest", visibility, scope_ref as "scopeRef",
           retention_until as "retentionUntil", status, submitted_by as "submittedBy",
@@ -209,6 +338,10 @@ export class PostgresControlledMemoryService {
           approved_version_id as "approvedVersionId", created_at as "createdAt"
       `
       if (!created) throw new Error('记忆候选创建失败')
+      if (input.proposalId) await transaction`
+        update memory_proposals set status = 'submitted', content = ${unavailableContent}
+         where tenant_id = ${tenantId} and id = ${input.proposalId}
+      `
       return created
     })
     await this.operations?.appendAudit(input.userId, 'memory.candidate.submit', result.id, 'success', `trace-${result.id}`, `${result.kind}:${result.visibility}`)
@@ -292,7 +425,7 @@ export class PostgresControlledMemoryService {
   }): Promise<ControlledMemoryCandidate> {
     const outcome = await this.database.begin(async (transaction) => {
       const [candidate] = await transaction<(CandidateRow & {
-        consentStatus: string; consentAgentVersionId: string; consentSourceUserId: string;
+        consentStatus: string; consentAgentVersionId: string; agentId: string; consentSourceUserId: string;
         sourceRunId: string; sourceAttemptId: string; sourceWorkspaceId: string; consentRetentionUntil: Date
       })[]>`
         select mc.id, mc.consent_id as "consentId", mc.memory_key as "memoryKey", mc.kind,
@@ -303,11 +436,13 @@ export class PostgresControlledMemoryService {
                mc.resolution_key as "resolutionKey", mc.approved_entry_id as "approvedEntryId",
                mc.approved_version_id as "approvedVersionId", mc.created_at as "createdAt",
                c.status as "consentStatus", c.agent_version_id as "consentAgentVersionId",
+               source_av.agent_id as "agentId",
                c.source_user_id as "consentSourceUserId", c.source_run_id as "sourceRunId",
                c.source_attempt_id as "sourceAttemptId", c.workspace_id as "sourceWorkspaceId",
                c.retention_until as "consentRetentionUntil"
           from memory_candidates mc
           join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
+          join agent_versions source_av on source_av.tenant_id = c.tenant_id and source_av.id = c.agent_version_id
          where mc.tenant_id = ${tenantId} and mc.id = ${input.candidateId}
          for update of mc, c
       `
@@ -358,18 +493,46 @@ export class PostgresControlledMemoryService {
           code: 'MEMORY_SOURCE_ACCESS_REVOKED',
         })
       }
-      await transaction`select pg_advisory_xact_lock(hashtext(${candidate.memoryKey}))`
+      const normalizedTitle = candidate.title.toLocaleLowerCase('zh-CN').replaceAll(/\s+/g, ' ')
+      const stableMemoryKey = createHash('sha256')
+        .update(`${candidate.agentId}\n${candidate.kind}\n${normalizedTitle}\n${candidate.visibility}\n${candidate.scopeRef}`)
+        .digest('hex')
+      // Older pending candidates still carry an Agent Version key. All reviews
+      // for one logical memory must serialize under the stable Agent key.
+      await transaction`select pg_advisory_xact_lock(hashtext(${stableMemoryKey}))`
+      if (candidate.memoryKey !== stableMemoryKey) {
+        await transaction`
+          update memory_candidates set memory_key = ${stableMemoryKey}
+           where tenant_id = ${tenantId} and id = ${candidate.id}
+        `
+        candidate.memoryKey = stableMemoryKey
+      }
+      const agentVersions = await transaction<{ id: string }[]>`
+        select id from agent_versions where tenant_id = ${tenantId} and agent_id = ${candidate.agentId}
+      `
+      const legacyKeys = agentVersions.map(version => createHash('sha256')
+        .update(`${version.id}\n${candidate.kind}\n${normalizedTitle}\n${candidate.visibility}\n${candidate.scopeRef}`)
+        .digest('hex'))
       let [entry] = await transaction<{ id: string; currentVersionId: string | null }[]>`
-        select id, current_version_id as "currentVersionId" from memory_entries
-         where tenant_id = ${tenantId} and memory_key = ${candidate.memoryKey} and kind = ${candidate.kind}
-           and visibility = ${candidate.visibility} and scope_ref = ${candidate.scopeRef}
-           and agent_version_id = ${candidate.consentAgentVersionId} for update
+        select me.id, me.current_version_id as "currentVersionId" from memory_entries me
+        join agent_versions av on av.tenant_id = me.tenant_id and av.id = me.agent_version_id
+         where me.tenant_id = ${tenantId}
+           and me.memory_key in ${transaction([stableMemoryKey, ...legacyKeys])}
+           and me.kind = ${candidate.kind}
+           and me.visibility = ${candidate.visibility} and me.scope_ref = ${candidate.scopeRef}
+           and av.agent_id = ${candidate.agentId}
+         order by (me.memory_key = ${stableMemoryKey}) desc, me.updated_at desc
+         limit 1 for update of me
+      `
+      if (entry) await transaction`
+        update memory_entries set memory_key = ${stableMemoryKey}
+         where tenant_id = ${tenantId} and id = ${entry.id} and memory_key <> ${stableMemoryKey}
       `
       if (!entry) {
         const entryId = `memory-entry-${randomUUID()}`
         ;[entry] = await transaction<{ id: string; currentVersionId: string | null }[]>`
           insert into memory_entries (id, tenant_id, memory_key, kind, visibility, scope_ref, agent_version_id)
-          values (${entryId}, ${tenantId}, ${candidate.memoryKey}, ${candidate.kind}, ${candidate.visibility},
+          values (${entryId}, ${tenantId}, ${stableMemoryKey}, ${candidate.kind}, ${candidate.visibility},
                   ${candidate.scopeRef}, ${candidate.consentAgentVersionId})
           returning id, current_version_id as "currentVersionId"
         `
@@ -430,7 +593,11 @@ export class PostgresControlledMemoryService {
       userId: input.userId,
       workspaceId: input.workspaceId,
     })
-    const currentRoleIds = targetAuthorization.roleIds.filter(roleId => input.roleIds.includes(roleId))
+    const currentRoleIds = await this.currentAgentRoles(
+      input.agentVersionId,
+      targetAuthorization.roleIds.filter(roleId => input.roleIds.includes(roleId)),
+    )
+    if (!currentRoleIds.length) return []
     const roleIds = currentRoleIds.length ? [...new Set(currentRoleIds)] : ['__no_role__']
     const rows = await this.database<Array<{
       memoryVersionId: string; title: string; version: number; kind: MemoryKind; visibility: MemoryVisibility;
@@ -441,9 +608,15 @@ export class PostgresControlledMemoryService {
              c.source_user_id as "sourceUserId", c.workspace_id as "sourceWorkspaceId"
         from memory_entries me
         join memory_versions mv on mv.tenant_id = me.tenant_id and mv.id = me.current_version_id
+        join agent_versions owner_av on owner_av.tenant_id = me.tenant_id and owner_av.id = me.agent_version_id
+        join agent_versions target_av on target_av.tenant_id = me.tenant_id
+          and target_av.id = ${input.agentVersionId} and target_av.agent_id = owner_av.agent_id
+          and target_av.status <> 'disabled'
+        join execution_principals ep on ep.tenant_id = me.tenant_id and ep.agent_id = target_av.agent_id
+          and ep.kind = 'agent' and ep.status = 'active'
         join memory_candidates mc on mc.tenant_id = mv.tenant_id and mc.id = mv.candidate_id
         join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
-       where me.tenant_id = ${tenantId} and me.agent_version_id = ${input.agentVersionId}
+       where me.tenant_id = ${tenantId}
          and mc.status = 'approved' and c.status = 'active'
          and mv.retention_until > now() and c.retention_until > now()
          and (
@@ -486,7 +659,11 @@ export class PostgresControlledMemoryService {
       workspaceId: manifest.workspace_id,
     })
     const ids = memories.map(item => item.memoryVersionId)
-    const currentRoleIds = targetAuthorization.roleIds.filter(roleId => manifest.user_context.role_ids.includes(roleId))
+    const currentRoleIds = await this.currentAgentRoles(
+      manifest.agent_version_id,
+      targetAuthorization.roleIds.filter(roleId => manifest.user_context.role_ids.includes(roleId)),
+    )
+    if (!currentRoleIds.length) throw authorizationDenied('Agent 当前身份或角色已不允许使用受控记忆')
     const roleIds = currentRoleIds.length
       ? [...new Set(currentRoleIds)]
       : ['__no_role__']
@@ -495,10 +672,15 @@ export class PostgresControlledMemoryService {
              c.workspace_id as "sourceWorkspaceId"
         from memory_versions mv
         join memory_entries me on me.tenant_id = mv.tenant_id and me.id = mv.entry_id
+        join agent_versions owner_av on owner_av.tenant_id = me.tenant_id and owner_av.id = me.agent_version_id
+        join agent_versions target_av on target_av.tenant_id = me.tenant_id
+          and target_av.id = ${manifest.agent_version_id} and target_av.agent_id = owner_av.agent_id
+          and target_av.status <> 'disabled'
+        join execution_principals ep on ep.tenant_id = me.tenant_id and ep.agent_id = target_av.agent_id
+          and ep.kind = 'agent' and ep.status = 'active'
         join memory_candidates mc on mc.tenant_id = mv.tenant_id and mc.id = mv.candidate_id
         join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
        where me.tenant_id = ${tenantId} and mv.id in ${this.database(ids)}
-         and me.agent_version_id = ${manifest.agent_version_id}
          and mc.status = 'approved' and c.status = 'active'
          and mv.retention_until > now() and c.retention_until > now()
          and (
@@ -532,6 +714,24 @@ export class PostgresControlledMemoryService {
     return `${answer.trim()}\n\n受控记忆参考（非权威业务事实）\n${rows.map((row, index) =>
       `- 【M${index + 1}】${row.title} v${row.version}（${visibilityLabel(row.visibility)}）`,
     ).join('\n')}`
+  }
+
+  private async currentAgentRoles(agentVersionId: string | null, candidateRoles: string[]): Promise<string[]> {
+    if (!agentVersionId || !candidateRoles.length) return []
+    const [target] = await this.database<{ declaredRoles: string[]; grantedRoles: string[] }[]>`
+      select av.visible_role_ids as "declaredRoles",
+             coalesce(jsonb_agg(g.role_id) filter (where g.role_id is not null), '[]'::jsonb) as "grantedRoles"
+        from agent_versions av
+        join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
+          and ep.kind = 'agent' and ep.status = 'active'
+        left join agent_principal_role_grants g on g.tenant_id = ep.tenant_id and g.principal_id = ep.id
+       where av.tenant_id = ${tenantId} and av.id = ${agentVersionId} and av.status <> 'disabled'
+       group by av.id
+    `
+    if (!target) return []
+    const declared = new Set(target.declaredRoles)
+    const granted = new Set(target.grantedRoles)
+    return candidateRoles.filter(roleId => declared.has(roleId) && granted.has(roleId))
   }
 
   private async resolveSourceAccess<T extends { sourceUserId: string; sourceWorkspaceId: string }>(

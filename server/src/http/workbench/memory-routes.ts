@@ -9,6 +9,13 @@ import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router
 const basePath = '/api/workbench/v1/memory'
 
 export function registerWorkbenchMemoryRoutes(router: Router, service: PostgresControlledMemoryService): void {
+  router.get(`${basePath}/proposals`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const attemptId = new URL(request.url ?? '', 'http://localhost').searchParams.get('attemptId')
+    if (!attemptId) throw requestInvalid('attemptId 必填')
+    return envelope('workbench', await service.listOwnProposals(identity.userId, attemptId), 'postgres')
+  })
+
   router.get(`${basePath}/consents`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     return envelope('workbench', await service.listOwnConsents(identity.userId), 'postgres')
@@ -23,6 +30,7 @@ export function registerWorkbenchMemoryRoutes(router: Router, service: PostgresC
       content?: unknown
       visibility?: unknown
       retentionDays?: unknown
+      proposalId?: unknown
     } | null>(request)
     if (!body) throw requestInvalid('请求体不能为空')
     const submissionKeyHeader = request.headers['idempotency-key']
@@ -34,6 +42,7 @@ export function registerWorkbenchMemoryRoutes(router: Router, service: PostgresC
     if (typeof body.title !== 'string') throw requestInvalid('title 必须是字符串')
     if (typeof body.content !== 'string') throw requestInvalid('content 必须是字符串')
     if (typeof body.retentionDays !== 'number') throw requestInvalid('retentionDays 必须是数字')
+    if (body.proposalId !== undefined && typeof body.proposalId !== 'string') throw requestInvalid('proposalId 必须是字符串')
     const candidate = await service.submitCandidate({
       userId: identity.userId,
       attemptId: body.attemptId.trim(),
@@ -43,6 +52,7 @@ export function registerWorkbenchMemoryRoutes(router: Router, service: PostgresC
       content: body.content,
       visibility,
       retentionDays: body.retentionDays,
+      ...(body.proposalId ? { proposalId: body.proposalId } : {}),
     })
     return httpResult(201, envelope('workbench', candidate, 'postgres'))
   })

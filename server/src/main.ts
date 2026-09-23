@@ -35,7 +35,7 @@ import { WorkbenchQueryService } from './modules/workbench/application/workbench
 import { PostgresConversationRepository } from './modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresRunRepository } from './modules/run/postgres-run-repository.ts'
 import type { JsonObject } from './modules/run/run-types.ts'
-import { PostgresTaskRepository, taskOperationParameterDigest } from './modules/task/postgres-task-repository.ts'
+import { PostgresTaskRepository, platformToolOperationKey, taskOperationParameterDigest } from './modules/task/postgres-task-repository.ts'
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { PostgresPersistentWaitService } from './modules/run/postgres-persistent-wait-service.ts'
@@ -132,6 +132,7 @@ async function start() {
   let dshInstallation: DshRuntimeInstallation | null = null
   let executionRuntime: AgentRuntimePort | null = null
   let persistentWait: PostgresPersistentWaitService | null = null
+  let memoryProposalSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   if (database) {
@@ -174,6 +175,7 @@ async function start() {
     const delegation = new PostgresAgentDelegationService(database, runs, tasks, authorization, taskQueries)
     const toolServiceRef: { current?: PostgresToolConnectorService } = {}
     const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
+    const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -201,6 +203,10 @@ async function start() {
         return persistentWaitRef.current.decidePermission(manifest, context)
       },
       delegateAgent: (input, manifest, signal) => delegation.delegate(input, manifest, signal),
+      proposeMemory: (input, manifest, signal) => {
+        if (!controlledMemoryRef.current) throw new Error('受控记忆服务尚未就绪')
+        return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
+      },
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
       inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
       proposeAdminTask: (input, manifest, signal) => assistantService.proposeTask(input, manifest, signal),
@@ -217,7 +223,7 @@ async function start() {
             taskId: manifest.task_id,
             runId: manifest.run_id,
             attemptId: manifest.attempt_id,
-            operationKey: `tool:${taskOperationParameterDigest({ tool: input.toolName, parameterDigest })}`,
+            operationKey: platformToolOperationKey(input.toolName, parameterDigest, manifest.attempt_id),
             actionType: 'platform-tool-write',
             actionRef: input.toolName,
             parameterDigest,
@@ -275,6 +281,13 @@ async function start() {
     const agents = new PostgresAgentService(database, operations, skills, toolService)
     const knowledge = new PostgresKnowledgeService(database)
     const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
+    controlledMemoryRef.current = controlledMemory
+    memoryProposalSweep = setInterval(() => {
+      void controlledMemory.purgeExpiredProposals().catch(error => {
+        console.error('Expired memory proposal cleanup failed:', error)
+      })
+    }, 6 * 60 * 60 * 1000)
+    memoryProposalSweep.unref()
     const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
     // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
     const automationRepository = new PostgresAutomationRepository(database)
@@ -428,6 +441,7 @@ async function start() {
     server.close(() => {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
+        if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()

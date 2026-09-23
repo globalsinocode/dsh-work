@@ -108,6 +108,15 @@ export function taskOperationParameterDigest(parameters: unknown): string {
   return sha256(canonicalJson(parameters))
 }
 
+/** Memory proposals belong to their source Attempt; other writes retain Task-level deduplication. */
+export function platformToolOperationKey(toolName: string, parameterDigest: string, attemptId: string): string {
+  return `tool:${taskOperationParameterDigest({
+    tool: toolName,
+    parameterDigest,
+    ...(toolName === 'propose_memory' ? { attemptId } : {}),
+  })}`
+}
+
 export class PostgresTaskRepository implements TaskRepository {
   private readonly database: DatabaseClient
 

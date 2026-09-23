@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import type { DatabaseClient } from './database.ts'
@@ -7,7 +7,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database
 import { PostgresControlledMemoryService } from '../../modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
-import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
+import { PostgresTaskRepository, platformToolOperationKey, taskOperationParameterDigest } from '../../modules/task/postgres-task-repository.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import type { JsonObject } from '../../modules/run/run-types.ts'
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
@@ -142,6 +142,234 @@ test('PF-05 serializes concurrent submissions with the same idempotency key', as
   assert.deepEqual(counts, { candidateCount: 1, consentCount: 1 })
 })
 
+test('AE-04 stages an Agent proposal but requires requester consent and admin review before use', async () => {
+  const source = await succeededFixture('agent-proposal', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-1', 'running')
+  const proposalInput = {
+    kind: 'experience' as const, title: '核对资料的顺序',
+    content: '整理资料时，先核对来源和日期，再区分已经验证的事实与尚待确认的假设。',
+  }
+  await assert.rejects(memory.proposeFromAttempt(proposalInput, { ...source.manifest, tools: [] }, new AbortController().signal),
+    'an Agent version without the intrinsic tool cannot stage memory')
+  await database`
+    update execution_principals set status = 'disabled'
+     where tenant_id = ${tenantId} and id = ${source.manifest.principal_context!.executed_as}
+  `
+  try {
+    await assert.rejects(memory.proposeFromAttempt(proposalInput, source.manifest, new AbortController().signal),
+      'a disabled Agent identity cannot stage memory')
+  } finally {
+    await database`
+      update execution_principals set status = 'active'
+       where tenant_id = ${tenantId} and id = ${source.manifest.principal_context!.executed_as}
+    `
+  }
+  const first = await memory.proposeFromAttempt(proposalInput, source.manifest, new AbortController().signal)
+  const trial = await memory.proposeFromAttempt(proposalInput, {
+    ...source.manifest, purpose: 'agent-release-trial', workspace_id: '',
+  }, new AbortController().signal)
+  assert.equal(trial.status, 'trial_only', 'release trials cannot persist personal proposals')
+  const replay = await memory.proposeFromAttempt(proposalInput, source.manifest, new AbortController().signal)
+  assert.equal(replay.proposalId, first.proposalId)
+  assert.equal(first.status, 'pending_human_consent')
+  await assert.rejects(memory.listOwnProposals('U00002', source.manifest.attempt_id))
+  await assert.rejects(memory.listOwnProposals('U00001', source.manifest.attempt_id),
+    'a running attempt cannot expose proposals to the employee yet')
+  await runs.transitionAttempt(tenantId, source.manifest.attempt_id, 'succeeded')
+  await runs.transitionRun(tenantId, source.runId, 'succeeded')
+  const listed = await memory.listOwnProposals('U00001', source.manifest.attempt_id)
+  assert.equal(listed.length, 1)
+  assert.equal(listed[0]?.id, first.proposalId)
+  assert.deepEqual(await memory.resolveContext({
+    query: '核对资料', userId: 'U00001', workspaceId: source.manifest.workspace_id,
+    agentVersionId: source.manifest.agent_version_id, roleIds: ['role-employee'],
+  }), [], 'an Agent proposal cannot directly enter future context')
+  await assert.rejects(memory.submitCandidate({
+    userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `wrong-${randomUUID()}`,
+    ...proposalInput, content: `${proposalInput.content}已修改`, visibility: 'private', retentionDays: 30,
+    proposalId: first.proposalId,
+  }), (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === 'MEMORY_PROPOSAL_CONFLICT')
+  const candidate = await memory.submitCandidate({
+    userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `consent-${randomUUID()}`,
+    ...proposalInput, visibility: 'private', retentionDays: 30, proposalId: first.proposalId,
+  })
+  assert.equal(candidate.status, 'pending')
+  assert.deepEqual(await memory.listOwnProposals('U00001', source.manifest.attempt_id), [], 'submitted text is no longer offered as a draft')
+  const [redactedProposal] = await database<{ content: string }[]>`
+    select content from memory_proposals where tenant_id = ${tenantId} and id = ${first.proposalId}
+  `
+  assert.match(redactedProposal?.content ?? '', /内容已撤回或超过可使用期限/)
+  await assert.rejects(memory.submitCandidate({
+    userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `second-${randomUUID()}`,
+    ...proposalInput, visibility: 'private', retentionDays: 30, proposalId: first.proposalId,
+  }), (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === 'MEMORY_PROPOSAL_CONFLICT')
+  assert.deepEqual(await memory.resolveContext({
+    query: '核对资料', userId: 'U00001', workspaceId: source.manifest.workspace_id,
+    agentVersionId: source.manifest.agent_version_id, roleIds: ['role-employee'],
+  }), [], 'employee consent is still insufficient without admin review')
+  await memory.reviewCandidate({ candidateId: candidate.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}` })
+  assert.equal((await memory.resolveContext({
+    query: '核对资料', userId: 'U00001', workspaceId: source.manifest.workspace_id,
+    agentVersionId: source.manifest.agent_version_id, roleIds: ['role-employee'],
+  })).length, 1)
+})
+
+test('AE-04 retries a failed Run with a fresh Attempt-owned proposal operation', async () => {
+  const first = await succeededFixture('retry-memory-proposal', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-1', 'running')
+  const input = {
+    kind: 'experience' as const, title: '失败重试核对经验',
+    content: '重试运行时重新核对当前来源、授权和未完成的操作回执。',
+  }
+  const parameterDigest = taskOperationParameterDigest(input)
+  async function accept(manifest: RuntimeManifest) {
+    return tasks.acceptOperation({
+      tenantId, taskId: manifest.task_id, runId: manifest.run_id, attemptId: manifest.attempt_id,
+      operationKey: platformToolOperationKey('propose_memory', parameterDigest, manifest.attempt_id),
+      actionType: 'platform-tool-write', actionRef: 'propose_memory', parameterDigest,
+      receipt: { callId: 'same-model-call' },
+    })
+  }
+  const firstOperation = await accept(first.manifest)
+  assert.equal(firstOperation.created, true)
+  const firstProposal = await memory.proposeFromAttempt(input, first.manifest, new AbortController().signal)
+  await tasks.resolveOperation({
+    tenantId, operationId: firstOperation.operation.id, status: 'completed', receipt: { result: firstProposal },
+  })
+  await runs.transitionAttempt(tenantId, first.manifest.attempt_id, 'failed', 'TEST_FAILURE')
+  await runs.transitionRun(tenantId, first.runId, 'failed')
+
+  const retryManifest: RuntimeManifest = {
+    ...first.manifest, attempt_id: `attempt-${randomUUID()}`, created_at: new Date().toISOString(),
+  }
+  const compiled = compileRuntimeManifest(retryManifest)
+  await runs.createAttempt({
+    attemptId: retryManifest.attempt_id, tenantId, runId: first.runId, runtimeId: 'runtime-local-01',
+    manifest: JSON.parse(compiled.canonicalJson) as JsonObject, manifestSha256: compiled.sha256,
+    modelRouteSnapshot: {},
+  })
+  await runs.transitionAttempt(tenantId, retryManifest.attempt_id, 'running')
+  await runs.transitionRun(tenantId, first.runId, 'running')
+  const retryOperation = await accept(retryManifest)
+  assert.equal(retryOperation.created, true)
+  assert.notEqual(retryOperation.operation.id, firstOperation.operation.id)
+  const retryProposal = await memory.proposeFromAttempt(input, retryManifest, new AbortController().signal)
+  assert.notEqual(retryProposal.proposalId, firstProposal.proposalId)
+  await tasks.resolveOperation({
+    tenantId, operationId: retryOperation.operation.id, status: 'completed', receipt: { result: retryProposal },
+  })
+  const replay = await accept(retryManifest)
+  assert.equal(replay.created, false)
+  assert.equal(replay.operation.id, retryOperation.operation.id)
+  await runs.transitionAttempt(tenantId, retryManifest.attempt_id, 'succeeded')
+  await runs.transitionRun(tenantId, first.runId, 'succeeded')
+  assert.deepEqual((await memory.listOwnProposals('U00001', retryManifest.attempt_id)).map(item => item.id),
+    [retryProposal.proposalId])
+})
+
+test('AE-04 removes expired, unconsented Agent proposals', async () => {
+  const source = await succeededFixture('expiring-proposal', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-1', 'running')
+  const created = await memory.proposeFromAttempt({
+    kind: 'preference', title: '临时输出偏好', content: '这个尚未获得任何同意的暂存提案到期后，应从平台数据库中删除。',
+  }, source.manifest, new AbortController().signal)
+  await database`
+    update memory_proposals set expires_at = now() - interval '1 second'
+     where tenant_id = ${tenantId} and id = ${created.proposalId}
+  `
+  assert.equal(await memory.purgeExpiredProposals(), 1)
+  const [remaining] = await database<{ count: number }[]>`
+    select count(*)::integer as count from memory_proposals
+     where tenant_id = ${tenantId} and id = ${created.proposalId}
+  `
+  assert.equal(remaining?.count, 0)
+})
+
+test('AE-04 revisions from a newer Agent Version advance one stable memory entry', async () => {
+  const oldSource = await succeededFixture('agent-memory-old')
+  const original = await memory.submitCandidate({
+    userId: 'U00001', attemptId: oldSource.manifest.attempt_id,
+    submissionKey: `submit-${randomUUID()}`, kind: 'experience', title: '跨版本核对方法',
+    content: '核对分析结论时，先确认数据时间、来源权限和所有未完成的外部操作回执。',
+    visibility: 'workspace', retentionDays: 30,
+  })
+  const first = await memory.reviewCandidate({
+    candidateId: original.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}`,
+  })
+  // Upgrade fixture: PF-05 originally keyed a logical memory by Agent Version.
+  const legacyKey = createHash('sha256')
+    .update(`${oldSource.manifest.agent_version_id}\nexperience\n跨版本核对方法\nworkspace\n${oldSource.manifest.workspace_id}`)
+    .digest('hex')
+  await database`
+    update memory_entries set memory_key = ${legacyKey} where tenant_id = ${tenantId} and id = ${first.approvedEntryId}
+  `
+  const newSource = await succeededFixture('agent-memory-new', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-output-1')
+  const revision = await memory.submitCandidate({
+    userId: 'U00001', attemptId: newSource.manifest.attempt_id,
+    submissionKey: `submit-${randomUUID()}`, kind: 'experience', title: '跨版本核对方法',
+    content: '核对分析结论时，先确认当前数据时间和来源授权，再逐一核对未完成的外部操作回执。',
+    visibility: 'workspace', retentionDays: 30,
+  })
+  const second = await memory.reviewCandidate({
+    candidateId: revision.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}`,
+  })
+  assert.equal(second.approvedEntryId, first.approvedEntryId)
+  assert.notEqual(second.approvedVersionId, first.approvedVersionId)
+  const [version] = await database<{ version: number }[]>`
+    select version from memory_versions where tenant_id = ${tenantId} and id = ${second.approvedVersionId}
+  `
+  assert.equal(version?.version, 2)
+  const resolved = await memory.resolveContext({
+    query: '跨版本核对方法', userId: 'U00001', workspaceId: newSource.manifest.workspace_id,
+    agentVersionId: newSource.manifest.agent_version_id, roleIds: ['role-employee'],
+  })
+  assert.equal(resolved[0]?.memoryVersionId, second.approvedVersionId)
+})
+
+test('AE-04 approves a legacy pending candidate into the stable Agent entry after a newer version', async () => {
+  const oldSource = await succeededFixture('agent-memory-pending-old')
+  const oldCandidate = await memory.submitCandidate({
+    userId: 'U00001', attemptId: oldSource.manifest.attempt_id,
+    submissionKey: `submit-${randomUUID()}`, kind: 'experience', title: '跨版本同名经验',
+    content: '旧版经验：先核对来源时间和权限，再确认未完成的外部动作回执。',
+    visibility: 'workspace', retentionDays: 30,
+  })
+  const legacyKey = createHash('sha256')
+    .update(`${oldSource.manifest.agent_version_id}\nexperience\n跨版本同名经验\nworkspace\n${oldSource.manifest.workspace_id}`)
+    .digest('hex')
+  await database`
+    update memory_candidates set memory_key = ${legacyKey}
+     where tenant_id = ${tenantId} and id = ${oldCandidate.id}
+  `
+  const newSource = await succeededFixture('agent-memory-pending-new', 'ws-personal-U00001', 'agent-version-dsh-work-assistant-output-1')
+  const newCandidate = await memory.submitCandidate({
+    userId: 'U00001', attemptId: newSource.manifest.attempt_id,
+    submissionKey: `submit-${randomUUID()}`, kind: 'experience', title: '跨版本同名经验',
+    content: '新版经验：先核对当前来源时间与访问权限，再检查全部未完成操作回执。',
+    visibility: 'workspace', retentionDays: 30,
+  })
+  const newer = await memory.reviewCandidate({
+    candidateId: newCandidate.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}`,
+  })
+  const older = await memory.reviewCandidate({
+    candidateId: oldCandidate.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}`,
+  })
+  assert.equal(older.approvedEntryId, newer.approvedEntryId)
+  assert.equal(older.memoryKey, newer.memoryKey)
+  const [state] = await database<{ entryCount: number; oldCandidateKey: string; versionCount: number }[]>`
+    select (select count(*)::integer from memory_entries where tenant_id = ${tenantId}
+      and memory_key = ${newer.memoryKey}) as "entryCount",
+      (select memory_key from memory_candidates where tenant_id = ${tenantId}
+        and id = ${oldCandidate.id}) as "oldCandidateKey",
+      (select count(*)::integer from memory_versions where tenant_id = ${tenantId}
+        and entry_id = ${newer.approvedEntryId}) as "versionCount"
+  `
+  assert.deepEqual(state, { entryCount: 1, oldCandidateKey: newer.memoryKey, versionCount: 2 })
+  const resolved = await memory.resolveContext({
+    query: '跨版本同名经验', userId: 'U00001', workspaceId: newSource.manifest.workspace_id,
+    agentVersionId: newSource.manifest.agent_version_id, roleIds: ['role-employee'],
+  })
+  assert.deepEqual(resolved.filter(item => item.title === '跨版本同名经验').map(item => item.memoryVersionId),
+    [older.approvedVersionId])
+})
+
 test('PF-05 withdrawal blocks new retrieval while preserving historical references', async () => {
   const source = await succeededFixture('withdrawal')
   const candidate = await memory.submitCandidate({
@@ -185,7 +413,7 @@ test('PF-05 withdrawal blocks new retrieval while preserving historical referenc
   assert.equal(approved.status, 'approved', 'the immutable review record remains historical evidence')
 })
 
-test('PF-05 scopes memory to the pinned Agent Version, role and workspace and rejects inactive consent', async () => {
+test('AE-04 shares reviewed memory across versions of the same Agent while preserving role and workspace ACL', async () => {
   const source = await succeededFixture('acl')
   const candidate = await memory.submitCandidate({
     userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `submit-${randomUUID()}`,
@@ -200,10 +428,39 @@ test('PF-05 scopes memory to the pinned Agent Version, role and workspace and re
     query: '库存风险', userId: 'U00001', workspaceId: source.manifest.workspace_id,
     agentVersionId: source.manifest.agent_version_id, roleIds: ['role-unrelated'],
   }), [], 'current role ACL is mandatory')
-  assert.deepEqual(await memory.resolveContext({
+  const inherited = await memory.resolveContext({
     query: '库存风险', userId: 'U00001', workspaceId: source.manifest.workspace_id,
     agentVersionId: 'agent-version-dsh-work-assistant-output-1', roleIds: ['role-employee'],
-  }), [], 'a memory never floats across Agent Versions')
+  })
+  assert.equal(inherited.length, 1, 'a newer version of the same Agent inherits reviewed memory')
+  await memory.assertCurrentReferences({
+    memory_context: inherited,
+    user_context: source.manifest.user_context,
+    workspace_id: source.manifest.workspace_id,
+    agent_version_id: 'agent-version-dsh-work-assistant-output-1',
+  })
+  await database`
+    update execution_principals set status = 'disabled'
+     where tenant_id = ${tenantId} and agent_id = 'agent-dsh-work-assistant'
+  `
+  try {
+    assert.deepEqual(await memory.resolveContext({
+      query: '库存风险', userId: 'U00001', workspaceId: source.manifest.workspace_id,
+      agentVersionId: 'agent-version-dsh-work-assistant-output-1', roleIds: ['role-employee'],
+    }), [], 'disabled Agent identity cannot retrieve inherited memory')
+    await assert.rejects(memory.assertCurrentReferences({
+      memory_context: inherited,
+      user_context: source.manifest.user_context,
+      workspace_id: source.manifest.workspace_id,
+      agent_version_id: 'agent-version-dsh-work-assistant-output-1',
+    }), (error: unknown) => typeof error === 'object' && error !== null
+      && 'code' in error && error.code === 'permission_denied')
+  } finally {
+    await database`
+      update execution_principals set status = 'active'
+       where tenant_id = ${tenantId} and agent_id = 'agent-dsh-work-assistant'
+    `
+  }
 
   const pending = await memory.submitCandidate({
     userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `submit-${randomUUID()}`,
@@ -403,7 +660,12 @@ test('PF-05 requires current access to the source workspace at submission, revie
     '[内容已撤回或超过可使用期限，不再展示正文]')
 })
 
-async function succeededFixture(label: string, workspaceId = 'ws-personal-U00001') {
+async function succeededFixture(
+  label: string,
+  workspaceId = 'ws-personal-U00001',
+  agentVersionId = 'agent-version-dsh-work-assistant-1',
+  finalStatus: 'running' | 'succeeded' = 'succeeded',
+) {
   const unique = `${label}-${randomUUID()}`
   const task = await tasks.createTask({
     tenantId, requestedBy: 'U00001', sourceType: 'api', correlationKey: unique,
@@ -416,11 +678,11 @@ async function succeededFixture(label: string, workspaceId = 'ws-personal-U00001
   const manifest: RuntimeManifest = {
     manifest_version: '1.0', run_id: run.id, attempt_id: `attempt-${randomUUID()}`,
     task_id: task.id, session_id: null, workspace_id: task.workspaceId!,
-    agent_version_id: 'agent-version-dsh-work-assistant-1',
+    agent_version_id: agentVersionId,
     agent_configuration: { system_prompt: 'Test controlled memory.', skill_instructions: [] },
     user_context: { user_id: task.requestedBy, tenant_id: tenantId, role_ids: ['role-employee'] },
     permission_policy: { approval_mode: 'never', network_policy: 'deny', write_policy: 'workspace_only' },
-    skills: [], tools: [], data_scopes: [], knowledge_context: [],
+    skills: [], tools: finalStatus === 'running' ? [{ id: 'propose_memory', version: '1.0.0' }] : [], data_scopes: [], knowledge_context: [],
     input: { message: 'Produce a governed answer.', file_mounts: [] },
     budget: {
       scope_task_id: task.id,
@@ -431,6 +693,19 @@ async function succeededFixture(label: string, workspaceId = 'ws-personal-U00001
     limits: { timeout_seconds: 30, max_tool_calls: 1, max_output_bytes: 4096 },
     created_at: new Date().toISOString(), trace_id: `trace-${unique}`,
   }
+  if (finalStatus === 'running') {
+    const [principal] = await database<{ id: string; authorizationVersion: number }[]>`
+      select ep.id, ep.authorization_version as "authorizationVersion"
+        from agent_versions av join execution_principals ep
+          on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id and ep.kind = 'agent'
+       where av.tenant_id = ${tenantId} and av.id = ${agentVersionId}
+    `
+    assert.ok(principal)
+    manifest.principal_context = {
+      initiated_by: task.initiatedByPrincipalId!, executed_as: principal.id,
+      disclosure_user_id: 'U00001', executor_authorization_version: principal.authorizationVersion,
+    }
+  }
   const compiled = compileRuntimeManifest(manifest)
   await runs.createAttempt({
     attemptId: manifest.attempt_id, tenantId, runId: run.id, runtimeId: 'runtime-local-01',
@@ -439,7 +714,9 @@ async function succeededFixture(label: string, workspaceId = 'ws-personal-U00001
   })
   await runs.transitionAttempt(tenantId, manifest.attempt_id, 'running')
   await runs.transitionRun(tenantId, run.id, 'running')
-  await runs.transitionAttempt(tenantId, manifest.attempt_id, 'succeeded')
-  await runs.transitionRun(tenantId, run.id, 'succeeded')
+  if (finalStatus === 'succeeded') {
+    await runs.transitionAttempt(tenantId, manifest.attempt_id, 'succeeded')
+    await runs.transitionRun(tenantId, run.id, 'succeeded')
+  }
   return { runId: run.id, manifest }
 }

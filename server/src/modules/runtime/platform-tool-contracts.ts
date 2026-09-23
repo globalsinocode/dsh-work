@@ -138,6 +138,24 @@ export const platformToolContracts = {
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'concurrent',
     completionSemantics: 'accepted', timeoutMs: 300_000,
   }),
+  propose_memory: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        kind: { type: 'string', enum: ['preference', 'experience'] },
+        title: { type: 'string', minLength: 3, maxLength: 120 },
+        content: { type: 'string', minLength: 20, maxLength: 4000 },
+      },
+      required: ['kind', 'title', 'content'],
+    },
+    outputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { proposalId: { type: 'string' }, status: { type: 'string', enum: ['pending_human_consent', 'trial_only'] } },
+      required: ['proposalId', 'status'],
+    },
+    // Only staging is complete here; consent and publication are separate human actions.
+    effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
 } satisfies Record<string, PlatformToolContract>
 
 export type PlatformToolName = keyof typeof platformToolContracts
@@ -177,6 +195,7 @@ export const dshWorkBuiltInToolDefinitions = {
   activate_skill: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   python_execute: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   delegate_agent: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  propose_memory: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
 } as const satisfies Record<PlatformToolName, DshWorkBuiltInToolDefinition>
 
 export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManifest['tools'] {

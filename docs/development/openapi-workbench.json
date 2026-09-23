@@ -16,6 +16,19 @@
     }
   ],
   "paths": {
+    "/memory/proposals": {
+      "get": {
+        "operationId": "listMyAgentMemoryProposals",
+        "summary": "读取本人成功 Attempt 中 Agent 提出的短期记忆候选",
+        "description": "只返回本人有权访问的成功 Attempt 的未过期提案；提案本身不是同意或已审核记忆。",
+        "parameters": [{ "name": "attemptId", "in": "query", "required": true, "schema": { "type": "string", "minLength": 1 } }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/memory/consents": {
       "get": {
         "operationId": "listMyMemoryConsents",
@@ -31,7 +44,7 @@
       "post": {
         "operationId": "submitControlledMemoryCandidate",
         "summary": "从本人成功 Attempt 提交受控记忆候选并明确授权",
-        "description": "内容由员工主动填写；平台不会把回答、Session 历史、业务记录或文档原文自动转成记忆。候选经管理员审核前不进入 Runtime。",
+        "description": "员工可主动填写，或选择本次 Agent 提出的短期候选并核对全文；使用范围和期限只能由员工选择。平台不会把回答、Session 历史、业务记录或文档原文自动转成记忆。候选经管理员审核前不进入 Runtime。",
         "parameters": [{
           "name": "Idempotency-Key",
           "in": "header",
@@ -50,7 +63,8 @@
               "title": { "type": "string", "minLength": 3, "maxLength": 120 },
               "content": { "type": "string", "minLength": 20, "maxLength": 4000 },
               "visibility": { "enum": ["private", "workspace", "organization"] },
-              "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+              "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+              "proposalId": { "type": "string", "description": "可选；绑定本次 Agent 提案，内容必须与原提案完全相同" }
             }
           } } }
         },

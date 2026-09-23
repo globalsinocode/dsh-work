@@ -20,4 +20,5 @@ export const DSH_RUNTIME_CONNECTOR_ID = 'connector-dsh-workspace'
 export const DSH_WORK_EXECUTION_TOOL_REFS = new Set([
   'activate_skill@1.0.0',
   'python_execute@1.0.0',
+  'propose_memory@1.0.0',
 ])

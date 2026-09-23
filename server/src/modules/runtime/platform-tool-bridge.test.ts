@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { request } from 'node:http'
 import { test } from 'node:test'
 
+import { platformToolOperationKey, taskOperationParameterDigest } from '../task/postgres-task-repository.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { compileToolContract, toolPreconditionFailed, type PlatformToolContract } from './platform-tool-contract.ts'
 import {
@@ -24,10 +25,22 @@ const baseContract: PlatformToolContract = {
   completionSemantics: 'completed', timeoutMs: 1000, maxOutputBytes: 1024,
 }
 
+test('memory proposal operation keys are scoped to an Attempt without changing other Task writes', () => {
+  const digest = taskOperationParameterDigest({ kind: 'experience', title: '核对经验' })
+  assert.equal(platformToolOperationKey('propose_memory', digest, 'attempt-1'),
+    platformToolOperationKey('propose_memory', digest, 'attempt-1'))
+  assert.notEqual(platformToolOperationKey('propose_memory', digest, 'attempt-1'),
+    platformToolOperationKey('propose_memory', digest, 'attempt-2'))
+  assert.equal(platformToolOperationKey('python_execute', digest, 'attempt-1'),
+    platformToolOperationKey('python_execute', digest, 'attempt-2'))
+})
+
 test('all governed platform tool contracts compile in strict JSON Schema mode', () => {
   for (const contract of Object.values(platformToolContracts)) assert.doesNotThrow(() => compileToolContract(contract))
   assert.equal(platformToolContracts.delegate_agent.completionSemantics, 'accepted',
     'parent Task must not treat transport-level delegation success as proof that the child goal was achieved')
+  assert.equal(platformToolContracts.propose_memory.completionSemantics, 'completed',
+    'only the staging operation completes; consent and publication are separate human actions')
 })
 
 test('dsh-work built-in tools use one explicit category and governance registry', () => {
@@ -36,7 +49,7 @@ test('dsh-work built-in tools use one explicit category and governance registry'
       .filter(([, definition]) => definition.category === 'dsh_work_execution')
       .map(([name]) => name)
       .sort(),
-    ['activate_skill', 'delegate_agent', 'python_execute'],
+    ['activate_skill', 'delegate_agent', 'propose_memory', 'python_execute'],
   )
   assert.deepEqual(
     platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),
