@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import { PostgresKnowledgeService } from '../../modules/knowledge/postgres-knowledge-service.ts'
+import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
@@ -17,11 +18,15 @@ import type {
   RuntimeManifest,
 } from '../../modules/runtime/runtime-types.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
+import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
+const knowledgeAgentId = 'agent-m4-knowledge'
+const knowledgeAgentVersionId = 'agent-version-m4-knowledge-1'
+const knowledgeAgentMemberId = 'm4-knowledge-agent-member'
 
 let database: DatabaseClient
 let throwaway: ThrowawayDatabase
@@ -39,6 +44,54 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   runtime = new CapturingRuntime()
   conversations = new PostgresConversationRepository(database)
+  await database`
+    insert into agents (
+      id, tenant_id, name, description, welcome_message, owner_user_id, created_by, status
+    ) values (
+      ${knowledgeAgentId}, 'tenant-dsh-work', '供应链知识测试 Agent',
+      '仅用于隔离数据库中的知识引用测试', '', 'U00008', 'U00008', 'published'
+    )
+  `
+  await database`
+    insert into agent_versions (
+      id, tenant_id, agent_id, version, name, description, welcome_message,
+      example_prompts, system_prompt, visible_role_ids, data_scopes,
+      max_output_bytes, max_tool_calls, timeout_seconds, skill_refs, tool_refs,
+      status, created_by, published_at
+    ) values (
+      ${knowledgeAgentVersionId}, 'tenant-dsh-work', ${knowledgeAgentId}, '1.0.0',
+      '供应链知识测试 Agent', '隔离知识引用测试', '', '[]', '仅回答供应链知识问题。',
+      '["role-employee"]', '["enterprise:authorized", "workspace:authorized", "domain:supply-chain"]',
+      65536, 20, 300, '[]', '[]', 'published', 'U00008', now()
+    )
+  `
+  await database`
+    update agents set active_version_id = ${knowledgeAgentVersionId}
+     where tenant_id = 'tenant-dsh-work' and id = ${knowledgeAgentId}
+  `
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values ('tenant-dsh-work', ${`principal-agent-${knowledgeAgentId}`}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values
+      ('tenant-dsh-work', ${`principal-agent-${knowledgeAgentId}`}, 'enterprise:authorized'),
+      ('tenant-dsh-work', ${`principal-agent-${knowledgeAgentId}`}, 'workspace:authorized'),
+      ('tenant-dsh-work', ${`principal-agent-${knowledgeAgentId}`}, 'domain:supply-chain')
+  `
+  await database`
+    insert into workspace_capability_grants (tenant_id, workspace_id, capability_type, capability_version_id)
+    values ('tenant-dsh-work', 'ws-supply', 'agent', ${knowledgeAgentVersionId})
+  `
+  await database`
+    insert into workspace_agent_members (
+      id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by
+    ) values (
+      ${knowledgeAgentMemberId}, 'tenant-dsh-work', 'ws-supply',
+      ${knowledgeAgentId}, ${knowledgeAgentVersionId}, 'available', 'U00001'
+    )
+  `
   orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
     conversations,
@@ -49,6 +102,7 @@ before(async () => {
     undefined,
     knowledge,
     authorization,
+    { agentMembers: new PostgresWorkspaceAgentMemberService(database, authorization, new PostgresAgentService(database)) },
   )
 })
 
@@ -111,16 +165,20 @@ test('knowledge answer persists immutable source version and exposes citation me
     userId: 'U00001',
     title: '知识查询自动化验证',
     workspaceId: 'ws-supply',
+    agentVersionId: knowledgeAgentVersionId,
   })
   const run = await orchestration.startRun({
     userId: 'U00001',
     sessionId: session.id,
     prompt: '可用库存低于安全库存时如何处理？',
     idempotencyKey: randomUUID(),
+    workspaceAgentMemberId: knowledgeAgentMemberId,
   })
   assert.ok(run)
   const task = await waitForTask(run.id)
   const manifest = runtime.manifest(run.id)
+  assert.equal(manifest?.agent_version_id, knowledgeAgentVersionId)
+  assert.ok(manifest?.data_scopes.includes('domain:supply-chain'))
   assert.equal(manifest?.knowledge_context[0]?.documentId, 'knowledge-inventory-policy-v21')
   assert.equal(manifest?.knowledge_context[0]?.version, '2.1')
   assert.match(manifest?.knowledge_context[0]?.excerpt ?? '', /安全库存/)
