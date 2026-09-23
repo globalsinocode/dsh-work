@@ -1,5 +1,5 @@
 import { request } from 'node:http'
-import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -43,6 +43,27 @@ lines.on('line', (line) => {
   if (message.method === 'session/new' && message.id !== undefined) {
     sessionSequence += 1
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: `mock-session-${sessionSequence}` } })
+    const delay = Number(process.env.MOCK_MCP_CATALOG_DELAY_MS ?? 0)
+    const catalogPath = process.env.DSH_TOOL_CATALOG_PATH
+    if (delay > 0 && catalogPath) {
+      const [serverName] = JSON.parse(process.env.DSH_ALLOWED_MCP_SERVERS_JSON ?? '[]') as string[]
+      const tools = [{ name: `mcp__${serverName}__ping`, description: 'Read-only test tool', parameters: { type: 'object' } }]
+      const publishCatalog = async (entries: typeof tools) => {
+        const temporary = `${catalogPath}.${process.pid}.tmp`
+        await writeFile(temporary, JSON.stringify({ formatVersion: 2, tools: entries }))
+        await rename(temporary, catalogPath)
+      }
+      setTimeout(() => {
+        void publishCatalog(tools).catch(() => undefined)
+      }, delay)
+      const updateDelay = Number(process.env.MOCK_MCP_CATALOG_UPDATE_DELAY_MS ?? 0)
+      if (updateDelay > delay) setTimeout(() => {
+        void publishCatalog([
+          ...tools,
+          { name: `mcp__${serverName}__pong`, description: 'Second test tool', parameters: { type: 'object' } },
+        ]).catch(() => undefined)
+      }, updateDelay)
+    }
     return
   }
 

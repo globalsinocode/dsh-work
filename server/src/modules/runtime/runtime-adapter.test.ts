@@ -137,6 +137,30 @@ describe('PF-03 DSH MCP process patch', () => {
     }), /MCP 发现失败/)
     assert.equal((await stat(runtimeRoot)).isDirectory(), true)
   })
+
+  it('waits for a delayed MCP catalog and its complete tool generation', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-work-mcp-delayed-catalog-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-mcp-delayed-catalog', runtimeRoot, dshRepository: process.cwd(), setupTimeoutMs: 5_000,
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--profile', 'test'],
+        cwd: process.cwd(),
+        env: { MOCK_MCP_CATALOG_DELAY_MS: '1200', MOCK_MCP_CATALOG_UPDATE_DELAY_MS: '1450' },
+      },
+    })
+    adapters.push(adapter)
+    const result = await adapter.inspectMcpConnection({
+      snapshot: {
+        connector_id: 'connector-delayed', server_name: 'delayed', transport: 'streamable-http',
+        endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+      },
+      headers: {},
+    })
+    assert.equal(result.capabilities[0]?.name, 'ping')
+    assert.equal(result.capabilities[1]?.name, 'pong', 'discovery must wait for the complete tool generation')
+    assert.ok(result.latencyMs >= 1000)
+  })
 })
 
 describe('Runtime Manifest compiler', () => {

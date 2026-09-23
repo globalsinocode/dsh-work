@@ -366,6 +366,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   async inspectMcpConnection(connection: McpRuntimeConnection): Promise<McpInspectionResult> {
     const started = performance.now()
+    const setupTimeoutMs = this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS
     await mkdir(this.configuration.runtimeRoot, { recursive: true })
     const directory = await mkdtemp(join(this.configuration.runtimeRoot, 'mcp-inspection-'))
     const workspace = join(directory, 'workspace')
@@ -383,11 +384,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     })
     try {
       const prefix = `mcp__${connection.snapshot.server_name}__`
+      const deadline = performance.now() + setupTimeoutMs
       const catalog = await withTimeout((async () => {
         await client.initialize()
         await client.newSession(workspace)
-        return waitForRuntimeToolCatalog(catalogPath, prefix)
-      })(), this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS, 'MCP 发现超时')
+        return waitForRuntimeToolCatalog(catalogPath, prefix, deadline)
+      })(), setupTimeoutMs, 'MCP 发现超时')
       const capabilities = catalog
         .filter(tool => tool.id.startsWith(prefix))
         .map(tool => ({ name: tool.id.slice(prefix.length), description: tool.description, inputSchema: tool.inputSchema }))
@@ -1455,10 +1457,13 @@ function parseMcpPublicToolName(name: string, serverNames: string[]): { serverNa
   return capabilityName ? { serverName, capabilityName } : undefined
 }
 
-async function waitForRuntimeToolCatalog(path: string, requiredPrefix?: string): Promise<RuntimeToolDescriptor[]> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+async function waitForRuntimeToolCatalog(path: string, requiredPrefix: string, deadline: number): Promise<RuntimeToolDescriptor[]> {
+  let lastCatalog = ''
+  let stableSince = 0
+  while (performance.now() < deadline) {
     try {
-      const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown
+      const content = await readFile(path, 'utf8')
+      const parsed = JSON.parse(content) as unknown
       if (isRecord(parsed) && parsed['formatVersion'] === 2 && Array.isArray(parsed['tools'])) {
         const tools: RuntimeToolDescriptor[] = parsed['tools'].map(value => {
           if (!isRecord(value) || typeof value['name'] !== 'string' || typeof value['description'] !== 'string' || !isRecord(value['parameters'])) {
@@ -1470,12 +1475,18 @@ async function waitForRuntimeToolCatalog(path: string, requiredPrefix?: string):
             concurrencyPolicy: 'concurrent', completionSemantics: 'completed', timeoutSeconds: 60,
           }
         })
-        if (!requiredPrefix || tools.some(tool => tool.id.startsWith(requiredPrefix))) return tools
+        if (tools.some(tool => tool.id.startsWith(requiredPrefix))) {
+          // DSH emits tools/change for each registration; an early snapshot can contain only part of one MCP generation.
+          if (content !== lastCatalog) {
+            lastCatalog = content
+            stableSince = performance.now()
+          } else if (performance.now() - stableSince >= 500) return tools
+        }
       }
     } catch (error) {
-      if (attempt === 19) throw error
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
     }
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('DSH Runtime 未生成 MCP 工具目录')
 }
