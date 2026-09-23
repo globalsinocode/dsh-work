@@ -900,6 +900,19 @@ async function expectTypedDenial(label: string, message: string, run: () => Prom
   assert.equal(mapped.error.code, 'permission_denied')
 }
 
+/** 测试 Agent Principal 获得调用者角色和其声明的最小数据范围。 */
+async function grantAgentExecution(agentId: string) {
+  const principalId = `principal-agent-${agentId}`
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${principalId}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${principalId}, 'enterprise:authorized')
+  `
+}
+
 /** 最小可用的已发布 Agent 版本 + 空间级 agent 授权（无 skill/tool 依赖）。 */
 async function seedAuthorizableAgent(workspaceId: string, versionId: string, visibleRoleIds: string[] = ['role-employee']) {
   const agentId = `${versionId}-agent`
@@ -930,6 +943,7 @@ async function seedAuthorizableAgent(workspaceId: string, versionId: string, vis
     values (${tenantId}, ${workspaceId}, 'agent', ${versionId})
     on conflict do nothing
   `
+  await grantAgentExecution(agentId)
 }
 
 test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403（消息不变）', async () => {
@@ -975,6 +989,7 @@ test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403�
       'published', 'U00008', '5-T4 测试版本'
     )
   `
+  await grantAgentExecution(`${noGrantWorkspace}-agent`)
   await expectTypedDenial(
     'requireWorkspaceCapabilities 未配置授权',
     '工作空间未配置Agent授权',

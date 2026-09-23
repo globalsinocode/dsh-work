@@ -26,6 +26,7 @@ import { streamRunEvents, registerConversationRoutes } from '../../http/workbenc
 import { Router } from '../../http/router.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { createServer, type Server } from 'node:http'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
@@ -1392,7 +1393,20 @@ async function seedAgent(workspacePrefix: string, versionId: string, suffix = ''
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}
   `
+  await grantAgentExecution(agentId)
   return { agentId, versionId }
+}
+
+async function grantAgentExecution(agentId: string) {
+  const principalId = `principal-agent-${agentId}`
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${principalId}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${principalId}, 'enterprise:authorized')
+  `
 }
 
 async function grantAgentVersion(workspaceId: string, versionId: string) {
@@ -1432,6 +1446,7 @@ async function seedAgentWithVersions(agentId: string, versionIds: string[]) {
     update agents set active_version_id = ${versionIds[versionIds.length - 1] ?? null}
      where tenant_id = ${tenantId} and id = ${agentId}
   `
+  await grantAgentExecution(agentId)
 }
 
 async function addAgentMemberRow(workspaceId: string, memberId: string, agentId: string, versionId: string) {
@@ -1465,6 +1480,7 @@ async function createRunWithAttempt(input: {
 }) {
   const attemptId = `${input.id}-attempt`
   const manifest = {
+    ...testAttemptManifest(`task-${input.id}`, input.id),
     manifest_version: '1.0',
     run_id: input.id,
     task_id: `task-${input.id}`,

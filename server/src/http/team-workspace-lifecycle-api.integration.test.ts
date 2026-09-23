@@ -866,6 +866,14 @@ async function seedAgent(workspacePrefix: string, versionId: string) {
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}
   `
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, 'enterprise:authorized')
+  `
 }
 
 async function grantAgentVersion(workspaceId: string, versionId: string) {

@@ -1358,6 +1358,7 @@ async function createPublishedAgent(input: {
   updatedAtSecondsAgo?: number
 }) {
   const status = input.status ?? 'published'
+  const roleIds = input.roleIds ?? ['role-employee']
   await database`
     insert into agents (
       id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
@@ -1373,7 +1374,7 @@ async function createPublishedAgent(input: {
         version: '1.0.0',
         skillRefs: input.skillRefs ?? [],
         toolRefs: input.toolRefs ?? [],
-        roleIds: input.roleIds ?? ['role-employee'],
+        roleIds,
         activate: false,
       })
     : await createAgentVersion({
@@ -1381,9 +1382,19 @@ async function createPublishedAgent(input: {
         version: '1.0.0',
         skillRefs: input.skillRefs ?? [],
         toolRefs: input.toolRefs ?? [],
-        roleIds: input.roleIds ?? ['role-employee'],
+        roleIds,
         versionStatus: input.versionStatus,
       })
+  for (const roleId of roleIds) {
+    await database`
+      insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+      values (${tenantId}, ${`principal-agent-${input.id}`}, ${roleId})
+    `
+  }
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${input.id}`}, 'enterprise:authorized')
+  `
   if (input.updatedAtSecondsAgo !== undefined) {
     await database`
       update agents set updated_at = now() - make_interval(secs => ${input.updatedAtSecondsAgo})

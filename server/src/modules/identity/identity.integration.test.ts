@@ -18,7 +18,6 @@ const externalUserId = `ai-user-${suffix}`
 const applicationId = `dsh-work-test-${suffix}`
 let localUserId = ''
 let directoryUserId = ''
-let directoryPlatformUserId = ''
 let backupAdminUserId = ''
 let legacyUserId = ''
 let database: DatabaseClient
@@ -35,42 +34,9 @@ before(async () => {
 })
 
 after(async () => {
-  if (!database) return
-  for (const userId of [
-    localUserId,
-    directoryUserId,
-    directoryPlatformUserId,
-    backupAdminUserId,
-    legacyUserId,
-  ].filter(Boolean)) {
-    await cleanupUser(userId)
-  }
-  await database`delete from audit_events where object_id = ${applicationId} or actor_id = 'service:dsh-work-directory-test'`
-  await database`delete from identity_directory_sync_state where application_id = ${applicationId}`
-  await throwaway.dispose()
+  // 整套用例使用一次性数据库，销毁数据库即可清理所有测试用户及关联数据。
+  if (throwaway) await throwaway.dispose()
 })
-
-async function cleanupUser(userId: string) {
-  await database`delete from audit_events where actor_id = ${userId} or object_id = ${userId}`
-  await database`delete from authentication_sessions where tenant_id = 'tenant-dsh-work' and user_id = ${userId}`
-  await database`delete from application_admin_bootstrap_claims where user_id = ${userId}`
-  await database`delete from data_scope_grants where tenant_id = 'tenant-dsh-work' and subject_type = 'user' and subject_id = ${userId}`
-  await database`delete from user_roles where tenant_id = 'tenant-dsh-work' and user_id = ${userId}`
-  // 用户由目录同步自动创建个人空间（0013 触发器），其负责人成员行受
-  // personal_workspace_membership_guard 保护、无法直接删除。此前用
-  // 「update workspace_type='team'」绕过，但 0022 起会伪造出一个 0 负责人的团队空间，
-  // 被 team_workspace_single_owner 在提交时正确拒绝。这里改为仅对本次清理临时停用
-  // 触发器，不伪造任何非法状态：
-  //   1) 停用触发器后删除个人空间与残留成员行；
-  //   2) 删除剩余空间行与用户行。
-  await database.begin(async transaction => {
-    await transaction`set local session_replication_role = replica`
-    await transaction`delete from workspaces where tenant_id = 'tenant-dsh-work' and created_by = ${userId}`
-    await transaction`delete from workspace_members where tenant_id = 'tenant-dsh-work' and user_id = ${userId}`
-  })
-  await database`delete from workspaces where tenant_id = 'tenant-dsh-work' and created_by = ${userId}`
-  await database`delete from users where tenant_id = 'tenant-dsh-work' and id = ${userId}`
-}
 
 test('identity-owned authorization migration installs mapping, bootstrap and sync state', async () => {
   const [record] = await database<{ count: number }[]>`
@@ -495,7 +461,6 @@ test('directory sync uses a service token and never overwrites local role assign
        where tenant_id = 'tenant-dsh-work' and identity_provider = 'ai-hub'
          and external_user_id = ${directoryPlatformExternalId}
     `
-    directoryPlatformUserId = directoryPlatformUser?.id ?? ''
     assert.equal(directoryPlatformUser?.status, 'disabled')
     assert.equal(directoryPlatformUser?.businessUser, false)
     const hiddenPlatformUser = await administration.listUsers({
