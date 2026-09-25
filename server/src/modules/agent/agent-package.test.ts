@@ -9,6 +9,8 @@ import { strToU8, zipSync } from 'fflate'
 
 import { parseAgentPackage } from './agent-package.ts'
 import { AGENT_PACKAGE_SCHEMA } from './agent-package.schema.ts'
+import { agentSpecFromConfiguration, assertAgentSpecContent } from './agent-spec.ts'
+import { configurationFingerprint } from './postgres-agent-service.ts'
 
 /**
  * Agent 发布包清单（agent.yaml）严格结构校验单测：
@@ -138,6 +140,49 @@ test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆
   assert.deepEqual(spec.model, { requirements: [] })
   assert.equal(parsed.checksumsVerified, true)
   assert.deepEqual(parsed.warnings, [])
+})
+
+test('Agent 包只声明数据需求和 Schema 候选，不携带 SQL 或授权', () => {
+  const collectionSchema = { type: 'object', additionalProperties: false,
+    properties: { materialCode: { type: 'string' } }, required: ['materialCode'] }
+  const parsed = parseAgentPackage(basePackage({ specLines: [
+    '  data:', '    state: true', '    collections:',
+    '      - key: shortage_records', '        scope: workspace', '        schemaVersion: 1',
+    '        actions: [query, propose, update]', '        schema: schemas/shortage_records.json',
+  ] }, { 'schemas/shortage_records.json': JSON.stringify(collectionSchema) }))
+  assert.equal(parsed.spec.data.state, true)
+  assert.deepEqual(parsed.spec.data.collections[0]?.actions, ['query', 'propose', 'update'])
+  assert.deepEqual(parsed.spec.data.collections[0]?.schema?.body, collectionSchema)
+  assert.match(parsed.spec.data.collections[0]?.schema?.sha256 ?? '', /^[a-f0-9]{64}$/)
+  assert.throws(() => parseAgentPackage(basePackage({ specLines: [
+    '  data:', '    state: false', '    collections:',
+    '      - key: shortage_records', '        scope: workspace', '        schemaVersion: 1',
+    '        actions: [query]', '        schema: schemas/shortage_records.json',
+  ] })), /Schema|schemas\/shortage_records/)
+})
+
+test('配置入口与 ZIP 共用 AgentSpec.data，并拒绝重复集合动作', () => {
+  const input = { id: 'config-agent', name: '配置助手', description: '执行受控数据操作的测试助手。',
+    systemPrompt: PROMPT, welcomeMessage: '', examplePrompts: [], skills: [], tools: [],
+    timeoutSeconds: 120, maxToolCalls: 5, maxOutputBytes: 32768,
+    data: { state: true, collections: [{ key: 'shared_records', scope: 'tenant' as const,
+      schemaVersion: 1, actions: ['query' as const, 'propose' as const] }] } }
+  const spec = agentSpecFromConfiguration(input, '1.0.0')
+  assert.deepEqual(spec.data.collections[0], { key: 'shared_records', scope: 'tenant',
+    schemaVersion: 1, actions: ['query', 'propose'], schema: null })
+  assert.doesNotThrow(() => assertAgentSpecContent(spec))
+  const invalid = agentSpecFromConfiguration({ ...input,
+    data: { state: true, collections: [{ ...input.data.collections[0]!, actions: ['query' as const, 'query' as const] }] } }, '1.0.0')
+  assert.throws(() => assertAgentSpecContent(invalid), /集合声明/)
+  const fingerprintInput = { versionId: 'draft-1', name: input.name, description: input.description,
+    welcomeMessage: input.welcomeMessage, systemPrompt: input.systemPrompt,
+    roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
+    examplePrompts: input.examplePrompts, skills: input.skills, tools: input.tools,
+    maxOutputBytes: input.maxOutputBytes, maxToolCalls: input.maxToolCalls,
+    timeoutSeconds: input.timeoutSeconds }
+  const changed = agentSpecFromConfiguration({ ...input, data: { state: false, collections: [] } }, '1.0.0')
+  assert.notEqual(configurationFingerprint({ ...fingerprintInput, agentSpec: spec }),
+    configurationFingerprint({ ...fingerprintInput, agentSpec: changed }))
 })
 
 test('嵌套顶层目录与完整 spec 字段解析', () => {

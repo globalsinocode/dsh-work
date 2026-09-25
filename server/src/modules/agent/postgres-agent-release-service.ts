@@ -22,6 +22,8 @@ import { configurationFingerprint, type PostgresAgentService } from './postgres-
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { AgentDelegationPolicy } from '../../domain/types.ts'
+import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
+import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -173,6 +175,7 @@ interface DraftVersionShape {
   skills: string[]
   tools: string[]
   delegationPolicy?: AgentDelegationPolicy
+  agentSpec: AgentSpec | null
 }
 
 interface AgentContext {
@@ -364,6 +367,7 @@ function draftFingerprint(draft: DraftVersionShape) {
     delegationPolicy: draft.delegationPolicy ?? {
       allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
     },
+    agentSpec: draft.agentSpec,
   })
 }
 
@@ -628,6 +632,14 @@ export class PostgresAgentReleaseService {
     const invalidCases = submission.cases.filter(item => caseValidationError(item))
     const coveredKinds = CASE_KINDS.filter(kind => submission.cases.some(item => item.kind === kind))
     const generatedCount = submission.cases.filter(item => item.origin === 'generated').length
+    let dataRequirementError: string | undefined
+    if (draft.agentSpec?.data?.collections?.length) {
+      try {
+        await this.database.begin(tx => this.assertDataRequirements(tx, draft.id, context.id))
+      } catch (error) {
+        dataRequirementError = error instanceof Error ? error.message : String(error)
+      }
+    }
     return [
       {
         id: 'manifest',
@@ -657,6 +669,14 @@ export class PostgresAgentReleaseService {
           : hasPackageSkills || hasPackageTools
             ? '平台依赖解析成功；包内候选进入独立准入流程'
             : '全部依赖解析为有权使用的已发布版本',
+      },
+      {
+        id: 'data',
+        label: '数据集合与授权',
+        status: dataRequirementError ? 'failed' : 'passed',
+        detail: dataRequirementError ?? (draft.agentSpec?.data?.collections?.length
+          ? '声明的集合、Schema 版本与当前执行身份授权兼容'
+          : '未声明结构化数据集合'),
       },
       {
         id: 'admission',
@@ -1291,6 +1311,7 @@ export class PostgresAgentReleaseService {
       // B-03/I-04：发布事务内复核封存绑定依据——并发绑定变更（撤销/轮换/语义
       // 漂移）在此拒绝，旧证据不能带病放行。
       await this.assertSealedBindings(submission, transaction)
+      await this.assertDataRequirements(transaction, submission.agentVersionId, agentId)
 
       // 已发布版本携带封存绑定依据：与状态翻转同一条 UPDATE（已发布版本不可变，
       // 不能发布后补写）。Attempt 据此解释当时使用的批准连接/凭据槽位/身份策略。
@@ -1353,6 +1374,42 @@ export class PostgresAgentReleaseService {
     })
     await this.audit(actor.id, 'agent.release.publish', agentId, 'success', `候选发布为 v${version}`)
     return this.getReleaseState(agentId)
+  }
+
+  private async assertDataRequirements(tx: DatabaseTransaction, agentVersionId: string, agentId: string): Promise<void> {
+    const [definition] = await tx<{ collections: AgentDataCollectionRequirement[]; dataScopes: string[] }[]>`
+      select coalesce(agent_spec #> '{data,collections}', '[]'::jsonb) as collections,
+             data_scopes as "dataScopes"
+        from agent_versions where tenant_id = ${tenantId} and id = ${agentVersionId}
+    `
+    if (!definition) throw new Error('Agent 数据声明不可用')
+    const grants = await tx<{ scopeValue: string }[]>`
+      select g.scope_value as "scopeValue" from agent_principal_scope_grants g
+        join execution_principals p on p.tenant_id = g.tenant_id and p.id = g.principal_id
+       where g.tenant_id = ${tenantId} and p.agent_id = ${agentId} and p.status = 'active'
+    `
+    const currentScopes = new Set(grants.map(item => item.scopeValue))
+    for (const requirement of definition.collections) {
+      const neededScope = requirement.scope === 'tenant' ? 'enterprise:authorized'
+        : requirement.scope === 'workspace' ? 'workspace:authorized' : null
+      if (neededScope && (!definition.dataScopes.includes(neededScope) || !currentScopes.has(neededScope))) {
+        throw new Error(`集合 ${requirement.key} 所需的数据范围未获 Agent Version 与执行身份共同授权`)
+      }
+      const [bound] = await tx<{ scope: string; version: number; schema: Record<string, unknown>; actions: string[] }[]>`
+        select c.access_scope as scope, c.schema_version as version, c.schema_json as schema, g.actions
+          from agent_data_collections c
+          join agent_data_collection_grants g on g.tenant_id = c.tenant_id and g.collection_id = c.id
+          join agent_installations i on i.tenant_id = g.tenant_id and i.id = g.agent_installation_id
+         where c.tenant_id = ${tenantId} and c.collection_key = ${requirement.key}
+           and c.status = 'active' and i.agent_id = ${agentId}
+         for share of c, g
+      `
+      if (!bound || bound.scope !== requirement.scope || bound.version !== requirement.schemaVersion
+        || requirement.actions.some(action => !bound.actions.includes(action))
+        || (requirement.schema && sha256(canonicalJson(requirement.schema.body)) !== sha256(canonicalJson(bound.schema)))) {
+        throw new Error(`集合 ${requirement.key} 未发布、版本不兼容或缺少当前授权，不能发布 Agent`)
+      }
+    }
   }
 
   /* ---------- ZIP 导入 ---------- */
@@ -1464,6 +1521,7 @@ export class PostgresAgentReleaseService {
         timeoutSeconds: parsed.spec.limits.timeoutSeconds,
         skills: resolved.skills,
         tools: resolved.tools,
+        agentSpec: parsed.spec,
       })
 
       await tx`
@@ -1718,6 +1776,7 @@ export class PostgresAgentReleaseService {
       draftSkills: string[] | null
       draftTools: string[] | null
       draftDelegationPolicy: AgentDelegationPolicy | null
+      draftAgentSpec: AgentSpec | null
     }[]>`
       select a.id, a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId",
@@ -1728,7 +1787,7 @@ export class PostgresAgentReleaseService {
              draft.max_output_bytes as "draftMaxOutputBytes", draft.max_tool_calls as "draftMaxToolCalls",
              draft.timeout_seconds as "draftTimeoutSeconds",
              draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools",
-             draft.delegation_policy as "draftDelegationPolicy"
+             draft.delegation_policy as "draftDelegationPolicy", draft.agent_spec as "draftAgentSpec"
         from agents a
         left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
@@ -1758,6 +1817,7 @@ export class PostgresAgentReleaseService {
           delegationPolicy: row.draftDelegationPolicy ?? {
             allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
           },
+          agentSpec: row.draftAgentSpec,
         },
       } : {}),
     }

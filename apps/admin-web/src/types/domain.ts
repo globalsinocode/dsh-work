@@ -320,6 +320,10 @@ export interface AgentDraftConfiguration {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  data?: { state: boolean; collections: Array<{
+    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
+    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
+  }> }
   delegationPolicy: AgentDelegationPolicy
   changeSummary: string
 }

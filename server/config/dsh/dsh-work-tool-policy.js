@@ -118,8 +118,8 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory'])
-const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'state_get', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'])
+const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent', 'state_get', 'data_query'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
   ['job_list', 10], ['job_kill', 10], ['bash', 60],
@@ -464,6 +464,65 @@ function registerPlatformTools(ctx) {
       },
       required: ['kind', 'title', 'content'],
     },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'state_get',
+    description: 'Read one bounded, private operational state value for the current Agent installation. State is not business truth or long-term memory.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['namespace', 'key'] },
+    concurrencySafe: true,
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'state_put',
+    description: 'Write one bounded, expiring operational state value with an exact expected version. Never use it for authoritative business records.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 },
+        value: {}, expectedVersion: { type: 'integer', minimum: 0 }, ttlSeconds: { type: 'integer', minimum: 60, maximum: 7776000 } },
+      required: ['namespace', 'key', 'value', 'expectedVersion', 'ttlSeconds'] },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'data_query',
+    description: 'Query the current authorized versioned collection using only published query fields and a bounded limit.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, field: { type: 'string', maxLength: 64 },
+        equals: { type: 'string', maxLength: 500 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+        after: { type: 'string', maxLength: 160 } },
+      required: ['collectionKey'] },
+    concurrencySafe: true,
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'data_create',
+    description: 'Create an approved lightweight collection record. Requires an exact published collection, current grant, schema validation and a stable operation key.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
+        data: { type: 'object' }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['collectionKey', 'recordKey', 'data', 'operationKey'] },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'data_update',
+    description: 'Write a new immutable version of an existing approved collection record. Requires expectedVersion and a stable operation key.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
+        data: { type: 'object' }, expectedVersion: { type: 'integer', minimum: 1 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'data_propose',
+    description: 'Submit a schema-checked record proposal for platform administrator review. This does not publish a record or prove a business fact.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
+        data: { type: 'object' }, expectedVersion: { type: 'integer', minimum: 0 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'data_transition',
+    description: 'Change the status field of an approved record only when its version and current status match, subject to the published Schema.',
+    parameters: { type: 'object', additionalProperties: false,
+      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
+        expectedVersion: { type: 'integer', minimum: 1 }, expectedStatus: { type: 'string', minLength: 1, maxLength: 80 },
+        nextStatus: { type: 'string', minLength: 1, maxLength: 80 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['collectionKey', 'recordKey', 'expectedVersion', 'expectedStatus', 'nextStatus', 'operationKey'] },
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'activate_skill',

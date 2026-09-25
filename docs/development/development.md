@@ -64,6 +64,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
+| Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 包、发布与 Runtime 契约测试 |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入原型冒烟） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：

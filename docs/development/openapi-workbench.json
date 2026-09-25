@@ -3259,9 +3259,10 @@
             "enum": [
               "answer",
               "artifact",
-              "tool"
+              "tool",
+              "record"
             ],
-            "description": "回执类别：回答提交/成果登记/平台工具动作"
+            "description": "回执类别：回答提交/成果登记/平台工具动作/结构化记录版本"
           },
           "status": {
             "type": "string",
@@ -3279,7 +3280,7 @@
               "string",
               "null"
             ],
-            "description": "可核验引用：消息 id / artifact_version id / tool_audit id；无引用为 null"
+            "description": "可核验引用：消息 id / artifact_version id / tool_audit id / record_version id；无引用为 null"
           },
           "label": {
             "type": "string",
@@ -3305,7 +3306,8 @@
               "no_deliverable",
               "no_verified_deliverable",
               "output_truncated",
-              "output_interrupted"
+              "output_interrupted",
+              "external_effect_unknown"
             ]
           },
           "message": {

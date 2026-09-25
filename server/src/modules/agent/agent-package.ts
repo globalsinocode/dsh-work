@@ -1,4 +1,5 @@
 import { parseDocument } from 'yaml'
+import Ajv2020Module from 'ajv/dist/2020.js'
 
 import { extractZip, hash, parseSkillMarkdown } from '../skill/skill-package.ts'
 import {
@@ -6,6 +7,7 @@ import {
   AGENT_SPEC_LIMITS_DEFAULT,
   assertAgentSpecContent,
   type AgentModelRequirement,
+  type AgentDataCollectionRequirement,
   type AgentSpec,
 } from './agent-spec.ts'
 import { manifestSchemaErrors, type AgentPackageManifestDocument } from './agent-package.schema.ts'
@@ -88,6 +90,7 @@ const DEP_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/
 const CASE_KINDS = new Set<string>(AGENT_EVALUATION_CASE_KINDS)
 const CASE_ASSERTIONS = new Set<string>(AGENT_EVALUATION_ASSERTIONS)
 const decoder = new TextDecoder('utf-8', { fatal: true })
+const Ajv2020 = Ajv2020Module.default
 
 /**
  * 平台受管字段：包内声明这些字段若被静默忽略即构成安全/能力语义漂移，直接拒绝。
@@ -355,6 +358,29 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
     ?? fail(`spec.instructions 指定的 ${instructionsPath} 不存在`)
   const checksumsVerified = verifyChecksums(files, rootDir, warnings)
 
+  const collectionKeys = new Set<string>()
+  const dataCollections: AgentDataCollectionRequirement[] = (document.spec.data?.collections ?? []).map(item => {
+    if (collectionKeys.has(item.key)) fail(`spec.data.collections 中重复声明集合 ${item.key}`)
+    collectionKeys.add(item.key)
+    let schema: AgentDataCollectionRequirement['schema'] = null
+    if (item.schema) {
+      if (item.schema !== `schemas/${item.key}.json`) fail(`集合 ${item.key} 的 Schema 路径必须为 schemas/${item.key}.json`)
+      const content = files[`${rootDir}${item.schema}`]
+      if (!content) fail(`集合 ${item.key} 声明的 Schema 文件不存在`)
+      if (content.length > 32 * 1024) fail(`集合 ${item.key} 的 Schema 超过 32 KiB`)
+      const bodyText = readText(files, `${rootDir}${item.schema}`)!
+      let body: unknown
+      try { body = JSON.parse(bodyText) } catch { fail(`集合 ${item.key} 的 Schema 不是有效 JSON`) }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || (body as Record<string, unknown>)['type'] !== 'object') {
+        fail(`集合 ${item.key} 的 Schema 顶层必须是 object`)
+      }
+      try { new Ajv2020({ strict: true, allErrors: true }).compile(body as Record<string, unknown>) }
+      catch { fail(`集合 ${item.key} 的 Schema 无效或包含不支持的引用`) }
+      schema = { path: item.schema, sha256: hash(content), body: body as Record<string, unknown> }
+    }
+    return { key: item.key, scope: item.scope, schemaVersion: item.schemaVersion, actions: [...item.actions], schema }
+  })
+
   const spec: AgentSpec = {
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: {
@@ -378,6 +404,7 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
     limits: { ...AGENT_SPEC_LIMITS_DEFAULT, ...(document.spec.limits ?? {}) },
     evaluation: { cases: document.spec.evaluation?.cases ?? null },
     model: { requirements: [...(document.spec.model?.requirements ?? [])] as AgentModelRequirement[] },
+    data: { state: document.spec.data?.state ?? false, collections: dataCollections },
   }
   assertAgentSpecContent(spec)
 

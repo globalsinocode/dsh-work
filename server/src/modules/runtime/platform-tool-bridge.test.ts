@@ -43,13 +43,27 @@ test('all governed platform tool contracts compile in strict JSON Schema mode', 
     'only the application staging completes; review and publication are separate human actions')
 })
 
+test('Agent data outputs require durable record references and distinguish trial-only replies', () => {
+  const create = compileToolContract(platformToolContracts.data_create)
+  assert.equal(create.output({ recordId: 'r1', recordVersionId: 'v1', version: 1 }), true)
+  assert.equal(create.output({ status: 'trial_only' }), true)
+  assert.equal(create.output({ version: 1 }), false)
+  const query = compileToolContract(platformToolContracts.data_query)
+  assert.equal(query.output({ records: [], nextCursor: null, trialOnly: true }), true)
+  assert.equal(query.output({ records: [] }), false)
+  const propose = compileToolContract(platformToolContracts.data_propose)
+  assert.equal(propose.output({ proposalId: 'p1', status: 'pending_admin_review' }), true)
+  assert.equal(propose.output({ status: 'trial_only' }), true)
+})
+
 test('dsh-work built-in tools use one explicit category and governance registry', () => {
   assert.deepEqual(
     Object.entries(dshWorkBuiltInToolDefinitions)
       .filter(([, definition]) => definition.category === 'dsh_work_execution')
       .map(([name]) => name)
       .sort(),
-    ['activate_skill', 'delegate_agent', 'propose_memory', 'python_execute'],
+    ['activate_skill', 'data_create', 'data_propose', 'data_query', 'data_transition', 'data_update',
+      'delegate_agent', 'propose_memory', 'python_execute', 'state_get', 'state_put'],
   )
   assert.deepEqual(
     platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),

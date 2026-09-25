@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import { PostgresAgentReleaseService } from '../../modules/agent/postgres-agent-release-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
@@ -339,6 +340,50 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const records = await agents.getReleaseRecords()
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
+})
+
+test('数据声明发布前复核集合授权，且试运行证据固定数据定义', async () => {
+  const agentId = 'agent-release-data'
+  await createDraftAgent(agentId, [], [], ['enterprise:authorized'])
+  const dataService = new PostgresAgentDataService(database)
+  const collectionId = await dataService.publishCollection({ tenantId, key: 'release_data_records',
+    schema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
+    queryFields: ['code'], retentionDays: 30, actorUserId: ADMIN })
+  const base = {
+    agentId, name: '退款预测助手', description: '基于历史退款记录预测高风险订单并给出处理建议。',
+    owner: '发布管理员', department: '平台治理', visibility: '指定角色', roleIds: ['role-employee'],
+    dataScopes: ['enterprise:authorized'], welcomeMessage: '', examplePrompts: ['评估本周退款风险订单'],
+    systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], tools: [],
+    changeSummary: '声明结构化数据需求', actor: ADMIN,
+  }
+  await agents.updateAgent({ ...base, data: { state: false,
+    collections: [{ key: 'release_data_records', scope: 'tenant', schemaVersion: 1, actions: ['query'] }] } })
+  await release.ensureCandidate(agentId, ADMIN)
+  const blocked = await release.runChecks(agentId, ADMIN)
+  assert.equal(blocked.candidate?.checks.find(item => item.id === 'data')?.status, 'failed')
+  await assert.rejects(release.startTrial(agentId, ADMIN), /试运行被阻塞/)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
+  const checked = await release.runChecks(agentId, ADMIN)
+  assert.equal(checked.candidate?.checks.find(item => item.id === 'data')?.status, 'passed')
+  const trial = await release.startTrial(agentId, ADMIN)
+  const caseRun = trial.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? [])[0]
+  assert.ok(caseRun?.runId)
+  assert.ok(trialRuntime.manifest(caseRun.runId!)?.tools.some(tool => tool.id === 'data_query'),
+    JSON.stringify(trialRuntime.manifest(caseRun.runId!)?.tools))
+  await confirmLatestTrial(agentId)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: [], actorUserId: ADMIN })
+  await assert.rejects(release.publish(agentId, '', ADMIN), /集合 release_data_records 未发布、版本不兼容或缺少当前授权/)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
+  await agents.updateAgent({ ...base, data: { state: true,
+    collections: [{ key: 'release_data_records', scope: 'tenant', schemaVersion: 1, actions: ['query'] }] } })
+  assert.equal((await release.getReleaseState(agentId)).definitionChanged, true)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /发布前必须.*封存试运行/)
+  await release.ensureCandidate(agentId, ADMIN)
+  await release.runChecks(agentId, ADMIN)
+  await release.startTrial(agentId, ADMIN)
+  await confirmLatestTrial(agentId)
+  assert.equal((await release.publish(agentId, '集合授权已确认', ADMIN)).candidate, undefined)
 })
 
 test('试运行缩小 Agent 授权后拒绝不再获准的工具，不产生 Runtime Attempt', async () => {

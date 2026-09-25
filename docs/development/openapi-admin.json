@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.10.0-agent-experience-iteration",
+    "version": "0.11.0-agent-data-plane",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,6 +16,89 @@
     }
   ],
   "paths": {
+    "/agent-data/collections": {
+      "get": {
+        "operationId": "listAgentDataCollections",
+        "summary": "列出 Agent 数据集合及 Schema、作用域和保留策略",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "publishAgentDataCollection",
+        "summary": "发布受治理的数据集合；不执行 Agent 包内 SQL",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataCollectionInput" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/schema": {
+      "patch": {
+        "operationId": "evolveAgentDataCollectionSchema",
+        "summary": "以期望版本升级集合 Schema",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSchemaEvolutionInput" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/status": {
+      "patch": {
+        "operationId": "setAgentDataCollectionStatus",
+        "summary": "启用或停用数据集合",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "enum": ["active", "disabled"] } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants": {
+      "get": {
+        "operationId": "listAgentDataCollectionGrants",
+        "summary": "列出集合对 Agent 安装实例的动作授权",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants/{agentId}": {
+      "patch": {
+        "operationId": "setAgentDataCollectionGrant",
+        "summary": "设置 Agent 的集合动作授权；空数组表示撤权",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }, { "$ref": "#/components/parameters/AgentId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataGrantInput" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/records": {
+      "get": {
+        "operationId": "listAgentDataRecords",
+        "summary": "分页读取集合的结构化记录",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" },
+          { "name": "after", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/proposals": {
+      "get": {
+        "operationId": "listAgentDataProposals",
+        "summary": "列出待审或已处理的 Agent 数据提案",
+        "parameters": [{ "name": "status", "in": "query", "schema": { "enum": ["pending", "approved", "rejected"] } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/proposals/{proposalId}/review": {
+      "post": {
+        "operationId": "reviewAgentDataProposal",
+        "summary": "审核提案并在批准时复核当前授权与固定 Schema 版本",
+        "parameters": [{ "name": "proposalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["decision"], "properties": { "decision": { "enum": ["approved", "rejected"] } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/records/{recordId}": {
+      "delete": {
+        "operationId": "deleteAgentDataRecord",
+        "summary": "删除记录正文并保留不含正文的版本删除摘要",
+        "parameters": [{ "name": "recordId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/experience-iterations/agents": {
       "get": {
         "operationId": "listExperienceIterationAgents",
@@ -1719,6 +1802,12 @@
       }
     },
     "parameters": {
+      "AgentDataCollectionId": {
+        "name": "collectionId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
       "AgentId": {
         "name": "agentId",
         "in": "path",
@@ -1760,7 +1849,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/AgentInput"
+              "$ref": "#/components/schemas/AgentConfiguration"
             }
           }
         }
@@ -1789,6 +1878,38 @@
       }
     },
     "schemas": {
+      "AgentDataCollectionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "schema", "queryFields", "retentionDays"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$" },
+          "ownerWorkspaceId": { "type": "string" },
+          "privateAgentId": { "type": "string" },
+          "schema": { "type": "object", "description": "管理员批准的 JSON Schema；顶层必须为 object。" },
+          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } },
+          "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+        }
+      },
+      "AgentDataSchemaEvolutionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["expectedVersion", "schema", "queryFields"],
+        "properties": {
+          "expectedVersion": { "type": "integer", "minimum": 1 },
+          "schema": { "type": "object" },
+          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } }
+        }
+      },
+      "AgentDataGrantInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actions"],
+        "properties": {
+          "actions": { "type": "array", "uniqueItems": true,
+            "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+        }
+      },
       "SkillTestScenario": {
         "type": "object",
         "additionalProperties": false,
@@ -1999,6 +2120,27 @@
               "type": "string"
             },
             "uniqueItems": true
+          },
+          "data": {
+            "type": "object",
+            "description": "可选 Agent 数据需求声明；集合发布与授权由平台管理，声明本身不授予权限。",
+            "properties": {
+              "state": { "type": "boolean" },
+              "collections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["key", "scope", "schemaVersion", "actions"],
+                  "properties": {
+                    "key": { "type": "string" },
+                    "scope": { "enum": ["installation", "workspace", "tenant"] },
+                    "schemaVersion": { "type": "integer", "minimum": 1 },
+                    "actions": { "type": "array", "uniqueItems": true,
+                      "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+                  }
+                }
+              }
+            }
           },
           "maxOutputBytes": {
             "type": "integer",

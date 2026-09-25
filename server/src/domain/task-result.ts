@@ -42,7 +42,7 @@ export const TASK_RESULT_VERSION = 'task-result/v1'
 export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_achieved'
 
 /** 回执类别：回答提交、成果登记、平台工具动作。 */
-export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool' | 'record'
 
 /**
  * 回执核验状态：
@@ -73,6 +73,7 @@ export type TaskResultPendingKind =
   | 'no_verified_deliverable'
   | 'output_truncated'
   | 'output_interrupted'
+  | 'external_effect_unknown'
 
 export interface TaskResultPendingItem {
   kind: TaskResultPendingKind
@@ -148,6 +149,10 @@ export interface TaskResultEvidence {
     artifact: Artifact
     artifactVersionId: string
   }>
+  /** Current Attempt's durable collection versions; no record body is exposed. */
+  recordVersions?: Array<{ id: string; deleted?: boolean }>
+  /** Current Attempt's write operations whose effect is still unknown. */
+  unknownOperations?: Array<{ id: string; actionRef: string }>
   sources: TaskSource[]
   /**
    * 当前 Attempt 的平台工具审计记录。`decision` 非空的行为授权决定记录
@@ -259,6 +264,10 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       label: `成果已登记：${artifact.name}（v${artifact.version}）`,
     })
   }
+  for (const record of evidence.recordVersions ?? []) {
+    receipts.push({ kind: 'record', status: 'completed', ref: record.id,
+      label: record.deleted ? '结构化记录版本曾登记，内容已按保留政策删除' : '结构化记录版本已登记' })
+  }
   const artifactsClaimed = terminalMetadata ? metadataNumber(terminalMetadata, 'artifact_count') : null
   if (artifactsClaimed !== null && artifactsClaimed > artifacts.length) {
     receipts.push({
@@ -298,6 +307,12 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       detail: audit.decision ?? undefined,
     })
   }
+  for (const operation of evidence.unknownOperations ?? []) {
+    receipts.push({ kind: 'tool', status: 'accepted', ref: operation.id,
+      label: `工具效果待核对：${operation.actionRef}` })
+    pendingItems.push({ kind: 'external_effect_unknown',
+      message: `工具 ${operation.actionRef} 的实际效果未知；须查询权威系统回执后才能确认目标。` })
+  }
 
   if (outputTruncated) {
     pendingItems.push({
@@ -321,9 +336,12 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
   const hasCommittedDeliverable = receipts.some(
     receipt => receipt.status === 'completed',
   )
+  // A state cursor or collection read is platform work, not evidence that the
+  // business goal is true. Durable record versions are verified separately.
   const hasVerifiedDeliverable = receipts.some(
-    receipt => receipt.status === 'completed' && (receipt.kind === 'artifact' || receipt.kind === 'tool'),
-  )
+    receipt => receipt.status === 'completed' && (receipt.kind === 'artifact' || receipt.kind === 'record'),
+  ) || toolAudits.some(audit => audit.decision === null && audit.result === 'success'
+    && !/^(state_|data_)/.test(audit.toolName ?? ''))
   let outcome: TaskResultOutcome
   if (!terminal) {
     outcome = 'pending'

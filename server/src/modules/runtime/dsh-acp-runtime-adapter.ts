@@ -118,6 +118,7 @@ export interface DshAcpRuntimeAdapterConfiguration {
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
   delegateAgent?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   proposeMemory?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  invokeAgentData?: (name: 'state_get' | 'state_put' | 'data_query' | 'data_create' | 'data_update' | 'data_propose' | 'data_transition', input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   collectArtifacts?: (
     manifest: RuntimeManifest,
@@ -521,6 +522,12 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         const propose = this.configuration.proposeMemory
         if (!propose) throw new Error('Agent 经验迭代申请不可用：未配置经验迭代服务')
         registerPlatformTool('propose_memory', (input, signal) => propose(input, record.manifest, signal))
+      }
+      for (const name of ['state_get', 'state_put', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'] as const) {
+        if (!record.manifest.tools.some(tool => tool.id === name)) continue
+        const invoke = this.configuration.invokeAgentData
+        if (!invoke) throw new Error('Agent 数据平面不可用：未配置受控数据工具')
+        registerPlatformTool(name, (input, signal) => invoke(name, input, record.manifest, signal))
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,

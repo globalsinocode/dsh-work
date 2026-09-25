@@ -75,7 +75,7 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'maxOutputBytes'
   | 'maxToolCalls'
   | 'timeoutSeconds'
->, 'delegationPolicy'> & { delegationPolicy?: AgentDelegationPolicy }
+>, 'delegationPolicy'> & { delegationPolicy?: AgentDelegationPolicy; agentSpec?: AgentSpec | null }
 
 interface VersionRow {
   id: string
@@ -141,6 +141,8 @@ export interface RuntimeAgentSnapshot {
   principalId?: string
   principalAuthorizationVersion?: number
   modelRequirements: AgentSpec['model']['requirements']
+  dataRequirements?: AgentSpec['data']['collections']
+  stateEnabled?: boolean
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
@@ -813,6 +815,8 @@ export class PostgresAgentService {
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
+             coalesce(av.agent_spec #> '{data,collections}', '[]'::jsonb) as "dataRequirements",
+             coalesce((av.agent_spec #>> '{data,state}')::boolean, false) as "stateEnabled",
              av.delegation_policy as "delegationPolicy"
         from agent_versions av
         join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
@@ -1143,6 +1147,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
 
 export function configurationFingerprint(row: AgentFingerprintSource) {
   const delegationPolicy = normalizeDelegationPolicy(row.delegationPolicy)
+  const data = row.agentSpec?.data
   return createHash('sha256').update(JSON.stringify({
     versionId: row.versionId,
     name: row.name,
@@ -1163,6 +1168,7 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
+    ...((data?.state || data?.collections?.length) ? { data } : {}),
   })).digest('hex')
 }
 
