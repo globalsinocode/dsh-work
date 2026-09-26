@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { StatusTag } from '@dsh-work/ui-core'
 import { adminApi } from '@/api/client'
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
+import AgentRoutinePanel from '@/components/AgentRoutinePanel.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import {
   useAgentGovernanceStore,
@@ -27,7 +28,7 @@ const selectedAgentId = ref('')
 const drawerOpen = ref(false)
 const editorOpen = ref(false)
 const editingAgent = ref<AgentDefinition>()
-const activeDetailTab = ref<'overview' | 'versions' | 'releases'>('overview')
+const activeDetailTab = ref<'overview' | 'versions' | 'releases' | 'routines'>('overview')
 const actionLoading = ref('')
 const workspaceJoinSaving = ref(false)
 const joinedWorkspacesLoading = ref(false)
@@ -387,6 +388,7 @@ onMounted(async () => {
           <button class="status-tab" :class="{ active: activeDetailTab === 'overview' }" type="button" role="tab" :aria-selected="activeDetailTab === 'overview'" @click="activeDetailTab = 'overview'">概览与生命周期</button>
           <button class="status-tab" :class="{ active: activeDetailTab === 'versions' }" type="button" role="tab" :aria-selected="activeDetailTab === 'versions'" @click="activeDetailTab = 'versions'">版本历史 <span class="tab-count">{{ selectedVersions.length }}</span></button>
           <button class="status-tab" :class="{ active: activeDetailTab === 'releases' }" type="button" role="tab" :aria-selected="activeDetailTab === 'releases'" @click="activeDetailTab = 'releases'">发布记录 <span class="tab-count">{{ selectedReleases.length }}</span></button>
+          <button class="status-tab" :class="{ active: activeDetailTab === 'routines' }" type="button" role="tab" :aria-selected="activeDetailTab === 'routines'" @click="activeDetailTab = 'routines'">主动任务</button>
         </div>
 
         <template v-if="activeDetailTab === 'overview'">
@@ -490,6 +492,8 @@ onMounted(async () => {
           </el-table>
           <el-pagination v-model:current-page="versionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedVersions.length" :page-size="10" />
         </section>
+
+        <AgentRoutinePanel v-else-if="activeDetailTab === 'routines'" :agent-id="selectedAgent.id" :versions="selectedVersions" :principal="principal" :can-manage="authStore.canManage" />
 
         <section v-else class="agent-detail__releases">
           <el-empty v-if="!selectedReleases.length" description="暂无发布记录" />

@@ -8,6 +8,7 @@ import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import type {
   Automation,
+  AgentRoutineResult,
   AutomationExecution,
   AutomationSchedule,
   TaskResultOutcome,
@@ -18,6 +19,8 @@ const router = useRouter()
 const contentStore = useContentStore()
 
 const automations = ref<Automation[]>([])
+const agentResults = ref<AgentRoutineResult[]>([])
+const agentResultsError = ref('')
 const loading = ref(false)
 const loadError = ref('')
 
@@ -362,7 +365,14 @@ async function cancelExecution(execution: AutomationExecution) {
 onMounted(() => {
   void contentStore.load()
   void load()
+  void loadAgentResults()
 })
+
+async function loadAgentResults() {
+  agentResultsError.value = ''
+  try { agentResults.value = await workbenchApi.getAgentRoutineResults() }
+  catch (error) { agentResultsError.value = error instanceof Error ? error.message : 'Agent 主动任务结果加载失败' }
+}
 </script>
 
 <template>
@@ -468,6 +478,17 @@ onMounted(() => {
         </div>
       </section>
     </div>
+
+    <section class="agent-results panel" aria-label="AI 同事主动任务结果">
+      <div class="agent-results__header"><div><h2>AI 同事主动任务结果</h2><p>由管理员批准的 Agent 规则产生；你是结果接收人，不是执行身份。</p></div><el-button text @click="loadAgentResults">刷新</el-button></div>
+      <el-alert v-if="agentResultsError" type="error" :closable="false" :title="agentResultsError" />
+      <el-empty v-else-if="!agentResults.length" description="暂无可查看的 Agent 主动任务结果" />
+      <div v-else class="agent-results__list"><article v-for="result in agentResults" :key="result.executionId" class="agent-results__item">
+        <h3>{{ result.routineName }}</h3><p>{{ result.agentName }} · {{ workspaceNameById.get(result.workspaceId) ?? '工作空间' }} · {{ formatInstant(result.createdAt) }}</p>
+        <p>运行：{{ runStatusLabels[result.runStatus] ?? result.runStatus }}<template v-if="result.resultOutcome"> · 结果：{{ outcomeMeta[result.resultOutcome as TaskResultOutcome]?.label ?? result.resultOutcome }}</template></p>
+        <pre v-if="result.answer" class="agent-results__answer">{{ result.answer }}</pre>
+      </article></div>
+    </section>
 
     <el-dialog
       v-model="dialogVisible"
@@ -645,4 +666,12 @@ onMounted(() => {
 .automation-skeleton { padding: 18px 20px; }
 
 .form-field { width: 100%; }
+.agent-results { margin-top: 24px; padding: 18px 20px; }
+.agent-results__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.agent-results__header h2 { margin: 0; font-size: var(--dsh-font-size-section); }
+.agent-results__header p, .agent-results__item p { color: var(--dsh-color-muted); }
+.agent-results__list { display: grid; gap: 12px; margin-top: 16px; }
+.agent-results__item { padding: 14px; border: 1px solid var(--dsh-color-border); border-radius: 8px; }
+.agent-results__item h3 { margin: 0; font-size: var(--dsh-font-size-body); }
+.agent-results__answer { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 </style>

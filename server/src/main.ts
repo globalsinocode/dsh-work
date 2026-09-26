@@ -72,6 +72,8 @@ import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
 import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
 import { AutomationService } from './modules/automation/automation-service.ts'
+import { AgentRoutineService } from './modules/automation/agent-routine-service.ts'
+import { registerAgentRoutineRecipientRoutes, registerAgentRoutineRoutes } from './http/admin/agent-routine-routes.ts'
 import { AutomationTriggerSweep } from './modules/automation/automation-trigger-sweep.ts'
 import { defaultAutomationConfig } from './modules/automation/automation-types.ts'
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
@@ -395,11 +397,16 @@ async function start() {
       operations,
       defaultAutomationConfig,
     )
+    const agentRoutineService = new AgentRoutineService(
+      database, authorization, runs, orchestration, conversations, operations,
+    )
     automationSweep = new AutomationTriggerSweep(
-      database, automationRepository, automationService, defaultAutomationConfig,
+      database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService,
     )
     await automationSweep.start()
     registerAutomationRoutes(router, automationService)
+    registerAgentRoutineRoutes(router, agentRoutineService)
+    registerAgentRoutineRecipientRoutes(router, agentRoutineService)
     registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerPersistentApprovalRoutes(router, persistentWait, authorization)

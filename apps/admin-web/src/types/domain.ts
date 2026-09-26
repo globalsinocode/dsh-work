@@ -279,6 +279,52 @@ export interface AgentPrincipalGovernance {
   dataScopes: string[]
 }
 
+export type AgentRoutineSchedule =
+  | { kind: 'manual'; timezone: string }
+  | { kind: 'daily' | 'weekly'; timezone: string; timeOfDay: string; weekdays?: number[] }
+  | { kind: 'event'; timezone: string; eventType: string }
+
+export interface AgentRoutine {
+  id: string
+  agentId: string
+  agentVersionId: string
+  workspaceId: string
+  recipientUserId: string
+  name: string
+  schedule: AgentRoutineSchedule
+  scheduleRevision: number
+  nextSlotUtc: string | null
+  inputTemplate: { prompt: string; budget: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number } }
+  approvedRoleIds: string[]
+  approvedDataScopes: string[]
+  revision: number
+  status: 'draft' | 'enabled' | 'paused' | 'disabled'
+  lastAdmissionStatus?: 'accepted' | 'skipped' | 'interrupted' | null
+  lastReasonCode?: string | null
+  createdBy: string
+  approvedBy: string | null
+  approvedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentRoutineExecution {
+  id: string
+  routineId: string
+  triggerId: string
+  kind: 'scheduled' | 'manual' | 'event' | 'missed'
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  taskId: string | null
+  runId: string | null
+  admissionStatus: 'accepted' | 'skipped' | 'interrupted'
+  reasonCode: string | null
+  runStatus?: string | null
+  resultOutcome?: string | null
+  createdAt: string
+}
+
 export interface GrantSourceReconciliationItem {
   sourceId: string
   workspaceId: string

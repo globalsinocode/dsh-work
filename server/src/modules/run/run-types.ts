@@ -57,7 +57,7 @@ export interface CreateRunInput {
   idempotencyKey: string
   /** Existing callers omit this and receive an idempotent session-backed Task. */
   taskId?: string
-  taskSourceType?: 'session' | 'automation' | 'api' | 'event' | 'system' | 'delegation'
+  taskSourceType?: 'session' | 'automation' | 'api' | 'event' | 'system' | 'delegation' | 'agent_routine'
   taskSourceRef?: string | null
   taskCorrelationKey?: string
   taskRequestDigest?: string | null

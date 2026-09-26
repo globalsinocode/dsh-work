@@ -5,6 +5,7 @@ import { slotsBetween } from './automation-calendar.ts'
 import type { PostgresAutomationRepository } from './postgres-automation-repository.ts'
 import type { AutomationService } from './automation-service.ts'
 import type { AutomationModuleConfig, AutomationRecord } from './automation-types.ts'
+import type { AgentRoutineService } from './agent-routine-service.ts'
 
 const OWNER_LOCK_NAME = 'dsh-work-automation-trigger-sweep'
 
@@ -21,6 +22,7 @@ export class AutomationTriggerSweep {
   private readonly automations: PostgresAutomationRepository
   private readonly service: AutomationService
   private readonly config: AutomationModuleConfig
+  private readonly agentRoutines?: AgentRoutineService
   private timer?: NodeJS.Timeout
   private lockConnection?: ReservedSql
   private processing = false
@@ -31,11 +33,13 @@ export class AutomationTriggerSweep {
     automations: PostgresAutomationRepository,
     service: AutomationService,
     config: AutomationModuleConfig,
+    agentRoutines?: AgentRoutineService,
   ) {
     this.database = database
     this.automations = automations
     this.service = service
     this.config = config
+    this.agentRoutines = agentRoutines
   }
 
   /** 返回 false 表示已有其它进程持有调度所有权，本进程不启动扫描。 */
@@ -52,9 +56,11 @@ export class AutomationTriggerSweep {
     this.lockConnection = connection
     try {
       const recovered = await this.service.recoverInterruptedPreparations()
+      const recoveredRoutines = await this.agentRoutines?.recoverInterruptedPreparations() ?? 0
       if (recovered > 0) {
         console.warn(`automation startup recovery: ${recovered} interrupted preparation(s) marked`)
       }
+      if (recoveredRoutines > 0) console.warn(`agent routine startup recovery: ${recoveredRoutines} interrupted preparation(s) marked`)
       await this.tick()
     } catch (error) {
       // 启动失败必须连同会话锁一起释放：否则锁挂在游离/归还的池化连接上，
@@ -108,6 +114,7 @@ export class AutomationTriggerSweep {
           console.error(`automation task ${task.id} sweep failed`, error)
         })
       }
+      await this.agentRoutines?.processDue(now)
     } finally {
       this.processing = false
     }

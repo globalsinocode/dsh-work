@@ -784,6 +784,11 @@ export class RunOrchestrationService {
       if (task.sourceType === 'delegation') {
         throw requestInvalid('委派子任务不支持通用重试；请由仍在运行的父 Agent 重新发起委派')
       }
+      // 主动任务重跑必须重新经过规则状态、触发去重和已批准授权上限。
+      // Task 来源不可变，不能依赖可能缺失或在重试后丢失的 Manifest purpose。
+      if (task.sourceType === 'agent_routine') {
+        throw requestInvalid('Agent 主动任务不支持通用重试；请由主动任务规则重新触发')
+      }
     }
     // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
     // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
@@ -967,6 +972,25 @@ export class RunOrchestrationService {
         limits: input.budget,
       })
     })
+  }
+
+  /** AE-05 autonomous routine: no employee Session or synthetic user message. */
+  async dispatchAgentRoutine(run: RunRecord, input: {
+    prompt: string; workspaceId: string; agentVersionId: string; recipientUserId: string;
+    attemptId: string; authorization: RuntimeAuthorizationDecision;
+    budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+  }): Promise<void> {
+    await this.failUndispatchedRun(run, () => this.dispatch(run, {
+      prompt: input.prompt,
+      workspaceId: input.workspaceId,
+      agentVersionId: input.agentVersionId,
+      userId: input.recipientUserId,
+      fileIds: [],
+      authorization: input.authorization,
+      purpose: 'agent-routine',
+      attemptId: input.attemptId,
+      limits: input.budget,
+    }))
   }
 
   /** PF-06 child admission already created the Task/Run and narrowed authorization. */
@@ -1246,7 +1270,7 @@ export class RunOrchestrationService {
       additionalSkillReferences: input.additionalSkillReferences,
     })
     const effectiveDataScopes = authorization?.dataScopes ?? agent.dataScopes
-    const knowledgeContext = this.knowledge
+    const knowledgeContext = this.knowledge && input.purpose !== 'agent-routine'
       ? await this.knowledge.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -1255,7 +1279,7 @@ export class RunOrchestrationService {
           roleIds: authorization?.roleIds,
         })
       : []
-    const memoryContext = this.memory
+    const memoryContext = this.memory && input.purpose !== 'agent-routine'
       ? await this.memory.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -1684,6 +1708,18 @@ export class RunOrchestrationService {
         return { denied: false }
       } catch {
         return { denied: true, reason: manifest.purpose === 'admin-assistant' ? '管理读取权限已撤销' : '管理写权限已撤销' }
+      }
+    }
+    if (manifest.purpose === 'agent-routine') {
+      if (!this.authorization) return { denied: true, reason: 'Agent 主动任务授权服务不可用' }
+      try {
+        await this.authorization.assertAgentRoutineRun(manifest)
+        return { denied: false }
+      } catch (error) {
+        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
+          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+        }
+        throw error
       }
     }
     if (!this.authorization) return { denied: false }

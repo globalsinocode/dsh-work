@@ -512,6 +512,7 @@ export class AutomationService {
       if (await this.automations.countUserPending(transaction, task.ownerUserId) >= this.config.userPendingLimit) {
         return skip(AutomationReasonCodes.userPendingLimit)
       }
+      await transaction`select pg_advisory_xact_lock(hashtext('dsh-work-automation-global-admission'))`
       if (await this.automations.countGlobalPending(transaction) >= this.config.globalPendingLimit) {
         return skip(AutomationReasonCodes.globalPendingLimit)
       }

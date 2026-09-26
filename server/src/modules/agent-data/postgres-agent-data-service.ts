@@ -92,6 +92,11 @@ interface ProposalRow {
   userId: string
   roleIds: string[]
   dataScopes: string[]
+  sourceType: string
+  purpose: string | null
+  taskWorkspaceId: string | null
+  taskRequestedBy: string
+  taskInitiatedByPrincipalId: string | null
 }
 
 export class AgentDataConflict extends Error {
@@ -788,10 +793,14 @@ export class PostgresAgentDataService {
                ra.manifest ->> 'agent_version_id' as "agentVersionId",
                ra.manifest ->> 'workspace_id' as "workspaceId", r.requested_by as "userId",
                coalesce(ra.manifest #> '{user_context,role_ids}', '[]'::jsonb) as "roleIds",
-               coalesce(ra.manifest -> 'data_scopes', '[]'::jsonb) as "dataScopes"
+               coalesce(ra.manifest -> 'data_scopes', '[]'::jsonb) as "dataScopes",
+               task.source_type as "sourceType", ra.manifest ->> 'purpose' as purpose,
+               task.workspace_id as "taskWorkspaceId", task.requested_by as "taskRequestedBy",
+               task.initiated_by_principal_id as "taskInitiatedByPrincipalId"
           from agent_data_proposals p
           join run_attempts ra on ra.tenant_id = p.tenant_id and ra.id = p.source_attempt_id
           join runs r on r.tenant_id = p.tenant_id and r.id = p.source_run_id
+          join tasks task on task.tenant_id = r.tenant_id and task.id = r.task_id
          where p.tenant_id = ${input.tenantId} and p.id = ${input.proposalId}
          for update of p
       `
@@ -922,6 +931,14 @@ export class PostgresAgentDataService {
       dataRequirements: AgentDataCollectionRequirement[];
       collectionKey: string; collectionScope: string; collectionSchemaVersion: number
     }): Promise<void> {
+    const routine = proposal.sourceType === 'agent_routine'
+    if ((routine && proposal.purpose !== 'agent-routine')
+      || (!routine && proposal.purpose === 'agent-routine')
+      || proposal.taskWorkspaceId !== actor.workspaceId
+      || proposal.taskRequestedBy !== actor.userId
+      || (routine && proposal.taskInitiatedByPrincipalId !== actor.principalId)) {
+      throw authorizationDenied('提案来源 Task 与执行身份不一致')
+    }
     const required = source.dataRequirements.find(item => item.key === source.collectionKey
       && item.scope === source.collectionScope && item.actions.includes('propose'))
     if (!required || required.schemaVersion !== source.collectionSchemaVersion) {
@@ -929,7 +946,7 @@ export class PostgresAgentDataService {
     }
     actor.declaredCollectionSchemaVersion = required.schemaVersion
     if (!proposal.roleIds.length || !proposal.dataScopes.length
-      || !proposal.roleIds.some(id => source.versionRoleIds.includes(id))
+      || (!routine && !proposal.roleIds.some(id => source.versionRoleIds.includes(id)))
       || proposal.dataScopes.some(scope => !source.versionDataScopes.includes(scope))) {
       throw authorizationDenied('提案来源权限快照已失效')
     }
@@ -950,16 +967,19 @@ export class PostgresAgentDataService {
     `
     const userRoleIds = new Set(currentUserRoles.map(row => row.id))
     const agentRoleIds = new Set(currentAgentRoles.map(row => row.id))
-    if (proposal.roleIds.some(id => !userRoleIds.has(id) || !agentRoleIds.has(id))
-      || !currentUserRoles.some(row => proposal.roleIds.includes(row.id)
-        && row.permissions.includes('workbench:use'))) {
+    if (proposal.roleIds.some(id => !agentRoleIds.has(id))
+      || (routine
+        ? !currentUserRoles.some(row => row.permissions.includes('workbench:use'))
+        : proposal.roleIds.some(id => !userRoleIds.has(id))
+          || !currentUserRoles.some(row => proposal.roleIds.includes(row.id)
+            && row.permissions.includes('workbench:use')))) {
       throw authorizationDenied('提案来源的当前用户或 Agent 角色授权已撤销')
     }
     const userScopes = await tx<{ scopeValue: string }[]>`
       select scope_value as "scopeValue" from data_scope_grants
        where tenant_id = ${actor.tenantId}
          and (subject_type = 'user' and subject_id = ${actor.userId}
-           or subject_type = 'role' and subject_id = any(${proposal.roleIds}::text[])
+           or subject_type = 'role' and subject_id = any(${routine ? currentUserRoles.map(row => row.id) : proposal.roleIds}::text[])
            or subject_type = 'workspace' and subject_id = ${actor.workspaceId})
        for share
     `
@@ -990,7 +1010,8 @@ export class PostgresAgentDataService {
            and capability_type = 'agent' and capability_version_id = ${actor.agentVersionId}
          for share
       `
-      if (!member || member.role === 'viewer' || (agentMember && agentMember.status !== 'available') || !workspaceGrant) {
+      if (!member || (!routine && member.role === 'viewer')
+        || (agentMember && agentMember.status !== 'available') || !workspaceGrant) {
         throw authorizationDenied('提案来源的团队 Agent 或执行权限已撤销')
       }
     }
@@ -1024,7 +1045,7 @@ export class PostgresAgentDataService {
          and p.id = ${actor.principalId} and p.status = 'active'
          and ra.manifest ->> 'agent_version_id' = av.id
          and ra.manifest ->> 'workspace_id' = ${actor.workspaceId}
-         and (ra.manifest ->> 'purpose' is null or ra.manifest ->> 'purpose' = 'automation')
+         and (ra.manifest ->> 'purpose' is null or ra.manifest ->> 'purpose' in ('automation', 'agent-routine'))
          and ra.manifest #>> '{principal_context,executed_as}' = p.id
          and ra.manifest #>> '{principal_context,disclosure_user_id}' = u.id
          for share of ra, r, av, a, p, u, w

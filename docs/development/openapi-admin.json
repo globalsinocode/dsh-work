@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.11.0-agent-data-plane",
+    "version": "0.12.0-agent-routines",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,6 +16,19 @@
     }
   ],
   "paths": {
+    "/agents/{agentId}/routines": {
+      "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agents/{agentId}/routines/{routineId}": {
+      "patch": { "operationId": "updateAgentRoutine", "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision"], "properties": { "expectedRevision": { "type": "integer" }, "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "disableAgentRoutine", "summary": "永久停用规则；保留审计与执行记录", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+    },
+    "/agents/{agentId}/routines/{routineId}/enable": { "post": { "operationId": "enableAgentRoutine", "summary": "确认 Agent 角色和数据范围上限并启用", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision", "roleIds", "dataScopes"], "properties": { "expectedRevision": { "type": "integer" }, "roleIds": { "type": "array", "items": { "type": "string" } }, "dataScopes": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
+    "/agents/{agentId}/routines/{routineId}/pause": { "post": { "operationId": "pauseAgentRoutine", "summary": "暂停规则并阻止后续执行授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agents/{agentId}/routines/{routineId}/run-now": { "post": { "operationId": "runAgentRoutineNow", "summary": "使用幂等键手动触发已启用规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["idempotencyKey"], "properties": { "idempotencyKey": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agents/{agentId}/routines/{routineId}/events": { "post": { "operationId": "triggerAgentRoutineEvent", "summary": "由受信管理员按来源与事件 ID 去重触发事件规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["eventType", "source", "eventId"], "properties": { "eventType": { "type": "string" }, "source": { "type": "string" }, "eventId": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
+    "/agents/{agentId}/routines/{routineId}/executions": { "get": { "operationId": "listAgentRoutineExecutions", "summary": "查询受理、跳过、Run 终态与业务结果", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
     "/agent-data/collections": {
       "get": {
         "operationId": "listAgentDataCollections",
@@ -1878,6 +1891,13 @@
       }
     },
     "schemas": {
+      "AgentRoutineSchedule": { "oneOf": [
+        { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
+        { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },
+        { "type": "object", "required": ["kind", "timezone", "eventType"], "properties": { "kind": { "const": "event" }, "timezone": { "type": "string" }, "eventType": { "type": "string" } } }
+      ] },
+      "AgentRoutineInput": { "type": "object", "required": ["prompt"], "properties": { "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 }, "budget": { "type": "object", "properties": { "timeoutSeconds": { "type": "integer", "minimum": 1 }, "maxToolCalls": { "type": "integer", "minimum": 1 }, "maxOutputBytes": { "type": "integer", "minimum": 1 } } } } },
+      "AgentRoutineDraft": { "type": "object", "required": ["name", "agentVersionId", "workspaceId", "recipientUserId", "schedule", "inputTemplate"], "properties": { "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } },
       "AgentDataCollectionInput": {
         "type": "object",
         "additionalProperties": false,

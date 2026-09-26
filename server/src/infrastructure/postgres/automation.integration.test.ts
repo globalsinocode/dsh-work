@@ -146,6 +146,16 @@ async function seedOwner(prefix: string) {
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}
   `
+  // New Agents never inherit their human owner's roles; this fixture must
+  // explicitly grant the Agent executor the capabilities the test exercises.
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, 'enterprise:authorized')
+  `
   return { userId, workspaceId: workspace.id, agentId, versionId }
 }
 

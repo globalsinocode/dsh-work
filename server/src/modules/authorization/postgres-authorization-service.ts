@@ -4,6 +4,7 @@ import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from './authorization-errors.ts'
+import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -14,6 +15,7 @@ export interface IdentityRow {
 }
 
 interface AgentAuthorizationRow {
+  agentId: string
   versionId: string
   skillReferences: string[]
   toolReferences: string[]
@@ -48,6 +50,15 @@ export interface RuntimeAuthorizationDecision {
 export interface RuntimeScopeCeiling {
   roleIds?: string[]
   dataScopes?: string[]
+}
+
+/** AE-05: autonomous work is authorized as the Agent, with a separate result recipient. */
+export interface AgentRoutineAuthorizationInput {
+  agentVersionId: string
+  workspaceId: string
+  recipientUserId: string
+  scopeCeiling: RuntimeScopeCeiling
+  additionalSkillReferences?: string[]
 }
 
 /**
@@ -179,6 +190,103 @@ export class PostgresAuthorizationService {
       await this.recordDecision(input.userId, input.agentVersionId, 'authorization.runtime', 'blocked', error)
       throw error
     }
+  }
+
+  async authorizeAgentRoutine(input: AgentRoutineAuthorizationInput): Promise<RuntimeAuthorizationDecision> {
+    const { agent, skillVersions } = await this.assertAgentDependencyClosure(
+      input.agentVersionId, input.additionalSkillReferences ?? [],
+    )
+    const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
+    const roleIds = principal.roleIds.filter(role => input.scopeCeiling.roleIds?.includes(role))
+    const dataScopes = principal.dataScopes.filter(scope => input.scopeCeiling.dataScopes?.includes(scope)
+      && agent.dataScopes.includes(scope))
+    if (!roleIds.length) throw authorizationDenied('Agent 主动任务的已批准角色已全部失效')
+    requireScopes(dataScopes, agent.dataScopes, 'Agent 主动任务')
+    const workspaceType = await this.workspaceTypeOf(input.workspaceId)
+    if (!workspaceType) throw authorizationDenied('主动任务工作空间不存在或已归档')
+    // The recipient is only a disclosure boundary. It cannot supply execution
+    // roles or scopes, and its current read entitlement must cover the output.
+    const recipient = await this.authorizeWorkbench({
+      userId: input.recipientUserId, workspaceId: input.workspaceId,
+    })
+    if (dataScopes.some(scope => !recipient.dataScopes.includes(scope))) {
+      throw authorizationDenied('结果接收人的当前数据范围不足')
+    }
+    const permissions = await this.permissionsForRoles(roleIds)
+    const toolVersions = await this.resolveAndAuthorizeTools(agent.toolReferences, roleIds, dataScopes)
+    if (workspaceType === 'team') {
+      const [member] = await this.database<{ status: string }[]>`
+        select status from workspace_agent_members
+         where tenant_id = ${tenantId} and workspace_id = ${input.workspaceId}
+           and agent_id = ${agent.agentId}
+      `
+      if (member?.status !== 'available') throw authorizationDenied('Agent 未加入或已停用该团队空间')
+      await this.requireWorkspaceCapabilities(input.workspaceId, 'agent', [{
+        reference: input.agentVersionId, versionId: input.agentVersionId,
+      }])
+      await this.requireWorkspaceCapabilities(input.workspaceId, 'skill', skillVersions)
+      await this.requireWorkspaceCapabilities(input.workspaceId, 'tool', toolVersions)
+    }
+    return {
+      userId: input.recipientUserId,
+      workspaceId: input.workspaceId,
+      executorPrincipalId: principal.id,
+      executorAuthorizationVersion: principal.authorizationVersion,
+      roleIds,
+      permissions,
+      dataScopes,
+      agentVersionId: input.agentVersionId,
+    }
+  }
+
+  async assertAgentRoutineRun(manifest: RuntimeManifest): Promise<RuntimeAuthorizationDecision> {
+    if (manifest.purpose !== 'agent-routine' || !manifest.agent_version_id || !manifest.workspace_id) {
+      throw authorizationDenied('Agent 主动任务清单无效')
+    }
+    const [source] = await this.database<{
+      agentVersionId: string; workspaceId: string; recipientUserId: string;
+      roleIds: string[]; dataScopes: string[]; status: string;
+      principalId: string; configRevision: string; executionRevision: string
+    }[]>`
+      select routine.agent_version_id as "agentVersionId", routine.workspace_id as "workspaceId",
+             routine.recipient_user_id as "recipientUserId",
+             routine.approved_role_ids as "roleIds", routine.approved_data_scopes as "dataScopes",
+             routine.status, task.initiated_by_principal_id as "principalId",
+             routine.confirmed_config_revision as "configRevision",
+             execution.execution_config->>'configRevision' as "executionRevision"
+        from runs run
+        join tasks task on task.tenant_id = run.tenant_id and task.id = run.task_id
+        join agent_routines routine on routine.tenant_id = task.tenant_id and routine.id = task.source_ref
+        join agent_routine_executions execution on execution.tenant_id = run.tenant_id
+          and execution.run_id = run.id and execution.routine_id = routine.id
+       where run.tenant_id = ${tenantId} and run.id = ${manifest.run_id}
+         and task.id = ${manifest.task_id} and task.source_type = 'agent_routine'
+         and execution.admission_status = 'accepted'
+    `
+    if (!source || source.status !== 'enabled'
+      || source.agentVersionId !== manifest.agent_version_id
+      || source.workspaceId !== manifest.workspace_id
+      || source.recipientUserId !== manifest.user_context.user_id
+      || source.configRevision !== source.executionRevision) {
+      throw authorizationDenied('Agent 主动任务已停用或执行配置已变化')
+    }
+    const decision = await this.authorizeAgentRoutine({
+      agentVersionId: source.agentVersionId,
+      workspaceId: source.workspaceId,
+      recipientUserId: source.recipientUserId,
+      scopeCeiling: { roleIds: source.roleIds, dataScopes: source.dataScopes },
+      additionalSkillReferences: manifest.skills.map(skill => `${skill.id}@${skill.version}`),
+    })
+    if (!manifest.principal_context
+      || source.principalId !== decision.executorPrincipalId
+      || manifest.principal_context.initiated_by !== decision.executorPrincipalId
+      || manifest.principal_context.executed_as !== decision.executorPrincipalId
+      || manifest.principal_context.disclosure_user_id !== source.recipientUserId
+      || manifest.user_context.role_ids.some(role => !decision.roleIds.includes(role))
+      || manifest.data_scopes.some(scope => !decision.dataScopes.includes(scope))) {
+      throw authorizationDenied('Agent 主动任务执行身份或授权快照已失效')
+    }
+    return decision
   }
 
   /**
@@ -883,7 +991,7 @@ export class PostgresAuthorizationService {
 
   private async requireAgentVersion(versionId: string): Promise<AgentAuthorizationRow> {
     const [row] = await this.database<AgentAuthorizationRow[]>`
-      select av.id as "versionId", av.skill_refs as "skillReferences",
+      select av.agent_id as "agentId", av.id as "versionId", av.skill_refs as "skillReferences",
              av.tool_refs as "toolReferences", av.visible_role_ids as "visibleRoleIds",
              av.data_scopes as "dataScopes"
         from agent_versions av

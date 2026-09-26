@@ -625,6 +625,18 @@ export interface WorkbenchSkill {
 }
 
 /** AG-03 自动任务调度规则：manual 仅手动触发；daily/weekly 需 timeOfDay。 */
+export interface AgentRoutineResult {
+  executionId: string
+  routineName: string
+  agentName: string
+  workspaceId: string
+  runId: string
+  runStatus: string
+  resultOutcome: string | null
+  answer: string | null
+  createdAt: string
+}
+
 export interface AutomationSchedule {
   kind: 'manual' | 'daily' | 'weekly'
   timezone: string

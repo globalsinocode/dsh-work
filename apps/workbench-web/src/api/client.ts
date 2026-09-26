@@ -7,6 +7,7 @@ import type {
   AgentMemberPatchAction,
   Artifact,
   Automation,
+  AgentRoutineResult,
   AutomationExecution,
   AutomationInputTemplate,
   AutomationSchedule,
@@ -438,6 +439,7 @@ export const workbenchApi = {
   },
   // ---- AG-03 自动任务 ----
   getAutomations: () => request<Automation[]>('/automations'),
+  getAgentRoutineResults: () => request<AgentRoutineResult[]>('/agent-routine-results'),
   createAutomation: (input: {
     name: string
     agentId: string

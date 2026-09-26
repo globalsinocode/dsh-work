@@ -47,7 +47,7 @@ export interface RuntimeManifest {
   manifest_version: '1.0'
   /** Admin-authored, immutable expectations for one trial scenario. */
   test_scenario?: SkillTestScenario
-  purpose?: AdminRunPurpose | 'automation'
+  purpose?: AdminRunPurpose | 'automation' | 'agent-routine'
   installation_source?: string
   run_id: string
   attempt_id: string

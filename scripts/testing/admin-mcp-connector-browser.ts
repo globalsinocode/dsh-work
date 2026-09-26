@@ -17,7 +17,15 @@ import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
+import { AgentRoutineService } from '../../server/src/modules/automation/agent-routine-service.ts'
+import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
+import { PostgresTaskRepository } from '../../server/src/modules/task/postgres-task-repository.ts'
+import { RunOrchestrationService } from '../../server/src/modules/run/run-orchestration-service.ts'
+import { ModelGovernanceService } from '../../server/src/modules/model/model-governance-service.ts'
+import { PostgresModelGovernanceRepository } from '../../server/src/modules/model/postgres-model-governance-repository.ts'
+import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { envelope, readJsonBody, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
 
 const port = Number(process.env.DSH_WORK_MCP_ADMIN_SERVER_PORT ?? 4392)
@@ -30,7 +38,11 @@ let capabilities: McpInspectionResult['capabilities'] = [
 ]
 
 const runtime: AgentRuntimePort = {
-  async execute() { throw new Error('PF-03 浏览器夹具不执行 Agent Loop') },
+  async execute(manifest) {
+    if (manifest.purpose !== 'agent-routine') throw new Error('PF-03 浏览器夹具不执行 Agent Loop')
+    return { runId: manifest.run_id, attemptId: manifest.attempt_id,
+      acceptedAt: new Date().toISOString(), done: new Promise(() => undefined) }
+  },
   subscribe() { return () => undefined },
   async cancel() { return { accepted: false } },
   status() { return undefined },
@@ -74,6 +86,21 @@ router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
 registerAgentRoutes(router, agents)
+const routineRuns = new PostgresRunRepository(database.client)
+const routineConversations = new PostgresConversationRepository(database.client)
+const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
+  new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime,
+  undefined, undefined, agents, undefined, authorization,
+  { tasks: new PostgresTaskRepository(database.client) })
+registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
+  routineRuns, routineOrchestration, routineConversations))
+router.get(`${base}/test/agent-routine/fixture`, async () => {
+  const [space] = await database.client<{ id: string }[]>`
+    select id from workspaces where tenant_id = 'tenant-dsh-work' and workspace_type = 'personal'
+      and created_by = 'U00001'
+  `
+  return envelope('admin', { workspaceId: space?.id, recipientUserId: 'U00001' }, 'postgres')
+})
 router.get(`${base}/identity/roles`, async () => envelope('admin', await database.client`
   select id, code, name, description, status, permissions,
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"

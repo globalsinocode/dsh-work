@@ -776,3 +776,10 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 4. 新 Attempt 仅将本次固定且获准的少量记忆写入 `workspace/memory.md`，文件权限为只读；Manifest/Prompt 标记其为非权威参考。领取、运行和等待恢复时继续复核当前来源、范围、身份、摘要与撤回状态。
 
 **验收：** 提案、同意、审核及执行引用是四个独立状态；`propose_memory` 的成功回执仅表示暂存，不表示已批准或业务目标完成。P0 浏览器冒烟证明员工必须明确选择范围和期限；P1 自动化证明平台边界；真实 DSH、OIDC 与跨账号收权仍按 PF-MEMORY-P2 单独留证。
+# AE-05 · Agent 主动任务（P1 集成旅程）
+
+- **优先级／角色／层级：** P1；平台管理员和结果接收员工；一次性 PostgreSQL、受控 Runtime、独立浏览器会话。
+- **前置数据：** 已发布 Agent Version、已启用的 Agent Principal、授权团队空间及明确的接收员工；专用可丢弃数据。
+- **操作：** 管理员在 Agent 详情确认角色与数据范围上限并启用规则，手动触发、查看执行记录，再暂停；服务集成测试创建手动、定时和事件规则并重复触发相同事件，检查错过槽位及接收人读权限。
+- **可观察结果：** 浏览器中批准、触发和暂停状态与执行记录一致；服务集成中仅一次受理，重叠和遗漏有原因，Task 发起与执行身份均为 Agent Principal，Run 无员工 Session；停用或收权阻断后续动作，仅指定接收人且有当前 Workspace 授权者能看到结果。
+- **Spec：** `e2e/agent-routines.integration.spec.ts`（独立 P1 管理端配置）；`server/src/infrastructure/postgres/agent-routines.integration.test.ts`（服务、身份、接收结果）。员工浏览器和真实 DSH/OIDC 另列 P2 验收。

@@ -6,6 +6,8 @@ import type {
   AgentEvalCase,
   AgentJoinedWorkspaceRecord,
   AgentPrincipalGovernance,
+  AgentRoutine,
+  AgentRoutineExecution,
   AgentPackageInspection,
   AgentReleaseState,
   AgentSubmissionSummary,
@@ -215,6 +217,36 @@ export const adminApi = {
       body: JSON.stringify({ expectedAuthorizationVersion: input.authorizationVersion,
         status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes }),
     }),
+  getAgentRoutines: (agentId: string) =>
+    request<AgentRoutine[]>(`/agents/${encodeURIComponent(agentId)}/routines`),
+  createAgentRoutine: (agentId: string, input: Pick<AgentRoutine,
+    'name' | 'agentVersionId' | 'workspaceId' | 'recipientUserId' | 'schedule' | 'inputTemplate'>) =>
+    request<AgentRoutine>(`/agents/${encodeURIComponent(agentId)}/routines`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  updateAgentRoutine: (agentId: string, routineId: string, input: Partial<Pick<AgentRoutine,
+    'name' | 'agentVersionId' | 'workspaceId' | 'recipientUserId' | 'schedule' | 'inputTemplate'>> & { expectedRevision: number }) =>
+    request<AgentRoutine>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
+  enableAgentRoutine: (agentId: string, routineId: string, input: { expectedRevision: number; roleIds: string[]; dataScopes: string[] }) =>
+    request<AgentRoutine>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/enable`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  setAgentRoutineStatus: (agentId: string, routineId: string, status: 'paused' | 'disabled') =>
+    request<AgentRoutine>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}${status === 'paused' ? '/pause' : ''}`, {
+      method: status === 'paused' ? 'POST' : 'DELETE',
+    }),
+  runAgentRoutineNow: (agentId: string, routineId: string, idempotencyKey: string) =>
+    request<AgentRoutineExecution>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/run-now`, {
+      method: 'POST', body: JSON.stringify({ idempotencyKey }),
+    }),
+  triggerAgentRoutineEvent: (agentId: string, routineId: string, input: { eventType: string; source: string; eventId: string }) =>
+    request<AgentRoutineExecution>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/events`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
+  getAgentRoutineExecutions: (agentId: string, routineId: string) =>
+    request<AgentRoutineExecution[]>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/executions`),
   getAgentReleaseSubmissions: () => request<{ items: AgentSubmissionSummary[] }>('/agent-release-submissions'),
   getAgentVersionEvidence: () => request<{ items: AgentVersionEvidenceEntry[] }>('/agent-version-evidence'),
   getAgentReleaseState: (agentId: string) =>
