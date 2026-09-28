@@ -15,6 +15,7 @@ import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnect
 import {
   assertDshToolApprovalPolicy,
   dshBuiltInToolCatalog,
+  defaultAgentDshToolNames,
   hiddenRuntimeCatalogTools,
   isVisibleDshCatalogTool,
   normalizeToolPolicyInput,
@@ -24,6 +25,7 @@ import {
   type CatalogEntry,
 } from './dsh-built-in-tool-catalog.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
+import { normalizeAgentMcpScope } from '../agent/agent-mcp-scope.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
@@ -1033,8 +1035,14 @@ export class PostgresToolConnectorService {
     return this.requireConnector(input.connectorId)
   }
 
-  /** Every Agent version receives every currently usable MCP Connector in its tenant. */
+  /** Resolve the Agent Version's MCP policy for a new Attempt. */
   async resolveMcpConnectionsForAgentVersion(versionId: string): Promise<McpConnectionSnapshot[]> {
+    const [version] = await this.database<{ scope: unknown }[]>`
+      select mcp_scope as scope from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
+    `
+    if (!version) throw authorizationDenied(`Agent Version 不存在：${versionId}`)
+    const scope = normalizeAgentMcpScope(version.scope)
+    if (scope.mode === 'none') return []
     const rows = await this.database<Array<McpConnectionSnapshot & {
       credentialStatus: string | null
       credentialBackend: string | null
@@ -1054,7 +1062,14 @@ export class PostgresToolConnectorService {
          and p.approval_status = 'approved' and p.capability_digest = p.approved_digest
        order by p.server_name
     `
-    return rows.map(row => {
+    const scopedRows = scope.mode === 'selected'
+      ? rows.filter(row => scope.connectorIds.includes(row.connector_id))
+      : rows
+    if (scope.mode === 'selected' && scopedRows.length !== scope.connectorIds.length) {
+      const available = new Set(scopedRows.map(row => row.connector_id))
+      throw authorizationDenied(`已选 MCP Connector 不可用或已变化：${scope.connectorIds.filter(id => !available.has(id)).join('、')}`)
+    }
+    return scopedRows.map(row => {
       if (row.auth_type === 'bearer' && (row.credentialStatus !== 'configured'
         || row.credentialBackend !== 'postgres-encrypted' || row.credentialVersion === null)) {
         throw new Error(`MCP Connector Bearer 凭据尚未完成加密升级：${row.connector_id}`)
@@ -1113,6 +1128,16 @@ export class PostgresToolConnectorService {
       on conflict (tenant_id, attempt_id, call_id) do update
         set result = excluded.result, occurred_at = now()
     `
+  }
+
+  async finalizeMcpInvocationAudit(manifest: RuntimeManifest): Promise<void> {
+    const [attempt] = await this.database<{ id: string }[]>`
+      update run_attempts
+         set mcp_audit_finalized_at = coalesce(mcp_audit_finalized_at, now())
+       where tenant_id = ${tenantId} and id = ${manifest.attempt_id} and run_id = ${manifest.run_id}
+       returning id
+    `
+    if (!attempt) throw new Error(`MCP 调用审计无法关联 Attempt：${manifest.attempt_id}`)
   }
 
   async listMcpInvocationAudits(connectorId: string): Promise<McpInvocationAudit[]> {
@@ -1228,6 +1253,28 @@ export class PostgresToolConnectorService {
 
   async assertAvailableReferences(references: string[]): Promise<void> {
     return this.assertReferences(references, true)
+  }
+
+  /** Optional platform defaults eligible for this Agent definition; callers seal exact refs and bindings. */
+  async resolvePlatformDefaultToolReferences(roleIds: string[], dataScopes: string[]): Promise<string[]> {
+    const rows = await this.database<{ id: string; version: string; allowedRoleIds: string[]; requiredScopes: string[] }[]>`
+      select distinct on (t.id) t.id, tv.version,
+             t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "requiredScopes"
+        from tools t
+        join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
+        join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
+       where t.tenant_id = ${tenantId} and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         and t.dsh_tool_name = any(${[...defaultAgentDshToolNames]})
+         and t.admission_status = 'approved' and t.status = 'available'
+         and tv.status = 'published' and c.status = 'healthy'
+       order by t.id, split_part(tv.version, '.', 1)::integer desc,
+                split_part(tv.version, '.', 2)::integer desc,
+                split_part(tv.version, '.', 3)::integer desc
+    `
+    const scopes = new Set(dataScopes)
+    return rows.filter(row => roleIds.every(role => row.allowedRoleIds.includes(role))
+      && row.requiredScopes.every(scope => scopes.has(scope)))
+      .map(row => `${row.id}@${row.version}`)
   }
 
   /** Draft storage is not execution: allow unhealthy connectors, never unknown/disabled tools or unpublished versions. */

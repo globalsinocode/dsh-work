@@ -358,11 +358,14 @@ export class PostgresAutomationRepository {
 
   async countGlobalPending(tx: DatabaseTransaction): Promise<number> {
     const [row] = await tx<{ count: number }[]>`
-      select count(*)::integer as count
-        from automation_executions e
+      select ((select count(*) from automation_executions e
         join runs r on r.tenant_id = e.tenant_id and r.id = e.run_id
-       where e.tenant_id = ${tenantId}
-         and e.admission_status = 'accepted' and r.status in ${tx(NON_TERMINAL_RUN_STATES)}
+        where e.tenant_id = ${tenantId}
+          and e.admission_status = 'accepted' and r.status in ${tx(NON_TERMINAL_RUN_STATES)})
+        + (select count(*) from agent_routine_executions e
+          join runs r on r.tenant_id = e.tenant_id and r.id = e.run_id
+         where e.tenant_id = ${tenantId}
+           and e.admission_status = 'accepted' and r.status in ${tx(NON_TERMINAL_RUN_STATES)}))::integer as count
     `
     return row?.count ?? 0
   }

@@ -36,6 +36,10 @@ const [seed] = await fixture.db.client<{ workspaceId: string; agentId: string; v
 `
 if (!seed) throw new Error('自动任务 P1 夹具缺少个人空间或已发布 Agent')
 
+// This harness exercises employee-owned automations; Agent-owned results have
+// their own PostgreSQL integration coverage and are empty for these fixtures.
+fixture.router.get('/api/workbench/v1/agent-routine-results', () => envelope('workbench', []))
+
 fixture.router.get('/api/workbench/v1/test/automation/fixtures', () => envelope('workbench', {
   ownerUserId,
   workspaceId: seed.workspaceId,

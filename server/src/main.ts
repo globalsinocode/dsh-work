@@ -72,6 +72,8 @@ import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
 import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
 import { AutomationService } from './modules/automation/automation-service.ts'
+import { AgentRoutineService } from './modules/automation/agent-routine-service.ts'
+import { registerAgentRoutineRecipientRoutes, registerAgentRoutineRoutes } from './http/admin/agent-routine-routes.ts'
 import { AutomationTriggerSweep } from './modules/automation/automation-trigger-sweep.ts'
 import { defaultAutomationConfig } from './modules/automation/automation-types.ts'
 import { registerAutomationRoutes } from './http/workbench/automation-routes.ts'
@@ -79,6 +81,8 @@ import { registerTaskExecutionRoutes, registerTaskOperationAdminRoutes } from '.
 import { registerPersistentApprovalRoutes } from './http/admin/persistent-approval-routes.ts'
 import { registerAdminExperienceIterationRoutes } from './http/admin/experience-iteration-routes.ts'
 import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
+import { PostgresAgentDataService } from './modules/agent-data/postgres-agent-data-service.ts'
+import { registerAdminAgentDataRoutes } from './http/admin/agent-data-routes.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
@@ -132,6 +136,7 @@ async function start() {
   let executionRuntime: AgentRuntimePort | null = null
   let persistentWait: PostgresPersistentWaitService | null = null
   let memoryProposalSweep: NodeJS.Timeout | null = null
+  let agentDataSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   if (database) {
@@ -175,6 +180,7 @@ async function start() {
     const toolServiceRef: { current?: PostgresToolConnectorService } = {}
     const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
     const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
+    const agentDataRef: { current?: PostgresAgentDataService } = {}
     const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
       runtimeId: 'runtime-local-01',
       runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -196,6 +202,10 @@ async function start() {
         if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
         await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
       },
+      finalizeMcpInvocationAudit: async manifest => {
+        if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+        await toolServiceRef.current.finalizeMcpInvocationAudit(manifest)
+      },
       permissionDecision: async (_request, manifest, context) => {
         if (!persistentWaitRef.current) return 'reject_once'
         return persistentWaitRef.current.decidePermission(manifest, context)
@@ -204,6 +214,10 @@ async function start() {
       proposeMemory: (input, manifest, signal) => {
         if (!controlledMemoryRef.current) throw new Error('经验迭代服务尚未就绪')
         return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
+      },
+      invokeAgentData: (name, input, manifest) => {
+        if (!agentDataRef.current) throw new Error('Agent 数据平面尚未就绪')
+        return agentDataRef.current.invokeFromAttempt(name, input, manifest)
       },
       prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
       inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
@@ -286,6 +300,26 @@ async function start() {
     const knowledge = new PostgresKnowledgeService(database)
     const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
     controlledMemoryRef.current = controlledMemory
+    const agentData = new PostgresAgentDataService(database)
+    agentDataRef.current = agentData
+    const sweepAgentData = async () => {
+      for (let batch = 0; batch < 10; batch += 1) {
+        const [records, state, proposals, writeCounters] = await Promise.all([
+          agentData.purgeExpiredRecords('tenant-dsh-work', 500),
+          agentData.purgeExpiredState('tenant-dsh-work', 1000),
+          agentData.purgeExpiredProposals('tenant-dsh-work', 1000),
+          agentData.purgeExpiredWriteCounters('tenant-dsh-work', 1000),
+        ])
+        if (records < 500 && state < 1000 && proposals < 1000 && writeCounters < 1000) break
+      }
+    }
+    void sweepAgentData().catch(error => console.error('Agent data retention cleanup failed:', error))
+    agentDataSweep = setInterval(() => {
+      void sweepAgentData().catch(error => {
+        console.error('Agent data retention cleanup failed:', error)
+      })
+    }, 60 * 60 * 1000)
+    agentDataSweep.unref()
     memoryProposalSweep = setInterval(() => {
       void controlledMemory.purgeExpiredProposals().catch(error => {
         console.error('Expired memory proposal cleanup failed:', error)
@@ -367,11 +401,16 @@ async function start() {
       operations,
       defaultAutomationConfig,
     )
+    const agentRoutineService = new AgentRoutineService(
+      database, authorization, runs, orchestration, conversations, operations,
+    )
     automationSweep = new AutomationTriggerSweep(
-      database, automationRepository, automationService, defaultAutomationConfig,
+      database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService,
     )
     await automationSweep.start()
     registerAutomationRoutes(router, automationService)
+    registerAgentRoutineRoutes(router, agentRoutineService)
+    registerAgentRoutineRecipientRoutes(router, agentRoutineService)
     registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)
     registerTaskOperationAdminRoutes(router, tasks, authorization)
     registerPersistentApprovalRoutes(router, persistentWait, authorization)
@@ -385,6 +424,7 @@ async function start() {
     registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
+    registerAdminAgentDataRoutes(router, agentData)
     registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, resolve(dataRoot, 'agent-packages'), orchestration))
     registerSkillRoutes(router, skills)
     registerToolRoutes(router, toolService)
@@ -445,6 +485,7 @@ async function start() {
       void (async () => {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
+        if (agentDataSweep) clearInterval(agentDataSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()

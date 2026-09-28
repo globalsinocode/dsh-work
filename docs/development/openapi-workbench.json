@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 员工工作台 API",
-    "version": "0.7.1-controlled-memory-governance",
+    "version": "0.8.0-agent-routine-results",
     "description": "请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session；AI Hub 只提供用户身份，工作台角色、权限和数据范围由 dsh-work 本地配置且不接受浏览器传入。每位用户具有唯一默认个人工作空间，所有 Session、文件与成果均归属个人或团队工作空间。"
   },
   "servers": [
@@ -16,6 +16,13 @@
     }
   ],
   "paths": {
+    "/agent-routine-results": {
+      "get": {
+        "operationId": "listAgentRoutineRecipientResults",
+        "summary": "列出当前员工被指定接收且仍有空间读取权的 Agent 主动任务结果",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/session": {
       "get": {
         "operationId": "getCurrentSession",
@@ -3259,9 +3266,10 @@
             "enum": [
               "answer",
               "artifact",
-              "tool"
+              "tool",
+              "record"
             ],
-            "description": "回执类别：回答提交/成果登记/平台工具动作"
+            "description": "回执类别：回答提交/成果登记/平台工具动作/结构化记录版本"
           },
           "status": {
             "type": "string",
@@ -3279,7 +3287,7 @@
               "string",
               "null"
             ],
-            "description": "可核验引用：消息 id / artifact_version id / tool_audit id；无引用为 null"
+            "description": "可核验引用：消息 id / artifact_version id / tool_audit id / record_version id；无引用为 null"
           },
           "label": {
             "type": "string",
@@ -3305,7 +3313,8 @@
               "no_deliverable",
               "no_verified_deliverable",
               "output_truncated",
-              "output_interrupted"
+              "output_interrupted",
+              "external_effect_unknown"
             ]
           },
           "message": {

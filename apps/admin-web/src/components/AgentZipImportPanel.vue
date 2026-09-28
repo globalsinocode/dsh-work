@@ -79,7 +79,7 @@ defineExpose({ parsed, importing, importAsDraft })
       <el-icon class="zip-import__icon"><UploadFilled /></el-icon>
       <div class="el-upload__text">拖拽 agent-package ZIP 到此处，或 <em>点击选择文件</em></div>
       <template #tip>
-        <div class="el-upload__tip">最小包：agent.yaml + 根目录 SOUL.md；可选 evals/cases.yaml（缺省时平台自动生成试运行案例）。服务端安全解包，不执行安装钩子。</div>
+        <div class="el-upload__tip">最小包：agent.yaml + 根目录 SOUL.md；可显式声明根目录 AGENTS.md 工作规程，评测案例可选。MCP 范围在导入后由平台配置。</div>
       </template>
     </el-upload>
 
@@ -95,6 +95,9 @@ defineExpose({ parsed, importing, importAsDraft })
       <el-collapse>
         <el-collapse-item title="文件清单" name="files">
           <div class="zip-import__files"><span v-for="file in info.files" :key="file" class="mono">{{ file }}</span></div>
+        </el-collapse-item>
+        <el-collapse-item v-if="info.workInstructions" title="AGENTS.md · 工作规程" name="work-procedures">
+          <pre class="zip-import__procedures">{{ info.workInstructions }}</pre>
         </el-collapse-item>
         <el-collapse-item title="已解析引用（agent.yaml 声明的依赖）" name="resolved">
           <div class="zip-import__files">

@@ -62,6 +62,56 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
+test('AE-03 OpenAPI exposes every Agent data management route and task result evidence kind', async () => {
+  const admin = JSON.parse(await readFile(
+    new URL('../../../docs/development/openapi-admin.json', import.meta.url), 'utf8',
+  )) as { paths: Record<string, Record<string, { operationId?: string }>> }
+  const operations = [
+    ['/agent-data/collections', 'get', 'listAgentDataCollections'],
+    ['/agent-data/collections', 'post', 'publishAgentDataCollection'],
+    ['/agent-data/collections/{collectionId}/schema', 'patch', 'evolveAgentDataCollectionSchema'],
+    ['/agent-data/collections/{collectionId}/status', 'patch', 'setAgentDataCollectionStatus'],
+    ['/agent-data/collections/{collectionId}/grants', 'get', 'listAgentDataCollectionGrants'],
+    ['/agent-data/collections/{collectionId}/grants/{agentId}', 'patch', 'setAgentDataCollectionGrant'],
+    ['/agent-data/collections/{collectionId}/records', 'get', 'listAgentDataRecords'],
+    ['/agent-data/proposals', 'get', 'listAgentDataProposals'],
+    ['/agent-data/proposals/{proposalId}/review', 'post', 'reviewAgentDataProposal'],
+    ['/agent-data/records/{recordId}', 'delete', 'deleteAgentDataRecord'],
+  ] as const
+  for (const [path, method, operationId] of operations) {
+    assert.equal(admin.paths[path]?.[method]?.operationId, operationId)
+  }
+  const workbench = JSON.parse(await readFile(
+    new URL('../../../docs/development/openapi-workbench.json', import.meta.url), 'utf8',
+  )) as { components: { schemas: {
+    TaskResultReceipt: { properties: { kind: { enum: string[] } } }
+    TaskResultPendingItem: { properties: { kind: { enum: string[] } } }
+  } } }
+  assert.ok(workbench.components.schemas.TaskResultReceipt.properties.kind.enum.includes('record'))
+  assert.ok(workbench.components.schemas.TaskResultPendingItem.properties.kind.enum.includes('external_effect_unknown'))
+})
+
+test('published admin and workbench OpenAPI references resolve', async () => {
+  for (const name of ['openapi-admin.json', 'openapi-workbench.json']) {
+    const document = JSON.parse(await readFile(
+      new URL(`../../../docs/development/${name}`, import.meta.url), 'utf8',
+    )) as Record<string, unknown>
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return
+      const object = value as Record<string, unknown>
+      if (typeof object['$ref'] === 'string' && object['$ref'].startsWith('#/')) {
+        const target = object['$ref'].slice(2).split('/').reduce<unknown>((node, part) =>
+          typeof node === 'object' && node !== null
+            ? (node as Record<string, unknown>)[part.replaceAll('~1', '/').replaceAll('~0', '~')]
+            : undefined, document)
+        assert.notEqual(target, undefined, `${name}: ${object['$ref']}`)
+      }
+      for (const child of Object.values(object)) visit(child)
+    }
+    visit(document)
+  }
+})
+
 test('OpenAPI publishes governed platform capabilities and omits employee memory endpoints', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),

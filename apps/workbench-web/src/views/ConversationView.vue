@@ -108,6 +108,7 @@ const canStop = computed(() => Boolean(
 const canRetry = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['failed', 'cancelled'].includes(task.value.status)
+  && !task.value.result.pendingItems.some(item => item.kind === 'external_effect_unknown')
   && (task.value.result.error?.retryable ?? true)))
 const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
 /**
@@ -792,6 +793,9 @@ watch(
                 <div><dt>原因</dt><dd>{{ task.result.error.reason }}</dd></div>
               </dl>
               <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
+              <ul v-if="task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')" class="result-pending">
+                <li v-for="item in task.result.pendingItems.filter(item => item.kind === 'external_effect_unknown')" :key="item.message">{{ item.message }}</li>
+              </ul>
               <code>{{ task.result.error.code }}</code>
             </div>
             <el-button

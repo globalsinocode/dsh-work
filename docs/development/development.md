@@ -64,7 +64,9 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
+| Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 包、发布与 Runtime 契约测试 |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入原型冒烟） |
+| Agent 定义、默认工具与 MCP 范围 | `pnpm test:agent-package`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：
 
@@ -109,12 +111,12 @@ Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验�
 [mvp-fixtures.json](fixtures/mvp-fixtures.json) 保存合成角色、空间、业务记录、知识和文件元数据，不能视为真实企业接口。服务端种子与前端原型 ID 以各自代码为准，不假定 fixture 已自动导入所有环境。
 
 - 个人空间与团队空间的会话、文件和成果访问；非成员、跨用户及跨数据范围访问拒绝。
-- Agent、Skill 测试后发布、版本锁定与回滚；精确 Tool Allowlist 不被 Skill 间接扩大。
+- Agent、Skill 测试后发布、版本锁定与回滚；平台默认 DSH 工具采用显式允许清单和精确绑定，Skill 不能间接扩大工具授权。
 - 文件上传、解析、Run 关联、来源与成果版本、下载鉴权；路径穿越、伪造签名和超限文件拒绝。
 - 取消、超时、Worker 崩溃、模型/Tool/网络故障；幂等请求不重复执行，只有失败 Run 可重试并生成新 Attempt。
 - 服务重启后活动 Attempt 失败收敛、排队任务恢复；SSE 使用 `Last-Event-ID` 重放，旧 Attempt 事件不能覆盖当前重试状态。
 - 审计脱敏、凭据隔离、DSH 子进程环境白名单、权限变化即时生效。
-- MCP Connector 成功检查后对全部 Agent 自动可用；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
+- MCP Connector 成功检查后按 Agent Version 的 `all`（默认）、`selected` 或 `none` 范围装配；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
 - 容量测试覆盖 1/3/5 并发与 50 Run 排队，记录受理/完成延迟、CPU、RSS、磁盘和失败率。模拟 Runtime 跑分不能推导真实模型吞吐或生产并发。
 
 测试时间用带时区 ISO 8601，业务 ID 尽量稳定；不提交真实员工、业务正文、凭据或敏感二进制附件。真实模型探针及升级验证命令统一见 Runtime 指南。

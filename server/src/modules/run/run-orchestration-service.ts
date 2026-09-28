@@ -14,7 +14,7 @@ import { toManifestToolBinding } from '../../domain/tool-binding.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService, PreparedRuntimeFile } from '../workbench/application/postgres-content-service.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
-import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
+import type { PostgresAgentService, RuntimeAgentSnapshot } from '../agent/postgres-agent-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresKnowledgeService } from '../knowledge/postgres-knowledge-service.ts'
 import type { PostgresControlledMemoryService } from '../memory/postgres-controlled-memory-service.ts'
@@ -45,6 +45,22 @@ type AdminPurpose = AdminRunPurpose
 
 const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+function agentDataToolRefs(agent: RuntimeAgentSnapshot): RuntimeManifest['tools'] {
+  const names = new Set<string>()
+  if (agent.stateEnabled) {
+    names.add('state_get')
+    names.add('state_put')
+  }
+  const byAction = {
+    query: 'data_query', propose: 'data_propose', create: 'data_create',
+    update: 'data_update', transition: 'data_transition',
+  } as const
+  for (const requirement of agent.dataRequirements ?? []) {
+    for (const action of requirement.actions) names.add(byAction[action])
+  }
+  return [...names].map(id => ({ id, version: '1.0.0' }))
+}
 
 export class RunOrchestrationService {
   private readonly eventWrites = new Map<string, Promise<void>>()
@@ -333,7 +349,9 @@ export class RunOrchestrationService {
       // MCP 网络只来自已批准 Connector；不触发人工审批，也不写工作区。
       permission_policy: { approval_mode: 'never', network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny', write_policy: 'deny' },
       skills: agent.skills.map(toCapabilityReference),
-      tools: [...agent.runtimeTools.map(toCapabilityReference), ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : [])],
+      tools: [...agent.runtimeTools.map(toCapabilityReference),
+        ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
+        ...agentDataToolRefs(agent)],
       // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
@@ -766,10 +784,25 @@ export class RunOrchestrationService {
       if (task.sourceType === 'delegation') {
         throw requestInvalid('委派子任务不支持通用重试；请由仍在运行的父 Agent 重新发起委派')
       }
+      // 主动任务重跑必须重新经过规则状态、触发去重和已批准授权上限。
+      // Task 来源不可变，不能依赖可能缺失或在重试后丢失的 Manifest purpose。
+      if (task.sourceType === 'agent_routine') {
+        throw requestInvalid('Agent 主动任务不支持通用重试；请由主动任务规则重新触发')
+      }
     }
     // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
     // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
     const lastAttempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
+    const mcpConnections = (lastAttempt?.manifest as unknown as RuntimeManifest | undefined)?.mcp_connections ?? []
+    if (lastAttempt && (
+      await this.conversations.hasUnresolvedExternalEffects(run.id, lastAttempt.id)
+      // Run 终态可能先于 DSH Worker 关闭和最终 MCP 审计落库；缺失完成标记
+      // （含升级前 Attempt、审计失败和进程崩溃）必须保守拒绝通用重试。
+      || (mcpConnections.length > 0
+        && !await this.conversations.isMcpInvocationAuditFinalized(run.id, lastAttempt.id))
+    )) {
+      throw requestInvalid('原 Attempt 的外部操作结果可能未确定；请先核对权威回执，再明确发起新任务，不要直接重试')
+    }
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
       throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
     }
@@ -949,6 +982,25 @@ export class RunOrchestrationService {
         limits: input.budget,
       })
     })
+  }
+
+  /** AE-05 autonomous routine: no employee Session or synthetic user message. */
+  async dispatchAgentRoutine(run: RunRecord, input: {
+    prompt: string; workspaceId: string; agentVersionId: string; recipientUserId: string;
+    attemptId: string; authorization: RuntimeAuthorizationDecision;
+    budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+  }): Promise<void> {
+    await this.failUndispatchedRun(run, () => this.dispatch(run, {
+      prompt: input.prompt,
+      workspaceId: input.workspaceId,
+      agentVersionId: input.agentVersionId,
+      userId: input.recipientUserId,
+      fileIds: [],
+      authorization: input.authorization,
+      purpose: 'agent-routine',
+      attemptId: input.attemptId,
+      limits: input.budget,
+    }))
   }
 
   /** PF-06 child admission already created the Task/Run and narrowed authorization. */
@@ -1228,7 +1280,7 @@ export class RunOrchestrationService {
       additionalSkillReferences: input.additionalSkillReferences,
     })
     const effectiveDataScopes = authorization?.dataScopes ?? agent.dataScopes
-    const knowledgeContext = this.knowledge
+    const knowledgeContext = this.knowledge && input.purpose !== 'agent-routine'
       ? await this.knowledge.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -1237,7 +1289,7 @@ export class RunOrchestrationService {
           roleIds: authorization?.roleIds,
         })
       : []
-    const memoryContext = this.memory
+    const memoryContext = this.memory && input.purpose !== 'agent-routine'
       ? await this.memory.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -1295,6 +1347,9 @@ export class RunOrchestrationService {
         ...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
         ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
+        ...(this.memory && input.purpose !== 'agent-routine'
+          ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
+        ...agentDataToolRefs(agent),
       ],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
@@ -1665,6 +1720,18 @@ export class RunOrchestrationService {
         return { denied: false }
       } catch {
         return { denied: true, reason: manifest.purpose === 'admin-assistant' ? '管理读取权限已撤销' : '管理写权限已撤销' }
+      }
+    }
+    if (manifest.purpose === 'agent-routine') {
+      if (!this.authorization) return { denied: true, reason: 'Agent 主动任务授权服务不可用' }
+      try {
+        await this.authorization.assertAgentRoutineRun(manifest)
+        return { denied: false }
+      } catch (error) {
+        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
+          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+        }
+        throw error
       }
     }
     if (!this.authorization) return { denied: false }

@@ -423,6 +423,21 @@ test('PF-03 makes every healthy MCP Connector available to every Agent', async (
       'published', now(), 'U00008', 'U00008'
     )
   `
+  const selectedVersionId = `agent-version-mcp-selected-${suffix}`
+  const noMcpVersionId = `agent-version-mcp-none-${suffix}`
+  await database`
+    insert into agent_versions (
+      id, tenant_id, agent_id, version, system_prompt, mcp_scope, status, published_at, created_by, published_by
+    ) values (
+      ${selectedVersionId}, 'tenant-dsh-work', ${secondAgentId}, '1.0.1', '只使用指定的 MCP。',
+      ${database.json({ mode: 'selected', connectorIds: [connectorId] })},
+      'published', now(), 'U00008', 'U00008'
+    ), (
+      ${noMcpVersionId}, 'tenant-dsh-work', ${secondAgentId}, '1.0.2', '不使用 MCP。',
+      ${database.json({ mode: 'none', connectorIds: [] })},
+      'published', now(), 'U00008', 'U00008'
+    )
+  `
   const [schemaEvidence] = await database<{ grantTable: string | null }[]>`
     select to_regclass('public.agent_mcp_grants')::text as "grantTable"
   `
@@ -435,6 +450,14 @@ test('PF-03 makes every healthy MCP Connector available to every Agent', async (
   assert.equal(pins[0]?.server_name, serverName)
   assert.equal((await service.resolveMcpConnectionsForAgentVersion(secondVersionId))
     .filter(connection => connection.connector_id === connectorId).length, 1)
+  const selectedPins = await service.resolveMcpConnectionsForAgentVersion(selectedVersionId)
+  assert.deepEqual(selectedPins.map(connection => connection.connector_id), [connectorId])
+  assert.deepEqual(await service.resolveMcpConnectionsForAgentVersion(noMcpVersionId), [])
+  await assert.rejects(
+    service.assertActiveMcpConnections(pins, noMcpVersionId),
+    /已停用、删除或能力摘要已变化/,
+    'an Attempt cannot use a Connector from another Agent Version scope',
+  )
   assert.equal((await service.getTools()).some(tool => tool.connectorId === connectorId), false)
 
   discovered = [...discovered, {
@@ -464,6 +487,11 @@ test('PF-03 makes every healthy MCP Connector available to every Agent', async (
   assert.equal(checkedWhileDisabled.mcp?.approvalStatus, 'approved')
   assert.equal((await service.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1'))
     .some(connection => connection.connector_id === connectorId), false)
+  await assert.rejects(
+    service.resolveMcpConnectionsForAgentVersion(selectedVersionId),
+    /已选 MCP Connector 不可用或已变化/,
+    'selected must fail closed when its Connector is disabled',
+  )
   const explicitlyEnabled = await service.setMcpConnectorStatus({
     connectorId, status: 'enabled', actor: 'U00008',
   })
@@ -524,6 +552,12 @@ test('PF-03 makes every healthy MCP Connector available to every Agent', async (
      where tenant_id = 'tenant-dsh-work' and attempt_id = ${attemptId}
   `
   assert.deepEqual([...audits], [{ connectorId, capabilityName: 'customer_get', result: 'success' }])
+  await service.finalizeMcpInvocationAudit({ run_id: runId, attempt_id: attemptId } as RuntimeManifest)
+  const [auditState] = await database<{ finalized: boolean }[]>`
+    select mcp_audit_finalized_at is not null as finalized from run_attempts
+     where tenant_id = 'tenant-dsh-work' and id = ${attemptId}
+  `
+  assert.equal(auditState?.finalized, true)
   const projectedAudits = await service.listMcpInvocationAudits(connectorId)
   assert.equal(projectedAudits[0]?.attemptId, attemptId)
   assert.equal(projectedAudits[0]?.parameterDigest, 'b'.repeat(64))

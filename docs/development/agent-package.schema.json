@@ -57,6 +57,9 @@
         "instructions": {
           "const": "SOUL.md"
         },
+        "workProcedures": {
+          "const": "AGENTS.md"
+        },
         "capabilities": {
           "type": "object",
           "additionalProperties": false,
@@ -163,6 +166,35 @@
             "cases": {
               "type": "string",
               "pattern": "^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.ya?ml$"
+            }
+          }
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": { "type": "boolean" },
+            "collections": {
+              "type": "array",
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "scope", "schemaVersion", "actions"],
+                "properties": {
+                  "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$" },
+                  "scope": { "type": "string", "enum": ["installation", "workspace", "tenant"] },
+                  "schemaVersion": { "type": "integer", "minimum": 1, "maximum": 10000 },
+                  "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "uniqueItems": true,
+                    "items": { "type": "string", "enum": ["query", "propose", "create", "update", "transition"] }
+                  },
+                  "schema": { "type": "string", "pattern": "^schemas/[a-z][a-z0-9_]{2,79}\\.json$" }
+                }
+              }
             }
           }
         },

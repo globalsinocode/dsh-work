@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
+import { parseAgentPackage } from '../../modules/agent/agent-package.ts'
+import type { AgentMcpScope } from '../../domain/types.ts'
 import { PostgresAgentReleaseService } from '../../modules/agent/postgres-agent-release-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
@@ -46,10 +49,10 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_release_test', maxConnections: 8 })
   database = throwaway.client
   packagesDir = await mkdtemp(join(tmpdir(), 'dsh-agent-packages-'))
-  tools = new PostgresToolConnectorService(database)
+  trialRuntime = new TrialStubRuntime()
+  tools = new PostgresToolConnectorService(database, trialRuntime)
   const skills = new PostgresSkillService(database, undefined, tools)
   agents = new PostgresAgentService(database, undefined, skills, tools)
-  trialRuntime = new TrialStubRuntime()
   orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
     new PostgresConversationRepository(database),
@@ -87,7 +90,7 @@ async function createAdminUser(id: string) {
 }
 
 async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], tools = ['read@1.0.0'],
-  dataScopes = ['workspace:authorized']) {
+  dataScopes = ['workspace:authorized'], mcpScope?: AgentMcpScope) {
   return agents.createAgent({
     id,
     name: '退款预测助手',
@@ -106,6 +109,7 @@ async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], t
     timeoutSeconds: 300,
     skills,
     tools,
+    mcpScope,
     changeSummary: '创建初始草稿版本',
     actor: ADMIN,
   })
@@ -341,6 +345,67 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
 })
 
+test('试运行保存完整回答供人工审核，不能仅保留开头', async () => {
+  const agentId = 'agent-release-full-output'
+  await createDraftAgent(agentId)
+  const state = await release.ensureCandidate(agentId, ADMIN)
+  const marker = `结尾核验-${'甲'.repeat(270)}`
+  await release.updateCases(agentId, state.candidate!.cases.map((item, index) => ({
+    ...item,
+    input: index === 0 ? `${item.input}\n${marker}` : item.input,
+  })), ADMIN)
+  await release.runChecks(agentId, ADMIN)
+  const trial = await release.startTrial(agentId, ADMIN)
+  const caseRun = trial.trialRuns[0]?.steps.find(step => step.id === 'dsh')?.caseRuns?.[0]
+  assert.equal(caseRun?.status, 'succeeded')
+  assert.ok(caseRun?.outputExcerpt.length && caseRun.outputExcerpt.length > 240)
+  assert.ok(caseRun.outputExcerpt.includes(marker))
+})
+
+test('数据声明发布前复核集合授权，且试运行证据固定数据定义', async () => {
+  const agentId = 'agent-release-data'
+  await createDraftAgent(agentId, [], [], ['enterprise:authorized'])
+  const dataService = new PostgresAgentDataService(database)
+  const collectionId = await dataService.publishCollection({ tenantId, key: 'release_data_records',
+    schema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
+    queryFields: ['code'], retentionDays: 30, actorUserId: ADMIN })
+  const base = {
+    agentId, name: '退款预测助手', description: '基于历史退款记录预测高风险订单并给出处理建议。',
+    owner: '发布管理员', department: '平台治理', visibility: '指定角色', roleIds: ['role-employee'],
+    dataScopes: ['enterprise:authorized'], welcomeMessage: '', examplePrompts: ['评估本周退款风险订单'],
+    systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], tools: [],
+    changeSummary: '声明结构化数据需求', actor: ADMIN,
+  }
+  await agents.updateAgent({ ...base, data: { state: false,
+    collections: [{ key: 'release_data_records', scope: 'tenant', schemaVersion: 1, actions: ['query'] }] } })
+  await release.ensureCandidate(agentId, ADMIN)
+  const blocked = await release.runChecks(agentId, ADMIN)
+  assert.equal(blocked.candidate?.checks.find(item => item.id === 'data')?.status, 'failed')
+  await assert.rejects(release.startTrial(agentId, ADMIN), /试运行被阻塞/)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
+  const checked = await release.runChecks(agentId, ADMIN)
+  assert.equal(checked.candidate?.checks.find(item => item.id === 'data')?.status, 'passed')
+  const trial = await release.startTrial(agentId, ADMIN)
+  const caseRun = trial.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? [])[0]
+  assert.ok(caseRun?.runId)
+  assert.ok(trialRuntime.manifest(caseRun.runId!)?.tools.some(tool => tool.id === 'data_query'),
+    JSON.stringify(trialRuntime.manifest(caseRun.runId!)?.tools))
+  await confirmLatestTrial(agentId)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: [], actorUserId: ADMIN })
+  await assert.rejects(release.publish(agentId, '', ADMIN), /集合 release_data_records 未发布、版本不兼容或缺少当前授权/)
+  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
+  await agents.updateAgent({ ...base, data: { state: true,
+    collections: [{ key: 'release_data_records', scope: 'tenant', schemaVersion: 1, actions: ['query'] }] } })
+  assert.equal((await release.getReleaseState(agentId)).definitionChanged, true)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /发布前必须.*封存试运行/)
+  await release.ensureCandidate(agentId, ADMIN)
+  await release.runChecks(agentId, ADMIN)
+  await release.startTrial(agentId, ADMIN)
+  await confirmLatestTrial(agentId)
+  assert.equal((await release.publish(agentId, '集合授权已确认', ADMIN)).candidate, undefined)
+})
+
 test('试运行缩小 Agent 授权后拒绝不再获准的工具，不产生 Runtime Attempt', async () => {
   const agentId = `agent-trial-narrow-${randomUUID().slice(0, 8)}`
   const created = await createDraftAgent(agentId, [], ['read@1.0.0'],
@@ -381,12 +446,28 @@ test('无 Skill/Tool 的 Soul Agent 可从配置或 ZIP 创建并通过候选检
   assert.equal(configSpec.spec.apiVersion, 'dsh-work.ai/v2')
   assert.deepEqual(configSpec.spec.instructions, { path: 'SOUL.md', body: PROMPT })
   assert.deepEqual(configSpec.spec.capabilities, { skills: [], tools: [] })
+  const exported = parseAgentPackage(await release.exportVersionPackage(configuredId, configured.version.id))
+  assert.equal(exported.checksumsVerified, true)
+  assert.deepEqual(exported.spec, configSpec.spec)
+  await assert.rejects(release.exportVersionPackage('another-agent', configured.version.id), /不存在/)
+  const draftSnapshot = await agents.getRuntimeSnapshot(configured.version.id)
+  assert.ok(draftSnapshot.runtimeTools.includes('read@1.0.0'))
+  assert.ok(draftSnapshot.runtimeTools.includes('write@1.0.0'))
+  assert.ok(!draftSnapshot.runtimeTools.some(reference => reference.startsWith('bash@')))
   await release.ensureCandidate(configuredId, ADMIN)
+  const exportedAfterGeneratedCases = parseAgentPackage(await release.exportVersionPackage(configuredId, configured.version.id))
+  assert.deepEqual(exportedAfterGeneratedCases.spec, configSpec.spec)
+  assert.deepEqual(exportedAfterGeneratedCases.cases, [])
   const configChecks = await release.runChecks(configuredId, ADMIN)
   assert.ok(configChecks.candidate?.checks.every(item => item.status === 'passed'))
   await release.startTrial(configuredId, ADMIN)
   const configTrial = await confirmLatestTrial(configuredId)
   assert.equal(configTrial.trialRuns[0]?.status, 'passed')
+  const sealedDefaults = configTrial.candidate?.bindingRefs ?? []
+  assert.ok(sealedDefaults.some(pin => pin.tool === 'read@1.0.0'))
+  assert.ok(sealedDefaults.some(pin => pin.tool === 'write@1.0.0'))
+  const firstRun = configTrial.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? []).find(run => run.runId)
+  assert.deepEqual(trialRuntime.manifest(firstRun!.runId!)?.tool_bindings, sealedDefaults)
 
   const importedId = 'agent-soul-zip'
   const imported = await release.importPackage(ADMIN, 'soul-agent.zip', createZip({
@@ -403,6 +484,91 @@ test('无 Skill/Tool 的 Soul Agent 可从配置或 ZIP 创建并通过候选检
   assert.deepEqual(zipSpec.spec.capabilities, configSpec.spec.capabilities)
   const zipChecks = await release.runChecks(importedId, ADMIN)
   assert.ok(zipChecks.candidate?.checks.every(item => item.status === 'passed'))
+})
+
+test('配置创建自动装配 Skill 工具依赖，移除 Skill 后不保留隐式工具', async () => {
+  const agentId = 'agent-skill-derived-tools'
+  const created = await createDraftAgent(agentId, ['skill-document@1.0.0'], [])
+  assert.deepEqual(created.agent.tools, [], '编辑契约只回显作者直接声明的工具')
+  const [initial] = await database<{ tools: string[]; spec: AgentSpec }[]>`
+    select tool_refs as tools, agent_spec as spec from agent_versions
+     where tenant_id = ${tenantId} and id = ${created.version.id}
+  `
+  assert.deepEqual(initial?.spec.capabilities.tools, [])
+  assert.deepEqual(initial?.tools, ['read@1.0.0'])
+  await release.ensureCandidate(agentId, ADMIN)
+  const checks = await release.runChecks(agentId, ADMIN)
+  assert.ok(checks.candidate?.checks.every(item => item.status === 'passed'))
+
+  await agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, skills: [], tools: created.agent.tools,
+    changeSummary: '移除文档 Skill',
+  })
+  const [updated] = await database<{ tools: string[]; spec: AgentSpec }[]>`
+    select tool_refs as tools, agent_spec as spec from agent_versions
+     where tenant_id = ${tenantId} and id = ${created.version.id}
+  `
+  assert.deepEqual(updated?.spec.capabilities.tools, [])
+  assert.deepEqual(updated?.tools, [], '已移除 Skill 的隐式工具不能残留在 Agent 定义')
+
+  const withExplicit = await createDraftAgent('agent-skill-explicit-tool', ['skill-document@1.0.0'], ['write@1.0.0'])
+  assert.deepEqual(withExplicit.agent.tools, ['write@1.0.0'])
+  const [combined] = await database<{ tools: string[] }[]>`
+    select tool_refs as tools from agent_versions
+     where tenant_id = ${tenantId} and id = ${withExplicit.version.id}
+  `
+  assert.deepEqual(combined?.tools, ['write@1.0.0', 'read@1.0.0'])
+  await agents.updateAgent({
+    ...withExplicit.agent, agentId: withExplicit.agent.id, actor: ADMIN,
+    skills: [], tools: withExplicit.agent.tools, changeSummary: '移除 Skill，保留直接声明的工具',
+  })
+  const [withoutSkill] = await database<{ tools: string[] }[]>`
+    select tool_refs as tools from agent_versions
+     where tenant_id = ${tenantId} and id = ${withExplicit.version.id}
+  `
+  assert.deepEqual(withoutSkill?.tools, ['write@1.0.0'])
+})
+
+test('试运行 Attempt 实际按 Agent Version 的 MCP 范围装配连接器', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  const first = await tools.registerMcpConnector({
+    name: `试运行数据源甲 ${suffix}`, endpoint: `https://source-a-${suffix}.example.test/mcp`,
+    authType: 'none', scopeDescription: '仅用于隔离试运行的合成数据', actor: ADMIN,
+  })
+  const second = await tools.registerMcpConnector({
+    name: `试运行数据源乙 ${suffix}`, endpoint: `https://source-b-${suffix}.example.test/mcp`,
+    authType: 'none', scopeDescription: '仅用于隔离试运行的合成数据', actor: ADMIN,
+  })
+  const scopes: Array<{ mode: 'all' | 'selected' | 'none'; scope: AgentMcpScope; expected: string[] }> = [
+    { mode: 'all', scope: { mode: 'all', connectorIds: [] }, expected: [first.id, second.id] },
+    { mode: 'selected', scope: { mode: 'selected', connectorIds: [first.id] }, expected: [first.id] },
+    { mode: 'none', scope: { mode: 'none', connectorIds: [] }, expected: [] },
+  ]
+  const versionIds = new Map<string, string>()
+  for (const { mode, scope, expected } of scopes) {
+    const agentId = `agent-release-mcp-${mode}-${suffix}`
+    const created = await createDraftAgent(agentId, [], [], ['workspace:authorized'], scope)
+    versionIds.set(mode, created.version.id)
+    await release.ensureCandidate(agentId, ADMIN)
+    const checks = await release.runChecks(agentId, ADMIN)
+    assert.ok(checks.candidate?.checks.every(item => item.status === 'passed'))
+    await release.startTrial(agentId, ADMIN)
+    const result = await confirmLatestTrial(agentId)
+    const run = result.trialRuns[0]!.steps.flatMap(step => step.caseRuns ?? []).find(item => item.runId)
+    const manifest = trialRuntime.manifest(run!.runId!)!
+    assert.deepEqual((manifest.mcp_connections ?? []).map(item => item.connector_id).sort(), expected.sort())
+    assert.equal(manifest.permission_policy.network_policy, expected.length ? 'allowlist' : 'deny')
+  }
+  const third = await tools.registerMcpConnector({
+    name: `试运行数据源丙 ${suffix}`, endpoint: `https://source-c-${suffix}.example.test/mcp`,
+    authType: 'none', scopeDescription: '验证后续 Attempt 的动态全部范围', actor: ADMIN,
+  })
+  const allSnapshot = await agents.getRuntimeSnapshot(versionIds.get('all')!)
+  assert.ok(allSnapshot.mcpConnections.some(item => item.connector_id === third.id))
+  const selectedSnapshot = await agents.getRuntimeSnapshot(versionIds.get('selected')!)
+  assert.deepEqual(selectedSnapshot.mcpConnections.map(item => item.connector_id), [first.id])
+  await tools.setMcpConnectorStatus({ connectorId: first.id, status: 'disabled', actor: ADMIN })
+  await assert.rejects(agents.getRuntimeSnapshot(versionIds.get('selected')!), /已选 MCP Connector 不可用或已变化/)
 })
 
 test('定义修改推进修订并作废检查与封存，发布要求最新封存试运行通过', async () => {
@@ -432,6 +598,7 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
     skills: ['skill-document@1.0.0'],
     tools: ['read@1.0.0'],
     changeSummary: '更新说明',
+    workInstructions: '先核对来源与数据范围，再列出可追溯的判断依据；无法确认时明确交给人工复核。',
     actor: ADMIN,
   })
   // GET 只读：只标记漂移，不推进修订
@@ -455,6 +622,10 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
   const published = await release.publish(agentId, '', ADMIN)
   assert.equal(published.candidate, undefined)
   assert.equal(published.evidence['0.1.0']?.length, 8)
+  const publishedSnapshot = await agents.getRuntimeSnapshot((await agents.getAgentVersions())
+    .find(version => version.agentId === agentId && version.version === '0.1.0')!.id)
+  assert.match(publishedSnapshot.systemPrompt, /# AGENTS\.md · 工作规程/)
+  assert.match(publishedSnapshot.systemPrompt, /先核对来源与数据范围/)
 })
 
 test('审核人判定任一案例不符合预期时试运行记为失败并阻塞发布', async () => {
@@ -1137,6 +1308,11 @@ class TrialStubRuntime implements AgentRuntimePort {
   }
 
   status(runId: string) { return this.executions.get(runId)?.snapshot }
+  async inspectMcpConnection() {
+    return { latencyMs: 1, capabilities: [
+      { name: 'lookup', description: '查询可丢弃的集成测试数据', inputSchema: { type: 'object', properties: {} } },
+    ] }
+  }
   async health() {
     return { status: 'healthy' as const, runtimeId: 'runtime-local-01', activeExecutions: 0, acceptingRuns: true, dshRepository: '/tmp', transport: 'acp-stdio' as const, message: 'test' }
   }
@@ -1182,11 +1358,11 @@ test('平台工具绑定经真实修订封存：Attempt 固定 pin，漂移后�
   // 封存：候选携带真实 pin（binding_id + revision + 摘要）。
   const trialed = await release.startTrial(agentId, ADMIN)
   const pins = trialed.candidate?.bindingRefs ?? []
-  assert.equal(pins.length, 1)
-  assert.equal(pins[0]?.tool, 'read@1.0.0')
-  assert.equal(pins[0]?.revision, 1)
-  assert.match(pins[0]?.binding_id ?? '', /^tool-binding-/)
-  assert.match(pins[0]?.digest ?? '', /^[a-f0-9]{64}$/)
+  const readPin = pins.find(pin => pin.tool === 'read@1.0.0')
+  assert.ok(pins.length > 1, '平台默认工具也应封存精确绑定')
+  assert.equal(readPin?.revision, 1)
+  assert.match(readPin?.binding_id ?? '', /^tool-binding-/)
+  assert.match(readPin?.digest ?? '', /^[a-f0-9]{64}$/)
 
   // Attempt Manifest 固定的正是封存 pin：执行证据与封存依据同源。
   const caseRun = trialed.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? [])[0]
@@ -1220,8 +1396,8 @@ test('平台工具绑定经真实修订封存：Attempt 固定 pin，漂移后�
   assert.equal(rechecked.candidate?.checks.find(item => item.id === 'binding')?.status, 'passed')
   await release.startTrial(agentId, ADMIN)
   const repins = (await release.getReleaseState(agentId)).candidate?.bindingRefs ?? []
-  assert.equal(repins.length, 1)
-  assert.equal(repins[0]?.revision, 3)
+  assert.equal(repins.length, pins.length)
+  assert.equal(repins.find(pin => pin.tool === 'read@1.0.0')?.revision, 3)
   await confirmLatestTrial(agentId)
   const published = await release.publish(agentId, '绑定修订复核通过', ADMIN)
   assert.equal(published.candidate, undefined)

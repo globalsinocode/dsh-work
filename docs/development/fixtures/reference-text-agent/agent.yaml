@@ -7,6 +7,7 @@ metadata:
   description: 将用户直接提供的文本整理为可核对的摘要、要点和待确认信息。
 spec:
   instructions: SOUL.md
+  workProcedures: AGENTS.md
   input:
     type: text
   output:

@@ -32,6 +32,12 @@ export const hiddenRuntimeCatalogTools = new Set([
   'exit_plan_mode', 'skill', 'workflow', 'ralph',
 ])
 
+/** Explicit platform default set. Discovery alone never exposes a new DSH Tool to every Agent. */
+export const defaultAgentDshToolNames = [
+  'read', 'glob', 'grep', 'write', 'edit', 'read_image', 'str_replace_editor',
+  'web_search', 'todo_write',
+] as const
+
 export function isVisibleDshCatalogTool(toolId: string) {
   return !hiddenRuntimeCatalogTools.has(toolId)
 }

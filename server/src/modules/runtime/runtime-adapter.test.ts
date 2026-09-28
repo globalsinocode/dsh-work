@@ -228,6 +228,22 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /可用库存低于安全库存/)
   })
 
+  it('tells DSH the exact tools and MCP server available to this Attempt', () => {
+    const input = manifest('run-capability-boundary', 'attempt-1')
+    input.tools = [{ id: 'read', version: '1.0.0' }, { id: 'write', version: '1.0.0' }]
+    input.permission_policy.network_policy = 'allowlist'
+    input.mcp_connections = [{
+      connector_id: 'connector-approved', server_name: 'approved_mcp', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/mcp', auth_type: 'none', capability_digest: 'a'.repeat(64),
+    }]
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /平台工具：read、write/)
+    assert.match(rendered, /MCP Server：approved_mcp/)
+    assert.match(rendered, /未列出的 Shell 命令、后台任务、网页获取、平台数据写入或 Agent 委派等能力不得声称可用/)
+    input.mcp_connections = []
+    assert.match(renderSystemPrompt(input), /MCP Server：无/)
+  })
+
   it('renders governed memory as non-authoritative guidance', () => {
     const input = manifest('run-memory', 'attempt-1')
     input.memory_context = [{
@@ -665,6 +681,8 @@ describe('DSH ACP Runtime Adapter', () => {
 
   it('keeps Token usage unavailable when only MCP call evidence exists', async () => {
     const audited: Array<{ serverName: string; capabilityName: string }> = []
+    let confirmAuditFinalized!: () => void
+    const auditFinalized = new Promise<void>(resolve => { confirmAuditFinalized = resolve })
     const adapter = await createAdapter(500, undefined, undefined, {
       process: {
         command: process.execPath,
@@ -674,6 +692,10 @@ describe('DSH ACP Runtime Adapter', () => {
       resolveMcpConnections: async manifest => manifest.mcp_connections?.map(snapshot => ({ snapshot, headers: {} })) ?? [],
       recordMcpInvocation: async (_manifest, invocation) => {
         audited.push({ serverName: invocation.serverName, capabilityName: invocation.capabilityName })
+      },
+      finalizeMcpInvocationAudit: async () => {
+        assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
+        confirmAuditFinalized()
       },
     })
     const input = manifest('run-mcp-log-no-usage', 'attempt-1', '[mcp-log-no-usage] finish normally')
@@ -693,6 +715,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(completed?.safe_metadata['tool_call_count'], 1)
     assert.equal(completed?.safe_metadata['usage_source'], 'dsh-session-log')
     assert.equal(completed?.safe_metadata['token_usage_source'], 'unavailable')
+    await auditFinalized
     assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
   })
 
@@ -1338,7 +1361,8 @@ describe('current execution authorization', () => {
     input.tools = [{ id: 'write', version: '1.0.0' }]
     const handle = await adapter.execute(input)
     const unsubscribe = adapter.subscribe(input.run_id, event => events.push(event))
-    assert.equal((await handle.done).errorCode, 'AUTHORIZATION_REVOKED')
+    const result = await handle.done
+    assert.equal(result.errorCode, 'AUTHORIZATION_REVOKED', result.errorMessage ?? undefined)
     unsubscribe()
     assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
   })
@@ -1353,7 +1377,8 @@ describe('current execution authorization', () => {
     input.tools = [{ id: 'write', version: '1.0.0' }]
     const handle = await adapter.execute(input)
     const unsubscribe = adapter.subscribe(input.run_id, event => events.push(event))
-    assert.equal((await handle.done).errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE')
+    const result = await handle.done
+    assert.equal(result.errorCode, 'AUTHORIZATION_CHECK_UNAVAILABLE', result.errorMessage ?? undefined)
     unsubscribe()
     assert.equal(events.some(event => event.event_type === 'assistant.completed' || event.event_type === 'run.completed'), false)
   })

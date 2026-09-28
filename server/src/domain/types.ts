@@ -4,6 +4,12 @@ import type { TaskResult } from './task-result.ts'
 
 export type UserRole = 'employee' | 'department_manager' | 'business_admin' | 'platform_admin' | 'auditor'
 
+/** Versioned Agent policy; Connector administration and credentials stay tenant-owned. */
+export type AgentMcpScope =
+  | { mode: 'all'; connectorIds: [] }
+  | { mode: 'none'; connectorIds: [] }
+  | { mode: 'selected'; connectorIds: string[] }
+
 export interface UserProfile {
   id: string
   name: string
@@ -265,11 +271,13 @@ export interface AgentDefinition {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
 }
@@ -286,11 +294,18 @@ export interface AgentDraftConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
+  /** Optional definition request; collection publication and grants remain platform-owned. */
+  data?: { state: boolean; collections: Array<{
+    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
+    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
+  }> }
   delegationPolicy?: AgentDelegationPolicy
   changeSummary: string
 }
@@ -328,11 +343,13 @@ export interface AgentVersionRecord {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
 

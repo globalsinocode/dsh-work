@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import AgentDraftDialog from './AgentDraftDialog.vue'
 import type { ZipInspection } from '../stores/agentGovernance'
 import { useContentStore } from '../stores/content'
-import type { AgentDefinition, AgentVersionRecord, ToolDefinition } from '../types/domain'
+import type { AgentDefinition, AgentVersionRecord } from '../types/domain'
 
 const wrappers: VueWrapper[] = []
 
@@ -89,7 +89,7 @@ describe('AgentDraftDialog import completion', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
-    const creationModes = wrapper.findAll('input[type="radio"]')
+    const creationModes = wrapper.find('[aria-label="选择 Agent 创建方式"]').findAll('input[type="radio"]')
     expect(creationModes).toHaveLength(2)
     await creationModes[1]!.setValue(true)
     await flushPromises()
@@ -194,22 +194,9 @@ describe('AgentDraftDialog import completion', () => {
     expect(update.mock.calls[0]?.[0].tools).toEqual([])
   })
 
-  it('offers only platform-admitted tools in an Agent version allow-list', async () => {
+  it('shows Skill and MCP scope without exposing the DSH tool allow-list', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
-    const contentStore = useContentStore()
-    const baseTool = {
-      version: '1.0.0', system: 'DSH Runtime', description: '测试工具', connectorId: 'connector-dsh-workspace',
-      risk: 'low' as const, mode: 'read' as const, status: 'available' as const,
-      inputSchema: '{}', outputSchema: '{}', outputValidation: 'unavailable' as const,
-      retryPolicy: 'safe' as const, concurrencyPolicy: 'concurrent' as const,
-      completionSemantics: 'completed' as const, timeoutSeconds: 30, allowedRoles: ['普通员工'],
-      dataScopes: ['workspace:authorized'], approvalPolicy: 'none' as const, lastCheckedAt: '刚刚',
-    }
-    contentStore.tools = [
-      { ...baseTool, id: 'read', name: '读取文本文件', admissionStatus: 'approved', admissionMessage: '可授权' },
-      { ...baseTool, id: 'web_search', name: '网页搜索', status: 'disabled', admissionStatus: 'unavailable', admissionMessage: '尚未接入网络策略' },
-    ] satisfies ToolDefinition[]
     const wrapper = mount(AgentDraftDialog, {
       props: { modelValue: true, agent: { ...importedAgent, skills: [], tools: [] } },
       global: {
@@ -227,7 +214,9 @@ describe('AgentDraftDialog import completion', () => {
     await wrapper.findAll('button').find(button => button.text() === '下一步')!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('读取文本文件 · v1.0.0 · DSH Runtime')
-    expect(wrapper.text()).not.toContain('网页搜索 · v1.0.0 · DSH Runtime')
+    expect(wrapper.text()).toContain('全部可用 MCP（默认）')
+    expect(wrapper.text()).toContain('仅使用选定 MCP')
+    expect(wrapper.text()).toContain('不使用 MCP')
+    expect(wrapper.text()).not.toContain('工具允许列表')
   })
 })

@@ -27,6 +27,7 @@ export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavaila
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
+  & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun'>>
 
 type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
   'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
@@ -64,6 +65,12 @@ export async function assertCurrentExecutionAuthorization(
           manifest.agent_version_id, manifest.user_context.role_ids, manifest.data_scopes,
         )
       }
+      return
+    }
+    if (manifest.purpose === 'agent-routine') {
+      if (!authorization.assertAgentRoutineRun) throw new AuthorizationCheckUnavailableError()
+      await authorization.assertAgentRoutineRun(manifest)
+      if (manifest.input.file_mounts.length) throw authorizationDenied('Agent 主动任务暂不接受员工文件输入')
       return
     }
     if (!manifest.workspace_id || !manifest.agent_version_id) {

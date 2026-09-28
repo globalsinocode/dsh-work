@@ -3,6 +3,12 @@ import type { AdminRunPurpose, RuntimeManifest } from './runtime-types.ts'
 import type { ToolCategory, ToolGovernanceMode } from '../../domain/tool-category.ts'
 
 const objectOutput = { type: 'object' } as const
+const recordWriteOutput = { oneOf: [
+  { type: 'object', additionalProperties: false,
+    properties: { recordId: { type: 'string' }, recordVersionId: { type: 'string' }, version: { type: 'integer', minimum: 1 } },
+    required: ['recordId', 'recordVersionId', 'version'] },
+  { type: 'object', additionalProperties: false, properties: { status: { const: 'trial_only' } }, required: ['status'] },
+] } as const
 const boundedString = { type: 'string', maxLength: 1_048_576 } as const
 const PYTHON_OUTPUT_MAX_BYTES = 16 * 1024 * 1024
 
@@ -156,6 +162,87 @@ export const platformToolContracts = {
     // Only the application staging is complete here; administrative review and publication are separate actions.
     effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
   }),
+  state_get: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['namespace', 'key'] },
+    outputSchema: { type: 'object', additionalProperties: false,
+      properties: { found: { type: 'boolean' }, value: {}, version: { type: 'integer', minimum: 0 }, trialOnly: { type: 'boolean' } },
+      required: ['found', 'value', 'version'] },
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  state_put: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 },
+        value: {}, expectedVersion: { type: 'integer', minimum: 0 }, ttlSeconds: { type: 'integer', minimum: 60, maximum: 7776000 },
+      }, required: ['namespace', 'key', 'value', 'expectedVersion', 'ttlSeconds'] },
+    outputSchema: { type: 'object', additionalProperties: false,
+      properties: { version: { type: 'integer', minimum: 0 }, trialOnly: { type: 'boolean' } }, required: ['version'] },
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  data_query: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
+        field: { type: 'string', maxLength: 64 }, equals: { type: 'string', maxLength: 500 },
+        limit: { type: 'integer', minimum: 1, maximum: 100 }, after: { type: 'string', maxLength: 160 },
+      }, required: ['collectionKey'] },
+    outputSchema: { type: 'object', additionalProperties: false,
+      properties: { records: { type: 'array', maxItems: 100,
+        items: { type: 'object', additionalProperties: false,
+          properties: { recordKey: { type: 'string' }, recordVersionId: { type: 'string' },
+            version: { type: 'integer', minimum: 1 }, schemaVersion: { type: 'integer', minimum: 1 },
+            data: { type: 'object' } },
+          required: ['recordKey', 'recordVersionId', 'version', 'schemaVersion', 'data'] } },
+        nextCursor: { type: ['string', 'null'] }, trialOnly: { type: 'boolean' } },
+      required: ['records', 'nextCursor'] },
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+    maxOutputBytes: 8 * 1024 * 1024,
+  }),
+  data_create: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
+        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
+        operationKey: { type: 'string', minLength: 1, maxLength: 160 },
+      }, required: ['collectionKey', 'recordKey', 'data', 'operationKey'] },
+    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  data_update: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
+        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
+        expectedVersion: { type: 'integer', minimum: 1 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
+      }, required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
+    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  data_propose: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
+        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
+        expectedVersion: { type: 'integer', minimum: 0 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
+      }, required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
+    outputSchema: { oneOf: [
+      { type: 'object', additionalProperties: false,
+        properties: { proposalId: { type: 'string' }, status: { const: 'pending_admin_review' } },
+        required: ['proposalId', 'status'] },
+      { type: 'object', additionalProperties: false, properties: { status: { const: 'trial_only' } }, required: ['status'] },
+    ] }, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized',
+    completionSemantics: 'accepted', timeoutMs: 30_000,
+  }),
+  data_transition: contract({
+    inputSchema: { type: 'object', additionalProperties: false,
+      properties: {
+        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
+        recordKey: { type: 'string', minLength: 1, maxLength: 160 },
+        expectedVersion: { type: 'integer', minimum: 1 }, expectedStatus: { type: 'string', minLength: 1, maxLength: 80 },
+        nextStatus: { type: 'string', minLength: 1, maxLength: 80 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
+      }, required: ['collectionKey', 'recordKey', 'expectedVersion', 'expectedStatus', 'nextStatus', 'operationKey'] },
+    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
 } satisfies Record<string, PlatformToolContract>
 
 export type PlatformToolName = keyof typeof platformToolContracts
@@ -196,6 +283,13 @@ export const dshWorkBuiltInToolDefinitions = {
   python_execute: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   delegate_agent: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   propose_memory: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  state_get: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  state_put: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  data_query: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  data_create: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  data_update: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  data_propose: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
+  data_transition: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
 } as const satisfies Record<PlatformToolName, DshWorkBuiltInToolDefinition>
 
 export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManifest['tools'] {

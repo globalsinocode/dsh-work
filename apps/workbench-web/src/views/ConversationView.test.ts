@@ -214,6 +214,17 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(true)
   })
 
+  it('shows an unknown external effect and hides both retry entries', async () => {
+    const item = task({ result: result({
+      pendingItems: [{ kind: 'external_effect_unknown', message: 'MCP 写入效果未知，须先核对权威回执。' }],
+    }) })
+    const { wrapper } = await mountView({ item })
+
+    expect(wrapper.text()).toContain('MCP 写入效果未知，须先核对权威回执。')
+    expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(false)
+    expect(wrapper.findAll('button').filter(button => button.text().trim() === '重新执行本轮')).toHaveLength(0)
+  })
+
   it('moves the active-run stop action into the composer send control', async () => {
     const item = task({ status: 'running', result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) })
     const { wrapper, taskStore } = await mountView({ item })

@@ -65,7 +65,7 @@ export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_ach
 /** Run 执行状态原文（含 waiting/cancel_requested）；比展示用 RunStatus 更原始。 */
 export type TaskResultExecution = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 
-export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool' | 'record'
 
 /**
  * 回执核验状态：completed=已完成且有持久化登记；accepted=仅受理/获准——
@@ -77,7 +77,7 @@ export type TaskResultReceiptStatus = 'completed' | 'accepted' | 'rejected' | 'f
 export interface TaskResultReceipt {
   kind: TaskResultReceiptKind
   status: TaskResultReceiptStatus
-  /** 可核验引用：消息 id / artifact_version id / tool_audit id；无引用为 null。 */
+  /** 可核验引用：消息、成果版本、工具审计或结构化记录版本 id；无引用为 null。 */
   ref: string | null
   label: string
   detail?: string
@@ -90,6 +90,7 @@ export type TaskResultPendingKind =
   | 'no_verified_deliverable'
   | 'output_truncated'
   | 'output_interrupted'
+  | 'external_effect_unknown'
 
 export interface TaskResultPendingItem {
   kind: TaskResultPendingKind
@@ -624,6 +625,18 @@ export interface WorkbenchSkill {
 }
 
 /** AG-03 自动任务调度规则：manual 仅手动触发；daily/weekly 需 timeOfDay。 */
+export interface AgentRoutineResult {
+  executionId: string
+  routineName: string
+  agentName: string
+  workspaceId: string
+  runId: string
+  runStatus: string
+  resultOutcome: string | null
+  answer: string | null
+  createdAt: string
+}
+
 export interface AutomationSchedule {
   kind: 'manual' | 'daily' | 'weekly'
   timezone: string

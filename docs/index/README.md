@@ -9,6 +9,7 @@
 | 启动开发、选择测试、准备验收 | [开发与测试](../development/development.md) |
 | 理解业务、权限和系统边界 | [架构总览](../development/overview.md) |
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
+| 实施已确认的 AGENTS、默认工具装配、MCP 使用范围与编辑页 V2 | [Agent 管理与能力装配统一更新方案（规范第 6 节，待实施）](../development/agent-design-standard.md#6-agent-管理与能力装配统一更新方案) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md)、[实现映射](../development/agent-lifecycle-implementation-map.md) |
 | 核对十二条规范的代码证据、测试覆盖和实施缺口 | [Agent 规范与当前实现差异清单](../development/agent-design-gap-analysis.md) |
 | 逐步优化执行观测、工具适配、上下文延续、恢复与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |

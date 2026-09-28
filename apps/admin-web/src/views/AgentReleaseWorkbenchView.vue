@@ -620,7 +620,7 @@ onMounted(async () => {
                       <div><dt>旧版预期</dt><dd>{{ run.expect || '未记录' }}</dd></div>
                       <div><dt>证据状态</dt><dd>缺少 AgentEvaluationSuite v1 的机器断言和人工 rubric，请重新试运行。</dd></div>
                     </template>
-                    <div><dt>实际输出</dt><dd>{{ run.outputExcerpt || run.error || '（无输出）' }}</dd></div>
+                    <div><dt>实际输出</dt><dd class="case-run__output" role="region" :aria-label="`${run.name}的实际输出`" tabindex="0">{{ run.outputExcerpt || run.error || '（无输出）' }}</dd></div>
                   </dl>
                   <div v-if="trial.status === 'asserting' && authStore.canManage && hasV1CaseEvidence(run)" class="case-run__verdict">
                     <el-radio-group v-model="caseVerdicts[verdictKey(trial.id, run.caseId)]" size="small">
@@ -771,6 +771,7 @@ onMounted(async () => {
 .case-run__io > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
 .case-run__io dt { color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .case-run__io dd { margin: 0; color: var(--color-text-primary); font-size: var(--font-size-badge); overflow-wrap: anywhere; white-space: pre-wrap; }
+.case-run__output { max-height: 360px; overflow-y: auto; }
 .case-run__verdict { margin-top: 8px; }
 .case-runs__footer { display: flex; align-items: center; gap: 12px; }
 .submit-card { display: flex; flex-direction: column; gap: 10px; }

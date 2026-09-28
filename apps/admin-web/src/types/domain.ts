@@ -235,6 +235,10 @@ export interface AgentDelegationPolicy {
   timeoutSeconds: number
 }
 
+export type AgentMcpScope =
+  | { mode: 'all' | 'none'; connectorIds: [] }
+  | { mode: 'selected'; connectorIds: string[] }
+
 export interface AgentDefinition {
   id: string
   name: string
@@ -250,11 +254,13 @@ export interface AgentDefinition {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
 }
@@ -277,6 +283,52 @@ export interface AgentPrincipalGovernance {
   authorizationVersion: number
   roleIds: string[]
   dataScopes: string[]
+}
+
+export type AgentRoutineSchedule =
+  | { kind: 'manual'; timezone: string }
+  | { kind: 'daily' | 'weekly'; timezone: string; timeOfDay: string; weekdays?: number[] }
+  | { kind: 'event'; timezone: string; eventType: string }
+
+export interface AgentRoutine {
+  id: string
+  agentId: string
+  agentVersionId: string
+  workspaceId: string
+  recipientUserId: string
+  name: string
+  schedule: AgentRoutineSchedule
+  scheduleRevision: number
+  nextSlotUtc: string | null
+  inputTemplate: { prompt: string; budget: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number } }
+  approvedRoleIds: string[]
+  approvedDataScopes: string[]
+  revision: number
+  status: 'draft' | 'enabled' | 'paused' | 'disabled'
+  lastAdmissionStatus?: 'accepted' | 'skipped' | 'interrupted' | null
+  lastReasonCode?: string | null
+  createdBy: string
+  approvedBy: string | null
+  approvedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentRoutineExecution {
+  id: string
+  routineId: string
+  triggerId: string
+  kind: 'scheduled' | 'manual' | 'event' | 'missed'
+  plannedSlotUtc: string | null
+  missedFromUtc: string | null
+  missedToUtc: string | null
+  taskId: string | null
+  runId: string | null
+  admissionStatus: 'accepted' | 'skipped' | 'interrupted'
+  reasonCode: string | null
+  runStatus?: string | null
+  resultOutcome?: string | null
+  createdAt: string
 }
 
 export interface GrantSourceReconciliationItem {
@@ -315,11 +367,17 @@ export interface AgentDraftConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
+  data?: { state: boolean; collections: Array<{
+    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
+    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
+  }> }
   delegationPolicy: AgentDelegationPolicy
   changeSummary: string
 }
@@ -376,11 +434,13 @@ export interface AgentVersionRecord {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
 
@@ -885,6 +945,7 @@ export interface AgentPackageInspection {
   manifest: { id: string; name: string; version: string; description: string }
   files: string[]
   systemPrompt: string
+  workInstructions?: string
   resolved: { skills: string[]; tools: string[] }
   missing: { skills: string[]; tools: string[] }
   packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }

@@ -1,7 +1,7 @@
 import Ajv2020Module from 'ajv/dist/2020.js'
 import type { ErrorObject } from 'ajv'
 
-import { AGENT_MODEL_REQUIREMENTS, AGENT_SPEC_API_VERSION, AGENT_SPEC_BOUNDS, AGENT_SPEC_INSTRUCTIONS_PATH } from './agent-spec.ts'
+import { AGENT_MODEL_REQUIREMENTS, AGENT_SPEC_API_VERSION, AGENT_SPEC_BOUNDS, AGENT_SPEC_INSTRUCTIONS_PATH, AGENT_SPEC_WORK_PROCEDURES_PATH } from './agent-spec.ts'
 
 // ajv is a CommonJS package: under NodeNext the default import types as the
 // module namespace; unwrap `.default` for the construct signature.
@@ -47,6 +47,7 @@ export const AGENT_PACKAGE_SCHEMA = {
       required: ['instructions'],
       properties: {
         instructions: { const: AGENT_SPEC_INSTRUCTIONS_PATH },
+        workProcedures: { const: AGENT_SPEC_WORK_PROCEDURES_PATH },
         capabilities: {
           type: 'object',
           additionalProperties: false,
@@ -115,6 +116,29 @@ export const AGENT_PACKAGE_SCHEMA = {
             },
           },
         },
+        data: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            state: { type: 'boolean' },
+            collections: {
+              type: 'array', maxItems: 12,
+              items: {
+                type: 'object', additionalProperties: false,
+                required: ['key', 'scope', 'schemaVersion', 'actions'],
+                properties: {
+                  key: { type: 'string', pattern: '^[a-z][a-z0-9_]{2,79}$' },
+                  scope: { type: 'string', enum: ['installation', 'workspace', 'tenant'] },
+                  schemaVersion: { type: 'integer', minimum: 1, maximum: 10000 },
+                  actions: {
+                    type: 'array', minItems: 1, maxItems: 5, uniqueItems: true,
+                    items: { type: 'string', enum: ['query', 'propose', 'create', 'update', 'transition'] },
+                  },
+                  schema: { type: 'string', pattern: '^schemas/[a-z][a-z0-9_]{2,79}\\.json$' },
+                },
+              },
+            },
+          },
+        },
       },
     },
   },
@@ -137,6 +161,7 @@ export interface AgentPackageManifestDocument {
   metadata: { id: string; name: string; version: string; description: string }
   spec: {
     instructions: string
+    workProcedures?: string
     capabilities?: { skills?: Array<{ id: string; version: string }>; tools?: Array<{ id: string; version: string }> }
     input?: { type: string }
     output?: { type: string }
@@ -145,6 +170,10 @@ export interface AgentPackageManifestDocument {
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
     evaluation?: { cases: string }
     model?: { requirements: string[] }
+    data?: { state?: boolean; collections?: Array<{
+      key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
+      actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>; schema?: string
+    }> }
   }
 }
 

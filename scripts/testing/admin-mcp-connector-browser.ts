@@ -8,21 +8,32 @@
  */
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { prototypeApiAuthenticator } from '../../server/src/modules/identity/prototype-authenticator.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
+import { PostgresAgentReleaseService } from '../../server/src/modules/agent/postgres-agent-release-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
+import { registerAgentReleaseRoutes } from '../../server/src/http/admin/agent-release-routes.ts'
+import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
+import { AgentRoutineService } from '../../server/src/modules/automation/agent-routine-service.ts'
+import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
+import { PostgresTaskRepository } from '../../server/src/modules/task/postgres-task-repository.ts'
+import { RunOrchestrationService } from '../../server/src/modules/run/run-orchestration-service.ts'
+import { ModelGovernanceService } from '../../server/src/modules/model/model-governance-service.ts'
+import { PostgresModelGovernanceRepository } from '../../server/src/modules/model/postgres-model-governance-repository.ts'
+import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { envelope, readJsonBody, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
 
 const port = Number(process.env.DSH_WORK_MCP_ADMIN_SERVER_PORT ?? 4392)
 const database = await createThrowawayDatabase({ namePrefix: 'dsh_pf03_admin_browser', maxConnections: 4 })
-const agents = new PostgresAgentService(database.client)
 const authorization = new PostgresAuthorizationService(database.client)
 let capabilities: McpInspectionResult['capabilities'] = [
   { name: 'customer_get', description: '读取一个客户', inputSchema: { type: 'object', properties: { id: { type: 'string' } } } },
@@ -30,7 +41,11 @@ let capabilities: McpInspectionResult['capabilities'] = [
 ]
 
 const runtime: AgentRuntimePort = {
-  async execute() { throw new Error('PF-03 浏览器夹具不执行 Agent Loop') },
+  async execute(manifest) {
+    if (manifest.purpose !== 'agent-routine') throw new Error('PF-03 浏览器夹具不执行 Agent Loop')
+    return { runId: manifest.run_id, attemptId: manifest.attempt_id,
+      acceptedAt: new Date().toISOString(), done: new Promise(() => undefined) }
+  },
   subscribe() { return () => undefined },
   async cancel() { return { accepted: false } },
   status() { return undefined },
@@ -58,6 +73,7 @@ const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, 
   keyId: 'p1-browser-v1',
 })
 const connectorService = new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets)
+const agents = new PostgresAgentService(database.client, undefined, undefined, connectorService)
 const router = new Router({ authenticateApi: prototypeApiAuthenticator })
 const base = '/api/admin/v1'
 
@@ -74,6 +90,23 @@ router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
 registerAgentRoutes(router, agents)
+registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database.client, agents, undefined,
+  connectorService, join(tmpdir(), 'dsh-agent-capabilities-p1')))
+const routineRuns = new PostgresRunRepository(database.client)
+const routineConversations = new PostgresConversationRepository(database.client)
+const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
+  new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime,
+  undefined, undefined, agents, undefined, authorization,
+  { tasks: new PostgresTaskRepository(database.client) })
+registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
+  routineRuns, routineOrchestration, routineConversations))
+router.get(`${base}/test/agent-routine/fixture`, async () => {
+  const [space] = await database.client<{ id: string }[]>`
+    select id from workspaces where tenant_id = 'tenant-dsh-work' and workspace_type = 'personal'
+      and created_by = 'U00001'
+  `
+  return envelope('admin', { workspaceId: space?.id, recipientUserId: 'U00001' }, 'postgres')
+})
 router.get(`${base}/identity/roles`, async () => envelope('admin', await database.client`
   select id, code, name, description, status, permissions,
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
@@ -124,6 +157,16 @@ router.get(`${base}/test/mcp/evidence`, async (_request, context) => {
   return envelope('admin', {
     ...counts,
     resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
+  }, 'postgres')
+})
+router.get(`${base}/test/agent-capabilities/evidence`, async (_request, context) => {
+  const versionId = context.url.searchParams.get('version_id') ?? ''
+  const snapshot = await agents.getRuntimeSnapshot(versionId)
+  return envelope('admin', {
+    systemPrompt: snapshot.systemPrompt,
+    runtimeTools: snapshot.runtimeTools,
+    toolBindings: snapshot.toolBindings,
+    mcpConnectorIds: snapshot.mcpConnections.map(connection => connection.connector_id),
   }, 'postgres')
 })
 router.get(`${base}/test/mcp/deletion-evidence`, async (_request, context) => {

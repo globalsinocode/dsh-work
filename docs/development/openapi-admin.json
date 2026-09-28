@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.10.0-agent-experience-iteration",
+    "version": "0.12.0-agent-routines",
     "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -16,6 +16,117 @@
     }
   ],
   "paths": {
+    "/agents/{agentId}/versions/{versionId}/package": {
+      "get": {
+        "operationId": "exportAgentVersionPackage",
+        "summary": "导出可回导的 Agent 定义 ZIP；不包含平台凭据、连接器或授权",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Agent 发布包", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/agents/{agentId}/routines": {
+      "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
+      "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/agents/{agentId}/routines/{routineId}": {
+      "patch": { "operationId": "updateAgentRoutine", "summary": "按修订更新草稿或已暂停规则；更新后必须重新确认授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision"], "properties": { "expectedRevision": { "type": "integer" }, "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "operationId": "disableAgentRoutine", "summary": "永久停用规则；保留审计与执行记录", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } }
+    },
+    "/agents/{agentId}/routines/{routineId}/enable": { "post": { "operationId": "enableAgentRoutine", "summary": "确认 Agent 角色和数据范围上限并启用", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["expectedRevision", "roleIds", "dataScopes"], "properties": { "expectedRevision": { "type": "integer" }, "roleIds": { "type": "array", "items": { "type": "string" } }, "dataScopes": { "type": "array", "items": { "type": "string" } } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } } } },
+    "/agents/{agentId}/routines/{routineId}/pause": { "post": { "operationId": "pauseAgentRoutine", "summary": "暂停规则并阻止后续执行授权", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agents/{agentId}/routines/{routineId}/run-now": { "post": { "operationId": "runAgentRoutineNow", "summary": "使用幂等键手动触发已启用规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["idempotencyKey"], "properties": { "idempotencyKey": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agents/{agentId}/routines/{routineId}/events": { "post": { "operationId": "triggerAgentRoutineEvent", "summary": "由受信管理员按来源与事件 ID 去重触发事件规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["eventType", "source", "eventId"], "properties": { "eventType": { "type": "string" }, "source": { "type": "string" }, "eventId": { "type": "string" } } } } } }, "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } } },
+    "/agents/{agentId}/routines/{routineId}/executions": { "get": { "operationId": "listAgentRoutineExecutions", "summary": "查询受理、跳过、Run 终态与业务结果", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "routineId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" } } } },
+    "/agent-data/collections": {
+      "get": {
+        "operationId": "listAgentDataCollections",
+        "summary": "列出 Agent 数据集合及 Schema、作用域和保留策略",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "publishAgentDataCollection",
+        "summary": "发布受治理的数据集合；不执行 Agent 包内 SQL",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataCollectionInput" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/schema": {
+      "patch": {
+        "operationId": "evolveAgentDataCollectionSchema",
+        "summary": "以期望版本升级集合 Schema",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataSchemaEvolutionInput" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/status": {
+      "patch": {
+        "operationId": "setAgentDataCollectionStatus",
+        "summary": "启用或停用数据集合",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["status"], "properties": { "status": { "enum": ["active", "disabled"] } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants": {
+      "get": {
+        "operationId": "listAgentDataCollectionGrants",
+        "summary": "列出集合对 Agent 安装实例的动作授权",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/grants/{agentId}": {
+      "patch": {
+        "operationId": "setAgentDataCollectionGrant",
+        "summary": "设置 Agent 的集合动作授权；空数组表示撤权",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" }, { "$ref": "#/components/parameters/AgentId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentDataGrantInput" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/collections/{collectionId}/records": {
+      "get": {
+        "operationId": "listAgentDataRecords",
+        "summary": "分页读取集合的结构化记录",
+        "parameters": [{ "$ref": "#/components/parameters/AgentDataCollectionId" },
+          { "name": "after", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/proposals": {
+      "get": {
+        "operationId": "listAgentDataProposals",
+        "summary": "列出待审或已处理的 Agent 数据提案",
+        "parameters": [{ "name": "status", "in": "query", "schema": { "enum": ["pending", "approved", "rejected"] } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/proposals/{proposalId}/review": {
+      "post": {
+        "operationId": "reviewAgentDataProposal",
+        "summary": "审核提案并在批准时复核当前授权与固定 Schema 版本",
+        "parameters": [{ "name": "proposalId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["decision"], "properties": { "decision": { "enum": ["approved", "rejected"] } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agent-data/records/{recordId}": {
+      "delete": {
+        "operationId": "deleteAgentDataRecord",
+        "summary": "删除记录正文并保留不含正文的版本删除摘要",
+        "parameters": [{ "name": "recordId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/experience-iterations/agents": {
       "get": {
         "operationId": "listExperienceIterationAgents",
@@ -1719,6 +1830,12 @@
       }
     },
     "parameters": {
+      "AgentDataCollectionId": {
+        "name": "collectionId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      },
       "AgentId": {
         "name": "agentId",
         "in": "path",
@@ -1760,7 +1877,7 @@
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/AgentInput"
+              "$ref": "#/components/schemas/AgentConfiguration"
             }
           }
         }
@@ -1789,6 +1906,45 @@
       }
     },
     "schemas": {
+      "AgentRoutineSchedule": { "oneOf": [
+        { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
+        { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },
+        { "type": "object", "required": ["kind", "timezone", "eventType"], "properties": { "kind": { "const": "event" }, "timezone": { "type": "string" }, "eventType": { "type": "string" } } }
+      ] },
+      "AgentRoutineInput": { "type": "object", "required": ["prompt"], "properties": { "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 }, "budget": { "type": "object", "properties": { "timeoutSeconds": { "type": "integer", "minimum": 1 }, "maxToolCalls": { "type": "integer", "minimum": 1 }, "maxOutputBytes": { "type": "integer", "minimum": 1 } } } } },
+      "AgentRoutineDraft": { "type": "object", "required": ["name", "agentVersionId", "workspaceId", "recipientUserId", "schedule", "inputTemplate"], "properties": { "name": { "type": "string" }, "agentVersionId": { "type": "string" }, "workspaceId": { "type": "string" }, "recipientUserId": { "type": "string" }, "schedule": { "$ref": "#/components/schemas/AgentRoutineSchedule" }, "inputTemplate": { "$ref": "#/components/schemas/AgentRoutineInput" } } },
+      "AgentDataCollectionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "schema", "queryFields", "retentionDays"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,79}$" },
+          "ownerWorkspaceId": { "type": "string" },
+          "privateAgentId": { "type": "string" },
+          "schema": { "type": "object", "description": "管理员批准的 JSON Schema；顶层必须为 object。" },
+          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } },
+          "retentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+        }
+      },
+      "AgentDataSchemaEvolutionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["expectedVersion", "schema", "queryFields"],
+        "properties": {
+          "expectedVersion": { "type": "integer", "minimum": 1 },
+          "schema": { "type": "object" },
+          "queryFields": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string" } }
+        }
+      },
+      "AgentDataGrantInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["actions"],
+        "properties": {
+          "actions": { "type": "array", "uniqueItems": true,
+            "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+        }
+      },
       "SkillTestScenario": {
         "type": "object",
         "additionalProperties": false,
@@ -1970,6 +2126,21 @@
             "minLength": 20,
             "maxLength": 20000
           },
+          "workInstructions": {
+            "type": ["string", "null"],
+            "description": "可选 AGENTS.md 工作规程正文；空值表示不启用",
+            "maxLength": 20000
+          },
+          "mcpScope": {
+            "type": "object",
+            "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 all。",
+            "required": ["mode", "connectorIds"],
+            "additionalProperties": false,
+            "properties": {
+              "mode": { "type": "string", "enum": ["all", "selected", "none"] },
+              "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
+            }
+          },
           "skills": {
             "type": "array",
             "items": {
@@ -1999,6 +2170,27 @@
               "type": "string"
             },
             "uniqueItems": true
+          },
+          "data": {
+            "type": "object",
+            "description": "可选 Agent 数据需求声明；集合发布与授权由平台管理，声明本身不授予权限。",
+            "properties": {
+              "state": { "type": "boolean" },
+              "collections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["key", "scope", "schemaVersion", "actions"],
+                  "properties": {
+                    "key": { "type": "string" },
+                    "scope": { "enum": ["installation", "workspace", "tenant"] },
+                    "schemaVersion": { "type": "integer", "minimum": 1 },
+                    "actions": { "type": "array", "uniqueItems": true,
+                      "items": { "enum": ["query", "propose", "create", "update", "transition"] } }
+                  }
+                }
+              }
+            }
           },
           "maxOutputBytes": {
             "type": "integer",
