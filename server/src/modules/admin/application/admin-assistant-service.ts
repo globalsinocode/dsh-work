@@ -88,7 +88,8 @@ interface ActionRow {
 
 type AgentSnapshot = Pick<AgentDefinition,
   'id' | 'name' | 'description' | 'owner' | 'department' | 'visibility' | 'roleIds' | 'dataScopes'
-  | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'tools'
+  | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
+  | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'tools'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -513,6 +514,8 @@ export class AdminAssistantService {
       welcomeMessage: readChangedString(changes, 'welcomeMessage', agent.welcomeMessage, 1, 2000),
       examplePrompts: readChangedStringArray(changes, 'examplePrompts', agent.examplePrompts, 20),
       systemPrompt: readChangedString(changes, 'systemPrompt', agent.systemPrompt, 20, 20000),
+      workInstructions: agent.workInstructions ?? '',
+      mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
       maxOutputBytes: changes['maxOutputBytes'] === undefined ? agent.maxOutputBytes : readInteger(changes, 'maxOutputBytes', 1, 10_000_000),
       maxToolCalls: changes['maxToolCalls'] === undefined ? agent.maxToolCalls : readInteger(changes, 'maxToolCalls', 1, 10_000),
       timeoutSeconds: changes['timeoutSeconds'] === undefined ? agent.timeoutSeconds : readInteger(changes, 'timeoutSeconds', 1, 3600),
@@ -820,6 +823,8 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
+    workInstructions: agent.workInstructions ?? '',
+    mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
     maxOutputBytes: agent.maxOutputBytes,
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
@@ -844,6 +849,8 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.welcomeMessage === after.welcomeMessage
     && canonicalJson(agent.examplePrompts) === canonicalJson(after.examplePrompts)
     && agent.systemPrompt === after.systemPrompt
+    && (agent.workInstructions ?? '') === (after.workInstructions ?? '')
+    && canonicalJson(agent.mcpScope ?? { mode: 'all', connectorIds: [] }) === canonicalJson(after.mcpScope ?? { mode: 'all', connectorIds: [] })
     && agent.maxOutputBytes === after.maxOutputBytes
     && agent.maxToolCalls === after.maxToolCalls
     && agent.timeoutSeconds === after.timeoutSeconds

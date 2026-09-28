@@ -6,7 +6,7 @@ import AgentZipImportPanel from '@/components/AgentZipImportPanel.vue'
 import type { ZipInspection } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentDraftConfiguration, CreateAgentDraftInput } from '@/types/domain'
+import type { AgentDefinition, AgentDraftConfiguration, AgentMcpScope, ConnectorDefinition, CreateAgentDraftInput } from '@/types/domain'
 
 const props = defineProps<{
   agent?: AgentDefinition
@@ -41,9 +41,13 @@ const roleLabels: Record<string, string> = {
   'role-auditor': '安全审计员',
 }
 
-const form = reactive<AgentDraftConfiguration>(emptyDraft())
+type DraftForm = AgentDraftConfiguration & { workInstructions: string; mcpScope: AgentMcpScope }
+const form = reactive<DraftForm>(emptyDraft())
 const executionRoleIds = ref<string[]>([])
 const executionDataScopes = ref<string[]>([])
+const inspectingMcp = ref<ConnectorDefinition | null>(null)
+const mcpToolsDialogOpen = ref(false)
+const governanceSections = ref<string[]>([])
 
 const rules: FormRules = {
   name: [
@@ -58,6 +62,10 @@ const rules: FormRules = {
     { required: true, message: '请输入 SOUL.md 内容', trigger: 'blur' },
     { min: 20, message: 'SOUL.md 内容至少需要 20 个字符', trigger: 'blur' },
   ],
+  workInstructions: [{ async validator(_rule, value: string) {
+    const length = value?.trim().length ?? 0
+    if (length > 0 && length < 20) throw new Error('AGENTS.md 填写后至少需要 20 个字符')
+  }, trigger: 'blur' }],
   roleIds: [{ type: 'array', required: true, min: 1, message: '请至少选择一个可见角色', trigger: 'change' }],
   dataScopes: [{ type: 'array', required: true, min: 1, message: '请至少配置一个业务数据范围', trigger: 'change' }],
 }
@@ -65,8 +73,10 @@ const rules: FormRules = {
 const publishedSkills = computed(() => contentStore.skills.filter((skill) =>
   Boolean(skill.activeVersion) && skill.status !== 'disabled',
 ))
-const usableTools = computed(() => contentStore.tools.filter((tool) =>
-  tool.status === 'available' && tool.admissionStatus !== 'unavailable'))
+const mcpConnectors = computed(() => contentStore.connectors.filter(connector => connector.protocol === 'mcp'))
+const selectedMcpConnectors = computed(() => form.mcpScope.connectorIds.map(id =>
+  mcpConnectors.value.find(connector => connector.id === id),
+))
 const delegationTargets = computed(() => contentStore.agentVersions.filter((version) =>
   version.status === 'published',
 ).map((version) => ({
@@ -105,23 +115,14 @@ const savedMissingCount = computed(() => {
 })
 
 const stepFields: string[][] = [
-  ['name', 'description'],
-  ['systemPrompt', 'roleIds', 'dataScopes'],
+  ['name', 'description', 'systemPrompt', 'workInstructions'],
+  ['roleIds', 'dataScopes'],
 ]
 
 watch(dialogOpen, (open) => {
   if (open) resetEditor()
 })
 
-watch(() => [...form.skills], (references) => {
-  const requiredTools = references.flatMap((reference) => {
-    const separator = reference.lastIndexOf('@')
-    const skillId = separator > 0 ? reference.slice(0, separator) : reference
-    const skill = contentStore.skills.find(item => item.id === skillId)
-    return skill?.toolIds.map(toVersionedToolReference) ?? []
-  })
-  form.tools = unique([...form.tools, ...requiredTools])
-})
 watch(() => [...form.roleIds], roles => {
   executionRoleIds.value = executionRoleIds.value.filter(role => roles.includes(role))
 })
@@ -129,7 +130,7 @@ watch(() => [...form.dataScopes], scopes => {
   executionDataScopes.value = executionDataScopes.value.filter(scope => scopes.includes(scope))
 })
 
-function emptyDraft(): AgentDraftConfiguration {
+function emptyDraft(): DraftForm {
   return {
     id: createAgentId(),
     name: '',
@@ -142,11 +143,13 @@ function emptyDraft(): AgentDraftConfiguration {
     welcomeMessage: '',
     examplePrompts: ['请介绍你能提供哪些帮助'],
     systemPrompt: '',
+    workInstructions: '',
     maxOutputBytes: 65536,
     maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: [],
     tools: [],
+    mcpScope: { mode: 'all', connectorIds: [] },
     delegationPolicy: defaultDelegationPolicy(),
     changeSummary: '创建初始草稿版本',
   }
@@ -170,11 +173,13 @@ function resetEditor() {
         welcomeMessage: props.agent.welcomeMessage,
         examplePrompts: [...props.agent.examplePrompts],
         systemPrompt: props.agent.systemPrompt,
+        workInstructions: props.agent.workInstructions ?? '',
         maxOutputBytes: props.agent.maxOutputBytes,
         maxToolCalls: props.agent.maxToolCalls,
         timeoutSeconds: props.agent.timeoutSeconds,
         skills: [...props.agent.skills],
         tools: props.agent.tools.map(toVersionedToolReference),
+        mcpScope: props.agent.mcpScope ?? { mode: 'all' as const, connectorIds: [] as [] },
         delegationPolicy: (() => {
           const policy = props.agent.delegationPolicy ?? defaultDelegationPolicy()
           return { ...policy, allowedAgentVersionIds: [...policy.allowedAgentVersionIds] }
@@ -190,10 +195,15 @@ function resetEditor() {
   activeStep.value = 0
   examplePrompt.value = source.examplePrompts[0] ?? '请介绍你能提供哪些帮助'
   initialSnapshot.value = JSON.stringify(form)
+  governanceSections.value = []
   formRef.value?.clearValidate()
 }
 
 async function nextStep() {
+  if (activeStep.value === 1 && form.mcpScope.mode === 'selected' && !form.mcpScope.connectorIds.length) {
+    ElMessage.warning('仅选定模式下，请至少选择一个 MCP Connector')
+    return
+  }
   const fields = stepFields[activeStep.value] ?? []
   try {
     if (fields.length) await formRef.value?.validateField(fields)
@@ -209,6 +219,11 @@ function previousStep() {
 }
 
 async function saveAgent() {
+  if (form.mcpScope.mode === 'selected' && !form.mcpScope.connectorIds.length) {
+    activeStep.value = 1
+    ElMessage.warning('仅选定模式下，请至少选择一个 MCP Connector')
+    return
+  }
   try {
     await formRef.value?.validate()
   } catch {
@@ -240,8 +255,9 @@ async function saveAgent() {
 }
 
 function findFirstInvalidStep() {
-  if (!form.name || !form.description) return 0
-  if (!form.systemPrompt || !form.roleIds.length || !form.dataScopes.length) return 1
+  if (!form.name || !form.description || !form.systemPrompt
+    || (form.workInstructions.trim() && form.workInstructions.trim().length < 20)) return 0
+  if (!form.roleIds.length || !form.dataScopes.length) return 1
   return -1
 }
 
@@ -279,7 +295,7 @@ function continueRelease() {
   emit('continue-release', saved)
 }
 
-function cloneDraft(value: AgentDraftConfiguration): AgentDraftConfiguration {
+function cloneDraft(value: DraftForm): DraftForm {
   return {
     ...value,
     roleIds: [...value.roleIds],
@@ -287,6 +303,9 @@ function cloneDraft(value: AgentDraftConfiguration): AgentDraftConfiguration {
     examplePrompts: [...value.examplePrompts],
     skills: [...value.skills],
     tools: [...value.tools],
+    mcpScope: value.mcpScope.mode === 'selected'
+      ? { mode: 'selected', connectorIds: [...value.mcpScope.connectorIds] }
+      : { mode: value.mcpScope.mode, connectorIds: [] },
     delegationPolicy: {
       ...value.delegationPolicy,
       allowedAgentVersionIds: [...value.delegationPolicy.allowedAgentVersionIds],
@@ -294,7 +313,7 @@ function cloneDraft(value: AgentDraftConfiguration): AgentDraftConfiguration {
   }
 }
 
-function preparePayload(value: AgentDraftConfiguration): AgentDraftConfiguration {
+function preparePayload(value: DraftForm): AgentDraftConfiguration {
   const payload = cloneDraft(value)
   if (!props.agent) {
     payload.owner = authStore.user.name
@@ -305,6 +324,19 @@ function preparePayload(value: AgentDraftConfiguration): AgentDraftConfiguration
   payload.examplePrompts = [examplePrompt.value.trim() || '请介绍你能提供哪些帮助']
   payload.changeSummary = props.agent ? `更新 ${payload.name} 配置` : '创建 Agent 初始版本'
   return payload
+}
+
+function setMcpMode(mode: AgentMcpScope['mode']) {
+  form.mcpScope = { mode, connectorIds: [] }
+}
+
+function setSelectedMcpIds(ids: string[]) {
+  form.mcpScope = { mode: 'selected', connectorIds: unique(ids) }
+}
+
+function showMcpTools(connector: ConnectorDefinition) {
+  inspectingMcp.value = connector
+  mcpToolsDialogOpen.value = true
 }
 
 function createAgentId() {
@@ -359,7 +391,7 @@ function toVersionedToolReference(reference: string) {
         <div><dt>Agent</dt><dd>{{ savedResult.agent.name }}</dd></div>
         <div><dt>草稿版本</dt><dd class="mono">v{{ savedResult.agent.version }}</dd></div>
         <div><dt>创建方式</dt><dd>{{ savedResult.source === 'zip' ? 'ZIP 导入' : '配置创建' }}</dd></div>
-        <div><dt>能力引用</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · {{ savedResult.agent.tools.length }} 个工具</dd></div>
+        <div><dt>能力范围</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · MCP：{{ savedResult.agent.mcpScope?.mode === 'selected' ? '仅选定' : savedResult.agent.mcpScope?.mode === 'none' ? '不使用' : '全部可用' }}</dd></div>
       </dl>
       <el-alert
         v-if="savedResult.executionGrantMissing"
@@ -393,8 +425,8 @@ function toVersionedToolReference(reference: string) {
 
       <div v-if="props.agent || creationMode === 'config'" class="agent-editor__steps">
       <el-steps :active="activeStep" finish-status="success" align-center>
-        <el-step title="定义 Agent" description="名称、说明和欢迎语" />
-        <el-step title="配置能力和权限" description="Soul、可选能力和权限" />
+        <el-step title="定义 Agent" description="职责、Soul 和工作规程" />
+        <el-step title="选择 Skill 与 MCP" description="选择方法与外部连接" />
         <el-step :title="props.agent ? '确认并保存' : '确认并创建'" description="确认员工端展示和配置摘要" />
       </el-steps>
       </div>
@@ -420,37 +452,51 @@ function toVersionedToolReference(reference: string) {
           <el-input v-model="form.welcomeMessage" type="textarea" :rows="2" maxlength="120" show-word-limit placeholder="员工首次打开 Agent 时看到的欢迎语" />
           <p class="field-help">留空时，平台会根据 Agent 名称和说明自动生成欢迎语。</p>
         </el-form-item>
-      </section>
-
-      <section v-show="activeStep === 1" class="agent-editor__pane" aria-label="Agent 能力配置">
-        <header class="pane-heading">
-          <div><h3>配置能力和权限</h3><p>定义 Agent 如何工作，以及哪些员工可以在什么数据范围内使用。</p></div>
-          <span class="step-badge">2 / 3</span>
-        </header>
-        <div class="configuration-section-heading"><strong>能力配置</strong><span>定义 Soul，按需引用 Skill 和工具</span></div>
         <el-form-item label="SOUL.md（人格与工作原则）" prop="systemPrompt">
           <el-input v-model="form.systemPrompt" type="textarea" :rows="6" maxlength="20000" show-word-limit placeholder="定义 Agent 的稳定职责、工作原则、沟通风格、禁止事项和转人工条件" />
-          <p class="field-help">包内统一保存为根目录 SOUL.md；不得包含凭证或密钥，发布后随 Agent 版本锁定。</p>
+          <p class="field-help">根目录 SOUL.md 随版本固定；不要填写凭据或密钥。</p>
         </el-form-item>
-        <div class="form-grid form-grid--two">
-          <el-form-item label="引用 Skill（选填）" prop="skills">
-            <el-select v-model="form.skills" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择已发布 Skill">
-              <el-option v-for="skill in publishedSkills" :key="skill.id" :label="`${skill.name} · v${skill.activeVersion}`" :value="`${skill.id}@${skill.activeVersion}`" />
+        <el-form-item label="AGENTS.md（工作规程，选填）" prop="workInstructions">
+          <el-input v-model="form.workInstructions" type="textarea" :rows="5" maxlength="20000" show-word-limit placeholder="例如：如何核对输入、使用状态与经验、验证结果，以及何时交接给人工" />
+          <p class="field-help">留空时不生成文件；填写后作为版本指令固定，不会读取服务器工作目录的同名文件。</p>
+        </el-form-item>
+      </section>
+
+      <section v-show="activeStep === 1" class="agent-editor__pane" aria-label="Skill 与 MCP 使用范围">
+        <header class="pane-heading">
+          <div><h3>选择 Skill 与 MCP</h3><p>平台自动提供获准的基础能力；这里只选择工作方法和外部连接范围。</p></div>
+          <span class="step-badge">2 / 3</span>
+        </header>
+        <el-form-item label="引用 Skill（选填）" prop="skills">
+          <el-select v-model="form.skills" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择已发布 Skill">
+            <el-option v-for="skill in publishedSkills" :key="skill.id" :label="`${skill.name} · v${skill.activeVersion}`" :value="`${skill.id}@${skill.activeVersion}`" />
+          </el-select>
+          <p class="field-help">精确引用已发布版本；无需 Skill 时可留空。</p>
+        </el-form-item>
+        <div class="configuration-section-heading"><strong>MCP 外部连接</strong><span>按整个 Connector 选择，不逐工具配置</span></div>
+        <el-radio-group :model-value="form.mcpScope.mode" aria-label="MCP 使用范围" @update:model-value="(value: string) => setMcpMode(value as AgentMcpScope['mode'])">
+          <el-radio value="all">全部可用 MCP（默认）</el-radio>
+          <el-radio value="selected">仅使用选定 MCP</el-radio>
+          <el-radio value="none">不使用 MCP</el-radio>
+        </el-radio-group>
+        <p class="field-help">全部模式在每次新运行时使用租户当前可用连接；历史运行保留各自清单。</p>
+        <div v-if="form.mcpScope.mode === 'selected'" class="mcp-selection">
+          <el-form-item label="选择 MCP Connector">
+            <el-select :model-value="form.mcpScope.connectorIds" multiple filterable placeholder="至少选择一个 Connector" @update:model-value="setSelectedMcpIds">
+              <el-option v-for="connector in mcpConnectors" :key="connector.id" :label="`${connector.name} · ${connector.status}`" :value="connector.id" :disabled="connector.status !== 'healthy'" />
             </el-select>
-            <p class="field-help">仅允许引用已发布版本，运行时锁定具体版本；无需 Skill 时可留空。</p>
+            <p v-if="!mcpConnectors.length" class="field-help">暂无可用 MCP Connector；请先在连接器管理中登记并检查。</p>
+            <p v-else-if="!form.mcpScope.connectorIds.length" class="field-help field-help--error">仅选定模式必须选择至少一个 Connector。</p>
           </el-form-item>
-          <el-form-item label="工具允许列表（选填）" prop="tools">
-            <el-select v-model="form.tools" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="选择 Agent 可调用的工具">
-              <el-option v-for="tool in usableTools" :key="tool.id" :label="`${tool.name} · v${tool.version ?? '1.0.0'} · ${tool.system}`" :value="`${tool.id}@${tool.version ?? '1.0.0'}`" />
-              <el-option label="提出经验迭代申请 · v1.0.0 · dsh-work 内置执行工具" value="propose_memory@1.0.0" />
-            </el-select>
-            <p class="field-help">无需工具时可留空；经验申请必须来自成功 Run/Attempt，按稳定 Agent 归属并经管理员审核后，才可在后续运行中作为非权威经验使用。</p>
-          </el-form-item>
+          <div v-for="(connector, index) in selectedMcpConnectors" :key="form.mcpScope.connectorIds[index]" class="selected-mcp">
+            <div><strong>{{ connector?.name ?? form.mcpScope.connectorIds[index] }}</strong><small>{{ connector ? `${connector.status} · ${connector.mcp?.capabilityCount ?? 0} 个工具` : '连接器已删除或不可见' }}</small></div>
+            <el-button v-if="connector" link type="primary" @click="showMcpTools(connector)">查看工具</el-button>
+            <el-button link type="danger" @click="setSelectedMcpIds(form.mcpScope.connectorIds.filter(id => id !== form.mcpScope.connectorIds[index]))">移除</el-button>
+          </div>
+          <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；试运行和新任务将被拒绝，请修正选择或恢复连接。" />
         </div>
-        <div class="selection-overview">
-          <div><span>Skill</span><strong>{{ form.skills.length }}</strong><small>个已选择</small></div>
-          <div><span>工具</span><strong>{{ form.tools.length }}</strong><small>个已允许</small></div>
-        </div>
+        <el-collapse v-model="governanceSections" class="agent-governance-collapse">
+          <el-collapse-item name="permissions" title="权限与运行限制">
         <div class="configuration-section-heading configuration-section-heading--permissions"><strong>受控委派（选填）</strong><span>只允许调用固定的已发布 Agent Version</span></div>
         <el-form-item label="允许委派的 Agent Version">
           <el-select v-model="form.delegationPolicy.allowedAgentVersionIds" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="不选择则不开放 Agent 委派">
@@ -500,6 +546,8 @@ function toVersionedToolReference(reference: string) {
           </el-form-item>
         </div>
         <el-alert type="info" :closable="false" show-icon title="涉及敏感数据或写操作时，工具自身的审批策略仍然生效。" />
+          </el-collapse-item>
+        </el-collapse>
       </section>
 
       <section v-show="activeStep === 2" class="agent-editor__pane" aria-label="Agent 配置确认">
@@ -532,7 +580,8 @@ function toVersionedToolReference(reference: string) {
             <div class="draft-summary__grid" :class="{ 'draft-summary__grid--create': !props.agent }">
               <div><span>Agent</span><strong>{{ form.name }}</strong><small>{{ form.description }}</small></div>
               <div v-if="props.agent"><span>负责人</span><strong>{{ form.owner }}</strong><small>负责配置维护与发布</small></div>
-              <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>{{ form.tools.length }} 个工具</small></div>
+              <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>MCP：{{ form.mcpScope.mode === 'selected' ? `${form.mcpScope.connectorIds.length} 个选定` : form.mcpScope.mode === 'none' ? '不使用' : '全部可用' }}</small></div>
+              <div><span>工作规程</span><strong>{{ form.workInstructions.trim() ? '已填写 AGENTS.md' : '未填写' }}</strong><small>与 Soul 一起随版本固定</small></div>
               <div><span>委派</span><strong>{{ form.delegationPolicy.allowedAgentVersionIds.length }} 个目标</strong><small>深度 {{ form.delegationPolicy.maxDepth }} · 并行 {{ form.delegationPolicy.maxParallel }}</small></div>
               <div><span>权限</span><strong>{{ selectedRoleNames.length }} 个可见角色</strong><small>{{ form.dataScopes.length }} 个数据范围</small></div>
               <div v-if="!props.agent"><span>执行授权</span><strong>{{ executionRoleIds.length }} 个角色</strong><small>{{ executionDataScopes.length }} 个数据范围；留空时不能试运行</small></div>
@@ -566,6 +615,13 @@ function toVersionedToolReference(reference: string) {
         >导入为草稿</el-button>
       </div>
     </template>
+  </el-dialog>
+  <el-dialog v-model="mcpToolsDialogOpen" :title="`工具清单 · ${inspectingMcp?.name ?? ''}`" width="min(680px, calc(100vw - 40px))" append-to-body>
+    <el-empty v-if="!inspectingMcp?.mcp?.capabilities.length" description="暂无已发现工具" />
+    <div v-for="tool in inspectingMcp?.mcp?.capabilities ?? []" :key="tool.name" class="mcp-tool-detail">
+      <strong>{{ tool.name }}</strong><p>{{ tool.description || '无描述' }}</p>
+      <details><summary>输入 Schema</summary><pre>{{ JSON.stringify(tool.inputSchema, null, 2) }}</pre></details>
+    </div>
   </el-dialog>
 </template>
 
@@ -613,6 +669,16 @@ function toVersionedToolReference(reference: string) {
 .selection-overview span, .draft-summary span { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
 .selection-overview strong { color: var(--color-text-heading); font-size: var(--font-size-heading); }
 .selection-overview small { grid-column: 1 / -1; color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.mcp-selection { margin-top: 16px; }
+.selected-mcp { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); margin-bottom: 8px; }
+.selected-mcp > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.selected-mcp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-mcp small { color: var(--color-text-muted); }
+.field-help--error { color: var(--color-danger); }
+.agent-governance-collapse { margin-top: 24px; }
+.mcp-tool-detail { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+.mcp-tool-detail p { color: var(--color-text-secondary); }
+.mcp-tool-detail pre { max-height: 220px; overflow: auto; padding: 10px; background: var(--color-bg-subtle); }
 .review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .employee-preview, .draft-summary { padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-base); }
 .employee-preview h4, .draft-summary h4 { margin-bottom: 14px; }

@@ -237,6 +237,22 @@ test('Agent data result exposes only immutable version references and does not c
   assert.equal(uncertainExternalWrite.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)
 })
 
+test('failed run with an unknown MCP effect does not present a safe retry', () => {
+  const result = deriveTaskResult(evidence({
+    run: { id: 'run-001', status: 'failed', updatedAt },
+    events: [event('failed', 'run.failed')],
+    unknownOperations: [{ id: 'mcp-audit-1', actionRef: 'MCP put_receipt (connector-1)' }],
+    runError: {
+      code: 'AUTHORIZATION_REVOKED', message: '本轮执行失败', object: '运行 run-001',
+      reason: '执行授权已撤销', suggestion: '可重新执行', retryable: true,
+    },
+  }))
+  assert.equal(result.outcome, 'not_achieved')
+  assert.equal(result.error?.retryable, false)
+  assert.match(result.error?.suggestion ?? '', /权威系统回执/)
+  assert.equal(result.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)
+})
+
 test('a completed tool action is a verifiable deliverable for a tool-only task', () => {
   const result = deriveTaskResult(evidence({
     events: [event('e2', 'run.completed', { tool_call_count: 1, tool_result_count: 1 })],

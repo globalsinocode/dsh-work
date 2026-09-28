@@ -5,6 +5,7 @@ import type {
   AgentDefinition,
   AgentDelegationPolicy,
   AgentDraftConfiguration,
+  AgentMcpScope,
   AgentReleaseRecord,
   AgentVersionRecord,
   CreateAgentDraftInput,
@@ -15,11 +16,12 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import type { ManifestToolBinding, ResolvedToolBinding } from '../../domain/tool-binding.ts'
+import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
-import { agentSpecFromConfiguration, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
+import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
+import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -56,6 +58,7 @@ interface AgentRow {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope: AgentMcpScope
   delegationPolicy: AgentDelegationPolicy
   updatedAt: Date
 }
@@ -71,15 +74,17 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'examplePrompts'
   | 'skills'
   | 'tools'
+  | 'mcpScope'
   | 'delegationPolicy'
   | 'maxOutputBytes'
   | 'maxToolCalls'
   | 'timeoutSeconds'
->, 'delegationPolicy'> & { delegationPolicy?: AgentDelegationPolicy; agentSpec?: AgentSpec | null }
+>, 'delegationPolicy' | 'mcpScope'> & { delegationPolicy?: AgentDelegationPolicy; mcpScope?: AgentMcpScope; agentSpec?: AgentSpec | null }
 
 interface VersionRow {
   id: string
   agentId: string
+  agentSpec: AgentSpec | null
   version: string
   bindingRefs?: ManifestToolBinding[]
   name: string
@@ -101,6 +106,7 @@ interface VersionRow {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope: AgentMcpScope
   delegationPolicy: AgentDelegationPolicy
 }
 
@@ -307,7 +313,9 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
-             av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy"
+             av.binding_refs as "bindingRefs", av.delegation_policy as "delegationPolicy",
+             av.mcp_scope as "mcpScope",
+             av.agent_spec as "agentSpec"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -349,7 +357,8 @@ export class PostgresAgentService {
       throw new Error('Agent 执行授权必须显式配置，且不能超过当前定义的角色和数据范围')
     }
     await this.assertInitialAgentGrants(executionRoleIds)
-    await this.assertCapabilityReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
     const versionId = `agent-version-${randomUUID()}`
     const version = '0.1.0'
@@ -369,14 +378,15 @@ export class PostgresAgentService {
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
           example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-          max_tool_calls, timeout_seconds, skill_refs, tool_refs, delegation_policy, agent_spec, status, created_by, change_summary
+          max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
           ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
           ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
           ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-          ${transaction.json(configuration.tools)}, ${transaction.json(asJson(configuration.delegationPolicy))},
+          ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
+          ${transaction.json(asJson(configuration.delegationPolicy))},
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
@@ -419,12 +429,13 @@ export class PostgresAgentService {
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
     const configuration = normalizeConfiguration(
-      { ...input, id: input.agentId },
+      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
       current.owner,
       current.department,
     )
     assertConfiguration(configuration)
-    await this.assertCapabilityReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
 
     let draftVersionId = current.draftVersionId
@@ -449,7 +460,8 @@ export class PostgresAgentService {
                  data_scopes = ${transaction.json(configuration.dataScopes)},
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
-                 skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(configuration.tools)},
+                 skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(effectiveTools)},
+                 mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  delegation_policy = ${transaction.json(asJson(configuration.delegationPolicy))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
                  change_summary = ${configuration.changeSummary}
@@ -471,14 +483,15 @@ export class PostgresAgentService {
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-            max_tool_calls, timeout_seconds, skill_refs, tool_refs, delegation_policy, agent_spec, status, created_by, source_version, change_summary
+            max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
             ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
-            ${transaction.json(configuration.skills)}, ${transaction.json(configuration.tools)},
+            ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
+            ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(configuration.delegationPolicy))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
@@ -807,13 +820,17 @@ export class PostgresAgentService {
   }
 
   async getRuntimeSnapshot(versionId: string, additionalSkillReferences: string[] = []): Promise<RuntimeAgentSnapshot> {
-    const [row] = await this.database<Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'>[]>`
+    const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & {
+      agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
+    })[]>`
       select av.id as "versionId", ep.id as "principalId",
              ep.authorization_version as "principalAuthorizationVersion",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
+             av.agent_spec as "agentSpec",
+             av.binding_refs as "bindingRefs", av.status as "versionStatus",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
              coalesce(av.agent_spec #> '{data,collections}', '[]'::jsonb) as "dataRequirements",
              coalesce((av.agent_spec #>> '{data,state}')::boolean, false) as "stateEnabled",
@@ -829,7 +846,16 @@ export class PostgresAgentService {
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
-    const tools = unique([...row.tools, ...skillInstructions.flatMap(skill => skill.tools).filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))])
+    const executionTools = skillInstructions.flatMap(skill => skill.tools)
+      .filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
+    const platformTools = row.versionStatus === 'draft'
+      ? (this.toolService
+        ? await this.toolService.resolvePlatformDefaultToolReferences(row.roleIds, row.dataScopes)
+        : [])
+      : row.bindingRefs?.length
+        ? row.bindingRefs.map(pin => pin.tool)
+        : []
+    const tools = unique([...row.tools, ...executionTools, ...platformTools])
     const runtimeToolNames = this.toolService
       ? await this.toolService.resolveRuntimeToolNames(tools)
       : tools.map(reference => parseReference(reference).id)
@@ -845,13 +871,21 @@ export class PostgresAgentService {
     const toolBindings = this.toolService
       ? await this.toolService.resolveToolBindings(tools)
       : []
+    if (row.versionStatus === 'published' && row.bindingRefs?.length
+      && bindingBasisKey(toolBindings.map(toManifestToolBinding)) !== bindingBasisKey(row.bindingRefs)) {
+      throw authorizationDenied('Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本')
+    }
     const mcpConnections = this.toolService
       ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
       : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
-    return { ...row, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
+    const systemPrompt = row.agentSpec
+      ? assembleAgentInstructions(row.agentSpec)
+      : row.systemPrompt
+    const { agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
+    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
   }
 
   /**
@@ -930,6 +964,18 @@ export class PostgresAgentService {
     }
   }
 
+  /** Persist effective Skill dependencies separately from author-declared AgentSpec tools. */
+  private async resolveConfiguredToolReferences(
+    skills: string[], declaredTools: string[], roleIds: string[], dataScopes: string[],
+  ): Promise<string[]> {
+    const runtimeSkills = this.skillService ? await this.skillService.resolveRuntimeSkills(skills) : []
+    const dependencies = runtimeSkills.flatMap(skill => skill.tools)
+      .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))
+    const effectiveTools = unique([...declaredTools, ...dependencies])
+    await this.assertCapabilityReferences(skills, effectiveTools, roleIds, dataScopes)
+    return effectiveTools
+  }
+
   private async appendRelease(
     transaction: DatabaseTransaction,
     versionId: string,
@@ -983,7 +1029,8 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.delegation_policy as "delegationPolicy",
+             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -1005,7 +1052,8 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.delegation_policy as "delegationPolicy",
+             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.delegation_policy as "delegationPolicy",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -1037,6 +1085,19 @@ export class PostgresAgentService {
     `
     if (rows.length !== policy.allowedAgentVersionIds.length) {
       throw new Error('委派目标必须是当前已发布的固定 Agent Version')
+    }
+  }
+
+  private async assertMcpConnectorSelection(scope: AgentMcpScope | undefined): Promise<void> {
+    const normalized = normalizeAgentMcpScope(scope)
+    if (normalized.mode !== 'selected') return
+    const rows = await this.database<{ id: string }[]>`
+      select id from connectors
+       where tenant_id = ${tenantId} and protocol = 'mcp' and deleted_at is null
+         and id = any(${normalized.connectorIds})
+    `
+    if (rows.length !== normalized.connectorIds.length) {
+      throw Object.assign(new Error('选定的 MCP Connector 不存在、已删除或不属于当前租户'), { status: 422, code: 'validation_failed' })
     }
   }
 
@@ -1073,8 +1134,10 @@ function normalizeConfiguration(
     welcomeMessage,
     examplePrompts: unique(input.examplePrompts),
     systemPrompt: input.systemPrompt.trim(),
+    ...(input.workInstructions !== undefined ? { workInstructions: input.workInstructions?.trim() ?? '' } : {}),
     skills: unique(input.skills),
     tools: unique(input.tools),
+    mcpScope: normalizeAgentMcpScope(input.mcpScope),
     delegationPolicy: normalizeDelegationPolicy(input.delegationPolicy),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
   }
@@ -1107,11 +1170,13 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,
     systemPrompt: row.systemPrompt,
+    workInstructions: row.agentSpec?.workProcedures?.body ?? '',
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
-    tools: row.tools,
+    tools: row.agentSpec?.capabilities.tools ?? row.tools,
+    mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     updatedAt: formatDateTime(row.updatedAt),
   }
@@ -1135,11 +1200,13 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,
     systemPrompt: row.systemPrompt,
+    workInstructions: row.agentSpec?.workProcedures?.body ?? '',
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
+    mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),
   }
@@ -1154,11 +1221,13 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     description: row.description,
     welcomeMessage: row.welcomeMessage,
     systemPrompt: row.systemPrompt,
+    workInstructions: row.agentSpec?.workProcedures?.body ?? '',
     roleIds: [...row.roleIds].sort(),
     dataScopes: [...row.dataScopes].sort(),
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
     tools: [...row.tools].sort(),
+    mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: {
       allowedAgentVersionIds: [...delegationPolicy.allowedAgentVersionIds].sort(),
       maxDepth: delegationPolicy.maxDepth,

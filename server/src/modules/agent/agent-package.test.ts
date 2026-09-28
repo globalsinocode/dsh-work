@@ -8,8 +8,9 @@ import { test } from 'node:test'
 import { strToU8, zipSync } from 'fflate'
 
 import { parseAgentPackage } from './agent-package.ts'
+import { exportAgentPackage } from './agent-package-export.ts'
 import { AGENT_PACKAGE_SCHEMA } from './agent-package.schema.ts'
-import { agentSpecFromConfiguration, assertAgentSpecContent } from './agent-spec.ts'
+import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent } from './agent-spec.ts'
 import { configurationFingerprint } from './postgres-agent-service.ts'
 
 /**
@@ -98,7 +99,7 @@ test('Schema 文档与代码常量保持同步', () => {
 })
 
 test('仓库中的通用参考 Agent 包符合当前严格契约', () => {
-  const paths = ['agent.yaml', 'SOUL.md', 'evals/cases.yaml', 'checksums.json']
+  const paths = ['agent.yaml', 'SOUL.md', 'AGENTS.md', 'evals/cases.yaml', 'checksums.json']
   const files = Object.fromEntries(paths.map(path => [path, readFileSync(resolve(referencePackageDirectory, path))]))
   const parsed = parseAgentPackage(zipSync(files, { level: 0 }))
 
@@ -125,6 +126,17 @@ test('仓库中的通用参考 Agent 包符合当前严格契约', () => {
   }
 })
 
+test('导出的 Agent 包可回导并保留 Soul、AGENTS、评测和完整性摘要', () => {
+  const paths = ['agent.yaml', 'SOUL.md', 'AGENTS.md', 'evals/cases.yaml', 'checksums.json']
+  const files = Object.fromEntries(paths.map(path => [path, readFileSync(resolve(referencePackageDirectory, path))]))
+  const original = parseAgentPackage(zipSync(files, { level: 0 }))
+  const exported = parseAgentPackage(exportAgentPackage(original.spec, original.cases))
+  assert.equal(exported.checksumsVerified, true)
+  assert.deepEqual(exported.spec, original.spec)
+  assert.deepEqual(exported.cases, original.cases)
+  assert.deepEqual(exported.declared, original.declared)
+})
+
 test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆盖时无警告', () => {
   const parsed = parseAgentPackage(basePackage())
   const { spec } = parsed
@@ -132,6 +144,7 @@ test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆
   assert.equal(spec.metadata.id, 'zip-agent')
   assert.equal(spec.metadata.version, '0.1.0')
   assert.deepEqual(spec.instructions, { path: 'SOUL.md', body: PROMPT })
+  assert.equal(spec.workProcedures, null)
   assert.deepEqual(spec.input, { type: 'text' })
   assert.deepEqual(spec.output, { type: 'text' })
   assert.deepEqual(spec.context, { conversationHistory: 'recent' })
@@ -140,6 +153,22 @@ test('最小有效包解析成功：默认值展开进 AgentSpec，checksums 覆
   assert.deepEqual(spec.model, { requirements: [] })
   assert.equal(parsed.checksumsVerified, true)
   assert.deepEqual(parsed.warnings, [])
+})
+
+test('AGENTS.md 必须显式声明并固定正文；配置与 ZIP 使用同一装配语义', () => {
+  const procedures = '先识别任务范围，再核对输入依据；如证据不足，应说明缺口并请求补充。'
+  const zipped = parseAgentPackage(basePackage({ specLines: ['  workProcedures: AGENTS.md'] }, { 'AGENTS.md': procedures }))
+  assert.deepEqual(zipped.spec.workProcedures, { path: 'AGENTS.md', body: procedures })
+  const configured = agentSpecFromConfiguration({
+    id: 'config-agent', name: '配置助手', description: '使用工作规程处理测试任务。',
+    systemPrompt: PROMPT, workInstructions: procedures, welcomeMessage: '', examplePrompts: [],
+    skills: [], tools: [], timeoutSeconds: 120, maxToolCalls: 5, maxOutputBytes: 32768,
+  }, '1.0.0')
+  assert.equal(assembleAgentInstructions(configured), assembleAgentInstructions(zipped.spec))
+  assert.throws(() => parseAgentPackage(basePackage({}, { 'AGENTS.md': procedures })), /必须由 spec\.workProcedures 显式声明/)
+  assert.throws(() => parseAgentPackage(basePackage({ specLines: ['  workProcedures: AGENTS.md'] })), /指定的 AGENTS\.md 不存在/)
+  assert.throws(() => parseAgentPackage(basePackage({ specLines: ['  workProcedures: AGENTS.md'] }, { 'AGENTS.md': '太短' })), /AGENTS\.md 必须位于包根目录/)
+  assert.throws(() => parseAgentPackage(basePackage({ specLines: ['  workProcedures: ../AGENTS.md'] }, { 'AGENTS.md': procedures })), /结构校验未通过/)
 })
 
 test('Agent 包只声明数据需求和 Schema 候选，不携带 SQL 或授权', () => {
@@ -154,6 +183,11 @@ test('Agent 包只声明数据需求和 Schema 候选，不携带 SQL 或授权'
   assert.deepEqual(parsed.spec.data.collections[0]?.actions, ['query', 'propose', 'update'])
   assert.deepEqual(parsed.spec.data.collections[0]?.schema?.body, collectionSchema)
   assert.match(parsed.spec.data.collections[0]?.schema?.sha256 ?? '', /^[a-f0-9]{64}$/)
+  const exported = parseAgentPackage(exportAgentPackage(parsed.spec))
+  assert.equal(exported.checksumsVerified, true)
+  assert.deepEqual(exported.spec.data.collections[0]?.schema?.body, parsed.spec.data.collections[0]?.schema?.body)
+  assert.deepEqual(exported.spec.data.collections[0]?.actions, parsed.spec.data.collections[0]?.actions)
+  assert.match(exported.spec.data.collections[0]?.schema?.sha256 ?? '', /^[a-f0-9]{64}$/)
   assert.throws(() => parseAgentPackage(basePackage({ specLines: [
     '  data:', '    state: false', '    collections:',
     '      - key: shortage_records', '        scope: workspace', '        schemaVersion: 1',

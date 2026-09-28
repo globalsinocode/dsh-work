@@ -16,6 +16,21 @@
     }
   ],
   "paths": {
+    "/agents/{agentId}/versions/{versionId}/package": {
+      "get": {
+        "operationId": "exportAgentVersionPackage",
+        "summary": "导出可回导的 Agent 定义 ZIP；不包含平台凭据、连接器或授权",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Agent 发布包", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/agents/{agentId}/routines": {
       "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
       "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
@@ -2110,6 +2125,21 @@
             "type": "string",
             "minLength": 20,
             "maxLength": 20000
+          },
+          "workInstructions": {
+            "type": ["string", "null"],
+            "description": "可选 AGENTS.md 工作规程正文；空值表示不启用",
+            "maxLength": 20000
+          },
+          "mcpScope": {
+            "type": "object",
+            "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 all。",
+            "required": ["mode", "connectorIds"],
+            "additionalProperties": false,
+            "properties": {
+              "mode": { "type": "string", "enum": ["all", "selected", "none"] },
+              "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
+            }
           },
           "skills": {
             "type": "array",

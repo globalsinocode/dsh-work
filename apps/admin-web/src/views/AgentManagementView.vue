@@ -300,6 +300,27 @@ async function rollback(version: AgentVersionRecord) {
   }
 }
 
+async function exportVersion(version: AgentVersionRecord) {
+  const agent = selectedAgent.value
+  if (!agent) return
+  actionLoading.value = `export:${version.id}`
+  try {
+    const blob = await adminApi.downloadAgentVersionPackage(agent.id, version.id)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${agent.id}-v${version.version}.zip`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    requestAnimationFrame(() => URL.revokeObjectURL(url))
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : 'Agent 包导出失败')
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
 function releaseActionLabel(record: AgentReleaseRecord) {
   return {
     published: '发布版本',
@@ -427,8 +448,9 @@ onMounted(async () => {
           </dl>
           <section class="agent-detail__section"><h3>员工使用体验</h3><div class="experience-card"><strong>欢迎语</strong><p>{{ selectedAgent.welcomeMessage }}</p><strong>示例问题</strong><div class="chip-list"><span v-for="prompt in selectedAgent.examplePrompts" :key="prompt">{{ prompt }}</span></div></div></section>
           <section class="agent-detail__section"><h3>SOUL.md · 人格与工作原则</h3><pre class="prompt-preview">{{ selectedAgent.systemPrompt }}</pre></section>
+          <section v-if="selectedAgent.workInstructions" class="agent-detail__section"><h3>AGENTS.md · 工作规程</h3><pre class="prompt-preview">{{ selectedAgent.workInstructions }}</pre></section>
           <section class="agent-detail__section"><h3>Skill 引用</h3><div class="chip-list"><span v-for="skill in selectedAgent.skills" :key="skill">{{ skill }}</span></div></section>
-          <section class="agent-detail__section"><h3>工具允许列表</h3><div class="chip-list chip-list--code"><span v-for="tool in selectedAgent.tools" :key="tool">{{ tool }}</span></div></section>
+          <section class="agent-detail__section"><h3>MCP 使用范围</h3><p>{{ selectedAgent.mcpScope?.mode === 'selected' ? '仅使用选定连接器' : selectedAgent.mcpScope?.mode === 'none' ? '不使用 MCP' : '全部可用 MCP' }}</p><div v-if="selectedAgent.mcpScope?.mode === 'selected'" class="chip-list chip-list--code"><span v-for="id in selectedAgent.mcpScope.connectorIds" :key="id">{{ contentStore.connectors.find(connector => connector.id === id)?.name ?? id }}</span></div></section>
           <section class="agent-detail__section"><h3>业务数据范围</h3><div class="chip-list"><span v-for="scope in selectedAgent.dataScopes" :key="scope">{{ scope }}</span></div></section>
           <section class="agent-detail__section">
             <h3>团队空间治理</h3>
@@ -483,10 +505,11 @@ onMounted(async () => {
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="170" fixed="right">
+            <el-table-column label="操作" width="180" fixed="right">
               <template #default="scope">
+                <el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `export:${scope.row.id}`" @click="exportVersion(scope.row)">导出包</el-button>
                 <el-button v-if="authStore.canManage && scope.row.status !== 'draft' && scope.row.version !== selectedAgent?.version" link type="primary" :loading="actionLoading === `rollback:${scope.row.id}`" data-action="rollback-agent" @click="rollback(scope.row)">回滚至此</el-button>
-                <span v-else class="muted">—</span>
+                <span v-if="!authStore.canManage" class="muted">—</span>
               </template>
             </el-table-column>
           </el-table>

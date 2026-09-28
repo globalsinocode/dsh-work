@@ -1,6 +1,6 @@
 # Agent 规范与当前实现差异清单
 
-**初次核对：** 2026-09-19；**实施范围更新：** 2026-09-25；**AE-03 目标设计更新：** 2026-09-24<br>
+**初次核对：** 2026-09-19；**实施范围更新：** 2026-09-25；**AE-03 目标设计更新：** 2026-09-24；**Agent 管理更新方案确认：** 2026-09-27<br>
 **阶段状态：** 平台基础能力的代码建设阶段收口；本清单保留为规范差异与实施记录。PF-07 全量 P2 仍是独立的目标版本发布验收事项，不标记为完成，也不阻止无关新任务的开发。<br>
 **代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。[双账号隔离环境的本轮进度](pf07-oidc-isolated-progress-2026-09-23.md)已覆盖一个真实 OIDC 身份的 MCP 写入/回执，以及私人受控记忆的发布、检索与撤回；第二身份的实际 Run、其他能力和故障撤权矩阵仍待验收。[较早的本地真实链路核对](pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
@@ -28,7 +28,7 @@
 | AE-03 统一 Agent 数据平面 | **代码级已实现，P2 待验收。** 固定通用表、安装实例、包/配置 `AgentSpec.data` 声明、候选检查及发布时的集合兼容与 Grant 复核、Schema 演进、提案/人工审核、CAS 状态转换、容量与写入速率配额、保留删除、管理员 API、DSH 受控工具和 `task-result/v1` 记录引用已接通；包上传不执行 SQL | 隔离 PostgreSQL 覆盖双 Agent 共享、私有隔离、40 个安装实例、并发与幂等、撤权、Schema 演进、提案审核、速率配额、保留删除及管理 API；Agent 包、发布试运行 Manifest、Runtime 工具目录与任务结果回归另列测试。真实 DSH/OIDC、多账号撤权、外部回执与故障注入仍须 P2 留证 |
 | AE-04 Agent-owned Experience | **第一阶段已实现。** 员工端提交、授权和撤回界面/API 已删除；成功 Attempt 的 Agent 经验申请按稳定 `agent_id` 进入管理端，管理员可按 Agent 核对 Agent Version、Run、Attempt 并批准或拒绝，批准创建不可变经验版本 | 管理端组件、OpenAPI、P0 浏览器与一次性 PostgreSQL覆盖按 Agent 查看和审核；专属质量评测、显式停用/回滚及真实 DSH/OIDC 链路仍待验收，不能宣称自动学习 |
 | AE-05 主动任务 | **代码级已实现，P2 待验收。** Agent Principal 拥有版本化 routine；支持手动、按时区的每日／每周和受信管理员提交的事件触发。独立执行账本记录去重键、触发来源、错过槽位和跳过原因；受理后创建无 Session Task/Run/Attempt，沿 DSH 链路执行。固定版本、输入、预算、Workspace、批准的角色/数据范围上限，运行中按当前授权复核；管理端启用/暂停/停用，员工端仅原 Task 接收人且有原空间当前授权时读取历史结果；通用重试不接受主动任务来源。个人自动任务语义保持不变 | 一次性 PostgreSQL 集成覆盖身份、事件去重、错过槽位、暂停、当前授权、原接收人结果隔离与停用后重试拒绝；P1 管理端浏览器覆盖批准、触发和暂停。外部事件生产者接线、真实 DSH/OIDC、多账号收权、通知及真实结果效果仍需独立 P2 留证；心跳只是可选规则预设，不随 Agent 创建自动开启 |
-| AE-06 管理与发布验收 | **待实施。** 统一展示身份/Soul/能力/数据/记忆/主动任务/发布及运行审计；扩展版本固定、评测和 P1/P2 验收 | 新旧入口均遵守单一 Run/Attempt → DSH 链路，合成环境与真实 DSH/OIDC 证据分开；PF-07 未完成项仍独立追踪 |
+| AE-06 管理与发布验收 | **部分实现；AG-CAP 本地 MCP 范围的 P2 已验收。** 本轮已接入可选 `AGENTS.md`、平台默认 DSH 工具装配、三种 MCP 使用范围及三步创建/编辑界面；既有身份、数据、记忆、主动任务、发布和审计入口继续复用。统一总览与其他跨入口真实验收仍待完成 | 包与发布治理、Connector 隔离库、管理端 P0/P1 旅程已有代码级证据；本轮真实 DSH/OIDC 与本地可丢弃 MCP 的 AG-CAP-P2 证据见下文。企业 MCP、生产部署及 PF-07 未完成项不随本轮收口 |
 
 AE-02 保留两条语义边界：`requested_by` 继续指向人类请求者，不能冒充 Agent；`approved_by_principal_id` 是未来任务级批准槽位，PF-04 动作批准归各自审批记录。已完成的历史结果是不可变证据，读取仍复核当前人类账号与 Workspace 权限；Agent 事后停用阻断新动作，不擦除有权用户对旧结果的访问。待补的是当前目标环境的真实 DSH/OIDC、多账号和外部工具 P2 证据。
 
@@ -42,6 +42,32 @@ AE-02 保留两条语义边界：`requested_by` 继续指向人类请求者，�
 4. **已实现（代码级）：** 在现有 DSH → 平台受控工具链实现状态和记录的查询、提案、创建、更新、状态转换；校验当前身份/披露范围/Workspace/ACL、Schema、期望版本、幂等、分页与查询字段。索引需求受平台策略约束，不能随包安装执行任意 DDL。
 5. **已实现（代码级）：** 大文件仍留在现有 Artifact/对象存储，ERP 等权威数据仍留在来源系统；成功记录写入返回不可变版本引用，接入结果投影、来源审计、保留与删除治理。
 6. **部分代码级验证完成，P2 待验收：** 两个 Agent 共享同一 Workspace 集合、40 个 Agent 安装、撤权、并发冲突、重复请求、Schema 演进和保留清理已在隔离 PostgreSQL 覆盖。更大规模负载、真实 DSH/OIDC、多账号撤权、外部回执与故障场景须按发布验收另留证，不以合成测试替代。
+
+### Agent 管理与能力装配更新（2026-09-27）
+
+**核心能力已接入代码；真实 DSH/OIDC 与本地可丢弃 MCP 的 AG-CAP-P2 已按本轮范围验收。** 完整目标、边界与验收统一见[Agent 设计规范第 6 节](agent-design-standard.md#6-agent-管理与能力装配统一更新方案)，不另建平行总方案。下表区分本轮已验证范围与其他需要单独验收的能力。
+
+| 工作项 | 当前实现与证据 | 后续边界 |
+| --- | --- | --- |
+| 可选 AGENTS 工作规程 | 包根目录 `AGENTS.md` 已进入严格 Schema/摘要、配置编辑、AgentSpec、版本指纹和显式 Runtime 指令装配；可按 Agent Version 导出包含 Soul、可选 AGENTS、已声明评测与完整性摘要的可回导 ZIP，平台凭据和 MCP ID 不进入包 | 导出时会重新生成 Schema 文件与摘要，原包字节不保证相同；依赖的 Skill/Tool 仍须在目标环境独立准入与解析，Connector 范围须由管理员重新配置 |
+| 平台默认工具 | 平台按显式允许清单和当前准入、角色、数据范围解析 DSH 工具；配置创建会自动解析已发布 Skill 的工具依赖，AgentSpec 保留作者直接声明，`tool_refs` 保存实际依赖，移除 Skill 后不残留隐式工具；候选试运行封存精确版本及绑定，普通 Agent 页面无需手选 | 本轮真实 DSH 已核对 `write/read` 文件成果与执行期 MCP 收权；网络搜索及其他默认工具的真实使用不在 AG-CAP-P2 本地场景证据中，任意 Shell 不在默认集 |
+| MCP 使用范围 | Agent Version 存储 `all`、`selected`、`none`，按 Connector 过滤新 Attempt；选定连接失效时拒绝，Runtime Patch 与活动调用沿原有摘要和审计门禁 | `all` 的新 Attempt 动态加载当前可用集合；三种模式、双账号、停用、在途撤权与能力漂移已在本地可丢弃 MCP 的真实 DSH/OIDC 场景验证；企业服务不在本轮范围 |
+| 编辑页 V2 | 三步表单保留定义、Skill、MCP 范围及折叠权限；隐藏逐 DSH 工具选择和全部工具侧栏，未展示配置在编辑时保留；管理助手的一次确认文案计划也固定并保护 AGENTS 工作规程与 MCP 范围；组件、隔离 PostgreSQL 与 P0/P1 浏览器用例覆盖主要交互 | P0 是原型交互，P1 使用隔离数据库及合成连接器，不能代表生产浏览器验收 |
+| 发布和执行验收 | 包解析、发布治理、Connector 隔离库和专用 P0/P1 浏览器测试覆盖版本指纹、封存、三种范围及失效拒绝；OpenAPI 与 DTO 已更新。本轮 AG-CAP-P2 还在真实 DSH/OIDC 与本地 MCP 中留有发布试运行、Run/Attempt、Artifact、逐调用审计和未知效果门禁证据 | 本轮不验收企业 MCP 或生产部署；AE-06 统一治理总览与其他场景的跨入口验收仍未全部完成 |
+
+**本地真实 DSH 定向工程回归（2026-09-27，非完整 P2）：** `pnpm probe:handshake` 与 `pnpm probe:artifact` 分别通过 DSH 0.1.2-rc.1 的协议握手及临时工作区文件读写；后者发生 2 次真实工具调用并核对了输出文件。`pnpm probe:pf07:mcp:platform` 在一次性 PostgreSQL、真实 DSH 与两个同租户本地可丢弃 Bearer MCP 服务中通过：`all` Agent 完成 MCP 写入和回执查询；新增的 `selected` Agent 固定平台默认 `glob/grep/read/write` 精确引用，实际 Attempt Manifest 包含可选 `AGENTS.md` 工作规程及所选连接器、排除另一个健康连接器，并完成写入、查询回执与调用审计；`none` Agent 的真实 Run 无 MCP 连接或调用审计，模型使用默认 `write/read` 在 `output` 生成并核对文件，平台登记了不可变 Artifact 版本，内容经存储读取核验。`selected` 的 Run/Attempt 为 `run-06f46c24-04c0-4244-bbe1-11908578e905` / `attempt-adcba313-2821-4c25-b994-e48810b7042e`，`none` 为 `run-1933f836-274a-4008-9970-469182bcc1d5` / `attempt-a31bdcc6-279e-4966-8ca5-c1d50608449f`，Artifact 版本为 `artifact-version-011d7471ac2f08d4fa3713939975f30a`。删除选定连接器后，`selected` 拒绝解析，`all` 仍保留另一连接器。一次性数据库已清理，命令输出是可重跑证据。发布门禁仍由独立 PostgreSQL 集成测试验证，探针中的一次性版本直接置为发布态，仅用于执行链核对。身份为合成用户，MCP 为本地测试服务；此结果不能替代真实 OIDC、多账号收权或企业 MCP 生产验收。
+
+**真实 OIDC 局部验收（2026-09-27，非完整 P2）：** 在独立可丢弃 PostgreSQL 中通过官方初始管理员认领入口为 `max` 建立本地平台管理员身份；另为 `eric` 分配本地普通员工角色，两账号在独立浏览器会话登录。`max` 的基础员工 Run `run-6311db29-9e62-4398-9c62-a2fd6c6a6480` 经真实 DSH 成功。管理员通过真实页面登记两个本地可丢弃 Bearer MCP，均健康、各发现 3 个工具，Token 以应用层加密形式保存在隔离库。三步表单创建的 `P2 能力验收 Agent`（`agent-mujx063z`）仅选择 MCP A。rev1 五案例的机器断言通过，但模型夸大 Shell/后台能力，人工判定失败；rev2 的两次旧服务试运行已取消，不作为证据。平台修复试运行仅保存回答前 240 字及 DSH 提示缺少当前 Manifest 能力清单的问题后，重启隔离服务重新执行 rev2 五案例；`trial-97f5dd34-14c1-4b30-a6cf-ec024aa4dbd0` 的真实 Run/Attempt、机器断言和逐项全文人工复核均通过，已从真实管理端发布不可变 v0.1.0。`max` 的员工 Run `run-25a33e55-fd01-4a11-96d9-962dff97478a` 与 `eric` 的 Run `run-6ac2aa99-3262-4b0c-942d-0bd6fe9e71aa` 均经 `runtime-local-01` 以同一独立 Agent Principal 调用所选 MCP A 的 `put_receipt`、`get_receipt`，两账号各自读回一致；Manifest 均排除健康的 MCP B，四条调用审计按人类发起人及 Agent Principal 分别归因。`max` 的文件 Run `run-eae62de0-6f11-4b72-a26b-9a8dff56a36c` 实际调用 `write/read`，`output/能力验收.txt` 登记为 Artifact V1，存储 SHA-256 与期望正文一致。停用 MCP A 后，`eric` 的新请求未生成 Run 或调用审计；随后已将 A 恢复健康。
+
+**同环境追加验证：** 在途 Run `run-c6129a71-3533-4250-bc65-e1a8b2520a63` 的本地外部写入已产生回执，管理员随即停用 A；Run 以 `AUTHORIZATION_REVOKED` 失败，MCP 审计将该次调用标为 `unknown`，员工端未宣称成功。A 已显式恢复。`all` Agent `agent-mujyrwyb` 的前两轮评测因输出误报能力被人工否决，rev3 的五案例 `trial-47a66b14-8eb4-4a6d-807a-4fa3b0a03f77` 全文复核通过后发布 v0.1.0；`eric` 的 Run `run-19fe62f8-0bb3-4ee2-9c55-9b2d691b8823` / Attempt `attempt-1f55da21-60f7-49db-861e-8395940139df` 同时装配 A/B，并实际调用 B 写入与读回，审计记录员工及独立 Agent Principal。`none` Agent `agent-mujz980l` 未填写可选 AGENTS 工作规程，五案例 `trial-6d8e6c29-1767-4d66-99ea-889c9b063ca4` 通过后发布 v0.1.0；`eric` 的 Run `run-30ae7454-6234-4b28-9558-8392ee0f15b8` / Attempt `attempt-3ac2d394-1011-4f92-804f-a43d4914a819` 不含 MCP 连接或调用审计，使用默认 `write/read` 生成了正文摘要匹配的 Artifact V1。随后本地 MCP B 从 3 个工具变为 4 个：旧摘要下的 Run `run-0a2267ee-6f64-42f8-a48e-f898a70c6246` 实际调用失败并明确报告未完成；管理端重新检查后，新 Run `run-249cd354-b171-462d-96d7-71730a5226cc` 固定新摘要、实际只读调用成功并返回版本 2。前一个 Run 的 `succeeded` 仅代表失败说明已生成，其 MCP 调用审计仍为 `failed`。上述证明本地可丢弃 MCP 与双账号真实 OIDC/DSH 的本轮闭环；企业 MCP 不在本轮验收范围，隔离库保留供复核。细节见 [AG-CAP-P2 验收条目](../../e2e/TEST-CATALOG.md#ag-cap-p2-真实-dsh-能力装配验收)。
+
+**未知外部效果风险已修复（2026-09-28）：** 在途撤权后的 MCP `unknown` 调用虽已记录且外部回执存在，旧员工失败卡片仍提供通用重试。现将 `mcp_invocation_audits` 合并进结果投影，员工页要求先核对权威回执并隐藏重试；服务端拒绝未知效果的通用重试。MCP Attempt 还须在 Worker 结束且调用审计持久化后写入完成标记，标记缺失时保守拒绝重试。隔离 PostgreSQL、Runtime Adapter 和员工端组件回归均通过；旧 Run 在真实 OIDC 页面不再显示重试。新只读真实 DSH Run `run-a27f8dce-e233-4bfc-a9c8-a9e64dc3b454` / Attempt `attempt-da60d79a-e5d8-4661-a839-d669e76cb7b7` 的 `get_receipt` 调用审计为 `success` 且完成标记非空。未重新触发旧写入；企业 MCP 不在本轮验收范围。详见 [AG-CAP-P2 验收条目](../../e2e/TEST-CATALOG.md#ag-cap-p2-真实-dsh-能力装配验收)。
+
+**本轮代码与页面回归（2026-09-28）：** Agent 包解析 75/75、发布治理隔离 PostgreSQL 28/28、三步编辑器 P0 浏览器 1/1、能力装配 P1 浏览器 1/1 通过；P0 使用独立端口与内存原型，P1 创建并销毁专用 PostgreSQL 测试库，这些 P0/P1 结果本身不替代上文的真实 OIDC/DSH 与本地 MCP 验收。
+
+**AG-CAP-P2 本轮验收结论（2026-09-28）：通过，范围限定为本地可丢弃 MCP。** 隔离库复核 `selected`、`all`、`none` 三个已发布版本，三次试运行各有五种 v1 案例且机器断言和 verdict 均通过；`max`、`eric` 两个 AI Hub OIDC 身份的真实 Run 分别固定人类发起人与独立 Agent Principal。Manifest、MCP 调用审计、回执和 Artifact 覆盖三种范围、停用、在途撤权与能力清单变化；未知效果的员工提示、服务端重试拒绝及 Worker 审计完成标记已按上文复核。此结论不等于企业 MCP、生产发布、PF-07 全量矩阵或 AE-06 其他治理能力通过，工作区仍未提交或推送。
+
+关联待办继续保留：`agent-routine` 当前跳过知识/记忆检索，统一上下文需要适配 Agent 独立授权；AE-04 专属经验质量评测、停用/回滚及 PF-07 P2 未完成项均不因本次方案确认而收口。
 
 ## 2. 十二条逐项核对
 

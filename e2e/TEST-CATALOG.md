@@ -69,12 +69,63 @@
 **spec：** `e2e/admin-agent-soul.spec.ts`
 
 1. 打开 Agent 管理，选择配置创建，填写名称和说明。
-2. 在能力配置页填写 `SOUL.md` 内容，Skill 与工具均留空，进入确认页。
-3. 确认页面显示 0 个 Skill 和 0 个工具，创建后显示草稿已保存。
+2. 在定义页填写 `SOUL.md` 内容，工作规程留空；下一步不选择 Skill，MCP 保留默认“全部可用”。
+3. 确认页面显示 0 个 Skill 与 MCP 范围，创建后显示草稿已保存。
 
-**验收：** 页面能无依赖完成基础 Agent 创建，Soul 有清晰的名称和边界提示；只证明 Prototype 页面交互，不证明 PostgreSQL、发布或真实 DSH。
+**验收：** 页面能在不手选 DSH 工具的情况下创建基础 Agent，Soul 有清晰的名称和边界提示；只证明 Prototype 页面交互，不证明 PostgreSQL、发布或真实 DSH。
 
-## P1/P2 待补旅程
+### AG-CAP-P0 Agent 定义与 MCP 范围配置
+
+**优先级：** P0 · **角色：** 平台管理员（Prototype 受控身份） · **运行层级：** P0 浏览器冒烟<br>
+**前置数据：** 隔离 Prototype 管理端；一个可用的企业知识 MCP Connector；唯一 Agent 标识<br>
+**spec：** `e2e/admin-agent-capabilities.spec.ts`
+
+1. 创建 Agent，填写 Soul 和可选的 `AGENTS.md` 工作规程；不选择 DSH 基础工具。
+2. 在 Skill 与 MCP 步骤检查默认“全部可用 MCP”，切换为“仅选定”，先验证空集合无法前进，再选择连接器并查看只读工具详情。
+3. 保存并重新打开草稿，检查工作规程和 MCP 模式回显。
+4. 切换为“不使用 MCP”后再切回“仅选定”，确认旧选择已清空且空集合无法进入确认页。
+
+**验收：** 表单只有定义、Skill 与 MCP、确认保存三步；不展示逐 Agent 的基础/扩展工具开关或全部工具预览。状态、空列表、加载失败和缺失连接器均有可理解反馈；本层只证明页面交互，不证明数据库、发布或实际调用限制。
+
+## P1 集成与 P2 待验收旅程
+
+### AG-CAP-P1 Agent 能力装配与发布执行
+
+**优先级：** P1 · **角色：** 平台管理员、可运行 Agent 的员工 · **运行层级：** P1 集成用户旅程<br>
+**前置数据：** 专用可丢弃 PostgreSQL、受控 Runtime/Worker、两个同租户合成 MCP Connector；已准入的文件工具、可发布 Agent 及运行身份<br>
+**spec：** `e2e/agent-capabilities.integration.spec.ts` 覆盖管理端创建、持久化、导出包、运行快照与选定连接器失效；包、试运行 Attempt 的实际 Manifest、跨租户校验及策略边界由对应服务端集成测试覆盖
+
+1. 通过配置和 ZIP 分别创建有、无 `AGENTS.md` 的 Agent；缺文件、错误路径或摘要不符时明确拒绝，且不读取宿主目录或输入附件中的同名文件。
+2. 无需手选 DSH 文件工具即可试运行；配置创建选择依赖文件工具的 Skill 时，平台自动解析并固定依赖，移除该 Skill 后隐式工具不残留，原先直接声明的工具保留；检查实际 Attempt 的精确工具与绑定快照、成果和授权范围。未授权文件、未批准集合及无获准委派目标不能因默认装配而被访问。
+3. 修改 Soul、`AGENTS.md`、默认工具依据或 MCP 模式后，旧试运行证据不能发布新候选；历史 Attempt 仍保留原依据。
+4. 验证 `all` 在新的 Attempt 中获得当前可用连接器、`selected` 只获得所选连接器、`none` 不获得 MCP；空选择或跨租户 ID 拒绝，已选连接器失效时拒绝试运行和新执行，不回退到 `all`。
+5. 在受控 Runtime 中尝试调用未选 MCP，以及停用或改变已固定连接器后继续调用；调用被阻止且留有可回查的失败与审计依据。
+6. 编辑草稿并重新打开，确认未展示的身份授权、数据需求、预算和委派配置未被清空；对话、试运行与主动任务沿同一能力装配规则运行。
+
+**验收：** 配置与 ZIP 形成同一发布契约；默认工具由平台准入和当前授权约束，MCP 范围在 Manifest 与实际调用处一致，三个入口均沿既有 Run/Attempt 链路。P1 不替代真实 DSH/OIDC 与获准 MCP 的 P2 验收。
+
+### AG-CAP-P2 真实 DSH 能力装配验收
+
+**优先级：** P2 · **角色：** 平台管理员、OIDC 员工及独立 Agent 身份 · **运行层级：** 真实 DSH/模型与 OIDC；本轮获准的 MCP 验收范围仅为本地可丢弃服务<br>
+**前置数据：** 目标版本的真实 DSH、两个独立 OIDC 账号、两个本地可回查且可清理的 MCP 测试目标及单独的验收数据库<br>
+**入口：** `pnpm probe:pf07:mcp:platform` 核对真实 DSH/本地 MCP 执行；管理端与员工端完整旅程须另留浏览器和 Run/Attempt 证据
+
+1. 管理员通过真实 OIDC 创建包含 Soul、可选工作规程、默认 DSH 工具和选定 MCP 的 Agent，查看五类试运行的完整实际输出并逐项审核后发布；回答后段的错误声明也必须可见，不能仅凭前 240 字判断。
+2. 员工从真实会话运行它，核对 Agent Principal、版本、Attempt Manifest、MCP 精确范围、文件成果、回执与逐调用审计。
+3. 以第二账号及撤权、停用、能力变化场景核对新 Attempt 和活动调用均被正确限制；核对 `all`/`selected`/`none` 的真实使用结果。
+4. 在可丢弃 MCP 上制造“写入已发生、回执未确认”的在途撤权，核对未知效果提示、先查权威回执的要求和通用重试禁用；Worker 审计未完成时也不能重试原 Attempt。
+
+**初始探针证据（2026-09-27）：** DSH 0.1.2-rc.1 握手与文件读写探针通过；一次性 PostgreSQL + 合成身份 + 两个同租户本地 Bearer MCP 的真实 Run/Attempt 探针通过。`all` 完成写入与回执查询；`selected` 的 Run `run-06f46c24-04c0-4244-bbe1-11908578e905`、Attempt `attempt-adcba313-2821-4c25-b994-e48810b7042e` 含工作规程、`glob/grep/read/write` 默认工具精确引用和所选连接器，排除另一健康连接器，并实际完成写入与回执查询；`none` 的 Run `run-1933f836-274a-4008-9970-469182bcc1d5`、Attempt `attempt-a31bdcc6-279e-4966-8ca5-c1d50608449f` 无 MCP 连接或调用审计，使用默认文件工具生成并核对了 `artifact-version-011d7471ac2f08d4fa3713939975f30a`。删除选定连接器后拒绝后续解析。一次性数据库已清理。该阶段尚未覆盖真实 OIDC、多账号收权和完整发布试运行，因此初始探针本身不足以判定 AG-CAP-P2 完成；后续补充证据见下文。
+
+**真实 OIDC 局部证据（2026-09-27）：** 隔离库完成 `max` 初始管理员认领，为 `eric` 分配普通员工角色；两账号分别登录。真实页面登记两个本地可丢弃 Bearer MCP，均发现 3 个工具。只选择 MCP A 的 `P2 能力验收 Agent`（`agent-mujx063z`）rev1 因回答夸大 Shell/后台能力而人工判失败；修复当前能力提示和试运行回答截断、重启隔离服务后，rev2 五案例 `trial-97f5dd34-14c1-4b30-a6cf-ec024aa4dbd0` 经真实 DSH 执行、全文人工复核通过，并发布不可变 v0.1.0。`max` 的 Run `run-25a33e55-fd01-4a11-96d9-962dff97478a` 与 `eric` 的 Run `run-6ac2aa99-3262-4b0c-942d-0bd6fe9e71aa` 均通过所选 MCP A 写入并查询同键回执；各自读回一致，Manifest 排除 MCP B，四条调用审计归因到各自请求者和同一 Agent Principal。`max` 的文件 Run `run-eae62de0-6f11-4b72-a26b-9a8dff56a36c` 实际 `write/read` 并登记匹配正文摘要的 Artifact V1。停用 A 时 `eric` 的新请求未生成 Run/调用审计，A 已恢复。
+
+**追加证据（同日，仍限本地可丢弃 MCP）：** `max` 的在途 Run `run-c6129a71-3533-4250-bc65-e1a8b2520a63` / Attempt `attempt-8b6f3a72-93f2-4f30-9a4d-18159bda3f4b` 调用 A 的 `unknown_after_commit`，本地目标先产生 `receipt-fc507f5d-3e6a-424e-a7c7-0da2384fd64f`；响应等待期间管理员停用 A。Run 最终为 `failed` / `AUTHORIZATION_REVOKED`，调用审计为 `unknown`，员工页未声称成功；A 随后显式恢复。`all` 模式的 `P2 全部 MCP 验收 Agent`（`agent-mujyrwyb`）rev1、rev2 分别因三项、一项回答误报能力被人工判失败，未绕过门禁；收紧工作规程后 rev3 五案例 `trial-47a66b14-8eb4-4a6d-807a-4fa3b0a03f77` 逐项通过并发布 v0.1.0。`eric` 的真实 Run `run-19fe62f8-0bb3-4ee2-9c55-9b2d691b8823` / Attempt `attempt-1f55da21-60f7-49db-861e-8395940139df` Manifest 同时包含 A/B，实际调用 B 的 `put_receipt`、`get_receipt` 并读回 `receipt-236aeadd-f2b9-4153-a288-3f6931fe1a42`；审计分别记录人类发起人和独立 Agent Principal。`none` 模式的 `P2 无 MCP 验收 Agent`（`agent-mujz980l`）保留可选 `AGENTS.md` 为空，五案例 `trial-6d8e6c29-1767-4d66-99ea-889c9b063ca4` 通过并发布 v0.1.0；`eric` 的真实 Run `run-30ae7454-6234-4b28-9558-8392ee0f15b8` / Attempt `attempt-3ac2d394-1011-4f92-804f-a43d4914a819` 的 MCP Manifest 为空、MCP 审计数为 0，实际使用 `write/read` 生成 `artifact-version-12167c0dce05ceaaa6cf0ac9d3359f1d`，存储 SHA-256 与指定的 28 字节正文一致。
+
+**能力变化证据（同日）：** 本地 MCP B 从 3 个工具变为 4 个，新增只读 `catalog_probe_v2`。管理端重新检查前，`eric` 的 Run `run-0a2267ee-6f64-42f8-a48e-f898a70c6246` / Attempt `attempt-a08f8719-d5da-4c97-8bb5-267690b6ac93` 仍固定旧摘要；调用审计为 `failed`，实际工具返回“能力清单与已审核摘要不一致”，Agent 明确报告未完成。该 Run 的终态是 `succeeded`，仅表示 Agent 完成了失败说明，**不代表工具调用成功**。管理端对 B 执行检查后显示 4 个 Tool 同步生效；新 Run `run-249cd354-b171-462d-96d7-71730a5226cc` / Attempt `attempt-79dac39e-ce9a-4406-a61e-6ee65d039039` 固定了新摘要，调用审计为 `success`，只读工具返回 `{"catalogVersion":2}`。当时未知效果重试风险仍待处理，后续修复证据见下文。
+
+**未知外部效果修复与验证（2026-09-28）：** 上述在途撤权 Attempt 的 MCP 审计为 `unknown`，本地目标已产生回执，原员工页却提供通用重试。现在结果投影同时纳入 MCP 与平台操作的未知效果；员工页显示权威回执核对要求并隐藏该 Run 的重试入口，服务端也拒绝通用重试。MCP Attempt 的审计须在 Worker 结束、会话日志落库后标记完成；缺少该标记时同样拒绝重试，避免迟到审计与重试竞态。旧 Run 页面已在真实 OIDC 员工会话中确认不再显示重试；隔离 PostgreSQL 回归覆盖未知效果拒绝、审计未完成拒绝及完成后可重试。新只读真实 DSH Run `run-a27f8dce-e233-4bfc-a9c8-a9e64dc3b454` / Attempt `attempt-da60d79a-e5d8-4661-a839-d669e76cb7b7` 调用 A 的 `get_receipt` 返回 `not_found`，数据库调用审计为 `success` 且 `mcp_audit_finalized_at` 非空。本轮未重复执行旧外部写入。
+
+**本轮结论（2026-09-28）：AG-CAP-P2 在“仅本地可丢弃 MCP”范围内通过。** 隔离库复核了三个已发布 v0.1.0 版本的 `selected`、`all`、`none` 范围；三次试运行各含五种必需案例，`dsh-work.ai/evaluation/v1` 机器断言及案例 verdict 均通过。`max` 和 `eric` 的发起身份均来自 AI Hub OIDC，真实 Run 将人类发起人和独立 Agent Principal 分开记录；所选、全部和不使用 MCP 的 Attempt 清单、实际调用、回执及文件成果与配置一致。停用、在途撤权、能力清单变化和未知效果重试门禁分别有上述 Run/Attempt、审计、真实页面及隔离库回归证据。此结论只覆盖本轮指定的本地测试 MCP；企业服务、生产部署和 PF-07 全量验收不在本条完成声明内。工作区改动尚未提交或推送。
 
 ### AE-02 Agent 独立身份与授权治理
 
@@ -593,7 +644,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 ## 批次 4 管理操作（C6/C7）
 
-- C6 / P1 / 有写权限管理员：隔离 PostgreSQL、合成 DSH 工具结果中有一个现存草稿；在管理助手描述改标题，看到精确差异与“一次确认”标识，确认前草稿不变，确认一次后只改草稿文案；权限/发布/Runtime 任务仍显示委派确认和最终计划确认。只读管理员不出现确认按钮。对应 `e2e/admin-review.spec.ts`（浏览器可运行环境预演后固化；真实 DSH 属 P2）。
+- C6 / P1 / 有写权限管理员：隔离 PostgreSQL、合成 DSH 工具结果中有一个现存草稿；在管理助手描述改标题，看到精确差异与“一次确认”标识，确认前草稿不变，确认一次后只改草稿文案；已有 AGENTS 工作规程与 `none`/`selected` MCP 范围不因文案更新变成默认 `all`，试图在一次确认请求中更改这些字段须拒绝；权限/发布/Runtime 任务仍显示委派确认和最终计划确认。只读管理员不出现确认按钮。对应 `e2e/admin-review.spec.ts`（浏览器可运行环境预演后固化；真实 DSH 属 P2）。
 
 ### C7 链接导入待浏览器预演
 

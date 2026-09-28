@@ -130,6 +130,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
   resolveMcpConnections?: (manifest: RuntimeManifest) => Promise<McpRuntimeConnection[]>
   /** Persist one settled MCP Tool call reconstructed from the DSH session log. */
   recordMcpInvocation?: (manifest: RuntimeManifest, invocation: McpInvocationEvidence) => Promise<void>
+  /** Mark the MCP session audit complete only after the closed Worker log has been persisted. */
+  finalizeMcpInvocationAudit?: (manifest: RuntimeManifest) => Promise<void>
   now?: () => Date
 }
 
@@ -682,18 +684,23 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await record.bridge?.close()
       if (record.manifest.mcp_connections?.length) {
         try {
-          await this.recordMcpInvocations(
-            record,
-            await waitForSessionEvidence(
-              join(record.snapshot.attemptDirectory, 'sessions'),
-              record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
-            ),
-          )
+          await this.finalizeMcpAudit(record)
         } catch (error) {
           console.warn('mcp invocation audit failed', safeErrorMessage(error))
         }
       }
     }
+  }
+
+  private async finalizeMcpAudit(record: ExecutionRecord): Promise<void> {
+    const evidence = await waitForSessionEvidence(
+      join(record.snapshot.attemptDirectory, 'sessions'),
+      record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
+    )
+    if (!evidence) throw new Error('DSH MCP 会话日志不可用，不能确认调用审计完整')
+    if (!this.configuration.recordMcpInvocation) throw new Error('MCP 调用审计服务不可用')
+    await this.recordMcpInvocations(record, evidence)
+    await this.configuration.finalizeMcpInvocationAudit?.(record.manifest)
   }
 
   private async recordMcpInvocations(record: ExecutionRecord, evidence: SessionEvidence | undefined): Promise<void> {
@@ -1039,6 +1046,13 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
 
 export function renderSystemPrompt(manifest: RuntimeManifest) {
   const sections = [manifest.agent_configuration.system_prompt.trim()]
+  sections.push([
+    '# 本次执行的实际能力边界',
+    '下面的清单由平台根据本次 Attempt 的 Manifest 生成，优先于 Agent 自述、历史消息和参考资料。仅能调用清单中的平台工具，以及列出的 MCP Server 当前获准的工具；不要把 DSH 可能具备但本次未授权的能力说成自己可用。',
+    `平台工具：${manifest.tools.length ? manifest.tools.map(tool => tool.id).join('、') : '无'}`,
+    `MCP Server：${manifest.mcp_connections?.length ? manifest.mcp_connections.map(connection => connection.server_name).join('、') : '无'}`,
+    '回答能力范围问题时，只依据本清单；未列出的 Shell 命令、后台任务、网页获取、平台数据写入或 Agent 委派等能力不得声称可用。实际调用仍以执行时权限校验为准。',
+  ].join('\n'))
   if (manifest.resume) {
     sections.push([
       '# 已批准动作恢复',

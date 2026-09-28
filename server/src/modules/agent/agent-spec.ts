@@ -35,6 +35,8 @@ export interface AgentSpec {
   metadata: { id: string; name: string; version: string; description: string }
   /** 指令唯一来源：包根目录 SOUL.md + 正文；配置与 ZIP 共用该路径。 */
   instructions: { path: string; body: string }
+  /** 可选的包根目录工作规程；由平台显式装配，不扫描宿主目录。 */
+  workProcedures?: { path: 'AGENTS.md'; body: string } | null
   /** 能力依赖：规范化 `id@x.y.z` 精确引用（含包内候选），不做版本解析或 latest 语义。 */
   capabilities: { skills: string[]; tools: string[] }
   input: { type: 'text' }
@@ -74,6 +76,13 @@ export const AGENT_SPEC_BOUNDS = {
 } as const
 
 export const AGENT_SPEC_INSTRUCTIONS_PATH = 'SOUL.md'
+export const AGENT_SPEC_WORK_PROCEDURES_PATH = 'AGENTS.md'
+
+export function assembleAgentInstructions(spec: Pick<AgentSpec, 'instructions' | 'workProcedures'>): string {
+  const soul = spec.instructions.body.trim()
+  const procedures = spec.workProcedures?.body.trim()
+  return procedures ? `${soul}\n\n# AGENTS.md · 工作规程\n${procedures}` : soul
+}
 
 /** 规范化定义的公共内容校验：Schema 未覆盖的正文长度与配置入口共用此关口。 */
 export function assertAgentSpecContent(spec: AgentSpec) {
@@ -91,6 +100,13 @@ export function assertAgentSpecContent(spec: AgentSpec) {
   const body = spec.instructions.body
   if (body.length < bounds.instructions.min || body.length > bounds.instructions.max) {
     throw new Error('SOUL.md 正文长度必须为 20～20000 个字符')
+  }
+  if (spec.workProcedures !== undefined && spec.workProcedures !== null) {
+    if (spec.workProcedures.path !== AGENT_SPEC_WORK_PROCEDURES_PATH
+      || spec.workProcedures.body.trim().length < bounds.instructions.min
+      || spec.workProcedures.body.length > bounds.instructions.max) {
+      throw new Error('AGENTS.md 必须位于包根目录，正文长度为 20～20000 个字符')
+    }
   }
   if (spec.catalog.welcomeMessage.length > bounds.welcomeMessage.max) {
     throw new Error('欢迎语不能超过 120 个字符')
@@ -137,6 +153,7 @@ export interface AgentSpecConfiguration {
   name: string
   description: string
   systemPrompt: string
+  workInstructions?: string | null
   welcomeMessage: string
   examplePrompts: string[]
   skills: string[]
@@ -155,6 +172,10 @@ export function agentSpecFromConfiguration(input: AgentSpecConfiguration, versio
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: { id: input.id, name: input.name, version, description: input.description },
     instructions: { path: AGENT_SPEC_INSTRUCTIONS_PATH, body: input.systemPrompt },
+    workProcedures: (input.workInstructions === undefined ? existing?.workProcedures?.body : input.workInstructions)?.trim()
+      ? { path: AGENT_SPEC_WORK_PROCEDURES_PATH,
+        body: (input.workInstructions === undefined ? existing?.workProcedures?.body : input.workInstructions)!.trim() }
+      : null,
     capabilities: { skills: [...input.skills], tools: [...input.tools] },
     input: existing ? { ...existing.input } : { type: 'text' },
     output: existing ? { ...existing.output } : { type: 'text' },

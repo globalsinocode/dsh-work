@@ -793,6 +793,16 @@ export class RunOrchestrationService {
     // AG-03：自动任务的重跑语义是「新的触发 + 新 Session/Run」，通用 retry
     // 会在原 Run 上叠加 Attempt，绕过触发去重与任务状态/重叠检查，必须拒绝。
     const lastAttempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
+    const mcpConnections = (lastAttempt?.manifest as unknown as RuntimeManifest | undefined)?.mcp_connections ?? []
+    if (lastAttempt && (
+      await this.conversations.hasUnresolvedExternalEffects(run.id, lastAttempt.id)
+      // Run 终态可能先于 DSH Worker 关闭和最终 MCP 审计落库；缺失完成标记
+      // （含升级前 Attempt、审计失败和进程崩溃）必须保守拒绝通用重试。
+      || (mcpConnections.length > 0
+        && !await this.conversations.isMcpInvocationAuditFinalized(run.id, lastAttempt.id))
+    )) {
+      throw requestInvalid('原 Attempt 的外部操作结果可能未确定；请先核对权威回执，再明确发起新任务，不要直接重试')
+    }
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
       throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
     }
@@ -1337,6 +1347,8 @@ export class RunOrchestrationService {
         ...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
         ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
+        ...(this.memory && input.purpose !== 'agent-routine'
+          ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
         ...agentDataToolRefs(agent),
       ],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。

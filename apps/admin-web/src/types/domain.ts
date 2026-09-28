@@ -235,6 +235,10 @@ export interface AgentDelegationPolicy {
   timeoutSeconds: number
 }
 
+export type AgentMcpScope =
+  | { mode: 'all' | 'none'; connectorIds: [] }
+  | { mode: 'selected'; connectorIds: string[] }
+
 export interface AgentDefinition {
   id: string
   name: string
@@ -250,11 +254,13 @@ export interface AgentDefinition {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
 }
@@ -361,11 +367,13 @@ export interface AgentDraftConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   data?: { state: boolean; collections: Array<{
     key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
     actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
@@ -426,11 +434,13 @@ export interface AgentVersionRecord {
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
+  workInstructions?: string | null
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
 
@@ -935,6 +945,7 @@ export interface AgentPackageInspection {
   manifest: { id: string; name: string; version: string; description: string }
   files: string[]
   systemPrompt: string
+  workInstructions?: string
   resolved: { skills: string[]; tools: string[] }
   missing: { skills: string[]; tools: string[] }
   packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }

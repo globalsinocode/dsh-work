@@ -202,6 +202,10 @@ async function start() {
         if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
         await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
       },
+      finalizeMcpInvocationAudit: async manifest => {
+        if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+        await toolServiceRef.current.finalizeMcpInvocationAudit(manifest)
+      },
       permissionDecision: async (_request, manifest, context) => {
         if (!persistentWaitRef.current) return 'reject_once'
         return persistentWaitRef.current.decidePermission(manifest, context)

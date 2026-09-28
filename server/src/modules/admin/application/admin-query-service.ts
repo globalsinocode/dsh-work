@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../agent/agent-spec.ts'
+import { normalizeAgentMcpScope } from '../../agent/agent-mcp-scope.ts'
 
 import type { PrototypeRepository } from '../../../infrastructure/prototype/prototype-repository.ts'
 import type {
@@ -218,6 +219,8 @@ export class AdminQueryService {
       owner: creatorName,
       department: creator?.department ?? input.department,
       welcomeMessage: normalizeWelcomeMessage(input),
+      workInstructions: input.workInstructions?.trim() ?? '',
+      mcpScope: normalizeAgentMcpScope(input.mcpScope),
     }
     assertDraftConfiguration(normalizedInput)
 
@@ -258,6 +261,8 @@ export class AdminQueryService {
       owner: current.owner,
       department: current.department,
       welcomeMessage: normalizeWelcomeMessage(submittedConfiguration),
+      workInstructions: (submittedConfiguration.workInstructions ?? current.workInstructions ?? '').trim(),
+      mcpScope: normalizeAgentMcpScope(submittedConfiguration.mcpScope ?? current.mcpScope),
     }
     assertDraftConfiguration({ id: agentId, changeSummary, ...configuration })
     const timestamp = prototypeTimestamp()
@@ -336,6 +341,8 @@ export class AdminQueryService {
       welcomeMessage: target.welcomeMessage,
       examplePrompts: target.examplePrompts,
       systemPrompt: target.systemPrompt,
+      workInstructions: target.workInstructions,
+      mcpScope: target.mcpScope,
       maxOutputBytes: target.maxOutputBytes,
       maxToolCalls: target.maxToolCalls,
       timeoutSeconds: target.timeoutSeconds,
@@ -780,6 +787,10 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.welcomeMessage.trim().length > 120) throw new Error('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw new Error('请配置至少一个示例问题')
   if (input.systemPrompt.trim().length < 20) throw new Error('SOUL.md 正文至少需要 20 个字符')
+  if (input.workInstructions && (input.workInstructions.trim().length < 20 || input.workInstructions.length > 20000)) {
+    throw new Error('AGENTS.md 正文长度必须为 20～20000 个字符')
+  }
+  normalizeAgentMcpScope(input.mcpScope)
   assertAgentSpecLimits({ timeoutSeconds: input.timeoutSeconds, maxToolCalls: input.maxToolCalls, maxOutputBytes: input.maxOutputBytes })
 }
 
@@ -796,6 +807,8 @@ function assertAgentReady(agent: AgentDefinition) {
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: agent.examplePrompts,
     systemPrompt: agent.systemPrompt,
+    workInstructions: agent.workInstructions,
+    mcpScope: agent.mcpScope,
     maxOutputBytes: agent.maxOutputBytes,
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
@@ -851,6 +864,8 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
+    workInstructions: agent.workInstructions,
+    mcpScope: agent.mcpScope,
     maxOutputBytes: agent.maxOutputBytes,
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,

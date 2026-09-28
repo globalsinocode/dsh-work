@@ -10,6 +10,8 @@
 
 MCP、持久化等待、受控记忆、Agent 数据平面、Agent 委派和无 Session 入口是 Agent 的扩展轨道。平台按差异清单统一建设这些通用能力；具体 Agent 只有满足本模板的触发条件并完成独立设计与验收后才启用。未选择时明确记录“不启用”及理由，不能因为平台已经支持就自动授予能力、权限或预算。
 
+**2026-09-27 已接入代码的更新：** [规范第 6 节](agent-design-standard.md#6-agent-管理与能力装配统一更新方案)将普通 DSH 工具逐项配置改为平台默认装配，并增加可选根目录 `AGENTS.md` 与 MCP 使用范围。记录需区分“平台提供的工具”与“本任务实际使用的资源/动作”：默认配备不自动授予数据集合、委派目标或主动任务预算。平台自动解析的精确依赖纳入发布证据；MCP 记录全部/选定/不使用模式及实际调用范围。真实 DSH/OIDC 与获准 MCP 按每次确定的验收目标单独留证；只有目标 Agent 依赖企业 MCP 时才要求该服务的验收证据。
+
 本模板中的“完成”必须有可核验结果。模型回复“已完成”、试运行状态为 succeeded 或人工批准本身，都不能替代必要的工具回执、业务结果或 Artifact 证据。
 
 ## 2. Agent 设计记录
@@ -68,7 +70,7 @@ MCP、持久化等待、受控记忆、Agent 数据平面、Agent 委派和无 S
 
 “需要查询外部系统”本身不是 MCP 触发条件。已有受控 Tool 或固定 API 适配器能够满足时继续使用现有路径。
 
-选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及自动生效摘要、默认对全部 Agent 开放的风险确认、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。首期不提供 Agent 或逐 Tool 权限，也不生成平台 Tool Version/Binding；Agent 发布不携带或改变 Connector 配置。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。
+选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及自动生效摘要、Agent Version 的 `all`/`selected`/`none` 范围、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。连接器健康时默认对全部 Agent 开放，但 Agent 创建者可以按整个 Connector 收窄；不提供逐 Tool Grant，也不生成平台 Tool Version/Binding。Agent 发布只固定使用范围，不携带或改变 Connector 地址与凭据。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。
 
 ### 4.2 持久化等待与长流程
 

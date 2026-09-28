@@ -42,7 +42,7 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
         ],
         manualReview: { required: true, rubric: '结果符合预期' },
         runId: `run-${kind}`, attemptId: `attempt-${kind}`, status: 'succeeded',
-        outputExcerpt: '结果', verdict: 'passed',
+        outputExcerpt: kind === 'success' ? `结果${'后续核验内容'.repeat(60)}` : '结果', verdict: 'passed',
       })) }],
     }],
     evidence: {}, packageWarnings: [],
@@ -87,6 +87,11 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
     global: { plugins: [pinia, router, ElementPlus], stubs: { teleport: true } },
   })
   try {
+    await flushPromises()
+    await router.push(`/agents/${agentId}/release/trial`)
+    await flushPromises()
+    expect(wrapper.get('.case-run__output').text()).toContain('后续核验内容'.repeat(60))
+    await router.push(`/agents/${agentId}/release/review`)
     await flushPromises()
     expect(wrapper.find('[data-action="submit-agent-release"]').exists()).toBe(false)
     const action = wrapper.get('[data-action="publish-agent"]')

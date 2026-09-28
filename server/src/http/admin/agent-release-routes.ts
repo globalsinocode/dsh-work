@@ -31,6 +31,20 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().getReleaseState(context.params['agentId'] ?? ''), 'postgres')
   })
 
+  router.get(`${basePath}/agents/:agentId/versions/:versionId/package`, async (_request, context, response) => {
+    requireRequestIdentity(context, 'admin')
+    const agentId = context.params['agentId'] ?? ''
+    const bytes = await available().exportVersionPackage(agentId, context.params['versionId'] ?? '')
+    const fileName = `${agentId.replace(/[^A-Za-z0-9._-]/g, '_') || 'agent'}.zip`
+    response.writeHead(200, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'X-Content-Type-Options': 'nosniff',
+    })
+    response.end(bytes)
+  })
+
   // GET 只读：候选创建/重绑/修订推进收敛到这个显式同步端点
   router.post(`${basePath}/agents/:agentId/release/candidate`, async (_request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId

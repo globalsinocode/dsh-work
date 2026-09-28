@@ -375,7 +375,16 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
     interrupted,
   }
 
-  const error = run.status === 'failed' ? evidence.runError : null
+  const unresolvedExternalEffect = pendingItems.some(item => item.kind === 'external_effect_unknown')
+  const error = run.status === 'failed' && evidence.runError
+    ? unresolvedExternalEffect
+      ? {
+          ...evidence.runError,
+          suggestion: '外部操作效果待核对。请先查询权威系统回执，确认实际结果后再决定是否发起新任务；不要直接重试本轮。',
+          retryable: false,
+        }
+      : evidence.runError
+    : null
 
   return {
     version: TASK_RESULT_VERSION,

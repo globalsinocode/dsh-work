@@ -356,6 +356,13 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
   }
   const instructionsBody = readText(files, `${rootDir}${instructionsPath}`)
     ?? fail(`spec.instructions 指定的 ${instructionsPath} 不存在`)
+  if (!document.spec.workProcedures && files[`${rootDir}AGENTS.md`]) {
+    fail('包内 AGENTS.md 必须由 spec.workProcedures 显式声明')
+  }
+  const workProceduresBody = document.spec.workProcedures
+    ? readText(files, `${rootDir}${document.spec.workProcedures}`)
+      ?? fail(`spec.workProcedures 指定的 ${document.spec.workProcedures} 不存在`)
+    : null
   const checksumsVerified = verifyChecksums(files, rootDir, warnings)
 
   const collectionKeys = new Set<string>()
@@ -390,6 +397,7 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
       description: document.metadata.description.trim(),
     },
     instructions: { path: instructionsPath, body: instructionsBody.trim() },
+    workProcedures: workProceduresBody === null ? null : { path: 'AGENTS.md', body: workProceduresBody.trim() },
     capabilities: {
       skills: normalizeCapabilityRefs(document.spec.capabilities?.skills, 'skills'),
       tools: normalizeCapabilityRefs(document.spec.capabilities?.tools, 'tools'),

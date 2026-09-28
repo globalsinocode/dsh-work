@@ -873,6 +873,107 @@ test('a retry continues from the partial output preserved by a timed-out Attempt
   assert.equal(attempts[0]?.manifest.input.message, '超时中断保留部分回答')
 })
 
+test('unknown MCP effect appears in every result projection and blocks generic retry', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: 'MCP 未知效果重试门禁' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '超时中断保留部分回答', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForTask(created.id, 'failed')
+  const original = await runs.getRun('tenant-dsh-work', created.id)
+  assert.ok(original?.currentAttemptId)
+  const connectorId = `connector-mcp-test-${randomUUID()}`
+  await database`
+    insert into connectors (
+      id, tenant_id, key, name, connector_type, status, system, protocol,
+      endpoint, auth_type, scope_description, created_by
+    ) values (
+      ${connectorId}, 'tenant-dsh-work', ${connectorId}, 'MCP 未知效果测试', 'mcp', 'healthy',
+      'MCP', 'mcp', 'http://127.0.0.1:54418/mcp', 'none', '隔离测试', 'U00001'
+    )
+  `
+  await database`
+    insert into mcp_invocation_audits (
+      id, tenant_id, run_id, attempt_id, connector_id, actor_user_id,
+      call_id, capability_name, parameter_digest, result
+    ) values (
+      ${`mcp-audit-${randomUUID()}`}, 'tenant-dsh-work', ${created.id}, ${original.currentAttemptId},
+      ${connectorId}, 'U00001', ${`call-${randomUUID()}`}, 'put_receipt', ${'a'.repeat(64)}, 'unknown'
+    )
+  `
+
+  const task = await conversations.getTask(created.id, 'U00001')
+  assert.equal(task?.result.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)
+  assert.equal(task?.result.error?.retryable, false)
+  const standalone = await conversations.getTaskResult(created.id, 'U00001')
+  assert.equal(standalone?.result.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)
+  const outcomes = await conversations.getTaskResultOutcomes([created.id])
+  assert.equal(outcomes.get(created.id), 'not_achieved')
+  await assert.rejects(orchestration.retry(created.id, 'U00001'), /外部操作结果可能未确定/)
+  const [count] = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${created.id}
+  `
+  assert.equal(count?.count, 1)
+
+  const completed = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '查询已完成但外部效果未知', idempotencyKey: randomUUID(),
+  })
+  assert.ok(completed)
+  await waitForTask(completed.id, 'succeeded')
+  const completedRun = await runs.getRun('tenant-dsh-work', completed.id)
+  assert.ok(completedRun?.currentAttemptId)
+  await database`
+    insert into mcp_invocation_audits (
+      id, tenant_id, run_id, attempt_id, connector_id, actor_user_id,
+      call_id, capability_name, parameter_digest, result
+    ) values (
+      ${`mcp-audit-${randomUUID()}`}, 'tenant-dsh-work', ${completed.id}, ${completedRun.currentAttemptId},
+      ${connectorId}, 'U00001', ${`call-${randomUUID()}`}, 'put_receipt', ${'b'.repeat(64)}, 'unknown'
+    )
+  `
+  const completedOutcomes = await conversations.getTaskResultOutcomes([completed.id])
+  assert.equal(completedOutcomes.get(completed.id), 'unverified')
+})
+
+test('MCP Attempt cannot retry until its invocation audit is finalized', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: 'MCP 撤权审计竞态' })
+  const created = await orchestration.startRun({
+    userId: 'U00001', sessionId: session.id, prompt: '超时中断保留部分回答', idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForTask(created.id, 'failed')
+  const run = await runs.getRun('tenant-dsh-work', created.id)
+  assert.ok(run?.currentAttemptId)
+  await database`
+    update run_attempts
+       set error_code = 'AUTHORIZATION_REVOKED',
+           manifest = jsonb_set(manifest, '{mcp_connections}', '[{"connector_id":"connector-mcp-test"}]'::jsonb)
+     where tenant_id = 'tenant-dsh-work' and id = ${run.currentAttemptId}
+  `
+
+  assert.equal(await conversations.hasUnresolvedExternalEffects(run.id, run.currentAttemptId), false)
+  assert.equal(await conversations.isMcpInvocationAuditFinalized(run.id, run.currentAttemptId), false)
+  await assert.rejects(orchestration.retry(run.id, 'U00001'), /外部操作结果可能未确定/)
+  const [count] = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${run.id}
+  `
+  assert.equal(count?.count, 1)
+
+  await database`
+    update run_attempts set mcp_audit_finalized_at = now()
+     where tenant_id = 'tenant-dsh-work' and id = ${run.currentAttemptId}
+  `
+  await orchestration.retry(run.id, 'U00001')
+  await waitForTask(run.id, 'succeeded')
+  const [afterFinalization] = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = 'tenant-dsh-work' and run_id = ${run.id}
+  `
+  assert.equal(afterFinalization?.count, 2)
+})
+
 test('deleting a conversation archives it only after active Runs stop', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: 'M3 删除对话' })
   const created = await orchestration.startRun({

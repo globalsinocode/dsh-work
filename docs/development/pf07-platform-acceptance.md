@@ -20,7 +20,7 @@
 
 `pnpm test:pf07:fixture` 检查本地 Streamable HTTP MCP 的 Bearer 拒绝、工具清单、幂等写入、冲突与超时后权威回执；这一层只验证测试靶场自身。`pnpm probe:pf07:mcp` 从 `.env` 解析当前锁定的真实 DSH，临时启动仅监听 `127.0.0.1` 的靶场，执行发现及一次真实模型驱动的 MCP 写入和回执查询，最后销毁靶场与 Attempt 工作目录。脚本只输出工具名、临时 Run/Attempt ID、回执 ID 和脱敏调用结果，不输出临时 Bearer Token。
 
-`pnpm probe:pf07:mcp:platform` 在 `DSH_WORK_TEST_DATABASE_URL` 指向的本地 PostgreSQL 维护实例中自建、迁移并销毁一次性数据库。它使用合成用户与真实平台服务登记、加密存储、解析 MCP；经真实 Run/Attempt → DSH 调用写入和查询工具，交叉检查回执与 `mcp_invocation_audits`，随后验证错误凭据、工具清单变化、停用、删除和 Manifest 不含密钥。脚本的外部工具审批回调固定为测试允许，且会销毁数据库和测试回执；这是隔离的工程回归，不能作为真实 OIDC 身份、人工审批或可事后查询的 P2 记录。命令只接受回环 PostgreSQL，禁止指向开发业务库或生产库。
+`pnpm probe:pf07:mcp:platform` 在 `DSH_WORK_TEST_DATABASE_URL` 指向的本地 PostgreSQL 维护实例中自建、迁移并销毁一次性数据库。它使用合成用户与真实平台服务登记、加密存储、解析 MCP；经真实 Run/Attempt → DSH 验证 Agent Version 的 `all`、`selected`、`none` 范围：写入和查询外部回执、审计实际 MCP 调用、排除未选 Connector，并用默认文件工具生成可从 Artifact 存储读取的文件。随后验证错误凭据、工具清单变化、停用、删除、选定连接失效时拒绝新 Attempt，以及 Manifest 不含密钥。脚本的外部工具审批回调固定为测试允许，且会销毁数据库、文件和测试回执；这是隔离的工程回归，不能作为真实 OIDC 身份、人工审批或可事后查询的 P2 记录。命令只接受回环 PostgreSQL，禁止指向开发业务库或生产库。
 
 单独长时间运行靶场时，先在 Git 工作区外建立权限为 `0600` 的 Token 文件，设置 `PF07_MCP_TEST_TOKEN_FILE`，再运行 `node scripts/acceptance/pf07-mcp-fixture.mjs`；可设置 `PF07_MCP_TEST_PORT` 固定回环端口、`PF07_MCP_RECEIPTS_PATH` 保存权威写入 JSONL，以及 `PF07_MCP_CATALOG_VERSION=2` 模拟新增工具。不要把 Token 或回执文件提交到仓库。完成后停止服务，并清理一次性连接器、数据库和记录。
 

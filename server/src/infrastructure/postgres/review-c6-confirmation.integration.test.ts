@@ -98,9 +98,29 @@ test('C6 RED: one general run prepares a display-only draft plan; only final con
   assert.equal(audit?.n, 1)
 })
 
+test('one-confirm draft copy preserves AGENTS instructions and a restricted MCP scope', async () => {
+  const created = await draft()
+  const procedures = '先核对本次输入的权限与来源，再检查结果并说明尚未证实的部分。'
+  await agents.updateAgent({
+    ...created, agentId: created.id, actor,
+    workInstructions: procedures, mcpScope: { mode: 'none', connectorIds: [] },
+    changeSummary: '设置受限工作规程',
+  })
+  const current = (await agents.getMutationSnapshot(created.id)).agent
+  const manifest = await seedRun('admin-assistant')
+  const plan = await prepare(manifest, current.id, { name: '仅修改显示名称' })
+  await finish(manifest)
+  await service.confirmAction(actor, plan.id, plan.planSha256)
+  const updated = (await agents.getMutationSnapshot(current.id)).agent
+  assert.equal(updated.name, '仅修改显示名称')
+  assert.equal(updated.workInstructions, procedures)
+  assert.deepEqual(updated.mcpScope, { mode: 'none', connectorIds: [] })
+})
+
 test('all privilege, execution, status, Runtime and unknown fields are refused by the single-confirmation path', async () => {
   const agent = await draft()
   for (const [key, value] of Object.entries({ systemPrompt: '不得通过通用助手直接改变模型行为指令。',
+    workInstructions: '不得通过一次确认修改 Agent 工作规程。', mcpScope: { mode: 'all', connectorIds: [] },
     roleIds: ['role-admin'], dataScopes: ['all'], skills: [], tools: [], maxOutputBytes: 131072, maxToolCalls: 20, timeoutSeconds: 20,
     visibility: '所有员工', owner: actor, department: 'test', allowWorkspaceJoin: true, status: 'published', confirmationMode: 'single', changeSummary: '不能由调用方覆盖安全字段', unknown: 1 })) {
     await assert.rejects(prepare(await seedRun('admin-assistant'), agent.id, { name: '合法字段混入', [key]: value }))

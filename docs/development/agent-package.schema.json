@@ -57,6 +57,9 @@
         "instructions": {
           "const": "SOUL.md"
         },
+        "workProcedures": {
+          "const": "AGENTS.md"
+        },
         "capabilities": {
           "type": "object",
           "additionalProperties": false,

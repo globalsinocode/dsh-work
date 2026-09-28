@@ -295,6 +295,18 @@ export const adminApi = {
       headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
       body: file,
     }),
+  downloadAgentVersionPackage: async (agentId: string, versionId: string): Promise<Blob> => {
+    const response = await fetch(`${baseUrl}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/package`, {
+      credentials: 'include',
+      headers: { Accept: 'application/zip' },
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
+      if (response.status === 401) redirectToLogin()
+      throw new AdminApiError(payload?.error ?? {}, response.status, `Agent 包导出失败（${response.status}）`)
+    }
+    return response.blob()
+  },
   getAgentJoinedWorkspaces: (agentId: string) =>
     request<{ items: AgentJoinedWorkspaceRecord[] }>(`/agents/${encodeURIComponent(agentId)}/workspaces`),
   getGrantSourceReconciliation: () =>

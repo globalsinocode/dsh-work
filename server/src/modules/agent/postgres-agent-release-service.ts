@@ -19,9 +19,10 @@ import {
   type AgentPackageCase,
 } from './agent-package.ts'
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
+import { exportAgentPackage } from './agent-package-export.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AgentDelegationPolicy } from '../../domain/types.ts'
+import type { AgentDelegationPolicy, AgentMcpScope } from '../../domain/types.ts'
 import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 
@@ -64,7 +65,7 @@ export interface ReleasePlanItem {
 export type TrialStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
 export interface TrialRunStep { id: string; label: string; status: TrialStepStatus; detail?: string; caseRuns?: TrialCaseRun[] }
 
-/** 单个评估案例的真实执行证据：Run/Attempt 标识、终态、输出摘录与审核人逐项确认结论。 */
+/** 单个评估案例的真实执行证据：Run/Attempt 标识、完整输出与审核人逐项确认结论。 */
 export interface TrialCaseRun {
   caseId: string
   name: string
@@ -145,6 +146,7 @@ export interface AgentPackageInspection {
   manifest: { id: string; name: string; version: string; description: string }
   files: string[]
   systemPrompt: string
+  workInstructions: string
   resolved: { skills: string[]; tools: string[] }
   missing: { skills: string[]; tools: string[] }
   packageRefs: { skills: AgentPackageCapabilityRef[]; tools: AgentPackageCapabilityRef[] }
@@ -174,6 +176,7 @@ interface DraftVersionShape {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   agentSpec: AgentSpec | null
 }
@@ -228,6 +231,7 @@ const ZIP_IMPORT_PLATFORM_DEFAULTS = {
   roleIds: ['role-employee'],
   dataScopes: ['enterprise:authorized', 'workspace:authorized'],
   allowWorkspaceJoin: false,
+  mcpScope: { mode: 'all', connectorIds: [] } as AgentMcpScope,
 }
 
 function parseRef(reference: string): CapabilityRef {
@@ -361,6 +365,7 @@ function draftFingerprint(draft: DraftVersionShape) {
     examplePrompts: draft.examplePrompts,
     skills: draft.skills,
     tools: draft.tools,
+    mcpScope: draft.mcpScope,
     maxOutputBytes: draft.maxOutputBytes,
     maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
@@ -417,6 +422,26 @@ export class PostgresAgentReleaseService {
   }
 
   /* ---------- 读取与协调 ---------- */
+
+  async exportVersionPackage(agentId: string, versionId: string): Promise<Uint8Array> {
+    const [row] = await this.database<{ spec: AgentSpec | null; cases: ReleaseEvalCase[] | null }[]>`
+      select av.agent_spec as spec,
+             (select s.cases from agent_release_submissions s
+               where s.tenant_id = av.tenant_id and s.agent_version_id = av.id
+               order by s.created_at desc limit 1) as cases
+        from agent_versions av
+       where av.tenant_id = ${tenantId} and av.agent_id = ${agentId} and av.id = ${versionId}
+    `
+    if (!row) throw Object.assign(new Error('Agent Version 不存在'), { status: 404, code: 'agent_version_not_found' })
+    if (!row.spec) throw Object.assign(new Error('该历史版本没有可导出的 AgentSpec'), { status: 409, code: 'agent_spec_unavailable' })
+    if (row.spec.evaluation.cases && !row.cases?.length) {
+      throw Object.assign(new Error('该版本缺少可导出的评测套件'), { status: 409, code: 'agent_evaluation_unavailable' })
+    }
+    return exportAgentPackage(row.spec, (row.spec.evaluation.cases ? row.cases ?? [] : []).map(({ name, kind, input, automatedAssertions, manualReview }) => ({
+      evaluationApiVersion: AGENT_EVALUATION_API_VERSION,
+      name, kind, input, automatedAssertions, manualReview,
+    })))
+  }
 
   async listSubmissions(): Promise<SubmissionSummary[]> {
     return this.database<SubmissionSummary[]>`
@@ -584,10 +609,12 @@ export class PostgresAgentReleaseService {
     pins: ManifestToolBinding[]
     error?: string
   }> {
-    if (!draft.tools.length) return { bindings: [], pins: [] }
-    if (!this.tools) return { bindings: [], pins: [], error: '工具绑定服务未接入' }
+    if (!this.tools) return draft.tools.length
+      ? { bindings: [], pins: [], error: '工具绑定服务未接入' }
+      : { bindings: [], pins: [] }
     try {
-      const bindings = await this.tools.resolveToolBindings(draft.tools, actorId)
+      const defaults = await this.tools.resolvePlatformDefaultToolReferences(draft.roleIds, draft.dataScopes)
+      const bindings = await this.tools.resolveToolBindings([...new Set([...draft.tools, ...defaults])], actorId)
       return { bindings, pins: bindings.map(toManifestToolBinding) }
     } catch (cause) {
       return { bindings: [], pins: [], error: cause instanceof Error ? cause.message : String(cause) }
@@ -600,15 +627,20 @@ export class PostgresAgentReleaseService {
    * 已封存 pin 逐条要求仍 active 且语义未漂移，漂移即证据失效。
    */
   private async assertSealedBindings(submission: SubmissionRow, tx: DatabaseTransaction) {
-    const [version] = await tx<{ tools: string[] }[]>`
-      select tool_refs as tools from agent_versions
+    const [version] = await tx<{ tools: string[]; roleIds: string[]; dataScopes: string[] }[]>`
+      select tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes" from agent_versions
        where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
     `
-    const platformTools = (version?.tools ?? [])
+    if (!version) throw new Error('Agent Version 不存在')
+    const defaults = this.tools
+      ? await this.tools.resolvePlatformDefaultToolReferences(version.roleIds, version.dataScopes)
+      : []
+    const platformTools = [...new Set([...version.tools, ...defaults])]
       .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
     const pins = submission.bindingRefs ?? []
-    if (platformTools.length && !pins.length) {
-      throw new Error('缺少平台工具绑定依据，请重新封存试运行')
+    if (platformTools.length !== pins.length
+      || platformTools.some(reference => !pins.some(pin => pin.tool === reference))) {
+      throw new Error('平台默认工具或固定绑定依据已变化，请重新封存试运行')
     }
     if (!pins.length) return
     if (!this.tools) throw new Error('工具绑定复核服务未接入')
@@ -633,6 +665,15 @@ export class PostgresAgentReleaseService {
     const coveredKinds = CASE_KINDS.filter(kind => submission.cases.some(item => item.kind === kind))
     const generatedCount = submission.cases.filter(item => item.origin === 'generated').length
     let dataRequirementError: string | undefined
+    let mcpScopeError: string | undefined
+    if (draft.mcpScope?.mode === 'selected') {
+      try {
+        if (!this.tools) throw new Error('MCP Connector 服务未接入')
+        await this.tools.resolveMcpConnectionsForAgentVersion(draft.id)
+      } catch (error) {
+        mcpScopeError = error instanceof Error ? error.message : String(error)
+      }
+    }
     if (draft.agentSpec?.data?.collections?.length) {
       try {
         await this.database.begin(tx => this.assertDataRequirements(tx, draft.id, context.id))
@@ -677,6 +718,14 @@ export class PostgresAgentReleaseService {
         detail: dataRequirementError ?? (draft.agentSpec?.data?.collections?.length
           ? '声明的集合、Schema 版本与当前执行身份授权兼容'
           : '未声明结构化数据集合'),
+      },
+      {
+        id: 'mcp_scope',
+        label: 'MCP 使用范围',
+        status: mcpScopeError ? 'failed' : 'passed',
+        detail: mcpScopeError ?? (draft.mcpScope?.mode === 'selected'
+          ? `已选 ${draft.mcpScope.connectorIds.length} 个当前可用 Connector`
+          : draft.mcpScope?.mode === 'none' ? '不加载 MCP Connector' : '每次 Attempt 加载当前可用 Connector'),
       },
       {
         id: 'admission',
@@ -1028,7 +1077,8 @@ export class PostgresAgentReleaseService {
           evaluationApiVersion: evalCase.evaluationApiVersion,
           automatedAssertions, manualReview: evalCase.manualReview,
           runId: result.runId, attemptId: result.attemptId,
-          status: result.status, outputExcerpt: result.output.slice(0, 240),
+          // 审核人必须能检查完整回答；截取开头会掩盖后文中的越权承诺或错误结论。
+          status: result.status, outputExcerpt: result.output,
         })
       } catch (error) {
         // 派发失败（编译/路由/调度异常）属于基础设施故障，后续案例不再浪费
@@ -1311,6 +1361,14 @@ export class PostgresAgentReleaseService {
       // B-03/I-04：发布事务内复核封存绑定依据——并发绑定变更（撤销/轮换/语义
       // 漂移）在此拒绝，旧证据不能带病放行。
       await this.assertSealedBindings(submission, transaction)
+      const [scopeRow] = await transaction<{ mcpScope: AgentMcpScope }[]>`
+        select mcp_scope as "mcpScope" from agent_versions
+         where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
+      `
+      if (scopeRow?.mcpScope.mode === 'selected') {
+        if (!this.tools) throw new Error('MCP Connector 服务未接入')
+        await this.tools.resolveMcpConnectionsForAgentVersion(submission.agentVersionId)
+      }
       await this.assertDataRequirements(transaction, submission.agentVersionId, agentId)
 
       // 已发布版本携带封存绑定依据：与状态翻转同一条 UPDATE（已发布版本不可变，
@@ -1425,6 +1483,7 @@ export class PostgresAgentReleaseService {
       manifest: parsed.spec.metadata,
       files: Object.keys(parsed.files).sort(),
       systemPrompt: parsed.spec.instructions.body,
+      workInstructions: parsed.spec.workProcedures?.body ?? '',
       resolved: { skills: resolved.skills, tools: resolved.tools },
       missing: { skills: resolved.missingSkills, tools: resolved.missingTools },
       packageRefs: parsed.packageRefs,
@@ -1477,7 +1536,7 @@ export class PostgresAgentReleaseService {
       let draftVersion: string
       // 平台字段（可见角色/数据范围/团队空间开关）不随包覆写：首次导入用平台默认值，
       // 重复导入保留管理员在平台上的既有配置。
-      let platformFields = { ...ZIP_IMPORT_PLATFORM_DEFAULTS }
+      let platformFields: { roleIds: string[]; dataScopes: string[]; allowWorkspaceJoin: boolean; mcpScope: AgentMcpScope } = { ...ZIP_IMPORT_PLATFORM_DEFAULTS }
       if (!existing) {
         draftVersionId = `agent-version-${randomUUID()}`
         draftVersion = parsed.spec.metadata.version
@@ -1491,17 +1550,17 @@ export class PostgresAgentReleaseService {
         draftVersionId = existing.draftVersionId
         const updated = await this.updateDraftVersion(tx, draftVersionId, parsed, resolved)
         draftVersion = updated.version
-        platformFields = { ...platformFields, roleIds: updated.roleIds, dataScopes: updated.dataScopes }
+        platformFields = { ...platformFields, roleIds: updated.roleIds, dataScopes: updated.dataScopes, mcpScope: updated.mcpScope }
       } else {
         draftVersion = await this.availableVersion(tx, agentId, parsed.spec.metadata.version)
         draftVersionId = `agent-version-${randomUUID()}`
-        const [current] = await tx<{ roleIds: string[]; dataScopes: string[] }[]>`
-          select av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes"
+        const [current] = await tx<{ roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }[]>`
+          select av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes", av.mcp_scope as "mcpScope"
             from agents a
             join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
            where a.tenant_id = ${tenantId} and a.id = ${agentId}
         `
-        if (current) platformFields = { ...platformFields, roleIds: current.roleIds, dataScopes: current.dataScopes }
+        if (current) platformFields = { ...platformFields, roleIds: current.roleIds, dataScopes: current.dataScopes, mcpScope: current.mcpScope }
         await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)
         await tx`update agents set draft_version_id = ${draftVersionId}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
       }
@@ -1521,6 +1580,7 @@ export class PostgresAgentReleaseService {
         timeoutSeconds: parsed.spec.limits.timeoutSeconds,
         skills: resolved.skills,
         tools: resolved.tools,
+        mcpScope: platformFields.mcpScope,
         agentSpec: parsed.spec,
       })
 
@@ -1607,7 +1667,7 @@ export class PostgresAgentReleaseService {
     parsed: ReturnType<typeof parseAgentPackage>,
     resolved: { skills: string[]; tools: string[] },
     actorId: string,
-    platformFields: { roleIds: string[]; dataScopes: string[] },
+    platformFields: { roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope },
   ) {
     // agent_spec 记录声明式定义（含包内候选引用）；skill_refs/tool_refs 记录平台
     // 已解析引用——两者同一来源（parsed.spec + resolved），不是第二套定义。
@@ -1616,7 +1676,7 @@ export class PostgresAgentReleaseService {
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
         example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-        max_tool_calls, timeout_seconds, skill_refs, tool_refs, agent_spec, status, created_by, change_summary
+        max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, change_summary
       ) values (
         ${versionId}, ${tenantId}, ${agentId}, ${version}, ${parsed.spec.metadata.name},
         ${parsed.spec.metadata.description}, ${parsed.spec.catalog.welcomeMessage},
@@ -1624,6 +1684,7 @@ export class PostgresAgentReleaseService {
         ${tx.json(asJson(platformFields.roleIds))}, ${tx.json(asJson(platformFields.dataScopes))},
         ${parsed.spec.limits.maxOutputBytes}, ${parsed.spec.limits.maxToolCalls}, ${parsed.spec.limits.timeoutSeconds},
         ${tx.json(asJson(resolved.skills))}, ${tx.json(asJson(resolved.tools))},
+        ${tx.json(asJson(platformFields.mcpScope))},
         ${tx.json(asJson(spec))},
         'draft', ${actorId}, 'ZIP 发布包导入'
       )
@@ -1635,7 +1696,7 @@ export class PostgresAgentReleaseService {
     draftVersionId: string,
     parsed: ReturnType<typeof parseAgentPackage>,
     resolved: { skills: string[]; tools: string[] },
-  ): Promise<{ version: string; roleIds: string[]; dataScopes: string[] }> {
+  ): Promise<{ version: string; roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }> {
     const [conflict] = await tx<{ id: string }[]>`
       select av.id from agent_versions av
         join agent_versions draft on draft.tenant_id = av.tenant_id and draft.id = ${draftVersionId}
@@ -1644,8 +1705,8 @@ export class PostgresAgentReleaseService {
     `
     if (conflict) throw new Error(`版本 v${parsed.spec.metadata.version} 已存在于该 Agent 的版本记录中，请修改包内 version 后重新导入`)
     // 平台字段（visible_role_ids/data_scopes）不由包声明，重复导入保留既有配置。
-    const [current] = await tx<{ roleIds: string[]; dataScopes: string[] }[]>`
-      select visible_role_ids as "roleIds", data_scopes as "dataScopes"
+    const [current] = await tx<{ roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }[]>`
+      select visible_role_ids as "roleIds", data_scopes as "dataScopes", mcp_scope as "mcpScope"
         from agent_versions
        where tenant_id = ${tenantId} and id = ${draftVersionId}
     `
@@ -1667,6 +1728,7 @@ export class PostgresAgentReleaseService {
       version: parsed.spec.metadata.version,
       roleIds: current?.roleIds ?? ZIP_IMPORT_PLATFORM_DEFAULTS.roleIds,
       dataScopes: current?.dataScopes ?? ZIP_IMPORT_PLATFORM_DEFAULTS.dataScopes,
+      mcpScope: current?.mcpScope ?? ZIP_IMPORT_PLATFORM_DEFAULTS.mcpScope,
     }
   }
 
@@ -1775,6 +1837,7 @@ export class PostgresAgentReleaseService {
       draftTimeoutSeconds: number | null
       draftSkills: string[] | null
       draftTools: string[] | null
+      draftMcpScope: AgentMcpScope | null
       draftDelegationPolicy: AgentDelegationPolicy | null
       draftAgentSpec: AgentSpec | null
     }[]>`
@@ -1787,6 +1850,7 @@ export class PostgresAgentReleaseService {
              draft.max_output_bytes as "draftMaxOutputBytes", draft.max_tool_calls as "draftMaxToolCalls",
              draft.timeout_seconds as "draftTimeoutSeconds",
              draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools",
+             draft.mcp_scope as "draftMcpScope",
              draft.delegation_policy as "draftDelegationPolicy", draft.agent_spec as "draftAgentSpec"
         from agents a
         left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
@@ -1814,6 +1878,7 @@ export class PostgresAgentReleaseService {
           timeoutSeconds: row.draftTimeoutSeconds ?? 300,
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],
+          mcpScope: row.draftMcpScope ?? ZIP_IMPORT_PLATFORM_DEFAULTS.mcpScope,
           delegationPolicy: row.draftDelegationPolicy ?? {
             allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
           },

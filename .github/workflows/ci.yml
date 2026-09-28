@@ -150,6 +150,11 @@ jobs:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:agent-principal
 
+      - name: Run Agent capability P1 browser journey
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:e2e:agent-capabilities
+
       - name: Run Agent routine P1 browser journey
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
