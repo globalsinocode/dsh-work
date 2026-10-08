@@ -15,6 +15,10 @@
 4. 本仓库为公开仓库：**站点特有的业务标识（具体连接器名、内网地址、租户取值）
    一律不得写入本文件**，只能写机制，具体取值放部署级配置（如 `runtime.env`）。
 5. 偏差一旦回灌源码或失效，必须在本文件标注退出并说明去向，不得留空壳条目。
+6. 本表是**仓库侧**登记：只收「需要在新构件上重放」的代码/配置偏差。
+   部署侧另有一套更细的运行记录（含 `.orig` 备份、修改前后 sha256、验证脚本与回滚命令），
+   位于部署根的 `automation/local-deviations/<日期>-<主题>/`；本表条目必须与之互相引用，
+   不得只写其中一处。
 
 ---
 
@@ -41,6 +45,12 @@
 | 3 | `resolveRuntimeToolNames` | 工具引用 → DSH 工具名映射 |
 | 4 | `resolveRuntimeApprovalMode` | 审批策略解析 |
 | 5 | `assertActiveToolBindings` | 绑定物化 |
+
+> 部署侧完整记录（原始备份、修改前后 sha256、验证脚本与回滚命令）：
+> `automation/local-deviations/2026-09-29-tool-resolution-hotfix/`
+> 该偏差还牵出两个仍在的遗留项（`syncToolCatalog` 按行 id 判定运行时工具存活；
+> 缺少 `plm_query` / `mes_query` 的 toolPolicies 条目），详见
+> `automation/local-deviations/2026-10-08-plm-tool-resync-repair/deviation.txt`。
 
 ### 2. 未放宽的门禁（必须保持原样）
 
