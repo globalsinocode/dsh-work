@@ -1100,11 +1100,24 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {
     const progressive = manifest.tools.some(tool => tool.id === 'activate_skill')
+    // 会话级指定 Skill：用户在建会话时选定的那一个。授权与快照固定已在前置环节完成，
+    // 这里只负责把"指定"语义渲染给模型，否则它只能在平等罗列的目录里猜。
+    const selectedSkill = typeof manifest.selected_skill === 'string'
+      ? manifest.agent_configuration.skill_instructions.find(skill =>
+          `${skill.id}@${skill.version}` === manifest.selected_skill || skill.id === manifest.selected_skill)
+      : undefined
+    if (selectedSkill) {
+      sections.push([
+        '# 本会话指定 Skill',
+        `用户已为本会话指定 Skill：${selectedSkill.name ?? selectedSkill.id}（${selectedSkill.id}@${selectedSkill.version}）。`,
+        '只要该 Skill 的适用范围成立，必须先用 activate_skill 使用它；不要改用目录中的其他 Skill。确实不适用时，先说明理由再换。',
+      ].join('\n'))
+    }
     sections.push(progressive ? [
         '# 可用 Skill 目录',
         '这里只提供目录信息。需要使用某个 Skill 时，先调用 activate_skill 获取当前 Run 锁定版本的完整说明；不要猜测 Skill 正文或直接扫描资源目录。激活后在本次 Attempt 中持续遵循返回的说明。',
         ...manifest.agent_configuration.skill_instructions.filter(skill => !skill.disable_model_invocation).map(skill =>
-          `- ${skill.name ?? skill.id}（${skill.id}@${skill.version}）：${skill.description?.trim() || '由平台提供的已锁定 Skill'}`,
+          `- ${skill.name ?? skill.id}（${skill.id}@${skill.version}）${selectedSkill && skill.id === selectedSkill.id ? '【本会话指定】' : ''}：${skill.description?.trim() || '由平台提供的已锁定 Skill'}`,
         ),
       ].join('\n\n')
       : [

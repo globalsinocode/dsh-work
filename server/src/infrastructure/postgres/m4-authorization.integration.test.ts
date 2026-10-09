@@ -207,6 +207,8 @@ test('authorization is fail-closed and compiles the effective identity into Runt
     { id: 'read', version: '1.0.0' },
     { id: 'activate_skill', version: '1.0.0' },
   ])
+  // 未指定 Skill 的会话不得凭空出现 selected_skill（字段缺失而非 null）。
+  assert.equal(manifest?.selected_skill, undefined)
 
   const [audit] = await database<{ blocked: number; success: number }[]>`
     select count(*) filter (where result = 'blocked')::integer as blocked,
@@ -216,6 +218,38 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   `
   assert.ok((audit?.blocked ?? 0) >= 3)
   assert.ok((audit?.success ?? 0) >= 1)
+})
+
+test('session-selected Skill is pinned into the Attempt Manifest instead of only ordering the catalog', async () => {
+  const session = await orchestration.createSession({
+    userId: 'U00001',
+    title: `指定 Skill 会话-${randomUUID().slice(0, 8)}`,
+    workspaceId: 'ws-supply',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+    selectedSkillVersionId: 'skill-version-document-1',
+    selectedSkillReference: 'skill-document@1.0.0',
+  })
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values ('wam-supply-assistant', 'tenant-dsh-work', 'ws-supply',
+            'agent-dsh-work-assistant', 'agent-version-dsh-work-assistant-1', 'available', 'U00001')
+    on conflict (id) do nothing
+  `
+  const run = await orchestration.startRun({
+    userId: 'U00001',
+    sessionId: session.id,
+    prompt: '按我指定的 Skill 整理文档重点',
+    idempotencyKey: randomUUID(),
+    workspaceAgentMemberId: 'wam-supply-assistant',
+  })
+  assert.ok(run)
+  await waitForRun(run.id)
+  const manifest = runtime.manifest(run.id)
+  assert.equal(manifest?.selected_skill, 'skill-document@1.0.0', '会话指定的 Skill 必须进入 Manifest')
+  assert.ok(
+    manifest?.skills.some(skill => `${skill.id}@${skill.version}` === manifest.selected_skill),
+    'selected_skill 必须指向本 Run 已固定的 Skill 快照',
+  )
 })
 
 test('personal Skill sessions use a compatible stable default Agent and reject an incompatible fixed pairing before persistence', async () => {

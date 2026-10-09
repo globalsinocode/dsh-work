@@ -55,6 +55,12 @@ export interface RuntimeManifest {
   session_id: string | null
   workspace_id: string
   agent_version_id: string | null
+  /**
+   * 会话级指定 Skill 的 `id@version`（未指定时字段不出现）。
+   * 授权与快照固定在前置环节完成；这里只把"指定"语义带进 Manifest，
+   * 由运行时的提示词渲染让模型知道该优先使用哪一个。
+   */
+  selected_skill?: string
   agent_configuration: {
     system_prompt: string
     skill_instructions: Array<{

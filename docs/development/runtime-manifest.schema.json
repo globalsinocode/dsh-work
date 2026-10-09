@@ -57,6 +57,11 @@
       ],
       "description": "直接使用平台默认助手时可为 null。"
     },
+    "selected_skill": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+      "description": "会话级指定 Skill 的 id@version（未指定时字段不出现）。形态由本 schema 固定，必须属于 skills 快照这一成员关系由 compileRuntimeManifest 校验。"
+    },
     "agent_configuration": {
       "type": "object",
       "required": [

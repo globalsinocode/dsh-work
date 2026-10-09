@@ -61,6 +61,14 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     throw new TypeError('agent_configuration.system_prompt must be at least 20 characters')
   }
   const skillReferences = new Set(input.skills.map(skill => `${skill.id}@${skill.version}`))
+  // 会话级指定 Skill 必须是本 Run 固定快照里的引用：不接受 latest 语义、
+  // 不接受未授权引用，也不接受非法形态（fail-closed）。
+  if (input.selected_skill !== undefined
+    && (typeof input.selected_skill !== 'string'
+      || !CAPABILITY_REF_PATTERN.test(input.selected_skill)
+      || !skillReferences.has(input.selected_skill))) {
+    throw new TypeError('selected_skill 必须是本 Run 固定快照中的 Skill 引用（id@version）')
+  }
   const skillNames = new Set<string>()
   for (const skill of input.agent_configuration.skill_instructions) {
     for (const key of Object.keys(skill)) {

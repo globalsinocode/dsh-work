@@ -269,6 +269,27 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     }
   })
 
+  it('pins the session-selected Skill to the Run skill snapshot at both boundaries', () => {
+    const accepted = baseManifest()
+    accepted.selected_skill = 'skill-inventory@1.0.0'
+    assertBothAccept(accepted, 'selected_skill 指向本 Run 快照内的 Skill')
+
+    // 形态（id@version）由 schema 与编译器同时固定。
+    const malformed = baseManifest()
+    malformed.selected_skill = 'skill inventory@1.0.0'
+    assertBothReject(malformed, /selected_skill 必须是本 Run 固定快照中的 Skill 引用/, 'selected_skill 形态非法')
+
+    // 成员关系只有编译器能判定：schema 只固定形态，编译器必须 fail-closed，
+    // 不允许 latest 语义或快照外引用进入持久化 Manifest。
+    const notInSnapshot = baseManifest()
+    notInSnapshot.selected_skill = 'skill-missing@1.0.0'
+    assert.equal(schemaErrors(notInSnapshot).valid, true, 'schema 不校验成员关系，只固定形态')
+    assert.throws(
+      () => compileRuntimeManifest(notInSnapshot),
+      /selected_skill 必须是本 Run 固定快照中的 Skill 引用/,
+    )
+  })
+
   it('rejects inline Skills missing instructions or file content at both boundaries', () => {
     assertBothReject(applySkill(skill => { delete skill.instructions }), /instructions must be at least/, 'inline Skill missing instructions')
     assertBothReject(applySkill(skill => {

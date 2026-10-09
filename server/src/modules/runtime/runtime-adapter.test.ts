@@ -276,6 +276,24 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /不得猜测文件名/)
   })
 
+  it('marks the session-selected Skill so the Agent does not choose among equals', () => {
+    const input = manifest('run-selected-skill', 'attempt-1')
+    input.tools.push({ id: 'activate_skill', version: '1.0.0' })
+    input.agent_configuration.skill_instructions[0]!.name = 'inventory-analysis'
+    input.selected_skill = 'skill-inventory@1.0.0'
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 本会话指定 Skill/)
+    assert.match(rendered, /用户已为本会话指定 Skill：inventory-analysis（skill-inventory@1\.0\.0）/)
+    assert.match(rendered, /必须先用 activate_skill 使用它/)
+    assert.match(rendered, /inventory-analysis（skill-inventory@1\.0\.0）【本会话指定】/)
+
+    // 未指定时不得凭空出现该段落，目录也保持原样。
+    delete input.selected_skill
+    const withoutSelection = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.doesNotMatch(withoutSelection, /本会话指定 Skill/)
+    assert.doesNotMatch(withoutSelection, /【本会话指定】/)
+  })
+
   it('renders only the progressive Skill catalog when activate_skill is available', () => {
     const input = manifest('run-skill-catalog', 'attempt-1')
     input.tools.push({ id: 'activate_skill', version: '1.0.0' })
