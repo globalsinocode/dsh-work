@@ -79,8 +79,16 @@ export const AGENT_SPEC_INSTRUCTIONS_PATH = 'SOUL.md'
 export const AGENT_SPEC_WORK_PROCEDURES_PATH = 'AGENTS.md'
 
 export function assembleAgentInstructions(spec: Pick<AgentSpec, 'instructions' | 'workProcedures'>): string {
-  const soul = spec.instructions.body.trim()
-  const procedures = spec.workProcedures?.body.trim()
+  // 畸形数据必须在领域层被拦下：agent_spec 非空但缺 instructions 时，原来的
+  // `spec.instructions.body` 会以 `TypeError: Cannot read properties of undefined (reading 'body')`
+  // 的形式从运行快照装配路径爆出来，排障时无法定位到"哪个 Agent 的定义不完整"。
+  const instructions: { path?: unknown; body?: unknown } | undefined = spec?.instructions
+  if (!instructions || typeof instructions.path !== 'string' || typeof instructions.body !== 'string') {
+    throw new Error('Agent 定义缺少 SOUL.md 指令（agent_spec.instructions 缺失或格式非法）')
+  }
+  const soul = instructions.body.trim()
+  const rawProcedures = spec.workProcedures?.body
+  const procedures = typeof rawProcedures === 'string' ? rawProcedures.trim() : undefined
   return procedures ? `${soul}\n\n# AGENTS.md · 工作规程\n${procedures}` : soul
 }
 

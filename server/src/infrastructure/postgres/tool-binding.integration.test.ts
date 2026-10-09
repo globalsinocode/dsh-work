@@ -111,7 +111,9 @@ test('停用工具撤销 active 修订，复核与解析一并拒绝', async () 
   const rows = (await service.listToolBindings()).filter(item => item.tool === 'write@1.0.0')
   assert.equal(rows.find(item => item.bindingId === binding.bindingId)?.status, 'revoked')
   await assert.rejects(service.assertActiveToolBindings([pin]), { code: 'permission_denied' })
-  await assert.rejects(service.resolveToolBindings(['write@1.0.0']), /已停用|无法解析绑定/)
+  // assertReferences 的前置校验加强后，停用工具的拒绝文案统一到"不可用"这一条
+  // （"已停用"/"无法解析绑定"仍是同一路径后面的出口）。
+  await assert.rejects(service.resolveToolBindings(['write@1.0.0']), /工具不存在、未发布、不可用或不符合受控运行策略：write@1\.0\.0/)
 
   await service.setToolStatus({ toolId: 'write', status: 'available', actor: 'U00008' })
   const [restored] = await service.resolveToolBindings(['write@1.0.0'])
@@ -125,7 +127,10 @@ test('DSH Runtime 内生工具不产生绑定记录；不存在/未发布的引�
   assert.equal(resolved.length, 0)
   assert.equal((await service.listToolBindings()).every(item => !item.tool.startsWith('activate_skill@')), true)
 
-  await assert.rejects(service.resolveToolBindings(['ghost.tool@1.0.0']), /无法解析绑定/)
+  // 文案口径随 assertReferences 的前置校验加强而前移：不存在/未发布的引用现在在
+  // "工具不存在、未发布、不可用或不符合受控运行策略"这一步就被拒，
+  // "无法解析绑定"仍是同一路径后面的出口（见本文件另一处断言）。
+  await assert.rejects(service.resolveToolBindings(['ghost.tool@1.0.0']), /工具不存在、未发布、不可用或不符合受控运行策略/)
 })
 
 test('凭据槽位标识入摘要、密钥值不入摘要：槽位轮换产生新修订，值轮换不产生', async () => {
