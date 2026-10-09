@@ -25,6 +25,7 @@
 | 配置登录、员工目录和首位管理员 | [AI Hub 身份接入](../release/ai-hub-sso-integration.md) |
 | 安装、验证与升级执行内核 | [DSH Runtime](../release/dsh-runtime-delivery.md) |
 | 发布、首次安装、升级、备份、恢复及地址变更 | [Mac mini 部署手册](../release/mac-mini-deployment-runbook.md) |
+| 核对部署环境相对上游源码的运行期偏差与重放要求 | [部署本地偏差登记](../release/deployment-local-deviations.md) |
 
 机器可读契约与测试夹具放在 `development/`：
 
