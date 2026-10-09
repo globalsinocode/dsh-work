@@ -332,14 +332,23 @@ test('Tool and Connector management gates immutable Agent and Skill references',
     changeSummary: '验证 Tool 和 Skill 的强引用约束',
     actor: 'U00008',
   }
-  await assert.rejects(agents.createAgent({ ...baseInput, tools: ['glob@1.0.0'] }), /必须显式授权/)
-  const created = await agents.createAgent({ ...baseInput, tools: ['read@1.0.0'] })
+  // ef7cbe4 起的能力集合语义：Agent 声明的有效工具 = 声明的工具 ∪ 所选 Skill 依赖的工具。
+  // 所以"只声明 glob@1.0.0"不再被拒 —— skill-document 依赖的 read@1.0.0 会被自动并入。
+  // 真正管住能力面的是 assertAvailableReferences / assertAuthorizationCompatibility
+  // （下面那条 ghost.tool 断言），以及 m4-authorization 里仍然会抛"必须显式授权"的强引用门禁。
+  const created = await agents.createAgent({ ...baseInput, tools: ['glob@1.0.0'] })
   await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
-  assert.deepEqual(snapshot.tools, ['read@1.0.0'])
-  assert.deepEqual(snapshot.runtimeTools, ['read@1.0.0'])
+  assert.deepEqual(snapshot.tools, ['glob@1.0.0', 'read@1.0.0'])
+  assert.deepEqual(snapshot.runtimeTools, ['glob@1.0.0', 'read@1.0.0'])
   assert.equal(snapshot.approvalMode, 'never')
   assert.deepEqual(snapshot.skillInstructions[0]?.tools, ['read@1.0.0'])
+
+  // 能力面门禁仍在：声明一个不存在/不可用的工具必须被拒。
+  await assert.rejects(
+    agents.createAgent({ ...baseInput, id: `agent-tool-ghost-${suffix}`, tools: ['ghost.tool@1.0.0'] }),
+    /工具不存在、未发布、不可用或不符合受控运行策略/,
+  )
 
   const checks = await database<{ status: string }[]>`
     select status from connector_health_checks
