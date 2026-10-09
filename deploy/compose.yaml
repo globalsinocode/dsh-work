@@ -23,6 +23,11 @@ services:
     image: ${DSH_WORK_NGINX_IMAGE:-nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46}
     environment:
       DSH_WORK_SERVER_PORT: ${DSH_WORK_SERVER_PORT:-4190}
+      # nginx 上游解析（站点可覆盖）。注意不要复用 DSH_WORK_SERVER_HOST：
+      # 那是服务自身的绑定地址，preflight 断言它必须是 127.0.0.1，
+      # 透传给容器会让 nginx 打到容器自己的 loopback（站点直接 502）。
+      DSH_WORK_NGINX_UPSTREAM_HOST: ${DSH_WORK_NGINX_UPSTREAM_HOST:-host.docker.internal}
+      DSH_WORK_NGINX_DNS_RESOLVER: ${DSH_WORK_NGINX_DNS_RESOLVER:-127.0.0.11}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
