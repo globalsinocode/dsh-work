@@ -602,6 +602,23 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 数据库迁移不会自动降级。因此每次迁移必须保持至少一个版本的向后兼容，确认新版本稳定
 后再进行破坏性清理。
 
+### 12.1 升级后必须复核的两项（2026-10-09 实测，都会表现为"建会话 403"）
+
+1. **运行时工具解析白名单必须覆盖所有已发布 Agent 版本引用过的连接器**。
+   `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` 漏一个连接器，凡是 `tool_refs` 引用其工具的已发布版本
+   都会在建会话时被拒：
+   `403 工具不存在、未发布、不可用或不符合受控运行策略：<工具>@<版本>`。
+   取值依据是"已发布版本的引用集合"，不是"连接器当前是否健康"。
+2. **绑定修订漂移的已发布 Agent 版本必须重新发布**。构件在会话期会比对
+   "发布时固定的绑定"与"当前 active 绑定"（`tool_version` / `revision` / `content_digest`），
+   不一致即拒绝：`403 Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本`。
+   站点做过连接器迁移（工具从 `connector-dsh-workspace` 迁到业务连接器）时，
+   旧版本的历史绑定必然漂移，管理端对该 Agent 执行一次「检查并发布新版本」即可修复；
+   数据库不需要改动。
+
+排查顺序建议：先看 `audit_events` 中 `authorization.runtime` 的 `blocked` 明细（能直接读到上面两类文案），
+再核对 `agent_versions.tool_refs` 与 `tool_binding_revisions` 的 active 修订。
+
 自动部署接受新的稳定版本 `vYYYY.MM.DD-NN`；为兼容已发布版本，也保留对旧
 `vMAJOR.MINOR.PATCH` Tag 的读取和回滚支持。自动部署只允许升级，不会自动降级。
 部署失败的 Tag 会写入 `automation/state/blocked-release`，不会反复重试和制造重复停机；
