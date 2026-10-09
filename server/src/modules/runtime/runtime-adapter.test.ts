@@ -19,6 +19,7 @@ import {
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
+import { assertAcpModelRoute, resolveAcpModelRoute } from '../../domain/acp-model-route.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson } from './canonical-json.ts'
 import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
@@ -485,6 +486,8 @@ describe('DSH ACP Runtime Adapter', () => {
       projectRoot: fixture.projectRoot,
       env: {
         DSH_RUNTIME_HOME: fixture.runtimeHome,
+        DSH_WORK_ACP_PROVIDER: 'test-provider',
+        DSH_WORK_ACP_MODEL: 'test-model',
         DSH_RUNTIME_COMMAND: process.execPath,
         DSH_RUNTIME_ARGS_JSON: '["--version"]',
         DSH_WORK_DATA_ROOT: dataRoot,
@@ -514,6 +517,8 @@ describe('DSH ACP Runtime Adapter', () => {
       projectRoot: fixture.projectRoot,
       env: {
         DSH_RUNTIME_HOME: fixture.runtimeHome,
+        DSH_WORK_ACP_PROVIDER: 'test-provider',
+        DSH_WORK_ACP_MODEL: 'test-model',
         DSH_WORK_DATA_ROOT: dataRoot,
       },
     })
@@ -543,6 +548,8 @@ describe('DSH ACP Runtime Adapter', () => {
       env: {
         NODE_ENV: 'development',
         DSH_RUNTIME_HOME: fixture.runtimeHome,
+        DSH_WORK_ACP_PROVIDER: 'test-provider',
+        DSH_WORK_ACP_MODEL: 'test-model',
         DSH_RUNTIME_COMPATIBILITY: 'legacy-0.1.1-rc.2',
         DSH_EXPECTED_VERSION: '0.1.1-rc.2',
         DSH_EXPECTED_COMMIT: fixture.commit,
@@ -1432,4 +1439,54 @@ it('user cancellation during an authorization check keeps cancellation semantics
   await adapter.cancel(input.run_id, 'usr-linlan')
   release()
   assert.equal((await handle.done).status, 'cancelled')
+})
+
+describe('ACP 模型路由取值（T4 回归修复）', () => {
+  it('requires the site to declare both provider and model explicitly', () => {
+    assert.deepEqual(
+      resolveAcpModelRoute({ DSH_WORK_ACP_PROVIDER: 'site-gateway', DSH_WORK_ACP_MODEL: 'site-model' }),
+      { provider: 'site-gateway', model: 'site-model' },
+    )
+    assert.throws(
+      () => resolveAcpModelRoute({ DSH_WORK_ACP_PROVIDER: 'site-gateway' }),
+      /缺少 ACP 模型路由配置：DSH_WORK_ACP_MODEL/,
+    )
+    assert.throws(() => resolveAcpModelRoute({}), /DSH_WORK_ACP_PROVIDER、DSH_WORK_ACP_MODEL/)
+    assert.throws(
+      () => resolveAcpModelRoute({ DSH_WORK_ACP_PROVIDER: '  ', DSH_WORK_ACP_MODEL: 'site-model' }),
+      /DSH_WORK_ACP_PROVIDER/,
+    )
+  })
+
+  it('fails deployment preflight when session/new carries no model route', () => {
+    assert.doesNotThrow(() => assertAcpModelRoute({
+      sessionId: 'session-1',
+      configOptions: [
+        { id: 'model', category: 'model', type: 'select', currentValue: '["site-gateway","site-model"]' },
+      ],
+    }))
+    // 2026-10-09 线上事故现场：config: {} 时 ACP 返回空的 configOptions
+    assert.throws(
+      () => assertAcpModelRoute({ sessionId: 'session-1', configOptions: [] }),
+      /ACP Agent 没有可用的模型路由/,
+    )
+    assert.throws(
+      () => assertAcpModelRoute({
+        sessionId: 'session-1',
+        configOptions: [{ id: 'model', category: 'model', type: 'select', currentValue: '[]' }],
+      }),
+      /ACP Agent 没有可用的模型路由/,
+    )
+  })
+
+  it('keeps the deployment overlay free of site values but bound to the site env', async () => {
+    const template = await readFile(
+      join(moduleDirectory, '../../../config/dsh/acp-managed-credentials.cordis.yml'),
+      'utf8',
+    )
+    assert.match(template, /provider: !!js process\.env\.DSH_WORK_ACP_PROVIDER/)
+    assert.match(template, /model: !!js process\.env\.DSH_WORK_ACP_MODEL/)
+    // `config: {}` 会让 ACP Agent 完全没有 provider/model（Agent 不会回落到 agent-default-model）。
+    assert.doesNotMatch(template, /config: \{\}/)
+  })
 })
