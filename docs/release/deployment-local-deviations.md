@@ -1,6 +1,6 @@
 # 部署本地偏差登记
 
-更新时间：2026-10-08
+更新时间：2026-10-09
 
 本文件登记**上游源码之外**、仅存在于特定部署环境的运行期偏差。登记的目的只有一个：
 让「重新构建发布」这件事**不会静默抹掉这些差异**。每条偏差都必须写明内容、理由、
@@ -26,11 +26,14 @@
 
 | 项 | 值 |
 | --- | --- |
-| 状态 | **生效中**（暂不回灌源码） |
+| 状态 | **已退出（2026-10-09）** —— 按第 8 节第 2 条改为运行时配置，已回灌源码；新构件**无需重放** |
 | 首次生效 | 2026-09-29 |
-| 载体 | 编译产物 `server/dist/modules/tool/postgres-tool-connector-service.js` |
-| 对应源码 | `server/src/modules/tool/postgres-tool-connector-service.ts` |
+| 退出时间 | 2026-10-09，随构件 `v2026.10.09-01` 安装生效 |
+| 载体（历史） | 编译产物 `server/dist/modules/tool/postgres-tool-connector-service.js` |
+| 去向 | 源码 `server/src/modules/tool/postgres-tool-connector-service.ts` + `server/src/domain/tool-category.ts`，提交 `ef55c5f`（副分支 `release/2026.10`） |
+| 替代机制 | 部署配置 `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS`（逗号分隔；缺省只含 DSH 运行时连接器；站点取值只写在 `runtime.env`，不入库） |
 | 性质 | **授权范围放宽**（非缺陷修复） |
+| 下游条目 | 下面第 1–8 节保留为历史记录；生效中的机制见第 9 节 |
 
 ### 1. 偏差内容
 
@@ -40,11 +43,11 @@
 
 | # | 源码方法 | 查询用途 |
 | --- | --- | --- |
-| 1 | `assertDraftReferences` | 草稿/引用校验 |
+| 1 | `assertReferences`（私有） | 草稿/引用校验（原表误记为 `assertDraftReferences`，2026-10-09 更正） |
 | 2 | `assertAuthorizationCompatibility` | 授权兼容性校验 |
 | 3 | `resolveRuntimeToolNames` | 工具引用 → DSH 工具名映射 |
 | 4 | `resolveRuntimeApprovalMode` | 审批策略解析 |
-| 5 | `assertActiveToolBindings` | 绑定物化 |
+| 5 | `loadBindingSnapshot` | 绑定快照加载与物化（原表误记为 `assertActiveToolBindings`，2026-10-09 更正） |
 
 > 部署侧完整记录（原始备份、修改前后 sha256、验证脚本与回滚命令）：
 > `automation/local-deviations/2026-09-29-tool-resolution-hotfix/`
@@ -87,6 +90,10 @@
 
 ### 6. 重放程序
 
+> ⚠️ **2026-10-09 起本节不再适用于新构件**：偏差已回灌源码（第 9 节），新构件不自带这 5 处改动，
+> 也不需要重放。本节只保留为「若必须回到 2026-09-29 那种构件级热修」时的历史程序，
+> 且仅允许用于**已经安装、无法替换**的旧构件。
+
 在新构件上重新应用本偏差时：
 
 1. 打开 `server/dist/modules/tool/postgres-tool-connector-service.js`
@@ -104,14 +111,19 @@
 
 ### 7. 校验方法
 
-- **正向**：挂载在非 DSH 运行时连接器下的**已准入只读工具**，在会话中可被正常解析并调用
-  （`resolveRuntimeToolNames` / `resolveRuntimeApprovalMode` / `assertActiveToolBindings`
+- **正向**：挂载在非 DSH 运行时连接器下的**已准入只读工具**，在其连接器被显式列入
+  `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` 时可被正常解析并调用
+  （`resolveRuntimeToolNames` / `resolveRuntimeApprovalMode` / `loadBindingSnapshot`
   三个环节均不再因连接器归属而失败）。
+- **反向 0**：连接器**未被列入**配置时，上述环节仍然全部拒绝。
 - **反向 1**：`admission_status != 'approved'` 的工具**仍然被拒绝**。
 - **反向 2**：未发布版本（`tv.status != 'published'`）的工具**仍然被拒绝**。
 - **反向 3**：写工具白名单之外的写工具**仍然被拒绝**。
-- **一致性**：`assertDraftReferences` 与 `assertAuthorizationCompatibility` 的判定结果
+- **反向 4**：连接器不健康（`status != 'healthy'`）时**仍然被拒绝**。
+- **一致性**：`assertReferences` 与 `assertAuthorizationCompatibility` 的判定结果
   必须与运行时解析结果一致（不得出现"草稿校验通过但运行时解析失败"）。
+- **管理面不变**：`GET /tools*`、目录同步与绑定列表仍固定只认 DSH 运行时连接器；
+  `resolvePlatformDefaultToolReferences`（上游 `main` 新增的第 6 处）**不在可配置范围内**。
 
 ### 8. 退出条件
 
@@ -125,3 +137,50 @@
 
 > 优先推荐第 2 条：把"允许的连接器范围"做成显式配置，比在编译产物上打补丁
 > 更安全、可审计，也与本仓库「仓库为真源」的发布链路相容。
+
+### 9. 退出记录（2026-10-09）
+
+**走的退出条件**：第 8 节第 **2** 条（改为运行时配置）。
+
+**为什么不是另外三条**：
+
+- 第 1 条（上游接受并合入 `main`）不成立：上游 `main` 至今保留全部连接器归属限制；
+  引入 `mcp_scope` 的那个提交反而**新增**了第 6 处同款限制（见第 5 节第 2 点）。
+- 第 3 条（`mcp_scope` 覆盖该场景）**不成立**，这是 2026-10-09 评估的关键结论：
+  `resolveMcpConnectionsForAgentVersion` 只处理 `c.protocol = 'mcp'` 的连接器，
+  而本偏差改的是 `tools` / `tool_versions` 的解析路径，普通 REST 工具连接器不在其覆盖范围。
+- 第 4 条（业务上不再需要）不成立：站点仍有由非 DSH 运行时连接器提供的已准入只读工具。
+
+**替代实现**（提交 `ef55c5f`，副分支 `release/2026.10`，随 `v2026.10.09-01` 安装）：
+
+1. `server/src/domain/tool-category.ts` 新增 `resolveAllowedToolConnectorIds()`：
+   读取 `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS`（逗号分隔），逐个校验标识格式，
+   非法取值**构造即失败**（不静默忽略）；返回集合恒含 DSH 运行时连接器并去重。
+2. 第 1–5 处解析点由 `= DSH_RUNTIME_CONNECTOR_ID` 改为
+   `= any(${allowedToolConnectorIds}::text[])`（沿用全仓库既有的数组参数写法）。
+3. **刻意不放宽**的边界：管理面（`GET /tools*`、目录同步、绑定列表、工具增删与状态操作）
+   仍固定只认 DSH 运行时连接器；上游新增的第 6 处 `resolvePlatformDefaultToolReferences`
+   也不进入可配置范围，避免业务连接器上的同名工具被注入为平台默认能力。
+4. 站点取值只写在部署配置 `runtime.env`（本文件遵守第 4 条规则，不记录具体连接器名）。
+   不设置时行为回落到偏差之前：只有 DSH 运行时连接器下的工具可解析。
+
+**验证证据**：
+
+- 单元/集成：`pnpm --filter @dsh-work/server test:m4:tool:integration` 3/3
+  （默认范围拒绝 5 个解析点；显式放行后逐个通过；连接器离线 / `admission_status='unavailable'` /
+  写工具白名单 / 版本不匹配 / 角色不匹配 / 数据范围未覆盖 六类反向仍然拒绝；
+  `getTools()` 与 `listToolBindings()` 不受配置影响；白名单解析与非法取值规则单独覆盖）。
+- 安装后：`releases/v2026.10.09-01` 用自带 `release.json` 校验 1330/1330 sha256 一致、
+  0 修改、0 个 `.bak`（即旧构件上的本偏差补丁已不存在，且无需重放）。
+- 部署侧记录：`automation/local-deviations/2026-10-09-retire-list/dev-001-decision.md`
+  （注销评估与取舍）、`retire-list.md` P6（退役结果与归档位置）、
+  `automation/local-deviations/2026-10-09-install-v2026.10.09-01/`（安装偏差、备份凭据与校验脚本）、
+  `automation/state/installed-releases.md`（线上 provenance）。
+- 站点功能验收（真实会话中引用该连接器工具）按发布验收流程单独执行，属 T12 第 6 项。
+
+**仍然存在的遗留项**（与本偏差无关，另行登记，不要因本条目退出而忽略）：
+
+- `syncToolCatalog` 仍按行 id 判定运行时工具存活；
+- 站点业务工具的 `toolPolicies` 条目缺失问题。
+
+详见部署侧 `automation/local-deviations/2026-10-08-plm-tool-resync-repair/deviation.txt`。
