@@ -13,6 +13,12 @@ export interface ManagedDshAcpProcessOptions {
   deploymentConfig?: string
   adapter?: DshAcpAdapter
   acpBaseConfig?: string
+  /**
+   * ACP Agent 的模型路由。ACP 子进程只继承固定的环境变量白名单，站点取值必须**显式**
+   * 注入，否则覆盖层里的 `!!js process.env.DSH_WORK_ACP_*` 取到 undefined，
+   * Agent 会在第一次 turn 报 "has no provider/model"。
+   */
+  acpModelRoute?: { provider: string; model: string }
   env?: Record<string, string>
   shutdownGraceMs?: number
 }
@@ -54,6 +60,12 @@ export function createManagedDshAcpProcessConfiguration(
     cwd: runtimeHome,
     env: {
       ...(adapter === 'legacy-acp-demo' ? { DSH_ACP_BASE_CONFIG: acpBaseConfig } : {}),
+      ...(options.acpModelRoute
+        ? {
+            DSH_WORK_ACP_PROVIDER: options.acpModelRoute.provider,
+            DSH_WORK_ACP_MODEL: options.acpModelRoute.model,
+          }
+        : {}),
       ...options.env,
     },
     shutdownGraceMs: options.shutdownGraceMs,

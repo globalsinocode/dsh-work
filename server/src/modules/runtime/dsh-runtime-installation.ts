@@ -91,7 +91,7 @@ export async function resolveDshRuntimeInstallation(
     : 'acp-managed-credentials.cordis.yml'
   // ACP Agent 的模型路由必须由站点显式给出（制品不含站点值）。缺失时在这里就失败，
   // 而不是等到第一次会话在模型调用处报 "has no provider/model"。
-  resolveAcpModelRoute(env)
+  const acpModelRoute = resolveAcpModelRoute(env)
   const deploymentConfigTemplate = resolve(
     options.projectRoot,
     `server/config/dsh/${deploymentConfigFilename}`,
@@ -142,6 +142,7 @@ export async function resolveDshRuntimeInstallation(
     adapter: target.adapter,
     compatibilityMode,
     process: createManagedDshAcpProcessConfiguration({
+      acpModelRoute,
       runtimeHome: home,
       projectRoot: options.projectRoot,
       command,

@@ -467,6 +467,22 @@ describe('DSH ACP Runtime Adapter', () => {
     )
   })
 
+  it('forwards the site ACP model route into the DSH child environment', () => {
+    // ACP 子进程只继承固定白名单环境变量，站点取值必须显式注入，
+    // 否则覆盖层里的 !!js process.env.DSH_WORK_ACP_* 取到 undefined。
+    const configuration = createManagedDshAcpProcessConfiguration({
+      runtimeHome: '/opt/dsh-runtime',
+      projectRoot: '/opt/dsh-work',
+      acpModelRoute: { provider: 'site-gateway', model: 'site-model' },
+    })
+
+    assert.equal(configuration.env?.['DSH_WORK_ACP_PROVIDER'], 'site-gateway')
+    assert.equal(configuration.env?.['DSH_WORK_ACP_MODEL'], 'site-model')
+    const childEnvironment = buildAcpChildEnvironment(configuration.env)
+    assert.equal(childEnvironment['DSH_WORK_ACP_PROVIDER'], 'site-gateway')
+    assert.equal(childEnvironment['DSH_WORK_ACP_MODEL'], 'site-model')
+  })
+
   it('accepts a managed command without requiring a sibling source checkout', () => {
     const configuration = createManagedDshAcpProcessConfiguration({
       runtimeHome: '/opt/dsh-runtime',
