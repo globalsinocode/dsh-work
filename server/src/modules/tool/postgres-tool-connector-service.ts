@@ -6,7 +6,7 @@ import {
   type ResolvedToolBinding,
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
-import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS, resolveAllowedToolConnectorIds } from '../../domain/tool-category.ts'
 import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
@@ -126,17 +126,26 @@ export class PostgresToolConnectorService {
   private readonly runtime?: AgentRuntimePort
   private readonly operations?: PostgresOperationsService
   private readonly credentialSecrets?: PostgresEncryptedCredentialStore
+  /** 运行时解析允许的连接器范围；管理面仍固定只认 DSH 运行时连接器。 */
+  private readonly allowedToolConnectorIds: string[]
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
     operations?: PostgresOperationsService,
     credentialSecrets?: PostgresEncryptedCredentialStore,
+    /**
+     * 运行时普通工具解析允许的连接器范围。缺省读取部署配置
+     * `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS`（默认只含 DSH 运行时连接器）；
+     * DSH 运行时连接器恒在范围内。管理面不受此参数影响。
+     */
+    allowedToolConnectorIds: string[] = resolveAllowedToolConnectorIds(),
   ) {
     this.database = database
     this.runtime = runtime
     this.operations = operations
     this.credentialSecrets = credentialSecrets
+    this.allowedToolConnectorIds = [...new Set([DSH_RUNTIME_CONNECTOR_ID, ...allowedToolConnectorIds])]
   }
 
   async getTools(): Promise<ToolDefinition[]> {
@@ -1255,7 +1264,13 @@ export class PostgresToolConnectorService {
     return this.assertReferences(references, true)
   }
 
-  /** Optional platform defaults eligible for this Agent definition; callers seal exact refs and bindings. */
+  /**
+   * Optional platform defaults eligible for this Agent definition; callers seal exact refs and bindings.
+   *
+   * 这里刻意**不**使用 `allowedToolConnectorIds`：平台默认工具是 DSH 内置工具的
+   * 名字集合（read/write/...），若把业务连接器也纳入范围，业务连接器上同名工具
+   * 会被当作平台默认能力自动注入。放宽面只覆盖"Agent 显式引用的工具能否解析"。
+   */
   async resolvePlatformDefaultToolReferences(roleIds: string[], dataScopes: string[]): Promise<string[]> {
     const rows = await this.database<{ id: string; version: string; allowedRoleIds: string[]; requiredScopes: string[] }[]>`
       select distinct on (t.id) t.id, tv.version,
@@ -1291,7 +1306,7 @@ export class PostgresToolConnectorService {
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
          where t.tenant_id = ${tenantId} and t.id = ${id}
-           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and t.connector_id = any(${this.allowedToolConnectorIds}::text[])
            and t.admission_status = 'approved'
            and (t.mode = 'read' or (t.mode = 'write'
                 and t.dsh_tool_name in ('write', 'edit', 'str_replace_editor', 'todo_write', 'create_goal', 'update_goal')))
@@ -1316,7 +1331,7 @@ export class PostgresToolConnectorService {
           from tools t
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
-           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and t.connector_id = any(${this.allowedToolConnectorIds}::text[])
            and t.admission_status = 'approved'
       `
       if (!row) throw new Error(`工具授权配置不存在：${reference}`)
@@ -1341,7 +1356,7 @@ export class PostgresToolConnectorService {
       const [row] = await this.database<{ name: string }[]>`
         select dsh_tool_name as name from tools
          where tenant_id = ${tenantId} and id = ${id}
-           and connector_id = ${DSH_RUNTIME_CONNECTOR_ID} and dsh_tool_name is not null
+           and connector_id = any(${this.allowedToolConnectorIds}::text[]) and dsh_tool_name is not null
       `
       if (!row) throw new Error(`工具没有 DSH Runtime 映射：${reference}`)
       names.push(row.name)
@@ -1361,7 +1376,7 @@ export class PostgresToolConnectorService {
         select t.approval_policy as "approvalPolicy" from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
-           and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+           and t.connector_id = any(${this.allowedToolConnectorIds}::text[])
            and tv.status = 'published'
       `
       if (!row) throw new Error(`工具审批策略不存在：${reference}`)
@@ -1561,7 +1576,7 @@ export class PostgresToolConnectorService {
         join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
         left join credential_refs cr on cr.tenant_id = c.tenant_id and cr.id = c.credential_ref_id
        where t.tenant_id = ${tenantId} and t.id = ${toolId}
-         and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         and t.connector_id = any(${this.allowedToolConnectorIds}::text[])
          and tv.version = ${toolVersion} and tv.status = 'published'
        ${lock ? db`for update of t` : db``}
     `

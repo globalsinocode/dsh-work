@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { ALLOWED_TOOL_CONNECTOR_IDS_ENV, resolveAllowedToolConnectorIds } from '../../domain/tool-category.ts'
 import type { AgentRuntimePort, RuntimeHealth } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
@@ -355,4 +356,108 @@ test('Tool and Connector management gates immutable Agent and Skill references',
      where tenant_id = 'tenant-dsh-work' and connector_id = 'connector-dsh-workspace'
   `
   assert.deepEqual(new Set(checks.map(check => check.status)), new Set(['healthy', 'degraded']))
+})
+
+test('运行时工具解析范围由显式配置决定，其余门禁一项不松（DEV-001 源码化）', async () => {
+  // 站点形态：已准入的业务连接器上挂着已发布工具，Agent 版本显式引用它。
+  // 默认范围必须与上游一致地拒绝；显式列入 DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS
+  // 之后逐项门禁仍全部生效。
+  await database`
+    insert into connectors (
+      id, tenant_id, key, name, connector_type, system, protocol, endpoint, auth_type,
+      scope_description, status, latency_ms, last_checked_at, created_by
+    ) values (
+      'connector-scope-probe', 'tenant-dsh-work', 'scope-probe', '解析范围探针连接器',
+      'enterprise', '探针系统', 'rest', 'https://probe.invalid/tools', 'none',
+      '验证运行时解析范围显式配置', 'healthy', 1, now(), 'U00008'
+    )
+  `
+  await database`
+    insert into tools (
+      id, tenant_id, key, name, source, status, connector_id, system, description,
+      dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes, approval_policy
+    ) values (
+      'probe-query', 'tenant-dsh-work', 'probe-query', '探针查询工具', 'platform', 'available',
+      'connector-scope-probe', '探针系统', '验证运行时解析范围', 'probe_query', 'read', 30,
+      '["role-platform-admin"]'::jsonb, '["probe:read"]'::jsonb, 'none'
+    )
+  `
+  await database`
+    insert into tool_versions (
+      id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status
+    ) values (
+      'tool-version-probe-query', 'tenant-dsh-work', 'probe-query', '1.0.0',
+      '{}'::jsonb, '{}'::jsonb, 'low', 'published'
+    )
+  `
+  const reference = 'probe-query@1.0.0'
+
+  // 1) 默认配置（未设置 DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS）：与上游源码一致，
+  //    连接器归属限制仍然生效——这正是 DEV-001 补丁曾经放宽的那条。
+  await assert.rejects(tools.assertAvailableReferences([reference]), /不符合受控运行策略/)
+  await assert.rejects(tools.assertAuthorizationCompatibility([reference], ['role-platform-admin'], ['probe:read']), /工具授权配置不存在/)
+  await assert.rejects(tools.resolveRuntimeToolNames([reference]), /不符合受控运行策略/)
+  await assert.rejects(tools.resolveRuntimeApprovalMode([reference]), /不符合受控运行策略/)
+  await assert.rejects(tools.resolveToolBindings([reference]), /不符合受控运行策略/)
+
+  // 2) 站点显式放行该业务连接器后，五个解析点全部按同一套门禁放行。
+  const scoped = new PostgresToolConnectorService(database, runtime, undefined, undefined, ['connector-scope-probe'])
+  await scoped.assertAvailableReferences([reference])
+  await scoped.assertAuthorizationCompatibility([reference], ['role-platform-admin'], ['probe:read'])
+  assert.deepEqual(await scoped.resolveRuntimeToolNames([reference]), ['probe_query'])
+  assert.equal(await scoped.resolveRuntimeApprovalMode([reference]), 'never')
+  const [binding] = await scoped.resolveToolBindings([reference])
+  assert.equal(binding?.connectorId, 'connector-scope-probe')
+  assert.equal(binding?.status, 'active')
+
+  // 3) 放宽的只是"连接器归属"，其余门禁在放行后依然拒绝。
+  await database`update connectors set status = 'offline' where id = 'connector-scope-probe'`
+  await assert.rejects(scoped.assertAvailableReferences([reference]), /不符合受控运行策略/)
+  await database`update connectors set status = 'healthy' where id = 'connector-scope-probe'`
+
+  await database`update tools set admission_status = 'unavailable' where id = 'probe-query'`
+  await assert.rejects(scoped.assertAvailableReferences([reference]), /不符合受控运行策略/)
+  await assert.rejects(scoped.resolveToolBindings([reference]), /不符合受控运行策略/)
+  await database`update tools set admission_status = 'approved' where id = 'probe-query'`
+
+  await database`update tools set mode = 'write', dsh_tool_name = 'bash' where id = 'probe-query'`
+  await assert.rejects(scoped.assertAvailableReferences([reference]), /不符合受控运行策略/)
+  await database`update tools set mode = 'read' where id = 'probe-query'`
+
+  // 版本不匹配不得回退到同 id 的其他版本。
+  await assert.rejects(scoped.assertAvailableReferences(['probe-query@2.0.0']), /不符合受控运行策略/)
+
+  await assert.rejects(scoped.assertAuthorizationCompatibility([reference], ['role-employee'], ['probe:read']), /未被工具/)
+  await assert.rejects(scoped.assertAuthorizationCompatibility([reference], ['role-platform-admin'], ['workspace:authorized']), /数据范围未覆盖/)
+
+  // 4) 管理面不受白名单影响：工具管理/目录/绑定列表仍只认 DSH 运行时连接器。
+  assert.equal((await scoped.getTools()).some(tool => tool.id === 'probe-query'), false)
+  assert.equal((await scoped.listToolBindings()).some(item => item.tool === reference), false)
+  // 解析确实在业务连接器上物化了 active 修订——它只是不出现在受控管理列表里。
+  const [materialized] = await database<{ count: number }[]>`
+    select count(*)::integer as count from tool_binding_revisions
+     where tenant_id = 'tenant-dsh-work' and tool_id = 'probe-query'
+       and connector_id = 'connector-scope-probe' and status = 'active'
+  `
+  assert.equal(materialized?.count, 1)
+  await assert.rejects(scoped.setToolStatus({ toolId: 'probe-query', status: 'disabled', actor: 'U00008' }), /只允许操作 DSH 内置工具/)
+  await assert.rejects(scoped.addTool({
+    catalogId: 'probe-query', allowedRoles: ['role-platform-admin'],
+    dataScopes: ['probe:read'], approvalPolicy: 'none', actor: 'U00008',
+  }), /不支持添加该 DSH 工具/)
+})
+
+test('连接器归属白名单本身的解析规则：恒含 DSH 运行时连接器，非法取值直接失败', () => {
+  assert.deepEqual(resolveAllowedToolConnectorIds({}), ['connector-dsh-workspace'])
+  assert.deepEqual(resolveAllowedToolConnectorIds({ [ALLOWED_TOOL_CONNECTOR_IDS_ENV]: '' }), ['connector-dsh-workspace'])
+  assert.deepEqual(
+    resolveAllowedToolConnectorIds({ [ALLOWED_TOOL_CONNECTOR_IDS_ENV]: 'connector-a, connector-b ,connector-a' }),
+    ['connector-dsh-workspace', 'connector-a', 'connector-b'],
+  )
+  // 漏写 DSH 运行时连接器也不会把平台自身工具挡在门外。
+  assert.deepEqual(resolveAllowedToolConnectorIds({ [ALLOWED_TOOL_CONNECTOR_IDS_ENV]: 'connector-a' })[0], 'connector-dsh-workspace')
+  assert.throws(
+    () => resolveAllowedToolConnectorIds({ [ALLOWED_TOOL_CONNECTOR_IDS_ENV]: 'connector-a,bad id' }),
+    /含非法连接器标识：bad id/,
+  )
 })
