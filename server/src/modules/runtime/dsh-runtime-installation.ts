@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
 
 import { AcpJsonRpcClient } from './acp-json-rpc-client.ts'
+import { assertAcpModelRoute, resolveAcpModelRoute } from '../../domain/acp-model-route.ts'
 import {
   createManagedDshAcpProcessConfiguration,
   type DshAcpAdapter,
@@ -88,6 +89,9 @@ export async function resolveDshRuntimeInstallation(
   const deploymentConfigFilename = target.adapter === 'legacy-acp-demo'
     ? 'acp-managed-credentials.legacy.cordis.yml'
     : 'acp-managed-credentials.cordis.yml'
+  // ACP Agent 的模型路由必须由站点显式给出（制品不含站点值）。缺失时在这里就失败，
+  // 而不是等到第一次会话在模型调用处报 "has no provider/model"。
+  resolveAcpModelRoute(env)
   const deploymentConfigTemplate = resolve(
     options.projectRoot,
     `server/config/dsh/${deploymentConfigFilename}`,
@@ -234,7 +238,8 @@ export async function preflightDshRuntime(
       await Promise.race([
         (async () => {
           await client.initialize()
-          await client.newSession(workspace)
+          const { result } = await client.newSessionWithOptions(workspace)
+          assertAcpModelRoute(result)
         })(),
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => { reject(new Error(`DSH ACP preflight timed out after ${timeoutMs} ms`)) }, timeoutMs)

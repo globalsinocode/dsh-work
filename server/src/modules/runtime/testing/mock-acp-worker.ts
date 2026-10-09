@@ -44,7 +44,26 @@ lines.on('line', (line) => {
   if (message.method === 'session/new' && message.id !== undefined) {
     sessionSequence += 1
     const sessionId = `mock-session-${sessionSequence}`
-    send({ jsonrpc: '2.0', id: message.id, result: { sessionId } })
+    // 真实 DSH 会在 session/new 里返回会话配置项；模型项带 currentValue 才说明
+    // Agent 拿到了路由（部署预检据此判断，见 domain/acp-model-route.ts）。
+    send({
+      jsonrpc: '2.0',
+      id: message.id,
+      result: {
+        sessionId,
+        configOptions: [{
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          type: 'select',
+          currentValue: JSON.stringify([
+            process.env.DSH_WORK_ACP_PROVIDER ?? 'mock-provider',
+            process.env.DSH_WORK_ACP_MODEL ?? 'mock-model',
+          ]),
+          options: [],
+        }],
+      },
+    })
     const delay = Number(process.env.MOCK_MCP_CATALOG_DELAY_MS ?? 0)
     const catalogPath = process.env.DSH_TOOL_CATALOG_PATH
     const catalogMode = process.env.DSH_WORK_TOOL_CATALOG_MODE

@@ -160,13 +160,24 @@ export class AcpJsonRpcClient {
     return response
   }
 
-  async newSession(cwd: string): Promise<string> {
+  /**
+   * 建立 ACP 会话并返回 `session/new` 的完整结果。
+   *
+   * 返回里带着 `configOptions`：ACP 会为会话列出模型选择项及其 `currentValue`
+   * （形如 `["<provider>","<model>"]`）。它让调用方**不必真的调用模型**就能判断
+   * Agent 是否拿到了路由 —— 2026-10-09 的 ACP 无路由事故正是靠这个字段发现的。
+   */
+  async newSessionWithOptions(cwd: string): Promise<{ sessionId: string; result: Record<string, unknown> }> {
     const result = asRecord(await this.request('session/new', { cwd, mcpServers: [] }))
     const sessionId = result['sessionId']
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
       throw new AcpProtocolError('ACP session/new returned no sessionId', result)
     }
-    return sessionId
+    return { sessionId, result }
+  }
+
+  async newSession(cwd: string): Promise<string> {
+    return (await this.newSessionWithOptions(cwd)).sessionId
   }
 
   prompt(sessionId: string, message: string): Promise<Record<string, unknown>> {
