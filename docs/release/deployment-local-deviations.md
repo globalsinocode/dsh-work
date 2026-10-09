@@ -199,6 +199,8 @@
 | S2 | 2026-10-08 | nginx 上游 IPv6 不可达（容器内 502） | 容器内 `deploy/nginx/default.conf.template` | **已退出**：T5 把 resolver 与 upstream host 源码参数化（`DSH_WORK_NGINX_UPSTREAM_HOST` / `DSH_WORK_NGINX_DNS_RESOLVER`，默认值与补丁逐字等效），新构件无需站点补丁 |
 | S3 | 2026-10-09 | 安装 `v2026.10.09-01`：`launchctl bootstrap` 被沙箱拒绝 | 部署脚本 `release.sh` 的 launchd 安装步骤与备份步骤 | **已退出（本次安装）**：两处 hunk + 收尾脚本；证据 `automation/local-deviations/2026-10-09-install-v2026.10.09-01/`（`release.sh.orig`/`release.sh`/`diff`/`install.log`/`complete-install.log`）；线上 provenance 记于 `automation/state/installed-releases.md` |
 | S4 | 2026-10-09 | 退役 DSH 侧静态 MCP 挂载 `mcp-skillhive` | `~/.dsh/profiles/acp/cordis.patch.yml`（站点 DSH 配置，不在仓库内） | **已退出**：静态挂载与受控注入同名导致 DSH 启动期 `duplicate loader entry id: mcp-skillhive`，连接器自检长期失败；退役后自检 `healthy`、12 个能力同步生效。证据 `automation/local-deviations/2026-10-09-retire-static-mcp-mount/receipt.txt` |
+| S5 | 2026-10-09 | 安装后修站点配置：运行时工具解析白名单漏列一个业务连接器 | 部署侧 `runtime.env` 的 `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` 取值 | **已退出**：已发布 Agent 版本的 `tool_refs` 引用了该连接器上的工具，而 T11 写入的白名单按"连接器当前是否健康"取值、漏了这一项，导致建会话被拒（`authorization.runtime` blocked，文案为"工具不存在、未发布、不可用或不符合受控运行策略"）。追加该连接器并重启服务；取值判据已写进构件 `deploy/runtime.env.example` 与部署手册 §12.1（提交 `65af1e3`、`f080ecd`）。证据 `automation/local-deviations/2026-10-09-allowlist-missing-skillhive/`（`receipt.txt`、`admin-operation-sheet.md`、只读预检脚本） |
+| S6 | 2026-10-09 | 新构件新增会话期"发布绑定漂移"门禁，站点历史已发布版本需重新发布 | 管理端 Agent 发布操作（数据面，不改构件/脚本） | **进行中**：站点做过连接器迁移，7 个业务工具的绑定修订已从 rev 1 漂到 rev 2，而当前 active 版本发布时固定的仍是 rev 1；旧构件只在发布时校验，新构件在会话期也校验，因此建会话被拒（改动前该版本可正常运行）。处置＝管理端「创建新版本 → 检查 → 试运行 → 审核通过并发布」，操作单见 `automation/local-deviations/2026-10-09-allowlist-missing-skillhive/admin-operation-sheet.md` |
 
 > 约定：站点专有取值（连接器标识、令牌、主机名）只写在部署侧 `runtime.env` 与部署侧记录里，
 > 一律不进入本文件；本文件只写机制、状态与去向。
