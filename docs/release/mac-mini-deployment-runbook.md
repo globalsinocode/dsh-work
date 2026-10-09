@@ -619,6 +619,26 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 排查顺序建议：先看 `audit_events` 中 `authorization.runtime` 的 `blocked` 明细（能直接读到上面两类文案），
 再核对 `agent_versions.tool_refs` 与 `tool_binding_revisions` 的 active 修订。
 
+升级前可先用下面这条只读 SQL 核对第 1 项：它列出"已发布 Agent 版本引用到、但当前白名单没覆盖"的连接器，
+结果为空才继续升级（把 `allowed` 替换成本次要写入 `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` 的完整取值）：
+
+```sql
+with allowed as (
+  select unnest(string_to_array('connector-dsh-workspace,connector-example-business', ',')) as id
+), referenced as (
+  select distinct t.connector_id
+    from agent_versions av
+    cross join lateral jsonb_array_elements_text(av.tool_refs::jsonb) as r
+    join tools t on t.tenant_id = av.tenant_id
+                and t.id = split_part(r, '@', 1)
+   where av.tenant_id = '<tenant>' and av.status = 'published'
+)
+select r.connector_id as missing_connector
+  from referenced r
+ where r.connector_id is not null
+   and r.connector_id <> all (select id from allowed);
+```
+
 自动部署接受新的稳定版本 `vYYYY.MM.DD-NN`；为兼容已发布版本，也保留对旧
 `vMAJOR.MINOR.PATCH` Tag 的读取和回滚支持。自动部署只允许升级，不会自动降级。
 部署失败的 Tag 会写入 `automation/state/blocked-release`，不会反复重试和制造重复停机；
