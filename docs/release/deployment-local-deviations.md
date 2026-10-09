@@ -184,3 +184,21 @@
 - 站点业务工具的 `toolPolicies` 条目缺失问题。
 
 详见部署侧 `automation/local-deviations/2026-10-08-plm-tool-resync-repair/deviation.txt`。
+
+---
+
+## 站点侧流程偏差索引（不进入重放表）
+
+下面几条**不是**"改构件/改配置"的偏差，而是部署与运维过程中的站点特例。它们不需要在重建发布时重放，
+但必须与上面的重放表互相引用：部署侧的 `automation/` 目录**不在任何版本控制仓库里**，
+只有本文件在仓库中可追溯，因此在这里留索引，避免站点历史只存在于某台机器上。
+
+| # | 日期 | 主题 | 载体 / 位置 | 状态与去向 |
+| --- | --- | --- | --- | --- |
+| S1 | 2026-09-24 | 跳过异地备份（站点无第二存储目标） | 部署脚本 `release.sh` 两处 hunk | **已退出**：2026-10-09 安装沿用同款两 hunk 偏差（`automation/local-deviations/2026-10-09-install-v2026.10.09-01/`），待有异地目标后恢复原校验 |
+| S2 | 2026-10-08 | nginx 上游 IPv6 不可达（容器内 502） | 容器内 `deploy/nginx/default.conf.template` | **已退出**：T5 把 resolver 与 upstream host 源码参数化（`DSH_WORK_NGINX_UPSTREAM_HOST` / `DSH_WORK_NGINX_DNS_RESOLVER`，默认值与补丁逐字等效），新构件无需站点补丁 |
+| S3 | 2026-10-09 | 安装 `v2026.10.09-01`：`launchctl bootstrap` 被沙箱拒绝 | 部署脚本 `release.sh` 的 launchd 安装步骤与备份步骤 | **已退出（本次安装）**：两处 hunk + 收尾脚本；证据 `automation/local-deviations/2026-10-09-install-v2026.10.09-01/`（`release.sh.orig`/`release.sh`/`diff`/`install.log`/`complete-install.log`）；线上 provenance 记于 `automation/state/installed-releases.md` |
+| S4 | 2026-10-09 | 退役 DSH 侧静态 MCP 挂载 `mcp-skillhive` | `~/.dsh/profiles/acp/cordis.patch.yml`（站点 DSH 配置，不在仓库内） | **已退出**：静态挂载与受控注入同名导致 DSH 启动期 `duplicate loader entry id: mcp-skillhive`，连接器自检长期失败；退役后自检 `healthy`、12 个能力同步生效。证据 `automation/local-deviations/2026-10-09-retire-static-mcp-mount/receipt.txt` |
+
+> 约定：站点专有取值（连接器标识、令牌、主机名）只写在部署侧 `runtime.env` 与部署侧记录里，
+> 一律不进入本文件；本文件只写机制、状态与去向。
