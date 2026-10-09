@@ -121,10 +121,26 @@ fi
   shasum -a 256 -c "${bundle_name}.tar.gz.sha256"
 )
 gh release verify-asset "${tag}" "${archive}" --repo "${repository}"
+# 来源 ref 由构件自述（build-release.sh 写入 ${GITHUB_REF}），落白名单后才交给 attestation 校验。
+# 白名单保留 main：既能继续安装上游官方 Release，也能安装我们自己的 release/* 发布线。
+# 旧构件没有 sourceRef 字段时按 refs/heads/main 兜底 —— 与放行前的行为完全一致，
+# 不放宽任何校验（attestation 仍要求签名 workflow 与 source-digest 匹配）。
+release_payload_file="${temporary_directory}/release-payload.json"
+tar -xzOf "${archive}" "${bundle_name}/release.json" > "${release_payload_file}"
+release_source_ref=$("${DSH_WORK_NODE_BIN}" -e '
+  const { readFileSync } = require("node:fs")
+  const payload = JSON.parse(readFileSync(process.argv[1], "utf8"))
+  const declared = payload.sourceRef
+  process.stdout.write(typeof declared === "string" && declared.length > 0 ? declared : "refs/heads/main")
+' "${release_payload_file}")
+case "${release_source_ref}" in
+  refs/heads/main|refs/heads/release/*) ;;
+  *) echo "release source ref is not acceptable: ${release_source_ref}" >&2; exit 1 ;;
+esac
 gh attestation verify "${archive}" \
   --repo "${repository}" \
   --signer-workflow "${repository}/.github/workflows/release.yml" \
-  --source-ref refs/heads/main \
+  --source-ref "${release_source_ref}" \
   --source-digest "${release_commit}" \
   --deny-self-hosted-runners
 

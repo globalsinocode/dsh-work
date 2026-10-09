@@ -24,10 +24,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Require the main branch
+      - name: Require a releasable branch
         env:
           SELECTED_REF: ${{ github.ref }}
-        run: test "${SELECTED_REF}" = "refs/heads/main"
+        run: |
+          # 白名单：main（上游/镜像发布线）与我们自己的 release/* 副分支发布线。
+          # 白名单而不是"只认副分支"，是为了保留以后继续安装上游官方 Release 的能力。
+          case "${SELECTED_REF}" in
+            refs/heads/main|refs/heads/release/*) ;;
+            *) echo "release must be dispatched from main or release/*: ${SELECTED_REF}" >&2; exit 1 ;;
+          esac
 
       - name: Check out the selected commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

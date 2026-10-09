@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+      # release/2026.10 副分支发布线：release.yml 要求该 commit 的 "M6 quality gate"
+      # check-run 为 success，而该 check-run 只由本 workflow 产生；不在这里放行副分支，
+      # 副分支就永远发不了版。仅新增分支名，不改变任何检查内容。
+      - release/*
   pull_request:
   workflow_dispatch:
 

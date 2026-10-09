@@ -102,7 +102,14 @@ cp "${project_root}/deploy/nginx/proxy_params" "${bundle}/deploy/nginx/"
 
 find "${bundle}/scripts/deploy" -type f -name '*.sh' -exec chmod 755 {} +
 commit=${GITHUB_SHA:-$(git rev-parse HEAD)}
-node "${project_root}/scripts/release/write-release-manifest.mjs" "${bundle}" "${version}" "${commit}"
+# 构件自述来源 ref（副分支发布线）：workflow 运行时为 ${GITHUB_REF}；本地构建时取当前分支。
+# 安装端 release.sh 会要求它与 attestation 的 --source-ref 一致，并落在白名单内。
+source_ref=${GITHUB_REF:-}
+if [[ -z "${source_ref}" ]]; then
+  current_branch=$(git symbolic-ref --quiet --short HEAD || true)
+  [[ -n "${current_branch}" ]] && source_ref="refs/heads/${current_branch}"
+fi
+node "${project_root}/scripts/release/write-release-manifest.mjs" "${bundle}" "${version}" "${commit}" "${source_ref}"
 
 tar -czf "${archive}" -C "${output_directory}" "${bundle_name}"
 (

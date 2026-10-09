@@ -291,10 +291,22 @@ gh release download "${DWP_TAG}" --repo "${DWP_REPOSITORY}" \
 )
 gh release verify-asset "${DWP_TAG}" "${DWP_BOOTSTRAP}/${DWP_ARCHIVE}" \
   --repo "${DWP_REPOSITORY}"
+# 来源 ref 由构件自述（build-release.sh 写入 ${GITHUB_REF}）；旧构件缺该字段时按 main 兜底。
+# 白名单与 scripts/deploy/release.sh 同一口径：refs/heads/main 与 refs/heads/release/*。
+DWP_SOURCE_REF="$("${DWP_NODE}" -e '
+  const { execFileSync } = require("node:child_process")
+  const raw = execFileSync("tar", ["-xzOf", process.argv[1], process.argv[2]], { encoding: "utf8" })
+  const declared = JSON.parse(raw).sourceRef
+  process.stdout.write(typeof declared === "string" && declared.length > 0 ? declared : "refs/heads/main")
+' "${DWP_BOOTSTRAP}/${DWP_ARCHIVE}" "dsh-work-${DWP_TAG}/release.json")"
+case "${DWP_SOURCE_REF}" in
+  refs/heads/main|refs/heads/release/*) ;;
+  *) echo "release source ref is not acceptable: ${DWP_SOURCE_REF}" >&2; exit 1 ;;
+esac
 gh attestation verify "${DWP_BOOTSTRAP}/${DWP_ARCHIVE}" \
   --repo "${DWP_REPOSITORY}" \
   --signer-workflow "${DWP_REPOSITORY}/.github/workflows/release.yml" \
-  --source-ref refs/heads/main --source-digest "${DWP_SOURCE_SHA}" \
+  --source-ref "${DWP_SOURCE_REF}" --source-digest "${DWP_SOURCE_SHA}" \
   --deny-self-hosted-runners
 
 tar -xzf "${DWP_BOOTSTRAP}/${DWP_ARCHIVE}" -C "${DWP_BOOTSTRAP}"
