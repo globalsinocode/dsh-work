@@ -181,6 +181,9 @@ test('DSH registers only the fixed governed platform tool contracts when an Atte
   assert.deepEqual(registered.find(tool => tool.name === 'propose_admin_task').parameters.required, ['kind', 'summary', 'impact'])
   assert.deepEqual(registered.find(tool => tool.name === 'prepare_admin_action').parameters.properties.actionType.enum, ['agent-update-draft', 'agent-set-status', 'runtime-update-configuration'])
   assert.deepEqual(registered.find(tool => tool.name === 'activate_skill').parameters.required, ['name'])
+  // 模型可见的参数说明必须给出 id@version 这一写法，否则会话指定 Skill 时它只会照抄显示名。
+  assert.match(registered.find(tool => tool.name === 'activate_skill').parameters.properties.name.description, /id@version/)
+  assert.match(registered.find(tool => tool.name === 'python_execute').parameters.properties.skill.description, /id@version/)
   assert.equal(registered.find(tool => tool.name === 'python_execute').parameters.additionalProperties, false)
   for (const tool of registered) assert.deepEqual(stripDescriptions(tool.parameters), stripDescriptions(platformToolContracts[tool.name].inputSchema))
 })

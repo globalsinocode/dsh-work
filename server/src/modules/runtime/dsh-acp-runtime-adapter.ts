@@ -478,8 +478,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (record.manifest.tools.some(tool => tool.id === 'activate_skill')) {
         registerPlatformTool('activate_skill', async (input) => {
           const requested = typeof input['name'] === 'string' ? input['name'].trim() : ''
-          const matches = record.manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === requested || skill.id === requested)
-          if (!requested || matches.length !== 1) throw toolPreconditionFailed(`当前 Run 中没有唯一匹配的 Skill：${requested || '未提供名称'}`)
+          const matches = matchSkillInstruction(record.manifest.agent_configuration.skill_instructions, requested)
+          if (!requested || matches.length !== 1) throw toolPreconditionFailed(`当前 Run 中没有唯一匹配的 Skill：${requested || '未提供名称'}（可用名称、id 或 id@version）`)
           const skill = matches[0]!
           const exactName = skill.name ?? skill.id
           if (skill.disable_model_invocation && !record.manifest.input.message.includes(exactName)) {
@@ -507,7 +507,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         if (!executePython) throw new Error('Python Skill 不可用：未配置平台脚本沙箱')
         registerPlatformTool('python_execute', async (input, signal) => {
           const requested = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
-          const skill = record.manifest.agent_configuration.skill_instructions.find(item => item.id === requested || (item.name ?? item.id) === requested)
+          const skill = matchSkillInstruction(record.manifest.agent_configuration.skill_instructions, requested)[0]
           if (!skill || !record.activatedSkills.has(skill.id)) throw toolPreconditionFailed('执行 Python 前必须先激活对应 Skill')
           const result = await executePython(input, record.manifest, workspaceDirectory, signal)
           const succeeded = typeof result === 'object' && result !== null && 'exitCode' in result && (result as { exitCode: unknown }).exitCode === 0
@@ -1042,6 +1042,22 @@ export function renderUserPrompt(manifest: RuntimeManifest) {
     '',
     `当前消息：\n${manifest.input.message}`,
   ].join('\n')
+}
+
+/**
+ * 把模型给出的 Skill 引用解析成本次 Attempt 快照里的条目。
+ * 接受三种写法：快照中的显示名、Skill id、以及 `id@version`
+ * （会话指定 Skill 时提示词直接给出后者，模型照抄即可命中）。
+ * 版本不匹配会自然落空，由调用方按"没有唯一匹配"拒绝，不做模糊回退。
+ */
+export function matchSkillInstruction(
+  skills: RuntimeManifest['agent_configuration']['skill_instructions'],
+  requested: string,
+): RuntimeManifest['agent_configuration']['skill_instructions'] {
+  if (!requested) return []
+  return skills.filter(skill => (skill.name ?? skill.id) === requested
+    || skill.id === requested
+    || `${skill.id}@${skill.version}` === requested)
 }
 
 export function renderSystemPrompt(manifest: RuntimeManifest) {

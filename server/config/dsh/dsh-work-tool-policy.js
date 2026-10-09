@@ -529,7 +529,7 @@ function registerPlatformTools(ctx) {
     description: 'Activate one Skill from the immutable catalog attached to this Run. Returns its exact instructions and resource directory. It cannot download or change a Skill.',
     parameters: {
       type: 'object',
-      properties: { name: { type: 'string', minLength: 1, maxLength: 160, description: 'Exact Skill name from the current Run catalog.' } },
+      properties: { name: { type: 'string', minLength: 1, maxLength: 160, description: 'Exact Skill name, Skill id, or id@version from the current Run catalog. Copy the form shown in the catalog or in the session-selected Skill section verbatim.' } },
       required: ['name'],
       additionalProperties: false,
     },
@@ -540,7 +540,7 @@ function registerPlatformTools(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        skill: { type: 'string', minLength: 1, maxLength: 160 },
+        skill: { type: 'string', minLength: 1, maxLength: 160, description: 'Skill id, name, or id@version of an already activated Skill in this Run.' },
         entry: { type: 'string', minLength: 1, maxLength: 500 },
         args: { type: 'array', items: { type: 'string', maxLength: 1000 }, maxItems: 32 },
       },

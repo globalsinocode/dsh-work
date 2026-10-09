@@ -210,9 +210,14 @@ lines.on('line', (line) => {
               activated.add(name)
               const output = await callPlatformTool('activate_skill', { name })
               pending.answer += `${pending.answer ? '\n' : ''}${output}`
-              const parsed = JSON.parse(output) as { id?: string; name?: string; dependencies?: string[]; pythonEntries?: string[] }
+              const parsed = JSON.parse(output) as { id?: string; name?: string; version?: string; dependencies?: string[]; pythonEntries?: string[] }
+              // python_execute 也接受 id@version：这里用精确引用调用，
+              // 让既有端到端用例同时覆盖该解析路径（activate_skill 仍按名称激活）。
+              const activatedReference = parsed.id && parsed.version
+                ? `${parsed.id}@${parsed.version}`
+                : parsed.id ?? parsed.name ?? name
               if (allowedTools.includes('python_execute') && parsed.pythonEntries?.[0]) {
-                pending.answer += `\n${await callPlatformTool('python_execute', { skill: parsed.id ?? parsed.name ?? name, entry: parsed.pythonEntries[0], args: [] })}`
+                pending.answer += `\n${await callPlatformTool('python_execute', { skill: activatedReference, entry: parsed.pythonEntries[0], args: [] })}`
               }
               for (const dependency of parsed.dependencies ?? []) await activate(dependency.split('@')[0]!)
             }

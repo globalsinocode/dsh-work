@@ -10,6 +10,7 @@ import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
+  matchSkillInstruction,
   prepareMcpProcess,
   renderMemoryProjection,
   renderSystemPrompt,
@@ -292,6 +293,25 @@ describe('Runtime Manifest compiler', () => {
     const withoutSelection = renderSystemPrompt(compileRuntimeManifest(input).manifest)
     assert.doesNotMatch(withoutSelection, /本会话指定 Skill/)
     assert.doesNotMatch(withoutSelection, /【本会话指定】/)
+  })
+
+  it('resolves Skill references by name, id or id@version without fuzzy fallback', () => {
+    const skills: RuntimeManifest['agent_configuration']['skill_instructions'] = [
+      { id: 'skill-inventory', name: 'inventory-analysis', version: '1.0.0', instructions: '读取当前授权范围内的库存信息，并说明数据口径。' },
+      { id: 'skill-plm', version: '2.1.0', instructions: '查询 PLM 物料主数据并标明版本与生效日期。' },
+    ]
+    for (const requested of ['inventory-analysis', 'skill-inventory', 'skill-inventory@1.0.0']) {
+      assert.deepEqual(
+        matchSkillInstruction(skills, requested).map(skill => skill.id),
+        ['skill-inventory'],
+        `${requested} 应命中唯一 Skill`,
+      )
+    }
+    assert.deepEqual(matchSkillInstruction(skills, 'skill-plm@2.1.0').map(skill => skill.id), ['skill-plm'])
+    // 版本或 id 不匹配时不得模糊回退到同 id 的其他版本。
+    assert.deepEqual(matchSkillInstruction(skills, 'skill-plm@2.2.0'), [])
+    assert.deepEqual(matchSkillInstruction(skills, 'plm'), [])
+    assert.deepEqual(matchSkillInstruction(skills, ''), [])
   })
 
   it('renders only the progressive Skill catalog when activate_skill is available', () => {
