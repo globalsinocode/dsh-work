@@ -48,6 +48,11 @@ export class AttemptDispatcher {
     preparedFiles?: PreparedRuntimeFile[]
     authorization?: RuntimeAuthorizationDecision
     additionalSkillReferences?: string[]
+    /**
+     * 会话级指定 Skill 的 `id@version`。与 additionalSkillReferences 不同：后者是授权用的
+     * "额外能力引用集合"，这里只表达"用户指定了哪一个"，用于在 Manifest 里出现 selected_skill。
+     */
+    selectedSkillReference?: string
     history?: RuntimeManifest['input']['conversation_history']
     /** AG-03/管理侧 purpose；缺省为员工交互运行（无 purpose 字段）。 */
     purpose?: RuntimeManifest['purpose']
@@ -135,6 +140,9 @@ export class AttemptDispatcher {
       session_id: run.sessionId,
       workspace_id: input.workspaceId,
       agent_version_id: input.agentVersionId,
+      // 会话级指定 Skill：授权与快照固定在前置环节已完成，这里只把"指定"语义
+      // 带进 Manifest（未指定时不出现该键），由提示词渲染让模型优先使用它。
+      ...(input.selectedSkillReference ? { selected_skill: input.selectedSkillReference } : {}),
       agent_configuration: {
         system_prompt: agent.systemPrompt,
         skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),

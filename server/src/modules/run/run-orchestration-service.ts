@@ -351,6 +351,7 @@ export class RunOrchestrationService {
         preparedFiles,
         authorization,
         additionalSkillReferences,
+        selectedSkillReference: session.selectedSkillReference ?? undefined,
         history,
         limits: attemptLimitsForBudget(normalizedBudget),
       })
@@ -584,6 +585,7 @@ export class RunOrchestrationService {
           fileIds,
           authorization,
           additionalSkillReferences,
+          selectedSkillReference: session.selectedSkillReference ?? undefined,
           history,
         })
       })
@@ -605,6 +607,7 @@ export class RunOrchestrationService {
       fileIds,
       authorization,
       additionalSkillReferences,
+      selectedSkillReference: session.selectedSkillReference ?? undefined,
       history: continued.history,
       limits: lastAttempt?.manifest
         ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
