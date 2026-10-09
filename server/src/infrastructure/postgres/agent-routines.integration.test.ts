@@ -15,6 +15,7 @@ import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agen
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { AgentRuntimePort, RuntimeExecutionHandle, RuntimeExecutionSnapshot, RuntimeHealth, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { assertCurrentExecutionAuthorization } from '../../modules/run/current-execution-authorization.ts'
+import { assembleAgentInstructions } from '../../modules/agent/agent-spec.ts'
 
 const tenantId = 'tenant-dsh-work'
 const agentId = 'agent-dsh-work-assistant'
@@ -318,4 +319,28 @@ test('AE-05 data proposal review ignores directory visibility for independent Ag
   const reviewed = await data.reviewProposal({ tenantId, proposalId: proposal.proposalId,
     decision: 'approved', actorUserId: 'U00008' })
   assert.ok(reviewed.recordVersionId)
+})
+
+test('畸形 agent_spec（非空但缺 instructions）抛领域错误而不是 TypeError', () => {
+  // 生产库里只有"agent_spec 为 NULL"（走 systemPrompt 兜底）与"完整 spec"两种情况；
+  // 这条断言把第三种情况（历史/手工写入的畸形数据）钉在领域错误上，
+  // 避免它以 `TypeError: Cannot read properties of undefined (reading 'body')` 的形式
+  // 从运行快照装配路径爆出来。
+  assert.throws(
+    () => assembleAgentInstructions({ instructions: undefined } as never),
+    /Agent 定义缺少 SOUL.md 指令/,
+  )
+  assert.throws(
+    () => assembleAgentInstructions({ instructions: { path: 'SOUL.md' } } as never),
+    /Agent 定义缺少 SOUL.md 指令/,
+  )
+  assert.equal(
+    assembleAgentInstructions({ instructions: { path: 'SOUL.md', body: ' 正文 ' }, workProcedures: null }),
+    '正文',
+  )
+  // workProcedures 畸形（是对象但没有 body）不再让整条装配路径崩掉。
+  assert.equal(
+    assembleAgentInstructions({ instructions: { path: 'SOUL.md', body: '正文' }, workProcedures: {} } as never),
+    '正文',
+  )
 })
