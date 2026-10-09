@@ -3,8 +3,18 @@ map $http_upgrade $connection_upgrade {
   '' close;
 }
 
+# 上游解析参数化（站点取值，不进产品默认行为）：
+# Docker Desktop 的 host.docker.internal 同时返回 A(192.168.65.254) 与 AAAA，
+# 而容器内该 IPv6 不可达；nginx 在加载配置时会把解析到的每个地址各建成一个 upstream
+# server 参与轮询，落到 IPv6 的连接失败，两个 server 同时被 fail_timeout 判死时返回 502。
+# 因此改用 Docker 内置 DNS 动态解析并 ipv6=off 只取 A 记录；zone 是使用 resolve 的前提。
+# resolver 地址与上游主机名由站点通过 deploy/compose.yaml 的 web.environment 提供，
+# 默认值见该文件（host.docker.internal / 127.0.0.11）。
+resolver ${DSH_WORK_NGINX_DNS_RESOLVER} valid=10s ipv6=off;
+
 upstream dsh_work_server {
-  server host.docker.internal:${DSH_WORK_SERVER_PORT};
+  zone dsh_work_server 64k;
+  server ${DSH_WORK_NGINX_UPSTREAM_HOST}:${DSH_WORK_SERVER_PORT} resolve;
   keepalive 32;
 }
 
