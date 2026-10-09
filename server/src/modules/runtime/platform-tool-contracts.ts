@@ -59,7 +59,8 @@ export const platformToolContracts = {
   }),
   activate_skill: contract({
     inputSchema: {
-      type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 160 } },
+      type: 'object',
+      properties: { name: { type: 'string', minLength: 1, maxLength: 160, description: 'Skill 显示名、id 或 id@version；三种写法都命中本次 Attempt 的快照。' } },
       required: ['name'], additionalProperties: false,
     },
     outputSchema: {
