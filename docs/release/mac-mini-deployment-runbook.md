@@ -365,7 +365,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_EXPECTED_VERSION`、`DSH_EXPECTED_COMMIT` | 生产主 Runtime Lock：`0.1.2-rc.1` 和 `76fda729799fe9b3848dbe2c211d4b231032b81e` |
 | `DSH_RUNTIME_COMPATIBILITY` | 必须保持未设置；这是本地开发专用开关 |
 | `DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES` | 未完成目标机镜像构建、摘要固定与隔离验收前保持未设置；启用时填写本机已有的摘要锁定镜像和镜像内已安装包名，运行时不会联网安装依赖 |
-| `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` | 可选；只列需要放行到**运行时解析**的业务连接器 id，逗号分隔。未设置时只含 `connector-dsh-workspace`。它只放宽“Agent 显式引用的工具能否解析”，准入状态、已发布版本、连接器健康、角色与数据范围门禁都不变，普通工具管理列表也只认 DSH Runtime 连接器 |
+| `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS` | 可选；只列需要放行到**运行时解析**的业务连接器 id，逗号分隔。未设置时只含 `connector-dsh-workspace`。它只放宽“Agent 显式引用的工具能否解析”，准入状态、已发布版本、连接器健康、角色与数据范围门禁都不变，普通工具管理列表也只认 DSH Runtime 连接器。**必须覆盖所有已发布 Agent 版本 `tool_refs` 引用过的连接器**（与它们当时是否健康无关）：漏一个，该 Agent 建会话就会 403「工具不存在、未发布、不可用或不符合受控运行策略：<工具>@<版本>」（2026-10-09 实测）；列上仍不放宽其余门禁 |
 | `DSH_WORK_NGINX_UPSTREAM_HOST`、`DSH_WORK_NGINX_DNS_RESOLVER` | 可选；默认 `host.docker.internal` 与 `127.0.0.11`（Docker 内置 DNS），通常无需设置。两者都不要填 `127.0.0.1`，也不要复用 `DSH_WORK_SERVER_HOST`（那是服务自身的绑定地址） |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
