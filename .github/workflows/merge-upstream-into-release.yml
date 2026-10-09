@@ -1,0 +1,66 @@
+name: Merge upstream into release line
+
+# 生效位置：GitHub 只对**默认分支**上的 workflow 执行 schedule，也只用默认分支解析
+# `workflow_dispatch`；放在 release/2026.10 上永远不会被触发。因此本文件只保留在 main
+# （与既有的 sync-upstream.yml 同一形态：fork 专有、上游没有）。它合并的对象是
+# release/2026.10，而不是自己所在的 main。
+
+# 副分支发布线的长期维护（implementation-plan-release-branch.md T14）。
+# `Sync upstream` 只快进 fork 的 main，不会碰 release/*，所以这里定期把已同步的
+# origin/main 合并进 release/2026.10，冲突即失败报警，交给人工处理。
+# 用 push 合并（而不是仅开 PR）是为了让副分支始终紧跟上游；代价是合并提交未经评审，
+# 因此合并成功后会显式触发一次 CI —— 默认 GITHUB_TOKEN 的 push 不会再触发其他
+# workflow，不显式 dispatch 就得不到 M6 门禁结论。
+"on":
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: merge-upstream-into-release
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge origin/main into release/2026.10
+    # 只在 fork 上生效：上游仓库没有 release/2026.10 这条发布线。
+    if: github.repository == 'globalsinocode/dsh-work'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the release branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: release/2026.10
+          fetch-depth: 0
+
+      - name: Merge origin/main
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "origin/main is already contained in release/2026.10; nothing to merge"
+            echo "merged=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if ! git merge --no-edit origin/main; then
+            echo "::error::上游 main 合并冲突，需要人工处理：git merge origin/main（本地解决后推 release/2026.10）"
+            exit 1
+          fi
+          git push origin HEAD:release/2026.10
+          echo "merged=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Re-run the quality gate on the merged branch
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref release/2026.10
