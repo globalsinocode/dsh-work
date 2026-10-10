@@ -20,7 +20,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ChatMessage, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
@@ -169,6 +169,40 @@ const lastAssistantMessageId = computed(() =>
 function belongsToCurrentRun(message: ChatMessage) {
   return message.runId === task.value?.id
 }
+
+/** 线程消息的可空归因归一为 ChatMessage 的可选字段（null 与缺省同样按「无」渲染）。 */
+function toChatMessage(message: SessionThreadMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    runId: message.runId,
+    senderId: message.senderId ?? undefined,
+    senderName: message.senderName ?? undefined,
+    runRequesterId: message.runRequesterId ?? undefined,
+    runRequesterName: message.runRequesterName ?? undefined,
+    agentName: message.agentName ?? undefined,
+  }
+}
+
+/**
+ * 对话页展示的消息流（TW-10 团队会话）：团队 Run 详情按查询边界只返回本轮
+ * 消息（评审 M8），共享会话的历史在共享线程接口里。线程可用时以线程全量
+ * 历史为准（保持会话时序，打开旧 Run 也不把该轮消息挪到末尾），并把尚未
+ * 落库的流式回答（Run 事件累积）追加在末尾；个人 Run 与线程缺失时退回
+ * Run 详情自带的消息（个人契约本就是完整多轮历史）。
+ */
+const conversationMessages = computed<ChatMessage[]>(() => {
+  const thread = sessionThread.value
+  const runMessages = task.value?.messages ?? []
+  if (!thread) return runMessages
+  const known = new Set(thread.messages.map(message => message.id))
+  return [
+    ...thread.messages.map(toChatMessage),
+    ...runMessages.filter(message => !known.has(message.id)),
+  ]
+})
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -408,9 +442,28 @@ async function loadConversationTarget(id: string): Promise<SessionThread | null>
   contentSyncedAt.value = new Date().toISOString()
   try {
     const run = await taskStore.refreshRun(id).catch(() => null) ?? taskStore.getTask(id) ?? null
-    return run ? null : await loadSessionMode(id)
+    if (!run) return await loadSessionMode(id)
+    // 团队 Run 目标：Run 详情只含本轮消息，补拉共享线程让对话页保留完整历史。
+    await loadRunSharedThread(run)
+    return null
   } finally {
     targetLoading.value = false
+  }
+}
+
+/**
+ * 团队 Run 目标下的历史补拉：失败只降级为「仅本轮消息」，不阻断 Run 详情
+ * （否则一次线程读取失败会把可读的执行详情也判成「未找到对话」）。
+ */
+async function loadRunSharedThread(run: TaskRun) {
+  if (run.workspaceType !== 'team' || !run.sessionId) {
+    sessionThread.value = null
+    return
+  }
+  try {
+    sessionThread.value = await taskStore.loadSessionThread(run.sessionId)
+  } catch {
+    sessionThread.value = null
   }
 }
 
@@ -462,17 +515,20 @@ async function refreshSharedTarget() {
   }
   sessionRefreshInFlight = true
   try {
-    if (sessionThread.value) {
+    // 团队 Run 目标同时持有线程与 Run 详情：线程带新的讨论消息，Run 带执行
+    // 状态。两者都刷新，任一失败都不影响另一个已加载的视图。
+    const thread = sessionThread.value
+    if (thread) {
       try {
-        sessionThread.value = await taskStore.loadSessionThread(sessionThread.value.sessionId)
+        sessionThread.value = await taskStore.loadSessionThread(thread.sessionId)
       } catch {
-        // 会话被删除或已失权：与初次加载同一口径落到「未找到对话」。
+        // 会话被删除或已失权：无 Run 详情时与初次加载同一口径落到「未找到对话」。
         sessionThread.value = null
-        threadMissing.value = true
+        if (!task.value) threadMissing.value = true
       }
-    } else if (task.value) {
-      await taskStore.refreshRun(task.value.id).catch(() => undefined)
     }
+    const currentTask = task.value
+    if (currentTask) await taskStore.refreshRun(currentTask.id).catch(() => undefined)
   } finally {
     sessionRefreshInFlight = false
     if (sessionRefreshQueued) {
@@ -499,7 +555,10 @@ watch(
 watch(streamWorkspaceId, (workspaceId, previous) => {
   if (previous && previous !== workspaceId) taskStore.unsubscribeWorkspaceSessions(previous)
   if (workspaceId) taskStore.subscribeWorkspaceSessions(workspaceId, contentSyncedAt.value)
-})
+  // 缓存里已有团队 Run（从工作台最近对话/空间列表直接进入）时，挂载那一刻
+  // 空间就已确定，非 immediate 的 watch 不会触发——团队对话会静默失去实时
+  // 更新。首帧就按已确定的空间建订阅，空间变化仍走上面的换约分支。
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
@@ -676,8 +735,16 @@ watch(
         @scroll.passive="onConversationScroll"
       >
         <div class="conversation-thread">
+          <button
+            v-if="sessionThread?.hasMoreMessages"
+            type="button"
+            data-testid="thread-load-earlier"
+            class="thread-earlier"
+            :disabled="loadingEarlierMessages"
+            @click="loadEarlierMessages"
+          >{{ loadingEarlierMessages ? '正在加载…' : '加载更早消息' }}</button>
           <article
-            v-for="message in task.messages"
+            v-for="message in conversationMessages"
             :key="message.id"
             class="conversation-message"
             :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"

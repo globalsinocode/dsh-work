@@ -342,6 +342,98 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.text()).toContain('共享 Run 的回答')
   })
 
+  it('keeps the shared discussion history when a team run is opened by run id (TW-10)', async () => {
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      messages: [
+        {
+          id: 'm-earlier-user', role: 'user', content: '先对齐一下口径', createdAt: '09:58',
+          runId: 'run-000', senderId: 'U00002', senderName: '周航',
+          runRequesterId: 'U00002', runRequesterName: '周航', agentName: null,
+        },
+        {
+          id: 'm-earlier-answer', role: 'assistant', content: '上一轮的回复', createdAt: '09:59',
+          runId: 'run-000', senderId: null, senderName: null,
+          runRequesterId: 'U00002', runRequesterName: '周航', agentName: '欠料追踪助手',
+        },
+        {
+          id: 'm-run', role: 'assistant', content: '本轮回答', createdAt: '10:01',
+          runId: 'run-001', senderId: null, senderName: null,
+          runRequesterId: 'U00001', runRequesterName: '林岚', agentName: '欠料追踪助手',
+        },
+      ],
+      hasMoreMessages: true,
+      messagesCursor: 'm-earlier-user',
+    }))
+    // Run 详情按服务端查询边界只回本轮消息：历史必须由共享线程补齐。
+    const { wrapper } = await mountView({
+      item: task({
+        messages: [{ id: 'm-run', role: 'assistant', content: '本轮回答', createdAt: '10:01', runId: 'run-001' }],
+      }),
+    })
+
+    expect(api.getSessionThread).toHaveBeenCalledWith('session-001')
+    expect(wrapper.text()).toContain('先对齐一下口径')
+    expect(wrapper.text()).toContain('上一轮的回复')
+    expect(wrapper.text()).toContain('本轮回答')
+    // 同一 id 的当前 Run 消息不因线程与 Run 详情都返回而重复渲染。
+    expect(wrapper.findAll('article.conversation-message')).toHaveLength(3)
+    expect(wrapper.find('[data-testid="thread-load-earlier"]').exists()).toBe(true)
+  })
+
+  it('loads earlier shared history pages from the run conversation (TW-10)', async () => {
+    // 首屏一页 + before 游标翻页：按参数分派，避免用例失败时把未消费的
+    // mockResolvedValueOnce 泄漏给后续用例。
+    const firstPage = sessionThread({
+      messages: [{
+        id: 'm-run', role: 'assistant', content: '本轮回答', createdAt: '10:01',
+        runId: 'run-001', senderId: null, senderName: null,
+        runRequesterId: 'U00001', runRequesterName: '林岚', agentName: '欠料追踪助手',
+      }],
+      hasMoreMessages: true,
+      messagesCursor: 'm-run',
+    })
+    const earlierPage = sessionThread({
+      messages: [{
+        id: 'm-old', role: 'user', content: '更早的一条讨论', createdAt: '09:00',
+        runId: null, senderId: 'U00002', senderName: '周航',
+        runRequesterId: null, runRequesterName: null, agentName: null,
+      }],
+      hasMoreMessages: false,
+      messagesCursor: null,
+    })
+    api.getSessionThread.mockImplementation((_sessionId: string, before?: string) =>
+      Promise.resolve(before ? earlierPage : firstPage))
+    const { wrapper } = await mountView()
+
+    await wrapper.get('[data-testid="thread-load-earlier"]').trigger('click')
+    await flushPromises()
+
+    expect(api.getSessionThread).toHaveBeenNthCalledWith(2, 'session-001', 'm-run')
+    expect(wrapper.text()).toContain('更早的一条讨论')
+    expect(wrapper.text()).toContain('本轮回答')
+    expect(wrapper.find('[data-testid="thread-load-earlier"]').exists()).toBe(false)
+  })
+
+  it('keeps a personal run on its own session history without loading the shared thread (AC-23)', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        workspaceId: 'ws-personal',
+        workspaceName: '我的空间',
+        workspaceType: 'personal',
+        currentUserRole: null,
+        messages: [
+          { id: 'm-personal-1', role: 'user', content: '我的上一轮提问', createdAt: '09:00', runId: 'run-000' },
+          { id: 'm-personal-2', role: 'assistant', content: '我的上一轮回答', createdAt: '09:01', runId: 'run-001' },
+        ],
+      }),
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+    })
+
+    expect(api.getSessionThread).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('我的上一轮提问')
+    expect(wrapper.text()).toContain('我的上一轮回答')
+  })
+
   it('loads a shared session thread without runs and shows sender/Agent attribution (TW-10)', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({
@@ -684,6 +776,54 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     await flushPromises()
 
     expect(api.getSessionThread).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('其他成员刚发的讨论')
+    vi.unstubAllGlobals()
+  })
+
+  it('refreshes both the shared thread and the run for a team run conversation', async () => {
+    class RunSessionStream {
+      static instances: RunSessionStream[] = []
+      readonly listeners = new Map<string, (event: MessageEvent<string>) => void>()
+      constructor(readonly url: string) { RunSessionStream.instances.push(this) }
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        this.listeners.set(type, listener as (event: MessageEvent<string>) => void)
+      }
+      close() { return undefined }
+      emit(type: string, payload: unknown) {
+        this.listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent<string>)
+      }
+    }
+    vi.stubGlobal('EventSource', RunSessionStream)
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'run-001' }
+    // 第一次是首屏线程，之后带上其他成员刚发的讨论消息。
+    let threadLoads = 0
+    api.getSessionThread.mockImplementation(() => {
+      threadLoads += 1
+      return Promise.resolve(sessionThread({
+        messages: threadLoads > 1
+          ? [{
+              id: 'message-live-1', role: 'user', content: '其他成员刚发的讨论', createdAt: '刚刚',
+              runId: null, senderId: 'U00002', senderName: '周航',
+              runRequesterId: null, runRequesterName: null, agentName: null,
+            }]
+          : [],
+      }))
+    })
+    const { wrapper } = await mountView()
+    expect(api.getSessionThread).toHaveBeenCalledTimes(1)
+    expect(api.getRun).toHaveBeenCalledTimes(1)
+
+    // 团队 Run 对话同时持有线程与 Run 详情：一次活动标记要刷新两者。
+    RunSessionStream.instances[0]?.emit('session.updated', {
+      session_id: 'session-001',
+      activity_at: '2026-09-12T08:01:00.000Z',
+    })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await flushPromises()
+
+    expect(api.getSessionThread).toHaveBeenCalledTimes(2)
+    expect(api.getRun).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('其他成员刚发的讨论')
     vi.unstubAllGlobals()
   })
