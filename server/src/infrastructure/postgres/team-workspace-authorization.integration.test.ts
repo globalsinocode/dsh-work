@@ -619,13 +619,20 @@ test('listWorkspaceAgentCandidates filters by publish state, join allowance, vis
     status: 'published',
   })
 
-  // Session-provided roles resolve the same way listWorkbenchAgents does:
-  // the platform-admin-visible candidate and the seeded assistant both match.
+  // 显式传入会话角色：平台治理角色在**部署面**不参与可见角色判定，因此候选是全部
+  // 「已发布 + 开放加入 + 有启用执行身份」的 Agent，而不只是可见角色命中的那些。
+  // 这正是修复「团队空间添加不了已创建的 Agent」的语义：空间负责人通常是平台管理员，
+  // 而被创建出来面向普通员工的 Agent 可见角色只含 role-employee，按交集过滤后连候选都搜不到。
   const sessionCandidates = await agents.listWorkspaceAgentCandidates(workspaceId, 'U00001', ['role-platform-admin'])
   assert.deepEqual(
     sessionCandidates.map(item => item.id).sort(),
-    [wrongRole.id, 'agent-dsh-work-assistant'].sort(),
+    [joinable.id, removedMember.id, wrongRole.id, 'agent-dsh-work-assistant'].sort(),
   )
+  // 对照：只持业务角色时仍按可见角色过滤，wrongRole 不在候选中；治理豁免没有放宽使用面。
+  const businessCandidates = await agents.listWorkspaceAgentCandidates(workspaceId, 'U00001', ['role-employee'])
+  const businessIds = businessCandidates.map(item => item.id)
+  assert.ok(businessIds.includes(joinable.id))
+  assert.ok(!businessIds.includes(wrongRole.id), '业务角色不得看到可见范围外的 Agent')
 
   // The personal-space list path is untouched: every previously listed agent is still listed.
   const personalListAfter = (await agents.listWorkbenchAgents('U00001')).map(agent => agent.id)
