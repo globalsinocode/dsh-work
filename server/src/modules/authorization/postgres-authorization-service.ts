@@ -4,6 +4,7 @@ import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from './authorization-errors.ts'
+import { isPlatformGovernance } from './authorization-roles.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -596,10 +597,17 @@ export class PostgresAuthorizationService {
    * candidate picker filters by visible_role_ids, but a caller can submit an
    * agent id directly, so the add path must not rely on the picker for
    * authorization. Mirrors the authorizeRuntime check.
+   *
+   * 平台治理角色例外（部署面与使用面分离）：可见角色表达的是「哪些员工能看到/使用」，
+   * 不是「谁有权把该 Agent 部署进团队空间」。持有 role-platform-admin 的用户在管理端
+   * 创建并发布 Agent，其自身角色通常不在该 Agent 的可见角色内（面向普通员工的 Agent
+   * 只声明 role-employee），若不豁免则连候选都搜不到，且管理端没有把 Agent 加入空间的
+   * 端点，空间负责人与创建者是同一人时形成死锁。豁免只作用于部署；成员执行时仍走
+   * authorizeRuntimeDecision 的可见性校验。
    */
   async assertAgentVersionVisibleToRoles(agentVersionId: string, roleIds: string[], label = '所选 Agent') {
     const agent = await this.requireAgentVersion(agentVersionId)
-    if (!intersects(roleIds, agent.visibleRoleIds)) {
+    if (!isPlatformGovernance(roleIds) && !intersects(roleIds, agent.visibleRoleIds)) {
       throw authorizationDenied(`当前用户角色不可使用${label}`)
     }
     return agent

@@ -3,10 +3,11 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
 import AgentZipImportPanel from '@/components/AgentZipImportPanel.vue'
+import { adminApi } from '@/api/client'
 import type { ZipInspection } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentDraftConfiguration, AgentMcpScope, ConnectorDefinition, CreateAgentDraftInput } from '@/types/domain'
+import type { AgentDefinition, AgentDraftConfiguration, AgentMcpScope, AgentPrincipalRoleOption, ConnectorDefinition, CreateAgentDraftInput } from '@/types/domain'
 
 const props = defineProps<{
   agent?: AgentDefinition
@@ -33,13 +34,21 @@ const savedResult = ref<{
   inspection?: ZipInspection
   executionGrantMissing?: boolean
 }>()
-const roleLabels: Record<string, string> = {
+/**
+ * 仅作历史 id 的显示兜底。可见角色的**可选集合**必须来自服务端角色目录
+ * （`getAgentPrincipalRoleOptions`），不能再用本地映射推导：此前这里用
+ * `Object.keys(roleLabels)` 拼选项，而 `roles` 表里根本没有 `role-manager` /
+ * `role-supply`，真实的「部门负责人」是 `role-department-manager`，导致
+ * ① 选中「部门负责人」实际写入死 id，等于没选；② 真实角色在界面上无法表达。
+ * 现在存活角色由目录提供名称，这个映射只兜住历史版本里已存在的 id；
+ * 已失效的 id 故意不给友好名，直接显示原始 id 以便一眼看出异常。
+ */
+const legacyRoleLabels: Record<string, string> = {
   'role-platform-admin': '平台管理员',
-  'role-employee': '试点员工',
-  'role-supply': '供应链分析人员',
-  'role-manager': '部门负责人',
+  'role-employee': '普通员工',
   'role-auditor': '安全审计员',
 }
+const roleCatalog = ref<AgentPrincipalRoleOption[]>([])
 
 type DraftForm = AgentDraftConfiguration & { workInstructions: string; mcpScope: AgentMcpScope }
 const form = reactive<DraftForm>(emptyDraft())
@@ -97,13 +106,29 @@ const dataScopeLabels: Record<string, string> = {
   'domain:supply-chain': '供应链业务范围',
   'domain:operations': '经营分析范围',
 }
-const roleOptions = computed(() => unique([
-  'role-employee',
-  ...Object.keys(roleLabels),
-  ...contentStore.agents.flatMap((agent) => agent.roleIds),
-  ...form.roleIds,
-]).map((id) => ({ id, name: roleName(id) })))
+/** 存活角色（启用中）来自服务端目录，这是可见角色与执行角色的唯一可选来源。 */
+const activeRoleOptions = computed(() => roleCatalog.value
+  .filter(role => role.status === 'active')
+  .map(role => ({ id: role.id, name: role.name })))
+/**
+ * 选项集合 = 服务端存活角色 ∪ 本表单已选 ∪ 现有 Agent 已用（历史 id）。
+ * 保留历史 id 是为了让旧草稿/旧版本的既有取值仍能显示，而不是悄悄丢掉。
+ */
+const roleOptions = computed(() => {
+  const catalog = new Map(activeRoleOptions.value.map(role => [role.id, role.name]))
+  const extras = unique([
+    ...contentStore.agents.flatMap((agent) => agent.roleIds),
+    ...form.roleIds,
+  ]).filter(id => !catalog.has(id))
+  return [
+    ...activeRoleOptions.value,
+    ...extras.map(id => ({ id, name: roleName(id) })),
+  ]
+})
 const selectedRoleNames = computed(() => form.roleIds.map(roleName))
+/** 执行授权是否为空：留空即「默认无授权」，该 Agent 无法试运行，因此必须让创建者明确知情。 */
+const executionGrantEmpty = computed(() => !executionRoleIds.value.length || !executionDataScopes.value.length)
+const executionGrantAcknowledged = ref(false)
 const editorTitle = computed(() => savedResult.value
   ? savedResult.value.source === 'zip' ? 'Agent 导入完成' : 'Agent 草稿已保存'
   : props.agent ? `编辑 Agent：${props.agent.name}` : '创建 Agent')
@@ -129,6 +154,12 @@ watch(() => [...form.roleIds], roles => {
 watch(() => [...form.dataScopes], scopes => {
   executionDataScopes.value = executionDataScopes.value.filter(scope => scopes.includes(scope))
 })
+// 目录只在打开时拉一次；角色目录属于低频变更的治理数据。
+// immediate 保证「挂载时就已经打开」（深链/首次渲染）同样会加载，否则可见角色与
+// 一键授权都会退化成空集合。
+watch(dialogOpen, (open) => {
+  if (open && !roleCatalog.value.length) void loadRoleCatalog()
+}, { immediate: true })
 
 function emptyDraft(): DraftForm {
   return {
@@ -190,6 +221,7 @@ function resetEditor() {
   Object.assign(form, source)
   executionRoleIds.value = []
   executionDataScopes.value = []
+  executionGrantAcknowledged.value = false
   savedResult.value = undefined
   creationMode.value = 'config'
   activeStep.value = 0
@@ -222,6 +254,14 @@ async function saveAgent() {
   if (form.mcpScope.mode === 'selected' && !form.mcpScope.connectorIds.length) {
     activeStep.value = 1
     ElMessage.warning('仅选定模式下，请至少选择一个 MCP Connector')
+    return
+  }
+  // 「默认无授权」是刻意的安全语义（差异清单 AE-02：创建时不从可见角色继承），
+  // 但留空的后果——该 Agent 过不了试运行、因而永远发不出去——此前只写在帮助文字里。
+  // 这里要求创建者显式确认一次，把静默失败变成一次明确的知情选择。
+  if (!props.agent && executionGrantEmpty.value && !executionGrantAcknowledged.value) {
+    activeStep.value = 1
+    ElMessage.warning('执行授权留空时该 Agent 无法试运行。请点「与可见范围相同」快速授予，或勾选确认「暂不授予」。')
     return
   }
   try {
@@ -356,7 +396,31 @@ function buildVisibilityLabel(roleIds: string[]) {
 }
 
 function roleName(roleId: string) {
-  return roleLabels[roleId] ?? roleId
+  return roleCatalog.value.find(role => role.id === roleId)?.name ?? legacyRoleLabels[roleId] ?? roleId
+}
+
+/** 载入服务端角色目录；失败时不静默降级，明确告知并保持空目录（宁可不给选项）。 */
+async function loadRoleCatalog() {
+  try {
+    roleCatalog.value = await adminApi.getAgentPrincipalRoleOptions()
+  } catch (cause) {
+    roleCatalog.value = []
+    ElMessage.warning(cause instanceof Error
+      ? `角色目录加载失败，无法选择可见角色：${cause.message}`
+      : '角色目录加载失败，无法选择可见角色')
+  }
+}
+
+/**
+ * 显式动作：把当前可见范围拷成执行授权（不会自动继承，必须由创建者点选）。
+ *
+ * 这里原样拷贝可见角色而不按目录过滤：执行角色本就受「必须是可见角色的子集」约束
+ * （见上方的 watch），角色 id 是否真实存在由服务端在保存时统一校验并给出明确报错，
+ * 前端再做一次过滤只会在目录尚未加载时静默拷成空集合。
+ */
+function copyVisibleScopeToExecutionGrant() {
+  executionRoleIds.value = [...form.roleIds]
+  executionDataScopes.value = [...form.dataScopes]
 }
 
 function unique(values: string[]) {
@@ -530,7 +594,7 @@ function toVersionedToolReference(reference: string) {
             <p class="field-help">最终权限取 Agent 范围、员工角色、工作空间和工具审批策略的交集。</p>
           </el-form-item>
         </div>
-        <div v-if="!props.agent" class="configuration-section-heading configuration-section-heading--permissions"><strong>AI 员工执行授权</strong><span>独立授权；留空时无法执行，可在创建后治理</span></div>
+        <div v-if="!props.agent" class="configuration-section-heading configuration-section-heading--permissions"><strong>AI 员工执行授权</strong><span>独立授权，留空即默认拒绝；留空时无法试运行，也就无法发布</span></div>
         <div v-if="!props.agent" class="form-grid form-grid--two">
           <el-form-item label="执行角色">
             <el-select v-model="executionRoleIds" multiple filterable placeholder="选择 Agent 本身获准使用的角色">
@@ -545,6 +609,21 @@ function toVersionedToolReference(reference: string) {
             <p class="field-help">与员工、工作空间及版本范围取交集；留空默认拒绝。</p>
           </el-form-item>
         </div>
+        <div v-if="!props.agent" class="execution-grant-actions">
+          <el-button link type="primary" @click="copyVisibleScopeToExecutionGrant">与可见范围相同</el-button>
+          <span class="field-help">把上面的可见角色与数据范围显式拷成执行授权；之后仍可单独收窄。</span>
+        </div>
+        <el-alert
+          v-if="!props.agent && executionGrantEmpty"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="执行授权留空：该 Agent 无法试运行，因而无法发布"
+          description="发布检查的「AI 员工执行授权」一项会判定为未通过并阻断试运行。若暂不授予，请勾选下方确认。"
+        />
+        <el-checkbox v-if="!props.agent && executionGrantEmpty" v-model="executionGrantAcknowledged" class="execution-grant-ack">
+          我确认暂不授予执行身份，该 Agent 将无法通过试运行
+        </el-checkbox>
         <el-alert type="info" :closable="false" show-icon title="涉及敏感数据或写操作时，工具自身的审批策略仍然生效。" />
           </el-collapse-item>
         </el-collapse>
@@ -584,7 +663,7 @@ function toVersionedToolReference(reference: string) {
               <div><span>工作规程</span><strong>{{ form.workInstructions.trim() ? '已填写 AGENTS.md' : '未填写' }}</strong><small>与 Soul 一起随版本固定</small></div>
               <div><span>委派</span><strong>{{ form.delegationPolicy.allowedAgentVersionIds.length }} 个目标</strong><small>深度 {{ form.delegationPolicy.maxDepth }} · 并行 {{ form.delegationPolicy.maxParallel }}</small></div>
               <div><span>权限</span><strong>{{ selectedRoleNames.length }} 个可见角色</strong><small>{{ form.dataScopes.length }} 个数据范围</small></div>
-              <div v-if="!props.agent"><span>执行授权</span><strong>{{ executionRoleIds.length }} 个角色</strong><small>{{ executionDataScopes.length }} 个数据范围；留空时不能试运行</small></div>
+              <div v-if="!props.agent"><span>执行授权</span><strong>{{ executionRoleIds.length }} 个角色</strong><small>{{ executionGrantEmpty ? '留空：该 Agent 无法试运行' : `${executionDataScopes.length} 个数据范围` }}</small></div>
             </div>
           </section>
         </div>
@@ -675,6 +754,8 @@ function toVersionedToolReference(reference: string) {
 .selected-mcp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selected-mcp small { color: var(--color-text-muted); }
 .field-help--error { color: var(--color-danger); }
+.execution-grant-actions { display: flex; align-items: center; gap: var(--space-2, 8px); margin: calc(-1 * var(--space-1, 4px)) 0 var(--space-3, 12px); }
+.execution-grant-ack { margin: 0 0 var(--space-3, 12px); white-space: normal; height: auto; }
 .agent-governance-collapse { margin-top: 24px; }
 .mcp-tool-detail { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
 .mcp-tool-detail p { color: var(--color-text-secondary); }

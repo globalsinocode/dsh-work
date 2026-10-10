@@ -60,7 +60,7 @@
     "probe:cancel": "pnpm probe -- cancel",
     "probe:concurrency": "pnpm probe -- concurrency",
     "test:scripts": "node --experimental-strip-types --test scripts/checks/checks.test.mjs scripts/runtime/probe.test.mjs",
-    "ci:check": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm test:pf07:fixture && pnpm check:secrets && pnpm typecheck && pnpm test:m1 && pnpm test:skill-install && pnpm test:agent-package && pnpm test:m2 && pnpm test:m4:file && pnpm test:m4:error && pnpm test:m5:frontend && pnpm test:m5:api && pnpm test:m5:security && pnpm test:m5:faults && pnpm test:m5:revocation && pnpm test:sso && pnpm lint && pnpm build",
+    "ci:check": "pnpm verify && pnpm test:scripts && pnpm test:pf07:matrix && pnpm test:pf07:fixture && pnpm check:secrets && pnpm typecheck && pnpm test:m1 && pnpm test:skill-install && pnpm test:agent-package && pnpm test:m2 && pnpm test:agent-release:unit && pnpm test:m4:file && pnpm test:m4:error && pnpm test:m5:frontend && pnpm test:m5:api && pnpm test:m5:security && pnpm test:m5:faults && pnpm test:m5:revocation && pnpm test:sso && pnpm lint && pnpm build",
     "check:architecture": "node scripts/check-architecture.mjs",
     "validate:ui": "pnpm --filter @dsh-work/admin-web --filter @dsh-work/workbench-web validate:ui",
     "lint": "pnpm check:architecture && pnpm validate:ui && eslint apps packages server scripts --max-warnings=0",
@@ -101,7 +101,8 @@
     "test:review:p2:skill:unit": "pnpm --filter @dsh-work/server test:review:p2:skill:unit",
     "test:review:p2:skill:integration": "pnpm --filter @dsh-work/server test:review:p2:skill:integration",
     "test:review:p2:logging": "pnpm --filter @dsh-work/server test:review:p2:logging",
-    "test:review:p2": "pnpm test:review:p2:origin && pnpm test:review:p2:skill:unit && pnpm test:review:p2:skill:integration && pnpm test:review:p2:logging"
+    "test:review:p2": "pnpm test:review:p2:origin && pnpm test:review:p2:skill:unit && pnpm test:review:p2:skill:integration && pnpm test:review:p2:logging",
+    "test:agent-release:unit": "pnpm --filter @dsh-work/server test:agent-release:unit"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

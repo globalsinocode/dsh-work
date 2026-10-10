@@ -140,3 +140,58 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
   const releases = (await agents.getReleaseRecords()).filter(record => record.agentId === agentId)
   assert.deepEqual(new Set(releases.map(record => record.action)), new Set(['published', 'rollback', 'disabled', 'enabled']))
 })
+
+test('可见角色必须是本租户存在且启用的角色，写入前拒绝静默死 id', async () => {
+  const suffix = randomUUID().slice(0, 8)
+  const configuration = {
+    name: '可见角色校验助手',
+    description: '用于验证可见角色必须落在真实角色目录内。',
+    owner: '不会采用客户端负责人',
+    department: '不会采用客户端部门',
+    visibility: '指定角色',
+    dataScopes: ['enterprise:authorized'],
+    welcomeMessage: '',
+    examplePrompts: ['请介绍你的能力'],
+    systemPrompt: '你是可见角色校验助手，只能根据当前授权数据回答，并给出可验证的结论。',
+    maxOutputBytes: 65536, maxToolCalls: 20,
+    timeoutSeconds: 300,
+    skills: [] as string[],
+    tools: [] as string[],
+    changeSummary: '创建可见角色校验 Agent',
+    actor: 'U00008',
+  }
+
+  // 不存在的角色：此前会被原样写进 visible_role_ids。界面用本地映射把
+  // role-manager 显示成「部门负责人」，而真实角色是 role-department-manager，
+  // 于是「选了部门负责人」实际是永不匹配的死 id，且没有任何报错。
+  await assert.rejects(
+    agents.createAgent({ ...configuration, id: `agent-visible-role-bad-${suffix}`, roleIds: ['role-manager'] }),
+    /可见角色包含不存在或已停用的角色：role-manager/,
+  )
+
+  // 已停用角色：不能作为新的可见范围写入。
+  const disabledRoleId = `role-disabled-${suffix}`
+  await database`
+    insert into roles (id, tenant_id, code, name, permissions, status)
+    values (${disabledRoleId}, 'tenant-dsh-work', ${`disabled_${suffix}`}, '已停用角色', '[]'::jsonb, 'disabled')
+  `
+  await assert.rejects(
+    agents.createAgent({ ...configuration, id: `agent-visible-role-disabled-${suffix}`, roleIds: [disabledRoleId] }),
+    /可见角色包含不存在或已停用的角色/,
+  )
+
+  // 合法角色照常通过，并可在更新路径上继续校验。
+  const agentId = `agent-visible-role-ok-${suffix}`
+  const created = await agents.createAgent({ ...configuration, id: agentId, roleIds: ['role-employee'] })
+  assert.equal(created.agent.id, agentId)
+  assert.deepEqual(created.agent.roleIds, ['role-employee'])
+  await assert.rejects(
+    agents.updateAgent({ ...configuration, agentId, roleIds: ['role-supply'], changeSummary: '写入失效角色' }),
+    /可见角色包含不存在或已停用的角色：role-supply/,
+  )
+  // 多角色时逐项列出非法角色，便于一次改完。
+  await assert.rejects(
+    agents.updateAgent({ ...configuration, agentId, roleIds: ['role-employee', 'role-manager'], changeSummary: '写入失效角色' }),
+    /可见角色包含不存在或已停用的角色：role-manager/,
+  )
+})

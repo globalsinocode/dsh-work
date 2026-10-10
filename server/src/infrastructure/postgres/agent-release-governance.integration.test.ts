@@ -90,7 +90,8 @@ async function createAdminUser(id: string) {
 }
 
 async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], tools = ['read@1.0.0'],
-  dataScopes = ['workspace:authorized'], mcpScope?: AgentMcpScope) {
+  dataScopes = ['workspace:authorized'], mcpScope?: AgentMcpScope,
+  execution?: { roleIds: string[]; dataScopes: string[] }) {
   return agents.createAgent({
     id,
     name: '退款预测助手',
@@ -100,8 +101,8 @@ async function createDraftAgent(id: string, skills = ['skill-document@1.0.0'], t
     visibility: '指定角色',
     roleIds: ['role-employee'],
     dataScopes,
-    executionRoleIds: ['role-employee'],
-    executionDataScopes: dataScopes,
+    executionRoleIds: execution ? execution.roleIds : ['role-employee'],
+    executionDataScopes: execution ? execution.dataScopes : dataScopes,
     welcomeMessage: '',
     examplePrompts: ['评估本周退款风险订单'],
     systemPrompt: '你是退款预测助手。基于已授权的历史退款与订单数据评估风险，只输出风险等级与依据。',
@@ -482,6 +483,7 @@ test('无 Skill/Tool 的 Soul Agent 可从配置或 ZIP 创建并通过候选检
   assert.ok(zipSpec)
   assert.deepEqual(zipSpec.spec.instructions, configSpec.spec.instructions)
   assert.deepEqual(zipSpec.spec.capabilities, configSpec.spec.capabilities)
+  await grantTrialExecution(importedId)
   const zipChecks = await release.runChecks(importedId, ADMIN)
   assert.ok(zipChecks.candidate?.checks.every(item => item.status === 'passed'))
 })
@@ -654,6 +656,10 @@ test('机器断言失败直接阻塞试运行，不能由人工判定覆盖', as
     assert.equal(trial.failureStage, '案例终态断言')
     const failedRun = trial.steps.flatMap(step => step.caseRuns ?? []).find(run => run.status === 'failed')
     assert.ok(failedRun)
+    // 运行时失败必须带上原因：此前只剩 status=failed 与空输出，审核人无从判断是提示词、
+    // 授权还是模型侧问题，只能去翻 Run 遥测。
+    assert.ok(failedRun.error, '运行时失败必须记录失败原因')
+    assert.match(failedRun.error, /TRIAL_FAILED|试运行案例执行失败/)
     assert.equal(failedRun.automatedAssertions.find(item => item.assertion === 'execution_succeeded')?.passed, false)
     await assert.rejects(
       release.confirmTrial(agentId, trial.id, [{ caseId: failedRun.caseId, verdict: 'passed' }], ADMIN),
@@ -855,9 +861,11 @@ test('ZIP 发布包导入落草稿与候选，包内案例作为试运行案例'
   assert.deepEqual(candidate.missingDeps.tools, [])
   assert.ok(state.packageWarnings.length >= 0)
 
+  // 执行身份必须显式授予后才能通过检查：AE-02 要求创建/导入默认无授权，
+  // 「AI 员工执行授权」检查项就是这条约束在发布门禁上的体现。
+  await grantTrialExecution('agent-release-zip')
   const checked = await release.runChecks('agent-release-zip', ADMIN)
   assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'), checked.candidate?.checks.map(item => item.detail).join(' | '))
-  await grantTrialExecution('agent-release-zip')
   await release.startTrial('agent-release-zip', ADMIN)
   const trialed = await confirmLatestTrial('agent-release-zip')
   assert.equal(trialed.trialRuns[0]?.status, 'passed')
@@ -1066,6 +1074,7 @@ test('声明依赖未接入时标记缺失并阻塞检查与发布，移除引�
   assert.equal(updated.candidate?.revision, 2)
   assert.deepEqual(updated.candidate?.missingDeps.tools, [])
 
+  await grantTrialExecution('agent-release-missing')
   const rechecked = await release.runChecks('agent-release-missing', ADMIN)
   assert.ok(rechecked.candidate?.checks.every(item => item.status === 'passed'))
 })
@@ -1406,4 +1415,120 @@ test('平台工具绑定经真实修订封存：Attempt 固定 pin，漂移后�
   const versions = await agents.getAgentVersions()
   const record = versions.find(item => item.agentId === agentId && item.version === '0.1.0')
   assert.deepEqual(record?.bindingRefs, repins)
+})
+
+test('系统提示词里的 DSH 模板变量写法在检查阶段即判红，不再白跑一次试运行', async () => {
+  const agentId = `agent-prompt-template-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId)
+  await release.ensureCandidate(agentId, ADMIN)
+  // 模拟作者按「引用工具返回字段」的直觉书写：{{字段名}}。
+  await agents.updateAgent({
+    agentId,
+    name: '退款预测助手',
+    description: '基于历史退款记录预测高风险订单并给出处理建议。',
+    owner: '发布管理员',
+    department: '平台治理',
+    visibility: '指定角色',
+    roleIds: ['role-employee'],
+    dataScopes: ['workspace:authorized'],
+    welcomeMessage: '',
+    examplePrompts: ['评估本周退款风险订单'],
+    systemPrompt: '你是退款预测助手。\n数据截至 {{simToday}}，另外 {{sim_today}} 也不是已注册变量。',
+    maxOutputBytes: 65536, maxToolCalls: 20,
+    timeoutSeconds: 300,
+    skills: ['skill-document@1.0.0'],
+    tools: ['read@1.0.0'],
+    changeSummary: '写入含模板变量写法的提示词',
+    actor: ADMIN,
+  })
+
+  const checked = await release.runChecks(agentId, ADMIN)
+  const prompt = checked.candidate?.checks.find(item => item.id === 'prompt')
+  assert.equal(prompt?.status, 'failed')
+  // 精确到行号，且区分「名字不合法」与「名字合法但未注册」，指向去掉花括号的修法。
+  assert.match(prompt?.detail ?? '', /第 2 行 \{\{simToday\}\} 变量名不合法/)
+  assert.match(prompt?.detail ?? '', /第 2 行 \{\{sim_today\}\} 不是已注册变量/)
+  assert.match(prompt?.detail ?? '', /去掉花括号/)
+
+  // 检查未通过时试运行在封存前即被拒：不产生 Run，更不产生 Runtime Attempt。
+  await assert.rejects(release.startTrial(agentId, ADMIN), /试运行被阻塞：系统提示词模板语法/)
+  const attempts = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts where tenant_id = ${tenantId}
+      and manifest->>'agent_version_id' in (
+        select id from agent_versions where tenant_id = ${tenantId} and agent_id = ${agentId}
+      )
+  `
+  assert.equal(attempts[0]?.count, 0)
+
+  // 去掉花括号后同一套检查放行，证明判红只因模板写法而非其它项。
+  await agents.updateAgent({
+    agentId,
+    name: '退款预测助手',
+    description: '基于历史退款记录预测高风险订单并给出处理建议。',
+    owner: '发布管理员',
+    department: '平台治理',
+    visibility: '指定角色',
+    roleIds: ['role-employee'],
+    dataScopes: ['workspace:authorized'],
+    welcomeMessage: '',
+    examplePrompts: ['评估本周退款风险订单'],
+    systemPrompt: '你是退款预测助手。\n数据截至 simToday，只输出风险等级与依据。',
+    maxOutputBytes: 65536, maxToolCalls: 20,
+    timeoutSeconds: 300,
+    skills: ['skill-document@1.0.0'],
+    tools: ['read@1.0.0'],
+    changeSummary: '去掉花括号写法',
+    actor: ADMIN,
+  })
+  await release.ensureCandidate(agentId, ADMIN)
+  const rechecked = await release.runChecks(agentId, ADMIN)
+  assert.equal(rechecked.candidate?.checks.find(item => item.id === 'prompt')?.status, 'passed')
+})
+
+test('未显式授予执行身份时检查阶段判红并指出修复位置，试运行被阻塞', async () => {
+  const agentId = `agent-exec-grant-${randomUUID().slice(0, 8)}`
+  // AE-02：创建时不从可见角色继承执行授权，因此这里可以创建成功但默认无授权。
+  await createDraftAgent(agentId, ['skill-document@1.0.0'], ['read@1.0.0'], ['workspace:authorized'],
+    undefined, { roleIds: [], dataScopes: [] })
+  const principal = await agents.getAgentPrincipal(agentId)
+  assert.deepEqual({ roles: principal.roleIds, scopes: principal.dataScopes }, { roles: [], scopes: [] })
+
+  await release.ensureCandidate(agentId, ADMIN)
+  const checked = await release.runChecks(agentId, ADMIN)
+  const grant = checked.candidate?.checks.find(item => item.id === 'execution_grant')
+  assert.equal(grant?.status, 'failed')
+  // 失败文案必须指向「独立执行身份」这个真实面板，并说明可见角色不等于执行授权。
+  assert.match(grant?.detail ?? '', /独立执行身份/)
+  assert.match(grant?.detail ?? '', /可见角色不会自动变成执行授权/)
+  assert.match(grant?.detail ?? '', /执行角色/)
+  assert.match(grant?.detail ?? '', /执行数据范围/)
+
+  await assert.rejects(release.startTrial(agentId, ADMIN), /试运行被阻塞：AI 员工执行授权/)
+
+  // 显式授权后放行：与 resolveAgentPrincipalTrialScope 同口径（角色、范围各自都要有交集）。
+  await agents.updateAgentPrincipal({
+    agentId, actor: ADMIN,
+    expectedAuthorizationVersion: principal.authorizationVersion,
+    status: 'active',
+    roleIds: ['role-employee'],
+    dataScopes: ['workspace:authorized'],
+  })
+  const rechecked = await release.runChecks(agentId, ADMIN)
+  const regrant = rechecked.candidate?.checks.find(item => item.id === 'execution_grant')
+  assert.equal(regrant?.status, 'passed')
+  assert.match(regrant?.detail ?? '', /执行角色 role-employee/)
+})
+
+test('执行身份只覆盖部分声明时，检查按交集判定并通过', async () => {
+  const agentId = `agent-exec-partial-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId, ['skill-document@1.0.0'], ['read@1.0.0'],
+    ['workspace:authorized', 'enterprise:authorized'], undefined,
+    { roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'] })
+  await release.ensureCandidate(agentId, ADMIN)
+  const checked = await release.runChecks(agentId, ADMIN)
+  // 与试运行同口径：只要角色与范围各自有交集即可，不会因为少授权一项而在检查阶段误杀。
+  assert.equal(checked.candidate?.checks.find(item => item.id === 'execution_grant')?.status, 'passed')
+  await release.startTrial(agentId, ADMIN)
+  const trial = (await release.getReleaseState(agentId)).trialRuns[0]
+  assert.notEqual(trial?.failureStage, '静态检查与测试准入复核')
 })

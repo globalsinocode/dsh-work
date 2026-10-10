@@ -4,6 +4,7 @@ import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } f
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 import type { RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import { createHash, randomUUID } from 'node:crypto'
+import { redactSensitiveText } from '../../security/safe-observability.ts'
 
 import type { ModelGovernanceService } from '../model/model-governance-service.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
@@ -282,7 +283,7 @@ export class RunOrchestrationService {
     message: string
     idempotencyKey: string
     deadlineMs?: number
-  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string }> {
+  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string; failureReason?: string }> {
     if (!this.agents) throw new Error('试运行执行链路未接入：缺少 Agent 运行时服务')
     const run = await this.runs.createRun({
       tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
@@ -306,12 +307,32 @@ export class RunOrchestrationService {
       current = await this.runs.getRun(tenantId, run.id)
     }
     const outputs = await this.conversations.getRunAssistantOutputs(run.id)
+    const status = current && TRIAL_TERMINAL_STATUSES.has(current.status) ? current.status : 'failed'
+    // 运行时失败（区别于派发前被拒）此前不留任何原因：Run 有终态、Attempt 有 error_code，
+    // 但试运行卡片只写 status=failed / outputExcerpt=''，审核人看到的是一个空白失败。
+    // 真实原因在 run_events 的遥测里（如 RUNTIME_EXECUTION_FAILED 的 reason），这里取回来。
+    const failureReason = status === 'failed' ? await this.readRunFailureReason(run.id) : undefined
     return {
       runId: run.id,
       attemptId: current?.currentAttemptId ?? null,
-      status: current && TRIAL_TERMINAL_STATUSES.has(current.status) ? current.status : 'failed',
+      status,
       output: outputs.map(output => output.content).join('\n'),
+      ...(failureReason ? { failureReason } : {}),
     }
+  }
+
+  /** 取该 Run 最近一条失败事件的遥测原因，供治理侧展示；没有则返回 undefined。 */
+  private async readRunFailureReason(runId: string): Promise<string | undefined> {
+    const events = await this.runs.readEvents(tenantId, runId).catch(() => [])
+    for (const event of [...events].reverse()) {
+      if (!event.eventType.endsWith('.failed')) continue
+      const reason = event.safeMetadata?.reason
+      if (typeof reason === 'string' && reason.trim()) return redactSensitiveText(reason.trim()).slice(0, 500)
+      const code = event.safeMetadata?.error_code
+      if (typeof code === 'string' && code.trim()) return code.trim()
+      if (event.displayMessage?.trim()) return redactSensitiveText(event.displayMessage.trim()).slice(0, 500)
+    }
+    return undefined
   }
 
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {

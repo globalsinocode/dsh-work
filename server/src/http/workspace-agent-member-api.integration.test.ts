@@ -862,6 +862,68 @@ test('加入 Agent 时复核角色可见范围：提交负责人不可见的 Age
   assert.equal(sources[0]?.count, 0, '越权提交不得写入授权来源')
 })
 
+test('平台管理员可见全部已发布 Agent：候选列表与加入不再被 visible_role_ids 拦空', async () => {
+  const workspaceId = 'ws-1a-ag-admin-scope'
+  const adminId = 'user-1a-ag-admin-scope-owner'
+  await createDirectoryUser(adminId, '平台管理员负责人')
+  await createTeamWorkspace(workspaceId, [{ userId: adminId, role: 'owner' }])
+  await createTool({ id: 'tool-1a-admin-scope' })
+  await createSkill({ id: 'skill-1a-admin-scope', toolRefs: ['tool-1a-admin-scope@1.0.0'] })
+  // Agent 只对安全审计员可见：平台管理员并不具备该业务角色。
+  const agent = await createPublishedAgent({
+    id: 'agent-1a-admin-scope',
+    name: '只对安全审计员可见的 Agent',
+    roleIds: ['role-auditor'],
+    skillRefs: ['skill-1a-admin-scope@1.0.0'],
+    toolRefs: ['tool-1a-admin-scope@1.0.0'],
+  })
+
+  // 本套件的 HTTP 认证夹具固定返回 role-employee，无法表达平台管理员身份，因此在
+  // 服务层直接传入角色集合——这正是路由从会话身份取出并透传给候选查询的入参。
+  const asBusinessOnly = await agentMembers.listAgentCandidates(workspaceId, adminId, ['role-employee'], { limit: 100 })
+  assert.ok(
+    !asBusinessOnly.items.some(item => item.agentId === agent.id),
+    '只持业务角色时该 Agent 必须不可见，否则本用例会失去意义',
+  )
+
+  // 部署面豁免：平台管理员负责把已发布 Agent 部署进团队空间，不参与可见角色判定。
+  const asGovernance = await agentMembers.listAgentCandidates(
+    workspaceId, adminId, ['role-employee', 'role-platform-admin'], { limit: 100 },
+  )
+  assert.ok(
+    asGovernance.items.some(item => item.agentId === agent.id),
+    '平台管理员负责部署面治理，候选列表不能按其业务角色交集过滤可见范围',
+  )
+  // 只看得到没用：加入路径必须同样放行，否则平台管理员仍然无法完成部署。
+  await agentMembers.addAgentMember(workspaceId, agent.id, adminId, ['role-employee', 'role-platform-admin'])
+  assert.equal((await agentMemberRows(workspaceId)).length, 1, '平台管理员必须能把该 Agent 加入自己负责的空间')
+})
+
+test('可见角色语义未被放宽：只持业务角色仍看不到也加不进不属于其可见范围的 Agent', async () => {
+  const workspaceId = 'ws-1a-ag-plain-scope'
+  const ownerId = 'user-1a-ag-plain-scope-owner'
+  await createDirectoryUser(ownerId, '普通员工负责人')
+  await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
+  await createTool({ id: 'tool-1a-plain-scope' })
+  await createSkill({ id: 'skill-1a-plain-scope', toolRefs: ['tool-1a-plain-scope@1.0.0'] })
+  const agent = await createPublishedAgent({
+    id: 'agent-1a-plain-scope',
+    name: '只对安全审计员可见的 Agent',
+    roleIds: ['role-auditor'],
+    skillRefs: ['skill-1a-plain-scope@1.0.0'],
+    toolRefs: ['tool-1a-plain-scope@1.0.0'],
+  })
+
+  const candidates = await agentMembers.listAgentCandidates(workspaceId, ownerId, ['role-employee'], { limit: 100 })
+  assert.ok(!candidates.items.some(item => item.agentId === agent.id))
+  await assert.rejects(
+    agentMembers.addAgentMember(workspaceId, agent.id, ownerId, ['role-employee']),
+    /当前用户角色不可使用所选 Agent/,
+    '候选列表只负责展示，写入前必须按添加人角色复核可见范围',
+  )
+  assert.equal((await agentMemberRows(workspaceId)).length, 0, '越权提交不得写入成员关系')
+})
+
 // ---------------------------------------------------------------------------
 // 版本升级
 // ---------------------------------------------------------------------------

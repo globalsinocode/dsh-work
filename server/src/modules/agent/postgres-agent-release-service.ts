@@ -25,6 +25,11 @@ import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { AgentDelegationPolicy, AgentMcpScope } from '../../domain/types.ts'
 import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
+import {
+  describePromptTemplateFinding,
+  findPromptTemplateFindings,
+  PROMPT_TEMPLATE_REMEDIATION,
+} from './prompt-template.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -681,6 +686,8 @@ export class PostgresAgentReleaseService {
         dataRequirementError = error instanceof Error ? error.message : String(error)
       }
     }
+    const promptFindings = findPromptTemplateFindings(draft.systemPrompt)
+    const executionGrant = await this.resolveExecutionGrant(context.id, draft)
     return [
       {
         id: 'manifest',
@@ -699,6 +706,14 @@ export class PostgresAgentReleaseService {
               : draft.systemPrompt.length < 20
                 ? '系统提示词不足 20 字符'
                 : '定义字段齐全',
+      },
+      {
+        id: 'prompt',
+        label: '系统提示词模板语法',
+        status: promptFindings.length ? 'failed' : 'passed',
+        detail: promptFindings.length
+          ? `${promptFindings.map(describePromptTemplateFinding).join('；')}。${PROMPT_TEMPLATE_REMEDIATION}`
+          : '未使用 DSH 保留的 {{...}} 模板变量写法',
       },
       await this.filesCheck(submission),
       {
@@ -758,6 +773,12 @@ export class PostgresAgentReleaseService {
               : '所需执行器均已适配当前 DSH Lock，授权范围兼容',
       },
       {
+        id: 'execution_grant',
+        label: 'AI 员工执行授权',
+        status: executionGrant.status,
+        detail: executionGrant.detail,
+      },
+      {
         id: 'cases',
         label: '案例覆盖与有效性',
         status: coveredKinds.length === CASE_KINDS.length && !invalidCases.length ? 'passed' : 'failed',
@@ -768,6 +789,59 @@ export class PostgresAgentReleaseService {
             : `发布评测缺少必需类型：${CASE_KINDS.filter(kind => !coveredKinds.includes(kind)).join('、')}`,
       },
     ]
+  }
+
+  /**
+   * 「AI 员工执行授权」（独立执行身份）是否覆盖本次版本声明。
+   *
+   * 可见性不是执行授权：`createAgent` 允许执行授权为空并 fail-closed（默认无授权、
+   * 显式授权，见差异清单 AE-02），所以新建 Agent 常常在检查阶段 9/9 通过、到了试运行
+   * 才在派发前被拒（resolveAgentPrincipalTrialScope → 「Agent 身份尚未获得试运行所需的
+   * 角色和数据授权」），而试运行卡片只会显示「缺少 Run 或 Attempt 证据 / 实际输出为空」，
+   * 真实原因不可见。这里把判定提前到检查阶段，并给出可操作的修复指向。
+   *
+   * 口径与 resolveAgentPrincipalTrialScope 一致：角色与数据范围**各自**都要有交集，
+   * 否则试运行仍然过不去。
+   */
+  private async resolveExecutionGrant(agentId: string, draft: DraftVersionShape): Promise<{ status: 'passed' | 'failed'; detail: string }> {
+    const [row] = await this.database<{ roleIds: string[]; dataScopes: string[] }[]>`
+      select coalesce((
+               select jsonb_agg(g.role_id) from agent_principal_role_grants g
+                where g.tenant_id = ep.tenant_id and g.principal_id = ep.id
+             ), '[]'::jsonb) as "roleIds",
+             coalesce((
+               select jsonb_agg(s.scope_value) from agent_principal_scope_grants s
+                where s.tenant_id = ep.tenant_id and s.principal_id = ep.id
+             ), '[]'::jsonb) as "dataScopes"
+        from execution_principals ep
+       where ep.tenant_id = ${tenantId} and ep.agent_id = ${agentId}
+         and ep.kind = 'agent' and ep.status = 'active'
+    `
+    if (!row) {
+      return {
+        status: 'failed',
+        detail: 'Agent 执行身份不存在或已停用，请在 Agent 管理详情的「独立执行身份」中启用',
+      }
+    }
+    const grantedRoles = new Set(row.roleIds)
+    const grantedScopes = new Set(row.dataScopes)
+    const roles = draft.roleIds.filter(role => grantedRoles.has(role))
+    const scopes = draft.dataScopes.filter(scope => grantedScopes.has(scope))
+    const missing: string[] = []
+    if (!roles.length) missing.push(`执行角色（版本声明 ${draft.roleIds.join('、') || '无'}）`)
+    if (!scopes.length) missing.push(`执行数据范围（版本声明 ${draft.dataScopes.join('、') || '无'}）`)
+    if (missing.length) {
+      return {
+        status: 'failed',
+        detail: `尚未授予本次声明所需的${missing.join(' 与 ')}，试运行会在派发前被拒。`
+          + '请在 Agent 管理详情的「独立执行身份」中配置执行角色与执行数据范围'
+          + '（可见角色不会自动变成执行授权）。',
+      }
+    }
+    return {
+      status: 'passed',
+      detail: `执行身份覆盖本次声明：执行角色 ${roles.join('、')}；执行数据范围 ${scopes.join('、')}`,
+    }
   }
 
   private async filesCheck(submission: SubmissionRow): Promise<ReleaseCheckItem> {
@@ -1079,6 +1153,8 @@ export class PostgresAgentReleaseService {
           runId: result.runId, attemptId: result.attemptId,
           // 审核人必须能检查完整回答；截取开头会掩盖后文中的越权承诺或错误结论。
           status: result.status, outputExcerpt: result.output,
+          // 运行时失败必须带上原因，否则卡片只剩一个空白失败（见 readRunFailureReason）。
+          ...(result.status === 'failed' && result.failureReason ? { error: result.failureReason } : {}),
         })
       } catch (error) {
         // 派发失败（编译/路由/调度异常）属于基础设施故障，后续案例不再浪费

@@ -5,6 +5,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import AgentDraftDialog from './AgentDraftDialog.vue'
+import { adminApi } from '../api/client'
 import type { ZipInspection } from '../stores/agentGovernance'
 import { useContentStore } from '../stores/content'
 import type { AgentDefinition, AgentVersionRecord } from '../types/domain'
@@ -218,5 +219,62 @@ describe('AgentDraftDialog import completion', () => {
     expect(wrapper.text()).toContain('仅使用选定 MCP')
     expect(wrapper.text()).toContain('不使用 MCP')
     expect(wrapper.text()).not.toContain('工具允许列表')
+  })
+})
+
+describe('AgentDraftDialog 角色目录与执行授权', () => {
+  function mountCreateDialog() {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    vi.spyOn(adminApi, 'getAgentPrincipalRoleOptions').mockResolvedValue([
+      { id: 'role-employee', name: '普通员工', status: 'active' },
+      { id: 'role-department-manager', name: '部门负责人', status: 'active' },
+      { id: 'role-platform-admin', name: '平台管理员', status: 'active' },
+      { id: 'role-retired', name: '已停用角色', status: 'disabled' },
+    ])
+    const wrapper = mount(AgentDraftDialog, {
+      props: { modelValue: true },
+      global: {
+        plugins: [pinia, ElementPlus],
+        stubs: {
+          teleport: true,
+          AgentZipImportPanel: ZipImportStub,
+          ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+          ElOption: { props: ['label'], template: '<span class="el-option-stub">{{ label }}</span>' },
+        },
+      },
+    })
+    wrappers.push(wrapper)
+    return wrapper
+  }
+
+  it('可见角色选项来自服务端角色目录，不再用本地映射伪造不存在的角色', async () => {
+    const wrapper = mountCreateDialog()
+    await flushPromises()
+
+    const labels = wrapper.findAll('.el-option-stub').map(option => option.text())
+    // 真实角色目录中的「部门负责人」此前无法表达；不存在的死 id 此前会被显示成
+    // 「部门负责人」「供应链分析人员」，让创建者以为已经选中了真实角色。
+    expect(labels).toContain('部门负责人')
+    expect(labels).not.toContain('供应链分析人员')
+    // 角色目录只提供启用中的角色，停用角色不作为可选范围。
+    expect(labels).not.toContain('已停用角色')
+  })
+
+  it('执行授权留空时给出警告与确认项，一键「与可见范围相同」后消失', async () => {
+    const wrapper = mountCreateDialog()
+    await flushPromises()
+
+    // 新建时默认不授予执行身份（AE-02），但后果必须显式告知而不是留给试运行阶段暴露。
+    expect(wrapper.text()).toContain('执行授权留空：该 Agent 无法试运行，因而无法发布')
+    expect(wrapper.text()).toContain('我确认暂不授予执行身份')
+
+    const copyButton = wrapper.findAll('button').find(button => button.text() === '与可见范围相同')
+    expect(copyButton).toBeDefined()
+    await copyButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('执行授权留空：该 Agent 无法试运行，因而无法发布')
+    expect(wrapper.text()).not.toContain('我确认暂不授予执行身份')
   })
 })

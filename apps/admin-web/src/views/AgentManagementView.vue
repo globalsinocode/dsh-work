@@ -37,6 +37,8 @@ const principalDraft = ref<AgentPrincipalGovernance>()
 const principalLoading = ref(false)
 const principalSaving = ref(false)
 const availableRoles = ref<AgentPrincipalRoleOption[]>([])
+/** 服务端角色目录，用于把可见角色 id 显示成当前真实角色名（历史失效 id 仍回落原始 id）。 */
+const roleCatalog = ref<AgentPrincipalRoleOption[]>([])
 const principalRolesUnavailable = ref(false)
 const agentRoleLabels: Record<string, string> = {
   'role-platform-admin': '平台管理员',
@@ -148,6 +150,7 @@ async function loadPrincipal(agentId: string) {
     principalDraft.value = { ...record, roleIds: [...record.roleIds], dataScopes: [...record.dataScopes] }
     if (rolesResult.status === 'fulfilled') {
       availableRoles.value = rolesResult.value
+      roleCatalog.value = rolesResult.value
     } else {
       principalRolesUnavailable.value = true
       availableRoles.value = record.roleIds.map(id => ({ id, name: agentRoleLabels[id] ?? id, status: 'disabled' }))
@@ -247,9 +250,20 @@ function evidenceName(evidence: EvidenceRef) {
   return evidenceLabel[evidence.kind]
 }
 
+/**
+ * 执行身份处于启用状态、却没有覆盖任何执行角色或数据范围。
+ * 这是「默认无授权」的合法状态，但它会让发布检查的「AI 员工执行授权」判红，
+ * 因此在治理页面上提前提示，而不是等到试运行阶段才以空白失败暴露。
+ */
+const executionGrantIncomplete = computed(() => {
+  const draft = principalDraft.value
+  if (!draft || draft.status !== 'active') return false
+  return draft.roleIds.length === 0 || draft.dataScopes.length === 0
+})
+
 function agentRoleNames(agent: AgentDefinition) {
   return agent.roleIds
-    .map((roleId) => agentRoleLabels[roleId] ?? roleId)
+    .map((roleId) => roleCatalog.value.find(role => role.id === roleId)?.name ?? agentRoleLabels[roleId] ?? roleId)
     .join('、')
 }
 
@@ -332,7 +346,13 @@ function releaseActionLabel(record: AgentReleaseRecord) {
 
 onMounted(async () => {
   await contentStore.load()
-  void Promise.allSettled([governance.loadSubmissionIndex(), governance.loadEvidenceIndex()])
+  void Promise.allSettled([
+    governance.loadSubmissionIndex(),
+    governance.loadEvidenceIndex(),
+    // 可见角色列在 Agent 列表/详情里显示，独立于「独立执行身份」面板的加载时机，
+    // 因此这里单独拉一次目录；失败只影响名称显示，不阻断页面。
+    adminApi.getAgentPrincipalRoleOptions().then((roles) => { roleCatalog.value = roles }).catch(() => undefined),
+  ])
 })
 </script>
 
@@ -419,6 +439,15 @@ onMounted(async () => {
             <template v-if="principalDraft">
               <dl class="agent-detail__meta"><div><dt>Principal</dt><dd class="mono">{{ principalDraft.principalId }}</dd></div><div><dt>授权修订</dt><dd>{{ principalDraft.authorizationVersion }}</dd></div></dl>
               <el-alert v-if="principalRolesUnavailable" type="warning" :closable="false" title="角色目录暂不可用；仍可停用身份或撤销已有角色，恢复后可新增授权。" />
+              <!-- 执行授权为空是「默认无授权」的 fail-closed 语义，但后果是发布检查判红、
+                   试运行无法发起；此前只体现为试运行阶段的一次空白失败，这里提前暴露。 -->
+              <el-alert
+                v-if="executionGrantIncomplete"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="执行身份尚未覆盖角色或数据范围：发布检查会在「AI 员工执行授权」判红并阻断试运行。"
+              />
               <el-form label-position="top">
                 <el-form-item label="执行身份状态"><el-switch v-model="principalDraft.status" active-value="active" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="!authStore.canManage" /></el-form-item>
                 <el-form-item label="执行角色"><el-select v-model="principalDraft.roleIds" multiple filterable placeholder="请选择授权角色" :disabled="!authStore.canManage || (principalRolesUnavailable && !principalDraft.roleIds.length)"><el-option v-for="role in availableRoles" :key="role.id" :label="role.name" :value="role.id" :disabled="role.status === 'disabled' && !principalDraft.roleIds.includes(role.id)" /></el-select></el-form-item>
