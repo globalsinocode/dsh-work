@@ -103,7 +103,8 @@ test('AE-02 creating a visible Agent never silently grants its executor the same
   // A3：留空执行授权不再是"静默通过"，创建页必须显式确认；确认本身不写入任何授权。
   await dialog.getByRole('button', { name: '完成创建' }).click()
   await expect(dialog.getByText('执行授权留空：该 Agent 无法试运行，因而无法发布')).toBeVisible()
-  await dialog.getByRole('checkbox', { name: /我确认暂不授予执行身份/ }).check()
+  // Element Plus 的原生 checkbox input 不可见（opacity/size 为 0），点它的 label 文本才等价于用户操作。
+  await dialog.getByText('我确认暂不授予执行身份，该 Agent 将无法通过试运行').click()
   await dialog.getByRole('button', { name: '下一步' }).click()
   await dialog.getByRole('button', { name: '完成创建' }).click()
   await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })
