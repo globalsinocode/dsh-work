@@ -17,6 +17,9 @@ test('administrator can create a Soul-only Agent draft with default platform cap
   await expect(dialog.getByRole('combobox', { name: '引用 Skill（选填）' })).toBeVisible()
   await expect(dialog.getByRole('radiogroup', { name: 'MCP 使用范围' })).toBeVisible()
   await expect(dialog.getByText('工具允许列表（选填）')).toHaveCount(0)
+  // 新建 Agent 的执行授权必须显式给出（默认拒绝，不从可见角色继承）。
+  await dialog.getByRole('button', { name: '权限与运行限制' }).click()
+  await dialog.getByRole('button', { name: '与可见范围相同' }).click()
   await dialog.getByRole('button', { name: '下一步' }).click()
 
   await expect(dialog.getByText('0 个 Skill')).toBeVisible()

@@ -30,6 +30,9 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await expect(page.getByRole('option', { name: new RegExp(connectorName) })).toBeVisible()
   await choice.press('ArrowDown')
   await choice.press('Enter')
+  // 新建 Agent 的执行授权必须显式给出（默认拒绝，不从可见角色继承）。
+  await create.getByRole('button', { name: '权限与运行限制' }).click()
+  await create.getByRole('button', { name: '与可见范围相同' }).click()
   await create.getByRole('button', { name: '下一步' }).click()
   await expect(create).toContainText('MCP：1 个选定')
   await create.getByRole('button', { name: '完成创建' }).click()

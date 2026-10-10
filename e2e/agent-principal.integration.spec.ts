@@ -97,7 +97,12 @@ test('AE-02 creating a visible Agent never silently grants its executor the same
   await dialog.getByRole('button', { name: '下一步' }).click()
   await dialog.getByRole('button', { name: '权限与运行限制' }).click()
   await expect(dialog.getByText('AI 员工执行授权')).toBeVisible()
-  await expect(dialog.getByText('留空时无法执行，可在创建后治理')).toBeVisible()
+  await expect(dialog.getByText('独立授权，留空即默认拒绝；留空时无法试运行，也就无法发布')).toBeVisible()
+  await dialog.getByRole('button', { name: '下一步' }).click()
+  // A3：留空执行授权不再是"静默通过"，创建页必须显式确认；确认本身不写入任何授权。
+  await dialog.getByRole('button', { name: '完成创建' }).click()
+  await expect(dialog.getByText('执行授权留空：该 Agent 无法试运行，因而无法发布')).toBeVisible()
+  await dialog.getByRole('checkbox', { name: /我确认暂不授予执行身份/ }).check()
   await dialog.getByRole('button', { name: '下一步' }).click()
   await dialog.getByRole('button', { name: '完成创建' }).click()
   await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })

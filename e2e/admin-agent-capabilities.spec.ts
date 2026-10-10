@@ -34,6 +34,9 @@ test('Agent editor keeps AGENTS.md and MCP scope while hiding per-Agent DSH tool
   await expect(tools.getByText('"type"')).toBeVisible()
   await tools.getByRole('button', { name: 'Close this dialog' }).press('Enter')
 
+  // 新建 Agent 的执行授权必须显式给出（默认拒绝，不从可见角色继承）。
+  await create.getByRole('button', { name: '权限与运行限制' }).click()
+  await create.getByRole('button', { name: '与可见范围相同' }).click()
   await create.getByRole('button', { name: '下一步' }).click()
   await expect(create.getByText('MCP：1 个选定')).toBeVisible()
   await expect(create.getByText('已填写 AGENTS.md')).toBeVisible()
