@@ -96,7 +96,8 @@ test('AE-02 creating a visible Agent never silently grants its executor the same
   await dialog.getByLabel('SOUL.md（人格与工作原则）').fill('你是测试 Agent，只处理明确的输入；如无执行授权，不得发起任务。')
   await dialog.getByRole('button', { name: '下一步' }).click()
   await dialog.getByRole('button', { name: '权限与运行限制' }).click()
-  await expect(dialog.getByText('AI 员工执行授权')).toBeVisible()
+  // exact：下面的告警描述里也含「AI 员工执行授权」，非精确匹配会命中两个元素。
+  await expect(dialog.getByText('AI 员工执行授权', { exact: true })).toBeVisible()
   await expect(dialog.getByText('独立授权，留空即默认拒绝；留空时无法试运行，也就无法发布')).toBeVisible()
   await dialog.getByRole('button', { name: '下一步' }).click()
   // A3：留空执行授权不再是"静默通过"，创建页必须显式确认；确认本身不写入任何授权。
