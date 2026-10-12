@@ -100,3 +100,11 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 ## 管理助手低风险确认（C6）
 
 风险白名单、判定位置、旧计划兼容与证据见 [C6](review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
+
+## 独立账号认证
+
+`DSH_WORK_AUTH_MODE=local` 在既有身份模块提供账号密码认证，不读取 AI Hub 配置、启动目录同步或刷新上游 Token。`RequestIdentity.identityProvider=local-password` 由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。账号凭据关联稳定用户 ID；提供方隔离字段、密码及状态变更、一次性初始化和最后一位本地管理员保护由数据库事务维护。
+
+认证接口及请求/错误结构见 [认证 OpenAPI](openapi-auth.json)，管理接口见 [Admin OpenAPI](openapi-admin.json)。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密撤销旧会话并要求重新登录。部署、旧身份显式绑定及验证边界见 [独立登录指南](../release/local-authentication.md)。
+
+`GET/PATCH /api/admin/v1/identity/login-settings` 读取和保存登录模式；写入仅限 `admin:*`，使用 `expectedRevision` 防止覆盖并复查当前操作者授权和目标模式管理员条件。选择复用 `system_settings` 的 `identity.login` 项，启动时覆盖部署默认模式并由既有认证服务执行；保存后须重启，激活切换时统一撤销旧认证会话。预检只读取，不激活；敏感凭据仍来自部署环境。原型不注册此端口。

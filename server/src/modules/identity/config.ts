@@ -1,6 +1,7 @@
 import type {
   ApiAudience,
   IdentityConfiguration,
+  LocalAudienceConfiguration,
   OidcAudienceConfiguration,
   OidcIdentityConfiguration,
 } from './types.ts'
@@ -19,11 +20,11 @@ export function loadIdentityConfiguration(
 ): IdentityConfiguration {
   const production = environment.NODE_ENV === 'production'
   const mode = environment.DSH_WORK_AUTH_MODE ?? (production ? 'oidc' : 'prototype')
-  if (mode !== 'prototype' && mode !== 'oidc') {
-    throw new Error('DSH_WORK_AUTH_MODE 必须是 prototype 或 oidc')
+  if (mode !== 'prototype' && mode !== 'oidc' && mode !== 'local') {
+    throw new Error('DSH_WORK_AUTH_MODE 必须是 prototype、oidc 或 local')
   }
-  if (production && mode !== 'oidc') {
-    throw new Error('生产环境必须显式启用 AI Hub OIDC，禁止回退到 Prototype 身份')
+  if (production && mode === 'prototype') {
+    throw new Error('生产环境必须启用 local 或 oidc 认证，禁止回退到 Prototype 身份')
   }
   if (mode === 'prototype') return { mode }
 
@@ -39,6 +40,19 @@ export function loadIdentityConfiguration(
     'DSH_WORK_COOKIE_SECURE',
   )
   if (production && !cookieSecure) throw new Error('生产环境必须启用 Secure Session Cookie')
+
+  if (mode === 'local') {
+    return {
+      mode,
+      sessionSecret,
+      cookieSecure,
+      sessionTtlSeconds: positiveInteger(environment.DSH_WORK_SESSION_TTL_SECONDS, 8 * 60 * 60, 'DSH_WORK_SESSION_TTL_SECONDS'),
+      audiences: {
+        workbench: localAudienceConfiguration(environment, 'workbench', production),
+        admin: localAudienceConfiguration(environment, 'admin', production),
+      },
+    }
+  }
 
   const platformUrl = normalizedUrl(
     required(environment, 'AI_HUB_PLATFORM_URL'),
@@ -105,6 +119,23 @@ export function loadIdentityConfiguration(
     jwksStaleTtlSeconds,
     audiences: { workbench, admin },
   } satisfies OidcIdentityConfiguration
+}
+
+function localAudienceConfiguration(
+  environment: NodeJS.ProcessEnv,
+  audience: ApiAudience,
+  production: boolean,
+): LocalAudienceConfiguration {
+  const prefix = audience === 'workbench' ? 'DSH_WORK_WORKBENCH' : 'DSH_WORK_ADMIN'
+  const allowedOrigins = originList(required(environment, `${prefix}_ORIGINS`), `${prefix}_ORIGINS`, production)
+  const defaultOrigin = environment[`${prefix}_DEFAULT_ORIGIN`]?.trim()
+    ? normalizedOrigin(environment[`${prefix}_DEFAULT_ORIGIN`]!, `${prefix}_DEFAULT_ORIGIN`, production)
+    : allowedOrigins[0]!
+  if (!allowedOrigins.includes(defaultOrigin)) throw new Error(`${prefix}_DEFAULT_ORIGIN 必须包含在 ${prefix}_ORIGINS 中`)
+  return {
+    audience, applicationId: 'dsh-work', allowedOrigins, defaultOrigin,
+    sessionCookieName: cookieName(audience === 'admin' ? 'dsh_work_local_admin_session' : 'dsh_work_local_session', production),
+  }
 }
 
 function audienceConfiguration(

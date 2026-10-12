@@ -819,12 +819,18 @@ export class PostgresAgentService {
     }))
   }
 
-  async getRuntimeSnapshot(versionId: string, additionalSkillReferences: string[] = []): Promise<RuntimeAgentSnapshot> {
-    const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & {
+  async getRuntimeSnapshot(
+    versionId: string,
+    additionalSkillReferences: string[] = [],
+    expectedDefinitionFingerprint?: string,
+  ): Promise<RuntimeAgentSnapshot> {
+    const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & AgentFingerprintSource & {
       agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
     })[]>`
       select av.id as "versionId", ep.id as "principalId",
              ep.authorization_version as "principalAuthorizationVersion",
+             av.name, av.description, av.welcome_message as "welcomeMessage",
+             av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
@@ -841,6 +847,11 @@ export class PostgresAgentService {
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
     `
     if (!row) throw new Error(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
+    // 试运行必须用封存时的定义；指纹与本次取到的配置在同一行快照上计算，
+    // 防止发布服务检查后、Attempt 准备前草稿被修改而混入另一份定义。
+    if (expectedDefinitionFingerprint && configurationFingerprint(row) !== expectedDefinitionFingerprint) {
+      throw new Error('Agent 草稿定义已偏离封存内容，请从第一项重新试运行')
+    }
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     await this.assertCapabilityReferences(skills, row.tools, row.roleIds, row.dataScopes)
     const skillInstructions = this.skillService
@@ -876,7 +887,7 @@ export class PostgresAgentService {
       throw authorizationDenied('Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本')
     }
     const mcpConnections = this.toolService
-      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
+      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId, expectedDefinitionFingerprint ? row.mcpScope : undefined)
       : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)

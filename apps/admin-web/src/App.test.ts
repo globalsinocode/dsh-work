@@ -25,6 +25,7 @@ async function render() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/assistant', component: AdminAssistantView, meta: { title: '管理助手' } },
     { path: '/agents', component: { template: '<div>Agent 管理</div>' }, meta: { title: 'Agent 管理' } },
+    { path: '/login-settings', component: { template: '<div>登录模式配置</div>' }, meta: { title: '登录设置' } },
     { path: '/experience-iterations', component: { template: '<div>经验迭代列表</div>' }, meta: { title: '经验迭代', subtitle: '按稳定 Agent 归属，经管理员审核后发布不可变经验版本。' } },
     { path: '/about', component: { template: '<div>关于 dsh-work</div>' }, meta: { title: '关于 dsh-work' } },
   ] })
@@ -79,6 +80,30 @@ describe('global management conversation history', () => {
     auth.$patch({ permissions: ['audit:read'] })
     await flushPromises()
     expect(wrapper.find('nav [aria-label="对话记录"]').exists()).toBe(false)
+  })
+
+  it('exposes login settings as a separate platform section only for managed admin readers', async () => {
+    const { wrapper, router, auth } = await render()
+    const platformSection = () => wrapper.get('nav').findAll('section').find(section => section.text().includes('平台设置'))
+    expect(platformSection()).toBeUndefined()
+    auth.$patch({ identityProvider: 'local-password', permissions: ['admin:read'] })
+    await flushPromises()
+    const platform = platformSection()!
+    expect(platform.text()).toContain('登录设置')
+    const organization = wrapper.get('nav').findAll('section').find(section => section.text().includes('组织与权限'))!
+    expect(organization.text()).toContain('员工与权限')
+    expect(organization.text()).not.toContain('登录设置')
+    await platform.findAll('button').find(button => button.text() === '登录设置')!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/login-settings')
+    expect(wrapper.get('.admin-topbar__context strong').text()).toBe('登录设置')
+
+    auth.$patch({ permissions: ['audit:read'] })
+    await flushPromises()
+    expect(platformSection()).toBeUndefined()
+    auth.$patch({ identityProvider: 'prototype-sso', permissions: ['admin:*'] })
+    await flushPromises()
+    expect(platformSection()).toBeUndefined()
   })
 
   it('opens the about page from the authenticated user dropdown', async () => {

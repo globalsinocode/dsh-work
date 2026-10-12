@@ -69,7 +69,7 @@ export interface AdminUserProfile {
 
 export interface AdminSession {
   user: AdminUserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc'
+  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
 }
@@ -93,9 +93,19 @@ export interface AgentPrincipalRoleOption {
   status: 'active' | 'disabled'
 }
 
+export interface LoginSettings {
+  activeMode: 'local' | 'oidc' | 'prototype'
+  savedMode: 'local' | 'oidc' | null
+  pendingRestart: boolean
+  revision: number
+  updatedAt: string | null
+  options: Array<{ mode: 'local' | 'oidc'; available: boolean; issues: string[] }>
+}
+
 export interface IdentityUserSummary {
   id: string
   externalUserId: string | null
+  username?: string | null
   name: string
   email: string | null
   department: string
@@ -816,7 +826,7 @@ export interface ModelRoute {
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
   persistence: 'prototype-memory' | 'postgres-foundation' | 'postgres'
-  sso: 'mock' | 'ai-hub-oidc'
+  sso: 'mock' | 'ai-hub-oidc' | 'local-password'
   dshRuntime: 'not-connected' | 'poc-validated' | 'connected'
   database: 'not-configured' | 'configured' | Record<string, unknown>
   artifactStorage: 'not-configured' | 'local-mvp'
@@ -938,17 +948,4 @@ export interface AgentVersionEvidenceEntry {
   agentId: string
   version: string
   evidence: AgentVersionEvidence[]
-}
-
-export interface AgentPackageInspection {
-  fileName: string
-  manifest: { id: string; name: string; version: string; description: string }
-  files: string[]
-  systemPrompt: string
-  workInstructions?: string
-  resolved: { skills: string[]; tools: string[] }
-  missing: { skills: string[]; tools: string[] }
-  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
-  cases: Array<Omit<AgentEvalCase, 'id'>>
-  warnings: string[]
 }

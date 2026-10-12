@@ -77,7 +77,10 @@
     "test:review:p2:origin": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-origin.test.ts",
     "test:review:p2:skill:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/skill/skill-errors.test.ts",
     "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts",
-    "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts"
+    "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts",
+    "auth:bootstrap": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/local-bootstrap.ts",
+    "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts",
+    "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/login-settings.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

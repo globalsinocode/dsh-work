@@ -21,6 +21,8 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './http/workbench/unavailable-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
+import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
+import { LocalAuthService } from './modules/identity/local-auth-service.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
 import { PrototypeRepository } from './infrastructure/prototype/prototype-repository.ts'
@@ -85,6 +87,8 @@ import { PostgresAgentDataService } from './modules/agent-data/postgres-agent-da
 import { registerAdminAgentDataRoutes } from './http/admin/agent-data-routes.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
 import { loadIdentityConfiguration } from './modules/identity/config.ts'
+import { LoginSettingsService, loadStartupIdentityConfiguration } from './modules/identity/login-settings-service.ts'
+import { registerLoginSettingsRoutes } from './http/admin/login-settings-routes.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
@@ -96,31 +100,43 @@ const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 async function start() {
   const repository = new PrototypeRepository()
   const workbenchQueries = new WorkbenchQueryService(repository)
-  const identityConfiguration = loadIdentityConfiguration()
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   const database = databaseUrl ? createDatabase({ url: databaseUrl }) : null
 
-  if (identityConfiguration.mode === 'oidc' && !database) {
-    throw new Error('AI Hub OIDC 模式必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
+  // Reject a production prototype before any database mutations.
+  if (process.env.DSH_WORK_AUTH_MODE === 'prototype') loadIdentityConfiguration()
+  if (database) await runMigrations(database)
+  const identityConfiguration = await loadStartupIdentityConfiguration(database, process.env, true)
+
+  if (identityConfiguration.mode !== 'prototype' && !database) {
+    throw new Error('local/oidc 模式必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
   }
 
-  if (database) await runMigrations(database)
   const oidcAuthentication = identityConfiguration.mode === 'oidc' && database
     ? new OidcAuthService(identityConfiguration, database)
     : null
   const directorySync = identityConfiguration.mode === 'oidc' && database
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
+  const localAuthentication = identityConfiguration.mode === 'local' && database
+    ? new LocalAuthService(identityConfiguration, database)
+    : null
+  const authentication = localAuthentication ?? oidcAuthentication
   const router = new Router({
-    authenticateApi: oidcAuthentication
-      ? (request, audience) => oidcAuthentication.authenticateApi(request, audience)
+    authenticateApi: authentication
+      ? (request, audience) => authentication.authenticateApi(request, audience)
       : prototypeApiAuthenticator,
   })
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication)
-  if (database && directorySync) {
+  if (localAuthentication) registerLocalAuthRoutes(router, localAuthentication)
+  for (const audience of ['workbench', 'admin']) {
+    router.get(`/auth/${audience}/configuration`, () => ({ mode: identityConfiguration.mode }))
+  }
+  if (database && authentication) {
+    registerLoginSettingsRoutes(router, new LoginSettingsService(database, identityConfiguration.mode))
     registerIdentityAdministrationRoutes(
       router,
-      new IdentityAdministrationService(database),
+      new IdentityAdministrationService(database, identityConfiguration.mode === 'local'),
       directorySync,
     )
   }
@@ -265,7 +281,7 @@ async function start() {
       database,
       runtime,
       authorization,
-      identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'mock',
+      identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
     )
     const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
@@ -425,7 +441,7 @@ async function start() {
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
     registerAdminAgentDataRoutes(router, agentData)
-    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, resolve(dataRoot, 'agent-packages'), orchestration))
+    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration))
     registerSkillRoutes(router, skills)
     registerToolRoutes(router, toolService)
     registerWorkbenchAgentRoutes(router, agents, authorization)
@@ -462,7 +478,7 @@ async function start() {
       status: 'ok',
       architecture: 'node-modular-monolith',
       persistence: database ? 'postgres-foundation' : 'prototype-memory',
-      sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'mock',
+      sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
       executionCapabilities: { dsh: dshCapability, python: pythonCapability },
       dshRuntime: executionRuntime ? await executionRuntime.health() : dshInstallation ? {
         status: 'connected',

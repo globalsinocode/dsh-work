@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 
 import { workbenchApi } from '../api/client'
 import type { UserProfile, UserRole, WorkbenchSession } from '../types/domain'
@@ -66,7 +67,17 @@ export const useAuthStore = defineStore('workbench-auth', () => {
     window.location.assign(`/auth/workbench/switch-account?return_to=${encodeURIComponent(returnTo)}`)
   }
 
-  function logout() {
+  async function logout() {
+    if (identityProvider.value === 'local-password') {
+      try {
+        const response = await fetch('/auth/workbench/logout', { method: 'POST', credentials: 'same-origin' })
+        if (!response.ok) throw new Error('退出登录失败，请重试')
+        window.location.assign('/login')
+      } catch (cause) {
+        ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
+      }
+      return
+    }
     sessionUser.value = null
     identityProvider.value = null
     initialized.value = false

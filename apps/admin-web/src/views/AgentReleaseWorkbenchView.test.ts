@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { adminApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useAgentGovernanceStore } from '@/stores/agentGovernance'
 import { useContentStore } from '@/stores/content'
 import type { AgentDefinition, AgentReleaseState, AgentTrialCaseRun, AgentVersionRecord } from '@/types/domain'
 import AgentReleaseWorkbenchView from './AgentReleaseWorkbenchView.vue'
@@ -79,7 +80,6 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/agents/:agentId/release/review', name: 'agent-release-review', component: AgentReleaseWorkbenchView },
     { path: '/agents/:agentId/release/trial', name: 'agent-release-trial', component: AgentReleaseWorkbenchView },
-    { path: '/agents/:agentId/release/checks', name: 'agent-release-checks', component: AgentReleaseWorkbenchView },
   ] })
   await router.push(`/agents/${agentId}/release/review`)
   await router.isReady()
@@ -91,11 +91,54 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
     await router.push(`/agents/${agentId}/release/trial`)
     await flushPromises()
     expect(wrapper.get('.case-run__output').text()).toContain('后续核验内容'.repeat(60))
+    expect(wrapper.find('[aria-label="Agent 候选发布流程"]').exists()).toBe(false)
+    expect(wrapper.find('.definition-card').exists()).toBe(false)
+    expect(wrapper.text()).toContain('单次审核 Agent')
+    expect(wrapper.text()).not.toContain('查看配置摘要')
+    expect(wrapper.text()).not.toContain('试运行进度')
+    expect(wrapper.text()).not.toContain('历史试运行')
+
+    const failedState: AgentReleaseState = {
+      ...state,
+      trialRuns: [{
+        id: 'trial-preflight-failed', submissionRevision: 1, status: 'failed',
+        startedAt: '2026-09-23T01:00:00.000Z',
+        steps: [{ id: 'dispatch', label: 'DSH 执行评估案例', status: 'failed', detail: '案例派发失败：Runtime 不可用' }],
+      }, ...state.trialRuns],
+    }
+    vi.mocked(adminApi.ensureAgentReleaseCandidate).mockResolvedValueOnce(failedState)
+    await useAgentGovernanceStore().ensureCandidate(agentId)
+    await flushPromises()
+    expect(wrapper.text()).toContain('案例派发失败：Runtime 不可用')
+    expect(wrapper.get('.case-tab-label').text()).toContain('失败')
+
+    const failedRun = {
+      ...state.trialRuns[0]!.steps[0]!.caseRuns![0]!,
+      runId: null, attemptId: null, status: 'failed', outputExcerpt: '',
+      error: 'Agent 身份尚未获得试运行所需的角色和数据授权', verdict: undefined,
+    }
+    vi.mocked(adminApi.ensureAgentReleaseCandidate).mockResolvedValueOnce({
+      ...failedState,
+      trialRuns: [{ ...failedState.trialRuns[0]!, steps: [{
+        id: 'dispatch', label: 'DSH 执行评估案例', status: 'failed',
+        detail: '案例派发失败：正常任务 failed', caseRuns: [failedRun],
+      }] }, ...state.trialRuns],
+    })
+    await useAgentGovernanceStore().ensureCandidate(agentId)
+    await flushPromises()
+    expect(wrapper.get('.case-feedback').text()).toContain('Agent 身份尚未获得试运行所需的角色和数据授权')
+    expect(wrapper.get('.case-feedback').text()).not.toContain('案例派发失败：正常任务 failed')
+    expect(wrapper.find('.case-run__output').exists()).toBe(false)
+    expect(wrapper.get('.case-run__details').text()).toContain('自动检查')
+
+    vi.mocked(adminApi.ensureAgentReleaseCandidate).mockResolvedValueOnce(state)
+    await useAgentGovernanceStore().ensureCandidate(agentId)
+    await flushPromises()
     await router.push(`/agents/${agentId}/release/review`)
     await flushPromises()
     expect(wrapper.find('[data-action="submit-agent-release"]').exists()).toBe(false)
     const action = wrapper.get('[data-action="publish-agent"]')
-    expect(action.text()).toContain('审核通过并发布')
+    expect(action.text()).toContain('确认发布')
     expect(action.attributes('disabled')).toBeUndefined()
     await wrapper.get('textarea').setValue('案例与权限已复核')
     await action.trigger('click')

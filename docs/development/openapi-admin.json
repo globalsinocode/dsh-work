@@ -3,7 +3,7 @@
   "info": {
     "title": "dsh-work 管理平台 API",
     "version": "0.12.0-agent-routines",
-    "description": "管理面请求使用 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。AI Hub 只提供身份和员工资料；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
+    "description": "管理面请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。认证模式由部署配置显式选择；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
     {
@@ -13,13 +13,43 @@
   "security": [
     {
       "adminSession": []
+    },
+    {
+      "localAdminSession": []
     }
   ],
   "paths": {
+    "/agents/{agentId}/release/case-trials": {
+      "post": {
+        "operationId": "startAgentReleaseTrial",
+        "summary": "自动检查并只执行第一项发布验证案例",
+        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId"], "properties": { "caseId": { "type": "string" } } } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agents/{agentId}/release/trials/{trialId}/cases": {
+      "post": {
+        "operationId": "continueAgentReleaseTrialCase",
+        "summary": "上一项经人工确认通过后保存并执行下一项案例",
+        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId", "input", "rubric"], "properties": { "caseId": { "type": "string" }, "input": { "type": "string" }, "rubric": { "type": "string" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/agents/{agentId}/release/trials/{trialId}/confirm": {
+      "post": {
+        "operationId": "confirmAgentReleaseTrialCase",
+        "summary": "对当前案例的完整输出登记人工结论；五项通过后试运行完成",
+        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["verdicts"], "properties": { "verdicts": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["caseId", "verdict"], "properties": { "caseId": { "type": "string" }, "verdict": { "enum": ["passed", "failed"] }, "note": { "type": "string" } } } } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/agents/{agentId}/versions/{versionId}/package": {
       "get": {
         "operationId": "exportAgentVersionPackage",
-        "summary": "导出可回导的 Agent 定义 ZIP；不包含平台凭据、连接器或授权",
+        "summary": "导出 Agent 版本 ZIP 供审阅和离线核对；不包含平台凭据、连接器或授权，不提供 ZIP 导入",
         "parameters": [
           { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
@@ -1178,10 +1208,44 @@
         }
       }
     },
+    "/identity/login-settings": {
+      "get": {
+        "operationId": "getLoginSettings",
+        "summary": "查看当前及已保存的登录模式、修订和切换前置条件",
+        "description": "正式认证模式下的管理读取接口。返回配置检查结果，不返回上游凭据或 Session Secret。",
+        "responses": {
+          "200": { "$ref": "#/components/responses/LoginSettings" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "patch": {
+        "operationId": "saveLoginSettings",
+        "summary": "保存重启后生效的登录模式，仅平台管理员可操作",
+        "description": "校验同源、当前 admin:* 权限和目标模式的配置及永久平台管理员条件。保存采用修订比较，不立即切换或重启；启动激活切换时撤销旧会话。切回当前模式可取消待生效变更。操作者只取服务端会话。409 包括 login_settings_changed 和 login_mode_unavailable。",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["mode", "expectedRevision"],
+            "properties": {
+              "mode": { "type": "string", "enum": ["local", "oidc"] },
+              "expectedRevision": { "type": "integer", "minimum": 0 }
+            }
+          } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/LoginSettings" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/identity/users": {
       "get": {
         "operationId": "listIdentityUsers",
-        "summary": "分页查询从 AI Hub 同步的员工及其本地角色、数据范围和 Session 摘要",
+        "summary": "分页查询员工及其本地角色、数据范围和会话摘要；local 模式包含本地账号及待绑定的原 AI Hub 员工，username 表示独立登录账号",
         "parameters": [
           {
             "name": "query",
@@ -1225,6 +1289,232 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createLocalAccount",
+        "summary": "仅 local 模式：创建账号，初始无角色，首次登录必须改密",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username",
+                  "password",
+                  "name"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 80
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true,
+                    "minLength": 15,
+                    "maxLength": 128
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "department": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改账号"
+          },
+          "409": {
+            "description": "账号已存在或最后一位管理员保护"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/local-account": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "bindLocalAccount",
+        "summary": "仅 local 模式：显式绑定有效既有员工；保留用户 ID 与授权，撤销旧会话",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 80
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true,
+                    "minLength": 15,
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改账号"
+          },
+          "409": {
+            "description": "账号已存在或最后一位管理员保护"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/password": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "resetLocalPassword",
+        "summary": "仅 local 模式：重置他人密码并撤销所有旧会话，下次登录强制改密",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true,
+                    "minLength": 15,
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改账号"
+          },
+          "409": {
+            "description": "账号已存在或最后一位管理员保护"
+          },
+          "422": {
+            "description": "输入无效"
+          }
+        }
+      }
+    },
+    "/identity/users/{userId}/status": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "operationId": "setLocalAccountStatus",
+        "summary": "仅 local 模式：启停账号；不能停用最后一位可登录的本地平台管理员",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "disabled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "description": "仅平台管理员可修改账号"
+          },
+          "409": {
+            "description": "账号已存在或最后一位管理员保护"
+          },
+          "422": {
+            "description": "输入无效"
           }
         }
       }
@@ -1822,6 +2112,7 @@
   },
   "components": {
     "securitySchemes": {
+      "localAdminSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_admin_session", "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
       "adminSession": {
         "type": "apiKey",
         "in": "cookie",
@@ -1884,6 +2175,15 @@
       }
     },
     "responses": {
+      "LoginSettings": {
+        "description": "登录模式配置",
+        "content": { "application/json": { "schema": {
+          "allOf": [
+            { "$ref": "#/components/schemas/Envelope" },
+            { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/LoginSettings" } } }
+          ]
+        } } }
+      },
       "Ok": {
         "description": "成功",
         "content": {
@@ -1906,6 +2206,27 @@
       }
     },
     "schemas": {
+      "LoginSettings": {
+        "type": "object",
+        "required": ["activeMode", "savedMode", "pendingRestart", "revision", "updatedAt", "options"],
+        "properties": {
+          "activeMode": { "type": "string", "enum": ["local", "oidc"] },
+          "savedMode": { "enum": ["local", "oidc", null] },
+          "pendingRestart": { "type": "boolean" },
+          "revision": { "type": "integer", "minimum": 0 },
+          "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+          "options": {
+            "type": "array", "items": {
+              "type": "object", "required": ["mode", "available", "issues"],
+              "properties": {
+                "mode": { "type": "string", "enum": ["local", "oidc"] },
+                "available": { "type": "boolean", "description": "本地配置及目标管理员条件具备；不表示上游可达性验收" },
+                "issues": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      },
       "AgentRoutineSchedule": { "oneOf": [
         { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
         { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },

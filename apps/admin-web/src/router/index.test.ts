@@ -23,7 +23,12 @@ describe('admin authentication routes', () => {
     expect(route.name).toBe('identity')
     expect(route.meta.title).toBe('员工与权限')
     expect(route.meta.requiredPermission).toBe('adminRead')
-    expect(route.meta.requiresAiHubIdentity).toBe(true)
+    expect(route.meta.requiresManagedIdentity).toBe(true)
+  })
+
+  it('serves local login and mandatory password changes without an authenticated session', () => {
+    expect(router.resolve('/login').meta.public).toBe(true)
+    expect(router.resolve('/change-password').meta.public).toBe(true)
   })
 
   it('registers the about page for every authenticated management user', () => {

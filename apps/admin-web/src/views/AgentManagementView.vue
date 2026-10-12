@@ -185,7 +185,7 @@ const principalScopeOptions = computed(() => [...new Set([
 ])].sort())
 
 function openCandidate(agent: AgentDefinition) {
-  void router.push(`/agents/${encodeURIComponent(agent.id)}/release/definition`)
+  void router.push(`/agents/${encodeURIComponent(agent.id)}/release/trial`)
 }
 
 async function loadJoinedWorkspaces(agentId: string) {
@@ -235,12 +235,10 @@ function openEdit(agent: AgentDefinition) {
   editorOpen.value = true
 }
 
-async function handleDraftSaved(agent: AgentDefinition, source: 'config' | 'zip') {
-  if (source === 'config') {
-    governance.ensureOverlay(agent.id)
-    // 等待候选同步完成（修订推进 + 旧检查/封存作废），再允许后续试运行/发布操作
-    await governance.noteDraftSaved(agent.id)
-  }
+async function handleDraftSaved(agent: AgentDefinition) {
+  governance.ensureOverlay(agent.id)
+  // 等待候选同步完成（修订推进 + 旧检查/封存作废），再允许后续试运行/发布操作
+  await governance.noteDraftSaved(agent.id)
 }
 
 function evidenceName(evidence: EvidenceRef) {

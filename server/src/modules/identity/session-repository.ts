@@ -336,6 +336,7 @@ export class IdentitySessionRepository {
         join tenants t on t.id = u.tenant_id
        where s.session_hash = ${sessionHash} and s.tenant_id = ${tenantId}
          and s.audience = ${audience} and s.revoked_at is null and s.expires_at > now()
+         and s.authentication_provider = 'ai-hub-oidc'
          and u.status = 'active' and t.status = 'active'
     `
     return record ?? null
@@ -366,6 +367,7 @@ export class IdentitySessionRepository {
           join tenants t on t.id = u.tenant_id
          where s.session_hash = ${sessionHash} and s.tenant_id = ${tenantId}
            and s.audience = ${audience} and s.revoked_at is null and s.expires_at > now()
+         and s.authentication_provider = 'ai-hub-oidc'
            and u.status = 'active' and t.status = 'active'
       `
       if (!session) return null
@@ -392,8 +394,8 @@ export class IdentitySessionRepository {
     `
   }
 
-  async resolveAuthorization(userId: string): Promise<LocalAuthorizationContext> {
-    const [user] = await this.database<{
+  async resolveAuthorization(userId: string, database: DatabaseClient | DatabaseTransaction = this.database): Promise<LocalAuthorizationContext> {
+    const [user] = await database<{
       id: string
       name: string
       department: string
@@ -464,11 +466,11 @@ export class IdentitySessionRepository {
 
   async logoutSession(sessionHash: string, audience: ApiAudience) {
     return this.database.begin(async (transaction) => {
-      const [session] = await transaction<{ userId: string }[]>`
+      const [session] = await transaction<{ userId: string; provider: string }[]>`
         update authentication_sessions set revoked_at = now()
          where session_hash = ${sessionHash} and tenant_id = ${tenantId}
            and audience = ${audience} and revoked_at is null
-        returning user_id as "userId"
+        returning user_id as "userId", authentication_provider as provider
       `
       if (!session) return false
       await appendIdentityAudit(transaction, {
@@ -476,6 +478,7 @@ export class IdentitySessionRepository {
         action: 'identity.logout',
         result: 'success',
         audience,
+        context: { provider: session.provider },
       })
       return true
     })

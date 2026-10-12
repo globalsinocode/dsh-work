@@ -1,6 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -13,9 +11,7 @@ import {
   AGENT_EVALUATION_CASE_KINDS,
   AGENT_ID_PATTERN,
   VERSION_PATTERN,
-  parseAgentPackage,
   type AgentEvaluationAssertion,
-  type AgentPackageCapabilityRef,
   type AgentPackageCase,
 } from './agent-package.ts'
 import { configurationFingerprint, type PostgresAgentService } from './postgres-agent-service.ts'
@@ -140,20 +136,6 @@ export interface SubmissionSummary {
   source: 'config' | 'zip'
 }
 
-/** ZIP 导入前的解析预览（不落库）。 */
-export interface AgentPackageInspection {
-  fileName: string
-  manifest: { id: string; name: string; version: string; description: string }
-  files: string[]
-  systemPrompt: string
-  workInstructions: string
-  resolved: { skills: string[]; tools: string[] }
-  missing: { skills: string[]; tools: string[] }
-  packageRefs: { skills: AgentPackageCapabilityRef[]; tools: AgentPackageCapabilityRef[] }
-  cases: AgentPackageCase[]
-  warnings: string[]
-}
-
 /** 版本证据索引：key = `${agentId}@${version}`。 */
 export interface VersionEvidenceEntry {
   agentId: string
@@ -223,15 +205,8 @@ const CASE_KINDS: ReleaseEvalCase['kind'][] = [...AGENT_EVALUATION_CASE_KINDS]
 /** sql.json 需要 JSONValue；与既有服务一致，经 JSON 往返擦除接口类型。 */
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
 
-/**
- * ZIP 导入的平台字段默认值：可见角色、数据范围与团队空间开关属平台授权配置，
- * 不在包内声明；首次导入按此初始化，重复导入保留管理员既有配置。
- */
-const ZIP_IMPORT_PLATFORM_DEFAULTS = {
-  roleIds: ['role-employee'],
-  dataScopes: ['enterprise:authorized', 'workspace:authorized'],
-  allowWorkspaceJoin: false,
-  mcpScope: { mode: 'all', connectorIds: [] } as AgentMcpScope,
+function releaseConflict(message: string) {
+  return Object.assign(new Error(message), { status: 409, code: 'release_conflict' })
 }
 
 function parseRef(reference: string): CapabilityRef {
@@ -402,7 +377,6 @@ export class PostgresAgentReleaseService {
   private readonly agents: PostgresAgentService
   private readonly skills?: PostgresSkillService
   private readonly tools?: PostgresToolConnectorService
-  private readonly packagesDir: string
   private readonly orchestration?: Pick<RunOrchestrationService, 'runReleaseTrialCase' | 'systemCancelRun'>
 
   constructor(
@@ -410,14 +384,12 @@ export class PostgresAgentReleaseService {
     agents: PostgresAgentService,
     skills: PostgresSkillService | undefined,
     tools: PostgresToolConnectorService | undefined,
-    packagesDir: string,
     orchestration?: Pick<RunOrchestrationService, 'runReleaseTrialCase' | 'systemCancelRun'>,
   ) {
     this.database = database
     this.agents = agents
     this.skills = skills
     this.tools = tools
-    this.packagesDir = packagesDir
     this.orchestration = orchestration
   }
 
@@ -595,10 +567,11 @@ export class PostgresAgentReleaseService {
       update agent_release_submissions
          set checks = ${this.database.json(asJson(checks))}, plan = ${this.database.json(asJson(plan))}, updated_at = now()
        where tenant_id = ${tenantId} and id = ${submission.id}
+         and revision = ${submission.revision}
          and status in ('draft', 'changes_requested')
       returning id
     `
-    if (!stored.length) throw new Error('发布候选已终态，无法写入检查结果')
+    if (!stored.length) throw new Error('发布候选已变化，无法写入旧修订检查结果，请重试')
     await this.audit(actor.id, 'agent.release.checks', agentId, 'success', `候选 rev${submission.revision} 检查 ${checks.filter(item => item.status === 'passed').length}/${checks.length} 通过`)
     return this.getReleaseState(agentId)
   }
@@ -897,34 +870,20 @@ export class PostgresAgentReleaseService {
         ...(generatedIds.has(id) ? { origin: 'generated' as const } : {}),
       }
     })
-    await this.bumpRevision(submission.id, 'cases', normalized)
+    await this.bumpCasesRevision(submission.id, normalized)
     await this.audit(actor.id, 'agent.release.cases', agentId, 'success', `候选案例更新为 ${normalized.length} 条`)
     return this.getReleaseState(agentId)
   }
 
-  async removeMissingDependency(agentId: string, kind: 'skills' | 'tools', reference: string, userId: string): Promise<AgentReleaseState> {
-    const actor = await this.requireActor(userId)
-    const submission = await this.requireSubmission(agentId, userId)
-    this.assertMutable(submission)
-    const missingDeps = {
-      skills: kind === 'skills' ? submission.missingDeps.skills.filter(item => item !== reference) : submission.missingDeps.skills,
-      tools: kind === 'tools' ? submission.missingDeps.tools.filter(item => item !== reference) : submission.missingDeps.tools,
-    }
-    await this.bumpRevision(submission.id, 'missing_deps', missingDeps)
-    await this.audit(actor.id, 'agent.release.dep.remove', agentId, 'success', `移除无法解析的依赖 ${reference}`)
-    return this.getReleaseState(agentId)
-  }
-
-  /** 定义/案例变更的统一步调：推进修订、作废检查结论与封存。状态条件防止复活已终态提交。 */
-  private async bumpRevision(submissionId: string, column: 'cases' | 'missing_deps', value: unknown) {
-    const serialized = this.database.json(asJson(value))
+  /** 案例变更推进修订并作废检查结论与封存，旧试运行不能放行。 */
+  private async bumpCasesRevision(submissionId: string, cases: ReleaseEvalCase[]) {
+    const serialized = this.database.json(asJson(cases))
     const updated = await this.database<{ id: string }[]>`
       update agent_release_submissions
          set revision = revision + 1, checks = '[]'::jsonb, plan = '[]'::jsonb,
              sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
              status = 'draft',
-             cases = case when ${column === 'cases'} then ${serialized} else cases end,
-             missing_deps = case when ${column === 'missing_deps'} then ${serialized} else missing_deps end,
+             cases = ${serialized},
              updated_at = now()
        where tenant_id = ${tenantId} and id = ${submissionId}
          and status in ('draft', 'changes_requested')
@@ -942,15 +901,24 @@ export class PostgresAgentReleaseService {
 
   /* ---------- 试运行 ---------- */
 
-  async startTrial(agentId: string, userId: string): Promise<AgentReleaseState> {
+  async startTrial(agentId: string, userId: string, caseId: string): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
+    // 配置创建后直接进入试运行；每次发起都重新解析当前授权、依赖及绑定，
+    // 检查失败时不封存候选，也不创建任何 Runtime Run。
+    await this.runChecks(agentId, userId)
     const context = await this.requireContext(agentId)
     const submission = await this.requireSubmission(agentId, userId)
     if (submission.status !== 'draft' && submission.status !== 'changes_requested') {
       throw new Error('当前提交状态不能发起试运行')
     }
-    if (!submission.checks.length) throw new Error('请先运行检查')
-    const failedChecks = submission.checks.filter(check => check.status === 'failed')
+    if (submission.cases[0]?.id !== caseId) {
+      throw Object.assign(new Error('请从第一项案例开始验证'), { status: 422, code: 'case_out_of_order' })
+    }
+    if (submission.boundFingerprint !== draftFingerprint(context.draft!)) {
+      throw new Error('Agent 配置在自动检查后已变化，请重试试运行')
+    }
+    if (!submission.checks.length) throw new Error('发布候选在自动检查后已变化，请重试试运行')
+    const failedChecks = submission.checks.filter(check => check.status !== 'passed')
     if (failedChecks.length) throw new Error(`试运行被阻塞：${failedChecks.map(check => check.label).join('、')}`)
 
     // B-03/I-04：封存同时固定绑定依据——试运行案例与发布门禁必须引用同一修订集；
@@ -960,22 +928,37 @@ export class PostgresAgentReleaseService {
 
     const trialId = `trial-${randomUUID()}`
     const steps = TRIAL_STEPS.map(step => ({ ...step, status: 'pending' as TrialStepStatus }))
-    const sealed = await this.database<{ id: string }[]>`
-      update agent_release_submissions
-         set sealed_revision = ${submission.revision}, sealed_at = now(),
-             binding_refs = ${this.database.json(asJson(bound.pins))}, updated_at = now()
-       where tenant_id = ${tenantId} and id = ${submission.id}
-         and revision = ${submission.revision}
-         and status in ('draft', 'submitted', 'changes_requested')
-      returning id
-    `
-    if (!sealed.length) throw new Error('发布候选已变化，请刷新后重试')
-    await this.database`
-      insert into agent_trial_runs (id, tenant_id, submission_id, agent_id, submission_revision, status, steps, created_by)
-      values (${trialId}, ${tenantId}, ${submission.id}, ${agentId}, ${submission.revision}, 'checking', ${this.database.json(asJson(steps))}, ${actor.id})
-    `
+    await this.database.begin(async (tx) => {
+      const [locked] = await tx<{ revision: number; status: string; boundFingerprint: string }[]>`
+        select revision, status, bound_fingerprint as "boundFingerprint"
+          from agent_release_submissions
+         where tenant_id = ${tenantId} and id = ${submission.id} for update
+      `
+      if (!locked || locked.revision !== submission.revision || locked.boundFingerprint !== submission.boundFingerprint
+        || !['draft', 'changes_requested'].includes(locked.status)) {
+        throw new Error('发布候选已变化，请刷新后重试')
+      }
+      const [active] = await tx<{ id: string }[]>`
+        select id from agent_trial_runs
+         where tenant_id = ${tenantId} and submission_id = ${submission.id}
+           and submission_revision = ${submission.revision}
+           and status in ('checking', 'queued', 'executing', 'asserting')
+         limit 1
+      `
+      if (active) throw releaseConflict('本轮试运行仍在进行，请先完成或取消后再重新开始')
+      await tx`
+        update agent_release_submissions
+           set sealed_revision = ${submission.revision}, sealed_at = now(),
+               binding_refs = ${tx.json(asJson(bound.pins))}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${submission.id}
+      `
+      await tx`
+        insert into agent_trial_runs (id, tenant_id, submission_id, agent_id, submission_revision, status, steps, created_by)
+        values (${trialId}, ${tenantId}, ${submission.id}, ${agentId}, ${submission.revision}, 'checking', ${tx.json(asJson(steps))}, ${actor.id})
+      `
+    })
 
-    const outcome = await this.executeTrialSteps(context, { ...submission, bindingRefs: bound.pins }, steps, { trialId, actorId: actor.id })
+    const outcome = await this.executeTrialSteps(context, { ...submission, bindingRefs: bound.pins }, steps, { trialId, actorId: actor.id, caseId })
     // 终态守卫：只允许从进行中状态收敛；并发取消（cancelTrial）已落 'cancelled' 时
     // 不得被本次更新覆盖回 passed/failed/asserting。
     const finalized = await this.database<{ id: string }[]>`
@@ -999,12 +982,115 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
-  /** 试运行执行过程的状态机：进行中 → 'asserting'（等审核人逐项确认）/ 'failed' / 'cancelled'。 */
+  /** 已确认上一项后才可运行下一项；仅更新尚未执行的案例，不作废已封存的前序证据。 */
+  async continueTrialCase(
+    agentId: string,
+    trialId: string,
+    input: { caseId: string; input: string; rubric: string },
+    userId: string,
+  ): Promise<AgentReleaseState> {
+    const actor = await this.requireActor(userId)
+    const claimed = await this.database.begin(async (tx) => {
+      const [agent] = await tx<{ draftVersionId: string | null }[]>`
+        select draft_version_id as "draftVersionId" from agents
+         where tenant_id = ${tenantId} and id = ${agentId} for update
+      `
+      if (!agent?.draftVersionId) throw releaseConflict('当前 Agent 没有可继续验证的草稿版本')
+      // 与草稿写入保持 agents → agent_versions 的锁顺序；之后在同一事务读取定义，
+      // 防止等待锁后仍使用旧快照，或检查通过后再从库中读到另一份定义。
+      const [lockedDraft] = await tx<{ id: string }[]>`
+        select id from agent_versions
+         where tenant_id = ${tenantId} and agent_id = ${agentId}
+           and id = ${agent.draftVersionId} and status = 'draft' for share
+      `
+      if (!lockedDraft) throw releaseConflict('Agent 草稿版本已变化，请重新开始验证')
+      const context = await this.loadContext(agentId, tx)
+      const [submission] = await tx<SubmissionRow[]>`
+        select id, agent_id as "agentId", agent_version_id as "agentVersionId",
+               bound_fingerprint as "boundFingerprint", revision, status, source,
+               sealed_revision as "sealedRevision", sealed_at as "sealedAt",
+               binding_refs as "bindingRefs", cases, package_refs as "packageRefs",
+               missing_deps as "missingDeps", checks, plan,
+               review_note as "reviewNote", package_id as "packageId"
+          from agent_release_submissions
+         where tenant_id = ${tenantId} and agent_id = ${agentId}
+           and status in ('draft', 'changes_requested')
+         order by created_at desc limit 1 for update
+      `
+      if (!submission || !context?.draft || submission.agentVersionId !== agent.draftVersionId
+        || submission.sealedRevision !== submission.revision) {
+        throw releaseConflict('候选定义或封存修订已变化，请重新开始验证')
+      }
+      const [trial] = await tx<{ id: string; status: string; submissionRevision: number; steps: TrialRunStep[] }[]>`
+        select id, status, submission_revision as "submissionRevision", steps
+          from agent_trial_runs
+         where tenant_id = ${tenantId} and id = ${trialId} and agent_id = ${agentId}
+           and submission_id = ${submission.id} for update
+      `
+      const [latest] = await tx<{ id: string }[]>`
+        select id from agent_trial_runs where tenant_id = ${tenantId} and submission_id = ${submission.id}
+         order by started_at desc limit 1
+      `
+      if (!trial || latest?.id !== trialId || trial.status !== 'asserting'
+        || trial.submissionRevision !== submission.revision) {
+        throw releaseConflict('试运行已变化，不能继续执行旧案例')
+      }
+      if (submission.boundFingerprint !== draftFingerprint(context.draft)) {
+        throw releaseConflict('Agent 定义与封存内容不一致，请同步候选并从第一项重新验证')
+      }
+      const caseRuns = trial.steps.find(step => step.id === 'dsh')?.caseRuns ?? []
+      if (!caseRuns.length || caseRuns.some(run => run.verdict !== 'passed')
+        || caseRuns.some((run, index) => run.caseId !== submission.cases[index]?.id)) {
+        throw releaseConflict('请先确认上一项案例通过，再运行下一项')
+      }
+      const nextCase = submission.cases[caseRuns.length]
+      if (!nextCase || nextCase.id !== input.caseId) {
+        throw Object.assign(new Error('只能按顺序运行下一项案例'), { status: 422, code: 'case_out_of_order' })
+      }
+      const updatedCase: ReleaseEvalCase = {
+        ...nextCase,
+        input: input.input.trim(),
+        manualReview: { required: true, rubric: input.rubric.trim() },
+      }
+      const validationError = caseValidationError(updatedCase)
+      if (validationError) throw Object.assign(new Error(validationError), { status: 422, code: 'validation_failed' })
+      const cases = submission.cases.map((item, index) => index === caseRuns.length ? updatedCase : item)
+      await tx`
+        update agent_release_submissions set cases = ${tx.json(asJson(cases))}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${submission.id}
+      `
+      await tx`
+        update agent_trial_runs set status = 'checking'
+         where tenant_id = ${tenantId} and id = ${trialId} and status = 'asserting'
+      `
+      return { context, submission: { ...submission, cases }, steps: trial.steps.map(step => ({ ...step })) }
+    })
+    const outcome = await this.executeTrialSteps(claimed.context, claimed.submission, claimed.steps, {
+      trialId, actorId: actor.id, caseId: input.caseId,
+    })
+    const finalized = await this.database<{ id: string }[]>`
+      update agent_trial_runs
+         set status = ${outcome.status}, steps = ${this.database.json(asJson(claimed.steps))},
+             failure_stage = ${outcome.failureStage ?? null},
+             finished_at = case when ${outcome.status === 'asserting'} then finished_at else now() end
+       where tenant_id = ${tenantId} and id = ${trialId}
+         and status in ('checking', 'queued', 'executing', 'asserting')
+       returning id
+    `
+    await this.audit(actor.id, 'agent.release.trial.case', agentId,
+      finalized.length && outcome.status === 'asserting' ? 'success' : 'failed',
+      finalized.length
+        ? `试运行 ${trialId} 案例 ${input.caseId} ${outcome.status}`
+        : `试运行 ${trialId} 案例 ${input.caseId} 已并发取消，终态保持原值`)
+    return this.getReleaseState(agentId)
+  }
+
+  /** 试运行执行过程的状态机：每次只执行指定案例，历史批量证据仍可读取。 */
   private async executeTrialSteps(
     context: AgentContext,
     submission: SubmissionRow,
     steps: TrialRunStep[],
-    input: { trialId: string; actorId: string },
+    input: { trialId: string; actorId: string; caseId: string },
   ): Promise<{ status: 'asserting' | 'failed' | 'cancelled'; failureStage?: string }> {
     const mark = (index: number, status: TrialStepStatus, detail?: string) => {
       steps[index]!.status = status
@@ -1032,8 +1118,9 @@ export class PostgresAgentReleaseService {
     }
 
     const current = await this.loadContext(context.id)
-    if (!current?.draft || current.draft.id !== submission.agentVersionId) {
-      return failAt(2, '草稿版本在封存后发生变化，请重新发起试运行')
+    if (!current?.draft || current.draft.id !== submission.agentVersionId
+      || draftFingerprint(current.draft) !== submission.boundFingerprint) {
+      return failAt(2, '草稿定义在封存后发生变化，请从第一项重新试运行')
     }
     if (!this.orchestration) return failAt(2, '试运行执行链路未接入：缺少 Run/Attempt 编排服务')
     const coveredKinds = CASE_KINDS.filter(kind => submission.cases.some(item => item.kind === kind))
@@ -1048,7 +1135,9 @@ export class PostgresAgentReleaseService {
       insert into sessions (id, tenant_id, created_by, title, status, audience, workspace_id, agent_version_id)
       values (${sessionId}, ${tenantId}, ${input.actorId}, ${`发布试运行 ${context.id} rev${submission.revision}`}, 'active', 'admin', null, null)
     `
-    mark(2, 'passed', `试运行会话 ${sessionId} 就绪，${submission.cases.length} 个案例进入调度`)
+    const casesToRun = submission.cases.filter(item => item.id === input.caseId)
+    if (!casesToRun.length) return failAt(2, '当前案例不在发布候选中')
+    mark(2, 'passed', `试运行会话 ${sessionId} 就绪，本次调度 ${casesToRun.length} 个案例`)
 
     if (resolved.missingSkills.length || resolved.missingTools.length) {
       return failAt(3, `依赖在执行前失效：${[...resolved.missingSkills, ...resolved.missingTools].join('、')}`)
@@ -1058,9 +1147,13 @@ export class PostgresAgentReleaseService {
     mark(3, 'running')
     // 进入执行段：状态推进为 executing，取消端点依赖它识别可取消窗口。
     await this.persistTrialProgress(input.trialId, 'executing', steps)
-    const caseRuns: TrialCaseRun[] = []
+    const previousCaseCount = steps[3]?.caseRuns?.length ?? 0
+    const caseRuns: TrialCaseRun[] = [...(steps[3]?.caseRuns ?? [])]
+    if (casesToRun.some(item => caseRuns.some(run => run.caseId === item.id))) {
+      return failAt(3, '案例已经执行，不能在同一试运行中重复派发')
+    }
     let cancelled = false
-    for (const evalCase of submission.cases) {
+    for (const evalCase of casesToRun) {
       // 案例之间检查取消：cancelTrial 先落库 cancelled，这里立即停发后续案例。
       if (await this.isTrialCancelled(input.trialId)) { cancelled = true; break }
       try {
@@ -1068,6 +1161,7 @@ export class PostgresAgentReleaseService {
           userId: input.actorId,
           sessionId,
           draftVersionId: submission.agentVersionId,
+          expectedDefinitionFingerprint: submission.boundFingerprint,
           message: evalCase.input,
           idempotencyKey: `trial-${input.trialId}-${evalCase.id}`,
         })
@@ -1099,17 +1193,17 @@ export class PostgresAgentReleaseService {
       if (!await this.persistTrialProgress(input.trialId, 'executing', steps)) { cancelled = true; break }
       if (caseRuns.at(-1)?.runId === null) break
     }
-    const dispatched = caseRuns.length
+    const dispatched = caseRuns.length - previousCaseCount
     const summary = caseRuns.map(item => `「${item.name}」${item.status}`).join('，')
     if (cancelled) {
       mark(3, 'skipped', `试运行已取消：${summary || '无案例执行'}`)
       for (let index = 4; index < steps.length; index++) mark(index, 'skipped')
       return { status: 'cancelled' }
     }
-    if (caseRuns.some(item => item.runId === null) || dispatched < submission.cases.length) {
+    if (caseRuns.some(item => item.runId === null) || dispatched < casesToRun.length) {
       return failAt(3, `案例派发失败：${summary || '无案例执行'}`)
     }
-    mark(3, 'passed', `${dispatched} 个案例经 Run/Attempt → Runtime Adapter → DSH 执行完成：${summary}`)
+    mark(3, 'passed', `${caseRuns.length}/${submission.cases.length} 个案例经 Run/Attempt → Runtime Adapter → DSH 执行完成：${summary}`)
 
     // 机器只执行案例声明且由当前执行证据可判定的断言；开放质量由审核人依据
     // manualReview.rubric 逐项确认，避免把“有输出”误报为目标已达成。
@@ -1157,19 +1251,32 @@ export class PostgresAgentReleaseService {
   ): Promise<AgentReleaseState> {
     const actor = await this.requireActor(userId)
     const result = await this.database.begin(async (tx) => {
-      const [trial] = await tx<{ id: string; status: string; steps: TrialRunStep[] }[]>`
-        select id, status, steps from agent_trial_runs
+      const [trial] = await tx<{ id: string; status: string; steps: TrialRunStep[]; submissionId: string; submissionRevision: number }[]>`
+        select id, status, steps, submission_id as "submissionId",
+               submission_revision as "submissionRevision" from agent_trial_runs
          where tenant_id = ${tenantId} and id = ${trialId} and agent_id = ${agentId}
          for update
       `
       if (!trial) throw Object.assign(new Error('试运行不存在'), { status: 404, code: 'trial_not_found' })
-      if (trial.status !== 'asserting') throw new Error('试运行不在待确认状态，无法登记确认结论')
+      if (trial.status !== 'asserting') throw releaseConflict('试运行不在待确认状态，无法登记确认结论')
+      const [submission] = await tx<{ revision: number; cases: ReleaseEvalCase[] }[]>`
+        select revision, cases from agent_release_submissions
+         where tenant_id = ${tenantId} and id = ${trial.submissionId}
+      `
+      if (!submission || submission.revision !== trial.submissionRevision) {
+        throw releaseConflict('案例或候选修订已变化，请重新开始验证')
+      }
       const dshStep = trial.steps.find(step => step.id === 'dsh')
       const caseRuns = dshStep?.caseRuns ?? []
       if (!caseRuns.length) throw new Error('试运行缺少案例执行记录，无法确认')
+      const pendingRuns = caseRuns.filter(item => !item.verdict)
+      if (!pendingRuns.length) throw releaseConflict('当前没有待确认的案例')
       const verdictMap = new Map(verdicts.map(item => [item.caseId, item]))
-      if (verdictMap.size !== caseRuns.length || caseRuns.some(item => !verdictMap.has(item.caseId))) {
-        throw new Error('需要对每个执行过的案例逐项登记确认结论')
+      if (!verdictMap.size || verdictMap.size !== verdicts.length
+        || [...verdictMap.keys()].some(caseId => !pendingRuns.some(item => item.caseId === caseId))
+        || (verdictMap.size !== pendingRuns.length
+          && (verdictMap.size !== 1 || !verdictMap.has(pendingRuns[0]!.caseId)))) {
+        throw new Error('只能逐项确认尚未判定的案例，不能覆盖已确认结论')
       }
       for (const item of verdicts) {
         if (item.verdict !== 'passed' && item.verdict !== 'failed') {
@@ -1178,36 +1285,46 @@ export class PostgresAgentReleaseService {
       }
       const steps = trial.steps.map(step => ({ ...step }))
       const confirmedRuns = caseRuns.map(item => {
-        const verdict = verdictMap.get(item.caseId)!
-        return { ...item, verdict: verdict.verdict, ...(verdict.note?.trim() ? { verdictNote: verdict.note.trim() } : {}) }
+        const verdict = verdictMap.get(item.caseId)
+        return verdict
+          ? { ...item, verdict: verdict.verdict, ...(verdict.note?.trim() ? { verdictNote: verdict.note.trim() } : {}) }
+          : item
       })
       const dshIndex = steps.findIndex(step => step.id === 'dsh')
       steps[dshIndex]!.caseRuns = confirmedRuns
       const rejected = confirmedRuns.filter(item => item.verdict === 'failed')
-      const passed = rejected.length === 0
+      const complete = confirmedRuns.length === submission.cases.length
+        && confirmedRuns.every((item, index) => item.caseId === submission.cases[index]?.id && item.verdict === 'passed')
+      const failed = rejected.length > 0
+      const passed = !failed && complete
       const assertIndex = steps.findIndex(step => step.id === 'assert')
-      steps[assertIndex]!.status = passed ? 'passed' : 'failed'
-      steps[assertIndex]!.detail = passed
-        ? `${confirmedRuns.length} 个案例输出全部经审核人确认符合预期`
-        : `审核人判定不符合预期的案例：${rejected.map(item => `「${item.name}」`).join('、')}`
+      steps[assertIndex]!.status = failed ? 'failed' : passed ? 'passed' : 'running'
+      steps[assertIndex]!.detail = failed
+        ? `审核人判定不符合预期的案例：${rejected.map(item => `「${item.name}」`).join('、')}`
+        : passed
+          ? `${confirmedRuns.length} 个案例输出全部经审核人确认符合预期`
+          : `${confirmedRuns.filter(item => item.verdict === 'passed').length}/${submission.cases.length} 个案例已确认，等待下一项`
       const reportIndex = steps.findIndex(step => step.id === 'report')
       if (reportIndex >= 0) {
-        steps[reportIndex]!.status = passed ? 'passed' : 'skipped'
+        steps[reportIndex]!.status = passed ? 'passed' : failed ? 'skipped' : 'pending'
         if (passed) steps[reportIndex]!.detail = '结果与证据已汇总，可进入审核发布'
       }
       const updated = await tx<{ id: string }[]>`
         update agent_trial_runs
-           set status = ${passed ? 'passed' : 'failed'}, steps = ${tx.json(asJson(steps))},
-               failure_stage = ${passed ? null : '案例终态断言'}, finished_at = now()
+           set status = ${failed ? 'failed' : passed ? 'passed' : 'asserting'}, steps = ${tx.json(asJson(steps))},
+               failure_stage = ${failed ? '案例终态断言' : null},
+               finished_at = case when ${passed || failed} then now() else finished_at end
          where tenant_id = ${tenantId} and id = ${trialId} and status = 'asserting'
         returning id
       `
       if (!updated.length) throw new Error('试运行状态已变化，请刷新后重试')
-      return passed
+      return { passed, failed, confirmed: confirmedRuns.filter(item => item.verdict === 'passed').length, total: submission.cases.length }
     })
     await this.audit(
-      actor.id, 'agent.release.trial.confirm', agentId, result ? 'success' : 'failed',
-      result ? `试运行 ${trialId} 全部案例确认通过` : `试运行 ${trialId} 存在不符合预期的案例`,
+      actor.id, 'agent.release.trial.confirm', agentId, result.failed ? 'failed' : 'success',
+      result.passed ? `试运行 ${trialId} 全部案例确认通过`
+        : result.failed ? `试运行 ${trialId} 存在不符合预期的案例`
+          : `试运行 ${trialId} 已确认 ${result.confirmed}/${result.total} 个案例`,
     )
     return this.getReleaseState(agentId)
   }
@@ -1470,355 +1587,10 @@ export class PostgresAgentReleaseService {
     }
   }
 
-  /* ---------- ZIP 导入 ---------- */
-
-  /** 仅解析与解析依赖，不落库：供导入前预览使用。 */
-  async inspectPackage(fileName: string, bytes: Uint8Array): Promise<AgentPackageInspection> {
-    if (!fileName.toLowerCase().endsWith('.zip')) throw new Error('仅支持 ZIP 格式的 Agent 发布包')
-    if (!bytes.byteLength) throw new Error('发布包不能为空')
-    const parsed = parseAgentPackage(bytes)
-    const resolved = await this.resolveDeclared(parsed.declared)
-    return {
-      fileName,
-      manifest: parsed.spec.metadata,
-      files: Object.keys(parsed.files).sort(),
-      systemPrompt: parsed.spec.instructions.body,
-      workInstructions: parsed.spec.workProcedures?.body ?? '',
-      resolved: { skills: resolved.skills, tools: resolved.tools },
-      missing: { skills: resolved.missingSkills, tools: resolved.missingTools },
-      packageRefs: parsed.packageRefs,
-      cases: parsed.cases,
-      warnings: [...parsed.warnings, ...resolved.warnings],
-    }
-  }
-
-  async importPackage(userId: string, fileName: string, bytes: Uint8Array): Promise<AgentReleaseState> {
-    const actor = await this.requireActor(userId)
-    if (!fileName.toLowerCase().endsWith('.zip')) throw new Error('仅支持 ZIP 格式的 Agent 发布包')
-    if (!bytes.byteLength) throw new Error('发布包不能为空')
-    const parsed = parseAgentPackage(bytes)
-    const resolved = await this.resolveDeclared(parsed.declared)
-    const warnings = [...parsed.warnings, ...resolved.warnings]
-    const packageId = `agent-package-${randomUUID()}`
-    const stagingDir = join(this.packagesDir, `.staging-${packageId}`)
-    const finalDir = join(this.packagesDir, packageId)
-    const agentId = parsed.spec.metadata.id
-    const packageSha = createHash('sha256').update(bytes).digest('hex')
-    let duplicate = false
-    try {
-      // 先写临时目录再原子改名：写入中途 I/O 失败或数据库事务失败都只留下可整体
-      // 清理的暂存目录，不会在最终目录积累没有数据库记录的半成品。
-      await this.storePackageFiles(stagingDir, parsed.files)
-      await rename(stagingDir, finalDir)
-      await this.database.begin(async (tx) => {
-      const [existing] = await tx<{ draftVersionId: string | null }[]>`
-        select draft_version_id as "draftVersionId" from agents where tenant_id = ${tenantId} and id = ${agentId} for update
-      `
-      if (existing) {
-        // 幂等：同 Agent + 同声明版本 + 同内容摘要 → 返回既有治理结果，不新建包/
-        // 草稿也不推进修订；同版本不同内容 → 明确版本冲突，绝不自动改写声明版本。
-        // 检查在 agents 行锁之后执行，并发重复导入在这里串行收敛。
-        const [priorPackage] = await tx<{ sha256: string }[]>`
-          select sha256 from agent_packages
-           where tenant_id = ${tenantId} and agent_id = ${agentId}
-             and manifest->>'version' = ${parsed.spec.metadata.version}
-           order by created_at desc limit 1
-        `
-        if (priorPackage?.sha256 === packageSha) { duplicate = true; return }
-        if (priorPackage) {
-          throw Object.assign(
-            new Error(`版本 v${parsed.spec.metadata.version} 已导入过内容不同的发布包；相同内容可直接复用，不同内容请修改包内 version`),
-            { status: 409, code: 'version_conflict' },
-          )
-        }
-      }
-      let draftVersionId: string
-      let draftVersion: string
-      // 平台字段（可见角色/数据范围/团队空间开关）不随包覆写：首次导入用平台默认值，
-      // 重复导入保留管理员在平台上的既有配置。
-      let platformFields: { roleIds: string[]; dataScopes: string[]; allowWorkspaceJoin: boolean; mcpScope: AgentMcpScope } = { ...ZIP_IMPORT_PLATFORM_DEFAULTS }
-      if (!existing) {
-        draftVersionId = `agent-version-${randomUUID()}`
-        draftVersion = parsed.spec.metadata.version
-        await tx`
-          insert into agents (id, tenant_id, name, description, welcome_message, owner_user_id, created_by, status, draft_version_id)
-          values (${agentId}, ${tenantId}, ${parsed.spec.metadata.name}, ${parsed.spec.metadata.description}, ${parsed.spec.catalog.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null)
-        `
-        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)
-        await tx`update agents set draft_version_id = ${draftVersionId}, allow_workspace_join = ${platformFields.allowWorkspaceJoin}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
-      } else if (existing.draftVersionId) {
-        draftVersionId = existing.draftVersionId
-        const updated = await this.updateDraftVersion(tx, draftVersionId, parsed, resolved)
-        draftVersion = updated.version
-        platformFields = { ...platformFields, roleIds: updated.roleIds, dataScopes: updated.dataScopes, mcpScope: updated.mcpScope }
-      } else {
-        draftVersion = await this.availableVersion(tx, agentId, parsed.spec.metadata.version)
-        draftVersionId = `agent-version-${randomUUID()}`
-        const [current] = await tx<{ roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }[]>`
-          select av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes", av.mcp_scope as "mcpScope"
-            from agents a
-            join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
-           where a.tenant_id = ${tenantId} and a.id = ${agentId}
-        `
-        if (current) platformFields = { ...platformFields, roleIds: current.roleIds, dataScopes: current.dataScopes, mcpScope: current.mcpScope }
-        await this.insertDraftVersion(tx, agentId, draftVersionId, draftVersion, parsed, resolved, actor.id, platformFields)
-        await tx`update agents set draft_version_id = ${draftVersionId}, updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
-      }
-
-      const boundFingerprint = draftFingerprint({
-        id: draftVersionId,
-        version: draftVersion,
-        name: parsed.spec.metadata.name,
-        description: parsed.spec.metadata.description,
-        welcomeMessage: parsed.spec.catalog.welcomeMessage,
-        systemPrompt: parsed.spec.instructions.body,
-        roleIds: platformFields.roleIds,
-        dataScopes: platformFields.dataScopes,
-        examplePrompts: parsed.spec.catalog.examplePrompts,
-        maxOutputBytes: parsed.spec.limits.maxOutputBytes,
-        maxToolCalls: parsed.spec.limits.maxToolCalls,
-        timeoutSeconds: parsed.spec.limits.timeoutSeconds,
-        skills: resolved.skills,
-        tools: resolved.tools,
-        mcpScope: platformFields.mcpScope,
-        agentSpec: parsed.spec,
-      })
-
-      await tx`
-        insert into agent_packages (id, tenant_id, agent_id, file_name, sha256, storage_dir, manifest, files, warnings, created_by)
-        values (
-          ${packageId}, ${tenantId}, ${agentId}, ${fileName},
-          ${packageSha},
-          ${join(this.packagesDir, packageId)},
-          ${tx.json(asJson({ ...parsed.spec.metadata, rootDir: parsed.rootDir, checksumsVerified: parsed.checksumsVerified, declared: parsed.declared }))},
-          ${tx.json(asJson(Object.keys(parsed.files)))}, ${tx.json(asJson(warnings))}, ${actor.id}
-        )
-      `
-
-      const [submission] = await tx<{ id: string; status: string }[]>`
-        select id, status from agent_release_submissions
-         where tenant_id = ${tenantId} and agent_id = ${agentId} and status in ('draft', 'submitted', 'changes_requested')
-         for update
-      `
-      const packageRefs = {
-        skills: parsed.packageRefs.skills.map(item => ({ ...item })),
-        tools: parsed.packageRefs.tools.map(item => ({ ...item })),
-      }
-      const missingDeps = { skills: resolved.missingSkills, tools: resolved.missingTools }
-      if (!submission) {
-        const cases = parsed.cases.length
-          ? parsed.cases.map(item => ({ ...item, id: `case-${randomUUID()}` }))
-          : defaultCases({ name: parsed.spec.metadata.name, description: parsed.spec.metadata.description, examplePrompts: parsed.spec.catalog.examplePrompts, dataScopes: platformFields.dataScopes })
-        await tx`
-          insert into agent_release_submissions (
-            id, tenant_id, agent_id, agent_version_id, bound_fingerprint, revision, status, source,
-            cases, package_refs, missing_deps, package_id, created_by
-          ) values (
-            ${`submission-${randomUUID()}`}, ${tenantId}, ${agentId}, ${draftVersionId}, ${boundFingerprint},
-            1, 'draft', 'zip', ${tx.json(asJson(cases))}, ${tx.json(asJson(packageRefs))}, ${tx.json(asJson(missingDeps))},
-            ${packageId}, ${actor.id}
-          )
-        `
-      } else {
-        // submitted 候选封存：重新导入等于改写审核中内容，必须先退回或撤回。
-        if (submission.status === 'submitted') {
-          throw Object.assign(
-            new Error('候选已提交审核，请先退回或撤回后再导入新的发布包'),
-            { status: 409, code: 'submission_locked' },
-          )
-        }
-        const [current] = await tx<{ cases: ReleaseEvalCase[] }[]>`
-          select cases from agent_release_submissions where tenant_id = ${tenantId} and id = ${submission.id}
-        `
-        const cases = parsed.cases.length ? parsed.cases.map(item => ({ ...item, id: `case-${randomUUID()}` })) : current!.cases
-        await tx`
-          update agent_release_submissions
-             set agent_version_id = ${draftVersionId}, bound_fingerprint = ${boundFingerprint},
-                 revision = revision + 1, source = 'zip', status = 'draft',
-                 cases = ${tx.json(asJson(cases))}, package_refs = ${tx.json(asJson(packageRefs))},
-                 missing_deps = ${tx.json(asJson(missingDeps))},
-                 checks = '[]'::jsonb, plan = '[]'::jsonb,
-                 sealed_revision = null, sealed_at = null, binding_refs = '[]'::jsonb,
-                 package_id = ${packageId}, updated_at = now()
-           where tenant_id = ${tenantId} and id = ${submission.id}
-        `
-      }
-      })
-    } catch (error) {
-      await rm(stagingDir, { recursive: true, force: true }).catch(() => {})
-      await rm(finalDir, { recursive: true, force: true }).catch(() => {})
-      throw error
-    }
-    if (duplicate) {
-      // 相同包重复导入：事务内未写入任何记录，本次落盘的包文件直接清掉。
-      await rm(finalDir, { recursive: true, force: true }).catch(() => {})
-      await this.audit(actor.id, 'agent.release.import', agentId, 'success', `重复导入相同发布包 ${fileName}（v${parsed.spec.metadata.version}），返回既有治理状态`)
-      return this.getReleaseState(agentId)
-    }
-    await this.audit(actor.id, 'agent.release.import', agentId, 'success', `导入发布包 ${fileName}（v${parsed.spec.metadata.version}）`)
-    return this.getReleaseState(agentId)
-  }
-
-  private async insertDraftVersion(
-    tx: DatabaseTransaction,
-    agentId: string,
-    versionId: string,
-    version: string,
-    parsed: ReturnType<typeof parseAgentPackage>,
-    resolved: { skills: string[]; tools: string[] },
-    actorId: string,
-    platformFields: { roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope },
-  ) {
-    // agent_spec 记录声明式定义（含包内候选引用）；skill_refs/tool_refs 记录平台
-    // 已解析引用——两者同一来源（parsed.spec + resolved），不是第二套定义。
-    const spec = { ...parsed.spec, metadata: { ...parsed.spec.metadata, version } }
-    await tx`
-      insert into agent_versions (
-        id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-        max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, change_summary
-      ) values (
-        ${versionId}, ${tenantId}, ${agentId}, ${version}, ${parsed.spec.metadata.name},
-        ${parsed.spec.metadata.description}, ${parsed.spec.catalog.welcomeMessage},
-        ${tx.json(asJson(parsed.spec.catalog.examplePrompts))}, ${parsed.spec.instructions.body},
-        ${tx.json(asJson(platformFields.roleIds))}, ${tx.json(asJson(platformFields.dataScopes))},
-        ${parsed.spec.limits.maxOutputBytes}, ${parsed.spec.limits.maxToolCalls}, ${parsed.spec.limits.timeoutSeconds},
-        ${tx.json(asJson(resolved.skills))}, ${tx.json(asJson(resolved.tools))},
-        ${tx.json(asJson(platformFields.mcpScope))},
-        ${tx.json(asJson(spec))},
-        'draft', ${actorId}, 'ZIP 发布包导入'
-      )
-    `
-  }
-
-  private async updateDraftVersion(
-    tx: DatabaseTransaction,
-    draftVersionId: string,
-    parsed: ReturnType<typeof parseAgentPackage>,
-    resolved: { skills: string[]; tools: string[] },
-  ): Promise<{ version: string; roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }> {
-    const [conflict] = await tx<{ id: string }[]>`
-      select av.id from agent_versions av
-        join agent_versions draft on draft.tenant_id = av.tenant_id and draft.id = ${draftVersionId}
-       where av.tenant_id = ${tenantId} and av.agent_id = draft.agent_id
-         and av.version = ${parsed.spec.metadata.version} and av.id <> ${draftVersionId}
-    `
-    if (conflict) throw new Error(`版本 v${parsed.spec.metadata.version} 已存在于该 Agent 的版本记录中，请修改包内 version 后重新导入`)
-    // 平台字段（visible_role_ids/data_scopes）不由包声明，重复导入保留既有配置。
-    const [current] = await tx<{ roleIds: string[]; dataScopes: string[]; mcpScope: AgentMcpScope }[]>`
-      select visible_role_ids as "roleIds", data_scopes as "dataScopes", mcp_scope as "mcpScope"
-        from agent_versions
-       where tenant_id = ${tenantId} and id = ${draftVersionId}
-    `
-    await tx`
-      update agent_versions
-         set version = ${parsed.spec.metadata.version}, name = ${parsed.spec.metadata.name},
-             description = ${parsed.spec.metadata.description}, welcome_message = ${parsed.spec.catalog.welcomeMessage},
-             example_prompts = ${tx.json(asJson(parsed.spec.catalog.examplePrompts))},
-             system_prompt = ${parsed.spec.instructions.body},
-             max_output_bytes = ${parsed.spec.limits.maxOutputBytes},
-             max_tool_calls = ${parsed.spec.limits.maxToolCalls},
-             timeout_seconds = ${parsed.spec.limits.timeoutSeconds},
-             skill_refs = ${tx.json(asJson(resolved.skills))}, tool_refs = ${tx.json(asJson(resolved.tools))},
-             agent_spec = ${tx.json(asJson(parsed.spec))},
-             change_summary = 'ZIP 发布包导入'
-       where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
-    `
-    return {
-      version: parsed.spec.metadata.version,
-      roleIds: current?.roleIds ?? ZIP_IMPORT_PLATFORM_DEFAULTS.roleIds,
-      dataScopes: current?.dataScopes ?? ZIP_IMPORT_PLATFORM_DEFAULTS.dataScopes,
-      mcpScope: current?.mcpScope ?? ZIP_IMPORT_PLATFORM_DEFAULTS.mcpScope,
-    }
-  }
-
-  /**
-   * 包声明版本的平台占用检查：版本号来自作者声明，平台绝不自动改写——已存在同号
-   * 版本（配置创建或既往导入）即明确冲突，由调用方修改包内 version 后重导。
-   */
-  private async availableVersion(tx: DatabaseTransaction, agentId: string, wanted: string) {
-    const [conflict] = await tx<{ id: string }[]>`
-      select id from agent_versions where tenant_id = ${tenantId} and agent_id = ${agentId} and version = ${wanted}
-    `
-    if (conflict) {
-      throw Object.assign(
-        new Error(`版本 v${wanted} 已存在于该 Agent 的版本记录中，不能导入同号不同内容的包；请修改包内 version 后重新导入`),
-        { status: 409, code: 'version_conflict' },
-      )
-    }
-    return wanted
-  }
-
-  /** 声明依赖的平台解析：已发布/可用 → `id@version`，否则进 missing；已解析 Skill 的运行时依赖工具并入工具允许列表。 */
-  private async resolveDeclared(declared: { skills: string[]; tools: string[] }) {
-    const warnings: string[] = []
-    const missingSkills: string[] = []
-    const missingTools: string[] = []
-    const resolvedSkills: string[] = []
-    const resolvedTools: string[] = []
-
-    // 声明引用在新格式下必为 `id@x.y.z` 精确版本（解析器已拒绝缺省/非精确写法），
-    // 直接走能力服务的规范断言，不做 implicit/latest 版本解析。
-    for (const reference of declared.skills) {
-      if (!this.skills) { missingSkills.push(reference); continue }
-      try {
-        await this.skills.assertPublishedReferences([reference])
-        resolvedSkills.push(reference)
-      } catch {
-        missingSkills.push(reference)
-      }
-    }
-    for (const reference of declared.tools) {
-      if (!this.tools) { missingTools.push(reference); continue }
-      try {
-        await this.tools.assertAvailableReferences([reference])
-        resolvedTools.push(reference)
-      } catch {
-        missingTools.push(reference)
-      }
-    }
-
-    // 已解析 Skill 的运行时依赖工具必须显式进入 Agent 工具允许列表。
-    if (resolvedSkills.length && this.skills) {
-      const runtimeSkills = await this.skills.resolveRuntimeSkills(resolvedSkills)
-      const selected = new Set(resolvedTools.map(reference => parseRef(reference).id))
-      for (const dependency of [...new Set(runtimeSkills.flatMap(skill => skill.tools))]) {
-        if (['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(dependency)) continue
-        const depId = parseRef(dependency).id
-        if (selected.has(depId)) continue
-        try {
-          if (!this.tools) throw new Error('工具服务未接入')
-          await this.tools.assertAvailableReferences([dependency])
-          resolvedTools.push(dependency)
-        } catch {
-          missingTools.push(depId)
-          warnings.push(`已解析 Skill 依赖的工具 ${depId} 未发布或不可用，标记「缺少工具」并阻塞试运行`)
-        }
-      }
-    }
-    for (const reference of missingSkills) warnings.push(`声明的 Skill ${reference} 未在平台发布，标记「缺少依赖」并阻塞试运行`)
-    for (const reference of missingTools) warnings.push(`声明的工具 ${reference} 未在平台接入，标记「缺少工具」并阻塞试运行`)
-    return {
-      skills: [...new Set(resolvedSkills)],
-      tools: [...new Set(resolvedTools)],
-      missingSkills: [...new Set(missingSkills)],
-      missingTools: [...new Set(missingTools)],
-      warnings,
-    }
-  }
-
-  private async storePackageFiles(targetDir: string, files: Record<string, Uint8Array>) {
-    for (const [path, content] of Object.entries(files)) {
-      const target = join(targetDir, path)
-      await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, content)
-    }
-  }
-
   /* ---------- 基础查询 ---------- */
 
-  private async loadContext(agentId: string): Promise<AgentContext | undefined> {
-    const [row] = await this.database<{
+  private async loadContext(agentId: string, db: DatabaseClient | DatabaseTransaction = this.database): Promise<AgentContext | undefined> {
+    const [row] = await db<{
       id: string
       persistedStatus: string
       activeVersionId: string | null
@@ -1878,7 +1650,7 @@ export class PostgresAgentReleaseService {
           timeoutSeconds: row.draftTimeoutSeconds ?? 300,
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],
-          mcpScope: row.draftMcpScope ?? ZIP_IMPORT_PLATFORM_DEFAULTS.mcpScope,
+          mcpScope: row.draftMcpScope ?? { mode: 'all', connectorIds: [] },
           delegationPolicy: row.draftDelegationPolicy ?? {
             allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
           },

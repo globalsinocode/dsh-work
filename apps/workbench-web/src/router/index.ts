@@ -7,6 +7,8 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   scrollBehavior: () => ({ top: 0 }),
   routes: [
+    { path: '/login', name: 'local-login', component: () => import('@/views/LocalLoginView.vue'), meta: { title: '登录', public: true } },
+    { path: '/change-password', name: 'change-password', component: () => import('@/views/LocalLoginView.vue'), meta: { title: '修改密码', public: true } },
     { path: '/', redirect: '/workbench' },
     {
       path: '/login-error',
@@ -106,6 +108,9 @@ router.beforeEach(async (to) => {
   try {
     await authStore.load()
   } catch (cause) {
+    if (cause instanceof Error && 'code' in cause && cause.code === 'password_change_required') {
+      return { name: 'change-password', query: { return_to: to.fullPath } }
+    }
     const status = errorStatus(cause)
     if (status === 401) {
       authStore.login(to.fullPath)

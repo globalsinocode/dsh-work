@@ -98,6 +98,12 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     ],
   },
   {
+    label: '平台设置',
+    items: [
+      { label: '登录设置', path: '/login-settings', icon: Key, permission: 'admin', requiresIdentityAdministration: true },
+    ],
+  },
+  {
     label: '安全与运维',
     items: [
       { label: 'Runtimes', path: '/runtimes', icon: Cpu, permission: 'admin' },

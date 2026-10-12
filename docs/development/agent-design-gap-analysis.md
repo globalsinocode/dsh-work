@@ -6,6 +6,8 @@
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
+**2026-10-03 流程更新：** Agent 的新建、编辑只通过管理端界面配置；ZIP 导入页面、客户端调用、管理 API 和发布服务导入方法已移除，版本 ZIP 导出与离线包格式校验保留。发布操作收敛为「界面配置 → 人工试运行验证 → 确认发布」：五类默认案例用带状态的页签逐项填写、逐项通过 DSH 执行与人工确认；自动检查失败不派发该项 Run，前一项未确认不能运行下一项，未运行案例可在轮到它时调整而保留前序已通过证据；发布事务仍要求五项完整通过。下文 2026-09 的 ZIP 导入实施记录是历史证据，不再描述当前可用入口；PF-07 的 P2 状态不因界面简化而改变。
+
 ## 1. 结论与状态口径
 
 已有统一 DSH 执行、严格 AgentSpec 包格式、真实工具绑定修订、精确依赖、当前授权、基础预算、轻量自动任务和可核验任务结果外层。B-05/I-08 已补自动任务 AC-20～24 的 P1 浏览器证据，并形成账号、团队成员、输入文件、固定能力和授权服务故障的阶段矩阵；文件/工具绑定领取边界、活动期文件撤权、成果提交前团队撤权、授权故障分类及结果端点直接证据均已进入 `12435b0`。平台通用权限/故障矩阵及 Agent 专属 `AgentEvaluationSuite v1` 发布门禁已达到代码级闭环；此前 P2 只有口头结论，无可复核的环境、版本、Run/Attempt、验收人和限制记录。当前 PF-07 P2 不能据此标为通过。真实高级模型能力、外部异步写操作、持续执行及其他按需扩展仍未启用。
@@ -96,7 +98,7 @@ AE-02 保留两条语义边界：`requested_by` 继续指向人类请求者，�
 
 ### D-02 包的当前支持与目标格式分开
 
-**当前契约（B-01 基础上由 AE-01 更新）：** `parseAgentPackage` 只接受分层 `agent.yaml`（`apiVersion: dsh-work.ai/v2`、`kind: AgentPackage`、`metadata`、`spec`），经 [agent-package.schema.json](agent-package.schema.json)（Ajv，`additionalProperties: false`）严格校验后归一化为 `AgentSpec`。指令必须经 `spec.instructions` 固定引用包根目录 `SOUL.md`；能力依赖为 `capabilities.skills/tools` 下可为空的 `id@x.y.z` 精确引用；`input`/`output`/`context`/`limits`/`model.requirements`/`evaluation` 均有版本化契约。旧扁平清单、字段别名（display_name、prompt_file、role_ids、skill_refs、tool_refs、max_tokens 等）、未知字段、重复 YAML 键与平台受管字段（凭据、端点、模型路由、执行环境、绑定、授权范围、调度、安装钩子等）一律在解析阶段拒绝，不再有警告后忽略或双格式解析。无 `evals/cases.yaml` 时发布服务仍生成默认案例（带 `origin` 来源标记）；缺少 checksums 时解析给警告，发布检查阻塞；提供清单时须覆盖全部文件（除清单自身）。解析、候选检查与发布是不同阶段，不支持用“平台自动生成摘要”替代 ZIP 发布门禁。配置入口与 ZIP 归一化为同一 `AgentSpec` 并持久化于 `agent_versions.agent_spec`；限额列由 `max_tokens` 更换为 `max_output_bytes` + `max_tool_calls`（迁移 0046），既有行按平台默认值补齐、不回填定义。
+**当前契约（2026-10-03）：** 创建和编辑只经管理端配置入口，统一保存 `AgentSpec` 于 `agent_versions.agent_spec`；没有 ZIP 上传或导入 API。界面配置时解析已选精确 Skill 版本和 MCP 使用范围，保存草稿时生成五类 `AgentEvaluationSuite v1` 默认案例。验证页仅编辑、运行并人工确认当前案例；首次开始自动执行候选检查，阻塞时不封存、不派发 Run；后续案例在前一项确认通过后才可运行，每次仍复核当前依赖与绑定。未运行案例可在轮到时更新输入和 rubric 而保留前序证据；五项通过后发布事务再复核封存证据。`parseAgentPackage`、分层 `agent.yaml` 与严格 Schema 保留用于版本 ZIP 导出和离线完整性核对，不再构成 Agent 创建路径。历史 B-01、AE-01 的 ZIP 导入实现与验收记录保留在下文，不代表现行接口。
 
 **历史记录（2026-09-19，已被 B-01 取代）：** 原基线曾接受扁平清单与字段别名并做冲突校验，详见 I-02 完成记录。2026-09-20“不考虑历史兼容”决策生效后，别名接受、未知字段警告、双格式解析均已移除，不做旧包兼容或渐进迁移。
 

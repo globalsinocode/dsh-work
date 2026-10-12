@@ -1,14 +1,11 @@
-import type { IncomingMessage } from 'node:http'
-
 import type { PostgresAgentReleaseService, ReleaseEvalCase } from '../../modules/agent/postgres-agent-release-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
 const basePath = '/api/admin/v1'
-const maxUploadBytes = 20 * 1024 * 1024
 
 /**
  * Agent 发布工作台的服务端接口：候选修订、检查、试运行、单次审核发布与
- * ZIP 发布包导入。替代前端原型 overlay 内存态。
+ * 发布证据。替代前端原型 overlay 内存态。
  */
 export function registerAgentReleaseRoutes(router: Router, service?: PostgresAgentReleaseService) {
   const available = () => {
@@ -51,11 +48,6 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().ensureCandidate(context.params['agentId'] ?? '', userId), 'postgres')
   })
 
-  router.post(`${basePath}/agents/:agentId/release/checks`, async (_request, context) => {
-    const userId = requireRequestIdentity(context, 'admin').userId
-    return envelope('admin', await available().runChecks(context.params['agentId'] ?? '', userId), 'postgres')
-  })
-
   router.post(`${basePath}/agents/:agentId/release/cases`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ cases: ReleaseEvalCase[] }>(request)
@@ -63,20 +55,29 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().updateCases(context.params['agentId'] ?? '', input.cases, userId), 'postgres')
   })
 
-  router.post(`${basePath}/agents/:agentId/release/dependencies/remove`, async (request, context) => {
+  // 独立路径作为逐项执行契约：新版页面连接旧服务时必须失败，不能落到旧版整轮派发入口。
+  router.post(`${basePath}/agents/:agentId/release/case-trials`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
-    const input = await readJsonBody<{ kind: 'skills' | 'tools'; reference: string }>(request)
-    if (input?.kind !== 'skills' && input?.kind !== 'tools') throw Object.assign(new Error('kind 必须是 skills 或 tools'), { status: 422, code: 'validation_failed' })
-    if (!input.reference?.trim()) throw Object.assign(new Error('缺少要移除的依赖引用'), { status: 422, code: 'validation_failed' })
-    return envelope('admin', await available().removeMissingDependency(context.params['agentId'] ?? '', input.kind, input.reference.trim(), userId), 'postgres')
+    const input = await readJsonBody<{ caseId?: string }>(request)
+    if (typeof input?.caseId !== 'string' || !input.caseId.trim()) {
+      throw Object.assign(new Error('caseId 不能为空'), { status: 422, code: 'validation_failed' })
+    }
+    return httpResult(201, envelope('admin', await available().startTrial(context.params['agentId'] ?? '', userId, input.caseId), 'postgres'))
   })
 
-  router.post(`${basePath}/agents/:agentId/release/trials`, async (_request, context) => {
+  router.post(`${basePath}/agents/:agentId/release/trials/:trialId/cases`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
-    return httpResult(201, envelope('admin', await available().startTrial(context.params['agentId'] ?? '', userId), 'postgres'))
+    const input = await readJsonBody<{ caseId?: string; input?: string; rubric?: string }>(request)
+    if (typeof input?.caseId !== 'string' || typeof input.input !== 'string' || typeof input.rubric !== 'string') {
+      throw Object.assign(new Error('caseId、input、rubric 必须是字符串'), { status: 422, code: 'validation_failed' })
+    }
+    return envelope('admin', await available().continueTrialCase(
+      context.params['agentId'] ?? '', context.params['trialId'] ?? '',
+      { caseId: input.caseId, input: input.input, rubric: input.rubric }, userId,
+    ), 'postgres')
   })
 
-  // 试运行案例逐项确认：执行完毕停在 asserting，全部案例确认通过才记为 passed。
+  // 每次只确认当前案例；全部案例完成后才记为 passed。
   router.post(`${basePath}/agents/:agentId/release/trials/:trialId/confirm`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ verdicts?: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }> }>(request)
@@ -107,40 +108,4 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().publish(context.params['agentId'] ?? '', input?.note ?? '', userId), 'postgres')
   })
 
-  router.post(`${basePath}/agent-packages/inspect`, async (request, context) => {
-    requireRequestIdentity(context, 'admin')
-    const fileName = decodeHeader(request, 'x-file-name')
-    const bytes = await readBinaryBody(request, maxUploadBytes)
-    return envelope('admin', await available().inspectPackage(fileName, bytes), 'postgres')
-  })
-
-  router.post(`${basePath}/agent-packages/import`, async (request, context) => {
-    const userId = requireRequestIdentity(context, 'admin').userId
-    const fileName = decodeHeader(request, 'x-file-name')
-    const bytes = await readBinaryBody(request, maxUploadBytes)
-    return httpResult(201, envelope('admin', await available().importPackage(userId, fileName, bytes), 'postgres'))
-  })
-}
-
-function decodeHeader(request: IncomingMessage, name: string) {
-  const raw = request.headers[name]
-  const value = Array.isArray(raw) ? raw[0] : raw
-  if (!value) throw Object.assign(new Error('缺少发布包文件名'), { status: 422, code: 'validation_failed' })
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    throw Object.assign(new Error('发布包文件名编码无效'), { status: 422, code: 'validation_failed' })
-  }
-}
-
-async function readBinaryBody(request: IncomingMessage, maxBytes: number) {
-  const chunks: Buffer[] = []
-  let length = 0
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    length += bytes.length
-    if (length > maxBytes) throw Object.assign(new Error('发布包超过 20 MB 限制'), { status: 422, code: 'validation_failed' })
-    chunks.push(bytes)
-  }
-  return Buffer.concat(chunks)
 }

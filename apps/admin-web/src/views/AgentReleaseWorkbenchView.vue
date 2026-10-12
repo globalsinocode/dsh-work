@@ -1,34 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheck, CircleClose, Loading } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
-import { useListPagination } from '@/composables/use-list-pagination'
 import {
   useAgentGovernanceStore,
-  type CheckStatus,
-  type PlanAction,
-  type SubmissionStatus,
   type TrialRunStatus,
 } from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentTrialRun } from '@/types/domain'
+import type { AgentDefinition, AgentEvalCase, AgentTrialRun } from '@/types/domain'
 import {
   automatedAssertionSummary,
   hasV1CaseEvidence,
   trialCaseRuns,
-  trialHasLegacyEvidence,
   trialHasPublishableV1Evidence,
 } from '@/utils/agent-evaluation-evidence'
 
-type ReleaseStep = 'definition' | 'checks' | 'trial' | 'review'
+type ReleaseStep = 'trial' | 'review'
 
 const routeStepByName: Record<string, ReleaseStep> = {
-  'agent-release-definition': 'definition',
-  'agent-release-checks': 'checks',
   'agent-release-trial': 'trial',
   'agent-release-review': 'review',
 }
@@ -46,6 +38,8 @@ const releaseReady = ref(false)
 /** 逐项确认选择：key = `${trialId}:${caseId}` → 审核人对该案例输出的判定。 */
 const caseVerdicts = ref<Record<string, 'passed' | 'failed'>>({})
 const confirmingTrial = ref(false)
+const editableCases = ref<AgentEvalCase[]>([])
+const activeCaseId = ref('')
 
 const agentId = computed(() => String(route.params.agentId ?? ''))
 const agent = computed(() => contentStore.agents.find(item => item.id === agentId.value))
@@ -62,141 +56,76 @@ const releaseState = computed(() => governance.releaseStateFor(agentId.value))
 /** 草稿已改但候选尚未同步完成：禁止发起试运行与发布，防止用旧证据放行。 */
 const definitionChanged = computed(() => releaseState.value?.definitionChanged ?? false)
 const candidateVersion = computed(() => draftVersion.value?.version ?? candidate.value?.version ?? '—')
-const skillReferences = computed(() => draftVersion.value?.skills ?? [])
-const toolReferences = computed(() => draftVersion.value?.tools ?? [])
-const candidateDataScopes = computed(() => draftVersion.value?.dataScopes ?? [])
-const delegationPolicy = computed(() => draftVersion.value?.delegationPolicy ?? {
-  allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
+const currentTrial = computed(() => latestTrial.value?.submissionRevision === candidate.value?.revision
+  ? latestTrial.value : undefined)
+const currentCaseRuns = computed(() => currentTrial.value ? trialCaseRuns(currentTrial.value) : [])
+const activeCase = computed(() => editableCases.value.find(item => item.id === activeCaseId.value))
+const activeCaseIndex = computed(() => editableCases.value.findIndex(item => item.id === activeCaseId.value))
+const activeCaseRun = computed(() => currentCaseRuns.value.find(item => item.caseId === activeCaseId.value))
+const nextRunnableCaseIndex = computed(() => {
+  const trial = currentTrial.value
+  if (!trial || ['failed', 'cancelled'].includes(trial.status)) return 0
+  if (trial.status === 'asserting' && currentCaseRuns.value.every(run => run.verdict === 'passed')) {
+    return currentCaseRuns.value.length
+  }
+  return -1
 })
-const delegationTargetLabels = computed(() => delegationPolicy.value.allowedAgentVersionIds.map((versionId) => {
-  const version = contentStore.agentVersions.find(item => item.id === versionId)
-  const target = version && contentStore.agents.find(item => item.id === version.agentId)
-  return version ? `${target?.name ?? version.agentId} · v${version.version}` : versionId
-}))
-const missingDependencyCount = computed(() => (
-  candidate.value?.missingDeps.skills.length ?? 0
-) + (
-  candidate.value?.missingDeps.tools.length ?? 0
-))
-type DependencyRow = {
-  key: string
-  id: string
-  kind: 'skill' | 'tool'
-  source: 'platform' | 'package' | 'missing'
-  status: 'resolved' | 'missing' | 'candidate'
-  version: string
-  path?: string
-}
-const dependencyStatusMeta: Record<DependencyRow['status'], { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
-  resolved: { label: '已解析', type: 'success' },
-  missing: { label: '缺失', type: 'danger' },
-  candidate: { label: '候选草稿', type: 'warning' },
-}
-const dependencySourceLabel: Record<DependencyRow['source'], string> = {
-  platform: '平台已发布',
-  package: '随包候选',
-  missing: '平台未接入',
-}
-function dependencyStatusMetaOf(status: DependencyRow['status']) {
-  return dependencyStatusMeta[status]
-}
-function dependencySourceText(source: DependencyRow['source']) {
-  return dependencySourceLabel[source]
-}
-function splitRef(reference: string) {
-  const separator = reference.lastIndexOf('@')
-  return separator > 0
-    ? { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
-    : { id: reference, version: '—' }
-}
-function formatTimestamp(value?: string) {
-  if (!value) return '—'
-  const parsed = new Date(value)
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('zh-CN', { hour12: false }) : value
-}
-/** 统一依赖清单：已解析引用 + 缺失引用 + 随包候选；阻塞项排在前面。 */
-const dependencyRows = computed<DependencyRow[]>(() => {
-  const current = candidate.value
-  const rows: DependencyRow[] = []
-  for (const reference of skillReferences.value) {
-    const { id, version } = splitRef(reference)
-    rows.push({ key: `platform:skill:${reference}`, id, kind: 'skill', source: 'platform', status: 'resolved', version })
-  }
-  for (const reference of toolReferences.value) {
-    const { id, version } = splitRef(reference)
-    rows.push({ key: `platform:tool:${reference}`, id, kind: 'tool', source: 'platform', status: 'resolved', version })
-  }
-  for (const reference of current?.missingDeps.skills ?? []) {
-    rows.push({ key: `missing:skill:${reference}`, id: reference, kind: 'skill', source: 'missing', status: 'missing', version: '未解析' })
-  }
-  for (const reference of current?.missingDeps.tools ?? []) {
-    rows.push({ key: `missing:tool:${reference}`, id: reference, kind: 'tool', source: 'missing', status: 'missing', version: '未解析' })
-  }
-  for (const item of current?.packageRefs.skills ?? []) {
-    rows.push({ key: `package:skill:${item.id}`, id: item.id, kind: 'skill', source: 'package', status: 'candidate', version: item.version, path: item.path })
-  }
-  for (const item of current?.packageRefs.tools ?? []) {
-    rows.push({ key: `package:tool:${item.id}`, id: item.id, kind: 'tool', source: 'package', status: 'candidate', version: item.version, path: item.path })
-  }
-  const weight = (row: DependencyRow) => (row.status === 'missing' ? 0 : row.status === 'candidate' ? 1 : 2)
-  return rows.sort((a, b) => weight(a) - weight(b))
-})
-const pendingPackageCount = computed(() => dependencyRows.value.filter(row => row.source === 'package').length)
-const generatedCaseCount = computed(() => candidate.value?.cases.filter(item => item.origin === 'generated').length ?? 0)
-const candidatePlan = computed(() => candidate.value?.plan ?? [])
-const trialRuns = computed(() => candidate.value?.trialRuns ?? [])
-const { currentPage: dependencyPage, pagedItems: pagedDependencyRows } =
-  useListPagination(dependencyRows, { resetOn: agentId })
-const { currentPage: planPage, pagedItems: pagedPlan } =
-  useListPagination(candidatePlan, { resetOn: agentId })
-const { currentPage: trialPage, pagedItems: pagedTrialRuns } =
-  useListPagination(trialRuns, { resetOn: agentId })
-const activeStep = computed<ReleaseStep>(() => routeStepByName[String(route.name)] ?? 'definition')
-const trialActive = computed(() => Boolean(
-  latestTrial.value && ['checking', 'queued', 'executing', 'asserting'].includes(latestTrial.value.status),
-))
+const activeStep = computed<ReleaseStep>(() => routeStepByName[String(route.name)] ?? 'trial')
+const trialExecuting = computed(() => Boolean(currentTrial.value
+  && ['checking', 'queued', 'executing'].includes(currentTrial.value.status)))
 const candidateLocked = computed(() => candidate.value?.status === 'submitted')
 const failedChecks = computed(() => candidate.value?.checks.filter(check => check.status === 'failed') ?? [])
-const checksPassed = computed(() => Boolean(candidate.value?.checks.length) && !failedChecks.value.length)
-const canStartTrial = computed(() => authStore.canManage
-  && Boolean(candidate.value?.checks.length)
-  && !failedChecks.value.length
-  && !candidateLocked.value
-  && !trialActive.value
-  && !definitionChanged.value)
+const trialFailureDetail = computed(() => failedChecks.value.length
+  ? failedChecks.value.map(check => `${check.label}：${check.detail}`).join('；')
+  : currentCaseRuns.value.find(run => run.error)?.error
+    || currentCaseRuns.value.find(run => run.status !== 'succeeded' && run.outputExcerpt?.trim())?.outputExcerpt
+    || currentTrial.value?.steps.find(step => step.status === 'failed')?.detail
+    || currentTrial.value?.failureStage
+    || '请检查当前案例结果，调整后从第一项重新验证。')
+const checksPassed = computed(() => Boolean(candidate.value?.checks.length)
+  && Boolean(candidate.value?.checks.every(check => check.status === 'passed')))
+const casesChanged = computed(() => JSON.stringify(editableCases.value) !== JSON.stringify(candidate.value?.cases ?? []))
+const casesValid = computed(() => ['success', 'invalid_input', 'permission_denied', 'prompt_injection', 'capability_failure'].every(
+  kind => editableCases.value.some(item => item.kind === kind),
+)
+  && editableCases.value.length >= 5
+  && editableCases.value.every(item => item.evaluationApiVersion === 'dsh-work.ai/evaluation/v1'
+    && item.input.trim() && item.manualReview.rubric.trim()
+    && item.automatedAssertions.length === 3
+    && ['run_attempt_recorded', 'execution_succeeded', 'output_non_empty'].every(assertion =>
+      item.automatedAssertions.includes(assertion as AgentEvalCase['automatedAssertions'][number]))))
+const canEditActiveCase = computed(() => authStore.canManage
+  && !candidateLocked.value && !definitionChanged.value && !trialExecuting.value
+  && activeCaseIndex.value === nextRunnableCaseIndex.value)
+const canRunActiveCase = computed(() => authStore.canManage
+  && Boolean(activeCase.value?.input.trim() && activeCase.value?.manualReview.rubric.trim())
+  && (!currentTrial.value || currentTrial.value.status === 'failed' || currentTrial.value.status === 'cancelled'
+    ? casesValid.value : true)
+  && canEditActiveCase.value
+  && governance.busy !== 'trial'
+)
 const canPublish = computed(() => latestTrial.value?.status === 'passed'
   && trialHasPublishableV1Evidence(latestTrial.value)
+  && checksPassed.value
   && candidate.value?.sealedRevision === candidate.value?.revision
+  && !casesChanged.value
   && !definitionChanged.value)
-/** 通过试运行后一次确认即审核并发布；已提交的候选仍可完成发布。 */
 const canFinalize = computed(() => canPublish.value
   && ['draft', 'changes_requested', 'submitted'].includes(candidate.value?.status ?? ''))
-const workflowSteps = computed(() => {
-  const current = candidate.value
-  if (!current) return []
-  const missingCount = current.missingDeps.skills.length + current.missingDeps.tools.length
-  return [
-    { key: 'definition' as const, index: 1, label: '定义与依赖', state: missingCount ? `${missingCount} 项待处理` : '已就绪', tone: missingCount ? 'blocked' : 'ready' },
-    { key: 'checks' as const, index: 2, label: '检查与案例', state: !current.checks.length ? `${current.cases.length} 个案例` : checksPassed.value ? '已通过' : '有阻塞项', tone: !current.checks.length ? 'pending' : checksPassed.value ? 'ready' : 'blocked' },
-    { key: 'trial' as const, index: 3, label: '试运行', state: latestTrial.value ? trialStatusLabel[latestTrial.value.status] : '未开始', tone: latestTrial.value?.status === 'passed' ? 'ready' : latestTrial.value?.status === 'failed' ? 'blocked' : 'pending' },
-    { key: 'review' as const, index: 4, label: '审核发布', state: canPublish.value ? '待确认发布' : '等待试运行', tone: canPublish.value ? 'active' : 'pending' },
-  ] as const
-})
+function syncEditableCases(cases: AgentEvalCase[]) {
+  editableCases.value = cases.map(item => ({
+    ...item,
+    automatedAssertions: [...(item.automatedAssertions ?? [])],
+    manualReview: { required: true, rubric: item.manualReview?.rubric ?? '' },
+  }))
+}
+watch(() => `${candidate.value?.id ?? ''}:${candidate.value?.revision ?? ''}`, () => {
+  syncEditableCases(candidate.value?.cases ?? [])
+  const completed = new Set(currentCaseRuns.value.filter(run => run.verdict === 'passed').map(run => run.caseId))
+  activeCaseId.value = candidate.value?.cases.find(item => !completed.has(item.id))?.id
+    ?? candidate.value?.cases[0]?.id ?? ''
+}, { immediate: true })
 
-const submissionLabel: Record<SubmissionStatus, string> = {
-  draft: '草稿',
-  submitted: '待审核',
-  changes_requested: '已退回',
-  published: '已发布',
-  withdrawn: '已撤回',
-}
-const submissionTagType: Record<SubmissionStatus, 'info' | 'warning' | 'danger' | 'success'> = {
-  draft: 'info',
-  submitted: 'warning',
-  changes_requested: 'danger',
-  published: 'success',
-  withdrawn: 'info',
-}
 const trialStatusLabel: Record<TrialRunStatus, string> = {
   checking: '检查中',
   queued: '排队中',
@@ -213,16 +142,25 @@ const caseKindLabel = {
   prompt_injection: '提示注入',
   capability_failure: '能力不可用',
 } as const
-const checkIcon: Record<CheckStatus, string> = { passed: '✓', failed: '✕', pending: '·' }
-const planActionLabel = { create: '新建', reuse: '复用', upgrade: '升级', blocked: '阻塞' } as const
-const planActionName = (action: PlanAction) => planActionLabel[action]
-watch([activeStep, candidate, checksPassed, canPublish, completedVersion], ([step, current, checksReady, reviewReady, completed]) => {
-  if (!current || completed) return
-  if (step === 'trial' && !checksReady) {
-    void router.replace(stepPath('checks'))
+function caseProgress(caseId: string, index: number) {
+  const run = currentCaseRuns.value.find(item => item.caseId === caseId)
+  if (run?.verdict === 'passed') return { label: '已通过', tone: 'success' as const }
+  if (run?.verdict === 'failed' || (run && currentTrial.value?.status === 'failed')) {
+    return { label: '失败', tone: 'danger' as const }
   }
-  if (step === 'review' && !reviewReady) {
-    void router.replace(stepPath(checksReady ? 'trial' : 'checks'))
+  if (run) return { label: '待确认', tone: 'warning' as const }
+  if (currentTrial.value?.status === 'failed' && index === currentCaseRuns.value.length) {
+    return { label: '失败', tone: 'danger' as const }
+  }
+  if (trialExecuting.value && index === currentCaseRuns.value.length) {
+    return { label: '运行中', tone: 'warning' as const }
+  }
+  if (index === nextRunnableCaseIndex.value) return { label: '待运行', tone: 'info' as const }
+  return { label: '未开始', tone: 'info' as const }
+}
+watch([activeStep, candidate, canPublish, completedVersion], ([step, current, reviewReady, completed]) => {
+  if (current && !completed && step === 'review' && !reviewReady) {
+    void router.replace(stepPath('trial'))
   }
 }, { immediate: true })
 
@@ -239,9 +177,7 @@ function stepPath(step: ReleaseStep, id = agentId.value) {
 }
 
 function canVisitStep(step: ReleaseStep) {
-  if (step === 'definition' || step === 'checks') return true
-  if (step === 'trial') return checksPassed.value
-  return canPublish.value
+  return step === 'trial' || canPublish.value
 }
 
 function goToStep(step: ReleaseStep) {
@@ -254,73 +190,50 @@ function openEdit() {
   editorOpen.value = true
 }
 
-function handleDraftSaved(saved: AgentDefinition, source: 'config' | 'zip') {
-  if (source === 'config') {
-    governance.noteDraftSaved(saved.id)
-  }
-  if (saved.id !== agentId.value) {
-    void router.replace(stepPath('definition', saved.id))
-  }
+function handleDraftSaved(saved: AgentDefinition) {
+  governance.noteDraftSaved(saved.id)
+  if (saved.id !== agentId.value) void router.replace(stepPath('trial', saved.id))
 }
 
-async function removeMissingDependency(kind: 'skills' | 'tools', reference: string) {
-  if (!agent.value) return
+async function runActiveCase() {
+  const testCase = activeCase.value
+  if (!agent.value || !testCase || !canRunActiveCase.value) return
   try {
-    await governance.removeMissingDependency(agent.value.id, kind, reference)
-    ElMessage.success(`已从候选定义移除依赖 ${reference}，请重新运行检查`)
+    if (!currentTrial.value || ['failed', 'cancelled'].includes(currentTrial.value.status)) {
+      if (casesChanged.value) await governance.updateCases(agent.value.id, editableCases.value)
+      await governance.startTrialRun(agent.value.id, testCase.id)
+    } else {
+      await governance.continueTrialCase(agent.value.id, currentTrial.value.id, {
+        caseId: testCase.id, input: testCase.input, rubric: testCase.manualReview.rubric,
+      })
+      // 后续案例可单独编辑，服务端会修剪首尾空白且不推进候选修订。
+      // 此时 revision watcher 不会触发，必须以保存后的案例覆盖本地表单。
+      if (candidate.value) syncEditableCases(candidate.value.cases)
+    }
   } catch (cause) {
+    await governance.loadReleaseState(agent.value.id).catch(() => undefined)
     fail(cause)
   }
-}
-
-async function runCandidateChecks() {
-  if (!agent.value) return
-  try {
-    await governance.runChecks(agent.value.id)
-    ElMessage.success('检查完成')
-  } catch (cause) {
-    fail(cause)
-  }
-}
-
-async function startTrial() {
-  if (!agent.value) return
-  try {
-    await governance.startTrialRun(agent.value.id)
-  } catch (cause) {
-    fail(cause)
-  }
-}
-
-/** 案例来源回查：TrialCaseRun 不带 origin，按 caseId 对照候选案例标记平台生成。 */
-function caseOrigin(caseId: string) {
-  return candidate.value?.cases.find(item => item.id === caseId)?.origin
 }
 
 function verdictKey(trialId: string, caseId: string) {
   return `${trialId}:${caseId}`
 }
 
-/** 全部案例都已选择判定后才允许提交逐项确认。 */
-function verdictsComplete(trial: AgentTrialRun) {
-  const runs = trialCaseRuns(trial)
-  return runs.length > 0
-    && runs.every(run => hasV1CaseEvidence(run) && Boolean(caseVerdicts.value[verdictKey(trial.id, run.caseId)]))
-}
-
-async function confirmTrial(trial: AgentTrialRun) {
-  if (!verdictsComplete(trial)) return
+async function confirmCase(trial: AgentTrialRun) {
+  const run = activeCaseRun.value
+  if (!run || run.verdict || !hasV1CaseEvidence(run)) return
+  const verdict = caseVerdicts.value[verdictKey(trial.id, run.caseId)]
+  if (!verdict) return
   confirmingTrial.value = true
   try {
-    await governance.confirmTrialRun(
-      agentId.value,
-      trial.id,
-      trialCaseRuns(trial).map(run => ({
-        caseId: run.caseId,
-        verdict: caseVerdicts.value[verdictKey(trial.id, run.caseId)]!,
-      })),
-    )
-    ElMessage.success('试运行结论已登记')
+    await governance.confirmTrialRun(agentId.value, trial.id, [{ caseId: run.caseId, verdict }])
+    if (verdict === 'passed') {
+      activeCaseId.value = editableCases.value[activeCaseIndex.value + 1]?.id ?? run.caseId
+      ElMessage.success('本项已通过，可以继续验证下一项')
+    } else {
+      ElMessage.warning('本项未通过，本轮验证已结束；调整后需重新开始')
+    }
   } catch (cause) {
     fail(cause)
   } finally {
@@ -353,6 +266,7 @@ async function withdrawCandidate() {
       { confirmButtonText: '确认撤回', cancelButtonText: '取消', type: 'warning' },
     )
     await governance.withdrawCandidate(agent.value.id)
+    await governance.ensureCandidate(agent.value.id)
     ElMessage.success('候选已撤回')
   } catch (cause) {
     fail(cause)
@@ -366,8 +280,8 @@ async function reviewAndPublish() {
   try {
     await ElMessageBox.confirm(
       '确认后即表示审核通过，系统会把封存定义、精确依赖与绑定修订发布为不可变版本，并记录本次检查与试运行证据。',
-      '审核通过并发布',
-      { confirmButtonText: '审核通过并发布', cancelButtonText: '取消', type: 'warning' },
+      '确认发布',
+      { confirmButtonText: '确认发布', cancelButtonText: '取消', type: 'warning' },
     )
     await governance.reviewAndPublish(currentAgent.id, submitNote.value.trim())
     submitNote.value = ''
@@ -417,238 +331,80 @@ onMounted(async () => {
     </section>
 
     <template v-else-if="agent && candidate">
-      <nav aria-label="Agent 候选发布流程">
-        <ol class="workflow-steps">
-          <li
-            v-for="step in workflowSteps"
-            :key="step.index"
-            :class="['workflow-step', `workflow-step--${step.tone}`, { 'is-current': activeStep === step.key }]"
-          >
-            <button
-              type="button"
-              :aria-current="activeStep === step.key ? 'step' : undefined"
-              :disabled="!canVisitStep(step.key)"
-              @click="goToStep(step.key)"
-            >
-              <span>{{ step.index }}</span>
-              <div><strong>{{ step.label }}</strong><small>{{ step.state }}</small></div>
-            </button>
-          </li>
-        </ol>
-      </nav>
-
       <div class="stage-page">
-        <div v-if="activeStep === 'definition'" class="stage-content">
-          <section class="content-panel workbench-card definition-card">
-            <div class="definition-card__headline">
-              <div>
-                <strong>{{ agent.name }}</strong>
-                <p>{{ agent.description }}</p>
-              </div>
-              <div class="definition-card__state">
-                <el-tag size="small" effect="plain">v{{ candidateVersion }}</el-tag>
-                <el-tag size="small" effect="plain">rev {{ candidate.revision }}</el-tag>
-                <el-tag size="small" :type="submissionTagType[candidate.status]">{{ submissionLabel[candidate.status] }}</el-tag>
-                <el-tag size="small" type="info" effect="plain">{{ candidate.source === 'zip' ? 'ZIP 导入' : '配置创建' }}</el-tag>
-                <el-button v-if="authStore.canManage" size="small" :disabled="candidateLocked" @click="openEdit">编辑定义</el-button>
-              </div>
-            </div>
-            <p v-if="candidateLocked" class="hint">此前提交的候选内容已封存；如需修改请先在「审核发布」步骤退回或撤回。</p>
-            <div class="definition-meta">
-              <span class="definition-meta__label">权限</span>
-              <el-tag v-for="role in agent.roleIds" :key="`role:${role}`" size="small" type="info" effect="plain">角色 · {{ role }}</el-tag>
-              <el-tag v-for="scope in candidateDataScopes" :key="`scope:${scope}`" size="small" type="info" effect="plain">数据 · {{ scope }}</el-tag>
-              <small v-if="!agent.roleIds.length && !candidateDataScopes.length">未配置</small>
-              <span class="definition-meta__divider" aria-hidden="true" />
-              <span class="definition-meta__label">限制</span>
-              <strong>{{ draftVersion?.timeoutSeconds ?? '—' }} 秒 · {{ draftVersion?.maxToolCalls ?? '—' }} 次工具调用 · {{ (draftVersion?.maxOutputBytes ?? 0).toLocaleString() }} 字节输出</strong>
-              <span class="definition-meta__divider" aria-hidden="true" />
-              <span class="definition-meta__label">委派</span>
-              <strong v-if="delegationTargetLabels.length">{{ delegationTargetLabels.length }} 个固定版本 · 深度 {{ delegationPolicy.maxDepth }} · 并行 {{ delegationPolicy.maxParallel }} · {{ delegationPolicy.timeoutSeconds }} 秒</strong>
-              <strong v-else>未启用</strong>
-            </div>
-            <el-collapse class="definition-details">
-              <el-collapse-item title="版本与变更详情" name="version-details">
-                <dl class="meta-grid meta-grid--compact">
-                  <div><dt>变更说明</dt><dd>{{ draftVersion?.summary }}</dd></div>
-                  <div><dt>封存状态</dt><dd>{{ candidate.sealedRevision ? `已封存 rev ${candidate.sealedRevision}` : '未封存' }}</dd></div>
-                  <div v-if="candidate.sealedAt"><dt>封存时间</dt><dd>{{ formatTimestamp(candidate.sealedAt) }}</dd></div>
-                  <div v-if="candidate.reviewNote"><dt>审核意见</dt><dd>{{ candidate.reviewNote }}</dd></div>
-                  <div><dt>委派目标</dt><dd>{{ delegationTargetLabels.join('、') || '未启用' }}</dd></div>
-                </dl>
-              </el-collapse-item>
-            </el-collapse>
-          </section>
-
-          <section class="content-panel workbench-card" :class="{ 'missing-deps-card': missingDependencyCount }">
-            <div class="card-head">
-              <div><span class="card-kicker">步骤 1</span><h2>依赖状态</h2></div>
-              <div class="review-actions">
-                <el-tag size="small" effect="plain">{{ dependencyRows.length }} 项能力</el-tag>
-                <el-tag v-if="missingDependencyCount" size="small" type="danger">{{ missingDependencyCount }} 项缺失</el-tag>
-                <el-tag v-if="pendingPackageCount" size="small" type="warning">{{ pendingPackageCount }} 项候选待准入</el-tag>
-                <el-tag v-if="!missingDependencyCount && !pendingPackageCount" size="small" type="success">依赖已就绪</el-tag>
-                <el-button v-if="candidate.missingDeps.skills.length" size="small" @click="router.push('/skills')">Skill 管理</el-button>
-                <el-button v-if="candidate.missingDeps.tools.length" size="small" @click="router.push('/tools')">DSH 工具管理</el-button>
-                <el-button v-if="missingDependencyCount" size="small" type="primary" :loading="governance.busy === 'checks'" :disabled="candidateLocked" @click="runCandidateChecks">重新解析</el-button>
-              </div>
-            </div>
-            <el-alert v-if="missingDependencyCount" type="error" :closable="false" show-icon title="缺失依赖会阻止检查和试运行" description="补齐平台能力，或者移除 Agent 不再需要的引用。" />
-            <el-table class="data-table dependency-table" :data="pagedDependencyRows" size="small">
-              <el-table-column label="依赖" min-width="180">
-                <template #default="scope">
-                  <strong class="mono" :class="{ 'plan-blocked': scope.row.status === 'missing' }">{{ scope.row.id }}</strong>
-                  <small class="cell-sub mono">{{ scope.row.version === '未解析' ? '未解析' : `v${scope.row.version}` }}{{ scope.row.path ? ` · ${scope.row.path}` : '' }}</small>
-                </template>
-              </el-table-column>
-              <el-table-column label="类型" width="76"><template #default="scope"><el-tag size="small" effect="plain">{{ scope.row.kind === 'skill' ? 'Skill' : 'Tool' }}</el-tag></template></el-table-column>
-              <el-table-column label="来源" width="104"><template #default="scope"><span class="muted">{{ dependencySourceText(scope.row.source) }}</span></template></el-table-column>
-              <el-table-column label="状态" width="104">
-                <template #default="scope"><el-tag size="small" :type="dependencyStatusMetaOf(scope.row.status).type">{{ dependencyStatusMetaOf(scope.row.status).label }}</el-tag></template>
-              </el-table-column>
-              <el-table-column label="操作" width="130" fixed="right">
-                <template #default="scope">
-                  <el-button v-if="scope.row.status === 'missing'" link type="danger" size="small" :disabled="candidateLocked" @click="removeMissingDependency(scope.row.kind === 'skill' ? 'skills' : 'tools', scope.row.id)">移除引用</el-button>
-                  <span v-else-if="scope.row.source === 'package'" class="muted">待准入</span>
-                  <span v-else class="muted">—</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-pagination v-model:current-page="dependencyPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="dependencyRows.length" :page-size="10" />
-            <p class="hint">仅已解析引用进入封存；包内候选需先在 Skill / 工具管理中完成安装发布与准入后才可引用。</p>
-            <div v-if="!missingDependencyCount && !pendingPackageCount" class="dependency-ready">
-              <el-icon><CircleCheck /></el-icon>
-              <span>所有声明依赖均已解析，无待处理项。</span>
-            </div>
-          </section>
-          <footer class="stage-footer">
-            <span>确认定义与依赖后，在下一页运行发布检查。</span>
-            <el-button type="primary" @click="goToStep('checks')">下一步：检查与案例</el-button>
-          </footer>
-        </div>
-
-        <template v-else-if="activeStep === 'checks'">
+        <template v-if="activeStep === 'trial'">
           <section class="content-panel workbench-card">
             <div class="card-head">
-              <div><span class="card-kicker">步骤 2</span><h2>运行检查</h2></div>
-              <el-button v-if="authStore.canManage" size="small" :loading="governance.busy === 'checks'" :disabled="candidateLocked" @click="runCandidateChecks">运行检查</el-button>
-            </div>
-            <p class="section-intro">候选随附 {{ candidate.cases.length }} 个 v1 试运行案例，覆盖目标质量、无效输入、越权、提示注入和能力特有失败<template v-if="generatedCaseCount">；其中 {{ generatedCaseCount }} 条由平台按定义生成</template>。</p>
-            <p class="hint">Run/Attempt、执行终态与非空输出由平台自动断言；业务质量由审核人按案例 rubric 判断。平台生成案例仍需结合实际职责核对。</p>
-            <el-empty v-if="!candidate.checks.length" description="尚未运行检查" :image-size="60" />
-            <ul v-else class="check-list">
-              <li v-for="check in candidate.checks" :key="check.id" :class="`check--${check.status}`">
-                <span class="check-icon" aria-hidden="true">{{ checkIcon[check.status] }}</span>
-                <div><strong>{{ check.label }}</strong><small>{{ check.detail }}</small></div>
-              </li>
-            </ul>
-          </section>
-
-          <section v-if="candidate.plan.length" class="content-panel workbench-card">
-            <div class="card-head"><div><span class="card-kicker">步骤 2</span><h2>部署计划</h2></div></div>
-            <el-table class="data-table" :data="pagedPlan" size="small">
-              <el-table-column label="类型" width="76"><template #default="scope"><el-tag size="small" effect="plain">{{ scope.row.kind }}</el-tag></template></el-table-column>
-              <el-table-column prop="name" label="对象" min-width="130"><template #default="scope"><strong :class="{ 'plan-blocked': scope.row.action === 'blocked' }">{{ scope.row.name }}</strong><small class="cell-sub mono">{{ scope.row.version }}</small></template></el-table-column>
-              <el-table-column label="动作" width="76"><template #default="scope"><el-tag size="small" :type="scope.row.action === 'blocked' ? 'danger' : scope.row.action === 'reuse' ? 'info' : 'success'">{{ planActionName(scope.row.action) }}</el-tag></template></el-table-column>
-              <el-table-column prop="detail" label="说明" min-width="180"><template #default="scope"><small class="plan-detail">{{ scope.row.detail }}</small></template></el-table-column>
-            </el-table>
-            <el-pagination v-model:current-page="planPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="candidatePlan.length" :page-size="10" />
-          </section>
-          <footer class="stage-footer">
-            <el-button @click="goToStep('definition')">上一步：定义与依赖</el-button>
-            <div>
-              <span v-if="!checksPassed">全部检查通过后才能进入试运行。</span>
-              <el-button type="primary" :disabled="!checksPassed" @click="goToStep('trial')">下一步：试运行</el-button>
-            </div>
-          </footer>
-        </template>
-
-        <template v-else-if="activeStep === 'trial'">
-          <section class="content-panel workbench-card">
-            <div class="card-head">
-              <div><span class="card-kicker">步骤 3</span><h2>试运行 <el-tag size="small" type="info" effect="plain">真实 DSH 执行</el-tag></h2></div>
-              <el-button v-if="authStore.canManage" size="small" type="primary" :loading="governance.busy === 'trial'" :disabled="!canStartTrial" @click="startTrial">发起试运行</el-button>
-            </div>
-            <p v-if="failedChecks.length" class="hint">阻塞项：{{ failedChecks.map(check => check.label).join('、') }}，全部通过后才能发起试运行。</p>
-            <p v-if="definitionChanged" class="hint">草稿已变更，候选正在同步——同步完成前不能发起试运行或发布。</p>
-            <el-empty v-if="!candidate.trialRuns.length" description="封存候选后逐案例经 Run/Attempt → Runtime Adapter → DSH 真实执行，输出由审核人逐项确认" :image-size="60" />
-            <div v-for="trial in pagedTrialRuns" :key="trial.id" class="trial">
-              <div class="trial__head">
-                <el-tag size="small" :type="trial.status === 'failed' ? 'danger' : trial.status === 'passed' ? 'success' : trial.status === 'cancelled' ? 'info' : 'warning'">{{ trialStatusLabel[trial.status] }}</el-tag>
-                <el-tag v-if="trial.submissionRevision !== candidate.revision" size="small" type="info" effect="plain">旧修订</el-tag>
-                <span class="trial__meta">封存 rev {{ trial.submissionRevision }} · {{ trial.id }}</span>
-                <el-button v-if="['checking', 'queued', 'executing', 'asserting'].includes(trial.status)" size="small" text type="danger" @click="governance.cancelTrialRun(agentId, trial.id)">取消</el-button>
-              </div>
-              <ol class="trial-steps">
-                <li v-for="step in trial.steps" :key="step.id" :class="`step--${step.status}`">
-                  <el-icon v-if="step.status === 'running'"><Loading /></el-icon>
-                  <el-icon v-else-if="step.status === 'passed'"><CircleCheck /></el-icon>
-                  <el-icon v-else-if="step.status === 'failed'"><CircleClose /></el-icon>
-                  <span v-else class="step-dot" aria-hidden="true" />
-                  <div><span>{{ step.label }}</span><small v-if="step.detail">{{ step.detail }}</small></div>
-                </li>
-              </ol>
-              <div v-if="trialCaseRuns(trial).length" class="case-runs">
-                <el-alert
-                  v-if="trialHasLegacyEvidence(trial)"
-                  type="warning"
-                  :closable="false"
-                  show-icon
-                  title="旧版评测证据不可用于 v1 发布"
-                  description="请重新运行五类 v1 评测；已提交候选可在此撤回后重建。"
-                >
-                  <template v-if="candidate.status === 'submitted' && authStore.canManage" #default>
-                    <el-button size="small" type="warning" plain :loading="governance.busy === 'submit'" @click="withdrawCandidate">撤回候选并重建</el-button>
-                  </template>
-                </el-alert>
-                <div v-for="run in trialCaseRuns(trial)" :key="run.caseId" class="case-run">
-                  <div class="case-run__head">
-                    <strong>{{ run.name }}</strong>
-                    <el-tag size="small" effect="plain">{{ caseKindLabel[run.kind] }}</el-tag>
-                    <el-tag v-if="caseOrigin(run.caseId) === 'generated'" size="small" type="info" effect="plain">平台生成</el-tag>
-                    <el-tag v-if="!hasV1CaseEvidence(run)" size="small" type="warning">旧版证据</el-tag>
-                    <el-tag size="small" :type="run.status === 'succeeded' ? 'success' : run.status === 'cancelled' ? 'info' : 'danger'" effect="plain">{{ run.status }}</el-tag>
-                    <el-tag v-if="run.verdict" size="small" :type="run.verdict === 'passed' ? 'success' : 'danger'">{{ run.verdict === 'passed' ? '已确认符合预期' : '判定不符合预期' }}</el-tag>
-                    <span v-if="run.runId" class="case-run__meta mono">{{ run.runId }}</span>
-                  </div>
-                  <dl class="case-run__io">
-                    <template v-if="hasV1CaseEvidence(run)">
-                      <div><dt>人工判定标准</dt><dd>{{ run.manualReview!.rubric }}</dd></div>
-                      <div><dt>自动断言</dt><dd>{{ automatedAssertionSummary(run) }}</dd></div>
-                    </template>
-                    <template v-else>
-                      <div><dt>旧版预期</dt><dd>{{ run.expect || '未记录' }}</dd></div>
-                      <div><dt>证据状态</dt><dd>缺少 AgentEvaluationSuite v1 的机器断言和人工 rubric，请重新试运行。</dd></div>
-                    </template>
-                    <div><dt>实际输出</dt><dd class="case-run__output" role="region" :aria-label="`${run.name}的实际输出`" tabindex="0">{{ run.outputExcerpt || run.error || '（无输出）' }}</dd></div>
-                  </dl>
-                  <div v-if="trial.status === 'asserting' && authStore.canManage && hasV1CaseEvidence(run)" class="case-run__verdict">
-                    <el-radio-group v-model="caseVerdicts[verdictKey(trial.id, run.caseId)]" size="small">
-                      <el-radio-button value="passed">符合预期</el-radio-button>
-                      <el-radio-button value="failed">不符合预期</el-radio-button>
-                    </el-radio-group>
-                  </div>
-                </div>
-                <div v-if="trial.status === 'asserting' && authStore.canManage" class="case-runs__footer">
-                  <el-button type="primary" size="small" :loading="confirmingTrial" :disabled="!verdictsComplete(trial)" @click="confirmTrial(trial)">提交逐项确认</el-button>
-                  <span class="hint">全部案例确认通过后试运行才记为通过，方可发布。</span>
-                </div>
+              <div class="card-head__title"><h2>验证案例</h2><span>{{ agent.name }}</span></div>
+              <div class="case-card-actions">
+                <el-button v-if="authStore.canManage" size="small" :disabled="candidateLocked" @click="openEdit">编辑配置</el-button>
+                <el-button v-if="authStore.canManage && currentTrial && ['checking', 'queued', 'executing', 'asserting'].includes(currentTrial.status)" size="small" text type="danger" @click="governance.cancelTrialRun(agentId, currentTrial.id)">取消本轮验证</el-button>
               </div>
             </div>
-            <el-pagination v-model:current-page="trialPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="trialRuns.length" :page-size="10" />
+            <p v-if="candidateLocked" class="hint">已提交候选内容已封存；修改前请先退回或撤回。</p>
+            <p v-if="!currentTrial" class="section-intro">逐项运行并确认结果，通过后继续下一项。</p>
+            <el-alert v-if="definitionChanged" type="warning" :closable="false" show-icon title="草稿已变更" description="候选同步完成前不能发起试运行或发布。" />
+            <el-alert v-if="failedChecks.length || currentTrial?.status === 'failed'" class="case-feedback" type="error" :closable="false" show-icon :title="failedChecks.length ? '自动检查未通过' : '验证失败'" :description="trialFailureDetail" />
+            <el-alert v-if="!casesValid" type="warning" :closable="false" show-icon title="案例不完整，无法试运行" description="需要五种案例且每条具有输入和人工判定标准。旧版候选可撤回并重建。" />
+            <el-button v-if="!casesValid && authStore.canManage" size="small" type="warning" plain @click="withdrawCandidate">撤回并重建候选</el-button>
+            <el-tabs v-model="activeCaseId" class="case-tabs" aria-label="五类逐项验证案例">
+              <el-tab-pane v-for="(testCase, index) in editableCases" :key="testCase.id" :name="testCase.id">
+                <template #label>
+                  <span class="case-tab-label">{{ index + 1 }}. {{ caseKindLabel[testCase.kind] }}
+                    <el-tag size="small" :type="caseProgress(testCase.id, index).tone" effect="plain">{{ caseProgress(testCase.id, index).label }}</el-tag>
+                  </span>
+                </template>
+                <div class="case-editor">
+                  <strong v-if="testCase.name !== caseKindLabel[testCase.kind]" class="case-editor__name">{{ testCase.name }}</strong>
+                  <p v-if="index !== nextRunnableCaseIndex && !currentCaseRuns.some(run => run.caseId === testCase.id)" class="hint">请先完成前一项验证；此页可预览，轮到本项时再填写。</p>
+                  <el-form-item label="测试输入">
+                    <el-input v-model="testCase.input" type="textarea" :rows="2" :maxlength="4000" :disabled="activeCaseId !== testCase.id || !canEditActiveCase" :aria-label="`${testCase.name}测试输入`" />
+                  </el-form-item>
+                  <el-form-item label="人工判定标准">
+                    <el-input v-model="testCase.manualReview.rubric" type="textarea" :rows="2" :maxlength="2000" :disabled="activeCaseId !== testCase.id || !canEditActiveCase" :aria-label="`${testCase.name}人工判定标准`" />
+                  </el-form-item>
+
+                  <div v-if="activeCaseRun && currentTrial" class="case-run case-run--current">
+                    <div class="case-run__head">
+                      <strong>{{ activeCaseRun.status === 'succeeded' ? '实际输出' : '执行详情' }}</strong>
+                      <el-tag v-if="activeCaseRun.verdict" size="small" :type="activeCaseRun.verdict === 'passed' ? 'success' : 'danger'">{{ activeCaseRun.verdict === 'passed' ? '已确认符合预期' : '判定不符合预期' }}</el-tag>
+                    </div>
+                    <el-alert v-if="!hasV1CaseEvidence(activeCaseRun)" type="warning" :closable="false" show-icon title="旧版评测证据不可用于发布" description="请撤回并重建候选后重新运行五类案例。" />
+                    <div v-if="activeCaseRun.status === 'succeeded'" class="case-run__output" role="region" :aria-label="`${testCase.name}的实际输出`" tabindex="0">{{ activeCaseRun.outputExcerpt || '（无输出）' }}</div>
+                    <details class="case-run__details">
+                      <summary>查看运行与自动检查</summary>
+                      <dl class="case-run__io">
+                        <div><dt>自动检查</dt><dd>{{ automatedAssertionSummary(activeCaseRun) || '旧版证据不可用' }}</dd></div>
+                        <div v-if="activeCaseRun.runId"><dt>Run</dt><dd class="mono">{{ activeCaseRun.runId }}</dd></div>
+                        <div v-if="activeCaseRun.attemptId"><dt>Attempt</dt><dd class="mono">{{ activeCaseRun.attemptId }}</dd></div>
+                        <div v-if="activeCaseRun.status !== 'succeeded' && (activeCaseRun.outputExcerpt || activeCaseRun.error)"><dt>执行返回</dt><dd>{{ activeCaseRun.outputExcerpt || activeCaseRun.error }}</dd></div>
+                      </dl>
+                    </details>
+                    <div v-if="currentTrial.status === 'asserting' && !activeCaseRun.verdict && authStore.canManage && hasV1CaseEvidence(activeCaseRun)" class="case-run__verdict">
+                      <el-radio-group v-model="caseVerdicts[verdictKey(currentTrial.id, testCase.id)]" size="small" :aria-label="`${testCase.name}人工结论`">
+                        <el-radio-button value="passed">符合预期</el-radio-button>
+                        <el-radio-button value="failed">不符合预期</el-radio-button>
+                      </el-radio-group>
+                      <el-button type="primary" size="small" :loading="confirmingTrial" :disabled="!caseVerdicts[verdictKey(currentTrial.id, testCase.id)]" @click="confirmCase(currentTrial)">确认本项结论</el-button>
+                    </div>
+                  </div>
+                  <div v-if="authStore.canManage" class="case-actions">
+                    <el-button v-if="index === nextRunnableCaseIndex" type="primary" :loading="governance.busy === 'trial'" :disabled="!canRunActiveCase" @click="runActiveCase">{{ currentTrial && ['failed', 'cancelled'].includes(currentTrial.status) ? '重新运行第一项' : '运行本项' }}</el-button>
+                    <el-button v-if="index !== 0 && (currentTrial?.status === 'failed' || currentTrial?.status === 'cancelled')" @click="activeCaseId = editableCases[0]?.id ?? ''">返回第一项重新验证</el-button>
+                  </div>
+                </div>
+              </el-tab-pane>
+            </el-tabs>
           </section>
-          <footer class="stage-footer">
-            <el-button @click="goToStep('checks')">上一步：检查与案例</el-button>
-            <div>
-              <span v-if="!canPublish">试运行通过后才能进入发布确认。</span>
-              <el-button type="primary" :disabled="!canPublish" @click="goToStep('review')">下一步：审核发布</el-button>
-            </div>
+
+          <footer v-if="canPublish" class="stage-footer stage-footer--forward">
+            <el-button type="primary" @click="goToStep('review')">验证通过，确认发布</el-button>
           </footer>
         </template>
 
         <template v-else>
           <section class="content-panel workbench-card review-summary">
-            <div class="card-head"><div><span class="card-kicker">步骤 4</span><h2>发布确认摘要</h2></div></div>
+            <div class="card-head"><div class="card-head__title"><h2>发布确认摘要</h2><span>{{ agent.name }}</span></div></div>
             <dl class="meta-grid">
               <div><dt>候选修订</dt><dd class="mono">rev {{ candidate.revision }}</dd></div>
               <div><dt>目标版本</dt><dd class="mono">v{{ candidateVersion }}</dd></div>
@@ -660,11 +416,11 @@ onMounted(async () => {
           </section>
 
           <section v-if="authStore.canManage" class="content-panel workbench-card submit-card">
-            <div class="card-head"><div><span class="card-kicker">步骤 4</span><h2>审核并发布</h2></div></div>
+            <div class="card-head"><h2>确认发布</h2></div>
             <p class="side-note">核对候选版本与试运行证据后，一次确认即审核通过并发布不可变平台版本。发布时会重新检查修订、依赖和绑定。</p>
             <el-input v-model="submitNote" type="textarea" :rows="3" placeholder="审核意见（业务效果确认、注意事项）" />
             <div class="submit-actions">
-              <el-button type="primary" :loading="governance.busy === 'submit'" :disabled="!canFinalize" data-action="publish-agent" @click="reviewAndPublish">审核通过并发布</el-button>
+              <el-button type="primary" :loading="governance.busy === 'submit'" :disabled="!canFinalize" data-action="publish-agent" @click="reviewAndPublish">确认发布</el-button>
               <el-button v-if="candidate.status === 'submitted'" :loading="governance.busy === 'submit'" @click="requestChanges">退回修改</el-button>
               <el-button text type="danger" :loading="governance.busy === 'submit'" @click="withdrawCandidate">撤回候选</el-button>
             </div>
@@ -685,98 +441,48 @@ onMounted(async () => {
 .release-workbench { width: 100%; gap: 8px; }
 .release-result { min-height: 360px; }
 .release-result .el-alert { max-width: 680px; margin: 0 auto 24px; }
-.workflow-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
-.workflow-step { min-width: 0; }
-.workflow-step > button { display: grid; width: 100%; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-button); color: inherit; background: var(--color-bg-base); cursor: pointer; font: inherit; text-align: left; }
-.workflow-step > button:hover:not(:disabled), .workflow-step > button:focus-visible { border-color: var(--color-primary); outline: none; }
-.workflow-step > button:disabled { cursor: not-allowed; opacity: .62; }
-.workflow-step.is-current > button { border-color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); }
-.workflow-step > button > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; color: var(--color-text-muted); background: var(--color-bg-subtle); font-size: var(--font-size-micro); font-weight: var(--font-weight-title); }
-.workflow-step button div { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
-.workflow-step strong { color: var(--color-text-heading); font-size: var(--font-size-badge); white-space: nowrap; }
-.workflow-step small { overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-micro); text-overflow: ellipsis; white-space: nowrap; }
-.workflow-step--ready > button { border-color: var(--color-success); background: var(--color-success-light); }
-.workflow-step--ready > button > span { color: var(--color-success-strong); background: var(--color-bg-base); }
-.workflow-step--blocked > button { border-color: var(--color-danger); background: var(--color-danger-light); }
-.workflow-step--blocked > button > span { color: var(--color-danger-strong); background: var(--color-bg-base); }
-.workflow-step--active > button { border-color: var(--color-primary); background: var(--color-primary-light); }
-.workflow-step--active > button > span { color: var(--color-primary); background: var(--color-bg-base); }
 .stage-page { width: 100%; }
-.stage-content { min-width: 0; }
 .stage-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 6px; padding: 16px 18px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-base); }
+.stage-footer--forward { justify-content: flex-end; }
 .stage-footer > span, .stage-footer > div > span { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .stage-footer > div { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
 .workbench-card { margin-bottom: 14px; padding: 18px; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
 .card-head h2 { margin: 2px 0 0; color: var(--color-text-heading); font-size: var(--font-size-body); }
-.card-kicker { color: var(--color-primary); font-size: var(--font-size-micro); font-weight: var(--font-weight-title); }
-.definition-card__headline { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--color-border); }
-.definition-card__headline > div:first-child { min-width: 0; }
-.definition-card__headline strong { color: var(--color-text-heading); font-size: var(--font-size-title); }
-.definition-card__headline p { max-width: 920px; margin: 4px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.55; }
-.definition-card__state { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.definition-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; font-size: var(--font-size-badge); }
-.definition-meta__label { color: var(--color-text-muted); }
-.definition-meta__divider { width: 1px; height: 14px; margin: 0 4px; background: var(--color-border); }
-.definition-meta strong { color: var(--color-text-primary); font-weight: var(--font-weight-title); }
-.definition-details { margin-top: 10px; }
-.definition-details :deep(.el-collapse-item__header) { min-height: 36px; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
-.definition-details :deep(.el-collapse-item__content) { padding-bottom: 8px; }
+.card-head__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.card-head__title span { color: var(--color-text-muted); font-size: var(--font-size-badge); overflow-wrap: anywhere; }
+.case-run__details summary { width: fit-content; cursor: pointer; }
 .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0; }
 .meta-grid--compact > div { padding: 7px 0; }
 .meta-grid > div { padding: 9px 0; border-bottom: 1px solid var(--color-border); }
 .meta-grid__wide { grid-column: 1 / -1; }
 .meta-grid dt { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .meta-grid dd { margin: 3px 0 0; color: var(--color-text-primary); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
-.cell-sub { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .muted, .hint, .submit-hint, .side-note { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .hint { margin: 7px 0 0; }
 .side-note { margin: 0; line-height: 1.55; }
 .mono { font-family: monospace; }
-.missing-deps-card { border-color: var(--color-danger); }
-.dependency-table { margin-top: 10px; }
 .section-intro { margin: 3px 0 10px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.dependency-ready { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-button); color: var(--color-success-strong); background: var(--color-success-light); font-size: var(--font-size-badge); }
-.dependency-ready .el-icon { font-size: var(--font-size-body); }
-.review-actions, .form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.form-actions { margin-top: 12px; }
-.check-list { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
-.check-list li { display: flex; gap: 9px; align-items: flex-start; }
-.check-icon { display: grid; width: 20px; height: 20px; flex: 0 0 auto; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 700; }
-.check--passed .check-icon { color: var(--color-bg-base); background: var(--color-success); }
-.check--failed .check-icon { color: var(--color-bg-base); background: var(--color-danger); }
-.check--pending .check-icon { color: var(--color-text-muted); background: var(--color-bg-subtle); }
-.check-list strong { display: block; color: var(--color-text-primary); font-size: var(--font-size-caption); }
-.check-list small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.plan-blocked { color: var(--color-danger-strong); }
-.plan-detail { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.trial { padding-top: 6px; }
-.trial__head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.trial__meta { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.trial-steps { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; color: var(--color-text-muted); font-size: var(--font-size-caption); }
-.trial-steps li { display: flex; gap: 9px; align-items: flex-start; }
-.trial-steps li.step--passed { color: var(--color-text-primary); }
-.trial-steps li.step--failed { color: var(--color-danger-strong); }
-.trial-steps .el-icon { margin-top: 2px; }
-.step--passed .el-icon { color: var(--color-success); }
-.step--failed .el-icon { color: var(--color-danger); }
-.step-dot { display: inline-block; width: 8px; height: 8px; margin: 5px 4px 0; border-radius: 50%; background: var(--color-border); }
-.trial-steps small { display: block; margin-top: 2px; color: var(--color-danger-strong); }
-.case-runs { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--color-border); }
+.case-feedback { margin-bottom: 10px; }
+.case-tabs { margin-top: 12px; }
+.case-card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.case-tab-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.case-editor__name { display: block; margin-top: 10px; color: var(--color-text-heading); font-size: var(--font-size-badge); }
+.case-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.case-run--current { margin-top: 16px; }
+.case-run__verdict { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .case-run { padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
+.case-editor :deep(.el-form-item) { margin: 10px 0; }
 .case-run__head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .case-run__head strong { color: var(--color-text-heading); font-size: var(--font-size-badge); }
-.case-run__meta { color: var(--color-text-muted); font-size: var(--font-size-micro); }
+.case-run__details { margin-top: 8px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .case-run__io { display: grid; gap: 6px; margin: 8px 0 0; }
 .case-run__io > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
 .case-run__io dt { color: var(--color-text-muted); font-size: var(--font-size-micro); }
 .case-run__io dd { margin: 0; color: var(--color-text-primary); font-size: var(--font-size-badge); overflow-wrap: anywhere; white-space: pre-wrap; }
-.case-run__output { max-height: 360px; overflow-y: auto; }
-.case-run__verdict { margin-top: 8px; }
-.case-runs__footer { display: flex; align-items: center; gap: 12px; }
+.case-run__output { max-height: 360px; margin-top: 8px; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--color-text-primary); font-size: var(--font-size-badge); }
 .submit-card { display: flex; flex-direction: column; gap: 10px; }
 .submit-card .card-head { margin-bottom: 0; }
 .submit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-@media (max-width: 900px) { .workflow-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 620px) { .workflow-steps, .meta-grid { grid-template-columns: 1fr; } .meta-grid__wide { grid-column: auto; } .workflow-step button div { justify-content: space-between; } .definition-card__headline { flex-direction: column; } .definition-card__state { justify-content: flex-start; } }
+@media (max-width: 620px) { .meta-grid { grid-template-columns: 1fr; } .meta-grid__wide { grid-column: auto; } }
 </style>

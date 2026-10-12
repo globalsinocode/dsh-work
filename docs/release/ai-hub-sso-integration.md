@@ -1,5 +1,7 @@
 # dsh-work 接入 AI Hub 身份服务
 
+本文适用于 AI Hub 统一登录模式。`DSH_WORK_AUTH_MODE=oidc` 是部署默认值；运营平台“平台设置 → 登录设置”保存的模式会在重启后优先生效。无需 AI Hub 的账号密码模式及切换步骤见 [独立登录](local-authentication.md)。
+
 本文的命令与表单示例以本地 `local` 环境为主。若 AI Hub 已在 Mac mini 上以纯 IP HTTPS
 部署，生产地址、`production` 环境登记和首次安装顺序请使用
 [Mac mini 部署流程（AI Hub 已部署）](mac-mini-deployment-runbook.md)，不要照搬下文的

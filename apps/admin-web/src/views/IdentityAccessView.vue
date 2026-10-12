@@ -15,6 +15,11 @@ import type {
 } from '@/types/domain'
 
 const authStore = useAuthStore()
+const localMode = computed(() => authStore.identityProvider === 'local-password')
+const accountDialogOpen = ref(false)
+const accountTarget = ref<IdentityUserSummary>()
+const resettingPassword = ref(false)
+const accountForm = reactive({ username: '', password: '', name: '', department: '', email: '' })
 const users = ref<IdentityUserSummary[]>([])
 const roles = ref<IdentityRoleSummary[]>([])
 const permissionDefinitions = ref<LocalPermissionDefinition[]>([])
@@ -66,7 +71,7 @@ async function load() {
       adminApi.getIdentityUsers(userListRequest()),
       adminApi.getIdentityRoles(),
       adminApi.getLocalPermissions(),
-      adminApi.getDirectorySyncState(),
+      localMode.value ? Promise.resolve(undefined) : adminApi.getDirectorySyncState(),
     ])
     applyUserPage(nextUsers)
     roles.value = nextRoles
@@ -77,6 +82,63 @@ async function load() {
     error.value = cause instanceof Error ? cause.message : '身份与权限数据加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+function openAccount(user?: IdentityUserSummary, reset = false) {
+  accountTarget.value = user
+  resettingPassword.value = reset
+  Object.assign(accountForm, { username: user?.username ?? '', password: '', name: user?.name ?? '', department: user?.department ?? '', email: user?.email ?? '' })
+  accountDialogOpen.value = true
+}
+
+async function saveAccount() {
+  if (!authStore.canManageIdentity || saving.value) return
+  if (accountTarget.value) {
+    const confirmed = await ElMessageBox.confirm(
+      `${resettingPassword.value ? '重置密码' : '开通独立登录'}后，${accountTarget.value.name} 的旧登录会话将失效，首次登录需修改密码。原有角色和业务数据保留。`,
+      resettingPassword.value ? '确认重置密码' : '确认绑定既有员工',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    ).then(() => true).catch(() => false)
+    if (!confirmed) return
+  }
+  saving.value = true
+  try {
+    if (resettingPassword.value && accountTarget.value) {
+      await adminApi.resetLocalPassword(accountTarget.value.id, accountForm.password)
+    } else {
+      await adminApi.createLocalAccount({ ...accountForm }, accountTarget.value?.id)
+    }
+    accountDialogOpen.value = false
+    accountForm.password = ''
+    await load()
+    ElMessage.success(resettingPassword.value ? '密码已重置，请通过安全渠道交付初始密码' : '账号已开通，请配置角色并通过安全渠道交付初始密码')
+  } catch (cause) {
+    showMutationError(cause, '账号操作失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function toggleAccountStatus() {
+  const user = selectedUser.value
+  if (!user || !authStore.canManageIdentity) return
+  const status = user.status === 'active' ? 'disabled' : 'active'
+  const confirmed = await ElMessageBox.confirm(
+    status === 'disabled' ? `停用 ${user.name} 后，其所有登录会话立即失效，原有业务数据和授权记录保留。` : `重新启用 ${user.name} 后，可使用现有密码和授权登录。`,
+    status === 'disabled' ? '确认停用账号' : '确认启用账号',
+    { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+  ).then(() => true).catch(() => false)
+  if (!confirmed) return
+  saving.value = true
+  try {
+    await adminApi.setLocalAccountStatus(user.id, status)
+    await load()
+    ElMessage.success(status === 'disabled' ? '账号已停用' : '账号已启用')
+  } catch (cause) {
+    showMutationError(cause, '账号状态更新失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -323,14 +385,14 @@ onMounted(() => void load())
       type="info"
       :closable="false"
       show-icon
-      title="AI Hub 仅提供登录身份和员工资料；角色、功能权限、数据范围与 Session 撤销全部由 dsh-work 管理。"
+      :title="localMode ? '账号由管理员开通；新账号需分配角色后才能使用。初始密码请通过安全渠道交付，首次登录需修改。' : 'AI Hub 仅提供登录身份和员工资料；角色、功能权限、数据范围与 Session 撤销全部由 dsh-work 管理。'"
     />
 
     <section class="identity-summary">
       <article class="metric-card">
-        <div class="metric-label">已同步员工</div>
+        <div class="metric-label">{{ localMode ? '员工账号' : '已同步员工' }}</div>
         <div class="metric-value">{{ userSummary.synchronized }}</div>
-        <div class="metric-detail">{{ userSummary.active }} 个 AI Hub 有效账号</div>
+        <div class="metric-detail">{{ userSummary.active }} 个有效账号</div>
       </article>
       <article class="metric-card">
         <div class="metric-label">已授权员工</div>
@@ -342,7 +404,7 @@ onMounted(() => void load())
         <div class="metric-value">{{ roles.length }}</div>
         <div class="metric-detail">{{ roles.filter(role => role.status === 'active').length }} 个启用</div>
       </article>
-      <article class="metric-card sync-card">
+      <article v-if="!localMode" class="metric-card sync-card">
         <div class="sync-card__copy">
           <div class="metric-label">员工目录</div>
           <strong>{{ directoryState?.applicationId ?? 'dsh-work' }} · {{ directoryState?.environment ?? '—' }}</strong>
@@ -364,6 +426,11 @@ onMounted(() => void load())
           </el-dropdown>
         </div>
       </article>
+      <article v-else class="metric-card">
+        <div class="metric-label">账号安全</div>
+        <div class="metric-detail">仅管理员可开通账号</div>
+        <el-button tag="a" href="/change-password" link type="primary">修改我的密码</el-button>
+      </article>
     </section>
 
     <el-tabs v-model="activeTab" class="identity-tabs">
@@ -378,15 +445,16 @@ onMounted(() => void load())
             </el-select>
             <el-button :icon="Search" @click="reloadUsers(true)">查询</el-button>
             <span class="filter-bar__meta">{{ userTotal }} 名员工</span>
+            <el-button v-if="localMode && authStore.canManageIdentity" type="primary" @click="openAccount()">新建账号</el-button>
           </div>
         </section>
         <section class="content-panel content-panel--flush">
-          <el-table v-loading="loading" class="data-table" :data="users" empty-text="暂无匹配的已同步员工">
+          <el-table v-loading="loading" class="data-table" :data="users" empty-text="暂无匹配的员工">
             <el-table-column label="员工" min-width="220">
               <template #default="scope">
                 <div class="user-cell">
                   <span class="user-cell__avatar">{{ [...scope.row.name][0] ?? '用' }}</span>
-                  <span><strong>{{ scope.row.name }}</strong><small>{{ scope.row.email ?? scope.row.externalUserId ?? '本地账号' }}</small></span>
+                  <span><strong>{{ scope.row.name }}</strong><small>{{ (localMode ? scope.row.username : null) ?? scope.row.email ?? scope.row.externalUserId ?? '未开通独立登录' }}</small></span>
                 </div>
               </template>
             </el-table-column>
@@ -399,7 +467,8 @@ onMounted(() => void load())
             </el-table-column>
             <el-table-column label="账号状态" width="105"><template #default="scope"><el-tag :type="scope.row.status === 'active' ? 'success' : 'info'" effect="plain">{{ scope.row.status === 'active' ? '有效' : '已停用' }}</el-tag></template></el-table-column>
             <el-table-column label="活动 Session" width="115" align="center"><template #default="scope">{{ scope.row.activeSessionCount }}</template></el-table-column>
-            <el-table-column label="目录同步" width="175"><template #default="scope">{{ formatDate(scope.row.directorySyncedAt) }}</template></el-table-column>
+            <el-table-column v-if="!localMode" label="目录同步" width="175"><template #default="scope">{{ formatDate(scope.row.directorySyncedAt) }}</template></el-table-column>
+            <el-table-column v-else label="独立登录" width="110"><template #default="scope">{{ scope.row.username ? '已开通' : '未开通' }}</template></el-table-column>
             <el-table-column label="操作" width="95" fixed="right"><template #default="scope"><el-button link type="primary" :icon="UserFilled" @click="openUser(scope.row)">{{ authStore.canManageIdentity ? '配置' : '查看' }}</el-button></template></el-table-column>
           </el-table>
           <div class="table-footer identity-pagination">
@@ -418,7 +487,7 @@ onMounted(() => void load())
 
       <el-tab-pane label="角色与权限" name="roles">
         <section class="content-panel role-toolbar">
-          <div><strong>本地角色</strong><span>角色权限不发布到 AI Hub，变更后由服务端立即重新计算。</span></div>
+          <div><strong>本地角色</strong><span>角色权限由 dsh-work 管理，变更后立即重新计算。</span></div>
           <el-button v-if="authStore.canManageIdentity" type="primary" @click="openCreateRole">新建角色</el-button>
         </section>
         <section class="content-panel content-panel--flush">
@@ -444,14 +513,42 @@ onMounted(() => void load())
       </el-tab-pane>
     </el-tabs>
 
+    <el-dialog v-model="accountDialogOpen" :title="resettingPassword ? '重置密码' : accountTarget ? '开通独立登录' : '新建账号'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false" @closed="accountForm.password = ''">
+      <el-alert v-if="accountTarget" :title="`${accountTarget.name} · ${accountTarget.id}`" type="info" :closable="false" />
+      <el-form label-position="top" @submit.prevent="saveAccount">
+        <template v-if="!resettingPassword">
+          <el-form-item label="登录账号" for="account-username"><el-input id="account-username" v-model="accountForm.username" autocomplete="off" :maxlength="80" required /></el-form-item>
+          <template v-if="!accountTarget">
+            <el-form-item label="姓名" for="account-name"><el-input id="account-name" v-model="accountForm.name" :maxlength="80" required /></el-form-item>
+            <el-form-item label="部门" for="account-department"><el-input id="account-department" v-model="accountForm.department" :maxlength="100" /></el-form-item>
+            <el-form-item label="邮箱" for="account-email"><el-input id="account-email" v-model="accountForm.email" type="email" :maxlength="254" /></el-form-item>
+          </template>
+        </template>
+        <el-form-item label="初始密码" for="account-password"><el-input id="account-password" v-model="accountForm.password" type="password" show-password autocomplete="new-password" :minlength="15" :maxlength="128" required /></el-form-item>
+        <p>15–128 个字符，首次登录需修改。请通过安全渠道交付给员工。</p>
+      </el-form>
+      <template #footer><el-button :disabled="saving" @click="accountDialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">{{ resettingPassword ? '重置密码' : '开通账号' }}</el-button></template>
+    </el-dialog>
+
     <el-drawer v-model="userDrawerOpen" size="min(680px, 100vw)" title="员工授权配置">
       <template v-if="selectedUser">
         <section class="user-detail-hero">
           <span class="user-detail-hero__avatar">{{ [...selectedUser.name][0] ?? '用' }}</span>
           <div><h2>{{ selectedUser.name }}</h2><p>{{ selectedUser.email ?? '未提供邮箱' }} · {{ selectedUser.department }}</p></div>
-          <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'" effect="plain">{{ selectedUser.status === 'active' ? 'AI Hub 有效' : 'AI Hub 已停用' }}</el-tag>
+          <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'" effect="plain">{{ selectedUser.status === 'active' ? '有效' : '已停用' }}</el-tag>
         </section>
-        <el-alert v-if="selectedUser.status === 'disabled'" type="warning" :closable="false" show-icon title="该员工已在 AI Hub 停用，所有登录 Session 已撤销；本地授权配置会保留，便于审计或恢复。" />
+        <el-alert v-if="selectedUser.status === 'disabled'" type="warning" :closable="false" show-icon title="该员工已停用，无法登录；原有授权配置保留，便于审计或恢复。" />
+
+        <section v-if="localMode && authStore.canManageIdentity" class="drawer-section">
+          <div class="drawer-section__heading"><div><strong>独立登录</strong><span>{{ selectedUser.username ?? '尚未绑定独立登录账号' }}</span></div></div>
+          <div class="inline-form">
+            <template v-if="selectedUser.username">
+              <el-button v-if="selectedUser.id !== authStore.user.id" :disabled="saving" @click="openAccount(selectedUser, true)">重置密码</el-button>
+              <el-button :type="selectedUser.status === 'active' ? 'danger' : 'primary'" :loading="saving" @click="toggleAccountStatus">{{ selectedUser.status === 'active' ? '停用账号' : '启用账号' }}</el-button>
+            </template>
+            <el-button v-else-if="selectedUser.status === 'active'" type="primary" @click="openAccount(selectedUser)">开通独立登录</el-button>
+          </div>
+        </section>
 
         <section class="drawer-section">
           <div class="drawer-section__heading"><div><strong>角色</strong><span>决定可用功能和角色数据范围</span></div></div>
@@ -463,7 +560,7 @@ onMounted(() => void load())
             <el-empty v-if="!selectedUser.roles.length" :image-size="56" description="尚未分配本地角色" />
           </div>
           <div v-if="authStore.canManageIdentity" class="inline-form">
-            <el-select v-model="selectedRoleId" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
+            <el-select v-model="selectedRoleId" aria-label="选择要分配的角色" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
             <el-button type="primary" :loading="saving" :disabled="!selectedRoleId" @click="grantRole">分配角色</el-button>
           </div>
         </section>

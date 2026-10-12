@@ -55,7 +55,7 @@ function logout() {
     :user-name="authStore.user.name"
     :avatar-text="authStore.user.avatarText"
     :role-label="roleLabels[authStore.user.role]"
-    :can-logout="authStore.identityProvider === 'ai-hub-oidc'"
+    :can-logout="authStore.identityProvider !== null && authStore.identityProvider !== 'prototype-sso'"
     :can-read-admin="authStore.canReadAdmin"
     :can-read-audit="authStore.canReadAudit"
     :identity-administration-available="authStore.identityAdministrationAvailable"

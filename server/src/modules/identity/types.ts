@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http'
 import type { UserProfile } from '../../domain/types.ts'
 
 export type ApiAudience = 'workbench' | 'admin'
-export type IdentityProvider = 'prototype-sso' | 'ai-hub-oidc'
+export type IdentityProvider = 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
 
 /** Business permissions are defined and evaluated only by dsh-work. */
 export const LOCAL_PERMISSIONS = {
@@ -53,6 +53,22 @@ export interface PrototypeIdentityConfiguration {
   mode: 'prototype'
 }
 
+export interface LocalAudienceConfiguration {
+  audience: ApiAudience
+  applicationId: string
+  allowedOrigins: string[]
+  defaultOrigin: string
+  sessionCookieName: string
+}
+
+export interface LocalIdentityConfiguration {
+  mode: 'local'
+  sessionSecret: string
+  sessionTtlSeconds: number
+  cookieSecure: boolean
+  audiences: Record<ApiAudience, LocalAudienceConfiguration>
+}
+
 export interface OidcIdentityConfiguration {
   /** Explicit fresh-install opt-in. A consumed application/environment claim always closes it. */
   adminBootstrapEnabled?: boolean
@@ -70,7 +86,7 @@ export interface OidcIdentityConfiguration {
   audiences: Record<ApiAudience, OidcAudienceConfiguration>
 }
 
-export type IdentityConfiguration = PrototypeIdentityConfiguration | OidcIdentityConfiguration
+export type IdentityConfiguration = PrototypeIdentityConfiguration | OidcIdentityConfiguration | LocalIdentityConfiguration
 
 export interface CurrentPlatformUser {
   user_id: string

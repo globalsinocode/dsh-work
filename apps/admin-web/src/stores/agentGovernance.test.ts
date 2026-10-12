@@ -113,20 +113,20 @@ describe('agent governance store（服务端持久化）', () => {
     expect(getState).not.toHaveBeenCalled()
   })
 
-  it('运行检查后合并检查与计划结果', async () => {
+  it('发起试运行后合并服务端自动检查结果', async () => {
     const state = makeState('agent-2', {
       candidate: makeCandidate('agent-2', {
         checks: [
           { id: 'manifest', label: '定义格式与字段', status: 'passed', detail: '字段齐全' },
-          { id: 'cases', label: '案例覆盖与有效性', status: 'passed', detail: '三类齐全' },
+          { id: 'cases', label: '案例覆盖与有效性', status: 'passed', detail: '五类齐全' },
         ],
       }),
     })
-    vi.spyOn(adminApi, 'runAgentReleaseChecks').mockResolvedValue(state)
+    vi.spyOn(adminApi, 'startAgentReleaseTrial').mockResolvedValue(state)
     const store = useAgentGovernanceStore()
 
-    const checks = await store.runChecks('agent-2')
-    expect(checks).toHaveLength(2)
+    await store.startTrialRun('agent-2', 'case-success')
+    expect(store.overlays['agent-2']?.candidate?.checks).toHaveLength(2)
     expect(store.overlays['agent-2']?.candidate?.checks[0]?.status).toBe('passed')
     expect(store.submissions['agent-2']?.status).toBe('draft')
   })
@@ -171,27 +171,6 @@ describe('agent governance store（服务端持久化）', () => {
     await store.withdrawCandidate('agent-5')
     expect(withdraw).toHaveBeenCalledWith('agent-5')
     expect(store.overlays['agent-5']?.candidate).toBeUndefined()
-  })
-
-  it('导入发布包后返回服务端创建的 Agent', async () => {
-    const agent = makeAgent('agent-zip')
-    const state = makeState('agent-zip', { candidate: makeCandidate('agent-zip', { source: 'zip' }) })
-    vi.spyOn(adminApi, 'importAgentPackage').mockResolvedValue(state)
-    vi.spyOn(adminApi, 'getAgentReleaseSubmissions').mockResolvedValue({
-      items: [{ agentId: 'agent-zip', revision: 1, status: 'draft', source: 'zip' }],
-    })
-    const contentStore = useContentStore()
-    vi.spyOn(contentStore, 'load').mockImplementation(async () => {
-      contentStore.agents = [agent]
-    })
-    const store = useAgentGovernanceStore()
-
-    const file = new File(['zip'], 'agent.zip', { type: 'application/zip' })
-    const result = await store.importPackage(file)
-
-    expect(result.agent.id).toBe('agent-zip')
-    expect(store.overlays['agent-zip']?.candidate?.source).toBe('zip')
-    expect(store.submissions['agent-zip']?.source).toBe('zip')
   })
 
   it('版本证据索引按 agent + version 归并', async () => {

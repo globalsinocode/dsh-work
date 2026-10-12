@@ -18,6 +18,7 @@ export const permissionCatalog = [
 interface UserListRow {
   id: string
   externalUserId: string | null
+  username: string | null
   name: string
   email: string | null
   department: string
@@ -40,8 +41,11 @@ interface UserListSummary {
 export class IdentityAdministrationService {
   private readonly database: DatabaseClient
 
-  constructor(database: DatabaseClient) {
+  private readonly localAccounts: boolean
+
+  constructor(database: DatabaseClient, localAccounts = false) {
     this.database = database
+    this.localAccounts = localAccounts
   }
 
   async listUsers(input: { query?: string; status?: string; page?: number; pageSize?: number }) {
@@ -62,25 +66,27 @@ export class IdentityAdministrationService {
                     and (ur.valid_until is null or ur.valid_until > now())
                ))::integer as authorized
           from users u
-         where u.tenant_id = ${tenantId} and u.identity_provider = 'ai-hub'
+         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
       `
       const [count] = await transaction<{ total: number }[]>`
         select count(*)::integer as total
           from users u
-         where u.tenant_id = ${tenantId} and u.identity_provider = 'ai-hub'
+         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
            and (${status} = '' or u.status = ${status})
            and (
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
              or coalesce(u.email, '') ilike ${`%${query}%`}
+             or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
              or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
            )
       `
       const items = await transaction<UserListRow[]>`
         select u.id, u.external_user_id as "externalUserId", u.display_name as name,
+               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as username,
                u.email, coalesce(u.department_id, '未分配部门') as department,
                u.status, u.identity_provider as "identityProvider",
                u.directory_synced_at as "directorySyncedAt",
@@ -107,13 +113,14 @@ export class IdentityAdministrationService {
                (select max(s.last_seen_at) from authentication_sessions s
                  where s.tenant_id = u.tenant_id and s.user_id = u.id) as "lastSeenAt"
          from users u
-         where u.tenant_id = ${tenantId} and u.identity_provider = 'ai-hub'
+         where u.tenant_id = ${tenantId} and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
            and u.business_user
            and (${status} = '' or u.status = ${status})
            and (
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
              or coalesce(u.email, '') ilike ${`%${query}%`}
+             or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
              or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
            )
@@ -154,7 +161,7 @@ export class IdentityAdministrationService {
                join users u on u.tenant_id = ur.tenant_id and u.id = ur.user_id
               where ur.tenant_id = r.tenant_id and ur.role_id = r.id
                 and ur.source_key = 'local' and u.status = 'active'
-                and u.identity_provider = 'ai-hub'
+                and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
                 and u.business_user
                 and (ur.valid_until is null or ur.valid_until > now())) as "userCount",
              (r.id in ('role-platform-admin', 'role-employee', 'role-department-manager', 'role-auditor')) as system,
@@ -256,7 +263,7 @@ export class IdentityAdministrationService {
     await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string; status: string }[]>`
         select id, status from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and identity_provider = 'ai-hub'
+          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
           and business_user
       `
       if (!user) throw new Error(`用户不存在：${input.userId}`)
@@ -295,9 +302,9 @@ export class IdentityAdministrationService {
       }
       const [user] = await transaction<{ id: string; status: string }[]>`
         select id, status from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and identity_provider = 'ai-hub'
+          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
       `
-      if (!user) throw new Error(`AI Hub 员工不存在：${input.userId}`)
+      if (!user) throw new Error(`员工不存在：${input.userId}`)
       if (input.roleId === 'role-platform-admin') {
         const [assigned] = await transaction<{ assigned: boolean }[]>`
           select exists (
@@ -308,7 +315,7 @@ export class IdentityAdministrationService {
           ) as assigned
         `
         if (assigned?.assigned && user.status === 'active') {
-          await requireAnotherPlatformAdmin(transaction, input.userId)
+          await requireAnotherPlatformAdmin(transaction, input.userId, this.localAccounts)
         }
       }
       await transaction`
@@ -332,7 +339,7 @@ export class IdentityAdministrationService {
     await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string }[]>`
         select id from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and identity_provider = 'ai-hub'
+          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
           and business_user
       `
       if (!user) throw new Error(`用户不存在：${input.userId}`)
@@ -352,7 +359,7 @@ export class IdentityAdministrationService {
     const count = await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string }[]>`
         select id from users where tenant_id = ${tenantId} and id = ${input.userId}
-          and identity_provider = 'ai-hub'
+          and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
       `
       if (!user) throw new Error(`用户不存在：${input.userId}`)
       const revoked = await transaction<{ sessionHash: string }[]>`
@@ -381,6 +388,7 @@ export class IdentityAdministrationService {
   private async requireUser(userId: string) {
     const [user] = await this.database<UserListRow[]>`
       select u.id, u.external_user_id as "externalUserId", u.display_name as name,
+               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as username,
              u.email, coalesce(u.department_id, '未分配部门') as department,
              u.status, u.identity_provider as "identityProvider",
              u.directory_synced_at as "directorySyncedAt",
@@ -398,7 +406,7 @@ export class IdentityAdministrationService {
              (select max(s.last_seen_at) from authentication_sessions s where s.tenant_id = u.tenant_id
                 and s.user_id = u.id) as "lastSeenAt"
         from users u where u.tenant_id = ${tenantId} and u.id = ${userId}
-          and u.identity_provider = 'ai-hub'
+          and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
     `
     if (!user) throw new Error(`用户不存在：${userId}`)
     return user
@@ -426,7 +434,7 @@ async function appendAdministrationAudit(
       ${`trace-identity-${randomUUID()}`},
       ${transaction.json({
         audience: 'admin',
-        provider: 'ai-hub-oidc',
+        authorizationSource: 'local',
         ...input.context,
       })}
     )
@@ -457,14 +465,14 @@ async function replaceScopes(
   }
 }
 
-async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, excludedUserId: string) {
+export async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, excludedUserId: string, localAccounts = false) {
   const [row] = await transaction<{ count: number }[]>`
     select count(distinct u.id)::integer as count
       from users u
       join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
       join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
      where u.tenant_id = ${tenantId} and u.id <> ${excludedUserId} and u.status = 'active'
-       and u.identity_provider = 'ai-hub'
+       and (case when ${localAccounts} then exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) else u.identity_provider = 'ai-hub' end)
        and u.business_user
        and ur.source_key = 'local' and ur.role_id = 'role-platform-admin'
        and (ur.valid_until is null or ur.valid_until > now())
@@ -473,7 +481,7 @@ async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, exc
   if (!row || row.count < 1) throw new Error('不能移除最后一个有效的平台管理员')
 }
 
-async function lockPlatformAdminInvariant(transaction: DatabaseTransaction) {
+export async function lockPlatformAdminInvariant(transaction: DatabaseTransaction) {
   await transaction`
     select pg_advisory_xact_lock(
       hashtextextended(${`${tenantId}:role-platform-admin:minimum-one-active`}, 0)

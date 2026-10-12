@@ -7,7 +7,7 @@ import {
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
 import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
+import type { AddToolInput, AgentMcpScope, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -1036,12 +1036,15 @@ export class PostgresToolConnectorService {
   }
 
   /** Resolve the Agent Version's MCP policy for a new Attempt. */
-  async resolveMcpConnectionsForAgentVersion(versionId: string): Promise<McpConnectionSnapshot[]> {
+  async resolveMcpConnectionsForAgentVersion(versionId: string, expectedScope?: AgentMcpScope): Promise<McpConnectionSnapshot[]> {
     const [version] = await this.database<{ scope: unknown }[]>`
       select mcp_scope as scope from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     if (!version) throw authorizationDenied(`Agent Version 不存在：${versionId}`)
     const scope = normalizeAgentMcpScope(version.scope)
+    if (expectedScope && JSON.stringify(scope) !== JSON.stringify(normalizeAgentMcpScope(expectedScope))) {
+      throw authorizationDenied('Agent MCP 使用范围已偏离本次试运行的封存定义')
+    }
     if (scope.mode === 'none') return []
     const rows = await this.database<Array<McpConnectionSnapshot & {
       credentialStatus: string | null

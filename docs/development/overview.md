@@ -3,7 +3,7 @@
 **文档状态：** 当前架构基线<br>
 **更新日期：** 2026-09-08<br>
 **技术形态：** 两个独立 Vue 应用 + 一个 Node.js 模块化单体 + PostgreSQL + 独立 DSH Worker 进程<br>
-**身份来源：** AI Hub OIDC（生产/联调）或受控原型身份（本地演示）
+**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）或受控原型身份（仅本地演示）
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
@@ -44,7 +44,7 @@ MVP 明确不包含：
 - 企业身份由服务端建立，浏览器传入的用户、角色或操作人字段不能作为授权事实；
 - DSH 只能通过受控适配器和平台能力调用模型、Tool 与成果存储；
 - MCP 复用 Connector 控制面，健康且能力快照已同步的 MCP Server 默认对全部 Agent 可用；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
-- AI Hub 不可用时不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
+- OIDC 模式下 AI Hub 不可用时不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
 
 ## 3. 架构原则
 
@@ -56,7 +56,7 @@ MVP 明确不包含：
 
 - 员工工作台与管理后台分别构建静态资源；
 - 每个 Attempt 默认启动独立 DSH ACP Worker 子进程；
-- PostgreSQL、AI Hub、模型 Provider、企业系统和文件存储是外部依赖。
+- PostgreSQL、模型 Provider、企业系统和文件存储是外部依赖；AI Hub 仅在 OIDC 模式需要。
 
 ### 3.2 版本不可变、运行可追溯
 
@@ -209,7 +209,7 @@ flowchart LR
 
 ## 6. 核心运行流程
 
-1. 用户通过对应 Portal 发起 AI Hub OIDC Authorization Code + PKCE 登录；
+1. 用户通过对应 Portal 使用独立账号密码登录，或在 OIDC 模式发起 AI Hub Authorization Code + PKCE 登录；
 2. 服务端校验 `state`、`nonce`、Issuer、Audience、签名和 Scope，建立加密的服务端 Session；
 3. 员工选择个人或团队 Workspace，并创建或继续产品 Session；API/event 也可在 Workspace 中直接受理无 Session Task。需要时从员工端 Skill 广场选择一个已发布 Skill；个人空间未显式指定 Agent 时，服务端优先使用平台默认 Agent，并跳过无法满足所选 Skill 工具依赖的候选；
 4. 服务端在创建 Session 前校验应用权限、Workspace 成员关系、Agent 可见性、有效数据范围及 Agent/Skill 工具闭包；`activate_skill`、`python_execute` 由 Attempt Manifest 内建授权，其余工具必须由 Agent 显式授权；
@@ -246,7 +246,7 @@ flowchart LR
 | 管理体验 | `apps/admin-web`、`packages/admin-components` |
 | 共享视觉基础 | `packages/design-tokens`、`packages/ui-core` |
 | Workbench/Admin/Auth API | `server/src/http` |
-| 身份与 AI Hub | `server/src/modules/identity` |
+| 独立身份与 AI Hub 适配 | `server/src/modules/identity` |
 | Run 与状态机 | `server/src/modules/run` |
 | Runtime Adapter | `server/src/modules/runtime` |
 | Agent/Skill/Tool/Model 治理 | `server/src/modules/agent`、`skill`、`tool`、`model` |
@@ -258,7 +258,7 @@ flowchart LR
 
 ## 9. 身份、安全与数据边界
 
-- 生产/联调身份使用 AI Hub OIDC，Token 加密保存在服务端 Session；Cookie 在 HTTPS 环境启用 Secure；
+- 生产/联调可显式选择独立账号密码或 AI Hub OIDC；独立密码以加盐 scrypt 保存，OIDC Token 加密保存在服务端 Session。两种模式共用本地授权，Cookie 与 Session 提供方隔离，生产均要求 HTTPS 和 Secure Cookie；
 - Workbench 与 Admin 分别校验 Audience；每次 API 请求从 PostgreSQL 解析当前本地角色、权限、数据范围和授权版本；
 - AI Hub 环境中明确指定的初始管理员只可一次性初始化首位本地平台管理员；应用负责人和平台登记人不因此获权，之后所有授权在 dsh-work 管理端维护；
 - API 不信任浏览器提交的 `actor`、用户 ID、角色或数据范围；
@@ -276,13 +276,13 @@ flowchart LR
 - 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
 - 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
-- 生产依赖 AI Hub 的 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
-- 业务角色在本地，但 AI Hub 账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
-- 管理端当前持续要求 Bootstrap Scope，即使首位管理员已经初始化；凭据轮换须覆盖后续登录和刷新验证。
+- 选择 OIDC 时依赖 AI Hub 的 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
+- OIDC 模式的业务角色在本地，但 AI Hub 账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
+- 普通 OIDC 登录不要求 Bootstrap Scope；仅显式首次认领入口申请。独立模式使用受控命令和持久化一次性账本初始化首位管理员，不访问上游。
 - `/health` 的 SSO 字段表示配置模式，不是身份服务可用性检测；接口契约与真实双系统故障行为需独立验证。
 - 企业只读 Connector、真实知识源、恶意文件扫描、数据出口、目标容量和备份恢复，均需针对部署环境提供证据。合成数据、历史测试与发布成功不能代替业务验收。
 
-开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
+开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
 
 ## 11. 生产演进原则
 

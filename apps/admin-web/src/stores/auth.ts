@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 
 import { adminApi } from '../api/client'
 import type { AdminRole, AdminSession, AdminUserProfile } from '../types/domain'
@@ -43,7 +44,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
   ))
   const canManageIdentity = computed(() => permissions.value.includes('admin:*'))
   const identityAdministrationAvailable = computed(() => (
-    identityProvider.value === 'ai-hub-oidc'
+    identityProvider.value === 'ai-hub-oidc' || identityProvider.value === 'local-password'
   ))
   const canAccessAdmin = computed(() =>
     sessionUser.value !== null && (canReadAdmin.value || canReadAudit.value || canManage.value),
@@ -85,7 +86,17 @@ export const useAuthStore = defineStore('admin-auth', () => {
     window.location.assign(`/auth/admin/switch-account?return_to=${encodeURIComponent(returnTo)}`)
   }
 
-  function logout() {
+  async function logout() {
+    if (identityProvider.value === 'local-password') {
+      try {
+        const response = await fetch('/auth/admin/logout', { method: 'POST', credentials: 'same-origin' })
+        if (!response.ok) throw new Error('退出登录失败，请重试')
+        window.location.assign('/login')
+      } catch (cause) {
+        ElMessage.error(cause instanceof Error ? cause.message : '退出登录失败')
+      }
+      return
+    }
     sessionUser.value = null
     identityProvider.value = null
     permissions.value = []

@@ -8,7 +8,6 @@ import type {
   AgentPrincipalGovernance,
   AgentRoutine,
   AgentRoutineExecution,
-  AgentPackageInspection,
   AgentReleaseState,
   AgentSubmissionSummary,
   AgentVersionEvidenceEntry,
@@ -32,6 +31,7 @@ import type {
   IdentityUserSummary,
   ListPage,
   LocalPermissionDefinition,
+  LoginSettings,
   ModelUsagePage,
   ManagedWorkspaceDefinition,
   ModelProvider,
@@ -253,20 +253,17 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
   ensureAgentReleaseCandidate: (agentId: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
-  runAgentReleaseChecks: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/checks`, { method: 'POST' }),
   updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
       method: 'POST',
       body: JSON.stringify({ cases }),
     }),
-  removeAgentReleaseDependency: (agentId: string, input: { kind: 'skills' | 'tools'; reference: string }) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/dependencies/remove`, {
-      method: 'POST',
-      body: JSON.stringify(input),
+  startAgentReleaseTrial: (agentId: string, caseId: string) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/case-trials`, { method: 'POST', body: JSON.stringify({ caseId }) }),
+  continueAgentReleaseTrialCase: (agentId: string, trialId: string, input: { caseId: string; input: string; rubric: string }) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cases`, {
+      method: 'POST', body: JSON.stringify(input),
     }),
-  startAgentReleaseTrial: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials`, { method: 'POST' }),
   confirmAgentReleaseTrial: (agentId: string, trialId: string, verdicts: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }>) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
   cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
@@ -282,18 +279,6 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publish`, {
       method: 'POST',
       body: JSON.stringify({ note }),
-    }),
-  inspectAgentPackage: (file: File) =>
-    request<AgentPackageInspection>('/agent-packages/inspect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
-      body: file,
-    }),
-  importAgentPackage: (file: File) =>
-    request<AgentReleaseState>('/agent-packages/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/zip', 'X-File-Name': encodeURIComponent(file.name) },
-      body: file,
     }),
   downloadAgentVersionPackage: async (agentId: string, versionId: string): Promise<Blob> => {
     const response = await fetch(`${baseUrl}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/package`, {
@@ -472,6 +457,17 @@ export const adminApi = {
       `/identity/users/${encodeURIComponent(userId)}/sessions/revoke`,
       { method: 'POST' },
     ),
+  createLocalAccount: (input: { username: string; password: string; name: string; department?: string; email?: string }, userId?: string) =>
+    request<{ userId: string; username: string }>(userId ? `/identity/users/${encodeURIComponent(userId)}/local-account` : '/identity/users', {
+      method: 'POST', body: JSON.stringify(userId ? { username: input.username, password: input.password } : input),
+    }),
+  getLoginSettings: () => request<LoginSettings>('/identity/login-settings'),
+  saveLoginSettings: (mode: 'local' | 'oidc', expectedRevision: number) =>
+    request<LoginSettings>('/identity/login-settings', { method: 'PATCH', body: JSON.stringify({ mode, expectedRevision }) }),
+  resetLocalPassword: (userId: string, password: string) =>
+    request<{ userId: string }>(`/identity/users/${encodeURIComponent(userId)}/password`, { method: 'POST', body: JSON.stringify({ password }) }),
+  setLocalAccountStatus: (userId: string, status: 'active' | 'disabled') =>
+    request<{ userId: string; status: string }>(`/identity/users/${encodeURIComponent(userId)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getDirectorySyncState: () => request<DirectorySyncState>('/identity/directory-sync'),
   synchronizeDirectory: (full = false) => request<DirectorySyncState>(
     `/identity/directory-sync${full ? '?full=true' : ''}`,

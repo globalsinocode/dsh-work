@@ -279,6 +279,7 @@ export class RunOrchestrationService {
     userId: string
     sessionId: string
     draftVersionId: string
+    expectedDefinitionFingerprint?: string
     message: string
     idempotencyKey: string
     deadlineMs?: number
@@ -291,7 +292,9 @@ export class RunOrchestrationService {
       await this.conversations.appendMessage({
         sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
       })
-      await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(run, input.userId, input.draftVersionId, input.message))
+      await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(
+        run, input.userId, input.draftVersionId, input.message, input.expectedDefinitionFingerprint,
+      ))
     }
     const deadline = Date.now() + (input.deadlineMs ?? 150_000)
     let current = await this.runs.getRun(tenantId, run.id)
@@ -314,9 +317,9 @@ export class RunOrchestrationService {
     }
   }
 
-  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {
+  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
-    const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
+    const agent = await this.agents!.getRuntimeSnapshot(draftVersionId, [], expectedDefinitionFingerprint)
     const trialScope = await this.authorization?.resolveAgentPrincipalTrialScope(
       draftVersionId, agent.roleIds, agent.dataScopes,
     ) ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
