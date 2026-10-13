@@ -20,8 +20,8 @@ test('administrator can create a Soul-only Agent draft with default platform cap
   await dialog.getByRole('button', { name: '下一步' }).click()
 
   await expect(dialog.getByText('0 个 Skill')).toBeVisible()
-  await expect(dialog.getByText('MCP：全部可用')).toBeVisible()
+  await expect(dialog.getByText('MCP：不使用')).toBeVisible()
   await dialog.getByRole('button', { name: '完成创建' }).click()
 
-  await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })).toContainText('0 个 Skill · MCP：全部可用')
+  await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })).toContainText('0 个 Skill · MCP：不使用')
 })

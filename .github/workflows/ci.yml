@@ -107,7 +107,12 @@ jobs:
       - name: Run PostgreSQL integration tests
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration && pnpm test:m4:integration && pnpm test:m4:skill:integration && pnpm test:skill-install:integration && pnpm test:m4:tool:integration && pnpm test:m4:knowledge:integration && pnpm test:m4:file:integration && pnpm test:m4:authorization:integration && pnpm test:m4:runtime:integration && pnpm test:m4:audit:integration && pnpm test:m4:error:integration && pnpm test:m5:security:integration && pnpm test:m5:faults:integration && pnpm test:m5:capacity:integration && pnpm test:m4:team-auth:integration && pnpm test:m5:members:integration && pnpm test:m5:workspace:integration && pnpm test:m5:workspace:upgrade:integration && pnpm test:m5:agent-members:integration && pnpm test:m5:sessions:integration && pnpm test:m5:shared-files:integration && pnpm test:m5:file-versions:integration && pnpm test:m5:lifecycle:integration && pnpm test:m5:activity:integration && pnpm test:m5:usage:integration && pnpm test:m5:reconciliation:integration && pnpm test:m5:revocation:integration && pnpm test:pf06:integration && pnpm test:sso:integration
+        run: pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration && pnpm test:m4:integration && pnpm test:m4:skill:integration && pnpm test:skill-install:integration && pnpm test:m4:tool:integration && pnpm test:m4:knowledge:integration && pnpm test:m4:file:integration && pnpm test:m4:authorization:integration && pnpm test:m4:runtime:integration && pnpm test:m4:audit:integration && pnpm test:m4:error:integration && pnpm test:m5:security:integration && pnpm test:m5:faults:integration && pnpm test:m5:capacity:integration && pnpm test:m4:team-auth:integration && pnpm test:m5:members:integration && pnpm test:m5:workspace:integration && pnpm test:m5:workspace:upgrade:integration && pnpm test:m5:agent-members:integration && pnpm test:m5:sessions:integration && pnpm test:m5:shared-files:integration && pnpm test:m5:file-versions:integration && pnpm test:m5:lifecycle:integration && pnpm test:m5:activity:integration && pnpm test:m5:usage:integration && pnpm test:m5:reconciliation:integration && pnpm test:m5:revocation:integration && pnpm test:pf06:integration && pnpm test:sso:integration && pnpm test:local-auth:integration
+
+      - name: Run automation identity and team tool binding regressions
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:automation:integration && pnpm test:tool-binding:integration
 
       - name: Run Agent release governance integration
         env:
@@ -129,6 +134,16 @@ jobs:
 
       - name: Run browser smoke tests
         run: pnpm test:e2e
+
+      - name: Run local authentication P1 browser journeys
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:e2e:local-auth
+
+      - name: Run login options and independent accounts P1 browser journeys
+        env:
+          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+        run: pnpm test:e2e:login-options
 
       - name: Run personal workbench P1 browser journeys
         env:

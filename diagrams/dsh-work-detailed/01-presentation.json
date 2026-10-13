@@ -1,0 +1,263 @@
+{
+  "type": "architecture",
+  "title": "第一层 · 展示层模块",
+  "subtitle": "双端 Vue 应用 · 五个员工主入口 · 管理治理、人工试运行与发布确认",
+  "eyebrow": "DSH-WORK / 五层模块详图 / 2026-10-12",
+  "caption": "连线表示界面入口及页面协作。员工主导航为新对话、Skill 广场、AI 同事、团队空间和自动任务；历史与文件通过上下文入口访问。两端使用独立路由、认证状态和 API Audience；服务端承担最终授权。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "budget": "balanced",
+  "out": "01-presentation.html",
+  "groups": [
+    {
+      "id": "access",
+      "label": "双端身份入口"
+    },
+    {
+      "id": "employee",
+      "label": "员工应用 · workbench-web"
+    },
+    {
+      "id": "admin",
+      "label": "管理应用 · admin-web"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "login",
+      "label": "登录与会话",
+      "sub": "账号密码 / 可选 AI Hub",
+      "row": 0,
+      "col": 1,
+      "kind": "input",
+      "icon": "lock",
+      "group": "access"
+    },
+    {
+      "id": "workbench",
+      "label": "员工工作台",
+      "sub": "主导航 / 路由 / 会话入口",
+      "row": 1,
+      "col": 1,
+      "kind": "backend",
+      "icon": "home",
+      "group": "employee"
+    },
+    {
+      "id": "conversation",
+      "label": "任务与对话",
+      "sub": "发起 / 进展 / 取消 / 继续",
+      "row": 1,
+      "col": 2,
+      "kind": "backend",
+      "icon": "chat",
+      "focal": true,
+      "group": "employee"
+    },
+    {
+      "id": "catalog",
+      "label": "Skill 与 AI 同事",
+      "sub": "选择能力 / 使用已发布 Agent",
+      "row": 1,
+      "col": 0,
+      "kind": "backend",
+      "icon": "people",
+      "group": "employee"
+    },
+    {
+      "id": "automations",
+      "label": "自动任务",
+      "sub": "计划配置 / 触发 / 执行历史",
+      "row": 2,
+      "col": 0,
+      "kind": "backend",
+      "icon": "clock",
+      "group": "employee"
+    },
+    {
+      "id": "teams",
+      "label": "团队空间",
+      "sub": "成员 / Agent / 共享上下文",
+      "row": 2,
+      "col": 1,
+      "kind": "backend",
+      "icon": "people",
+      "group": "employee"
+    },
+    {
+      "id": "results",
+      "label": "文件与历史",
+      "sub": "输入文件 / 成果 / 历史对话",
+      "row": 2,
+      "col": 2,
+      "kind": "backend",
+      "icon": "document",
+      "group": "employee"
+    },
+    {
+      "id": "admin",
+      "label": "管理控制台",
+      "sub": "身份 / 能力 / 运维 / 审批",
+      "row": 0,
+      "col": 3,
+      "kind": "backend",
+      "icon": "gear",
+      "group": "admin"
+    },
+    {
+      "id": "release",
+      "label": "发布工作台",
+      "sub": "逐例试运行 / 评价 / 确认发布",
+      "row": 1,
+      "col": 3,
+      "kind": "backend",
+      "icon": "check",
+      "focal": true,
+      "group": "admin"
+    }
+  ],
+  "edges": [
+    {
+      "from": "login",
+      "to": "workbench",
+      "label": "员工入口",
+      "kind": "primary"
+    },
+    {
+      "from": "workbench",
+      "to": "conversation",
+      "label": "发起任务",
+      "kind": "primary"
+    },
+    {
+      "from": "login",
+      "to": "admin",
+      "label": "管理入口",
+      "kind": "link"
+    },
+    {
+      "from": "admin",
+      "to": "release",
+      "label": "发布验证",
+      "kind": "primary"
+    },
+    {
+      "from": "workbench",
+      "to": "catalog",
+      "label": "能力选择",
+      "kind": "default"
+    },
+    {
+      "from": "workbench",
+      "to": "automations",
+      "label": "计划管理",
+      "kind": "default"
+    },
+    {
+      "from": "workbench",
+      "to": "teams",
+      "label": "空间协作",
+      "kind": "default"
+    },
+    {
+      "from": "workbench",
+      "to": "results",
+      "label": "上下文入口",
+      "kind": "default"
+    },
+    {
+      "from": "conversation",
+      "to": "results",
+      "label": "文件与成果",
+      "kind": "link"
+    }
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {
+        "label": "本图主链路"
+      },
+      "link": {
+        "label": "能力与控制关系"
+      },
+      "default": {
+        "label": "数据或模块连接"
+      },
+      "backend": {
+        "label": "已实现模块"
+      },
+      "input": {
+        "label": "入口或输入"
+      },
+      "focal": {
+        "label": "关键节点"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "login",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 10,
+      "note": "员工登录、改密和登录失败页面已有路由；独立账号是主要入口，AI Hub 作为可选身份提供方。管理端拥有自己的登录和会话边界。"
+    },
+    {
+      "id": "workbench",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 26,
+      "note": "员工端通过自己的路由、Pinia 和 API 客户端承载工作流，不共享管理端认证状态。"
+    },
+    {
+      "id": "conversation",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 44,
+      "note": "ConversationView 展示任务输入、消息、进展、取消和继续等交互；运行事件通过 SSE 返回，执行仍进入第二层 Run/Attempt。"
+    },
+    {
+      "id": "catalog",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 32,
+      "note": "Skill 广场与 AI 同事是两个独立主导航入口；图中合并为能力发现模块。"
+    },
+    {
+      "id": "automations",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 76,
+      "note": "自动任务页面负责计划和执行历史的用户交互，实际触发与执行在编排层。"
+    },
+    {
+      "id": "teams",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 57,
+      "note": "团队空间具有成员、Agent 与空间内对话入口；空间对话在空间外壳内打开。"
+    },
+    {
+      "id": "results",
+      "file": "apps/workbench-web/src/router/index.ts",
+      "line": 72,
+      "note": "我的文件、历史对话、Session 恢复保留路由与上下文入口，成果路由映射到文件视图；它们不是额外的员工主导航项。"
+    },
+    {
+      "id": "admin",
+      "file": "apps/admin-web/src/router/index.ts",
+      "line": 145,
+      "note": "管理台覆盖员工与权限、Agent、Skill、DSH 工具、MCP、模型、Runtime、Session、审批、经验迭代、审计和健康；本图以控制台模块汇总这些管理页面。"
+    },
+    {
+      "id": "release",
+      "file": "apps/admin-web/src/router/index.ts",
+      "line": 75,
+      "note": "Agent 发布工作台提供配置、逐例人工试运行与确认发布。对应业务门禁位于配置管理层，真实试运行仍使用统一 DSH 执行链。"
+    },
+    {
+      "id": "login",
+      "file": "docs/development/overview.md",
+      "line": 154,
+      "note": "当前展示层为自有 Web 应用；未发现 Octo、终端工作区或 WorkBuddy 桌面客户端接入。"
+    }
+  ]
+}

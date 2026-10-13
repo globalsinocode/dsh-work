@@ -7,6 +7,8 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   scrollBehavior: () => ({ top: 0 }),
   routes: [
+    { path: '/login', name: 'local-login', component: () => import('@/views/LocalLoginView.vue'), meta: { title: '登录', public: true } },
+    { path: '/change-password', name: 'change-password', component: () => import('@/views/LocalLoginView.vue'), meta: { title: '修改密码', public: true } },
     { path: '/', redirect: '/overview' },
     { path: '/admin', redirect: '/overview' },
     { path: '/admin/overview', redirect: '/overview' },
@@ -59,31 +61,27 @@ const router = createRouter({
     },
     {
       path: '/agents/:agentId/release',
-      redirect: to => ({ name: 'agent-release-definition', params: { agentId: to.params.agentId } }),
+      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
     },
     {
       path: '/agents/:agentId/release/definition',
-      name: 'agent-release-definition',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 定义与依赖', requiresAdmin: true, requiredPermission: 'adminRead' },
+      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
     },
     {
       path: '/agents/:agentId/release/checks',
-      name: 'agent-release-checks',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 检查与案例', requiresAdmin: true, requiredPermission: 'adminRead' },
+      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
     },
     {
       path: '/agents/:agentId/release/trial',
       name: 'agent-release-trial',
       component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 试运行', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Agent 发布工作台 · 人工试运行验证', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/agents/:agentId/release/review',
       name: 'agent-release-review',
       component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 审核发布', requiresAdmin: true, requiredPermission: 'adminRead' },
+      meta: { title: 'Agent 发布工作台 · 确认发布', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/capabilities',
@@ -151,7 +149,7 @@ const router = createRouter({
         title: '员工与权限',
         requiresAdmin: true,
         requiredPermission: 'adminRead',
-        requiresAiHubIdentity: true,
+        requiresManagedIdentity: true,
       },
     },
     {
@@ -222,6 +220,9 @@ router.beforeEach(async (to) => {
   try {
     await authStore.load()
   } catch (cause) {
+    if (cause instanceof Error && 'code' in cause && cause.code === 'password_change_required') {
+      return { name: 'change-password', query: { return_to: to.fullPath } }
+    }
     const status = errorStatus(cause)
     if (status === 401) {
       authStore.login(to.fullPath)
@@ -230,7 +231,7 @@ router.beforeEach(async (to) => {
     if (status === 403) return { name: 'forbidden' }
     return { name: 'auth-error', query: { code: 'session_unavailable' } }
   }
-  if (to.meta.requiresAiHubIdentity && !authStore.identityAdministrationAvailable) {
+  if (to.meta.requiresManagedIdentity && !authStore.identityAdministrationAvailable) {
     return { name: 'overview' }
   }
   if (to.meta.requiresAdmin && !authStore.canAccessAdmin) return { name: 'forbidden' }

@@ -1,23 +1,35 @@
 import type { ServerResponse } from 'node:http'
 
 import { IdentityAccessError, OidcAuthService } from '../modules/identity/auth-service.ts'
+import type { LocalAuthService } from '../modules/identity/local-auth-service.ts'
 import type { ApiAudience } from '../modules/identity/types.ts'
 import type { Router } from './router.ts'
 
-export function registerOidcRoutes(router: Router, authentication: OidcAuthService) {
+export function registerOidcRoutes(router: Router, authentication: OidcAuthService, local?: LocalAuthService | null) {
   router.get('/auth/admin/bootstrap', async (request, context, response) => {
     const result = await authentication.beginBootstrapLogin(request, context.url.searchParams.get('return_to'))
     redirect(response, result.location, [result.cookie])
   })
   for (const audience of ['workbench', 'admin'] as const) {
-    router.get(`/auth/${audience}/login`, async (request, context, response) => {
-      const result = await authentication.beginLogin(request, audience, context.url.searchParams.get('return_to'))
-      redirect(response, result.location, [result.cookie])
-    })
-
-    router.get(`/auth/${audience}/switch-account`, async (request, context, response) => {
-      const result = await authentication.switchAccount(request, audience, context.url.searchParams.get('return_to'))
-      redirect(response, result.location, [result.cookie, result.clearSessionCookie])
+    for (const action of ['login', 'switch-account']) router.get(`/auth/${audience}/${local ? 'oidc/' : ''}${action}`, async (request, context, response) => {
+      // Validate the portal before handling upstream outages as a recoverable page state.
+      const loginPage = local ? new URL(local.loginPage(request, audience, context.url.searchParams.get('return_to'))) : null
+      try {
+        const returnTo = context.url.searchParams.get('return_to')
+        if (action === 'switch-account') {
+          const result = await authentication.switchAccount(request, audience, returnTo)
+          redirect(response, result.location, [result.cookie, result.clearSessionCookie])
+        } else {
+          const result = await authentication.beginLogin(request, audience, returnTo)
+          redirect(response, result.location, [result.cookie])
+        }
+      } catch (error) {
+        if (!loginPage) throw error
+        loginPage.searchParams.set('provider', 'ai-hub')
+        loginPage.searchParams.set('auth_error', 'ai_hub_unavailable')
+        if (action === 'switch-account') loginPage.searchParams.set('switch_account', 'true')
+        redirect(response, loginPage.toString(), [authentication.clearTransactionCookie(audience)])
+      }
     })
 
     router.get(`/auth/${audience}/callback`, async (request, context, response) => {
@@ -49,7 +61,9 @@ export function registerOidcRoutes(router: Router, authentication: OidcAuthServi
           state,
           transactionToken,
         })
-        redirect(response, result.location, [result.sessionCookie, result.clearTransactionCookie])
+        const cookies = [result.sessionCookie, result.clearTransactionCookie]
+        if (local) cookies.push(await local.revokeSession(request, audience))
+        redirect(response, result.location, cookies)
       } catch (error) {
         const codeValue = error instanceof IdentityAccessError ? error.code : 'authentication_failed'
         redirect(
@@ -62,10 +76,12 @@ export function registerOidcRoutes(router: Router, authentication: OidcAuthServi
 
     const logout = async (request: Parameters<Parameters<Router['get']>[1]>[0], response: ServerResponse) => {
       const result = await authentication.logout(request, audience)
-      redirect(response, result.location, [result.clearSessionCookie])
+      const cookies = [result.clearSessionCookie]
+      if (local) cookies.push(await local.revokeSession(request, audience))
+      redirect(response, result.location, cookies)
     }
     router.get(`/auth/${audience}/logout`, async (request, _context, response) => logout(request, response))
-    router.post(`/auth/${audience}/logout`, async (request, _context, response) => logout(request, response))
+    if (!local) router.post(`/auth/${audience}/logout`, async (request, _context, response) => logout(request, response))
   }
 }
 

@@ -1,0 +1,441 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "dsh-work 登录 API",
+    "version": "1.0.0",
+    "description": "正式部署始终提供账号密码；AI Hub 配置有效时自动提供显式入口，无登录模式选择。无自助注册或公开独立账号 Bootstrap；生产要求 HTTPS。"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/auth/{audience}/configuration": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getAuthenticationMode",
+        "responses": {
+          "200": {
+            "description": "当前部署认证模式",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "mode",
+                    "localEnabled",
+                    "aiHubEnabled"
+                  ],
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "local",
+                        "oidc",
+                        "prototype"
+                      ]
+                    },
+                    "localEnabled": {
+                      "type": "boolean",
+                      "description": "是否提供账号密码登录"
+                    },
+                    "aiHubEnabled": {
+                      "type": "boolean",
+                      "description": "是否允许用户主动选择 AI Hub 登录"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/{audience}/login": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "openLocalLogin",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "转到当前入口的本地登录页"
+          }
+        }
+      },
+      "post": {
+        "operationId": "loginWithPassword",
+        "summary": "正式部署始终提供；成功后设置独立 Session Cookie，初始密码进入改密页",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作成功；登录和退出通过 Set-Cookie 管理 HttpOnly Session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "location"
+                  ],
+                  "properties": {
+                    "location": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码错误，或会话已失效"
+          },
+          "403": {
+            "description": "来源或权限不允许；初始密码未修改时业务 API 返回 password_change_required"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
+          },
+          "422": {
+            "description": "输入无效"
+          },
+          "429": {
+            "description": "尝试次数或密码派生并发超限"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 254,
+                    "description": "手机号或邮箱；兼容既有用户名登录"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true,
+                    "maxLength": 128
+                  },
+                  "returnTo": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/{audience}/password": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "changeLocalPassword",
+        "summary": "验证当前 Session 与密码；原子修改密码、撤销旧会话并签发当前门户的新会话",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "改密成功；Set-Cookie 设置新的 HttpOnly Session，location 为原同源访问地址，无需再次登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "location"
+                  ],
+                  "properties": {
+                    "location": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码错误，或会话已失效"
+          },
+          "403": {
+            "description": "来源或权限不允许；初始密码未修改时业务 API 返回 password_change_required"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
+          },
+          "422": {
+            "description": "输入无效"
+          },
+          "429": {
+            "description": "尝试次数或密码派生并发超限"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "currentPassword",
+                  "newPassword"
+                ],
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "format": "password",
+                    "writeOnly": true,
+                    "minLength": 8,
+                    "maxLength": 12
+                  },
+                  "returnTo": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "localAdminSession": []
+          },
+          {
+            "localWorkbenchSession": []
+          }
+        ]
+      }
+    },
+    "/auth/{audience}/logout": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "operationId": "logoutLocalSession",
+        "summary": "撤销当前门户会话并清理 Cookie",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "必须与当前受信入口同源"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "操作成功；登录和退出通过 Set-Cookie 管理 HttpOnly Session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "location"
+                  ],
+                  "properties": {
+                    "location": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "账号或密码错误，或会话已失效"
+          },
+          "403": {
+            "description": "来源或权限不允许；初始密码未修改时业务 API 返回 password_change_required"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
+          },
+          "422": {
+            "description": "输入无效"
+          },
+          "429": {
+            "description": "尝试次数或密码派生并发超限"
+          }
+        },
+        "description": "注销对应 audience 的 Cookie；没有有效会话也可清理本机 Cookie。"
+      }
+    },
+    "/auth/{audience}/switch-account": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "openLocalAccountSwitch",
+        "responses": {
+          "302": {
+            "description": "转到本地登录页；新登录成功后使用新身份"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/oidc/login": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "startAiHubLogin",
+        "summary": "仅启用 AI Hub 时提供；用户主动选择后进入企业授权页面",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "转到 AI Hub；上游暂不可用时返回本地登录页并保留安全的 return_to"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "localAdminSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_local_admin_session",
+        "description": "admin 入口专用，生产 Cookie 使用 __Host- 前缀"
+      },
+      "localWorkbenchSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "dsh_work_local_session",
+        "description": "workbench 入口专用，生产 Cookie 使用 __Host- 前缀"
+      }
+    }
+  }
+}

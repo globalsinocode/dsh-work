@@ -6,9 +6,7 @@ import type {
   AgentCapabilityRef,
   AgentCheckItem,
   AgentCheckStatus,
-  AgentDefinition,
   AgentEvalCase,
-  AgentPackageInspection,
   AgentPlanItem,
   AgentReleaseCandidate,
   AgentReleaseState,
@@ -39,7 +37,6 @@ export type TrialRunStatus = AgentTrialRun['status']
 export type TrialRun = AgentTrialRun
 export type CapabilityRef = AgentCapabilityRef
 export type EvalCase = AgentEvalCase
-export type ZipInspection = AgentPackageInspection
 
 export interface AgentCandidate extends AgentReleaseCandidate {
   /** 试运行列表并入候选，保持视图原有 candidate.trialRuns 访问方式。 */
@@ -69,6 +66,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   const evidenceIndex = ref<Record<string, Record<string, EvidenceRef[]>>>({})
   const busy = ref('')
   const inFlight = new Map<string, Promise<AgentReleaseState>>()
+  const stateGenerations = new Map<string, number>()
 
   function isVersionPublished(agentId: string, version: string) {
     return contentStore.agentVersions.some(
@@ -163,9 +161,14 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   function loadReleaseState(agentId: string): Promise<AgentReleaseState> {
     const pending = inFlight.get(agentId)
     if (pending) return pending
+    const generation = stateGenerations.get(agentId) ?? 0
     const request = adminApi.getAgentReleaseState(agentId)
       .then((state) => {
-        states.value = { ...states.value, [agentId]: state }
+        // A polling GET started before a trial mutation must not overwrite the
+        // newer terminal state returned by that mutation.
+        if ((stateGenerations.get(agentId) ?? 0) === generation) {
+          states.value = { ...states.value, [agentId]: state }
+        }
         return state
       })
       .finally(() => inFlight.delete(agentId))
@@ -174,6 +177,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   }
 
   function mergeState(agentId: string, state: AgentReleaseState) {
+    stateGenerations.set(agentId, (stateGenerations.get(agentId) ?? 0) + 1)
     states.value = { ...states.value, [agentId]: state }
     if (state.candidate) {
       const { candidate } = state
@@ -242,34 +246,28 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
 
   /* ---------- 检查、试运行、发布 ---------- */
 
-  async function runChecks(agentId: string): Promise<CheckItem[]> {
-    busy.value = 'checks'
-    try {
-      const state = await adminApi.runAgentReleaseChecks(agentId)
-      mergeState(agentId, state)
-      return state.candidate?.checks ?? []
-    } finally {
-      busy.value = ''
-    }
-  }
-
-  /** 案例更新仍保留接口（当前界面不开放编辑，供后续恢复或测试使用）。 */
+  /** 人工试运行前调整五类案例；服务端推进修订并使旧证据失效。 */
   async function updateCases(agentId: string, cases: EvalCase[]) {
     const state = await adminApi.updateAgentReleaseCases(agentId, cases)
     mergeState(agentId, state)
   }
 
-  async function removeMissingDependency(agentId: string, kind: 'skills' | 'tools', reference: string) {
-    const state = await adminApi.removeAgentReleaseDependency(agentId, { kind, reference })
-    mergeState(agentId, state)
-  }
-
-  async function startTrialRun(agentId: string): Promise<string | undefined> {
+  async function startTrialRun(agentId: string, caseId: string): Promise<string | undefined> {
     busy.value = 'trial'
     try {
-      const state = await adminApi.startAgentReleaseTrial(agentId)
+      const state = await adminApi.startAgentReleaseTrial(agentId, caseId)
       mergeState(agentId, state)
       return state.trialRuns[0]?.id
+    } finally {
+      busy.value = ''
+    }
+  }
+
+  async function continueTrialCase(agentId: string, trialId: string, input: { caseId: string; input: string; rubric: string }) {
+    busy.value = 'trial'
+    try {
+      const state = await adminApi.continueAgentReleaseTrialCase(agentId, trialId, input)
+      mergeState(agentId, state)
     } finally {
       busy.value = ''
     }
@@ -325,28 +323,6 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
     }
   }
 
-  /* ---------- ZIP 导入 ---------- */
-
-  function inspectPackage(file: File): Promise<ZipInspection> {
-    return adminApi.inspectAgentPackage(file)
-  }
-
-  /** 上传并导入发布包：服务端解析、落草稿/候选、登记包资产。返回导入后的 Agent。 */
-  async function importPackage(file: File): Promise<{ agent: AgentDefinition }> {
-    busy.value = 'import'
-    try {
-      const state = await adminApi.importAgentPackage(file)
-      const agentId = state.candidate?.agentId
-      if (agentId) mergeState(agentId, state)
-      await Promise.all([loadSubmissionIndex(), contentStore.load(true)])
-      const agent = contentStore.agents.find(item => item.id === agentId)
-      if (!agent) throw new Error('导入完成但未能读取 Agent 记录，请刷新列表')
-      return { agent }
-    } finally {
-      busy.value = ''
-    }
-  }
-
   return {
     overlays,
     submissions,
@@ -363,13 +339,10 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
     confirmTrialRun,
     requestCandidateChanges,
     withdrawCandidate,
-    runChecks,
     updateCases,
-    removeMissingDependency,
     startTrialRun,
+    continueTrialCase,
     cancelTrialRun,
     reviewAndPublish,
-    inspectPackage,
-    importPackage,
   }
 })

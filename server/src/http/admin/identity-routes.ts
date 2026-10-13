@@ -7,7 +7,7 @@ const basePath = '/api/admin/v1/identity'
 export function registerIdentityAdministrationRoutes(
   router: Router,
   administration: IdentityAdministrationService,
-  directory: IdentityDirectorySyncService,
+  directory?: IdentityDirectorySyncService | null,
 ) {
   router.get(`${basePath}/users`, async (_request, context) => envelope('admin', await administration.listUsers({
     query: context.url.searchParams.get('query') ?? '',
@@ -85,6 +85,7 @@ export function registerIdentityAdministrationRoutes(
       actorId,
     }), 'postgres')
   })
+  if (!directory) return
   router.get(`${basePath}/directory-sync`, async () => envelope(
     'admin',
     await directory.state(),

@@ -1,0 +1,224 @@
+{
+  "type": "architecture",
+  "title": "dsh-work 系统架构",
+  "subtitle": "两个 Vue 前端 · 一个 Node.js 模块化单体 · PostgreSQL · 每次 Attempt 独立的 DSH Worker",
+  "eyebrow": "系统全景 / AGENT 执行链路 / 2026-10-12",
+  "caption": "蓝色双向链路表示任务下发与事件回传；运行事件先落 PostgreSQL，再经 SSE 送达前端。平台负责权限、状态与调度，DSH 负责单次 Attempt 内的 Agent Loop。依据当前工作区源码绘制。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "order": ["portal","api","run","adapter","dsh","external","tools","database","files"],
+  "budget": "balanced",
+  "out": "dsh-work-system-architecture.html",
+  "groups": [
+    {"id":"client","label":"浏览器 · 两个独立应用"},
+    {"id":"platform","label":"平台服务 · 同一 Node.js 进程"},
+    {"id":"worker","label":"隔离执行 · 每 Attempt 一个进程","style":"dashed"},
+    {"id":"storage","label":"持久化 · 产品事实与文件内容"}
+  ],
+  "nodes": [
+    {
+      "id": "portal",
+      "label": "双端门户",
+      "sub": "员工工作台 / 管理后台",
+      "tag": "Vue 3",
+      "kind": "input",
+      "icon": "people",
+      "row": 1,
+      "col": 0,
+      "group": "client"
+    },
+    {
+      "id": "api",
+      "label": "接入与治理",
+      "sub": "身份 / 授权 / 能力版本",
+      "tag": "API",
+      "kind": "backend",
+      "icon": "lock",
+      "row": 1,
+      "col": 1,
+      "group": "platform"
+    },
+    {
+      "id": "run",
+      "label": "运行编排",
+      "sub": "Task → Run → Attempt",
+      "tag": "调度",
+      "kind": "backend",
+      "icon": "gear",
+      "focal": true,
+      "row": 1,
+      "col": 2,
+      "group": "platform"
+    },
+    {
+      "id": "adapter",
+      "label": "运行适配器",
+      "sub": "Runtime Adapter",
+      "tag": "ACP",
+      "kind": "backend",
+      "icon": "code",
+      "row": 1,
+      "col": 3,
+      "group": "platform"
+    },
+    {
+      "id": "dsh",
+      "label": "DSH Worker",
+      "sub": "Agent Loop / 模型与工具",
+      "tag": "执行",
+      "kind": "backend",
+      "icon": "server",
+      "focal": true,
+      "row": 1,
+      "col": 4,
+      "group": "worker"
+    },
+    {
+      "id": "external",
+      "label": "外部能力",
+      "sub": "模型 Provider / MCP",
+      "kind": "external",
+      "icon": "cloud",
+      "row": 0,
+      "col": 4
+    },
+    {
+      "id": "tools",
+      "label": "平台工具",
+      "sub": "Tool Bridge / 逐次鉴权",
+      "kind": "backend",
+      "icon": "key",
+      "row": 2,
+      "col": 3,
+      "group": "platform"
+    },
+    {
+      "id": "database",
+      "label": "PostgreSQL",
+      "sub": "权限 / 版本 / 状态 / 审计",
+      "kind": "store",
+      "icon": "database",
+      "row": 3,
+      "col": 2,
+      "group": "storage"
+    },
+    {
+      "id": "files",
+      "label": "文件与成果",
+      "sub": "Skill 包 / 输入 / Artifact",
+      "kind": "store",
+      "icon": "document",
+      "row": 3,
+      "col": 1,
+      "group": "storage"
+    }
+  ],
+  "edges": [
+    {"from":"portal","to":"api","label":"HTTPS / SSE","kind":"primary","both":true},
+    {"from":"api","to":"run","label":"任务 / 结果","kind":"primary","both":true},
+    {"from":"run","to":"adapter","label":"执行 / 事件","kind":"primary","both":true},
+    {"from":"adapter","to":"dsh","label":"ACP stdio","kind":"primary","both":true},
+    {"from":"dsh","to":"external","label":"授权调用","kind":"link","both":true},
+    {"from":"dsh","to":"tools","label":"受控调用","kind":"link","both":true},
+    ["api","database","配置权限"],
+    ["run","database","状态事件"],
+    ["tools","database","业务数据"],
+    ["api","files","输入成果"]
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {"label":"Agent 执行主链路"},
+      "link": {"label":"受控能力调用"},
+      "backend": {"label":"执行与平台模块"},
+      "input": {"label":"用户入口"},
+      "external": {"label":"外部能力"},
+      "store": {"label":"持久化资源"},
+      "focal": {"label":"关键执行节点"},
+      "default": {"label":"平台数据访问"}
+    }
+  },
+  "evidence": [
+    {
+      "id": "portal",
+      "file": "docs/development/overview.md",
+      "line": 5,
+      "note": "员工端与管理端为两个独立 Vue 应用。图中合并为双端门户以保持全景清晰。"
+    },
+    {
+      "id": "api",
+      "file": "docs/development/overview.md",
+      "line": 75,
+      "note": "所有 Agent 场景均通过各自 Audience 的 API、平台 Run/Attempt、Runtime Adapter 和 DSH。身份可使用本地账号或 AI Hub OIDC。"
+    },
+    {
+      "id": "run",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1401,
+      "note": "创建不可变 Attempt，固定 Manifest 摘要、模型路由、来源与输入快照。PostgreSQL 认领后再次复核当前权限。"
+    },
+    {
+      "id": "adapter",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1571,
+      "note": "平台调用 runtime.execute(manifest)，订阅并串行持久化 Runtime 事件；平台不运行模型循环。"
+    },
+    {
+      "id": "dsh",
+      "file": "server/src/modules/runtime/dsh-acp-runtime-adapter.ts",
+      "line": 557,
+      "note": "每次 Attempt 启动隔离 ACP Worker，执行 initialize、newSession、prompt，处理取消、超时、事件转换与回收。"
+    },
+    {
+      "id": "external",
+      "file": "server/src/modules/runtime/dsh-acp-runtime-adapter.ts",
+      "line": 543,
+      "note": "模型与 MCP 工具由 DSH 执行；MCP 连接由平台解析并注入当前 Attempt。图示为接线与职责，不代表外部服务已通过生产验收。"
+    },
+    {
+      "id": "external",
+      "file": "docs/development/overview.md",
+      "line": 78,
+      "note": "DSH 持有模型交互和工具调用循环；平台负责模型治理、Connector 控制面和授权。"
+    },
+    {
+      "id": "tools",
+      "file": "server/src/modules/runtime/platform-tool-bridge.ts",
+      "line": 73,
+      "note": "平台只提供明确注册的确定性工具处理器，校验 Schema、调用次数、当前权限及输出，并记录受控操作回执。"
+    },
+    {
+      "id": "database",
+      "file": "server/src/main.ts",
+      "line": 180,
+      "note": "会话、授权、内容、Task、Run 与业务服务共享 PostgreSQL。权限、版本关系与运行状态以数据库为事实来源。"
+    },
+    {
+      "id": "files",
+      "file": "server/src/main.ts",
+      "line": 161,
+      "note": "DSH_WORK_DATA_ROOT 下保存 Skill 包、输入与成果；内容由平台管理，元数据保存在 PostgreSQL。"
+    },
+    {
+      "id": "files",
+      "file": "server/src/modules/runtime/dsh-acp-runtime-adapter.ts",
+      "line": 635,
+      "note": "Adapter 为 Attempt 准备隔离目录与输入，并在获准运行结束后通过平台内容服务收集 Artifact；图中省略文件搬运连线。"
+    },
+    {
+      "id": "run",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1895,
+      "note": "Runtime 事件先落库；重试与恢复创建新 Attempt，不覆盖历史执行事实。"
+    },
+    {
+      "id": "portal",
+      "file": "server/src/http/workbench/conversation-routes.ts",
+      "line": 603,
+      "note": "SSE 从数据库读取已持久化事件，支持 Last-Event-ID，并在发送前复核当前读取权限。"
+    }
+  ]
+}

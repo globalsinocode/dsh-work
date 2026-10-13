@@ -69,7 +69,7 @@ export interface AdminUserProfile {
 
 export interface AdminSession {
   user: AdminUserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc'
+  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
   apiAudience: 'admin'
   permissions: string[]
 }
@@ -96,6 +96,8 @@ export interface AgentPrincipalRoleOption {
 export interface IdentityUserSummary {
   id: string
   externalUserId: string | null
+  username?: string | null
+  loginAccount: string | null
   name: string
   email: string | null
   department: string
@@ -263,6 +265,8 @@ export interface AgentDefinition {
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
+  /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
+  revision?: string
 }
 
 export interface AgentJoinedWorkspaceRecord {
@@ -389,6 +393,8 @@ export interface CreateAgentDraftInput extends AgentDraftConfiguration {
 
 export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id'> {
   agentId: string
+  /** 打开编辑器时读取的修订；Agent 已被其他操作修改时服务端拒绝保存。 */
+  expectedRevision?: string
 }
 
 /** B-03/I-04：发布时固定的平台工具绑定修订引用。 */
@@ -560,8 +566,11 @@ export interface ToolDefinition {
   concurrencyPolicy: 'concurrent' | 'serialized'
   completionSemantics: 'completed' | 'accepted'
   timeoutSeconds: number
+  /** Stable authorization identifiers; allowedRoles contains display names only. */
+  allowedRoleIds: string[]
   allowedRoles: string[]
   dataScopes: string[]
+  agentRunLocalDefault?: boolean
   approvalPolicy: 'none' | 'sensitive' | 'always'
   lastCheckedAt: string
 }
@@ -816,7 +825,7 @@ export interface ModelRoute {
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
   persistence: 'prototype-memory' | 'postgres-foundation' | 'postgres'
-  sso: 'mock' | 'ai-hub-oidc'
+  sso: 'mock' | 'ai-hub-oidc' | 'local-password'
   dshRuntime: 'not-connected' | 'poc-validated' | 'connected'
   database: 'not-configured' | 'configured' | Record<string, unknown>
   artifactStorage: 'not-configured' | 'local-mvp'
@@ -876,13 +885,23 @@ export interface AgentTrialCaseRun {
   verdictNote?: string
 }
 
-export interface AgentTrialStep { id: string; label: string; status: AgentTrialStepStatus; detail?: string; caseRuns?: AgentTrialCaseRun[] }
+export interface AgentTrialStep {
+  id: string; label: string; status: AgentTrialStepStatus; detail?: string; caseRuns?: AgentTrialCaseRun[]
+  currentCaseId?: string
+}
 
 export interface AgentTrialRun {
   id: string
   submissionRevision: number
   status: 'checking' | 'queued' | 'executing' | 'asserting' | 'passed' | 'failed' | 'cancelled'
   steps: AgentTrialStep[]
+  progress?: {
+    caseId: string
+    runId: string | null
+    attemptId: string | null
+    runStatus: string | null
+    events: Array<{ type: string; label: string; occurredAt: string }>
+  }
   startedAt: string
   finishedAt?: string
   failureStage?: string
@@ -938,17 +957,4 @@ export interface AgentVersionEvidenceEntry {
   agentId: string
   version: string
   evidence: AgentVersionEvidence[]
-}
-
-export interface AgentPackageInspection {
-  fileName: string
-  manifest: { id: string; name: string; version: string; description: string }
-  files: string[]
-  systemPrompt: string
-  workInstructions?: string
-  resolved: { skills: string[]; tools: string[] }
-  missing: { skills: string[]; tools: string[] }
-  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
-  cases: Array<Omit<AgentEvalCase, 'id'>>
-  warnings: string[]
 }

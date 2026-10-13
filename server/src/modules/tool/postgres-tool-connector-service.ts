@@ -7,7 +7,7 @@ import {
   type ToolBindingSnapshot,
 } from '../../domain/tool-binding.ts'
 import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AddToolInput, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
+import type { AddToolInput, AgentMcpScope, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
@@ -17,6 +17,7 @@ import {
   dshBuiltInToolCatalog,
   defaultAgentDshToolNames,
   hiddenRuntimeCatalogTools,
+  isDefaultRunLocalAgentTool,
   isVisibleDshCatalogTool,
   normalizeToolPolicyInput,
   publicCatalogCandidate,
@@ -57,6 +58,7 @@ interface ToolRow {
   system: string
   description: string
   connectorId: string
+  dshToolName: string | null
   risk: ToolDefinition['risk']
   mode: ToolDefinition['mode']
   status: ToolDefinition['status']
@@ -142,7 +144,8 @@ export class PostgresToolConnectorService {
   async getTools(): Promise<ToolDefinition[]> {
     const rows = await this.database<ToolRow[]>`
       select t.id, tv.version, t.name, t.system, t.description,
-             t.connector_id as "connectorId", tv.risk_level as risk, t.mode, t.status,
+             t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+             tv.risk_level as risk, t.mode, t.status,
              t.admission_status as "admissionStatus", t.admission_message as "admissionMessage",
              tv.input_schema as "inputSchema", tv.output_schema as "outputSchema",
              tv.output_validation as "outputValidation", tv.retry_policy as "retryPolicy",
@@ -183,8 +186,15 @@ export class PostgresToolConnectorService {
       concurrencyPolicy: row.concurrencyPolicy,
       completionSemantics: row.completionSemantics,
       timeoutSeconds: row.timeoutSeconds,
+      allowedRoleIds: [...row.allowedRoleIds],
       allowedRoles: row.allowedRoleIds.map(id => roleNames.get(id) ?? id),
       dataScopes: row.dataScopes,
+      agentRunLocalDefault: isDefaultRunLocalAgentTool({
+        connectorId: row.connectorId,
+        dshToolName: row.dshToolName,
+        allowedRoleIds: row.allowedRoleIds,
+        dataScopes: row.dataScopes,
+      }),
       approvalPolicy: row.approvalPolicy,
       lastCheckedAt: formatRelative(row.lastCheckedAt),
     }))
@@ -1036,12 +1046,15 @@ export class PostgresToolConnectorService {
   }
 
   /** Resolve the Agent Version's MCP policy for a new Attempt. */
-  async resolveMcpConnectionsForAgentVersion(versionId: string): Promise<McpConnectionSnapshot[]> {
+  async resolveMcpConnectionsForAgentVersion(versionId: string, expectedScope?: AgentMcpScope): Promise<McpConnectionSnapshot[]> {
     const [version] = await this.database<{ scope: unknown }[]>`
       select mcp_scope as scope from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     if (!version) throw authorizationDenied(`Agent Version 不存在：${versionId}`)
     const scope = normalizeAgentMcpScope(version.scope)
+    if (expectedScope && JSON.stringify(scope) !== JSON.stringify(normalizeAgentMcpScope(expectedScope))) {
+      throw authorizationDenied('Agent MCP 使用范围已偏离本次试运行的封存定义')
+    }
     if (scope.mode === 'none') return []
     const rows = await this.database<Array<McpConnectionSnapshot & {
       credentialStatus: string | null
@@ -1257,8 +1270,9 @@ export class PostgresToolConnectorService {
 
   /** Optional platform defaults eligible for this Agent definition; callers seal exact refs and bindings. */
   async resolvePlatformDefaultToolReferences(roleIds: string[], dataScopes: string[]): Promise<string[]> {
-    const rows = await this.database<{ id: string; version: string; allowedRoleIds: string[]; requiredScopes: string[] }[]>`
+    const rows = await this.database<{ id: string; version: string; connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; requiredScopes: string[] }[]>`
       select distinct on (t.id) t.id, tv.version,
+             t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
              t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "requiredScopes"
         from tools t
         join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
@@ -1272,8 +1286,11 @@ export class PostgresToolConnectorService {
                 split_part(tv.version, '.', 3)::integer desc
     `
     const scopes = new Set(dataScopes)
-    return rows.filter(row => roleIds.every(role => row.allowedRoleIds.includes(role))
-      && row.requiredScopes.every(scope => scopes.has(scope)))
+    return rows.filter(row => isDefaultRunLocalAgentTool({
+      connectorId: row.connectorId, dshToolName: row.dshToolName,
+      allowedRoleIds: row.allowedRoleIds, dataScopes: row.requiredScopes,
+    }) || (roleIds.some(role => row.allowedRoleIds.includes(role))
+      && row.requiredScopes.every(scope => scopes.has(scope))))
       .map(row => `${row.id}@${row.version}`)
   }
 
@@ -1304,15 +1321,16 @@ export class PostgresToolConnectorService {
 
   async assertAuthorizationCompatibility(
     references: string[],
-    visibleRoleIds: string[],
+    executionRoleIds: string[],
     agentDataScopes: string[],
   ): Promise<void> {
     const scopeSet = new Set(agentDataScopes)
     for (const reference of unique(references)) {
       if (DSH_WORK_EXECUTION_TOOL_REFS.has(reference)) continue
       const { id, version } = parseReference(reference)
-      const [row] = await this.database<{ allowedRoleIds: string[]; dataScopes: string[] }[]>`
-        select t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes"
+      const [row] = await this.database<{ connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; dataScopes: string[] }[]>`
+        select t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+               t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "dataScopes"
           from tools t
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
          where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
@@ -1320,14 +1338,13 @@ export class PostgresToolConnectorService {
            and t.admission_status = 'approved'
       `
       if (!row) throw new Error(`工具授权配置不存在：${reference}`)
-      const allowedRoleSet = new Set(row.allowedRoleIds)
-      const unsupportedRoles = unique(visibleRoleIds).filter(roleId => !allowedRoleSet.has(roleId))
-      if (unsupportedRoles.length) {
-        throw new Error(`Agent 可见角色未被工具 ${reference} 授权：${unsupportedRoles.join('、')}`)
+      if (isDefaultRunLocalAgentTool(row)) continue
+      if (!executionRoleIds.some(roleId => row.allowedRoleIds.includes(roleId))) {
+        throw new Error(`Agent 执行身份缺少工具 ${reference} 所需角色：${row.allowedRoleIds.join('、')}`)
       }
       const missingScopes = unique(row.dataScopes).filter(scope => !scopeSet.has(scope))
       if (missingScopes.length) {
-        throw new Error(`Agent 数据范围未覆盖工具 ${reference}：${missingScopes.join('、')}`)
+        throw new Error(`Agent 执行身份缺少工具 ${reference} 所需平台数据范围：${missingScopes.join('、')}`)
       }
     }
   }

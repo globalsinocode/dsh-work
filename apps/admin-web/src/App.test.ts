@@ -81,6 +81,15 @@ describe('global management conversation history', () => {
     expect(wrapper.find('nav [aria-label="对话记录"]').exists()).toBe(false)
   })
 
+  it('does not expose login mode settings for either provider', async () => {
+    const { wrapper, auth } = await render()
+    for (const identityProvider of ['local-password', 'ai-hub-oidc', 'prototype-sso'] as const) {
+      auth.$patch({ identityProvider, permissions: ['admin:*'] })
+      await flushPromises()
+      expect(wrapper.get('nav').text()).not.toContain('登录设置')
+    }
+  })
+
   it('opens the about page from the authenticated user dropdown', async () => {
     const { wrapper, router } = await render()
     await wrapper.get('.header-user-button').trigger('click')

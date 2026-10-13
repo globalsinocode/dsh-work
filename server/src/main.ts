@@ -21,6 +21,8 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './http/workbench/unavailable-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
+import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
+import { LocalAuthService } from './modules/identity/local-auth-service.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
 import { PrototypeRepository } from './infrastructure/prototype/prototype-repository.ts'
@@ -84,7 +86,8 @@ import { PostgresControlledMemoryService } from './modules/memory/postgres-contr
 import { PostgresAgentDataService } from './modules/agent-data/postgres-agent-data-service.ts'
 import { registerAdminAgentDataRoutes } from './http/admin/agent-data-routes.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
-import { loadIdentityConfiguration } from './modules/identity/config.ts'
+import { loadIdentityConfiguration, loadStartupIdentityConfiguration, localIdentityConfiguration } from './modules/identity/config.ts'
+import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
@@ -96,31 +99,45 @@ const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 async function start() {
   const repository = new PrototypeRepository()
   const workbenchQueries = new WorkbenchQueryService(repository)
-  const identityConfiguration = loadIdentityConfiguration()
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   const database = databaseUrl ? createDatabase({ url: databaseUrl }) : null
 
-  if (identityConfiguration.mode === 'oidc' && !database) {
-    throw new Error('AI Hub OIDC 模式必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
+  // Reject a production prototype before any database mutations.
+  if (process.env.DSH_WORK_AUTH_MODE === 'prototype') loadIdentityConfiguration()
+  if (database) await runMigrations(database)
+  const identityConfiguration = loadStartupIdentityConfiguration()
+  if (identityConfiguration.mode === 'local' && identityConfiguration.aiHubConfigurationIssue) {
+    console.warn(`AI Hub 登录未启用：${identityConfiguration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
   }
 
-  if (database) await runMigrations(database)
+  if (identityConfiguration.mode !== 'prototype' && !database) {
+    throw new Error('正式认证必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
+  }
+
   const oidcAuthentication = identityConfiguration.mode === 'oidc' && database
     ? new OidcAuthService(identityConfiguration, database)
     : null
   const directorySync = identityConfiguration.mode === 'oidc' && database
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
+  const localAuthentication = identityConfiguration.mode !== 'prototype' && database
+    ? new LocalAuthService(localIdentityConfiguration(identityConfiguration), database)
+    : null
+  const authentication = localAuthentication ?? oidcAuthentication
   const router = new Router({
-    authenticateApi: oidcAuthentication
-      ? (request, audience) => oidcAuthentication.authenticateApi(request, audience)
+    authenticateApi: localAuthentication
+      ? portalAuthenticator(localAuthentication, oidcAuthentication)
       : prototypeApiAuthenticator,
   })
-  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication)
-  if (database && directorySync) {
+  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
+  if (localAuthentication) registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
+  for (const audience of ['workbench', 'admin']) {
+    router.get(`/auth/${audience}/configuration`, () => ({ mode: identityConfiguration.mode, localEnabled: Boolean(localAuthentication), aiHubEnabled: Boolean(oidcAuthentication) }))
+  }
+  if (database && authentication) {
     registerIdentityAdministrationRoutes(
       router,
-      new IdentityAdministrationService(database),
+      new IdentityAdministrationService(database, true),
       directorySync,
     )
   }
@@ -162,7 +179,8 @@ async function start() {
     pythonCapability = python.state
     const conversations = new PostgresConversationRepository(database)
     const authorization = new PostgresAuthorizationService(database, {
-      // AG-03：OIDC 模式下自动任务后台主体校验需要目录新鲜度，
+      // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
+      // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
       // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
       automationDirectory: identityConfiguration.mode === 'oidc'
         ? {
@@ -265,7 +283,7 @@ async function start() {
       database,
       runtime,
       authorization,
-      identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'mock',
+      identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
     )
     const runtimePolicy = await operations.getRuntimePolicy('runtime-local-01')
     await runtime.configureScheduling(runtimePolicy.schedulingStatus)
@@ -425,7 +443,11 @@ async function start() {
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
     registerAdminAgentDataRoutes(router, agentData)
-    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, resolve(dataRoot, 'agent-packages'), orchestration))
+    const agentRelease = new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration)
+    // 启动收敛：进程中断留下的执行中试运行标记为“服务重启中断”，允许管理员重新开始（底层 Run 已由重启恢复收敛）。
+    const trialRecovery = await agentRelease.recoverInterruptedTrials()
+    if (trialRecovery.interrupted > 0) console.warn('agent release trial recovery completed', trialRecovery)
+    registerAgentReleaseRoutes(router, agentRelease)
     registerSkillRoutes(router, skills)
     registerToolRoutes(router, toolService)
     registerWorkbenchAgentRoutes(router, agents, authorization)
@@ -462,7 +484,7 @@ async function start() {
       status: 'ok',
       architecture: 'node-modular-monolith',
       persistence: database ? 'postgres-foundation' : 'prototype-memory',
-      sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'mock',
+      sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : identityConfiguration.mode === 'local' ? 'local-password' : 'mock',
       executionCapabilities: { dsh: dshCapability, python: pythonCapability },
       dshRuntime: executionRuntime ? await executionRuntime.health() : dshInstallation ? {
         status: 'connected',

@@ -44,6 +44,8 @@ const runtimeId = 'runtime-local-01'
 type AdminPurpose = AdminRunPurpose
 
 const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
+/** 试运行治理等待在 Attempt 超时之外预留的排队与启动余量。 */
+const TRIAL_WAIT_GRACE_SECONDS = 60
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 function agentDataToolRefs(agent: RuntimeAgentSnapshot): RuntimeManifest['tools'] {
@@ -279,6 +281,7 @@ export class RunOrchestrationService {
     userId: string
     sessionId: string
     draftVersionId: string
+    expectedDefinitionFingerprint?: string
     message: string
     idempotencyKey: string
     deadlineMs?: number
@@ -291,10 +294,18 @@ export class RunOrchestrationService {
       await this.conversations.appendMessage({
         sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
       })
-      await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(run, input.userId, input.draftVersionId, input.message))
+      await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(
+        run, input.userId, input.draftVersionId, input.message, input.expectedDefinitionFingerprint,
+      ))
     }
-    const deadline = Date.now() + (input.deadlineMs ?? 150_000)
+    // F-02：治理等待与生产一致，以本次 Attempt 实际生效的超时（Agent timeoutSeconds 受 Runtime 策略上限约束）
+    // 为准，再留出排队与启动余量；不再固定 150 秒，避免长任务被治理侧提前判失败。
     let current = await this.runs.getRun(tenantId, run.id)
+    const attempt = current?.currentAttemptId ? await this.runs.getAttempt(tenantId, current.currentAttemptId) : null
+    const attemptTimeoutSeconds = Number((attempt?.manifest as { limits?: { timeout_seconds?: unknown } } | undefined)?.limits?.timeout_seconds)
+    const deadline = Date.now() + (input.deadlineMs ?? (Number.isFinite(attemptTimeoutSeconds) && attemptTimeoutSeconds > 0
+      ? (attemptTimeoutSeconds + TRIAL_WAIT_GRACE_SECONDS) * 1000
+      : 150_000))
     while (current && !TRIAL_TERMINAL_STATUSES.has(current.status) && Date.now() < deadline) {
       await delay(200)
       current = await this.runs.getRun(tenantId, run.id)
@@ -314,15 +325,18 @@ export class RunOrchestrationService {
     }
   }
 
-  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string) {
+  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {
     const runtimePolicy = await this.operations?.getRuntimePolicy(runtimeId)
-    const agent = await this.agents!.getRuntimeSnapshot(draftVersionId)
+    const agent = await this.agents!.getRuntimeSnapshot(draftVersionId, [], expectedDefinitionFingerprint)
     const trialScope = await this.authorization?.resolveAgentPrincipalTrialScope(
       draftVersionId, agent.roleIds, agent.dataScopes,
     ) ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
     await this.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.runtime, agent.modelRequirements, route)
+    const delegationPolicy = agent.delegationPolicy ?? {
+      allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
+    }
     const limits = {
       timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
       max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
@@ -346,12 +360,28 @@ export class RunOrchestrationService {
       ...(agent.principalId && agent.principalAuthorizationVersion ? {
         principal_context: await this.principalContextForRun(run, agent.principalId, agent.principalAuthorizationVersion),
       } : {}),
-      // MCP 网络只来自已批准 Connector；不触发人工审批，也不写工作区。
-      permission_policy: { approval_mode: 'never', network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny', write_policy: 'deny' },
+      // F-02：与员工执行使用同一权限策略与工具集，评测结论才能代表线上行为。
+      // F-01：外部效果按 purpose 隔离——需审批的工具调用直接拒绝（不创建审批等待），
+      // MCP 调用由 DSH 策略返回 trial_only，平台写工具/数据/记忆/委派各自返回 trial_only 或拒绝。
+      permission_policy: {
+        approval_mode: agent.approvalMode,
+        network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
+        write_policy: 'workspace_only',
+      },
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
+        ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
+        ...(this.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
         ...agentDataToolRefs(agent)],
+      ...(delegationPolicy.allowedAgentVersionIds.length ? {
+        delegation_policy: {
+          allowed_agent_version_ids: [...delegationPolicy.allowedAgentVersionIds],
+          max_depth: delegationPolicy.maxDepth,
+          max_parallel: delegationPolicy.maxParallel,
+          timeout_seconds: delegationPolicy.timeoutSeconds,
+        },
+      } : {}),
       // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
