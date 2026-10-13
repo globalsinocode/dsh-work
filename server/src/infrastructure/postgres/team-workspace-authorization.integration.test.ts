@@ -703,7 +703,16 @@ test('5-T4 授权拒绝类型化：消息不变，HTTP 仍是 403 permission_den
     }),
   )
 
-  // 5）数据范围未授权（原先靠「未授权」文案落 403）。
+  // 5）管理员收紧工具范围后，未授权的数据范围仍是类型化 403。
+  const [scopeBefore] = await database<{ dataScopes: string[] }[]>`
+    select data_scopes as "dataScopes" from tools
+     where tenant_id = ${tenantId} and id = 'read'
+  `
+  assert.ok(scopeBefore)
+  await database`
+    update tools set data_scopes = '["workspace:authorized", "enterprise:authorized"]'::jsonb
+     where tenant_id = ${tenantId} and id = 'read'
+  `
   await database`
     delete from data_scope_grants
      where tenant_id = ${tenantId} and id = 'grant-role-employee-workspace'
@@ -711,13 +720,17 @@ test('5-T4 授权拒绝类型化：消息不变，HTTP 仍是 403 permission_den
   try {
     await expectTypedDenial(
       'requireScopes',
-      'Agent要求未授权的数据范围：workspace:authorized',
+      '工具 read@1.0.0要求未授权的数据范围：workspace:authorized',
       () => authorization.authorizeRuntime({
         userId: 'U00001',
         agentVersionId: 'agent-version-dsh-work-assistant-1',
       }),
     )
   } finally {
+    await database`
+      update tools set data_scopes = ${database.json(scopeBefore.dataScopes)}
+       where tenant_id = ${tenantId} and id = 'read'
+    `
     await database`
       insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
       values ('grant-role-employee-workspace', ${tenantId}, 'role', 'role-employee', 'capability', 'workspace:authorized')
