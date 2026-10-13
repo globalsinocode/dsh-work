@@ -78,6 +78,7 @@ describe('AgentDraftDialog config completion', () => {
     contentStore.agents = [{ ...importedAgent, id: 'specialist', name: '专项分析 Agent', status: 'published', version: '1.2.0' }]
     const editable = {
       ...importedAgent,
+      revision: 'rev-editor-1',
       tools: ['tool-runtime-file-read@1.0.0'],
       delegationPolicy: {
         allowedAgentVersionIds: [targetVersion.id], maxDepth: 2, maxParallel: 3, timeoutSeconds: 90,
@@ -111,6 +112,8 @@ describe('AgentDraftDialog config completion', () => {
 
     expect(update).toHaveBeenCalledOnce()
     expect(update.mock.calls[0]?.[0].delegationPolicy).toEqual(editable.delegationPolicy)
+    // F-05：保存时回传打开编辑器时读取的修订，供服务端拒绝过期编辑。
+    expect(update.mock.calls[0]?.[1]).toBe('rev-editor-1')
   })
 
   it('allows a Soul-only Agent draft without Skill or tool references', async () => {
@@ -165,7 +168,7 @@ describe('AgentDraftDialog config completion', () => {
     await wrapper.findAll('button').find(button => button.text() === '下一步')!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('全部可用 MCP（默认）')
+    expect(wrapper.text()).toContain('不使用 MCP（默认）')
     expect(wrapper.text()).toContain('仅使用选定 MCP')
     expect(wrapper.text()).toContain('不使用 MCP')
     expect(wrapper.text()).not.toContain('工具允许列表')

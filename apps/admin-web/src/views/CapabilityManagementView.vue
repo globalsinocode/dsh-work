@@ -250,7 +250,7 @@ async function inspectConnector(connector: ConnectorDefinition) {
     { label: '服务地址', value: connector.endpoint },
     { label: '认证方式', value: connector.authType },
     { label: '认证凭据', value: connector.credentialRef },
-    { label: '数据范围', value: connector.scopeDescription },
+    { label: '登记的上游权限说明', value: connector.scopeDescription },
     { label: '提供工具', value: `${connector.toolCount} 个` },
     { label: '当前延迟', value: connector.latency },
     ...(connector.mcp ? [
@@ -929,7 +929,7 @@ onUnmounted(() => clearSkillTestPoll())
         <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
         <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="Bearer Token" required><el-input v-model="mcpCreateForm.bearerToken" type="password" autocomplete="new-password" placeholder="输入 MCP 服务签发的 Token" /><small>Token 使用 AES-256-GCM 加密后存入数据库，保存后不再回显。</small></el-form-item>
-        <el-form-item label="整体权限范围" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明该 MCP 内全部 Tool 共同适用的系统、数据范围和只读边界" /></el-form-item>
+        <el-form-item label="上游权限说明" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明 MCP 凭据和服务端允许访问的系统、数据及操作边界；此说明不执行过滤" /></el-form-item>
       </el-form>
       <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />
       <el-alert v-else-if="mcpTestError" type="error" :closable="false" show-icon :title="mcpTestError.title" :description="mcpTestError.description" />

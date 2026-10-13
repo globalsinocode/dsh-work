@@ -168,11 +168,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return result.agent
   }
 
-  async function updateAgentDraft(input: AgentDraftConfiguration) {
+  async function updateAgentDraft(input: AgentDraftConfiguration, expectedRevision?: string) {
     const { id, ...configuration } = input
     const result = await adminApi.updateAgentDraft({
       agentId: id,
       ...configuration,
+      ...(expectedRevision ? { expectedRevision } : {}),
     })
     replaceById(agents.value, result.agent)
     replaceById(agentVersions.value, result.version)

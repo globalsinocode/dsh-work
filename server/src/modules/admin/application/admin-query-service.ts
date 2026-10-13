@@ -40,6 +40,7 @@ import {
   dshBuiltInToolCatalog,
   isVisibleDshCatalogTool,
   normalizeToolPolicyInput,
+  prototypeToolRoleIds,
   publicCatalogCandidate,
 } from '../../tool/dsh-built-in-tool-catalog.ts'
 
@@ -254,10 +255,15 @@ export class AdminQueryService {
     if (current.status !== 'draft') throw new Error('只有草稿状态的 Agent 可以编辑')
     if (!input.actor.trim()) throw new Error('操作人不能为空')
 
-    const { agentId, actor: _actor, changeSummary, ...submittedConfiguration } = input
+    const { agentId, actor: _actor, expectedRevision: _revision, changeSummary, ...submittedConfiguration } = input
     void _actor
+    void _revision
     const configuration = {
       ...submittedConfiguration,
+      // F-05：发布范围只由发布工作台写入，编辑器保存沿用当前值。
+      roleIds: current.roleIds,
+      dataScopes: current.dataScopes,
+      visibility: current.visibility,
       owner: current.owner,
       department: current.department,
       welcomeMessage: normalizeWelcomeMessage(submittedConfiguration),
@@ -333,7 +339,8 @@ export class AdminQueryService {
 
     const timestamp = prototypeTimestamp()
     const agent = await this.repository.updateAgent(input.agentId, {
-      status: 'published',
+      // F-03：回滚不改变启停状态，停用中的 Agent 回滚后仍停用。
+      status: current.status === 'disabled' ? 'disabled' : 'published',
       version: target.version,
       visibility: target.visibility,
       roleIds: target.roleIds,
@@ -358,7 +365,7 @@ export class AdminQueryService {
       action: 'rollback',
       actor: input.actor,
       time: timestamp,
-      note: `活动版本由 v${current.version} 回滚到 v${target.version}。`,
+      note: `活动版本由 v${current.version} 回滚到 v${target.version}；启停状态与进行中的草稿保持不变。`,
     })
     return { agent, release }
   }
@@ -472,6 +479,7 @@ export class AdminQueryService {
         const { id: _id, ...definitionPatch } = definition
         await this.repository.updateTool(entry.id, {
           ...definitionPatch,
+          allowedRoleIds: existing.allowedRoleIds,
           allowedRoles: existing.allowedRoles,
           dataScopes: existing.dataScopes,
           status: entry.platformSupported
@@ -600,6 +608,7 @@ export class AdminQueryService {
       throw new Error(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能配置权限')
     }
     return this.repository.updateToolPermissions(input.toolId, {
+      allowedRoleIds: prototypeToolRoleIds(input.allowedRoles),
       allowedRoles: input.allowedRoles,
       dataScopes: input.dataScopes,
       approvalPolicy: input.approvalPolicy,
@@ -782,8 +791,7 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.name.trim().length < 2) throw new Error('Agent 名称至少需要 2 个字符')
   if (input.description.trim().length < 10) throw new Error('Agent 说明至少需要 10 个字符')
   if (!input.owner.trim() || !input.department.trim()) throw new Error('负责人和归属部门不能为空')
-  if (!input.visibility.trim() || input.roleIds.length === 0) throw new Error('请配置 Agent 可见范围和角色')
-  if (input.dataScopes.length === 0) throw new Error('请配置至少一个业务数据范围')
+  if (!input.visibility.trim()) throw new Error('Agent 可见范围描述不能为空')
   if (input.welcomeMessage.trim().length > 120) throw new Error('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw new Error('请配置至少一个示例问题')
   if (input.systemPrompt.trim().length < 20) throw new Error('SOUL.md 正文至少需要 20 个字符')
@@ -816,6 +824,7 @@ function assertAgentReady(agent: AgentDefinition) {
     tools: agent.tools,
     changeSummary: '发布校验',
   })
+  if (!agent.roleIds.length) throw new Error('发布前必须配置员工可见角色')
 }
 
 function assertSkillConfiguration(input: SkillConfiguration) {

@@ -179,7 +179,8 @@ async function start() {
     pythonCapability = python.state
     const conversations = new PostgresConversationRepository(database)
     const authorization = new PostgresAuthorizationService(database, {
-      // AG-03：OIDC 模式下自动任务后台主体校验需要目录新鲜度，
+      // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
+      // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
       // 信任窗口 = 同步间隔 ×2（interval=0 即关闭同步 → 兜底 60s 后 fail-closed）。
       automationDirectory: identityConfiguration.mode === 'oidc'
         ? {
@@ -442,7 +443,11 @@ async function start() {
     registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
     registerAgentRoutes(router, agents)
     registerAdminAgentDataRoutes(router, agentData)
-    registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration))
+    const agentRelease = new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration)
+    // 启动收敛：进程中断留下的执行中试运行标记为“服务重启中断”，允许管理员重新开始（底层 Run 已由重启恢复收敛）。
+    const trialRecovery = await agentRelease.recoverInterruptedTrials()
+    if (trialRecovery.interrupted > 0) console.warn('agent release trial recovery completed', trialRecovery)
+    registerAgentReleaseRoutes(router, agentRelease)
     registerSkillRoutes(router, skills)
     registerToolRoutes(router, toolService)
     registerWorkbenchAgentRoutes(router, agents, authorization)

@@ -131,6 +131,23 @@ describe('agent governance store（服务端持久化）', () => {
     expect(store.submissions['agent-2']?.status).toBe('draft')
   })
 
+  it('轮询中的旧 GET 不能覆盖试运行请求返回的最终状态', async () => {
+    const agentId = 'agent-trial-progress'
+    let resolvePoll!: (value: AgentReleaseState) => void
+    vi.spyOn(adminApi, 'getAgentReleaseState').mockReturnValue(new Promise(resolve => { resolvePoll = resolve }))
+    vi.spyOn(adminApi, 'startAgentReleaseTrial').mockResolvedValue(makeState(agentId, {
+      trialRuns: [{ id: 'trial-current', submissionRevision: 1, status: 'asserting', steps: [], startedAt: '2026-09-23T10:00:00.000Z' }],
+    }))
+    const store = useAgentGovernanceStore()
+    const pendingPoll = store.loadReleaseState(agentId)
+    await store.startTrialRun(agentId, 'case-1')
+    resolvePoll(makeState(agentId, {
+      trialRuns: [{ id: 'trial-current', submissionRevision: 1, status: 'executing', steps: [], startedAt: '2026-09-23T10:00:00.000Z' }],
+    }))
+    await pendingPoll
+    expect(store.overlays[agentId]?.candidate?.trialRuns[0]?.status).toBe('asserting')
+  })
+
   it('发布成功后刷新提交索引并展示版本证据', async () => {
     const state = makeState('agent-3', {
       candidate: makeCandidate('agent-3', { status: 'published', sealedRevision: 1 }),

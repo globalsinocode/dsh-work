@@ -38,6 +38,33 @@ export const defaultAgentDshToolNames = [
   'web_search', 'todo_write',
 ] as const
 
+/** These tools are confined to the current Attempt's isolated workspace/session. */
+const runLocalAgentToolNames = new Set([
+  'read', 'write', 'edit', 'read_image', 'todo_write',
+])
+
+/**
+ * The seeded role/scope policy predates independent Agent identities. Only
+ * the unchanged default policy has an Agent-side run-local exemption: changing
+ * either policy dimension restores the ordinary explicit-grant requirement.
+ * Availability, bindings, input mounts and the DSH workspace guard still apply.
+ */
+export function isDefaultRunLocalAgentTool(tool: {
+  connectorId: string
+  dshToolName: string | null
+  allowedRoleIds: readonly string[]
+  dataScopes: readonly string[]
+}): boolean {
+  return tool.connectorId === DSH_RUNTIME_CONNECTOR_ID
+    && tool.dshToolName !== null
+    && runLocalAgentToolNames.has(tool.dshToolName)
+    && tool.allowedRoleIds.length === 2
+    && tool.allowedRoleIds.includes('role-employee')
+    && tool.allowedRoleIds.includes('role-platform-admin')
+    && tool.dataScopes.length === 1
+    && tool.dataScopes[0] === 'workspace:authorized'
+}
+
 export function isVisibleDshCatalogTool(toolId: string) {
   return !hiddenRuntimeCatalogTools.has(toolId)
 }
@@ -248,11 +275,22 @@ export function catalogEntryToToolDefinition(
     concurrencyPolicy: entry.concurrencyPolicy,
     completionSemantics: entry.completionSemantics,
     timeoutSeconds: entry.timeoutSeconds,
+    allowedRoleIds: prototypeToolRoleIds(policy?.allowedRoles ?? entry.defaultAllowedRoles),
     allowedRoles: policy?.allowedRoles ?? [...entry.defaultAllowedRoles],
     dataScopes: policy?.dataScopes ?? [...entry.defaultDataScopes],
     approvalPolicy: policy?.approvalPolicy ?? entry.defaultApprovalPolicy,
     lastCheckedAt: '刚刚',
   }
+}
+
+/** Prototype has a fixed role catalog. PostgreSQL resolves IDs from its roles table. */
+export function prototypeToolRoleIds(values: string[]): string[] {
+  const roles: Record<string, string> = {
+    普通员工: 'role-employee', 试点员工: 'role-employee', 平台管理员: 'role-platform-admin',
+    销售: 'role-sales', 供应链: 'role-supply', 管理者: 'role-manager',
+    生产: 'role-production', 仓储: 'role-warehouse',
+  }
+  return [...new Set(values.flatMap(value => value.startsWith('role-') ? [value] : roles[value] ? [roles[value]] : []))]
 }
 
 export function normalizeToolPolicyInput(input: {

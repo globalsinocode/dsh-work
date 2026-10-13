@@ -19,6 +19,15 @@
     }
   ],
   "paths": {
+    "/agents/{agentId}/release/publication-scope": {
+      "patch": {
+        "operationId": "updateAgentPublicationScope",
+        "summary": "在发布试运行前配置员工可见角色与可选的平台数据授权上限；变更使旧试运行证据失效",
+        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["roleIds", "dataScopes"], "properties": { "roleIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "dataScopes": { "type": "array", "uniqueItems": true, "items": { "type": "string" } } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/agents/{agentId}/release/case-trials": {
       "post": {
         "operationId": "startAgentReleaseTrial",
@@ -42,7 +51,7 @@
         "operationId": "confirmAgentReleaseTrialCase",
         "summary": "对当前案例的完整输出登记人工结论；五项通过后试运行完成",
         "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["verdicts"], "properties": { "verdicts": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["caseId", "verdict"], "properties": { "caseId": { "type": "string" }, "verdict": { "enum": ["passed", "failed"] }, "note": { "type": "string" } } } } } } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["verdicts"], "properties": { "verdicts": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["caseId", "verdict"], "properties": { "caseId": { "type": "string" }, "verdict": { "enum": ["passed", "failed"] }, "note": { "type": "string", "maxLength": 1000, "description": "verdict=failed 时必填（去除首尾空白后非空），否则返回 422" } } } } } } } } },
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -298,7 +307,7 @@
     "/agents/draft": {
       "patch": {
         "operationId": "updateAgentDraft",
-        "summary": "更新草稿；编辑已发布 Agent 时创建下一版本草稿",
+        "summary": "更新草稿；编辑已发布 Agent 时创建下一版本草稿。需回传 expectedRevision，发布范围保持不变",
         "requestBody": {
           "required": true,
           "content": {
@@ -344,7 +353,7 @@
     "/agents/rollback": {
       "post": {
         "operationId": "rollbackAgent",
-        "summary": "将活动版本指针回滚到指定已发布版本",
+        "summary": "将活动版本指针回滚到指定已发布版本；不改变启用/停用状态，不影响进行中的草稿",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -779,7 +788,12 @@
         "summary": "查询已同步的平台工具及其平台准入状态",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Ok"
+            "description": "工具列表。授权判断使用 allowedRoleIds，allowedRoles 仅为展示名称。",
+            "content": { "application/json": { "schema": {
+              "type": "object", "required": ["data"], "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDefinition" } }
+              }
+            } } }
           }
         }
       },
@@ -2130,6 +2144,18 @@
       }
     },
     "schemas": {
+      "ToolDefinition": {
+        "type": "object",
+        "required": ["id", "allowedRoleIds", "allowedRoles", "dataScopes"],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "allowedRoleIds": { "type": "array", "items": { "type": "string" }, "description": "稳定角色 ID，用于与执行身份的 roleIds 比较" },
+          "allowedRoles": { "type": "array", "items": { "type": "string" }, "description": "角色展示名称，不用于授权判断" },
+          "dataScopes": { "type": "array", "items": { "type": "string" } },
+          "agentRunLocalDefault": { "type": "boolean", "description": "是否为当前 Run 隔离范围内且保持默认策略的基础工具" }
+        }
+      },
       "AgentRoutineSchedule": { "oneOf": [
         { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
         { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },
@@ -2466,12 +2492,19 @@
           },
           {
             "type": "object",
+            "description": "编辑器不写发布范围：roleIds 与 dataScopes 仅为兼容字段，服务端沿用当前值；发布范围只能通过 PATCH /agents/{agentId}/release/publication-scope 修改。",
             "required": [
-              "agentId"
+              "agentId",
+              "expectedRevision"
             ],
             "properties": {
               "agentId": {
                 "type": "string"
+              },
+              "expectedRevision": {
+                "type": "string",
+                "minLength": 1,
+                "description": "打开编辑器时 Agent 返回的 revision；Agent 已被其他操作修改时返回 409 state_conflict。"
               }
             }
           }

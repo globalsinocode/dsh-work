@@ -571,6 +571,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             DSH_WORKSPACE_ROOT: workspaceDirectory,
             DSH_TOOL_APPROVAL_MODE: record.manifest.permission_policy.approval_mode,
             DSH_TOOL_APPROVAL_LOG: join(record.snapshot.attemptDirectory, 'tool-approval-requests.jsonl'),
+            // F-01：发布试运行隔离外部效果，DSH 策略对 MCP 调用返回 trial_only 而不实际调用。
+            ...(record.manifest.purpose === 'agent-release-trial' ? { DSH_WORK_TRIAL_EXTERNAL_EFFECTS: 'trial_only' } : {}),
           },
         },
         {
@@ -824,9 +826,14 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           dataVersion,
           checkpointState: await captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId),
         }
+    // F-01：发布试运行没有审批人，也不能产生外部效果。生产中需要人工审批的动作在试运行中
+    // 直接拒绝（trial_only），不创建持久化审批等待；无需审批的动作与生产一致自动放行。
+    const trialOnly = context !== null && record.manifest.purpose === 'agent-release-trial'
     const decision = context === null
       ? 'allow_once'
-      : await this.configuration.permissionDecision?.(request, record.manifest, context) ?? 'reject_once'
+      : trialOnly
+        ? 'reject_once'
+        : await this.configuration.permissionDecision?.(request, record.manifest, context) ?? 'reject_once'
     if (typeof decision === 'object' && decision.decision === 'wait') {
       if (!context) throw new Error('无需审批的工具调用不能进入持久化等待')
       record.durableWait = decision
@@ -860,7 +867,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       })
       return { outcome: { outcome: 'cancelled' } }
     }
-    this.emit(record, 'approval.resolved', decision === 'allow_once' ? '已允许本次操作' : '已拒绝本次操作', {
+    this.emit(record, 'approval.resolved', decision === 'allow_once' ? '已允许本次操作'
+      : trialOnly ? '发布试运行不执行需审批的操作（trial_only），未产生外部效果' : '已拒绝本次操作', {
       decision,
       tool_name: toolName,
       tool_call_id: toolCallId,
@@ -1082,7 +1090,8 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       ].join('\n')),
     ].join('\n'))
   }
-  if (!isAdminRunPurpose(manifest.purpose) && manifest.tools.some(tool => tool.id === 'write')) {
+  // 发布试运行与员工执行使用同一成果说明（F-02）；试运行不登记成果，见下方附加说明。
+  if ((!isAdminRunPurpose(manifest.purpose) || manifest.purpose === 'agent-release-trial') && manifest.tools.some(tool => tool.id === 'write')) {
     sections.push([
       '# 成果文件',
       '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',

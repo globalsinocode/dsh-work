@@ -74,7 +74,7 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 | Soul | Agent 定义版本根目录的唯一可信指令文件 `SOUL.md`；结构化标识、目标、边界和评测仍由 AgentSpec/发布记录管理 | AE-01 已把包 Schema、解析器及配置入口切换至根目录 `SOUL.md`（代码级）；AE-05 主动任务已另行代码级实施 |
 | Experience | Agent 稳定身份下的受控经验申请及不可变版本；`memory.md` 只是 Attempt 内的只读运行投影 | 员工端记忆提交、授权和撤回功能已移除。管理端按稳定 `agent_id` 查看 Agent 从成功 Run/Attempt 提出的申请并人工审核；专属质量评测与显式回滚仍须补齐，不能宣称 Agent 自动学习 |
 | Skill 与内置 Tool | Agent Version 固定所需的精确依赖，按当前状态和权限复核；没有需求时允许空集合 | AE-01 已使界面配置允许空集合（代码级）；业务能力仍须按需显式声明 |
-| MCP Tool | 保留 Connector 整体发现、租户内全部 Agent 默认可见及每 Attempt 能力摘要复核；调用归因到 Agent Principal、Task 和 Attempt | 当前共享 Connector 凭据不能证明上游区分各 Agent 身份 |
+| MCP Tool | 保留 Connector 整体发现、租户内全部 Agent 可选及每 Attempt 能力摘要复核；调用归因到 Agent Principal、Task 和 Attempt | 当前共享 Connector 凭据不能证明上游区分各 Agent 身份 |
 | 工作数据 | 独立的轻量状态与受治理的数据集合；集合归属企业租户或 Workspace，Agent 仅按当前授权使用；记录版本绑定写入身份、Task/Run/Attempt、来源和 Schema 版本 | AE-03 已接通固定通用表、AgentSpec、管理 API、DSH 工具及 `task-result/v1` 记录引用（代码级）；真实 DSH/OIDC 与外部回执验收另记 |
 | 主动任务 | Agent 拥有的版本化 routine，受触发条件、Workspace、身份、授权上限和预算约束 | AE-05 新增 `agent_routines` 与独立执行账本（代码级）；原 `agent_automations` 仍由员工本人拥有，不能当作 AI 员工心跳。真实 DSH/OIDC 与外部事件源仍需另验 |
 
@@ -84,7 +84,7 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 
 Task 分别记录 `initiated_by`、`executed_as`、`approved_by`（可空）和治理负责人引用。员工请求由 `human` 发起、`agent` 执行；定时/事件任务可由 `system` 发起、Agent 执行。高风险动作仍由有权的人类批准。当前人类外键、Run Manifest、审计及结果读取须作为一个契约变更同步处理，不能将 `agent_id` 偷写入 `user_id` 或静默混用两类身份。
 
-Agent Principal 的角色与数据授权独立、可撤销，并满足 Workspace 当前准入。员工交互请求的输入与新结果披露还受发起人当前授权上限约束，防止借 Agent 越权读取；这不改变 Agent 的执行身份。主动任务只使用 Agent 当前授权与启用时批准上限的交集。停用、收权或授权服务不可用时拒绝新动作；历史快照不能恢复已撤销权限，活动读写与结果提交均须复核。已完成结果按当前人类账号和 Workspace 读取授权保留为不可变证据，Agent 事后停用不撤销历史结果读取。现行 MCP“对全部 Agent 默认开放”只表示可装载 Connector，不替代目标系统数据授权；需要上游独立身份时另设计可核验的工作负载凭据，不默认增加逐 Agent MCP Grant。
+Agent Principal 的角色与数据授权独立、可撤销，并满足 Workspace 当前准入。员工交互请求的输入与新结果披露还受发起人当前授权上限约束，防止借 Agent 越权读取；这不改变 Agent 的执行身份。主动任务只使用 Agent 当前授权与启用时批准上限的交集。停用、收权或授权服务不可用时拒绝新动作；历史快照不能恢复已撤销权限，活动读写与结果提交均须复核。已完成结果按当前人类账号和 Workspace 读取授权保留为不可变证据，Agent 事后停用不撤销历史结果读取。租户级 MCP Connector 面向所有 Agent 可选，但新 Agent Version 默认不接入；选择连接器不替代目标系统数据授权。需要上游独立身份时另设计可核验的工作负载凭据，不默认增加逐 Agent MCP Grant。
 
 ### 3.2 Soul、Memory 与目录
 
@@ -192,7 +192,7 @@ DSH 不可用必须明确失败或拒绝受理，不自动降级到直连模型�
 
 ### AS-05 Skill、Tool 与 MCP 职责明确
 
-**现行约束：** Skill 提供方法；平台 Tool 提供逐能力、版本化的可校验动作；MCP 是外部能力接入协议。两种能力边界并行存在，不要求把 MCP Server 暴露的每个 Tool 复制为平台 Tool Version 或 Tool Binding。MCP 复用 Connector 管理；成功发现的 Tool 集合与摘要自动生效，健康且能力快照已同步的 Connector 默认对租户内全部 Agent 可用。平台不建立 Agent→Connector 或逐 Tool 授权；Agent Version 可按第 6.4 节将自身使用范围收窄为 `selected` 或 `none`。运行时把本次范围内可用的 Connector 写入 Attempt 快照，并持续复核连接器状态与能力摘要。
+**现行约束：** Skill 提供方法；平台 Tool 提供逐能力、版本化的可校验动作；MCP 是外部能力接入协议。两种能力边界并行存在，不要求把 MCP Server 暴露的每个 Tool 复制为平台 Tool Version 或 Tool Binding。MCP 复用 Connector 管理；成功发现的 Tool 集合与摘要自动生效，健康且能力快照已同步的 Connector 对租户内全部 Agent 可选。平台不建立 Agent→Connector 或逐 Tool 授权；Agent Version 按第 6.4 节明确声明 `all`、`selected` 或 `none`，新建默认 `none`。运行时把本次范围内可用的 Connector 写入 Attempt 快照，并持续复核连接器状态与能力摘要。
 
 DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP Server 名称，要求模型只据此描述自身能力，避免把 Runtime 可安装但本次未授权的工具说成可用。提示只改善回答准确性；实际调用仍以策略、当前授权和连接器状态校验为准。
 
@@ -203,7 +203,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 | DSH 内置工具 | DSH Runtime | Tool Version + Connector Binding + Agent 精确引用 | `DSH 工具管理` |
 | dsh-work 内置执行工具 | dsh-work Platform Tool Bridge，DSH 在 Attempt 内调用 | Agent/Skill Manifest 精确声明；不进入普通 Tool Binding | Agent/Skill 定义与运行证据 |
 | dsh-work 内置平台工具 | dsh-work Platform Tool Bridge，DSH 在管理 Attempt 内调用 | 由平台按 Run purpose 注入并强制校验；不提供 Agent 自由选配 | 对应平台流程与审计 |
-| MCP 外部工具 | 外部 MCP Server，DSH MCP Client 调用 | Connector 整体发现、自动生效快照、全部 Agent 默认可用及状态/摘要持续复核；不复制为平台 Tool Version/Binding | `MCP 连接器` |
+| MCP 外部工具 | 外部 MCP Server，DSH MCP Client 调用 | Connector 整体发现、自动生效快照、全部 Agent 可选及状态/摘要持续复核；新 Agent 默认不接入，也不复制为平台 Tool Version/Binding | `MCP 连接器` |
 
 `activate_skill`、`python_execute` 属于 dsh-work 内置执行工具；`inspect_admin_state`、`propose_admin_task`、`prepare_admin_action`、`prepare_skill_installation` 属于 dsh-work 内置平台工具。普通工具列表只返回 `connector-dsh-workspace` 下的 DSH 内置工具；不得把平台桥工具、MCP 发现项或旧的自定义候选原型混入该列表。
 
@@ -337,6 +337,8 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 创建和编辑页移除基础能力展示、扩展能力开关、逐工具允许列表和默认展开的全部工具预览。平台按统一策略向所有 Agent 提供符合前置条件的能力，LLM 决定是否调用、调用顺序和参数。默认提供能力不自动授予角色、数据范围、委派目标或额外预算。
 
+仅访问当前隔离 Run 工作区、且路径参数由 DSH 策略逐次校验的基础文件工具（`read`、`read_image`、`write`、`edit`），以及本次会话的 `todo_write`，在平台默认角色/范围策略未被管理员收紧时，不要求 Agent Principal 额外领取员工业务角色或 `workspace:authorized`。这项例外只适用于已准入、可用并固定绑定的对应 DSH 工具；输入文件挂载仍须通过发起人及工作空间的当前授权，执行期仍复核身份、文件来源与目录边界。路径参数可省略的 `glob`、`grep`、`str_replace_editor` 保持常规授权门禁，不能据此例外搜索工作区之外的内容。管理员对工具角色或数据范围作出非默认限制后，Agent 必须显式获得相应授权。MCP、企业数据集合、平台受控业务工具和敏感动作不继承此例外。
+
 | 能力 | 自动装配依据 | 执行范围 |
 | --- | --- | --- |
 | 文件读取、查找、内容搜索、图片读取、成果生成与编辑 | 平台明确纳入默认集、已准入且 Runtime 支持的工具 | 当前已授权文件和隔离工作区；输入只读、成果路径受控 |
@@ -354,13 +356,13 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 ### 6.4 MCP 使用范围
 
-连接器继续在现有 MCP 管理模块登记、测试、发现、自动生效、启停及删除。租户内可用 MCP 默认向全部 Agent 开放；新增的是 Agent 创建者主动收窄使用范围的配置，不新增逐 Agent Grant、逐 Tool Grant 或第二套 Connector 审核。
+连接器继续在现有 MCP 管理模块登记、测试、发现、自动生效、启停及删除。连接器保持租户级可用，不新增逐 Agent Grant、逐 Tool Grant 或第二套 Connector 审核。新 Agent 的使用范围默认 `none`，由作者明确选择 `selected` 或 `all` 后才接入外部数据；已有版本保留其已发布模式。
 
 | 模式 | 语义 | 连接器集合 |
 | --- | --- | --- |
-| `all`：全部可用 MCP | 默认值，每个新 Attempt 解析租户当时全部可用 MCP | 不保存手工选择的 ID；新连接器可在后续 Attempt 中可用 |
+| `all`：全部可用 MCP | 显式选择后，每个新 Attempt 解析租户当时全部可用 MCP | 不保存手工选择的 ID；新连接器可在后续 Attempt 中可用 |
 | `selected`：仅使用选定 MCP | 只加载并允许调用选定连接器中的工具 | 至少选择一个本租户连接器，保存去重后的稳定 ID |
-| `none`：不使用 MCP | 本 Agent 的该版本不加载或调用 MCP | 空集合 |
+| `none`：不使用 MCP | 新 Agent 默认值；该版本不加载或调用 MCP | 空集合 |
 
 模式与集合属于目标环境的平台配置，随 Agent 发布版本固定并进入候选摘要；端点和凭据继续留在 Connector，不进入作者包。界面配置统一使用同一规则，跨环境不可静默复用其他租户或环境的 Connector ID。
 
@@ -368,15 +370,15 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 平台先解析使用范围，再将本次连接标识与能力摘要固定到 Manifest、DSH 配置和调用策略。未选命名空间的调用须被实际拒绝，即使该 MCP 对租户其他 Agent 可用。队列启动、恢复和活动调用继续复核健康、停用、删除及摘要漂移；已经开始的 Attempt 不自动扩入新增连接器。保留当前容量门禁和调用审计，不因新增范围选择就扩大 Runtime 上限。
 
-发布时固定的是模式和选定 ID 等使用策略，MCP 实际清单按每次 Attempt 留证。`all` 随新 Attempt 使用当前集合，是明确的动态环境语义；不能将它描述为所有 MCP 工具永久随 Agent Version 锁定。共享 MCP 凭据也不等于上游能够识别每个 Agent 或自动执行企业数据隔离。
+发布时固定的是模式和选定 ID 等使用策略，MCP 实际清单按每次 Attempt 留证。`all` 随新 Attempt 使用当前集合，是明确的动态环境语义；不能将它描述为所有 MCP 工具永久随 Agent Version 锁定。MCP 数据访问边界由上游凭据和服务端实现；Connector 的权限说明是登记信息，平台 Agent Version 的 `dataScopes` 仅约束 dsh-work 受控工具与数据集合，不过滤 MCP 返回的数据。共享 MCP 凭据不等于上游能够识别每个 Agent 或自动执行企业数据隔离。
 
 ### 6.5 管理端 UI 与交互
 
 沿用现有应用壳层、编辑弹窗、Design Token、保存及发布流程，创建和编辑分三步：
 
-1. **定义 Agent：** 名称、说明、欢迎语、Soul、可选 AGENTS 工作规程；负责人、执行身份与可见性仍依现有治理语义处理。
-2. **选择 Skill 与 MCP：** 选填已发布 Skill；MCP 提供上述三种模式，默认 `all`。仅在 `selected` 下显示选择连接器及已选列表，按整个 Connector 选择，不逐工具勾选。
-3. **确认并保存：** 展示定义、Skill、MCP 模式和必要的授权摘要，保存草稿。保存后直接进入人工试运行验证；试运行通过后一次确认发布。
+1. **定义 Agent：** 名称、说明、欢迎语、Soul、可选 AGENTS 工作规程；平台自动创建独立执行身份，初始不继承创建者业务角色或数据授权。创建阶段不填写员工可见范围和平台数据授权范围。
+2. **选择 Skill 与 MCP：** 选填已发布 Skill；MCP 提供上述三种模式，新建默认 `none`。仅在 `selected` 下显示选择连接器及已选列表，按整个 Connector 选择，不逐工具勾选。
+3. **确认并保存：** 展示定义、Skill、MCP 模式，保存草稿。发布工作台在首项试运行前选择员工可见角色、按需设置平台数据范围；这些字段与定义指纹一起固定，调整后旧试运行证据失效。基础文本 Agent 无业务角色和数据范围时可通过独立身份试运行；工具和数据集合需要的授权在派发前按当前 Agent Principal 与版本上限复核并列明缺口。试运行通过后一次确认发布。
 
 第二步不展示基础能力、扩展能力开关或右侧全部工具列表。已选 MCP 列表字段为“连接器、状态、工具数量、操作”，操作包含“查看工具”和“移除”；工具详情只读展示名称、描述及输入 Schema。移除仅改变草稿使用范围，不删除 Connector。“权限与运行限制”默认折叠，详细资源策略在相应治理入口维护。
 
@@ -384,7 +386,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 ![Agent 编辑界面 V2：Skill 与 MCP 使用范围](../design/assets/agent-management-editor-v2.png)
 
-效果图展示 `selected` 状态以便评审连接器选择；新建默认仍为 `all`。图片是设计参考；实际交互以当前管理端及对应 P0/P1 用例为准。
+效果图展示 `selected` 状态以便评审连接器选择；新建默认以本节 `none` 为准。图片是设计参考；实际交互以当前管理端及对应 P0/P1 用例为准。
 
 ### 6.5.1 创建到发布的唯一操作流程（2026-10-03）
 

@@ -7,7 +7,7 @@ import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agen
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import { parseAgentPackage } from '../../modules/agent/agent-package.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
-import { PostgresAgentReleaseService } from '../../modules/agent/postgres-agent-release-service.ts'
+import { PostgresAgentReleaseService, type TrialRunStep } from '../../modules/agent/postgres-agent-release-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -135,7 +135,9 @@ async function confirmLatestTrial(agentId: string, verdict: 'passed' | 'failed' 
   assert.equal(trial?.status, 'asserting', '试运行应停在待逐项确认状态')
   const caseRuns = trial.steps.flatMap(step => step.caseRuns ?? []).filter(run => !run.verdict)
   assert.ok(caseRuns.length > 0, '试运行缺少案例执行记录')
-  return release.confirmTrial(agentId, trial.id, caseRuns.map(run => ({ caseId: run.caseId, verdict })), ADMIN)
+  return release.confirmTrial(agentId, trial.id, caseRuns.map(run => ({
+    caseId: run.caseId, verdict, ...(verdict === 'failed' ? { note: '回答未说明缺失信息' } : {}),
+  })), ADMIN)
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +176,14 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
   assert.equal(dshStep?.caseRuns?.length, 5)
   assert.ok(dshStep?.caseRuns?.every(item => item.runId && item.attemptId && item.status === 'succeeded'))
   assert.ok(dshStep?.caseRuns?.every(item => item.automatedAssertions.every(assertion => assertion.passed)))
+  const finalCase = state.candidate!.cases.at(-1)!
+  assert.equal(trialed.trialRuns[0]?.progress?.caseId, finalCase.id)
+  assert.equal(trialed.trialRuns[0]?.progress?.runId, dshStep?.caseRuns?.at(-1)?.runId)
+  assert.equal(trialed.trialRuns[0]?.progress?.runStatus, 'succeeded')
+  assert.ok(trialed.trialRuns[0]?.progress?.events.some(event => event.type === 'run.started'))
+  assert.ok(trialed.trialRuns[0]?.progress?.events.some(event => event.type === 'run.completed'))
+  assert.ok(trialed.trialRuns[0]?.progress?.events.every(event => !event.label.includes('试运行回答：')),
+    '运行过程只返回受控状态，不泄露原始回答或 Runtime 日志')
   const trialRunsInDb = await database<{ count: number }[]>`
     select count(*)::integer as count from runs
      where tenant_id = ${tenantId} and session_id in (
@@ -228,6 +238,33 @@ test('配置创建的草稿走完检查、试运行与发布，版本证据落�
 
   const records = await agents.getReleaseRecords()
   assert.ok(records.some(item => item.agentId === agentId && item.action === 'published'))
+})
+
+test('运行中的单项案例可读取已持久化检查进度与自身 Run 事件', async () => {
+  const agentId = 'agent-release-live-progress'
+  await createDraftAgent(agentId)
+  const candidate = (await release.ensureCandidate(agentId, ADMIN)).candidate!
+  const firstCase = candidate.cases[0]!
+  trialRuntime.pauseOnMessage = firstCase.input
+  const paused = trialRuntime.waitUntilPaused()
+  try {
+    const running = release.startTrial(agentId, ADMIN, firstCase.id)
+    await paused
+    const state = await release.getReleaseState(agentId)
+    const trial = state.trialRuns[0]!
+    assert.equal(trial.status, 'executing')
+    assert.deepEqual(trial.steps.slice(0, 3).map(step => step.status), ['passed', 'passed', 'passed'])
+    assert.equal(trial.steps.find(step => step.id === 'dsh')?.status, 'running')
+    assert.equal(trial.progress?.caseId, firstCase.id)
+    assert.ok(trial.progress?.runId?.startsWith('run-'))
+    assert.equal(trial.progress?.runStatus, 'running')
+    assert.ok(trial.progress.events.some(event => event.type === 'run.started'))
+    trialRuntime.resumePaused()
+    assert.equal((await running).trialRuns[0]?.status, 'asserting')
+  } finally {
+    trialRuntime.pauseOnMessage = ''
+    trialRuntime.resumePaused()
+  }
 })
 
 test('五类案例逐项运行与确认，不能跳项，后续案例编辑保留已通过证据', async () => {
@@ -296,7 +333,7 @@ test('草稿定义在两项之间变化时拒绝继续，旧案例证据不能�
     'Attempt 准备时也必须拒绝封存后变化的草稿',
   )
   await assert.rejects(
-    tools.resolveMcpConnectionsForAgentVersion(created.version.id, { mode: 'none', connectorIds: [] }),
+    tools.resolveMcpConnectionsForAgentVersion(created.version.id, { mode: 'all', connectorIds: [] }),
     /MCP 使用范围已偏离/,
     'MCP 范围在 Runtime 快照读取后变化也不能混入本次试运行',
   )
@@ -378,32 +415,81 @@ test('数据声明发布前复核集合授权，且试运行证据固定数据�
 })
 
 test('试运行缩小 Agent 授权后拒绝不再获准的工具，不产生 Runtime Attempt', async () => {
-  const agentId = `agent-trial-narrow-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, [], ['read@1.0.0'],
-    ['workspace:authorized', 'enterprise:authorized'])
-  await release.ensureCandidate(agentId, ADMIN)
-  const checked = await release.runChecks(agentId, ADMIN)
-  assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'))
-  const principal = await agents.getAgentPrincipal(agentId)
-  await agents.updateAgentPrincipal({ agentId, actor: ADMIN,
-    expectedAuthorizationVersion: principal.authorizationVersion,
-    status: 'active', roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
+  await tools.updateToolPermissions({
+    toolId: 'grep', allowedRoles: ['role-employee'], dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none', actor: ADMIN,
   })
-  await assert.rejects(assertCurrentExecutionAuthorization(new PostgresAuthorizationService(database), undefined, {
-    purpose: 'agent-release-trial', agent_version_id: created.version.id, workspace_id: '',
-    user_context: { user_id: ADMIN, tenant_id: tenantId, role_ids: ['role-employee'] },
-    data_scopes: ['enterprise:authorized'], input: { message: 'test', file_mounts: [] },
-  } as unknown as RuntimeManifest), /当前身份、固定能力或输入资源授权已撤销/)
-  const trial = await runCasesToReview(agentId)
-  assert.equal(trial.trialRuns[0]?.status, 'failed')
-  const caseRuns = trial.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? []) ?? []
-  assert.ok(caseRuns.length > 0)
-  assert.ok(caseRuns.every(run => !run.attemptId))
-  const attempts = await database<{ count: number }[]>`
-    select count(*)::integer as count from run_attempts
-     where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${created.version.id}
+  try {
+    const agentId = `agent-trial-narrow-${randomUUID().slice(0, 8)}`
+    const created = await createDraftAgent(agentId, [], ['grep@1.0.0'],
+      ['workspace:authorized', 'enterprise:authorized'])
+    await release.ensureCandidate(agentId, ADMIN)
+    const checked = await release.runChecks(agentId, ADMIN)
+    assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'))
+    const principal = await agents.getAgentPrincipal(agentId)
+    await agents.updateAgentPrincipal({ agentId, actor: ADMIN,
+      expectedAuthorizationVersion: principal.authorizationVersion,
+      status: 'active', roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
+    })
+    await assert.rejects(assertCurrentExecutionAuthorization(new PostgresAuthorizationService(database), undefined, {
+      purpose: 'agent-release-trial', agent_version_id: created.version.id, workspace_id: '',
+      user_context: { user_id: ADMIN, tenant_id: tenantId, role_ids: ['role-employee'] },
+      data_scopes: ['enterprise:authorized'], input: { message: 'test', file_mounts: [] },
+    } as unknown as RuntimeManifest), /当前身份、固定能力或输入资源授权已撤销/)
+    const firstCaseId = (await release.getReleaseState(agentId)).candidate!.cases[0]!.id
+    await assert.rejects(release.startTrial(agentId, ADMIN, firstCaseId), /试运行被阻塞：独立执行身份、执行器与 Runtime 兼容/)
+    assert.equal((await release.getReleaseState(agentId)).trialRuns.length, 0)
+    const attempts = await database<{ count: number }[]>`
+      select count(*)::integer as count from run_attempts
+       where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${created.version.id}
+    `
+    assert.equal(attempts[0]?.count, 0)
+  } finally {
+    await tools.updateToolPermissions({
+      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
+      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
+    })
+  }
+})
+
+test('Run 本地文件 Skill 不要求新 Agent 领取员工业务角色或平台数据范围', async () => {
+  const agentId = `agent-run-local-${randomUUID().slice(0, 8)}`
+  const created = await agents.createAgent({
+    id: agentId, name: '当前工作区文档助手', description: '整理本次输入和当前工作区内的文件。',
+    owner: '发布管理员', department: '平台治理', visibility: '发布时设置',
+    roleIds: [], dataScopes: [], welcomeMessage: '', examplePrompts: ['整理这份材料'],
+    systemPrompt: '只处理本次 Run 中已获授权的输入文件和当前工作区内容。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    skills: ['skill-document@1.0.0'], tools: [], changeSummary: '验证本地基础工具', actor: ADMIN,
+  })
+  const principal = await agents.getAgentPrincipal(agentId)
+  assert.deepEqual(principal.roleIds, [])
+  assert.deepEqual(principal.dataScopes, [])
+  const [stored] = await database<{ tools: string[] }[]>`
+    select tool_refs as tools from agent_versions
+     where tenant_id = ${tenantId} and id = ${created.version.id}
   `
-  assert.equal(attempts[0]?.count, 0)
+  assert.ok(stored?.tools.includes('read@1.0.0'))
+  await release.ensureCandidate(agentId, ADMIN)
+  await release.updatePublicationScope(agentId, ADMIN, ['role-employee'], [])
+  const checked = await release.runChecks(agentId, ADMIN)
+  assert.ok(checked.candidate?.checks.every(item => item.status === 'passed'),
+    JSON.stringify(checked.candidate?.checks))
+  const started = await release.startTrial(agentId, ADMIN, checked.candidate!.cases[0]!.id)
+  const first = started.trialRuns[0]?.steps.flatMap(step => step.caseRuns ?? [])[0]
+  assert.ok(first?.runId)
+  const manifest = trialRuntime.manifest(first.runId!)
+  assert.deepEqual(manifest?.user_context.role_ids, [])
+  assert.deepEqual(manifest?.data_scopes, [])
+  assert.ok(manifest?.tools.some(tool => tool.id === 'read'))
+  assert.ok(!manifest?.tools.some(tool => tool.id === 'glob' || tool.id === 'grep'))
+  // F-02：试运行与员工执行使用同一权限策略（审批模式、工作区写入），外部效果由 purpose 隔离。
+  const snapshot = await agents.getRuntimeSnapshot(manifest!.agent_version_id!)
+  assert.equal(manifest?.purpose, 'agent-release-trial')
+  assert.equal(manifest?.permission_policy.approval_mode, snapshot.approvalMode)
+  assert.equal(manifest?.permission_policy.write_policy, 'workspace_only')
+  // 测试环境未配置 Runtime 策略上限：试运行超时即 Agent 自身超时（不再是固定 150 秒等待）。
+  assert.equal(manifest?.limits.timeout_seconds, snapshot.timeoutSeconds)
 })
 
 test('无 Skill/Tool 的 Soul Agent 可从界面配置创建并通过自动检查', async () => {
@@ -441,6 +527,70 @@ test('无 Skill/Tool 的 Soul Agent 可从界面配置创建并通过自动检�
   assert.deepEqual(trialRuntime.manifest(firstRun!.runId!)?.tool_bindings, sealedDefaults)
 
 
+})
+
+test('基础 Agent 无业务授权创建，发布前设置可见角色后以空业务权限完成试运行', async () => {
+  const agentId = `agent-basic-${randomUUID().slice(0, 8)}`
+  const created = await agents.createAgent({
+    id: agentId, name: '文本整理助手', description: '只整理用户本次输入的文字并指出不确定信息。',
+    owner: '发布管理员', department: '平台治理', visibility: '发布时设置',
+    roleIds: [], dataScopes: [], welcomeMessage: '', examplePrompts: ['请整理这段文字'],
+    systemPrompt: '你是独立的文本整理 AI 员工。只处理用户本次提供的文字，不读取企业业务数据。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    skills: [], tools: [], changeSummary: '创建基础草稿', actor: ADMIN,
+  })
+  const identity = await agents.getAgentPrincipal(agentId)
+  assert.equal(identity.status, 'active')
+  assert.deepEqual(identity.roleIds, [])
+  assert.deepEqual(identity.dataScopes, [])
+  const pending = await release.ensureCandidate(agentId, ADMIN)
+  const initial = await release.runChecks(agentId, ADMIN)
+  assert.equal(initial.candidate?.checks.find(item => item.id === 'audience')?.status, 'failed')
+  assert.equal(initial.candidate?.checks.find(item => item.id === 'principal')?.status, 'passed')
+  await assert.rejects(release.startTrial(agentId, ADMIN, pending.candidate!.cases[0]!.id), /试运行被阻塞：员工可见范围/)
+  const configured = await release.updatePublicationScope(agentId, ADMIN, ['role-employee'], [])
+  // F-09：可见角色不属于定义，设置后不推进修订；试运行前的自动检查重新评估可见范围。
+  assert.equal(configured.candidate!.revision, pending.candidate!.revision)
+  const trial = await runCasesToReview(agentId)
+  const firstRun = trial.trialRuns[0]!.steps.flatMap(step => step.caseRuns ?? [])[0]!
+  const manifest = trialRuntime.manifest(firstRun.runId!)
+  assert.deepEqual(manifest?.user_context.role_ids, [])
+  assert.deepEqual(manifest?.data_scopes, [])
+  assert.equal(manifest?.mcp_connections, undefined)
+  await confirmLatestTrial(agentId)
+  assert.equal((await release.publish(agentId, '基础能力验收通过', ADMIN)).candidate, undefined)
+  assert.equal(created.agent.id, agentId)
+})
+
+test('可见角色是发布属性：调整后沿用已通过的试运行；平台数据范围变更仍作废封存证据', async () => {
+  // F-09：只改员工可见角色不需要重跑五项试运行，发布时复核角色有效性并写入版本。
+  const roleOnly = `agent-scope-role-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(roleOnly, [], [], [])
+  await release.ensureCandidate(roleOnly, ADMIN)
+  await runCasesToReview(roleOnly)
+  const rolePassed = await confirmLatestTrial(roleOnly)
+  const roleChanged = await release.updatePublicationScope(roleOnly, ADMIN, ['role-employee', 'role-platform-admin'], [])
+  assert.equal(roleChanged.candidate!.revision, rolePassed.candidate!.revision)
+  assert.equal(roleChanged.candidate!.sealedRevision, rolePassed.candidate!.sealedRevision)
+  await release.publish(roleOnly, '可见范围扩大后发布', ADMIN)
+  const [published] = await database<{ roleIds: string[] }[]>`
+    select av.visible_role_ids as "roleIds" from agents a
+      join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
+     where a.tenant_id = ${tenantId} and a.id = ${roleOnly}
+  `
+  assert.deepEqual([...published!.roleIds].sort(), ['role-employee', 'role-platform-admin'])
+
+  // 平台数据范围上限属于定义：变化后推进修订并作废封存，旧试运行不能放行。
+  const agentId = `agent-scope-change-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId, [], [])
+  await release.ensureCandidate(agentId, ADMIN)
+  await runCasesToReview(agentId)
+  const passed = await confirmLatestTrial(agentId)
+  const revision = passed.candidate!.revision
+  const changed = await release.updatePublicationScope(agentId, ADMIN, ['role-employee'], [])
+  assert.ok(changed.candidate!.revision > revision)
+  assert.equal(changed.candidate!.sealedRevision, undefined)
+  await assert.rejects(release.publish(agentId, '', ADMIN), /试运行对应的修订已被修改/)
 })
 
 test('发起试运行自动检查失效依赖，阻塞时不创建试运行或 Attempt', async () => {
@@ -597,7 +747,9 @@ test('定义修改推进修订并作废检查与封存，发布要求最新封�
   assert.equal(retrialed.trialRuns[0]?.submissionRevision, 2)
   const published = await release.publish(agentId, '', ADMIN)
   assert.equal(published.candidate, undefined)
-  assert.equal(published.evidence['0.1.0']?.length, 8)
+  // F-06：未填写审核意见时不代填业务确认，证据只有配置检查 + 绑定修订 + 5 条案例 = 7 条。
+  assert.equal(published.evidence['0.1.0']?.length, 7)
+  assert.ok(!published.evidence['0.1.0']?.some(item => item.kind === 'business_accepted'))
   const publishedSnapshot = await agents.getRuntimeSnapshot((await agents.getAgentVersions())
     .find(version => version.agentId === agentId && version.version === '0.1.0')!.id)
   assert.match(publishedSnapshot.systemPrompt, /# AGENTS\.md · 工作规程/)
@@ -609,11 +761,22 @@ test('审核人判定任一案例不符合预期时试运行记为失败并阻�
   await createDraftAgent(agentId)
   await release.ensureCandidate(agentId, ADMIN)
   await release.runChecks(agentId, ADMIN)
-  await runCasesToReview(agentId)
+  const pending = await runCasesToReview(agentId)
+  const pendingTrial = pending.trialRuns[0]!
+  const pendingCase = pendingTrial.steps.flatMap(step => step.caseRuns ?? []).find(run => !run.verdict)!
+  // 不通过必须附原因；缺失原因时结论不落库，试运行仍停在待确认。
+  await assert.rejects(
+    release.confirmTrial(agentId, pendingTrial.id, [{ caseId: pendingCase.caseId, verdict: 'failed', note: '  ' }], ADMIN),
+    /必须填写原因/,
+  )
+  assert.equal((await release.getReleaseState(agentId)).trialRuns[0]?.status, 'asserting')
 
   const rejected = await confirmLatestTrial(agentId, 'failed')
   assert.equal(rejected.trialRuns[0]?.status, 'failed')
   assert.equal(rejected.trialRuns[0]?.failureStage, '案例终态断言')
+  const rejectedRun = rejected.trialRuns[0]!.steps.flatMap(step => step.caseRuns ?? []).find(run => run.verdict === 'failed')
+  assert.equal(rejectedRun?.verdictNote, '回答未说明缺失信息')
+  assert.match(rejected.trialRuns[0]!.steps.find(step => step.id === 'assert')?.detail ?? '', /（回答未说明缺失信息）/)
   await assert.rejects(release.publish(agentId, '', ADMIN), /需要一次.*通过试运行/)
 })
 
@@ -685,7 +848,7 @@ test('升级前通过的三案例试运行不能作为 v1 发布证据', async (
   assert.equal(stillDraft.find(item => item.id === agentId)?.status, 'draft')
 })
 
-test('案例编辑的 origin 由服务端维护：既有生成案例保留标记，调用方不能伪造或清除', async () => {
+test('案例编辑的 origin 由服务端维护：未改写的生成案例保留标记，改写即清除，调用方不能伪造', async () => {
   const agentId = 'agent-release-origin'
   await createDraftAgent(agentId)
   const state = await release.ensureCandidate(agentId, ADMIN)
@@ -721,6 +884,20 @@ test('案例编辑的 origin 由服务端维护：既有生成案例保留标记
   const forged = updated.candidate!.cases.find(item => item.name === '伪造来源案例')
   assert.ok(forged)
   assert.equal(forged.origin, undefined)
+
+  // F-08：改写生成案例的输入后清除 generated 标记，其余未改动案例保留；改回原文也不恢复标记。
+  const strip = (item: typeof generated[number]) => ({
+    id: item.id, evaluationApiVersion: item.evaluationApiVersion, name: item.name, kind: item.kind,
+    input: item.input, automatedAssertions: item.automatedAssertions, manualReview: item.manualReview,
+  })
+  const target = generated.find(item => item.kind === 'success')!
+  const rewritten = await release.updateCases(agentId, generated.map(item => item.id === target.id
+    ? { ...strip(item), input: '核对 PO-2026-0815 与发票 INV-3302 的金额差异' }
+    : strip(item)), ADMIN)
+  assert.equal(rewritten.candidate!.cases.find(item => item.id === target.id)?.origin, undefined)
+  assert.ok(rewritten.candidate!.cases.filter(item => item.id !== target.id).every(item => item.origin === 'generated'))
+  const reverted = await release.updateCases(agentId, generated.map(strip), ADMIN)
+  assert.equal(reverted.candidate!.cases.find(item => item.id === target.id)?.origin, undefined)
 })
 
 test('既有 submitted 候选仍可退回解锁、重试并发布', async () => {
@@ -819,6 +996,143 @@ interface TrialExecution {
   resolve: (snapshot: RuntimeExecutionSnapshot) => void
 }
 
+// ---------------------------------------------------------------------------
+// AR-01 正确性与安全修复回归（F-03/F-04/F-05/F-06）及案例沿用、启动收敛
+// ---------------------------------------------------------------------------
+
+/** 按生产流程发布当前草稿：检查 → 五项逐项试运行 → 确认 → 发布。 */
+async function publishCurrentDraft(agentId: string, note = '业务场景已确认') {
+  await release.ensureCandidate(agentId, ADMIN)
+  await release.runChecks(agentId, ADMIN)
+  await runCasesToReview(agentId)
+  await confirmLatestTrial(agentId)
+  return release.publish(agentId, note, ADMIN)
+}
+
+test('F-04：发布服务与 Agent 服务共用管理员判定，已停用的管理员角色不能操作发布', async () => {
+  const agentId = `agent-admin-source-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId, [], [], [])
+  const suffix = randomUUID().slice(0, 8)
+  const roleId = `role-disabled-admin-${suffix}`
+  const user = `user-disabled-admin-${suffix}`
+  await database`
+    insert into roles (id, tenant_id, code, name, permissions, status)
+    values (${roleId}, ${tenantId}, ${`disabled-admin-${suffix}`}, '已停用的管理角色', ${database.json(['admin:*'])}, 'disabled')
+  `
+  await database`
+    insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user)
+    values (${user}, ${tenantId}, ${`directory:${user}`}, '停用角色管理员', null, 'active', 'ai-hub', true)
+  `
+  await database`insert into user_roles (tenant_id, user_id, role_id, source_key) values (${tenantId}, ${user}, ${roleId}, 'local')`
+  // 修复前发布服务不检查角色状态，停用角色仍可推进发布流程。
+  await assert.rejects(release.ensureCandidate(agentId, user), /不是平台管理员/)
+  await assert.rejects(release.updatePublicationScope(agentId, user, ['role-employee'], []), /不是平台管理员/)
+  await assert.rejects(agents.setStatus({ agentId, status: 'disabled', actor: user }), /不是平台管理员/)
+})
+
+test('F-03：回滚只移动活动版本，停用状态与进行中的草稿保持不变，并拒绝过期回滚', async () => {
+  const agentId = `agent-rollback-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, [], [], [])
+  await publishCurrentDraft(agentId)
+  await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, name: '退款预测助手二版', changeSummary: '二版' })
+  await publishCurrentDraft(agentId)
+  await agents.setStatus({ agentId, status: 'disabled', actor: ADMIN })
+  const third = await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, name: '退款预测助手三版', changeSummary: '三版草稿' })
+  assert.equal(third.agent.version, '0.3.0')
+
+  const rolled = await agents.rollback({ agentId, version: '0.1.0', actor: ADMIN })
+  assert.equal(rolled.agent.status, 'disabled', '停用中的 Agent 回滚后仍保持停用')
+  assert.match(rolled.release.note, /启停状态与进行中的草稿保持不变/)
+  const [row] = await database<{ status: string; draftVersionId: string | null; activeVersion: string; draftStatus: string }[]>`
+    select a.status, a.draft_version_id as "draftVersionId", active.version as "activeVersion", draft.status as "draftStatus"
+      from agents a
+      join agent_versions active on active.tenant_id = a.tenant_id and active.id = a.active_version_id
+      left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
+     where a.tenant_id = ${tenantId} and a.id = ${agentId}
+  `
+  assert.equal(row?.status, 'disabled')
+  assert.equal(row?.activeVersion, '0.1.0')
+  assert.equal(row?.draftVersionId, third.version.id, '回滚不能静默丢弃进行中的草稿')
+  assert.equal(row?.draftStatus, 'draft')
+  await assert.rejects(agents.rollback({ agentId, version: '0.1.0', actor: ADMIN }), /已是当前活动版本/)
+  // 并发：两次回滚同时请求不同目标，只能有一个按读取时的活动版本成功，另一个报冲突或无需回滚。
+  const results = await Promise.allSettled([
+    agents.rollback({ agentId, version: '0.2.0', actor: ADMIN }),
+    agents.rollback({ agentId, version: '0.2.0', actor: ADMIN }),
+  ])
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+})
+
+test('F-05：编辑器保存沿用工作台写入的发布范围，过期修订被拒绝', async () => {
+  const agentId = `agent-editor-scope-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, [], [], [])
+  const opened = await agents.getMutationSnapshot(agentId)
+  assert.equal(created.agent.revision, opened.revision)
+  // 工作台写入发布范围；编辑器仍持有打开时的旧角色列表。
+  await release.updatePublicationScope(agentId, ADMIN, ['role-employee', 'role-platform-admin'], [])
+  const afterScope = (await agents.getAgents()).find(item => item.id === agentId)!
+  // 可见角色不属于定义：打开编辑器后工作台调整可见范围不会让编辑器修订过期。
+  assert.equal(afterScope.revision, opened.revision)
+  const saved = await agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, roleIds: ['role-employee'], dataScopes: [],
+    systemPrompt: `${PROMPT}遇到无法核实的数据时明确说明。`, changeSummary: '编辑器保存',
+  }, opened.revision, { preservePublicationScope: true })
+  assert.deepEqual([...saved.agent.roleIds].sort(), ['role-employee', 'role-platform-admin'])
+  // 定义已被修改：继续使用打开时的修订保存会被拒绝。
+  await assert.rejects(agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, changeSummary: '过期编辑',
+  }, opened.revision, { preservePublicationScope: true }), /Agent 配置已变化/)
+})
+
+test('新版本沿用上一次发布时改写过的案例，未改写的类型按当前定义重新生成', async () => {
+  const agentId = `agent-case-carry-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, [], [], [])
+  const candidate = (await release.ensureCandidate(agentId, ADMIN)).candidate!
+  const rewrittenInput = '评估订单 SO-2026-1001 的退款风险并给出依据'
+  await release.updateCases(agentId, candidate.cases.map(item => item.kind === 'success'
+    ? { ...item, input: rewrittenInput } : item), ADMIN)
+  await publishCurrentDraft(agentId)
+
+  await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, name: '退款预测助手二版', changeSummary: '二版' })
+  const next = (await release.ensureCandidate(agentId, ADMIN)).candidate!
+  assert.equal(next.cases.length, 5)
+  const success = next.cases.find(item => item.kind === 'success')!
+  assert.equal(success.input, rewrittenInput)
+  assert.equal(success.origin, undefined)
+  assert.ok(next.cases.filter(item => item.kind !== 'success').every(item => item.origin === 'generated'))
+  assert.ok(next.cases.every(item => !candidate.cases.some(previous => previous.id === item.id)), '沿用案例使用新的案例标识')
+})
+
+test('服务重启后执行中的试运行收敛为“服务重启中断”，等待人工判定的保留', async () => {
+  const executing = `agent-trial-recover-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(executing, [], [], [])
+  const reviewing = `agent-trial-review-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(reviewing, [], [], [])
+  await release.ensureCandidate(executing, ADMIN)
+  await runCasesToReview(executing)
+  await release.ensureCandidate(reviewing, ADMIN)
+  await runCasesToReview(reviewing)
+  const [interrupted] = await database<{ id: string }[]>`
+    update agent_trial_runs
+       set status = 'executing', finished_at = null,
+           steps = jsonb_set(steps, '{0,status}', '"running"')
+     where tenant_id = ${tenantId} and agent_id = ${executing}
+    returning id
+  `
+  const recovered = await release.recoverInterruptedTrials()
+  assert.ok(recovered.interrupted >= 1)
+  const [row] = await database<{ status: string; failureStage: string | null; steps: TrialRunStep[] }[]>`
+    select status, failure_stage as "failureStage", steps from agent_trial_runs where tenant_id = ${tenantId} and id = ${interrupted!.id}
+  `
+  assert.equal(row?.status, 'failed')
+  assert.equal(row?.failureStage, '服务重启中断')
+  assert.ok(row?.steps.every(step => step.status !== 'running'))
+  assert.equal((await release.getReleaseState(reviewing)).trialRuns[0]?.status, 'asserting')
+  // 收敛后可直接重新开始试运行。
+  const restarted = await runCasesToReview(executing)
+  assert.equal(restarted.trialRuns[0]?.status, 'asserting')
+})
+
 class TrialStubRuntime implements AgentRuntimePort {
   modelRequirementsEnabled = false
   async assertModelRequirements(requirements: NonNullable<RuntimeManifest['model_requirements']>, target: { providerKey: string; modelKey: string; baseUrl: string }) {
@@ -830,6 +1144,12 @@ class TrialStubRuntime implements AgentRuntimePort {
   private readonly executions = new Map<string, TrialExecution>()
   /** 测试可让指定输入失败（断言负路径）。 */
   failOnMessage = ''
+  pauseOnMessage = ''
+  private pausedEntered: (() => void) | undefined
+  private resume: (() => void) | undefined
+
+  waitUntilPaused() { return new Promise<void>(resolve => { this.pausedEntered = resolve }) }
+  resumePaused() { this.resume?.(); this.resume = undefined }
 
   /** 已派发 Attempt 的固化 Manifest：用于断言 tool_bindings 等执行期固定引用。 */
   manifest(runId: string) {
@@ -851,10 +1171,17 @@ class TrialStubRuntime implements AgentRuntimePort {
     }
     this.executions.set(manifest.run_id, execution)
     this.emit(execution, 'run.queued', '已排队')
-    setTimeout(() => {
+    setTimeout(async () => {
       execution.snapshot.status = 'running'
       execution.snapshot.startedAt = new Date().toISOString()
       this.emit(execution, 'run.started', '已启动')
+      if (this.pauseOnMessage && manifest.input.message === this.pauseOnMessage) {
+        await new Promise<void>(resolve => {
+          this.resume = resolve
+          this.pausedEntered?.()
+          this.pausedEntered = undefined
+        })
+      }
       if (this.failOnMessage && manifest.input.message === this.failOnMessage) {
         this.emit(execution, 'assistant.delta', '失败前的部分输出')
         this.emit(execution, 'assistant.completed', '失败前的部分输出')
@@ -965,6 +1292,8 @@ test('平台工具绑定经真实修订封存：Attempt 固定 pin，漂移后�
     approvalPolicy: 'none',
     actor: ADMIN,
   })
+  await assert.rejects(tools.assertAuthorizationCompatibility(['read@1.0.0'], [], []),
+    /Agent 执行身份缺少工具 read@1\.0\.0 所需角色/)
   await assert.rejects(release.publish(agentId, '', ADMIN), /绑定修订已失效|重新封存/)
 
   // 漂移后重新走封存-试运行-发布：先恢复兼容的授权范围（又一次修订

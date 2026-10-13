@@ -155,7 +155,9 @@ forbidFragments('src/components/AgentDraftDialog.vue', ['AgentZipImportPanel', '
 requireFragments('src/views/AgentReleaseWorkbenchView.vue', [
   '验证案例',
   '运行本项',
-  '确认本项结论',
+  '确认不通过',
+  '不通过原因',
+  '验证结论',
   '确认发布',
   "activeStep === 'trial'",
   'data-action="publish-agent"',

@@ -252,6 +252,10 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
   ensureAgentReleaseCandidate: (agentId: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
+  updateAgentPublicationScope: (agentId: string, input: { roleIds: string[]; dataScopes: string[] }) =>
+    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publication-scope`, {
+      method: 'PATCH', body: JSON.stringify(input),
+    }),
   updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
       method: 'POST',

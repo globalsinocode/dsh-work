@@ -280,6 +280,8 @@ export interface AgentDefinition {
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
+  /** 草稿编辑的乐观并发修订：保存时原样回传为 expectedRevision（F-05）。原型模式不提供。 */
+  revision?: string
 }
 
 export interface AgentDraftConfiguration {
@@ -319,6 +321,8 @@ export interface CreateAgentDraftInput extends AgentDraftConfiguration {
 export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id'> {
   agentId: string
   actor: string
+  /** HTTP 编辑入口必填：读取草稿时的修订，过期则拒绝保存（F-05）。 */
+  expectedRevision?: string
 }
 
 /** B-03/I-04：发布时固定的平台工具绑定修订引用——与 Manifest pin 同一契约（tool/binding_id/revision/digest）。 */
@@ -461,8 +465,12 @@ export interface ToolDefinition {
   concurrencyPolicy: 'concurrent' | 'serialized'
   completionSemantics: 'completed' | 'accepted'
   timeoutSeconds: number
+  /** Stable authorization identifiers; allowedRoles contains display names only. */
+  allowedRoleIds: string[]
   allowedRoles: string[]
   dataScopes: string[]
+  /** Default DSH tool confined to the current Run; Agent business grants are not required. */
+  agentRunLocalDefault?: boolean
   approvalPolicy: 'none' | 'sensitive' | 'always'
   lastCheckedAt: string
 }

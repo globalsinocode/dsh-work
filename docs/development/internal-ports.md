@@ -12,7 +12,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 | 模型 Provider、路由与凭据引用 | [ModelGovernanceRepository](../../server/src/modules/model/model-governance-repository.ts) | Attempt 固定路由快照；Agent 不单独配置模型策略 |
 | 凭据存储 | [SecretStorePort](../../server/src/modules/model/secret-store-port.ts)、[PostgresEncryptedCredentialStore](../../server/src/modules/tool/postgres-encrypted-credential-store.ts) | 模型 Provider 继续使用外部引用；MCP Bearer Token 以 AES-256-GCM 密文存入 PostgreSQL，主密钥由服务环境提供，明文只在受控运行时解析 |
 | 身份与本地授权上下文 | [RequestIdentity](../../server/src/modules/identity/types.ts) | 用户、角色、数据范围和操作人只从服务端产生 |
-| Agent 独立执行身份（AE-02） | [迁移 0064～0069](../../server/migrations/0064_execution_principals.sql)、[Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts)与[授权服务](../../server/src/modules/authorization/postgres-authorization-service.ts) | human/agent/system Principal 分库存储；执行授权与治理负责人及可见角色分离，新 Agent 未显式授权时不可执行。Task/Manifest 固定发起、执行及披露身份；工具、审批和审计标记执行者，当前授权在执行边界复核。`requested_by` 始终是人类请求者；已完成结果仍按当前人类/Workspace ACL 读取 |
+| Agent 独立执行身份（AE-02） | [迁移 0064～0069](../../server/migrations/0064_execution_principals.sql)、[Agent 服务](../../server/src/modules/agent/postgres-agent-service.ts)与[授权服务](../../server/src/modules/authorization/postgres-authorization-service.ts) | human/agent/system Principal 分库存储；执行授权与治理负责人及可见角色分离，新 Agent 有基础运行资格，业务角色与平台数据范围须显式授权。默认策略下路径参数逐次受控、仅限当前隔离 Run 工作区的 DSH 基础文件工具无需 Agent 业务授权；挂载输入、企业数据和收紧后的工具策略仍受当前授权约束。Task/Manifest 固定发起、执行及披露身份；工具、审批和审计标记执行者，当前授权在执行边界复核。`requested_by` 始终是人类请求者；已完成结果仍按当前人类/Workspace ACL 读取 |
 | Agent 数据平面（AE-03） | [迁移 0072](../../server/migrations/0072_agent_data_plane.sql)、[受控数据服务](../../server/src/modules/agent-data/postgres-agent-data-service.ts)、[管理 API](../../server/src/http/admin/agent-data-routes.ts)、[开发者契约](agent-data-plane.md) | 固定通用表与安装实例；AgentSpec 声明经发布检查后才在 DSH Bridge 注入状态/记录工具，集合与 Grant 由管理员治理；不可变版本、提案审核、状态转换、保留删除及 `task-result/v1` 记录引用已接通。真实 DSH/OIDC P2 尚未留证 |
 | Agent 主动任务（AE-05） | [迁移 0074](../../server/migrations/0074_agent_owned_routines.sql)、[规则服务](../../server/src/modules/automation/agent-routine-service.ts)、[管理与接收路由](../../server/src/http/admin/agent-routine-routes.ts) | Agent Principal 拥有独立 routine，批准时固定版本、Workspace、输入、预算与授权上限；调度器复用现有所有者锁，受理时创建无 Session Task/Run/Attempt 并由 DSH 执行。执行记录持久化去重键、触发来源、跳过原因与结果投影，按原 Task 固定的接收人和 Workspace 及当前空间授权读取历史回答；活动期复核停用和收权，通用重试不接受主动任务来源。外部事件生产者、真实 DSH/OIDC 和通知仍需独立验收 |
 | 对象与执行授权 | [PostgresAuthorizationService](../../server/src/modules/authorization/postgres-authorization-service.ts) | Workspace、Agent/Skill/Tool Version 与数据范围逐层校验，默认拒绝 |
@@ -56,6 +56,8 @@ PF-04 使用 `waiting` 作为 Run 的非终态等待状态和来源 Attempt 的�
 员工与管理端 Agent 均通过同一 Run/Attempt、AgentRuntimePort 和 DSH 适配链路执行，不能通过新增 API、Gateway 或业务服务另建直接调用模型的 Agent Loop。职责与评审要求见 [架构总览：Agent 执行引擎统一](overview.md)。
 
 ## 运行与恢复规则
+
+工具目录返回 `allowedRoleIds`（稳定角色标识）与 `allowedRoles`（展示名称）；授权预检只使用前者，不按名称匹配执行身份。团队 Agent 的工具依赖包含 `tool_refs` 和封存 `binding_refs` 中的工具。升级迁移 `0079` 为仍有效的 `agent_member` 来源补齐缺失的工具来源及有效授权，包含旧会话固定的已发布版本；不将未知来源猜测为成员授权，不恢复已停用/移除成员或被撤销的来源，补齐后沿用成员撤权和空间授权修订机制。
 
 - 使用稳定事件 ID，按持久化的全 Run 顺序支持 `Last-Event-ID` 续传；不能仅按单 Attempt 序号恢复整个 Run。
 - Token、Tool 和计量信息来自受控 Session 日志/Telemetry 投影，不从回答文本猜测，不直接导出未经脱敏的运行轨迹；PF-02 缺少完整 Token 回报时明确返回 unavailable。
@@ -104,6 +106,8 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 ## 独立账号认证
 
 正式部署始终注册账号密码认证，AI Hub 配置完整且有效时另外注册 OIDC 与目录同步。未配置或配置无效的可选 AI Hub 不阻塞独立认证；配置错误记入启动日志，公开接口不暴露细节或密钥。基础身份配置、可信入口、Session Secret 和生产 HTTPS 校验仍必须通过。
+
+个人自动任务按持久化用户的 `identity_provider` 复核后台身份：AI Hub 用户必须具有可用配置和信任窗口内的成功目录同步，配置缺失、无效或目录过期时拒绝启用、触发及执行期复核；独立账号不依赖 AI Hub，但仍检查账号、租户和当前授权。
 
 `RequestIdentity.identityProvider=local-password` 由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。独立账号和 AI Hub 账号分别创建、分别授权，不进行绑定或姓名/邮箱匹配。旧绑定凭据不删除，但不能用于 AI Hub 用户的密码登录、改密或重置。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密、撤销所有旧会话和签发当前门户的新会话在同一事务内完成；响应设置新的 HttpOnly Session Cookie，并返回原同源访问地址，前端直接进入系统，无需再次登录。改密失败不签发会话、不跳转。
 

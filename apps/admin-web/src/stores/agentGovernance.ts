@@ -66,6 +66,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   const evidenceIndex = ref<Record<string, Record<string, EvidenceRef[]>>>({})
   const busy = ref('')
   const inFlight = new Map<string, Promise<AgentReleaseState>>()
+  const stateGenerations = new Map<string, number>()
 
   function isVersionPublished(agentId: string, version: string) {
     return contentStore.agentVersions.some(
@@ -160,9 +161,14 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   function loadReleaseState(agentId: string): Promise<AgentReleaseState> {
     const pending = inFlight.get(agentId)
     if (pending) return pending
+    const generation = stateGenerations.get(agentId) ?? 0
     const request = adminApi.getAgentReleaseState(agentId)
       .then((state) => {
-        states.value = { ...states.value, [agentId]: state }
+        // A polling GET started before a trial mutation must not overwrite the
+        // newer terminal state returned by that mutation.
+        if ((stateGenerations.get(agentId) ?? 0) === generation) {
+          states.value = { ...states.value, [agentId]: state }
+        }
         return state
       })
       .finally(() => inFlight.delete(agentId))
@@ -171,6 +177,7 @@ export const useAgentGovernanceStore = defineStore('agent-governance', () => {
   }
 
   function mergeState(agentId: string, state: AgentReleaseState) {
+    stateGenerations.set(agentId, (stateGenerations.get(agentId) ?? 0) + 1)
     states.value = { ...states.value, [agentId]: state }
     if (state.candidate) {
       const { candidate } = state

@@ -83,6 +83,7 @@ function disabledDshTool(): import('../types/domain').ToolDefinition {
     risk: 'low', mode: 'read', status: 'disabled', inputSchema: '{}', outputSchema: '{}',
     outputValidation: 'unavailable', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
     completionSemantics: 'completed', timeoutSeconds: 30, allowedRoles: ['平台管理员'],
+    allowedRoleIds: ['role-platform-admin'],
     dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
   }
 }
@@ -178,12 +179,13 @@ describe('Skill installation sibling tab', () => {
       admissionStatus: 'approved', admissionMessage: '已完成平台安全准入，可在 Agent 版本中授权',
       outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
       timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
+      allowedRoleIds: ['role-employee', 'role-platform-admin'],
       dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
     }
     const bash: import('../types/domain').ToolDefinition = {
       ...edit, id: 'bash', name: '执行 Shell 命令', risk: 'high', status: 'disabled',
       admissionStatus: 'unavailable', admissionMessage: 'MVP 不开放任意 Shell',
-      allowedRoles: ['平台管理员'], approvalPolicy: 'always',
+      allowedRoleIds: ['role-platform-admin'], allowedRoles: ['平台管理员'], approvalPolicy: 'always',
     }
     const sync = vi.spyOn(content, 'syncDshTools').mockImplementation(async () => {
       content.$patch({ tools: [edit, bash] })

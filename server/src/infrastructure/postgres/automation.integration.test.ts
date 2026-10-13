@@ -4,6 +4,7 @@ import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { AutomationTriggerSweep } from '../../modules/automation/automation-trigger-sweep.ts'
 import { nextSlotUtc } from '../../modules/automation/automation-calendar.ts'
@@ -27,6 +28,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database
 import { testAttemptManifest } from './test-attempt-manifest.ts'
 
 const tenantId = 'tenant-dsh-work'
+const automationDirectory = { applicationId: 'automation-test', environment: 'test', maxSyncAgeMs: 60_000 }
 
 let throwaway: ThrowawayDatabase
 let database: DatabaseClient
@@ -74,7 +76,11 @@ before(async () => {
   automations = new PostgresAutomationRepository(database)
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
-  authorization = new PostgresAuthorizationService(database)
+  authorization = new PostgresAuthorizationService(database, { automationDirectory })
+  await database`
+    insert into identity_directory_sync_state (application_id, environment, last_succeeded_at)
+    values (${automationDirectory.applicationId}, ${automationDirectory.environment}, now())
+  `
   agents = new PostgresAgentService(database)
   content = new PostgresContentService(database, `/tmp/dsh-work-automation-test-${randomUUID()}`, authorization)
   orchestration = new RunOrchestrationService(
@@ -88,20 +94,24 @@ before(async () => {
     undefined,
     authorization,
   )
-  service = new AutomationService(
+  service = automationServiceWith(authorization)
+  sweep = new AutomationTriggerSweep(database, automations, service, defaultAutomationConfig)
+})
+
+function automationServiceWith(subjectAuthorization: PostgresAuthorizationService) {
+  return new AutomationService(
     database,
     automations,
     conversations,
     runs,
     orchestration,
-    authorization,
+    subjectAuthorization,
     agents,
     content,
     undefined,
     defaultAutomationConfig,
   )
-  sweep = new AutomationTriggerSweep(database, automations, service, defaultAutomationConfig)
-})
+}
 
 after(async () => {
   await sweep.close()
@@ -111,11 +121,11 @@ after(async () => {
 let sequence = 0
 
 /** 种子：目录用户（个人空间由 0013 触发器自动创建）+ 已发布 Agent。 */
-async function seedOwner(prefix: string) {
+async function seedOwner(prefix: string, provider: 'ai-hub' | 'local' = 'ai-hub') {
   const userId = `${prefix}-owner-${sequence++}`
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
-    values (${userId}, ${tenantId}, ${`directory:${userId}`}, '自动任务测试用户', 'active', 'ai-hub', true)
+    values (${userId}, ${tenantId}, ${`${provider}:${userId}`}, '自动任务测试用户', 'active', ${provider}, true)
   `
   await database`
     insert into user_roles (tenant_id, user_id, role_id, source_key)
@@ -350,6 +360,65 @@ test('账号停用后触发被跳过且记录授权原因', async () => {
   // authorization_denied 留给角色/范围交集阶段的拒绝。
   assert.equal(execution.reasonCode, 'subject_invalid')
   assert.equal(execution.runId, null)
+})
+
+test('AI Hub 配置缺失或无效时既有自动任务拒绝触发，独立账号仍可运行', async () => {
+  const upstream = await seedOwner('hub-fallback')
+  const local = await seedOwner('local-fallback', 'local')
+  const createEnabled = async (owner: typeof upstream) => {
+    const task = await service.create(owner.userId, {
+      name: '身份来源门禁', agentId: owner.agentId, workspaceId: owner.workspaceId,
+      schedule: { kind: 'manual', timezone: 'UTC' }, inputTemplate: { prompt: '检查身份来源' },
+    })
+    await service.enable(owner.userId, task.id)
+    return task
+  }
+  const upstreamTask = await createEnabled(upstream)
+  const localTask = await createEnabled(local)
+  for (const optionalHub of [{}, { AI_HUB_PLATFORM_URL: 'invalid-url' }]) {
+    const config = loadStartupIdentityConfiguration({
+      DSH_WORK_SESSION_SECRET: 'test-automation-session-secret-at-least-32',
+      DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:4174',
+      DSH_WORK_ADMIN_ORIGINS: 'http://localhost:4180', ...optionalHub,
+    })
+    assert.equal(config.mode, 'local')
+    // Production passes null when optional AI Hub configuration cannot be loaded.
+    const fallback = new PostgresAuthorizationService(database, { automationDirectory: null })
+    await assert.rejects(fallback.resolveAutomationSubject(upstream.userId), /AI Hub 员工目录不可用/)
+    assert.equal((await fallback.resolveAutomationSubject(local.userId)).id, local.userId)
+    const execution = await automationServiceWith(fallback).runNow(upstream.userId, upstreamTask.id, randomUUID())
+    assert.equal(execution.admissionStatus, 'skipped')
+    assert.equal(execution.reasonCode, 'subject_invalid')
+    assert.equal(execution.runId, null)
+  }
+  const accepted = await automationServiceWith(new PostgresAuthorizationService(database)).runNow(
+    local.userId, localTask.id, randomUUID(),
+  )
+  assert.equal(accepted.admissionStatus, 'accepted')
+})
+
+test('目录失去新鲜度仅拦截 AI Hub 身份，恢复目录仍须检查账号状态', async () => {
+  const hub = await seedOwner('hub-stale')
+  const local = await seedOwner('local-stale', 'local')
+  const binding = { ...automationDirectory, applicationId: 'unavailable-directory' }
+  const guarded = new PostgresAuthorizationService(database, { automationDirectory: binding })
+  await assert.rejects(guarded.resolveAutomationSubject(hub.userId), /目录同步状态不可用或已过期/)
+  assert.equal((await guarded.resolveAutomationSubject(local.userId)).id, local.userId)
+  await database`
+    insert into identity_directory_sync_state (application_id, environment, last_succeeded_at)
+    values (${binding.applicationId}, ${binding.environment}, now() - interval '5 minutes')
+  `
+  await assert.rejects(guarded.resolveAutomationSubject(hub.userId), /目录同步状态不可用或已过期/)
+  assert.equal((await guarded.resolveAutomationSubject(local.userId)).id, local.userId)
+  await database`
+    update identity_directory_sync_state set last_succeeded_at = now()
+    where application_id = ${binding.applicationId} and environment = ${binding.environment}
+  `
+  assert.equal((await guarded.resolveAutomationSubject(hub.userId)).id, hub.userId)
+  for (const userId of [hub.userId, local.userId]) {
+    await database`update users set status = 'disabled' where id = ${userId}`
+    await assert.rejects(guarded.resolveAutomationSubject(userId), /已停用/)
+  }
 })
 
 test('受理已提交但 Attempt 未建的执行在启动恢复时收敛为 interrupted', async () => {

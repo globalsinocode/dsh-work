@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
@@ -59,7 +60,11 @@ export interface ReleasePlanItem {
 }
 
 export type TrialStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
-export interface TrialRunStep { id: string; label: string; status: TrialStepStatus; detail?: string; caseRuns?: TrialCaseRun[] }
+export interface TrialRunStep {
+  id: string; label: string; status: TrialStepStatus; detail?: string; caseRuns?: TrialCaseRun[]
+  /** Current case stays pinned even when dispatch fails before a TrialCaseRun is written. */
+  currentCaseId?: string
+}
 
 /** 单个评估案例的真实执行证据：Run/Attempt 标识、完整输出与审核人逐项确认结论。 */
 export interface TrialCaseRun {
@@ -85,6 +90,14 @@ export interface ReleaseTrialRun {
   submissionRevision: number
   status: 'checking' | 'queued' | 'executing' | 'asserting' | 'passed' | 'failed' | 'cancelled'
   steps: TrialRunStep[]
+  /** Read-only projection of this case's persisted Run events; never exposes raw ACP logs or model reasoning. */
+  progress?: {
+    caseId: string
+    runId: string | null
+    attemptId: string | null
+    runStatus: string | null
+    events: Array<{ type: string; label: string; occurredAt: string }>
+  }
   startedAt: string
   finishedAt?: string
   failureStage?: string
@@ -200,10 +213,29 @@ const TRIAL_STEPS = [
   { id: 'report', label: '汇总结果与证据' },
 ]
 
+const trialRunEventLabels: Record<string, string> = {
+  'run.queued': '已进入 Runtime 队列',
+  'run.started': 'DSH Worker 已启动',
+  'approval.required': '正在校验工具调用权限',
+  'approval.resolved': '工具调用权限校验已返回',
+  'assistant.delta': '正在生成回答',
+  'run.completed': 'DSH 执行完成',
+  'run.failed': 'DSH 执行失败',
+  'run.cancelled': 'DSH 执行已取消',
+}
+
 const CASE_KINDS: ReleaseEvalCase['kind'][] = [...AGENT_EVALUATION_CASE_KINDS]
 
 /** sql.json 需要 JSONValue；与既有服务一致，经 JSON 往返擦除接口类型。 */
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value))
+
+/** 判定案例是否被改写：比较管理员可编辑的全部内容（名称、类型、输入、断言与 rubric）。 */
+function caseContentKey(item: Pick<ReleaseEvalCase, 'name' | 'kind' | 'input' | 'automatedAssertions' | 'manualReview'>) {
+  return canonicalJson(asJson({
+    name: item.name.trim(), kind: item.kind, input: item.input.trim(),
+    automatedAssertions: item.automatedAssertions, rubric: item.manualReview.rubric.trim(),
+  }))
+}
 
 function releaseConflict(message: string) {
   return Object.assign(new Error(message), { status: 409, code: 'release_conflict' })
@@ -468,6 +500,9 @@ export class PostgresAgentReleaseService {
         && (submission.agentVersionId !== context.draft.id || submission.boundFingerprint !== draftFingerprint(context.draft)),
     )
     const trialRuns = submission ? await this.listTrials(submission.id) : []
+    if (submission && trialRuns[0]) {
+      trialRuns[0].progress = await this.trialRunProgress(trialRuns[0], submission)
+    }
     const evidence = await this.evidenceByVersion(agentId)
     const packageWarnings = submission?.packageId ? await this.packageWarnings(submission.packageId) : []
     return {
@@ -502,6 +537,55 @@ export class PostgresAgentReleaseService {
       else if (submission.boundFingerprint !== draftFingerprint(context.draft)) await this.refreshSubmissionRevision(submission, context, transaction)
     })
     return this.getReleaseState(agentId)
+  }
+
+  /** Publication audience and platform-data ceiling are set after draft creation. */
+  async updatePublicationScope(agentId: string, userId: string, roleIds: string[], dataScopes: string[]): Promise<AgentReleaseState> {
+    const actor = await this.requireActor(userId)
+    if (!Array.isArray(roleIds) || !roleIds.length || roleIds.length > 50
+      || roleIds.some(role => typeof role !== 'string' || !role.trim() || role.length > 128)
+      || new Set(roleIds).size !== roleIds.length
+      || !Array.isArray(dataScopes) || dataScopes.length > 50
+      || dataScopes.some(scope => typeof scope !== 'string' || !scope.trim() || scope.length > 128)
+      || new Set(dataScopes).size !== dataScopes.length) {
+      throw Object.assign(new Error('请选择有效的员工可见角色；平台数据范围上限可留空'), { status: 422, code: 'validation_failed' })
+    }
+    await this.database.begin(async tx => {
+      const [agent] = await tx<{ draftVersionId: string | null }[]>`
+        select draft_version_id as "draftVersionId" from agents
+         where tenant_id = ${tenantId} and id = ${agentId} for update
+      `
+      if (!agent?.draftVersionId) throw releaseConflict('Agent 没有可配置的草稿版本')
+      const activeRoles = await tx<{ id: string }[]>`
+        select id from roles where tenant_id = ${tenantId} and status = 'active' and id = any(${roleIds})
+      `
+      if (activeRoles.length !== roleIds.length) throw authorizationDenied('员工可见角色包含无效或已停用角色')
+      const [submission] = await tx<{ id: string; status: SubmissionStatus }[]>`
+        select id, status from agent_release_submissions where tenant_id = ${tenantId}
+          and agent_id = ${agentId} and status in ('draft', 'submitted', 'changes_requested')
+         order by created_at desc limit 1 for update
+      `
+      if (submission?.status === 'submitted') throw releaseConflict('候选已提交，退回或撤回后才能修改发布范围')
+      if (submission) {
+        const [activeTrial] = await tx<{ id: string }[]>`
+          select id from agent_trial_runs where tenant_id = ${tenantId}
+            and submission_id = ${submission.id} and status in ('checking', 'queued', 'executing', 'asserting')
+           limit 1
+        `
+        if (activeTrial) throw releaseConflict('本轮试运行仍在进行，请先结束或取消')
+      }
+      const updated = await tx<{ id: string }[]>`
+        update agent_versions set visible_role_ids = ${tx.json(roleIds)}, data_scopes = ${tx.json(dataScopes)},
+          change_summary = '更新发布范围与平台数据上限'
+         where tenant_id = ${tenantId} and id = ${agent.draftVersionId} and status = 'draft'
+        returning id
+      `
+      if (!updated.length) throw releaseConflict('草稿版本已变化，请刷新后重试')
+      await tx`update agents set updated_at = now() where tenant_id = ${tenantId} and id = ${agentId}`
+    })
+    await this.audit(actor.id, 'agent.release.scope', agentId, 'success',
+      `发布可见角色 ${roleIds.length} 项，平台数据范围 ${dataScopes.length} 项`)
+    return this.ensureCandidate(agentId, userId)
   }
 
   /** 草稿内容在发布流程外被修改（同版本行内编辑）：推进修订、作废检查结论与封存。 */
@@ -559,8 +643,9 @@ export class PostgresAgentReleaseService {
     if (submission.boundFingerprint !== draftFingerprint(context.draft!)) {
       submission = await this.refreshSubmissionRevision(submission, context)
     }
-    const resolved = await this.resolveDraftReferences(context.draft!)
-    const bound = await this.resolveDraftBindings(context.draft!, actor.id)
+    const execution = await this.resolveExecutionScope(context.id, context.draft!)
+    const resolved = await this.resolveDraftReferences(context.draft!, execution)
+    const bound = await this.resolveDraftBindings(context.draft!, actor.id, execution)
     const checks = await this.buildChecks(context, submission, resolved, bound)
     const plan = await this.buildPlan(context, submission, resolved, bound)
     const stored = await this.database<{ id: string }[]>`
@@ -576,8 +661,19 @@ export class PostgresAgentReleaseService {
     return this.getReleaseState(agentId)
   }
 
+  private async resolveExecutionScope(agentId: string, draft: { dataScopes: string[] }, tx?: DatabaseTransaction) {
+    const principal = await this.agents.getAgentExecutionPrincipal(agentId, tx)
+    const missingScopes = draft.dataScopes.filter(scope => !principal.dataScopes.includes(scope))
+    return {
+      roleIds: principal.status === 'active' ? principal.roleIds : [],
+      dataScopes: draft.dataScopes.filter(scope => principal.dataScopes.includes(scope)),
+      error: principal.status !== 'active' ? 'Agent 独立执行身份已停用'
+        : missingScopes.length ? `Agent 独立执行身份缺少平台数据授权范围：${missingScopes.join('、')}` : undefined,
+    }
+  }
+
   /** 解析草稿工具引用的当前平台绑定修订；解析失败以 error 返回，由检查/计划项展示为失败。 */
-  private async resolveDraftBindings(draft: DraftVersionShape, actorId?: string): Promise<{
+  private async resolveDraftBindings(draft: DraftVersionShape, actorId?: string, execution?: { roleIds: string[]; dataScopes: string[] }): Promise<{
     bindings: Awaited<ReturnType<PostgresToolConnectorService['resolveToolBindings']>>
     pins: ManifestToolBinding[]
     error?: string
@@ -586,7 +682,7 @@ export class PostgresAgentReleaseService {
       ? { bindings: [], pins: [], error: '工具绑定服务未接入' }
       : { bindings: [], pins: [] }
     try {
-      const defaults = await this.tools.resolvePlatformDefaultToolReferences(draft.roleIds, draft.dataScopes)
+      const defaults = await this.tools.resolvePlatformDefaultToolReferences(execution?.roleIds ?? [], execution?.dataScopes ?? [])
       const bindings = await this.tools.resolveToolBindings([...new Set([...draft.tools, ...defaults])], actorId)
       return { bindings, pins: bindings.map(toManifestToolBinding) }
     } catch (cause) {
@@ -605,8 +701,10 @@ export class PostgresAgentReleaseService {
        where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
     `
     if (!version) throw new Error('Agent Version 不存在')
+    const execution = await this.resolveExecutionScope(submission.agentId, version, tx)
+    if (execution.error) throw new Error(execution.error)
     const defaults = this.tools
-      ? await this.tools.resolvePlatformDefaultToolReferences(version.roleIds, version.dataScopes)
+      ? await this.tools.resolvePlatformDefaultToolReferences(execution.roleIds, execution.dataScopes)
       : []
     const platformTools = [...new Set([...version.tools, ...defaults])]
       .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
@@ -631,6 +729,13 @@ export class PostgresAgentReleaseService {
     bound: { bindings: { tool: string; revision: number }[]; error?: string },
   ): Promise<ReleaseCheckItem[]> {
     const draft = context.draft!
+    const execution = await this.resolveExecutionScope(context.id, draft)
+    const activeAudience = draft.roleIds.length ? await this.database<{ id: string }[]>`
+      select id from roles where tenant_id = ${tenantId} and status = 'active'
+        and id = any(${draft.roleIds})
+    ` : []
+    const audienceError = !draft.roleIds.length ? '发布前请选择至少一个员工可见角色'
+      : activeAudience.length !== draft.roleIds.length ? '员工可见角色包含不存在或已停用的角色' : undefined
     const hasPackageTools = submission.packageRefs.tools.length > 0
     const hasPackageSkills = submission.packageRefs.skills.length > 0
     const missing = [...new Set([...submission.missingDeps.skills, ...submission.missingDeps.tools, ...resolved.missingSkills, ...resolved.missingTools])]
@@ -655,6 +760,16 @@ export class PostgresAgentReleaseService {
       }
     }
     return [
+      {
+        id: 'audience', label: '员工可见范围', status: audienceError ? 'failed' : 'passed',
+        detail: audienceError ?? `已选择 ${draft.roleIds.length} 个当前有效角色；此设置不授予 Agent 执行权限`,
+      },
+      {
+        id: 'principal', label: '独立执行身份', status: execution.error ? 'failed' : 'passed',
+        detail: execution.error ?? (draft.dataScopes.length
+          ? '平台数据授权范围已由 Agent 独立身份显式获得'
+          : '基础运行资格有效；无需业务角色或平台数据授权范围'),
+      },
       {
         id: 'manifest',
         label: '定义格式与字段',
@@ -728,7 +843,8 @@ export class PostgresAgentReleaseService {
             ? `包内 Tool 候选尚未完成必要验证：${submission.packageRefs.tools.map(tool => tool.id).join('、')}`
             : resolved.authError
               ? `授权兼容性校验未通过：${resolved.authError}`
-              : '所需执行器均已适配当前 DSH Lock，授权范围兼容',
+              // F-07：此处只核实了授权兼容；DSH 可用性与模型能力要求由每次 Attempt 派发时校验，不在此声称已适配。
+              : '授权范围兼容；DSH 执行能力与模型能力要求在试运行派发时校验',
       },
       {
         id: 'cases',
@@ -819,7 +935,7 @@ export class PostgresAgentReleaseService {
   }
 
   /** 校验草稿声明的能力引用当前仍可解析为已发布/可用版本（逐条判定，精确到引用）。 */
-  private async resolveDraftReferences(draft: DraftVersionShape) {
+  private async resolveDraftReferences(draft: DraftVersionShape, execution: { roleIds: string[]; dataScopes: string[] }) {
     const missingSkills: string[] = []
     const missingTools: string[] = []
     for (const reference of draft.skills) {
@@ -838,7 +954,7 @@ export class PostgresAgentReleaseService {
     }
     let authError: string | undefined
     try {
-      await this.tools?.assertAuthorizationCompatibility(draft.tools, draft.roleIds, draft.dataScopes)
+      await this.tools?.assertAuthorizationCompatibility(draft.tools, execution.roleIds, execution.dataScopes)
     } catch (cause) {
       authError = cause instanceof Error ? cause.message : String(cause)
     }
@@ -855,11 +971,12 @@ export class PostgresAgentReleaseService {
       const error = caseValidationError(item)
       if (error) throw Object.assign(new Error(error), { status: 422, code: 'validation_failed' })
     }
-    // origin 由服务端维护：仅沿用既有平台生成案例的标记，调用方传入的 origin 一律忽略（防伪造）。
-    const generatedIds = new Set(submission.cases.filter(item => item.origin === 'generated').map(item => item.id))
+    // origin 由服务端维护，调用方传入的 origin 一律忽略（防伪造）。F-08：只有内容与平台生成时
+    // 完全一致的案例保留 generated 标记；管理员改写任一内容即视为业务案例，清除标记且不可恢复。
+    const generatedById = new Map(submission.cases.filter(item => item.origin === 'generated').map(item => [item.id, item]))
     const normalized = cases.map((item) => {
       const id = item.id || `case-${randomUUID()}`
-      return {
+      const next = {
         id,
         evaluationApiVersion: AGENT_EVALUATION_API_VERSION,
         name: item.name.trim(),
@@ -867,8 +984,9 @@ export class PostgresAgentReleaseService {
         input: item.input.trim(),
         automatedAssertions: [...item.automatedAssertions],
         manualReview: { required: true as const, rubric: item.manualReview.rubric.trim() },
-        ...(generatedIds.has(id) ? { origin: 'generated' as const } : {}),
       }
+      const generated = generatedById.get(id)
+      return generated && caseContentKey(generated) === caseContentKey(next) ? { ...next, origin: 'generated' as const } : next
     })
     await this.bumpCasesRevision(submission.id, normalized)
     await this.audit(actor.id, 'agent.release.cases', agentId, 'success', `候选案例更新为 ${normalized.length} 条`)
@@ -923,7 +1041,8 @@ export class PostgresAgentReleaseService {
 
     // B-03/I-04：封存同时固定绑定依据——试运行案例与发布门禁必须引用同一修订集；
     // 解析失败（工具停用/无已发布版本/绑定服务缺失）在封存前拒绝。
-    const bound = await this.resolveDraftBindings(context.draft!, actor.id)
+    const bound = await this.resolveDraftBindings(context.draft!, actor.id,
+      await this.resolveExecutionScope(context.id, context.draft!))
     if (bound.error) throw new Error(`绑定解析失败，无法封存试运行：${bound.error}`)
 
     const trialId = `trial-${randomUUID()}`
@@ -1102,14 +1221,18 @@ export class PostgresAgentReleaseService {
       return { status: 'failed' as const, failureStage: TRIAL_STEPS[index]!.label }
     }
 
+    steps[3]!.currentCaseId = input.caseId
     mark(0, 'passed', `候选 rev${submission.revision} 已封存（${submission.bindingRefs.length} 项绑定修订）`)
+    if (!await this.persistTrialProgress(input.trialId, 'checking', steps)) return { status: 'cancelled' }
 
-    const resolved = await this.resolveDraftReferences(context.draft!)
-    const boundNow = await this.resolveDraftBindings(context.draft!, input.actorId)
+    const execution = await this.resolveExecutionScope(context.id, context.draft!)
+    const resolved = await this.resolveDraftReferences(context.draft!, execution)
+    const boundNow = await this.resolveDraftBindings(context.draft!, input.actorId, execution)
     const checks = await this.buildChecks(context, submission, resolved, boundNow)
     const failedChecks = checks.filter(check => check.status === 'failed')
     if (failedChecks.length) return failAt(1, `复核未通过：${failedChecks.map(check => check.label).join('、')}`)
     mark(1, 'passed', `${checks.length} 项检查全部通过`)
+    if (!await this.persistTrialProgress(input.trialId, 'checking', steps)) return { status: 'cancelled' }
 
     // B-03/I-04：封存依据与当前解析的绑定修订集必须一致——绑定在封存后被
     // 撤销/轮换/语义漂移时本次试运行不能作为该修订集的发布证据。
@@ -1138,6 +1261,7 @@ export class PostgresAgentReleaseService {
     const casesToRun = submission.cases.filter(item => item.id === input.caseId)
     if (!casesToRun.length) return failAt(2, '当前案例不在发布候选中')
     mark(2, 'passed', `试运行会话 ${sessionId} 就绪，本次调度 ${casesToRun.length} 个案例`)
+    if (!await this.persistTrialProgress(input.trialId, 'checking', steps)) return { status: 'cancelled' }
 
     if (resolved.missingSkills.length || resolved.missingTools.length) {
       return failAt(3, `依赖在执行前失效：${[...resolved.missingSkills, ...resolved.missingTools].join('、')}`)
@@ -1146,7 +1270,7 @@ export class PostgresAgentReleaseService {
 
     mark(3, 'running')
     // 进入执行段：状态推进为 executing，取消端点依赖它识别可取消窗口。
-    await this.persistTrialProgress(input.trialId, 'executing', steps)
+    if (!await this.persistTrialProgress(input.trialId, 'executing', steps)) return { status: 'cancelled' }
     const previousCaseCount = steps[3]?.caseRuns?.length ?? 0
     const caseRuns: TrialCaseRun[] = [...(steps[3]?.caseRuns ?? [])]
     if (casesToRun.some(item => caseRuns.some(run => run.caseId === item.id))) {
@@ -1227,7 +1351,7 @@ export class PostgresAgentReleaseService {
    * 执行期增量持久化：把最新 steps（含已派发案例的 Run/Attempt 引用）写回试运行行。
    * 返回 false 表示行已被并发取消（终态守卫），调用方应立即停止后续案例派发。
    */
-  private async persistTrialProgress(trialId: string, status: 'executing' | 'asserting', steps: TrialRunStep[]) {
+  private async persistTrialProgress(trialId: string, status: 'checking' | 'executing' | 'asserting', steps: TrialRunStep[]) {
     const updated = await this.database<{ id: string }[]>`
       update agent_trial_runs
          set status = ${status}, steps = ${this.database.json(asJson(steps))}
@@ -1282,6 +1406,16 @@ export class PostgresAgentReleaseService {
         if (item.verdict !== 'passed' && item.verdict !== 'failed') {
           throw Object.assign(new Error(`确认结论无效：${item.verdict}`), { status: 422, code: 'validation_failed' })
         }
+        if (item.note !== undefined && typeof item.note !== 'string') {
+          throw Object.assign(new Error('确认说明必须是字符串'), { status: 422, code: 'validation_failed' })
+        }
+        if ((item.note?.trim().length ?? 0) > 1000) {
+          throw Object.assign(new Error('确认说明不能超过 1000 个字符'), { status: 422, code: 'validation_failed' })
+        }
+        // 不通过结论必须说明原因，供修改配置后重新验证时对照。
+        if (item.verdict === 'failed' && !item.note?.trim()) {
+          throw Object.assign(new Error('判定不通过时必须填写原因'), { status: 422, code: 'validation_failed' })
+        }
       }
       const steps = trial.steps.map(step => ({ ...step }))
       const confirmedRuns = caseRuns.map(item => {
@@ -1300,7 +1434,7 @@ export class PostgresAgentReleaseService {
       const assertIndex = steps.findIndex(step => step.id === 'assert')
       steps[assertIndex]!.status = failed ? 'failed' : passed ? 'passed' : 'running'
       steps[assertIndex]!.detail = failed
-        ? `审核人判定不符合预期的案例：${rejected.map(item => `「${item.name}」`).join('、')}`
+        ? `审核人判定不符合预期的案例：${rejected.map(item => `「${item.name}」${item.verdictNote ? `（${item.verdictNote}）` : ''}`).join('、')}`
         : passed
           ? `${confirmedRuns.length} 个案例输出全部经审核人确认符合预期`
           : `${confirmedRuns.filter(item => item.verdict === 'passed').length}/${submission.cases.length} 个案例已确认，等待下一项`
@@ -1327,6 +1461,37 @@ export class PostgresAgentReleaseService {
           : `试运行 ${trialId} 已确认 ${result.confirmed}/${result.total} 个案例`,
     )
     return this.getReleaseState(agentId)
+  }
+
+  /**
+   * 服务启动收敛：试运行在请求内同步驱动案例执行，进程中断后记录会停在 checking/queued/executing，
+   * 且无人继续推进。启动时将其标记为失败（失败阶段“服务重启中断”），底层 Run 由编排服务的
+   * 重启恢复收敛；asserting（等待人工判定）是持久状态，原样保留。管理员可直接重新开始试运行。
+   */
+  async recoverInterruptedTrials(): Promise<{ interrupted: number }> {
+    const rows = await this.database<{ id: string; agentId: string; steps: TrialRunStep[] }[]>`
+      select id, agent_id as "agentId", steps from agent_trial_runs
+       where tenant_id = ${tenantId} and status in ('checking', 'queued', 'executing')
+    `
+    for (const row of rows) {
+      const steps = row.steps.map(step => (step.status === 'running' || step.status === 'pending'
+        ? { ...step, status: (step.status === 'running' ? 'failed' : 'skipped') as TrialStepStatus,
+            detail: step.status === 'running' ? '服务重启，本轮试运行已中断，请重新开始试运行' : step.detail }
+        : step))
+      await this.database`
+        update agent_trial_runs
+           set status = 'failed', steps = ${this.database.json(asJson(steps))},
+               failure_stage = '服务重启中断', finished_at = now()
+         where tenant_id = ${tenantId} and id = ${row.id}
+           and status in ('checking', 'queued', 'executing')
+      `
+      await this.database`
+        insert into audit_events (id, tenant_id, actor_type, actor_id, action, object_type, object_id, result, trace_id, safe_context)
+        values (${`audit-${randomUUID()}`}, ${tenantId}, 'system', 'dsh-work-startup', 'agent.release.trial.interrupted', 'agent',
+                ${row.agentId}, 'failed', ${`trace-${randomUUID()}`}, ${this.database.json(asJson({ summary: `试运行 ${row.id} 因服务重启中断` }))})
+      `
+    }
+    return { interrupted: rows.length }
   }
 
   async cancelTrial(agentId: string, trialId: string, userId: string): Promise<AgentReleaseState> {
@@ -1475,9 +1640,26 @@ export class PostgresAgentReleaseService {
       if (!submission.checks.length || submission.checks.some(check => check.status !== 'passed')) {
         throw new Error('候选检查未全部通过，请重新检查并试运行')
       }
-      // B-03/I-04：发布事务内复核封存绑定依据——并发绑定变更（撤销/轮换/语义
-      // 漂移）在此拒绝，旧证据不能带病放行。
+      await transaction`
+        select id from execution_principals where tenant_id = ${tenantId} and kind = 'agent'
+          and agent_id = ${agentId} for update
+      `
+      // Binding drift is reported before any current authorization mismatch;
+      // both gates run under the same locked Principal transaction.
       await this.assertSealedBindings(submission, transaction)
+      const [draftAuthorization] = await transaction<{ roleIds: string[]; dataScopes: string[]; tools: string[] }[]>`
+        select visible_role_ids as "roleIds", data_scopes as "dataScopes", tool_refs as tools
+          from agent_versions where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
+      `
+      if (!draftAuthorization?.roleIds.length) throw new Error('发布前必须配置员工可见角色')
+      const activeAudience = await transaction<{ id: string }[]>`
+        select id from roles where tenant_id = ${tenantId} and status = 'active'
+          and id = any(${draftAuthorization.roleIds})
+      `
+      if (activeAudience.length !== draftAuthorization.roleIds.length) throw new Error('员工可见角色已失效，请重新验证')
+      const execution = await this.resolveExecutionScope(agentId, draftAuthorization, transaction)
+      if (execution.error) throw new Error(execution.error)
+      await this.tools?.assertAuthorizationCompatibility(draftAuthorization.tools, execution.roleIds, execution.dataScopes)
       const [scopeRow] = await transaction<{ mcpScope: AgentMcpScope }[]>`
         select mcp_scope as "mcpScope" from agent_versions
          where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
@@ -1537,7 +1719,8 @@ export class PostgresAgentReleaseService {
           runId: null,
         }] : []),
         ...trialEvidence,
-        { kind: 'business_accepted' as const, summary: note.trim() || '业务效果已确认', scope: 'enterprise', runId: null },
+        // F-06：只有审核人实际写下业务意见时才登记业务确认，不代填未发生的确认。
+        ...(note.trim() ? [{ kind: 'business_accepted' as const, summary: note.trim(), scope: 'enterprise', runId: null }] : []),
       ]
       for (const item of evidence) {
         await transaction`
@@ -1700,9 +1883,24 @@ export class PostgresAgentReleaseService {
 
   private async createSubmission(context: AgentContext, source: 'config' | 'zip', packageId: string | null, actorId: string, db: DatabaseClient | DatabaseTransaction = this.database): Promise<SubmissionRow> {
     const draft = context.draft!
-    const cases = defaultCases({
+    const generated = defaultCases({
       name: draft.name, description: draft.description,
       examplePrompts: draft.examplePrompts, dataScopes: draft.dataScopes,
+    })
+    // 新版本沿用上一次发布时管理员改写过的案例（按类型），未改写的类型重新按当前定义生成，
+    // 让业务案例跨版本形成回归，不必每个版本重新改写。
+    const [previous] = await db<{ cases: ReleaseEvalCase[] }[]>`
+      select cases from agent_release_submissions
+       where tenant_id = ${tenantId} and agent_id = ${context.id} and status = 'published'
+       order by updated_at desc limit 1
+    `
+    const carried = (previous?.cases ?? [])
+      .filter(item => item.origin !== 'generated' && !caseValidationError(item))
+    const cases = CASE_KINDS.flatMap(kind => {
+      const rewritten = carried.filter(item => item.kind === kind)
+      return rewritten.length
+        ? rewritten.map(item => ({ ...item, id: `case-${randomUUID()}` }))
+        : generated.filter(item => item.kind === kind)
     })
     const [row] = await db<SubmissionRow[]>`
       insert into agent_release_submissions (
@@ -1744,6 +1942,43 @@ export class PostgresAgentReleaseService {
     }))
   }
 
+  private async trialRunProgress(trial: ReleaseTrialRun, submission: SubmissionRow): Promise<NonNullable<ReleaseTrialRun['progress']> | undefined> {
+    const lastCaseRun = trial.steps.find(step => step.id === 'dsh')?.caseRuns?.at(-1)
+    const caseId = trial.steps.find(step => step.id === 'dsh')?.currentCaseId ?? lastCaseRun?.caseId
+    if (!caseId || !submission.cases.some(item => item.id === caseId)) return undefined
+    // Trial IDs are random and the origin must also match the persisted admin
+    // Session and creator. Never accept a client-supplied Run ID for this view.
+    const [run] = await this.database<{ id: string; attemptId: string | null; status: string }[]>`
+      select r.id, r.current_attempt_id as "attemptId", r.status
+        from agent_trial_runs tr
+        join runs r on r.tenant_id = tr.tenant_id
+          and r.idempotency_key = ${`trial-${trial.id}-${caseId}`}
+          and r.requested_by = tr.created_by
+        join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
+          and s.audience = 'admin' and s.created_by = tr.created_by
+       where tr.tenant_id = ${tenantId} and tr.id = ${trial.id}
+         and tr.submission_id = ${submission.id} and tr.agent_id = ${submission.agentId}
+       order by r.created_at desc limit 1
+    `
+    if (!run) return { caseId, runId: null, attemptId: null, runStatus: null, events: [] }
+    const events = await this.database<{ eventType: string; occurredAt: Date }[]>`
+      select event_type as "eventType", min(occurred_at) as "occurredAt"
+        from run_events
+       where tenant_id = ${tenantId} and run_id = ${run.id}
+         and event_type = any(${Object.keys(trialRunEventLabels)})
+       group by event_type
+       order by min(stream_position)
+    `
+    return {
+      caseId, runId: run.id, attemptId: run.attemptId, runStatus: run.status,
+      events: events.map(event => ({
+        type: event.eventType,
+        label: trialRunEventLabels[event.eventType]!,
+        occurredAt: event.occurredAt.toISOString(),
+      })),
+    }
+  }
+
   private async evidenceByVersion(agentId: string): Promise<Record<string, ReleaseEvidence[]>> {
     const rows = await this.database<{
       version: string; kind: ReleaseEvidence['kind']; summary: string; runId: string | null
@@ -1777,19 +2012,7 @@ export class PostgresAgentReleaseService {
   }
 
   private async requireActor(userId: string) {
-    const [actor] = await this.database<{ id: string; displayName: string; department: string }[]>`
-      select u.id, u.display_name as "displayName", coalesce(u.department_id, '未分配部门') as department
-        from users u where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
-         )
-    `
-    if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
-    return actor
+    return requirePlatformAdminActor(this.database, userId)
   }
 
   private async audit(actorId: string, action: string, objectId: string, result: 'success' | 'failed' | 'blocked', summary: string) {

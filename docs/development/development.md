@@ -16,11 +16,13 @@ pnpm install --frozen-lockfile
 NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
 ```
 
-若默认端口已有 OIDC/开发数据库服务，浏览器冒烟应改用独立端口并显式关闭数据库，避免 Playwright 复用真实环境：
+默认浏览器冒烟自动使用原型身份、内存数据和独立端口（员工端 4274、管理端 4280、后端 4290），覆盖 `.env` 的数据库与身份配置，不需要先启动数据库：
 
 ```bash
-DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=4274 DSH_WORK_ADMIN_PORT=4280 DSH_WORK_SERVER_PORT=4290 VITE_ADMIN_URL=http://localhost:4280 VITE_WORKBENCH_URL=http://localhost:4274 pnpm test:e2e
+pnpm test:e2e
 ```
+
+测试不复用已有服务；测试端口占用时会报错。需要换端口可同时指定 `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT`、`DSH_WORK_SERVER_PORT`，测试会自动同步页面及 API 地址。以下是普通 `pnpm dev:all` 的默认开发入口：
 
 - 员工端：`http://localhost:4174/workbench`
 - 管理端：`http://localhost:4180/overview`
@@ -104,7 +106,7 @@ PF-06 受控 Agent 委派使用 `pnpm test:pf06:integration`，在一次性数�
 
 PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-06 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
 
-Playwright 会启动服务，并在非 CI 模式复用已有服务。若只验原型页面，先停掉不匹配的开发实例，并用上述原型环境变量运行 `pnpm test:e2e`。不要将复用的真实环境误认为隔离测试。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
+默认 `pnpm test:e2e` 始终新建上述 P0 原型服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
 
