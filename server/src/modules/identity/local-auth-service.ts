@@ -8,6 +8,7 @@ import {
 } from './auth-service.ts'
 import { lockPlatformAdminInvariant, requireAnotherPlatformAdmin } from './administration-service.ts'
 import { hashPassword, normalizeUsername, verifyPassword } from './password.ts'
+import { loginAccountCandidates, normalizeLoginAccount } from './login-account.ts'
 import { hashOpaque, randomOpaque } from './secure-values.ts'
 import { IdentitySessionRepository } from './session-repository.ts'
 import type { ApiAudience, LocalIdentityConfiguration, RequestIdentity } from './types.ts'
@@ -27,7 +28,6 @@ export interface LocalAccountInput {
   name: string
   department?: string | null
   email?: string | null
-  existingUserId?: string
 }
 
 export class LocalAuthService {
@@ -48,6 +48,18 @@ export class LocalAuthService {
     return url.toString()
   }
 
+  hasSessionCookie(request: IncomingMessage, audience: ApiAudience) {
+    return Boolean(parseCookies(request.headers.cookie)[this.configuration.audiences[audience].sessionCookieName])
+  }
+
+  /** Only called after the selected login flow has validated its origin and credentials. */
+  async revokeSession(request: IncomingMessage, audience: ApiAudience) {
+    const settings = this.configuration.audiences[audience]
+    const token = parseCookies(request.headers.cookie)[settings.sessionCookieName]
+    if (token) await this.repository.logoutSession(hashOpaque(token), audience)
+    return clearCookie(settings.sessionCookieName, this.configuration.cookieSecure)
+  }
+
   async login(request: IncomingMessage, audience: ApiAudience, input: { username: unknown; password: unknown; returnTo?: string }) {
     const settings = this.configuration.audiences[audience]
     validateRequestOrigin(request, settings)
@@ -64,7 +76,7 @@ export class LocalAuthService {
           from local_user_credentials c
           join users u on u.tenant_id = c.tenant_id and u.id = c.user_id
           join tenants t on t.id = u.tenant_id
-         where c.tenant_id = ${tenantId} and c.username = ${username}
+         where c.tenant_id = ${tenantId} and c.username = ${username} and u.identity_provider = 'local'
          for update of u, c
       `
       const valid = await verifyPassword(input.password, credential?.passwordHash ?? null)
@@ -118,7 +130,7 @@ export class LocalAuthService {
         join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
        where s.tenant_id = ${tenantId} and s.session_hash = ${sessionHash} and s.audience = ${audience}
          and s.authentication_provider = 'local-password' and s.revoked_at is null and s.expires_at > now()
-         and u.status = 'active' and u.business_user and t.status = 'active'
+         and u.status = 'active' and u.business_user and t.status = 'active' and u.identity_provider = 'local'
     `
     if (!session) throw new IdentityAccessError(401, 'session_expired', '登录会话不存在或已过期')
     if (session.mustChangePassword && !allowPasswordChange) {
@@ -138,48 +150,69 @@ export class LocalAuthService {
     const settings = this.configuration.audiences[audience]
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
-    const token = parseCookies(request.headers.cookie)[settings.sessionCookieName]
-    if (token) await this.repository.logoutSession(hashOpaque(token), audience)
-    return { location: new URL('/login', origin).toString(), clearSessionCookie: clearCookie(settings.sessionCookieName, this.configuration.cookieSecure) }
+    return { location: new URL('/login', origin).toString(), clearSessionCookie: await this.revokeSession(request, audience) }
   }
 
   async changePassword(request: IncomingMessage, audience: ApiAudience, input: { currentPassword: unknown; newPassword: unknown; returnTo?: string }) {
     const identity = await this.authenticateApi(request, audience, true)
+    const settings = this.configuration.audiences[audience]
+    const origin = resolveRequestOrigin(request, settings)
     await this.rateLimit(request, `password:${identity.userId}`)
     if (input.currentPassword === input.newPassword) throw new IdentityAccessError(422, 'password_unchanged', '新密码不能与当前密码相同')
     const passwordHash = await hashPassword(input.newPassword)
+    const sessionToken = randomOpaque()
+    const sessionHash = hashOpaque(sessionToken)
     const changed = await this.database.begin(async transaction => {
-      const [credential] = await transaction<{ passwordHash: string }[]>`
-        select password_hash as "passwordHash" from local_user_credentials
-         where tenant_id = ${tenantId} and user_id = ${identity.userId} for update
+      // Use the same user/credential lock order as login, and recheck after hashing.
+      const [credential] = await transaction<{ passwordHash: string; active: boolean }[]>`
+        select c.password_hash as "passwordHash",
+               (u.status = 'active' and u.business_user and t.status = 'active') as active
+          from local_user_credentials c
+          join users u on u.tenant_id = c.tenant_id and u.id = c.user_id
+          join tenants t on t.id = u.tenant_id
+         where c.tenant_id = ${tenantId} and c.user_id = ${identity.userId} and u.identity_provider = 'local'
+         for update of u, c
       `
       const [session] = await transaction`
         select session_hash from authentication_sessions
-         where session_hash = ${identity.sessionHash} and revoked_at is null and expires_at > now() for update
+         where tenant_id = ${tenantId} and user_id = ${identity.userId}
+           and session_hash = ${identity.sessionHash} and audience = ${audience}
+           and authentication_provider = 'local-password' and revoked_at is null and expires_at > now() for update
       `
-      if (!session || !credential || !await verifyPassword(input.currentPassword, credential.passwordHash)) {
+      if (!session || !credential?.active || !await verifyPassword(input.currentPassword, credential.passwordHash)) {
         await localAudit(transaction, identity.userId, 'identity.password.change', 'failed')
         return false
       }
+      const authorization = await this.repository.resolveAuthorization(identity.userId, transaction)
+      assertAudienceAccess(audience, authorization.permissions, false)
       await transaction`
         update local_user_credentials set password_hash = ${passwordHash}, must_change_password = false, updated_at = now()
          where tenant_id = ${tenantId} and user_id = ${identity.userId}
       `
       await revokeUserSessions(transaction, identity.userId)
-      await localAudit(transaction, identity.userId, 'identity.password.change', 'success')
+      const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
+      await transaction`
+        insert into authentication_sessions (
+          session_hash, tenant_id, audience, user_id, authentication_provider,
+          authorization_version, permissions_expires_at, expires_at
+        ) values (
+          ${sessionHash}, ${tenantId}, ${audience}, ${identity.userId}, 'local-password',
+          ${authorization.authorizationVersion}, ${expiresAt}, ${expiresAt}
+        )
+      `
+      await localAudit(transaction, identity.userId, 'identity.password.change', 'success', { audience })
       return true
     })
     if (!changed) throw new IdentityAccessError(401, 'invalid_credentials', '当前密码错误或会话已过期')
-    const result = await this.logout(request, audience)
-    const location = new URL(result.location)
-    location.searchParams.set('password_changed', 'true')
-    location.searchParams.set('return_to', normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, location.origin))
-    return { ...result, location: location.toString() }
+    return {
+      location: normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin),
+      sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, this.configuration.sessionTtlSeconds, this.configuration.cookieSecure),
+    }
   }
 
   /** Operator-only, one-time command. No HTTP bootstrap endpoint or default password. */
   async bootstrap(input: LocalAccountInput) {
-    const username = normalizeUsername(input.username)
+    const username = normalizeLoginAccount(input.username)
     const passwordHash = await hashPassword(input.password)
     return this.database.begin(async transaction => {
       await lockPlatformAdminInvariant(transaction)
@@ -200,14 +233,22 @@ export class LocalAuthService {
   }
 
   async createAccount(input: LocalAccountInput, actorId: string) {
-    const username = normalizeUsername(input.username)
+    const username = normalizeLoginAccount(input.username)
     const passwordHash = await hashPassword(input.password)
     return this.database.begin(async transaction => {
       await assertPlatformAdmin(transaction, actorId)
       const userId = await insertAccount(transaction, input, username, passwordHash, true)
       await revokeUserSessions(transaction, userId)
-      await localAudit(transaction, actorId, input.existingUserId ? 'identity.local.bind' : 'identity.local.create', 'success', { userId })
+      await localAudit(transaction, actorId, 'identity.local.create', 'success', { userId })
       return { userId, username }
+    })
+  }
+
+  async checkLoginAccount(input: unknown, actorId: string) {
+    const username = normalizeLoginAccount(input)
+    return this.database.begin(async transaction => {
+      await assertPlatformAdmin(transaction, actorId)
+      return { username, available: !await loginAccountExists(transaction, username) }
     })
   }
 
@@ -218,7 +259,8 @@ export class LocalAuthService {
       await assertPlatformAdmin(transaction, actorId)
       const [credential] = await transaction`
         update local_user_credentials set password_hash = ${passwordHash}, must_change_password = true, updated_at = now()
-         where tenant_id = ${tenantId} and user_id = ${userId} returning user_id
+         where tenant_id = ${tenantId} and user_id = ${userId}
+           and exists (select 1 from users u where u.tenant_id = ${tenantId} and u.id = ${userId} and u.identity_provider = 'local') returning user_id
       `
       if (!credential) throw new IdentityAccessError(404, 'local_account_missing', '该员工尚未开通独立登录')
       await revokeUserSessions(transaction, userId)
@@ -232,11 +274,14 @@ export class LocalAuthService {
     await this.database.begin(async transaction => {
       await lockPlatformAdminInvariant(transaction)
       await assertPlatformAdmin(transaction, actorId)
-      const [user] = await transaction`
-        select u.id from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
+      const [user] = await transaction<{ identityProvider: string }[]>`
+        select u.identity_provider as "identityProvider" from users u join local_user_credentials c on c.tenant_id = u.tenant_id and c.user_id = u.id
          where u.tenant_id = ${tenantId} and u.id = ${userId} for update of u
       `
       if (!user) throw new IdentityAccessError(404, 'local_account_missing', '该员工尚未开通独立登录')
+      if (user.identityProvider !== 'local') {
+        throw new IdentityAccessError(422, 'upstream_managed_status', 'AI Hub 账号状态请在企业身份平台中管理')
+      }
       if (status === 'disabled') {
         const [admin] = await transaction`
           select ur.user_id from user_roles ur join roles r on r.id = ur.role_id and r.tenant_id = ur.tenant_id
@@ -272,27 +317,34 @@ export class LocalAuthService {
 }
 
 async function insertAccount(transaction: DatabaseTransaction, input: LocalAccountInput, username: string, passwordHash: string, mustChangePassword: boolean) {
-  const userId = input.existingUserId || `user-${randomUUID()}`
-  if (input.existingUserId) {
-    const [existing] = await transaction`
-      select id from users where tenant_id = ${tenantId} and id = ${userId} and business_user and status = 'active' for update
-    `
-    if (!existing) throw new IdentityAccessError(404, 'user_unavailable', '请选择有效的既有员工')
-  } else {
-    const name = requiredText(input.name, '姓名', 80)
-    const department = optionalText(input.department, '部门', 100)
-    const email = optionalText(input.email, '邮箱', 254)
-    await transaction`
-      insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user, email)
-      values (${userId}, ${tenantId}, ${`local:${randomUUID()}`}, ${name}, ${department}, 'active', 'local', true, ${email})
-    `
-  }
+  if ('existingUserId' in input) throw new IdentityAccessError(422, 'account_binding_unsupported', '不支持绑定既有账号，请创建独立账号')
+  if (await loginAccountExists(transaction, username)) throw new IdentityAccessError(409, 'local_account_exists', '登录账号已存在，请使用其他手机号或邮箱')
+  const userId = `user-${randomUUID()}`
+  const name = requiredText(input.name, '姓名', 80)
+  const department = optionalText(input.department, '部门', 100)
+  const email = optionalText(input.email, '邮箱', 254)
+  await transaction`
+    insert into users (id, tenant_id, external_subject, display_name, department_id, status, identity_provider, business_user, email)
+    values (${userId}, ${tenantId}, ${`local:${randomUUID()}`}, ${name}, ${department}, 'active', 'local', true, ${email})
+  `
   const [created] = await transaction`
     insert into local_user_credentials (tenant_id, user_id, username, password_hash, must_change_password)
     values (${tenantId}, ${userId}, ${username}, ${passwordHash}, ${mustChangePassword}) on conflict do nothing returning user_id
   `
-  if (!created) throw new IdentityAccessError(409, 'local_account_exists', '登录账号已存在，或该员工已开通独立登录')
+  if (!created) throw new IdentityAccessError(409, 'local_account_exists', '登录账号已存在，请使用其他手机号或邮箱')
   return userId
+}
+
+async function loginAccountExists(transaction: DatabaseTransaction, username: string) {
+  const candidates = loginAccountCandidates(username)
+  const [existing] = await transaction`
+    select 1 from local_user_credentials where tenant_id = ${tenantId} and username = any(${candidates}::text[])
+    union all
+    select 1 from users where tenant_id = ${tenantId} and identity_provider = 'ai-hub'
+      and lower(btrim(external_subject)) = any(${candidates}::text[])
+    limit 1
+  `
+  return Boolean(existing)
 }
 
 async function assertPlatformAdmin(transaction: DatabaseTransaction, userId: string) {

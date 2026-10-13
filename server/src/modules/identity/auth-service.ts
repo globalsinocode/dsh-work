@@ -287,15 +287,26 @@ export class OidcAuthService {
   async logout(request: IncomingMessage, audience: ApiAudience) {
     const settings = this.configuration.audiences[audience]
     const portalOrigin = resolveRequestOrigin(request, settings)
+    const clearSessionCookie = await this.revokeSession(request, audience)
+    return {
+      location: await this.providers[audience].logoutUrl(portalOrigin),
+      clearSessionCookie,
+    }
+  }
+
+  hasSessionCookie(request: IncomingMessage, audience: ApiAudience) {
+    return Boolean(parseCookies(request.headers.cookie)[this.configuration.audiences[audience].sessionCookieName])
+  }
+
+  /** Clear a previous provider session without depending on the upstream logout service. */
+  async revokeSession(request: IncomingMessage, audience: ApiAudience) {
+    const settings = this.configuration.audiences[audience]
     const cookieValue = parseCookies(request.headers.cookie)[settings.sessionCookieName]
     if (cookieValue) {
       const sessionHash = hashOpaque(cookieValue)
       await this.repository.logoutSession(sessionHash, audience)
     }
-    return {
-      location: await this.providers[audience].logoutUrl(portalOrigin),
-      clearSessionCookie: clearCookie(settings.sessionCookieName, this.configuration.cookieSecure),
-    }
+    return clearCookie(settings.sessionCookieName, this.configuration.cookieSecure)
   }
 
   transactionCookie(request: IncomingMessage, audience: ApiAudience) {

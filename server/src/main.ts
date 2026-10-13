@@ -86,9 +86,8 @@ import { PostgresControlledMemoryService } from './modules/memory/postgres-contr
 import { PostgresAgentDataService } from './modules/agent-data/postgres-agent-data-service.ts'
 import { registerAdminAgentDataRoutes } from './http/admin/agent-data-routes.ts'
 import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
-import { loadIdentityConfiguration } from './modules/identity/config.ts'
-import { LoginSettingsService, loadStartupIdentityConfiguration } from './modules/identity/login-settings-service.ts'
-import { registerLoginSettingsRoutes } from './http/admin/login-settings-routes.ts'
+import { loadIdentityConfiguration, loadStartupIdentityConfiguration, localIdentityConfiguration } from './modules/identity/config.ts'
+import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
@@ -106,10 +105,13 @@ async function start() {
   // Reject a production prototype before any database mutations.
   if (process.env.DSH_WORK_AUTH_MODE === 'prototype') loadIdentityConfiguration()
   if (database) await runMigrations(database)
-  const identityConfiguration = await loadStartupIdentityConfiguration(database, process.env, true)
+  const identityConfiguration = loadStartupIdentityConfiguration()
+  if (identityConfiguration.mode === 'local' && identityConfiguration.aiHubConfigurationIssue) {
+    console.warn(`AI Hub 登录未启用：${identityConfiguration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
+  }
 
   if (identityConfiguration.mode !== 'prototype' && !database) {
-    throw new Error('local/oidc 模式必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
+    throw new Error('正式认证必须配置 DSH_WORK_DATABASE_URL 以保存服务端会话')
   }
 
   const oidcAuthentication = identityConfiguration.mode === 'oidc' && database
@@ -118,25 +120,24 @@ async function start() {
   const directorySync = identityConfiguration.mode === 'oidc' && database
     ? new IdentityDirectorySyncService(identityConfiguration, database)
     : null
-  const localAuthentication = identityConfiguration.mode === 'local' && database
-    ? new LocalAuthService(identityConfiguration, database)
+  const localAuthentication = identityConfiguration.mode !== 'prototype' && database
+    ? new LocalAuthService(localIdentityConfiguration(identityConfiguration), database)
     : null
   const authentication = localAuthentication ?? oidcAuthentication
   const router = new Router({
-    authenticateApi: authentication
-      ? (request, audience) => authentication.authenticateApi(request, audience)
+    authenticateApi: localAuthentication
+      ? portalAuthenticator(localAuthentication, oidcAuthentication)
       : prototypeApiAuthenticator,
   })
-  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication)
-  if (localAuthentication) registerLocalAuthRoutes(router, localAuthentication)
+  if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
+  if (localAuthentication) registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
   for (const audience of ['workbench', 'admin']) {
-    router.get(`/auth/${audience}/configuration`, () => ({ mode: identityConfiguration.mode }))
+    router.get(`/auth/${audience}/configuration`, () => ({ mode: identityConfiguration.mode, localEnabled: Boolean(localAuthentication), aiHubEnabled: Boolean(oidcAuthentication) }))
   }
   if (database && authentication) {
-    registerLoginSettingsRoutes(router, new LoginSettingsService(database, identityConfiguration.mode))
     registerIdentityAdministrationRoutes(
       router,
-      new IdentityAdministrationService(database, identityConfiguration.mode === 'local'),
+      new IdentityAdministrationService(database, true),
       directorySync,
     )
   }

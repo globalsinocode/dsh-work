@@ -136,11 +136,13 @@ export class IdentitySessionRepository {
       type IdentityMatch = {
         id: string
         identityProvider: 'local' | 'ai-hub'
+        hasLocalCredentials: boolean
         externalUserId: string | null
         authorizationVersion: number
       }
       const matches = await transaction<IdentityMatch[]>`
         select id, identity_provider as "identityProvider",
+               exists (select 1 from local_user_credentials c where c.tenant_id = users.tenant_id and c.user_id = users.id) as "hasLocalCredentials",
                external_user_id as "externalUserId",
                local_authorization_version::integer as "authorizationVersion"
           from users
@@ -157,6 +159,9 @@ export class IdentitySessionRepository {
         throw new Error('AI Hub 用户标识与既有 OIDC subject 分别映射到不同本地用户')
       }
       const existing = externalMatch ?? subjectMatch
+      if (existing?.identityProvider === 'local' && existing.hasLocalCredentials) {
+        throw new Error('AI Hub 身份标识与独立账号冲突，不能绑定或转换独立账号')
+      }
       if (
         existing?.identityProvider === 'ai-hub'
         && existing.externalUserId !== input.externalUserId

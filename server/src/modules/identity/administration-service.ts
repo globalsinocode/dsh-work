@@ -19,6 +19,7 @@ interface UserListRow {
   id: string
   externalUserId: string | null
   username: string | null
+  loginAccount: string | null
   name: string
   email: string | null
   department: string
@@ -79,6 +80,7 @@ export class IdentityAdministrationService {
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
              or coalesce(u.email, '') ilike ${`%${query}%`}
+             or (u.identity_provider = 'ai-hub' and u.external_subject ilike ${`%${query}%`})
              or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
              or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
@@ -86,7 +88,10 @@ export class IdentityAdministrationService {
       `
       const items = await transaction<UserListRow[]>`
         select u.id, u.external_user_id as "externalUserId", u.display_name as name,
-               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as username,
+               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and u.identity_provider = 'local') as username,
+               case when u.identity_provider = 'ai-hub' then u.external_subject
+                 else (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
+               end as "loginAccount",
                u.email, coalesce(u.department_id, '未分配部门') as department,
                u.status, u.identity_provider as "identityProvider",
                u.directory_synced_at as "directorySyncedAt",
@@ -120,6 +125,7 @@ export class IdentityAdministrationService {
              ${query} = ''
              or u.display_name ilike ${`%${query}%`}
              or coalesce(u.email, '') ilike ${`%${query}%`}
+             or (u.identity_provider = 'ai-hub' and u.external_subject ilike ${`%${query}%`})
              or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and c.username ilike ${`%${query}%`}))
              or coalesce(u.external_user_id, '') ilike ${`%${query}%`}
              or coalesce(u.department_id, '') ilike ${`%${query}%`}
@@ -388,7 +394,10 @@ export class IdentityAdministrationService {
   private async requireUser(userId: string) {
     const [user] = await this.database<UserListRow[]>`
       select u.id, u.external_user_id as "externalUserId", u.display_name as name,
-               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) as username,
+               (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id and u.identity_provider = 'local') as username,
+             case when u.identity_provider = 'ai-hub' then u.external_subject
+               else (select c.username from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)
+             end as "loginAccount",
              u.email, coalesce(u.department_id, '未分配部门') as department,
              u.status, u.identity_provider as "identityProvider",
              u.directory_synced_at as "directorySyncedAt",
@@ -466,13 +475,18 @@ async function replaceScopes(
 }
 
 export async function requireAnotherPlatformAdmin(transaction: DatabaseTransaction, excludedUserId: string, localAccounts = false) {
+  const [excluded] = await transaction<{ identityProvider: string }[]>`
+    select identity_provider as "identityProvider" from users where tenant_id = ${tenantId} and id = ${excludedUserId}
+  `
+  const protectLocal = localAccounts && excluded?.identityProvider === 'local'
+
   const [row] = await transaction<{ count: number }[]>`
     select count(distinct u.id)::integer as count
       from users u
       join user_roles ur on ur.tenant_id = u.tenant_id and ur.user_id = u.id
       join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
      where u.tenant_id = ${tenantId} and u.id <> ${excludedUserId} and u.status = 'active'
-       and (case when ${localAccounts} then exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) else u.identity_provider = 'ai-hub' end)
+       and (case when ${protectLocal} then u.identity_provider = 'local' and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id) else u.identity_provider = 'ai-hub' or (${localAccounts} and u.identity_provider = 'local' and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)) end)
        and u.business_user
        and ur.source_key = 'local' and ur.role_id = 'role-platform-admin'
        and (ur.valid_until is null or ur.valid_until > now())

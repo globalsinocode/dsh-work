@@ -31,7 +31,6 @@ import type {
   IdentityUserSummary,
   ListPage,
   LocalPermissionDefinition,
-  LoginSettings,
   ModelUsagePage,
   ManagedWorkspaceDefinition,
   ModelProvider,
@@ -457,13 +456,10 @@ export const adminApi = {
       `/identity/users/${encodeURIComponent(userId)}/sessions/revoke`,
       { method: 'POST' },
     ),
-  createLocalAccount: (input: { username: string; password: string; name: string; department?: string; email?: string }, userId?: string) =>
-    request<{ userId: string; username: string }>(userId ? `/identity/users/${encodeURIComponent(userId)}/local-account` : '/identity/users', {
-      method: 'POST', body: JSON.stringify(userId ? { username: input.username, password: input.password } : input),
-    }),
-  getLoginSettings: () => request<LoginSettings>('/identity/login-settings'),
-  saveLoginSettings: (mode: 'local' | 'oidc', expectedRevision: number) =>
-    request<LoginSettings>('/identity/login-settings', { method: 'PATCH', body: JSON.stringify({ mode, expectedRevision }) }),
+  createLocalAccount: (input: { username: string; password: string; name: string; department?: string; email?: string }) =>
+    request<{ userId: string; username: string }>('/identity/users', { method: 'POST', body: JSON.stringify(input) }),
+  checkLocalLoginAccount: (username: string) =>
+    request<{ username: string; available: boolean }>('/identity/login-account/check', { method: 'POST', body: JSON.stringify({ username }) }),
   resetLocalPassword: (userId: string, password: string) =>
     request<{ userId: string }>(`/identity/users/${encodeURIComponent(userId)}/password`, { method: 'POST', body: JSON.stringify({ password }) }),
   setLocalAccountStatus: (userId: string, status: 'active' | 'disabled') =>

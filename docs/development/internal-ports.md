@@ -103,8 +103,14 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 独立账号认证
 
-`DSH_WORK_AUTH_MODE=local` 在既有身份模块提供账号密码认证，不读取 AI Hub 配置、启动目录同步或刷新上游 Token。`RequestIdentity.identityProvider=local-password` 由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。账号凭据关联稳定用户 ID；提供方隔离字段、密码及状态变更、一次性初始化和最后一位本地管理员保护由数据库事务维护。
+正式部署始终注册账号密码认证，AI Hub 配置完整且有效时另外注册 OIDC 与目录同步。未配置或配置无效的可选 AI Hub 不阻塞独立认证；配置错误记入启动日志，公开接口不暴露细节或密钥。基础身份配置、可信入口、Session Secret 和生产 HTTPS 校验仍必须通过。
 
-认证接口及请求/错误结构见 [认证 OpenAPI](openapi-auth.json)，管理接口见 [Admin OpenAPI](openapi-admin.json)。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密撤销旧会话并要求重新登录。部署、旧身份显式绑定及验证边界见 [独立登录指南](../release/local-authentication.md)。
+`RequestIdentity.identityProvider=local-password` 由服务端产生，后续角色、数据范围、Run/Attempt 和 DSH 授权保持原路径。独立账号和 AI Hub 账号分别创建、分别授权，不进行绑定或姓名/邮箱匹配。旧绑定凭据不删除，但不能用于 AI Hub 用户的密码登录、改密或重置。新账号和管理员重置的密码必须先通过 `/auth/{audience}/password` 修改，否则业务 API 返回 `password_change_required`；改密、撤销所有旧会话和签发当前门户的新会话在同一事务内完成；响应设置新的 HttpOnly Session Cookie，并返回原同源访问地址，前端直接进入系统，无需再次登录。改密失败不签发会话、不跳转。
 
-`GET/PATCH /api/admin/v1/identity/login-settings` 读取和保存登录模式；写入仅限 `admin:*`，使用 `expectedRevision` 防止覆盖并复查当前操作者授权和目标模式管理员条件。选择复用 `system_settings` 的 `identity.login` 项，启动时覆盖部署默认模式并由既有认证服务执行；保存后须重启，激活切换时统一撤销旧认证会话。预检只读取，不激活；敏感凭据仍来自部署环境。原型不注册此端口。
+新建独立账号统一使用手机号或邮箱；`POST /api/admin/v1/identity/login-account/check` 仅允许平台管理员检查格式和占用情况，创建事务仍会重新检查独立账号与已同步 AI Hub 的登录账号，重复返回 `local_account_exists`。手机号兼容 `+86` 并统一为大陆 11 位，邮箱忽略大小写；已有用户名继续兼容登录，不按资料邮箱绑定身份。
+
+认证接口见 [认证 OpenAPI](openapi-auth.json)，管理接口见 [Admin OpenAPI](openapi-admin.json)。`/auth/{audience}/configuration` 返回当前能力 `mode`、`localEnabled`、`aiHubEnabled`；`mode` 表示已加载的提供方能力，不是管理端可选设置。API 按提供方 Cookie 分流，双 Cookie 拒绝；登录完成撤销当前门户另一提供方旧会话，过期凭据不跨提供方降级。
+
+管理端登录设置页面、`GET/PATCH /api/admin/v1/identity/login-settings` 和 `POST /api/admin/v1/identity/users/:userId/local-account` 已移除。旧 `system_settings.identity.login` 记录保留但不再读取，不触发启动切换或会话撤销。部署默认自动启用独立认证，旧 `DSH_WORK_AUTH_MODE=local/oidc` 仅兼容、不改变能力选择；`prototype` 仍须显式用于开发且禁止在生产启用。详见 [独立登录指南](../release/local-authentication.md)。
+
+员工授权列表和授权变更响应返回只读 `loginAccount`：独立账号取凭据用户名，AI Hub 取已同步的 subject（当前上游以登录账号作为 subject）。列表搜索同时匹配两类账号；`username` 保持仅用于独立凭据管理，账号展示不改变身份归属。邮箱、最近活跃和活动会话来自既有资料与会话记录，AI Hub 用户标识和目录同步时间在详情查看。

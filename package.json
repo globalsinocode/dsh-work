@@ -105,7 +105,7 @@
     "test:local-auth": "pnpm --filter @dsh-work/server test:local-auth",
     "test:local-auth:integration": "pnpm --filter @dsh-work/server test:local-auth:integration",
     "test:e2e:local-auth": "playwright test --config playwright.local-auth.config.ts",
-    "test:e2e:login-mode": "playwright test --config playwright.login-mode.config.ts"
+    "test:e2e:login-options": "playwright test --config playwright.login-options.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

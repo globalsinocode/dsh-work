@@ -1208,48 +1208,39 @@
         }
       }
     },
-    "/identity/login-settings": {
-      "get": {
-        "operationId": "getLoginSettings",
-        "summary": "查看当前及已保存的登录模式、修订和切换前置条件",
-        "description": "正式认证模式下的管理读取接口。返回配置检查结果，不返回上游凭据或 Session Secret。",
-        "responses": {
-          "200": { "$ref": "#/components/responses/LoginSettings" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" }
-        }
-      },
-      "patch": {
-        "operationId": "saveLoginSettings",
-        "summary": "保存重启后生效的登录模式，仅平台管理员可操作",
-        "description": "校验同源、当前 admin:* 权限和目标模式的配置及永久平台管理员条件。保存采用修订比较，不立即切换或重启；启动激活切换时撤销旧会话。切回当前模式可取消待生效变更。操作者只取服务端会话。409 包括 login_settings_changed 和 login_mode_unavailable。",
+    "/identity/login-account/check": {
+      "post": {
+        "operationId": "checkLocalLoginAccount",
+        "summary": "平台管理员检查新登录账号格式及是否被独立账号或已同步 AI Hub 账号占用",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": {
-            "type": "object", "required": ["mode", "expectedRevision"],
-            "properties": {
-              "mode": { "type": "string", "enum": ["local", "oidc"] },
-              "expectedRevision": { "type": "integer", "minimum": 0 }
-            }
+            "type": "object", "additionalProperties": false, "required": ["username"],
+            "properties": { "username": { "type": "string", "maxLength": 254 } }
           } } }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/LoginSettings" },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "422": { "$ref": "#/components/responses/Error" }
+          "200": { "description": "返回规范化的 username 与 available；创建时仍重新检查", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["data", "meta"], "properties": {
+              "data": { "type": "object", "required": ["username", "available"], "properties": {
+                "username": { "type": "string" }, "available": { "type": "boolean" }
+              } }, "meta": { "type": "object" }
+            }
+          } } } },
+          "403": { "description": "仅平台管理员可检查账号占用" },
+          "422": { "description": "账号不是有效的手机号或邮箱" }
         }
       }
     },
     "/identity/users": {
       "get": {
         "operationId": "listIdentityUsers",
-        "summary": "分页查询员工及其本地角色、数据范围和会话摘要；local 模式包含本地账号及待绑定的原 AI Hub 员工，username 表示独立登录账号",
+        "summary": "分页查询员工及本地角色、数据范围和会话摘要；loginAccount 展示登录账号（独立用户名或 AI Hub subject），identityProvider 表示来源 local/ai-hub，username 仅用于独立凭据管理；不提供账号绑定",
         "parameters": [
           {
             "name": "query",
             "in": "query",
+            "description": "搜索登录账号、姓名、邮箱、员工标识或部门",
             "schema": {
               "type": "string",
               "maxLength": 100
@@ -1294,7 +1285,7 @@
       },
       "post": {
         "operationId": "createLocalAccount",
-        "summary": "仅 local 模式：创建账号，初始无角色，首次登录必须改密",
+        "summary": "创建账号，初始无角色，首次登录必须改密",
         "requestBody": {
           "required": true,
           "content": {
@@ -1310,15 +1301,16 @@
                 "properties": {
                   "username": {
                     "type": "string",
-                    "minLength": 3,
-                    "maxLength": 80
+                    "minLength": 5,
+                    "maxLength": 254,
+                    "description": "中国大陆 11 位手机号（可带 +86）或邮箱；忽略邮箱大小写，创建时检查独立及已同步 AI Hub 登录账号占用"
                   },
                   "password": {
                     "type": "string",
                     "format": "password",
                     "writeOnly": true,
-                    "minLength": 15,
-                    "maxLength": 128
+                    "minLength": 8,
+                    "maxLength": 12
                   },
                   "name": {
                     "type": "string",
@@ -1354,65 +1346,6 @@
         }
       }
     },
-    "/identity/users/{userId}/local-account": {
-      "parameters": [
-        {
-          "name": "userId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "operationId": "bindLocalAccount",
-        "summary": "仅 local 模式：显式绑定有效既有员工；保留用户 ID 与授权，撤销旧会话",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "username",
-                  "password"
-                ],
-                "properties": {
-                  "username": {
-                    "type": "string",
-                    "minLength": 3,
-                    "maxLength": 80
-                  },
-                  "password": {
-                    "type": "string",
-                    "format": "password",
-                    "writeOnly": true,
-                    "minLength": 15,
-                    "maxLength": 128
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "description": "仅平台管理员可修改账号"
-          },
-          "409": {
-            "description": "账号已存在或最后一位管理员保护"
-          },
-          "422": {
-            "description": "输入无效"
-          }
-        }
-      }
-    },
     "/identity/users/{userId}/password": {
       "parameters": [
         {
@@ -1426,7 +1359,7 @@
       ],
       "post": {
         "operationId": "resetLocalPassword",
-        "summary": "仅 local 模式：重置他人密码并撤销所有旧会话，下次登录强制改密",
+        "summary": "重置他人密码并撤销所有旧会话，下次登录强制改密",
         "requestBody": {
           "required": true,
           "content": {
@@ -1442,8 +1375,8 @@
                     "type": "string",
                     "format": "password",
                     "writeOnly": true,
-                    "minLength": 15,
-                    "maxLength": 128
+                    "minLength": 8,
+                    "maxLength": 12
                   }
                 }
               }
@@ -1479,7 +1412,7 @@
       ],
       "patch": {
         "operationId": "setLocalAccountStatus",
-        "summary": "仅 local 模式：启停账号；不能停用最后一位可登录的本地平台管理员",
+        "summary": "启停账号；不能停用最后一位可登录的本地平台管理员",
         "requestBody": {
           "required": true,
           "content": {
@@ -2112,7 +2045,7 @@
   },
   "components": {
     "securitySchemes": {
-      "localAdminSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_admin_session", "description": "local 模式签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
+      "localAdminSession": {"type": "apiKey", "in": "cookie", "name": "dsh_work_local_admin_session", "description": "独立账号登录签发；生产使用 __Host- 前缀，与 OIDC Session 分离。"},
       "adminSession": {
         "type": "apiKey",
         "in": "cookie",
@@ -2175,15 +2108,6 @@
       }
     },
     "responses": {
-      "LoginSettings": {
-        "description": "登录模式配置",
-        "content": { "application/json": { "schema": {
-          "allOf": [
-            { "$ref": "#/components/schemas/Envelope" },
-            { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/LoginSettings" } } }
-          ]
-        } } }
-      },
       "Ok": {
         "description": "成功",
         "content": {
@@ -2206,27 +2130,6 @@
       }
     },
     "schemas": {
-      "LoginSettings": {
-        "type": "object",
-        "required": ["activeMode", "savedMode", "pendingRestart", "revision", "updatedAt", "options"],
-        "properties": {
-          "activeMode": { "type": "string", "enum": ["local", "oidc"] },
-          "savedMode": { "enum": ["local", "oidc", null] },
-          "pendingRestart": { "type": "boolean" },
-          "revision": { "type": "integer", "minimum": 0 },
-          "updatedAt": { "type": ["string", "null"], "format": "date-time" },
-          "options": {
-            "type": "array", "items": {
-              "type": "object", "required": ["mode", "available", "issues"],
-              "properties": {
-                "mode": { "type": "string", "enum": ["local", "oidc"] },
-                "available": { "type": "boolean", "description": "本地配置及目标管理员条件具备；不表示上游可达性验收" },
-                "issues": { "type": "array", "items": { "type": "string" } }
-              }
-            }
-          }
-        }
-      },
       "AgentRoutineSchedule": { "oneOf": [
         { "type": "object", "required": ["kind", "timezone"], "properties": { "kind": { "const": "manual" }, "timezone": { "type": "string" } } },
         { "type": "object", "required": ["kind", "timezone", "timeOfDay"], "properties": { "kind": { "enum": ["daily", "weekly"] }, "timezone": { "type": "string" }, "timeOfDay": { "type": "string" }, "weekdays": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 6 } } } },

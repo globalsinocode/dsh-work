@@ -45,7 +45,7 @@ node_supported=$("${node_bin}" -p "const [major,minor]=process.versions.node.spl
 [[ "${NODE_ENV:-}" == production ]] || fail "NODE_ENV must be production"
 [[ -z "${DSH_RUNTIME_COMPATIBILITY:-}" ]] \
   || fail "DSH_RUNTIME_COMPATIBILITY is development-only and must be unset in production"
-[[ "${DSH_WORK_AUTH_MODE:-}" == oidc || "${DSH_WORK_AUTH_MODE:-}" == local ]] || fail "DSH_WORK_AUTH_MODE must be local or oidc"
+[[ "${DSH_WORK_AUTH_MODE:-}" != prototype ]] || fail "prototype authentication is forbidden in production"
 [[ "${DSH_WORK_COOKIE_SECURE:-}" == true ]] || fail "secure cookies are mandatory"
 [[ "${DSH_WORK_SERVER_HOST:-}" == 127.0.0.1 ]] || fail "the native server must bind only to 127.0.0.1"
 
@@ -53,7 +53,6 @@ for required_path in \
   "${release_dir}/release.json" \
   "${release_dir}/server/dist/main.js" \
   "${release_dir}/server/dist/modules/identity/config.js" \
-  "${release_dir}/server/dist/modules/identity/login-settings-service.js" \
   "${release_dir}/server/dist/modules/runtime/dsh-runtime-installation.js" \
   "${release_dir}/server/dist/infrastructure/postgres/migrate.js" \
   "${release_dir}/server/migrations" \
@@ -70,16 +69,10 @@ done
 
 if ! (
   cd "${release_dir}"
-  identity_database_mode=fresh
-  [[ ! -e "${deploy_root}/current" ]] || identity_database_mode=existing
-  "${node_bin}" --input-type=module - "${identity_database_mode}" <<'JS'
-import { createDatabase } from './server/dist/infrastructure/postgres/database.js'
-import { loadStartupIdentityConfiguration } from './server/dist/modules/identity/login-settings-service.js'
-const database = process.argv[2] === 'existing'
-  ? createDatabase({ url: process.env.DSH_WORK_DATABASE_URL, maxConnections: 1 })
-  : null
-try { await loadStartupIdentityConfiguration(database) }
-finally { if (database) await database.end() }
+  "${node_bin}" --input-type=module <<'JS'
+import { loadStartupIdentityConfiguration } from './server/dist/modules/identity/config.js'
+const configuration = loadStartupIdentityConfiguration()
+if (configuration.aiHubConfigurationIssue) console.warn(`AI Hub 登录未启用：${configuration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
 JS
 ); then
   fail "Production identity configuration is invalid"

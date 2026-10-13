@@ -25,7 +25,6 @@ const router = createRouter({
     { path: '/admin/model-governance', redirect: '/model-governance' },
     { path: '/admin/permissions', redirect: '/permissions' },
     { path: '/admin/identity', redirect: '/identity' },
-    { path: '/admin/login-settings', redirect: '/login-settings' },
     { path: '/admin/audit', redirect: '/audit' },
     { path: '/admin/health', redirect: '/health' },
     { path: '/admin/approvals', redirect: '/approvals' },
@@ -148,17 +147,6 @@ const router = createRouter({
       component: () => import('@/views/IdentityAccessView.vue'),
       meta: {
         title: '员工与权限',
-        requiresAdmin: true,
-        requiredPermission: 'adminRead',
-        requiresManagedIdentity: true,
-      },
-    },
-    {
-      path: '/login-settings',
-      name: 'login-settings',
-      component: () => import('@/views/LoginSettingsView.vue'),
-      meta: {
-        title: '登录设置',
         requiresAdmin: true,
         requiredPermission: 'adminRead',
         requiresManagedIdentity: true,

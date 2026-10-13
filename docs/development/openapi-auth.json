@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "dsh-work 独立登录 API",
+    "title": "dsh-work 登录 API",
     "version": "1.0.0",
-    "description": "DSH_WORK_AUTH_MODE=local。无自助注册、公开 Bootstrap 或 AI Hub 依赖；生产要求 HTTPS。"
+    "description": "正式部署始终提供账号密码；AI Hub 配置有效时自动提供显式入口，无登录模式选择。无自助注册或公开独立账号 Bootstrap；生产要求 HTTPS。"
   },
   "servers": [
     {
@@ -37,7 +37,9 @@
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "mode"
+                    "mode",
+                    "localEnabled",
+                    "aiHubEnabled"
                   ],
                   "properties": {
                     "mode": {
@@ -47,6 +49,14 @@
                         "oidc",
                         "prototype"
                       ]
+                    },
+                    "localEnabled": {
+                      "type": "boolean",
+                      "description": "是否提供账号密码登录"
+                    },
+                    "aiHubEnabled": {
+                      "type": "boolean",
+                      "description": "是否允许用户主动选择 AI Hub 登录"
                     }
                   }
                 }
@@ -90,7 +100,7 @@
       },
       "post": {
         "operationId": "loginWithPassword",
-        "summary": "仅 local 模式；成功后设置 Session Cookie，初始密码进入改密页",
+        "summary": "正式部署始终提供；成功后设置独立 Session Cookie，初始密码进入改密页",
         "parameters": [
           {
             "name": "Origin",
@@ -154,7 +164,8 @@
                   "username": {
                     "type": "string",
                     "minLength": 3,
-                    "maxLength": 80
+                    "maxLength": 254,
+                    "description": "手机号或邮箱；兼容既有用户名登录"
                   },
                   "password": {
                     "type": "string",
@@ -189,7 +200,7 @@
       ],
       "post": {
         "operationId": "changeLocalPassword",
-        "summary": "验证当前 Session 与密码；修改密码并撤销所有旧会话",
+        "summary": "验证当前 Session 与密码；原子修改密码、撤销旧会话并签发当前门户的新会话",
         "parameters": [
           {
             "name": "Origin",
@@ -203,7 +214,7 @@
         ],
         "responses": {
           "200": {
-            "description": "操作成功；登录和退出通过 Set-Cookie 管理 HttpOnly Session",
+            "description": "改密成功；Set-Cookie 设置新的 HttpOnly Session，location 为原同源访问地址，无需再次登录",
             "content": {
               "application/json": {
                 "schema": {
@@ -259,8 +270,8 @@
                     "type": "string",
                     "format": "password",
                     "writeOnly": true,
-                    "minLength": 15,
-                    "maxLength": 128
+                    "minLength": 8,
+                    "maxLength": 12
                   },
                   "returnTo": {
                     "type": "string"
@@ -369,6 +380,43 @@
         "responses": {
           "302": {
             "description": "转到本地登录页；新登录成功后使用新身份"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/oidc/login": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "startAiHubLogin",
+        "summary": "仅启用 AI Hub 时提供；用户主动选择后进入企业授权页面",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "转到 AI Hub；上游暂不可用时返回本地登录页并保留安全的 return_to"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
           }
         }
       }

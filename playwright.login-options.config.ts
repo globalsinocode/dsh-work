@@ -16,8 +16,8 @@ const environment = {
 }
 
 export default defineConfig({
-  outputDir: 'test-results/login-mode',
-  testDir: './e2e', testMatch: 'login-mode.integration.spec.ts',
+  outputDir: 'test-results/login-options',
+  testDir: './e2e', testMatch: 'login-options.integration.spec.ts',
   workers: 1, fullyParallel: false, retries: 0, reporter: 'list',
   use: {
     ...devices['Desktop Chrome'], baseURL: `http://localhost:${adminPort}`,
@@ -25,7 +25,7 @@ export default defineConfig({
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {},
   },
   webServer: [
-    { command: 'node --env-file-if-exists=.env --experimental-strip-types scripts/testing/local-auth-browser.ts --login-settings', url: `http://127.0.0.1:${serverPort}/health`, env: environment, reuseExistingServer: false, timeout: 60_000, gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 } },
+    { command: 'node --env-file-if-exists=.env --experimental-strip-types scripts/testing/local-auth-browser.ts --ai-hub', url: `http://127.0.0.1:${serverPort}/health`, env: environment, reuseExistingServer: false, timeout: 60_000, gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 } },
     { command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1', cwd: 'apps/admin-web', url: `http://localhost:${adminPort}/login`, env: environment, reuseExistingServer: false },
     { command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1', cwd: 'apps/workbench-web', url: `http://localhost:${workbenchPort}/login`, env: environment, reuseExistingServer: false },
   ],

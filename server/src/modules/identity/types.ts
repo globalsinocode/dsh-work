@@ -63,6 +63,8 @@ export interface LocalAudienceConfiguration {
 
 export interface LocalIdentityConfiguration {
   mode: 'local'
+  /** Optional provider rejected during startup; never exposed on the public login API. */
+  aiHubConfigurationIssue?: string
   sessionSecret: string
   sessionTtlSeconds: number
   cookieSecure: boolean

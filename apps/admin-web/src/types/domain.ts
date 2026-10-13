@@ -93,19 +93,11 @@ export interface AgentPrincipalRoleOption {
   status: 'active' | 'disabled'
 }
 
-export interface LoginSettings {
-  activeMode: 'local' | 'oidc' | 'prototype'
-  savedMode: 'local' | 'oidc' | null
-  pendingRestart: boolean
-  revision: number
-  updatedAt: string | null
-  options: Array<{ mode: 'local' | 'oidc'; available: boolean; issues: string[] }>
-}
-
 export interface IdentityUserSummary {
   id: string
   externalUserId: string | null
   username?: string | null
+  loginAccount: string | null
   name: string
   email: string | null
   department: string

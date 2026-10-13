@@ -33,7 +33,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；独立账号按 [独立登录指南](../release/local-authentication.md) 切换 `local`，或按 [AI Hub 身份指南](../release/ai-hub-sso-integration.md) 切换 `oidc`。两种真实认证模式都需要数据库，并提供身份管理路由。
+4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；正式认证移除该变量，按 [独立登录指南](../release/local-authentication.md) 初始化账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。正式认证需要数据库。
 5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
@@ -58,7 +58,7 @@ DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_WORKBENCH_PORT=42
 | 类型、UI 与代码规范 | `pnpm typecheck`、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
 | Runtime 与模型治理 | `pnpm test:m1`、`pnpm test:m2` |
-| 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录模式配置运行 `pnpm test:e2e:login-mode` |
+| 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录能力与账号来源运行 `pnpm test:e2e:login-options` |
 | 权限与安全 | `pnpm test:m5:security`、`pnpm test:m5:security:integration` |
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |

@@ -135,10 +135,10 @@ jobs:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:local-auth
 
-      - name: Run login mode configuration P1 browser journeys
+      - name: Run login options and independent accounts P1 browser journeys
         env:
           DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:e2e:login-mode
+        run: pnpm test:e2e:login-options
 
       - name: Run personal workbench P1 browser journeys
         env:

@@ -1,5 +1,5 @@
 // P1 fixture: real application and password authentication, disposable database,
-// synthetic accounts, no AI Hub, model or DSH process.
+// synthetic accounts, optional unreachable AI Hub configuration, no real provider or DSH process.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -27,11 +27,11 @@ const environment: NodeJS.ProcessEnv = {
   DSH_WORK_COOKIE_SECURE: 'false',
   DSH_RUNTIME_HOME: join(dataRoot, 'runtime-unavailable'),
 }
-const loginSettingsFixture = process.argv.includes('--login-settings')
-if (loginSettingsFixture) Object.assign(environment, {
+const aiHubFixture = process.argv.includes('--ai-hub')
+if (aiHubFixture) Object.assign(environment, {
   AI_HUB_PLATFORM_URL: 'http://localhost:9', AI_HUB_OIDC_ISSUER: 'http://localhost:9/fixture',
-  AI_HUB_APPLICATION_ID: 'login-settings-fixture', AI_HUB_CLIENT_ID: 'login-settings-fixture',
-  AI_HUB_CLIENT_SECRET: 'login-settings-fixture-only-not-a-real-secret',
+  AI_HUB_APPLICATION_ID: 'login-options-fixture', AI_HUB_CLIENT_ID: 'login-options-fixture',
+  AI_HUB_CLIENT_SECRET: 'login-options-fixture-only-not-a-real-secret',
   DSH_WORK_ADMIN_PORT: process.env.DSH_WORK_LOCAL_AUTH_ADMIN_PORT ?? '4680',
   DSH_WORK_WORKBENCH_PORT: process.env.DSH_WORK_LOCAL_AUTH_WORKBENCH_PORT ?? '4674',
 })
@@ -55,14 +55,14 @@ try {
   if (configuration.mode !== 'local') throw new Error('Local browser fixture configuration mismatch')
   const authentication = new LocalAuthService(configuration, database.client)
   const admin = await authentication.bootstrap({
-    username: 'browser.admin', name: '独立登录验收管理员', password: 'browser-only admin passphrase',
+    username: 'browser.admin@example.invalid', name: '独立登录验收管理员', password: 'AdminPass123',
   })
-  if (loginSettingsFixture) {
+  if (aiHubFixture) {
     const directory = new IdentitySessionRepository(database.client)
     const administration = new IdentityAdministrationService(database.client, true)
-    const upstream = await directory.synchronizeIdentity({ externalUserId: 'fixture-upstream-admin', subject: 'fixture-upstream-subject', displayName: '配置验收上游管理员', email: null, organizationName: '合成数据', businessUser: true, status: 'ACTIVE' })
+    const upstream = await directory.synchronizeIdentity({ externalUserId: 'fixture-upstream-admin', subject: 'hub.employee@example.invalid', displayName: '配置验收上游管理员', email: 'profile.employee@example.invalid', organizationName: '合成数据', businessUser: true, status: 'ACTIVE', updatedAt: '2026-10-12T06:00:00Z' })
     await administration.grantRole({ userId: upstream.userId, roleId: 'role-platform-admin', actorId: admin.userId })
-    const reader = await authentication.createAccount({ username: 'browser.reader', name: '配置验收只读管理员', password: 'browser-only reader passphrase' }, admin.userId)
+    const reader = await authentication.createAccount({ username: 'browser.reader@example.invalid', name: '配置验收只读管理员', password: 'Reader123456' }, admin.userId)
     await administration.grantRole({ userId: reader.userId, roleId: 'role-auditor', actorId: admin.userId })
     await database.client`update local_user_credentials set must_change_password = false where user_id = ${reader.userId}`
   }
