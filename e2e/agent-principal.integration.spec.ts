@@ -27,7 +27,7 @@ test('AE-02 administrator governs an independent Agent executor without changing
   const evidence = async () => {
     const response = await page.request.get(`/api/admin/v1/test/agent-principal/evidence?agent_version_id=${versionId}`)
     expect(response.ok()).toBeTruthy()
-    return (await response.json()).data as { allowed: boolean; executorPrincipalId?: string }
+    return (await response.json()).data as { allowed: boolean; executorPrincipalId?: string; dataScopes?: string[] }
   }
   expect(await evidence()).toMatchObject({ allowed: true, executorPrincipalId: `principal-agent-${agentId}` })
 
@@ -49,10 +49,13 @@ test('AE-02 administrator governs an independent Agent executor without changing
       roleIds: current.roleIds, dataScopes: [] },
   })
   expect(revoked.ok(), await revoked.text()).toBeTruthy()
-  // This existing version needs a scoped platform tool, so revoking its scope
-  // still denies execution; a Soul-only Agent is covered by the creation case.
-  await expect.poll(async () => (await evidence()).allowed).toBe(false)
+  // The default read tool is confined to the Run workspace. Revoking business
+  // scopes does not disable it, and the authorization decision cannot restore them.
+  await expect.poll(evidence).toMatchObject({
+    allowed: true, executorPrincipalId: `principal-agent-${agentId}`, dataScopes: [],
+  })
   const latest = (await revoked.json()).data as Principal
+  expect(latest.dataScopes).toEqual([])
   const stale = await page.request.patch(`/api/admin/v1/agents/${agentId}/principal`, {
     data: { expectedAuthorizationVersion: current.authorizationVersion, status: 'active',
       roleIds: current.roleIds, dataScopes: current.dataScopes },

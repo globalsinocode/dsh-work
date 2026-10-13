@@ -194,7 +194,7 @@
 **spec：** `e2e/agent-principal.integration.spec.ts`
 
 1. 管理员在 Agent 详情中查看独立执行身份、角色和数据范围，停用该身份后员工无法创建新的执行。
-2. 管理员恢复身份并撤销一项数据授权，员工执行请求不再取得该范围；旧修订的并发更新返回冲突。
+2. 管理员恢复身份并撤销业务数据授权，员工执行请求不再取得该范围；默认隔离文件工具可继续运行，授权结果中的数据范围必须为空。管理员收紧工具策略时仍按实际所需范围拒绝未授权执行（后端授权回归覆盖）；旧修订的并发更新返回冲突。
 3. PostgreSQL/Runtime 层分别验证默认无授权、固定 Attempt 在领取和工具调用边界收权，以及发起人、执行者和动作批准人归因。
 4. 管理员从配置表单创建基础 Agent 时无需填写员工可见角色、业务执行角色或平台数据范围；草稿成功创建独立 Principal，授权为空。发布工作台选择员工可见角色后，基础试运行可执行；选择业务工具时须先在 Agent 详情显式授予所需角色和平台数据范围。
 5. Prototype＋PostgreSQL 下角色选项来自 Agent 治理只读接口；角色列表临时失败时仍能查看 Principal 并停用身份，页面显示角色新增暂不可用。
@@ -732,7 +732,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **spec：** `e2e/admin-mcp-connector.integration.spec.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`server/src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts`
 
-1. 在“MCP 连接器”页面填写名称与 Streamable HTTP 地址；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，连接器与当前 Tool 清单立即生效。
+1. 在“MCP 连接器”页面填写名称与 Streamable HTTP 地址，登记“上游权限说明”（说明凭据和上游服务的访问边界，不执行数据过滤）；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，连接器与当前 Tool 清单立即生效。
 2. 列表保持与 Skill 管理一致的工具栏、表格和分页结构，不增加统计卡片；列按“名称、Endpoint、认证方式、工具数量、状态、更新时间、添加时间、添加人员、操作”排列。“工具数量”可打开 Tool 名称、描述和输入 Schema 清单；操作列直接提供查看、检查，其余凭据轮换、停用或启用、删除收进“更多”；页面不出现 Agent 权限或整体审核入口。
 3. 登记成功后无需授权操作，已发布 Agent 的新 Attempt 自动解析该 Connector；确认数据库没有 Agent→Connector Grant 表，也没有在平台 Tool 列表生成 MCP Tool。详情明确显示“适用 Agent：全部 Agent”。
 4. 合成发现 Runtime 新增一个 Tool 后重新检查；确认新清单与摘要自动生效，连接器保持健康，全部 Agent 的新 Attempt 使用最新摘要，详情显示每个 Tool 的名称、描述和输入 Schema。

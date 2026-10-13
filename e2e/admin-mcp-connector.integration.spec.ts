@@ -22,7 +22,7 @@ test('PF-MCP-01: Connector registration and capability changes take effect autom
   await createDialog.getByLabel('Streamable HTTP 地址').fill('https://mcp.example.test/rpc')
   await createDialog.locator('.el-radio').filter({ hasText: 'Bearer Token' }).click()
   await createDialog.getByLabel('Bearer Token', { exact: true }).last().fill(initialToken)
-  await createDialog.getByLabel('整体权限范围').fill('P1 合成客户主数据，只读范围')
+  await createDialog.getByLabel('上游权限说明').fill('P1 合成客户主数据，只读范围')
   const addMcpButton = createDialog.getByRole('button', { name: '添加 MCP', exact: true })
   await expect(addMcpButton).toBeDisabled()
   await createDialog.getByRole('button', { name: '测试连接', exact: true }).click()
