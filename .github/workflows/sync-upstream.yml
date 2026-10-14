@@ -1,8 +1,17 @@
 name: Sync upstream
 
+# 上游吸收策略：手动、受控。
+# 原先的定时触发（每 6 小时）已移除 —— 本仓库 main 承载组织自身的提交，
+# 定时合并会把上游提交在没有评审的情况下带入 main，并与"仓库为真源"的发布链路冲突。
+#
+# 手动吸收上游的推荐做法（可评审、留痕）：
+#   git remote add upstream https://github.com/tonycc/dsh-work.git
+#   git fetch upstream && git merge upstream/main
+#   # 解决冲突后推送分支，开 PR 评审合并
+#
+# 本工作流的 workflow_dispatch 是直接的合并通道（gh repo sync 具备合并语义，
+# 不止 fast-forward），不产生评审记录，仅在确知无冲突时使用。
 on:
-  schedule:
-    - cron: "0 */6 * * *" # 每 6 小时，UTC
   workflow_dispatch:
 
 jobs:
