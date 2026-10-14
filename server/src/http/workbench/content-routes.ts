@@ -34,12 +34,12 @@ function parseWorkspaceStatus(raw: string | null): 'active' | 'archived' | 'all'
 export function registerContentRoutes(
   router: Router,
   content: PostgresContentService,
-  authorization?: PostgresAuthorizationService,
+  authorization: PostgresAuthorizationService,
   agentMembers?: PostgresWorkspaceAgentMemberService,
 ) {
   router.get(`${basePath}/content-policy`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     return envelope('workbench', personalContentPolicy, 'postgres')
   })
   router.get(`${basePath}/files`, async (_request, context) => {
@@ -59,7 +59,7 @@ export function registerContentRoutes(
     await content.removePersonalFile(context.params['fileId'] ?? '', requireRequestIdentity(context, 'workbench').userId), 'postgres'))
   router.post(`${basePath}/files`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     const header = request.headers['x-file-name']
     const name = Array.isArray(header) ? header[0] : header
     if (!name) throw routeValidationFailed('缺少文件名')
@@ -71,7 +71,7 @@ export function registerContentRoutes(
   router.get(`${basePath}/workspaces`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const status = parseWorkspaceStatus(context.url.searchParams.get('status'))
     return envelope('workbench', await content.listWorkspaces(userId, { status }), 'postgres')
   })
@@ -79,7 +79,7 @@ export function registerContentRoutes(
   router.post(`${basePath}/workspaces`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    const access = await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const access = await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const body = await readJsonBody<{ name: string; description?: string }>(request)
     if (body.name.trim().length < 2) throw new Error('工作空间名称至少需要 2 个字符')
     const workspace = await content.createWorkspace({
@@ -137,14 +137,14 @@ export function registerContentRoutes(
   router.get(`${basePath}/artifacts`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     return envelope('workbench', await content.listArtifacts(userId), 'postgres')
   })
 
   router.post(`${basePath}/workspaces/:workspaceId/files`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId: context.params['workspaceId'],
       ...sessionAuthorizationContext(identity),
@@ -170,7 +170,7 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId,
       ...sessionAuthorizationContext(identity),
@@ -192,7 +192,7 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId,
       ...sessionAuthorizationContext(identity),
@@ -209,7 +209,7 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId,
       ...sessionAuthorizationContext(identity),
@@ -231,7 +231,7 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId,
       ...sessionAuthorizationContext(identity),
@@ -260,7 +260,7 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({
+    await authorization.authorizeWorkbench({
       userId,
       workspaceId,
       ...sessionAuthorizationContext(identity),
@@ -281,7 +281,7 @@ export function registerContentRoutes(
   router.post(`${basePath}/sessions/:sessionId/files`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const fileNameHeader = request.headers['x-file-name']
     const encodedName = Array.isArray(fileNameHeader) ? fileNameHeader[0] : fileNameHeader
     if (!encodedName) throw new Error('缺少文件名')
@@ -301,7 +301,7 @@ export function registerContentRoutes(
   // 会话文件；已引用对象必须保留，避免破坏执行/审计历史。
   router.delete(`${basePath}/sessions/:sessionId/files/:fileId`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     return envelope(
       'workbench',
       await content.discardSessionFile(
@@ -316,7 +316,7 @@ export function registerContentRoutes(
   router.get(`${basePath}/files/:fileId/download`, async (_request, context, response) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const file = await content.readFile(context.params['fileId'] ?? '', userId)
     writeDownload(response, file.name, file.mimeType, file.bytes)
   })
@@ -324,7 +324,7 @@ export function registerContentRoutes(
   router.get(`${basePath}/artifacts/:artifactId/download`, async (_request, context, response) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const fileId = await content.artifactFileId(context.params['artifactId'] ?? '', undefined, userId)
     const file = await content.readFile(fileId, userId)
     writeDownload(response, file.name, file.mimeType, file.bytes)
@@ -333,7 +333,7 @@ export function registerContentRoutes(
   router.get(`${basePath}/artifacts/:artifactId/versions/:versionId/download`, async (_request, context, response) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const version = Number(context.params['versionId'])
     if (!Number.isInteger(version) || version < 1) throw new Error('Artifact 版本号无效')
     const fileId = await content.artifactFileId(context.params['artifactId'] ?? '', version, userId)

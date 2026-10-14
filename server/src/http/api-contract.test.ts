@@ -3,14 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { after, before, test } from 'node:test'
 
-import { PrototypeRepository } from '../infrastructure/prototype/prototype-repository.ts'
-import { AdminQueryService } from '../modules/admin/application/admin-query-service.ts'
-import { WorkbenchQueryService } from '../modules/workbench/application/workbench-query-service.ts'
-import { registerAdminRoutes } from './admin/routes.ts'
-import { Router } from './router.ts'
-import { registerWorkbenchRoutes } from './workbench/routes.ts'
-import { registerUnavailableWorkbenchCommandRoutes } from './workbench/unavailable-routes.ts'
-import { prototypeApiAuthenticator } from '../modules/identity/prototype-authenticator.ts'
+import { createSmokeRouter } from '../testing/p0-smoke/smoke-router.ts'
 
 let server: Server
 let baseUrl = ''
@@ -173,11 +166,7 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
 })
 
 before(async () => {
-  const repository = new PrototypeRepository()
-  const router = new Router({ authenticateApi: prototypeApiAuthenticator })
-  registerUnavailableWorkbenchCommandRoutes(router)
-  registerWorkbenchRoutes(router, new WorkbenchQueryService(repository))
-  registerAdminRoutes(router, new AdminQueryService(repository))
+  const router = createSmokeRouter()
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

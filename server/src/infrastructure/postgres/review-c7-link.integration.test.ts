@@ -17,7 +17,7 @@ import type { RunOrchestrationService } from '../../modules/run/run-orchestratio
 import { UnavailableRuntime, ExecutionCapabilityUnavailableError } from '../../modules/runtime/execution-capabilities.ts'
 import type { SkillSource } from '../../modules/skill/skill-source.ts'
 import { Router } from '../../http/router.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { registerSkillInstallationRoutes } from '../../http/admin/skill-installation-routes.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
@@ -83,7 +83,7 @@ test('C7 RED: missing Python capability defers execution, but never pretends the
 })
 
 test('C7 RED: HTTP link endpoint returns an authenticated deterministic installation, not an assistant run', async () => {
-  const router = new Router({ authenticateApi: prototypeApiAuthenticator })
+  const router = new Router({ authenticateApi: testApiAuthenticator })
   registerSkillInstallationRoutes(router, service())
   const server = createServer((request, response) => void router.handle(request, response))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -225,7 +225,7 @@ test('publication closure checks link-origin dependencies even when the root cam
 
 test('confirmed source metadata cannot be forged through HTTP and read-only callers cannot acquire or confirm', async () => {
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     return request.headers['x-test-reader'] ? { ...identity, userId: 'U00001', permissions: ['admin:read'] } : identity
   } })
   registerSkillInstallationRoutes(router, service())

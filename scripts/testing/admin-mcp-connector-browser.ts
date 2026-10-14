@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
-import { prototypeApiAuthenticator } from '../../server/src/modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
 import { PostgresAgentReleaseService } from '../../server/src/modules/agent/postgres-agent-release-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
@@ -72,7 +72,7 @@ const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, 
 })
 const connectorService = new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets)
 const agents = new PostgresAgentService(database.client, undefined, undefined, connectorService)
-const router = new Router({ authenticateApi: prototypeApiAuthenticator })
+const router = new Router({ authenticateApi: testApiAuthenticator })
 const base = '/api/admin/v1'
 
 router.get(`${base}/session`, (_request, context) => {

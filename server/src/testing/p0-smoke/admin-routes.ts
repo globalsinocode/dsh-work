@@ -1,6 +1,6 @@
 import type { PublishStatus, SkillDefinition, SkillReleaseRecord, SkillVersionRecord } from '../../domain/types.ts'
-import type { AdminQueryService } from '../../modules/admin/application/admin-query-service.ts'
-import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import type { AdminQueryService } from './admin-query-service.ts'
+import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../../http/router.ts'
 
 const basePath = '/api/admin/v1'
 

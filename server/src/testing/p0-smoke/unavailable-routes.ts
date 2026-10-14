@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { envelope, httpResult, type Router } from '../router.ts'
+import { envelope, httpResult, type Router } from '../../http/router.ts'
 
 const basePath = '/api/workbench/v1'
 

@@ -32,7 +32,7 @@ function loadConfig(ports = {}) {
   return JSON.parse(result.stdout)
 }
 
-test('default P0 servers isolate inherited production database, identity and API settings', () => {
+test('default P0 suite uses the test-only smoke server and isolates inherited API settings', () => {
   const config = loadConfig()
   assert.equal(config.baseURL, 'http://localhost:4274')
   assert.deepEqual(config.workerPorts, ['4274', '4280', '4290'])
@@ -41,12 +41,12 @@ test('default P0 servers isolate inherited production database, identity and API
     'http://localhost:4274/workbench',
     'http://localhost:4280/overview',
   ])
+  // The application server has no in-memory mode; P0 never starts it.
+  assert.equal(config.webServer[0].command, 'node --experimental-strip-types scripts/testing/p0-smoke-server.ts')
+  assert.ok(config.webServer.every(server => !server.command.includes('dev:server')))
   for (const server of config.webServer) {
     assert.equal(server.reuseExistingServer, false)
     assert.equal(server.env.NODE_ENV, 'development')
-    assert.equal(server.env.DSH_WORK_AUTH_MODE, 'prototype')
-    assert.equal(server.env.DSH_WORK_DATABASE_URL, '')
-    assert.equal(server.env.DSH_WORK_SERVER_HOST, '127.0.0.1')
     assert.equal(server.env.VITE_ADMIN_API_BASE_URL, '/api/admin/v1')
     assert.equal(server.env.VITE_WORKBENCH_API_BASE_URL, '/api/workbench/v1')
   }
@@ -74,6 +74,5 @@ test('custom P0 ports stay consistent across readiness checks, proxies, links an
     assert.equal(server.env.VITE_WORKBENCH_URL, 'http://localhost:5274')
     assert.equal(server.env.VITE_ADMIN_URL, 'http://localhost:5280')
     assert.equal(server.reuseExistingServer, false)
-    assert.equal(server.env.DSH_WORK_DATABASE_URL, '')
   }
 })

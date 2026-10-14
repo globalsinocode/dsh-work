@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { Router } from '../../http/router.ts'
 import { registerAssistantRoutes } from '../../http/admin/assistant-routes.ts'
 import { registerSkillInstallationRoutes } from '../../http/admin/skill-installation-routes.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -520,7 +520,7 @@ test('admin HTTP routes allow read-only chat but protect management writes and c
   const saved = await send(); await wait(saved.sessionId)
   let userId = actor
   let permissions = ['admin:read']
-  const router = new Router({ authenticateApi: async (request, audience) => ({ ...(await prototypeApiAuthenticator(request, audience)), userId, permissions }) })
+  const router = new Router({ authenticateApi: async (request, audience) => ({ ...(await testApiAuthenticator(request, audience)), userId, permissions }) })
   registerAssistantRoutes(router, assistant)
   registerSkillInstallationRoutes(router, service)
   const server = createServer((request, response) => { void router.handle(request, response) })

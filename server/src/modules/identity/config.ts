@@ -19,9 +19,9 @@ const defaultScopes = [
 /** Password authentication is always available. Legacy local/oidc values no longer select a provider. */
 export function loadStartupIdentityConfiguration(environment: NodeJS.ProcessEnv = process.env): IdentityConfiguration {
   const legacyMode = environment.DSH_WORK_AUTH_MODE
-  if (legacyMode === 'prototype') return loadIdentityConfiguration(environment)
+  if (legacyMode === 'prototype') throw new Error('原型模式已移除：请删除 DSH_WORK_AUTH_MODE=prototype 并配置 PostgreSQL，使用账号密码或 AI Hub 登录')
   if (legacyMode && legacyMode !== 'local' && legacyMode !== 'oidc') {
-    throw new Error('DSH_WORK_AUTH_MODE 仅用于显式开发原型；旧 local/oidc 值仅兼容，不再切换登录方式')
+    throw new Error('DSH_WORK_AUTH_MODE 无需设置；旧 local/oidc 值仅兼容，不再切换登录方式')
   }
   const localEnvironment = {
     ...environment,
@@ -60,14 +60,11 @@ export function loadIdentityConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ): IdentityConfiguration {
   const production = environment.NODE_ENV === 'production'
-  const mode = environment.DSH_WORK_AUTH_MODE ?? (production ? 'oidc' : 'prototype')
-  if (mode !== 'prototype' && mode !== 'oidc' && mode !== 'local') {
-    throw new Error('DSH_WORK_AUTH_MODE 必须是 prototype、oidc 或 local')
+  const mode = environment.DSH_WORK_AUTH_MODE ?? 'oidc'
+  if (mode === 'prototype') throw new Error('原型模式已移除：请删除 DSH_WORK_AUTH_MODE=prototype 并配置 PostgreSQL，使用账号密码或 AI Hub 登录')
+  if (mode !== 'oidc' && mode !== 'local') {
+    throw new Error('DSH_WORK_AUTH_MODE 必须是 oidc 或 local')
   }
-  if (production && mode === 'prototype') {
-    throw new Error('生产环境必须启用 local 或 oidc 认证，禁止回退到 Prototype 身份')
-  }
-  if (mode === 'prototype') return { mode }
 
   const sessionSecret = required(environment, 'DSH_WORK_SESSION_SECRET')
   if (sessionSecret.length < 32) throw new Error('DSH_WORK_SESSION_SECRET 至少需要 32 个字符')

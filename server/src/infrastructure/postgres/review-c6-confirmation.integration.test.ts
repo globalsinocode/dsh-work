@@ -16,7 +16,7 @@ import type { RunOrchestrationService } from '../../modules/run/run-orchestratio
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
 import { canonicalJson, sha256 } from '../../modules/runtime/canonical-json.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { Router } from '../../http/router.ts'
 import { registerAssistantRoutes } from '../../http/admin/assistant-routes.ts'
 
@@ -187,7 +187,7 @@ test('cancelled plans, stale state, digest tampering, new attempts and other use
 test('HTTP confirmation checks role and owner; double clicks do not duplicate the draft write', async () => {
   const agent = await draft(), manifest = await seedRun('admin-assistant')
   const plan = await prepare(manifest, agent.id, { name: 'HTTP 一次确认' }); await finish(manifest)
-  const router = new Router({ authenticateApi: prototypeApiAuthenticator })
+  const router = new Router({ authenticateApi: testApiAuthenticator })
   registerAssistantRoutes(router, service)
   const server = createServer((req, res) => void router.handle(req, res)); server.listen(0, '127.0.0.1'); await once(server, 'listening')
   try {

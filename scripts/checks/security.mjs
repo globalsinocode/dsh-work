@@ -10,9 +10,11 @@ export function checkSecurity(check) {
     check.assert(!initialMigration.includes(secret), `初始化迁移不得包含明文凭据列 ${secret}`)
   }
   check.includes('server/src/modules/identity/config.ts', [
-    "production && mode === 'prototype'", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
+    "mode === 'prototype') throw", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
     'DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS',
   ])
+  // Test identities and in-memory smoke data must never be reachable from the application entry point.
+  check.assert(!/from '\.\/testing\//.test(check.read('server/src/main.ts')), 'server/src/main.ts 不得引用 server/src/testing 下的测试身份或冒烟数据')
   check.includes('server/src/modules/identity/auth-service.ts', [
     'equalOpaqueHash', 'validateRequestOrigin', 'refreshTokensWithLock', 'resolveAuthorization',
   ])

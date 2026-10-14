@@ -33,10 +33,10 @@ async function simulateIo() {
 }
 
 /**
- * Prototype-only persistence adapter. It deliberately has the same boundary that a
- * PostgreSQL repository will implement later, without pretending data is durable.
+ * In-memory data for the P0 browser smoke server only. Never used by the application:
+ * production always reads PostgreSQL. Edits are lost on restart by design.
  */
-export class PrototypeRepository {
+export class SmokeRepository {
   async read<K extends PrototypeCollection>(collection: K): Promise<PrototypeData[K]> {
     await simulateIo()
     return copy(prototypeData[collection])

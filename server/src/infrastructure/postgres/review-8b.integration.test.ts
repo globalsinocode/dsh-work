@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { Router } from '../../http/router.ts'
 import { registerSkillRoutes } from '../../http/admin/skill-routes.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -163,7 +163,7 @@ test('scenario evidence cannot be written without a concrete Run and Attempt', a
 test('admin trial API forwards immutable scenarios and rejects malformed or unauthorized input', async () => {
   const item = await fixture()
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     return request.headers['x-test-employee'] === 'true' ? { ...identity, userId: 'U00001', permissions: [] } : identity
   } })
   registerSkillRoutes(router, item.skills)

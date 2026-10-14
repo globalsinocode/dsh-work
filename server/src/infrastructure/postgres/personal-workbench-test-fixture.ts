@@ -15,7 +15,7 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import type { AgentRuntimePort } from '../../modules/runtime/runtime-types.ts'
 import { registerWorkbenchAgentRoutes } from '../../http/workbench/agent-routes.ts'
 import { Router, envelope, requireRequestIdentity } from '../../http/router.ts'
@@ -61,7 +61,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     defaultAutomationConfig,
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     const user = request.headers['x-test-user-id']
     return user ? { ...identity, userId: String(user) } : identity
   } })

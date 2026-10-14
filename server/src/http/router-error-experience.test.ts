@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { ModelCapabilityMismatchError } from '../modules/model/model-governance-service.ts'
 import { ExecutionCapabilityUnavailableError } from '../modules/runtime/execution-capabilities.ts'
-import { assertApiRouteAccess, classifyHttpError } from './router.ts'
+import { assertApiRouteAccess, classifyHttpError, readJsonBody } from './router.ts'
 
 test('model capability errors retain stable codes and explain the administrator action', () => {
   for (const error of [new ModelCapabilityMismatchError(['structured-output']), new ExecutionCapabilityUnavailableError('model')]) {
@@ -92,4 +92,14 @@ test('admin writers cannot escalate privileges through identity administration r
     /只有平台管理员/,
   )
   assert.doesNotThrow(() => assertApiRouteAccess(identity, '/api/admin/v1/agents', 'POST'))
+})
+
+test('JSON bodies keep UTF-8 text split across chunks and the limit counts bytes', async () => {
+  const full = Buffer.from(JSON.stringify({ text: '生产计划' }))
+  const cut = full.indexOf(Buffer.from('产')) + 1
+  const split = (async function* () { yield full.subarray(0, cut); yield full.subarray(cut) })()
+  assert.deepEqual(await readJsonBody(split as unknown as Parameters<typeof readJsonBody>[0]), { text: '生产计划' })
+  // 400k three-byte characters stay under 1M UTF-16 units but exceed 1 MB of bytes.
+  const oversized = (async function* () { yield Buffer.from(JSON.stringify({ text: '中'.repeat(400_000) })) })()
+  await assert.rejects(readJsonBody(oversized as unknown as Parameters<typeof readJsonBody>[0]), /1 MB/)
 })

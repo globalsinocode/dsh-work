@@ -3,7 +3,7 @@
 **文档状态：** 当前架构基线<br>
 **更新日期：** 2026-09-08<br>
 **技术形态：** 两个独立 Vue 应用 + 一个 Node.js 模块化单体 + PostgreSQL + 独立 DSH Worker 进程<br>
-**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）或受控原型身份（仅本地演示）
+**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）；测试身份只存在于测试代码中
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
@@ -198,14 +198,7 @@ flowchart LR
 
 目标 MVP 以公司内网 Mac mini 为单节点部署基线：Reverse Proxy 终止 HTTPS，两个前端作为独立静态资源发布，Node.js 模块化单体连接 PostgreSQL，并按活动 Attempt 启动 DSH Worker。每个目标环境都需验证硬件、存储、备份、监控和网络；部署模板不能证明线上状态。
 
-本地开发允许两种模式：
-
-| 模式 | 数据 | 身份 | Runtime | 用途 |
-|---|---|---|---|---|
-| 原型模式 | 进程内数据 | 受控原型身份 | 不启动真实 Run | 页面预览、确定性 E2E |
-| 完整链路 | PostgreSQL | AI Hub OIDC 或受控联调身份 | 固定版本 DSH ACP | 集成、UAT、预生产验证 |
-
-原型模式只能用于开发和演示，不能作为真实企业数据试点的安全基线。
+本地开发与生产使用同一条链路：PostgreSQL、账号登录（独立账号或 AI Hub OIDC）和固定版本 DSH ACP，没有免数据库的内存模式。确定性的 P0 浏览器冒烟由测试专用服务提供内存数据与测试身份（`server/src/testing/`），应用入口不引用这些代码。
 
 ## 6. 核心运行流程
 
@@ -271,7 +264,7 @@ flowchart LR
 
 ## 10. 当前边界与独立开发
 
-- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；开发环境可显式选择 `prototype`，独立账号登录也无需启动 AI Hub。
+- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
 - Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。实现边界见 [管理助手方案](../design/admin-assistant-plan.md)与[对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
 - 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
 - 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。

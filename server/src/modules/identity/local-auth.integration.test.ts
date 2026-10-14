@@ -364,6 +364,22 @@ test('only platform administrators may check account availability', async () => 
   assert.equal((await call('/api/admin/v1/identity/login-account/check', { cookie: session.cookie, body: { username: 'someone@example.invalid' } })).response.status, 403)
 })
 
+test('rate limiting is per account: no shared connection quota and a success clears the failure window', async () => {
+  assert.equal((await login('local.admin@example.invalid', 'admin', 'wrong')).response.status, 401)
+  // Only the account window is recorded; a per-connection key would be one quota for everyone behind the proxy.
+  assert.equal((await database.client`select key_hash from local_auth_rate_limits`).length, 1)
+  await database.client`update local_auth_rate_limits set attempts = 9`
+  assert.equal((await login()).response.status, 200)
+  assert.equal((await database.client`select key_hash from local_auth_rate_limits`).length, 0)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    assert.equal((await login('local.admin@example.invalid', 'admin', 'wrong')).response.status, 401)
+  }
+  assert.equal((await login()).response.status, 429)
+  await employee('rate.other@example.invalid')
+  await database.client`update local_user_credentials set must_change_password = false where username = 'rate.other@example.invalid'`
+  assert.equal((await login('rate.other@example.invalid', 'workbench')).response.status, 200, 'another account is unaffected by a locked account')
+})
+
 test('rate limiting is persisted and failed requests never store password material in audits', async () => {
   await login('local.admin@example.invalid', 'admin', 'wrong')
   await database.client`update local_auth_rate_limits set attempts = 10`

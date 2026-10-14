@@ -8,35 +8,25 @@
 pnpm install --frozen-lockfile
 ```
 
-### 页面与业务原型
+### 浏览器冒烟（P0）
 
-不需要 AI Hub、PostgreSQL 或 DSH。以下变量会覆盖已有 `.env` 中的对应值，避免误连完整运行环境：
-
-```bash
-NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
-```
-
-默认浏览器冒烟自动使用原型身份、内存数据和独立端口（员工端 4274、管理端 4280、后端 4290），覆盖 `.env` 的数据库与身份配置，不需要先启动数据库：
+默认浏览器冒烟由测试专用服务 [`scripts/testing/p0-smoke-server.ts`](../../scripts/testing/p0-smoke-server.ts) 提供接口：内存假数据和测试身份位于 `server/src/testing/`，应用入口 `server/src/main.ts` 不引用它们（`pnpm verify` 的安全检查会拦截）。冒烟使用独立端口（员工端 4274、管理端 4280、后端 4290），不读取 `.env` 的数据库与身份配置，不需要先启动数据库：
 
 ```bash
 pnpm test:e2e
 ```
 
-测试不复用已有服务；测试端口占用时会报错。需要换端口可同时指定 `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT`、`DSH_WORK_SERVER_PORT`，测试会自动同步页面及 API 地址。以下是普通 `pnpm dev:all` 的默认开发入口：
+测试不复用已有服务；测试端口占用时会报错。需要换端口可同时指定 `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT`、`DSH_WORK_SERVER_PORT`，测试会自动同步页面及 API 地址。冒烟服务只监听 `127.0.0.1`，不属于发布产物。
 
-- 员工端：`http://localhost:4174/workbench`
-- 管理端：`http://localhost:4180/overview`
-- 后端：`http://localhost:4190/health`
+### 开发环境
 
-原型模式使用进程内数据和受控测试身份，不提供完整持久化及真实 Run。重启可能丢失编辑结果，不能用于生产。各服务也可分别用 `pnpm dev:server`、`pnpm dev:workbench`、`pnpm dev:admin` 启动。
-
-### 持久化与真实执行
+服务端没有免数据库的内存模式：启动时必须配置 `DSH_WORK_DATABASE_URL`，所有请求都需要登录。旧的 `DSH_WORK_AUTH_MODE=prototype` 已移除，设置后服务会拒绝启动并提示删除。
 
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；正式认证移除该变量，按 [独立登录指南](../release/local-authentication.md) 初始化账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。正式认证需要数据库。
-5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
+4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。
+5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
 
@@ -47,7 +37,7 @@ pnpm test:e2e
 
 不要把生产 `runtime.env` 直接复制到本地，也不要把本地 `.env` 当作生产模板。两者的 DSH 路径、版本锁、认证入口和端口约束都不同。
 
-只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；原型身份不能证明生产权限正确。生产禁止回退到 Prototype。
+只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；冒烟测试身份不能证明生产权限正确。
 
 ## 自动化验证
 
@@ -67,7 +57,7 @@ pnpm test:e2e
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 包、发布与 Runtime 契约测试 |
-| Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入原型冒烟） |
+| Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |
 | Agent 定义、默认工具与 MCP 范围 | `pnpm test:agent-package`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：
@@ -106,7 +96,7 @@ PF-06 受控 Agent 委派使用 `pnpm test:pf06:integration`，在一次性数�
 
 PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-06 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
 
-默认 `pnpm test:e2e` 始终新建上述 P0 原型服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
+默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
 

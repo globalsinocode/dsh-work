@@ -1,6 +1,13 @@
-import type { ApiAuthenticator } from './types.ts'
+import type { ApiAuthenticator } from '../modules/identity/types.ts'
 
-export const prototypeApiAuthenticator: ApiAuthenticator = async (_request, audience) => {
+/**
+ * Test-only identities for integration tests and the P0 browser smoke server.
+ * Never imported by the application entry point: production always authenticates
+ * with password or AI Hub sessions. The users U00001 and U00008 come from the
+ * PostgreSQL seed migrations.
+ */
+
+export const testApiAuthenticator: ApiAuthenticator = async (_request, audience) => {
   if (audience === 'workbench') {
     return {
       audience,

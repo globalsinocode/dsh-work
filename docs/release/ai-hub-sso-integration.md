@@ -71,7 +71,7 @@ http://localhost:4190/auth/admin/callback
 ## 4. dsh-work 环境变量
 
 ```dotenv
-# 移除开发用 DSH_WORK_AUTH_MODE=prototype；不再设置 local/oidc 登录模式
+# 不设置 DSH_WORK_AUTH_MODE（prototype 已移除，local/oidc 仅兼容）
 DSH_WORK_DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>
 
 AI_HUB_PLATFORM_URL=http://platform.localhost:8088

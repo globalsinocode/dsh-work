@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockTasks } from '../server/src/infrastructure/prototype/data.ts'
+import { mockTasks } from '../server/src/testing/p0-smoke/data.ts'
 
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 

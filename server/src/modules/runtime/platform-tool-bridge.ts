@@ -289,11 +289,16 @@ function ajvErrors(errors: null | undefined | Array<{ instancePath?: string; mes
 }
 
 async function readBody(request: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
-  let body = ''
+  // Decode once after collecting bytes so a UTF-8 character split across chunks stays intact.
+  const chunks: Buffer[] = []
+  let size = 0
   for await (const chunk of request) {
-    body += String(chunk)
-    if (Buffer.byteLength(body) > 65536) throw toolInputInvalid('参数超过 64 KB')
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    size += bytes.length
+    if (size > 65536) throw toolInputInvalid('参数超过 64 KB')
+    chunks.push(bytes)
   }
+  const body = Buffer.concat(chunks, size).toString('utf8')
   if (!body) return {}
   let parsed: unknown
   try { parsed = JSON.parse(body) as unknown }

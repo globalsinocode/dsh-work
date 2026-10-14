@@ -29,7 +29,7 @@ export function registerConversationRoutes(
   orchestration: RunOrchestrationService,
   runs: RunRepository,
   agents: PostgresAgentService,
-  authorization?: PostgresAuthorizationService,
+  authorization: PostgresAuthorizationService,
   operations?: PostgresOperationsService,
   skills?: PostgresSkillService,
   agentMembers?: PostgresWorkspaceAgentMemberService,
@@ -37,15 +37,13 @@ export function registerConversationRoutes(
   router.get(`${basePath}/tasks`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const tasks = await conversations.listTasks(userId)
     // 团队空间运行在收权后必须停止交付：列表与详情同样只按发起人过滤，因此这里
     // 逐条复核当前团队读权限，失权空间的条目直接不返回（与 SSE 同一口径）。
     // 同时附带调用者的 currentUserRole（TW-10）：前端按它决定写入口显隐，
     // 若列表不带角色，从工作台打开的团队 Run 会被 fail-closed 误判为只读成员。
-    const visible = authorization
-      ? await attachListRoles(authorization, tasks, userId)
-      : tasks
+    const visible = await attachListRoles(authorization, tasks, userId)
     return envelope('workbench', visible, 'postgres')
   })
 
@@ -57,14 +55,14 @@ export function registerConversationRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     // 读取轨（3-T1）。空间不存在/非团队时的拒绝必须与「非成员」同状态码，否则可用
     // 状态码区分空间是否存在（符合性评审 P1-3：此前抛「仅支持…」被归为 422）。
-    const workspaceType = await authorization?.readableWorkspaceTypeOf(workspaceId)
+    const workspaceType = await authorization.readableWorkspaceTypeOf(workspaceId)
     if (workspaceType !== 'team') {
       throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
     }
-    await authorization?.requireTeamRole(
+    await authorization.requireTeamRole(
       workspaceId,
       userId,
       ['owner', 'admin', 'member', 'viewer'],
@@ -82,7 +80,7 @@ export function registerConversationRoutes(
 
   router.get(`${basePath}/sessions`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     const scope = context.url.searchParams.get('scope') ?? 'personal'
     if (scope !== 'personal' && scope !== 'team' && scope !== 'all') throw routeValidationFailed('scope 必须为 personal、team 或 all')
     return envelope('workbench', await conversations.listSessionsForUser({
@@ -95,7 +93,7 @@ export function registerConversationRoutes(
 
   router.get(`${basePath}/sessions/:sessionId/summary`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    await authorization?.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
     return envelope('workbench', await conversations.getSessionForUser(context.params['sessionId'] ?? '', identity.userId), 'postgres')
   })
 
@@ -125,7 +123,7 @@ export function registerConversationRoutes(
     const agentId = body.agentId as string | undefined
     const skillId = body.skillId as string | undefined
     const workspaceAgentMemberId = body.workspaceAgentMemberId as string | undefined
-    const access = await authorization?.authorizeWorkbench({ userId, ...authorizationContext })
+    const access = await authorization.authorizeWorkbench({ userId, ...authorizationContext })
     // Team workspaces must start sessions through the agent member
     // association (pinned version); personal workspaces, non-members and
     // omitted workspaceIds keep the existing resolution path untouched
@@ -133,12 +131,12 @@ export function registerConversationRoutes(
     const selectedSkillVersion = skillId && skills
       ? await skills.resolveWorkbenchSkillVersion(skillId)
       : undefined
-    const workspaceType = await authorization?.resolveWorkspaceType(workspaceId, userId)
+    const workspaceType = await authorization.resolveWorkspaceType(workspaceId, userId)
     // TW-10：团队空间会话是全队共享讨论，创建时不再强制绑定 Agent 成员——
     // 普通消息不产生 Run，@Agent 时才按成员固定版本执行。只读成员不得创建
     // 讨论串；显式携带成员关联时仍校验其可用性并记录固定版本（会话级默认值）。
     if (workspaceType === 'team') {
-      await authorization!.requireTeamRole(workspaceId!, userId, ['owner', 'admin', 'member'])
+      await authorization.requireTeamRole(workspaceId!, userId, ['owner', 'admin', 'member'])
       // 单独传 agentId 不传成员关联是有歧义的输入：拒绝而不是静默创建
       // 未绑定会话，避免调用方误以为 Agent 已绑定（发现延迟到首次 startRun）。
       if (agentId !== undefined && !workspaceAgentMemberId) {
@@ -176,7 +174,7 @@ export function registerConversationRoutes(
   if (skills) {
     router.get(`${basePath}/skills`, async (_request, context) => {
       const identity = requireRequestIdentity(context, 'workbench')
-      await authorization?.authorizeWorkbench({
+      await authorization.authorizeWorkbench({
         userId: identity.userId,
         ...sessionAuthorizationContext(identity),
       })
@@ -187,7 +185,7 @@ export function registerConversationRoutes(
   router.delete(`${basePath}/sessions/:sessionId`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const sessionId = context.params['sessionId'] ?? ''
     const archived = await conversations.archiveSession(sessionId, userId)
     await operations?.appendAudit(
@@ -205,11 +203,11 @@ export function registerConversationRoutes(
   router.get(`${basePath}/runs/:runId`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const task = await conversations.getTask(context.params['runId'] ?? '', userId)
     if (!task) return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     // 团队空间运行详情与 SSE 同一收权口径：被移出的成员不得再读到正文。
-    if (authorization && !(await authorizeTeamTaskRead(authorization, task, userId))) {
+    if (!(await authorizeTeamTaskRead(authorization, task, userId))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
     return envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres')
@@ -223,10 +221,10 @@ export function registerConversationRoutes(
   router.get(`${basePath}/runs/:runId/result`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const task = await conversations.getTaskResult(context.params['runId'] ?? '', userId)
     if (!task) return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
-    if (authorization && !(await authorizeTeamTaskRead(authorization, task, userId))) {
+    if (!(await authorizeTeamTaskRead(authorization, task, userId))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
     return envelope('workbench', task.result, 'postgres')
@@ -238,7 +236,7 @@ export function registerConversationRoutes(
   router.get(`${basePath}/sessions/:sessionId`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     // before：加载更早一页共享讨论消息（游标=本页最旧一条消息 id）。
     const before = context.url.searchParams.get('before') ?? undefined
     return envelope('workbench', await orchestration.getSessionThread(context.params['sessionId'] ?? '', userId, before), 'postgres')
@@ -256,7 +254,7 @@ export function registerConversationRoutes(
     if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== 'string') {
       throw routeValidationFailed('idempotencyKey 必须是字符串')
     }
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const headerKey = request.headers['idempotency-key']
     const idempotencyKey = body.idempotencyKey ?? (Array.isArray(headerKey) ? headerKey[0] : headerKey)
     // 与 /runs 同一口径：幂等键必须由客户端显式提供，否则网络重试/双击
@@ -330,7 +328,7 @@ export function registerConversationRoutes(
     const task = await conversations.getTask(context.params['runId'] ?? '', userId)
     // 取消与重试同样返回完整正文，必须与详情/列表用同一团队读取口径，否则被移出
     // 成员可借这些接口读回回答内容（AC-09）。
-    if (!task || (authorization && !(await authorizeTeamTaskRead(authorization, task, userId)))) {
+    if (!task || (!(await authorizeTeamTaskRead(authorization, task, userId)))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
     return httpResult(202, envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres'))
@@ -347,7 +345,7 @@ export function registerConversationRoutes(
       sessionAuthorizationContext(identity),
     )
     const task = await conversations.getTask(retried?.id ?? context.params['runId'] ?? '', userId)
-    if (!task || (authorization && !(await authorizeTeamTaskRead(authorization, task, userId)))) {
+    if (!task || (!(await authorizeTeamTaskRead(authorization, task, userId)))) {
       return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
     }
     return httpResult(202, envelope('workbench', await attachCurrentUserRole(authorization, task, userId), 'postgres'))
@@ -356,7 +354,7 @@ export function registerConversationRoutes(
   router.get(`${basePath}/runs/:runId/events`, async (request, context, response) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const runId = context.params['runId'] ?? ''
     const task = await conversations.getTask(runId, userId)
     if (!task) return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
@@ -369,7 +367,7 @@ export function registerConversationRoutes(
     // 3-T1：读轨用状态无关的 readableWorkspaceTypeOf，归档空间仍解析为 team 并走
     // `canReadWorkspaceObject`（现任成员可读，被移出成员拒绝）；执行轨（排队领取与
     // 执行前复核）仍用只认 active 的 workspaceTypeOf，见 run-orchestration-service。
-    if (task.workspaceId && authorization) {
+    if (task.workspaceId) {
       const workspaceType = await authorization.readableWorkspaceTypeOf(task.workspaceId)
       if (workspaceType === 'team') {
         // 团队空间：建连与逐批写出都走同一读取门禁；非成员与已删除空间一律
@@ -408,12 +406,12 @@ export function registerConversationRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const workspaceId = context.params['workspaceId'] ?? ''
-    await authorization?.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
-    const workspaceType = authorization ? await authorization.readableWorkspaceTypeOf(workspaceId) : null
-    if (authorization && workspaceType !== 'team') {
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const workspaceType = await authorization.readableWorkspaceTypeOf(workspaceId)
+    if (workspaceType !== 'team') {
       throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
     }
-    await authorization?.requireTeamRole(
+    await authorization.requireTeamRole(
       workspaceId,
       userId,
       ['owner', 'admin', 'member', 'viewer'],
@@ -427,7 +425,7 @@ export function registerConversationRoutes(
     const sinceParsed = sinceRaw ? Date.parse(sinceRaw) : Number.NaN
     const clientSince = Number.isNaN(sinceParsed) || sinceParsed > Date.now() ? null : new Date(sinceParsed)
     await streamWorkspaceSessionEvents(response, workspaceId, sharedSessionActivitySource(conversations), 500, 15_000,
-      authorization ? { workspaceId, userId, authorization } : undefined, clientSince)
+      { workspaceId, userId, authorization }, clientSince)
   })
 }
 

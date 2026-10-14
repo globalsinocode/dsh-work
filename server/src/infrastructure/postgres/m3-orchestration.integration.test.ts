@@ -11,7 +11,7 @@ import { Router } from '../../http/router.ts'
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
@@ -73,7 +73,7 @@ before(async () => {
     { tasks },
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     const header = request.headers['x-test-user-id']
     const userId = Array.isArray(header) ? header[0] : header
     return audience === 'workbench' && userId

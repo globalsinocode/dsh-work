@@ -7,7 +7,6 @@ import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './
 import { LocalAuthService, type LocalAccountInput } from './local-auth-service.ts'
 
 const configuration = loadStartupIdentityConfiguration()
-if (configuration.mode === 'prototype') throw new Error('独立账号初始化不能在 prototype 开发原型中执行')
 if (!process.env.DSH_WORK_DATABASE_URL) throw new Error('DSH_WORK_DATABASE_URL 未配置')
 const input = await readInput()
 const database = createDatabase({ url: process.env.DSH_WORK_DATABASE_URL })
@@ -21,12 +20,16 @@ try {
 
 async function readInput(): Promise<LocalAccountInput> {
   if (!process.stdin.isTTY) {
-    let body = ''
+    // Decode once so a UTF-8 character (for example a Chinese name) split across chunks stays intact.
+    const chunks: Buffer[] = []
+    let size = 0
     for await (const chunk of process.stdin) {
-      body += String(chunk)
-      if (body.length > 16_384) throw new Error('初始化输入超过长度限制')
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+      size += bytes.length
+      if (size > 16_384) throw new Error('初始化输入超过长度限制')
+      chunks.push(bytes)
     }
-    return JSON.parse(body) as LocalAccountInput
+    return JSON.parse(Buffer.concat(chunks, size).toString('utf8')) as LocalAccountInput
   }
   let muted = false
   const output = new Writable({ write(chunk, _encoding, callback) {

@@ -155,6 +155,16 @@ test('platform bridge validates input and output with stable error envelopes', a
   } finally { await bridge.close() }
 })
 
+test('platform bridge decodes UTF-8 text split across request chunks', async () => {
+  const bridge = await createPlatformToolBridge({ sample: {
+    contract: baseContract,
+    handler: async input => ({ result: input['value'] }),
+  } }, 3)
+  try {
+    assert.deepEqual(await callInTwoChunks(bridge.socket, 'sample', { value: '生产计划' }, '产'), { status: 200, body: { result: '生产计划' } })
+  } finally { await bridge.close() }
+})
+
 test('platform bridge distinguishes authorization, safe read timeout and unknown write result', async () => {
   const waitForever = async (_input: Record<string, unknown>, signal: AbortSignal) => {
     await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }))
@@ -423,6 +433,26 @@ function call(socketPath: string, tool: string, input: unknown, callId?: string)
     })
     req.on('error', reject)
     req.end(body)
+  })
+}
+
+/** Sends the JSON body as two separate writes, cut inside the UTF-8 bytes of `splitInside`. */
+function callInTwoChunks(socketPath: string, tool: string, input: unknown, splitInside: string): Promise<{ status: number; body: ToolHttpBody }> {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(input))
+    const cut = body.indexOf(Buffer.from(splitInside)) + 1
+    const req = request({ socketPath, path: `/tools/${tool}`, method: 'POST', headers: {
+      'Content-Type': 'application/json', 'Content-Length': body.length,
+    } }, response => {
+      let text = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { text += chunk })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: JSON.parse(text) as ToolHttpBody }))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.flushHeaders()
+    req.write(body.subarray(0, cut), () => { setTimeout(() => req.end(body.subarray(cut)), 20) })
   })
 }
 

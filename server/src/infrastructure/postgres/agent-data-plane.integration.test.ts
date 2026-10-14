@@ -12,7 +12,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { registerAdminAgentDataRoutes } from '../../http/admin/agent-data-routes.ts'
 import { Router } from '../../http/router.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import type { JsonObject } from '../../modules/run/run-types.ts'
 
@@ -426,7 +426,7 @@ test('AE-03 DSH tool entry requires pinned definition, live grant and current co
 test('AE-03 admin API publishes a governed collection and rejects non-admin writes', async () => {
   let admin = true
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     return admin ? identity : { ...identity, userId: 'U00001', permissions: ['admin:read'] }
   } })
   registerAdminAgentDataRoutes(router, service)

@@ -91,19 +91,9 @@ e2e/                       # Playwright 浏览器冒烟
 pnpm install --frozen-lockfile
 ```
 
-### 无需 AI Hub 的本地原型模式
+### 启动开发环境
 
-只开发页面或体验业务原型时，无需启动 AI Hub、PostgreSQL 或 DSH，执行：
-
-```bash
-NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
-```
-
-该命令同时启动后端、员工端和管理端，并覆盖已有 `.env` 中的对应配置。原型模式使用内存数据和受控测试身份，重启可能丢失编辑结果，不提供持久化及真实 Agent 执行，不能用于生产。
-
-### 使用已有环境配置
-
-需要持久化、真实 Agent 执行或 AI Hub 登录时，按 [开发与测试](docs/development/development.md) 配置环境后执行 `pnpm dev:all`。也可在不同终端分别启动后端、员工端和管理端：
+服务端始终使用 PostgreSQL 和账号登录（独立账号密码，配置 AI Hub 后也可统一登录），没有免数据库的内存模式。按 [开发与测试](docs/development/development.md) 准备数据库、`.env` 和首个管理员账号后执行 `pnpm dev:all`。也可在不同终端分别启动后端、员工端和管理端：
 
 ```bash
 pnpm dev:server

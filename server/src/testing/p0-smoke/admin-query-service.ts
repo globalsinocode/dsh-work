@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-import { assertAgentSpecLimits } from '../../agent/agent-spec.ts'
-import { normalizeAgentMcpScope } from '../../agent/agent-mcp-scope.ts'
+import { assertAgentSpecLimits } from '../../modules/agent/agent-spec.ts'
+import { normalizeAgentMcpScope } from '../../modules/agent/agent-mcp-scope.ts'
 
-import type { PrototypeRepository } from '../../../infrastructure/prototype/prototype-repository.ts'
+import type { SmokeRepository } from './smoke-repository.ts'
 import type {
   AgentDefinition,
   AgentDraftConfiguration,
@@ -32,8 +32,8 @@ import type {
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
-} from '../../../domain/types.ts'
-import { DSH_RUNTIME_CONNECTOR_ID } from '../../../domain/tool-category.ts'
+} from '../../domain/types.ts'
+import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import {
   assertDshToolApprovalPolicy,
   catalogEntryToToolDefinition,
@@ -42,7 +42,7 @@ import {
   normalizeToolPolicyInput,
   prototypeToolRoleIds,
   publicCatalogCandidate,
-} from '../../tool/dsh-built-in-tool-catalog.ts'
+} from '../../modules/tool/dsh-built-in-tool-catalog.ts'
 
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
@@ -54,9 +54,9 @@ export interface PlatformStatus {
 }
 
 export class AdminQueryService {
-  private readonly repository: PrototypeRepository
+  private readonly repository: SmokeRepository
 
-  constructor(repository: PrototypeRepository) {
+  constructor(repository: SmokeRepository) {
     this.repository = repository
   }
 
