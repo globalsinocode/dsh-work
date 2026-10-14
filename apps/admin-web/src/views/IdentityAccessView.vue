@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { adminApi } from '@/api/client'
+import { adminApi, AdminApiError } from '@/api/client'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -15,6 +15,19 @@ import type {
 } from '@/types/domain'
 
 const authStore = useAuthStore()
+const localAccountsEnabled = ref(false)
+const directoryEnabled = ref(false)
+const accountDialogOpen = ref(false)
+const accountTarget = ref<IdentityUserSummary>()
+const resettingPassword = ref(false)
+const accountForm = reactive({ username: '', password: '', name: '', department: '', email: '' })
+const accountPasswordError = ref('')
+const accountUsernameError = ref('')
+const accountNameError = ref('')
+const accountError = ref('')
+const checkingAccount = ref(false)
+let accountCheckVersion = 0
+let pendingAccountCheck: { value: string; promise: Promise<boolean> } | undefined
 const users = ref<IdentityUserSummary[]>([])
 const roles = ref<IdentityRoleSummary[]>([])
 const permissionDefinitions = ref<LocalPermissionDefinition[]>([])
@@ -62,11 +75,16 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
+    const response = await fetch('/auth/admin/configuration', { credentials: 'same-origin' })
+    if (!response.ok) throw new Error('登录配置加载失败，请重试')
+    const configuration = await response.json() as { localEnabled: boolean; aiHubEnabled: boolean }
+    localAccountsEnabled.value = configuration.localEnabled === true
+    directoryEnabled.value = configuration.aiHubEnabled === true
     const [nextUsers, nextRoles, nextPermissions, nextState] = await Promise.all([
       adminApi.getIdentityUsers(userListRequest()),
       adminApi.getIdentityRoles(),
       adminApi.getLocalPermissions(),
-      adminApi.getDirectorySyncState(),
+      directoryEnabled.value ? adminApi.getDirectorySyncState() : Promise.resolve(undefined),
     ])
     applyUserPage(nextUsers)
     roles.value = nextRoles
@@ -77,6 +95,115 @@ async function load() {
     error.value = cause instanceof Error ? cause.message : '身份与权限数据加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+function openAccount(user?: IdentityUserSummary, reset = false) {
+  accountTarget.value = user
+  resettingPassword.value = reset
+  accountPasswordError.value = ''
+  accountNameError.value = ''
+  accountError.value = ''
+  clearAccountUsernameError()
+  Object.assign(accountForm, { username: user?.username ?? '', password: '', name: user?.name ?? '', department: user?.department ?? '', email: user?.email ?? '' })
+  accountDialogOpen.value = true
+}
+
+function clearAccountUsernameError() {
+  accountCheckVersion++
+  pendingAccountCheck = undefined
+  checkingAccount.value = false
+  accountUsernameError.value = ''
+}
+
+function checkAccountUsername(): Promise<boolean> {
+  const value = accountForm.username
+  if (pendingAccountCheck?.value === value) return pendingAccountCheck.promise
+  const version = ++accountCheckVersion
+  accountUsernameError.value = ''
+  if (!value.trim()) {
+    accountUsernameError.value = '请输入手机号或邮箱'
+    return Promise.resolve(false)
+  }
+  checkingAccount.value = true
+  const promise = (async () => {
+    try {
+      const result = await adminApi.checkLocalLoginAccount(value)
+      if (version !== accountCheckVersion) return false
+      if (!result.available) accountUsernameError.value = '登录账号已存在，请使用其他手机号或邮箱'
+      return result.available
+    } catch (cause) {
+      if (version === accountCheckVersion) accountUsernameError.value = cause instanceof Error ? cause.message : '账号检查失败，请重试'
+      return false
+    } finally {
+      if (version === accountCheckVersion) {
+        checkingAccount.value = false
+        pendingAccountCheck = undefined
+      }
+    }
+  })()
+  pendingAccountCheck = { value, promise }
+  return promise
+}
+
+async function saveAccount() {
+  if (!authStore.canManageIdentity || saving.value) return
+  accountError.value = ''
+  accountNameError.value = !resettingPassword.value && !accountForm.name.trim() ? '请输入姓名' : ''
+  accountPasswordError.value = !accountForm.password ? '请输入初始密码'
+    : [...accountForm.password].length < 8 || [...accountForm.password].length > 12 ? '密码需为 8–12 个字符' : ''
+  if (!resettingPassword.value && !accountForm.username.trim()) accountUsernameError.value = '请输入手机号或邮箱'
+  if (accountNameError.value || accountPasswordError.value || (!resettingPassword.value && !accountForm.username.trim())) return
+  saving.value = true
+  try {
+    if (!resettingPassword.value && !await checkAccountUsername()) return
+    if (accountTarget.value) {
+      const confirmed = await ElMessageBox.confirm(
+        `重置密码后，${accountTarget.value.name} 的旧登录会话将失效，首次登录需修改密码。原有角色和业务数据保留。`,
+        '确认重置密码',
+        { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+      ).then(() => true).catch(() => false)
+      if (!confirmed) return
+    }
+    if (resettingPassword.value && accountTarget.value) {
+      await adminApi.resetLocalPassword(accountTarget.value.id, accountForm.password)
+    } else {
+      await adminApi.createLocalAccount({ ...accountForm })
+    }
+    accountDialogOpen.value = false
+    accountForm.password = ''
+    await load()
+    ElMessage.success(resettingPassword.value ? '密码已重置，请通过安全渠道交付初始密码' : '账号已开通，请配置角色并通过安全渠道交付初始密码')
+  } catch (cause) {
+    if (cause instanceof AdminApiError && ['local_account_exists', 'invalid_username'].includes(cause.code)) {
+      accountUsernameError.value = cause.message
+    } else {
+      accountError.value = cause instanceof Error ? cause.message : '账号操作失败，请重试'
+    }
+  } finally {
+    saving.value = false
+  }
+}
+
+async function toggleAccountStatus() {
+  const user = selectedUser.value
+  if (!user || !authStore.canManageIdentity) return
+  const status = user.status === 'active' ? 'disabled' : 'active'
+  const confirmed = await ElMessageBox.confirm(
+    status === 'disabled' ? `停用 ${user.name} 后，其所有登录会话立即失效，原有业务数据和授权记录保留。` : `重新启用 ${user.name} 后，可使用现有密码和授权登录。`,
+    status === 'disabled' ? '确认停用账号' : '确认启用账号',
+    { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+  ).then(() => true).catch(() => false)
+  if (!confirmed) return
+  saving.value = true
+  try {
+    await adminApi.setLocalAccountStatus(user.id, status)
+    await load()
+    ElMessage.success(status === 'disabled' ? '账号已停用' : '账号已启用')
+  } catch (cause) {
+    showMutationError(cause, '账号状态更新失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -323,14 +450,14 @@ onMounted(() => void load())
       type="info"
       :closable="false"
       show-icon
-      title="AI Hub 仅提供登录身份和员工资料；角色、功能权限、数据范围与 Session 撤销全部由 dsh-work 管理。"
+      title="账号由管理员开通；新账号需分配角色后才能使用。初始密码请通过安全渠道交付，首次登录需修改。"
     />
 
     <section class="identity-summary">
       <article class="metric-card">
-        <div class="metric-label">已同步员工</div>
+        <div class="metric-label">员工账号</div>
         <div class="metric-value">{{ userSummary.synchronized }}</div>
-        <div class="metric-detail">{{ userSummary.active }} 个 AI Hub 有效账号</div>
+        <div class="metric-detail">{{ userSummary.active }} 个有效账号</div>
       </article>
       <article class="metric-card">
         <div class="metric-label">已授权员工</div>
@@ -342,7 +469,7 @@ onMounted(() => void load())
         <div class="metric-value">{{ roles.length }}</div>
         <div class="metric-detail">{{ roles.filter(role => role.status === 'active').length }} 个启用</div>
       </article>
-      <article class="metric-card sync-card">
+      <article v-if="directoryEnabled" class="metric-card sync-card">
         <div class="sync-card__copy">
           <div class="metric-label">员工目录</div>
           <strong>{{ directoryState?.applicationId ?? 'dsh-work' }} · {{ directoryState?.environment ?? '—' }}</strong>
@@ -364,13 +491,18 @@ onMounted(() => void load())
           </el-dropdown>
         </div>
       </article>
+      <article v-else class="metric-card">
+        <div class="metric-label">账号安全</div>
+        <div class="metric-detail">仅管理员可开通账号</div>
+        <el-button v-if="authStore.identityProvider === 'local-password'" tag="a" href="/change-password" link type="primary">修改我的密码</el-button>
+      </article>
     </section>
 
     <el-tabs v-model="activeTab" class="identity-tabs">
       <el-tab-pane label="员工授权" name="users">
         <section class="content-panel filter-panel">
           <div class="filter-bar">
-            <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索姓名、邮箱、员工标识或部门" @keyup.enter="reloadUsers(true)" @clear="reloadUsers(true)" />
+            <el-input v-model="query" :prefix-icon="Search" clearable aria-label="搜索员工" placeholder="搜索账号、姓名、邮箱或部门" @keyup.enter="reloadUsers(true)" @clear="reloadUsers(true)" />
             <el-select v-model="statusFilter" aria-label="筛选员工状态" @change="reloadUsers(true)">
               <el-option label="全部状态" value="all" />
               <el-option label="有效" value="active" />
@@ -378,28 +510,32 @@ onMounted(() => void load())
             </el-select>
             <el-button :icon="Search" @click="reloadUsers(true)">查询</el-button>
             <span class="filter-bar__meta">{{ userTotal }} 名员工</span>
+            <el-button v-if="localAccountsEnabled && authStore.canManageIdentity" type="primary" @click="openAccount()">新建账号</el-button>
           </div>
         </section>
         <section class="content-panel content-panel--flush">
-          <el-table v-loading="loading" class="data-table" :data="users" empty-text="暂无匹配的已同步员工">
+          <el-table v-loading="loading" class="data-table" :data="users" empty-text="暂无匹配的员工">
             <el-table-column label="员工" min-width="220">
               <template #default="scope">
                 <div class="user-cell">
                   <span class="user-cell__avatar">{{ [...scope.row.name][0] ?? '用' }}</span>
-                  <span><strong>{{ scope.row.name }}</strong><small>{{ scope.row.email ?? scope.row.externalUserId ?? '本地账号' }}</small></span>
+                <span><strong>{{ scope.row.name }}</strong><small :title="scope.row.email ?? undefined">{{ scope.row.email || '未提供邮箱' }}</small></span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="department" label="组织 / 部门" min-width="160" />
-            <el-table-column label="本地角色" min-width="250">
+            <el-table-column label="登录账号" min-width="180" show-overflow-tooltip><template #default="scope"><span class="login-account">{{ scope.row.loginAccount || '未提供' }}</span></template></el-table-column>
+            <el-table-column label="来源" width="100"><template #default="scope"><el-tag effect="plain" :type="scope.row.identityProvider === 'ai-hub' ? 'primary' : 'info'">{{ scope.row.identityProvider === 'ai-hub' ? 'AI Hub' : '独立账号' }}</el-tag></template></el-table-column>
+            <el-table-column prop="department" label="组织 / 部门" min-width="140" show-overflow-tooltip />
+            <el-table-column label="本地角色" min-width="180">
               <template #default="scope">
                 <div v-if="scope.row.roles.length" class="tag-list"><el-tag v-for="role in scope.row.roles" :key="role.id" effect="plain" :type="role.status === 'active' ? 'primary' : 'info'">{{ role.name }}</el-tag></div>
                 <span v-else class="empty-value">尚未授权</span>
               </template>
             </el-table-column>
             <el-table-column label="账号状态" width="105"><template #default="scope"><el-tag :type="scope.row.status === 'active' ? 'success' : 'info'" effect="plain">{{ scope.row.status === 'active' ? '有效' : '已停用' }}</el-tag></template></el-table-column>
-            <el-table-column label="活动 Session" width="115" align="center"><template #default="scope">{{ scope.row.activeSessionCount }}</template></el-table-column>
-            <el-table-column label="目录同步" width="175"><template #default="scope">{{ formatDate(scope.row.directorySyncedAt) }}</template></el-table-column>
+            <el-table-column label="最近活跃" width="180">
+              <template #default="scope"><div class="activity-cell"><span>{{ scope.row.lastSeenAt ? formatDate(scope.row.lastSeenAt) : '暂无访问记录' }}</span><small>{{ scope.row.activeSessionCount ? `${scope.row.activeSessionCount} 个活动会话` : '暂无活动会话' }}</small></div></template>
+            </el-table-column>
             <el-table-column label="操作" width="95" fixed="right"><template #default="scope"><el-button link type="primary" :icon="UserFilled" @click="openUser(scope.row)">{{ authStore.canManageIdentity ? '配置' : '查看' }}</el-button></template></el-table-column>
           </el-table>
           <div class="table-footer identity-pagination">
@@ -418,7 +554,7 @@ onMounted(() => void load())
 
       <el-tab-pane label="角色与权限" name="roles">
         <section class="content-panel role-toolbar">
-          <div><strong>本地角色</strong><span>角色权限不发布到 AI Hub，变更后由服务端立即重新计算。</span></div>
+          <div><strong>本地角色</strong><span>角色权限由 dsh-work 管理，变更后立即重新计算。</span></div>
           <el-button v-if="authStore.canManageIdentity" type="primary" @click="openCreateRole">新建角色</el-button>
         </section>
         <section class="content-panel content-panel--flush">
@@ -444,14 +580,53 @@ onMounted(() => void load())
       </el-tab-pane>
     </el-tabs>
 
+    <el-dialog v-model="accountDialogOpen" :title="resettingPassword ? '重置密码' : '新建账号'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false" @closed="accountForm.password = ''">
+      <el-alert v-if="accountTarget" :title="`${accountTarget.name} · ${accountTarget.id}`" type="info" :closable="false" />
+      <el-alert v-if="accountError" :title="accountError" type="error" :closable="false" show-icon role="alert" />
+      <el-form class="account-form" label-position="top" @submit.prevent="saveAccount">
+        <template v-if="!resettingPassword">
+          <el-form-item label="登录账号" for="account-username" required :error="accountUsernameError"><el-input id="account-username" v-model="accountForm.username" placeholder="请输入手机号或邮箱" autocomplete="off" autocapitalize="none" :maxlength="254" :disabled="saving" required @input="clearAccountUsernameError" @blur="checkAccountUsername" /><span v-if="checkingAccount" role="status">正在检查账号…</span></el-form-item>
+          <template v-if="!accountTarget">
+            <el-form-item label="姓名" for="account-name" required :error="accountNameError"><el-input id="account-name" v-model="accountForm.name" :maxlength="80" :disabled="saving" required @input="accountNameError = ''" /></el-form-item>
+            <el-form-item label="部门" for="account-department"><el-input id="account-department" v-model="accountForm.department" :maxlength="100" /></el-form-item>
+            <el-form-item label="邮箱" for="account-email"><el-input id="account-email" v-model="accountForm.email" type="email" :maxlength="254" /></el-form-item>
+          </template>
+        </template>
+        <el-form-item label="初始密码" for="account-password" required :error="accountPasswordError"><el-input id="account-password" v-model="accountForm.password" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="12" :disabled="saving" required @input="accountPasswordError = ''" /></el-form-item>
+        <p>8–12 个字符，首次登录需修改。请通过安全渠道交付给员工。</p>
+      </el-form>
+      <template #footer><el-button :disabled="saving" @click="accountDialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">{{ resettingPassword ? '重置密码' : '开通账号' }}</el-button></template>
+    </el-dialog>
+
     <el-drawer v-model="userDrawerOpen" size="min(680px, 100vw)" title="员工授权配置">
       <template v-if="selectedUser">
         <section class="user-detail-hero">
           <span class="user-detail-hero__avatar">{{ [...selectedUser.name][0] ?? '用' }}</span>
           <div><h2>{{ selectedUser.name }}</h2><p>{{ selectedUser.email ?? '未提供邮箱' }} · {{ selectedUser.department }}</p></div>
-          <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'" effect="plain">{{ selectedUser.status === 'active' ? 'AI Hub 有效' : 'AI Hub 已停用' }}</el-tag>
+          <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'" effect="plain">{{ selectedUser.status === 'active' ? '有效' : '已停用' }}</el-tag>
         </section>
-        <el-alert v-if="selectedUser.status === 'disabled'" type="warning" :closable="false" show-icon title="该员工已在 AI Hub 停用，所有登录 Session 已撤销；本地授权配置会保留，便于审计或恢复。" />
+        <el-alert v-if="selectedUser.status === 'disabled'" type="warning" :closable="false" show-icon title="该员工已停用，无法登录；原有授权配置保留，便于审计或恢复。" />
+
+        <section class="drawer-section" aria-label="账号信息">
+          <div class="drawer-section__heading"><strong>账号信息</strong></div>
+          <el-descriptions :column="1" border class="account-details">
+            <el-descriptions-item label="登录账号">{{ selectedUser.loginAccount || '未提供' }}</el-descriptions-item>
+            <el-descriptions-item label="账号来源">{{ selectedUser.identityProvider === 'ai-hub' ? 'AI Hub' : '独立账号' }}</el-descriptions-item>
+            <el-descriptions-item label="最近活跃">{{ selectedUser.lastSeenAt ? formatDate(selectedUser.lastSeenAt) : '暂无访问记录' }}</el-descriptions-item>
+            <el-descriptions-item label="活动会话">{{ selectedUser.activeSessionCount }}</el-descriptions-item>
+            <el-descriptions-item v-if="selectedUser.identityProvider === 'ai-hub'" label="AI Hub 用户标识">{{ selectedUser.externalUserId || '未提供' }}</el-descriptions-item>
+            <el-descriptions-item v-if="selectedUser.identityProvider === 'ai-hub'" label="目录同步时间">{{ selectedUser.directorySyncedAt ? formatDate(selectedUser.directorySyncedAt) : '暂无同步记录' }}</el-descriptions-item>
+          </el-descriptions>
+        </section>
+
+        <section v-if="localAccountsEnabled && authStore.canManageIdentity && selectedUser.identityProvider === 'local' && selectedUser.username" class="drawer-section">
+          <div class="drawer-section__heading"><div><strong>独立账号</strong><span>{{ selectedUser.username }}</span></div></div>
+          <div class="inline-form">
+            <el-button v-if="selectedUser.id !== authStore.user.id" :disabled="saving" @click="openAccount(selectedUser, true)">重置密码</el-button>
+            <el-button :type="selectedUser.status === 'active' ? 'danger' : 'primary'" :loading="saving" @click="toggleAccountStatus">{{ selectedUser.status === 'active' ? '停用账号' : '启用账号' }}</el-button>
+          </div>
+        </section>
+        <p v-if="selectedUser.identityProvider === 'ai-hub'">AI Hub 账号，登录凭据和账号启停由 AI Hub 管理。</p>
 
         <section class="drawer-section">
           <div class="drawer-section__heading"><div><strong>角色</strong><span>决定可用功能和角色数据范围</span></div></div>
@@ -463,7 +638,7 @@ onMounted(() => void load())
             <el-empty v-if="!selectedUser.roles.length" :image-size="56" description="尚未分配本地角色" />
           </div>
           <div v-if="authStore.canManageIdentity" class="inline-form">
-            <el-select v-model="selectedRoleId" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
+            <el-select v-model="selectedRoleId" aria-label="选择要分配的角色" filterable placeholder="选择要分配的角色"><el-option v-for="role in assignableRoles" :key="role.id" :label="role.name" :value="role.id" /></el-select>
             <el-button type="primary" :loading="saving" :disabled="!selectedRoleId" @click="grantRole">分配角色</el-button>
           </div>
         </section>
@@ -519,6 +694,10 @@ onMounted(() => void load())
 .user-cell > span:last-child, .role-cell { display: flex; min-width: 0; flex-direction: column; }
 .user-cell strong, .role-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .user-cell small, .role-cell code { margin-top: 3px; overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
+.login-account { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.activity-cell { display: flex; flex-direction: column; font-size: var(--font-size-caption); }
+.activity-cell small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.account-details { overflow-wrap: anywhere; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .empty-value, .scope-copy { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .role-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -543,6 +722,7 @@ onMounted(() => void load())
 .inline-form .el-select, .drawer-section > .el-select, .el-dialog .el-select { width: 100%; }
 .inline-form .el-select { flex: 1; }
 .drawer-section__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.account-form :deep(.el-form-item__error) { position: static; width: 100%; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .permission-groups { display: grid; width: 100%; gap: 12px; }
 .permission-groups section { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); }
@@ -551,6 +731,6 @@ onMounted(() => void load())
 .permission-groups :deep(.el-checkbox) { height: auto; margin: 0; align-items: flex-start; }
 .permission-groups :deep(.el-checkbox__label) { display: flex; min-width: 0; flex-direction: column; line-height: 1.4; }
 .permission-groups small { color: var(--color-text-muted); font-size: var(--font-size-micro); }
-@media (max-width: 1100px) { .identity-summary { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1280px) { .identity-summary { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px) { .identity-summary { grid-template-columns: 1fr; } .sync-card, .role-toolbar { align-items: stretch; flex-direction: column; } .sync-card__actions { justify-content: space-between; } .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .form-grid, .permission-groups :deep(.el-checkbox-group) { grid-template-columns: 1fr; } .user-detail-hero { grid-template-columns: auto 1fr; } .user-detail-hero > .el-tag { grid-column: 1 / -1; justify-self: start; } }
 </style>

@@ -185,7 +185,7 @@ const principalScopeOptions = computed(() => [...new Set([
 ])].sort())
 
 function openCandidate(agent: AgentDefinition) {
-  void router.push(`/agents/${encodeURIComponent(agent.id)}/release/definition`)
+  void router.push(`/agents/${encodeURIComponent(agent.id)}/release/trial`)
 }
 
 async function loadJoinedWorkspaces(agentId: string) {
@@ -235,12 +235,10 @@ function openEdit(agent: AgentDefinition) {
   editorOpen.value = true
 }
 
-async function handleDraftSaved(agent: AgentDefinition, source: 'config' | 'zip') {
-  if (source === 'config') {
-    governance.ensureOverlay(agent.id)
-    // 等待候选同步完成（修订推进 + 旧检查/封存作废），再允许后续试运行/发布操作
-    await governance.noteDraftSaved(agent.id)
-  }
+async function handleDraftSaved(agent: AgentDefinition) {
+  governance.ensureOverlay(agent.id)
+  // 等待候选同步完成（修订推进 + 旧检查/封存作废），再允许后续试运行/发布操作
+  await governance.noteDraftSaved(agent.id)
 }
 
 function evidenceName(evidence: EvidenceRef) {
@@ -285,7 +283,7 @@ async function rollback(version: AgentVersionRecord) {
   if (!agent) return
   try {
     await ElMessageBox.confirm(
-      `活动版本将从 v${agent.version} 切换为已发布的 v${version.version}。历史版本不会被修改。`,
+      `活动版本将切换为已发布的 v${version.version}。Agent 的启用/停用状态和进行中的草稿保持不变，历史版本不会被修改。`,
       `回滚“${agent.name}”？`,
       { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' },
     )
@@ -422,7 +420,7 @@ onMounted(async () => {
               <el-form label-position="top">
                 <el-form-item label="执行身份状态"><el-switch v-model="principalDraft.status" active-value="active" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="!authStore.canManage" /></el-form-item>
                 <el-form-item label="执行角色"><el-select v-model="principalDraft.roleIds" multiple filterable placeholder="请选择授权角色" :disabled="!authStore.canManage || (principalRolesUnavailable && !principalDraft.roleIds.length)"><el-option v-for="role in availableRoles" :key="role.id" :label="role.name" :value="role.id" :disabled="role.status === 'disabled' && !principalDraft.roleIds.includes(role.id)" /></el-select></el-form-item>
-                <el-form-item label="数据范围"><el-select v-model="principalDraft.dataScopes" multiple filterable placeholder="请选择数据范围" :disabled="!authStore.canManage"><el-option v-for="scope in principalScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
+                <el-form-item label="平台数据授权范围"><el-select v-model="principalDraft.dataScopes" multiple filterable placeholder="基础运行可留空；业务能力按需授权" :disabled="!authStore.canManage"><el-option v-for="scope in principalScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
               </el-form>
               <el-button v-if="authStore.canManage" type="primary" :loading="principalSaving" @click="savePrincipal">保存身份授权</el-button>
             </template>
@@ -450,8 +448,8 @@ onMounted(async () => {
           <section class="agent-detail__section"><h3>SOUL.md · 人格与工作原则</h3><pre class="prompt-preview">{{ selectedAgent.systemPrompt }}</pre></section>
           <section v-if="selectedAgent.workInstructions" class="agent-detail__section"><h3>AGENTS.md · 工作规程</h3><pre class="prompt-preview">{{ selectedAgent.workInstructions }}</pre></section>
           <section class="agent-detail__section"><h3>Skill 引用</h3><div class="chip-list"><span v-for="skill in selectedAgent.skills" :key="skill">{{ skill }}</span></div></section>
-          <section class="agent-detail__section"><h3>MCP 使用范围</h3><p>{{ selectedAgent.mcpScope?.mode === 'selected' ? '仅使用选定连接器' : selectedAgent.mcpScope?.mode === 'none' ? '不使用 MCP' : '全部可用 MCP' }}</p><div v-if="selectedAgent.mcpScope?.mode === 'selected'" class="chip-list chip-list--code"><span v-for="id in selectedAgent.mcpScope.connectorIds" :key="id">{{ contentStore.connectors.find(connector => connector.id === id)?.name ?? id }}</span></div></section>
-          <section class="agent-detail__section"><h3>业务数据范围</h3><div class="chip-list"><span v-for="scope in selectedAgent.dataScopes" :key="scope">{{ scope }}</span></div></section>
+          <section class="agent-detail__section"><h3>MCP 连接范围与上游权限</h3><p>{{ selectedAgent.mcpScope?.mode === 'selected' ? '仅使用选定连接器' : selectedAgent.mcpScope?.mode === 'none' ? '不使用 MCP' : '全部可用 MCP' }}</p><div v-if="selectedAgent.mcpScope?.mode === 'selected'" class="chip-list chip-list--code"><span v-for="id in selectedAgent.mcpScope.connectorIds" :key="id">{{ contentStore.connectors.find(connector => connector.id === id)?.name ?? id }}：{{ contentStore.connectors.find(connector => connector.id === id)?.scopeDescription ?? '未登记上游权限说明' }}</span></div><p>实际可访问数据由 MCP 服务及其凭据决定；平台数据授权范围不会过滤 MCP 返回的数据。</p></section>
+          <section class="agent-detail__section"><h3>平台数据范围上限</h3><div class="chip-list"><span v-for="scope in selectedAgent.dataScopes" :key="scope">{{ scope }}</span><span v-if="!selectedAgent.dataScopes.length">未配置；基础 Agent 可正常运行</span></div></section>
           <section class="agent-detail__section">
             <h3>团队空间治理</h3>
             <div class="governance-row">

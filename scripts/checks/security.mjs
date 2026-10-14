@@ -10,7 +10,7 @@ export function checkSecurity(check) {
     check.assert(!initialMigration.includes(secret), `初始化迁移不得包含明文凭据列 ${secret}`)
   }
   check.includes('server/src/modules/identity/config.ts', [
-    "production && mode !== 'oidc'", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
+    "production && mode === 'prototype'", '`__Host-${name}`', 'DSH_WORK_COOKIE_SECURE',
     'DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS',
   ])
   check.includes('server/src/modules/identity/auth-service.ts', [

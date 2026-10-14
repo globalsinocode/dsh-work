@@ -1,0 +1,47 @@
+{
+  "title": "dsh-work 五层架构模块详图",
+  "diagrams": [
+    {
+      "slug": "00-overview",
+      "title": "dsh-work 五层架构总览",
+      "nodes": 9,
+      "edges": 10,
+      "evidence": 16
+    },
+    {
+      "slug": "01-presentation",
+      "title": "第一层 · 展示层模块",
+      "nodes": 9,
+      "edges": 9,
+      "evidence": 10
+    },
+    {
+      "slug": "02-orchestration",
+      "title": "第二层 · 编排层模块",
+      "nodes": 9,
+      "edges": 11,
+      "evidence": 11
+    },
+    {
+      "slug": "03-configuration",
+      "title": "第三层 · 配置管理层模块",
+      "nodes": 9,
+      "edges": 8,
+      "evidence": 10
+    },
+    {
+      "slug": "04-execution",
+      "title": "第四层 · 执行层模块",
+      "nodes": 9,
+      "edges": 9,
+      "evidence": 11
+    },
+    {
+      "slug": "05-infrastructure",
+      "title": "第五层 · 基础设施模块",
+      "nodes": 9,
+      "edges": 10,
+      "evidence": 11
+    }
+  ]
+}

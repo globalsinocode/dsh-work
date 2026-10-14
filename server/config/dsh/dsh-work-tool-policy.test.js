@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, test } from 'node:test'
 
-import { apply } from './dsh-work-tool-policy.js'
+import { apply, TRIAL_ONLY_MCP_REASON } from './dsh-work-tool-policy.js'
 
 const originalEnvironment = {
   currentAuthorization: process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION,
@@ -22,6 +22,7 @@ const originalEnvironment = {
   platformSocket: process.env.DSH_PLATFORM_TOOL_SOCKET,
   toolCatalogPath: process.env.DSH_TOOL_CATALOG_PATH,
   toolCatalogMode: process.env.DSH_WORK_TOOL_CATALOG_MODE,
+  trialExternalEffects: process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS,
 }
 
 afterEach(() => {
@@ -36,6 +37,7 @@ afterEach(() => {
   restoreEnvironment('DSH_PLATFORM_TOOL_SOCKET', originalEnvironment.platformSocket)
   restoreEnvironment('DSH_TOOL_CATALOG_PATH', originalEnvironment.toolCatalogPath)
   restoreEnvironment('DSH_WORK_TOOL_CATALOG_MODE', originalEnvironment.toolCatalogMode)
+  restoreEnvironment('DSH_WORK_TRIAL_EXTERNAL_EFFECTS', originalEnvironment.trialExternalEffects)
 })
 
 test('DSH tool policy confines read and search paths to the immutable Run workspace', async () => {
@@ -373,4 +375,31 @@ test('current authorization is checked on every built-in tool call and does not 
     assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, async () => { downstream = true; return { kind: 'allow' } })).kind, 'deny')
     assert.equal(downstream, false)
   } finally { await bridge.close() }
+})
+
+test('release trial returns trial_only for reviewed MCP calls without reaching the server', async () => {
+  const capability = { name: 'create_po', description: 'Create a purchase order.', inputSchema: { type: 'object' } }
+  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp', digest }])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+  const schemas = [{ name: 'mcp__erp__create_po', description: capability.description, parameters: capability.inputSchema }]
+
+  process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS = 'trial_only'
+  const trial = capturePolicy(schemas)
+  let reached = 0
+  const next = async () => { reached += 1; return { kind: 'allow' } }
+  // 模型仍能看到与生产一致的 MCP 能力；调用在到达 MCP Server 之前被拦截。
+  assert.equal(trial.guard({ name: 'mcp__erp__create_po', arguments: {} }), undefined)
+  assert.deepEqual(await trial.preExecute({ callId: 'call-trial', name: 'mcp__erp__create_po', arguments: {} }, next),
+    { kind: 'deny', reason: TRIAL_ONLY_MCP_REASON })
+  assert.equal(reached, 0)
+  // 非 MCP 工具在试运行中照常执行（与生产一致）。
+  assert.equal((await trial.preExecute({ callId: 'call-read', name: 'read', arguments: { file_path: 'package.json' } }, next)).kind, 'allow')
+
+  delete process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS
+  const production = capturePolicy(schemas)
+  assert.equal((await production.preExecute({ callId: 'call-prod', name: 'mcp__erp__create_po', arguments: {} }, next)).kind, 'allow')
 })

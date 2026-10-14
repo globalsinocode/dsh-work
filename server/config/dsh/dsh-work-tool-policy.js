@@ -15,6 +15,8 @@ const pathArguments = new Map([
   ['str_replace_editor', 'path'],
 ])
 
+export const TRIAL_ONLY_MCP_REASON = 'trial_only：发布试运行不调用外部 MCP 工具，本次调用未执行，未对外部系统产生任何效果。请在回答中说明该步骤需在正式运行时执行，不要声称已完成。'
+
 const writableArtifactExtensions = new Set(['.md', '.txt', '.csv'])
 const readableImageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
 
@@ -36,6 +38,9 @@ export function apply(ctx) {
   const approvalMode = parseApprovalMode(process.env.DSH_TOOL_APPROVAL_MODE)
   const approvalLog = parseApprovalLog(process.env.DSH_TOOL_APPROVAL_LOG)
   const requireCurrentAuthorization = process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION === 'true'
+  // 发布试运行（F-01）：MCP 能力清单与生产一致地暴露给模型，但实际调用一律返回 trial_only，
+  // 不连接外部系统。MCP 工具尚无可信的只读/写入分类，因此只读调用同样不执行（fail closed）。
+  const trialExternalEffects = process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS === 'trial_only'
   const authorizationSocket = process.env.DSH_PLATFORM_TOOL_SOCKET
 
   const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
@@ -55,6 +60,9 @@ export function apply(ctx) {
   ctx.on('tools/pre-execute', async (execution, next) => {
     const denial = denialReason(execution)
     if (denial !== undefined) return { kind: 'deny', reason: denial }
+    if (trialExternalEffects && matchConfiguredMcpServer(execution.name, allowedMcpServers)) {
+      return { kind: 'deny', reason: TRIAL_ONLY_MCP_REASON }
+    }
 
     if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
     if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {

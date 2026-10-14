@@ -355,7 +355,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES` | 未完成目标机镜像构建、摘要固定与隔离验收前保持未设置；启用时填写本机已有的摘要锁定镜像和镜像内已安装包名，运行时不会联网安装依赖 |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
-| `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | `oidc`、`true` |
+| `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | 不设置认证模式（禁止 `prototype`）、`true`；AI Hub 按接入配置自动可用 |
 | `DSH_WORK_SESSION_SECRET` | 另一份独立高熵随机值，至少 32 字符，不与数据库密码共用 |
 | `DSH_WORK_DIRECTORY_SYNC_INTERVAL_SECONDS` | `900`，生产不可设为 `0` |
 | `AI_HUB_PLATFORM_URL` | `https://<Mac mini IP>`，使用 443 |

@@ -263,7 +263,8 @@ test('AE-05 data proposal review ignores directory visibility for independent Ag
       visible_role_ids, data_scopes, agent_spec, status, published_at)
     values (${writerVersionId}, ${tenantId}, ${agentId}, '9.9.5', 'Propose governed records.',
       ${database.json(['role-employee'])}, ${database.json(['enterprise:authorized', 'workspace:authorized'])},
-      ${database.json({ data: { state: false, collections: [{ key: collectionKey, scope: 'workspace',
+      ${database.json({ instructions: { path: 'SOUL.md', body: 'Propose governed records.' },
+        data: { state: false, collections: [{ key: collectionKey, scope: 'workspace',
         schemaVersion: 1, actions: ['propose'], schema: null }] } })}, 'published', now())
   `
   const data = new PostgresAgentDataService(database)

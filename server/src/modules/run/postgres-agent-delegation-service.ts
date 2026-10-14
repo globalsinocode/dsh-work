@@ -81,6 +81,8 @@ export class PostgresAgentDelegationService {
   setExecutor(executor: DelegationExecutor): void { this.executor = executor }
 
   async delegate(input: Record<string, unknown>, parent: RuntimeManifest, signal: AbortSignal): Promise<DelegatedTaskResult> {
+    // F-01：发布试运行与生产暴露同一委派工具，但不创建子任务、不执行其他 Agent（trial_only）。
+    if (parent.purpose === 'agent-release-trial') throw requestInvalid('trial_only：发布试运行不执行受控委派，未创建子任务')
     const executor = this.executor
     if (!executor) throw unavailable('受控委派执行器尚未就绪')
     const targetAgentVersionId = requiredString(input['targetAgentVersionId'], 'targetAgentVersionId', 128)

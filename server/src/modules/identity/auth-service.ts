@@ -287,15 +287,26 @@ export class OidcAuthService {
   async logout(request: IncomingMessage, audience: ApiAudience) {
     const settings = this.configuration.audiences[audience]
     const portalOrigin = resolveRequestOrigin(request, settings)
+    const clearSessionCookie = await this.revokeSession(request, audience)
+    return {
+      location: await this.providers[audience].logoutUrl(portalOrigin),
+      clearSessionCookie,
+    }
+  }
+
+  hasSessionCookie(request: IncomingMessage, audience: ApiAudience) {
+    return Boolean(parseCookies(request.headers.cookie)[this.configuration.audiences[audience].sessionCookieName])
+  }
+
+  /** Clear a previous provider session without depending on the upstream logout service. */
+  async revokeSession(request: IncomingMessage, audience: ApiAudience) {
+    const settings = this.configuration.audiences[audience]
     const cookieValue = parseCookies(request.headers.cookie)[settings.sessionCookieName]
     if (cookieValue) {
       const sessionHash = hashOpaque(cookieValue)
       await this.repository.logoutSession(sessionHash, audience)
     }
-    return {
-      location: await this.providers[audience].logoutUrl(portalOrigin),
-      clearSessionCookie: clearCookie(settings.sessionCookieName, this.configuration.cookieSecure),
-    }
+    return clearCookie(settings.sessionCookieName, this.configuration.cookieSecure)
   }
 
   transactionCookie(request: IncomingMessage, audience: ApiAudience) {
@@ -468,7 +479,7 @@ function hasAdminAccess(permissions: string[]) {
     || granted.has(LOCAL_PERMISSIONS.auditRead)
 }
 
-function assertAudienceAccess(audience: ApiAudience, permissions: string[], unsafe: boolean) {
+export function assertAudienceAccess(audience: ApiAudience, permissions: string[], unsafe: boolean) {
   const granted = new Set(permissions)
   if (audience === 'workbench') {
     if (!granted.has(LOCAL_PERMISSIONS.workbenchUse) && !granted.has(LOCAL_PERMISSIONS.workbenchManage)) {
@@ -487,7 +498,7 @@ function assertAudienceAccess(audience: ApiAudience, permissions: string[], unsa
   }
 }
 
-function normalizeReturnTo(value: string | null, portalOrigin: string) {
+export function normalizeReturnTo(value: string | null, portalOrigin: string) {
   const portal = new URL(`${portalOrigin.replace(/\/$/, '')}/`)
   if (!value) return portal.toString()
   try {
@@ -499,9 +510,9 @@ function normalizeReturnTo(value: string | null, portalOrigin: string) {
   }
 }
 
-function validateRequestOrigin(
+export function validateRequestOrigin(
   request: IncomingMessage,
-  settings: OidcAudienceConfiguration,
+  settings: Pick<OidcAudienceConfiguration, 'allowedOrigins'>,
 ) {
   if (!isUnsafeMethod(request.method)) return
   const origin = request.headers.origin
@@ -519,9 +530,9 @@ function redirectUriForOrigin(settings: OidcAudienceConfiguration, origin: strin
   return redirectUri
 }
 
-function resolveRequestOrigin(
+export function resolveRequestOrigin(
   request: IncomingMessage,
-  settings: OidcAudienceConfiguration,
+  settings: Pick<OidcAudienceConfiguration, 'allowedOrigins'>,
 ) {
   const origin = requestOrigin(request)
   if (!settings.allowedOrigins.includes(origin)) {
@@ -591,7 +602,7 @@ function isUnsafeMethod(method: string | undefined) {
   return !['GET', 'HEAD', 'OPTIONS'].includes(method ?? 'GET')
 }
 
-function parseCookies(header: string | undefined) {
+export function parseCookies(header: string | undefined) {
   const cookies: Record<string, string> = {}
   for (const part of header?.split(';') ?? []) {
     const separator = part.indexOf('=')
@@ -608,7 +619,7 @@ function parseCookies(header: string | undefined) {
   return cookies
 }
 
-function serializeCookie(name: string, value: string, maxAge: number, secure: boolean) {
+export function serializeCookie(name: string, value: string, maxAge: number, secure: boolean) {
   return [
     `${name}=${encodeURIComponent(value)}`,
     'Path=/',
@@ -619,7 +630,7 @@ function serializeCookie(name: string, value: string, maxAge: number, secure: bo
   ].join('; ')
 }
 
-function clearCookie(name: string, secure: boolean) {
+export function clearCookie(name: string, secure: boolean) {
   return serializeCookie(name, '', 0, secure)
 }
 

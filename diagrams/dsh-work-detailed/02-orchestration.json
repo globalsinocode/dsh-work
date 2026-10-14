@@ -1,0 +1,206 @@
+{
+  "type": "architecture",
+  "title": "第二层 · 编排层模块",
+  "subtitle": "Task / Run / Attempt · 幂等与预算 · 调度、受控委派、等待恢复和结果投影",
+  "eyebrow": "DSH-WORK / 五层模块详图 / 2026-10-12",
+  "caption": "所有入口进入同一 Run/Attempt 链路。委派只创建受控子任务，模型规划仍由 DSH 执行。动作批准从检查点创建新 Attempt；事件先落库，再供查询与 SSE 使用。委派与等待按需启用，真实多 Agent 场景仍需 P2 验收。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "budget": "balanced",
+  "out": "02-orchestration.html",
+  "groups": [
+    {"id":"controls","label":"执行约束与受控协作"},
+    {"id":"schedule","label":"统一任务调度"},
+    {"id":"lifecycle","label":"等待、恢复与交付"}
+  ],
+  "nodes": [
+    {
+      "id": "triggers",
+      "label": "触发与自动任务",
+      "sub": "对话 / API / 定时 / Agent routine",
+      "row": 1,
+      "col": 0,
+      "kind": "input",
+      "icon": "clock"
+    },
+    {
+      "id": "task",
+      "label": "任务与运行",
+      "sub": "Task / Run / 幂等 / 固定身份",
+      "row": 1,
+      "col": 1,
+      "kind": "backend",
+      "icon": "document",
+      "focal": true,
+      "group": "schedule"
+    },
+    {
+      "id": "gates",
+      "label": "执行门禁",
+      "sub": "当前权限 / 来源 / 预算预占",
+      "row": 0,
+      "col": 1,
+      "kind": "backend",
+      "icon": "lock",
+      "group": "controls"
+    },
+    {
+      "id": "scheduler",
+      "label": "Attempt 调度",
+      "sub": "容量 / 车道 / PG 原子认领",
+      "row": 1,
+      "col": 2,
+      "kind": "backend",
+      "icon": "gear",
+      "group": "schedule"
+    },
+    {
+      "id": "runtime",
+      "label": "Runtime 执行口",
+      "sub": "Adapter → DSH Worker",
+      "row": 1,
+      "col": 3,
+      "kind": "external",
+      "icon": "server",
+      "focal": true,
+      "tag": "第四层"
+    },
+    {
+      "id": "delegation",
+      "label": "父子 Agent 委派",
+      "sub": "精确目标 / 根预算 / 取消传播",
+      "row": 0,
+      "col": 2,
+      "kind": "backend",
+      "icon": "people",
+      "tag": "按需",
+      "group": "controls"
+    },
+    {
+      "id": "wait",
+      "label": "持久化等待",
+      "sub": "动作审批 / 检查点 / 新 Attempt",
+      "row": 2,
+      "col": 2,
+      "kind": "backend",
+      "icon": "clock",
+      "tag": "按需",
+      "group": "lifecycle"
+    },
+    {
+      "id": "events",
+      "label": "事件与恢复",
+      "sub": "终态收敛 / 重试 / 重启对账",
+      "row": 2,
+      "col": 3,
+      "kind": "backend",
+      "icon": "gear",
+      "group": "lifecycle"
+    },
+    {
+      "id": "result",
+      "label": "结果与回执",
+      "sub": "task-result / 查询 / SSE",
+      "row": 3,
+      "col": 1,
+      "kind": "backend",
+      "icon": "check",
+      "group": "lifecycle"
+    }
+  ],
+  "edges": [
+    {"from":"triggers","to":"task","label":"受理任务","kind":"primary"},
+    {"from":"gates","to":"task","label":"校验与预占","kind":"link"},
+    {"from":"task","to":"scheduler","label":"创建 Attempt","kind":"primary"},
+    {"from":"scheduler","to":"runtime","label":"认领执行","kind":"primary"},
+    {"from":"runtime","to":"events","label":"运行事件","kind":"primary"},
+    {"from":"events","to":"result","label":"状态与交付","kind":"primary"},
+    {"from":"runtime","to":"delegation","label":"委派请求","kind":"link"},
+    {"from":"delegation","to":"task","label":"创建子任务","kind":"link"},
+    {"from":"runtime","to":"wait","label":"权限请求","kind":"link"},
+    {"from":"wait","to":"scheduler","label":"批准后续跑","kind":"link"},
+    {"from":"events","to":"scheduler","label":"恢复与重试","kind":"default"}
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {"label":"本图主链路"},
+      "link": {"label":"能力与控制关系"},
+      "default": {"label":"数据或模块连接"},
+      "backend": {"label":"已实现模块"},
+      "input": {"label":"入口或输入"},
+      "focal": {"label":"关键节点"}
+    }
+  },
+  "evidence": [
+    {
+      "id": "triggers",
+      "file": "docs/development/internal-ports.md",
+      "line": 17,
+      "note": "员工自动任务与 Agent routine 由平台调度器触发，API/event 可创建无 Session Task；不同来源最终复用 Run/Attempt/DSH。routine 固定版本、身份、Workspace、输入和授权上限。"
+    },
+    {
+      "id": "triggers",
+      "file": "server/src/modules/automation/automation-trigger-sweep.ts",
+      "line": 46,
+      "note": "定时扫描通过 PostgreSQL advisory lock 获取调度所有权，并使用持久化去重与计划状态；这里不是独立消息队列服务。"
+    },
+    {
+      "id": "task",
+      "file": "docs/development/internal-ports.md",
+      "line": 11,
+      "note": "Task 保存任务来源、身份、累计预算与外部操作回执。幂等键和摘要阻止重复受理；Run/Attempt 区分业务运行与具体尝试。"
+    },
+    {
+      "id": "gates",
+      "file": "docs/development/internal-ports.md",
+      "line": 18,
+      "note": "Workspace、Agent/Skill/Tool、文件来源和数据范围必须通过当前授权；预算在 Attempt 事务中预占，终态结算或释放。实际运行前还会再次复核。"
+    },
+    {
+      "id": "scheduler",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1431,
+      "note": "进程内队列扫描交互与自动任务车道，PostgreSQL 原子认领 Attempt；容量、停用、排空和子任务席位约束在平台检查。"
+    },
+    {
+      "id": "runtime",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1571,
+      "note": "编排层只通过 AgentRuntimePort 执行和订阅；第四层负责 ACP、Worker 与 Agent Loop。"
+    },
+    {
+      "id": "delegation",
+      "file": "docs/development/internal-ports.md",
+      "line": 25,
+      "note": "委派固定已发布目标版本，并约束权限交集、根预算、深度、并行和超时。父任务取消或失效会传播到活动子任务，子结果按 task-result/v1 回收。"
+    },
+    {
+      "id": "wait",
+      "file": "docs/development/internal-ports.md",
+      "line": 23,
+      "note": "DSH 权限请求绑定具体动作、参数、执行身份和有效期。waiting 释放 Worker；批准先复核权限与检查点，再创建新 Attempt，不能原地复活旧 Attempt。"
+    },
+    {
+      "id": "events",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1098,
+      "note": "服务重启恢复持久化队列和状态，处理崩溃与取消；重试创建新的 Attempt，不覆盖旧执行事实。"
+    },
+    {
+      "id": "events",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1895,
+      "note": "Runtime 事件按序持久化，终态和审计由平台控制。"
+    },
+    {
+      "id": "result",
+      "file": "server/src/modules/task/postgres-task-query-service.ts",
+      "line": 23,
+      "note": "结果查询聚合回答、Artifact、记录引用和外部操作回执；Run succeeded 与业务目标 achieved 是不同判定。SSE 只读取已提交且当前仍可访问的事件。"
+    }
+  ]
+}

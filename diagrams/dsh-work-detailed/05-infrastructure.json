@@ -1,0 +1,202 @@
+{
+  "type": "architecture",
+  "title": "第五层 · 基础设施模块",
+  "subtitle": "单节点部署基线 · PostgreSQL 与持久文件 · 安全隔离、凭据、发布与运维",
+  "eyebrow": "DSH-WORK / 五层模块详图 / 2026-10-12",
+  "caption": "图中是当前代码和部署脚本提供的能力。Node.js 承载模块化单体，PostgreSQL 负责业务事实与调度事务；独立 MQ 尚未接入。Git/CI 用于源码和发布制品，运行资产仍以数据库与内容目录为准。部署模板不能替代真实环境验收。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "budget": "balanced",
+  "out": "05-infrastructure.html",
+  "groups": [
+    {"id":"deliveryGroup","label":"接入与发布"},
+    {"id":"isolation","label":"执行隔离资源"},
+    {"id":"data","label":"数据持久化与运维"}
+  ],
+  "nodes": [
+    {
+      "id": "delivery",
+      "label": "Git 与发布",
+      "sub": "CI 构建 / 制品 / 版本切换",
+      "row": 0,
+      "col": 0,
+      "kind": "backend",
+      "icon": "code",
+      "group": "deliveryGroup"
+    },
+    {
+      "id": "proxy",
+      "label": "HTTPS 接入",
+      "sub": "Nginx / TLS / 双端静态资源",
+      "row": 1,
+      "col": 0,
+      "kind": "backend",
+      "icon": "lock",
+      "group": "deliveryGroup"
+    },
+    {
+      "id": "secrets",
+      "label": "凭据与密钥",
+      "sub": "模型引用 / MCP 密文 / 环境密钥",
+      "row": 0,
+      "col": 1,
+      "kind": "backend",
+      "icon": "key"
+    },
+    {
+      "id": "host",
+      "label": "Node.js 宿主",
+      "sub": "模块化单体 / launchd / 健康口",
+      "row": 1,
+      "col": 1,
+      "kind": "backend",
+      "icon": "server",
+      "focal": true
+    },
+    {
+      "id": "workers",
+      "label": "DSH 进程隔离",
+      "sub": "独立 Worker / 目录 / 版本锁",
+      "row": 1,
+      "col": 2,
+      "kind": "backend",
+      "icon": "server",
+      "focal": true,
+      "group": "isolation"
+    },
+    {
+      "id": "database",
+      "label": "PostgreSQL",
+      "sub": "身份 / 版本 / 状态 / 审计",
+      "row": 2,
+      "col": 0,
+      "kind": "store",
+      "icon": "database",
+      "group": "data"
+    },
+    {
+      "id": "files",
+      "label": "持久文件目录",
+      "sub": "Skill 包 / 输入 / 成果 / 会话",
+      "row": 2,
+      "col": 1,
+      "kind": "store",
+      "icon": "document",
+      "group": "data"
+    },
+    {
+      "id": "sandbox",
+      "label": "Python 沙箱",
+      "sub": "Docker / 禁网 / 降权 / 限额",
+      "row": 2,
+      "col": 2,
+      "kind": "backend",
+      "icon": "lock",
+      "tag": "按需",
+      "group": "isolation"
+    },
+    {
+      "id": "operations",
+      "label": "运维与恢复",
+      "sub": "健康 / 审计 / 异机备份 / 恢复",
+      "row": 3,
+      "col": 2,
+      "kind": "backend",
+      "icon": "gear"
+    }
+  ],
+  "edges": [
+    {"from":"proxy","to":"host","label":"API / SSE","kind":"primary"},
+    {"from":"host","to":"workers","label":"启动与回收","kind":"primary"},
+    {"from":"delivery","to":"host","label":"发布制品","kind":"default"},
+    {"from":"delivery","to":"proxy","label":"静态构建","kind":"default"},
+    {"from":"secrets","to":"host","label":"受控解析","kind":"link"},
+    {"from":"host","to":"database","label":"事务与调度","kind":"default"},
+    {"from":"host","to":"files","label":"内容持久化","kind":"default"},
+    {"from":"host","to":"sandbox","label":"工具执行","kind":"link"},
+    {"from":"database","to":"operations","label":"数据库备份","kind":"default"},
+    {"from":"files","to":"operations","label":"文件备份","kind":"default"}
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {"label":"本图主链路"},
+      "link": {"label":"能力与控制关系"},
+      "default": {"label":"数据或模块连接"},
+      "backend": {"label":"已实现模块"},
+      "store": {"label":"持久化资源"},
+      "focal": {"label":"关键节点"}
+    }
+  },
+  "evidence": [
+    {
+      "id": "delivery",
+      "file": ".github/workflows/ci.yml",
+      "line": 1,
+      "note": "GitHub 工作流负责构建与验证，发布脚本执行制品校验、备份、迁移和版本切换。Git 不替代平台运行资产的数据库版本关系。"
+    },
+    {
+      "id": "delivery",
+      "file": "scripts/deploy/release.sh",
+      "line": 34,
+      "note": "部署脚本包含升级备份与发布流程；此处只描述代码能力，没有执行发布、迁移或生产恢复。"
+    },
+    {
+      "id": "proxy",
+      "file": "deploy/compose.yaml",
+      "line": 22,
+      "note": "Nginx 容器挂载两个前端的静态资源与 TLS 配置，反向代理宿主 Node.js API。PostgreSQL 也由部署 Compose 管理。"
+    },
+    {
+      "id": "host",
+      "file": "deploy/launchd/com.company.dsh-work.server.plist.template",
+      "line": 3,
+      "note": "Node.js 模块化单体由宿主 launchd 管理；运行、身份、治理、工具和审计是同一个平台部署单元中的逻辑模块。"
+    },
+    {
+      "id": "secrets",
+      "file": "docs/development/internal-ports.md",
+      "line": 13,
+      "note": "模型 Provider 保存外部凭据引用；MCP Token 以 AES-256-GCM 密文保存在 PostgreSQL，主密钥来自服务环境，仅在受控运行时解析。"
+    },
+    {
+      "id": "workers",
+      "file": "docs/development/internal-ports.md",
+      "line": 9,
+      "note": "一个 Attempt 对应一个独立 DSH Worker，DSH 版本由 Runtime Lock 固定；容量、取消、超时和进程清理由平台管理。"
+    },
+    {
+      "id": "database",
+      "file": "docs/development/overview.md",
+      "line": 42,
+      "note": "PostgreSQL 保存身份、对象权限、配置版本关系、任务、Attempt、运行事件、回执、调度锁和审计。调度依赖持久化事务与平台队列，没有独立 MQ 中间件。"
+    },
+    {
+      "id": "files",
+      "file": "docs/development/overview.md",
+      "line": 43,
+      "note": "DSH_WORK_DATA_ROOT 保存 Skill 内容寻址包、输入和成果等持久文件。数据库与内容目录需要成组备份；路径引用和摘要在平台元数据中保存。"
+    },
+    {
+      "id": "sandbox",
+      "file": "server/src/modules/runtime/python-skill-runner.ts",
+      "line": 44,
+      "note": "Python 容器限制网络、文件系统、权限和资源；这一沙箱不覆盖所有 DSH 进程。"
+    },
+    {
+      "id": "operations",
+      "file": "scripts/deploy/backup.sh",
+      "line": 63,
+      "note": "备份脚本归档 PostgreSQL 与持久文件并执行异机副本校验；恢复流程独立且受明确操作边界约束。"
+    },
+    {
+      "id": "operations",
+      "file": "apps/admin-web/src/router/index.ts",
+      "line": 185,
+      "note": "管理台提供运行健康与审计视图；真实模型、OIDC、多账号、外部工具和恢复演练需在对应环境单独验证。"
+    }
+  ]
+}

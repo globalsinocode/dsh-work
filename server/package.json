@@ -1,7 +1,7 @@
 {
   "name": "@dsh-work/server",
   "version": "0.1.1",
-  "releaseVersion": "2026.09.23-01",
+  "releaseVersion": "2026.10.13-01",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,7 +23,8 @@
     "test:pf04:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf04-persistent-wait.integration.test.ts",
     "test:pf05:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf05-controlled-memory.integration.test.ts",
     "test:pf06:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf06-agent-delegation.integration.test.ts",
-    "test:tool-binding:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/tool-binding.integration.test.ts",
+    "test:tool-binding:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/tool-binding.integration.test.ts src/infrastructure/postgres/team-agent-binding-upgrade.integration.test.ts",
+    "test:automation:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/automation.integration.test.ts",
     "test:m4:knowledge:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-enterprise-knowledge.integration.test.ts",
     "test:m4:file": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/workbench/application/document-extractor.test.ts",
     "test:m4:file:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts",
@@ -77,7 +78,10 @@
     "test:review:p2:origin": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-origin.test.ts",
     "test:review:p2:skill:unit": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/skill/skill-errors.test.ts",
     "test:review:p2:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/review-p2-skill-errors.integration.test.ts",
-    "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts"
+    "test:review:p2:logging": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/review-p2-error-logging.test.ts",
+    "auth:bootstrap": "node --env-file-if-exists=../.env --experimental-strip-types src/modules/identity/local-bootstrap.ts",
+    "test:local-auth": "node --experimental-strip-types --test src/modules/identity/local-auth.test.ts",
+    "test:local-auth:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/identity/local-auth.integration.test.ts src/modules/identity/authentication-startup.integration.test.ts src/modules/identity/portal-auth.integration.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

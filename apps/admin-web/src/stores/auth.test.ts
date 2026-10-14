@@ -71,4 +71,21 @@ describe('admin auth store', () => {
     expect(store.canReadAdmin).toBe(true)
     expect(store.identityAdministrationAvailable).toBe(true)
   })
+
+  it('enables account administration for a local platform administrator', async () => {
+    api.getSession.mockResolvedValueOnce({
+      identityProvider: 'local-password',
+      apiAudience: 'admin',
+      permissions: ['admin:*', 'admin:read', 'admin:write', 'audit:read'],
+      user: {
+        id: 'local-admin', name: '本地管理员', title: '管理员', department: '',
+        avatarText: '本', role: 'platform_admin', dataScopes: [],
+      },
+    })
+    const { useAuthStore } = await import('./auth')
+    const store = useAuthStore()
+    await store.load()
+    expect(store.identityAdministrationAvailable).toBe(true)
+    expect(store.canManageIdentity).toBe(true)
+  })
 })

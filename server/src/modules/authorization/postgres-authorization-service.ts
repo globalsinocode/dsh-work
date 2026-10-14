@@ -4,7 +4,9 @@ import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from './authorization-errors.ts'
+import { requirePlatformAdminActor } from './platform-admin-actor.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import { isDefaultRunLocalAgentTool } from '../tool/dsh-built-in-tool-catalog.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -19,6 +21,7 @@ interface AgentAuthorizationRow {
   versionId: string
   skillReferences: string[]
   toolReferences: string[]
+  bindingRefs: Array<{ tool: string }>
   visibleRoleIds: string[]
   dataScopes: string[]
 }
@@ -62,9 +65,9 @@ export interface AgentRoutineAuthorizationInput {
 }
 
 /**
- * 后台主体校验所需的目录绑定（AG-03）：OIDC 模式下按
+ * 后台主体校验所需的目录绑定（AG-03）：AI Hub 身份按
  * `identity_directory_sync_state` 的 last_succeeded_at 判断目录新鲜度，
- * 超过 maxSyncAgeMs 即 fail-closed。Prototype 模式没有目录同步，传 null。
+ * 超过 maxSyncAgeMs 即 fail-closed。null 表示目录不可用，仅独立账号可继续。
  */
 export interface AutomationDirectoryBinding {
   applicationId: string
@@ -326,13 +329,16 @@ export class PostgresAuthorizationService {
     // A grant added for another Agent Version cannot expand this immutable
     // version's declared data boundary.
     const dataScopes = principalDataScopes.filter(scope => agent.dataScopes.includes(scope))
-    if (!intersects(roleIds, agent.visibleRoleIds)) {
+    // Catalog visibility belongs to the human user. Agent execution roles are
+    // independent grants and may be empty for a text-only Agent.
+    if (!intersects(context.roleIds, agent.visibleRoleIds)) {
       // 5-T4 发现、父代理修复：这是真授权拒绝，但文案不含 403 正则里的任何片段
       // （「不可使用」不在 `/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/`），
       // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
       throw authorizationDenied('当前用户角色不可使用所选 Agent')
     }
-    requireScopes(dataScopes, agent.dataScopes, 'Agent')
+    // Version scopes are a ceiling. Individual tools and data collections
+    // enforce the scopes they actually require.
 
     const toolVersions = await this.resolveAndAuthorizeTools(
       agent.toolReferences,
@@ -427,17 +433,23 @@ export class PostgresAuthorizationService {
   /**
    * 后台主体校验（AG-03）：自动任务触发时重查「本人账号当前仍有效」。
    *
-   * 两段检查：先验证员工目录新鲜度（OIDC 模式按
-   * `identity_directory_sync_state.last_succeeded_at` 是否落在信任窗口内；
-   * 从未成功或超窗一律 fail-closed，Prototype 模式无目录可校、跳过此段），
-   * 再走 requireIdentity 的 active + 租户可用 + 角色解析（business_user
-   * 为否的同步用户已被归一化为 disabled，天然被拦）。
+   * 按持久身份来源决定是否复核目录，而不是按当前启动模式。
+   * AI Hub 用户在目录未配置、从未同步或超出信任窗口时 fail-closed；
+   * 独立账号不依赖外部目录。两者均须通过 active + 租户 + 当前角色检查。
    *
    * 不逐次写审计——本方法按扫描周期高频调用，失败证据由调用方落在
    * automation_executions 的 reason 字段。
    */
   async resolveAutomationSubject(userId: string): Promise<IdentityRow> {
-    if (this.automationDirectory) {
+    const [user] = await this.database<{ identityProvider: 'local' | 'ai-hub' }[]>`
+      select identity_provider as "identityProvider" from users
+       where tenant_id = ${tenantId} and id = ${userId}
+    `
+    if (!user) throw authorizationDenied('当前用户不存在')
+    if (user.identityProvider === 'ai-hub') {
+      if (!this.automationDirectory) {
+        throw authorizationDenied('AI Hub 员工目录不可用，该身份的自动任务暂停触发')
+      }
       const [state] = await this.database<{ lastSucceededAt: string | null }[]>`
         select last_succeeded_at as "lastSucceededAt"
           from identity_directory_sync_state
@@ -658,8 +670,7 @@ export class PostgresAuthorizationService {
         from agent_versions
        where tenant_id = ${tenantId} and id = ${agentVersionId}
     `
-    if (!version || roleIds.some(role => !version.roleIds.includes(role))
-      || dataScopes.some(scope => !version.dataScopes.includes(scope))) {
+    if (!version || dataScopes.some(scope => !version.dataScopes.includes(scope))) {
       throw authorizationDenied('试运行权限超出 Agent Version 声明范围')
     }
     const skillVersions = await this.resolveSkillVersions(version.skills)
@@ -672,16 +683,16 @@ export class PostgresAuthorizationService {
     await this.resolveAndAuthorizeTools(version.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference)), roleIds, dataScopes)
   }
 
-  /** Release trials run within current Agent grants, not every visible role or declared scope. */
+  /** Release trials use the Agent's own grants, never the audience or creator's roles. */
   async resolveAgentPrincipalTrialScope(agentVersionId: string, declaredRoles: string[], declaredScopes: string[]): Promise<{
     roleIds: string[]; dataScopes: string[]
   }> {
     const principal = await this.requireAgentPrincipalGrants(agentVersionId)
-    const roleIds = declaredRoles.filter(role => principal.roleIds.includes(role))
+    void declaredRoles
+    const roleIds = principal.roleIds
     const dataScopes = declaredScopes.filter(scope => principal.dataScopes.includes(scope))
-    if (!roleIds.length || !dataScopes.length) {
-      throw authorizationDenied('Agent 身份尚未获得试运行所需的角色和数据授权')
-    }
+    const missingScopes = declaredScopes.filter(scope => !principal.dataScopes.includes(scope))
+    if (missingScopes.length) throw authorizationDenied(`Agent 身份缺少平台数据授权范围：${missingScopes.join('、')}`)
     return { roleIds, dataScopes }
   }
 
@@ -756,23 +767,7 @@ export class PostgresAuthorizationService {
   }
 
   async requirePlatformAdmin(userId: string) {
-    const [row] = await this.database<{ id: string; displayName: string; department: string }[]>`
-      select u.id, u.display_name as "displayName",
-             coalesce(u.department_id, '未分配部门') as department
-        from users u
-       where u.tenant_id = ${tenantId} and u.id = ${userId}
-         and u.status = 'active'
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id
-              and ur.source_key = 'local' and r.status = 'active'
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
-         )
-    `
-    if (!row) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
-    return row
+    return requirePlatformAdminActor(this.database, userId)
   }
 
   async requireAdminReader(userId: string) {
@@ -992,7 +987,8 @@ export class PostgresAuthorizationService {
   private async requireAgentVersion(versionId: string): Promise<AgentAuthorizationRow> {
     const [row] = await this.database<AgentAuthorizationRow[]>`
       select av.agent_id as "agentId", av.id as "versionId", av.skill_refs as "skillReferences",
-             av.tool_refs as "toolReferences", av.visible_role_ids as "visibleRoleIds",
+             av.tool_refs as "toolReferences", av.binding_refs as "bindingRefs",
+             av.visible_role_ids as "visibleRoleIds",
              av.data_scopes as "dataScopes"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
@@ -1002,7 +998,9 @@ export class PostgresAuthorizationService {
          and av.status = 'published' and a.status = 'published'
     `
     if (!row) throw authorizationDenied('Agent Version 不存在、未发布或 Agent 执行身份已停用')
-    return row
+    return { ...row, toolReferences: unique([
+      ...row.toolReferences, ...(row.bindingRefs ?? []).map(binding => binding.tool),
+    ]) }
   }
 
   private async resolveSkillVersions(references: string[]): Promise<CapabilityVersion[]> {
@@ -1028,6 +1026,7 @@ export class PostgresAuthorizationService {
   ): Promise<CapabilityVersion[]> {
     const resolved = await this.resolveToolVersionRows(references)
     for (const tool of resolved) {
+      if (isDefaultRunLocalAgentTool({ ...tool, dataScopes: tool.requiredDataScopes })) continue
       if (!intersects(roleIds, tool.allowedRoleIds)) throw authorizationDenied(`当前用户角色不可调用工具：${tool.reference}`)
       requireScopes(dataScopes, tool.requiredDataScopes, `工具 ${tool.reference}`)
     }
@@ -1036,16 +1035,23 @@ export class PostgresAuthorizationService {
 
   private async resolveToolVersionRows(
     references: string[],
-  ): Promise<Array<CapabilityVersion & { allowedRoleIds: string[]; requiredDataScopes: string[] }>> {
-    const resolved: Array<CapabilityVersion & { allowedRoleIds: string[]; requiredDataScopes: string[] }> = []
+  ): Promise<Array<CapabilityVersion & {
+    connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; requiredDataScopes: string[]
+  }>> {
+    const resolved: Array<CapabilityVersion & {
+      connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; requiredDataScopes: string[]
+    }> = []
     for (const reference of unique(references)) {
       const { id, version } = parseReference(reference, '工具')
       const [row] = await this.database<{
         versionId: string
+        connectorId: string
+        dshToolName: string | null
         allowedRoleIds: string[]
         requiredDataScopes: string[]
       }[]>`
-        select tv.id as "versionId", t.allowed_role_ids as "allowedRoleIds",
+        select tv.id as "versionId", t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+               t.allowed_role_ids as "allowedRoleIds",
                t.data_scopes as "requiredDataScopes"
           from tools t
           join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
@@ -1058,7 +1064,9 @@ export class PostgresAuthorizationService {
            and tv.status = 'published' and c.status = 'healthy'
       `
       if (!row) throw authorizationDenied(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
-      resolved.push({ reference, versionId: row.versionId, allowedRoleIds: row.allowedRoleIds, requiredDataScopes: row.requiredDataScopes })
+      resolved.push({ reference, versionId: row.versionId, connectorId: row.connectorId,
+        dshToolName: row.dshToolName, allowedRoleIds: row.allowedRoleIds,
+        requiredDataScopes: row.requiredDataScopes })
     }
     return resolved
   }

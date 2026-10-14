@@ -20,6 +20,7 @@ import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type 
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 
@@ -204,8 +205,8 @@ export class PostgresAgentService {
     return rows.map(toAgentDefinition)
   }
 
-  async getAgentPrincipal(agentId: string): Promise<AgentPrincipalGovernance> {
-    const [row] = await this.database<{
+  async getAgentPrincipal(agentId: string, sql: DatabaseClient | DatabaseTransaction = this.database): Promise<AgentPrincipalGovernance> {
+    const [row] = await sql<{
       principalId: string; agentId: string; status: 'active' | 'disabled'; authorizationVersion: number
       roleIds: string[]; dataScopes: string[]
     }[]>`
@@ -220,6 +221,18 @@ export class PostgresAgentService {
     `
     if (!row) throw new Error(`Agent 执行身份不存在：${agentId}`)
     return row
+  }
+
+  /** Runtime and release checks must ignore role grants whose role has since been disabled. */
+  async getAgentExecutionPrincipal(agentId: string, sql: DatabaseClient | DatabaseTransaction = this.database): Promise<AgentPrincipalGovernance> {
+    const principal = await this.getAgentPrincipal(agentId, sql)
+    const activeRoles = await sql<{ id: string }[]>`
+      select g.role_id as id from agent_principal_role_grants g
+        join roles r on r.tenant_id = g.tenant_id and r.id = g.role_id and r.status = 'active'
+       where g.tenant_id = ${tenantId} and g.principal_id = ${principal.principalId}
+       order by g.role_id
+    `
+    return { ...principal, roleIds: activeRoles.map(role => role.id) }
   }
 
   async listPrincipalRoleOptions(): Promise<Array<{ id: string; name: string; status: 'active' | 'disabled' }>> {
@@ -352,12 +365,11 @@ export class PostgresAgentService {
     }
     const executionRoleIds = unique(input.executionRoleIds ?? [])
     const executionDataScopes = unique(input.executionDataScopes ?? [])
-    if (executionRoleIds.some(role => !configuration.roleIds.includes(role))
-      || executionDataScopes.some(scope => !configuration.dataScopes.includes(scope))) {
-      throw new Error('Agent 执行授权必须显式配置，且不能超过当前定义的角色和数据范围')
+    if (executionDataScopes.some(scope => !configuration.dataScopes.includes(scope))) {
+      throw new Error('Agent 执行数据授权不能超过当前定义的平台数据范围')
     }
     await this.assertInitialAgentGrants(executionRoleIds)
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
     const versionId = `agent-version-${randomUUID()}`
@@ -424,17 +436,26 @@ export class PostgresAgentService {
     return { agent: toAgentDefinition(row), revision: agentMutationRevision(row) }
   }
 
-  async updateAgent(input: UpdateAgentDraftInput, expectedRevision?: string, options: { draftCopyOnly?: boolean } = {}) {
+  async updateAgent(
+    input: UpdateAgentDraftInput,
+    expectedRevision?: string,
+    options: { draftCopyOnly?: boolean; preservePublicationScope?: boolean } = {},
+  ) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    // F-05：发布范围（可见角色、平台数据范围上限）只由发布工作台写入。编辑器保存时沿用当前值，
+    // 并由调用方的 expectedRevision 保证“读到的当前值”与加锁后的行一致。
+    const publicationScope = options.preservePublicationScope
+      ? { roleIds: current.roleIds, dataScopes: current.dataScopes, visibility: toAgentDefinition(current).visibility }
+      : {}
     const configuration = normalizeConfiguration(
-      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
+      { ...input, ...publicationScope, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
       current.owner,
       current.department,
     )
     assertConfiguration(configuration)
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools, configuration.roleIds, configuration.dataScopes)
+    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     await this.assertDelegationTargets(normalizeDelegationPolicy(configuration.delegationPolicy))
 
@@ -597,20 +618,38 @@ export class PostgresAgentService {
          and av.version = ${input.version} and av.status = 'published'
     `
     if (!target) throw new Error(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
-    await this.assertCapabilityReferences(target.skills, target.tools, target.roleIds, target.dataScopes)
+    const principal = await this.getAgentExecutionPrincipal(input.agentId)
+    await this.assertCapabilityReferences(target.skills, target.tools, principal.roleIds,
+      target.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
 
-    const note = `活动版本由 v${current.version} 回滚到 v${target.version}。`
+    if (!current.activeVersionId) throw new Error('尚未发布的 Agent 不能回滚')
+    if (current.activeVersionId === target.id) throw new Error(`v${target.version} 已是当前活动版本，无需回滚`)
+    const [activeBefore] = await this.database<{ version: string }[]>`
+      select version from agent_versions where tenant_id = ${tenantId} and id = ${current.activeVersionId}
+    `
+    const note = `活动版本由 v${activeBefore?.version ?? '—'} 回滚到 v${target.version}；启停状态与进行中的草稿保持不变。`
+    // F-03：回滚只移动活动版本指针。行锁 + 比较活动版本防止与并发发布/回滚交错；
+    // 不改变 agents.status（停用中的 Agent 回滚后仍停用），也不停用进行中的草稿及其发布候选。
     const release = await this.database.begin(async transaction => {
-      if (current.draftVersionId) {
-        await transaction`update agent_versions set status = 'disabled' where tenant_id = ${tenantId} and id = ${current.draftVersionId} and status = 'draft'`
+      const locked = await this.lockAgentForMutation(transaction, input.agentId)
+      if (!locked || locked.activeVersionId !== current.activeVersionId) {
+        throw new Error('Agent 当前版本已发生变化，请刷新后重试')
       }
-      await transaction`
-        update agents set active_version_id = ${target.id}, draft_version_id = null,
-                          status = 'published', name = ${target.name},
+      const [stillPublished] = await transaction<{ id: string }[]>`
+        select id from agent_versions
+         where tenant_id = ${tenantId} and id = ${target.id} and status = 'published'
+         for share
+      `
+      if (!stillPublished) throw new Error(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
+      const moved = await transaction<{ id: string }[]>`
+        update agents set active_version_id = ${target.id}, name = ${target.name},
                           description = ${target.description},
                           welcome_message = ${target.welcomeMessage}, updated_at = now()
          where tenant_id = ${tenantId} and id = ${input.agentId}
+           and active_version_id = ${current.activeVersionId}
+        returning id
       `
+      if (!moved.length) throw new Error('Agent 当前版本已发生变化，请刷新后重试')
       return this.appendRelease(transaction, target.id, input.agentId, 'rollback', actor.id, note)
     })
     await this.audit(actor.id, 'agent.rollback', input.agentId, 'success', release.note)
@@ -753,11 +792,12 @@ export class PostgresAgentService {
       if (!row?.activeVersionId) continue
       if (!additionalSkillReferences.length) return row.activeVersionId
       try {
+        const principal = await this.getAgentExecutionPrincipal(candidate.id)
         await this.assertCapabilityReferences(
           mergeSkillReferences(row.skills, additionalSkillReferences),
           row.tools,
-          row.roleIds,
-          row.dataScopes,
+          principal.roleIds,
+          row.dataScopes.filter(scope => principal.dataScopes.includes(scope)),
         )
         return row.activeVersionId
       } catch (error) {
@@ -819,12 +859,18 @@ export class PostgresAgentService {
     }))
   }
 
-  async getRuntimeSnapshot(versionId: string, additionalSkillReferences: string[] = []): Promise<RuntimeAgentSnapshot> {
-    const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & {
-      agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
+  async getRuntimeSnapshot(
+    versionId: string,
+    additionalSkillReferences: string[] = [],
+    expectedDefinitionFingerprint?: string,
+  ): Promise<RuntimeAgentSnapshot> {
+    const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & AgentFingerprintSource & {
+      agentId: string; agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
     })[]>`
-      select av.id as "versionId", ep.id as "principalId",
+      select av.id as "versionId", av.agent_id as "agentId", ep.id as "principalId",
              ep.authorization_version as "principalAuthorizationVersion",
+             av.name, av.description, av.welcome_message as "welcomeMessage",
+             av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
              av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
@@ -841,8 +887,16 @@ export class PostgresAgentService {
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
     `
     if (!row) throw new Error(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
+    // 试运行必须用封存时的定义；指纹与本次取到的配置在同一行快照上计算，
+    // 防止发布服务检查后、Attempt 准备前草稿被修改而混入另一份定义。
+    if (expectedDefinitionFingerprint && configurationFingerprint(row) !== expectedDefinitionFingerprint) {
+      throw new Error('Agent 草稿定义已偏离封存内容，请从第一项重新试运行')
+    }
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
-    await this.assertCapabilityReferences(skills, row.tools, row.roleIds, row.dataScopes)
+    const principal = await this.getAgentExecutionPrincipal(row.agentId)
+    if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
+    const executionScopes = row.dataScopes.filter(scope => principal.dataScopes.includes(scope))
+    await this.assertCapabilityReferences(skills, row.tools, principal.roleIds, executionScopes)
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
@@ -850,7 +904,7 @@ export class PostgresAgentService {
       .filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
     const platformTools = row.versionStatus === 'draft'
       ? (this.toolService
-        ? await this.toolService.resolvePlatformDefaultToolReferences(row.roleIds, row.dataScopes)
+        ? await this.toolService.resolvePlatformDefaultToolReferences(principal.roleIds, executionScopes)
         : [])
       : row.bindingRefs?.length
         ? row.bindingRefs.map(pin => pin.tool)
@@ -876,7 +930,7 @@ export class PostgresAgentService {
       throw authorizationDenied('Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本')
     }
     const mcpConnections = this.toolService
-      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
+      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId, expectedDefinitionFingerprint ? row.mcpScope : undefined)
       : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
@@ -884,7 +938,7 @@ export class PostgresAgentService {
     const systemPrompt = row.agentSpec
       ? assembleAgentInstructions(row.agentSpec)
       : row.systemPrompt
-    const { agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
+    const { agentId: _agentId, agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
     return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
   }
 
@@ -903,7 +957,10 @@ export class PostgresAgentService {
     const locked = await this.lockAgentForMutation(transaction, agentId)
     if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
     assertAgentMutationRevision(locked, expectedRevision)
-    await this.assertCapabilityReferences(locked.skills, locked.tools, locked.roleIds, locked.dataScopes)
+    const principal = await this.getAgentExecutionPrincipal(agentId, transaction)
+    if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
+    await this.assertCapabilityReferences(locked.skills, locked.tools, principal.roleIds,
+      locked.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
 
     const fingerprint = configurationFingerprint(locked)
     // 发布门禁只认封存试运行：agent_trial_runs 的案例经 Run/Attempt → Runtime Adapter
@@ -966,13 +1023,13 @@ export class PostgresAgentService {
 
   /** Persist effective Skill dependencies separately from author-declared AgentSpec tools. */
   private async resolveConfiguredToolReferences(
-    skills: string[], declaredTools: string[], roleIds: string[], dataScopes: string[],
+    skills: string[], declaredTools: string[],
   ): Promise<string[]> {
     const runtimeSkills = this.skillService ? await this.skillService.resolveRuntimeSkills(skills) : []
     const dependencies = runtimeSkills.flatMap(skill => skill.tools)
       .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))
     const effectiveTools = unique([...declaredTools, ...dependencies])
-    await this.assertCapabilityReferences(skills, effectiveTools, roleIds, dataScopes)
+    await this.assertCapabilityReferences(skills, effectiveTools)
     return effectiveTools
   }
 
@@ -1002,20 +1059,7 @@ export class PostgresAgentService {
   }
 
   private async requireActor(userId: string, sql: DatabaseClient | DatabaseTransaction = this.database) {
-    const [actor] = await sql<{ id: string; displayName: string; department: string }[]>`
-      select u.id, u.display_name as "displayName", coalesce(u.department_id, '未分配部门') as department
-        from users u where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
-         and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
-         and exists (
-           select 1 from user_roles ur
-           join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id
-            where ur.tenant_id = u.tenant_id and ur.user_id = u.id and ur.source_key = 'local' and r.status = 'active'
-              and (ur.valid_until is null or ur.valid_until > now())
-              and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
-         )
-    `
-    if (!actor) throw authorizationDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
-    return actor
+    return requirePlatformAdminActor(sql, userId)
   }
 
   private async readAgentRows(agentId?: string): Promise<AgentRow[]> {
@@ -1147,7 +1191,9 @@ function assertConfiguration(input: AgentDraftConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw new Error('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
-  if (!input.roleIds.length || !input.dataScopes.length) throw new Error('必须配置可见角色和数据范围')
+  // Drafts may start with no audience or business-data access. The release
+  // gate requires an audience before the first trial; an empty scope means a
+  // basic Agent without platform business-data access.
   if (!input.examplePrompts.length) throw new Error('必须配置至少一个示例问题')
   assertDelegationPolicy(normalizeDelegationPolicy(input.delegationPolicy))
 }
@@ -1159,7 +1205,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     description: row.description,
     owner: row.owner,
     department: row.department,
-    visibility: row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
+    visibility: row.roleIds.length === 0 ? '发布时设置' : row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
     roleIds: row.roleIds,
     dataScopes: row.dataScopes,
     allowWorkspaceJoin: row.allowWorkspaceJoin,
@@ -1179,6 +1225,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     updatedAt: formatDateTime(row.updatedAt),
+    revision: agentMutationRevision(row),
   }
 }
 
@@ -1194,7 +1241,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     ...(row.publishedBy ? { publishedBy: row.publishedBy } : {}),
     ...(row.sourceVersion ? { sourceVersion: row.sourceVersion } : {}),
     summary: row.summary,
-    visibility: row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
+    visibility: row.roleIds.length === 0 ? '发布时设置' : row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
     roleIds: row.roleIds,
     dataScopes: row.dataScopes,
     welcomeMessage: row.welcomeMessage,
@@ -1222,7 +1269,8 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     welcomeMessage: row.welcomeMessage,
     systemPrompt: row.systemPrompt,
     workInstructions: row.agentSpec?.workProcedures?.body ?? '',
-    roleIds: [...row.roleIds].sort(),
+    // F-09：员工可见角色是发布属性，不影响 Agent 行为，也不参与试运行，因此不进入定义指纹；
+    // 调整可见范围不作废试运行证据，由发布事务复核角色有效性并单独审计。平台数据范围上限仍计入。
     dataScopes: [...row.dataScopes].sort(),
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
@@ -1254,7 +1302,7 @@ function agentMutationRevision(row: AgentRow) {
 
 function assertAgentMutationRevision(row: AgentRow, expectedRevision?: string) {
   if (expectedRevision && agentMutationRevision(row) !== expectedRevision) {
-    throw new Error('Agent 配置已变化，请重新生成操作计划')
+    throw Object.assign(new Error('Agent 配置已变化（可能已被其他管理员或流程修改），请刷新后重新编辑'), { status: 409, code: 'state_conflict' })
   }
 }
 

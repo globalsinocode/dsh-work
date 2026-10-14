@@ -1,5 +1,9 @@
 # dsh-work 接入 AI Hub 身份服务
 
+平台始终提供独立账号密码登录，AI Hub 接入配置有效时自动增加企业登录入口，无需管理端选择登录模式。两类账号独立，不提供绑定或合并；账号初始化见 [独立登录](local-authentication.md)。
+
+两端 `/login` 默认显示账号密码；用户点击“使用 AI Hub 账号登录”后，直接访问 `/auth/{audience}/oidc/login` 发起授权，无中间确认页。`/auth/{audience}/login` 统一转到本地页面；回调地址不变。上游不可用时返回账号密码表单显示错误，独立账号不会自动绑定或切换到上游身份。
+
 本文的命令与表单示例以本地 `local` 环境为主。若 AI Hub 已在 Mac mini 上以纯 IP HTTPS
 部署，生产地址、`production` 环境登记和首次安装顺序请使用
 [Mac mini 部署流程（AI Hub 已部署）](mac-mini-deployment-runbook.md)，不要照搬下文的
@@ -67,7 +71,7 @@ http://localhost:4190/auth/admin/callback
 ## 4. dsh-work 环境变量
 
 ```dotenv
-DSH_WORK_AUTH_MODE=oidc
+# 移除开发用 DSH_WORK_AUTH_MODE=prototype；不再设置 local/oidc 登录模式
 DSH_WORK_DATABASE_URL=postgres://<user>:<password>@<host>:<port>/<database>
 
 AI_HUB_PLATFORM_URL=http://platform.localhost:8088
@@ -128,6 +132,8 @@ Bootstrap 只在本地认领记录首次原子写入时授予 `role-platform-adm
 上述查询可由具有管理读取权限的账号查看；同步、角色编辑、员工授权和 Session 撤销只允许本地 `admin:*` 平台管理员执行，普通 `admin:write` 不具备身份授权管理能力。
 
 同步只更新 `external_user_id`、subject、姓名、邮箱、组织、业务用户标记和账号状态。`business_user=false` 的 AI Hub 平台账号会被停用、撤销会话并从员工授权列表排除。同步绝不新增、删除或覆盖 dsh-work 的角色、功能权限和数据范围历史。
+
+员工授权列表展示登录账号、姓名与邮箱、账号来源、组织、角色、状态和最近活跃情况，支持按登录账号搜索。当前 AI Hub 的账号创建以登录账号作为 `subject`，OIDC Provider 使用 `user_username`；因此 dsh-work 将已同步的 `external_subject` 作为 AI Hub 的只读 `loginAccount`。独立账号的 `loginAccount` 来自本地凭据用户名，`username` 字段仍仅用于独立凭据管理。用户 UUID 不作为登录账号展示，两类账号不会据此绑定或合并。AI Hub 用户标识、目录同步时间保留在详情中；此次展示调整无需重新迁移或同步已有数据。
 
 ## 7. 验收顺序
 
