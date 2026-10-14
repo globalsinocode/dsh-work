@@ -113,8 +113,9 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   `
   const ungranted = await agents.getAgentPrincipal(agentId)
   assert.deepEqual({ roles: ungranted.roleIds, scopes: ungranted.dataScopes }, { roles: [], scopes: [] })
-  await assert.rejects(authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId }),
-    /当前用户角色不可使用所选 Agent/)
+  const basicDecision = await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })
+  assert.deepEqual(basicDecision.roleIds, [])
+  assert.deepEqual(basicDecision.dataScopes, [])
   await agents.updateAgentPrincipal({ agentId, actor,
     expectedAuthorizationVersion: ungranted.authorizationVersion,
     status: 'active', roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
@@ -123,7 +124,7 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   assert.equal(initialDecision.executorPrincipalId, principal.id)
   assert.deepEqual(initialDecision.dataScopes, ['workspace:authorized'])
   assert.deepEqual(await authorization.resolveAgentPrincipalTrialScope(versionId,
-    ['role-employee', 'role-platform-admin'], ['workspace:authorized', 'enterprise:authorized']),
+    ['role-employee', 'role-platform-admin'], ['workspace:authorized']),
   { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
   const originalGrant = await agents.getAgentPrincipal(agentId)
   const revoked = await agents.updateAgentPrincipal({ agentId, actor,
@@ -131,8 +132,9 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     status: 'active', roleIds: ['role-employee'], dataScopes: [],
   })
   assert.equal(revoked.dataScopes.length, 0)
-  await assert.rejects(authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId }),
-    /workspace:authorized/)
+  assert.deepEqual((await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })).dataScopes, [])
+  await assert.rejects(authorization.resolveAgentPrincipalTrialScope(versionId,
+    ['role-employee'], ['workspace:authorized']), /缺少平台数据授权范围：workspace:authorized/)
   await assert.rejects(agents.updateAgentPrincipal({ agentId, actor,
     expectedAuthorizationVersion: originalGrant.authorizationVersion,
     status: 'active', roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],

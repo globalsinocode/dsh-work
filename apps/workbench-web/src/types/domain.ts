@@ -600,7 +600,7 @@ export interface WorkspaceAgentMember {
 
 export interface WorkbenchSession {
   user: UserProfile
-  identityProvider: 'prototype-sso' | 'ai-hub-oidc'
+  identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'
   apiAudience: 'workbench'
 }
 

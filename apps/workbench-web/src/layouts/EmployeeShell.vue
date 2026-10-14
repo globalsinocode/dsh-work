@@ -269,7 +269,7 @@ onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加�
                 <el-icon><Monitor /></el-icon>
                 打开管理后台
               </el-dropdown-item>
-              <el-dropdown-item v-if="authStore.identityProvider === 'ai-hub-oidc'" divided command="logout">
+              <el-dropdown-item v-if="authStore.identityProvider !== null && authStore.identityProvider !== 'prototype-sso'" divided command="logout">
                 <el-icon><SwitchButton /></el-icon>
                 退出登录
               </el-dropdown-item>

@@ -8,8 +8,6 @@
  */
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { prototypeApiAuthenticator } from '../../server/src/modules/identity/prototype-authenticator.ts'
@@ -90,14 +88,15 @@ router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
 registerAgentRoutes(router, agents)
-registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database.client, agents, undefined,
-  connectorService, join(tmpdir(), 'dsh-agent-capabilities-p1')))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
   new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime,
   undefined, undefined, agents, undefined, authorization,
   { tasks: new PostgresTaskRepository(database.client) })
+// 发布服务第五个参数是试运行编排：此前误传临时目录字符串，导致该夹具中无法发起试运行。
+registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database.client, agents, undefined,
+  connectorService, routineOrchestration))
 registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
   routineRuns, routineOrchestration, routineConversations))
 router.get(`${base}/test/agent-routine/fixture`, async () => {

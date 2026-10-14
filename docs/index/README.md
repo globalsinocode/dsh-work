@@ -12,6 +12,7 @@
 | 实施已确认的 AGENTS、默认工具装配、MCP 使用范围与编辑页 V2 | [Agent 管理与能力装配统一更新方案（规范第 6 节，待实施）](../development/agent-design-standard.md#6-agent-管理与能力装配统一更新方案) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md)、[实现映射](../development/agent-lifecycle-implementation-map.md) |
 | 核对十二条规范的代码证据、测试覆盖和实施缺口 | [Agent 规范与当前实现差异清单](../development/agent-design-gap-analysis.md) |
+| 优化 Agent 新建、试运行与发布流程及界面（问题清单、目标设计与 AR 阶段计划） | [Agent 新建与发布流程优化方案](../design/agent-release-optimization-plan.md) |
 | 逐步优化执行观测、工具适配、上下文延续、恢复与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
 | 实施轻量自动任务及核对 AC-20～24 验收 | [AG-03 轻量自动任务实施方案](../design/automation-implementation-plan.md) |
 | 理解数据关系与迁移约束 | [数据模型](../design/data-model.md) |

@@ -317,7 +317,7 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   const baseInput = {
     id: `agent-tool-${suffix}`,
     name: '只读工具验证助手',
-    description: '验证 Agent 只能使用已发布、可用且由 Skill 明确依赖的只读工具。',
+    description: '验证平台自动解析 Skill 的精确工具依赖，执行前复核独立身份授权。',
     owner: '客户端占位',
     department: '客户端占位',
     visibility: '全体试点员工',
@@ -332,12 +332,35 @@ test('Tool and Connector management gates immutable Agent and Skill references',
     changeSummary: '验证 Tool 和 Skill 的强引用约束',
     actor: 'U00008',
   }
-  await assert.rejects(agents.createAgent({ ...baseInput, tools: ['glob@1.0.0'] }), /必须显式授权/)
-  const created = await agents.createAgent({ ...baseInput, tools: ['read@1.0.0'] })
+  await assert.rejects(agents.createAgent({ ...baseInput, tools: ['bash@1.0.0'] }), /不可用/)
+  const created = await agents.createAgent({ ...baseInput, tools: ['glob@1.0.0'] })
+  const [definition] = await database<{ declaredTools: string[]; effectiveTools: string[] }[]>`
+    select agent_spec #> '{capabilities,tools}' as "declaredTools", tool_refs as "effectiveTools"
+      from agent_versions where tenant_id = 'tenant-dsh-work' and id = ${created.version.id}
+  `
+  assert.deepEqual(definition?.declaredTools, ['glob@1.0.0'])
+  assert.deepEqual(definition?.effectiveTools, ['glob@1.0.0', 'read@1.0.0'])
+
+  // 自动解析依赖不授予业务权限；可见角色和定义范围也不替代独立身份授权。
+  let principal = await agents.getAgentExecutionPrincipal(created.agent.id)
+  assert.deepEqual(principal.roleIds, [])
+  assert.deepEqual(principal.dataScopes, [])
+  await assert.rejects(agents.getRuntimeSnapshot(created.version.id), /缺少工具 glob@1\.0\.0 所需角色/)
+  principal = await agents.updateAgentPrincipal({
+    agentId: created.agent.id, actor: 'U00008', status: 'active',
+    expectedAuthorizationVersion: principal.authorizationVersion,
+    roleIds: ['role-employee'], dataScopes: [],
+  })
+  await assert.rejects(agents.getRuntimeSnapshot(created.version.id), /缺少工具 glob@1\.0\.0 所需平台数据范围/)
+  await agents.updateAgentPrincipal({
+    agentId: created.agent.id, actor: 'U00008', status: 'active',
+    expectedAuthorizationVersion: principal.authorizationVersion,
+    roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  })
   await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
-  assert.deepEqual(snapshot.tools, ['read@1.0.0'])
-  assert.deepEqual(snapshot.runtimeTools, ['read@1.0.0'])
+  assert.deepEqual(snapshot.tools, ['glob@1.0.0', 'read@1.0.0'])
+  assert.deepEqual(snapshot.runtimeTools, ['glob@1.0.0', 'read@1.0.0'])
   assert.equal(snapshot.approvalMode, 'never')
   assert.deepEqual(snapshot.skillInstructions[0]?.tools, ['read@1.0.0'])
 

@@ -45,7 +45,7 @@ node_supported=$("${node_bin}" -p "const [major,minor]=process.versions.node.spl
 [[ "${NODE_ENV:-}" == production ]] || fail "NODE_ENV must be production"
 [[ -z "${DSH_RUNTIME_COMPATIBILITY:-}" ]] \
   || fail "DSH_RUNTIME_COMPATIBILITY is development-only and must be unset in production"
-[[ "${DSH_WORK_AUTH_MODE:-}" == oidc ]] || fail "DSH_WORK_AUTH_MODE must be oidc"
+[[ "${DSH_WORK_AUTH_MODE:-}" != prototype ]] || fail "prototype authentication is forbidden in production"
 [[ "${DSH_WORK_COOKIE_SECURE:-}" == true ]] || fail "secure cookies are mandatory"
 [[ "${DSH_WORK_SERVER_HOST:-}" == 127.0.0.1 ]] || fail "the native server must bind only to 127.0.0.1"
 
@@ -69,10 +69,13 @@ done
 
 if ! (
   cd "${release_dir}"
-  "${node_bin}" --input-type=module -e \
-    "const { loadIdentityConfiguration } = await import('./server/dist/modules/identity/config.js'); loadIdentityConfiguration()"
+  "${node_bin}" --input-type=module <<'JS'
+import { loadStartupIdentityConfiguration } from './server/dist/modules/identity/config.js'
+const configuration = loadStartupIdentityConfiguration()
+if (configuration.aiHubConfigurationIssue) console.warn(`AI Hub 登录未启用：${configuration.aiHubConfigurationIssue}。独立账号登录仍可用。`)
+JS
 ); then
-  fail "AI Hub OIDC production configuration is invalid"
+  fail "Production identity configuration is invalid"
 fi
 
 endpoint_compose=$("${release_dir}/scripts/deploy/render-endpoint-compose.sh" \

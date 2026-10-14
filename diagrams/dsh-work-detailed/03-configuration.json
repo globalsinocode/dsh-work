@@ -1,0 +1,253 @@
+{
+  "type": "architecture",
+  "title": "第三层 · 配置管理层模块",
+  "subtitle": "Agent / Skill / Tool 版本链 · 发布门禁 · 模型、MCP、知识与经验快照",
+  "eyebrow": "DSH-WORK / 五层模块详图 / 2026-10-12",
+  "caption": "Agent、Skill 与普通 Tool 采用版本和依赖治理；模型路由由平台治理，Agent 不单独配置模型策略。MCP 按发现快照自动生效，不绑定 Agent 发布。知识与经验按授权装载，经验需管理员审核；尚无独立的团队 Rules 统一分发模块。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "budget": "balanced",
+  "out": "03-configuration.html",
+  "groups": [
+    {
+      "id": "versioned",
+      "label": "定义、依赖与发布治理"
+    },
+    {
+      "id": "runtimeConfig",
+      "label": "运行期配置与固定快照"
+    },
+    {
+      "id": "context",
+      "label": "知识与经验上下文"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "skill",
+      "label": "Skill 资产",
+      "sub": "安装计划 / 包校验 / 不可变版本",
+      "row": 0,
+      "col": 0,
+      "kind": "backend",
+      "icon": "document",
+      "group": "versioned"
+    },
+    {
+      "id": "tool",
+      "label": "普通 Tool 目录",
+      "sub": "安全准入 / Schema / 绑定修订",
+      "row": 0,
+      "col": 1,
+      "kind": "backend",
+      "icon": "key",
+      "group": "versioned"
+    },
+    {
+      "id": "agent",
+      "label": "Agent 定义",
+      "sub": "工作定义 / Soul / 能力与授权",
+      "row": 1,
+      "col": 1,
+      "kind": "backend",
+      "icon": "people",
+      "focal": true,
+      "group": "versioned"
+    },
+    {
+      "id": "release",
+      "label": "评测与发布",
+      "sub": "配置校验 / 逐例试运行 / 确认",
+      "row": 1,
+      "col": 2,
+      "kind": "backend",
+      "icon": "check",
+      "group": "versioned"
+    },
+    {
+      "id": "snapshot",
+      "label": "运行快照",
+      "sub": "Manifest / 摘要 / 精确引用",
+      "row": 1,
+      "col": 3,
+      "kind": "backend",
+      "icon": "document",
+      "focal": true,
+      "tag": "按 Attempt",
+      "group": "runtimeConfig"
+    },
+    {
+      "id": "models",
+      "label": "模型治理",
+      "sub": "Provider / 路由 / 凭据引用",
+      "row": 0,
+      "col": 3,
+      "kind": "backend",
+      "icon": "cloud",
+      "group": "runtimeConfig"
+    },
+    {
+      "id": "mcp",
+      "label": "MCP 连接器",
+      "sub": "发现 / 健康 / 能力摘要",
+      "row": 2,
+      "col": 3,
+      "kind": "backend",
+      "icon": "key",
+      "group": "runtimeConfig"
+    },
+    {
+      "id": "knowledge",
+      "label": "知识与数据权限",
+      "sub": "来源版本 / 角色 / 空间范围",
+      "row": 2,
+      "col": 0,
+      "kind": "backend",
+      "icon": "document",
+      "group": "context"
+    },
+    {
+      "id": "experience",
+      "label": "Agent 经验迭代",
+      "sub": "运行申请 / 人工审核 / 经验版本",
+      "row": 2,
+      "col": 1,
+      "kind": "backend",
+      "icon": "check",
+      "tag": "按需",
+      "group": "context"
+    }
+  ],
+  "edges": [
+    {
+      "from": "skill",
+      "to": "agent",
+      "label": "能力依赖",
+      "kind": "primary"
+    },
+    {
+      "from": "tool",
+      "to": "agent",
+      "label": "精确绑定",
+      "kind": "link"
+    },
+    {
+      "from": "agent",
+      "to": "release",
+      "label": "发布候选",
+      "kind": "primary"
+    },
+    {
+      "from": "release",
+      "to": "snapshot",
+      "label": "已发布版本",
+      "kind": "primary"
+    },
+    {
+      "from": "models",
+      "to": "snapshot",
+      "label": "路由快照",
+      "kind": "link"
+    },
+    {
+      "from": "mcp",
+      "to": "snapshot",
+      "label": "能力摘要",
+      "kind": "link"
+    },
+    {
+      "from": "knowledge",
+      "to": "snapshot",
+      "label": "授权上下文",
+      "kind": "link"
+    },
+    {
+      "from": "experience",
+      "to": "snapshot",
+      "label": "经验引用",
+      "kind": "link"
+    }
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {
+        "label": "本图主链路"
+      },
+      "link": {
+        "label": "能力与控制关系"
+      },
+      "backend": {
+        "label": "已实现模块"
+      },
+      "focal": {
+        "label": "关键节点"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "skill",
+      "file": "docs/development/internal-ports.md",
+      "line": 19,
+      "note": "安装服务固定来源、依赖和管理员确认，校验 Skill 包并保存不可变内容。安装助手中的推理仍由 DSH 执行；确定性下载与入库由平台工具负责。"
+    },
+    {
+      "id": "skill",
+      "file": "server/src/modules/skill/postgres-skill-service.ts",
+      "line": 826,
+      "note": "Skill 草稿、校验结果、依赖和发布版本由 Skill 服务管理；发布不等于每次调用都已通过真实外部环境验收。"
+    },
+    {
+      "id": "tool",
+      "file": "docs/development/overview.md",
+      "line": 89,
+      "note": "普通 DSH 工具进入版本化目录，只有安全准入后才获得活动 Binding。运行控制工具、平台内置工具与 MCP 分别治理，不能混为同一普通 Tool 列表。"
+    },
+    {
+      "id": "agent",
+      "file": "server/src/modules/agent/postgres-agent-service.ts",
+      "line": 906,
+      "note": "Agent 保存工作定义、指令、能力依赖、精确版本、可见范围与按需扩展策略。发布后版本不可覆盖；Agent 不拥有另一套执行引擎。"
+    },
+    {
+      "id": "release",
+      "file": "server/src/modules/agent/postgres-agent-service.ts",
+      "line": 920,
+      "note": "配置校验不是运行验收。发布要求当前配置指纹匹配已经封存且通过的 DSH 试运行；管理端按案例逐步执行、人工评价后确认发布。"
+    },
+    {
+      "id": "snapshot",
+      "file": "server/src/modules/runtime/manifest-compiler.ts",
+      "line": 28,
+      "note": "运行编排汇集精确版本、模型路由、角色和数据范围、输入文件、知识及按需上下文，再编译规范化 Manifest 与摘要。逻辑上由配置治理提供输入，实际编译发生在运行准备过程中。"
+    },
+    {
+      "id": "models",
+      "file": "docs/development/internal-ports.md",
+      "line": 12,
+      "note": "Provider、模型、路由和凭据引用由平台统一治理，Attempt 固定路由快照；不在 Agent 内另设模型策略。"
+    },
+    {
+      "id": "mcp",
+      "file": "docs/development/internal-ports.md",
+      "line": 22,
+      "note": "MCP Server 整体发现、健康检查和能力摘要自动生效，不生成普通 Tool Version/Binding，也不经过 Agent 发布工作台。实际调用由 DSH 执行并细化到 Tool 审计。"
+    },
+    {
+      "id": "knowledge",
+      "file": "server/src/modules/knowledge/postgres-knowledge-service.ts",
+      "line": 37,
+      "note": "知识源与文档版本在当前用户、角色、Workspace 和数据范围下解析，固定来源证据。数据集合与 Grant 是另一种平台受控数据能力，不等同于任意 SQL 访问。"
+    },
+    {
+      "id": "experience",
+      "file": "docs/development/internal-ports.md",
+      "line": 24,
+      "note": "Agent 从获准工具提出短期经验申请，成功 Attempt 后进入管理端。批准产生稳定 Agent 名下的不可变经验版本，后续 Attempt 固定引用，不自动修改 Soul、Skill、Tool 或权限。"
+    }
+  ]
+}

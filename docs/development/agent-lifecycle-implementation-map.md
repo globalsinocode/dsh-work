@@ -17,10 +17,10 @@
 | 1. 工作定义 | 每个 Agent 的生命周期设计记录 | [生命周期模板](agent-lifecycle-template.md)第 2 节 | 目标、范围外事项和完成判据进入评审；运行配置不承载设计理由 | **流程已定义**。具体 Agent 在进入配置前复制记录 |
 | 2. 能力分解 | 设计记录；随后固化为 Skill、Tool 和业务服务契约 | Skill/Tool 治理服务、`AgentSpec.capabilities` | 能力版本独立发布；Agent 只引用精确版本 | **已实现基础对象**。能力清单仍由 Agent 负责人填写 |
 | 3. 扩展判定 | 设计记录中的逐项决定 | 生命周期模板第 4 节 | 没有触发事实时不进入实现和发布声明 | **流程已定义**。不新增空字段或预建服务 |
-| 4. AgentSpec 定义 | 规范化 `AgentSpec` 和不可变 Agent Version | [`agent-spec.ts`](../../server/src/modules/agent/agent-spec.ts)、[`agent-package.ts`](../../server/src/modules/agent/agent-package.ts)、[包 Schema](agent-package.schema.json) | 唯一分层包格式；严格 Schema、路径、摘要、精确依赖和受管字段检查 | **已实现**。配置入口与 ZIP 入口归一化到同一对象 |
+| 4. AgentSpec 定义 | 规范化 `AgentSpec` 和不可变 Agent Version | [`agent-spec.ts`](../../server/src/modules/agent/agent-spec.ts)、管理端配置、[包 Schema](agent-package.schema.json) | 界面配置校验定义与精确依赖；版本 ZIP 可导出供离线核对 | **已实现**。界面配置是唯一创建入口，不提供 ZIP 导入 |
 | 5. 能力准入与绑定 | 已发布 Skill/Tool Version、`tool_binding_revisions` 与 MCP Connector/Profile | Agent、Skill、Tool/Connector 服务与 Runtime 快照 | 平台 Tool 固定精确版本及绑定修订；MCP 能力快照自动生效并默认对全部 Agent 可用，Attempt 固定清单摘要并复核当前状态 | **已实现基础链路**。MCP 不生成 Tool Version/Binding，也不耦合 Agent 发布；真实外部服务仍需 P2 |
 | 6. 评测设计 | `AgentEvaluationSuite v1` | [评测模板](agent-evaluation-template.yaml)、包解析器、发布服务 | 五类案例、固定机器断言和必需人工 rubric | **已实现契约**。平台生成案例必须替换为具体 Agent 的目标输入 |
-| 7. 候选检查与试运行 | `agent_release_submissions`、`agent_trial_runs`、Run/Attempt | 发布服务、发布路由、管理端发布工作台 | 固定候选修订与 Binding；统一 Runtime Adapter → DSH；逐项机器和人工判定；旧证据失效 | **已实现**。真实 DSH 结果属于具体 Agent 的 P2 |
+| 7. 自动检查与人工试运行 | `agent_release_submissions`、`agent_trial_runs`、Run/Attempt | 发布服务、发布路由、管理端发布工作台 | 发起试运行时复核授权、依赖、绑定和五类案例；固定候选修订后经 Runtime Adapter → DSH 执行；逐项机器和人工判定；旧证据失效 | **已实现代码级**。具体 Agent 的真实 DSH 结果仍需 P2 |
 | 8. 审核与发布 | 不可变 Agent Version、Submission、`agent_version_evidence` | 发布服务与管理端发布工作台 | 试运行通过后一次审核确认并发布；发布事务内复核定义/依赖/绑定/试运行证据 | **已实现**。人工批准不覆盖失败的机器断言 |
 | 9. 运行与结果 | Task、可选 Session、Run、Attempt、Runtime Manifest、`task-result/v1` | Task/API 入口、Run 编排、DSH Adapter、当前授权、结果投影 | 执行前/中/提交前重新鉴权；执行终态与业务结果分离；Artifact/回执缺失时不标记达成 | **已实现基础链路**。具体业务完成仍需 Agent rubric 或工具证据 |
 | 10. 监控与演进 | Run/Event/工具审计、版本和发布证据、重新分叉的草稿 | 管理端治理视图、审计与版本服务 | 定义、依赖、Binding 或 Runtime 变化创建新候选并重做受影响证据 | **基础可用**。跨版本质量和成本趋势聚合是后续可选运维能力，不阻塞通用流程 |

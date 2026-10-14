@@ -926,6 +926,27 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(capturedContext?.checkpointState.workspace_files, [])
   })
 
+  it('rejects approval-required actions in a release trial without creating a durable wait', async () => {
+    let decisionRequested = false
+    const adapter = await createAdapter(500, undefined, undefined, {
+      permissionDecision: async () => { decisionRequested = true; return 'allow_once' },
+    })
+    const input = manifest('run-trial-approval', 'attempt-1', '[permission] read inventory')
+    input.purpose = 'agent-release-trial'
+    input.workspace_id = ''
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    // F-01：试运行没有审批人；生产需审批的动作直接拒绝（trial_only），不进入持久化等待。
+    assert.equal(decisionRequested, false)
+    assert.notEqual(result.status, 'waiting')
+    const resolved = events.find(event => event.event_type === 'approval.resolved')
+    assert.equal(resolved?.safe_metadata['decision'], 'reject_once')
+    assert.match(String(resolved?.display_message ?? ''), /trial_only/)
+    assert.equal(events.some(event => event.event_type === 'run.waiting'), false)
+  })
+
   it('restores bounded checkpoint files and renders pending action and prior tool results', async () => {
     const adapter = await createAdapter()
     const input = manifest('run-resume-context', 'attempt-2', 'Continue the approved operation.')

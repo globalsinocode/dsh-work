@@ -151,19 +151,38 @@ test('authorization is fail-closed and compiles the effective identity into Runt
     /不是平台管理员/,
   )
 
+  const [readToolBefore] = await database<{ dataScopes: string[] }[]>`
+    select data_scopes as "dataScopes" from tools
+     where tenant_id = 'tenant-dsh-work' and id = 'read'
+  `
+  assert.ok(readToolBefore)
   await database`
     delete from data_scope_grants
      where tenant_id = 'tenant-dsh-work' and id = 'grant-role-employee-workspace'
   `
   try {
+    const narrowed = await authorization.authorizeRuntime({
+      userId: 'U00001',
+      agentVersionId: 'agent-version-dsh-work-assistant-1',
+    })
+    assert.ok(!narrowed.dataScopes.includes('workspace:authorized'), '基础文件工具不会补回已撤销的数据范围')
+    // 默认文件工具可在隔离工作区运行；管理员收紧策略后必须复核实际所需范围。
+    await database`
+      update tools set data_scopes = '["workspace:authorized", "enterprise:authorized"]'::jsonb
+       where tenant_id = 'tenant-dsh-work' and id = 'read'
+    `
     await assert.rejects(
       authorization.authorizeRuntime({
         userId: 'U00001',
         agentVersionId: 'agent-version-dsh-work-assistant-1',
       }),
-      /workspace:authorized/,
+      /工具 read@1\.0\.0要求未授权的数据范围：workspace:authorized/,
     )
   } finally {
+    await database`
+      update tools set data_scopes = ${database.json(readToolBefore.dataScopes)}
+       where tenant_id = 'tenant-dsh-work' and id = 'read'
+    `
     await database`
       insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
       values ('grant-role-employee-workspace', 'tenant-dsh-work', 'role', 'role-employee', 'capability', 'workspace:authorized')

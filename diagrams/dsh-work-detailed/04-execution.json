@@ -1,0 +1,278 @@
+{
+  "type": "architecture",
+  "title": "第四层 · 执行层模块",
+  "subtitle": "唯一 Agent Loop 在 DSH · ACP 生命周期 · 受控模型、MCP、平台工具与成果处理",
+  "eyebrow": "DSH-WORK / 五层模块详图 / 2026-10-12",
+  "caption": "平台通过 ACP 控制 DSH 的启动、取消、超时和回收；模型推理与工具调用循环始终留在 DSH。Tool Bridge 只运行确定性处理器。Python 容器仅服务声明且获准的脚本，不能据此认为全部 DSH Worker 都在容器内。",
+  "lang": "zh-CN",
+  "dir": "LR",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "budget": "balanced",
+  "out": "04-execution.html",
+  "groups": [
+    {
+      "id": "adapterGroup",
+      "label": "生命周期与隔离准备"
+    },
+    {
+      "id": "external",
+      "label": "外部能力 · 按授权接入"
+    },
+    {
+      "id": "platform",
+      "label": "平台确定性处理器"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "manifest",
+      "label": "执行 Manifest",
+      "sub": "版本 / 身份 / 预算 / 输入",
+      "row": 1,
+      "col": 0,
+      "kind": "input",
+      "icon": "document",
+      "tag": "第二层"
+    },
+    {
+      "id": "adapter",
+      "label": "Runtime Adapter",
+      "sub": "启动 / 取消 / 超时 / 事件转换",
+      "row": 1,
+      "col": 1,
+      "kind": "backend",
+      "icon": "gear",
+      "focal": true,
+      "group": "adapterGroup"
+    },
+    {
+      "id": "workspace",
+      "label": "Attempt 工作区",
+      "sub": "隔离输入 / Skill / 路径策略",
+      "row": 0,
+      "col": 1,
+      "kind": "backend",
+      "icon": "document",
+      "group": "adapterGroup"
+    },
+    {
+      "id": "dsh",
+      "label": "DSH Worker",
+      "sub": "模型推理 / 工具循环 / 上下文",
+      "row": 1,
+      "col": 2,
+      "kind": "backend",
+      "icon": "server",
+      "focal": true,
+      "tag": "唯一 Loop"
+    },
+    {
+      "id": "model",
+      "label": "模型 Provider",
+      "sub": "受控路由 / 请求 / Token",
+      "row": 0,
+      "col": 3,
+      "kind": "external",
+      "icon": "cloud",
+      "group": "external"
+    },
+    {
+      "id": "mcp",
+      "label": "外部 MCP 服务",
+      "sub": "Streamable HTTP / Tool 审计",
+      "row": 1,
+      "col": 3,
+      "kind": "external",
+      "icon": "cloud",
+      "group": "external"
+    },
+    {
+      "id": "bridge",
+      "label": "平台工具桥",
+      "sub": "参数校验 / 鉴权 / 操作回执",
+      "row": 2,
+      "col": 2,
+      "kind": "backend",
+      "icon": "key",
+      "group": "platform"
+    },
+    {
+      "id": "python",
+      "label": "Python Skill 执行",
+      "sub": "声明入口 / 禁网容器 / 资源限额",
+      "row": 2,
+      "col": 3,
+      "kind": "backend",
+      "icon": "code",
+      "tag": "按需",
+      "group": "platform"
+    },
+    {
+      "id": "artifacts",
+      "label": "成果处理",
+      "sub": "收集 / 校验 / 版本登记 / ACL",
+      "row": 2,
+      "col": 1,
+      "kind": "backend",
+      "icon": "document",
+      "group": "platform"
+    }
+  ],
+  "edges": [
+    {
+      "from": "manifest",
+      "to": "adapter",
+      "label": "执行请求",
+      "kind": "primary"
+    },
+    {
+      "from": "adapter",
+      "to": "dsh",
+      "label": "ACP / 事件",
+      "kind": "primary",
+      "both": true
+    },
+    {
+      "from": "adapter",
+      "to": "workspace",
+      "label": "准备工作区",
+      "kind": "default"
+    },
+    {
+      "from": "workspace",
+      "to": "dsh",
+      "label": "隔离输入",
+      "kind": "link"
+    },
+    {
+      "from": "dsh",
+      "to": "model",
+      "label": "模型调用",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "dsh",
+      "to": "mcp",
+      "label": "MCP 调用",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "dsh",
+      "to": "bridge",
+      "label": "受控调用",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "bridge",
+      "to": "python",
+      "label": "脚本与结果",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "adapter",
+      "to": "artifacts",
+      "label": "收集与登记",
+      "kind": "default"
+    }
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {
+        "label": "本图主链路"
+      },
+      "link": {
+        "label": "能力与控制关系"
+      },
+      "default": {
+        "label": "数据或模块连接"
+      },
+      "backend": {
+        "label": "已实现模块"
+      },
+      "input": {
+        "label": "入口或输入"
+      },
+      "external": {
+        "label": "跨层或外部依赖"
+      },
+      "focal": {
+        "label": "关键节点"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "manifest",
+      "file": "server/src/modules/runtime/manifest-compiler.ts",
+      "line": 28,
+      "note": "Manifest 固定输入与摘要，不把浏览器传来的身份字段直接作为授权事实。"
+    },
+    {
+      "id": "adapter",
+      "file": "server/src/modules/runtime/dsh-acp-runtime-adapter.ts",
+      "line": 167,
+      "note": "Adapter 实现 AgentRuntimePort；通过 ACP JSON-RPC stdio 启动 Worker、建立会话、提交提示词、转换事件并处理取消、超时与清理。当前是 ACP 进程集成，不是独立模型执行 SDK。"
+    },
+    {
+      "id": "workspace",
+      "file": "docs/development/overview.md",
+      "line": 171,
+      "note": "每个 Attempt 具有自己的目录与 Worker；Skill 包、输入文件、运行参数和路径策略由平台准备。进程和目录隔离不等于完整容器沙箱。"
+    },
+    {
+      "id": "dsh",
+      "file": "docs/development/overview.md",
+      "line": 78,
+      "note": "模型交互、工具调用编排与循环上下文由 DSH 负责。员工对话、管理安装助手、发布试运行和委派子任务都使用同一执行链。"
+    },
+    {
+      "id": "model",
+      "file": "docs/development/overview.md",
+      "line": 81,
+      "note": "模型 Provider 的传输、路由与计量可以由平台适配，但模型驱动的多步循环只有 DSH 持有。图中外部服务节点表示依赖，不表示真实凭据或生产服务已经验收。"
+    },
+    {
+      "id": "mcp",
+      "file": "docs/development/internal-ports.md",
+      "line": 22,
+      "note": "Adapter 将当前有效 MCP 连接注入 Attempt，DSH 实际调用；能力摘要、健康状态、停用与审计仍由平台控制。"
+    },
+    {
+      "id": "bridge",
+      "file": "docs/development/internal-ports.md",
+      "line": 21,
+      "note": "Unix socket 平台工具桥严格校验输入/输出、当前授权、超时、输出大小和串行限制。处理器包括文件/知识、Agent 数据、经验、受控委派及管理操作，按 Manifest 或 Run purpose 注入。"
+    },
+    {
+      "id": "bridge",
+      "file": "docs/development/internal-ports.md",
+      "line": 16,
+      "note": "按需数据工具访问安装实例、状态、集合和记录；集合动作与 Grant 经过声明、发布检查和授权，不能绕过到任意数据库操作。"
+    },
+    {
+      "id": "python",
+      "file": "server/src/modules/runtime/python-skill-runner.ts",
+      "line": 44,
+      "note": "已声明 Python 入口在固定镜像的短生命周期容器中运行；禁网、只读根目录、只读输入挂载、受控输出、降权及资源限制由平台执行。"
+    },
+    {
+      "id": "artifacts",
+      "file": "server/src/modules/runtime/dsh-acp-runtime-adapter.ts",
+      "line": 123,
+      "note": "运行结束后由 Adapter 回调平台成果收集服务，校验、登记版本与 ACL；成果事实与目录由平台保存，DSH Session Log 不能替代业务数据库。"
+    },
+    {
+      "id": "python",
+      "file": "server/src/main.ts",
+      "line": 273,
+      "note": "Python Runner 在平台启动时探测并接入 Adapter；没有可用能力时显式不可用，不绕过 DSH 另开模型执行路线。"
+    }
+  ]
+}

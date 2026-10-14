@@ -14,7 +14,7 @@ test('Agent editor keeps AGENTS.md and MCP scope while hiding per-Agent DSH tool
   await create.getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
   await create.getByRole('button', { name: '下一步' }).click()
 
-  await expect(create.getByRole('radio', { name: '全部可用 MCP（默认）' })).toBeChecked()
+  await expect(create.getByRole('radio', { name: '不使用 MCP（默认）' })).toBeChecked()
   await expect(create.getByText('工具允许列表（选填）')).toHaveCount(0)
   await create.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
   await expect(create.getByText('仅选定模式必须选择至少一个 Connector。')).toBeVisible()

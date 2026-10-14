@@ -152,7 +152,7 @@ export class PrototypeRepository {
 
   async updateToolPermissions(
     toolId: string,
-    patch: Pick<ToolDefinition, 'allowedRoles' | 'dataScopes' | 'approvalPolicy'>,
+    patch: Pick<ToolDefinition, 'allowedRoleIds' | 'allowedRoles' | 'dataScopes' | 'approvalPolicy'>,
   ): Promise<ToolDefinition> {
     await simulateIo()
     const tool = prototypeData.tools.find((item) => item.id === toolId)

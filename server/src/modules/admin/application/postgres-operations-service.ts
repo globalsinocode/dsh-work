@@ -39,13 +39,13 @@ export class PostgresOperationsService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
   private readonly authorization?: PostgresAuthorizationService
-  private readonly sso: 'mock' | 'ai-hub-oidc'
+  private readonly sso: 'mock' | 'ai-hub-oidc' | 'local-password'
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
     authorization?: PostgresAuthorizationService,
-    sso: 'mock' | 'ai-hub-oidc' = 'mock',
+    sso: 'mock' | 'ai-hub-oidc' | 'local-password' = 'mock',
   ) {
     this.database = database
     this.runtime = runtime

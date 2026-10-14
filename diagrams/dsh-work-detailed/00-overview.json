@@ -1,0 +1,341 @@
+{
+  "type": "architecture",
+  "title": "dsh-work 五层架构总览",
+  "subtitle": "总览 + 01–05 分层详图 · 从用户入口到 DSH 执行、治理与基础设施",
+  "eyebrow": "当前实现 / AGENT 执行主线 / 2026-10-12",
+  "caption": "本图保留五层关系；01–05 详图分别展开每层的九个模块视图。蓝色突出执行主线，绿色表示配置与受控协作。平台持有身份、权限和业务状态；DSH 持有 Agent Loop。五层是职责划分，不是五个独立服务。",
+  "lang": "zh-CN",
+  "dir": "TB",
+  "skin": "light",
+  "size": "wide",
+  "motion": "trace",
+  "order": [
+    "portal",
+    "run",
+    "dsh",
+    "tools",
+    "delegation",
+    "assets",
+    "connections",
+    "storage",
+    "isolation"
+  ],
+  "budget": "balanced",
+  "out": "00-overview.html",
+  "groups": [
+    {
+      "id": "presentation",
+      "label": "01 展示层 · Presentation"
+    },
+    {
+      "id": "orchestration",
+      "label": "02 编排层 · Orchestration"
+    },
+    {
+      "id": "configuration",
+      "label": "03 配置管理层 · Configuration"
+    },
+    {
+      "id": "execution",
+      "label": "04 执行层 · Execution"
+    },
+    {
+      "id": "infrastructure",
+      "label": "05 基础设施层 · Infrastructure"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "portal",
+      "label": "双端工作台",
+      "sub": "员工发起任务 / 管理员评价发布",
+      "tag": "Vue 3",
+      "kind": "input",
+      "icon": "people",
+      "row": 0,
+      "col": 0,
+      "group": "presentation"
+    },
+    {
+      "id": "run",
+      "label": "任务编排",
+      "sub": "Task → Run → Attempt",
+      "tag": "调度",
+      "kind": "backend",
+      "icon": "gear",
+      "focal": true,
+      "row": 1,
+      "col": 0,
+      "group": "orchestration"
+    },
+    {
+      "id": "delegation",
+      "label": "受控委派",
+      "sub": "父子 Agent / 权限与根预算",
+      "tag": "部分具备",
+      "kind": "backend",
+      "icon": "people",
+      "row": 1,
+      "col": 1,
+      "group": "orchestration"
+    },
+    {
+      "id": "assets",
+      "label": "AI 资产治理",
+      "sub": "Agent / Skill / Tool / 知识",
+      "tag": "版本治理",
+      "kind": "backend",
+      "icon": "document",
+      "row": 2,
+      "col": 1,
+      "group": "configuration"
+    },
+    {
+      "id": "connections",
+      "label": "模型与连接",
+      "sub": "模型路由 / MCP / 凭据引用",
+      "tag": "运行配置",
+      "kind": "backend",
+      "icon": "key",
+      "row": 2,
+      "col": 2,
+      "group": "configuration"
+    },
+    {
+      "id": "dsh",
+      "label": "DSH 执行",
+      "sub": "Runtime Adapter → DSH Worker",
+      "tag": "ACP",
+      "kind": "backend",
+      "icon": "server",
+      "focal": true,
+      "row": 3,
+      "col": 0,
+      "group": "execution"
+    },
+    {
+      "id": "tools",
+      "label": "受控工具",
+      "sub": "Tool Bridge / 文件与业务操作",
+      "tag": "逐次鉴权",
+      "kind": "backend",
+      "icon": "code",
+      "row": 3,
+      "col": 1,
+      "group": "execution"
+    },
+    {
+      "id": "isolation",
+      "label": "隔离与安全",
+      "sub": "Worker 隔离 / Python 沙箱 / TLS",
+      "kind": "security",
+      "icon": "lock",
+      "row": 4,
+      "col": 0,
+      "group": "infrastructure"
+    },
+    {
+      "id": "storage",
+      "label": "状态与文件",
+      "sub": "PostgreSQL / Skill 包 / 成果",
+      "kind": "store",
+      "icon": "database",
+      "row": 4,
+      "col": 1,
+      "group": "infrastructure"
+    }
+  ],
+  "edges": [
+    {
+      "from": "portal",
+      "to": "run",
+      "label": "HTTPS / SSE",
+      "kind": "primary",
+      "both": true
+    },
+    {
+      "from": "run",
+      "to": "delegation",
+      "label": "子 Run / 回执",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "assets",
+      "to": "run",
+      "label": "版本快照",
+      "kind": "link"
+    },
+    {
+      "from": "connections",
+      "to": "dsh",
+      "label": "模型 / MCP",
+      "kind": "link"
+    },
+    {
+      "from": "assets",
+      "to": "tools",
+      "label": "授权配置",
+      "kind": "link"
+    },
+    {
+      "from": "dsh",
+      "to": "tools",
+      "label": "工具 / 结果",
+      "kind": "link",
+      "both": true
+    },
+    {
+      "from": "run",
+      "to": "storage",
+      "label": "状态 / 审计",
+      "kind": "default"
+    },
+    {
+      "from": "tools",
+      "to": "storage",
+      "label": "数据 / 成果",
+      "kind": "default"
+    },
+    {
+      "from": "dsh",
+      "to": "isolation",
+      "label": "隔离执行",
+      "kind": "default"
+    },
+    {
+      "from": "run",
+      "to": "dsh",
+      "label": "执行 / 事件",
+      "kind": "primary",
+      "both": true
+    }
+  ],
+  "legend": {
+    "title": "阅读图例",
+    "entries": {
+      "primary": {
+        "label": "Agent 执行主线"
+      },
+      "link": {
+        "label": "配置与受控协作"
+      },
+      "default": {
+        "label": "基础设施支撑"
+      },
+      "backend": {
+        "label": "已实现模块"
+      },
+      "input": {
+        "label": "用户界面"
+      },
+      "security": {
+        "label": "隔离与安全"
+      },
+      "store": {
+        "label": "持久化资源"
+      },
+      "focal": {
+        "label": "关键执行节点"
+      }
+    }
+  },
+  "evidence": [
+    {
+      "id": "portal",
+      "file": "docs/development/overview.md",
+      "line": 150,
+      "note": "展示层为自有员工工作台与管理后台；支持任务、进展、成果和发布评价。未发现 Octo Web、终端工作区或 WorkBuddy 桌面客户端接入。"
+    },
+    {
+      "id": "run",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1433,
+      "note": "编排层维护进程内待执行队列，以 PostgreSQL 事务认领 Attempt，处理容量、自动任务车道、当前权限、取消和恢复；调度不是另一套模型推理循环。"
+    },
+    {
+      "id": "run",
+      "file": "server/src/modules/run/run-orchestration-service.ts",
+      "line": 1556,
+      "note": "执行前再次检查当前授权与 Run 状态，调用 runtime.execute 并订阅事件。Runtime Adapter 与 DSH 在执行节点合并展示。"
+    },
+    {
+      "id": "delegation",
+      "file": "server/src/modules/run/postgres-agent-delegation-service.ts",
+      "line": 83,
+      "note": "DSH 经 delegate_agent 工具请求委派；平台固定目标 Agent Version、权限交集、根预算、深度与并行上限，创建子 Task/Run，并复用同一 DSH 执行链。图中的编排与委派连线概括这一协调关系。"
+    },
+    {
+      "id": "delegation",
+      "file": "server/src/modules/run/postgres-agent-delegation-service.ts",
+      "line": 375,
+      "note": "子任务返回 task-result/v1、回答和可核验回执；工具调用成功不等于父任务目标完成。已有受控协作基础，未发现 JiuwenSwarm 或通用 Leader-Specialist 规划框架。"
+    },
+    {
+      "id": "delegation",
+      "file": "docs/development/agent-design-gap-analysis.md",
+      "line": 446,
+      "note": "真实多 Agent DSH、真实身份撤权、容量故障等 P2 验收仍需单独留证；本图只描述代码层面的现行实现。"
+    },
+    {
+      "id": "assets",
+      "file": "server/src/modules/agent/postgres-agent-service.ts",
+      "line": 906,
+      "note": "Agent 发布绑定当前配置指纹和封存试运行；Agent/Skill/Tool 的已发布版本与 Attempt 输入不可覆盖。未发现 TeamAI 接入或独立的团队 Rules 资产统一分发体系。"
+    },
+    {
+      "id": "assets",
+      "file": "server/src/modules/knowledge/postgres-knowledge-service.ts",
+      "line": 37,
+      "note": "知识读取按当前用户、角色、工作空间及数据范围过滤，图中归入资产与知识权限治理。"
+    },
+    {
+      "id": "connections",
+      "file": "server/src/modules/model/model-governance-service.ts",
+      "line": 68,
+      "note": "模型配置管理 Provider、模型、路由及凭据引用。连接器管理 MCP；外部模型和 MCP 服务属于运行依赖，不是本层内部的执行引擎。"
+    },
+    {
+      "id": "connections",
+      "file": "docs/development/agent-lifecycle-implementation-map.md",
+      "line": 58,
+      "note": "MCP 能力发现后自动生效，不耦合 Agent 发布；Attempt 固定能力摘要并复核当前状态。因此不能宣称所有配置都经过同一种人工评审。"
+    },
+    {
+      "id": "dsh",
+      "file": "docs/development/overview.md",
+      "line": 165,
+      "note": "执行层通过 ACP JSON-RPC stdio 集成 DSH，每个 Attempt 默认对应隔离目录与 Worker 进程。当前不是 SDK 集成；未发现 WorkBuddy 或 Hermes 执行引擎接入。"
+    },
+    {
+      "id": "dsh",
+      "file": "docs/development/overview.md",
+      "line": 73,
+      "note": "员工对话、系统助手、发布试运行和委派子任务均复用 Run/Attempt → Runtime Adapter → DSH。平台不运行第二套 Agent Loop；模型推理和工具调用循环属于 DSH。"
+    },
+    {
+      "id": "tools",
+      "file": "server/src/modules/runtime/platform-tool-bridge.ts",
+      "line": 73,
+      "note": "Tool Bridge 提供确定性的文件与业务能力，逐次检查参数和授权，记录操作回执；delegate_agent 仅在已配置受控目标时注入。它在五层职责视图中归入执行层，物理上仍属于 Node.js 平台。"
+    },
+    {
+      "id": "storage",
+      "file": "docs/development/overview.md",
+      "line": 39,
+      "note": "PostgreSQL 是权限、版本关系与运行状态的事实来源；Skill 包、输入文件和 Artifact 保存在平台管理的数据目录。未发现独立 MQ 中间件；Git 管理项目源码，尚非运行配置分发的事实来源。"
+    },
+    {
+      "id": "isolation",
+      "file": "server/src/modules/runtime/python-skill-runner.ts",
+      "line": 44,
+      "note": "Python Skill 在禁网、只读根文件系统、资源受限的容器内执行。这不意味着全部 DSH Worker 均运行于容器沙箱。"
+    },
+    {
+      "id": "isolation",
+      "file": "deploy/compose.yaml",
+      "line": 22,
+      "note": "部署模板提供 Nginx、TLS 与静态资源托管；身份、权限、网络和审计是跨层约束。五个区域表示逻辑职责，不代表五个微服务或生产部署已经验收。"
+    }
+  ]
+}
