@@ -2,17 +2,18 @@ import { existsSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { pnpmCommands, workflowCommands } from './context.mjs'
 
-const unitScripts = [
-  'test:m1', 'test:m2', 'test:m4:file', 'test:m4:error', 'test:m5:frontend',
-  'test:m5:api', 'test:m5:security', 'test:m5:faults', 'test:sso', 'test:scripts',
-]
-const integrationScripts = [
-  'test:m2:integration', 'test:m3:integration', 'test:m4:integration',
-  ...['skill', 'tool', 'knowledge', 'file', 'authorization', 'runtime', 'audit', 'error']
-    .map(feature => `test:m4:${feature}:integration`),
-  ...['security', 'faults', 'capacity'].map(feature => `test:m5:${feature}:integration`),
-  'test:sso:integration',
-]
+// CI runs server tests by file name (scripts/testing/run-server-tests.mjs), so wiring is checked
+// at the level of these entry points rather than per suite.
+const qualityScripts = ['verify', 'check:secrets', 'typecheck', 'lint', 'build', 'test:scripts', 'test:unit', 'test:m5:frontend']
+const ciScripts = ['ci:static', 'ci:unit', 'test:integration', 'test:e2e']
+
+/** pnpm commands a script runs, following nested pnpm scripts. */
+function expandScripts(scripts, name, seen = new Set()) {
+  if (seen.has(name)) return seen
+  seen.add(name)
+  for (const child of pnpmCommands(scripts[name] ?? '')) if (!child.startsWith('-')) expandScripts(scripts, child, seen)
+  return seen
+}
 
 export function checkProject(check) {
   check.files([
@@ -39,27 +40,28 @@ export function checkProject(check) {
   const pkg = check.json('package.json')
   const scripts = pkg?.scripts ?? {}
   const workflow = check.read('.github/workflows/ci.yml')
-  const quality = new Set(pnpmCommands(scripts['ci:check'] ?? ''))
-  const ci = new Set(workflowCommands(workflow))
-  for (const name of [...unitScripts, ...integrationScripts, 'test:e2e']) {
+  const quality = expandScripts(scripts, 'ci:check')
+  const ciCommands = workflowCommands(workflow)
+  const ci = new Set(ciCommands.flatMap(name => [...expandScripts(scripts, name)]))
+  for (const name of qualityScripts) {
     check.assert(typeof scripts[name] === 'string', `package.json 缺少 ${name}`)
-    const owner = name.endsWith(':integration') || name === 'test:e2e' ? ci : quality
-    check.assert(owner.has(name), `${name} 未接入 ${owner === ci ? 'GitHub CI' : 'ci:check'}`)
+    check.assert(quality.has(name), `${name} 未接入 ci:check`)
   }
-  for (const name of ['verify', 'check:secrets', 'typecheck', 'lint', 'build']) {
-    check.assert(quality.has(name), `ci:check 缺少 ${name}`)
+  for (const name of [...ciScripts, ...Object.keys(scripts).filter(key => key.startsWith('test:e2e'))]) {
+    check.assert(typeof scripts[name] === 'string', `package.json 缺少 ${name}`)
+    check.assert(ciCommands.includes(name), `${name} 未接入 GitHub CI`)
   }
   for (const name of [...quality, ...ci]) {
     if (['install', 'exec'].includes(name)) continue
     check.assert(typeof scripts[name] === 'string', `工作流引用了不存在的命令 ${name}`)
   }
+  // Named suites stay available for targeted local runs; they must still point at real files.
   const server = check.json('server/package.json')?.scripts ?? {}
-  for (const name of [...unitScripts, ...integrationScripts]) {
-    const target = scripts[name]?.match(/^pnpm --filter @dsh-work\/server ([\w:-]+)$/)?.[1]
+  for (const [name, command] of Object.entries(scripts)) {
+    const target = command.match(/^pnpm --filter @dsh-work\/server ([\w:-]+)$/)?.[1]
     if (!target) continue
-    check.assert(typeof server[target] === 'string', `服务端缺少被引用的 ${target}`)
+    check.assert(typeof server[target] === 'string', `${name} 引用的服务端脚本 ${target} 不存在`)
     const files = [...(server[target] ?? '').matchAll(/\b((?:src|config)\/\S+\.(?:ts|js))(?=\s|$)/g)]
-    check.assert(files.length > 0, `${target} 没有明确的测试文件`)
     check.files(files.map(match => `server/${match[1]}`))
   }
   for (const dependency of ['vitest', '@vue/test-utils', 'happy-dom', '@playwright/test']) {
@@ -70,11 +72,11 @@ export function checkProject(check) {
     ['pnpm/setup', /pnpm\/setup@[0-9a-f]{40}\s+# v\d/],
   ]) check.assert(pattern.test(workflow), `CI 的 ${action} 必须固定带版本注释的 Commit SHA`)
   check.includes('.github/workflows/ci.yml', [
-    'pnpm install --frozen-lockfile', 'pnpm ci:check',
+    'pnpm install --frozen-lockfile',
     'playwright install --with-deps chromium', 'bash scripts/ci/deploy.sh',
   ])
   checkMigrationNumbers(check)
-  checkServerTestsAreWired(check)
+  checkDatabaseTestsAreNamed(check)
 }
 
 // 0039 was assigned twice before this check existed; applied versions are keyed by file
@@ -95,15 +97,17 @@ function checkMigrationNumbers(check) {
   }
 }
 
-/** Server tests run only when a package script names them; an unlisted file silently never runs. */
-function checkServerTestsAreWired(check) {
-  const scripts = [check.json('package.json'), check.json('server/package.json')]
-    .flatMap(pkg => Object.values(pkg?.scripts ?? {})).join('\n')
-  const listed = new Set([...scripts.matchAll(/[\w./-]+\.test\.(?:ts|js)/g)].map(match => match[0].replace(/^server\//, '')))
+/**
+ * test:unit runs every *.test.ts without a database, test:integration every *.integration.test.ts with
+ * one; a database suite with the wrong name would run (and fail or skip) in the unit job instead.
+ */
+function checkDatabaseTestsAreNamed(check) {
   for (const base of ['server/src', 'server/config']) {
     for (const file of testFiles(resolve(check.root, base))) {
-      const relative = `${base.slice('server/'.length)}/${file}`
-      check.assert(listed.has(relative), `server/${relative} 未被任何 package.json 测试脚本引用，CI 不会运行它`)
+      if (/\.integration\.test\.(?:ts|js)$/.test(file)) continue
+      const path = `${base}/${file}`
+      check.assert(!/createThrowawayDatabase|DSH_WORK_TEST_DATABASE_URL/.test(check.read(path)),
+        `${path} 使用测试数据库，必须命名为 *.integration.test.ts`)
     }
   }
 }

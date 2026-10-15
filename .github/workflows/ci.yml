@@ -14,27 +14,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Four independent jobs run in parallel. Server tests are selected by file name:
+# *.integration.test.ts → test:integration (PostgreSQL), other *.test.ts → test:unit.
 jobs:
-  quality:
-    name: M6 quality gate
+  static:
+    name: Static checks and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: dsh_work
-          POSTGRES_PASSWORD: ci_only_password
-          POSTGRES_DB: dsh_work_m3_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U dsh_work -d dsh_work_m3_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -54,123 +40,133 @@ jobs:
       - name: Validate deployment configuration
         run: bash scripts/ci/deploy.sh
 
-      - name: Run quality gate
-        run: pnpm ci:check
+      - name: Run static checks, type checks, lint and build
+        run: pnpm ci:static
 
-      - name: Run review unit regression
-        run: pnpm test:review:unit
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Run review PostgreSQL regression
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.19.0
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run server and frontend unit tests
+        run: pnpm ci:unit
+
+  integration:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+    services:
+      postgres:
+        image: postgres:17-alpine
         env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:integration
+          POSTGRES_USER: dsh_work
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: dsh_work_m3_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dsh_work -d dsh_work_m3_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Run review batch02 unit regression
-        run: pnpm test:review:batch02:unit
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.19.0
+          cache: true
+          install: false
 
-      - name: Run review batch02 PostgreSQL regression
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run all server integration suites
+        run: pnpm test:integration
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
+    services:
+      postgres:
+        image: postgres:17-alpine
         env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:batch02:integration
+          POSTGRES_USER: dsh_work
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: dsh_work_m3_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dsh_work -d dsh_work_m3_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-      - name: Run scenario trial regression
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:8b:unit && pnpm test:review:8b:integration
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@22.19.0
+          cache: true
+          install: false
 
-      - name: Run personal workbench integration regression
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:batch03:integration
-
-      - name: Run low-risk admin confirmation regression
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:c6:unit && pnpm test:review:c6:integration
-
-      - name: Run deterministic link import regression
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:c7:unit && pnpm test:review:c7:integration
-
-      - name: Run P2 request-origin error regression
-        run: pnpm test:review:p2:origin
-
-      - name: Run P2 Skill domain error regression
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:review:p2:skill:unit && pnpm test:review:p2:skill:integration
-
-      - name: Run P2 safe HTTP error logging regression
-        run: pnpm test:review:p2:logging
-
-      - name: Run PostgreSQL integration tests
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:m2:integration && pnpm test:m3:integration && pnpm test:mcp:integration && pnpm test:pf04:integration && pnpm test:pf05:integration && pnpm test:m4:integration && pnpm test:m4:skill:integration && pnpm test:skill-install:integration && pnpm test:m4:tool:integration && pnpm test:m4:knowledge:integration && pnpm test:m4:file:integration && pnpm test:m4:authorization:integration && pnpm test:m4:runtime:integration && pnpm test:m4:audit:integration && pnpm test:m4:error:integration && pnpm test:m5:security:integration && pnpm test:m5:faults:integration && pnpm test:m5:capacity:integration && pnpm test:m4:team-auth:integration && pnpm test:m5:members:integration && pnpm test:m5:workspace:integration && pnpm test:m5:workspace:upgrade:integration && pnpm test:m5:agent-members:integration && pnpm test:m5:sessions:integration && pnpm test:m5:shared-files:integration && pnpm test:m5:file-versions:integration && pnpm test:m5:lifecycle:integration && pnpm test:m5:activity:integration && pnpm test:m5:usage:integration && pnpm test:m5:reconciliation:integration && pnpm test:m5:revocation:integration && pnpm test:pf06:integration && pnpm test:sso:integration && pnpm test:local-auth:integration
-
-      - name: Run automation identity and team tool binding regressions
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:automation:integration && pnpm test:tool-binding:integration
-
-      - name: Run Agent release governance integration
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:agent-release:integration
-
-      - name: Run Agent data plane integration
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:agent-data:integration
-
-      - name: Run Agent routine integration
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
-        run: pnpm test:agent-routines:integration
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run browser smoke tests
+      - name: Run P0 browser smoke tests
         run: pnpm test:e2e
 
       - name: Run local authentication P1 browser journeys
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:local-auth
 
       - name: Run login options and independent accounts P1 browser journeys
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:login-options
 
       - name: Run personal workbench P1 browser journeys
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:personal
 
       - name: Run MCP administration P1 browser journey
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:mcp-admin
 
       - name: Run automation P1 browser journeys
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:automation
 
       - name: Run Agent Principal P1 browser journey
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:agent-principal
 
       - name: Run Agent capability P1 browser journey
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:agent-capabilities
 
       - name: Run Agent routine P1 browser journey
-        env:
-          DSH_WORK_TEST_DATABASE_URL: postgres://dsh_work:ci_only_password@127.0.0.1:5432/dsh_work_m3_test
         run: pnpm test:e2e:agent-routines

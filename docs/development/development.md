@@ -41,11 +41,15 @@ pnpm test:e2e
 
 ## 自动化验证
 
-统一质量入口是 `pnpm ci:check`，具体脚本以 [package.json](../../package.json)、[服务端脚本](../../server/package.json) 和 [CI 工作流](../../.github/workflows/ci.yml) 为准。
+统一质量入口是 `pnpm ci:check`（= `pnpm ci:static` + `pnpm ci:unit`），具体脚本以 [package.json](../../package.json)、[服务端脚本](../../server/package.json) 和 [CI 工作流](../../.github/workflows/ci.yml) 为准。CI 拆成四个并行 Job：`static`（部署配置、静态检查、类型、lint、构建）、`unit`（服务端与双前端单测）、`integration`（全部 PostgreSQL 集成套件）、`browser`（P0 冒烟与各 P1 浏览器旅程）。
+
+服务端测试按文件名自动归类，不再需要逐个登记：`*.integration.test.ts` 属于集成测试，其余 `*.test.ts`（含 `server/config` 下的 `*.test.js`）属于单元测试。新增测试文件放对位置、用对后缀即可进入 CI；使用测试数据库的文件必须以 `.integration.test.ts` 结尾，`pnpm verify` 会检查。
 
 | 改动范围 | 主要验证命令 |
 | --- | --- |
 | 完整本地质量门禁 | `pnpm ci:check` |
+| 服务端单元测试（全部或按目录） | `pnpm test:unit`、`pnpm test:unit src/modules/run` |
+| 服务端集成测试（全部或按目录） | `pnpm test:integration`、`pnpm test:integration src/http` |
 | 文档、契约与架构 | `pnpm verify`、`pnpm check:architecture` |
 | 类型、UI 与代码规范 | `pnpm typecheck`、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
@@ -67,7 +71,7 @@ pnpm test:e2e
 - `runtime`：版本锁、环境模板、生产兼容限制与探针入口。
 - `security`：身份与授权边界、子进程凭据隔离及安全迁移约束。
 
-历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 测试命令继续保留并接入 CI。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
+历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
 
 ### scripts 目录约定
 
@@ -88,7 +92,7 @@ PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发
 DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:sso:integration
 ```
 
-其他 `test:*:integration` 使用同一测试变量，按修改模块选择。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 另启动 PostgreSQL Service、运行各集成套件，再执行 E2E。
+`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
 
 PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现与自动生效、全部 Agent 默认可用、已准备 Attempt 的能力摘要漂移、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 

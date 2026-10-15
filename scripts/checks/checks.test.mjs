@@ -75,20 +75,25 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
   const root = fixture(t)
   assert.equal(failures(root, 'project'), '')
   appendFileSync(join(root, 'README.md'), '\n[missing](docs/deleted.md)\n')
-  editJson(root, 'package.json', pkg => { pkg.scripts['ci:check'] = pkg.scripts['ci:check'].replace('pnpm test:sso && ', '') })
+  editJson(root, 'package.json', pkg => { pkg.scripts['ci:unit'] = pkg.scripts['ci:unit'].replace('pnpm test:unit && ', '') })
   const workflow = join(root, '.github/workflows/ci.yml')
-  writeFileSync(workflow, readFileSync(workflow, 'utf8').replace(' && pnpm test:sso:integration', ''))
+  writeFileSync(workflow, readFileSync(workflow, 'utf8')
+    .replace('run: pnpm test:integration', 'run: echo skipped')
+    .replace('run: pnpm test:e2e:personal', 'run: echo skipped'))
   assert.match(failures(root, 'project'), /文档链接不存在：docs\/deleted.md/)
-  assert.match(failures(root, 'project'), /test:sso 未接入 ci:check/)
-  assert.match(failures(root, 'project'), /test:sso:integration 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /test:unit 未接入 ci:check/)
+  assert.match(failures(root, 'project'), /test:integration 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /test:e2e:personal 未接入 GitHub CI/)
 })
 
-test('project checks reject duplicate migration numbers and server tests no script runs', t => {
+test('project checks reject duplicate migration numbers and database tests outside the integration job', t => {
   const root = fixture(t)
   writeFileSync(join(root, 'server/migrations/0001_duplicate_number.sql'), 'select 1;\n')
-  writeFileSync(join(root, 'server/src/http/forgotten.test.ts'), 'export {}\n')
+  writeFileSync(join(root, 'server/src/http/misnamed.test.ts'), 'await createThrowawayDatabase()\n')
+  writeFileSync(join(root, 'server/src/http/plain.test.ts'), 'export {}\n')
   assert.match(failures(root, 'project'), /迁移编号重复：0001_duplicate_number\.sql 与 0001_m2_platform\.sql/)
-  assert.match(failures(root, 'project'), /server\/src\/http\/forgotten\.test\.ts 未被任何 package\.json 测试脚本引用/)
+  assert.match(failures(root, 'project'), /server\/src\/http\/misnamed\.test\.ts 使用测试数据库，必须命名为 \*\.integration\.test\.ts/)
+  assert.doesNotMatch(failures(root, 'project'), /plain\.test\.ts/)
 })
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {
