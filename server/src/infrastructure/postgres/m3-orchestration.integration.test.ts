@@ -440,6 +440,63 @@ test('validated Runtime output is published once as a downloadable Artifact', as
   }
 })
 
+test('EX-02 a referenced artifact is mounted next turn and a same-named output becomes its next version', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '周报两轮修改' })
+  const turn = async (prompt: string, outputs: Record<string, string>, fileIds: string[] = []) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-continuation-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    for (const [name, body] of Object.entries(outputs)) await writeFile(join(workspaceDirectory, 'output', name), body)
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>((resolve) => { release = resolve })
+    try {
+      const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+      const manifest = attempt!.manifest as unknown as RuntimeManifest
+      await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+      release()
+      return { task: await waitForTask(created.id, 'succeeded'), manifest }
+    } finally {
+      release()
+    }
+  }
+
+  const first = await turn('写一份周报', { '周报.md': '# 周报\r\n第一版\r\n' })
+  const v1 = first.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  assert.equal(v1.version, 1)
+  assert.equal(v1.canReference, true)
+  assert.ok(v1.fileId)
+
+  const second = await turn('把第二行改成第二版，另附一份附录', { '周报.md': '# 周报\n第二版\n', '附录.md': '# 附录\n' }, [v1.fileId!])
+  // 挂载的是成果原文（只统一换行），并标出它是哪一个成果的第几版。
+  const [mount] = second.manifest.input.file_mounts
+  assert.equal(mount?.content, '# 周报\n第一版\n')
+  assert.deepEqual(mount?.artifact_revision, { artifact_id: v1.id, version: 1 })
+  const v2 = second.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  const appendix = second.task.result.artifacts.find(artifact => artifact.name === '附录.md')!
+  assert.equal(v2.id, v1.id)
+  assert.equal(v2.version, 2)
+  assert.notEqual(appendix.id, v1.id)
+  assert.equal(appendix.version, 1)
+  // 两个版本各自可下载，旧版本不被覆盖。
+  assert.equal((await content.readFile(await content.artifactFileId(v1.id, 1, 'U00001'), 'U00001')).bytes.toString('utf8'), '# 周报\r\n第一版\r\n')
+  assert.equal((await content.readFile(await content.artifactFileId(v1.id, 2, 'U00001'), 'U00001')).bytes.toString('utf8'), '# 周报\n第二版\n')
+
+  // 未引用旧成果时，同名输出是新成果，不会被串成版本。
+  const third = await turn('重新写一份周报', { '周报.md': '# 周报\n全新\n' })
+  const unrelated = third.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  assert.notEqual(unrelated.id, v1.id)
+  assert.equal(unrelated.version, 1)
+
+  // 另一位员工不能把别人的成果挂进自己的会话。
+  const foreign = await orchestration.createSession({ userId: 'U00008', title: '尝试引用他人成果' })
+  await assert.rejects(
+    orchestration.startRun({ userId: 'U00008', sessionId: foreign.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [v2.fileId!] }),
+    /文件不存在、不可访问或解析未成功/,
+  )
+})
+
 test('HTML Runtime output is published as a previewable html Artifact', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '生成 HTML 成果' })
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-html-'))

@@ -900,3 +900,19 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 - **操作：** 管理员在 Agent 详情确认角色与数据范围上限并启用规则，手动触发、查看执行记录，再暂停；服务集成测试创建手动、定时和事件规则并重复触发相同事件，检查错过槽位及接收人读权限。
 - **可观察结果：** 浏览器中批准、触发和暂停状态与执行记录一致；服务集成中仅一次受理，重叠和遗漏有原因，Task 发起与执行身份均为 Agent Principal，Run 无员工 Session；停用或收权阻断后续动作，仅指定接收人且有当前 Workspace 授权者能看到结果。
 - **Spec：** `e2e/agent-routines.integration.spec.ts`（独立 P1 管理端配置）；`server/src/infrastructure/postgres/agent-routines.integration.test.ts`（服务、身份、接收结果）。员工浏览器和真实 DSH/OIDC 另列 P2 验收。
+
+## EX-02 跨轮成果延续
+
+### EX-ARTIFACT-01 引用上一轮成果并产生新版本
+
+**优先级：** P1 · **角色：** 员工（成果发起人）、同空间外的另一员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器与前端组件<br>
+**前置数据：** 个人或团队会话中一次成功 Run 已登记的 Markdown、文本、CSV 或 HTML 成果<br>
+**spec：** `server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/modules/runtime/runtime-manifest-schema.test.ts`、`apps/workbench-web/src/views/ConversationView.test.ts`
+
+1. 成果发布时保存原文文本作为解析结果；回答下方的成果卡片对可引用成果显示“继续修改”，点击后成果以“名称 · V版本”标签出现在输入框上方，可移除；不可引用（非 UTF-8、空文件或超长）的成果不显示该入口。
+2. 发送下一条消息时，成果按既有附件权限重新校验后只读挂载；Manifest 的挂载项带 `artifact_revision`，Runtime 说明提示“修改时写回同名文件，登记为下一版”。
+3. 本轮挂载了同会话成果且输出同名文件时，登记为该成果的下一版本；未引用或同名指向多个成果时作为新成果。旧版本保持可下载。
+4. 另一员工不能把他人成果挂进自己的会话；团队会话中未 @Agent 的讨论消息不能携带引用成果。
+
+**验收：** 两轮后同一成果有 V1、V2，两版下载内容分别为原文与修改后内容；附带的新文件是独立成果；跨用户引用被拒绝。P2 另需在目标环境用真实 DSH 完成“第一轮生成 Markdown/CSV、第二轮修改指定部分”，下载两版核对差异，并留证 Run/Attempt 与 DSH 版本。
+

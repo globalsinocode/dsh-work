@@ -1088,6 +1088,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
         `${index + 1}. ${file.source_name}`,
         `   - 读取路径：${file.mount_path.slice('/workspace/'.length)}`,
         `   - 媒体类型：${file.media_type}`,
+        ...(file.artifact_revision ? [`   - 这是此前生成的成果第 ${file.artifact_revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.source_name}，平台会登记为第 ${file.artifact_revision.version + 1} 版；只是参考时不要重写`] : []),
       ].join('\n')),
     ].join('\n'))
   }

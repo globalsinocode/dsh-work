@@ -136,6 +136,9 @@ interface RuntimeFileRow {
   mimeType: string
   textStorageKey: string
   textSha256: string
+  /** Set when the file is a run artifact version: the mount tells the Agent which artifact it revises. */
+  artifactId: string | null
+  artifactVersion: number | null
 }
 
 export interface PreparedRuntimeFile {
@@ -154,6 +157,16 @@ interface PreparedRuntimeArtifact {
   bytes: Buffer
   sha256: string
   storageKey: string
+  /** Original text kept as the file's extraction so a later turn can mount it; null when not usable as text. */
+  text: ArtifactInputText | null
+}
+
+interface ArtifactInputText {
+  content: string
+  sha256: string
+  storageKey: string
+  detectedType: 'csv' | 'text'
+  rowCount: number
 }
 
 export class PostgresContentService {
@@ -1446,10 +1459,16 @@ export class PostgresContentService {
     const [row] = await this.database<RuntimeFileRow[]>`
       select f.workspace_id as "workspaceId", f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
              f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
-             fe.text_sha256 as "textSha256"
+             fe.text_sha256 as "textSha256", art.id as "artifactId", art.version_no as "artifactVersion"
         from file_objects f
         join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
         join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
+        left join lateral (
+          select a.id, av.version_no from artifact_versions av
+          join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+           where av.tenant_id = f.tenant_id and av.file_object_id = f.id
+           limit 1
+        ) art on true
        where f.tenant_id = ${tenantId} and f.id = ${input.fileId}
          ${this.runtimeFileReadyPredicate()}
          and target.status = 'active'
@@ -1559,6 +1578,9 @@ export class PostgresContentService {
           media_type: row.mimeType,
           content_sha256: row.textSha256,
           content,
+          ...(row.artifactId && row.artifactVersion
+            ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
+            : {}),
         },
       })
     }
@@ -1666,6 +1688,21 @@ export class PostgresContentService {
     const entries = await readdir(outputRoot, { withFileTypes: true })
     if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 
+    // EX-02：本 Attempt 挂载过同会话的成果、并输出同名文件时，登记为该成果的下一版本；
+    // 未引用或同名指向多个成果（无法确定）时仍作为新成果，不把碰巧同名的文件串成版本。
+    const revisable = new Map<string, string | null>()
+    if (manifest.session_id) {
+      const referenced = await this.database<{ name: string; artifactId: string }[]>`
+        select distinct a.name, a.id as "artifactId"
+          from run_input_files rif
+          join artifact_versions av on av.tenant_id = rif.tenant_id and av.file_object_id = rif.file_id
+          join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+         where rif.tenant_id = ${tenantId} and rif.attempt_id = ${manifest.attempt_id}
+           and a.session_id = ${manifest.session_id}
+      `
+      for (const row of referenced) revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
+    }
+
     const prepared: PreparedRuntimeArtifact[] = []
     let totalBytes = 0
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
@@ -1688,20 +1725,25 @@ export class PostgresContentService {
       const contentSha256 = createHash('sha256').update(bytes).digest('hex')
       const identity = createHash('sha256').update(`${manifest.attempt_id}\0${entry.name}\0${contentSha256}`).digest('hex').slice(0, 32)
       const artifactIdentity = createHash('sha256').update(`${manifest.run_id}\0${entry.name}`).digest('hex').slice(0, 32)
+      const fileId = `file-artifact-${identity}`
       prepared.push({
-        artifactId: `artifact-${artifactIdentity}`,
+        artifactId: revisable.get(entry.name) ?? `artifact-${artifactIdentity}`,
         artifactVersionId: `artifact-version-${identity}`,
-        fileId: `file-artifact-${identity}`,
+        fileId,
         name: entry.name,
         type,
         mimeType: artifactMimeType(type),
         bytes,
         sha256: contentSha256,
         storageKey: join('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
+        text: artifactInputText(type, bytes, fileId),
       })
     }
 
-    for (const artifact of prepared) await this.storage.putIfAbsent(artifact.storageKey, artifact.bytes)
+    for (const artifact of prepared) {
+      await this.storage.putIfAbsent(artifact.storageKey, artifact.bytes)
+      if (artifact.text) await this.storage.putIfAbsent(artifact.text.storageKey, Buffer.from(artifact.text.content, 'utf8'))
+    }
     await this.database.begin(async transaction => {
       // H5：发布事务按统一锁序 Workspace → Run 取得锁，锁内复核空间活跃、
       // 发起人当前成员写资格与 Run/Attempt 一致性。成员移除/降级与空间归档
@@ -1777,6 +1819,17 @@ export class PostgresContentService {
             ${artifact.sha256}, 'clean', ${manifest.user_context.user_id}
           )
         `
+        if (artifact.text) {
+          await transaction`
+            insert into file_extractions (
+              id, tenant_id, file_id, extractor_version, detected_type, status,
+              text_storage_key, text_sha256, character_count, row_count
+            ) values (
+              ${`extraction-${artifact.fileId}`}, ${tenantId}, ${artifact.fileId}, 'm4-basic-v1', ${artifact.text.detectedType}, 'succeeded',
+              ${artifact.text.storageKey}, ${artifact.text.sha256}, ${artifact.text.content.length}, ${artifact.text.rowCount}
+            )
+          `
+        }
         await transaction`
           insert into artifacts (
             id, tenant_id, workspace_id, session_id, task_id, name, artifact_type, created_by
@@ -2089,6 +2142,30 @@ function artifactMimeType(type: Artifact['type']) {
   if (type === 'html') return 'text/html; charset=utf-8'
   if (type === 'text') return 'text/plain; charset=utf-8'
   return 'application/octet-stream'
+}
+
+/**
+ * Artifacts are already text (Markdown, text, CSV, HTML). The extraction keeps the original
+ * content, not a summary, so a later turn can revise the file itself. Text that is not valid
+ * UTF-8, empty or over the extraction limit is left without an extraction: the artifact is
+ * still published, it just cannot be attached to a later message.
+ */
+function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string): ArtifactInputText | null {
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return null
+  }
+  content = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+  if (!content.trim() || content.length > 512_000) return null
+  return {
+    content,
+    sha256: createHash('sha256').update(content).digest('hex'),
+    storageKey: join('extractions', fileId, 'm4-basic-v1.txt'),
+    detectedType: type === 'csv' ? 'csv' : 'text',
+    rowCount: content.split('\n').length,
+  }
 }
 
 function safeMountName(name: string, index: number) {

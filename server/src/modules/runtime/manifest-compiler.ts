@@ -175,6 +175,10 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     mountedPaths.add(mount.mount_path)
     if (!mount.source_name.trim() || !mount.media_type.trim()) throw new TypeError('file mount source name and media type are required')
     if (sha256(mount.content) !== mount.content_sha256) throw new TypeError(`file mount checksum mismatch: ${mount.file_id}`)
+    if (mount.artifact_revision !== undefined && (
+      !/^artifact-[A-Za-z0-9-]+$/.test(mount.artifact_revision.artifact_id)
+      || !Number.isSafeInteger(mount.artifact_revision.version) || mount.artifact_revision.version < 1
+    )) throw new TypeError(`file mount artifact revision is invalid: ${mount.file_id}`)
     mountedBytes += Buffer.byteLength(mount.content)
   }
   if (mountedBytes > 1024 * 1024) throw new RangeError('mounted extracted text must not exceed 1 MB')

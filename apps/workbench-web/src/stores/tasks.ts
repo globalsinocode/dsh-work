@@ -135,13 +135,20 @@ export const useTaskStore = defineStore('tasks', () => {
     return task
   }
 
-  async function sendMessage(id: string, prompt: string, attachments: File[], workspaceAgentMemberId?: string) {
+  async function sendMessage(
+    id: string,
+    prompt: string,
+    attachments: File[],
+    workspaceAgentMemberId?: string,
+    referencedFileIds: string[] = [],
+  ) {
     const epoch = generation
     const current = getTask(id)
     if (!current) return undefined
     const task = await startRunWithSessionFiles(current.sessionId, {
       prompt,
       attachments,
+      referencedFileIds,
       workspaceAgentMemberId,
     })
     requireGeneration(epoch)

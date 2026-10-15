@@ -60,6 +60,9 @@ export interface Artifact {
   createdAt: string
   runId: string
   workspaceId: string
+  /** The artifact version's file; with canReference it can be attached to the next message. */
+  fileId?: string
+  canReference?: boolean
   summary: string
 }
 

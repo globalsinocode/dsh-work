@@ -149,6 +149,8 @@ interface ArtifactRow {
   sizeBytes: string | number
   createdAt: Date
   workspaceId: string
+  fileId: string
+  canReference: boolean
 }
 
 interface SourceRow {
@@ -860,6 +862,12 @@ export class PostgresConversationRepository {
     const artifacts = await this.database<Array<ArtifactRow & { sourceRunId: string; sourceAttemptId: string | null }>>`
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             f.id as "fileId",
+             (f.scan_status = 'clean' and f.removed_at is null and exists (
+               select 1 from file_extractions fe
+                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+             )) as "canReference",
              av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1197,7 +1205,13 @@ export class PostgresConversationRepository {
     const artifacts = row.currentAttemptId
       ? await this.database<ArtifactRow[]>`
           select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
-                 f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId"
+                 f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+                 f.id as "fileId",
+                 (f.scan_status = 'clean' and f.removed_at is null and exists (
+                   select 1 from file_extractions fe
+                    where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                      and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+                 )) as "canReference"
             from artifact_versions av
             join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
             join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -1332,6 +1346,8 @@ function mapArtifactRow(artifact: ArtifactRow, runId: string) {
     createdAt: formatDateTime(artifact.createdAt),
     runId,
     workspaceId: artifact.workspaceId,
+    fileId: artifact.fileId,
+    canReference: artifact.canReference,
     summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
   }
 }

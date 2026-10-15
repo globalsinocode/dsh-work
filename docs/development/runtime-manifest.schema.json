@@ -878,6 +878,25 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512000
+        },
+        "artifact_revision": {
+          "type": "object",
+          "required": [
+            "artifact_id",
+            "version"
+          ],
+          "additionalProperties": false,
+          "description": "EX-02：挂载内容是该成果版本的原文；向 output/<source_name> 写入同名文件会登记为下一版本",
+          "properties": {
+            "artifact_id": {
+              "type": "string",
+              "pattern": "^artifact-[A-Za-z0-9-]+$"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       },
       "additionalProperties": false

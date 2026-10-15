@@ -9,6 +9,7 @@ import {
   CopyDocument,
   DataLine,
   Document,
+  EditPen,
   Lock,
   RefreshRight,
   Share,
@@ -260,6 +261,33 @@ function download(item: Artifact) {
   void downloadArtifactFile(item)
 }
 
+/**
+ * EX-02「继续修改」：把本轮成果作为只读输入带进下一条消息。服务端按会话与空间权限
+ * 重新校验；Agent 输出同名文件时登记为该成果的下一版本，旧版本保持可下载。
+ */
+const referencedArtifacts = ref<Array<{ fileId: string; name: string; version: number }>>([])
+const maxReferencedFiles = 5
+
+function continueEditing(artifact: Artifact) {
+  if (!artifact.fileId || !artifact.canReference) return
+  if (referencedArtifacts.value.some(item => item.fileId === artifact.fileId)) return
+  if (referencedArtifacts.value.length >= maxReferencedFiles) {
+    ElMessage.warning(`每条消息最多引用 ${maxReferencedFiles} 个文件`)
+    return
+  }
+  referencedArtifacts.value.push({ fileId: artifact.fileId, name: artifact.name, version: artifact.version })
+  ElMessage.success(`已引用 ${artifact.name}，在下方说明要怎么修改`)
+}
+
+function removeReferencedArtifact(fileId: string) {
+  referencedArtifacts.value = referencedArtifacts.value.filter(item => item.fileId !== fileId)
+}
+
+// 引用只在当前会话内有效：切到其他会话时清空，避免把成果带进无关对话。
+watch(() => task.value?.sessionId, (sessionId, previous) => {
+  if (sessionId !== previous) referencedArtifacts.value = []
+})
+
 function openSessionRun(runId: string) {
   void router.push(conversationPath(runId))
 }
@@ -277,8 +305,8 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
     const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
     if (isTeamSession.value && !mentionedMemberId) {
       // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
-      if (payload.files.length) {
-        ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+      if (payload.files.length || referencedArtifacts.value.length) {
+        ElMessage.warning('带附件或引用成果的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
         return
       }
       await taskStore.postSessionMessage(task.value.sessionId, payload.prompt)
@@ -290,7 +318,11 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
         ElMessage.warning('讨论消息已发送，但对话状态刷新失败，请稍后手动刷新。')
       }
     } else {
-      const nextTask = await taskStore.sendMessage(task.value.id, payload.prompt, payload.files, mentionedMemberId)
+      const nextTask = await taskStore.sendMessage(
+        task.value.id, payload.prompt, payload.files, mentionedMemberId,
+        referencedArtifacts.value.map(item => item.fileId),
+      )
+      referencedArtifacts.value = []
       if (nextTask) await router.replace(conversationPath(nextTask.id))
       payload.confirm?.()
     }
@@ -717,19 +749,35 @@ watch(
                   v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
                   class="answer-artifacts"
                 >
-                  <button
+                  <div
                     v-for="artifact in task.result.artifacts"
                     :key="artifact.id"
-                    type="button"
-                    @click="download(artifact)"
+                    class="answer-artifact"
                   >
-                    <span><el-icon><Document /></el-icon></span>
-                    <span>
-                      <strong>{{ artifact.name }}</strong>
-                      <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-                    </span>
-                    <el-icon><ArrowDown /></el-icon>
-                  </button>
+                    <button
+                      type="button"
+                      class="answer-artifact__download"
+                      @click="download(artifact)"
+                    >
+                      <span><el-icon><Document /></el-icon></span>
+                      <span>
+                        <strong>{{ artifact.name }}</strong>
+                        <small>{{ artifact.size }} · V{{ artifact.version }}</small>
+                      </span>
+                      <el-icon><ArrowDown /></el-icon>
+                    </button>
+                    <button
+                      v-if="canFollowUp && artifact.canReference && artifact.fileId"
+                      type="button"
+                      class="answer-artifact__revise"
+                      :data-testid="`continue-editing-${artifact.id}`"
+                      :disabled="referencedArtifacts.some(item => item.fileId === artifact.fileId)"
+                      @click="continueEditing(artifact)"
+                    >
+                      <el-icon><EditPen /></el-icon>
+                      {{ referencedArtifacts.some(item => item.fileId === artifact.fileId) ? '已引用' : '继续修改' }}
+                    </button>
+                  </div>
                 </div>
 
                 <div class="assistant-actions">
@@ -836,6 +884,22 @@ watch(
           <el-icon><ArrowDown /></el-icon>
         </button>
         <div class="conversation-composer-dock__inner">
+          <div
+            v-if="canFollowUp && referencedArtifacts.length"
+            class="referenced-artifacts"
+            data-testid="referenced-artifacts"
+          >
+            <span>引用成果</span>
+            <el-tag
+              v-for="item in referencedArtifacts"
+              :key="item.fileId"
+              closable
+              effect="plain"
+              @close="removeReferencedArtifact(item.fileId)"
+            >
+              {{ item.name }} · V{{ item.version }}
+            </el-tag>
+          </div>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
             v-if="canFollowUp"
             compact
@@ -1254,7 +1318,47 @@ watch(
   margin-top: 16px;
 }
 
-.answer-artifacts button {
+.answer-artifact {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.answer-artifact__revise {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  color: #356858;
+  background: #fafbfa;
+  cursor: pointer;
+  font-size: var(--dsh-font-size-badge);
+  white-space: nowrap;
+}
+
+.answer-artifact__revise:hover:not(:disabled) {
+  border-color: #bdcbc5;
+  background: #f5f8f6;
+}
+
+.answer-artifact__revise:disabled {
+  color: #8a908a;
+  cursor: default;
+}
+
+.referenced-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: #6b716b;
+  font-size: var(--dsh-font-size-badge);
+}
+
+.answer-artifact__download {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 16px;
   align-items: center;
@@ -1269,12 +1373,12 @@ watch(
   text-align: left;
 }
 
-.answer-artifacts button:hover {
+.answer-artifact__download:hover {
   border-color: #bdcbc5;
   background: #f5f8f6;
 }
 
-.answer-artifacts button > span:first-child {
+.answer-artifact__download > span:first-child {
   display: grid;
   width: 30px;
   height: 30px;
@@ -1284,7 +1388,7 @@ watch(
   background: #eaf4f0;
 }
 
-.answer-artifacts button > span:nth-child(2) {
+.answer-artifact__download > span:nth-child(2) {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1762,8 +1866,13 @@ watch(
   }
 
 
-  .answer-artifacts button {
+  .answer-artifact {
     width: 100%;
+  }
+
+  .answer-artifact__download {
+    flex: 1;
+    min-width: 0;
   }
 }
 </style>

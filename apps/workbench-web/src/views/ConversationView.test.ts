@@ -516,6 +516,45 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(assistants[1]!.find('.assistant-run-meta').exists()).toBe(false)
   })
 
+  it('attaches a referenceable artifact to the next message with “继续修改” (EX-02)', async () => {
+    const artifact = (overrides: Record<string, unknown>) => ({
+      id: 'artifact-1', name: '周报.md', type: 'markdown' as const, version: 1, size: '2 KB',
+      createdAt: '2026-10-15 10:05', runId: 'run-001', workspaceId: 'ws-personal', summary: '本轮成果', ...overrides,
+    })
+    const { wrapper, taskStore } = await mountView({
+      item: task({
+        workspaceId: 'ws-personal', workspaceName: '我的空间', workspaceType: 'personal', status: 'succeeded',
+        result: result({
+          execution: 'succeeded', outcome: 'achieved', summary: '执行完成', error: null,
+          artifacts: [
+            artifact({ fileId: 'file-artifact-1', canReference: true }),
+            artifact({ id: 'artifact-2', name: '旧报表.html', fileId: 'file-artifact-2', canReference: false }),
+          ],
+        }),
+        messages: [
+          { id: 'm-user', role: 'user', content: '写周报', createdAt: '10:00', runId: 'run-001' },
+          { id: 'm-answer', role: 'assistant', content: '已生成周报.md', createdAt: '10:01', runId: 'run-001' },
+        ],
+      }),
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+    })
+    const send = vi.spyOn(taskStore, 'sendMessage').mockResolvedValue(task({ id: 'run-002' }))
+
+    expect(wrapper.find('[data-testid="continue-editing-artifact-2"]').exists()).toBe(false)
+    const revise = wrapper.get('[data-testid="continue-editing-artifact-1"]')
+    await revise.trigger('click')
+    expect(wrapper.get('[data-testid="referenced-artifacts"]').text()).toContain('周报.md · V1')
+    expect(revise.text()).toContain('已引用')
+
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '把第二节改成要点列表', files: [], workspaceId: 'ws-personal', mentions: [],
+    })
+    await flushPromises()
+
+    expect(send).toHaveBeenCalledWith('run-001', '把第二节改成要点列表', [], undefined, ['file-artifact-1'])
+    expect(wrapper.find('[data-testid="referenced-artifacts"]').exists()).toBe(false)
+  })
+
   it('does not show an inline verification warning for an unverified result', async () => {
     // 核验状态仍由 I-06 投影保留，但普通问答和外部业务结果均不在消息流中展示警示横幅。
     const { wrapper } = await mountView({

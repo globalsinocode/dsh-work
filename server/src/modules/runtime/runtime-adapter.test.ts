@@ -276,6 +276,22 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /不得猜测文件名/)
   })
 
+  it('tells the Agent that writing a revised artifact under its original name records the next version', () => {
+    const input = manifest('run-artifact-revision', 'attempt-1')
+    input.input.file_mounts = [{
+      ...fileMount('/workspace/input/01-report.txt', '# 周报\n第一版'),
+      source_name: 'report.md', media_type: 'text/markdown; charset=utf-8',
+      artifact_revision: { artifact_id: 'artifact-report', version: 2 },
+    }]
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /此前生成的成果第 2 版/)
+    assert.match(rendered, /output\/report\.md/)
+    assert.match(rendered, /登记为第 3 版/)
+
+    input.input.file_mounts = [fileMount('/workspace/input/01-inventory-uat.txt', '物料,库存\nA-01,120')]
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(input).manifest), /此前生成的成果/)
+  })
+
   it('renders only the progressive Skill catalog when activate_skill is available', () => {
     const input = manifest('run-skill-catalog', 'attempt-1')
     input.tools.push({ id: 'activate_skill', version: '1.0.0' })
