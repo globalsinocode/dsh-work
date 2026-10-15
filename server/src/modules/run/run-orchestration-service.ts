@@ -45,6 +45,8 @@ const runtimeId = 'runtime-local-01'
 type AdminPurpose = AdminRunPurpose
 
 const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
+/** 试运行治理等待在 Attempt 超时之外预留的排队与启动余量。 */
+const TRIAL_WAIT_GRACE_SECONDS = 60
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 function agentDataToolRefs(agent: RuntimeAgentSnapshot): RuntimeManifest['tools'] {
@@ -294,8 +296,14 @@ export class RunOrchestrationService {
       })
       await this.failUndispatchedRun(run, () => this.dispatchTrialAttempt(run, input.userId, input.draftVersionId, input.message))
     }
-    const deadline = Date.now() + (input.deadlineMs ?? 150_000)
+    // F-02：治理等待与生产一致，以本次 Attempt 实际生效的超时（Agent timeoutSeconds 受 Runtime 策略上限约束）
+    // 为准，再留出排队与启动余量；不再固定 150 秒，避免长任务被治理侧提前判失败。
     let current = await this.runs.getRun(tenantId, run.id)
+    const attempt = current?.currentAttemptId ? await this.runs.getAttempt(tenantId, current.currentAttemptId) : null
+    const attemptTimeoutSeconds = Number((attempt?.manifest as { limits?: { timeout_seconds?: unknown } } | undefined)?.limits?.timeout_seconds)
+    const deadline = Date.now() + (input.deadlineMs ?? (Number.isFinite(attemptTimeoutSeconds) && attemptTimeoutSeconds > 0
+      ? (attemptTimeoutSeconds + TRIAL_WAIT_GRACE_SECONDS) * 1000
+      : 150_000))
     while (current && !TRIAL_TERMINAL_STATUSES.has(current.status) && Date.now() < deadline) {
       await delay(200)
       current = await this.runs.getRun(tenantId, run.id)
