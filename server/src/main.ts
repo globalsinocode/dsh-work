@@ -20,7 +20,7 @@ import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-a
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
-import { registerSessionRoutes } from './http/session-routes.ts'
+import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
 import { LocalAuthService } from './modules/identity/local-auth-service.ts'
 import { checkDatabase, createDatabase } from './infrastructure/postgres/database.ts'
 import { runMigrations } from './infrastructure/postgres/migration-runner.ts'
@@ -117,9 +117,7 @@ async function start() {
   if (oidcAuthentication) registerOidcRoutes(router, oidcAuthentication, localAuthentication)
   registerLocalAuthRoutes(router, localAuthentication, oidcAuthentication)
   registerSessionRoutes(router)
-  for (const audience of ['workbench', 'admin']) {
-    router.get(`/auth/${audience}/configuration`, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
-  }
+  registerAuthConfigurationRoutes(router, () => ({ mode: identityConfiguration.mode, localEnabled: true, aiHubEnabled: Boolean(oidcAuthentication) }))
   registerIdentityAdministrationRoutes(
     router,
     new IdentityAdministrationService(database, true),

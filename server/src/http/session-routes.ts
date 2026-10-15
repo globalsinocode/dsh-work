@@ -24,3 +24,13 @@ export function registerSessionRoutes(router: Router) {
     }, 'postgres')
   })
 }
+
+/** Login options for both portals; the login pages read it before showing the AI Hub entry. */
+export function registerAuthConfigurationRoutes(
+  router: Router,
+  describe: () => { mode: string; localEnabled: boolean; aiHubEnabled: boolean },
+) {
+  for (const audience of ['workbench', 'admin']) {
+    router.get(`/auth/${audience}/configuration`, () => describe())
+  }
+}

@@ -45,6 +45,8 @@ pnpm test:e2e
 
 服务端测试按文件名自动归类，不再需要逐个登记：`*.integration.test.ts` 属于集成测试，其余 `*.test.ts`（含 `server/config` 下的 `*.test.js`）属于单元测试。新增测试文件放对位置、用对后缀即可进入 CI；使用测试数据库的文件必须以 `.integration.test.ts` 结尾，`pnpm verify` 会检查。
 
+接口文档 `docs/development/openapi-{admin,workbench,auth,mobile-h5}.json` 由单元测试 `server/src/http/openapi-coverage.test.ts` 与代码逐条比对：`main.ts` 经 `register*Routes` 注册的每个接口都必须写进对应文档，文档里的每个操作都必须有实际路由（参数名不同视为同一路径；`/health*` 探针除外）。新增或删除接口时同步修改文档，否则 `pnpm test:unit` 失败；`main.ts` 不得在路由函数之外直接注册接口。
+
 | 改动范围 | 主要验证命令 |
 | --- | --- |
 | 完整本地质量门禁 | `pnpm ci:check` |

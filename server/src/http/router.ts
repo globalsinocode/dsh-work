@@ -79,6 +79,11 @@ export class Router {
     this.register('DELETE', path, handler)
   }
 
+  /** Registered method + path pairs in registration order (used to check the API documents). */
+  listRoutes(): Array<{ method: string; path: string }> {
+    return this.routes.map(({ method, path }) => ({ method, path }))
+  }
+
   private register(method: string, path: string, handler: RouteHandler) {
     const parameterNames: string[] = []
     const source = path

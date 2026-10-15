@@ -358,6 +358,19 @@
           }
         },
         "description": "注销对应 audience 的 Cookie；没有有效会话也可清理本机 Cookie。"
+      },
+      "get": {
+        "operationId": "logoutAiHubSession",
+        "summary": "仅启用 AI Hub 时提供；撤销当前门户会话并跳转 AI Hub 退出页",
+        "description": "跨站请求（Sec-Fetch-Site: cross-site）被拒绝；同时清理本地独立账号会话。",
+        "responses": {
+          "302": {
+            "description": "转到 AI Hub 退出页或本地登录页"
+          },
+          "403": {
+            "description": "跨站请求被拒绝"
+          }
+        }
       }
     },
     "/auth/{audience}/switch-account": {
@@ -417,6 +430,114 @@
           },
           "421": {
             "description": "请求入口不在允许列表"
+          }
+        }
+      }
+    },
+    "/auth/admin/bootstrap": {
+      "get": {
+        "operationId": "startAdminBootstrapLogin",
+        "summary": "仅启用 AI Hub 且应用初始管理员尚未认领时提供；经 AI Hub 登录后认领初始管理员",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "转到 AI Hub 授权页"
+          },
+          "409": {
+            "description": "初始管理员已被认领"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/oidc/switch-account": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "switchAiHubAccount",
+        "summary": "仅启用 AI Hub 时提供；清除当前会话后要求 AI Hub 重新选择账号",
+        "parameters": [
+          {
+            "name": "return_to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "转到 AI Hub；上游暂不可用时返回本地登录页"
+          },
+          "421": {
+            "description": "请求入口不在允许列表"
+          }
+        }
+      }
+    },
+    "/auth/{audience}/callback": {
+      "parameters": [
+        {
+          "name": "audience",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workbench"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "operationId": "completeAiHubLogin",
+        "summary": "AI Hub 授权回调：校验 state 与事务 Cookie，签发当前门户的 Session",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "登录成功回到 return_to；失败转到带错误码的登录页"
           }
         }
       }

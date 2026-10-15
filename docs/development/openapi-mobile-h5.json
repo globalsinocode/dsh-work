@@ -693,56 +693,6 @@
           }
         },
         "x-permission": "登录会话；会话创建者或团队空间非只读成员"
-      },
-      "delete": {
-        "tags": [
-          "会话"
-        ],
-        "operationId": "discardSessionFile",
-        "summary": "回收未随 Run 提交的会话附件",
-        "description": "Run 创建失败或附件改判不用时，由上传人清理尚未被任何 Run 输入引用的会话文件；已被引用的对象按执行/审计历史保留，返回 removed=false。",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/SessionId"
-          },
-          {
-            "$ref": "#/components/parameters/FileId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "回收结果",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "data",
-                    "meta"
-                  ],
-                  "properties": {
-                    "data": {
-                      "$ref": "#/components/schemas/DiscardedSessionFile"
-                    },
-                    "meta": {
-                      "$ref": "#/components/schemas/Meta"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          }
-        },
-        "x-permission": "登录会话；文件上传人本人"
       }
     },
     "/runs/{runId}": {
@@ -1465,6 +1415,58 @@
           }
         },
         "x-permission": "登录会话；成果所属空间成员"
+      }
+    },
+    "/sessions/{sessionId}/files/{fileId}": {
+      "delete": {
+        "tags": [
+          "会话"
+        ],
+        "operationId": "discardSessionFile",
+        "summary": "回收未随 Run 提交的会话附件",
+        "description": "Run 创建失败或附件改判不用时，由上传人清理尚未被任何 Run 输入引用的会话文件；已被引用的对象按执行/审计历史保留，返回 removed=false。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SessionId"
+          },
+          {
+            "$ref": "#/components/parameters/FileId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "回收结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DiscardedSessionFile"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "x-permission": "登录会话；文件上传人本人"
       }
     }
   },
