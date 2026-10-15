@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
@@ -87,6 +88,8 @@ import { IdentityAdministrationService } from './modules/identity/administration
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
+// server/package.json sits one level above both src/main.ts and dist/main.js.
+const serverVersion = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version
 const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 
 async function start() {
@@ -432,7 +435,7 @@ async function start() {
   router.get('/health/live', () => ({
     status: 'ok',
     service: 'dsh-work',
-    version: '0.1.0',
+    version: serverVersion,
   }))
 
   router.get('/health/ready', async () => {
@@ -446,22 +449,17 @@ async function start() {
     }
   })
 
+  // Public and unauthenticated (nginx exposes it for release checks): statuses only.
+  // Runtime versions, commits, paths and run counts stay behind the admin health API.
   router.get('/health', async () =>
     envelope('system', {
       service: 'dsh-work-server',
       status: 'ok',
-      architecture: 'node-modular-monolith',
-      persistence: 'postgres-foundation',
-      sso: identityConfiguration.mode === 'oidc' ? 'ai-hub-oidc' : 'local-password',
-      executionCapabilities: { dsh: dshCapability, python: pythonCapability },
-      dshRuntime: executionRuntime ? await executionRuntime.health() : dshInstallation ? {
-        status: 'connected',
-        version: dshInstallation.version,
-        commit: dshInstallation.commit,
-        protocolVersion: dshInstallation.protocolVersion,
-        launchMode: dshInstallation.launchMode,
-      } : 'not-configured',
-      database: await checkDatabase(database),
+      executionCapabilities: { dsh: { status: dshCapability.status }, python: { status: pythonCapability.status } },
+      dshRuntime: {
+        status: executionRuntime ? (await executionRuntime.health()).status : dshInstallation ? 'connected' : 'not-configured',
+      },
+      database: { status: (await checkDatabase(database)).ok ? 'ok' : 'unavailable' },
     }, 'postgres'),
   )
 

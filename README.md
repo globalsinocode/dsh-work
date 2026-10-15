@@ -21,7 +21,7 @@ dsh-work 是面向企业员工的统一 AI Agent 工作台，同时提供独立�
 - 文件与成果：上传和分析常见办公文件，保存来源、版本和下载权限；
 - Agent 与能力治理：管理 Agent、Skill、预置 Tool/Connector 和模型路由的版本与可用范围；
 - 运行与调度：以 Session、Run、Attempt 和 Runtime Manifest 组织可取消、可重试、可追踪的执行链路；
-- 企业身份与权限：使用 AI Hub 统一登录并同步员工资料，在应用内配置角色、功能权限和业务数据范围；
+- 企业身份与权限：支持独立账号密码登录，配置 AI Hub 后也可统一登录并同步员工资料；在应用内配置角色、功能权限和业务数据范围；
 - 审计与运营：记录运行、模型、Tool、成果和管理操作，提供用量、健康与异常追踪。
 
 ## 产品边界
@@ -49,7 +49,9 @@ flowchart TB
   User --> Admin[管理后台]
   WB --> API[Workbench API]
   Admin --> AdminAPI[Admin API]
-  AIHub[AI Hub<br/>OIDC 身份与员工目录] --> API
+  Local[独立账号密码] --> API
+  Local --> AdminAPI
+  AIHub[AI Hub（可选）<br/>OIDC 身份与员工目录] --> API
   AIHub --> AdminAPI
 
   subgraph App[dsh-work Node.js 模块化单体]

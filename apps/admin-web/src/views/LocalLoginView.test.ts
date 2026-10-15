@@ -28,14 +28,14 @@ afterEach(() => {
 })
 
 describe.each(['admin', 'workbench'] as const)('%s shared login page', audience => {
-  it.each([7, 13])('rejects a new password with %i characters before sending a request', async length => {
+  it.each([7, 65])('rejects a new password with %i characters before sending a request', async length => {
     const wrapper = render(audience, true)
     await flushPromises()
     await wrapper.get('#local-password').setValue('legacy-test-only-passphrase')
     await wrapper.get('#local-new-password').setValue('x'.repeat(length))
     await wrapper.get('#local-confirm-password').setValue('x'.repeat(length))
     await wrapper.get('form').trigger('submit')
-    expect(wrapper.get('[role="alert"]').text()).toContain('8–12')
+    expect(wrapper.get('[role="alert"]').text()).toContain('8–64')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(window.location.assign).not.toHaveBeenCalled()
   })

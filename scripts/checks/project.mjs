@@ -73,4 +73,44 @@ export function checkProject(check) {
     'pnpm install --frozen-lockfile', 'pnpm ci:check',
     'playwright install --with-deps chromium', 'bash scripts/ci/deploy.sh',
   ])
+  checkMigrationNumbers(check)
+  checkServerTestsAreWired(check)
+}
+
+// 0039 was assigned twice before this check existed; applied versions are keyed by file
+// name and must never be renamed, so only that pair is grandfathered.
+const grandfatheredMigrationNumbers = new Set(['0039'])
+
+function checkMigrationNumbers(check) {
+  const directory = resolve(check.root, 'server/migrations')
+  if (!existsSync(directory)) return
+  const seen = new Map()
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.sql')).sort()) {
+    const number = file.slice(0, 4)
+    check.assert(/^\d{4}_[a-z0-9_]+\.sql$/.test(file), `迁移文件名不符合 NNNN_name.sql：${file}`)
+    if (seen.has(number) && !grandfatheredMigrationNumbers.has(number)) {
+      check.failures.add(`迁移编号重复：${seen.get(number)} 与 ${file}，新迁移请使用下一个未占用编号`)
+    }
+    seen.set(number, file)
+  }
+}
+
+/** Server tests run only when a package script names them; an unlisted file silently never runs. */
+function checkServerTestsAreWired(check) {
+  const scripts = [check.json('package.json'), check.json('server/package.json')]
+    .flatMap(pkg => Object.values(pkg?.scripts ?? {})).join('\n')
+  const listed = new Set([...scripts.matchAll(/[\w./-]+\.test\.(?:ts|js)/g)].map(match => match[0].replace(/^server\//, '')))
+  for (const base of ['server/src', 'server/config']) {
+    for (const file of testFiles(resolve(check.root, base))) {
+      const relative = `${base.slice('server/'.length)}/${file}`
+      check.assert(listed.has(relative), `server/${relative} 未被任何 package.json 测试脚本引用，CI 不会运行它`)
+    }
+  }
+}
+
+function testFiles(directory, prefix = '') {
+  if (!existsSync(directory)) return []
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+    ? testFiles(resolve(directory, entry.name), `${prefix}${entry.name}/`)
+    : /\.test\.(?:ts|js)$/.test(entry.name) ? [`${prefix}${entry.name}`] : [])
 }

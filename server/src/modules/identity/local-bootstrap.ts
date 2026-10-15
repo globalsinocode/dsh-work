@@ -40,7 +40,7 @@ async function readInput(): Promise<LocalAccountInput> {
   try {
     const username = await prompts.question('登录账号（手机号或邮箱）：')
     const name = await prompts.question('管理员姓名：')
-    const passwordQuestion = prompts.question('密码（8–12 字符，输入隐藏）：')
+    const passwordQuestion = prompts.question('密码（8–64 字符，输入隐藏）：')
     muted = true
     const password = await passwordQuestion
     muted = false

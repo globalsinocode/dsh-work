@@ -781,6 +781,16 @@ async function createPublishedAgent(input: {
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}
   `
+  // Tools are authorized against the Agent's own execution principal, not the
+  // triggering member: grant it the same role and scope the version declares.
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${`principal-agent-${input.id}`}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${input.id}`}, 'enterprise:authorized')
+  `
   return { id: input.id, versionId }
 }
 

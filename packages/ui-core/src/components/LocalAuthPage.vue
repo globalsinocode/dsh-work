@@ -56,8 +56,8 @@ async function submit() {
     error.value = '两次输入的新密码不一致'
     return
   }
-  if (props.changePassword && ([...newPassword.value].length < 8 || [...newPassword.value].length > 12)) {
-    error.value = '新密码需为 8–12 个字符'
+  if (props.changePassword && ([...newPassword.value].length < 8 || [...newPassword.value].length > 64)) {
+    error.value = '新密码需为 8–64 个字符'
     return
   }
   saving.value = true
@@ -121,11 +121,11 @@ onMounted(() => void initialize())
         </el-form-item>
         <template v-if="changePassword">
           <el-form-item label="新密码" for="local-new-password">
-            <el-input id="local-new-password" v-model="newPassword" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="12" required :disabled="saving" />
+            <el-input id="local-new-password" v-model="newPassword" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="64" required :disabled="saving" />
           </el-form-item>
-          <p class="local-auth-hint">密码长度为 8–12 个字符。</p>
+          <p class="local-auth-hint">密码长度为 8–64 个字符。</p>
           <el-form-item label="确认新密码" for="local-confirm-password">
-            <el-input id="local-confirm-password" v-model="confirmation" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="12" required :disabled="saving" />
+            <el-input id="local-confirm-password" v-model="confirmation" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="64" required :disabled="saving" />
           </el-form-item>
         </template>
         <el-button class="local-auth-submit" type="primary" native-type="submit" :loading="saving" :disabled="busy || !localEnabled">{{ saving ? '正在提交…' : changePassword ? '保存新密码' : '登录' }}</el-button>

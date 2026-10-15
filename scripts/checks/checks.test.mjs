@@ -15,7 +15,7 @@ function fixture(t) {
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts',
-    'scripts/checks/contracts.mjs',
+    'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
     'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/automation-smoke.spec.ts',
     'e2e/automation.integration.spec.ts', 'e2e/personal-integration/task-result.spec.ts',
@@ -81,6 +81,14 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
   assert.match(failures(root, 'project'), /文档链接不存在：docs\/deleted.md/)
   assert.match(failures(root, 'project'), /test:sso 未接入 ci:check/)
   assert.match(failures(root, 'project'), /test:sso:integration 未接入 GitHub CI/)
+})
+
+test('project checks reject duplicate migration numbers and server tests no script runs', t => {
+  const root = fixture(t)
+  writeFileSync(join(root, 'server/migrations/0001_duplicate_number.sql'), 'select 1;\n')
+  writeFileSync(join(root, 'server/src/http/forgotten.test.ts'), 'export {}\n')
+  assert.match(failures(root, 'project'), /迁移编号重复：0001_duplicate_number\.sql 与 0001_m2_platform\.sql/)
+  assert.match(failures(root, 'project'), /server\/src\/http\/forgotten\.test\.ts 未被任何 package\.json 测试脚本引用/)
 })
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {

@@ -53,8 +53,8 @@ export function normalizeUsername(value: unknown) {
 }
 
 export function validatePassword(value: unknown): asserts value is string {
-  if (typeof value !== 'string' || [...value].length < 8 || [...value].length > 12) {
-    throw new IdentityAccessError(422, 'invalid_password', '密码需为 8–12 个字符')
+  if (typeof value !== 'string' || [...value].length < 8 || [...value].length > 64) {
+    throw new IdentityAccessError(422, 'invalid_password', '密码需为 8–64 个字符')
   }
 }
 

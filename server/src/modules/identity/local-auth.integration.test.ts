@@ -171,7 +171,7 @@ test('failed password changes do not rotate sessions or unlock access, and succe
     { currentPassword: 'incorrect password', newPassword: 'ValidPass12', status: 401 },
     { currentPassword: password, newPassword: password, status: 422 },
     { currentPassword: password, newPassword: 'x'.repeat(7), status: 422 },
-    { currentPassword: password, newPassword: 'x'.repeat(13), status: 422 },
+    { currentPassword: password, newPassword: 'x'.repeat(65), status: 422 },
   ]) {
     const failed = await call('/auth/workbench/password', { cookie: first.cookie, body: input })
     assert.equal(failed.response.status, input.status)
@@ -187,14 +187,14 @@ test('failed password changes do not rotate sessions or unlock access, and succe
   assert.equal((await call('/api/workbench/v1/session', { cookie: changed.cookie })).response.status, 200)
 })
 
-test('account provisioning and reset enforce 8–12 characters without changing credentials or sessions on failure', async () => {
+test('account provisioning and reset enforce 8–64 characters without changing credentials or sessions on failure', async () => {
   const admin = await login()
   const userId = await employee('length.employee@example.invalid')
   await database.client`update local_user_credentials set must_change_password = false where user_id = ${userId}`
   const session = await login('length.employee@example.invalid', 'workbench')
-  for (const length of [7, 13]) {
+  for (const length of [7, 65]) {
     const invalid = 'x'.repeat(length)
-    await assert.rejects(auth.bootstrap({ username: 'length.invalid.admin@example.invalid', name: 'invalid', password: invalid }), /8–12/)
+    await assert.rejects(auth.bootstrap({ username: 'length.invalid.admin@example.invalid', name: 'invalid', password: invalid }), /8–64/)
     const created = await call('/api/admin/v1/identity/users', { cookie: admin.cookie, body: { username: 'length.invalid@example.invalid', name: 'invalid', password: invalid } })
     assert.equal(created.response.status, 422)
     assert.equal(created.body.error.code, 'invalid_password')
@@ -204,7 +204,7 @@ test('account provisioning and reset enforce 8–12 characters without changing 
     assert.equal((await call('/api/workbench/v1/session', { cookie: session.cookie })).response.status, 200)
   }
   assert.equal((await administration.listUsers({ query: 'length.invalid@example.invalid' })).total, 0)
-  for (const length of [8, 12]) {
+  for (const length of [8, 64]) {
     const candidate = 'p'.repeat(length)
     const created = await call('/api/admin/v1/identity/users', { cookie: admin.cookie, body: { username: `length.valid.${length}@example.invalid`, name: '有效长度', password: candidate } })
     assert.equal(created.response.status, 200)
