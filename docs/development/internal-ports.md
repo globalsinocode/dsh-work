@@ -101,7 +101,7 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 管理助手低风险确认（C6）
 
-风险白名单、判定位置、旧计划兼容与证据见 [C6](review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
+风险白名单、判定位置、旧计划兼容与证据见 [C6](../history/reviews/review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
 
 ## 独立账号认证
 

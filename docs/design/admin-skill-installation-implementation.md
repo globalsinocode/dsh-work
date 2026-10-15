@@ -8,7 +8,7 @@
 
 新增 Skill 页可直接解析公共 HTTPS 来源，可指定多包仓库中的 Skill 名称。不经过管理助手、不创建 Run，复用 `skill-source.ts` 的固定提交下载、安全校验和 `prepareBundle` / `installPlan`。`link` 与 `zip` 记录均为 `run_id=null`，`assistant` 不变。仅链接入口允许运行依赖待验证时先保存草稿，不把“待验证”改称兼容；实际发布检查覆盖根及依赖闭包中的 link 草稿，并要求当前 DSH/Python 可用和对应试运行证据。ZIP 与对话安装的默认兼容性规则不变。
 
-新增迁移 0045，仅扩展 channel/check。旧 API 的 ZIP 确认路径继续兼容，`confirmZip` 服务方法仍严格限制 ZIP；HTTP 确认由服务端读取 channel 后调用共同 `confirmDirect`。取消不删除草稿/版本，已安装记录取消返回 409；错误摘要或他人计划不能确认。详见 [C7 红绿证据](../development/review-c7-evidence.md)。
+新增迁移 0045，仅扩展 channel/check。旧 API 的 ZIP 确认路径继续兼容，`confirmZip` 服务方法仍严格限制 ZIP；HTTP 确认由服务端读取 channel 后调用共同 `confirmDirect`。取消不删除草稿/版本，已安装记录取消返回 409；错误摘要或他人计划不能确认。详见 [C7 红绿证据](../history/reviews/review-c7-evidence.md)。
 
 ## 使用方式
 

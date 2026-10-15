@@ -2,7 +2,7 @@
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-25；**AE-03 目标设计更新：** 2026-09-24；**Agent 管理更新方案确认：** 2026-09-27<br>
 **阶段状态：** 平台基础能力的代码建设阶段收口；本清单保留为规范差异与实施记录。PF-07 全量 P2 仍是独立的目标版本发布验收事项，不标记为完成，也不阻止无关新任务的开发。<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。[双账号隔离环境的本轮进度](pf07-oidc-isolated-progress-2026-09-23.md)已覆盖一个真实 OIDC 身份的 MCP 写入/回执，以及私人受控记忆的发布、检索与撤回；第二身份的实际 Run、其他能力和故障撤权矩阵仍待验收。[较早的本地真实链路核对](pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。[双账号隔离环境的本轮进度](../history/pf07/pf07-oidc-isolated-progress-2026-09-23.md)已覆盖一个真实 OIDC 身份的 MCP 写入/回执，以及私人受控记忆的发布、检索与撤回；第二身份的实际 Run、其他能力和故障撤权矩阵仍待验收。[较早的本地真实链路核对](../history/pf07/pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
@@ -157,7 +157,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | PF-06（代码级与管理端已完成，2026-09-23） | 受控 Agent 委派 | 平台受管的精确目标版本允许列表；无 Session 父子 Task/Run；最小显式上下文；当前授权与父快照上限交集；PF-02 根预算；深度/并行/容量预留/超时门禁；委派 Task 禁止通用重试；取消、重启对账和全回执 `task-result/v1` 合并 | 一次性 PostgreSQL、Runtime/Schema/策略、当前授权和管理端组件测试覆盖版本固定、幂等、边界、预算、撤权、重试隔离、满载拒绝与子席位预留、取消、恢复及混合回执结果真值；真实 DSH 多 Agent、真实身份撤权和容量故障留 PF-07 P2 |
 | PF-07（部分完成） | 平台基线验收 | [版本化能力矩阵](agent-platform-capabilities.v1.json)、P0/P1 入口和 [验收手册](pf07-platform-acceptance.md)已建立；覆盖无 Session、外部动作、累计预算、MCP、等待/审批、记忆和委派 | P1 已在本地隔离环境运行，目标提交与 CI 结果仍需固定；当前版本 P2 尚须在真实 DSH/OIDC/批准连接上执行并留代码版本、身份、环境、Runtime、Run/Attempt、故障/撤权和结果证据，复核通过后才开放给 Agent 发布 |
 
-**阶段移交：** 本清单不再作为继续新功能开发的排队清单。PF-07 的目标版本真实验收继续开放，由[运行手册](pf07-platform-acceptance.md)跟踪环境、身份、Runtime、Run/Attempt、故障与验收人证据；[本地隔离环境进度](pf07-oidc-isolated-progress-2026-09-23.md)仅覆盖部分场景。此前手工 P2 无原始记录且早于当前能力，不能作为通过依据。发布依赖这些能力的 Agent 时，须完成适用场景并经复核后再开放；平台整体 PF-07 仍未通过。
+**阶段移交：** 本清单不再作为继续新功能开发的排队清单。PF-07 的目标版本真实验收继续开放，由[运行手册](pf07-platform-acceptance.md)跟踪环境、身份、Runtime、Run/Attempt、故障与验收人证据；[本地隔离环境进度](../history/pf07/pf07-oidc-isolated-progress-2026-09-23.md)仅覆盖部分场景。此前手工 P2 无原始记录且早于当前能力，不能作为通过依据。发布依赖这些能力的 Agent 时，须完成适用场景并经复核后再开放；平台整体 PF-07 仍未通过。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 

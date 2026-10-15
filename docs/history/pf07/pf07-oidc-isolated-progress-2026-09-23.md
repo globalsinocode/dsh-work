@@ -19,6 +19,6 @@
 
 ## 仍需完成
 
-[能力矩阵](agent-platform-capabilities.v1.json)中的无 Session 任务、外部动作未知/重复回执、累计预算、持久化审批恢复、受控记忆的跨身份/角色/等待撤权、父子 Agent 委派，以及 MCP 的第二 Agent、超时/取消和真实企业连接器尚无本轮完整 P2 证据。应继续使用同一受控基线逐场景留存 Run/Attempt、权限变化、权威结果和验收人复核结论；不能将这个部分记录改为全量 `verified`。
+[能力矩阵](../../development/agent-platform-capabilities.v1.json)中的无 Session 任务、外部动作未知/重复回执、累计预算、持久化审批恢复、受控记忆的跨身份/角色/等待撤权、父子 Agent 委派，以及 MCP 的第二 Agent、超时/取消和真实企业连接器尚无本轮完整 P2 证据。应继续使用同一受控基线逐场景留存 Run/Attempt、权限变化、权威结果和验收人复核结论；不能将这个部分记录改为全量 `verified`。
 
-本轮结束时已停止可丢弃 MCP 靶场、移除工作区外的明文测试 Token，并将 `localhost:4174/4180/4190` 恢复到原开发库 `dsh_work`；`/health` 返回 PostgreSQL 与 DSH 健康。隔离库暂时保留供复核，但不接入日常开发服务；受限的靶场回执账本仍留在工作区外。数据库快照是查询结果的脱敏副本，若最终销毁隔离库，应先按 [PF-07 运行手册](pf07-platform-acceptance.md)完成独立复核与归档。
+本轮结束时已停止可丢弃 MCP 靶场、移除工作区外的明文测试 Token，并将 `localhost:4174/4180/4190` 恢复到原开发库 `dsh_work`；`/health` 返回 PostgreSQL 与 DSH 健康。隔离库暂时保留供复核，但不接入日常开发服务；受限的靶场回执账本仍留在工作区外。数据库快照是查询结果的脱敏副本，若最终销毁隔离库，应先按 [PF-07 运行手册](../../development/pf07-platform-acceptance.md)完成独立复核与归档。

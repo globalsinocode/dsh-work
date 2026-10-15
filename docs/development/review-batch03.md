@@ -29,4 +29,4 @@
 
 P1 默认端口 4374/4390，可通过 `DSH_WORK_PERSONAL_WEB_PORT` / `DSH_WORK_PERSONAL_SERVER_PORT` 指定；不复用现存业务服务器。测试必须设置专用 `DSH_WORK_TEST_DATABASE_URL`。`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 仅供明确指定已有浏览器，默认仍用 Playwright 安装的 Chromium，不绕过任何浏览器策略。
 
-本环境浏览器访问被系统 URL 管理策略拒绝；预演与 P1 首例返回 `ERR_BLOCKED_BY_ADMINISTRATOR`。未解除策略、未用 DOM 测试冒充浏览器通过。完整 P0/P1 与真实 DSH/OIDC/Python/目标硬件验收仍需在允许的环境执行，见 [D12 证据](review-d12-evidence.md)。
+本环境浏览器访问被系统 URL 管理策略拒绝；预演与 P1 首例返回 `ERR_BLOCKED_BY_ADMINISTRATOR`。未解除策略、未用 DOM 测试冒充浏览器通过。完整 P0/P1 与真实 DSH/OIDC/Python/目标硬件验收仍需在允许的环境执行，见 [D12 证据](../history/reviews/review-d12-evidence.md)。

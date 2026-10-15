@@ -136,4 +136,4 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ### 个人工作闭环增量
 
-[批次 3 规则](review-batch03.md) 与 [D12 实测证据](review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
+[批次 3 规则](review-batch03.md) 与 [D12 实测证据](../history/reviews/review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。

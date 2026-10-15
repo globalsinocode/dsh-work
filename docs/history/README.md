@@ -15,6 +15,8 @@
 | [团队工作空间归档索引](team-workspace/README.md) | 团队工作空间专题的批次记录、交接快照和遗留清理 |
 | [team-workspace-1b-statistics.md](team-workspace-1b-statistics.md) | 1B 阶段生成的统计基线原始结果，可按脚本复跑 |
 | [team-workspace-1b-statistics-findings.md](team-workspace-1b-statistics-findings.md) | 1B 阶段基线的结论、口径和后续待办 |
+| [reviews/](reviews/) | 2026-09 各评审批次（A1、A2、8a、8b、B3–B5、C6、C7、C9、C10、D12、P2、管理端会话）的逐项提交与实测证据；批次规则仍在 `docs/development/review-batch01.md`、`review-batch03.md` |
+| [pf07/](pf07/) | 2026-09-23 PF-07 本地预检、单身份真实链路核对与双账号隔离环境进度记录；现行验收手册见 [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 
 维护约定：
 

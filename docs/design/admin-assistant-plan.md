@@ -1,6 +1,6 @@
 # 管理助手交互方案
 
-> 2026-09 批次 4 增量：现有 Agent 草稿的展示文案采用一次最终确认；其余管理变更保留本文的委派/最终两次确认。字段白名单与服务器边界以 [C6 规则与证据](../development/review-c6-evidence.md) 为准。
+> 2026-09 批次 4 增量：现有 Agent 草稿的展示文案采用一次最终确认；其余管理变更保留本文的委派/最终两次确认。字段白名单与服务器边界以 [C6 规则与证据](../history/reviews/review-c6-evidence.md) 为准。
 
 
 **状态：** 交互方案已经管理员确认；通用 DSH 对话、任务提案、专用助手调度以及 Agent/Runtime 二次确认计划已进入实现。当前代码已接线，仍需在配置测试 PostgreSQL 与真实 DSH 的环境完成端到端验收后才能视为可发布。Skill 安装继续复用既有实现。见 [实现与验收](admin-skill-installation-implementation.md)。
