@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { lstat, readFile, readdir } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 
 import type { Artifact, Workspace, WorkspaceFile } from '../../../domain/types.ts'
@@ -14,6 +14,7 @@ import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceTyp
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
+import type { ObjectStorage } from '../../../domain/object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
@@ -157,20 +158,20 @@ interface PreparedRuntimeArtifact {
 
 export class PostgresContentService {
   private readonly database: DatabaseClient
-  private readonly storageRoot: string
+  private readonly storage: ObjectStorage
   private readonly authorization: PostgresAuthorizationService
   private readonly scanner: FileSafetyScannerPort
   private readonly workspaces: PostgresWorkspaceService
 
   constructor(
     database: DatabaseClient,
-    storageRoot: string,
+    storage: ObjectStorage,
     authorization: PostgresAuthorizationService,
     scanner: FileSafetyScannerPort = new BaselineFileSafetyScanner(),
     workspaces = new PostgresWorkspaceService(database),
   ) {
     this.database = database
-    this.storageRoot = resolve(storageRoot)
+    this.storage = storage
     this.authorization = authorization
     this.scanner = scanner
     this.workspaces = workspaces
@@ -1543,7 +1544,7 @@ export class PostgresContentService {
     let totalBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
-      const content = await readFile(this.resolveStorage(row.textStorageKey), 'utf8')
+      const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
       totalBytes += Buffer.byteLength(content)
       if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
       const safeName = safeMountName(row.originalName, index)
@@ -1700,7 +1701,7 @@ export class PostgresContentService {
       })
     }
 
-    for (const artifact of prepared) await this.writeStorage(artifact.storageKey, artifact.bytes)
+    for (const artifact of prepared) await this.storage.putIfAbsent(artifact.storageKey, artifact.bytes)
     await this.database.begin(async transaction => {
       // H5：发布事务按统一锁序 Workspace → Run 取得锁，锁内复核空间活跃、
       // 发起人当前成员写资格与 Run/Attempt 一致性。成员移除/降级与空间归档
@@ -1851,7 +1852,7 @@ export class PostgresContentService {
     const fileId = `file-${randomUUID()}`
     const sha256 = createHash('sha256').update(bytes).digest('hex')
     const storageKey = join(sessionId ? 'session-files' : 'workspace-files', sessionId ?? workspaceId ?? 'unknown', `${fileId}${extension}`)
-    await this.writeStorage(storageKey, bytes)
+    await this.storage.putIfAbsent(storageKey, bytes)
     return { fileId, extension, sha256, storageKey }
   }
 
@@ -1867,7 +1868,7 @@ export class PostgresContentService {
       const textBytes = Buffer.from(extraction.text, 'utf8')
       const textSha256 = createHash('sha256').update(textBytes).digest('hex')
       const textStorageKey = join('extractions', fileId, 'm4-basic-v1.txt')
-      await this.writeStorage(textStorageKey, textBytes)
+      await this.storage.putIfAbsent(textStorageKey, textBytes)
       await this.database`
         insert into file_extractions (
           id, tenant_id, file_id, extractor_version, detected_type, status,
@@ -1991,7 +1992,7 @@ export class PostgresContentService {
       if (isAuthorizationDenial(error)) throw authorizationDenied('文件不存在或不可访问')
       throw error
     }
-    return { name: row.originalName, mimeType: row.mimeType, bytes: await readFile(this.resolveStorage(row.storageKey)) }
+    return { name: row.originalName, mimeType: row.mimeType, bytes: await this.storage.get(row.storageKey) }
   }
 
   async artifactFileId(artifactId: string, version: number | undefined, actorUserId: string) {
@@ -2058,19 +2059,6 @@ export class PostgresContentService {
     return user?.displayName ?? userId
   }
 
-  private async writeStorage(storageKey: string, bytes: Buffer) {
-    const target = this.resolveStorage(storageKey)
-    await mkdir(resolve(target, '..'), { recursive: true })
-    await writeFile(target, bytes, { flag: 'wx' }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'EEXIST') throw error
-    })
-  }
-
-  private resolveStorage(storageKey: string) {
-    const target = resolve(this.storageRoot, storageKey)
-    if (!target.startsWith(`${this.storageRoot}/`)) throw new Error('非法存储路径')
-    return target
-  }
 }
 
 function formatSize(bytes: number) {

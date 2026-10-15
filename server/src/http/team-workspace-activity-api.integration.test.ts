@@ -28,6 +28,7 @@ import { registerWorkspaceActivityRoutes } from './workbench/workspace-activity-
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './workbench/workspace-lifecycle-routes.ts'
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const suffix = randomUUID().replaceAll('-', '').slice(0, 8)
@@ -64,7 +65,7 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   workspaces = new PostgresWorkspaceService(database)
   activity = new PostgresWorkspaceActivityService(database, workspaces)
-  const content = new PostgresContentService(database, storageRoot, authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, new PostgresAgentService(database))
@@ -417,7 +418,7 @@ test('会话附件上传不进入团队动态（私有内容边界）', async ()
 
   const attachmentName = `私密附件-${suffix}.txt`
   const module = await import('../modules/workbench/application/postgres-content-service.ts')
-  const content = new module.PostgresContentService(database, storageRoot, authorization)
+  const content = new module.PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   await content.storeSessionFile(sessionId, attachmentName, 'text/plain', Buffer.from(`私有正文-${suffix}`), owner)
 
   const rows = await activityRows(ws)

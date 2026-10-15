@@ -19,6 +19,7 @@ import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { Router } from '../../http/router.ts'
 import { registerConversationRoutes } from '../../http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase, root: string, content: PostgresContentService
 let conversations: PostgresConversationRepository, orchestration: RunOrchestrationService
@@ -35,7 +36,7 @@ before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_a1', maxConnections: 5 })
   root = await mkdtemp(join(tmpdir(), 'dsh-work-review-a1-'))
   const auth = new PostgresAuthorizationService(db.client)
-  content = new PostgresContentService(db.client, root, auth)
+  content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)

@@ -61,7 +61,7 @@ import { registerSkillInstallationRoutes } from './http/admin/skill-installation
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
 import { acquireSkillSource } from './modules/skill/skill-source.ts'
 import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
-import { FileSystemSkillArtifactStore } from './modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from './modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
@@ -87,6 +87,7 @@ import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
+import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -139,7 +140,7 @@ async function start() {
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
-  const skillArtifacts = new FileSystemSkillArtifactStore(resolve(dataRoot, 'skills'))
+  const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
   await migrateSkillFilesToFileSystem(database, skillArtifacts)
   // Database migrations and identity initialization above stay fail-closed.
   // Only optional execution capabilities may fail independently.
@@ -170,7 +171,7 @@ async function start() {
         }
       : null,
   })
-  const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization)
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)

@@ -7,7 +7,8 @@ import { strToU8, zipSync, type Zippable } from 'fflate'
 import { parseSkillBundle, parseSkillPackage, toSkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan } from './skill-installation-plan.ts'
 import { continueSkillSource, isPublicAddress, parseSkillSource } from './skill-source.ts'
-import { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from './skill-artifact-store.ts'
+import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 
 export const sampleSkill = '---\nname: test-skill\ndescription: Read an exact reference file and report its value.\n---\nRead references/example.txt and report the exact value without inventing data.\n'
 test('parses an existing Skill and preserves immutable UTF-8 resources', () => {
@@ -23,7 +24,7 @@ test('persists Skill bodies as an immutable folder and keeps only an index descr
   const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
   try {
     const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('folder-marker') }))
-    const store = new FileSystemSkillArtifactStore(root)
+    const store = new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 }))
     const artifact = await store.put(pkg)
     assert.equal(JSON.stringify(artifact).includes('folder-marker'), false)
     assert.equal(await readFile(join(root, artifact.artifactRef, 'references/example.txt'), 'utf8'), 'folder-marker')
@@ -39,7 +40,7 @@ test('persists Skill bodies as an immutable folder and keeps only an index descr
 test('rejects legacy artifact references (symbol-edged package segments)', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
   try {
-    const store = new FileSystemSkillArtifactStore(root)
+    const store = new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 }))
     const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill), 'references/example.txt': strToU8('folder-marker') }))
     // B-02 唯一引用规则：旧版生成器未清理首尾符号的持久化引用（中文名 →
     // packages/____/<sha>）读写同口径拒绝，越界与遍历段一并覆盖。
@@ -55,7 +56,7 @@ test('rejects legacy artifact references (symbol-edged package segments)', async
 test('truncates the package segment before stripping edge symbols', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
   try {
-    const store = new FileSystemSkillArtifactStore(root)
+    const store = new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 }))
     // 63 个 a + '-report'：先清理后截断会留下结尾 '-'，被规范形式拒绝；先截断后清理得到合法引用。
     const longName = `${'a'.repeat(63)}-report`
     const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(sampleSkill.replace('test-skill', longName)), 'references/example.txt': strToU8('marker') }))

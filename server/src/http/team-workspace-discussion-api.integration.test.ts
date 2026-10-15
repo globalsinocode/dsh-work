@@ -29,6 +29,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructu
 import { Router } from './router.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -944,7 +945,7 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
-  const content = new PostgresContentService(database, storageRoot, authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)
   const orchestration = new RunOrchestrationService(

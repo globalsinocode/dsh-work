@@ -27,6 +27,7 @@ import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -79,7 +80,7 @@ before(async () => {
   agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-agent-member-'))
-  const content = new PostgresContentService(database, storageRoot, authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),

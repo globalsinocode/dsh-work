@@ -1,5 +1,5 @@
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
+import type { SkillArtifactStore } from './skill-artifact-store.ts'
 import {
   hash,
   createSkillPackage,
@@ -32,7 +32,7 @@ interface LegacyInstallationRow {
 }
 
 /** Idempotently moves pre-0031 packaged Skill bodies out of PostgreSQL. */
-export async function migrateSkillFilesToFileSystem(database: DatabaseClient, store: FileSystemSkillArtifactStore) {
+export async function migrateSkillFilesToFileSystem(database: DatabaseClient, store: SkillArtifactStore) {
   const versions = await database<LegacyVersionRow[]>`
     select id, name, description, instructions, version, tool_refs as "toolIds", manifest from skill_versions
      where artifact_ref is null

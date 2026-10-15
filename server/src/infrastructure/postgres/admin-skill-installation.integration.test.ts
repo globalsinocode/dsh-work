@@ -27,11 +27,12 @@ import { PostgresSkillService } from '../../modules/skill/postgres-skill-service
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { AdminAssistantService, type StoredActionPlan } from '../../modules/admin/application/admin-assistant-service.ts'
 import { acquireSkillSource, type SkillSource } from '../../modules/skill/skill-source.ts'
-import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from '../../modules/skill/skill-file-storage-migration.ts'
 import { parseSkillPackage } from '../../modules/skill/skill-package.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 const real = process.env.DSH_WORK_SKILL_REAL_DSH === '1'
@@ -40,7 +41,7 @@ let assistant: AdminAssistantService
 let operations: PostgresOperationsService
 let agents: PostgresAgentService
 let runtimeRoot: string, conversations: PostgresConversationRepository, runs: PostgresRunRepository
-let artifactStore: FileSystemSkillArtifactStore
+let artifactStore: SkillArtifactStore
 const body = '---\nname: installation-test\ndescription: Read a reference file and return its exact contents.\n---\nUse the read tool to read references/value.txt and report exactly the value, never infer or fabricate it.\n'
 const bytes = zipSync({ 'SKILL.md': strToU8(body), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
 const changedBytes = zipSync({ 'SKILL.md': strToU8(`${body}\nReturn the result as one concise line.\n`), 'references/value.txt': strToU8('SKILL_RESOURCE_MARKER_7F31') })
@@ -57,7 +58,7 @@ async function fixtureAcquire(source: SkillSource) {
 before(async () => {
   database = await createThrowawayDatabase({ namePrefix: 'dsh_skill_installation_test' })
   runtimeRoot = await mkdtemp(join(tmpdir(), 'dsh-install-test-'))
-  artifactStore = new FileSystemSkillArtifactStore(join(runtimeRoot, 'skills'))
+  artifactStore = new SkillArtifactStore(new LocalObjectStorage(join(runtimeRoot, 'skills'), { fileMode: 0o400 }))
   const projectRoot = resolve(import.meta.dirname, '../../../..')
   const installation = real ? await resolveDshRuntimeInstallation({ projectRoot }) : null
   const runtime = new DshAcpRuntimeAdapter({ runtimeId: 'runtime-local-01', runtimeRoot, dshRepository: installation?.home ?? runtimeRoot,

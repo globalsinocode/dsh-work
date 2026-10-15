@@ -19,7 +19,7 @@ import type {
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
+import type { SkillArtifactStore } from './skill-artifact-store.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -158,13 +158,13 @@ export class PostgresSkillService {
   private readonly database: DatabaseClient
   private readonly operations?: AuditTrail
   private readonly toolService?: PostgresToolConnectorService
-  private readonly artifactStore?: FileSystemSkillArtifactStore
+  private readonly artifactStore?: SkillArtifactStore
 
   constructor(
     database: DatabaseClient,
     operations?: AuditTrail,
     toolService?: PostgresToolConnectorService,
-    artifactStore?: FileSystemSkillArtifactStore,
+    artifactStore?: SkillArtifactStore,
   ) {
     this.database = database
     this.operations = operations

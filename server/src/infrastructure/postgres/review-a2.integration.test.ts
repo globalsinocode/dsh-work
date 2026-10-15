@@ -18,6 +18,7 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { DshAcpRuntimeAdapter } from '../../modules/runtime/dsh-acp-runtime-adapter.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase
 const mockWorker = join(dirname(fileURLToPath(import.meta.url)), '../../modules/runtime/testing/mock-acp-worker.ts')
@@ -54,7 +55,7 @@ async function runRevokedCase(
       acceptingRuns: true, dshRepository: '/test-only', transport: 'acp-stdio', message: 'test port' } },
   }
   const auth = new PostgresAuthorizationService(db.client)
-  const content = new PostgresContentService(db.client, root, auth)
+  const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   const tools = new PostgresToolConnectorService(db.client)
   const agents = new PostgresAgentService(db.client, undefined, undefined, tools)
   const orchestration = new RunOrchestrationService(runs, conversations,
@@ -137,7 +138,7 @@ test('input file removed while the DSH Worker is active stops execution without 
   const runs = new PostgresRunRepository(db.client)
   const conversations = new PostgresConversationRepository(db.client)
   const auth = new PostgresAuthorizationService(db.client)
-  const content = new PostgresContentService(db.client, join(root, 'storage'), auth)
+  const content = new PostgresContentService(db.client, new LocalObjectStorage(join(root, 'storage')), auth)
   const tools = new PostgresToolConnectorService(db.client)
   const agents = new PostgresAgentService(db.client, undefined, undefined, tools)
   const context: { orchestration?: RunOrchestrationService } = {}
@@ -218,7 +219,7 @@ test('team member removed before the artifact transaction cannot publish a resul
   const scanReached = new Promise<void>(resolve => { markScanReached = resolve })
   const content = new PostgresContentService(
     db.client,
-    join(root, 'storage'),
+    new LocalObjectStorage(join(root, 'storage')),
     new PostgresAuthorizationService(db.client),
     {
       async scan() {

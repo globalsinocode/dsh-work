@@ -291,7 +291,7 @@ flowchart LR
 
 1. 先完成 AI Hub 联调、企业 Connector/知识源、目标主机、存储、备份、监控和 UAT；
 2. 容量不足时先测量瓶颈；增加 Node.js 实例或多主机 Worker 前实现并验证租约、抢占、事件归属和失联恢复；
-3. 文件规模增长时先为文件、成果和 Skill 抽出存储端口（当前内容服务直接读写本地目录，尚无存储适配器），再接入 NAS/对象存储，不改变业务对象；
+3. 上传文件、解析文本、成果与 Skill 文件经 `ObjectStorage` 端口（`server/src/domain/object-storage.ts`）读写，当前实现为本地目录 `LocalObjectStorage`；文件规模增长时新增 NAS/对象存储实现即可，不改变业务对象；Attempt 工作目录属于 Runtime 主机本地，不经此端口；
 4. 跨应用治理复用达到门槛后，通过稳定治理端口把 Agent、Skill、Tool、Model、发布和汇总治理迁入 AI Hub；
 5. Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态继续由 dsh-work 持有；
 6. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。

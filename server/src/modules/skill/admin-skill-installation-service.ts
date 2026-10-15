@@ -14,7 +14,7 @@ import type { PostgresToolConnectorService } from '../tool/postgres-tool-connect
 import { parseSkillBundle, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan, externalizeSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
 import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLink, type SkillSource } from './skill-source.ts'
-import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
+import type { SkillArtifactStore } from './skill-artifact-store.ts'
 import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenant = 'tenant-dsh-work'
@@ -58,9 +58,9 @@ export class AdminSkillInstallationService {
   private readonly acquire: typeof acquireSkillSource
   private readonly pythonSandboxAvailable: boolean
   private readonly pythonPackages: string[]
-  private readonly artifactStore?: FileSystemSkillArtifactStore
+  private readonly artifactStore?: SkillArtifactStore
   private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
-  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: FileSystemSkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
+  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
     this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
   }
 

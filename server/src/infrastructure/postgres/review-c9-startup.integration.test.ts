@@ -16,6 +16,7 @@ import { IdentityAdministrationService } from '../../modules/identity/administra
 import { loadIdentityConfiguration } from '../../modules/identity/config.ts'
 import { LocalAuthService } from '../../modules/identity/local-auth-service.ts'
 import type { LocalIdentityConfiguration } from '../../modules/identity/types.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase
 const sessionSecret = 'review-c9-session-secret-with-32-characters'
@@ -95,7 +96,7 @@ test('C9 RED: missing DSH and failed Python preflight do not block authenticated
     assert.equal((await fetch(`${app.base}/api/workbench/v1/tasks`, { headers: employee })).status, 200)
     const platform = await (await fetch(`${app.base}/api/admin/v1/platform-status`, { headers: admin })).json() as { data: { dshRuntime: string } }
     assert.equal(platform.data.dshRuntime, 'not-connected')
-    const content = new PostgresContentService(db.client, join(app.root, 'storage'), new PostgresAuthorizationService(db.client))
+    const content = new PostgresContentService(db.client, new LocalObjectStorage(join(app.root, 'storage')), new PostgresAuthorizationService(db.client))
     const conversations = new PostgresConversationRepository(db.client)
     const session = await conversations.createSession({ userId: employeeId, title: '故障时的历史资料' })
     const file = await content.storeSessionFile(session.id, 'fixture.txt', 'text/plain', Buffer.from('synthetic historical file'), employeeId)

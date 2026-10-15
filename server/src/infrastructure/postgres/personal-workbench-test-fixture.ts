@@ -25,6 +25,7 @@ import { registerAutomationRoutes } from '../../http/workbench/automation-routes
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 export const testTenant = 'tenant-dsh-work'
 export async function personalWorkbenchFixture(prefix: string, options: {
@@ -36,7 +37,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
   const auth = new PostgresAuthorizationService(db.client)
-  const content = new PostgresContentService(db.client, root, auth)
+  const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   const conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)

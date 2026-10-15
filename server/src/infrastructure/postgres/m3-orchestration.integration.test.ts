@@ -31,6 +31,7 @@ import { PostgresTaskRepository, TaskContractConflictError, taskOperationParamet
 import { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -55,7 +56,7 @@ before(async () => {
   runtime = new DeterministicRuntime()
   runs = new PostgresRunRepository(database)
   conversations = new PostgresConversationRepository(database)
-  content = new PostgresContentService(database, `/tmp/dsh-work-m3-test-${randomUUID()}`, new PostgresAuthorizationService(database))
+  content = new PostgresContentService(database, new LocalObjectStorage(`/tmp/dsh-work-m3-test-${randomUUID()}`), new PostgresAuthorizationService(database))
   operations = new PostgresOperationsService(database)
   tasks = new PostgresTaskRepository(database)
   taskQueries = new PostgresTaskQueryService(database, tasks, runs)
