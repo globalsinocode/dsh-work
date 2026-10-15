@@ -7,7 +7,9 @@ export function checkSecurity(check) {
   check.excludes('server/src/modules/identity/ai-hub-client.ts', ['/me/permissions', '/authorization/decisions'])
   check.excludes('server/src/modules/identity/types.ts', ['dsh_work.'])
   check.excludes('server/src/modules/identity/auth-service.ts', ['claim.owner_user_id'])
-  check.excludes('server/src/modules/run/run-orchestration-service.ts', ["role_ids: ['role-employee']", 'publishAssistantResult'])
+  for (const file of ['run-orchestration-service.ts', 'orchestration/attempt-dispatcher.ts', 'orchestration/run-event-recorder.ts']) {
+    check.excludes(`server/src/modules/run/${file}`, ["role_ids: ['role-employee']", 'publishAssistantResult'])
+  }
   const initialMigration = check.read('server/migrations/0001_m2_platform.sql').toLowerCase()
   for (const secret of ['api_key text', 'secret_value', 'credential_value']) {
     check.assert(!initialMigration.includes(secret), `初始化迁移不得包含明文凭据列 ${secret}`)

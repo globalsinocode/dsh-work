@@ -47,10 +47,9 @@ export function checkTeamWorkspace1a(check) {
     'sweepWorkspaceActiveRuns',
     'systemCancelRun',
   ])
-  check.includes('server/src/modules/run/run-orchestration-service.ts', [
-    'systemCancelRun',
-    'recheckExecutionAuthorization',
-  ])
+  check.includes('server/src/modules/run/run-orchestration-service.ts', ['systemCancelRun'])
+  check.includes('server/src/modules/run/orchestration/execution-authorization-gate.ts', ['recheckExecutionAuthorization'])
+  check.includes('server/src/modules/run/orchestration/attempt-scheduler.ts', ['gate.recheckExecutionAuthorization'])
   check.includes('server/src/http/workbench/conversation-routes.ts', ['authorizeTeamReadAccess'])
   check.includes('server/src/infrastructure/postgres/m5-revocation-pipeline.integration.test.ts', [
     '收权清扫：member_removed',
