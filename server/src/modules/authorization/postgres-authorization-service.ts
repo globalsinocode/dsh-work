@@ -119,8 +119,8 @@ export class PostgresAuthorizationService {
   private readonly streamAccessTtlMs: number
   /**
    * In-process read-access cache for team-workspace SSE delivery (1A-T5,
-   * confirmed decision: in-process cache + revision invalidation, see
-   * docs/product/team-workspace-batch-1a-convergence.md §4). Entries are
+   * confirmed decision: in-process cache + revision invalidation; the
+   * revocation rules are in docs/development/feature-rules.md §3.8). Entries are
    * keyed by workspace+viewer and hold the workspace's team_auth_revision at
    * check time: a revision change invalidates immediately, otherwise the
    * cached grant is trusted for a short TTL so the 250ms SSE poll does not

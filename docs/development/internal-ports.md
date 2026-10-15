@@ -2,7 +2,7 @@
 
 两个前端只调用各自 API；服务端通过明确的接口协作。下表链接实际类型和实现，避免维护与源码不一致的伪接口副本。
 
-Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.md)；现有类型、Schema 与目标规范的差异见[实现核对](agent-design-gap-analysis.md)。目标字段须经过契约及消费者迁移，不能仅据规范文字直接调用。
+Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.md)；未完成事项见[架构总览第 10 节](overview.md#10-当前边界与独立开发)。目标字段须经过契约及消费者迁移，不能仅据规范文字直接调用。
 
 | 边界 | 权威来源 | 约束 |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 场景试运行契约
 
-管理端既有测试接口可选传入 `scenario`，平台验证后固定为 Manifest `test_scenario`；只允许 `admin-skill-test` 使用。默认调用不改变严格策略。场景级验证结果使用 `scenario-v1` 证据策略，发布需要当前配置下的完整能力覆盖；不得将部分场景证据标成完整严格测试。请求例子、断言支持范围和迁移说明见 [Skill 场景试运行](skill-scenario-trials.md)。
+管理端既有测试接口可选传入 `scenario`，平台验证后固定为 Manifest `test_scenario`；只允许 `admin-skill-test` 使用。默认调用不改变严格策略。场景级验证结果使用 `scenario-v1` 证据策略，发布需要当前配置下的完整能力覆盖；不得将部分场景证据标成完整严格测试。断言支持范围与发布聚合规则见[功能规则](feature-rules.md#54-场景试运行8b)。
 
 ## 个人历史（B3）
 
@@ -97,11 +97,11 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 内容生命周期（B5）
 
-`archiveSession` 保留旧方法和 `archived` 字段，但产品语义为从历史移除，不物理删除。公共读取策略及账号停用语义见 [个人内容生命周期](personal-content-lifecycle.md)；`/content-policy` 返回固定策略版本。团队归档只读与个人移除不混用。
+`archiveSession` 保留旧方法和 `archived` 字段，但产品语义为从历史移除，不物理删除。公共读取策略及账号停用语义见[功能规则](feature-rules.md#23-内容生命周期logical-retention-v1)；`/content-policy` 返回固定策略版本。团队归档只读与个人移除不混用。
 
 ## 管理助手低风险确认（C6）
 
-风险白名单、判定位置、旧计划兼容与证据见 [C6](../history/reviews/review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
+风险白名单、判定位置与旧计划兼容见[功能规则：管理助手](feature-rules.md#4-管理助手)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
 
 ## 独立账号认证
 

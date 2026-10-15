@@ -5,7 +5,7 @@ import type { TaskResultOutcome } from '../../domain/task-result.ts'
 /**
  * AG-03 轻量自动任务——模块类型。
  *
- * 设计依据 docs/design/automation-implementation-plan.md：
+ * 设计依据 docs/development/feature-rules.md 第 7 节：
  * - 任务引用固定 Agent Version（不跟随最新版）；
  * - schedule 是唯一时区权威存储；manual 任务 next_slot_utc 恒为 null；
  * - 执行状态不冗余存储，经 run_id 读 Run；执行记录只承载受理结果。

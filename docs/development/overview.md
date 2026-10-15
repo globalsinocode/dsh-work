@@ -7,7 +7,7 @@
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
-Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进，并用[生命周期实现映射](agent-lifecycle-implementation-map.md)定位平台对象和门禁；代码支持程度及未实现项见[差异清单](agent-design-gap-analysis.md)。本文保留系统职责与执行链的架构边界。
+Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进；已交付功能的产品与安全规则见[功能规则](feature-rules.md)，未完成事项见第 10 节。本文保留系统职责与执行链的架构边界。
 
 ## 1. 产品定位与范围
 
@@ -156,7 +156,7 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 
 ### 4.1 体验层
 
-- `apps/workbench-web`：主导航提供新对话、Skill 广场、AI 同事、团队空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见 [个人工作闭环](review-batch03.md)；
+- `apps/workbench-web`：主导航提供新对话、Skill 广场、AI 同事、团队空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)；
 - `apps/admin-web`：运营、Agent、Skill/Tool、Runtime、Session、权限、模型用量、审计和健康；
 - 两个应用拥有独立路由、Pinia、API 客户端、DTO 和构建产物；
 - `packages/` 只共享 Design Token 和无业务状态组件，不共享认证状态或业务 Store。
@@ -273,15 +273,24 @@ flowchart LR
 ## 10. 当前边界与独立开发
 
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
-- Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。实现边界见 [管理助手方案](../design/admin-assistant-plan.md)与[对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
-- 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
-- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
+- Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。规则见[功能规则](feature-rules.md#4-管理助手)。
+- 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，未完成事项见本节末尾。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
+- 已有 Skill 的 Python 脚本执行遵守[功能规则第 6 节](feature-rules.md#6-skill-python-执行)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 使用 AI Hub 账号时依赖其 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
 - AI Hub 账号的业务角色在本地，但上游账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
 - 普通 OIDC 登录不要求 Bootstrap Scope；仅显式首次认领入口申请。独立账号使用受控命令和持久化一次性账本初始化首位管理员，不访问上游。
 - `/health` 的 SSO 字段表示解析后的登录能力配置，不是身份服务可用性检测；接口契约与真实双系统故障行为需独立验证。
 - 企业只读 Connector、真实知识源、恶意文件扫描、数据出口、目标容量和备份恢复，均需针对部署环境提供证据。合成数据、历史测试与发布成功不能代替业务验收。
+
+### 未完成与未验收事项
+
+代码和测试存在不等于目标环境已验收。以下事项仍开放，按对应文档跟踪：
+
+- **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
+- **Agent 能力：** 经验迭代（AE-04）缺专属质量评测、显式停用与回滚；`agent-routine` 跳过知识与记忆检索，统一上下文需适配 Agent 独立授权；统一治理总览与跨入口真实验收（AE-06）未完成；模型能力要求 `long-context` 与 `structured-output` 目前一律拒绝，真正支持需定义约束并接通目标模型。
+- **Agent 发布流程与 Runtime 执行：** 分阶段状态见 [Agent 发布流程方案](../design/agent-release-optimization-plan.md) 和 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
+- **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
 
@@ -302,9 +311,7 @@ flowchart LR
 - [文档导航](../index/README.md)
 - [Agent 设计规范](agent-design-standard.md)
 - [通用 Agent 全生命周期模板](agent-lifecycle-template.md)
-- [Agent 全生命周期实现映射](agent-lifecycle-implementation-map.md)
-- [通用文本整理助手参考记录](reference-agent-lifecycle-record.md)
-- [Agent 规范与当前实现差异清单](agent-design-gap-analysis.md)
+- [功能规则](feature-rules.md)
 - [开发与测试](development.md)
 - [数据模型](../design/data-model.md)
 - [内部端口与契约](internal-ports.md)

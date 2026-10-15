@@ -2,7 +2,7 @@
 
 **状态：** 新建或重大调整 Agent 时使用的通用工作模板。  
 **适用范围：** 所有业务 Agent、管理助手、发布试运行与自动任务；不绑定具体业务场景。  
-**规范依据：** [Agent 设计规范](agent-design-standard.md)。实现能力与缺口以[差异清单](agent-design-gap-analysis.md)为准。
+**规范依据：** [Agent 设计规范](agent-design-standard.md)。未完成事项见[架构总览第 10 节](overview.md#10-当前边界与独立开发)。
 
 ## 1. 使用原则
 

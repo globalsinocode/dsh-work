@@ -1,7 +1,7 @@
 # Runtime 执行架构渐进优化方案
 
 **状态：** 部分交付；各阶段状态见第 3 节表格。本文记录优化方向、实施依赖与验收条件，未标注交付的能力不代表已经可用。<br>
-**更新日期：** 2026-09-15<br>
+**更新日期：** 2026-10-16<br>
 **依据：** 对 Octop 的静态架构分析，以及当前 dsh-work 的 Run、Runtime、工具目录与恢复代码；尚未进行两项目同条件性能压测。<br>
 **范围：** 执行观测、工具适配、上下文延续、受控恢复和有测量依据的性能优化。<br>
 **执行基线：** macOS 开发与生产环境、Node.js 模块化单体、PostgreSQL、每 Attempt 独立 DSH ACP Worker。
@@ -25,22 +25,24 @@
 | 内容 | 唯一维护入口 | 与本计划的关系 |
 | --- | --- | --- |
 | 当前执行、授权及状态语义 | [架构总览](../development/overview.md)、[内部端口与契约](../development/internal-ports.md) | 本计划描述未来增量；实施通过后再更新当前基线 |
-| Agent 包、真实 Agent 试运行、版本发布、自动任务 | [差异清单](../development/agent-design-gap-analysis.md)、[AG-03 实施方案](automation-implementation-plan.md) | 本计划提供共用执行能力，不重复定义这些产品流程 |
-| Skill 包与脚本沙箱 | [Skill 安装方案](skill-installation-plan.md)、[Python 执行方案](skill-python-execution-plan.md) | 复用存储、权限和沙箱；不改为宿主机任意脚本执行 |
+| Agent 包、真实 Agent 试运行、版本发布、自动任务 | [Agent 设计规范](../development/agent-design-standard.md)、[Agent 发布流程方案](agent-release-optimization-plan.md)、[功能规则：自动任务](../development/feature-rules.md#7-自动任务ag-03) | 本计划提供共用执行能力，不重复定义这些产品流程 |
+| Skill 包与脚本沙箱 | [功能规则：Skill 安装与 Python 执行](../development/feature-rules.md#5-skill-安装与发布) | 复用存储、权限和沙箱；不改为宿主机任意脚本执行 |
 | DSH 安装、精确版本与真实探针 | [Runtime 指南](../release/dsh-runtime-delivery.md) | 恢复和性能验证必须记录实际版本、环境及探针证据 |
 
 持久化人工工具审批与跨进程恢复是独立后续增量，不自动成为企业内部智能体首版发布的前置条件。Agent 包、定时任务和经验的已确认范围也不因本计划被取消。
 
 ## 2. 已核对的当前实现
 
+以下为 2026-09-15 方案起草时的核对结果，2026-10-16 按 PF-04 与 EX-01 的交付更新了相应两行。
+
 | 当前事实 | 优势或问题 | 源码依据 |
 | --- | --- | --- |
 | 每个 Attempt 创建目录、准备输入和 Skill 文件、启动 Worker，并新建 ACP Session | 隔离边界清楚；存在重复初始化和文件处理，成本尚未测量 | [Runtime Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts)、[ACP Client](../../server/src/modules/runtime/acp-json-rpc-client.ts) |
 | 多轮输入传递 user/assistant 历史消息 | 可以继续对话；超时中断的 Attempt 会把已生成部分回答落库并作为普通历史进入重试 Attempt（上下文延续，非步骤恢复）；没有复用原 ACP Session，不能等同完整工具状态和执行步骤恢复 | [Runtime 类型](../../server/src/modules/runtime/runtime-types.ts)、[历史输入构造](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) |
 | 重启恢复重新调度排队 Attempt，活动 Attempt 标记 SERVICE_RESTARTED；重试新建 Attempt | 业务状态可收敛；不具备已经验证的中断步骤续跑 | [Run Repository](../../server/src/modules/run/postgres-run-repository.ts)、[运行编排](../../server/src/modules/run/run-orchestration-service.ts) |
-| ACP 权限请求通过策略回调决定；未配置回调时默认拒绝，approval_mode 为 never 时走一次允许 | 有请求与结果事件；没有产品级持久等待、审批收件箱和跨重启续跑闭环 | [权限请求处理](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) |
+| ACP 权限请求通过策略回调决定；未配置回调时默认拒绝，approval_mode 为 never 时走一次允许；PF-04 已提供持久化等待、动作审批和批准后新建 Attempt 继续执行（迁移 0061） | 审批等待场景已闭环；Worker 中断后的通用检查点恢复仍未验证 | [权限请求处理](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) |
 | 工具候选由 DSH 描述与平台策略合成，未知工具默认不接入；输出 Schema 存在空对象 | 已有发现和治理基础；上游加载、平台适配、用户授权需要更明确的状态及契约 | [工具目录](../../server/src/modules/tool/dsh-built-in-tool-catalog.ts) |
-| 平台工具桥使用通用处理器，但错误主要返回字符串和统一 HTTP 状态 | 复用传输有效；不同工具的错误、取消、重试提示和结果展示还可统一 | [平台工具桥](../../server/src/modules/runtime/platform-tool-bridge.ts) |
+| 平台工具桥使用通用处理器，按契约返回类型化错误码（`error.code/retryable/effect_state`）；EX-01 已把每次工具调用的结果与失败原因投影为 `tool.completed` 事件 | 工具定义仍分散在目录、契约和授权多处；工具目录的多维状态与贯通样例未完成 | [平台工具桥](../../server/src/modules/runtime/platform-tool-bridge.ts) |
 | 数据库锁住 Runtime 容量并原子认领 Attempt；运行以单节点为基线 | 已有准入控制；多实例租约、失联接管和跨节点调度不能直接假定存在 | [调度与恢复](../../server/src/modules/run/postgres-run-repository.ts) |
 
 这些是优化依据，不代表上述机制全部有缺陷。例如启动 Worker 有成本，不等于它已经是主要瓶颈；现有权限限制也不能通过放开全部 DSH 工具来消除。
@@ -121,7 +123,7 @@ EX-01 与 EX-02 可独立推进；EX-04 不必等待恢复能力完成。EX-03 �
 - 未授权、Schema 错误、缺少依赖、超时、取消、输出超限均有不同的可观察结果；不再统一误报为包解析失败。
 - 安装或发现工具不会扩大已有 Agent 权限；上游工具变化不会覆盖旧 Tool Version。
 - 原有 Skill 安装、`activate_skill` 和 `python_execute` 保持相同授权语义和执行链路。
-- 工具注册规范与样例由此阶段交付；员工 Tool 候选审核、发布规则随准入流水线另行设计，现阶段按[差异清单](../development/agent-design-gap-analysis.md)登记。
+- 工具注册规范与样例由此阶段交付；员工 Tool 候选审核、发布规则随准入流水线另行设计，现阶段登记在[架构总览第 10 节](../development/overview.md#10-当前边界与独立开发)。
 
 ### 已交付：工具调用结果可见
 
@@ -185,6 +187,8 @@ Attempt 结束（成功或失败）时，Adapter 从 DSH 会话日志读出本�
 
 ### 7.3 EX-03B：持久化人工工具审批
 
+**交付状态：** 下列要求已由 PF-04 在代码级实现（持久化等待、动作审批、拒绝/过期/撤权/重启处理，见[内部端口与契约](../development/internal-ports.md)中“持久化等待与动作审批”一行及测试目录 PF-WAIT-01）；目标环境的真实验收按 PF-WAIT-P2 另记。
+
 以一个确有人工确认需要的受控工具为先导，完成以下闭环后才开放：
 
 - 审批记录绑定具体 Attempt、Tool Version、参数摘要、目标对象、风险范围、配置 revision 和有效期。批准一次操作不扩大后续工具权限。
@@ -232,14 +236,12 @@ P0 原型、P1 受控集成、P2 真实验收分别记录。数据库测试不�
 
 ## 10. 下一步工作单
 
-从 EX-00 开始，首个工作单只包含：
+EX-01 与 EX-02 已先于 EX-00 交付了部分范围。剩余工作按以下顺序推进，每项完成后回填第 3 节状态：
 
-1. 核对实际运行版本与现有指标，落实分段事件位置和脱敏字段。
-2. 准备固定输入及失败场景，在受控环境采集启动、上下文、并发和资源基线。
-3. 验证 Session/检查点/人工审批的真实可用范围，列出平台接线缺口与 DSH 缺口。
-4. 回填本文件的阶段状态和证据链接，选定 EX-01/EX-02 的首个场景，以及 EX-04 是否有必要启动。
-
-本次文档交付不启动 Worker 预热、数据库迁移、工具放权或运行服务变更。
+1. **EX-02 与 EX-01 的真实 DSH 验收：** 按测试目录 EX-ARTIFACT-01、EX-TOOL-01 的 P2 要求，在目标环境完成“两轮修改同一成果”和“工具调用失败可见”，留存 Run/Attempt 与 DSH 版本。
+2. **EX-00 基线：** 核对实际运行版本与现有分段指标，准备固定输入和失败场景，在受控环境采集启动、上下文、并发和资源基线；同时验证 Session、检查点与人工审批的真实可用范围，列出平台接线缺口与 DSH 缺口。
+3. **EX-01 剩余部分：** 统一工具定义（目录、模型可见 Schema、执行校验、结果投影共用一处）、工具目录的多维状态，以及一个“发现 → 接入 → 授权 → 调用 → 结果 → 失败说明”的贯通样例。工具步骤目前在 Attempt 结束时一次补齐；ACP 实时 `tool_call` 通知经验证可用后再改为实时展示。
+4. **EX-03A 与 EX-04：** 依据 EX-00 的能力验证和测量结论决定是否启动，不预先实施。
 
 ## 11. 外部参考与采用范围
 

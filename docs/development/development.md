@@ -119,7 +119,7 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 测试时间用带时区 ISO 8601，业务 ID 尽量稳定；不提交真实员工、业务正文、凭据或敏感二进制附件。真实模型探针及升级验证命令统一见 Runtime 指南。
 
-本轮安全修复的范围、兼容约定和单独回归入口见 [批次 0/1](review-batch01.md)。
+跨空间输入、执行前复核和试运行证据隔离的规则见[功能规则](feature-rules.md#1-跨功能约束)，回归入口为 `pnpm test:review:unit` 与 `pnpm test:review:integration`（后者需要 `DSH_WORK_TEST_DATABASE_URL`）。
 
 ## 发布与业务验收条件
 
@@ -138,4 +138,4 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ### 个人工作闭环增量
 
-[批次 3 规则](review-batch03.md) 与 [D12 实测证据](../history/reviews/review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
+规则见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
