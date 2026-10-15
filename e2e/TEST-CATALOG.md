@@ -903,6 +903,20 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 ## EX-02 跨轮成果延续
 
+### EX-TOOL-01 工具调用结果在执行步骤中可见
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、Mock ACP Worker、平台工具桥<br>
+**前置数据：** 一次 Run 中有成功、失败和未返回结果的工具调用<br>
+**spec：** `server/src/modules/runtime/tool-call-summary.test.ts`、`server/src/modules/runtime/platform-tool-bridge.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`
+
+1. Attempt 成功结束时，每次工具调用按顺序产生一条 `tool.completed` 事件，均在 `run.completed` 之前；`run.completed` 带工具调用总数和失败数。
+2. Attempt 失败时，已发生的工具调用仍在 `run.failed` 之前登记。
+3. 平台工具失败显示与错误码对应的固定原因（如“调用参数不符合工具要求”“已达到本次执行的工具调用次数上限”）；未知错误码和内置工具失败显示“工具返回失败”；无结果记录显示“未收到调用结果”。
+4. 事件不含工具参数和输出内容。
+5. 工作台执行步骤逐条显示工具名与结果，失败步骤为失败状态；结果核验显示“工具调用 N（失败 M，原因见执行步骤）”。
+
+**验收：** 上述测试通过；P2 另需在目标环境用真实 DSH 让 Agent 读取一个不存在的文件，确认执行步骤出现失败的工具调用、任务本身仍可完成，并留证 Run/Attempt 与 DSH 版本。
+
 ### EX-ARTIFACT-01 引用上一轮成果并产生新版本
 
 **优先级：** P1 · **角色：** 员工（成果发起人）、同空间外的另一员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器与前端组件<br>

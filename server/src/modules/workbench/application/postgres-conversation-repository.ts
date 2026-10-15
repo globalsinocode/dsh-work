@@ -1469,12 +1469,25 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   }
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
-    .map((event, index, visibleEvents) => ({
+    .map((event, index, visibleEvents) => event.eventType === 'tool.completed' ? toolStep(event) : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
     }))
+}
+
+/** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
+function toolStep(event: EventRow): RunStep {
+  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const outcome = event.safeMetadata['status']
+  return {
+    id: event.id,
+    title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
+    detail: event.displayMessage ?? '工具调用已结束。',
+    status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
+    ...(toolName ? { tool: toolName } : {}),
+  }
 }
 
 function eventTitle(eventType: string) {

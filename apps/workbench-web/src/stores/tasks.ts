@@ -23,7 +23,7 @@ const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
 let sessionEventSeq = 0
 const runtimeEventTypes = [
   'run.queued', 'run.started', 'assistant.delta', 'assistant.completed',
-  'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
+  'tool.completed', 'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
   'run.cancelled', 'run.failed', 'run.completed',
 ]
 
@@ -436,14 +436,12 @@ export const useTaskStore = defineStore('tasks', () => {
 
     if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
-      if (!step) {
-        task.steps.push({
-          id: event.event_id,
-          title: eventTitle(event.event_type),
-          detail: event.display_message ?? '执行状态已更新。',
-          status: eventStepStatus(event.event_type),
-        })
-      }
+      if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
+        id: event.event_id,
+        title: eventTitle(event.event_type),
+        detail: event.display_message ?? '执行状态已更新。',
+        status: eventStepStatus(event.event_type),
+      })
     }
 
     if (isTerminal(task.status)) {
@@ -491,6 +489,19 @@ function eventTitle(eventType: string) {
     'run.completed': '执行完成',
   }
   return titles[eventType] ?? '运行事件'
+}
+
+/** EX-01：与服务端 mapSteps 相同的工具调用步骤。 */
+function toolStep(event: { event_id: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
+  const outcome = event.safe_metadata['status']
+  const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
+  return {
+    id: event.event_id,
+    title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
+    detail: event.display_message ?? '工具调用已结束。',
+    status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
+    ...(toolName ? { tool: toolName } : {}),
+  }
 }
 
 function eventStepStatus(eventType: string) {

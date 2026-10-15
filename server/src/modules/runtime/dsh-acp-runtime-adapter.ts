@@ -9,6 +9,13 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
+import {
+  MAX_TOOL_CALL_EVENTS,
+  summarizeToolCalls,
+  toolCallDisplayMessage,
+  toolFailureReason,
+  type ToolCallObservation,
+} from './tool-call-summary.ts'
 import { assertPlatformToolPurpose, platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
 import {
   PlatformToolError,
@@ -65,6 +72,7 @@ interface ExecutionRecord {
   materializedSkills: Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
   durableWait?: DurableWaitDecision
+  toolCallsReported?: boolean
 }
 
 export interface DurablePermissionContext {
@@ -648,6 +656,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await this.recordMcpInvocations(record, evidence)
       await this.verifyExecutionAuthorization(record)
       if (record.terminal) return
+      const toolCalls = this.reportToolCalls(record, evidence)
       if (record.assistantText.length > 0) {
         this.emit(record, 'assistant.completed', record.assistantText, {
           committed: true,
@@ -664,6 +673,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         output_tokens: evidence?.outputTokens ?? null,
         tool_call_count: evidence?.toolCallCount ?? 0,
         tool_result_count: evidence?.toolResultCount ?? 0,
+        tool_failed_count: toolCalls.failed,
+        ...(toolCalls.omitted > 0 ? { tool_calls_omitted: toolCalls.omitted } : {}),
         artifact_count: artifacts.length,
         usage_source: evidence ? 'dsh-session-log' : 'unavailable',
         token_usage_source: evidence?.inputTokens !== null && evidence?.inputTokens !== undefined
@@ -678,6 +689,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       else if (record.cancelCause !== undefined) this.finishFromCancellationCause(record)
       else {
         const failure = classifyRuntimeFailure(error)
+        await this.reportToolCallsBestEffort(record)
         this.finishFailed(record, failure.code, failure.message)
       }
     } finally {
@@ -692,6 +704,41 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           console.warn('mcp invocation audit failed', safeErrorMessage(error))
         }
       }
+    }
+  }
+
+  /**
+   * EX-01: one `tool.completed` event per tool call of this Attempt (bounded), with
+   * the tool name, status and a fixed Chinese failure reason. Arguments and tool
+   * output never leave the session log.
+   */
+  private reportToolCalls(record: ExecutionRecord, evidence: SessionEvidence | undefined) {
+    if (record.toolCallsReported || record.terminal) return { failed: 0, omitted: 0 }
+    record.toolCallsReported = true
+    const summaries = summarizeToolCalls(evidence?.toolCalls, record.bridge?.outcomes() ?? [])
+    for (const summary of summaries.slice(0, MAX_TOOL_CALL_EVENTS)) {
+      this.emit(record, 'tool.completed', toolCallDisplayMessage(summary), {
+        ...summary,
+        ...(summary.status === 'failed' ? { reason: toolFailureReason(summary.error_code) } : {}),
+      })
+    }
+    return {
+      failed: summaries.filter(summary => summary.status === 'failed').length,
+      omitted: Math.max(0, summaries.length - MAX_TOOL_CALL_EVENTS),
+    }
+  }
+
+  /** On a failed Attempt the tool trail helps explain why; never let it mask the failure. */
+  private async reportToolCallsBestEffort(record: ExecutionRecord): Promise<void> {
+    if (record.toolCallsReported || record.terminal) return
+    try {
+      const evidence = await readSessionEvidence(
+        join(record.snapshot.attemptDirectory, 'sessions'),
+        record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
+      )
+      this.reportToolCalls(record, evidence)
+    } catch (error) {
+      console.warn('tool call summary unavailable', safeErrorMessage(error))
     }
   }
 
@@ -1447,7 +1494,11 @@ interface SessionEvidence {
   toolCallCount: number
   toolResultCount: number
   mcpInvocations: McpInvocationEvidence[]
+  /** Tool calls in log order, bounded; status from the matching tool/result. */
+  toolCalls: ToolCallObservation[]
 }
+
+const MAX_OBSERVED_TOOL_CALLS = 200
 
 async function waitForSessionEvidence(root: string, mcpServerNames: string[]): Promise<SessionEvidence | undefined> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -1466,7 +1517,8 @@ async function readSessionEvidence(root: string, mcpServerNames: string[]): Prom
   let toolCallCount = 0
   let toolResultCount = 0
   const mcpCalls = new Map<string, { name: string; parameterDigest: string }>()
-  const mcpResults = new Map<string, 'success' | 'failed'>()
+  const toolResults = new Map<string, 'success' | 'failed'>()
+  const observedCalls: Array<{ callId: string; toolName: string }> = []
   for (const path of paths) {
     const content = await readFile(path, 'utf8')
     for (const line of content.split('\n')) {
@@ -1478,6 +1530,7 @@ async function readSessionEvidence(root: string, mcpServerNames: string[]): Prom
         const data = isRecord(event['data']) ? event['data'] : undefined
         const callId = typeof data?.['callId'] === 'string' ? data['callId'] : ''
         const name = typeof data?.['name'] === 'string' ? data['name'] : ''
+        if (callId && name && observedCalls.length < MAX_OBSERVED_TOOL_CALLS) observedCalls.push({ callId, toolName: name })
         if (callId && name.startsWith('mcp__')) {
           const parameters = typeof data?.['arguments'] === 'string' ? data['arguments'] : JSON.stringify(data?.['arguments'] ?? {})
           mcpCalls.set(callId, { name, parameterDigest: createHash('sha256').update(parameters).digest('hex') })
@@ -1486,7 +1539,7 @@ async function readSessionEvidence(root: string, mcpServerNames: string[]): Prom
       if (event['type'] === 'tool/result') {
         toolResultCount += 1
         const result = readToolResult(event['data'])
-        if (result) mcpResults.set(result.callId, result.failed ? 'failed' : 'success')
+        if (result) toolResults.set(result.callId, result.failed ? 'failed' : 'success')
       }
       if (event['type'] !== 'assistant/message' || !isRecord(event['data'])) continue
       const usage = event['data']['usage']
@@ -1504,7 +1557,7 @@ async function readSessionEvidence(root: string, mcpServerNames: string[]): Prom
       callId,
       capabilityName: parsed.capabilityName,
       parameterDigest: call.parameterDigest,
-      result: mcpResults.get(callId) ?? 'unknown',
+      result: toolResults.get(callId) ?? 'unknown',
     } satisfies McpInvocationEvidence]
   })
   return usageFound || toolCallCount > 0 ? {
@@ -1513,6 +1566,10 @@ async function readSessionEvidence(root: string, mcpServerNames: string[]): Prom
     toolCallCount,
     toolResultCount,
     mcpInvocations,
+    toolCalls: observedCalls.map(call => {
+      const result = toolResults.get(call.callId)
+      return { ...call, status: result === undefined ? 'unknown' : result === 'failed' ? 'failed' : 'succeeded' }
+    }),
   } : undefined
 }
 

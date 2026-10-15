@@ -956,7 +956,7 @@ watch(
             <dl class="run-facts">
               <div><dt>声明成果</dt><dd>{{ task.result.evidence.artifactsClaimed ?? '未上报' }}</dd></div>
               <div><dt>登记成果</dt><dd>{{ task.result.evidence.artifactsRegistered }}</dd></div>
-              <div v-if="task.result.evidence.toolCalls !== null"><dt>工具调用</dt><dd>{{ task.result.evidence.toolCalls }}</dd></div>
+              <div v-if="task.result.evidence.toolCalls !== null"><dt>工具调用</dt><dd data-testid="tool-call-facts">{{ task.result.evidence.toolCalls }}<template v-if="task.result.evidence.toolFailures">（失败 {{ task.result.evidence.toolFailures }}，原因见执行步骤）</template></dd></div>
               <div v-if="task.result.evidence.inputTokens !== null || task.result.evidence.outputTokens !== null">
                 <dt>Token</dt>
                 <dd>{{ task.result.evidence.inputTokens ?? 0 }} 入 / {{ task.result.evidence.outputTokens ?? 0 }} 出</dd>

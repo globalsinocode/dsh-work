@@ -105,6 +105,7 @@ export interface TaskResultTelemetry {
   stopReason: string | null
   toolCalls: number | null
   toolResults: number | null
+  toolFailures?: number | null
   artifactsClaimed: number | null
   artifactsRegistered: number
   inputTokens: number | null

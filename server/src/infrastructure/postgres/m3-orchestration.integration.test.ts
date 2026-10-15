@@ -497,6 +497,20 @@ test('EX-02 a referenced artifact is mounted next turn and a same-named output b
   )
 })
 
+test('EX-01 tool call outcomes are kept as run steps and counted in the task result', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '工具调用可见' })
+  const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '工具调用有一次失败', idempotencyKey: randomUUID() })
+  assert.ok(created)
+  const task = await waitForTask(created.id, 'succeeded')
+  const toolSteps = task.steps.filter(step => step.tool)
+  assert.deepEqual(toolSteps.map(step => [step.title, step.status, step.tool, step.detail]), [
+    ['调用工具', 'succeeded', 'read', 'read：调用成功'],
+    ['工具调用失败', 'failed', 'data_create', 'data_create：调用失败，调用参数不符合工具要求'],
+  ])
+  assert.equal(task.result.evidence.toolCalls, 2)
+  assert.equal(task.result.evidence.toolFailures, 1)
+})
+
 test('EX-02 backfill makes artifacts published without an extraction referenceable', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '旧成果回填' })
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-backfill-'))
@@ -1281,6 +1295,18 @@ class DeterministicRuntime implements AgentRuntimePort {
           this.finish(execution)
         }
         void fail()
+        return
+      }
+      if (manifest.input.message === '工具调用有一次失败') {
+        // EX-01 夹具：工具调用结果以 tool.completed 事件上报，终态声明失败次数。
+        this.emit(execution, 'tool.completed', 'read：调用成功', { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null })
+        this.emit(execution, 'tool.completed', 'data_create：调用失败，调用参数不符合工具要求', {
+          call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
+        })
+        this.emit(execution, 'assistant.completed', '已改用其他方式完成')
+        execution.snapshot.status = 'completed'
+        this.emit(execution, 'run.completed', '已完成', { tool_call_count: 2, tool_result_count: 2, tool_failed_count: 1 })
+        this.finish(execution)
         return
       }
       if (manifest.input.message === '声明成果但未登记' && count === 1) {

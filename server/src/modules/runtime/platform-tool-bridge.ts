@@ -23,6 +23,19 @@ export interface PlatformToolOperationRecord {
   execute: boolean
 }
 
+/**
+ * EX-01: what the bridge observed for one platform tool request. Only the tool
+ * name, the DSH call id (when sent) and the typed error code are kept, never
+ * parameters or results, so the summary is safe to project into run events.
+ */
+export interface PlatformToolOutcome {
+  toolName: string
+  callId: string | null
+  errorCode: string | null
+}
+
+const MAX_RECORDED_OUTCOMES = 200
+
 export interface PlatformToolOperationLifecycle {
   begin(input: { callId: string; toolName: string; parameters: Record<string, unknown> }): Promise<PlatformToolOperationRecord>
   resolve(input: {
@@ -50,6 +63,7 @@ export async function createPlatformToolBridge(
   let count = 0
   const active = new Set<Promise<void>>()
   const activeSerializedTools = new Set<string>()
+  const outcomes: PlatformToolOutcome[] = []
   const server = createServer((request, response) => {
     const task = (async () => {
       response.setHeader('Content-Type', 'application/json')
@@ -74,6 +88,14 @@ export async function createPlatformToolBridge(
         ? 'prepare_skill_installation'
         : request.url?.match(/^\/tools\/([a-z0-9_]+)$/)?.[1]
       const registration = toolName ? prepared[toolName] : undefined
+      if (toolName) {
+        const callIdHeader = request.headers['x-dsh-tool-call-id']
+        const observedCallId = (Array.isArray(callIdHeader) ? callIdHeader[0] : callIdHeader)?.trim() || null
+        response.once('finish', () => {
+          if (outcomes.length >= MAX_RECORDED_OUTCOMES) return
+          outcomes.push({ toolName, callId: observedCallId, errorCode: response.statusCode < 400 ? null : writtenErrorCodes.get(response) ?? 'TOOL_EXECUTION_FAILED' })
+        })
+      }
       if (request.method !== 'POST' || !registration || controller.signal.aborted) {
         writeError(response, new PlatformToolError({ status: 403, code: 'TOOL_PERMISSION_DENIED', message: '工具未获授权或 Attempt 已结束' }))
         return
@@ -184,6 +206,8 @@ export async function createPlatformToolBridge(
   return {
     socket,
     abort: () => controller.abort(),
+    /** Tool requests answered so far, in completion order. */
+    outcomes: (): PlatformToolOutcome[] => outcomes.map(outcome => ({ ...outcome })),
     async close() {
       controller.abort()
       server.closeAllConnections()
@@ -275,7 +299,10 @@ async function executeWithTimeout(
   }
 }
 
+const writtenErrorCodes = new WeakMap<import('node:http').ServerResponse, string>()
+
 function writeError(response: import('node:http').ServerResponse, error: PlatformToolError) {
+  writtenErrorCodes.set(response, error.code)
   response.writeHead(error.status).end(JSON.stringify({ error: {
     code: error.code,
     message: error.message,

@@ -43,6 +43,34 @@ test('all governed platform tool contracts compile in strict JSON Schema mode', 
     'only the application staging completes; review and publication are separate human actions')
 })
 
+test('EX-01 the bridge records each tool request outcome with its typed error code only', async () => {
+  const bridge = await createPlatformToolBridge({ sample: {
+    contract: baseContract,
+    handler: async input => {
+      if (input['value'] === 'boom') throw toolPreconditionFailed('前置条件不满足')
+      return { result: 'ok' }
+    },
+  } }, 3)
+  try {
+    assert.equal((await call(bridge.socket, 'sample', { value: 'a' }, 'call-1')).status, 200)
+    assert.equal((await call(bridge.socket, 'sample', { value: 'boom' })).status, 422)
+    assert.equal((await call(bridge.socket, 'sample', {}, 'call-3')).status, 422)
+    assert.equal((await call(bridge.socket, 'sample', { value: 'a' })).status, 429)
+    assert.equal((await call(bridge.socket, 'missing', { value: 'a' })).status, 403)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(bridge.outcomes(), [
+      { toolName: 'sample', callId: 'call-1', errorCode: null },
+      { toolName: 'sample', callId: null, errorCode: 'TOOL_PRECONDITION_FAILED' },
+      { toolName: 'sample', callId: 'call-3', errorCode: 'TOOL_INPUT_INVALID' },
+      { toolName: 'sample', callId: null, errorCode: 'TOOL_CALL_LIMIT_EXCEEDED' },
+      { toolName: 'missing', callId: null, errorCode: 'TOOL_PERMISSION_DENIED' },
+    ])
+    assert.ok(!JSON.stringify(bridge.outcomes()).includes('boom'), 'parameters never reach the outcome summary')
+  } finally {
+    await bridge.close()
+  }
+})
+
 test('Agent data outputs require durable record references and distinguish trial-only replies', () => {
   const create = compileToolContract(platformToolContracts.data_create)
   assert.equal(create.output({ recordId: 'r1', recordVersionId: 'v1', version: 1 }), true)

@@ -735,6 +735,42 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
   })
 
+  it('EX-01 reports every tool call with a safe status before the Run completes', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-log', 'attempt-1', '[tool-log] use tools')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const tools = events.filter(event => event.event_type === 'tool.completed')
+    assert.deepEqual(tools.map(event => [event.display_message, event.safe_metadata['status']]), [
+      ['read：调用成功', 'succeeded'],
+      ['bash：调用失败，工具返回失败', 'failed'],
+      ['web_fetch：未收到调用结果', 'unknown'],
+    ])
+    assert.equal(tools[1]?.safe_metadata['reason'], '工具返回失败')
+    const types = events.map(event => event.event_type)
+    assert.ok(types.lastIndexOf('tool.completed') < types.indexOf('run.completed'))
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['tool_call_count'], 3)
+    assert.equal(completed?.safe_metadata['tool_failed_count'], 1)
+    assert.ok(!JSON.stringify(tools).includes('SECRET'), 'tool arguments and output stay in the session log')
+  })
+
+  it('EX-01 keeps the tool trail of a failed Attempt ahead of run.failed', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-log-fail', 'attempt-1', '[tool-log-fail] use tools')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    const types = events.map(event => event.event_type)
+    assert.equal(types.filter(type => type === 'tool.completed').length, 3)
+    assert.ok(types.lastIndexOf('tool.completed') < types.indexOf('run.failed'))
+  })
+
   it('collects generated output before committing a successful Run', async () => {
     const collected: Array<{ runId: string; name: string; content: string }> = []
     const adapter = await createAdapter(500, undefined, async (input, workspaceDirectory) => {

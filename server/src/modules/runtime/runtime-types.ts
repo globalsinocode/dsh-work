@@ -16,6 +16,7 @@ export type RuntimeEventType =
   | 'run.started'
   | 'assistant.delta'
   | 'assistant.completed'
+  | 'tool.completed'
   | 'approval.required'
   | 'approval.resolved'
   | 'run.waiting'
