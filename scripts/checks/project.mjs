@@ -76,6 +76,7 @@ export function checkProject(check) {
     'playwright install --with-deps chromium', 'bash scripts/ci/deploy.sh',
   ])
   checkMigrationNumbers(check)
+  checkDataModelCoversTables(check)
   checkDatabaseTestsAreNamed(check)
 }
 
@@ -117,4 +118,20 @@ function testFiles(directory, prefix = '') {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
     ? testFiles(resolve(directory, entry.name), `${prefix}${entry.name}/`)
     : /\.test\.(?:ts|js)$/.test(entry.name) ? [`${prefix}${entry.name}`] : [])
+}
+
+/** docs/design/data-model.md must name every table that a migration creates and none drops. */
+function checkDataModelCoversTables(check) {
+  const directory = resolve(check.root, 'server/migrations')
+  if (!existsSync(directory)) return
+  const tables = new Set()
+  for (const file of readdirSync(directory).filter(name => name.endsWith('.sql')).sort()) {
+    const sql = check.read(`server/migrations/${file}`)
+    for (const match of sql.matchAll(/create table (?:if not exists )?([a-z_][a-z0-9_]*)/gi)) tables.add(match[1].toLowerCase())
+    for (const match of sql.matchAll(/drop table (?:if exists )?([a-z_][a-z0-9_]*)/gi)) tables.delete(match[1].toLowerCase())
+  }
+  const model = check.read('docs/design/data-model.md')
+  for (const table of tables) {
+    check.assert(model.includes(`\`${table}\``), `docs/design/data-model.md 未说明数据表 ${table}`)
+  }
 }

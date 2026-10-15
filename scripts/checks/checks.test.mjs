@@ -89,11 +89,14 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
 test('project checks reject duplicate migration numbers and database tests outside the integration job', t => {
   const root = fixture(t)
   writeFileSync(join(root, 'server/migrations/0001_duplicate_number.sql'), 'select 1;\n')
+  writeFileSync(join(root, 'server/migrations/0999_undocumented_table.sql'), 'create table undocumented_table (id text);\ncreate table dropped_table (id text);\ndrop table dropped_table;\n')
   writeFileSync(join(root, 'server/src/http/misnamed.test.ts'), 'await createThrowawayDatabase()\n')
   writeFileSync(join(root, 'server/src/http/plain.test.ts'), 'export {}\n')
   assert.match(failures(root, 'project'), /迁移编号重复：0001_duplicate_number\.sql 与 0001_m2_platform\.sql/)
   assert.match(failures(root, 'project'), /server\/src\/http\/misnamed\.test\.ts 使用测试数据库，必须命名为 \*\.integration\.test\.ts/)
   assert.doesNotMatch(failures(root, 'project'), /plain\.test\.ts/)
+  assert.match(failures(root, 'project'), /data-model\.md 未说明数据表 undocumented_table/)
+  assert.doesNotMatch(failures(root, 'project'), /dropped_table/)
 })
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {
