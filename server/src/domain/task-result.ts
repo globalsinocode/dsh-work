@@ -23,7 +23,7 @@
  * 占位，当前平台工具均为同步 `completed` 语义，不产生该状态；真实接入时
  * 必须补业务操作键与状态查询，不能仅凭 Run 终态判定外部动作完成。
  */
-import type { JsonObject, RunState } from '../modules/run/run-types.ts'
+import type { JsonObject, RunState } from './run-state.ts'
 import type { Artifact, TaskSource, TaskRunError } from './types.ts'
 
 export const TASK_RESULT_VERSION = 'task-result/v1'

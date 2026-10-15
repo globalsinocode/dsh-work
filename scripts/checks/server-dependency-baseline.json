@@ -1,0 +1,129 @@
+{
+  "description": "服务端模块之间现存的循环依赖（2026-10-15 基线）。新增循环会使 pnpm lint 失败；修掉某条后必须从这里删除该条目，基线只减不增。",
+  "cyclicModuleEdges": [
+    {
+      "from": "admin",
+      "to": "agent"
+    },
+    {
+      "from": "admin",
+      "to": "authorization"
+    },
+    {
+      "from": "admin",
+      "to": "run"
+    },
+    {
+      "from": "admin",
+      "to": "skill"
+    },
+    {
+      "from": "agent",
+      "to": "admin"
+    },
+    {
+      "from": "agent",
+      "to": "authorization"
+    },
+    {
+      "from": "agent",
+      "to": "run"
+    },
+    {
+      "from": "agent",
+      "to": "skill"
+    },
+    {
+      "from": "agent",
+      "to": "tool"
+    },
+    {
+      "from": "authorization",
+      "to": "tool"
+    },
+    {
+      "from": "memory",
+      "to": "admin"
+    },
+    {
+      "from": "memory",
+      "to": "authorization"
+    },
+    {
+      "from": "run",
+      "to": "admin"
+    },
+    {
+      "from": "run",
+      "to": "agent"
+    },
+    {
+      "from": "run",
+      "to": "authorization"
+    },
+    {
+      "from": "run",
+      "to": "memory"
+    },
+    {
+      "from": "run",
+      "to": "skill"
+    },
+    {
+      "from": "run",
+      "to": "task"
+    },
+    {
+      "from": "run",
+      "to": "tool"
+    },
+    {
+      "from": "run",
+      "to": "workbench"
+    },
+    {
+      "from": "skill",
+      "to": "admin"
+    },
+    {
+      "from": "skill",
+      "to": "authorization"
+    },
+    {
+      "from": "skill",
+      "to": "run"
+    },
+    {
+      "from": "skill",
+      "to": "tool"
+    },
+    {
+      "from": "task",
+      "to": "run"
+    },
+    {
+      "from": "tool",
+      "to": "admin"
+    },
+    {
+      "from": "tool",
+      "to": "agent"
+    },
+    {
+      "from": "tool",
+      "to": "authorization"
+    },
+    {
+      "from": "workbench",
+      "to": "agent"
+    },
+    {
+      "from": "workbench",
+      "to": "authorization"
+    },
+    {
+      "from": "workbench",
+      "to": "run"
+    }
+  ]
+}
