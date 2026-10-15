@@ -17,7 +17,7 @@ import type {
   UpdateSkillInput,
 } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
 
@@ -156,13 +156,13 @@ export class PostgresSkillService {
   setPackageTester(tester: NonNullable<PostgresSkillService['packageTester']>) { this.packageTester = tester }
   setPackageTestLifecycle(lifecycle: NonNullable<PostgresSkillService['packageTestLifecycle']>) { this.packageTestLifecycle = lifecycle }
   private readonly database: DatabaseClient
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: AuditTrail
   private readonly toolService?: PostgresToolConnectorService
   private readonly artifactStore?: FileSystemSkillArtifactStore
 
   constructor(
     database: DatabaseClient,
-    operations?: PostgresOperationsService,
+    operations?: AuditTrail,
     toolService?: PostgresToolConnectorService,
     artifactStore?: FileSystemSkillArtifactStore,
   ) {

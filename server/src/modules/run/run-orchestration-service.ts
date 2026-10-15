@@ -13,7 +13,7 @@ import { normalizePersistedRuntimeManifest } from '../runtime/runtime-manifest-c
 import { toManifestToolBinding } from '../../domain/tool-binding.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { PostgresContentService, PreparedRuntimeFile } from '../workbench/application/postgres-content-service.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { RunOperationsPort } from './run-operations-port.ts'
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../agent/postgres-agent-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresKnowledgeService } from '../knowledge/postgres-knowledge-service.ts'
@@ -77,7 +77,7 @@ export class RunOrchestrationService {
   private readonly models: ModelGovernanceService
   private readonly runtime: AgentRuntimePort
   private readonly content?: PostgresContentService
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: RunOperationsPort
   private readonly agents?: PostgresAgentService
   private readonly knowledge?: PostgresKnowledgeService
   private readonly memory?: PostgresControlledMemoryService
@@ -97,7 +97,7 @@ export class RunOrchestrationService {
     models: ModelGovernanceService,
     runtime: AgentRuntimePort,
     content?: PostgresContentService,
-    operations?: PostgresOperationsService,
+    operations?: RunOperationsPort,
     agents?: PostgresAgentService,
     knowledge?: PostgresKnowledgeService,
     authorization?: PostgresAuthorizationService,

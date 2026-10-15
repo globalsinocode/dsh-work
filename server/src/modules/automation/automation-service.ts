@@ -11,7 +11,7 @@ import {
   isAuthorizationDenial,
   RequestValidationError,
 } from '../authorization/authorization-errors.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
@@ -96,7 +96,7 @@ export class AutomationService {
   private readonly authorization: PostgresAuthorizationService
   private readonly agents: PostgresAgentService
   private readonly content: PostgresContentService
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: AuditTrail
   private readonly config: AutomationModuleConfig
 
   constructor(
@@ -108,7 +108,7 @@ export class AutomationService {
     authorization: PostgresAuthorizationService,
     agents: PostgresAgentService,
     content: PostgresContentService,
-    operations: PostgresOperationsService | undefined,
+    operations: AuditTrail | undefined,
     config: AutomationModuleConfig,
   ) {
     this.database = database

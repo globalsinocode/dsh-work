@@ -6,8 +6,8 @@ import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../a
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
-import type { JsonObject } from '../run/run-types.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
+import type { JsonObject } from '../../domain/run-state.ts'
 import { nextSlotUtc, normalizeSchedule, slotsBetween } from './automation-calendar.ts'
 import type { AutomationBudget, AutomationSchedule } from './automation-types.ts'
 
@@ -124,7 +124,7 @@ export class AgentRoutineService {
   private readonly runs: PostgresRunRepository
   private readonly orchestration: RunOrchestrationService
   private readonly conversations: PostgresConversationRepository
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: AuditTrail
 
   constructor(
     database: DatabaseClient,
@@ -132,7 +132,7 @@ export class AgentRoutineService {
     runs: PostgresRunRepository,
     orchestration: RunOrchestrationService,
     conversations: PostgresConversationRepository,
-    operations?: PostgresOperationsService,
+    operations?: AuditTrail,
   ) {
     this.database = database
     this.authorization = authorization

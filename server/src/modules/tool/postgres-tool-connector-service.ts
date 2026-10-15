@@ -9,7 +9,7 @@ import {
 import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { AddToolInput, AgentMcpScope, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnectionSnapshot, type McpInspectionResult, type McpRuntimeConnection, type RuntimeManifest } from '../runtime/runtime-types.ts'
 import {
@@ -127,13 +127,13 @@ interface McpRegistrationInspection {
 export class PostgresToolConnectorService {
   private readonly database: DatabaseClient
   private readonly runtime?: AgentRuntimePort
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: AuditTrail
   private readonly credentialSecrets?: PostgresEncryptedCredentialStore
 
   constructor(
     database: DatabaseClient,
     runtime?: AgentRuntimePort,
-    operations?: PostgresOperationsService,
+    operations?: AuditTrail,
     credentialSecrets?: PostgresEncryptedCredentialStore,
   ) {
     this.database = database

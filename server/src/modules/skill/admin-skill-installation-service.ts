@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'
 import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
+import type { AdminRunLauncher } from './admin-run-launcher.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
@@ -52,7 +52,7 @@ interface InstalledIdentity {
 }
 export class AdminSkillInstallationService {
   private readonly db: DatabaseClient
-  private readonly orchestration: RunOrchestrationService
+  private readonly orchestration: AdminRunLauncher
   private readonly authorization: PostgresAuthorizationService
   private readonly tools: PostgresToolConnectorService
   private readonly acquire: typeof acquireSkillSource
@@ -60,7 +60,7 @@ export class AdminSkillInstallationService {
   private readonly pythonPackages: string[]
   private readonly artifactStore?: FileSystemSkillArtifactStore
   private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
-  constructor(db: DatabaseClient, orchestration: RunOrchestrationService, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: FileSystemSkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
+  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: FileSystemSkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
     this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
   }
 

@@ -13,7 +13,7 @@ import type {
   UpdateAgentDraftInput,
 } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
@@ -185,13 +185,13 @@ export interface AgentMutationSnapshot {
 
 export class PostgresAgentService {
   private readonly database: DatabaseClient
-  private readonly operations?: PostgresOperationsService
+  private readonly operations?: AuditTrail
   private readonly skillService?: PostgresSkillService
   private readonly toolService?: PostgresToolConnectorService
 
   constructor(
     database: DatabaseClient,
-    operations?: PostgresOperationsService,
+    operations?: AuditTrail,
     skillService?: PostgresSkillService,
     toolService?: PostgresToolConnectorService,
   ) {

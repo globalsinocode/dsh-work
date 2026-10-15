@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
 import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../authorization/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RuntimeControlledMemory, RuntimeManifest } from '../runtime/runtime-types.ts'
@@ -126,12 +126,12 @@ interface CandidateRow {
 export class PostgresControlledMemoryService {
   private readonly database: DatabaseClient
   private readonly authorization: Pick<PostgresAuthorizationService, 'authorizeWorkbench'>
-  private readonly operations?: Pick<PostgresOperationsService, 'appendAudit'>
+  private readonly operations?: AuditTrail
 
   constructor(
     database: DatabaseClient,
     authorization: Pick<PostgresAuthorizationService, 'authorizeWorkbench'>,
-    operations?: Pick<PostgresOperationsService, 'appendAudit'>,
+    operations?: AuditTrail,
   ) {
     this.database = database
     this.authorization = authorization

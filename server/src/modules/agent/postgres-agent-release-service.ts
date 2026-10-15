@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
-import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
+import type { ReleaseTrialRunner } from './release-trial-runner.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import {
@@ -410,14 +410,14 @@ export class PostgresAgentReleaseService {
   private readonly agents: PostgresAgentService
   private readonly skills?: PostgresSkillService
   private readonly tools?: PostgresToolConnectorService
-  private readonly orchestration?: Pick<RunOrchestrationService, 'runReleaseTrialCase' | 'systemCancelRun'>
+  private readonly orchestration?: ReleaseTrialRunner
 
   constructor(
     database: DatabaseClient,
     agents: PostgresAgentService,
     skills: PostgresSkillService | undefined,
     tools: PostgresToolConnectorService | undefined,
-    orchestration?: Pick<RunOrchestrationService, 'runReleaseTrialCase' | 'systemCancelRun'>,
+    orchestration?: ReleaseTrialRunner,
   ) {
     this.database = database
     this.agents = agents

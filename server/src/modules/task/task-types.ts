@@ -1,4 +1,4 @@
-import type { JsonObject } from '../run/run-types.ts'
+import type { JsonObject } from '../../domain/run-state.ts'
 import type { TaskBudgetInput } from './task-budget-types.ts'
 
 export type TaskSourceType = 'session' | 'automation' | 'api' | 'event' | 'system' | 'delegation' | 'agent_routine'
