@@ -14,7 +14,7 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import type { JsonObject, RunRecord } from '../../modules/run/run-types.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import type { AgentRuntimePort, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
-import { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
+import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-service.ts'
 import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 

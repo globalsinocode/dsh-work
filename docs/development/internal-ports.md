@@ -101,7 +101,7 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 管理助手低风险确认（C6）
 
-风险白名单、判定位置、旧计划兼容与证据见 [C6](review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
+风险白名单、判定位置、旧计划兼容与证据见 [C6](../history/reviews/review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
 
 ## 独立账号认证
 
@@ -115,6 +115,6 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 认证接口见 [认证 OpenAPI](openapi-auth.json)，管理接口见 [Admin OpenAPI](openapi-admin.json)。`/auth/{audience}/configuration` 返回当前能力 `mode`、`localEnabled`、`aiHubEnabled`；`mode` 表示已加载的提供方能力，不是管理端可选设置。API 按提供方 Cookie 分流，双 Cookie 拒绝；登录完成撤销当前门户另一提供方旧会话，过期凭据不跨提供方降级。
 
-管理端登录设置页面、`GET/PATCH /api/admin/v1/identity/login-settings` 和 `POST /api/admin/v1/identity/users/:userId/local-account` 已移除。旧 `system_settings.identity.login` 记录保留但不再读取，不触发启动切换或会话撤销。部署默认自动启用独立认证，旧 `DSH_WORK_AUTH_MODE=local/oidc` 仅兼容、不改变能力选择；`prototype` 仍须显式用于开发且禁止在生产启用。详见 [独立登录指南](../release/local-authentication.md)。
+管理端登录设置页面、`GET/PATCH /api/admin/v1/identity/login-settings` 和 `POST /api/admin/v1/identity/users/:userId/local-account` 已移除。旧 `system_settings.identity.login` 记录保留但不再读取，不触发启动切换或会话撤销。部署默认自动启用独立认证，旧 `DSH_WORK_AUTH_MODE=local/oidc` 仅兼容、不改变能力选择；原 `prototype` 模式已移除，设置后服务拒绝启动。详见 [独立登录指南](../release/local-authentication.md)。
 
 员工授权列表和授权变更响应返回只读 `loginAccount`：独立账号取凭据用户名，AI Hub 取已同步的 subject（当前上游以登录账号作为 subject）。列表搜索同时匹配两类账号；`username` 保持仅用于独立凭据管理，账号展示不改变身份归属。邮箱、最近活跃和活动会话来自既有资料与会话记录，AI Hub 用户标识和目录同步时间在详情查看。

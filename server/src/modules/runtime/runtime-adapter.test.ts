@@ -276,6 +276,22 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /不得猜测文件名/)
   })
 
+  it('tells the Agent that writing a revised artifact under its original name records the next version', () => {
+    const input = manifest('run-artifact-revision', 'attempt-1')
+    input.input.file_mounts = [{
+      ...fileMount('/workspace/input/01-report.txt', '# 周报\n第一版'),
+      source_name: 'report.md', media_type: 'text/markdown; charset=utf-8',
+      artifact_revision: { artifact_id: 'artifact-report', version: 2 },
+    }]
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /此前生成的成果第 2 版/)
+    assert.match(rendered, /output\/report\.md/)
+    assert.match(rendered, /登记为第 3 版/)
+
+    input.input.file_mounts = [fileMount('/workspace/input/01-inventory-uat.txt', '物料,库存\nA-01,120')]
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(input).manifest), /此前生成的成果/)
+  })
+
   it('renders only the progressive Skill catalog when activate_skill is available', () => {
     const input = manifest('run-skill-catalog', 'attempt-1')
     input.tools.push({ id: 'activate_skill', version: '1.0.0' })
@@ -717,6 +733,42 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(completed?.safe_metadata['token_usage_source'], 'unavailable')
     await auditFinalized
     assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
+  })
+
+  it('EX-01 reports every tool call with a safe status before the Run completes', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-log', 'attempt-1', '[tool-log] use tools')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const tools = events.filter(event => event.event_type === 'tool.completed')
+    assert.deepEqual(tools.map(event => [event.display_message, event.safe_metadata['status']]), [
+      ['read：调用成功', 'succeeded'],
+      ['bash：调用失败，工具返回失败', 'failed'],
+      ['web_fetch：未收到调用结果', 'unknown'],
+    ])
+    assert.equal(tools[1]?.safe_metadata['reason'], '工具返回失败')
+    const types = events.map(event => event.event_type)
+    assert.ok(types.lastIndexOf('tool.completed') < types.indexOf('run.completed'))
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['tool_call_count'], 3)
+    assert.equal(completed?.safe_metadata['tool_failed_count'], 1)
+    assert.ok(!JSON.stringify(tools).includes('SECRET'), 'tool arguments and output stay in the session log')
+  })
+
+  it('EX-01 keeps the tool trail of a failed Attempt ahead of run.failed', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-log-fail', 'attempt-1', '[tool-log-fail] use tools')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'failed')
+    const types = events.map(event => event.event_type)
+    assert.equal(types.filter(type => type === 'tool.completed').length, 3)
+    assert.ok(types.lastIndexOf('tool.completed') < types.indexOf('run.failed'))
   })
 
   it('collects generated output before committing a successful Run', async () => {

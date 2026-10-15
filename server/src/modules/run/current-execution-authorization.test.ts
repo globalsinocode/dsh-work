@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 
 type Port = Parameters<typeof assertCurrentExecutionAuthorization>[0]

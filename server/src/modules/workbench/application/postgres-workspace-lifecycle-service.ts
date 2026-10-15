@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { redactSensitiveText } from '../../../security/safe-observability.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../../domain/authorization-errors.ts'
 import {
   activityTransitionToken,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -78,7 +79,7 @@ export class PostgresWorkspaceLifecycleService {
       // AC-23: personal workspaces are never archivable. `0013` enforces
       // `personal => status = 'active'`; reject before touching the row rather
       // than fighting the CHECK constraint.
-      if (workspace.type !== 'team') throw new Error('仅支持团队工作空间进行归档或恢复')
+      if (workspace.type !== 'team') throw invalidRequest('仅支持团队工作空间进行归档或恢复')
 
       // Owner is re-read inside the lock: a concurrent owner transfer must not
       // let the previous owner archive/restore after the transfer commits.

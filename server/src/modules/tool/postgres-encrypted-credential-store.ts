@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const ALGORITHM = 'aes-256-gcm'
 const NONCE_BYTES = 12
@@ -60,7 +61,7 @@ export class PostgresEncryptedCredentialStore {
        where tenant_id = ${input.tenantId} and credential_ref_id = ${input.credentialRefId}
        returning credential_ref_id as "credentialRefId"
     `
-    if (!result[0]) throw new Error('Bearer 凭据不存在，不能轮换')
+    if (!result[0]) throw notFound('Bearer 凭据不存在，不能轮换')
   }
 
   async readBearerToken(tenantId: string, credentialRefId: string): Promise<string> {
@@ -69,7 +70,7 @@ export class PostgresEncryptedCredentialStore {
         from credential_secrets
        where tenant_id = ${tenantId} and credential_ref_id = ${credentialRefId}
     `
-    if (!row) throw new Error('MCP Bearer 凭据未配置')
+    if (!row) throw stateConflict('MCP Bearer 凭据未配置')
     if (row.algorithm !== ALGORITHM || row.keyId !== this.keyId) {
       throw new Error(`MCP Bearer 凭据使用了当前服务无法解密的密钥版本：${row.keyId}`)
     }
@@ -99,25 +100,25 @@ export function parseCredentialMasterKey(value: string | undefined): Buffer {
   }
   const normalized = value.trim()
   if (!/^[A-Za-z0-9+/]{43}=$/.test(normalized)) {
-    throw new Error('DSH_CREDENTIAL_MASTER_KEY 必须是规范的 32 字节 Base64 值')
+    throw invalidRequest('DSH_CREDENTIAL_MASTER_KEY 必须是规范的 32 字节 Base64 值')
   }
   const key = Buffer.from(normalized, 'base64')
   if (key.length !== 32 || key.toString('base64') !== normalized) {
-    throw new Error('DSH_CREDENTIAL_MASTER_KEY 必须是规范的 32 字节 Base64 值')
+    throw invalidRequest('DSH_CREDENTIAL_MASTER_KEY 必须是规范的 32 字节 Base64 值')
   }
   return key
 }
 
 export function normalizeBearerToken(value: string): string {
   if (!value || Buffer.byteLength(value, 'utf8') > MAX_BEARER_TOKEN_BYTES || /\s/.test(value)) {
-    throw new Error('Bearer Token 必须为 1-8192 字节且不能包含空白字符')
+    throw stateConflict('Bearer Token 必须为 1-8192 字节且不能包含空白字符')
   }
   return value
 }
 
 function parseKeyId(value: string) {
   const keyId = value.trim()
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyId)) throw new Error('凭据主密钥版本标识格式无效')
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyId)) throw invalidRequest('凭据主密钥版本标识格式无效')
   return keyId
 }
 

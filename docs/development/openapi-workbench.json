@@ -92,6 +92,44 @@
             "description": "active=仅活动；archived=仅已归档；all=全部（默认，设计 §2.1「默认全部；个人空间恒显」）"
           }
         ]
+      },
+      "post": {
+        "operationId": "createTeamWorkspace",
+        "summary": "创建团队工作空间；创建者成为负责人，平台默认 Agent 可用时自动加入",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/workspaces/{workspaceId}/files": {
@@ -2532,6 +2570,56 @@
             "$ref": "#/components/responses/Error"
           },
           "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "get": {
+        "operationId": "listMyTasks",
+        "summary": "列出当前员工发起的 Task/Run；团队空间条目按当前读权限过滤，并附带调用者的 currentUserRole",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/session-events": {
+      "get": {
+        "operationId": "streamWorkspaceSessionEvents",
+        "summary": "订阅团队空间共享会话列表的变化（SSE）",
+        "description": "仅团队空间现任成员（含只读成员）可订阅；个人空间、已归档或非成员一律 403。since 为客户端最后一次同步会话状态的时刻，服务端在基线轮补推此后归档的会话；非法或未来时间忽略。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream 事件流",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
             "$ref": "#/components/responses/Error"
           }
         }

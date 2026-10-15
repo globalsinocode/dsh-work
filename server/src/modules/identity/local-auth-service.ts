@@ -65,7 +65,16 @@ export class LocalAuthService {
     validateRequestOrigin(request, settings)
     const origin = resolveRequestOrigin(request, settings)
     const username = normalizeUsername(input.username)
-    await this.rateLimit(request, `login:${username}`)
+    const accountKey = `login:${username}`
+    await this.rateLimit(accountKey)
+    // Derive outside the transaction so no row lock or pooled connection is held during scrypt.
+    const [candidate] = await this.database<{ passwordHash: string }[]>`
+      select c.password_hash as "passwordHash"
+        from local_user_credentials c
+        join users u on u.tenant_id = c.tenant_id and u.id = c.user_id
+       where c.tenant_id = ${tenantId} and c.username = ${username} and u.identity_provider = 'local'
+    `
+    const valid = await verifyPassword(input.password, candidate?.passwordHash ?? null)
     const sessionToken = randomOpaque()
     const sessionHash = hashOpaque(sessionToken)
     const result = await this.database.begin(async transaction => {
@@ -79,8 +88,8 @@ export class LocalAuthService {
          where c.tenant_id = ${tenantId} and c.username = ${username} and u.identity_provider = 'local'
          for update of u, c
       `
-      const valid = await verifyPassword(input.password, credential?.passwordHash ?? null)
-      if (!valid || !credential?.active) {
+      // Recheck under the lock: a concurrent password change or reset invalidates the verified hash.
+      if (!valid || !credential?.active || credential.passwordHash !== candidate?.passwordHash) {
         await localAudit(transaction, credential?.userId ?? 'anonymous', 'identity.login', 'failed')
         return null
       }
@@ -105,6 +114,7 @@ export class LocalAuthService {
       return { mustChangePassword: credential.mustChangePassword }
     })
     if (!result) throw new IdentityAccessError(401, 'invalid_credentials', '账号或密码错误，或账号已停用')
+    await this.clearRateLimit(accountKey)
     const returnTo = normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin)
     const location = result.mustChangePassword
       ? new URL(`/change-password?return_to=${encodeURIComponent(returnTo)}`, origin).toString()
@@ -157,9 +167,16 @@ export class LocalAuthService {
     const identity = await this.authenticateApi(request, audience, true)
     const settings = this.configuration.audiences[audience]
     const origin = resolveRequestOrigin(request, settings)
-    await this.rateLimit(request, `password:${identity.userId}`)
+    const passwordKey = `password:${identity.userId}`
+    await this.rateLimit(passwordKey)
     if (input.currentPassword === input.newPassword) throw new IdentityAccessError(422, 'password_unchanged', '新密码不能与当前密码相同')
     const passwordHash = await hashPassword(input.newPassword)
+    // Verify outside the transaction; the locked recheck below rejects a hash changed meanwhile.
+    const [current] = await this.database<{ passwordHash: string }[]>`
+      select password_hash as "passwordHash" from local_user_credentials
+       where tenant_id = ${tenantId} and user_id = ${identity.userId}
+    `
+    const currentValid = await verifyPassword(input.currentPassword, current?.passwordHash ?? null)
     const sessionToken = randomOpaque()
     const sessionHash = hashOpaque(sessionToken)
     const changed = await this.database.begin(async transaction => {
@@ -179,7 +196,7 @@ export class LocalAuthService {
            and session_hash = ${identity.sessionHash} and audience = ${audience}
            and authentication_provider = 'local-password' and revoked_at is null and expires_at > now() for update
       `
-      if (!session || !credential?.active || !await verifyPassword(input.currentPassword, credential.passwordHash)) {
+      if (!session || !credential?.active || !currentValid || credential.passwordHash !== current?.passwordHash) {
         await localAudit(transaction, identity.userId, 'identity.password.change', 'failed')
         return false
       }
@@ -204,6 +221,7 @@ export class LocalAuthService {
       return true
     })
     if (!changed) throw new IdentityAccessError(401, 'invalid_credentials', '当前密码错误或会话已过期')
+    await this.clearRateLimit(passwordKey)
     return {
       location: normalizeReturnTo(typeof input.returnTo === 'string' ? input.returnTo : null, origin),
       sessionCookie: serializeCookie(settings.sessionCookieName, sessionToken, this.configuration.sessionTtlSeconds, this.configuration.cookieSecure),
@@ -297,22 +315,32 @@ export class LocalAuthService {
     return { userId, status }
   }
 
-  private async rateLimit(request: IncomingMessage, accountKey: string) {
-    // Forwarded client IP headers are deliberately not trusted by the application.
-    const keys = [{ key: `peer:${request.socket.remoteAddress ?? 'unknown'}`, limit: 100 }, { key: accountKey, limit: 10 }]
-    for (const { key, limit } of keys) {
-      const keyHash = createHmac('sha256', this.configuration.sessionSecret).update(key).digest('hex')
-      const [row] = await this.database<{ attempts: number }[]>`
-        insert into local_auth_rate_limits (key_hash, attempts, expires_at)
-        values (${keyHash}, 1, now() + interval '15 minutes')
-        on conflict (key_hash) do update set
-          attempts = case when local_auth_rate_limits.expires_at <= now() then 1 else least(local_auth_rate_limits.attempts + 1, 1000) end,
-          expires_at = case when local_auth_rate_limits.expires_at <= now() then now() + interval '15 minutes' else local_auth_rate_limits.expires_at end
-        returning attempts
-      `
-      if (!row || row.attempts > limit) throw new IdentityAccessError(429, 'login_rate_limited', '尝试次数过多，请 15 分钟后重试')
-    }
+  /**
+   * Per-account attempt window. Behind the reverse proxy every request shares one peer
+   * address, so a per-connection limit would become a single company-wide quota; it is
+   * intentionally absent. The attempt is reserved before verification (so concurrent
+   * guesses cannot exceed the limit) and the window is cleared after a success, so only
+   * consecutive failures lock an account.
+   */
+  private async rateLimit(accountKey: string) {
+    const [row] = await this.database<{ attempts: number }[]>`
+      insert into local_auth_rate_limits (key_hash, attempts, expires_at)
+      values (${this.rateLimitKey(accountKey)}, 1, now() + interval '15 minutes')
+      on conflict (key_hash) do update set
+        attempts = case when local_auth_rate_limits.expires_at <= now() then 1 else least(local_auth_rate_limits.attempts + 1, 1000) end,
+        expires_at = case when local_auth_rate_limits.expires_at <= now() then now() + interval '15 minutes' else local_auth_rate_limits.expires_at end
+      returning attempts
+    `
+    if (!row || row.attempts > 10) throw new IdentityAccessError(429, 'login_rate_limited', '尝试次数过多，请 15 分钟后重试')
     await this.database`delete from local_auth_rate_limits where expires_at < now() - interval '1 day'`
+  }
+
+  private async clearRateLimit(accountKey: string) {
+    await this.database`delete from local_auth_rate_limits where key_hash = ${this.rateLimitKey(accountKey)}`
+  }
+
+  private rateLimitKey(accountKey: string) {
+    return createHmac('sha256', this.configuration.sessionSecret).update(accountKey).digest('hex')
   }
 }
 

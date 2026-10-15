@@ -3,7 +3,7 @@ import {
   AuthorizationDeniedError,
   authorizationDenied,
   requestInvalid,
-} from '../../authorization/authorization-errors.ts'
+} from '../../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import type { PostgresWorkspaceService } from './postgres-workspace-service.ts'
 

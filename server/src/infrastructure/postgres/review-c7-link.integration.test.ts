@@ -12,16 +12,17 @@ import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-i
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { UnavailableRuntime, ExecutionCapabilityUnavailableError } from '../../modules/runtime/execution-capabilities.ts'
 import type { SkillSource } from '../../modules/skill/skill-source.ts'
 import { Router } from '../../http/router.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { registerSkillInstallationRoutes } from '../../http/admin/skill-installation-routes.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
-let db: ThrowawayDatabase, store: FileSystemSkillArtifactStore, root: string
+let db: ThrowawayDatabase, store: SkillArtifactStore, root: string
 let tools: PostgresToolConnectorService, auth: PostgresAuthorizationService
 const fixtures = new Map<string, Uint8Array>()
 let acquireCount = 0, dshAvailable = false, pythonAvailable = false
@@ -47,7 +48,7 @@ function source(files: Record<string, string> = {}, instruction = 'Return a dete
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_review_c7' })
   root = await mkdtemp(join(tmpdir(), 'dsh-review-c7-'))
-  store = new FileSystemSkillArtifactStore(join(root, 'skills'))
+  store = new SkillArtifactStore(new LocalObjectStorage(join(root, 'skills'), { fileMode: 0o400 }))
   auth = new PostgresAuthorizationService(db.client)
   tools = new PostgresToolConnectorService(db.client, new UnavailableRuntime('runtime-local-01'))
 })
@@ -83,7 +84,7 @@ test('C7 RED: missing Python capability defers execution, but never pretends the
 })
 
 test('C7 RED: HTTP link endpoint returns an authenticated deterministic installation, not an assistant run', async () => {
-  const router = new Router({ authenticateApi: prototypeApiAuthenticator })
+  const router = new Router({ authenticateApi: testApiAuthenticator })
   registerSkillInstallationRoutes(router, service())
   const server = createServer((request, response) => void router.handle(request, response))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -225,7 +226,7 @@ test('publication closure checks link-origin dependencies even when the root cam
 
 test('confirmed source metadata cannot be forged through HTTP and read-only callers cannot acquire or confirm', async () => {
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     return request.headers['x-test-reader'] ? { ...identity, userId: 'U00001', permissions: ['admin:read'] } : identity
   } })
   registerSkillInstallationRoutes(router, service())

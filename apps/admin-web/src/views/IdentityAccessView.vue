@@ -151,7 +151,7 @@ async function saveAccount() {
   accountError.value = ''
   accountNameError.value = !resettingPassword.value && !accountForm.name.trim() ? '请输入姓名' : ''
   accountPasswordError.value = !accountForm.password ? '请输入初始密码'
-    : [...accountForm.password].length < 8 || [...accountForm.password].length > 12 ? '密码需为 8–12 个字符' : ''
+    : [...accountForm.password].length < 8 || [...accountForm.password].length > 64 ? '密码需为 8–64 个字符' : ''
   if (!resettingPassword.value && !accountForm.username.trim()) accountUsernameError.value = '请输入手机号或邮箱'
   if (accountNameError.value || accountPasswordError.value || (!resettingPassword.value && !accountForm.username.trim())) return
   saving.value = true
@@ -592,8 +592,8 @@ onMounted(() => void load())
             <el-form-item label="邮箱" for="account-email"><el-input id="account-email" v-model="accountForm.email" type="email" :maxlength="254" /></el-form-item>
           </template>
         </template>
-        <el-form-item label="初始密码" for="account-password" required :error="accountPasswordError"><el-input id="account-password" v-model="accountForm.password" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="12" :disabled="saving" required @input="accountPasswordError = ''" /></el-form-item>
-        <p>8–12 个字符，首次登录需修改。请通过安全渠道交付给员工。</p>
+        <el-form-item label="初始密码" for="account-password" required :error="accountPasswordError"><el-input id="account-password" v-model="accountForm.password" type="password" show-password autocomplete="new-password" :minlength="8" :maxlength="64" :disabled="saving" required @input="accountPasswordError = ''" /></el-form-item>
+        <p>8–64 个字符，首次登录需修改。请通过安全渠道交付给员工。</p>
       </el-form>
       <template #footer><el-button :disabled="saving" @click="accountDialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">{{ resettingPassword ? '重置密码' : '开通账号' }}</el-button></template>
     </el-dialog>

@@ -15,7 +15,7 @@ function fixture(t) {
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts',
-    'scripts/checks/contracts.mjs',
+    'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
     'apps/workbench-web/vitest.config.ts', 'apps/admin-web/vitest.config.ts', 'playwright.config.ts',
     'e2e/mvp-smoke.spec.ts', 'e2e/TEST-CATALOG.md', 'e2e/automation-smoke.spec.ts',
     'e2e/automation.integration.spec.ts', 'e2e/personal-integration/task-result.spec.ts',
@@ -75,12 +75,28 @@ test('project checks reject dangling docs and tests disconnected from CI', t => 
   const root = fixture(t)
   assert.equal(failures(root, 'project'), '')
   appendFileSync(join(root, 'README.md'), '\n[missing](docs/deleted.md)\n')
-  editJson(root, 'package.json', pkg => { pkg.scripts['ci:check'] = pkg.scripts['ci:check'].replace('pnpm test:sso && ', '') })
+  editJson(root, 'package.json', pkg => { pkg.scripts['ci:unit'] = pkg.scripts['ci:unit'].replace('pnpm test:unit && ', '') })
   const workflow = join(root, '.github/workflows/ci.yml')
-  writeFileSync(workflow, readFileSync(workflow, 'utf8').replace(' && pnpm test:sso:integration', ''))
+  writeFileSync(workflow, readFileSync(workflow, 'utf8')
+    .replace('run: pnpm test:integration', 'run: echo skipped')
+    .replace('run: pnpm test:e2e:personal', 'run: echo skipped'))
   assert.match(failures(root, 'project'), /文档链接不存在：docs\/deleted.md/)
-  assert.match(failures(root, 'project'), /test:sso 未接入 ci:check/)
-  assert.match(failures(root, 'project'), /test:sso:integration 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /test:unit 未接入 ci:check/)
+  assert.match(failures(root, 'project'), /test:integration 未接入 GitHub CI/)
+  assert.match(failures(root, 'project'), /test:e2e:personal 未接入 GitHub CI/)
+})
+
+test('project checks reject duplicate migration numbers and database tests outside the integration job', t => {
+  const root = fixture(t)
+  writeFileSync(join(root, 'server/migrations/0001_duplicate_number.sql'), 'select 1;\n')
+  writeFileSync(join(root, 'server/migrations/0999_undocumented_table.sql'), 'create table undocumented_table (id text);\ncreate table dropped_table (id text);\ndrop table dropped_table;\n')
+  writeFileSync(join(root, 'server/src/http/misnamed.test.ts'), 'await createThrowawayDatabase()\n')
+  writeFileSync(join(root, 'server/src/http/plain.test.ts'), 'export {}\n')
+  assert.match(failures(root, 'project'), /迁移编号重复：0001_duplicate_number\.sql 与 0001_m2_platform\.sql/)
+  assert.match(failures(root, 'project'), /server\/src\/http\/misnamed\.test\.ts 使用测试数据库，必须命名为 \*\.integration\.test\.ts/)
+  assert.doesNotMatch(failures(root, 'project'), /plain\.test\.ts/)
+  assert.match(failures(root, 'project'), /data-model\.md 未说明数据表 undocumented_table/)
+  assert.doesNotMatch(failures(root, 'project'), /dropped_table/)
 })
 
 test('security checks reject external authorization calls and plaintext secret columns', t => {
@@ -89,6 +105,8 @@ test('security checks reject external authorization calls and plaintext secret c
   appendFileSync(join(root, 'server/migrations/0001_m2_platform.sql'), '\nALTER TABLE x ADD API_KEY TEXT;\n')
   assert.match(failures(root, 'security'), /不应包含 \/authorization\/decisions/)
   assert.match(failures(root, 'security'), /不得包含明文凭据列/)
+  appendFileSync(join(root, 'server/src/modules/tool/postgres-tool-connector-service.ts'), "\nthrow Object.assign(new Error('x'), { status: 409, code: 'y' })\n")
+  assert.match(failures(root, 'security'), /postgres-tool-connector-service\.ts 不得用 Object\.assign 拼装 HTTP 状态/)
 })
 
 test('CI command discovery handles run blocks and ignores step names and comments', () => {

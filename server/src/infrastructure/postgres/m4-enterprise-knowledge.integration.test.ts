@@ -196,6 +196,53 @@ test('knowledge answer persists immutable source version and exposes citation me
   )
 })
 
+test('long documents are chunked and retrieved by their relevant chunk', async () => {
+  const filler = Array.from({ length: 60 }, (_, index) => `第${index + 1}条：差旅报销须在出行结束后十个工作日内提交票据。`).join('')
+  const target = '冷链运输出现温控偏差时，承运商须在两小时内上报并隔离受影响批次。'
+  const insert = (id: string, status: 'draft' | 'published', title: string, content: string) => database`
+    insert into knowledge_documents (
+      id, tenant_id, source_id, document_key, title, version, effective_date, content, content_checksum,
+      keywords, allowed_role_ids, allowed_workspace_ids, data_scope, status, published_at
+    ) values (
+      ${id}, 'tenant-dsh-work', 'knowledge-source-managed-mvp', ${id}, ${title}, '1.0', date '2026-07-01',
+      ${content}, md5(${content}), '[]'::jsonb, '["role-employee"]'::jsonb, '[]'::jsonb,
+      'domain:supply-chain', ${status}, ${status === 'published' ? new Date() : null}
+    )
+  `
+  await insert('knowledge-long-handbook', 'published', '综合运营手册', `${filler}\n\n${target}\n\n${filler}`)
+  await insert('knowledge-draft-coldchain', 'draft', '冷链温控偏差处置草案', target)
+
+  const [{ chunks }] = await database<{ chunks: number }[]>`
+    select count(*)::int as chunks from knowledge_chunks where document_id = 'knowledge-long-handbook'
+  `
+  assert.ok(chunks >= 4, `expected several chunks, got ${chunks}`)
+
+  const access = await authorization.authorizeWorkbench({ userId: 'U00001', workspaceId: 'ws-supply' })
+  const resolved = await knowledge.resolveContext({
+    query: '冷链温控偏差应该怎么上报？',
+    userId: 'U00001',
+    workspaceId: 'ws-supply',
+    dataScopes: access.dataScopes,
+  })
+  assert.deepEqual(resolved.map(document => document.documentId), ['knowledge-long-handbook'])
+  assert.match(resolved[0]!.excerpt, /温控偏差/)
+  assert.match(resolved[0]!.excerpt, /^…[\s\S]*…$/)
+  assert.ok(resolved[0]!.excerpt.length < 900)
+
+  assert.deepEqual(await knowledge.resolveContext({
+    query: '今天天气怎么样？',
+    userId: 'U00001',
+    workspaceId: 'ws-supply',
+    dataScopes: access.dataScopes,
+  }), [])
+
+  await database`update knowledge_documents set content = '已改写的草案正文' where id = 'knowledge-draft-coldchain'`
+  const [{ content }] = await database<{ content: string }[]>`
+    select string_agg(content, '') as content from knowledge_chunks where document_id = 'knowledge-draft-coldchain'
+  `
+  assert.equal(content, '已改写的草案正文')
+})
+
 async function waitForTask(runId: string) {
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {

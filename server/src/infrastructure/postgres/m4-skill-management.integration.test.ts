@@ -5,12 +5,13 @@ import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
-import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -27,7 +28,7 @@ before(async () => {
   database = throwaway.client
   const tools = new PostgresToolConnectorService(database)
   artifactRoot = await mkdtemp(join(tmpdir(), 'dsh-skill-lifecycle-test-'))
-  skills = new PostgresSkillService(database, undefined, tools, new FileSystemSkillArtifactStore(artifactRoot))
+  skills = new PostgresSkillService(database, undefined, tools, new SkillArtifactStore(new LocalObjectStorage(artifactRoot, { fileMode: 0o400 })))
   agents = new PostgresAgentService(database, undefined, skills, tools)
 })
 

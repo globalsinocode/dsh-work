@@ -12,11 +12,11 @@ const basePath = '/api/workbench/v1'
 export function registerWorkbenchAgentRoutes(
   router: Router,
   service: PostgresAgentService,
-  authorization?: PostgresAuthorizationService,
+  authorization: PostgresAuthorizationService,
   ) {
   router.get(`${basePath}/agents`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    const access = await authorization?.authorizeWorkbench({
+    const access = await authorization.authorizeWorkbench({
       userId: identity.userId,
       ...sessionAuthorizationContext(identity),
     })

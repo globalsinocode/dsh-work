@@ -12,9 +12,27 @@ import { testAttemptManifest } from './test-attempt-manifest.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
+import { IdentityAdministrationService } from '../../modules/identity/administration-service.ts'
+import { loadIdentityConfiguration } from '../../modules/identity/config.ts'
+import { LocalAuthService } from '../../modules/identity/local-auth-service.ts'
+import type { LocalIdentityConfiguration } from '../../modules/identity/types.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase
-before(async () => { db = await createThrowawayDatabase({ namePrefix: 'dsh_review_c9' }) })
+const sessionSecret = 'review-c9-session-secret-with-32-characters'
+const password = 'ReviewC9pw1'
+let employeeId: string
+before(async () => {
+  db = await createThrowawayDatabase({ namePrefix: 'dsh_review_c9' })
+  // The application always requires a real login: create one administrator and one employee.
+  const configuration = loadIdentityConfiguration({ DSH_WORK_AUTH_MODE: 'local', DSH_WORK_SESSION_SECRET: sessionSecret,
+    DSH_WORK_WORKBENCH_ORIGINS: 'http://localhost:1', DSH_WORK_ADMIN_ORIGINS: 'http://localhost:1' }) as LocalIdentityConfiguration
+  const accounts = new LocalAuthService(configuration, db.client)
+  const { userId: adminId } = await accounts.bootstrap({ username: 'c9.admin@example.invalid', name: 'C9 管理员', password })
+  employeeId = (await accounts.createAccount({ username: 'c9.employee@example.invalid', name: 'C9 员工', password }, adminId)).userId
+  await new IdentityAdministrationService(db.client, true).grantRole({ userId: employeeId, roleId: 'role-employee', actorId: adminId })
+  await db.client`update local_user_credentials set must_change_password = false where user_id = ${employeeId}`
+})
 after(async () => { await db?.dispose() })
 async function freePort() {
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening')
@@ -24,9 +42,14 @@ async function freePort() {
 async function startApplication(extra: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-review-c9-'))
   const port = await freePort()
+  const base = `http://localhost:${port}`
+  // Isolate from a developer .env: no AI Hub, no legacy mode switch.
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AI_HUB_') && key !== 'DSH_WORK_AUTH_MODE'))
   const child = spawn(process.execPath, ['--experimental-strip-types', 'src/main.ts'], {
     cwd: resolve(import.meta.dirname, '../../..'),
-    env: { ...process.env, NODE_ENV: 'development', DSH_WORK_AUTH_MODE: 'prototype',
+    env: { ...inherited, NODE_ENV: 'development',
+      DSH_WORK_SESSION_SECRET: sessionSecret, DSH_WORK_COOKIE_SECURE: 'false',
+      DSH_WORK_WORKBENCH_ORIGINS: base, DSH_WORK_ADMIN_ORIGINS: base,
       DSH_WORK_DATABASE_URL: db.url, DSH_WORK_DATA_ROOT: root,
       DSH_RUNTIME_HOME: join(root, 'missing-dsh'), DSH_WORK_PYTHON_IMAGE: 'invalid-image',
       DSH_WORK_SERVER_PORT: String(port), DSH_WORK_SERVER_HOST: '127.0.0.1', ...extra },
@@ -34,11 +57,21 @@ async function startApplication(extra: NodeJS.ProcessEnv = {}) {
   })
   let output = ''; child.stdout.on('data', chunk => { output += String(chunk) }); child.stderr.on('data', chunk => { output += String(chunk) })
   const exited = once(child, 'exit')
-  return { root, base: `http://127.0.0.1:${port}`, child, output: () => output,
+  return { root, base, child, output: () => output,
     async close() { if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM'); await Promise.race([exited, delay(3000)]);
       if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited }
     } await rm(root, { recursive: true, force: true }) } }
+}
+async function login(app: Awaited<ReturnType<typeof startApplication>>, audience: 'workbench' | 'admin', username: string) {
+  const response = await fetch(`${app.base}/auth/${audience}/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.base },
+    body: JSON.stringify({ username, password }),
+  })
+  assert.equal(response.status, 200, await response.clone().text())
+  const cookie = response.headers.get('set-cookie')?.split(';')[0]
+  assert.ok(cookie)
+  return { Cookie: cookie, Origin: app.base }
 }
 async function ready(app: Awaited<ReturnType<typeof startApplication>>) {
   const deadline = Date.now() + 15000
@@ -57,17 +90,20 @@ test('C9 RED: missing DSH and failed Python preflight do not block authenticated
     const status = await (await fetch(`${app.base}/health`)).json() as { data: { dshRuntime: { status: string }; executionCapabilities: { python: { status: string } } } }
     assert.equal(status.data.dshRuntime.status, 'offline')
     assert.equal(status.data.executionCapabilities.python.status, 'unavailable')
-    assert.equal((await fetch(`${app.base}/api/workbench/v1/tasks`)).status, 200)
-    const platform = await (await fetch(`${app.base}/api/admin/v1/platform-status`)).json() as { data: { dshRuntime: string } }
+    const employee = await login(app, 'workbench', 'c9.employee@example.invalid')
+    const admin = await login(app, 'admin', 'c9.admin@example.invalid')
+    assert.equal((await fetch(`${app.base}/api/workbench/v1/tasks`)).status, 401, 'APIs always require a login')
+    assert.equal((await fetch(`${app.base}/api/workbench/v1/tasks`, { headers: employee })).status, 200)
+    const platform = await (await fetch(`${app.base}/api/admin/v1/platform-status`, { headers: admin })).json() as { data: { dshRuntime: string } }
     assert.equal(platform.data.dshRuntime, 'not-connected')
-    const content = new PostgresContentService(db.client, join(app.root, 'storage'), new PostgresAuthorizationService(db.client))
+    const content = new PostgresContentService(db.client, new LocalObjectStorage(join(app.root, 'storage')), new PostgresAuthorizationService(db.client))
     const conversations = new PostgresConversationRepository(db.client)
-    const session = await conversations.createSession({ userId: 'U00001', title: '故障时的历史资料' })
-    const file = await content.storeSessionFile(session.id, 'fixture.txt', 'text/plain', Buffer.from('synthetic historical file'), 'U00001')
-    const download = await fetch(`${app.base}/api/workbench/v1/files/${file.id}/download`)
+    const session = await conversations.createSession({ userId: employeeId, title: '故障时的历史资料' })
+    const file = await content.storeSessionFile(session.id, 'fixture.txt', 'text/plain', Buffer.from('synthetic historical file'), employeeId)
+    const download = await fetch(`${app.base}/api/workbench/v1/files/${file.id}/download`, { headers: employee })
     assert.equal(download.status, 200); assert.equal(await download.text(), 'synthetic historical file')
     const response = await fetch(`${app.base}/api/workbench/v1/sessions/${session.id}/runs`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: '合成请求', idempotencyKey: 'review-c9' }),
+      method: 'POST', headers: { ...employee, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: '合成请求', idempotencyKey: 'review-c9' }),
     })
     assert.equal(response.status, 503)
     const failure = await response.json() as { error: { code: string } }
@@ -79,6 +115,9 @@ test('C9 RED: missing DSH and failed Python preflight do not block authenticated
 test('core database and identity configuration failures never expose readiness', async () => {
   for (const extra of [
     { DSH_WORK_DATABASE_URL: 'invalid-database-url' },
+    { DSH_WORK_DATABASE_URL: '' },
+    // The removed in-memory mode is rejected in every environment.
+    { DSH_WORK_AUTH_MODE: 'prototype' },
     { NODE_ENV: 'production', DSH_WORK_AUTH_MODE: 'prototype' },
   ]) {
     const app = await startApplication(extra)

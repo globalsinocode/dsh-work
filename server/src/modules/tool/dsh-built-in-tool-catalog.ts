@@ -1,6 +1,7 @@
 import type { ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
 import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import type { RuntimeToolDescriptor } from '../runtime/runtime-types.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 export type CatalogEntry = Omit<ToolCatalogCandidate, 'status' | 'availabilityMessage'> & {
   inputSchemaObject: Record<string, unknown>
@@ -37,33 +38,6 @@ export const defaultAgentDshToolNames = [
   'read', 'glob', 'grep', 'write', 'edit', 'read_image', 'str_replace_editor',
   'web_search', 'todo_write',
 ] as const
-
-/** These tools are confined to the current Attempt's isolated workspace/session. */
-const runLocalAgentToolNames = new Set([
-  'read', 'write', 'edit', 'read_image', 'todo_write',
-])
-
-/**
- * The seeded role/scope policy predates independent Agent identities. Only
- * the unchanged default policy has an Agent-side run-local exemption: changing
- * either policy dimension restores the ordinary explicit-grant requirement.
- * Availability, bindings, input mounts and the DSH workspace guard still apply.
- */
-export function isDefaultRunLocalAgentTool(tool: {
-  connectorId: string
-  dshToolName: string | null
-  allowedRoleIds: readonly string[]
-  dataScopes: readonly string[]
-}): boolean {
-  return tool.connectorId === DSH_RUNTIME_CONNECTOR_ID
-    && tool.dshToolName !== null
-    && runLocalAgentToolNames.has(tool.dshToolName)
-    && tool.allowedRoleIds.length === 2
-    && tool.allowedRoleIds.includes('role-employee')
-    && tool.allowedRoleIds.includes('role-platform-admin')
-    && tool.dataScopes.length === 1
-    && tool.dataScopes[0] === 'workspace:authorized'
-}
 
 export function isVisibleDshCatalogTool(toolId: string) {
   return !hiddenRuntimeCatalogTools.has(toolId)
@@ -208,7 +182,7 @@ export function requiredDshToolApprovalPolicy(toolName: string): ToolDefinition[
 
 export function assertDshToolApprovalPolicy(entry: CatalogEntry, approvalPolicy: ToolDefinition['approvalPolicy']) {
   if (approvalPolicy !== entry.defaultApprovalPolicy) {
-    throw new Error(`工具“${entry.name}”的审批策略由平台固定为“${approvalPolicyLabel(entry.defaultApprovalPolicy)}”`)
+    throw invalidRequest(`工具“${entry.name}”的审批策略由平台固定为“${approvalPolicyLabel(entry.defaultApprovalPolicy)}”`)
   }
 }
 
@@ -300,16 +274,16 @@ export function normalizeToolPolicyInput(input: {
 }) {
   if (!Array.isArray(input.allowedRoles)
     || input.allowedRoles.some(value => typeof value !== 'string' || !value.trim())) {
-    throw new Error('授权角色格式无效')
+    throw invalidRequest('授权角色格式无效')
   }
   if (!Array.isArray(input.dataScopes)
     || input.dataScopes.some(value => typeof value !== 'string' || !value.trim())) {
-    throw new Error('数据范围格式无效')
+    throw invalidRequest('数据范围格式无效')
   }
   const allowedRoles = [...new Set(input.allowedRoles.map(value => value.trim()))]
   const dataScopes = [...new Set(input.dataScopes.map(value => value.trim()))]
-  if (!allowedRoles.length || !dataScopes.length) throw new Error('工具必须配置授权角色和数据范围')
-  if (!['none', 'sensitive', 'always'].includes(String(input.approvalPolicy))) throw new Error('审批策略无效')
+  if (!allowedRoles.length || !dataScopes.length) throw invalidRequest('工具必须配置授权角色和数据范围')
+  if (!['none', 'sensitive', 'always'].includes(String(input.approvalPolicy))) throw invalidRequest('审批策略无效')
   return {
     allowedRoles,
     dataScopes,

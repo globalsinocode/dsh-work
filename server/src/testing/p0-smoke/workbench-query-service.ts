@@ -1,9 +1,9 @@
-import type { PrototypeRepository } from '../../../infrastructure/prototype/prototype-repository.ts'
+import type { SmokeRepository } from './smoke-repository.ts'
 
 export class WorkbenchQueryService {
-  private readonly repository: PrototypeRepository
+  private readonly repository: SmokeRepository
 
-  constructor(repository: PrototypeRepository) {
+  constructor(repository: SmokeRepository) {
     this.repository = repository
   }
 

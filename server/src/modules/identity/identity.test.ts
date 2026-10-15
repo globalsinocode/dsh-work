@@ -261,6 +261,27 @@ test('account switching without a local session logs out of OIDC and returns to 
   assert.equal(localLogout.mock.callCount(), 0)
 })
 
+test('OIDC logout cannot be triggered by another site', async (context) => {
+  const configuration = loadIdentityConfiguration(baseEnvironment())
+  if (configuration.mode !== 'oidc') assert.fail('expected OIDC configuration')
+  const authentication = new OidcAuthService(configuration, {} as DatabaseClient)
+  context.mock.method(OidcProviderClient.prototype, 'logoutUrl', async (origin: string) => `https://identity.example/end-session/?r=${origin}`)
+  const revoked = context.mock.method(IdentitySessionRepository.prototype, 'logoutSession', async () => {})
+  const cookie = { cookie: `${configuration.audiences.workbench.sessionCookieName}=opaque-session` }
+  // Same-origin link, typed URL and non-browser client keep working over GET.
+  for (const headers of [{ 'sec-fetch-site': 'same-origin' }, { 'sec-fetch-site': 'none' }, {}] as Record<string, string>[]) {
+    await authentication.logout(requestFor('localhost:4174', { ...cookie, ...headers }), 'workbench')
+  }
+  assert.equal(revoked.mock.callCount(), 3)
+  await assert.rejects(authentication.logout(requestFor('localhost:4174', { ...cookie, 'sec-fetch-site': 'cross-site' }), 'workbench'),
+    (error: Error & { status?: number; code?: string }) => error.status === 403 && error.code === 'csrf_check_failed')
+  const post = (origin?: string) => ({ ...requestFor('localhost:4174', { ...cookie, ...(origin ? { origin } : {}) }), method: 'POST' }) as IncomingMessage
+  await assert.rejects(authentication.logout(post('https://evil.example'), 'workbench'), /请求来源校验失败/)
+  await assert.rejects(authentication.logout(post(), 'workbench'), /请求来源校验失败/)
+  await authentication.logout(post('http://localhost:4174'), 'workbench')
+  assert.equal(revoked.mock.callCount(), 4, 'rejected requests never revoke the session')
+})
+
 test('multi-origin callbacks cannot switch away from the transaction origin', async (context) => {
   const environment = baseEnvironment()
   delete environment.AI_HUB_WORKBENCH_PORTAL_URL

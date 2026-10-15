@@ -8,6 +8,7 @@ import type {
   ApiAuthenticator,
   RequestIdentity,
 } from '../modules/identity/types.ts'
+import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
 
 export interface ApiMeta {
   api: 'workbench' | 'admin' | 'system'
@@ -76,6 +77,11 @@ export class Router {
 
   delete(path: string, handler: RouteHandler) {
     this.register('DELETE', path, handler)
+  }
+
+  /** Registered method + path pairs in registration order (used to check the API documents). */
+  listRoutes(): Array<{ method: string; path: string }> {
+    return this.routes.map(({ method, path }) => ({ method, path }))
   }
 
   private register(method: string, path: string, handler: RouteHandler) {
@@ -155,12 +161,11 @@ export interface HttpErrorDetail {
 }
 
 export function classifyHttpError(error: unknown, path: string): { status: number; error: HttpErrorDetail } {
-  const original = error instanceof Error ? error.message : '未知服务端错误'
-  const normalized = original.toLowerCase()
   const object = inferRequestObject(path)
   const traceId = `trace-http-${randomUUID()}`
 
-  if (isIdentityAccessError(error)) {
+  // Status always comes from the error's type or explicit status/code, never from its wording.
+  if (isTypedHttpError(error)) {
     const status = error.status
     const suggestions: Record<typeof status, string> = {
       401: '请检查账号和密码并重新登录；若使用统一登录，请管理员检查身份服务配置。',
@@ -173,19 +178,22 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
       500: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`,
       502: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
       503: '稍后重试；若问题持续，请检查 AI Hub 与身份服务健康状态。',
+      504: '稍后重试；若持续发生，请管理员检查运行时或连接器健康状态。',
     }
-    const suggestion = ['MODEL_CAPABILITY_MISMATCH', 'MODEL_CAPABILITY_UNAVAILABLE'].includes(error.code)
-      ? '请管理员核对 Agent 模型能力要求、默认模型路由及 DSH 支持情况；能力不足时不能直接重试或忽略要求。'
-      : ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
-      ? '请管理员检查对应执行能力；配置修复并重启服务后再提交任务。'
-      : status === 503 && error.code.startsWith('skill_')
-        ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
-        : suggestions[status]
+    const explicit = 'suggestion' in error && typeof error.suggestion === 'string' ? error.suggestion : undefined
+    const suggestion = explicit
+      ?? (['MODEL_CAPABILITY_MISMATCH', 'MODEL_CAPABILITY_UNAVAILABLE'].includes(error.code)
+        ? '请管理员核对 Agent 模型能力要求、默认模型路由及 DSH 支持情况；能力不足时不能直接重试或忽略要求。'
+        : ['RUNTIME_UNAVAILABLE', 'PYTHON_UNAVAILABLE'].includes(error.code)
+          ? '请管理员检查对应执行能力；配置修复并重启服务后再提交任务。'
+          : status === 503 && error.code.startsWith('skill_')
+            ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
+            : suggestions[status])
     return {
       status,
       error: {
         code: error.code,
-        message: status === 500 ? `${object}操作未完成` : error.message,
+        message: status === 500 ? `${object}操作未完成` : status === 504 ? `${object}处理超时` : error.message,
         object,
         suggestion,
         traceId,
@@ -196,25 +204,21 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
   if (error instanceof SyntaxError) {
     return { status: 422, error: { code: 'invalid_request', message: `${object}请求内容不是有效 JSON`, object, suggestion: '检查请求字段和 JSON 格式后重新提交。', traceId } }
   }
-  if (normalized.includes('超时') || normalized.includes('timeout')) {
+  if (isTimeoutFailure(error)) {
     return { status: 504, error: { code: 'dependency_timeout', message: `${object}处理超时`, object, suggestion: '稍后重试；若持续发生，请管理员检查运行时或连接器健康状态。', traceId } }
   }
-  if (/没有.*权限|不可访问|不是成员|不可调用|未授权|不是平台管理员/.test(original)) {
-    return { status: 403, error: { code: 'permission_denied', message: original, object, suggestion: '确认当前账号、工作空间成员关系和数据范围；需要时联系管理员授权。', traceId } }
-  }
-  if (/不存在|没有找到/.test(original)) {
-    return { status: 404, error: { code: 'resource_not_found', message: original, object, suggestion: '返回列表确认对象仍存在，然后重新选择。', traceId } }
-  }
-  if (/离线|不可用|未处于健康状态|健康检查/.test(original)) {
-    return { status: 503, error: { code: 'dependency_unavailable', message: original, object, suggestion: '请管理员检查运行时或连接器状态，恢复后再重试。', traceId } }
-  }
-  if (/当前状态|只有.*可以|不能|已存在/.test(original)) {
-    return { status: 409, error: { code: 'state_conflict', message: original, object, suggestion: '刷新对象状态后，按页面允许的操作继续。', traceId } }
-  }
-  if (/必须|不支持|仅支持|至少|最多|超过|无效|不能为空|缺少|长度|大小/.test(original)) {
-    return { status: 422, error: { code: 'invalid_request', message: original, object, suggestion: '按提示调整输入内容或文件后重新提交。', traceId } }
-  }
+  // Anything untyped is an unexpected fault: never guess a 4xx from the message.
   return { status: 500, error: { code: 'operation_failed', message: `${object}操作未完成`, object, suggestion: `稍后重试；若问题持续，请将链路编号 ${traceId} 提供给管理员。`, traceId } }
+}
+
+const timeoutErrorCodes = new Set(['ETIMEDOUT', 'CONNECT_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'])
+
+/** Platform timeouts recognised by type or system error code (AbortSignal.timeout, sockets, fetch, postgres). */
+function isTimeoutFailure(error: unknown, depth = 0): boolean {
+  if (!(error instanceof Error) || depth > 3) return false
+  const code = (error as { code?: unknown }).code
+  if (error.name === 'TimeoutError' || (typeof code === 'string' && timeoutErrorCodes.has(code))) return true
+  return isTimeoutFailure((error as { cause?: unknown }).cause, depth + 1)
 }
 
 function inferRequestObject(path: string) {
@@ -295,12 +299,18 @@ export function assertApiRouteAccess(
 }
 
 export async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
-  let body = ''
+  // Collect bytes and decode once: decoding each chunk separately corrupts a
+  // multi-byte UTF-8 character (for example Chinese text) split across chunks.
+  const chunks: Buffer[] = []
+  let size = 0
   for await (const chunk of request) {
-    body += String(chunk)
-    if (body.length > 1024 * 1024) throw new Error('请求体超过 1 MB 限制')
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    size += bytes.length
+    if (size > 1024 * 1024) throw invalidRequest('请求体超过 1 MB 限制')
+    chunks.push(bytes)
   }
-  if (!body) throw new Error('请求体不能为空')
+  const body = Buffer.concat(chunks, size).toString('utf8')
+  if (!body) throw stateConflict('请求体不能为空')
   return JSON.parse(body) as T
 }
 
@@ -329,13 +339,13 @@ function apiAudience(path: string): ApiAudience | null {
   return null
 }
 
-/** Also recognizes typed domain/capability errors; never infer their status from message wording. */
-function isIdentityAccessError(
+/** Typed domain, identity and capability errors: an explicit status and a stable code. */
+function isTypedHttpError(
   error: unknown,
-): error is Error & { status: 401 | 403 | 404 | 409 | 421 | 422 | 429 | 500 | 502 | 503; code: string } {
+): error is Error & { status: 401 | 403 | 404 | 409 | 421 | 422 | 429 | 500 | 502 | 503 | 504; code: string; suggestion?: string } {
   if (!(error instanceof Error)) return false
   const candidate = error as Error & { status?: unknown; code?: unknown }
-  return [401, 403, 404, 409, 421, 422, 429, 500, 502, 503].includes(Number(candidate.status))
+  return [401, 403, 404, 409, 421, 422, 429, 500, 502, 503, 504].includes(Number(candidate.status))
     && typeof candidate.code === 'string'
     && /^[a-z0-9_]{1,80}$/i.test(candidate.code)
 }

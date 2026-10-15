@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { canReadWorkspaceObject, AuthorizationDeniedError, isAuthorizationDenial } from '../../modules/authorization/authorization-errors.ts'
+import { canReadWorkspaceObject, AuthorizationDeniedError, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../modules/authorization/postgres-workspace-grant-source-service.ts'
 import { classifyHttpError } from '../../http/router.ts'
 import { createDatabase, type DatabaseClient } from './database.ts'

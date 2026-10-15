@@ -8,7 +8,7 @@ import { after, before, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
-import { RequestValidationError } from '../modules/authorization/authorization-errors.ts'
+import { RequestValidationError } from '../domain/authorization-errors.ts'
 import { WorkspaceStateConflictError } from '../modules/workbench/application/workspace-state-conflict-error.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { runMigrations } from '../infrastructure/postgres/migration-runner.ts'
@@ -17,6 +17,7 @@ import { PostgresContentService, type UploadedWorkspaceFileVersion } from '../mo
 import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const suffix = randomUUID().replaceAll('-', '').slice(0, 8)
@@ -65,7 +66,7 @@ before(async () => {
 
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-file-versions-'))
   authorization = new PostgresAuthorizationService(database)
-  content = new PostgresContentService(database, storageRoot, authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerContentRoutes(router, content, authorization)

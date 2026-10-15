@@ -96,7 +96,7 @@ function downloadGuide() {
       <ul class="guide-list">
         <li><code>v1</code> 内只增不删，向后兼容；破坏性变更发布 <code>v2</code> 并预留迁移窗口。契约以 <code>docs/development/openapi-mobile-h5.json</code> 为唯一事实来源。</li>
         <li>所有 Agent 交互必须经 Run/Attempt API 发起，禁止绕过 dsh-work 直连模型 API。</li>
-        <li>Prototype 模式仅用于冒烟联调；验收必须使用 PostgreSQL + OIDC 完整环境。</li>
+        <li>服务端始终使用 PostgreSQL 与正式登录；验收必须使用完整环境。</li>
       </ul>
     </section>
   </div>

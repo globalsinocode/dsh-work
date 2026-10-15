@@ -258,6 +258,23 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     }), /不得携带 content/, 'externalized file index with inline content')
   })
 
+  it('accepts an artifact revision on a file mount and rejects malformed ones at both boundaries', () => {
+    const withRevision = (revision: unknown) => {
+      const manifest = baseManifest()
+      const content = '# 周报\n第一版'
+      manifest.input.file_mounts = [{
+        file_id: 'file-artifact-1', mount_path: '/workspace/input/01-report.txt', access: 'read_only',
+        source_name: 'report.md', media_type: 'text/markdown; charset=utf-8',
+        content_sha256: sha256(content), content,
+        artifact_revision: revision as { artifact_id: string; version: number },
+      }]
+      return manifest
+    }
+    assertBothAccept(withRevision({ artifact_id: 'artifact-abc123', version: 2 }), 'artifact revision')
+    assertBothReject(withRevision({ artifact_id: 'artifact-abc123', version: 0 }), /artifact revision is invalid/, 'version 0')
+    assertBothReject(withRevision({ artifact_id: '../escape', version: 1 }), /artifact revision is invalid/, 'malformed artifact id')
+  })
+
   it('rejects structural ambiguities at both boundaries', () => {
     const cases: Array<[string, (skill: SkillInstruction) => void, RegExp]> = [
       ['externalized Skill carrying inline instructions', skill => Object.assign(skill, externalizedSkill()), /内联 instructions/],

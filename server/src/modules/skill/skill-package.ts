@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { crc32, inflateRawSync } from 'node:zlib'
 import { parseDocument } from 'yaml'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 export interface SkillPackage {
   name: string
@@ -49,7 +50,7 @@ export const skillPackageContentHash = (files: SkillPackage['files']) => hash(JS
   sha256: file.sha256,
 }))))
 const decoder = new TextDecoder('utf-8', { fatal: true })
-const fail = (message: string, label = 'Skill 包校验失败'): never => { throw Object.assign(new Error(`${label}：${message}`), { status: 422, code: 'skill_package_invalid' }) }
+const fail = (message: string, label = 'Skill 包校验失败'): never => { throw new RequestError(422, 'skill_package_invalid', `${label}：${message}`) }
 
 export function toSkillPackageArtifact(pkg: SkillPackage, artifactRef: string): SkillPackageArtifact {
   return {

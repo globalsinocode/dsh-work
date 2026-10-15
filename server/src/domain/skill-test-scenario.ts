@@ -1,3 +1,4 @@
+import { RequestError } from './request-errors.ts'
 /** Deterministic, data-only expectations. No regexes, scripts or evaluators from packages. */
 export interface SkillTestScenario {
   id: string
@@ -11,7 +12,7 @@ export interface SkillTestScenario {
 export interface TestCatalogEntry { id: string; version: string; files?: Array<{ path: string }> }
 const unsafeKeys = new Set(['__proto__', 'prototype', 'constructor'])
 function invalid(): never {
-  throw Object.assign(new Error('试运行场景无效：必须使用锁定 Skill/脚本及受支持的有限结果断言'), { status: 422, code: 'invalid_test_scenario' })
+  throw new RequestError(422, 'invalid_test_scenario', '试运行场景无效：必须使用锁定 Skill/脚本及受支持的有限结果断言')
 }
 function object(value: unknown, keys: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid()

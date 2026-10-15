@@ -26,6 +26,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const automationDirectory = { applicationId: 'automation-test', environment: 'test', maxSyncAgeMs: 60_000 }
@@ -82,7 +83,7 @@ before(async () => {
     values (${automationDirectory.applicationId}, ${automationDirectory.environment}, now())
   `
   agents = new PostgresAgentService(database)
-  content = new PostgresContentService(database, `/tmp/dsh-work-automation-test-${randomUUID()}`, authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(`/tmp/dsh-work-automation-test-${randomUUID()}`), authorization)
   orchestration = new RunOrchestrationService(
     runs,
     conversations,

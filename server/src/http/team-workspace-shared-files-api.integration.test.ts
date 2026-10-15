@@ -8,7 +8,7 @@ import { after, before, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
-import { AuthorizationDeniedError, isAuthorizationDenial } from '../modules/authorization/authorization-errors.ts'
+import { AuthorizationDeniedError, isAuthorizationDenial } from '../domain/authorization-errors.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
 import { testAttemptManifest } from '../infrastructure/postgres/test-attempt-manifest.ts'
@@ -17,6 +17,7 @@ import { PostgresRunRepository } from '../modules/run/postgres-run-repository.ts
 import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
 import { Router, classifyHttpError } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -35,7 +36,7 @@ before(async () => {
   // 本套件只验证列表/移除/下载门禁，不需要真实解析：给一个临时存储根即可。
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-shared-files-'))
   authorization = new PostgresAuthorizationService(database)
-  content = new PostgresContentService(database, storageRoot, authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerContentRoutes(router, content, authorization)

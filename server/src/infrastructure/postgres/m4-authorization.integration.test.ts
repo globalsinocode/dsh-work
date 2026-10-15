@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { AuthorizationDeniedError, isAuthorizationDenial } from '../../modules/authorization/authorization-errors.ts'
+import { AuthorizationDeniedError, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { classifyHttpError } from '../../http/router.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'

@@ -1,5 +1,6 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../../domain/authorization-errors.ts'
+import { notFound } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -43,7 +44,7 @@ export class PostgresWorkspaceService {
        order by created_at asc
        limit 1
     `
-    if (!workspace) throw new Error('当前用户不存在、已停用或无法创建个人工作空间')
+    if (!workspace) throw notFound('当前用户不存在、已停用或无法创建个人工作空间')
 
     await this.database`
       insert into workspace_members (

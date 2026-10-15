@@ -1,17 +1,19 @@
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
-import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from '../../modules/skill/skill-file-storage-migration.ts'
 import { createDatabase } from './database.ts'
 import { runMigrations } from './migration-runner.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_DATABASE_URL 未配置')
 
 const projectRoot = fileURLToPath(new URL('../../../..', import.meta.url))
 const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
-const store = new FileSystemSkillArtifactStore(resolve(dataRoot, 'skills'))
+const skillRoot = resolve(dataRoot, 'skills')
+const store = new SkillArtifactStore(new LocalObjectStorage(skillRoot, { fileMode: 0o400 }))
 const database = createDatabase({ url: databaseUrl, maxConnections: 1 })
 
 try {
@@ -32,7 +34,7 @@ try {
   if (!after || after.versions || after.installations || after.attempts) {
     throw new Error(`Skill 文件迁移后仍有数据库正文：${JSON.stringify(after)}`)
   }
-  console.log(JSON.stringify({ migrated: before, remaining: after, skillRoot: store.root }))
+  console.log(JSON.stringify({ migrated: before, remaining: after, skillRoot }))
 } finally {
   await database.end()
 }

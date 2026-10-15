@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { isAuthorizationDenial, AuthorizationDeniedError, authorizationDenied } from '../authorization/authorization-errors.ts'
+import { isAuthorizationDenial, AuthorizationDeniedError, authorizationDenied } from '../../domain/authorization-errors.ts'
 
 /**
  * Locks the authorization-denial classifier (1A-T5). The authorization service
  * throws plain Errors, so if one of its denial messages is reworded this test
  * fails instead of the sweep silently refusing to cancel revoked runs.
  */
-test('isAuthorizationDenial classifies authorization denials', () => {
+test('isAuthorizationDenial ignores wording: a plain Error is never a denial', () => {
   const denials = [
     '当前用户没有员工工作台使用权限',
     '当前用户不存在、已停用或所属企业不可用',
@@ -27,7 +27,9 @@ test('isAuthorizationDenial classifies authorization denials', () => {
     'Agent要求未授权的数据范围：scope-x',
   ]
   for (const message of denials) {
-    assert.equal(isAuthorizationDenial(new Error(message)), true, `应判定为授权拒绝：${message}`)
+    // Wording alone must not cancel runs; only the typed denial does.
+    assert.equal(isAuthorizationDenial(new Error(message)), false, `普通 Error 不应判定为授权拒绝：${message}`)
+    assert.equal(isAuthorizationDenial(new AuthorizationDeniedError(message)), true, message)
   }
 })
 

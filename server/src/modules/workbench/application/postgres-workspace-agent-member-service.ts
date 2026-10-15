@@ -6,13 +6,14 @@ import type {
   WorkspaceAgentCandidate,
 } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
+import { RequestError, invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -689,7 +690,7 @@ async function lockWorkspaceRow(transaction: DatabaseTransaction, workspaceId: s
 
 /** Agent 成员域的类型化 404：不再依赖中文文案正则映射状态码（评审 L2）。 */
 function agentMemberNotFound(message: string): Error {
-  return Object.assign(new Error(message), { status: 404, code: 'agent_member_not_found' })
+  return new RequestError(404, 'agent_member_not_found', message)
 }
 
 function allowedActionsFor(
@@ -737,10 +738,10 @@ function decodeCursorIndex(candidates: WorkspaceAgentCandidate[], cursor: string
   try {
     parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { i?: unknown }
   } catch {
-    throw new Error('分页游标无效')
+    throw invalidRequest('分页游标无效')
   }
-  if (typeof parsed.i !== 'string') throw new Error('分页游标无效')
+  if (typeof parsed.i !== 'string') throw invalidRequest('分页游标无效')
   const index = candidates.findIndex(candidate => candidate.id === parsed.i)
-  if (index < 0) throw new Error('分页游标无效')
+  if (index < 0) throw invalidRequest('分页游标无效')
   return index + 1
 }

@@ -1,5 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { extname, join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { checkServerDependencies } from './checks/server-dependencies.mjs'
 
 const projectRoot = new URL('../', import.meta.url)
 const violations = []
@@ -82,9 +85,11 @@ for (const path of await sourceFiles('packages/')) {
   reject(path, content, /apps\/(workbench-web|admin-web)\//, '共享包不得反向依赖应用源码')
 }
 
+violations.push(...await checkServerDependencies(fileURLToPath(projectRoot)))
+
 if (violations.length > 0) {
   console.error(`架构边界检查失败：\n${violations.map((item) => `- ${item}`).join('\n')}`)
   process.exitCode = 1
 } else {
-  console.log('架构边界检查通过：双前端、双 API 与无状态共享包边界有效。')
+  console.log('架构边界检查通过：双前端、双 API、无状态共享包与服务端分层边界有效，模块循环依赖未超出基线。')
 }

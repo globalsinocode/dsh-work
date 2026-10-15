@@ -23,7 +23,7 @@
  * 占位，当前平台工具均为同步 `completed` 语义，不产生该状态；真实接入时
  * 必须补业务操作键与状态查询，不能仅凭 Run 终态判定外部动作完成。
  */
-import type { JsonObject, RunState } from '../modules/run/run-types.ts'
+import type { JsonObject, RunState } from './run-state.ts'
 import type { Artifact, TaskSource, TaskRunError } from './types.ts'
 
 export const TASK_RESULT_VERSION = 'task-result/v1'
@@ -88,6 +88,8 @@ export interface TaskResultTelemetry {
   stopReason: string | null
   toolCalls: number | null
   toolResults: number | null
+  /** EX-01：本轮失败的工具调用数（来自 tool.completed 事件）；旧记录未上报为 null。 */
+  toolFailures: number | null
   /** Runtime 在终态事件中声明的成果数；未上报为 null。 */
   artifactsClaimed: number | null
   /** 平台实际登记的成果版本数。 */
@@ -183,6 +185,14 @@ function metadataString(metadata: JsonObject, key: string): string | null {
 
 function metadataFlag(metadata: JsonObject | undefined, key: string): boolean {
   return metadata?.[key] === true
+}
+
+function countToolFailures(events: TaskResultEvidence['events'], terminalMetadata: JsonObject | undefined): number | null {
+  const toolEvents = events.filter(event => event.eventType === 'tool.completed')
+  const reported = terminalMetadata ? metadataNumber(terminalMetadata, 'tool_failed_count') : null
+  if (toolEvents.length === 0) return reported
+  // tool.completed is capped per Attempt; the terminal count also covers omitted calls.
+  return Math.max(reported ?? 0, toolEvents.filter(event => event.safeMetadata['status'] === 'failed').length)
 }
 
 function summarize(
@@ -366,6 +376,7 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
     stopReason: terminalMetadata ? metadataString(terminalMetadata, 'stop_reason') : null,
     toolCalls: terminalMetadata ? metadataNumber(terminalMetadata, 'tool_call_count') : null,
     toolResults: terminalMetadata ? metadataNumber(terminalMetadata, 'tool_result_count') : null,
+    toolFailures: countToolFailures(events, terminalMetadata),
     artifactsClaimed,
     artifactsRegistered: artifacts.length,
     inputTokens: terminalMetadata ? metadataNumber(terminalMetadata, 'input_tokens') : null,

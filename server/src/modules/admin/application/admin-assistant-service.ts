@@ -2,7 +2,7 @@ import type { AgentDefinition, UpdateAgentDraftInput, UpdateRuntimeConfiguration
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { redactSensitiveText } from '../../../security/safe-observability.ts'
 import { assertDraftCopyFields, assertDraftCopyPlan, DRAFT_COPY_POLICY } from '../../agent/agent-draft-copy-policy.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
@@ -12,6 +12,7 @@ import type { AdminSkillInstallationService } from '../../skill/admin-skill-inst
 import type { PostgresSkillService } from '../../skill/postgres-skill-service.ts'
 import { continueSkillSource, parseSkillSource, type SkillSource } from '../../skill/skill-source.ts'
 import type { PostgresOperationsService } from './postgres-operations-service.ts'
+import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -251,8 +252,8 @@ export class AdminAssistantService {
   async confirmProposal(userId: string, proposalId: string, proposalSha256: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const proposal = await this.requireProposal(userId, proposalId)
-    if (proposal.proposalSha256 !== proposalSha256) throw new Error('任务提案不存在或已变化，请重新查看')
-    if (proposal.status === 'cancelled') throw new Error('任务提案已取消，请重新发起')
+    if (proposal.proposalSha256 !== proposalSha256) throw notFound('任务提案不存在或已变化，请重新查看')
+    if (proposal.status === 'cancelled') throw stateConflict('任务提案已取消，请重新发起')
     if (proposal.status === 'confirmed' && proposal.delegatedRunId) {
       await this.recordDelegationReply(proposal, proposal.delegatedRunId)
       return this.detail(userId, proposal.sessionId)
@@ -260,7 +261,7 @@ export class AdminAssistantService {
     const [origin] = await this.database<{ status: string }[]>`
       select status from runs where tenant_id = ${tenantId} and id = ${proposal.runId}
     `
-    if (origin?.status !== 'succeeded') throw new Error('管理助手尚未成功完成，请等待或重试')
+    if (origin?.status !== 'succeeded') throw stateConflict('管理助手尚未成功完成，请等待或重试')
     const delegated = await this.orchestration.startAdminRun({
       userId,
       sessionId: proposal.sessionId,
@@ -283,7 +284,7 @@ export class AdminAssistantService {
   async cancelProposal(userId: string, proposalId: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const proposal = await this.requireProposal(userId, proposalId)
-    if (proposal.status === 'confirmed') throw new Error('专用助手已经启动，不能再取消任务提案')
+    if (proposal.status === 'confirmed') throw stateConflict('专用助手已经启动，不能再取消任务提案')
     await this.database`
       update admin_assistant_task_proposals set status = 'cancelled', resolved_at = now()
        where tenant_id = ${tenantId} and id = ${proposal.id} and status = 'pending'
@@ -337,11 +338,11 @@ export class AdminAssistantService {
   async confirmAction(userId: string, actionId: string, planSha256: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const action = await this.requireAction(userId, actionId)
-    if (action.planSha256 !== planSha256 || sha256(canonicalJson(action.plan)) !== planSha256) throw new Error('操作计划不存在或已变化，请重新查看')
+    if (action.planSha256 !== planSha256 || sha256(canonicalJson(action.plan)) !== planSha256) throw notFound('操作计划不存在或已变化，请重新查看')
     if (action.status === 'executed') return this.detail(userId, action.sessionId)
     if (action.status !== 'pending') throw actionConflict(action.status === 'executing' ? '操作计划正在执行，请稍后刷新' : '操作计划已取消或失败，请重新生成')
     const [run] = await this.database<{ status: string }[]>`select status from runs where tenant_id = ${tenantId} and id = ${action.runId}`
-    if (run?.status !== 'succeeded') throw new Error('管理助手尚未成功完成，请等待或重试')
+    if (run?.status !== 'succeeded') throw stateConflict('管理助手尚未成功完成，请等待或重试')
     await this.assertConfirmationBoundary(action)
     try {
       await this.assertActionPrecondition(action.plan)
@@ -432,7 +433,7 @@ export class AdminAssistantService {
   async cancelAction(userId: string, actionId: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const action = await this.requireAction(userId, actionId)
-    if (action.status === 'executing' || action.status === 'executed') throw new Error('操作已经开始或完成，不能取消')
+    if (action.status === 'executing' || action.status === 'executed') throw stateConflict('操作已经开始或完成，不能取消')
     await this.database`
       update admin_assistant_action_plans set status = 'cancelled', resolved_at = now(), updated_at = now()
        where tenant_id = ${tenantId} and id = ${action.id} and status in ('pending', 'failed')
@@ -533,14 +534,14 @@ export class AdminAssistantService {
   private async assertActionPrecondition(plan: StoredActionPlan) {
     if (plan.actionType === 'runtime-update-configuration') {
       const snapshot = await this.operations.getRuntimeMutationSnapshot(plan.before.runtimeId)
-      if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw new Error('Runtime 状态已变化，请重新生成操作计划')
+      if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw stateConflict('Runtime 状态已变化，请重新生成操作计划')
       return
     }
     const current = await this.agents.getMutationSnapshot(plan.before.id)
     const snapshot = plan.actionType === 'agent-set-status'
       ? { id: current.agent.id, status: current.agent.status, version: current.agent.version, revision: current.revision }
       : agentSnapshot(current.agent, current.revision)
-    if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw new Error('Agent 配置已变化，请重新生成操作计划')
+    if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw stateConflict('Agent 配置已变化，请重新生成操作计划')
   }
 
   private async executeAction(plan: StoredActionPlan, userId: string) {
@@ -589,7 +590,7 @@ export class AdminAssistantService {
       select id from sessions
        where tenant_id = ${tenantId} and id = ${sessionId} and created_by = ${userId} and audience = 'admin' and status = 'active'
     `
-    if (!row) throw new Error('管理对话不存在或不可访问')
+    if (!row) throw accessDenied('管理对话不存在或不可访问')
     return row
   }
 
@@ -602,7 +603,7 @@ export class AdminAssistantService {
        where r.tenant_id = ${tenantId} and r.id = ${runId} and r.requested_by = ${userId}
          and s.created_by = ${userId} and s.audience = 'admin'
     `
-    if (!row) throw new Error('管理助手运行不存在或不可访问')
+    if (!row) throw accessDenied('管理助手运行不存在或不可访问')
     return row
   }
 
@@ -658,7 +659,7 @@ export class AdminAssistantService {
        where p.tenant_id = ${tenantId} and p.id = ${proposalId} and p.created_by = ${userId}
          and s.created_by = ${userId} and s.audience = 'admin' and s.status = 'active'
     `
-    if (!row) throw new Error('管理任务提案不存在或不可访问')
+    if (!row) throw accessDenied('管理任务提案不存在或不可访问')
     return row
   }
 
@@ -672,7 +673,7 @@ export class AdminAssistantService {
        where a.tenant_id = ${tenantId} and a.id = ${actionId} and a.created_by = ${userId}
          and s.created_by = ${userId} and s.audience = 'admin' and s.status = 'active'
     `
-    if (!row) throw new Error('管理操作计划不存在或不可访问')
+    if (!row) throw accessDenied('管理操作计划不存在或不可访问')
     return row
   }
 
@@ -734,8 +735,8 @@ export class AdminAssistantService {
 }
 
 function assertMessageInput(input: { sessionId: string; message: string; requestId: string }) {
-  if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw Object.assign(new Error('消息长度必须为 1～20000 个字符'), { status: 422, code: 'invalid_message' })
-  if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw new Error('请求标识无效')
+  if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw new RequestError(422, 'invalid_message', '消息长度必须为 1～20000 个字符')
+  if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw invalidRequest('请求标识无效')
 }
 
 function purposeFor(kind: AdminTaskKind): AdminTaskProposal['purpose'] {
@@ -807,7 +808,7 @@ function presentActionPlan(plan: StoredActionPlan): { before: Record<string, unk
 function parseManifestSource(value: string | undefined) {
   if (!value) return null
   try { return JSON.parse(value) as SkillSource }
-  catch { throw new Error('Skill 来源快照无效') }
+  catch { throw invalidRequest('Skill 来源快照无效') }
 }
 
 function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot {
@@ -950,5 +951,5 @@ function omitKeys(input: object, keys: string[]): Record<string, unknown> {
 }
 
 function actionConflict(message: string) {
-  return Object.assign(new Error(message), { status: 409, code: 'state_conflict' })
+  return new RequestError(409, 'state_conflict', message)
 }

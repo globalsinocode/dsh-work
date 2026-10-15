@@ -3,6 +3,7 @@ import { AiHubClient } from './ai-hub-client.ts'
 import { OidcProviderClient } from './oidc-client.ts'
 import { IdentitySessionRepository } from './session-repository.ts'
 import type { DirectoryUser, OidcIdentityConfiguration } from './types.ts'
+import { dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const serviceScopes = ['ai_hub.identity', 'platform.directory.read']
 
@@ -39,7 +40,7 @@ export class IdentityDirectorySyncService {
     const environment = this.configuration.environment
     if (input.full) await this.repository.resetDirectoryCursor(applicationId, environment)
     const run = await this.repository.beginDirectorySync(applicationId, environment)
-    if (!run) throw new Error('员工目录同步当前状态为运行中，请稍后刷新状态')
+    if (!run) throw stateConflict('员工目录同步当前状态为运行中，请稍后刷新状态')
 
     let cursor = run.cursor
     let synchronizedUsers = 0
@@ -72,7 +73,7 @@ export class IdentityDirectorySyncService {
           throw new Error('AI Hub 员工目录游标没有向前推进')
         }
         cursor = nextCursor
-        if (pageNumber === 9_999) throw new Error('AI Hub 员工目录分页超过安全上限')
+        if (pageNumber === 9_999) throw invalidRequest('AI Hub 员工目录分页超过安全上限')
       }
       await this.repository.finishDirectorySync({
         applicationId,
@@ -149,7 +150,7 @@ function requireGrantedScopes(scope: string, required: string[]) {
   const granted = new Set(scope.split(/\s+/).filter(Boolean))
   const missing = required.filter(item => !granted.has(item))
   if (missing.length > 0) {
-    throw new Error(`AI Hub 服务令牌不可用：缺少目录 Scope ${missing.join('、')}`)
+    throw dependencyUnavailable(`AI Hub 服务令牌不可用：缺少目录 Scope ${missing.join('、')}`)
   }
 }
 

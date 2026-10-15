@@ -3,10 +3,11 @@ import { randomUUID } from 'node:crypto'
 import type { ChatMessage, RunStep, TaskRun, TaskRunError } from '../../../domain/types.ts'
 import { deriveTaskResult, type TaskResult, type TaskResultEvidence, type TaskResultOutcome } from '../../../domain/task-result.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import type { JsonObject, RunState } from '../../run/run-types.ts'
+import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -148,6 +149,8 @@ interface ArtifactRow {
   sizeBytes: string | number
   createdAt: Date
   workspaceId: string
+  fileId: string
+  canReference: boolean
 }
 
 interface SourceRow {
@@ -356,7 +359,7 @@ export class PostgresConversationRepository {
            and status in ('queued', 'running', 'waiting', 'cancel_requested')
          limit 1
       `
-      if (activeRun) throw new Error('对话当前状态不能删除：仍有运行正在执行，请先停止当前运行')
+      if (activeRun) throw stateConflict('对话当前状态不能删除：仍有运行正在执行，请先停止当前运行')
 
       await transaction`
         update sessions set status = 'archived', last_active_at = now()
@@ -859,6 +862,12 @@ export class PostgresConversationRepository {
     const artifacts = await this.database<Array<ArtifactRow & { sourceRunId: string; sourceAttemptId: string | null }>>`
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             f.id as "fileId",
+             (f.scan_status = 'clean' and f.removed_at is null and exists (
+               select 1 from file_extractions fe
+                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+             )) as "canReference",
              av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1196,7 +1205,13 @@ export class PostgresConversationRepository {
     const artifacts = row.currentAttemptId
       ? await this.database<ArtifactRow[]>`
           select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
-                 f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId"
+                 f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+                 f.id as "fileId",
+                 (f.scan_status = 'clean' and f.removed_at is null and exists (
+                   select 1 from file_extractions fe
+                    where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                      and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+                 )) as "canReference"
             from artifact_versions av
             join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
             join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -1331,6 +1346,8 @@ function mapArtifactRow(artifact: ArtifactRow, runId: string) {
     createdAt: formatDateTime(artifact.createdAt),
     runId,
     workspaceId: artifact.workspaceId,
+    fileId: artifact.fileId,
+    canReference: artifact.canReference,
     summary: '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
   }
 }
@@ -1452,12 +1469,25 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   }
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
-    .map((event, index, visibleEvents) => ({
+    .map((event, index, visibleEvents) => event.eventType === 'tool.completed' ? toolStep(event) : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
     }))
+}
+
+/** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
+function toolStep(event: EventRow): RunStep {
+  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const outcome = event.safeMetadata['status']
+  return {
+    id: event.id,
+    title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
+    detail: event.displayMessage ?? '工具调用已结束。',
+    status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
+    ...(toolName ? { tool: toolName } : {}),
+  }
 }
 
 function eventTitle(eventType: string) {

@@ -8,35 +8,25 @@
 pnpm install --frozen-lockfile
 ```
 
-### 页面与业务原型
+### 浏览器冒烟（P0）
 
-不需要 AI Hub、PostgreSQL 或 DSH。以下变量会覆盖已有 `.env` 中的对应值，避免误连完整运行环境：
-
-```bash
-NODE_ENV=development DSH_WORK_AUTH_MODE=prototype DSH_WORK_DATABASE_URL='' DSH_WORK_SERVER_HOST=127.0.0.1 pnpm dev:all
-```
-
-默认浏览器冒烟自动使用原型身份、内存数据和独立端口（员工端 4274、管理端 4280、后端 4290），覆盖 `.env` 的数据库与身份配置，不需要先启动数据库：
+默认浏览器冒烟由测试专用服务 [`scripts/testing/p0-smoke-server.ts`](../../scripts/testing/p0-smoke-server.ts) 提供接口：内存假数据和测试身份位于 `server/src/testing/`，应用入口 `server/src/main.ts` 不引用它们（`pnpm verify` 的安全检查会拦截）。冒烟使用独立端口（员工端 4274、管理端 4280、后端 4290），不读取 `.env` 的数据库与身份配置，不需要先启动数据库：
 
 ```bash
 pnpm test:e2e
 ```
 
-测试不复用已有服务；测试端口占用时会报错。需要换端口可同时指定 `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT`、`DSH_WORK_SERVER_PORT`，测试会自动同步页面及 API 地址。以下是普通 `pnpm dev:all` 的默认开发入口：
+测试不复用已有服务；测试端口占用时会报错。需要换端口可同时指定 `DSH_WORK_WORKBENCH_PORT`、`DSH_WORK_ADMIN_PORT`、`DSH_WORK_SERVER_PORT`，测试会自动同步页面及 API 地址。冒烟服务只监听 `127.0.0.1`，不属于发布产物。
 
-- 员工端：`http://localhost:4174/workbench`
-- 管理端：`http://localhost:4180/overview`
-- 后端：`http://localhost:4190/health`
+### 开发环境
 
-原型模式使用进程内数据和受控测试身份，不提供完整持久化及真实 Run。重启可能丢失编辑结果，不能用于生产。各服务也可分别用 `pnpm dev:server`、`pnpm dev:workbench`、`pnpm dev:admin` 启动。
-
-### 持久化与真实执行
+服务端没有免数据库的内存模式：启动时必须配置 `DSH_WORK_DATABASE_URL`，所有请求都需要登录。旧的 `DSH_WORK_AUTH_MODE=prototype` 已移除，设置后服务会拒绝启动并提示删除。
 
 1. 准备独立的开发 PostgreSQL 数据库。
 2. 若没有 `.env`，从 [配置模板](../../.env.example) 创建；已有配置只修改所需字段。设置实际 `DSH_WORK_DATABASE_URL`。
 3. 按 [Runtime 指南](../release/dsh-runtime-delivery.md) 配置独立 DSH checkout、精确版本与模型凭据；模板里的开发电脑路径需替换。
-4. 业务开发可继续使用 `DSH_WORK_AUTH_MODE=prototype`；正式认证移除该变量，按 [独立登录指南](../release/local-authentication.md) 初始化账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。正式认证需要数据库。
-5. 执行 `pnpm dev:all`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
+4. 不设置 `DSH_WORK_AUTH_MODE`。按 [独立登录指南](../release/local-authentication.md) 初始化首个管理员账号；AI Hub 按 [接入指南](../release/ai-hub-sso-integration.md) 配置后自动可用。
+5. 执行 `pnpm dev:all`，默认入口为员工端 `http://localhost:4174/workbench`、管理端 `http://localhost:4180/overview`、后端 `http://localhost:4190/health`。服务启动会自动运行 SQL 迁移并预检 DSH/Python；执行能力故障隔离见 [内部契约](internal-ports.md#执行能力故障隔离c9)；也可单独执行 `pnpm --filter @dsh-work/server db:migrate`。
 
 使用 Bearer 认证的 MCP Connector 前，开发和生产都必须配置 `DSH_CREDENTIAL_MASTER_KEY`。执行 `openssl rand -base64 32` 生成 32 字节 Base64 密钥，并设置 `DSH_CREDENTIAL_MASTER_KEY_ID`（默认 `v1`）。密钥不进入 PostgreSQL 或 Git；数据库只保存 AES-256-GCM 密文、随机 nonce、认证标签和密钥版本。备份或恢复数据库时必须同时通过独立安全渠道备份或恢复对应主密钥，否则已有 Token 无法解密。
 
@@ -47,15 +37,21 @@ pnpm test:e2e
 
 不要把生产 `runtime.env` 直接复制到本地，也不要把本地 `.env` 当作生产模板。两者的 DSH 路径、版本锁、认证入口和端口约束都不同。
 
-只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；原型身份不能证明生产权限正确。生产禁止回退到 Prototype。
+只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；冒烟测试身份不能证明生产权限正确。
 
 ## 自动化验证
 
-统一质量入口是 `pnpm ci:check`，具体脚本以 [package.json](../../package.json)、[服务端脚本](../../server/package.json) 和 [CI 工作流](../../.github/workflows/ci.yml) 为准。
+统一质量入口是 `pnpm ci:check`（= `pnpm ci:static` + `pnpm ci:unit`），具体脚本以 [package.json](../../package.json)、[服务端脚本](../../server/package.json) 和 [CI 工作流](../../.github/workflows/ci.yml) 为准。CI 拆成四个并行 Job：`static`（部署配置、静态检查、类型、lint、构建）、`unit`（服务端与双前端单测）、`integration`（全部 PostgreSQL 集成套件）、`browser`（P0 冒烟与各 P1 浏览器旅程）。
+
+服务端测试按文件名自动归类，不再需要逐个登记：`*.integration.test.ts` 属于集成测试，其余 `*.test.ts`（含 `server/config` 下的 `*.test.js`）属于单元测试。新增测试文件放对位置、用对后缀即可进入 CI；使用测试数据库的文件必须以 `.integration.test.ts` 结尾，`pnpm verify` 会检查。
+
+接口文档 `docs/development/openapi-{admin,workbench,auth,mobile-h5}.json` 由单元测试 `server/src/http/openapi-coverage.test.ts` 与代码逐条比对：`main.ts` 经 `register*Routes` 注册的每个接口都必须写进对应文档，文档里的每个操作都必须有实际路由（参数名不同视为同一路径；`/health*` 探针除外）。新增或删除接口时同步修改文档，否则 `pnpm test:unit` 失败；`main.ts` 不得在路由函数之外直接注册接口。
 
 | 改动范围 | 主要验证命令 |
 | --- | --- |
 | 完整本地质量门禁 | `pnpm ci:check` |
+| 服务端单元测试（全部或按目录） | `pnpm test:unit`、`pnpm test:unit src/modules/run` |
+| 服务端集成测试（全部或按目录） | `pnpm test:integration`、`pnpm test:integration src/http` |
 | 文档、契约与架构 | `pnpm verify`、`pnpm check:architecture` |
 | 类型、UI 与代码规范 | `pnpm typecheck`、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
@@ -67,7 +63,7 @@ pnpm test:e2e
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 包、发布与 Runtime 契约测试 |
-| Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入原型冒烟） |
+| Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |
 | Agent 定义、默认工具与 MCP 范围 | `pnpm test:agent-package`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：
@@ -77,7 +73,7 @@ pnpm test:e2e
 - `runtime`：版本锁、环境模板、生产兼容限制与探针入口。
 - `security`：身份与授权边界、子进程凭据隔离及安全迁移约束。
 
-历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 测试命令继续保留并接入 CI。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
+历史 `verify:m*` 命令已替换为这个入口；函数名、页面文案等重复字符串校验由对应行为测试覆盖。原有 `test:m*` 等具名测试命令继续保留，便于针对性运行；CI 统一使用按文件名归类的 `test:unit` 与 `test:integration`，不再逐个登记。静态检查不代表行为测试成功；`pnpm test:scripts` 验证检查器的拒绝场景和探针流程，不连接 AI Hub、数据库或真实模型。
 
 ### scripts 目录约定
 
@@ -98,7 +94,7 @@ PostgreSQL 集成测试必须使用专用可丢弃测试库，禁止使用开发
 DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:5432/dsh_work_test' pnpm test:sso:integration
 ```
 
-其他 `test:*:integration` 使用同一测试变量，按修改模块选择。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 另启动 PostgreSQL Service、运行各集成套件，再执行 E2E。
+`pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
 
 PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现与自动生效、全部 Agent 默认可用、已准备 Attempt 的能力摘要漂移、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
@@ -106,7 +102,7 @@ PF-06 受控 Agent 委派使用 `pnpm test:pf06:integration`，在一次性数�
 
 PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-06 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
 
-默认 `pnpm test:e2e` 始终新建上述 P0 原型服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
+默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
 ## 必测场景与数据
 
@@ -142,4 +138,4 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ### 个人工作闭环增量
 
-[批次 3 规则](review-batch03.md) 与 [D12 实测证据](review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
+[批次 3 规则](review-batch03.md) 与 [D12 实测证据](../history/reviews/review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。

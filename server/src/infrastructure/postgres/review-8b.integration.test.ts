@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { Router } from '../../http/router.ts'
 import { registerSkillRoutes } from '../../http/admin/skill-routes.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -15,19 +15,20 @@ import { PostgresAuthorizationService } from '../../modules/authorization/postgr
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService, type RuntimeSkillConfiguration } from '../../modules/skill/postgres-skill-service.ts'
-import { FileSystemSkillArtifactStore } from '../../modules/skill/file-system-skill-artifact-store.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { parseSkillPackage } from '../../modules/skill/skill-package.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
-let db: ThrowawayDatabase, store: FileSystemSkillArtifactStore, directory: string
+let db: ThrowawayDatabase, store: SkillArtifactStore, directory: string
 let service: AdminSkillInstallationService, runs: PostgresRunRepository
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_8b', maxConnections: 5 })
   directory = await mkdtemp(join(tmpdir(), 'dsh-work-review-8b-'))
-  store = new FileSystemSkillArtifactStore(directory)
+  store = new SkillArtifactStore(new LocalObjectStorage(directory, { fileMode: 0o400 }))
   runs = new PostgresRunRepository(db.client)
   service = new AdminSkillInstallationService(db.client, {} as RunOrchestrationService,
     new PostgresAuthorizationService(db.client), {} as PostgresToolConnectorService)
@@ -163,7 +164,7 @@ test('scenario evidence cannot be written without a concrete Run and Attempt', a
 test('admin trial API forwards immutable scenarios and rejects malformed or unauthorized input', async () => {
   const item = await fixture()
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     return request.headers['x-test-employee'] === 'true' ? { ...identity, userId: 'U00001', permissions: [] } : identity
   } })
   registerSkillRoutes(router, item.skills)

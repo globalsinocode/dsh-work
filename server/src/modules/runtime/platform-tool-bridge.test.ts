@@ -43,6 +43,34 @@ test('all governed platform tool contracts compile in strict JSON Schema mode', 
     'only the application staging completes; review and publication are separate human actions')
 })
 
+test('EX-01 the bridge records each tool request outcome with its typed error code only', async () => {
+  const bridge = await createPlatformToolBridge({ sample: {
+    contract: baseContract,
+    handler: async input => {
+      if (input['value'] === 'boom') throw toolPreconditionFailed('前置条件不满足')
+      return { result: 'ok' }
+    },
+  } }, 3)
+  try {
+    assert.equal((await call(bridge.socket, 'sample', { value: 'a' }, 'call-1')).status, 200)
+    assert.equal((await call(bridge.socket, 'sample', { value: 'boom' })).status, 422)
+    assert.equal((await call(bridge.socket, 'sample', {}, 'call-3')).status, 422)
+    assert.equal((await call(bridge.socket, 'sample', { value: 'a' })).status, 429)
+    assert.equal((await call(bridge.socket, 'missing', { value: 'a' })).status, 403)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(bridge.outcomes(), [
+      { toolName: 'sample', callId: 'call-1', errorCode: null },
+      { toolName: 'sample', callId: null, errorCode: 'TOOL_PRECONDITION_FAILED' },
+      { toolName: 'sample', callId: 'call-3', errorCode: 'TOOL_INPUT_INVALID' },
+      { toolName: 'sample', callId: null, errorCode: 'TOOL_CALL_LIMIT_EXCEEDED' },
+      { toolName: 'missing', callId: null, errorCode: 'TOOL_PERMISSION_DENIED' },
+    ])
+    assert.ok(!JSON.stringify(bridge.outcomes()).includes('boom'), 'parameters never reach the outcome summary')
+  } finally {
+    await bridge.close()
+  }
+})
+
 test('Agent data outputs require durable record references and distinguish trial-only replies', () => {
   const create = compileToolContract(platformToolContracts.data_create)
   assert.equal(create.output({ recordId: 'r1', recordVersionId: 'v1', version: 1 }), true)
@@ -152,6 +180,16 @@ test('platform bridge validates input and output with stable error envelopes', a
     assert.equal(overLimit.status, 429)
     assert.equal(requireError(overLimit.body).code, 'TOOL_CALL_LIMIT_EXCEEDED')
     assert.equal(calls, 2, '超过调用上限时不能进入处理器')
+  } finally { await bridge.close() }
+})
+
+test('platform bridge decodes UTF-8 text split across request chunks', async () => {
+  const bridge = await createPlatformToolBridge({ sample: {
+    contract: baseContract,
+    handler: async input => ({ result: input['value'] }),
+  } }, 3)
+  try {
+    assert.deepEqual(await callInTwoChunks(bridge.socket, 'sample', { value: '生产计划' }, '产'), { status: 200, body: { result: '生产计划' } })
   } finally { await bridge.close() }
 })
 
@@ -423,6 +461,26 @@ function call(socketPath: string, tool: string, input: unknown, callId?: string)
     })
     req.on('error', reject)
     req.end(body)
+  })
+}
+
+/** Sends the JSON body as two separate writes, cut inside the UTF-8 bytes of `splitInside`. */
+function callInTwoChunks(socketPath: string, tool: string, input: unknown, splitInside: string): Promise<{ status: number; body: ToolHttpBody }> {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(input))
+    const cut = body.indexOf(Buffer.from(splitInside)) + 1
+    const req = request({ socketPath, path: `/tools/${tool}`, method: 'POST', headers: {
+      'Content-Type': 'application/json', 'Content-Length': body.length,
+    } }, response => {
+      let text = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { text += chunk })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: JSON.parse(text) as ToolHttpBody }))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.flushHeaders()
+    req.write(body.subarray(0, cut), () => { setTimeout(() => req.end(body.subarray(cut)), 20) })
   })
 }
 

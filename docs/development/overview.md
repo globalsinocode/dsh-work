@@ -1,9 +1,9 @@
 # dsh-work 产品与系统架构总览
 
 **文档状态：** 当前架构基线<br>
-**更新日期：** 2026-09-08<br>
+**更新日期：** 2026-10-15<br>
 **技术形态：** 两个独立 Vue 应用 + 一个 Node.js 模块化单体 + PostgreSQL + 独立 DSH Worker 进程<br>
-**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）或受控原型身份（仅本地演示）
+**身份来源：** 独立账号密码（`local`）、AI Hub OIDC（`oidc`）；测试身份只存在于测试代码中
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
@@ -50,7 +50,7 @@ MVP 明确不包含：
 
 ### 3.1 逻辑边界稳定，物理部署简单
 
-员工工作台、管理后台、身份、Workspace、治理、运行、Runtime Adapter、Model/Connector Gateway、Artifact 和审计是清晰的逻辑边界，但不等于独立服务。MVP 和生产默认都保持一个代码库、一个 Node.js 业务部署单元和一套共享业务事实。
+员工工作台、管理后台、身份、Workspace、治理、运行、Runtime Adapter、Model 治理、MCP Connector 控制面、Artifact 和审计是清晰的逻辑边界，但不等于独立服务。MVP 和生产默认都保持一个代码库、一个 Node.js 业务部署单元和一套共享业务事实。
 
 只有以下边界采用独立运行体：
 
@@ -60,7 +60,7 @@ MVP 明确不包含：
 
 ### 3.2 版本不可变、运行可追溯
 
-已发布 Agent Version、Skill Version、Tool Version 和 Attempt Manifest 不可覆盖。每个 Run/Attempt 固定实际使用的版本、模型路由、权限范围、输入文件和来源快照，重试创建新 Attempt，不修改历史 Attempt。
+已发布 Agent Version、Skill Version、Tool Version 和 Attempt Manifest 不可覆盖。每个 Run/Attempt 固定实际使用的版本、模型路由快照、权限范围、输入文件和来源快照，重试创建新 Attempt，不修改历史 Attempt。
 
 ### 3.3 只读与最小权限优先
 
@@ -78,7 +78,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 - **DSH 持有单次 Attempt 内的执行循环。** 模型交互、工具调用编排与循环上下文由 DSH 负责；平台复用现有 Runtime Adapter 处理启动、取消、超时、事件转换和进程回收。
 - **平台持有业务事实和工具实现。** 身份与权限、会话和安装记录、队列调度、Attempt 重试、断线恢复、幂等及审计由平台负责。下载、解包、校验、入库和版本发布是受控业务工具；其确定性流程与事务恢复不属于另一套 Agent Loop。管理端安装工具按管理身份授权，不扩大员工 Agent 的工具权限。
 - **Agent 委派仍是同一链路的子任务。** `delegate_agent` 只创建受控的无 Session 子 Task/Run；目标固定到已发布 Agent Version，子 Attempt 仍由 Runtime Adapter 启动 DSH。平台只负责父子关系、权限上限、根预算、容量、取消、恢复和结果契约，不在父子 Task 之间运行模型编排循环。
-- **模型治理不承担 Agent 执行。** Model 模块及 Gateway 可承担路由、凭据引用、计量和 DSH 调用所需的协议传输，不能自行发起一条绕过 DSH 的业务 Agent 路线。
+- **模型治理不承担 Agent 执行。** Model 模块只承担路由、凭据引用和计量等治理职责，不能自行发起一条绕过 DSH 的业务 Agent 路线；当前路由也尚未传给 DSH（见 4.4）。
 - **DSH 不可用时禁止绕过。** 需要 Agent 的对话和试运行明确报告不可用，不能自动降级到直接调用模型。已有安装记录和确定性平台管理操作可按自身权限继续工作；这不代表 Agent 仍可运行。
 - **扩展现有链路。** 安装助手所需工具调用或资源能力不足时，应扩展现有 Run/Runtime 契约和 DSH 能力。Runtime 可替换表示通过既有端口统一迁移执行内核，不表示允许各业务场景自行选择或维护第二套引擎。Mock Runtime 仅供测试与原型使用，不是生产回退方案。
 
@@ -102,31 +102,35 @@ flowchart TB
   subgraph Access[接入与身份]
     WAPI[Workbench API / SSE]
     AAPI[Admin API]
-    Auth[AI Hub OIDC / 员工目录]
+    Local[独立账号密码<br/>默认启用]
+    Auth[AI Hub OIDC / 员工目录<br/>配置后启用]
   end
 
   subgraph App[dsh-work 模块化单体]
     Workspace[Workspace / Task / Session / File / Artifact]
-    Authorization[本地身份映射 / 角色 / 权限 / 数据范围]
-    Governance[Agent / Skill / Tool / Model 治理]
+    Authorization[本地角色 / 权限 / 数据范围]
+    Governance[Agent / Skill / Tool / Model / MCP Connector 治理]
     Orchestration[Run / Attempt / Scheduler / Audit]
     Runtime[Runtime Adapter / Run Event]
-    Gateway[Model / Connector / Artifact 边界]
+    Bridge[Platform Tool Bridge]
   end
 
   subgraph Execution[执行面]
     DSH[每 Attempt 独立 DSH ACP Worker]
+    Sandbox[Python Skill 沙箱容器]
   end
 
-  subgraph Dependencies[基础设施与企业依赖]
+  subgraph Dependencies[基础设施与外部依赖]
     PG[(PostgreSQL)]
-    Models[批准的模型]
-    Systems[企业知识 / ERP / MES]
-    Storage[本地受控目录 / NAS / 对象存储]
+    Storage[本地数据目录<br/>文件 / Skill / Attempt]
+    Models[模型<br/>DSH Profile 固定，凭据在 DSH_HOME]
+    MCP[MCP 服务<br/>企业知识 / 业务系统]
   end
 
   WB --> WAPI
   Admin --> AAPI
+  Local --> WAPI
+  Local --> AAPI
   Auth --> WAPI
   Auth --> AAPI
   WAPI --> Authorization
@@ -136,16 +140,19 @@ flowchart TB
   AAPI --> Governance
   AAPI --> Orchestration
   Workspace --> PG
+  Workspace --> Storage
   Authorization --> PG
   Governance --> PG
   Orchestration --> PG
   Orchestration --> Runtime
   Runtime --> DSH
-  DSH --> Gateway
-  Gateway --> Models
-  Gateway --> Systems
-  Gateway --> Storage
+  DSH --> Models
+  DSH -->|平台解密的凭据| MCP
+  DSH -.->|平台内置工具| Bridge
+  Bridge --> Sandbox
 ```
+
+DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网关。平台控制的是 DSH 能用什么：工具白名单、工作区路径、执行中的授权复核和逐调用审计。平台内置工具与 Python 沙箱经 Platform Tool Bridge（Unix Socket）回到服务端执行。
 
 ### 4.1 体验层
 
@@ -174,7 +181,7 @@ flowchart TB
 
 ### 4.4 平台能力层
 
-- Model 模块保存 Provider、模型和路由策略，只持久化凭据引用；
+- Model 模块保存 Provider、模型和路由策略，只持久化凭据引用。**当前路由只记录、不生效**：DSH ACP 使用 Profile 固定的模型（`deepseek-v4-pro`），凭据由 DSH 在 `DSH_HOME` 中管理；平台路由只写入 Attempt 快照，不决定实际调用的模型；Manifest 声明了模型能力要求的运行会被拒绝（`MODEL_CAPABILITY_UNAVAILABLE`）。让路由真正生效需要把它作为每次 Attempt 的配置传给 DSH；
 - Connector/Tool 模块保存版本、Schema、风险、角色、数据范围和健康状态；
 - Artifact/Content 模块保存文件与成果元数据、不可覆盖版本、权限和存储键；
 - 审计与运营投影不保存提示词、回答正文、文件内容或密钥正文。
@@ -198,14 +205,7 @@ flowchart LR
 
 目标 MVP 以公司内网 Mac mini 为单节点部署基线：Reverse Proxy 终止 HTTPS，两个前端作为独立静态资源发布，Node.js 模块化单体连接 PostgreSQL，并按活动 Attempt 启动 DSH Worker。每个目标环境都需验证硬件、存储、备份、监控和网络；部署模板不能证明线上状态。
 
-本地开发允许两种模式：
-
-| 模式 | 数据 | 身份 | Runtime | 用途 |
-|---|---|---|---|---|
-| 原型模式 | 进程内数据 | 受控原型身份 | 不启动真实 Run | 页面预览、确定性 E2E |
-| 完整链路 | PostgreSQL | AI Hub OIDC 或受控联调身份 | 固定版本 DSH ACP | 集成、UAT、预生产验证 |
-
-原型模式只能用于开发和演示，不能作为真实企业数据试点的安全基线。
+本地开发与生产使用同一条链路：PostgreSQL、账号登录（独立账号或 AI Hub OIDC）和固定版本 DSH ACP，没有免数据库的内存模式。确定性的 P0 浏览器冒烟由测试专用服务提供内存数据与测试身份（`server/src/testing/`），应用入口不引用这些代码。
 
 ## 6. 核心运行流程
 
@@ -229,7 +229,7 @@ flowchart LR
 | Product Session | 用户可继续的业务对话 | 不等于 DSH Runtime Session；锁定 Agent Version，可选锁定一个已发布 Skill Version |
 | Task | 一次来自会话、自动任务、API、事件、系统或受控委派的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属；委派子 Task 共用根预算范围 |
 | Run | 一次用户任务 | 幂等创建；拥有一个或多个按序 Attempt |
-| Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由、权限、文件与来源快照；终态不可回退 |
+| Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由快照、权限、文件与来源快照；终态不可回退 |
 | Run Event | 面向产品的标准运行事件 | 先落库后发送；稳定 ID 与全 Run 顺序；不暴露隐藏推理 |
 | Agent/Skill/Tool Version | 已发布治理版本 | 发布后不可修改或删除；运行引用精确版本 |
 | File/Artifact Version | 输入与交付成果 | 存储键不使用用户文件名；版本不可覆盖；Artifact 明确归属 Session 或 Task，下载再次鉴权 |
@@ -254,7 +254,7 @@ flowchart LR
 | 文件、成果、对话和工作空间 | `server/src/modules/workbench` |
 | PostgreSQL 与迁移 | `server/src/infrastructure/postgres`、`server/migrations` |
 
-依赖方向由 `scripts/check-architecture.mjs` 检查：应用可以依赖共享包，两个前端不能互相依赖；服务端模块通过明确端口协作，不允许前端引用服务端领域类型。
+`scripts/check-architecture.mjs` 检查前端边界（应用可以依赖共享包，两个前端不能互相依赖，前端不能引用服务端领域类型），并经 `scripts/checks/server-dependencies.mjs` 检查服务端分层：`domain` 只依赖自身，业务模块与基础设施不得依赖 HTTP 层或 `main.ts`，生产代码不得引用 `server/src/testing`，模块之间不得形成循环依赖（基线已清零，新增循环会使 `pnpm lint` 失败）。跨模块协作优先依赖消费方定义的端口，例如审计写入 `AuditTrail`、发起 Run 的 `AdminRunLauncher` / `ReleaseTrialRunner`、存储 `ObjectStorage`。Run 编排按职责拆在 `server/src/modules/run/orchestration/`：调度器、事件记录、预算、执行授权闸门、Attempt 派发与各场景入口（管理助手、发布试运行、自动任务/主动任务/委派），`RunOrchestrationService` 保留员工入口并作为对外门面。 `pnpm verify` 另外检查应用入口 `main.ts` 不引用 `server/src/testing` 中的测试身份和冒烟数据。
 
 ## 9. 身份、安全与数据边界
 
@@ -267,11 +267,12 @@ flowchart LR
 - 模型 Provider 凭据保存外部引用；MCP Bearer Token 由平台使用环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
 - 文件执行扩展名、MIME、大小、签名、路径和工作空间校验，正式环境仍需企业级恶意文件扫描；
 - Tool/Connector 默认只读、固定 Schema、超时、字段过滤并记录脱敏审计；
+- HTTP 状态码只来自类型化错误（`server/src/domain/request-errors.ts`、`AuthorizationDeniedError` 等），不按错误消息文字推断；未类型化的错误一律返回 500 和链路编号，授权拒绝只按类型识别；
 - L2 数据、模型出口、日志保留、备份和销毁参数必须在试点前完成企业评审。
 
 ## 10. 当前边界与独立开发
 
-- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；开发环境可显式选择 `prototype`，独立账号登录也无需启动 AI Hub。
+- Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
 - Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。实现边界见 [管理助手方案](../design/admin-assistant-plan.md)与[对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
 - 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
 - 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
@@ -290,10 +291,11 @@ flowchart LR
 
 1. 先完成 AI Hub 联调、企业 Connector/知识源、目标主机、存储、备份、监控和 UAT；
 2. 容量不足时先测量瓶颈；增加 Node.js 实例或多主机 Worker 前实现并验证租约、抢占、事件归属和失联恢复；
-3. 文件规模增长时将本地存储适配器替换为 NAS/对象存储，不改变业务对象；
-4. 跨应用治理复用达到门槛后，通过稳定治理端口把 Agent、Skill、Tool、Model、发布和汇总治理迁入 AI Hub；
-5. Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态继续由 dsh-work 持有；
-6. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。
+3. 上传文件、解析文本、成果与 Skill 文件经 `ObjectStorage` 端口（`server/src/domain/object-storage.ts`）读写，当前实现为本地目录 `LocalObjectStorage`；文件规模增长时新增 NAS/对象存储实现即可，不改变业务对象；Attempt 工作目录属于 Runtime 主机本地，不经此端口；
+4. 企业知识按句切成不超过 800 字的分段，写入时由数据库生成中文二元组与英文词检索项并建 GIN 索引（迁移 0081）；检索在同一条 SQL 里先做角色、工作空间、Data Scope 与发布状态过滤，再按关键词、标题与正文命中打分，每篇取最相关分段作为摘录。语义（向量）检索需要另行评估嵌入服务后再接入；
+5. 跨应用治理复用达到门槛后，通过稳定治理端口把 Agent、Skill、Tool、Model、发布和汇总治理迁入 AI Hub；
+6. Workspace、产品 Session、Run/Attempt、审批实例、文件、成果和高频运行状态继续由 dsh-work 持有；
+7. 只有独立扩缩容、故障域、团队所有权和数据边界同时成立时，才评审拆分部署单元。
 
 ## 12. 相关文档
 

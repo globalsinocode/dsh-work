@@ -29,6 +29,7 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructu
 import { Router } from './router.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -781,6 +782,16 @@ async function createPublishedAgent(input: {
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}
   `
+  // Tools are authorized against the Agent's own execution principal, not the
+  // triggering member: grant it the same role and scope the version declares.
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${`principal-agent-${input.id}`}, 'role-employee')
+  `
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${input.id}`}, 'enterprise:authorized')
+  `
   return { id: input.id, versionId }
 }
 
@@ -934,7 +945,7 @@ before(async () => {
   authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
   agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
-  const content = new PostgresContentService(database, storageRoot, authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)
   const orchestration = new RunOrchestrationService(

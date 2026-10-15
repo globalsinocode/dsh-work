@@ -1,5 +1,5 @@
 import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import type { PostgresWorkspaceService } from './postgres-workspace-service.ts'
 import type { WorkspaceActivityKind, WorkspaceActivityObjectType } from './workspace-activity-writer.ts'
 

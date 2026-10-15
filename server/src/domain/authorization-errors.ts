@@ -1,3 +1,5 @@
+import { RequestError } from './request-errors.ts'
+
 /**
  * Typed authorization denial (1A-T5).
  *
@@ -11,47 +13,25 @@
  * Prefer this over a bare `Error` for every authorization decision that can
  * deny a request or revoke a run.
  */
-export class AuthorizationDeniedError extends Error {
-  readonly status = 403
-  readonly code = 'permission_denied'
-
-  constructor(message: string) {
-    super(message)
+export class AuthorizationDeniedError extends RequestError {
+  /**
+   * An authorization decision is a denial (the revocation sweep cancels runs on it)
+   * whatever the HTTP answer. A few configuration checks deny execution but answer
+   * the editing request as invalid input or a missing object; they pass `http`.
+   */
+  constructor(message: string, http: { status: number; code: string; suggestion?: string } = { status: 403, code: 'permission_denied' }) {
+    super(http.status, http.code, message, http.suggestion)
     this.name = 'AuthorizationDeniedError'
   }
 }
 
-export function authorizationDenied(message: string): AuthorizationDeniedError {
-  return new AuthorizationDeniedError(message)
+export function authorizationDenied(message: string, http?: { status: number; code: string; suggestion?: string }): AuthorizationDeniedError {
+  return new AuthorizationDeniedError(message, http)
 }
 
-/**
- * True only for an explicit authorization denial. The message list is a
- * fallback for the plain-Error denials that predate the typed error; new code
- * should throw `authorizationDenied(...)`.
- */
-const LEGACY_DENIAL_MESSAGES = [
-  '当前用户没有员工工作台使用权限',
-  '当前用户不存在、已停用或所属企业不可用',
-  '当前用户角色不可使用所选 Agent',
-  '当前用户角色不可调用工具',
-  '当前用户已不是该团队空间成员',
-  '当前用户角色为只读',
-  '工作空间不存在、已归档或当前用户不是成员',
-  '工作空间不存在或已归档',
-  '工作空间未配置',
-  '工作空间未授权',
-  'Agent Version 不存在、未发布或所属 Agent 已停用',
-  'Skill 不存在、未发布或已停用',
-  '工具不存在、未发布、不可用或不符合一期只读策略',
-  'Agent 必须显式授权所选 Skill 依赖的工具',
-  '要求未授权的数据范围',
-]
-
+/** True only for an explicit authorization denial, recognised by type, never by wording. */
 export function isAuthorizationDenial(error: unknown): boolean {
-  if (error instanceof AuthorizationDeniedError) return true
-  const message = error instanceof Error ? error.message : ''
-  return LEGACY_DENIAL_MESSAGES.some(fragment => message.includes(fragment))
+  return error instanceof AuthorizationDeniedError
 }
 
 /**
@@ -117,12 +97,9 @@ export async function canReadWorkspaceObject(
  * `authorizationDenied` for 403. Services outside the HTTP layer use this instead of
  * importing `routeValidationFailed` from the router (that would invert the layering).
  */
-export class RequestValidationError extends Error {
-  readonly status = 422
-  readonly code = 'invalid_request'
-
+export class RequestValidationError extends RequestError {
   constructor(message: string) {
-    super(message)
+    super(422, 'invalid_request', message)
     this.name = 'RequestValidationError'
   }
 }

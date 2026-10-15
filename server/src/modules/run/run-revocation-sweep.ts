@@ -1,4 +1,4 @@
-import { isAuthorizationDenial } from '../authorization/authorization-errors.ts'
+import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RunOrchestrationService } from './run-orchestration-service.ts'

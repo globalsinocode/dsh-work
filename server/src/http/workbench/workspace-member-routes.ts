@@ -1,3 +1,4 @@
+import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
 import type { RequestIdentity } from '../../modules/identity/types.ts'
 import {
@@ -15,6 +16,7 @@ import {
   sessionAuthorizationContext,
   type Router,
 } from '../router.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const basePath = '/api/workbench/v1'
 
@@ -135,7 +137,7 @@ export async function requireTeamActor(
     allowArchived,
   })
   if (access.workspaceType !== 'team') {
-    throw new Error(options.teamOnlyMessage ?? '仅支持团队工作空间进行成员管理')
+    throw invalidRequest(options.teamOnlyMessage ?? '仅支持团队工作空间进行成员管理')
   }
   try {
     await authorization.requireTeamRole(workspaceId, identity.userId, allowedRoles, {
@@ -152,9 +154,7 @@ export async function requireTeamActor(
  * raises: missing workspace/membership and role outside the allowed set.
  */
 function isTeamRoleDenial(error: unknown): error is Error {
-  if (!(error instanceof Error)) return false
-  return error.message === '工作空间不存在、已归档或当前用户不是成员'
-    || error.message.startsWith('当前用户角色无权执行此操作')
+  return isAuthorizationDenial(error)
 }
 
 function parseMemberRole(value: unknown): MemberRole {

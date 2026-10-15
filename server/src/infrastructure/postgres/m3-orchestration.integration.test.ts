@@ -11,7 +11,7 @@ import { Router } from '../../http/router.ts'
 import type { PostgresAgentService, RuntimeAgentSnapshot } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { compileRuntimeManifest } from '../../modules/runtime/manifest-compiler.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
@@ -28,9 +28,10 @@ import type {
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresTaskRepository, TaskContractConflictError, taskOperationParameterDigest } from '../../modules/task/postgres-task-repository.ts'
-import { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
+import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -55,7 +56,7 @@ before(async () => {
   runtime = new DeterministicRuntime()
   runs = new PostgresRunRepository(database)
   conversations = new PostgresConversationRepository(database)
-  content = new PostgresContentService(database, `/tmp/dsh-work-m3-test-${randomUUID()}`, new PostgresAuthorizationService(database))
+  content = new PostgresContentService(database, new LocalObjectStorage(`/tmp/dsh-work-m3-test-${randomUUID()}`), new PostgresAuthorizationService(database))
   operations = new PostgresOperationsService(database)
   tasks = new PostgresTaskRepository(database)
   taskQueries = new PostgresTaskQueryService(database, tasks, runs)
@@ -73,7 +74,7 @@ before(async () => {
     { tasks },
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     const header = request.headers['x-test-user-id']
     const userId = Array.isArray(header) ? header[0] : header
     return audience === 'workbench' && userId
@@ -436,6 +437,107 @@ test('validated Runtime output is published once as a downloadable Artifact', as
     assert.equal((await readFile(join(workspaceDirectory, 'output', '生产欠料管理PRD.md'), 'utf8')), '# 生产欠料管理 PRD\n')
   } finally {
     releaseCompletion()
+  }
+})
+
+test('EX-02 a referenced artifact is mounted next turn and a same-named output becomes its next version', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '周报两轮修改' })
+  const turn = async (prompt: string, outputs: Record<string, string>, fileIds: string[] = []) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-continuation-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    for (const [name, body] of Object.entries(outputs)) await writeFile(join(workspaceDirectory, 'output', name), body)
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>((resolve) => { release = resolve })
+    try {
+      const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+      const manifest = attempt!.manifest as unknown as RuntimeManifest
+      await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+      release()
+      return { task: await waitForTask(created.id, 'succeeded'), manifest }
+    } finally {
+      release()
+    }
+  }
+
+  const first = await turn('写一份周报', { '周报.md': '# 周报\r\n第一版\r\n' })
+  const v1 = first.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  assert.equal(v1.version, 1)
+  assert.equal(v1.canReference, true)
+  assert.ok(v1.fileId)
+
+  const second = await turn('把第二行改成第二版，另附一份附录', { '周报.md': '# 周报\n第二版\n', '附录.md': '# 附录\n' }, [v1.fileId!])
+  // 挂载的是成果原文（只统一换行），并标出它是哪一个成果的第几版。
+  const [mount] = second.manifest.input.file_mounts
+  assert.equal(mount?.content, '# 周报\n第一版\n')
+  assert.deepEqual(mount?.artifact_revision, { artifact_id: v1.id, version: 1 })
+  const v2 = second.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  const appendix = second.task.result.artifacts.find(artifact => artifact.name === '附录.md')!
+  assert.equal(v2.id, v1.id)
+  assert.equal(v2.version, 2)
+  assert.notEqual(appendix.id, v1.id)
+  assert.equal(appendix.version, 1)
+  // 两个版本各自可下载，旧版本不被覆盖。
+  assert.equal((await content.readFile(await content.artifactFileId(v1.id, 1, 'U00001'), 'U00001')).bytes.toString('utf8'), '# 周报\r\n第一版\r\n')
+  assert.equal((await content.readFile(await content.artifactFileId(v1.id, 2, 'U00001'), 'U00001')).bytes.toString('utf8'), '# 周报\n第二版\n')
+
+  // 未引用旧成果时，同名输出是新成果，不会被串成版本。
+  const third = await turn('重新写一份周报', { '周报.md': '# 周报\n全新\n' })
+  const unrelated = third.task.result.artifacts.find(artifact => artifact.name === '周报.md')!
+  assert.notEqual(unrelated.id, v1.id)
+  assert.equal(unrelated.version, 1)
+
+  // 另一位员工不能把别人的成果挂进自己的会话。
+  const foreign = await orchestration.createSession({ userId: 'U00008', title: '尝试引用他人成果' })
+  await assert.rejects(
+    orchestration.startRun({ userId: 'U00008', sessionId: foreign.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [v2.fileId!] }),
+    /文件不存在、不可访问或解析未成功/,
+  )
+})
+
+test('EX-01 tool call outcomes are kept as run steps and counted in the task result', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '工具调用可见' })
+  const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '工具调用有一次失败', idempotencyKey: randomUUID() })
+  assert.ok(created)
+  const task = await waitForTask(created.id, 'succeeded')
+  const toolSteps = task.steps.filter(step => step.tool)
+  assert.deepEqual(toolSteps.map(step => [step.title, step.status, step.tool, step.detail]), [
+    ['调用工具', 'succeeded', 'read', 'read：调用成功'],
+    ['工具调用失败', 'failed', 'data_create', 'data_create：调用失败，调用参数不符合工具要求'],
+  ])
+  assert.equal(task.result.evidence.toolCalls, 2)
+  assert.equal(task.result.evidence.toolFailures, 1)
+})
+
+test('EX-02 backfill makes artifacts published without an extraction referenceable', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '旧成果回填' })
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-backfill-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  await writeFile(join(workspaceDirectory, 'output', '旧报表.csv'), '物料,库存\nA-01,120\n')
+  let release: () => void = () => undefined
+  runtime.completionGate = new Promise<void>((resolve) => { release = resolve })
+  try {
+    const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '生成报表', idempotencyKey: randomUUID() })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    await content.publishRuntimeArtifacts({ manifest: attempt!.manifest as unknown as RuntimeManifest, workspaceDirectory })
+    release()
+    const published = await waitForTask(created.id, 'succeeded')
+    const artifact = published.result.artifacts[0]!
+    // 模拟此功能上线前发布的成果：没有解析记录，不能引用。
+    await database`delete from file_extractions where tenant_id = 'tenant-dsh-work' and file_id = ${artifact.fileId!}`
+    assert.equal((await conversations.getTask(created.id, 'U00001'))?.result.artifacts[0]?.canReference, false)
+
+    const first = await content.backfillArtifactExtractions()
+    assert.ok(first.extracted >= 1)
+    assert.equal((await conversations.getTask(created.id, 'U00001'))?.result.artifacts[0]?.canReference, true)
+    const again = await content.backfillArtifactExtractions()
+    assert.equal(again.extracted, 0)
+  } finally {
+    release()
   }
 })
 
@@ -1193,6 +1295,18 @@ class DeterministicRuntime implements AgentRuntimePort {
           this.finish(execution)
         }
         void fail()
+        return
+      }
+      if (manifest.input.message === '工具调用有一次失败') {
+        // EX-01 夹具：工具调用结果以 tool.completed 事件上报，终态声明失败次数。
+        this.emit(execution, 'tool.completed', 'read：调用成功', { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null })
+        this.emit(execution, 'tool.completed', 'data_create：调用失败，调用参数不符合工具要求', {
+          call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
+        })
+        this.emit(execution, 'assistant.completed', '已改用其他方式完成')
+        execution.snapshot.status = 'completed'
+        this.emit(execution, 'run.completed', '已完成', { tool_call_count: 2, tool_result_count: 2, tool_failed_count: 1 })
+        this.finish(execution)
         return
       }
       if (manifest.input.message === '声明成果但未登记' && count === 1) {

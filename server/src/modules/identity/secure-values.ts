@@ -5,6 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 export function randomOpaque(bytes = 32) {
   return randomBytes(bytes).toString('base64url')
@@ -38,7 +39,7 @@ export class SecretBox {
   open(value: string) {
     const [version, encodedIv, encodedTag, encodedCiphertext, extra] = value.split('.')
     if (version !== 'v1' || !encodedIv || !encodedTag || encodedCiphertext === undefined || extra !== undefined) {
-      throw new Error('加密会话值格式无效')
+      throw invalidRequest('加密会话值格式无效')
     }
     const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(encodedIv, 'base64url'))
     decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'))

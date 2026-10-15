@@ -26,6 +26,7 @@ import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './workbench/workspace-lifecycle-routes.ts'
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
+import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -65,7 +66,7 @@ before(async () => {
   `
 
   authorization = new PostgresAuthorizationService(database)
-  content = new PostgresContentService(database, storageRoot, authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   lifecycle = new PostgresWorkspaceLifecycleService(database)
   members = new PostgresWorkspaceMemberService(database, authorization)
   // TW-10：团队会话 startRun 必须经 Agent 成员关联解析固定版本。
@@ -332,16 +333,18 @@ test('并发互斥：归档先提交时，正在等待锁的空间设置改写�
 
   const archivePromise = lifecycle.archiveWorkspace(ws, ownerId)
   await waitForWorkspaceLockWaiters(1, '归档进入空间行锁等待队列')
-  const patchPromise = content.updateWorkspace(ws, { description: '归档后不应写入' }, ownerId)
+  // Attach the outcome handler immediately: the rejection may settle while we await the
+  // archive below, and a late handler would surface it as an unhandled rejection.
+  const patchOutcome = content.updateWorkspace(ws, { description: '归档后不应写入' }, ownerId).then(() => null, (error: unknown) => (
+    error instanceof Error ? error.message : String(error)
+  ))
   await waitForWorkspaceLockWaiters(2, '空间设置改写排在归档之后等待同一行锁')
   releaseLock()
   await holder
 
   const archived = await archivePromise
   assert.equal(archived.status, 'archived')
-  const patchError = await patchPromise.then(() => null, (error: unknown) => (
-    error instanceof Error ? error.message : String(error)
-  ))
+  const patchError = await patchOutcome
   assert.ok(patchError !== null, '归档提交后等待锁的设置改写必须被拒绝')
   assert.match(patchError!, /已归档|不可访问/)
 

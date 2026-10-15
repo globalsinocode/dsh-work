@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { LOCAL_PERMISSIONS } from './types.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const managedScopeCode = 'application'
@@ -203,7 +204,7 @@ export class IdentityAdministrationService {
         on conflict do nothing
         returning id
       `
-      if (!created) throw new Error(`不能重复使用角色编码：${normalized.code}`)
+      if (!created) throw stateConflict(`不能重复使用角色编码：${normalized.code}`)
       await replaceScopes(transaction, 'role', roleId, normalized.dataScopes, input.actorId)
       await appendAdministrationAudit(transaction, {
         actorId: input.actorId,
@@ -231,7 +232,7 @@ export class IdentityAdministrationService {
     const dataScopes = normalizeScopes(input.dataScopes)
     if (input.roleId === 'role-platform-admin') {
       if (input.status !== 'active' || !permissions.includes(LOCAL_PERMISSIONS.adminAll)) {
-        throw new Error('系统平台管理员角色必须保持启用并保留 admin:* 权限')
+        throw invalidRequest('系统平台管理员角色必须保持启用并保留 admin:* 权限')
       }
     }
     await this.database.begin(async (transaction) => {
@@ -241,7 +242,7 @@ export class IdentityAdministrationService {
          where tenant_id = ${tenantId} and id = ${input.roleId}
         returning id
       `
-      if (!role) throw new Error(`角色不存在：${input.roleId}`)
+      if (!role) throw notFound(`角色不存在：${input.roleId}`)
       await replaceScopes(transaction, 'role', input.roleId, dataScopes, input.actorId)
       await appendAdministrationAudit(transaction, {
         actorId: input.actorId,
@@ -261,10 +262,10 @@ export class IdentityAdministrationService {
   }) {
     const validUntil = input.validUntil ? new Date(input.validUntil) : null
     if (validUntil && (!Number.isFinite(validUntil.getTime()) || validUntil <= new Date())) {
-      throw new Error('角色有效期必须是未来时间')
+      throw invalidRequest('角色有效期必须是未来时间')
     }
     if (input.roleId === 'role-platform-admin' && validUntil) {
-      throw new Error('平台管理员角色不能设置有效期，请通过显式撤权和审计管理其生命周期')
+      throw stateConflict('平台管理员角色不能设置有效期，请通过显式撤权和审计管理其生命周期')
     }
     await this.database.begin(async (transaction) => {
       const [user] = await transaction<{ id: string; status: string }[]>`
@@ -272,11 +273,11 @@ export class IdentityAdministrationService {
           and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
           and business_user
       `
-      if (!user) throw new Error(`用户不存在：${input.userId}`)
+      if (!user) throw notFound(`用户不存在：${input.userId}`)
       const [role] = await transaction<{ id: string }[]>`
         select id from roles where tenant_id = ${tenantId} and id = ${input.roleId} and status = 'active'
       `
-      if (!role) throw new Error(`角色不存在或已停用：${input.roleId}`)
+      if (!role) throw notFound(`角色不存在或已停用：${input.roleId}`)
       await transaction`
         insert into user_roles (
           tenant_id, user_id, role_id, source_key, valid_until, granted_by
@@ -310,7 +311,7 @@ export class IdentityAdministrationService {
         select id, status from users where tenant_id = ${tenantId} and id = ${input.userId}
           and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
       `
-      if (!user) throw new Error(`员工不存在：${input.userId}`)
+      if (!user) throw notFound(`员工不存在：${input.userId}`)
       if (input.roleId === 'role-platform-admin') {
         const [assigned] = await transaction<{ assigned: boolean }[]>`
           select exists (
@@ -348,7 +349,7 @@ export class IdentityAdministrationService {
           and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
           and business_user
       `
-      if (!user) throw new Error(`用户不存在：${input.userId}`)
+      if (!user) throw notFound(`用户不存在：${input.userId}`)
       await replaceScopes(transaction, 'user', input.userId, scopes, input.actorId)
       await appendAdministrationAudit(transaction, {
         actorId: input.actorId,
@@ -367,7 +368,7 @@ export class IdentityAdministrationService {
         select id from users where tenant_id = ${tenantId} and id = ${input.userId}
           and (identity_provider = 'ai-hub' or (${this.localAccounts} and id in (select user_id from local_user_credentials where tenant_id = 'tenant-dsh-work')))
       `
-      if (!user) throw new Error(`用户不存在：${input.userId}`)
+      if (!user) throw notFound(`用户不存在：${input.userId}`)
       const revoked = await transaction<{ sessionHash: string }[]>`
         update authentication_sessions set revoked_at = now()
          where tenant_id = ${tenantId} and user_id = ${input.userId} and revoked_at is null
@@ -387,7 +388,7 @@ export class IdentityAdministrationService {
 
   private async requireRole(roleId: string) {
     const role = (await this.listRoles()).find(item => item.id === roleId)
-    if (!role) throw new Error(`角色不存在：${roleId}`)
+    if (!role) throw notFound(`角色不存在：${roleId}`)
     return role
   }
 
@@ -417,7 +418,7 @@ export class IdentityAdministrationService {
         from users u where u.tenant_id = ${tenantId} and u.id = ${userId}
           and (u.identity_provider = 'ai-hub' or (${this.localAccounts} and exists (select 1 from local_user_credentials c where c.tenant_id = u.tenant_id and c.user_id = u.id)))
     `
-    if (!user) throw new Error(`用户不存在：${userId}`)
+    if (!user) throw notFound(`用户不存在：${userId}`)
     return user
   }
 
@@ -492,7 +493,7 @@ export async function requireAnotherPlatformAdmin(transaction: DatabaseTransacti
        and (ur.valid_until is null or ur.valid_until > now())
        and r.status = 'active' and r.permissions ? ${LOCAL_PERMISSIONS.adminAll}
   `
-  if (!row || row.count < 1) throw new Error('不能移除最后一个有效的平台管理员')
+  if (!row || row.count < 1) throw stateConflict('不能移除最后一个有效的平台管理员')
 }
 
 export async function lockPlatformAdminInvariant(transaction: DatabaseTransaction) {
@@ -512,7 +513,7 @@ function normalizeRoleInput(input: {
 }) {
   const code = input.code.trim()
   if (!/^[a-z][a-z0-9_]{2,49}$/.test(code)) {
-    throw new Error('角色编码必须为 3-50 位小写字母、数字或下划线')
+    throw invalidRequest('角色编码必须为 3-50 位小写字母、数字或下划线')
   }
   return {
     code,
@@ -524,21 +525,21 @@ function normalizeRoleInput(input: {
 }
 
 function normalizePermissions(values: string[]) {
-  if (!Array.isArray(values)) throw new Error('角色权限必须是数组')
+  if (!Array.isArray(values)) throw invalidRequest('角色权限必须是数组')
   const allowed = new Set(permissionCatalog.map(item => item.code))
   const normalized = unique(values.map(item => String(item).trim()).filter(Boolean))
   const unknown = normalized.filter(item => !allowed.has(item as typeof permissionCatalog[number]['code']))
-  if (unknown.length > 0) throw new Error(`包含未知的本地权限：${unknown.join('、')}`)
+  if (unknown.length > 0) throw invalidRequest(`包含未知的本地权限：${unknown.join('、')}`)
   return normalized.sort()
 }
 
 function normalizeScopes(values: string[]) {
-  if (!Array.isArray(values)) throw new Error('数据范围必须是数组')
+  if (!Array.isArray(values)) throw invalidRequest('数据范围必须是数组')
   const scopes = unique(values.map(item => String(item).trim()).filter(Boolean))
-  if (scopes.length > 100) throw new Error('数据范围最多配置 100 项')
+  if (scopes.length > 100) throw invalidRequest('数据范围最多配置 100 项')
   for (const scope of scopes) {
     if (scope.length > 160 || !/^[a-z][a-z0-9_-]*:[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(scope)) {
-      throw new Error(`数据范围格式无效：${scope}`)
+      throw invalidRequest(`数据范围格式无效：${scope}`)
     }
   }
   return scopes.sort()
@@ -546,14 +547,14 @@ function normalizeScopes(values: string[]) {
 
 function requiredText(value: string, label: string, maxLength: number) {
   const normalized = value.trim()
-  if (!normalized) throw new Error(`${label}不能为空`)
-  if (normalized.length > maxLength) throw new Error(`${label}长度不能超过 ${maxLength}`)
+  if (!normalized) throw stateConflict(`${label}不能为空`)
+  if (normalized.length > maxLength) throw stateConflict(`${label}长度不能超过 ${maxLength}`)
   return normalized
 }
 
 function optionalText(value: string | undefined, maxLength: number) {
   const normalized = value?.trim() ?? ''
-  if (normalized.length > maxLength) throw new Error(`描述长度不能超过 ${maxLength}`)
+  if (normalized.length > maxLength) throw stateConflict(`描述长度不能超过 ${maxLength}`)
   return normalized
 }
 

@@ -1,13 +1,14 @@
 import type { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import type { AdminAssistantService } from '../../modules/admin/application/admin-assistant-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 type AssistantService = AdminSkillInstallationService | AdminAssistantService
 
 export function registerAssistantRoutes(router: Router, service?: AssistantService) {
   const base = '/api/admin/v1/assistant'
   const available = () => {
-    if (!service) throw Object.assign(new Error('安装助手不可用：请配置 PostgreSQL 和 DSH Runtime'), { status: 503, code: 'assistant_unavailable' })
+    if (!service) throw new RequestError(503, 'assistant_unavailable', '安装助手不可用：请配置 PostgreSQL 和 DSH Runtime')
     return service
   }
   router.get(`${base}/sessions`, async (_request, context) => envelope('admin', await available().list(requireRequestIdentity(context, 'admin').userId), 'postgres'))
@@ -41,7 +42,7 @@ export function registerAssistantRoutes(router: Router, service?: AssistantServi
 
   function general() {
     const assistant = available()
-    if (!('confirmProposal' in assistant)) throw Object.assign(new Error('通用管理助手尚未配置'), { status: 503, code: 'assistant_unavailable' })
+    if (!('confirmProposal' in assistant)) throw new RequestError(503, 'assistant_unavailable', '通用管理助手尚未配置')
     return assistant
   }
 }

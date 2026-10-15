@@ -15,7 +15,7 @@ const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A
 const BINDING_FIELDS = new Set(['tool', 'binding_id', 'revision', 'digest'])
 const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest'])
 const RESUME_FIELDS = new Set(['strategy', 'checkpoint_id', 'checkpoint_digest', 'source_attempt_id', 'approval_id', 'action_name', 'parameter_digest', 'resource_ref', 'data_version', 'approved_by', 'approved_at', 'checkpoint_context_sha256', 'checkpoint_context'])
-// 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 FileSystemSkillArtifactStore
+// 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 SkillArtifactStore
 // 读写同口径；runtime-manifest.schema.json 中的等价 pattern 由 contracts 静态检查固定。
 const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
@@ -175,6 +175,10 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     mountedPaths.add(mount.mount_path)
     if (!mount.source_name.trim() || !mount.media_type.trim()) throw new TypeError('file mount source name and media type are required')
     if (sha256(mount.content) !== mount.content_sha256) throw new TypeError(`file mount checksum mismatch: ${mount.file_id}`)
+    if (mount.artifact_revision !== undefined && (
+      !/^artifact-[A-Za-z0-9-]+$/.test(mount.artifact_revision.artifact_id)
+      || !Number.isSafeInteger(mount.artifact_revision.version) || mount.artifact_revision.version < 1
+    )) throw new TypeError(`file mount artifact revision is invalid: ${mount.file_id}`)
     mountedBytes += Buffer.byteLength(mount.content)
   }
   if (mountedBytes > 1024 * 1024) throw new RangeError('mounted extracted text must not exceed 1 MB')

@@ -287,6 +287,10 @@ export class OidcAuthService {
   async logout(request: IncomingMessage, audience: ApiAudience) {
     const settings = this.configuration.audiences[audience]
     const portalOrigin = resolveRequestOrigin(request, settings)
+    // GET stays supported for the redirect to AI Hub end-session; neither method may be
+    // triggered by another site to sign the user out.
+    if (isUnsafeMethod(request.method)) validateRequestOrigin(request, settings)
+    else rejectCrossSiteNavigation(request)
     const clearSessionCookie = await this.revokeSession(request, audience)
     return {
       location: await this.providers[audience].logoutUrl(portalOrigin),
@@ -595,6 +599,18 @@ function normalizeHeaderOrigin(value: string) {
     return parsed.origin
   } catch {
     return null
+  }
+}
+
+/**
+ * A top-level GET navigation carries no Origin header, so it cannot be checked like a
+ * POST. Browsers label it with Sec-Fetch-Site; reject navigations started by another
+ * site. Same-origin links, typed URLs and non-browser clients are unaffected.
+ */
+export function rejectCrossSiteNavigation(request: IncomingMessage) {
+  const site = request.headers['sec-fetch-site']
+  if ((Array.isArray(site) ? site : [site]).some(value => value?.trim().toLowerCase() === 'cross-site')) {
+    throw new IdentityAccessError(403, 'csrf_check_failed', '请求来源校验失败')
   }
 }
 

@@ -1,5 +1,5 @@
 import type { AgentDefinition, UpdateAgentDraftInput } from '../../domain/types.ts'
-import { requestInvalid } from '../authorization/authorization-errors.ts'
+import { requestInvalid } from '../../domain/authorization-errors.ts'
 import { canonicalJson } from '../runtime/canonical-json.ts'
 
 /** Copy-only, NOT model instructions. Default deny: additions require a policy review. */

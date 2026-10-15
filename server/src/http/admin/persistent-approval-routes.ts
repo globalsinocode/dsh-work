@@ -1,5 +1,5 @@
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { requestInvalid } from '../../modules/authorization/authorization-errors.ts'
+import { requestInvalid } from '../../domain/authorization-errors.ts'
 import type { PostgresPersistentWaitService } from '../../modules/run/postgres-persistent-wait-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 

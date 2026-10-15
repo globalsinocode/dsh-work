@@ -67,7 +67,7 @@ data: {"runId":"run-…","step":"…"}
 
 ## 7. 联调环境
 
-- Prototype 模式（内存数据、受控身份）仅用于冒烟联调，不能作为验收依据。
+- P0 冒烟服务（内存数据、测试身份）仅用于自动化冒烟，不能作为验收依据。
 - 验收必须使用 PostgreSQL + OIDC 完整环境（`docs/development/development.md`）。
 - 移动端发现的服务端缺陷回 dsh-work 仓库修复，不在客户端绕过。
 

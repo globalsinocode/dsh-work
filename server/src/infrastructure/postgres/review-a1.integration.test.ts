@@ -15,10 +15,11 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { AgentRuntimePort, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { Router } from '../../http/router.ts'
 import { registerConversationRoutes } from '../../http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let db: ThrowawayDatabase, root: string, content: PostgresContentService
 let conversations: PostgresConversationRepository, orchestration: RunOrchestrationService
@@ -35,14 +36,14 @@ before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'dsh_work_review_a1', maxConnections: 5 })
   root = await mkdtemp(join(tmpdir(), 'dsh-work-review-a1-'))
   const auth = new PostgresAuthorizationService(db.client)
-  content = new PostgresContentService(db.client, root, auth)
+  content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
   orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
     content, undefined, agents, undefined, auth)
-  const router = new Router({ authenticateApi: prototypeApiAuthenticator })
+  const router = new Router({ authenticateApi: testApiAuthenticator })
   registerConversationRoutes(router, conversations, orchestration, runs, agents, auth)
   registerContentRoutes(router, content, auth)
   server = createServer((request, response) => void router.handle(request, response))

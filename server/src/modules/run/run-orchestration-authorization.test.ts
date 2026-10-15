@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { AgentRuntimePort } from '../runtime/runtime-types.ts'
 import type { ModelGovernanceService } from '../model/model-governance-service.ts'

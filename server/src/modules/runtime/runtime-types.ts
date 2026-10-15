@@ -16,6 +16,7 @@ export type RuntimeEventType =
   | 'run.started'
   | 'assistant.delta'
   | 'assistant.completed'
+  | 'tool.completed'
   | 'approval.required'
   | 'approval.resolved'
   | 'run.waiting'
@@ -252,6 +253,8 @@ export interface FileMount {
   media_type: string
   content_sha256: string
   content: string
+  /** EX-02: the mount is this artifact version; writing a file with the same name to output/ records its next version. */
+  artifact_revision?: { artifact_id: string; version: number }
 }
 
 export interface CompiledRuntimeManifest {

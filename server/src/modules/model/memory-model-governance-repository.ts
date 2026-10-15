@@ -12,6 +12,7 @@ import type {
   ProviderStatus,
   UpsertCredentialReferenceInput,
 } from './model-types.ts'
+import { dependencyUnavailable, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const clone = <T>(value: T): T => structuredClone(value)
 
@@ -25,7 +26,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   async createProvider(_tenantId: string, input: CreateProviderInput) {
     if (this.providers.some((provider) => provider.key === input.key)) {
-      throw new Error(`Provider 标识已存在：${input.key}`)
+      throw stateConflict(`Provider 标识已存在：${input.key}`)
     }
     const timestamp = new Date().toISOString()
     const provider: ModelProvider = {
@@ -53,7 +54,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
   async createProviderModel(_tenantId: string, input: CreateProviderModelInput) {
     const provider = this.requireProvider(input.providerId)
     if (provider.models.some((model) => model.modelKey === input.modelKey)) {
-      throw new Error(`模型标识已存在：${input.modelKey}`)
+      throw stateConflict(`模型标识已存在：${input.modelKey}`)
     }
     provider.models.push({
       id: `model-${randomUUID()}`,
@@ -89,7 +90,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   async createRoute(_tenantId: string, input: CreateModelRouteInput) {
     if (this.routes.some((route) => route.key === input.key)) {
-      throw new Error(`模型路由标识已存在：${input.key}`)
+      throw stateConflict(`模型路由标识已存在：${input.key}`)
     }
     if (input.purpose === 'default' && input.enabled) {
       for (const route of this.routes) {
@@ -117,10 +118,10 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   async resolveRoute(_tenantId: string, routeKey = 'default'): Promise<ModelRouteSnapshot> {
     const route = this.routes.find((item) => item.key === routeKey && item.enabled)
-    if (!route) throw new Error(`没有可用的模型路由：${routeKey}`)
+    if (!route) throw dependencyUnavailable(`没有可用的模型路由：${routeKey}`)
     const { provider, model } = this.requireModel(route.providerModelId)
-    if (provider.status !== 'active' || model.status !== 'active') throw new Error('模型路由目标已停用')
-    if (!provider.credential || provider.credential.status !== 'configured') throw new Error('Provider 凭据未配置')
+    if (provider.status !== 'active' || model.status !== 'active') throw dependencyUnavailable('模型路由目标已停用')
+    if (!provider.credential || provider.credential.status !== 'configured') throw dependencyUnavailable('Provider 凭据未配置')
     return {
       routeId: route.id,
       routeKey: route.key,
@@ -140,7 +141,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   private requireProvider(providerId: string) {
     const provider = this.providers.find((item) => item.id === providerId)
-    if (!provider) throw new Error(`Provider 不存在：${providerId}`)
+    if (!provider) throw notFound(`Provider 不存在：${providerId}`)
     return provider
   }
 
@@ -149,7 +150,7 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
       const model = provider.models.find((item) => item.id === modelId)
       if (model) return { provider, model }
     }
-    throw new Error(`Provider 模型不存在：${modelId}`)
+    throw notFound(`Provider 模型不存在：${modelId}`)
   }
 }
 

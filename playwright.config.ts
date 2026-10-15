@@ -1,18 +1,16 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// The default suite is P0: never let a developer's .env select PostgreSQL/OIDC.
-// Publish the chosen ports to test workers as well as the three server processes.
+// The default suite is P0: a test-only smoke server with in-memory data and test
+// identities (scripts/testing/p0-smoke-server.ts). It never reads PostgreSQL/OIDC
+// settings. Publish the chosen ports to test workers as well as the three processes.
 const workbenchPort = process.env.DSH_WORK_WORKBENCH_PORT ||= '4274'
 const adminPort = process.env.DSH_WORK_ADMIN_PORT ||= '4280'
 const serverPort = process.env.DSH_WORK_SERVER_PORT ||= '4290'
 const workbenchUrl = `http://localhost:${workbenchPort}`
 const adminUrl = `http://localhost:${adminPort}`
 const serverUrl = `http://localhost:${serverPort}`
-const prototypeEnvironment = {
+const smokeEnvironment = {
   NODE_ENV: 'development',
-  DSH_WORK_AUTH_MODE: 'prototype',
-  DSH_WORK_DATABASE_URL: '',
-  DSH_WORK_SERVER_HOST: '127.0.0.1',
   DSH_WORK_WORKBENCH_PORT: workbenchPort,
   DSH_WORK_ADMIN_PORT: adminPort,
   DSH_WORK_SERVER_PORT: serverPort,
@@ -42,23 +40,23 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm dev:server',
+      command: 'node --experimental-strip-types scripts/testing/p0-smoke-server.ts',
       url: `${serverUrl}/health`,
-      env: prototypeEnvironment,
+      env: smokeEnvironment,
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
       command: 'pnpm dev:workbench',
       url: `${workbenchUrl}/workbench`,
-      env: prototypeEnvironment,
+      env: smokeEnvironment,
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
       command: 'pnpm dev:admin',
       url: `${adminUrl}/overview`,
-      env: prototypeEnvironment,
+      env: smokeEnvironment,
       reuseExistingServer: false,
       timeout: 30_000,
     },

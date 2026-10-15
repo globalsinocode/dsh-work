@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { RuntimeScopeCeiling } from '../authorization/postgres-authorization-service.ts'
-import type { JsonObject } from '../run/run-types.ts'
+import type { JsonObject } from '../../domain/run-state.ts'
 import type {
   AutomationAdmissionStatus,
   AutomationExecutionKind,

@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { UserProfile, UserRole } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { ApiAudience } from './types.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -122,7 +123,7 @@ export class IdentitySessionRepository {
       : 'active'
     const updatedAt = input.updatedAt ? new Date(input.updatedAt) : null
     if (updatedAt && !Number.isFinite(updatedAt.getTime())) {
-      throw new Error('AI Hub 员工更新时间无效')
+      throw invalidRequest('AI Hub 员工更新时间无效')
     }
     return this.database.begin(async (transaction) => {
       const identityLocks = [
@@ -160,7 +161,7 @@ export class IdentitySessionRepository {
       }
       const existing = externalMatch ?? subjectMatch
       if (existing?.identityProvider === 'local' && existing.hasLocalCredentials) {
-        throw new Error('AI Hub 身份标识与独立账号冲突，不能绑定或转换独立账号')
+        throw stateConflict('AI Hub 身份标识与独立账号冲突，不能绑定或转换独立账号')
       }
       if (
         existing?.identityProvider === 'ai-hub'
@@ -262,14 +263,14 @@ export class IdentitySessionRepository {
          for update
       `
       if (!claim || claim.externalUserId !== input.externalUserId || claim.userId !== input.userId) {
-        throw new Error('应用初始管理员已经由其他账号认领')
+        throw stateConflict('应用初始管理员已经由其他账号认领')
       }
       if (!inserted) return false
       const [role] = await transaction<{ id: string }[]>`
         select id from roles
          where tenant_id = ${tenantId} and id = 'role-platform-admin' and status = 'active'
       `
-      if (!role) throw new Error('本地平台管理员角色不存在或已停用')
+      if (!role) throw notFound('本地平台管理员角色不存在或已停用')
       await transaction`
         insert into user_roles (
           tenant_id, user_id, role_id, source_key, granted_by

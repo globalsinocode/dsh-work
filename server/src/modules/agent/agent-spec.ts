@@ -1,3 +1,4 @@
+import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 /**
  * 规范化 Agent 定义（AgentSpec）：管理端配置与 ZIP 发布包共用的唯一语义契约。
  *
@@ -87,29 +88,29 @@ export function assembleAgentInstructions(spec: Pick<AgentSpec, 'instructions' |
 /** 规范化定义的公共内容校验：Schema 未覆盖的正文长度与配置入口共用此关口。 */
 export function assertAgentSpecContent(spec: AgentSpec) {
   if (spec.instructions.path !== AGENT_SPEC_INSTRUCTIONS_PATH) {
-    throw new Error(`Agent 指令必须使用包根目录 ${AGENT_SPEC_INSTRUCTIONS_PATH}`)
+    throw invalidRequest(`Agent 指令必须使用包根目录 ${AGENT_SPEC_INSTRUCTIONS_PATH}`)
   }
   const { name, description } = spec.metadata
   const bounds = AGENT_SPEC_BOUNDS
   if (name.length < bounds.name.min || name.length > bounds.name.max) {
-    throw new Error('Agent 名称长度为 2～40 个字符')
+    throw invalidRequest('Agent 名称长度为 2～40 个字符')
   }
   if (description.length < bounds.description.min || description.length > bounds.description.max) {
-    throw new Error('Agent 说明长度为 10～200 个字符')
+    throw invalidRequest('Agent 说明长度为 10～200 个字符')
   }
   const body = spec.instructions.body
   if (body.length < bounds.instructions.min || body.length > bounds.instructions.max) {
-    throw new Error('SOUL.md 正文长度必须为 20～20000 个字符')
+    throw invalidRequest('SOUL.md 正文长度必须为 20～20000 个字符')
   }
   if (spec.workProcedures !== undefined && spec.workProcedures !== null) {
     if (spec.workProcedures.path !== AGENT_SPEC_WORK_PROCEDURES_PATH
       || spec.workProcedures.body.trim().length < bounds.instructions.min
       || spec.workProcedures.body.length > bounds.instructions.max) {
-      throw new Error('AGENTS.md 必须位于包根目录，正文长度为 20～20000 个字符')
+      throw invalidRequest('AGENTS.md 必须位于包根目录，正文长度为 20～20000 个字符')
     }
   }
   if (spec.catalog.welcomeMessage.length > bounds.welcomeMessage.max) {
-    throw new Error('欢迎语不能超过 120 个字符')
+    throw stateConflict('欢迎语不能超过 120 个字符')
   }
   assertAgentSpecLimits(spec.limits)
   assertAgentDataDefinition(spec.data)
@@ -117,7 +118,7 @@ export function assertAgentSpecContent(spec: AgentSpec) {
 
 export function assertAgentDataDefinition(data: AgentSpec['data']): void {
   if (!data || typeof data.state !== 'boolean' || !Array.isArray(data.collections) || data.collections.length > 12) {
-    throw new Error('Agent 数据声明格式或集合数量无效')
+    throw invalidRequest('Agent 数据声明格式或集合数量无效')
   }
   const keys = new Set<string>()
   const actions = new Set<AgentDataAction>(['query', 'propose', 'create', 'update', 'transition'])
@@ -127,7 +128,7 @@ export function assertAgentDataDefinition(data: AgentSpec['data']): void {
       || !Number.isInteger(item.schemaVersion) || item.schemaVersion < 1
       || !Array.isArray(item.actions) || !item.actions.length || item.actions.length > 5
       || item.actions.some(action => !actions.has(action)) || new Set(item.actions).size !== item.actions.length) {
-      throw new Error('Agent 集合声明中的 key、范围、版本或动作无效')
+      throw invalidRequest('Agent 集合声明中的 key、范围、版本或动作无效')
     }
     keys.add(item.key)
   }
@@ -137,13 +138,13 @@ export function assertAgentSpecLimits(limits: AgentSpecLimits) {
   const bounds = AGENT_SPEC_BOUNDS
   const { timeoutSeconds, maxToolCalls, maxOutputBytes } = limits
   if (timeoutSeconds < bounds.timeoutSeconds.min || timeoutSeconds > bounds.timeoutSeconds.max) {
-    throw new Error(`运行超时必须在 ${bounds.timeoutSeconds.min}～${bounds.timeoutSeconds.max} 秒之间`)
+    throw invalidRequest(`运行超时必须在 ${bounds.timeoutSeconds.min}～${bounds.timeoutSeconds.max} 秒之间`)
   }
   if (maxToolCalls < bounds.maxToolCalls.min || maxToolCalls > bounds.maxToolCalls.max) {
-    throw new Error(`工具调用上限必须在 ${bounds.maxToolCalls.min}～${bounds.maxToolCalls.max} 之间`)
+    throw invalidRequest(`工具调用上限必须在 ${bounds.maxToolCalls.min}～${bounds.maxToolCalls.max} 之间`)
   }
   if (maxOutputBytes < bounds.maxOutputBytes.min || maxOutputBytes > bounds.maxOutputBytes.max) {
-    throw new Error(`输出字节上限必须在 ${bounds.maxOutputBytes.min}～${bounds.maxOutputBytes.max} 之间`)
+    throw invalidRequest(`输出字节上限必须在 ${bounds.maxOutputBytes.min}～${bounds.maxOutputBytes.max} 之间`)
   }
 }
 
@@ -167,7 +168,7 @@ export interface AgentSpecConfiguration {
 /** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义，统一生成 SOUL.md。 */
 export function agentSpecFromConfiguration(input: AgentSpecConfiguration, version: string, existing?: AgentSpec | null): AgentSpec {
   if (input.data !== undefined && (!input.data || typeof input.data.state !== 'boolean'
-    || !Array.isArray(input.data.collections))) throw new Error('Agent 数据声明格式无效')
+    || !Array.isArray(input.data.collections))) throw invalidRequest('Agent 数据声明格式无效')
   return {
     apiVersion: AGENT_SPEC_API_VERSION,
     metadata: { id: input.id, name: input.name, version, description: input.description },

@@ -11,6 +11,7 @@ import {
   type AgentSpec,
 } from './agent-spec.ts'
 import { manifestSchemaErrors, type AgentPackageManifestDocument } from './agent-package.schema.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 /**
  * Agent 发布包（ZIP）服务端解包与清单解析。
@@ -136,7 +137,7 @@ const RESERVED_MANIFEST_KEYS: Record<string, string> = {
 }
 
 const fail = (message: string): never => {
-  throw Object.assign(new Error(`${LABEL}：${message}`), { status: 422, code: 'agent_package_invalid' })
+  throw new RequestError(422, 'agent_package_invalid', `${LABEL}：${message}`)
 }
 
 function readText(files: Record<string, Uint8Array>, path: string): string | undefined {

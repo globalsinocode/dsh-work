@@ -1,5 +1,5 @@
 import type { PostgresAgentDataService, CollectionAction } from '../../modules/agent-data/postgres-agent-data-service.ts'
-import { requestInvalid } from '../../modules/authorization/authorization-errors.ts'
+import { requestInvalid } from '../../domain/authorization-errors.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 
 const basePath = '/api/admin/v1/agent-data'

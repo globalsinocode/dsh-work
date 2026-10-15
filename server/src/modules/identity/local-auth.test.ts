@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { loadIdentityConfiguration, loadStartupIdentityConfiguration, localIdentityConfiguration } from './config.ts'
-import { hashPassword, normalizeUsername, validatePassword, verifyPassword } from './password.ts'
+import { createConcurrencyLimiter, hashPassword, normalizeUsername, validatePassword, verifyPassword } from './password.ts'
 import { normalizeLoginAccount } from './login-account.ts'
 
 test('new login accounts require phone or email and normalize equivalent spellings', () => {
@@ -49,13 +49,47 @@ test('passwords are salted and verified without accepting malformed records or n
   assert.equal(await verifyPassword(password.trim(), first), false)
   assert.equal(await verifyPassword(password, null), false)
   assert.equal(await verifyPassword(password, first.replace('131072', '999999999')), false)
-  assert.throws(() => validatePassword('x'.repeat(7)), /8–12/)
+  assert.throws(() => validatePassword('x'.repeat(7)), /8–64/)
   assert.doesNotThrow(() => validatePassword('x'.repeat(8)))
-  assert.doesNotThrow(() => validatePassword('x'.repeat(12)))
-  assert.throws(() => validatePassword('x'.repeat(13)), /8–12/)
-  assert.throws(() => validatePassword(null), /8–12/)
+  assert.doesNotThrow(() => validatePassword('x'.repeat(64)))
+  assert.doesNotThrow(() => validatePassword('密'.repeat(64)), 'the limit counts characters, not bytes')
+  assert.throws(() => validatePassword('x'.repeat(65)), /8–64/)
+  assert.throws(() => validatePassword(null), /8–64/)
   assert.equal(normalizeUsername('  Alice.Example  '), 'alice.example')
   assert.throws(() => normalizeUsername({ username: 'alice' }))
+})
+
+test('password derivation queues a bounded burst instead of failing beyond the concurrency limit', async () => {
+  const limit = createConcurrencyLimiter(2, 3)
+  let active = 0, peak = 0
+  const releases: Array<() => void> = []
+  const task = (value: number) => limit(async () => {
+    active++
+    peak = Math.max(peak, active)
+    await new Promise<void>(resolve => releases.push(resolve))
+    active--
+    return value
+  })
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  const accepted = [1, 2, 3, 4, 5].map(task)
+  await settle()
+  assert.equal(releases.length, 2, 'only the concurrency limit runs at once')
+  await assert.rejects(task(6), (error: Error & { status?: number; code?: string }) => error.status === 429 && error.code === 'login_busy')
+  while (releases.length) {
+    releases.shift()!()
+    await settle()
+  }
+  assert.deepEqual(await Promise.all(accepted), [1, 2, 3, 4, 5])
+  assert.equal(peak, 2)
+  assert.equal(await limit(async () => 'slot released'), 'slot released')
+  await assert.rejects(limit(async () => { throw new Error('task failure') }), /task failure/)
+  assert.equal(await limit(async () => 'released after failure'), 'released after failure')
+})
+
+test('more concurrent password checks than the derivation limit all complete', async () => {
+  const stored = await hashPassword('Burst1234')
+  const results = await Promise.all(Array.from({ length: 6 }, () => verifyPassword('Burst1234', stored)))
+  assert.deepEqual(results, Array(6).fill(true))
 })
 
 const startupEnvironment = {
@@ -108,9 +142,12 @@ test('invalid optional AI Hub configuration preserves password authentication wi
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_SESSION_SECRET: '' }))
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_ADMIN_ORIGINS: 'not-a-url' }))
 })
-test('prototype is explicit development-only and legacy portal origins remain compatible', () => {
-  assert.deepEqual(loadStartupIdentityConfiguration({ DSH_WORK_AUTH_MODE: 'prototype' }), { mode: 'prototype' })
-  assert.throws(() => loadStartupIdentityConfiguration({ NODE_ENV: 'production', DSH_WORK_AUTH_MODE: 'prototype' }))
+test('the removed prototype mode is rejected with a migration hint and legacy portal origins remain compatible', () => {
+  for (const NODE_ENV of ['development', 'production']) {
+    assert.throws(() => loadStartupIdentityConfiguration({ NODE_ENV, DSH_WORK_AUTH_MODE: 'prototype' }), /原型模式已移除/)
+    assert.throws(() => loadIdentityConfiguration({ NODE_ENV, DSH_WORK_AUTH_MODE: 'prototype' }), /原型模式已移除/)
+  }
+  assert.throws(() => loadIdentityConfiguration({}), /未配置/, 'an empty environment no longer falls back to an unauthenticated mode')
   assert.throws(() => loadStartupIdentityConfiguration({ ...startupEnvironment, DSH_WORK_AUTH_MODE: 'unknown' }))
   const config = loadStartupIdentityConfiguration({ ...startupHub, DSH_WORK_SESSION_SECRET: startupEnvironment.DSH_WORK_SESSION_SECRET,
     AI_HUB_ADMIN_PORTAL_URL: 'http://localhost:4180', AI_HUB_WORKBENCH_PORTAL_URL: 'http://localhost:4174',

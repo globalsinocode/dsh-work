@@ -49,10 +49,6 @@ export interface OidcAudienceConfiguration {
   loginScopes: string[]
 }
 
-export interface PrototypeIdentityConfiguration {
-  mode: 'prototype'
-}
-
 export interface LocalAudienceConfiguration {
   audience: ApiAudience
   applicationId: string
@@ -88,7 +84,7 @@ export interface OidcIdentityConfiguration {
   audiences: Record<ApiAudience, OidcAudienceConfiguration>
 }
 
-export type IdentityConfiguration = PrototypeIdentityConfiguration | OidcIdentityConfiguration | LocalIdentityConfiguration
+export type IdentityConfiguration = OidcIdentityConfiguration | LocalIdentityConfiguration
 
 export interface CurrentPlatformUser {
   user_id: string

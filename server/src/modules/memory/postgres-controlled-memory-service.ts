@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import type { PostgresOperationsService } from '../admin/application/postgres-operations-service.ts'
-import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../authorization/authorization-errors.ts'
+import type { AuditTrail } from '../../domain/audit-trail.ts'
+import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RuntimeControlledMemory, RuntimeManifest } from '../runtime/runtime-types.ts'
+import { RequestError, notFound } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxContextMemories = 3
@@ -125,12 +126,12 @@ interface CandidateRow {
 export class PostgresControlledMemoryService {
   private readonly database: DatabaseClient
   private readonly authorization: Pick<PostgresAuthorizationService, 'authorizeWorkbench'>
-  private readonly operations?: Pick<PostgresOperationsService, 'appendAudit'>
+  private readonly operations?: AuditTrail
 
   constructor(
     database: DatabaseClient,
     authorization: Pick<PostgresAuthorizationService, 'authorizeWorkbench'>,
-    operations?: Pick<PostgresOperationsService, 'appendAudit'>,
+    operations?: AuditTrail,
   ) {
     this.database = database
     this.authorization = authorization
@@ -207,7 +208,7 @@ export class PostgresControlledMemoryService {
        where tenant_id = ${tenantId} and attempt_id = ${manifest.attempt_id} and proposal_key = ${proposalKey}
     `
     if (!created && (!existing || existing.status !== 'proposed' || existing.expiresAt.getTime() <= Date.now())) {
-      throw Object.assign(new Error('相同记忆提案已提交或已过期'), { status: 409, code: 'MEMORY_PROPOSAL_CONFLICT' })
+      throw new RequestError(409, 'MEMORY_PROPOSAL_CONFLICT', '相同记忆提案已提交或已过期')
     }
     return { proposalId: (created ?? existing)!.id, status: 'pending_admin_review' }
   }
@@ -325,7 +326,7 @@ export class PostgresControlledMemoryService {
       `
       if (existing) {
         if (existing.requestDigest !== requestDigest) {
-          throw Object.assign(new Error('submissionKey 已用于不同的记忆候选'), { status: 409, code: 'MEMORY_SUBMISSION_CONFLICT' })
+          throw new RequestError(409, 'MEMORY_SUBMISSION_CONFLICT', 'submissionKey 已用于不同的记忆候选')
         }
         return existing
       }
@@ -338,7 +339,7 @@ export class PostgresControlledMemoryService {
         `
         if (!proposal || proposal.status !== 'proposed'
           || proposal.kind !== input.kind || proposal.title !== title || proposal.content !== content) {
-          throw Object.assign(new Error('记忆提案已过期、已提交或内容已改变'), { status: 409, code: 'MEMORY_PROPOSAL_CONFLICT' })
+          throw new RequestError(409, 'MEMORY_PROPOSAL_CONFLICT', '记忆提案已过期、已提交或内容已改变')
         }
       }
       const consentId = `memory-consent-${randomUUID()}`
@@ -423,7 +424,7 @@ export class PostgresControlledMemoryService {
     })
     await this.operations?.appendAudit(input.userId, 'memory.consent.withdraw', input.consentId, 'success', `trace-${input.consentId}`, '阻止后续 Attempt 引用')
     const consent = (await this.listOwnConsents(input.userId)).find(item => item.id === input.consentId)
-    if (!consent) throw new Error('撤回后的记忆授权不存在')
+    if (!consent) throw notFound('撤回后的记忆授权不存在')
     return consent
   }
 
@@ -606,7 +607,7 @@ export class PostgresControlledMemoryService {
       auditTargetId: input.applicationId,
     })
     const application = (await this.listExperienceIterationApplications()).find(item => item.id === input.applicationId)
-    if (!application) throw new Error('审核后的经验迭代申请不存在')
+    if (!application) throw notFound('审核后的经验迭代申请不存在')
     return application
   }
 
@@ -659,10 +660,10 @@ export class PostgresControlledMemoryService {
             sourceWorkspaceId: candidate.sourceWorkspaceId,
           })) ? candidate : { ...candidate, content: unavailableContent }
         }
-        throw Object.assign(new Error('记忆候选已被处理，当前决定未生效'), { status: 409, code: 'MEMORY_REVIEW_CONFLICT' })
+        throw new RequestError(409, 'MEMORY_REVIEW_CONFLICT', '记忆候选已被处理，当前决定未生效')
       }
       if (candidate.consentStatus !== 'active' || candidate.consentRetentionUntil.getTime() <= Date.now()) {
-        throw Object.assign(new Error('来源授权已撤回或过期，不能发布记忆'), { status: 409, code: 'MEMORY_CONSENT_INACTIVE' })
+        throw new RequestError(409, 'MEMORY_CONSENT_INACTIVE', '来源授权已撤回或过期，不能发布记忆')
       }
       if (input.decision === 'rejected') {
         const [rejected] = await transaction<CandidateRow[]>`
@@ -684,10 +685,7 @@ export class PostgresControlledMemoryService {
         })
       } catch (error) {
         if (!isAuthorizationDenial(error)) throw error
-        throw Object.assign(new Error('来源用户已无权访问来源工作空间，不能发布记忆'), {
-          status: 409,
-          code: 'MEMORY_SOURCE_ACCESS_REVOKED',
-        })
+        throw new RequestError(409, 'MEMORY_SOURCE_ACCESS_REVOKED', '来源用户已无权访问来源工作空间，不能发布记忆')
       }
       const normalizedTitle = candidate.title.toLocaleLowerCase('zh-CN').replaceAll(/\s+/g, ' ')
       const stableMemoryKey = createHash('sha256')

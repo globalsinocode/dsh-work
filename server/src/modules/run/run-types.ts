@@ -1,9 +1,9 @@
+import type { JsonObject, JsonValue, RunState } from '../../domain/run-state.ts'
+
+export type { JsonObject, JsonValue, RunState }
 import type { TaskBudgetInput } from '../task/task-budget-types.ts'
 
-export type RunState = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 export type AttemptState = RunState
-export type JsonValue = null | string | number | boolean | JsonValue[] | { [key: string]: JsonValue }
-export type JsonObject = { [key: string]: JsonValue }
 
 export interface RunRecord {
   id: string

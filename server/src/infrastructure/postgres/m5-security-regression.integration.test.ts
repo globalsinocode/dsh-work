@@ -13,6 +13,7 @@ import { PostgresConversationRepository } from '../../modules/workbench/applicat
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { testAttemptManifest } from './test-attempt-manifest.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 let throwaway: ThrowawayDatabase
 
@@ -28,7 +29,7 @@ before(async () => {
   database = throwaway.client
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-m5-security-'))
   authorization = new PostgresAuthorizationService(database)
-  content = new PostgresContentService(database, storageRoot, authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   operations = new PostgresOperationsService(database, undefined, authorization)
 })
 
@@ -82,7 +83,7 @@ test('malicious content and database-injected traversal paths never reach storag
       'outside-security.txt', 'text/plain', 8, ${'f'.repeat(64)}, 'clean', 'U00001'
     )
   `
-  await assert.rejects(content.readFile(fileId, 'U00001'), /非法存储路径/)
+  await assert.rejects(content.readFile(fileId, 'U00001'), /非法存储键/)
 })
 
 test('authorization denies non-admin changes and records blocked decisions without granting access', async () => {

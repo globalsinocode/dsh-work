@@ -1,5 +1,5 @@
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
-import { authorizationDenied, isAuthorizationDenial } from '../authorization/authorization-errors.ts'
+import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'

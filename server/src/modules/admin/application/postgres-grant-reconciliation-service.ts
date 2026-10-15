@@ -1,6 +1,7 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../../domain/authorization-errors.ts'
 import type { PostgresOperationsService } from './postgres-operations-service.ts'
+import { invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxReconcileBatch = 200
@@ -176,11 +177,11 @@ export class PostgresGrantReconciliationService {
          order by workspace_id asc, id asc
       `
       if (rows.length !== sourceIds.length) {
-        throw new Error('部分授权来源不存在，请刷新对账清单后重试')
+        throw notFound('部分授权来源不存在，请刷新对账清单后重试')
       }
       const notLegacy = rows.filter(row => row.sourceType !== 'legacy_unresolved' || row.status !== 'active')
       if (notLegacy.length) {
-        throw new Error('部分授权来源已完成对账或已撤销，不能重复对账，请刷新对账清单后重试')
+        throw stateConflict('部分授权来源已完成对账或已撤销，不能重复对账，请刷新对账清单后重试')
       }
 
       // 与 Agent 移出/停用共用 workspace 行锁，且顺序一致（先 workspace、后来源）。
@@ -198,7 +199,7 @@ export class PostgresGrantReconciliationService {
       `
       const stale = locked.filter(row => row.sourceType !== 'legacy_unresolved' || row.status !== 'active')
       if (stale.length) {
-        throw new Error('部分授权来源已完成对账或已撤销，不能重复对账，请刷新对账清单后重试')
+        throw stateConflict('部分授权来源已完成对账或已撤销，不能重复对账，请刷新对账清单后重试')
       }
       await transaction`
         update workspace_grant_sources
@@ -255,10 +256,10 @@ function inferenceNote(capabilityType: ReconciledCapabilityType) {
 }
 
 function normalizeSourceIds(sourceIds: string[]) {
-  if (!Array.isArray(sourceIds)) throw new Error('sourceIds 必须为数组')
+  if (!Array.isArray(sourceIds)) throw invalidRequest('sourceIds 必须为数组')
   const unique = [...new Set(sourceIds.map(id => String(id).trim()).filter(Boolean))]
-  if (unique.length === 0) throw new Error('至少需要选择一条待对账的授权来源')
-  if (unique.length > maxReconcileBatch) throw new Error(`单次对账最多 ${maxReconcileBatch} 条授权来源`)
+  if (unique.length === 0) throw invalidRequest('至少需要选择一条待对账的授权来源')
+  if (unique.length > maxReconcileBatch) throw invalidRequest(`单次对账最多 ${maxReconcileBatch} 条授权来源`)
   return unique
 }
 

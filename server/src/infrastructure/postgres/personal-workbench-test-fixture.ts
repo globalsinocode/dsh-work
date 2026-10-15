@@ -15,7 +15,7 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
-import { prototypeApiAuthenticator } from '../../modules/identity/prototype-authenticator.ts'
+import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import type { AgentRuntimePort } from '../../modules/runtime/runtime-types.ts'
 import { registerWorkbenchAgentRoutes } from '../../http/workbench/agent-routes.ts'
 import { Router, envelope, requireRequestIdentity } from '../../http/router.ts'
@@ -25,6 +25,7 @@ import { registerAutomationRoutes } from '../../http/workbench/automation-routes
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 export const testTenant = 'tenant-dsh-work'
 export async function personalWorkbenchFixture(prefix: string, options: {
@@ -36,7 +37,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
   const auth = new PostgresAuthorizationService(db.client)
-  const content = new PostgresContentService(db.client, root, auth)
+  const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
   const conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
@@ -61,7 +62,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     defaultAutomationConfig,
   )
   const router = new Router({ authenticateApi: async (request, audience) => {
-    const identity = await prototypeApiAuthenticator(request, audience)
+    const identity = await testApiAuthenticator(request, audience)
     const user = request.headers['x-test-user-id']
     return user ? { ...identity, userId: String(user) } : identity
   } })

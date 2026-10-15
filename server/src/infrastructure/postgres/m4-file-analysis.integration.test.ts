@@ -22,6 +22,7 @@ import { PostgresContentService } from '../../modules/workbench/application/post
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -39,7 +40,7 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_file_test', maxConnections: 5 })
   database = throwaway.client
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-m4-file-'))
-  content = new PostgresContentService(database, storageRoot, new PostgresAuthorizationService(database))
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), new PostgresAuthorizationService(database))
   conversations = new PostgresConversationRepository(database)
   runtime = new CapturingFileRuntime()
   orchestration = new RunOrchestrationService(

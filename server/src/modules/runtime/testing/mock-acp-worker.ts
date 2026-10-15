@@ -171,6 +171,14 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[tool-log]') || text.includes('[tool-log-fail]')) {
+      const failing = text.includes('[tool-log-fail]')
+      void writeToolLog().then(
+        () => failing ? failPrompt(pending, 'Model provider rejected the request', 'model') : finishPrompt(pending, 'end_turn'),
+        () => failPrompt(pending, 'Session log write failed', 'tool'),
+      )
+      return
+    }
     if (text.includes('[mcp-log-no-usage]')) {
       void writeMcpLogWithoutUsage().then(
         () => finishPrompt(pending, 'end_turn'),
@@ -344,6 +352,22 @@ function canonicalJson(value: unknown): string {
     return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+/** EX-01: one succeeded, one failed and one unanswered call; arguments carry a marker that must not leak. */
+async function writeToolLog() {
+  const root = process.env.DSH_SNAPSHOT_SESSIONS_ROOT
+  if (!root) throw new Error('DSH_SNAPSHOT_SESSIONS_ROOT is missing')
+  const directory = join(root, 'mock-tool-session')
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'session.jsonl'), [
+    JSON.stringify({ type: 'tool/call', data: { callId: 'call-read', name: 'read', arguments: { path: 'input/SECRET-ARG.md' } } }),
+    JSON.stringify({ type: 'tool/result', data: { callId: 'call-read', isError: false, output: 'SECRET-OUTPUT' } }),
+    JSON.stringify({ type: 'tool/call', data: { callId: 'call-bash', name: 'bash', arguments: { command: 'cat SECRET-ARG' } } }),
+    JSON.stringify({ type: 'tool/result', data: { callId: 'call-bash', isError: true, output: 'SECRET-OUTPUT' } }),
+    JSON.stringify({ type: 'tool/call', data: { callId: 'call-fetch', name: 'web_fetch', arguments: { url: 'https://example.test' } } }),
+    '',
+  ].join('\n'))
 }
 
 async function writeMcpLogWithoutUsage() {
