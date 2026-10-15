@@ -140,7 +140,7 @@ async function toggleProvider(provider: ModelProvider) {
   const status = provider.status === 'active' ? 'disabled' : 'active'
   try {
     if (status === 'disabled') {
-      await ElMessageBox.confirm('停用后，新 Run 不再解析到该 Provider。已启动 Attempt 不受影响。', `停用 ${provider.name}`, { type: 'warning' })
+      await ElMessageBox.confirm('停用后，新 Run 无法解析到该 Provider 的路由；没有其他可用路由时，新 Run 会被拒绝。执行实际使用的模型仍由 DSH Profile 决定，已启动的 Attempt 不受影响。', `停用 ${provider.name}`, { type: 'warning' })
     }
     await adminApi.setModelProviderStatus({ providerId: provider.id, status })
     ElMessage.success(status === 'active' ? 'Provider 已启用' : 'Provider 已停用')
@@ -171,23 +171,23 @@ onMounted(() => void load())
 <template>
   <div class="ops-page model-governance-page">
     <div class="page-heading-row">
-      <p class="page-note">集中管理 Provider、可用模型、平台路由和密钥引用；Agent 不单独配置模型。</p>
+      <p class="page-note">登记 Provider、可用模型、平台路由和密钥引用；Agent 不单独配置模型。</p>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
-    <el-alert type="info" :closable="false" show-icon title="当前默认模型继承 DSH 配置。dsh-work 只保存密钥引用与状态，不能读取、回显或导出密钥正文。" />
+    <el-alert class="record-only-notice" type="warning" :closable="false" show-icon title="模型路由目前仅记录，不决定执行使用的模型" description="每次运行会把解析到的路由写入快照，用于审计和用量统计；DSH 实际调用的模型由 DSH Profile 固定，修改路由不会改变执行模型。没有可用路由（Provider 或模型已停用、密钥引用未配置）时，新运行会被拒绝。dsh-work 只保存密钥引用与状态，不能读取、回显或导出密钥正文。" />
 
     <section class="metric-grid">
       <article class="metric-card"><div class="metric-label">启用 Provider</div><div class="metric-value">{{ activeProviderCount }}</div><div class="metric-detail">共 {{ providers.length }} 个</div></article>
       <article class="metric-card"><div class="metric-label">可治理模型</div><div class="metric-value">{{ modelCount }}</div><div class="metric-detail">按 Provider 注册</div></article>
       <article class="metric-card"><div class="metric-label">凭据已配置</div><div class="metric-value">{{ configuredCredentialCount }}</div><div class="metric-detail">仅记录引用状态</div></article>
-      <article class="metric-card"><div class="metric-label">启用路由</div><div class="metric-value">{{ routes.filter((item) => item.enabled).length }}</div><div class="metric-detail">运行前解析并快照</div></article>
+      <article class="metric-card"><div class="metric-label">启用路由</div><div class="metric-value">{{ routes.filter((item) => item.enabled).length }}</div><div class="metric-detail">仅记录到运行快照</div></article>
     </section>
 
     <section class="content-panel content-panel--flush">
       <div class="governance-toolbar">
-        <el-tabs v-model="activeTab" class="governance-tabs"><el-tab-pane label="Provider 与模型" name="providers" /><el-tab-pane label="模型路由" name="routes" /></el-tabs>
+        <el-tabs v-model="activeTab" class="governance-tabs"><el-tab-pane label="Provider 与模型" name="providers" /><el-tab-pane label="模型路由（仅记录）" name="routes" /></el-tabs>
         <el-button v-if="authStore.canManage" type="primary" :icon="Plus" @click="activeTab === 'providers' ? openProviderDialog() : openRouteDialog()">{{ activeTab === 'providers' ? '新建 Provider' : '新建路由' }}</el-button>
       </div>
 
@@ -229,7 +229,8 @@ onMounted(() => void load())
     </el-dialog>
 
     <el-dialog v-model="routeDialogOpen" title="新建模型路由" width="640px" destroy-on-close>
-      <el-form label-position="top" :model="routeForm"><div class="form-grid"><el-form-item label="路由名称" required><el-input v-model="routeForm.name" placeholder="例如：平台默认模型路由" /></el-form-item><el-form-item label="路由标识" required><el-input v-model="routeForm.key" placeholder="例如：default" /></el-form-item></div><div class="form-grid"><el-form-item label="用途" required><el-select v-model="routeForm.purpose"><el-option label="默认" value="default" /><el-option label="对话" value="chat" /><el-option label="分析" value="analysis" /><el-option label="降级" value="fallback" /></el-select></el-form-item><el-form-item label="优先级" required><el-input-number v-model="routeForm.priority" :min="0" :max="10000" controls-position="right" /></el-form-item></div><el-form-item label="目标模型" required><el-select v-model="routeForm.providerModelId" filterable><el-option v-for="option in modelOptions" :key="option.value" :label="option.label" :value="option.value" :disabled="option.disabled" /></el-select></el-form-item><el-form-item><el-checkbox v-model="routeForm.enabled">创建后立即启用</el-checkbox></el-form-item></el-form>
+      <el-alert type="info" :closable="false" show-icon title="路由只记录到运行快照，不改变 DSH 实际使用的模型。" />
+      <el-form class="dialog-form" label-position="top" :model="routeForm"><div class="form-grid"><el-form-item label="路由名称" required><el-input v-model="routeForm.name" placeholder="例如：平台默认模型路由" /></el-form-item><el-form-item label="路由标识" required><el-input v-model="routeForm.key" placeholder="例如：default" /></el-form-item></div><div class="form-grid"><el-form-item label="用途" required><el-select v-model="routeForm.purpose"><el-option label="默认" value="default" /><el-option label="对话" value="chat" /><el-option label="分析" value="analysis" /><el-option label="降级" value="fallback" /></el-select></el-form-item><el-form-item label="优先级" required><el-input-number v-model="routeForm.priority" :min="0" :max="10000" controls-position="right" /></el-form-item></div><el-form-item label="目标模型" required><el-select v-model="routeForm.providerModelId" filterable><el-option v-for="option in modelOptions" :key="option.value" :label="option.label" :value="option.value" :disabled="option.disabled" /></el-select></el-form-item><el-form-item><el-checkbox v-model="routeForm.enabled">创建后立即启用</el-checkbox></el-form-item></el-form>
       <template #footer><el-button @click="routeDialogOpen = false">取消</el-button><el-button type="primary" @click="createRoute">创建路由</el-button></template>
     </el-dialog>
   </div>
