@@ -1,10 +1,10 @@
 import { lookup } from 'node:dns/promises'
 import { request } from 'node:https'
 import { isIP } from 'node:net'
-import { dependencyTimeout, invalidRequest } from '../../domain/request-errors.ts'
+import { RequestError, dependencyTimeout, invalidRequest } from '../../domain/request-errors.ts'
 
 export interface SkillSource { url: string; selected?: string; directory?: string; repository?: string; ref?: string }
-const invalid = (message: string): never => { throw Object.assign(new Error(`安装来源无效：${message}`), { status: 422, code: 'skill_source_invalid' }) }
+const invalid = (message: string): never => { throw new RequestError(422, 'skill_source_invalid', `安装来源无效：${message}`) }
 
 /** Direct UI accepts exactly one URL, never a command, prose, credentials or caller-supplied resolved ref. */
 export function parseSkillLink(input: { url: string; selected?: string }): SkillSource {

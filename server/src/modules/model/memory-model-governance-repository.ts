@@ -12,7 +12,7 @@ import type {
   ProviderStatus,
   UpsertCredentialReferenceInput,
 } from './model-types.ts'
-import { notFound, stateConflict } from '../../domain/request-errors.ts'
+import { dependencyUnavailable, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const clone = <T>(value: T): T => structuredClone(value)
 
@@ -118,10 +118,10 @@ export class MemoryModelGovernanceRepository implements ModelGovernanceRepositor
 
   async resolveRoute(_tenantId: string, routeKey = 'default'): Promise<ModelRouteSnapshot> {
     const route = this.routes.find((item) => item.key === routeKey && item.enabled)
-    if (!route) throw new Error(`没有可用的模型路由：${routeKey}`)
+    if (!route) throw dependencyUnavailable(`没有可用的模型路由：${routeKey}`)
     const { provider, model } = this.requireModel(route.providerModelId)
-    if (provider.status !== 'active' || model.status !== 'active') throw new Error('模型路由目标已停用')
-    if (!provider.credential || provider.credential.status !== 'configured') throw new Error('Provider 凭据未配置')
+    if (provider.status !== 'active' || model.status !== 'active') throw dependencyUnavailable('模型路由目标已停用')
+    if (!provider.credential || provider.credential.status !== 'configured') throw dependencyUnavailable('Provider 凭据未配置')
     return {
       routeId: route.id,
       routeKey: route.key,

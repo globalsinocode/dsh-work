@@ -3,14 +3,14 @@ import type { IncomingMessage } from 'node:http'
 
 import type { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
-import { invalidRequest } from '../../domain/request-errors.ts'
+import { RequestError, invalidRequest } from '../../domain/request-errors.ts'
 
 const maxUploadBytes = 20 * 1024 * 1024
 
 export function registerSkillInstallationRoutes(router: Router, service?: AdminSkillInstallationService) {
   const base = '/api/admin/v1/skill-installations'
   const available = () => {
-    if (!service) throw Object.assign(new Error('Skill 安装服务不可用：请配置 PostgreSQL'), { status: 503, code: 'skill_installation_unavailable' })
+    if (!service) throw new RequestError(503, 'skill_installation_unavailable', 'Skill 安装服务不可用：请配置 PostgreSQL')
     return service
   }
 

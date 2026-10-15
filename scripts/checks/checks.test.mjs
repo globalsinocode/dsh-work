@@ -102,6 +102,8 @@ test('security checks reject external authorization calls and plaintext secret c
   appendFileSync(join(root, 'server/migrations/0001_m2_platform.sql'), '\nALTER TABLE x ADD API_KEY TEXT;\n')
   assert.match(failures(root, 'security'), /不应包含 \/authorization\/decisions/)
   assert.match(failures(root, 'security'), /不得包含明文凭据列/)
+  appendFileSync(join(root, 'server/src/modules/tool/postgres-tool-connector-service.ts'), "\nthrow Object.assign(new Error('x'), { status: 409, code: 'y' })\n")
+  assert.match(failures(root, 'security'), /postgres-tool-connector-service\.ts 不得用 Object\.assign 拼装 HTTP 状态/)
 })
 
 test('CI command discovery handles run blocks and ignores step names and comments', () => {

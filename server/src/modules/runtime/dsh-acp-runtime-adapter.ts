@@ -37,7 +37,7 @@ import type {
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
-import { dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
 
@@ -1651,7 +1651,7 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message:
   }
 }
 
-type McpAuthenticationFailure = Error & {
+type McpAuthenticationFailure = RequestError & {
   status: 422
   code: 'MCP_AUTHENTICATION_REQUIRED' | 'MCP_AUTHENTICATION_FAILED'
 }
@@ -1693,12 +1693,9 @@ export async function diagnoseMcpAuthenticationFailure(
 }
 
 function mcpAuthenticationFailure(authType: McpRuntimeConnection['snapshot']['auth_type']): McpAuthenticationFailure {
-  return Object.assign(new Error(authType === 'none'
-    ? 'MCP 认证失败：该服务要求 Bearer Token，请选择 Bearer Token 认证并填写有效 Token'
-    : 'MCP 认证失败：Bearer Token 无效、已过期或无权访问该服务，请检查 Token 后重试'), {
-    status: 422 as const,
-    code: authType === 'none' ? 'MCP_AUTHENTICATION_REQUIRED' as const : 'MCP_AUTHENTICATION_FAILED' as const,
-  })
+  return authType === 'none'
+    ? new RequestError(422, 'MCP_AUTHENTICATION_REQUIRED', 'MCP 认证失败：该服务要求 Bearer Token，请选择 Bearer Token 认证并填写有效 Token') as McpAuthenticationFailure
+    : new RequestError(422, 'MCP_AUTHENTICATION_FAILED', 'MCP 认证失败：Bearer Token 无效、已过期或无权访问该服务，请检查 Token 后重试') as McpAuthenticationFailure
 }
 
 export async function prepareMcpProcess(

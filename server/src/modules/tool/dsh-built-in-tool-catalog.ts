@@ -209,7 +209,7 @@ export function requiredDshToolApprovalPolicy(toolName: string): ToolDefinition[
 
 export function assertDshToolApprovalPolicy(entry: CatalogEntry, approvalPolicy: ToolDefinition['approvalPolicy']) {
   if (approvalPolicy !== entry.defaultApprovalPolicy) {
-    throw new Error(`工具“${entry.name}”的审批策略由平台固定为“${approvalPolicyLabel(entry.defaultApprovalPolicy)}”`)
+    throw invalidRequest(`工具“${entry.name}”的审批策略由平台固定为“${approvalPolicyLabel(entry.defaultApprovalPolicy)}”`)
   }
 }
 

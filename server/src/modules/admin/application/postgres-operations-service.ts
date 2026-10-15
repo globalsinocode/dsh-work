@@ -143,7 +143,7 @@ export class PostgresOperationsService {
         const runtime = await this.readRuntimeMutationSnapshot(transaction, input.runtimeId, true)
         if (!runtime) throw notFound(`Runtime 不存在：${input.runtimeId}`)
         if (expected && !sameRuntimeMutationSnapshot(runtime, expected)) {
-          throw new Error('Runtime 状态已变化，请重新生成操作计划')
+          throw stateConflict('Runtime 状态已变化，请重新生成操作计划')
         }
 
         if (input.schedulingStatus === 'accepting') {

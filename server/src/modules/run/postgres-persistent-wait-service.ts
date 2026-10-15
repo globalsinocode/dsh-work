@@ -8,7 +8,7 @@ import type { DurablePermissionContext, DurableWaitDecision } from '../runtime/d
 import type { RuntimeManifest, RuntimeResumeCheckpointContext } from '../runtime/runtime-types.ts'
 import type { JsonObject, RunRecord } from './run-types.ts'
 import { PostgresRunRepository } from './postgres-run-repository.ts'
-import { notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -156,9 +156,7 @@ export class PostgresPersistentWaitService {
          where tenant_id = ${tenantId} and attempt_id = ${manifest.attempt_id} and status = 'unknown'
          limit 1
       `
-      if (unknown) throw Object.assign(new Error('当前 Attempt 存在效果未知的外部动作，核对前不能进入审批恢复'), {
-        status: 409, code: 'TASK_OPERATION_EFFECT_UNKNOWN',
-      })
+      if (unknown) throw new RequestError(409, 'TASK_OPERATION_EFFECT_UNKNOWN', '当前 Attempt 存在效果未知的外部动作，核对前不能进入审批恢复')
       const [existing] = await transaction<{ approvalId: string; checkpointId: string; checkpointDigest: string; expiresAt: Date }[]>`
         select a.id as "approvalId", a.checkpoint_id as "checkpointId",
                c.checkpoint_digest as "checkpointDigest", a.expires_at as "expiresAt"
@@ -313,15 +311,13 @@ export class PostgresPersistentWaitService {
     if (!current) throw requestInvalid('审批不存在')
     if (current.status !== 'pending') {
       if (current.status === 'preparing') {
-        throw Object.assign(new Error('审批尚未进入可处理状态，请等待 Runtime 释放当前执行'), {
-          status: 409, code: 'APPROVAL_NOT_READY',
-        })
+        throw new RequestError(409, 'APPROVAL_NOT_READY', '审批尚未进入可处理状态，请等待 Runtime 释放当前执行')
       }
       if (current.status === 'expired') throw approvalExpired()
       const sameDecision = (input.decision === 'approved' && current.status === 'approved')
         || (input.decision === 'rejected' && current.status === 'rejected')
       if (sameDecision && current.resolutionKey === input.resolutionKey) return toRecord(current)
-      throw Object.assign(new Error(`审批已处于 ${current.status}，不能改写决定`), { status: 409, code: 'APPROVAL_CONFLICT' })
+      throw new RequestError(409, 'APPROVAL_CONFLICT', `审批已处于 ${current.status}，不能改写决定`)
     }
     if (current.expiresAt.getTime() <= Date.now()) {
       await this.expireOne(current.id)
@@ -341,18 +337,14 @@ export class PostgresPersistentWaitService {
        where tenant_id = ${tenantId} and attempt_id = ${current.sourceAttemptId} and status = 'unknown'
        limit 1
     `
-    if (unknown) throw Object.assign(new Error('来源 Attempt 存在效果未知的外部动作，请先核对结果'), {
-      status: 409, code: 'TASK_OPERATION_EFFECT_UNKNOWN',
-    })
+    if (unknown) throw new RequestError(409, 'TASK_OPERATION_EFFECT_UNKNOWN', '来源 Attempt 存在效果未知的外部动作，请先核对结果')
 
     const approvedAt = new Date().toISOString()
     const checkpointContext = current.checkpointContext as unknown as RuntimeResumeCheckpointContext
     const checkpointContextSha256 = createHash('sha256').update(canonicalJson(checkpointContext)).digest('hex')
     if (checkpointContextSha256 !== current.checkpointContextSha256
       || createHash('sha256').update(canonicalJson(checkpointContext.pending_action?.arguments ?? null)).digest('hex') !== current.parameterDigest) {
-      throw Object.assign(new Error('持久化检查点内容校验失败，不能恢复执行'), {
-        status: 409, code: 'CHECKPOINT_INTEGRITY_FAILED',
-      })
+      throw new RequestError(409, 'CHECKPOINT_INTEGRITY_FAILED', '持久化检查点内容校验失败，不能恢复执行')
     }
     const resumedManifest: RuntimeManifest = {
       ...structuredClone(sourceManifest),
@@ -397,7 +389,7 @@ export class PostgresPersistentWaitService {
         if (!approval || approval.status !== 'pending' || approval.expiresAt.getTime() <= Date.now()
           || approval.checkpointDigest !== current.checkpointDigest
           || approval.checkpointContextSha256 !== checkpointContextSha256) {
-          throw Object.assign(new Error('审批已被处理或检查点已变化'), { status: 409, code: 'APPROVAL_CONFLICT' })
+          throw new RequestError(409, 'APPROVAL_CONFLICT', '审批已被处理或检查点已变化')
         }
         await transaction`
           update run_approval_requests
@@ -581,9 +573,7 @@ export class PostgresPersistentWaitService {
     if (resolved?.status === 'rejected' && resolved.resolutionKey === input.resolutionKey) {
       return toRecord(resolved)
     }
-    throw Object.assign(new Error('审批已被其他请求处理，拒绝决定未生效'), {
-      status: 409, code: 'APPROVAL_CONFLICT',
-    })
+    throw new RequestError(409, 'APPROVAL_CONFLICT', '审批已被其他请求处理，拒绝决定未生效')
   }
 
   private async appendWaitTerminalEventWithinTransaction(
@@ -677,7 +667,7 @@ export class PostgresPersistentWaitService {
 }
 
 function approvalExpired() {
-  return Object.assign(new Error('审批已过期，不能恢复执行'), { status: 409, code: 'APPROVAL_EXPIRED' })
+  return new RequestError(409, 'APPROVAL_EXPIRED', '审批已过期，不能恢复执行')
 }
 
 function toRecord(row: ApprovalRow): PersistentApprovalRecord {

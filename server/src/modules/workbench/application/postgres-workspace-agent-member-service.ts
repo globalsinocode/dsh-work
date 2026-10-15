@@ -13,7 +13,7 @@ import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
-import { invalidRequest } from '../../../domain/request-errors.ts'
+import { RequestError, invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -690,7 +690,7 @@ async function lockWorkspaceRow(transaction: DatabaseTransaction, workspaceId: s
 
 /** Agent 成员域的类型化 404：不再依赖中文文案正则映射状态码（评审 L2）。 */
 function agentMemberNotFound(message: string): Error {
-  return Object.assign(new Error(message), { status: 404, code: 'agent_member_not_found' })
+  return new RequestError(404, 'agent_member_not_found', message)
 }
 
 function allowedActionsFor(

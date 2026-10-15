@@ -9,7 +9,7 @@ import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
-import { invalidRequest } from '../../../domain/request-errors.ts'
+import { RequestError, invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -670,7 +670,7 @@ export class PostgresWorkspaceMemberService {
   /**
    * Runs a membership mutation in a transaction and translates the deferred
    * single-owner trigger failure (team_workspace_single_owner, migration
-   * 0022 — raise text "must have exactly one owner") into a friendly
+   * 0022, SQLSTATE DW001 since 0080) into a friendly
    * conflict error. The trigger can only abort here when a concurrent owner
    * transfer committed between the role pre-checks (which run outside the
    * transaction) and the mutation, so the error instructs a refresh instead
@@ -751,11 +751,14 @@ function decodeCandidateCursor(cursor: string): { name: string; id: string } {
 
 /** 成员管理目标的类型化 404：与 automation-service 的 notFound 同一约定，不再依赖中文文案正则。 */
 function memberTargetNotFound(message: string): Error {
-  return Object.assign(new Error(message), { status: 404, code: 'member_target_not_found' })
+  return new RequestError(404, 'member_target_not_found', message)
 }
 
+/** SQLSTATE raised by assert_team_workspace_single_owner (migration 0080). */
+const singleOwnerViolation = 'DW001'
+
 function isSingleOwnerViolation(error: unknown) {
-  return error instanceof Error && /exactly one owner/.test(error.message)
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === singleOwnerViolation
 }
 
 /**

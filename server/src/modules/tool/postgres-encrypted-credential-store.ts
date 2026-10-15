@@ -70,7 +70,7 @@ export class PostgresEncryptedCredentialStore {
         from credential_secrets
        where tenant_id = ${tenantId} and credential_ref_id = ${credentialRefId}
     `
-    if (!row) throw new Error('MCP Bearer 凭据未配置')
+    if (!row) throw stateConflict('MCP Bearer 凭据未配置')
     if (row.algorithm !== ALGORITHM || row.keyId !== this.keyId) {
       throw new Error(`MCP Bearer 凭据使用了当前服务无法解密的密钥版本：${row.keyId}`)
     }

@@ -529,7 +529,7 @@ function normalizePermissions(values: string[]) {
   const allowed = new Set(permissionCatalog.map(item => item.code))
   const normalized = unique(values.map(item => String(item).trim()).filter(Boolean))
   const unknown = normalized.filter(item => !allowed.has(item as typeof permissionCatalog[number]['code']))
-  if (unknown.length > 0) throw new Error(`包含未知的本地权限：${unknown.join('、')}`)
+  if (unknown.length > 0) throw invalidRequest(`包含未知的本地权限：${unknown.join('、')}`)
   return normalized.sort()
 }
 

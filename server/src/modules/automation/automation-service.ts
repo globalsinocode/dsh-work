@@ -30,7 +30,7 @@ import {
   type AutomationSchedule,
   type FrozenExecutionConfig,
 } from './automation-types.ts'
-import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -39,11 +39,11 @@ function sha256(value: string): string {
 }
 
 function conflict(message: string, code = 'conflict'): Error {
-  return Object.assign(new Error(message), { status: 409, code })
+  return new RequestError(409, code, message)
 }
 
 function notFound(message = '自动任务不存在或不可访问'): Error {
-  return Object.assign(new Error(message), { status: 404, code: 'not_found' })
+  return new RequestError(404, 'not_found', message)
 }
 
 /**

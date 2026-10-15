@@ -1,3 +1,6 @@
+import { readdirSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 // These forbidden dependencies and production safeguards supplement behavior tests.
 // Method names, SQL formatting and UI copy are intentionally left to their test suites.
 export function checkSecurity(check) {
@@ -20,6 +23,11 @@ export function checkSecurity(check) {
   check.assert(!/\/[^/\n]*[\u4e00-\u9fff][^/\n]*\/[a-z]*\.test\(/.test(router) && !/\.includes\('[^']*[\u4e00-\u9fff]/.test(router),
     'server/src/http/router.ts 不得按错误消息文字判断状态码，请抛出 server/src/domain/request-errors.ts 中的类型化错误')
   check.excludes('server/src/modules/authorization/authorization-errors.ts', ['LEGACY_DENIAL_MESSAGES', 'message.includes('])
+  check.excludes('server/src/modules/workbench/application/postgres-workspace-member-service.ts', ['/exactly one owner/'])
+  for (const file of serverSourceFiles(check)) {
+    check.assert(!/Object\.assign\(new Error\([\s\S]{0,400}?\bstatus:/.test(check.read(file)),
+      `${file} 不得用 Object.assign 拼装 HTTP 状态，请使用 server/src/domain/request-errors.ts 中的 RequestError 或工厂函数`)
+  }
   check.includes('server/src/modules/identity/auth-service.ts', [
     'equalOpaqueHash', 'validateRequestOrigin', 'refreshTokensWithLock', 'resolveAuthorization',
   ])
@@ -37,4 +45,12 @@ export function checkSecurity(check) {
   ])
   check.includes('server/migrations/0017_business_user_directory.sql', ['business_user boolean not null default false'])
   check.includes('server/migrations/0018_fail_closed_directory_reconciliation.sql', ['business_user = false', 'cursor = null'])
+}
+
+/** Production server sources (no tests, no test-only support). */
+function serverSourceFiles(check) {
+  return readdirSync(resolve(check.root, 'server/src'), { recursive: true })
+    .map(file => String(file).split('\\').join('/'))
+    .filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts') && !file.startsWith('testing/') && !file.includes('/testing/'))
+    .map(file => `server/src/${file}`)
 }

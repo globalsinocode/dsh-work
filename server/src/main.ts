@@ -86,7 +86,7 @@ import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
-import { invalidRequest } from './domain/request-errors.ts'
+import { RequestError, invalidRequest } from './domain/request-errors.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -290,7 +290,7 @@ async function start() {
     if (references.includes('python_execute@1.0.0') && pythonCapability.status !== 'available') throw new ExecutionCapabilityUnavailableError('python')
     const configuredPackages = new Set(pythonPackages.map(value => value.toLowerCase()))
     if (requiredPackages.some(name => !configuredPackages.has(name.toLowerCase()))) {
-      throw Object.assign(new Error('声明的 Python 依赖未配置并验证，当前不可发布'), { status: 503, code: 'SKILL_DEPENDENCIES_UNAVAILABLE' })
+      throw new RequestError(503, 'SKILL_DEPENDENCIES_UNAVAILABLE', '声明的 Python 依赖未配置并验证，当前不可发布')
     }
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)

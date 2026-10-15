@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { canonicalJson } from '../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 export const SKILL_TEST_EVIDENCE_POLICY = 'attempt-v2'
 export const SKILL_TEST_SCENARIO_POLICY = 'scenario-v1'
@@ -82,8 +83,6 @@ export function assertStartedSkillTest(
 ): void {
   if (!started || current.versionId !== started.versionId || current.fingerprint !== started.fingerprint
     || current.runtimeFingerprint !== started.runtimeFingerprint) {
-    throw Object.assign(new Error('Skill 配置或依赖已变化，旧试运行不能用于当前草稿；请重新测试'), {
-      status: 409, code: 'skill_test_snapshot_changed',
-    })
+    throw new RequestError(409, 'skill_test_snapshot_changed', 'Skill 配置或依赖已变化，旧试运行不能用于当前草稿；请重新测试')
   }
 }

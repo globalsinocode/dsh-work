@@ -10,6 +10,7 @@ import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { JsonObject } from '../../domain/run-state.ts'
 import { nextSlotUtc, normalizeSchedule, slotsBetween } from './automation-calendar.ts'
 import type { AutomationBudget, AutomationSchedule } from './automation-types.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxPromptLength = 20_000
@@ -68,8 +69,8 @@ const executionColumns = `e.id, e.routine_id as "routineId", e.trigger_id as "tr
   e.trigger_evidence as "triggerEvidence", e.created_at as "createdAt"`
 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
-function conflict(message: string): Error { return Object.assign(new Error(message), { status: 409, code: 'state_conflict' }) }
-function missing(): Error { return Object.assign(new Error('Agent 主动任务不存在'), { status: 404, code: 'not_found' }) }
+function conflict(message: string): Error { return new RequestError(409, 'state_conflict', message) }
+function missing(): Error { return new RequestError(404, 'not_found', 'Agent 主动任务不存在') }
 function mapRoutine(row: RoutineRow): AgentRoutine {
   return { ...row, nextSlotUtc: row.nextSlotUtc?.toISOString() ?? null,
     approvedAt: row.approvedAt?.toISOString() ?? null,

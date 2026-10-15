@@ -1,5 +1,6 @@
 import type { PostgresAgentReleaseService, ReleaseEvalCase } from '../../modules/agent/postgres-agent-release-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 const basePath = '/api/admin/v1'
 
@@ -9,7 +10,7 @@ const basePath = '/api/admin/v1'
  */
 export function registerAgentReleaseRoutes(router: Router, service?: PostgresAgentReleaseService) {
   const available = () => {
-    if (!service) throw Object.assign(new Error('Agent 发布治理服务不可用：请配置 PostgreSQL'), { status: 503, code: 'agent_release_unavailable' })
+    if (!service) throw new RequestError(503, 'agent_release_unavailable', 'Agent 发布治理服务不可用：请配置 PostgreSQL')
     return service
   }
 
@@ -52,7 +53,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ roleIds: string[]; dataScopes: string[] }>(request)
     if (!Array.isArray(input?.roleIds) || !Array.isArray(input?.dataScopes)) {
-      throw Object.assign(new Error('roleIds 和 dataScopes 必须是数组'), { status: 422, code: 'validation_failed' })
+      throw new RequestError(422, 'validation_failed', 'roleIds 和 dataScopes 必须是数组')
     }
     return envelope('admin', await available().updatePublicationScope(
       context.params['agentId'] ?? '', userId, input.roleIds, input.dataScopes,
@@ -62,7 +63,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
   router.post(`${basePath}/agents/:agentId/release/cases`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ cases: ReleaseEvalCase[] }>(request)
-    if (!Array.isArray(input?.cases)) throw Object.assign(new Error('cases 必须是数组'), { status: 422, code: 'validation_failed' })
+    if (!Array.isArray(input?.cases)) throw new RequestError(422, 'validation_failed', 'cases 必须是数组')
     return envelope('admin', await available().updateCases(context.params['agentId'] ?? '', input.cases, userId), 'postgres')
   })
 
@@ -71,7 +72,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ caseId?: string }>(request)
     if (typeof input?.caseId !== 'string' || !input.caseId.trim()) {
-      throw Object.assign(new Error('caseId 不能为空'), { status: 422, code: 'validation_failed' })
+      throw new RequestError(422, 'validation_failed', 'caseId 不能为空')
     }
     return httpResult(201, envelope('admin', await available().startTrial(context.params['agentId'] ?? '', userId, input.caseId), 'postgres'))
   })
@@ -80,7 +81,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ caseId?: string; input?: string; rubric?: string }>(request)
     if (typeof input?.caseId !== 'string' || typeof input.input !== 'string' || typeof input.rubric !== 'string') {
-      throw Object.assign(new Error('caseId、input、rubric 必须是字符串'), { status: 422, code: 'validation_failed' })
+      throw new RequestError(422, 'validation_failed', 'caseId、input、rubric 必须是字符串')
     }
     return envelope('admin', await available().continueTrialCase(
       context.params['agentId'] ?? '', context.params['trialId'] ?? '',
@@ -92,7 +93,7 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
   router.post(`${basePath}/agents/:agentId/release/trials/:trialId/confirm`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ verdicts?: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }> }>(request)
-    if (!Array.isArray(input?.verdicts)) throw Object.assign(new Error('verdicts 必须是数组'), { status: 422, code: 'validation_failed' })
+    if (!Array.isArray(input?.verdicts)) throw new RequestError(422, 'validation_failed', 'verdicts 必须是数组')
     return envelope('admin', await available().confirmTrial(context.params['agentId'] ?? '', context.params['trialId'] ?? '', input.verdicts, userId), 'postgres')
   })
 

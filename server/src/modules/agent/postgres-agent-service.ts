@@ -23,7 +23,7 @@ import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
-import { accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -266,9 +266,7 @@ export class PostgresAgentService {
       `
       if (!principal) throw notFound(`Agent 执行身份不存在：${input.agentId}`)
       if (principal.authorizationVersion !== input.expectedAuthorizationVersion) {
-        throw Object.assign(new Error('Agent 身份授权已变化，请刷新后重试'), {
-          status: 409, code: 'AGENT_PRINCIPAL_REVISION_CONFLICT',
-        })
+        throw new RequestError(409, 'AGENT_PRINCIPAL_REVISION_CONFLICT', 'Agent 身份授权已变化，请刷新后重试')
       }
       const requestedRoles = input.roleIds.length ? input.roleIds : ['__none__']
       const existingRoles = await transaction<{ roleId: string }[]>`
@@ -490,7 +488,7 @@ export class PostgresAgentService {
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
       } else {
-        if (!locked.activeVersionId) throw new Error('Agent 没有可用于创建新版本的已发布版本')
+        if (!locked.activeVersionId) throw stateConflict('Agent 没有可用于创建新版本的已发布版本')
         const [latest] = await transaction<{ version: string }[]>`
           select version from agent_versions
            where tenant_id = ${tenantId} and agent_id = ${input.agentId}
@@ -561,7 +559,7 @@ export class PostgresAgentService {
              and status = 'published' and active_version_id = ${activeVersionId}
            returning id
         `
-        if (!updated.length) throw new Error('仅已发布状态的 Agent 可以停用，或状态已变化请刷新后重试')
+        if (!updated.length) throw stateConflict('仅已发布状态的 Agent 可以停用，或状态已变化请刷新后重试')
         return this.appendRelease(transaction, activeVersionId, input.agentId, 'disabled', actor.id, '停用当前 Agent，不影响已创建的运行。')
       })
       await this.audit(actor.id, 'agent.disable', input.agentId, 'success', release.note)
@@ -575,14 +573,14 @@ export class PostgresAgentService {
       if (current.draftVersionId) {
         throw stateConflict('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
       }
-      throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
+      throw stateConflict('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
     const release = await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked) throw notFound(`Agent 不存在：${input.agentId}`)
       assertAgentMutationRevision(locked, expectedRevision)
       if (!locked.activeVersionId || locked.persistedStatus !== 'disabled') {
-        throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
+        throw stateConflict('当前 Agent 没有可发布草稿，也不处于停用状态')
       }
       const activeVersionId = locked.activeVersionId
       const updated = await transaction`
@@ -591,7 +589,7 @@ export class PostgresAgentService {
            and status = 'disabled' and active_version_id = ${activeVersionId}
          returning id
       `
-      if (!updated.length) throw new Error('Agent 状态已发生变化，请刷新后重试')
+      if (!updated.length) throw stateConflict('Agent 状态已发生变化，请刷新后重试')
       return this.appendRelease(transaction, activeVersionId, input.agentId, 'enabled', actor.id, '重新启用当前 Agent 版本。')
     })
     await this.audit(actor.id, 'agent.enable', input.agentId, 'success', release.note)
@@ -624,7 +622,7 @@ export class PostgresAgentService {
       target.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
 
     if (!current.activeVersionId) throw stateConflict('尚未发布的 Agent 不能回滚')
-    if (current.activeVersionId === target.id) throw new Error(`v${target.version} 已是当前活动版本，无需回滚`)
+    if (current.activeVersionId === target.id) throw stateConflict(`v${target.version} 已是当前活动版本，无需回滚`)
     const [activeBefore] = await this.database<{ version: string }[]>`
       select version from agent_versions where tenant_id = ${tenantId} and id = ${current.activeVersionId}
     `
@@ -634,7 +632,7 @@ export class PostgresAgentService {
     const release = await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked || locked.activeVersionId !== current.activeVersionId) {
-        throw new Error('Agent 当前版本已发生变化，请刷新后重试')
+        throw stateConflict('Agent 当前版本已发生变化，请刷新后重试')
       }
       const [stillPublished] = await transaction<{ id: string }[]>`
         select id from agent_versions
@@ -650,7 +648,7 @@ export class PostgresAgentService {
            and active_version_id = ${current.activeVersionId}
         returning id
       `
-      if (!moved.length) throw new Error('Agent 当前版本已发生变化，请刷新后重试')
+      if (!moved.length) throw stateConflict('Agent 当前版本已发生变化，请刷新后重试')
       return this.appendRelease(transaction, target.id, input.agentId, 'rollback', actor.id, note)
     })
     await this.audit(actor.id, 'agent.rollback', input.agentId, 'success', release.note)
@@ -891,7 +889,7 @@ export class PostgresAgentService {
     // 试运行必须用封存时的定义；指纹与本次取到的配置在同一行快照上计算，
     // 防止发布服务检查后、Attempt 准备前草稿被修改而混入另一份定义。
     if (expectedDefinitionFingerprint && configurationFingerprint(row) !== expectedDefinitionFingerprint) {
-      throw new Error('Agent 草稿定义已偏离封存内容，请从第一项重新试运行')
+      throw stateConflict('Agent 草稿定义已偏离封存内容，请从第一项重新试运行')
     }
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     const principal = await this.getAgentExecutionPrincipal(row.agentId)
@@ -956,7 +954,7 @@ export class PostgresAgentService {
     bindingRefs?: ManifestToolBinding[],
   ): Promise<AgentReleaseRecord> {
     const locked = await this.lockAgentForMutation(transaction, agentId)
-    if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw new Error('当前 Agent 草稿已发生变化，请重新测试后再发布')
+    if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw stateConflict('当前 Agent 草稿已发生变化，请重新测试后再发布')
     assertAgentMutationRevision(locked, expectedRevision)
     const principal = await this.getAgentExecutionPrincipal(agentId, transaction)
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
@@ -986,7 +984,7 @@ export class PostgresAgentService {
        where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
        returning id
     `
-    if (!published.length) throw new Error('Agent 草稿发布状态已发生变化，请刷新后重试')
+    if (!published.length) throw stateConflict('Agent 草稿发布状态已发生变化，请刷新后重试')
 
     // 发布只切换活动版本与草稿指针，不隐式重新启用：停用中的 Agent 发布后仍保持
     // disabled，重新启用必须走独立的状态变更操作与确认流程。
@@ -997,7 +995,7 @@ export class PostgresAgentService {
        where tenant_id = ${tenantId} and id = ${agentId} and draft_version_id = ${locked.versionId}
        returning id
     `
-    if (!activated.length) throw new Error('Agent 草稿指针已发生变化，请刷新后重试')
+    if (!activated.length) throw stateConflict('Agent 草稿指针已发生变化，请刷新后重试')
     return this.appendRelease(transaction, locked.versionId, agentId, 'published', actor.id, '封存试运行通过，发布当前 Agent 版本。')
   }
 
@@ -1142,7 +1140,7 @@ export class PostgresAgentService {
          and id = any(${normalized.connectorIds})
     `
     if (rows.length !== normalized.connectorIds.length) {
-      throw Object.assign(new Error('选定的 MCP Connector 不存在、已删除或不属于当前租户'), { status: 422, code: 'validation_failed' })
+      throw new RequestError(422, 'validation_failed', '选定的 MCP Connector 不存在、已删除或不属于当前租户')
     }
   }
 
@@ -1189,7 +1187,7 @@ function normalizeConfiguration(
 }
 
 function assertConfiguration(input: AgentDraftConfiguration) {
-  if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw new Error('Agent 标识格式不正确')
+  if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw invalidRequest('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
   // Drafts may start with no audience or business-data access. The release
@@ -1303,7 +1301,7 @@ function agentMutationRevision(row: AgentRow) {
 
 function assertAgentMutationRevision(row: AgentRow, expectedRevision?: string) {
   if (expectedRevision && agentMutationRevision(row) !== expectedRevision) {
-    throw Object.assign(new Error('Agent 配置已变化（可能已被其他管理员或流程修改），请刷新后重新编辑'), { status: 409, code: 'state_conflict' })
+    throw new RequestError(409, 'state_conflict', 'Agent 配置已变化（可能已被其他管理员或流程修改），请刷新后重新编辑')
   }
 }
 

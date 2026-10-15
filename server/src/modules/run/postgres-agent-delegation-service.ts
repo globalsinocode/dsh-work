@@ -9,6 +9,7 @@ import type { TaskRepository } from '../task/task-repository.ts'
 import type { PostgresTaskQueryService } from '../task/postgres-task-query-service.ts'
 import { canonicalJson } from '../runtime/canonical-json.ts'
 import type { RunRecord } from './run-types.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
@@ -440,11 +441,11 @@ function optionalString(value: unknown, name: string, max: number): string {
 }
 
 function conflict(code: string, message: string): Error & { status: number; code: string } {
-  return Object.assign(new Error(message), { status: 409, code })
+  return new RequestError(409, code, message)
 }
 
 function unavailable(message: string): Error & { status: number; code: string } {
-  return Object.assign(new Error(message), { status: 503, code: 'DELEGATION_UNAVAILABLE' })
+  return new RequestError(503, 'DELEGATION_UNAVAILABLE', message)
 }
 
 function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {

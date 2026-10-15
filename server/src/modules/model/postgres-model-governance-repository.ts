@@ -18,7 +18,7 @@ import type {
   ProviderStatus,
   UpsertCredentialReferenceInput,
 } from './model-types.ts'
-import { notFound } from '../../domain/request-errors.ts'
+import { dependencyUnavailable, notFound } from '../../domain/request-errors.ts'
 
 interface ProviderRow {
   id: string
@@ -237,10 +237,10 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
        order by r.priority asc
        limit 1
     `
-    if (!row) throw new Error(`没有可用的模型路由：${routeKey}`)
-    if (row.providerStatus !== 'active' || row.modelStatus !== 'active') throw new Error('模型路由目标已停用')
+    if (!row) throw dependencyUnavailable(`没有可用的模型路由：${routeKey}`)
+    if (row.providerStatus !== 'active' || row.modelStatus !== 'active') throw dependencyUnavailable('模型路由目标已停用')
     if (!row.credentialRefId || !row.credentialBackend || !row.credentialExternalRef || row.credentialStatus !== 'configured') {
-      throw new Error('Provider 凭据未配置')
+      throw dependencyUnavailable('Provider 凭据未配置')
     }
     return {
       routeId: row.routeId,

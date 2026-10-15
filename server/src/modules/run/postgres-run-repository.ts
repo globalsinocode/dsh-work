@@ -16,7 +16,7 @@ import type {
 } from './run-types.ts'
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
-import { accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 interface RunRow {
   id: string
@@ -284,7 +284,7 @@ export class PostgresRunRepository implements RunRepository {
       const purpose = input.manifest['purpose']
       if (typeof purpose === 'string' && (purpose.startsWith('admin-') || purpose === 'automation')) {
         const [active] = await transaction`select id from run_attempts where tenant_id = ${input.tenantId} and run_id = ${input.runId} and status in ('queued', 'running', 'cancel_requested') limit 1`
-        if (active) throw Object.assign(new Error('该请求已有进行中的 Attempt'), { status: 409, code: 'attempt_already_active' })
+        if (active) throw new RequestError(409, 'attempt_already_active', '该请求已有进行中的 Attempt')
       }
       const [counter] = await transaction<{ next: number }[]>`
         select coalesce(max(attempt_no), 0)::integer + 1 as next

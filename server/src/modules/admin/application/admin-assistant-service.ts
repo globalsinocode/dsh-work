@@ -12,7 +12,7 @@ import type { AdminSkillInstallationService } from '../../skill/admin-skill-inst
 import type { PostgresSkillService } from '../../skill/postgres-skill-service.ts'
 import { continueSkillSource, parseSkillSource, type SkillSource } from '../../skill/skill-source.ts'
 import type { PostgresOperationsService } from './postgres-operations-service.ts'
-import { accessDenied, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
+import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -253,7 +253,7 @@ export class AdminAssistantService {
     await this.authorization.requirePlatformAdmin(userId)
     const proposal = await this.requireProposal(userId, proposalId)
     if (proposal.proposalSha256 !== proposalSha256) throw notFound('任务提案不存在或已变化，请重新查看')
-    if (proposal.status === 'cancelled') throw new Error('任务提案已取消，请重新发起')
+    if (proposal.status === 'cancelled') throw stateConflict('任务提案已取消，请重新发起')
     if (proposal.status === 'confirmed' && proposal.delegatedRunId) {
       await this.recordDelegationReply(proposal, proposal.delegatedRunId)
       return this.detail(userId, proposal.sessionId)
@@ -261,7 +261,7 @@ export class AdminAssistantService {
     const [origin] = await this.database<{ status: string }[]>`
       select status from runs where tenant_id = ${tenantId} and id = ${proposal.runId}
     `
-    if (origin?.status !== 'succeeded') throw new Error('管理助手尚未成功完成，请等待或重试')
+    if (origin?.status !== 'succeeded') throw stateConflict('管理助手尚未成功完成，请等待或重试')
     const delegated = await this.orchestration.startAdminRun({
       userId,
       sessionId: proposal.sessionId,
@@ -342,7 +342,7 @@ export class AdminAssistantService {
     if (action.status === 'executed') return this.detail(userId, action.sessionId)
     if (action.status !== 'pending') throw actionConflict(action.status === 'executing' ? '操作计划正在执行，请稍后刷新' : '操作计划已取消或失败，请重新生成')
     const [run] = await this.database<{ status: string }[]>`select status from runs where tenant_id = ${tenantId} and id = ${action.runId}`
-    if (run?.status !== 'succeeded') throw new Error('管理助手尚未成功完成，请等待或重试')
+    if (run?.status !== 'succeeded') throw stateConflict('管理助手尚未成功完成，请等待或重试')
     await this.assertConfirmationBoundary(action)
     try {
       await this.assertActionPrecondition(action.plan)
@@ -534,14 +534,14 @@ export class AdminAssistantService {
   private async assertActionPrecondition(plan: StoredActionPlan) {
     if (plan.actionType === 'runtime-update-configuration') {
       const snapshot = await this.operations.getRuntimeMutationSnapshot(plan.before.runtimeId)
-      if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw new Error('Runtime 状态已变化，请重新生成操作计划')
+      if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw stateConflict('Runtime 状态已变化，请重新生成操作计划')
       return
     }
     const current = await this.agents.getMutationSnapshot(plan.before.id)
     const snapshot = plan.actionType === 'agent-set-status'
       ? { id: current.agent.id, status: current.agent.status, version: current.agent.version, revision: current.revision }
       : agentSnapshot(current.agent, current.revision)
-    if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw new Error('Agent 配置已变化，请重新生成操作计划')
+    if (canonicalJson(snapshot) !== canonicalJson(plan.before)) throw stateConflict('Agent 配置已变化，请重新生成操作计划')
   }
 
   private async executeAction(plan: StoredActionPlan, userId: string) {
@@ -735,7 +735,7 @@ export class AdminAssistantService {
 }
 
 function assertMessageInput(input: { sessionId: string; message: string; requestId: string }) {
-  if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw Object.assign(new Error('消息长度必须为 1～20000 个字符'), { status: 422, code: 'invalid_message' })
+  if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw new RequestError(422, 'invalid_message', '消息长度必须为 1～20000 个字符')
   if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw invalidRequest('请求标识无效')
 }
 
@@ -951,5 +951,5 @@ function omitKeys(input: object, keys: string[]): Record<string, unknown> {
 }
 
 function actionConflict(message: string) {
-  return Object.assign(new Error(message), { status: 409, code: 'state_conflict' })
+  return new RequestError(409, 'state_conflict', message)
 }

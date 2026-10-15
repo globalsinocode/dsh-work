@@ -1,10 +1,11 @@
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT } from '../runtime/runtime-types.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 
 export const DEFAULT_AGENT_MCP_SCOPE: AgentMcpScope = { mode: 'none', connectorIds: [] }
 
 const invalid = (message: string): never => {
-  throw Object.assign(new Error(message), { status: 422, code: 'validation_failed' })
+  throw new RequestError(422, 'validation_failed', message)
 }
 
 /** Configuration is versioned, but endpoint and credentials remain Connector-owned. */

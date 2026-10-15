@@ -8,11 +8,11 @@ export interface SecretStorePort {
 /** DSH keeps the current API key. This adapter deliberately cannot read or overwrite it. */
 export class DshManagedSecretStore implements SecretStorePort {
   async put(): Promise<void> {
-    throw new Error('当前凭据由 DSH Credentials Provider 管理，请在 DSH 中更新')
+    throw stateConflict('当前凭据由 DSH Credentials Provider 管理，请在 DSH 中更新')
   }
 
   async remove(): Promise<void> {
-    throw new Error('当前凭据由 DSH Credentials Provider 管理，请在 DSH 中撤销')
+    throw stateConflict('当前凭据由 DSH Credentials Provider 管理，请在 DSH 中撤销')
   }
 
   async exists(reference: string): Promise<boolean> {

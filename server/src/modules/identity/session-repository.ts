@@ -263,7 +263,7 @@ export class IdentitySessionRepository {
          for update
       `
       if (!claim || claim.externalUserId !== input.externalUserId || claim.userId !== input.userId) {
-        throw new Error('应用初始管理员已经由其他账号认领')
+        throw stateConflict('应用初始管理员已经由其他账号认领')
       }
       if (!inserted) return false
       const [role] = await transaction<{ id: string }[]>`

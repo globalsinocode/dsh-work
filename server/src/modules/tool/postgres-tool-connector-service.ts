@@ -27,7 +27,7 @@ import {
 } from './dsh-built-in-tool-catalog.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 import { normalizeAgentMcpScope } from '../agent/agent-mcp-scope.ts'
-import { accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
@@ -240,7 +240,7 @@ export class PostgresToolConnectorService {
    */
   async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
     const actor = await this.requireActor(input.actor)
-    if (!this.runtime?.listTools) throw new Error('DSH Runtime 未提供工具目录发现能力')
+    if (!this.runtime?.listTools) throw dependencyUnavailable('DSH Runtime 未提供工具目录发现能力')
     const health = await this.runtime.health()
     if (health.status !== 'healthy' || !health.acceptingRuns) {
       throw dependencyUnavailable(health.message || 'DSH Runtime 当前不可用，无法同步工具目录')
@@ -403,7 +403,7 @@ export class PostgresToolConnectorService {
   private async loadRuntimeCatalogEntries(): Promise<readonly CatalogEntry[]> {
     if (!this.runtime?.listTools) return dshBuiltInToolCatalog
     const tools = await this.runtime.listTools()
-    if (!tools.length) throw new Error('DSH Runtime 返回了空工具目录')
+    if (!tools.length) throw dependencyUnavailable('DSH Runtime 返回了空工具目录')
     return tools
       .filter(tool => isVisibleDshCatalogTool(tool.id))
       .map(runtimeToolToCatalogEntry)
@@ -559,7 +559,7 @@ export class PostgresToolConnectorService {
 
   async checkMcpConnector(input: { connectorId: string; actor: string }) {
     const connector = await this.requireConnector(input.connectorId)
-    if (connector.protocol !== 'mcp') throw new Error(`不是 MCP Connector：${input.connectorId}`)
+    if (connector.protocol !== 'mcp') throw invalidRequest(`不是 MCP Connector：${input.connectorId}`)
     return this.checkConnector(input)
   }
 
@@ -585,7 +585,7 @@ export class PostgresToolConnectorService {
       const message = cause instanceof Error ? cause.message : 'MCP 连通测试失败'
       await this.audit(actor.id, 'connector.mcp.test', 'mcp-test-failed', 'failed', message)
       if (isTypedServiceError(cause)) throw cause
-      throw Object.assign(new Error(message), { status: 503 as const, code: 'MCP_CONNECTION_TEST_FAILED' })
+      throw new RequestError(503, 'MCP_CONNECTION_TEST_FAILED', message)
     }
   }
 
@@ -709,7 +709,7 @@ export class PostgresToolConnectorService {
            and c.protocol = 'mcp' and c.auth_type = 'bearer' and c.deleted_at is null
          for update
       `
-      if (!connector?.credentialRefId) throw new Error('目标不是已配置 Bearer 认证的 MCP Connector')
+      if (!connector?.credentialRefId) throw stateConflict('目标不是已配置 Bearer 认证的 MCP Connector')
       const [credential] = await transaction<{ backend: string }[]>`
         select backend from credential_refs
          where tenant_id = ${tenantId} and id = ${connector.credentialRefId}
@@ -793,7 +793,7 @@ export class PostgresToolConnectorService {
            and c.protocol = 'mcp' and c.deleted_at is null
          for update of c
       `
-      if (!connector) throw new Error('目标不是 MCP Connector')
+      if (!connector) throw notFound('目标不是 MCP Connector')
       if (input.status === 'enabled' && connector.authType === 'bearer'
         && (connector.credentialBackend !== 'postgres-encrypted' || connector.credentialVersion === null)) {
         throw stateConflict('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
@@ -829,7 +829,7 @@ export class PostgresToolConnectorService {
        where t.tenant_id = ${tenantId} and t.id = ${input.toolId}
     `
     if (!tool) throw notFound(`工具不存在：${input.toolId}`)
-    if (tool.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
+    if (tool.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw invalidRequest('普通工具管理只允许操作 DSH 内置工具')
     if (input.status === 'available' && tool.admissionStatus !== 'approved') {
       throw stateConflict(tool.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能启用')
     }
@@ -881,7 +881,7 @@ export class PostgresToolConnectorService {
         from tools where tenant_id = ${tenantId} and id = ${input.toolId}
     `
     if (!current) throw notFound(`工具不存在：${input.toolId}`)
-    if (current.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
+    if (current.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw invalidRequest('普通工具管理只允许操作 DSH 内置工具')
     if (current.admissionStatus !== 'approved') {
       throw stateConflict(current.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能配置权限')
     }
@@ -952,7 +952,7 @@ export class PostgresToolConnectorService {
           const inspected = await this.runtime.inspectMcpConnection(runtimeConnection)
           const discoveredCapabilities = normalizeMcpCapabilities(inspected.capabilities)
           if (!discoveredCapabilities.length) {
-            throw new Error('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
+            throw invalidRequest('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
           }
           capabilities = discoveredCapabilities
           status = 'healthy'
@@ -1086,7 +1086,7 @@ export class PostgresToolConnectorService {
     return scopedRows.map(row => {
       if (row.auth_type === 'bearer' && (row.credentialStatus !== 'configured'
         || row.credentialBackend !== 'postgres-encrypted' || row.credentialVersion === null)) {
-        throw new Error(`MCP Connector Bearer 凭据尚未完成加密升级：${row.connector_id}`)
+        throw stateConflict(`MCP Connector Bearer 凭据尚未完成加密升级：${row.connector_id}`)
       }
       const {
         credentialStatus: _credentialStatus,
@@ -1186,10 +1186,7 @@ export class PostgresToolConnectorService {
     if (input.authType === 'none' && input.bearerToken) throw invalidMcpConnectionInput('无认证 MCP 不能提交 Bearer Token')
     if (input.authType === 'bearer' && !this.credentialSecrets) throw mcpCredentialStoreUnavailable()
     if (!this.runtime?.inspectMcpConnection) {
-      throw Object.assign(new Error('当前 DSH Runtime 未接入 MCP 检查能力'), {
-        status: 503 as const,
-        code: 'MCP_DISCOVERY_UNAVAILABLE',
-      })
+      throw new RequestError(503, 'MCP_DISCOVERY_UNAVAILABLE', '当前 DSH Runtime 未接入 MCP 检查能力')
     }
     const serverName = createMcpServerName(name, connectorId)
     let bearerToken: string | undefined
@@ -1208,12 +1205,12 @@ export class PostgresToolConnectorService {
         headers: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {},
       })
       const capabilities = normalizeMcpCapabilities(inspected.capabilities)
-      if (!capabilities.length) throw new Error('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
+      if (!capabilities.length) throw invalidRequest('MCP Server 未发现任何 Tool；Resources 与 Prompts 当前不受支持')
       return { endpoint, serverName, latencyMs: inspected.latencyMs, capabilities }
     } catch (cause) {
       if (isTypedServiceError(cause)) throw cause
       const message = cause instanceof Error ? cause.message : 'MCP 连通测试失败'
-      throw Object.assign(new Error(message), { status: 503 as const, code: 'MCP_CONNECTION_TEST_FAILED' })
+      throw new RequestError(503, 'MCP_CONNECTION_TEST_FAILED', message)
     }
   }
 
@@ -1252,7 +1249,7 @@ export class PostgresToolConnectorService {
     if (row.authType === 'bearer') {
       if (row.credentialStatus !== 'configured' || !row.credentialRefId) throw dependencyUnavailable('MCP Bearer 凭据不可用')
       if (row.credentialBackend !== 'postgres-encrypted') {
-        throw new Error('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
+        throw stateConflict('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
       }
       if (!this.credentialSecrets) throw mcpCredentialStoreUnavailable()
       const secret = await this.credentialSecrets.readBearerToken(tenantId, row.credentialRefId)
@@ -1755,7 +1752,7 @@ function mcpCredentialStoreUnavailable() {
 }
 
 function invalidMcpConnectionInput(message: string) {
-  return Object.assign(new Error(message), { status: 422 as const, code: 'MCP_CONNECTION_INVALID' })
+  return new RequestError(422, 'MCP_CONNECTION_INVALID', message)
 }
 
 function mcpConnectorCapacityExceeded() {
@@ -1782,7 +1779,7 @@ function normalizeMcpEndpoint(value: string) {
   try { endpoint = new URL(value.trim()) }
   catch { throw invalidRequest('MCP 服务地址必须是有效的 HTTP(S) URL') }
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) {
-    throw new Error('MCP 服务地址只能使用 HTTP(S)，且不得包含账号、密码、查询参数或片段')
+    throw invalidRequest('MCP 服务地址只能使用 HTTP(S)，且不得包含账号、密码、查询参数或片段')
   }
   return endpoint.toString()
 }
