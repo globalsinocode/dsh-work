@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readdir, lstat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { RuntimeManifest } from './runtime-types.ts'
+import { dependencyUnavailable, invalidRequest } from '../../domain/request-errors.ts'
 
 const IMAGE_PATTERN = /^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$/
 const ENTRY_PATTERN = /^(?:scripts\/)?[A-Za-z0-9._/-]+\.py$/
@@ -13,22 +14,22 @@ export class PythonSkillRunner {
   readonly image: string
   private readonly command: string
   constructor(image: string, command = 'docker') {
-    if (!IMAGE_PATTERN.test(image)) throw new Error('DSH_WORK_PYTHON_IMAGE 必须使用 sha256 摘要锁定容器镜像')
+    if (!IMAGE_PATTERN.test(image)) throw invalidRequest('DSH_WORK_PYTHON_IMAGE 必须使用 sha256 摘要锁定容器镜像')
     this.image = image
     this.command = command
   }
 
   async preflight() {
     const result = await run(this.command, ['image', 'inspect', this.image], AbortSignal.timeout(15000))
-    if (result.exitCode !== 0) throw new Error(`Python Skill 沙箱镜像不可用：${result.stderr.trim() || this.image}`)
+    if (result.exitCode !== 0) throw dependencyUnavailable(`Python Skill 沙箱镜像不可用：${result.stderr.trim() || this.image}`)
   }
 
   async execute(input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) {
     const skillName = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
     const entry = typeof input['entry'] === 'string' ? input['entry'].trim() : ''
     const args = input['args'] === undefined ? [] : input['args']
-    if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw new Error('Python Skill 或入口文件无效')
-    if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw new Error('Python 参数无效')
+    if (!skillName || !ENTRY_PATTERN.test(entry) || entry.includes('..')) throw invalidRequest('Python Skill 或入口文件无效')
+    if (!Array.isArray(args) || args.length > 32 || args.some(value => typeof value !== 'string' || value.length > 1000 || value.includes('\0'))) throw invalidRequest('Python 参数无效')
     const matches = manifest.agent_configuration.skill_instructions.filter(skill => (skill.name ?? skill.id) === skillName || skill.id === skillName)
     if (matches.length !== 1 || !matches[0]!.files?.some(file => file.path === entry && file.path.endsWith('.py'))) throw new Error('入口文件未在当前 Run 的锁定 Skill 中声明')
     const skillRoot = resolve(workspaceDirectory, 'skills', safeSegment(matches[0]!.id))

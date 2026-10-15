@@ -86,6 +86,7 @@ import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'
 import { IdentityAdministrationService } from './modules/identity/administration-service.ts'
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
+import { invalidRequest } from './domain/request-errors.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -95,7 +96,7 @@ const host = process.env.DSH_WORK_SERVER_HOST ?? '127.0.0.1'
 async function start() {
   const databaseUrl = process.env.DSH_WORK_DATABASE_URL
   // Sessions, identities and all business data live in PostgreSQL; there is no in-memory mode.
-  if (!databaseUrl) throw new Error('必须配置 DSH_WORK_DATABASE_URL：服务端会话与业务数据都保存在 PostgreSQL 中')
+  if (!databaseUrl) throw invalidRequest('必须配置 DSH_WORK_DATABASE_URL：服务端会话与业务数据都保存在 PostgreSQL 中')
   // Validate authentication configuration before any database mutation.
   const identityConfiguration = loadStartupIdentityConfiguration()
   const database = createDatabase({ url: databaseUrl })

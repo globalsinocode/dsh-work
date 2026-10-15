@@ -3,6 +3,7 @@ import type { IncomingMessage } from 'node:http'
 
 import type { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const maxUploadBytes = 20 * 1024 * 1024
 
@@ -49,11 +50,11 @@ export function registerSkillInstallationRoutes(router: Router, service?: AdminS
 function decodeHeader(request: IncomingMessage, name: string) {
   const raw = request.headers[name]
   const value = Array.isArray(raw) ? raw[0] : raw
-  if (!value) throw new Error('缺少 Skill 包文件名')
+  if (!value) throw invalidRequest('缺少 Skill 包文件名')
   try {
     return decodeURIComponent(value)
   } catch {
-    throw new Error('Skill 包文件名编码无效')
+    throw invalidRequest('Skill 包文件名编码无效')
   }
 }
 
@@ -63,7 +64,7 @@ async function readBinaryBody(request: IncomingMessage, maxBytes: number) {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     length += bytes.length
-    if (length > maxBytes) throw new Error('Skill 包超过 20 MB 限制')
+    if (length > maxBytes) throw invalidRequest('Skill 包超过 20 MB 限制')
     chunks.push(bytes)
   }
   return Buffer.concat(chunks)

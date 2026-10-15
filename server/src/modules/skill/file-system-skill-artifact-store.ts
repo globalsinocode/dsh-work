@@ -13,6 +13,7 @@ import {
   type SkillPackage,
   type SkillPackageArtifact,
 } from './skill-package.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 
@@ -29,11 +30,11 @@ export class FileSystemSkillArtifactStore {
 
   async put(pkg: SkillPackage): Promise<SkillPackageArtifact> {
     if (pkg.files.reduce((sum, file) => sum + file.size, 0) > MAX_SKILL_BYTES) {
-      throw new Error('单个 Skill 资源合计超过 1 MB')
+      throw invalidRequest('单个 Skill 资源合计超过 1 MB')
     }
     const artifactRef = this.referenceFor(pkg)
     // 写入侧自检：新生成的引用必须满足收紧后的规范形式，生成规则回归时在此暴露。
-    if (!REF_PATTERN.test(artifactRef)) throw new Error(`Skill 文件夹引用生成无效：${artifactRef}`)
+    if (!REF_PATTERN.test(artifactRef)) throw invalidRequest(`Skill 文件夹引用生成无效：${artifactRef}`)
     const targetRoot = this.resolveReference(artifactRef)
     try {
       const existing = await this.read(toSkillPackageArtifact(pkg, artifactRef))
@@ -101,7 +102,7 @@ export class FileSystemSkillArtifactStore {
         const info = await handle.stat()
         if (!info.isFile() || info.size !== indexed.size) throw new Error(`Skill 文件已损坏或被修改：${indexed.path}`)
         loadedBytes += info.size
-        if (loadedBytes > MAX_SKILL_BYTES) throw new Error('单个 Skill 资源合计超过 1 MB')
+        if (loadedBytes > MAX_SKILL_BYTES) throw invalidRequest('单个 Skill 资源合计超过 1 MB')
         const bytes = await handle.readFile()
         if (hash(bytes) !== indexed.sha256) throw new Error(`Skill 文件已损坏或被修改：${indexed.path}`)
         const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -111,7 +112,7 @@ export class FileSystemSkillArtifactStore {
       }
     }
     const skillMarkdown = files.find(file => file.path === 'SKILL.md')
-    if (!skillMarkdown) throw new Error('Skill 文件夹缺少 SKILL.md')
+    if (!skillMarkdown) throw invalidRequest('Skill 文件夹缺少 SKILL.md')
     const metadata = parseSkillMarkdown(skillMarkdown.content)
     if (hash(metadata.instructions) !== instructionsSha256) throw new Error('Skill 执行说明摘要不匹配')
     return { instructions: metadata.instructions, files }
@@ -127,7 +128,7 @@ export class FileSystemSkillArtifactStore {
   }
 
   private resolveReference(reference: string) {
-    if (!REF_PATTERN.test(reference)) throw new Error('Skill 文件夹引用无效')
+    if (!REF_PATTERN.test(reference)) throw invalidRequest('Skill 文件夹引用无效')
     const target = resolve(this.root, reference)
     if (!target.startsWith(`${this.root}/`)) throw new Error('Skill 文件夹引用越界')
     return target

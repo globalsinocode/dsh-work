@@ -15,6 +15,11 @@ export function checkSecurity(check) {
   ])
   // Test identities and in-memory smoke data must never be reachable from the application entry point.
   check.assert(!/from '\.\/testing\//.test(check.read('server/src/main.ts')), 'server/src/main.ts 不得引用 server/src/testing 下的测试身份或冒烟数据')
+  // HTTP status and authorization denials come from typed errors, never from message wording.
+  const router = check.read('server/src/http/router.ts')
+  check.assert(!/\/[^/\n]*[\u4e00-\u9fff][^/\n]*\/[a-z]*\.test\(/.test(router) && !/\.includes\('[^']*[\u4e00-\u9fff]/.test(router),
+    'server/src/http/router.ts 不得按错误消息文字判断状态码，请抛出 server/src/domain/request-errors.ts 中的类型化错误')
+  check.excludes('server/src/modules/authorization/authorization-errors.ts', ['LEGACY_DENIAL_MESSAGES', 'message.includes('])
   check.includes('server/src/modules/identity/auth-service.ts', [
     'equalOpaqueHash', 'validateRequestOrigin', 'refreshTokensWithLock', 'resolveAuthorization',
   ])

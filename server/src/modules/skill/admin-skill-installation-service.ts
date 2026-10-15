@@ -15,6 +15,7 @@ import { parseSkillBundle, type SkillPackage, type SkillPackageArtifact } from '
 import { buildSkillInstallationPlan, externalizeSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
 import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLink, type SkillSource } from './skill-source.ts'
 import type { FileSystemSkillArtifactStore } from './file-system-skill-artifact-store.ts'
+import { accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenant = 'tenant-dsh-work'
 type SkillTestRunStatus = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
@@ -165,7 +166,7 @@ export class AdminSkillInstallationService {
   async send(userId: string, input: { sessionId: string; message: string; requestId: string }) {
     await this.authorization.requirePlatformAdmin(userId)
     if (!input || typeof input.message !== 'string' || !input.message.trim() || input.message.length > 20000) throw Object.assign(new Error('消息长度必须为 1～20000 个字符'), { status: 422, code: 'invalid_message' })
-    if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw new Error('请求标识无效')
+    if (!/^admin-session-[a-f0-9-]{36}$/.test(input.sessionId) || !/^[a-zA-Z0-9-]{16,80}$/.test(input.requestId)) throw invalidRequest('请求标识无效')
     // Validate before persisting: rejected credential-bearing commands never enter history.
     let source = parseSkillSource(input.message)
     await this.db`
@@ -225,7 +226,7 @@ export class AdminSkillInstallationService {
   }
 
   async prepare(manifest: RuntimeManifest, signal: AbortSignal) {
-    if (manifest.purpose !== 'admin-skill-install') throw new Error('当前运行没有安装权限')
+    if (manifest.purpose !== 'admin-skill-install') throw accessDenied('当前运行没有安装权限')
     const userId = manifest.user_context.user_id
     await this.authorization.requirePlatformAdmin(userId)
     await this.requireActiveAttempt(manifest)
@@ -263,8 +264,8 @@ export class AdminSkillInstallationService {
 
   async prepareZip(userId: string, input: { fileName: string; bytes: Uint8Array }) {
     await this.authorization.requirePlatformAdmin(userId)
-    if (!input.fileName.toLowerCase().endsWith('.zip')) throw new Error('仅支持 ZIP 格式的 Skill 包')
-    if (!input.bytes.byteLength) throw new Error('Skill 包不能为空')
+    if (!input.fileName.toLowerCase().endsWith('.zip')) throw invalidRequest('仅支持 ZIP 格式的 Skill 包')
+    if (!input.bytes.byteLength) throw stateConflict('Skill 包不能为空')
     const { plan, pkg } = await this.prepareBundle(input.bytes)
     const id = `installation-${randomUUID()}`
     const source: InstallationSource = { kind: 'zip', fileName: input.fileName }
@@ -309,7 +310,7 @@ export class AdminSkillInstallationService {
             result_type as "resultType", installed_version as "installedVersion"
           from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and created_by = ${userId} for update
         `
-        if (!row || !row.package || !row.plan || row.planSha256 !== sha256 || row.plan.sha256 !== sha256 || installationPlanDigest(row.plan) !== sha256) throw new Error('安装计划不存在或已变化，请重新查看计划')
+        if (!row || !row.package || !row.plan || row.planSha256 !== sha256 || row.plan.sha256 !== sha256 || installationPlanDigest(row.plan) !== sha256) throw notFound('安装计划不存在或已变化，请重新查看计划')
         if (row.status === 'installed') {
           await this.recordInstallationReply(tx, owned.sessionId, runId, row.id, row.plan.rootName, {
             skillId: row.skillId!, versionId: row.versionId!, version: row.installedVersion ?? '0.1.0', action: row.resultType ?? 'created',
@@ -382,7 +383,7 @@ export class AdminSkillInstallationService {
   async retry(userId: string, runId: string) {
     await this.authorization.requirePlatformAdmin(userId)
     const run = await this.requireRun(userId, runId)
-    if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的运行可以重试')
+    if (!['failed', 'cancelled'].includes(run.status)) throw stateConflict('只有失败或已取消的运行可以重试')
     await this.db`delete from skill_installations where tenant_id = ${tenant} and run_id = ${runId} and status <> 'installed'`
     await this.orchestration.retryAdminRun(runId, userId)
     return this.detail(userId, run.sessionId)
@@ -404,7 +405,7 @@ export class AdminSkillInstallationService {
     const [row] = await this.db<{ id: string; title: string }[]>`
       select id, title from sessions where tenant_id = ${tenant} and id = ${sessionId} and created_by = ${userId} and audience = 'admin' and status = 'active'
     `
-    if (!row) throw new Error('管理对话不存在或不可访问')
+    if (!row) throw accessDenied('管理对话不存在或不可访问')
     return row
   }
   private async requireRun(userId: string, runId: string) {
@@ -412,7 +413,7 @@ export class AdminSkillInstallationService {
       select r.session_id as "sessionId", r.status from runs r join sessions s on s.id = r.session_id and s.tenant_id = r.tenant_id
        where r.tenant_id = ${tenant} and r.id = ${runId} and r.requested_by = ${userId} and s.created_by = ${userId} and s.audience = 'admin'
     `
-    if (!row) throw new Error('安装运行不存在或不可访问')
+    if (!row) throw accessDenied('安装运行不存在或不可访问')
     return row
   }
   private async requireActiveAttempt(manifest: RuntimeManifest, sql: DatabaseClient | DatabaseTransaction = this.db, lock = false) {
@@ -472,7 +473,7 @@ export class AdminSkillInstallationService {
   }
 
   private async installPlan(tx: DatabaseTransaction, row: { id: string; channel?: string; plan: SkillInstallationPlan }, userId: string, traceId: string, changeSummary: string) {
-    if (row.plan.compatibility.status === 'incompatible') throw new Error(`安装计划不兼容：${row.plan.compatibility.issues.map(issue => issue.message).join('；')}`)
+    if (row.plan.compatibility.status === 'incompatible') throw invalidRequest(`安装计划不兼容：${row.plan.compatibility.issues.map(issue => issue.message).join('；')}`)
     if (row.channel === 'link') await this.tools.assertDraftReferences(row.plan.summary.toolIds, tx)
     else await this.tools.assertAvailableReferences(row.plan.summary.toolIds)
     for (const artifact of row.plan.packages) await this.requireArtifactStore().read(artifact)

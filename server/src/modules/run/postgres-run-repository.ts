@@ -16,6 +16,7 @@ import type {
 } from './run-types.ts'
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
+import { accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 interface RunRow {
   id: string
@@ -116,7 +117,7 @@ export class PostgresRunRepository implements RunRepository {
              for update
           `
         : []
-      if (input.sessionId && !session) throw new Error(`Session 不存在或不可访问：${input.sessionId}`)
+      if (input.sessionId && !session) throw accessDenied(`Session 不存在或不可访问：${input.sessionId}`)
       const workspaceId = session?.workspaceId ?? input.workspaceId ?? null
       if (!input.sessionId && !workspaceId) throw new TypeError('无 Session Run 必须提供 workspaceId')
       if (!input.sessionId && !input.taskId && (!input.taskSourceType || input.taskSourceType === 'session')) {
@@ -138,7 +139,7 @@ export class PostgresRunRepository implements RunRepository {
             workspaceId,
             sessionId: input.sessionId,
           }, transaction)
-      if (!task) throw new Error(`Task 不存在：${input.taskId}`)
+      if (!task) throw notFound(`Task 不存在：${input.taskId}`)
       if (task.requestedBy !== input.requestedBy
         || (task.sessionId !== null && task.sessionId !== input.sessionId)
         || (task.workspaceId !== null && task.workspaceId !== workspaceId)) {
@@ -274,9 +275,9 @@ export class PostgresRunRepository implements RunRepository {
           and (r.session_id is null or s.status = 'active')
         for update of r
       `
-      if (!run) throw new Error(`Run 不存在或所属 Session 已归档：${input.runId}`)
+      if (!run) throw notFound(`Run 不存在或所属 Session 已归档：${input.runId}`)
       if (!['queued', 'waiting', 'failed', 'cancelled'].includes(run.status)) {
-        throw new Error(`Run 当前状态不能创建 Attempt：${run.status}`)
+        throw stateConflict(`Run 当前状态不能创建 Attempt：${run.status}`)
       }
       // 管理侧与自动任务运行同一 Run 只允许一个活动 Attempt；自动化重放必须
       // 复用已持久化 Attempt（恢复入队），不能在此静默产生第二个（AG-03）。
@@ -364,7 +365,7 @@ export class PostgresRunRepository implements RunRepository {
            for update
         `
         if (!fileRow || fileRow.removedAt) {
-          throw new Error(`Run 输入文件不存在、已被移除或超出该运行的可挂载范围：${file.fileId}`)
+          throw notFound(`Run 输入文件不存在、已被移除或超出该运行的可挂载范围：${file.fileId}`)
         }
         await transaction`
           insert into run_input_files (
@@ -395,7 +396,7 @@ export class PostgresRunRepository implements RunRepository {
                created_at as "createdAt", updated_at as "updatedAt"
           from runs where tenant_id = ${tenantId} and id = ${runId} for update
       `
-      if (!current) throw new Error(`Run 不存在：${runId}`)
+      if (!current) throw notFound(`Run 不存在：${runId}`)
       assertRunTransition(current.status, to)
       if (current.status === to) return mapRun(current)
       const [updated] = await transaction<RunRow[]>`
@@ -619,7 +620,7 @@ export class PostgresRunRepository implements RunRepository {
                ended_at as "endedAt", error_code as "errorCode", created_at as "createdAt"
           from run_attempts where tenant_id = ${tenantId} and id = ${attemptId} for update
       `
-      if (!current) throw new Error(`Attempt 不存在：${attemptId}`)
+      if (!current) throw notFound(`Attempt 不存在：${attemptId}`)
       assertAttemptTransition(current.status, to)
       if (current.status === to) return mapAttempt(current)
       const startedAt = to === 'running' && !current.startedAt ? new Date() : current.startedAt
@@ -1068,7 +1069,7 @@ async function reserveAttemptBudget(
      where tenant_id = ${input.tenantId} and budget_scope_task_id = ${input.budgetScopeTaskId}
      for update
   `
-  if (!account) throw new Error(`Task 预算账户不存在：${input.budgetScopeTaskId}`)
+  if (!account) throw notFound(`Task 预算账户不存在：${input.budgetScopeTaskId}`)
   const cumulative = budget['cumulative_limits']
   if (!cumulative || typeof cumulative !== 'object' || Array.isArray(cumulative)
     || cumulative['max_duration_ms'] !== account.maxDurationMs

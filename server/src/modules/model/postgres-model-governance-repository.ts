@@ -18,6 +18,7 @@ import type {
   ProviderStatus,
   UpsertCredentialReferenceInput,
 } from './model-types.ts'
+import { notFound } from '../../domain/request-errors.ts'
 
 interface ProviderRow {
   id: string
@@ -113,7 +114,7 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
          set status = ${status}, updated_at = now()
        where tenant_id = ${tenantId} and id = ${providerId}
     `
-    if (result.count !== 1) throw new Error(`Provider 不存在：${providerId}`)
+    if (result.count !== 1) throw notFound(`Provider 不存在：${providerId}`)
     await this.appendAudit(tenantId, actor, `model_provider.${status}`, providerId)
     return this.requireProvider(tenantId, providerId)
   }
@@ -260,7 +261,7 @@ export class PostgresModelGovernanceRepository implements ModelGovernanceReposit
 
   private async requireProvider(tenantId: string, providerId: string) {
     const provider = (await this.listProviders(tenantId)).find((item) => item.id === providerId)
-    if (!provider) throw new Error(`Provider 不存在：${providerId}`)
+    if (!provider) throw notFound(`Provider 不存在：${providerId}`)
     return provider
   }
 

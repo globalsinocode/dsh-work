@@ -1,6 +1,7 @@
 import type { PublishStatus, SkillDefinition, SkillReleaseRecord, SkillVersionRecord } from '../../domain/types.ts'
 import type { AdminQueryService } from './admin-query-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../../http/router.ts'
+import { notFound } from '../../domain/request-errors.ts'
 
 const basePath = '/api/admin/v1'
 
@@ -72,7 +73,7 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   router.post(`${basePath}/skills/test`, async (request) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
     const skill = (await service.getSkills()).find(item => item.id === input.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!skill) throw notFound(`Skill 不存在：${input.skillId}`)
     return envelope('admin', {
       id: `skill-test-${Date.now()}`,
       skillId: skill.id,
@@ -85,7 +86,7 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   router.post(`${basePath}/skills/test-runs`, async (request) => {
     const input = await readJsonBody<{ skillId: string; prompt?: string }>(request)
     const skill = (await service.getSkills()).find(item => item.id === input.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!skill) throw notFound(`Skill 不存在：${input.skillId}`)
     const testedAt = new Date().toISOString()
     return httpResult(202, envelope('admin', {
       runId: `skill-test-${Date.now()}`,
@@ -99,7 +100,7 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
   })
   router.get(`${basePath}/skills/:skillId/test-runs/:runId`, async (_request, context) => {
     const skill = (await service.getSkills()).find(item => item.id === context.params.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${context.params.skillId}`)
+    if (!skill) throw notFound(`Skill 不存在：${context.params.skillId}`)
     const testedAt = new Date().toISOString()
     return envelope('admin', {
       runId: context.params.runId,

@@ -13,6 +13,7 @@ import { extractDocument } from './document-extractor.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
+import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
@@ -1537,14 +1538,14 @@ export class PostgresContentService {
     userId: string
   }): Promise<PreparedRuntimeFile[]> {
     const fileIds = [...new Set(input.fileIds.map(id => id.trim()).filter(Boolean))]
-    if (fileIds.length > 5) throw new Error('每次 Run 最多分析 5 个文件')
+    if (fileIds.length > 5) throw invalidRequest('每次 Run 最多分析 5 个文件')
     const prepared: PreparedRuntimeFile[] = []
     let totalBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
       const content = await readFile(this.resolveStorage(row.textStorageKey), 'utf8')
       totalBytes += Buffer.byteLength(content)
-      if (totalBytes > 1024 * 1024) throw new Error('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
+      if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
       const safeName = safeMountName(row.originalName, index)
       prepared.push({
         fileId: row.fileId,
@@ -1660,9 +1661,9 @@ export class PostgresContentService {
 
     const workspaceRoot = resolve(input.workspaceDirectory)
     const outputRoot = resolve(workspaceRoot, 'output')
-    if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw new Error('Runtime 成果目录无效')
+    if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw invalidRequest('Runtime 成果目录无效')
     const entries = await readdir(outputRoot, { withFileTypes: true })
-    if (entries.length > 20) throw new Error('单次 Run 最多生成 20 个成果文件')
+    if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 
     const prepared: PreparedRuntimeArtifact[] = []
     let totalBytes = 0
@@ -1674,12 +1675,12 @@ export class PostgresContentService {
       const type = artifactTypeForExtension(extension)
       if (!type) throw new Error(`成果文件格式不受支持：${entry.name}`)
       const sourcePath = resolve(outputRoot, entry.name)
-      if (!sourcePath.startsWith(`${outputRoot}/`)) throw new Error(`成果文件路径无效：${entry.name}`)
+      if (!sourcePath.startsWith(`${outputRoot}/`)) throw invalidRequest(`成果文件路径无效：${entry.name}`)
       const details = await lstat(sourcePath)
       if (!details.isFile() || details.nlink !== 1) throw new Error(`成果文件不是独立普通文件：${entry.name}`)
-      if (details.size < 1 || details.size > 10 * 1024 * 1024) throw new Error(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
+      if (details.size < 1 || details.size > 10 * 1024 * 1024) throw invalidRequest(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
       totalBytes += details.size
-      if (totalBytes > 20 * 1024 * 1024) throw new Error('单次 Run 成果文件合计不能超过 20 MB')
+      if (totalBytes > 20 * 1024 * 1024) throw stateConflict('单次 Run 成果文件合计不能超过 20 MB')
       const bytes = await readFile(sourcePath)
       const scan = await this.scanner.scan({ name: entry.name, mimeType: artifactMimeType(type), bytes })
       if (!scan.clean) throw new Error(`成果文件安全检查未通过：${entry.name}`)
@@ -1839,8 +1840,8 @@ export class PostgresContentService {
   }) {
     const { workspaceId, sessionId, name, mimeType, bytes } = input
     const extension = extname(name).toLowerCase()
-    if (!allowedExtensions.has(extension)) throw new Error('仅支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown 文件')
-    if (bytes.length < 1 || bytes.length > 20 * 1024 * 1024) throw new Error('文件大小必须为 1 B～20 MB')
+    if (!allowedExtensions.has(extension)) throw invalidRequest('仅支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown 文件')
+    if (bytes.length < 1 || bytes.length > 20 * 1024 * 1024) throw invalidRequest('文件大小必须为 1 B～20 MB')
     const scan = await this.scanner.scan({ name, mimeType, bytes })
     // 安全扫描拒绝是请求内容不合法，不是服务器故障：裸 Error 不含分类关键字会被
     // 映射成 500（质量评审实测 `MZ…` 请求体返回 500），改抛类型化 422。
@@ -2124,7 +2125,7 @@ function decodeFileCursor(cursor: string): { createdAt: string; id: string } {
     if (typeof parsed.at !== 'string' || typeof parsed.id !== 'string') throw new Error('shape')
     return { createdAt: parsed.at, id: parsed.id }
   } catch {
-    throw new Error('无效的分页游标')
+    throw invalidRequest('无效的分页游标')
   }
 }
 

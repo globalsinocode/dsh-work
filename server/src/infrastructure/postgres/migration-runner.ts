@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 import type { DatabaseClient } from './database.ts'
 import { upgradePreflightChecks } from './team-workspace-upgrade-baseline.ts'
+import { stateConflict } from '../../domain/request-errors.ts'
 
 const migrationPattern = /^\d{4}_[a-z0-9_]+\.sql$/
 
@@ -80,6 +81,6 @@ async function verifyAppliedMigration(database: DatabaseClient, version: string,
     return
   }
   if (recorded !== current) {
-    throw new Error(`迁移 ${version} 已执行过，但文件内容已被修改。已执行的迁移不能修改，请恢复原文件并把变更写成新的迁移。`)
+    throw stateConflict(`迁移 ${version} 已执行过，但文件内容已被修改。已执行的迁移不能修改，请恢复原文件并把变更写成新的迁移。`)
   }
 }

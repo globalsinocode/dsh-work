@@ -13,6 +13,7 @@ import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
+import { invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -737,10 +738,10 @@ function decodeCursorIndex(candidates: WorkspaceAgentCandidate[], cursor: string
   try {
     parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { i?: unknown }
   } catch {
-    throw new Error('分页游标无效')
+    throw invalidRequest('分页游标无效')
   }
-  if (typeof parsed.i !== 'string') throw new Error('分页游标无效')
+  if (typeof parsed.i !== 'string') throw invalidRequest('分页游标无效')
   const index = candidates.findIndex(candidate => candidate.id === parsed.i)
-  if (index < 0) throw new Error('分页游标无效')
+  if (index < 0) throw invalidRequest('分页游标无效')
   return index + 1
 }

@@ -27,6 +27,7 @@ import {
 } from './dsh-built-in-tool-catalog.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 import { normalizeAgentMcpScope } from '../agent/agent-mcp-scope.ts'
+import { accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 /** 平台拥有的绑定记录在非管理员上下文首次物化时归属到 bootstrap 平台管理员。 */
@@ -242,7 +243,7 @@ export class PostgresToolConnectorService {
     if (!this.runtime?.listTools) throw new Error('DSH Runtime 未提供工具目录发现能力')
     const health = await this.runtime.health()
     if (health.status !== 'healthy' || !health.acceptingRuns) {
-      throw new Error(health.message || 'DSH Runtime 当前不可用，无法同步工具目录')
+      throw dependencyUnavailable(health.message || 'DSH Runtime 当前不可用，无法同步工具目录')
     }
     const entries = await this.loadRuntimeCatalogEntries()
     const defaultRoleIds = new Map<string, string[]>()
@@ -354,12 +355,12 @@ export class PostgresToolConnectorService {
     const actor = await this.requireActor(input.actor)
     const policy = normalizeToolPolicyInput(input)
     const entry = (await this.loadRuntimeCatalogEntries()).find(item => item.id === input.catalogId)
-    if (!entry) throw new Error(`不支持添加该 DSH 工具：${input.catalogId}`)
-    if (!entry.platformSupported) throw new Error(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
+    if (!entry) throw invalidRequest(`不支持添加该 DSH 工具：${input.catalogId}`)
+    if (!entry.platformSupported) throw invalidRequest(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
     assertDshToolApprovalPolicy(entry, policy.approvalPolicy)
     const candidate = (await this.getToolCatalog()).find(item => item.id === entry.id)
-    if (candidate?.status === 'installed') throw new Error(`工具已存在：${entry.name}`)
-    if (candidate?.status !== 'ready') throw new Error(candidate?.availabilityMessage ?? '工具当前不可添加')
+    if (candidate?.status === 'installed') throw stateConflict(`工具已存在：${entry.name}`)
+    if (candidate?.status !== 'ready') throw stateConflict(candidate?.availabilityMessage ?? '工具当前不可添加')
     const roleIds = await this.resolveRoleIds(policy.allowedRoles)
 
     await this.database.begin(async transaction => {
@@ -367,7 +368,7 @@ export class PostgresToolConnectorService {
         select id from connectors
          where tenant_id = ${tenantId} and id = ${entry.connectorId} and status = 'healthy'
       `
-      if (!connector) throw new Error('DSH Runtime 连接器未处于健康状态，不能添加工具')
+      if (!connector) throw dependencyUnavailable('DSH Runtime 连接器未处于健康状态，不能添加工具')
       const inserted = await transaction`
         insert into tools (
           id, tenant_id, key, name, source, status, connector_id, system, description,
@@ -380,7 +381,7 @@ export class PostgresToolConnectorService {
           ${policy.approvalPolicy}, now()
         ) on conflict do nothing returning id
       `
-      if (!inserted.length) throw new Error(`工具已存在：${entry.name}`)
+      if (!inserted.length) throw stateConflict(`工具已存在：${entry.name}`)
       await transaction`
         insert into tool_versions (
           id, tenant_id, tool_id, version, input_schema, output_schema, risk_level,
@@ -507,7 +508,7 @@ export class PostgresToolConnectorService {
 
   async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
     const connector = (await this.getConnectors()).find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
-    if (!connector) throw new Error('DSH Runtime 内置工具连接器不存在')
+    if (!connector) throw notFound('DSH Runtime 内置工具连接器不存在')
 
     const [catalogRows, bindingRows, healthRows, liveHealth] = await Promise.all([
       this.database<{ id: string; version: string; status: string }[]>`
@@ -591,7 +592,7 @@ export class PostgresToolConnectorService {
   async registerMcpConnector(input: RegisterMcpConnectorInput): Promise<ConnectorDefinition> {
     const actor = await this.requireActor(input.actor)
     const id = `connector-mcp-${randomUUID()}`
-    if (!input.scopeDescription.trim()) throw new Error('整体权限范围不能为空')
+    if (!input.scopeDescription.trim()) throw stateConflict('整体权限范围不能为空')
     const inspected = await this.inspectMcpRegistrationInput(input, id)
     const digest = mcpCapabilityDigest(inspected.capabilities)
 
@@ -658,7 +659,7 @@ export class PostgresToolConnectorService {
            and protocol = 'mcp' and deleted_at is null
          for update
       `
-      if (!connector) throw new Error(`MCP Connector 不存在：${input.connectorId}`)
+      if (!connector) throw notFound(`MCP Connector 不存在：${input.connectorId}`)
       await transaction`
         update tool_binding_revisions
            set status = 'revoked'
@@ -714,7 +715,7 @@ export class PostgresToolConnectorService {
          where tenant_id = ${tenantId} and id = ${connector.credentialRefId}
          for update
       `
-      if (!credential) throw new Error('MCP Bearer 凭据引用不存在')
+      if (!credential) throw notFound('MCP Bearer 凭据引用不存在')
       const [secret] = await transaction<{ version: number }[]>`
         select version from credential_secrets
          where tenant_id = ${tenantId} and credential_ref_id = ${connector.credentialRefId}
@@ -731,7 +732,7 @@ export class PostgresToolConnectorService {
       let targetCredentialId = connector.credentialRefId
       if (mustSplitCredential) {
         if (!['dsh-managed', 'postgres-encrypted'].includes(credential.backend)) {
-          throw new Error('MCP Bearer 凭据后端不支持页面轮换')
+          throw invalidRequest('MCP Bearer 凭据后端不支持页面轮换')
         }
         targetCredentialId = `credential-mcp-${randomUUID()}`
         await transaction`
@@ -795,11 +796,11 @@ export class PostgresToolConnectorService {
       if (!connector) throw new Error('目标不是 MCP Connector')
       if (input.status === 'enabled' && connector.authType === 'bearer'
         && (connector.credentialBackend !== 'postgres-encrypted' || connector.credentialVersion === null)) {
-        throw new Error('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
+        throw stateConflict('旧版 MCP Bearer 凭据需要先重新录入 Token，不能启用')
       }
       if (input.status === 'enabled' && (connector.approvalStatus !== 'approved'
         || connector.capabilityDigest !== connector.approvedDigest)) {
-        throw new Error('MCP 当前能力清单尚未成功同步，不能启用')
+        throw stateConflict('MCP 当前能力清单尚未成功同步，不能启用')
       }
       if (input.status === 'enabled') {
         await this.assertMcpConnectorCapacity(transaction, input.connectorId)
@@ -827,19 +828,19 @@ export class PostgresToolConnectorService {
       join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
        where t.tenant_id = ${tenantId} and t.id = ${input.toolId}
     `
-    if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (!tool) throw notFound(`工具不存在：${input.toolId}`)
     if (tool.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
     if (input.status === 'available' && tool.admissionStatus !== 'approved') {
-      throw new Error(tool.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能启用')
+      throw stateConflict(tool.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能启用')
     }
     if (input.status === 'available' && tool.connectorStatus !== 'healthy') {
-      throw new Error('连接器未处于健康状态，不能启用工具')
+      throw dependencyUnavailable('连接器未处于健康状态，不能启用工具')
     }
     if (input.status === 'available'
       && tool.connectorId === DSH_RUNTIME_CONNECTOR_ID
       && tool.dshToolName
       && requiredDshToolApprovalPolicy(tool.dshToolName) === undefined) {
-      throw new Error('该 DSH 工具所需的逐次审批尚未接入，不能启用')
+      throw stateConflict('该 DSH 工具所需的逐次审批尚未接入，不能启用')
     }
     await this.database.begin(async transaction => {
       await transaction`
@@ -868,7 +869,7 @@ export class PostgresToolConnectorService {
     actor: string
   }) {
     const actor = await this.requireActor(input.actor)
-    if (!input.allowedRoles.length || !input.dataScopes.length) throw new Error('工具必须配置授权角色和数据范围')
+    if (!input.allowedRoles.length || !input.dataScopes.length) throw invalidRequest('工具必须配置授权角色和数据范围')
     const [current] = await this.database<{
       connectorId: string | null
       dshToolName: string | null
@@ -879,16 +880,16 @@ export class PostgresToolConnectorService {
              admission_status as "admissionStatus", admission_message as "admissionMessage"
         from tools where tenant_id = ${tenantId} and id = ${input.toolId}
     `
-    if (!current) throw new Error(`工具不存在：${input.toolId}`)
+    if (!current) throw notFound(`工具不存在：${input.toolId}`)
     if (current.connectorId !== DSH_RUNTIME_CONNECTOR_ID) throw new Error('普通工具管理只允许操作 DSH 内置工具')
     if (current.admissionStatus !== 'approved') {
-      throw new Error(current.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能配置权限')
+      throw stateConflict(current.admissionMessage || '该 DSH 工具尚未完成平台安全准入，不能配置权限')
     }
     if (current.connectorId === DSH_RUNTIME_CONNECTOR_ID && current.dshToolName) {
       const requiredPolicy = requiredDshToolApprovalPolicy(current.dshToolName)
-      if (requiredPolicy === undefined) throw new Error('该 DSH 工具尚未接入所需的逐次审批，不能配置为可用')
+      if (requiredPolicy === undefined) throw stateConflict('该 DSH 工具尚未接入所需的逐次审批，不能配置为可用')
       if (input.approvalPolicy !== requiredPolicy) {
-        throw new Error('DSH 内置工具的审批策略由平台安全策略固定，不能在权限页面覆盖')
+        throw stateConflict('DSH 内置工具的审批策略由平台安全策略固定，不能在权限页面覆盖')
       }
     }
     const roleIds = await this.resolveRoleIds(input.allowedRoles)
@@ -900,7 +901,7 @@ export class PostgresToolConnectorService {
          where tenant_id = ${tenantId} and id = ${input.toolId}
          returning status
       `
-      if (!result.length) throw new Error(`工具不存在：${input.toolId}`)
+      if (!result.length) throw notFound(`工具不存在：${input.toolId}`)
       // 授权角色/数据范围/审批策略属绑定语义：变更对全部已发布版本产生新修订，
       // 旧发布依据随之失效，不能只轮换最新版本而留下名义上仍 active 的陈旧行。
       // 已停用工具的绑定早已撤销，不重新物化。
@@ -927,7 +928,7 @@ export class PostgresToolConnectorService {
         left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
        where c.tenant_id = ${tenantId} and c.id = ${input.connectorId} and c.deleted_at is null
     `
-    if (!connector) throw new Error(`连接器不存在：${input.connectorId}`)
+    if (!connector) throw notFound(`连接器不存在：${input.connectorId}`)
     const checkedCredential: McpCredentialRevision = {
       credentialRefId: connector.credentialRefId,
       credentialBackend: connector.credentialBackend,
@@ -974,7 +975,7 @@ export class PostgresToolConnectorService {
            where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
            for update
         `
-        if (!profiles[0]) throw new Error('MCP Connector 缺少治理配置')
+        if (!profiles[0]) throw invalidRequest('MCP Connector 缺少治理配置')
         status = 'healthy'
         message = `MCP 能力清单已同步并自动生效，共 ${capabilities.length} 个 Tool`
       }
@@ -983,7 +984,7 @@ export class PostgresToolConnectorService {
          where tenant_id = ${tenantId} and id = ${input.connectorId} and deleted_at is null
          for update
       `
-      if (!lockedConnector) throw new Error(`连接器不存在：${input.connectorId}`)
+      if (!lockedConnector) throw notFound(`连接器不存在：${input.connectorId}`)
       const [currentCredential] = await transaction<McpCredentialRevision[]>`
         select c.credential_ref_id as "credentialRefId", cr.backend as "credentialBackend",
                cs.version as "credentialVersion"
@@ -992,7 +993,7 @@ export class PostgresToolConnectorService {
           left join credential_secrets cs on cs.tenant_id = c.tenant_id and cs.credential_ref_id = c.credential_ref_id
          where c.tenant_id = ${tenantId} and c.id = ${input.connectorId}
       `
-      if (!currentCredential) throw new Error(`连接器不存在：${input.connectorId}`)
+      if (!currentCredential) throw notFound(`连接器不存在：${input.connectorId}`)
       if (connector.protocol === 'mcp' && !sameMcpCredentialRevision(checkedCredential, currentCredential)) {
         status = 'degraded'
         message = 'MCP Bearer 凭据已在检查期间更新；本次旧凭据检查结果已丢弃，请重新检查'
@@ -1158,7 +1159,7 @@ export class PostgresToolConnectorService {
       select id from connectors
        where tenant_id = ${tenantId} and id = ${connectorId} and protocol = 'mcp'
     `
-    if (!connector) throw new Error(`MCP Connector 不存在：${connectorId}`)
+    if (!connector) throw notFound(`MCP Connector 不存在：${connectorId}`)
     return this.database<McpInvocationAudit[]>`
       select id, run_id as "runId", attempt_id as "attemptId", connector_id as "connectorId",
              actor_user_id as "actorUserId", executor_principal_id as "executorPrincipalId",
@@ -1233,7 +1234,7 @@ export class PostgresToolConnectorService {
        where c.tenant_id = ${tenantId} and c.id = ${connectorId}
          and c.protocol = 'mcp' and c.deleted_at is null
     `
-    if (!row) throw new Error(`MCP Connector 不存在：${connectorId}`)
+    if (!row) throw notFound(`MCP Connector 不存在：${connectorId}`)
     if (expected && (row.connectorStatus !== 'healthy' || row.approvalStatus !== 'approved'
       || row.capabilityDigest !== expected.capability_digest || row.serverName !== expected.server_name
       || row.endpoint !== expected.endpoint || row.authType !== expected.auth_type)) {
@@ -1249,7 +1250,7 @@ export class PostgresToolConnectorService {
     }
     const headers: Record<string, string> = {}
     if (row.authType === 'bearer') {
-      if (row.credentialStatus !== 'configured' || !row.credentialRefId) throw new Error('MCP Bearer 凭据不可用')
+      if (row.credentialStatus !== 'configured' || !row.credentialRefId) throw dependencyUnavailable('MCP Bearer 凭据不可用')
       if (row.credentialBackend !== 'postgres-encrypted') {
         throw new Error('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
       }
@@ -1315,7 +1316,7 @@ export class PostgresToolConnectorService {
            and ${requireHealthy ? sql` t.status = 'available' and c.status = 'healthy'` : sql`t.status in ('available', 'degraded')`}
            and tv.version = ${version} and tv.status = 'published'
       `
-      if (!row) throw new Error(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
+      if (!row) throw notFound(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
     }
   }
 
@@ -1337,14 +1338,14 @@ export class PostgresToolConnectorService {
            and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
            and t.admission_status = 'approved'
       `
-      if (!row) throw new Error(`工具授权配置不存在：${reference}`)
+      if (!row) throw notFound(`工具授权配置不存在：${reference}`)
       if (isDefaultRunLocalAgentTool(row)) continue
       if (!executionRoleIds.some(roleId => row.allowedRoleIds.includes(roleId))) {
-        throw new Error(`Agent 执行身份缺少工具 ${reference} 所需角色：${row.allowedRoleIds.join('、')}`)
+        throw invalidRequest(`Agent 执行身份缺少工具 ${reference} 所需角色：${row.allowedRoleIds.join('、')}`)
       }
       const missingScopes = unique(row.dataScopes).filter(scope => !scopeSet.has(scope))
       if (missingScopes.length) {
-        throw new Error(`Agent 执行身份缺少工具 ${reference} 所需平台数据范围：${missingScopes.join('、')}`)
+        throw invalidRequest(`Agent 执行身份缺少工具 ${reference} 所需平台数据范围：${missingScopes.join('、')}`)
       }
     }
   }
@@ -1381,7 +1382,7 @@ export class PostgresToolConnectorService {
            and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
            and tv.status = 'published'
       `
-      if (!row) throw new Error(`工具审批策略不存在：${reference}`)
+      if (!row) throw notFound(`工具审批策略不存在：${reference}`)
       policies.push(row.approvalPolicy)
     }
     if (policies.includes('always')) return 'always'
@@ -1487,13 +1488,13 @@ export class PostgresToolConnectorService {
       }
       // 快路径不加锁：活跃修订与当前快照一致时直接复用，避免每次派发都对 tools 行取写锁。
       const snapshot = await this.loadBindingSnapshot(db, toolId, toolVersion, false)
-      if (!snapshot) throw new Error(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
+      if (!snapshot) throw notFound(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
       const digest = toolBindingDigest(snapshot)
       const current = await loadCurrent()
       if (current?.contentDigest === digest) return toResolvedBinding(current)
       // 需要轮换：持 tools 行锁复核快照与活跃修订，与并发解析/语义变更串行化。
       const locked = await this.loadBindingSnapshot(db, toolId, toolVersion, true)
-      if (!locked) throw new Error(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
+      if (!locked) throw notFound(`工具不存在、版本未发布或已停用，无法解析绑定：${toolId}@${toolVersion}`)
       const lockedDigest = toolBindingDigest(locked)
       const currentUnderLock = await loadCurrent()
       if (currentUnderLock?.contentDigest === lockedDigest) return toResolvedBinding(currentUnderLock)
@@ -1600,7 +1601,7 @@ export class PostgresToolConnectorService {
 
   private async requireTool(toolId: string) {
     const tool = (await this.getTools()).find(item => item.id === toolId)
-    if (!tool) throw new Error(`工具不存在：${toolId}`)
+    if (!tool) throw notFound(`工具不存在：${toolId}`)
     return tool
   }
 
@@ -1633,7 +1634,7 @@ export class PostgresToolConnectorService {
 
   private async requireConnector(connectorId: string) {
     const connector = (await this.getConnectors()).find(item => item.id === connectorId)
-    if (!connector) throw new Error(`连接器不存在：${connectorId}`)
+    if (!connector) throw notFound(`连接器不存在：${connectorId}`)
     return connector
   }
 
@@ -1649,7 +1650,7 @@ export class PostgresToolConnectorService {
               and (r.permissions ? 'admin:*' or r.permissions ? 'admin:write')
          )
     `
-    if (!actor) throw new Error(`操作人不存在、已停用或不是平台管理员：${userId}`)
+    if (!actor) throw accessDenied(`操作人不存在、已停用或不是平台管理员：${userId}`)
     return actor
   }
 
@@ -1666,7 +1667,7 @@ export class PostgresToolConnectorService {
       const [role] = await this.database<{ id: string }[]>`
         select id from roles where tenant_id = ${tenantId} and (id = ${value} or name = ${value})
       `
-      if (!role) throw new Error(`角色不存在：${value}`)
+      if (!role) throw notFound(`角色不存在：${value}`)
       roleIds.push(role.id)
     }
     return roleIds
@@ -1779,7 +1780,7 @@ function sameMcpCredentialRevision(left: McpCredentialRevision, right: McpCreden
 function normalizeMcpEndpoint(value: string) {
   let endpoint: URL
   try { endpoint = new URL(value.trim()) }
-  catch { throw new Error('MCP 服务地址必须是有效的 HTTP(S) URL') }
+  catch { throw invalidRequest('MCP 服务地址必须是有效的 HTTP(S) URL') }
   if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) {
     throw new Error('MCP 服务地址只能使用 HTTP(S)，且不得包含账号、密码、查询参数或片段')
   }
@@ -1792,7 +1793,7 @@ function normalizeMcpCapabilities(
   const names = new Set<string>()
   return capabilities.map(capability => {
     const name = capability.name.trim()
-    if (!name || name.length > 200 || names.has(name)) throw new Error(`MCP 返回了无效或重复的 Tool 名称：${name || '空名称'}`)
+    if (!name || name.length > 200 || names.has(name)) throw invalidRequest(`MCP 返回了无效或重复的 Tool 名称：${name || '空名称'}`)
     names.add(name)
     return {
       name,
@@ -1843,7 +1844,7 @@ function sameMcpConnectionSnapshot(left: McpConnectionSnapshot, right: McpConnec
 
 function parseReference(reference: string) {
   const separator = reference.lastIndexOf('@')
-  if (separator <= 0 || separator === reference.length - 1) throw new Error(`工具引用必须锁定版本：${reference}`)
+  if (separator <= 0 || separator === reference.length - 1) throw invalidRequest(`工具引用必须锁定版本：${reference}`)
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
 }
 

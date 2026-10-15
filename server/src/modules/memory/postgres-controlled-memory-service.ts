@@ -5,6 +5,7 @@ import type { PostgresOperationsService } from '../admin/application/postgres-op
 import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../authorization/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RuntimeControlledMemory, RuntimeManifest } from '../runtime/runtime-types.ts'
+import { notFound } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const maxContextMemories = 3
@@ -423,7 +424,7 @@ export class PostgresControlledMemoryService {
     })
     await this.operations?.appendAudit(input.userId, 'memory.consent.withdraw', input.consentId, 'success', `trace-${input.consentId}`, '阻止后续 Attempt 引用')
     const consent = (await this.listOwnConsents(input.userId)).find(item => item.id === input.consentId)
-    if (!consent) throw new Error('撤回后的记忆授权不存在')
+    if (!consent) throw notFound('撤回后的记忆授权不存在')
     return consent
   }
 
@@ -606,7 +607,7 @@ export class PostgresControlledMemoryService {
       auditTargetId: input.applicationId,
     })
     const application = (await this.listExperienceIterationApplications()).find(item => item.id === input.applicationId)
-    if (!application) throw new Error('审核后的经验迭代申请不存在')
+    if (!application) throw notFound('审核后的经验迭代申请不存在')
     return application
   }
 

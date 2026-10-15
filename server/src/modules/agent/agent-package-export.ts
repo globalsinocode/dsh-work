@@ -4,10 +4,11 @@ import { stringify } from 'yaml'
 import { hash } from '../skill/skill-package.ts'
 import { AGENT_EVALUATION_API_VERSION, AGENT_EVALUATION_KIND, parseAgentPackage, type AgentPackageCase } from './agent-package.ts'
 import type { AgentSpec } from './agent-spec.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 /** Export only the portable definition. Connector IDs, endpoints, credentials and grants stay platform-owned. */
 export function exportAgentPackage(spec: AgentSpec, cases: AgentPackageCase[] = []): Uint8Array {
-  if (spec.evaluation.cases && !cases.length) throw new Error('已声明评测文件但缺少可导出的案例')
+  if (spec.evaluation.cases && !cases.length) throw invalidRequest('已声明评测文件但缺少可导出的案例')
   const files: Record<string, Uint8Array> = {}
   const add = (path: string, body: string) => { files[path] = strToU8(body) }
   const capability = (reference: string) => {

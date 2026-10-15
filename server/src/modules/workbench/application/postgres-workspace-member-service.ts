@@ -9,6 +9,7 @@ import {
   currentTeamAuthRevision,
   recordWorkspaceActivity,
 } from './workspace-activity-writer.ts'
+import { invalidRequest } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -744,7 +745,7 @@ function decodeCandidateCursor(cursor: string): { name: string; id: string } {
     if (typeof parsed.n !== 'string' || typeof parsed.i !== 'string') throw new Error('bad cursor')
     return { name: parsed.n, id: parsed.i }
   } catch {
-    throw new Error('分页游标无效')
+    throw invalidRequest('分页游标无效')
   }
 }
 

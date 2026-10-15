@@ -1,6 +1,7 @@
 import type { ToolCatalogCandidate, ToolDefinition } from '../../domain/types.ts'
 import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
 import type { RuntimeToolDescriptor } from '../runtime/runtime-types.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 export type CatalogEntry = Omit<ToolCatalogCandidate, 'status' | 'availabilityMessage'> & {
   inputSchemaObject: Record<string, unknown>
@@ -300,16 +301,16 @@ export function normalizeToolPolicyInput(input: {
 }) {
   if (!Array.isArray(input.allowedRoles)
     || input.allowedRoles.some(value => typeof value !== 'string' || !value.trim())) {
-    throw new Error('授权角色格式无效')
+    throw invalidRequest('授权角色格式无效')
   }
   if (!Array.isArray(input.dataScopes)
     || input.dataScopes.some(value => typeof value !== 'string' || !value.trim())) {
-    throw new Error('数据范围格式无效')
+    throw invalidRequest('数据范围格式无效')
   }
   const allowedRoles = [...new Set(input.allowedRoles.map(value => value.trim()))]
   const dataScopes = [...new Set(input.dataScopes.map(value => value.trim()))]
-  if (!allowedRoles.length || !dataScopes.length) throw new Error('工具必须配置授权角色和数据范围')
-  if (!['none', 'sensitive', 'always'].includes(String(input.approvalPolicy))) throw new Error('审批策略无效')
+  if (!allowedRoles.length || !dataScopes.length) throw invalidRequest('工具必须配置授权角色和数据范围')
+  if (!['none', 'sensitive', 'always'].includes(String(input.approvalPolicy))) throw invalidRequest('审批策略无效')
   return {
     allowedRoles,
     dataScopes,

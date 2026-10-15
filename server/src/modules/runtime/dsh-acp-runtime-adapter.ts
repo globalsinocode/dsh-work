@@ -37,6 +37,7 @@ import type {
   RuntimeToolDescriptor,
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
+import { dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
 
@@ -215,7 +216,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
             instructions: skill.instructions ?? '',
             files: (skill.files ?? []).filter((file): file is { path: string; content: string; sha256: string; size: number } => file.content !== undefined),
           }
-      if (!materialized || materialized.instructions.length < 20) throw new Error(`Skill 文件夹不可用：${skill.id}@${skill.version}`)
+      if (!materialized || materialized.instructions.length < 20) throw dependencyUnavailable(`Skill 文件夹不可用：${skill.id}@${skill.version}`)
       if (skill.instructions_sha256 && createHash('sha256').update(materialized.instructions).digest('hex') !== skill.instructions_sha256) throw new Error(`Skill 执行说明摘要不匹配：${skill.id}`)
       const indexed = new Map((skill.files ?? []).map(file => [file.path, file]))
       for (const file of materialized.files) {
@@ -368,7 +369,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       })(), setupTimeoutMs, 'DSH Runtime 工具目录发现超时')
     } catch (error) {
       const detail = diagnostics.join('\n').slice(-2000)
-      throw new Error(`DSH Runtime 工具目录发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
+      throw dependencyUnavailable(`DSH Runtime 工具目录发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
     } finally {
       await client.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
@@ -413,7 +414,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         `${error instanceof Error ? error.message : String(error)}\n${detail}`,
       )
       if (authenticationFailure) throw authenticationFailure
-      throw new Error(`MCP 发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
+      throw dependencyUnavailable(`MCP 发现失败：${error instanceof Error ? error.message : String(error)}${detail ? `；${detail}` : ''}`)
     } finally {
       await client.close().catch(() => undefined)
       await rm(directory, { recursive: true, force: true })
@@ -421,7 +422,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   }
 
   async configureScheduling(status: 'accepting' | 'draining' | 'disabled'): Promise<void> {
-    if (this.closed && status === 'accepting') throw new Error('已关闭的 Runtime Adapter 不能重新接收任务')
+    if (this.closed && status === 'accepting') throw stateConflict('已关闭的 Runtime Adapter 不能重新接收任务')
     this.acceptingRuns = status === 'accepting' && !this.closed
   }
 
@@ -457,22 +458,22 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
       if (record.manifest.tools.some(tool => tool.id === 'prepare_skill_installation')) {
         const prepare = this.configuration.prepareSkillInstallation
-        if (!prepare) throw new Error('安装助手不可用：未配置平台安装工具')
+        if (!prepare) throw dependencyUnavailable('安装助手不可用：未配置平台安装工具')
         registerPlatformTool('prepare_skill_installation', (_input, signal) => prepare(record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'inspect_admin_state')) {
         const inspect = this.configuration.inspectAdminState
-        if (!inspect) throw new Error('管理助手不可用：未配置平台查询工具')
+        if (!inspect) throw dependencyUnavailable('管理助手不可用：未配置平台查询工具')
         registerPlatformTool('inspect_admin_state', (input, signal) => inspect(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'propose_admin_task')) {
         const propose = this.configuration.proposeAdminTask
-        if (!propose) throw new Error('管理助手不可用：未配置任务提案工具')
+        if (!propose) throw dependencyUnavailable('管理助手不可用：未配置任务提案工具')
         registerPlatformTool('propose_admin_task', (input, signal) => propose(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'prepare_admin_action')) {
         const prepare = this.configuration.prepareAdminAction
-        if (!prepare) throw new Error('管理助手不可用：未配置操作计划工具')
+        if (!prepare) throw dependencyUnavailable('管理助手不可用：未配置操作计划工具')
         registerPlatformTool('prepare_admin_action', (input, signal) => prepare(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'activate_skill')) {
@@ -504,7 +505,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
       if (record.manifest.tools.some(tool => tool.id === 'python_execute')) {
         const executePython = this.configuration.executePython
-        if (!executePython) throw new Error('Python Skill 不可用：未配置平台脚本沙箱')
+        if (!executePython) throw dependencyUnavailable('Python Skill 不可用：未配置平台脚本沙箱')
         registerPlatformTool('python_execute', async (input, signal) => {
           const requested = typeof input['skill'] === 'string' ? input['skill'].trim() : ''
           const skill = record.manifest.agent_configuration.skill_instructions.find(item => item.id === requested || (item.name ?? item.id) === requested)
@@ -517,18 +518,18 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
       if (record.manifest.tools.some(tool => tool.id === 'delegate_agent')) {
         const delegate = this.configuration.delegateAgent
-        if (!delegate) throw new Error('Agent 委派不可用：未配置受控委派服务')
+        if (!delegate) throw dependencyUnavailable('Agent 委派不可用：未配置受控委派服务')
         registerPlatformTool('delegate_agent', (input, signal) => delegate(input, record.manifest, signal))
       }
       if (record.manifest.tools.some(tool => tool.id === 'propose_memory')) {
         const propose = this.configuration.proposeMemory
-        if (!propose) throw new Error('Agent 经验迭代申请不可用：未配置经验迭代服务')
+        if (!propose) throw dependencyUnavailable('Agent 经验迭代申请不可用：未配置经验迭代服务')
         registerPlatformTool('propose_memory', (input, signal) => propose(input, record.manifest, signal))
       }
       for (const name of ['state_get', 'state_put', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'] as const) {
         if (!record.manifest.tools.some(tool => tool.id === name)) continue
         const invoke = this.configuration.invokeAgentData
-        if (!invoke) throw new Error('Agent 数据平面不可用：未配置受控数据工具')
+        if (!invoke) throw dependencyUnavailable('Agent 数据平面不可用：未配置受控数据工具')
         registerPlatformTool(name, (input, signal) => invoke(name, input, record.manifest, signal))
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
@@ -636,7 +637,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
       let artifacts: Array<{ name: string; size: number }> = []
       if (!isAdminRunPurpose(record.manifest.purpose) && record.manifest.tools.some(tool => tool.id === 'write')) {
-        if (!this.configuration.collectArtifacts) throw new Error('成果收集服务不可用')
+        if (!this.configuration.collectArtifacts) throw dependencyUnavailable('成果收集服务不可用')
         artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
       }
       if (record.terminal) return
@@ -699,8 +700,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       join(record.snapshot.attemptDirectory, 'sessions'),
       record.manifest.mcp_connections?.map(connection => connection.server_name) ?? [],
     )
-    if (!evidence) throw new Error('DSH MCP 会话日志不可用，不能确认调用审计完整')
-    if (!this.configuration.recordMcpInvocation) throw new Error('MCP 调用审计服务不可用')
+    if (!evidence) throw dependencyUnavailable('DSH MCP 会话日志不可用，不能确认调用审计完整')
+    if (!this.configuration.recordMcpInvocation) throw dependencyUnavailable('MCP 调用审计服务不可用')
     await this.recordMcpInvocations(record, evidence)
     await this.configuration.finalizeMcpInvocationAudit?.(record.manifest)
   }
@@ -835,7 +836,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         ? 'reject_once'
         : await this.configuration.permissionDecision?.(request, record.manifest, context) ?? 'reject_once'
     if (typeof decision === 'object' && decision.decision === 'wait') {
-      if (!context) throw new Error('无需审批的工具调用不能进入持久化等待')
+      if (!context) throw stateConflict('无需审批的工具调用不能进入持久化等待')
       record.durableWait = decision
       this.emit(record, 'approval.required', '操作等待人工审批，当前 Worker 已释放', {
         approval_id: decision.approvalId,
@@ -1207,11 +1208,11 @@ async function captureResumeCheckpointContext(
   const completedToolResults = [...completedByCall.values()]
   if (completedToolResults.length > 50
     || Buffer.byteLength(canonicalJson(completedToolResults)) > 256 * 1024) {
-    throw new Error('累计工具结果超过安全恢复上限，无法创建持久化检查点')
+    throw invalidRequest('累计工具结果超过安全恢复上限，无法创建持久化检查点')
   }
   const assistantOutput = [previous?.assistant_output, record.assistantText].filter(Boolean).join('\n')
   if (Buffer.byteLength(assistantOutput) > 64 * 1024) {
-    throw new Error('累计未提交回答超过安全恢复上限，无法创建持久化检查点')
+    throw invalidRequest('累计未提交回答超过安全恢复上限，无法创建持久化检查点')
   }
   return {
     pending_action: { arguments: jsonClone(actionArguments) as Record<string, unknown> },
@@ -1260,7 +1261,7 @@ async function readCompletedToolResults(
       }
       totalBytes += Buffer.byteLength(canonicalJson(item))
       if (completed.length >= 50 || totalBytes > 256 * 1024) {
-        throw new Error('等待审批前的工具结果超过安全恢复上限，无法创建持久化检查点')
+        throw invalidRequest('等待审批前的工具结果超过安全恢复上限，无法创建持久化检查点')
       }
       completed.push(item)
     }
@@ -1286,7 +1287,7 @@ async function readCheckpointWorkspaceFiles(
       if (!Buffer.from(content, 'utf8').equals(bytes)) throw new Error('输出目录包含无法安全恢复的非文本文件')
       totalBytes += bytes.length
       if (result.length >= 64 || totalBytes > 1024 * 1024) {
-        throw new Error('等待审批前的输出文件超过安全恢复上限，无法创建持久化检查点')
+        throw invalidRequest('等待审批前的输出文件超过安全恢复上限，无法创建持久化检查点')
       }
       result.push({
         path: `output/${relative(outputRoot, path).split('\\').join('/')}`,
@@ -1570,7 +1571,7 @@ async function waitForRuntimeToolCatalog(
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(timeoutMessage)
+  throw dependencyTimeout(timeoutMessage)
 }
 
 function parseRuntimeToolCatalog(values: unknown[]): RuntimeToolDescriptor[] {
@@ -1583,7 +1584,7 @@ function parseRuntimeToolCatalog(values: unknown[]): RuntimeToolDescriptor[] {
       || !isRecord(value['parameters'])
       || !isRuntimeToolContract(value['contract'])
       || seen.has(value['name'])) {
-      throw new Error('DSH Runtime 工具目录包含无效条目')
+      throw invalidRequest('DSH Runtime 工具目录包含无效条目')
     }
     seen.add(value['name'])
     return {
@@ -1641,7 +1642,7 @@ function catalogProbeEnvironment(
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    timer = setTimeout(() => reject(dependencyTimeout(message)), timeoutMs)
   })
   try {
     return await Promise.race([operation, deadline])
@@ -1707,7 +1708,7 @@ export async function prepareMcpProcess(
   extraEnvironment: Record<string, string> = {},
 ): Promise<AcpProcessConfiguration> {
   if (!connections.length) return { ...base, env: { ...base.env, ...extraEnvironment } }
-  if (!base.args.includes('--profile')) throw new Error('当前 DSH 兼容模式不支持受控 MCP Patch')
+  if (!base.args.includes('--profile')) throw invalidRequest('当前 DSH 兼容模式不支持受控 MCP Patch')
   const environment: Record<string, string> = { ...base.env, ...extraEnvironment }
   const rows: string[] = ['- insert:']
   connections.forEach((connection, connectionIndex) => {
@@ -1725,7 +1726,7 @@ export async function prepareMcpProcess(
     else {
       rows.push('        headers:')
       headers.forEach(([name, value], headerIndex) => {
-        if (!/^[A-Za-z0-9-]{1,80}$/.test(name) || /[\r\n]/.test(value)) throw new Error('MCP 请求头配置无效')
+        if (!/^[A-Za-z0-9-]{1,80}$/.test(name) || /[\r\n]/.test(value)) throw invalidRequest('MCP 请求头配置无效')
         const environmentName = `DSH_MCP_VALUE_${connectionIndex}_${headerIndex}`
         environment[environmentName] = value
         rows.push(`          ${JSON.stringify(name)}: !!js process.env.${environmentName}`)

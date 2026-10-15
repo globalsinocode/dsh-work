@@ -22,6 +22,7 @@ import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { AgentDelegationPolicy, AgentMcpScope } from '../../domain/types.ts'
 import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
+import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -700,7 +701,7 @@ export class PostgresAgentReleaseService {
       select tool_refs as tools, visible_role_ids as "roleIds", data_scopes as "dataScopes" from agent_versions
        where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
     `
-    if (!version) throw new Error('Agent Version 不存在')
+    if (!version) throw notFound('Agent Version 不存在')
     const execution = await this.resolveExecutionScope(submission.agentId, version, tx)
     if (execution.error) throw new Error(execution.error)
     const defaults = this.tools
@@ -718,7 +719,7 @@ export class PostgresAgentReleaseService {
     try {
       await this.tools.assertActiveToolBindings(pins, tx)
     } catch (error) {
-      throw new Error(`固定绑定修订已失效，请重新封存试运行：${error instanceof Error ? error.message : String(error)}`)
+      throw stateConflict(`固定绑定修订已失效，请重新封存试运行：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -1007,7 +1008,7 @@ export class PostgresAgentReleaseService {
          and status in ('draft', 'changes_requested')
       returning id
     `
-    if (!updated.length) throw new Error('发布候选已终态或不存在，无法修改')
+    if (!updated.length) throw notFound('发布候选已终态或不存在，无法修改')
   }
 
   /** submitted = 审核中封存：案例/依赖/检查等候选内容一律不可改，只能退回、撤回或发布。 */
@@ -1027,7 +1028,7 @@ export class PostgresAgentReleaseService {
     const context = await this.requireContext(agentId)
     const submission = await this.requireSubmission(agentId, userId)
     if (submission.status !== 'draft' && submission.status !== 'changes_requested') {
-      throw new Error('当前提交状态不能发起试运行')
+      throw stateConflict('当前提交状态不能发起试运行')
     }
     if (submission.cases[0]?.id !== caseId) {
       throw Object.assign(new Error('请从第一项案例开始验证'), { status: 422, code: 'case_out_of_order' })
@@ -1043,7 +1044,7 @@ export class PostgresAgentReleaseService {
     // 解析失败（工具停用/无已发布版本/绑定服务缺失）在封存前拒绝。
     const bound = await this.resolveDraftBindings(context.draft!, actor.id,
       await this.resolveExecutionScope(context.id, context.draft!))
-    if (bound.error) throw new Error(`绑定解析失败，无法封存试运行：${bound.error}`)
+    if (bound.error) throw stateConflict(`绑定解析失败，无法封存试运行：${bound.error}`)
 
     const trialId = `trial-${randomUUID()}`
     const steps = TRIAL_STEPS.map(step => ({ ...step, status: 'pending' as TrialStepStatus }))
@@ -1392,7 +1393,7 @@ export class PostgresAgentReleaseService {
       }
       const dshStep = trial.steps.find(step => step.id === 'dsh')
       const caseRuns = dshStep?.caseRuns ?? []
-      if (!caseRuns.length) throw new Error('试运行缺少案例执行记录，无法确认')
+      if (!caseRuns.length) throw invalidRequest('试运行缺少案例执行记录，无法确认')
       const pendingRuns = caseRuns.filter(item => !item.verdict)
       if (!pendingRuns.length) throw releaseConflict('当前没有待确认的案例')
       const verdictMap = new Map(verdicts.map(item => [item.caseId, item]))
@@ -1400,7 +1401,7 @@ export class PostgresAgentReleaseService {
         || [...verdictMap.keys()].some(caseId => !pendingRuns.some(item => item.caseId === caseId))
         || (verdictMap.size !== pendingRuns.length
           && (verdictMap.size !== 1 || !verdictMap.has(pendingRuns[0]!.caseId)))) {
-        throw new Error('只能逐项确认尚未判定的案例，不能覆盖已确认结论')
+        throw stateConflict('只能逐项确认尚未判定的案例，不能覆盖已确认结论')
       }
       for (const item of verdicts) {
         if (item.verdict !== 'passed' && item.verdict !== 'failed') {
@@ -1615,13 +1616,13 @@ export class PostgresAgentReleaseService {
         throw new Error('候选绑定的草稿版本已变化，请重新同步候选后再发布')
       }
       if (submission.packageRefs.tools.length) {
-        throw new Error('包内 Tool 候选尚未完成平台内准入，不能随本次发布放行')
+        throw stateConflict('包内 Tool 候选尚未完成平台内准入，不能随本次发布放行')
       }
       if (submission.packageRefs.skills.length) {
-        throw new Error('包内 Skill 候选尚未完成平台内安装与发布，不能随本次发布放行')
+        throw stateConflict('包内 Skill 候选尚未完成平台内安装与发布，不能随本次发布放行')
       }
       if (submission.missingDeps.skills.length || submission.missingDeps.tools.length) {
-        throw new Error('仍存在无法解析的依赖，不能发布')
+        throw stateConflict('仍存在无法解析的依赖，不能发布')
       }
       // 审核确认即发布：新候选无需先提交审核；保留已提交候选的完成路径。
       if (submission.sealedRevision === null || submission.sealedRevision !== submission.revision) {
@@ -1636,7 +1637,7 @@ export class PostgresAgentReleaseService {
         throw new Error('需要一次与当前封存修订一致的通过试运行才能发布')
       }
       const trialEvidenceError = v1TrialEvidenceError(submission.cases, latestTrial.steps)
-      if (trialEvidenceError) throw new Error(`旧版或无效试运行证据不能发布：${trialEvidenceError}，请退回或撤回候选后重新运行 v1 评测`)
+      if (trialEvidenceError) throw stateConflict(`旧版或无效试运行证据不能发布：${trialEvidenceError}，请退回或撤回候选后重新运行 v1 评测`)
       if (!submission.checks.length || submission.checks.some(check => check.status !== 'passed')) {
         throw new Error('候选检查未全部通过，请重新检查并试运行')
       }
@@ -1651,7 +1652,7 @@ export class PostgresAgentReleaseService {
         select visible_role_ids as "roleIds", data_scopes as "dataScopes", tool_refs as tools
           from agent_versions where tenant_id = ${tenantId} and id = ${submission.agentVersionId}
       `
-      if (!draftAuthorization?.roleIds.length) throw new Error('发布前必须配置员工可见角色')
+      if (!draftAuthorization?.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
       const activeAudience = await transaction<{ id: string }[]>`
         select id from roles where tenant_id = ${tenantId} and status = 'active'
           and id = any(${draftAuthorization.roleIds})
@@ -1740,7 +1741,7 @@ export class PostgresAgentReleaseService {
              data_scopes as "dataScopes"
         from agent_versions where tenant_id = ${tenantId} and id = ${agentVersionId}
     `
-    if (!definition) throw new Error('Agent 数据声明不可用')
+    if (!definition) throw dependencyUnavailable('Agent 数据声明不可用')
     const grants = await tx<{ scopeValue: string }[]>`
       select g.scope_value as "scopeValue" from agent_principal_scope_grants g
         join execution_principals p on p.tenant_id = g.tenant_id and p.id = g.principal_id
@@ -1765,7 +1766,7 @@ export class PostgresAgentReleaseService {
       if (!bound || bound.scope !== requirement.scope || bound.version !== requirement.schemaVersion
         || requirement.actions.some(action => !bound.actions.includes(action))
         || (requirement.schema && sha256(canonicalJson(requirement.schema.body)) !== sha256(canonicalJson(bound.schema)))) {
-        throw new Error(`集合 ${requirement.key} 未发布、版本不兼容或缺少当前授权，不能发布 Agent`)
+        throw stateConflict(`集合 ${requirement.key} 未发布、版本不兼容或缺少当前授权，不能发布 Agent`)
       }
     }
   }

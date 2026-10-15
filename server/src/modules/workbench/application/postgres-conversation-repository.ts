@@ -7,6 +7,7 @@ import type { JsonObject, RunState } from '../../run/run-types.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
 import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -356,7 +357,7 @@ export class PostgresConversationRepository {
            and status in ('queued', 'running', 'waiting', 'cancel_requested')
          limit 1
       `
-      if (activeRun) throw new Error('对话当前状态不能删除：仍有运行正在执行，请先停止当前运行')
+      if (activeRun) throw stateConflict('对话当前状态不能删除：仍有运行正在执行，请先停止当前运行')
 
       await transaction`
         update sessions set status = 'archived', last_active_at = now()

@@ -5,6 +5,7 @@ import { createDatabase } from '../../infrastructure/postgres/database.ts'
 import { runMigrations } from '../../infrastructure/postgres/migration-runner.ts'
 import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './config.ts'
 import { LocalAuthService, type LocalAccountInput } from './local-auth-service.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const configuration = loadStartupIdentityConfiguration()
 if (!process.env.DSH_WORK_DATABASE_URL) throw new Error('DSH_WORK_DATABASE_URL 未配置')
@@ -26,7 +27,7 @@ async function readInput(): Promise<LocalAccountInput> {
     for await (const chunk of process.stdin) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
       size += bytes.length
-      if (size > 16_384) throw new Error('初始化输入超过长度限制')
+      if (size > 16_384) throw invalidRequest('初始化输入超过长度限制')
       chunks.push(bytes)
     }
     return JSON.parse(Buffer.concat(chunks, size).toString('utf8')) as LocalAccountInput

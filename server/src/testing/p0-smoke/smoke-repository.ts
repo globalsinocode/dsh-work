@@ -25,6 +25,7 @@ import type {
   SkillDefinition,
   ToolDefinition,
 } from '../../domain/types.ts'
+import { notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const copy = <T>(value: T): T => structuredClone(value)
 
@@ -51,7 +52,7 @@ export class SmokeRepository {
   ): Promise<{ name: string; mimeType: string; bytes: Buffer }> {
     await simulateIo()
     const file = mockArtifactFiles[artifactId]
-    if (!file) throw new Error(`成果内容不存在：${artifactId}`)
+    if (!file) throw notFound(`成果内容不存在：${artifactId}`)
     return { name: file.name, mimeType: file.mimeType, bytes: Buffer.from(file.content, 'utf8') }
   }
 
@@ -61,7 +62,7 @@ export class SmokeRepository {
   ): Promise<AgentDefinition> {
     await simulateIo()
     const agent = prototypeData.agents.find((item) => item.id === agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw notFound(`Agent 不存在：${agentId}`)
     Object.assign(agent, copy(patch))
     return copy(agent)
   }
@@ -75,7 +76,7 @@ export class SmokeRepository {
     const record = prototypeData.agentVersions.find(
       (item) => item.agentId === agentId && item.version === version,
     )
-    if (!record) throw new Error(`Agent Version 不存在：${agentId}@${version}`)
+    if (!record) throw notFound(`Agent Version 不存在：${agentId}@${version}`)
     Object.assign(record, copy(patch))
     return copy(record)
   }
@@ -86,7 +87,7 @@ export class SmokeRepository {
   ): Promise<{ agent: AgentDefinition; version: AgentVersionRecord }> {
     await simulateIo()
     if (prototypeData.agents.some((item) => item.id === agent.id)) {
-      throw new Error(`Agent 标识已存在：${agent.id}`)
+      throw stateConflict(`Agent 标识已存在：${agent.id}`)
     }
     prototypeData.agents.unshift(copy(agent))
     prototypeData.agentVersions.unshift(copy(version))
@@ -102,7 +103,7 @@ export class SmokeRepository {
   async createSkill(skill: SkillDefinition): Promise<SkillDefinition> {
     await simulateIo()
     if (prototypeData.skills.some((item) => item.id === skill.id)) {
-      throw new Error(`Skill 标识已存在：${skill.id}`)
+      throw stateConflict(`Skill 标识已存在：${skill.id}`)
     }
     prototypeData.skills.unshift(copy(skill))
     return copy(skill)
@@ -114,7 +115,7 @@ export class SmokeRepository {
   ): Promise<SkillDefinition> {
     await simulateIo()
     const skill = prototypeData.skills.find((item) => item.id === skillId)
-    if (!skill) throw new Error(`Skill 不存在：${skillId}`)
+    if (!skill) throw notFound(`Skill 不存在：${skillId}`)
     Object.assign(skill, copy(patch))
     return copy(skill)
   }
@@ -125,7 +126,7 @@ export class SmokeRepository {
   ): Promise<ToolDefinition> {
     await simulateIo()
     const tool = prototypeData.tools.find((item) => item.id === toolId)
-    if (!tool) throw new Error(`工具不存在：${toolId}`)
+    if (!tool) throw notFound(`工具不存在：${toolId}`)
     Object.assign(tool, copy(patch))
     return copy(tool)
   }
@@ -133,7 +134,7 @@ export class SmokeRepository {
   async createTool(tool: ToolDefinition): Promise<ToolDefinition> {
     await simulateIo()
     if (prototypeData.tools.some((item) => item.id === tool.id)) {
-      throw new Error(`工具已存在：${tool.name}`)
+      throw stateConflict(`工具已存在：${tool.name}`)
     }
     prototypeData.tools.unshift(copy(tool))
     return copy(tool)
@@ -145,7 +146,7 @@ export class SmokeRepository {
   ): Promise<ConnectorDefinition> {
     await simulateIo()
     const connector = prototypeData.connectors.find((item) => item.id === connectorId)
-    if (!connector) throw new Error(`连接器不存在：${connectorId}`)
+    if (!connector) throw notFound(`连接器不存在：${connectorId}`)
     Object.assign(connector, copy(patch))
     return copy(connector)
   }
@@ -156,7 +157,7 @@ export class SmokeRepository {
   ): Promise<ToolDefinition> {
     await simulateIo()
     const tool = prototypeData.tools.find((item) => item.id === toolId)
-    if (!tool) throw new Error(`工具不存在：${toolId}`)
+    if (!tool) throw notFound(`工具不存在：${toolId}`)
     Object.assign(tool, copy(patch))
     return copy(tool)
   }
@@ -167,7 +168,7 @@ export class SmokeRepository {
   ): Promise<RuntimeDefinition> {
     await simulateIo()
     const runtime = prototypeData.runtimes.find((item) => item.id === runtimeId)
-    if (!runtime) throw new Error(`Runtime 不存在：${runtimeId}`)
+    if (!runtime) throw notFound(`Runtime 不存在：${runtimeId}`)
     Object.assign(runtime, copy(patch))
     return copy(runtime)
   }

@@ -7,6 +7,7 @@ import { authorizationDenied } from './authorization-errors.ts'
 import { requirePlatformAdminActor } from './platform-admin-actor.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { isDefaultRunLocalAgentTool } from '../tool/dsh-built-in-tool-catalog.ts'
+import { invalidRequest, notFound } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -565,7 +566,7 @@ export class PostgresAuthorizationService {
             where t.id = ${tenantId} and t.status = 'active'
          )
     `
-    if (!row) throw new Error('工作空间不存在、已归档或当前用户不可用')
+    if (!row) throw notFound('工作空间不存在、已归档或当前用户不可用')
     // Key includes tenant and the status track so a future multi-tenant
     // deployment cannot mix entries and, more importantly, an active-only
     // (execution) probe can never be satisfied by a cached archived-read
@@ -639,7 +640,7 @@ export class PostgresAuthorizationService {
     const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
       .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference) && !authorizedToolReferences.has(reference))
     if (missingSkillTools.length) {
-      throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`)
+      throw authorizationDenied(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
     }
     return { agent, skillVersions }
   }
@@ -1013,7 +1014,7 @@ export class PostgresAuthorizationService {
          where s.tenant_id = ${tenantId} and s.id = ${id} and sv.version = ${version}
            and s.status = 'published' and sv.status = 'published'
       `
-      if (!row) throw new Error(`Skill 不存在、未发布或已停用：${reference}`)
+      if (!row) throw authorizationDenied(`Skill 不存在、未发布或已停用：${reference}`, { status: 404, code: 'resource_not_found', suggestion: '返回列表确认对象仍存在，然后重新选择。' })
       resolved.push({ reference, versionId: row.versionId, toolReferences: row.toolReferences })
     }
     return resolved
@@ -1126,7 +1127,7 @@ function normalizeWorkspaceId(workspaceId: string | null | undefined) {
 function parseReference(reference: string, label: string) {
   const separator = reference.lastIndexOf('@')
   if (separator <= 0 || separator === reference.length - 1) {
-    throw new Error(`${label}引用必须锁定版本：${reference}`)
+    throw invalidRequest(`${label}引用必须锁定版本：${reference}`)
   }
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
 }

@@ -30,6 +30,7 @@ import {
   type AutomationSchedule,
   type FrozenExecutionConfig,
 } from './automation-types.ts'
+import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -643,21 +644,21 @@ export class AutomationService {
 function normalizeAutomationName(name: string): string {
   const normalized = typeof name === 'string' ? name.trim() : ''
   if (normalized.length < 1 || normalized.length > 120) {
-    throw new Error('任务名称长度必须为 1～120 个字符')
+    throw invalidRequest('任务名称长度必须为 1～120 个字符')
   }
   return normalized
 }
 
 function normalizeInputTemplate(input: AutomationInputTemplate): AutomationInputTemplate {
   if (!input || typeof input.prompt !== 'string' || input.prompt.trim().length < 1) {
-    throw new Error('任务输入不能为空')
+    throw stateConflict('任务输入不能为空')
   }
-  if (input.prompt.length > 20_000) throw new Error('任务输入不能超过 20000 字符')
+  if (input.prompt.length > 20_000) throw stateConflict('任务输入不能超过 20000 字符')
   const budget = input.budget ?? {}
   for (const key of ['timeoutSeconds', 'maxToolCalls', 'maxOutputBytes'] as const) {
     const value = budget[key]
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
-      throw new Error(`预算 ${key} 必须是正整数`)
+      throw invalidRequest(`预算 ${key} 必须是正整数`)
     }
   }
   return {
@@ -669,7 +670,7 @@ function normalizeInputTemplate(input: AutomationInputTemplate): AutomationInput
 
 function assertIdempotencyKey(key: string) {
   if (typeof key !== 'string' || key.trim().length < 1 || key.length > 128) {
-    throw new Error('idempotencyKey 必须是 1～128 字符')
+    throw invalidRequest('idempotencyKey 必须是 1～128 字符')
   }
 }
 

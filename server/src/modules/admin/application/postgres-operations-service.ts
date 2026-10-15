@@ -24,6 +24,7 @@ import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied } from '../../authorization/authorization-errors.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../../security/safe-observability.ts'
+import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -129,7 +130,7 @@ export class PostgresOperationsService {
 
   async getRuntimeMutationSnapshot(runtimeId: string): Promise<RuntimeMutationSnapshot> {
     const snapshot = await this.readRuntimeMutationSnapshot(this.database, runtimeId)
-    if (!snapshot) throw new Error(`Runtime 不存在：${runtimeId}`)
+    if (!snapshot) throw notFound(`Runtime 不存在：${runtimeId}`)
     return snapshot
   }
 
@@ -140,7 +141,7 @@ export class PostgresOperationsService {
     try {
       await this.database.begin(async (transaction) => {
         const runtime = await this.readRuntimeMutationSnapshot(transaction, input.runtimeId, true)
-        if (!runtime) throw new Error(`Runtime 不存在：${input.runtimeId}`)
+        if (!runtime) throw notFound(`Runtime 不存在：${input.runtimeId}`)
         if (expected && !sameRuntimeMutationSnapshot(runtime, expected)) {
           throw new Error('Runtime 状态已变化，请重新生成操作计划')
         }
@@ -148,7 +149,7 @@ export class PostgresOperationsService {
         if (input.schedulingStatus === 'accepting') {
           const health = await this.runtime?.health()
           if (!health || health.runtimeId !== input.runtimeId || health.status === 'offline') {
-            throw new Error('Runtime 当前离线，不能切换为接收任务')
+            throw dependencyUnavailable('Runtime 当前离线，不能切换为接收任务')
           }
         }
 
@@ -157,7 +158,7 @@ export class PostgresOperationsService {
            where tenant_id = ${tenantId} and runtime_id = ${input.runtimeId} and status = 'running'
         `
         if (input.maxConcurrentWorkers < (active?.count ?? 0)) {
-          throw new Error('最大并发数不能小于当前活动 Worker 数')
+          throw stateConflict('最大并发数不能小于当前活动 Worker 数')
         }
 
         await transaction`
@@ -175,7 +176,7 @@ export class PostgresOperationsService {
            where tenant_id = ${tenantId} and id = ${input.runtimeId}
            returning id
         `
-        if (!updated.length) throw new Error(`Runtime 不存在：${input.runtimeId}`)
+        if (!updated.length) throw notFound(`Runtime 不存在：${input.runtimeId}`)
 
         // claimAttempt locks the same Runtime row before admitting work. Keep
         // the row lock while mirroring the state so no claim can observe a
@@ -386,7 +387,7 @@ export class PostgresOperationsService {
     const [run] = await this.database<{ id: string }[]>`
       select id from runs where tenant_id = ${tenantId} and id = ${runId}
     `
-    if (!run) throw new Error(`Run 不存在：${runId}`)
+    if (!run) throw notFound(`Run 不存在：${runId}`)
     return (await this.readOperationalEvents({ runId, pageSize: 500 })).items
   }
 
@@ -773,7 +774,7 @@ export class PostgresOperationsService {
       select requested_by as "requestedBy" from runs
        where tenant_id = ${tenantId} and id = ${input.runId}
     `
-    if (!run) throw new Error(`Run 不存在：${input.runId}`)
+    if (!run) throw notFound(`Run 不存在：${input.runId}`)
     const toolVersionId = await this.resolveToolVersionId(input.runId, input.attemptId, input.metadata)
     await this.database`
       insert into tool_audit_logs (
@@ -793,13 +794,13 @@ export class PostgresOperationsService {
     metadata: Record<string, unknown>,
   ) {
     const toolName = typeof metadata['tool_name'] === 'string' ? metadata['tool_name'].trim() : ''
-    if (!toolName) throw new Error('工具审计缺少 tool_name，无法关联 Tool Version')
+    if (!toolName) throw invalidRequest('工具审计缺少 tool_name，无法关联 Tool Version')
 
     const [attempt] = await this.database<{ manifest: unknown }[]>`
       select manifest from run_attempts
        where tenant_id = ${tenantId} and run_id = ${runId} and id = ${attemptId}
     `
-    if (!attempt) throw new Error(`Attempt 不存在：${attemptId}`)
+    if (!attempt) throw notFound(`Attempt 不存在：${attemptId}`)
     const manifestTools = readManifestToolReferences(attempt.manifest)
     const normalizedName = toolName.toLowerCase()
     const manifestTool = manifestTools.find(reference =>
@@ -879,7 +880,7 @@ export class PostgresOperationsService {
       select id, capacity, scheduling_status as "schedulingStatus" from runtimes
        where tenant_id = ${tenantId} and id = ${runtimeId}
     `
-    if (!runtime) throw new Error(`Runtime 不存在：${runtimeId}`)
+    if (!runtime) throw notFound(`Runtime 不存在：${runtimeId}`)
     return runtime
   }
 
@@ -906,13 +907,13 @@ function sameRuntimeMutationSnapshot(left: RuntimeMutationSnapshot, right: Runti
 
 function assertRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
   if (!Number.isInteger(input.maxConcurrentWorkers) || input.maxConcurrentWorkers < 1 || input.maxConcurrentWorkers > 128) {
-    throw new Error('最大并发 Worker 数必须是 1～128 之间的整数')
+    throw invalidRequest('最大并发 Worker 数必须是 1～128 之间的整数')
   }
   if (!Number.isInteger(input.attemptTimeoutMinutes) || input.attemptTimeoutMinutes < 1 || input.attemptTimeoutMinutes > 60) {
-    throw new Error('单次执行超时时间必须是 1～60 分钟之间的整数')
+    throw invalidRequest('单次执行超时时间必须是 1～60 分钟之间的整数')
   }
   if (!['accepting', 'draining', 'disabled'].includes(input.schedulingStatus)) {
-    throw new Error('Runtime 调度状态无效')
+    throw invalidRequest('Runtime 调度状态无效')
   }
 }
 

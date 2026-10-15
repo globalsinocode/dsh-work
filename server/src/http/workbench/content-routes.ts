@@ -6,6 +6,7 @@ import type { PostgresWorkspaceAgentMemberService } from '../../modules/workbenc
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { DEFAULT_WORKBENCH_AGENT_ID } from '../../modules/agent/postgres-agent-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, routeValidationFailed, sessionAuthorizationContext, type Router } from '../router.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const basePath = '/api/workbench/v1'
 
@@ -81,7 +82,7 @@ export function registerContentRoutes(
     const userId = identity.userId
     const access = await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const body = await readJsonBody<{ name: string; description?: string }>(request)
-    if (body.name.trim().length < 2) throw new Error('工作空间名称至少需要 2 个字符')
+    if (body.name.trim().length < 2) throw invalidRequest('工作空间名称至少需要 2 个字符')
     const workspace = await content.createWorkspace({
       name: body.name,
       description: body.description ?? '',
@@ -151,7 +152,7 @@ export function registerContentRoutes(
     })
     const fileNameHeader = request.headers['x-file-name']
     const encodedName = Array.isArray(fileNameHeader) ? fileNameHeader[0] : fileNameHeader
-    if (!encodedName) throw new Error('缺少文件名')
+    if (!encodedName) throw invalidRequest('缺少文件名')
     const name = decodeFileNameHeader(encodedName)
     const bytes = await readBinaryBody(request, 20 * 1024 * 1024)
     const file = await content.storeWorkspaceFile(
@@ -284,7 +285,7 @@ export function registerContentRoutes(
     await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const fileNameHeader = request.headers['x-file-name']
     const encodedName = Array.isArray(fileNameHeader) ? fileNameHeader[0] : fileNameHeader
-    if (!encodedName) throw new Error('缺少文件名')
+    if (!encodedName) throw invalidRequest('缺少文件名')
     const name = decodeFileNameHeader(encodedName)
     const bytes = await readBinaryBody(request, 20 * 1024 * 1024)
     const file = await content.storeSessionFile(
@@ -335,7 +336,7 @@ export function registerContentRoutes(
     const userId = identity.userId
     await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const version = Number(context.params['versionId'])
-    if (!Number.isInteger(version) || version < 1) throw new Error('Artifact 版本号无效')
+    if (!Number.isInteger(version) || version < 1) throw invalidRequest('Artifact 版本号无效')
     const fileId = await content.artifactFileId(context.params['artifactId'] ?? '', version, userId)
     const file = await content.readFile(fileId, userId)
     writeDownload(response, file.name, file.mimeType, file.bytes)
@@ -363,7 +364,7 @@ async function readBinaryBody(request: IncomingMessage, maxBytes: number) {
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     length += bytes.length
-    if (length > maxBytes) throw new Error('文件超过 20 MB 限制')
+    if (length > maxBytes) throw invalidRequest('文件超过 20 MB 限制')
     chunks.push(bytes)
   }
   return Buffer.concat(chunks)

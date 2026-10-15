@@ -38,6 +38,7 @@ import type { PostgresPersistentWaitService } from './postgres-persistent-wait-s
 import type { PostgresAgentDelegationService } from './postgres-agent-delegation-service.ts'
 import { normalizeTaskBudget, type TaskBudgetInput, type TaskBudgetLimits } from '../task/task-budget-types.ts'
 import { platformToolsForPurpose } from '../runtime/platform-tool-contracts.ts'
+import { accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const runtimeId = 'runtime-local-01'
@@ -178,14 +179,14 @@ export class RunOrchestrationService {
   async retryAdminRun(runId: string, userId: string) {
     const run = await this.requireAdminRun(runId, userId)
     await this.runtime.assertAvailable?.()
-    if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的运行可以重试')
+    if (!['failed', 'cancelled'].includes(run.status)) throw stateConflict('只有失败或已取消的运行可以重试')
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
-    if (!attempt) throw new Error('管理助手运行缺少原始输入，请重新发送请求')
+    if (!attempt) throw invalidRequest('管理助手运行缺少原始输入，请重新发送请求')
     const manifest = normalizePersistedRuntimeManifest(attempt.manifest as unknown as RuntimeManifest)
     // 试运行 Run 属于发布治理证据：失败应在工作台重新发起完整试运行（封存/案例/确认
     // 全链路），不能按管理助手语义单独重试——那会用 Skill 安装工具集重放治理输入。
     if (manifest.purpose === 'agent-release-trial') {
-      throw new Error('试运行不支持单独重试；请在发布工作台重新发起试运行')
+      throw invalidRequest('试运行不支持单独重试；请在发布工作台重新发起试运行')
     }
     if (manifest.purpose === 'admin-skill-test') {
       // Reuse the full immutable graph, tool allowlist and original input. The
@@ -216,7 +217,7 @@ export class RunOrchestrationService {
 
   private async requireAdminRun(runId: string, userId: string) {
     const run = await this.runs.getRun(tenantId, runId)
-    if (!run || run.requestedBy !== userId) throw new Error('管理助手运行不存在或不可访问')
+    if (!run || run.requestedBy !== userId) throw accessDenied('管理助手运行不存在或不可访问')
     const attempt = run.currentAttemptId ? await this.runs.getAttempt(tenantId, run.currentAttemptId) : null
     const purpose = (attempt?.manifest as RuntimeManifest | undefined)?.purpose
     if (purpose === 'admin-assistant') await this.authorization?.requireAdminReader(userId)
@@ -286,7 +287,7 @@ export class RunOrchestrationService {
     idempotencyKey: string
     deadlineMs?: number
   }): Promise<{ runId: string; attemptId: string | null; status: string; output: string }> {
-    if (!this.agents) throw new Error('试运行执行链路未接入：缺少 Agent 运行时服务')
+    if (!this.agents) throw invalidRequest('试运行执行链路未接入：缺少 Agent 运行时服务')
     const run = await this.runs.createRun({
       tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
     })
@@ -721,7 +722,7 @@ export class RunOrchestrationService {
    */
   async systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     const run = await this.runs.getRun(tenantId, runId)
-    if (!run) throw new Error(`Run 不存在：${runId}`)
+    if (!run) throw notFound(`Run 不存在：${runId}`)
     await this.delegation?.cancelActiveDescendants(run.taskId, reason ?? '父任务授权已撤销，终止所有活动子任务')
     if (run.status === 'waiting') {
       if (!this.persistentWait) throw new Error('持久化等待服务未接线')
@@ -803,7 +804,7 @@ export class RunOrchestrationService {
 
   async retry(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     const run = await this.requireWritableRun(runId, userId)
-    if (!['failed', 'cancelled'].includes(run.status)) throw new Error('只有失败或已取消的 Run 可以重试')
+    if (!['failed', 'cancelled'].includes(run.status)) throw stateConflict('只有失败或已取消的 Run 可以重试')
     if (run.sessionId === null) {
       if (!this.tasks) throw requestInvalid('Task 重试服务未接线')
       const task = await this.tasks.getTask(tenantId, run.taskId)
@@ -834,7 +835,7 @@ export class RunOrchestrationService {
       throw requestInvalid('原 Attempt 的外部操作结果可能未确定；请先核对权威回执，再明确发起新任务，不要直接重试')
     }
     if ((lastAttempt?.manifest as RuntimeManifest | undefined)?.purpose === 'automation') {
-      throw new Error('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
+      throw invalidRequest('自动任务运行不支持在此重试；请在自动任务详情页使用「再次运行」')
     }
     if (run.sessionId === null) {
       const manifest = lastAttempt?.manifest as RuntimeManifest | undefined
@@ -2059,7 +2060,7 @@ export class RunOrchestrationService {
    */
   private async requireWritableRun(runId: string, userId: string) {
     const run = await this.runs.getRun(tenantId, runId)
-    if (!run) throw new Error(`Run 不存在或不可访问：${runId}`)
+    if (!run) throw accessDenied(`Run 不存在或不可访问：${runId}`)
     if (run.sessionId) await this.requireSessionAccess(run.sessionId, userId, 'write')
     else {
       if (!this.tasks || !this.authorization) throw new AuthorizationCheckUnavailableError()
@@ -2084,7 +2085,7 @@ export class RunOrchestrationService {
   ): Promise<void> {
     if (!this.tasks) return
     const attempt = await this.runs.getAttempt(tenantId, event.attempt_id)
-    if (!attempt) throw new Error(`Attempt 不存在，不能结算预算：${event.attempt_id}`)
+    if (!attempt) throw notFound(`Attempt 不存在，不能结算预算：${event.attempt_id}`)
     const output = this.assistantOutputs.get(event.attempt_id) ?? ''
     const reportedInput = nonNegativeInteger(event.safe_metadata['input_tokens'])
     const reportedOutput = nonNegativeInteger(event.safe_metadata['output_tokens'])

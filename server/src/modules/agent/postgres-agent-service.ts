@@ -23,6 +23,7 @@ import { authorizationDenied } from '../authorization/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
+import { accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -219,7 +220,7 @@ export class PostgresAgentService {
         from execution_principals ep
        where ep.tenant_id = ${tenantId} and ep.kind = 'agent' and ep.agent_id = ${agentId}
     `
-    if (!row) throw new Error(`Agent 执行身份不存在：${agentId}`)
+    if (!row) throw notFound(`Agent 执行身份不存在：${agentId}`)
     return row
   }
 
@@ -255,7 +256,7 @@ export class PostgresAgentService {
       || input.dataScopes.some(value => typeof value !== 'string' || !value.trim() || value.length > 128)
       || new Set(input.roleIds).size !== input.roleIds.length
       || new Set(input.dataScopes).size !== input.dataScopes.length) {
-      throw new Error('Agent 身份授权参数无效')
+      throw invalidRequest('Agent 身份授权参数无效')
     }
     await this.database.begin(async transaction => {
       const [principal] = await transaction<{ id: string; authorizationVersion: number }[]>`
@@ -263,7 +264,7 @@ export class PostgresAgentService {
          where tenant_id = ${tenantId} and kind = 'agent' and agent_id = ${input.agentId}
          for update
       `
-      if (!principal) throw new Error(`Agent 执行身份不存在：${input.agentId}`)
+      if (!principal) throw notFound(`Agent 执行身份不存在：${input.agentId}`)
       if (principal.authorizationVersion !== input.expectedAuthorizationVersion) {
         throw Object.assign(new Error('Agent 身份授权已变化，请刷新后重试'), {
           status: 409, code: 'AGENT_PRINCIPAL_REVISION_CONFLICT',
@@ -280,7 +281,7 @@ export class PostgresAgentService {
         select id from roles where tenant_id = ${tenantId} and status = 'active'
           and id in ${transaction(addedRoles.length ? addedRoles : ['__none__'])}
       `
-      if (knownRoles.length !== addedRoles.length) throw new Error('Agent 身份包含无效或停用角色')
+      if (knownRoles.length !== addedRoles.length) throw invalidRequest('Agent 身份包含无效或停用角色')
       await transaction`
         delete from agent_principal_role_grants where tenant_id = ${tenantId} and principal_id = ${principal.id}
           and role_id not in ${transaction(requestedRoles)}
@@ -361,12 +362,12 @@ export class PostgresAgentService {
     if (!Array.isArray(input.executionRoleIds ?? []) || !Array.isArray(input.executionDataScopes ?? [])
       || (input.executionRoleIds ?? []).some(role => typeof role !== 'string' || !role.trim())
       || (input.executionDataScopes ?? []).some(scope => typeof scope !== 'string' || !scope.trim() || scope.length > 128)) {
-      throw new Error('Agent 执行授权参数无效')
+      throw invalidRequest('Agent 执行授权参数无效')
     }
     const executionRoleIds = unique(input.executionRoleIds ?? [])
     const executionDataScopes = unique(input.executionDataScopes ?? [])
     if (executionDataScopes.some(scope => !configuration.dataScopes.includes(scope))) {
-      throw new Error('Agent 执行数据授权不能超过当前定义的平台数据范围')
+      throw stateConflict('Agent 执行数据授权不能超过当前定义的平台数据范围')
     }
     await this.assertInitialAgentGrants(executionRoleIds)
     const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
@@ -427,12 +428,12 @@ export class PostgresAgentService {
       select id from roles where tenant_id = ${tenantId} and status = 'active'
         and id in ${this.database(roleIds)}
     `
-    if (rows.length !== roleIds.length) throw new Error('Agent 执行授权包含无效或停用角色')
+    if (rows.length !== roleIds.length) throw invalidRequest('Agent 执行授权包含无效或停用角色')
   }
 
   async getMutationSnapshot(agentId: string): Promise<AgentMutationSnapshot> {
     const [row] = await this.readAgentRows(agentId)
-    if (!row) throw new Error(`Agent 不存在：${agentId}`)
+    if (!row) throw notFound(`Agent 不存在：${agentId}`)
     return { agent: toAgentDefinition(row), revision: agentMutationRevision(row) }
   }
 
@@ -443,7 +444,7 @@ export class PostgresAgentService {
   ) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     // F-05：发布范围（可见角色、平台数据范围上限）只由发布工作台写入。编辑器保存时沿用当前值，
     // 并由调用方的 expectedRevision 保证“读到的当前值”与加锁后的行一致。
     const publicationScope = options.preservePublicationScope
@@ -462,7 +463,7 @@ export class PostgresAgentService {
     let draftVersionId = current.draftVersionId
     await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
-      if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+      if (!locked) throw notFound(`Agent 不存在：${input.agentId}`)
       assertAgentMutationRevision(locked, expectedRevision)
       await this.requireActor(input.actor, transaction)
       if (options.draftCopyOnly) {
@@ -543,16 +544,16 @@ export class PostgresAgentService {
   }, expectedRevision?: string) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
 
     if (input.status === 'disabled') {
       const release = await this.database.begin(async transaction => {
         const locked = await this.lockAgentForMutation(transaction, input.agentId)
-        if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+        if (!locked) throw notFound(`Agent 不存在：${input.agentId}`)
         assertAgentMutationRevision(locked, expectedRevision)
         // 停用是管理状态切换，与待发布草稿独立：草稿保留并可在治理流程中继续推进，
         // 发布只切换活动版本，不隐式重新启用（见 publishDraftWithinTransaction）。
-        if (!locked.activeVersionId) throw new Error('尚未发布的 Agent 不能停用')
+        if (!locked.activeVersionId) throw stateConflict('尚未发布的 Agent 不能停用')
         const activeVersionId = locked.activeVersionId
         const updated = await transaction`
           update agents set status = 'disabled', updated_at = now()
@@ -572,13 +573,13 @@ export class PostgresAgentService {
     const reenabling = current.persistedStatus === 'disabled' && Boolean(current.activeVersionId)
     if (!reenabling) {
       if (current.draftVersionId) {
-        throw new Error('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
+        throw stateConflict('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
       }
       throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
     const release = await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
-      if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+      if (!locked) throw notFound(`Agent 不存在：${input.agentId}`)
       assertAgentMutationRevision(locked, expectedRevision)
       if (!locked.activeVersionId || locked.persistedStatus !== 'disabled') {
         throw new Error('当前 Agent 没有可发布草稿，也不处于停用状态')
@@ -600,7 +601,7 @@ export class PostgresAgentService {
   async rollback(input: { agentId: string; version: string; actor: string }) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     const [target] = await this.database<VersionRow[]>`
       select av.id, av.agent_id as "agentId", av.version, av.name, av.description, av.status, av.created_at as "createdAt",
              creator.display_name as "createdBy", av.published_at as "publishedAt",
@@ -617,12 +618,12 @@ export class PostgresAgentService {
        where av.tenant_id = ${tenantId} and av.agent_id = ${input.agentId}
          and av.version = ${input.version} and av.status = 'published'
     `
-    if (!target) throw new Error(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
+    if (!target) throw notFound(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
     const principal = await this.getAgentExecutionPrincipal(input.agentId)
     await this.assertCapabilityReferences(target.skills, target.tools, principal.roleIds,
       target.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
 
-    if (!current.activeVersionId) throw new Error('尚未发布的 Agent 不能回滚')
+    if (!current.activeVersionId) throw stateConflict('尚未发布的 Agent 不能回滚')
     if (current.activeVersionId === target.id) throw new Error(`v${target.version} 已是当前活动版本，无需回滚`)
     const [activeBefore] = await this.database<{ version: string }[]>`
       select version from agent_versions where tenant_id = ${tenantId} and id = ${current.activeVersionId}
@@ -640,7 +641,7 @@ export class PostgresAgentService {
          where tenant_id = ${tenantId} and id = ${target.id} and status = 'published'
          for share
       `
-      if (!stillPublished) throw new Error(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
+      if (!stillPublished) throw notFound(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
       const moved = await transaction<{ id: string }[]>`
         update agents set active_version_id = ${target.id}, name = ${target.name},
                           description = ${target.description},
@@ -668,17 +669,17 @@ export class PostgresAgentService {
   }): Promise<AgentDefinition> {
     const actor = await this.requireActor(input.actor)
     if (typeof input.allowWorkspaceJoin !== 'boolean') {
-      throw new Error('allowWorkspaceJoin 必须为布尔值')
+      throw invalidRequest('allowWorkspaceJoin 必须为布尔值')
     }
     const [current] = await this.readAgentRows(input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     await this.database.begin(async transaction => {
       const [locked] = await transaction<{ id: string }[]>`
         select id from agents
          where tenant_id = ${tenantId} and id = ${input.agentId}
          for update
       `
-      if (!locked) throw new Error(`Agent 不存在：${input.agentId}`)
+      if (!locked) throw notFound(`Agent 不存在：${input.agentId}`)
       await transaction`
         update agents set allow_workspace_join = ${input.allowWorkspaceJoin}
          where tenant_id = ${tenantId} and id = ${input.agentId}
@@ -702,7 +703,7 @@ export class PostgresAgentService {
     const [agent] = await this.database<{ id: string }[]>`
       select id from agents where tenant_id = ${tenantId} and id = ${agentId}
     `
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw notFound(`Agent 不存在：${agentId}`)
     const rows = await this.database<{
       workspaceId: string
       workspaceName: string
@@ -774,7 +775,7 @@ export class PostgresAgentService {
   ): Promise<string> {
     const agents = await this.listWorkbenchAgents(userId, sessionRoleIds)
     const candidates = agentId ? agents.filter(agent => agent.id === agentId) : agents
-    if (!candidates.length) throw new Error(agentId ? 'Agent 不存在或当前用户不可用' : '当前用户没有可用 Agent')
+    if (!candidates.length) throw (agentId ? notFound('Agent 不存在或当前用户不可用') : accessDenied('当前用户没有可用 Agent'))
     for (const candidate of candidates) {
       const [row] = await this.database<{
         activeVersionId: string
@@ -804,7 +805,7 @@ export class PostgresAgentService {
         if (agentId) throw error
       }
     }
-    throw new Error('所选 Skill 必须由已配置所需工具的 Agent 运行；当前没有兼容 Agent，请联系管理员配置')
+    throw invalidRequest('所选 Skill 必须由已配置所需工具的 Agent 运行；当前没有兼容 Agent，请联系管理员配置')
   }
 
   async listWorkspaceAgentCandidates(
@@ -886,7 +887,7 @@ export class PostgresAgentService {
           and ep.kind = 'agent' and ep.status = 'active'
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
     `
-    if (!row) throw new Error(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
+    if (!row) throw notFound(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
     // 试运行必须用封存时的定义；指纹与本次取到的配置在同一行快照上计算，
     // 防止发布服务检查后、Attempt 准备前草稿被修改而混入另一份定义。
     if (expectedDefinitionFingerprint && configurationFingerprint(row) !== expectedDefinitionFingerprint) {
@@ -977,7 +978,7 @@ export class PostgresAgentService {
          and t.submission_revision = s.sealed_revision
        limit 1
     `
-    if (!trial) throw new Error('发布前必须在发布工作台完成与当前配置一致的封存试运行')
+    if (!trial) throw invalidRequest('发布前必须在发布工作台完成与当前配置一致的封存试运行')
 
     const published = await transaction<{ id: string }[]>`
       update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id},
@@ -1017,7 +1018,7 @@ export class PostgresAgentService {
     const missingTools = unique(runtimeSkills.flatMap(skill => skill.tools))
       .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference) && !selectedTools.has(reference))
     if (missingTools.length) {
-      throw new Error(`Agent 必须显式授权所选 Skill 依赖的工具：${missingTools.join('、')}`)
+      throw authorizationDenied(`Agent 必须显式授权所选 Skill 依赖的工具：${missingTools.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
     }
   }
 
@@ -1111,7 +1112,7 @@ export class PostgresAgentService {
 
   private async requireAgent(agentId: string): Promise<AgentDefinition> {
     const [row] = await this.readAgentRows(agentId)
-    if (!row) throw new Error(`Agent 不存在：${agentId}`)
+    if (!row) throw notFound(`Agent 不存在：${agentId}`)
     return toAgentDefinition(row)
   }
 
@@ -1128,7 +1129,7 @@ export class PostgresAgentService {
          and av.status = 'published' and a.status = 'published'
     `
     if (rows.length !== policy.allowedAgentVersionIds.length) {
-      throw new Error('委派目标必须是当前已发布的固定 Agent Version')
+      throw invalidRequest('委派目标必须是当前已发布的固定 Agent Version')
     }
   }
 
@@ -1149,7 +1150,7 @@ export class PostgresAgentService {
     const agent = await this.requireAgent(agentId)
     const versions = await this.getAgentVersions()
     const version = versions.find(item => item.id === versionId)
-    if (!version) throw new Error(`Agent Version 不存在：${versionId}`)
+    if (!version) throw notFound(`Agent Version 不存在：${versionId}`)
     return { agent, version }
   }
 
@@ -1194,7 +1195,7 @@ function assertConfiguration(input: AgentDraftConfiguration) {
   // Drafts may start with no audience or business-data access. The release
   // gate requires an audience before the first trial; an empty scope means a
   // basic Agent without platform business-data access.
-  if (!input.examplePrompts.length) throw new Error('必须配置至少一个示例问题')
+  if (!input.examplePrompts.length) throw invalidRequest('必须配置至少一个示例问题')
   assertDelegationPolicy(normalizeDelegationPolicy(input.delegationPolicy))
 }
 
@@ -1333,16 +1334,16 @@ function assertDelegationPolicy(value: AgentDelegationPolicy): void {
   if (!value || !Array.isArray(value.allowedAgentVersionIds)
     || value.allowedAgentVersionIds.length > 16
     || value.allowedAgentVersionIds.some(id => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))) {
-    throw new Error('委派目标必须是最多 16 个有效 Agent Version 标识')
+    throw invalidRequest('委派目标必须是最多 16 个有效 Agent Version 标识')
   }
   if (!Number.isInteger(value.maxDepth) || value.maxDepth < 1 || value.maxDepth > 4) {
-    throw new Error('委派最大深度必须为 1～4')
+    throw invalidRequest('委派最大深度必须为 1～4')
   }
   if (!Number.isInteger(value.maxParallel) || value.maxParallel < 1 || value.maxParallel > 4) {
-    throw new Error('委派并行上限必须为 1～4')
+    throw invalidRequest('委派并行上限必须为 1～4')
   }
   if (!Number.isInteger(value.timeoutSeconds) || value.timeoutSeconds < 10 || value.timeoutSeconds > 300) {
-    throw new Error('委派超时必须为 10～300 秒')
+    throw invalidRequest('委派超时必须为 10～300 秒')
   }
 }
 
@@ -1359,7 +1360,7 @@ function mergeSkillReferences(base: string[], additional: string[]) {
 function parseReference(reference: string) {
   const separator = reference.lastIndexOf('@')
   if (separator <= 0 || separator === reference.length - 1) {
-    throw new Error(`工具引用必须锁定版本：${reference}`)
+    throw invalidRequest(`工具引用必须锁定版本：${reference}`)
   }
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
 }

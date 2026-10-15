@@ -43,6 +43,7 @@ import {
   prototypeToolRoleIds,
   publicCatalogCandidate,
 } from '../../modules/tool/dsh-built-in-tool-catalog.ts'
+import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 export interface PlatformStatus {
   architecture: 'node-modular-monolith'
@@ -78,10 +79,10 @@ export class AdminQueryService {
   }
 
   async checkRuntime(input: { runtimeId: string; actor: string }) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const runtimes = await this.repository.read('runtimes')
     const runtime = runtimes.find((item) => item.id === input.runtimeId)
-    if (!runtime) throw new Error(`Runtime 不存在：${input.runtimeId}`)
+    if (!runtime) throw notFound(`Runtime 不存在：${input.runtimeId}`)
     if (runtime.status === 'offline') {
       return this.repository.updateRuntime(input.runtimeId, {
         checkedAt: '刚刚',
@@ -97,22 +98,22 @@ export class AdminQueryService {
   }
 
   async updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     if (!Number.isInteger(input.maxConcurrentWorkers) || input.maxConcurrentWorkers < 1 || input.maxConcurrentWorkers > 128) {
-      throw new Error('最大并发 Worker 数必须是 1～128 之间的整数')
+      throw invalidRequest('最大并发 Worker 数必须是 1～128 之间的整数')
     }
     if (!Number.isInteger(input.attemptTimeoutMinutes) || input.attemptTimeoutMinutes < 1 || input.attemptTimeoutMinutes > 60) {
-      throw new Error('单次执行超时时间必须是 1～60 分钟之间的整数')
+      throw invalidRequest('单次执行超时时间必须是 1～60 分钟之间的整数')
     }
     if (!['accepting', 'draining', 'disabled'].includes(input.schedulingStatus)) {
-      throw new Error('Runtime 调度状态无效')
+      throw invalidRequest('Runtime 调度状态无效')
     }
 
     const runtimes = await this.repository.read('runtimes')
     const runtime = runtimes.find((item) => item.id === input.runtimeId)
-    if (!runtime) throw new Error(`Runtime 不存在：${input.runtimeId}`)
+    if (!runtime) throw notFound(`Runtime 不存在：${input.runtimeId}`)
     if (input.maxConcurrentWorkers < runtime.activeWorkers) {
-      throw new Error(`最大并发 Worker 数不能小于当前活动 Worker 数 ${runtime.activeWorkers}`)
+      throw stateConflict(`最大并发 Worker 数不能小于当前活动 Worker 数 ${runtime.activeWorkers}`)
     }
 
     return this.repository.updateRuntime(input.runtimeId, {
@@ -210,7 +211,7 @@ export class AdminQueryService {
 
   async createAgentDraft(input: CreateAgentDraftInput) {
     const creatorName = input.actor.trim()
-    if (!creatorName) throw new Error('创建人不能为空')
+    if (!creatorName) throw stateConflict('创建人不能为空')
 
     const users = await this.repository.read('users')
     const creator = Object.values(users).find((user) => user.name === creatorName)
@@ -251,9 +252,9 @@ export class AdminQueryService {
   async updateAgentDraft(input: UpdateAgentDraftInput) {
     const agents = await this.repository.read('agents')
     const current = agents.find((agent) => agent.id === input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
-    if (current.status !== 'draft') throw new Error('只有草稿状态的 Agent 可以编辑')
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
+    if (current.status !== 'draft') throw stateConflict('只有草稿状态的 Agent 可以编辑')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
 
     const { agentId, actor: _actor, expectedRevision: _revision, changeSummary, ...submittedConfiguration } = input
     void _actor
@@ -290,7 +291,7 @@ export class AdminQueryService {
   }) {
     const agents = await this.repository.read('agents')
     const current = agents.find((agent) => agent.id === input.agentId)
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     if (input.status === 'published') assertAgentReady(current)
 
     const timestamp = prototypeTimestamp()
@@ -333,9 +334,9 @@ export class AdminQueryService {
     const target = versions.find(
       (version) => version.agentId === input.agentId && version.version === input.version,
     )
-    if (!current) throw new Error(`Agent 不存在：${input.agentId}`)
-    if (!target) throw new Error(`Agent Version 不存在：${input.agentId}@${input.version}`)
-    if (target.status === 'draft') throw new Error('不能回滚到尚未发布的草稿版本')
+    if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
+    if (!target) throw notFound(`Agent Version 不存在：${input.agentId}@${input.version}`)
+    if (target.status === 'draft') throw stateConflict('不能回滚到尚未发布的草稿版本')
 
     const timestamp = prototypeTimestamp()
     const agent = await this.repository.updateAgent(input.agentId, {
@@ -379,7 +380,7 @@ export class AdminQueryService {
 
   async createSkill(input: CreateSkillInput) {
     const actor = input.actor.trim()
-    if (!actor) throw new Error('创建人不能为空')
+    if (!actor) throw stateConflict('创建人不能为空')
     const skillId = `skill-${randomUUID()}`
     const configuration: SkillConfiguration = {
       id: skillId,
@@ -409,10 +410,10 @@ export class AdminQueryService {
   }
 
   async updateSkill(input: UpdateSkillInput) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const skills = await this.repository.read('skills')
     const current = skills.find((skill) => skill.id === input.skillId)
-    if (!current) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!current) throw notFound(`Skill 不存在：${input.skillId}`)
     if (current.status !== 'draft') throw new Error('已发布或已停用的 Skill 不可原地编辑')
     const configuration: SkillConfiguration = { id: input.skillId, ...input }
     assertSkillConfiguration(configuration)
@@ -433,10 +434,10 @@ export class AdminQueryService {
     status: Extract<PublishStatus, 'published' | 'disabled'>
     actor: string
   }) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const skills = await this.repository.read('skills')
     const skill = skills.find((item) => item.id === input.skillId)
-    if (!skill) throw new Error(`Skill 不存在：${input.skillId}`)
+    if (!skill) throw notFound(`Skill 不存在：${input.skillId}`)
     if (input.status === 'published') {
       assertSkillConfiguration(skill)
       await this.assertSkillToolsAvailable(skill.toolIds)
@@ -451,7 +452,7 @@ export class AdminQueryService {
     const tools = await this.repository.read('tools')
     for (const toolId of unique(toolIds)) {
       const tool = tools.find((item) => item.id === toolId)
-      if (!tool) throw new Error(`Skill 引用的工具不存在：${toolId}`)
+      if (!tool) throw notFound(`Skill 引用的工具不存在：${toolId}`)
       if (tool.status === 'disabled') throw new Error(`Skill 引用的工具已停用：${tool.name}`)
     }
   }
@@ -471,7 +472,7 @@ export class AdminQueryService {
   }
 
   async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     for (const entry of dshBuiltInToolCatalog) {
       const definition = catalogEntryToToolDefinition(entry)
       const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
@@ -503,14 +504,14 @@ export class AdminQueryService {
   }
 
   async addTool(input: AddToolInput) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const policy = normalizeToolPolicyInput(input)
     const entry = dshBuiltInToolCatalog.find(item => item.id === input.catalogId)
-    if (!entry) throw new Error(`不支持添加该 DSH 工具：${input.catalogId}`)
-    if (!entry.platformSupported) throw new Error(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
+    if (!entry) throw invalidRequest(`不支持添加该 DSH 工具：${input.catalogId}`)
+    if (!entry.platformSupported) throw invalidRequest(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
     assertDshToolApprovalPolicy(entry, policy.approvalPolicy)
     const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
-    if (existing) throw new Error(`工具已存在：${entry.name}`)
+    if (existing) throw stateConflict(`工具已存在：${entry.name}`)
     return this.repository.createTool(catalogEntryToToolDefinition(entry, {
       allowedRoles: policy.allowedRoles,
       dataScopes: policy.dataScopes,
@@ -523,11 +524,11 @@ export class AdminQueryService {
     status: Extract<ToolDefinition['status'], 'available' | 'disabled'>
     actor: string
   }) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
-    if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (!tool) throw notFound(`工具不存在：${input.toolId}`)
     if (input.status === 'available' && tool.admissionStatus === 'unavailable') {
-      throw new Error(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能启用')
+      throw stateConflict(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能启用')
     }
     return this.repository.updateTool(input.toolId, {
       status: input.status,
@@ -550,7 +551,7 @@ export class AdminQueryService {
       this.repository.read('tools'),
     ])
     const connector = connectors.find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
-    if (!connector) throw new Error('DSH Runtime 内置工具连接器不存在')
+    if (!connector) throw notFound('DSH Runtime 内置工具连接器不存在')
     const catalog = tools
       .filter(tool => tool.connectorId === DSH_RUNTIME_CONNECTOR_ID)
       .map(tool => ({ id: tool.id, version: tool.version, status: tool.status }))
@@ -579,15 +580,15 @@ export class AdminQueryService {
 
   async checkMcpConnector(input: { connectorId: string; actor: string }) {
     const connector = (await this.getMcpConnectors()).find(item => item.id === input.connectorId)
-    if (!connector) throw new Error(`MCP Connector 不存在：${input.connectorId}`)
+    if (!connector) throw notFound(`MCP Connector 不存在：${input.connectorId}`)
     return this.checkConnector(input)
   }
 
   async checkConnector(input: { connectorId: string; actor: string }) {
-    if (!input.actor.trim()) throw new Error('操作人不能为空')
+    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
     const connectors = await this.repository.read('connectors')
     const connector = connectors.find((item) => item.id === input.connectorId)
-    if (!connector) throw new Error(`连接器不存在：${input.connectorId}`)
+    if (!connector) throw notFound(`连接器不存在：${input.connectorId}`)
     assertConnectorConfiguration(connector)
     return this.repository.updateConnector(input.connectorId, {
       status: 'healthy',
@@ -603,9 +604,9 @@ export class AdminQueryService {
     approvalPolicy: ToolDefinition['approvalPolicy']
   }) {
     const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
-    if (!tool) throw new Error(`工具不存在：${input.toolId}`)
+    if (!tool) throw notFound(`工具不存在：${input.toolId}`)
     if (tool.admissionStatus === 'unavailable') {
-      throw new Error(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能配置权限')
+      throw stateConflict(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能配置权限')
     }
     return this.repository.updateToolPermissions(input.toolId, {
       allowedRoleIds: prototypeToolRoleIds(input.allowedRoles),
@@ -786,17 +787,17 @@ function normalizeWelcomeMessage(
 
 function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) {
-    throw new Error('Agent 标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
+    throw invalidRequest('Agent 标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
   }
-  if (input.name.trim().length < 2) throw new Error('Agent 名称至少需要 2 个字符')
-  if (input.description.trim().length < 10) throw new Error('Agent 说明至少需要 10 个字符')
-  if (!input.owner.trim() || !input.department.trim()) throw new Error('负责人和归属部门不能为空')
-  if (!input.visibility.trim()) throw new Error('Agent 可见范围描述不能为空')
-  if (input.welcomeMessage.trim().length > 120) throw new Error('欢迎语不能超过 120 个字符')
-  if (input.examplePrompts.length === 0) throw new Error('请配置至少一个示例问题')
-  if (input.systemPrompt.trim().length < 20) throw new Error('SOUL.md 正文至少需要 20 个字符')
+  if (input.name.trim().length < 2) throw invalidRequest('Agent 名称至少需要 2 个字符')
+  if (input.description.trim().length < 10) throw invalidRequest('Agent 说明至少需要 10 个字符')
+  if (!input.owner.trim() || !input.department.trim()) throw stateConflict('负责人和归属部门不能为空')
+  if (!input.visibility.trim()) throw stateConflict('Agent 可见范围描述不能为空')
+  if (input.welcomeMessage.trim().length > 120) throw stateConflict('欢迎语不能超过 120 个字符')
+  if (input.examplePrompts.length === 0) throw invalidRequest('请配置至少一个示例问题')
+  if (input.systemPrompt.trim().length < 20) throw invalidRequest('SOUL.md 正文至少需要 20 个字符')
   if (input.workInstructions && (input.workInstructions.trim().length < 20 || input.workInstructions.length > 20000)) {
-    throw new Error('AGENTS.md 正文长度必须为 20～20000 个字符')
+    throw invalidRequest('AGENTS.md 正文长度必须为 20～20000 个字符')
   }
   normalizeAgentMcpScope(input.mcpScope)
   assertAgentSpecLimits({ timeoutSeconds: input.timeoutSeconds, maxToolCalls: input.maxToolCalls, maxOutputBytes: input.maxOutputBytes })
@@ -824,35 +825,35 @@ function assertAgentReady(agent: AgentDefinition) {
     tools: agent.tools,
     changeSummary: '发布校验',
   })
-  if (!agent.roleIds.length) throw new Error('发布前必须配置员工可见角色')
+  if (!agent.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
 }
 
 function assertSkillConfiguration(input: SkillConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) {
-    throw new Error('Skill 标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
+    throw invalidRequest('Skill 标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
   }
-  if (input.name.trim().length < 2) throw new Error('Skill 名称至少需要 2 个字符')
+  if (input.name.trim().length < 2) throw invalidRequest('Skill 名称至少需要 2 个字符')
   if (!input.category.trim()) throw new Error('请选择 Skill 分类')
-  if (input.description.trim().length < 10) throw new Error('Skill 说明至少需要 10 个字符')
-  if (input.instructions.trim().length < 20) throw new Error('执行指令至少需要 20 个字符')
-  if (input.toolIds.length === 0) throw new Error('请至少选择一个工具')
+  if (input.description.trim().length < 10) throw invalidRequest('Skill 说明至少需要 10 个字符')
+  if (input.instructions.trim().length < 20) throw invalidRequest('执行指令至少需要 20 个字符')
+  if (input.toolIds.length === 0) throw invalidRequest('请至少选择一个工具')
   if (input.testPrompt.trim().length < 4) throw new Error('请提供一个可用于测试的典型问题')
 }
 
 function assertConnectorConfiguration(input: ConnectorConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) {
-    throw new Error('连接器标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
+    throw invalidRequest('连接器标识必须以小写字母开头，只能包含小写字母、数字和连字符，长度为 3～48 位')
   }
-  if (input.name.trim().length < 2) throw new Error('连接器名称至少需要 2 个字符')
-  if (!input.system.trim()) throw new Error('企业系统不能为空')
+  if (input.name.trim().length < 2) throw invalidRequest('连接器名称至少需要 2 个字符')
+  if (!input.system.trim()) throw stateConflict('企业系统不能为空')
   try {
     const endpoint = new URL(input.endpoint.trim())
     if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname) throw new Error()
   } catch {
-    throw new Error('服务地址必须是包含主机名的 http:// 或 https:// 地址')
+    throw invalidRequest('服务地址必须是包含主机名的 http:// 或 https:// 地址')
   }
   if (!input.authType.trim()) throw new Error('请选择认证方式')
-  if (!input.credentialRef.trim().startsWith('secret://')) throw new Error('凭据引用必须使用 secret:// 开头，不能填写真实密钥')
+  if (!input.credentialRef.trim().startsWith('secret://')) throw stateConflict('凭据引用必须使用 secret:// 开头，不能填写真实密钥')
   if (input.credentialRef.trim().endsWith('/')) throw new Error('凭据引用需要指向一个具体的服务端密钥条目')
   if (input.scopeDescription.trim().length < 6) throw new Error('请说明连接器的数据范围')
 }

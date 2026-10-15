@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises'
 import { request } from 'node:https'
 import { isIP } from 'node:net'
+import { dependencyTimeout, invalidRequest } from '../../domain/request-errors.ts'
 
 export interface SkillSource { url: string; selected?: string; directory?: string; repository?: string; ref?: string }
 const invalid = (message: string): never => { throw Object.assign(new Error(`安装来源无效：${message}`), { status: 422, code: 'skill_source_invalid' }) }
@@ -137,13 +138,13 @@ export async function downloadPublicHttps(value: string, signal: AbortSignal, re
       let size = 0
       response.on('data', (chunk: Buffer) => {
         size += chunk.length
-        if (size > 20 * 1024 * 1024) { req.destroy(new Error('Skill 下载超过 20 MB 限制')); return }
+        if (size > 20 * 1024 * 1024) { req.destroy(invalidRequest('Skill 下载超过 20 MB 限制')); return }
         chunks.push(chunk)
       })
       response.on('end', () => resolve(Buffer.concat(chunks)))
       response.on('error', reject)
     })
-    req.setTimeout(30000, () => req.destroy(new Error('Skill 下载超时，请重试')))
+    req.setTimeout(30000, () => req.destroy(dependencyTimeout('Skill 下载超时，请重试')))
     req.on('error', reject)
     req.end()
   })

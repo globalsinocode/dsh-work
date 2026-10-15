@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -57,7 +58,7 @@ export class PostgresWorkspaceGrantSourceService {
     for (const source of sources) {
       if (source.sourceType === 'agent_member') {
         if (!source.sourceRefId) {
-          throw new Error('Agent 成员授权来源必须指定 sourceRefId（关联的 Agent 成员）')
+          throw invalidRequest('Agent 成员授权来源必须指定 sourceRefId（关联的 Agent 成员）')
         }
         // The partial unique index workspace_grant_sources_agent_member_once
         // covers revoked rows too: re-adding after a revoke must reactivate
@@ -210,7 +211,7 @@ export class PostgresWorkspaceGrantSourceService {
   ): Promise<void> {
     const unresolved = await this.listActiveLegacySources(tx, workspaceId)
     if (unresolved.length === 0) return
-    throw new Error(
+    throw stateConflict(
       `该空间存在 ${unresolved.length} 条待对账的历史授权来源（legacy_unresolved），`
       + `完成对账前不能${operationLabel}。请先在管理端运营「授权来源对账清单」完成对账，`
       + '再执行移除或停用操作。',

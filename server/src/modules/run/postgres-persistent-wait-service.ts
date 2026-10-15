@@ -8,6 +8,7 @@ import type { DurablePermissionContext, DurableWaitDecision } from '../runtime/d
 import type { RuntimeManifest, RuntimeResumeCheckpointContext } from '../runtime/runtime-types.ts'
 import type { JsonObject, RunRecord } from './run-types.ts'
 import { PostgresRunRepository } from './postgres-run-repository.ts'
+import { notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -420,7 +421,7 @@ export class PostgresPersistentWaitService {
       throw error
     }
     const run = await this.runs.getRun(tenantId, current.runId)
-    if (!run) throw new Error('恢复后的 Run 不存在')
+    if (!run) throw notFound('恢复后的 Run 不存在')
     this.callbacks.enqueue(run, resumedManifest)
     return (await this.get(current.id))!
   }
@@ -680,7 +681,7 @@ function approvalExpired() {
 }
 
 function toRecord(row: ApprovalRow): PersistentApprovalRecord {
-  if (row.status === 'preparing') throw new Error('尚未激活的审批不能暴露给管理端')
+  if (row.status === 'preparing') throw stateConflict('尚未激活的审批不能暴露给管理端')
   return {
     id: row.id, runId: row.runId, taskId: row.taskId, sourceAttemptId: row.sourceAttemptId,
     checkpointId: row.checkpointId, checkpointDigest: row.checkpointDigest,

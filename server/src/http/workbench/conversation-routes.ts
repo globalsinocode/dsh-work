@@ -19,6 +19,7 @@ import {
   sessionAuthorizationContext,
   type Router,
 } from '../router.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 
 const basePath = '/api/workbench/v1'
 const tenantId = 'tenant-dsh-work'
@@ -530,7 +531,7 @@ async function resolveTeamSessionAgentVersion(
   roleIds: string[],
 ) {
   if (!agentMembers || !body.workspaceId || !body.workspaceAgentMemberId) {
-    throw new Error('团队空间对话必须通过 Agent 成员关联发起')
+    throw invalidRequest('团队空间对话必须通过 Agent 成员关联发起')
   }
   const member = await agentMembers.requireAvailableAgentMemberVersion(
     body.workspaceId,
@@ -539,7 +540,7 @@ async function resolveTeamSessionAgentVersion(
   if (body.agentId !== undefined) {
     const rawVersionId = await agents.resolveWorkbenchAgentVersion(body.agentId, userId, roleIds)
     if (rawVersionId !== member.agentVersionId) {
-      throw new Error('团队空间对话必须通过 Agent 成员关联发起')
+      throw invalidRequest('团队空间对话必须通过 Agent 成员关联发起')
     }
   }
   return member.agentVersionId

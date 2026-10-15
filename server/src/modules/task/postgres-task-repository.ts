@@ -20,6 +20,7 @@ import type {
   TaskSourceType,
   TaskStatus,
 } from './task-types.ts'
+import { notFound } from '../../domain/request-errors.ts'
 
 interface TaskRow {
   id: string
@@ -281,7 +282,7 @@ export class PostgresTaskRepository implements TaskRepository {
           from attempt_budget_usage
          where tenant_id = ${tenantId} and attempt_id = ${attemptId}
       `
-      if (!peek) throw new Error(`Attempt 预算预占不存在：${attemptId}`)
+      if (!peek) throw notFound(`Attempt 预算预占不存在：${attemptId}`)
       // The fallback trigger locks the account before updating the usage row.
       // Keep the same order here so cancellation and precise settlement cannot
       // form an account-row/usage-row deadlock.
@@ -304,7 +305,7 @@ export class PostgresTaskRepository implements TaskRepository {
          where tenant_id = ${tenantId} and attempt_id = ${attemptId}
          for update
       `
-      if (!current) throw new Error(`Attempt 预算预占不存在：${attemptId}`)
+      if (!current) throw notFound(`Attempt 预算预占不存在：${attemptId}`)
       if (current.status !== 'reserved') return
       const actualDurationMs = Math.min(settlement.durationMs, current.reservedDurationMs)
       const reportedToolCalls = settlement.toolCalls ?? current.reservedToolCalls
@@ -417,7 +418,7 @@ export class PostgresTaskRepository implements TaskRepository {
          where tenant_id = ${input.tenantId} and id = ${input.operationId}
          for update
       `
-      if (!current) throw new Error(`外部操作不存在：${input.operationId}`)
+      if (!current) throw notFound(`外部操作不存在：${input.operationId}`)
       if (current.status === input.status && input.status !== 'accepted') {
         if (current.errorCode !== (input.errorCode ?? null) || canonicalJson(current.receipt) !== canonicalJson(input.receipt)) {
           throw new TaskContractConflictError('外部操作终态已记录且回执不同')

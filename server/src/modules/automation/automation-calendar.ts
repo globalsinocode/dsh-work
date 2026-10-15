@@ -1,6 +1,7 @@
 import { CronExpressionParser } from 'cron-parser'
 
 import type { AutomationSchedule } from './automation-types.ts'
+import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 /**
  * AG-03 日历封装：内部用 cron-parser 求值，对外契约只暴露
@@ -28,17 +29,17 @@ export function isValidTimezone(timezone: string): boolean {
 
 /** 校验并规范化调度规则；非法输入抛错（路由层转 400）。 */
 export function normalizeSchedule(input: AutomationSchedule): AutomationSchedule {
-  if (!input || typeof input !== 'object') throw new Error('调度规则不能为空')
+  if (!input || typeof input !== 'object') throw stateConflict('调度规则不能为空')
   if (!['manual', 'daily', 'weekly'].includes(input.kind)) {
-    throw new Error('调度类型必须是 manual、daily 或 weekly')
+    throw invalidRequest('调度类型必须是 manual、daily 或 weekly')
   }
   if (typeof input.timezone !== 'string' || !isValidTimezone(input.timezone)) {
-    throw new Error('时区必须是有效的 IANA 标识')
+    throw invalidRequest('时区必须是有效的 IANA 标识')
   }
   if (input.kind === 'manual') return { kind: 'manual', timezone: input.timezone }
 
   const timeOfDay = input.timeOfDay ?? ''
-  if (!WALL_CLOCK.test(timeOfDay)) throw new Error('执行时间必须是 HH:mm（24 小时制）')
+  if (!WALL_CLOCK.test(timeOfDay)) throw invalidRequest('执行时间必须是 HH:mm（24 小时制）')
   if (input.kind === 'daily') {
     return { kind: 'daily', timezone: input.timezone, timeOfDay }
   }
@@ -47,7 +48,7 @@ export function normalizeSchedule(input: AutomationSchedule): AutomationSchedule
     weekdays.length === 0
     || weekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6)
   ) {
-    throw new Error('每周执行必须选择 0（周日）到 6（周六）之间的星期')
+    throw invalidRequest('每周执行必须选择 0（周日）到 6（周六）之间的星期')
   }
   weekdays.sort((a, b) => a - b)
   return { kind: 'weekly', timezone: input.timezone, timeOfDay, weekdays }

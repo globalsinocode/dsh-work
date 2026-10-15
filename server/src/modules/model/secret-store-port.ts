@@ -1,3 +1,4 @@
+import { stateConflict } from '../../domain/request-errors.ts'
 export interface SecretStorePort {
   put(reference: string, secret: string): Promise<void>
   remove(reference: string): Promise<void>
@@ -23,7 +24,7 @@ export class MemorySecretStore implements SecretStorePort {
   private readonly secrets = new Set<string>()
 
   async put(reference: string, secret: string) {
-    if (!secret.trim()) throw new Error('密钥不能为空')
+    if (!secret.trim()) throw stateConflict('密钥不能为空')
     this.secrets.add(reference)
   }
 
