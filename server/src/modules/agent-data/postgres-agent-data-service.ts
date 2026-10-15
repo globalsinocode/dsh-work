@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import Ajv2020Module from 'ajv/dist/2020.js'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { authorizationDenied, requestInvalid } from '../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../domain/authorization-errors.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { AgentDataCollectionRequirement } from '../agent/agent-spec.ts'

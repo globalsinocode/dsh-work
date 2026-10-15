@@ -22,7 +22,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import type { RunAttemptRecord, RunRecord } from '../../run/run-types.ts'
 import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../../domain/authorization-errors.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../../security/safe-observability.ts'
 import { dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../../domain/request-errors.ts'
 

@@ -1,4 +1,4 @@
-import { isAuthorizationDenial } from '../../modules/authorization/authorization-errors.ts'
+import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
 import type { RequestIdentity } from '../../modules/identity/types.ts'
 import {

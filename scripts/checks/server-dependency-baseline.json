@@ -1,45 +1,4 @@
 {
-  "description": "服务端模块之间现存的循环依赖（2026-10-15 基线）。新增循环会使 pnpm lint 失败；修掉某条后必须从这里删除该条目，基线只减不增。",
-  "cyclicModuleEdges": [
-    {
-      "from": "agent",
-      "to": "authorization"
-    },
-    {
-      "from": "agent",
-      "to": "skill"
-    },
-    {
-      "from": "agent",
-      "to": "tool"
-    },
-    {
-      "from": "authorization",
-      "to": "tool"
-    },
-    {
-      "from": "run",
-      "to": "task"
-    },
-    {
-      "from": "skill",
-      "to": "authorization"
-    },
-    {
-      "from": "skill",
-      "to": "tool"
-    },
-    {
-      "from": "task",
-      "to": "run"
-    },
-    {
-      "from": "tool",
-      "to": "agent"
-    },
-    {
-      "from": "tool",
-      "to": "authorization"
-    }
-  ]
+  "description": "服务端模块之间允许保留的循环依赖。2026-10-15 起已清零：新增任何模块循环都会使 pnpm lint 失败，请改为依赖接口（消费方定义的端口）或调整依赖方向，而不是加入这里。",
+  "cyclicModuleEdges": []
 }

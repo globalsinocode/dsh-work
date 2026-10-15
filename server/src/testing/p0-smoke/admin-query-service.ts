@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../modules/agent/agent-spec.ts'
-import { normalizeAgentMcpScope } from '../../modules/agent/agent-mcp-scope.ts'
+import { normalizeAgentMcpScope } from '../../modules/tool/agent-mcp-scope.ts'
 
 import type { SmokeRepository } from './smoke-repository.ts'
 import type {

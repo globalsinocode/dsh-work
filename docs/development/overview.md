@@ -254,7 +254,7 @@ flowchart LR
 | 文件、成果、对话和工作空间 | `server/src/modules/workbench` |
 | PostgreSQL 与迁移 | `server/src/infrastructure/postgres`、`server/migrations` |
 
-`scripts/check-architecture.mjs` 检查前端边界：应用可以依赖共享包，两个前端不能互相依赖，前端不能引用服务端领域类型。服务端模块之间目前**没有自动依赖检查**，且存在互相依赖（例如多个模块直接引用 `PostgresOperationsService` 写审计，Run 编排直接依赖 11 个模块）；新增代码应依赖接口，不再新增对其他模块 Postgres 实现类的引用。`pnpm verify` 另外检查应用入口 `main.ts` 不引用 `server/src/testing` 中的测试身份和冒烟数据。
+`scripts/check-architecture.mjs` 检查前端边界（应用可以依赖共享包，两个前端不能互相依赖，前端不能引用服务端领域类型），并经 `scripts/checks/server-dependencies.mjs` 检查服务端分层：`domain` 只依赖自身，业务模块与基础设施不得依赖 HTTP 层或 `main.ts`，生产代码不得引用 `server/src/testing`，模块之间不得形成循环依赖（基线已清零，新增循环会使 `pnpm lint` 失败）。跨模块协作优先依赖消费方定义的端口，例如审计写入 `AuditTrail`、发起 Run 的 `AdminRunLauncher` / `ReleaseTrialRunner`、存储 `ObjectStorage`。Run 编排按职责拆在 `server/src/modules/run/orchestration/`：调度器、事件记录、预算、执行授权闸门、Attempt 派发与各场景入口（管理助手、发布试运行、自动任务/主动任务/委派），`RunOrchestrationService` 保留员工入口并作为对外门面。 `pnpm verify` 另外检查应用入口 `main.ts` 不引用 `server/src/testing` 中的测试身份和冒烟数据。
 
 ## 9. 身份、安全与数据边界
 

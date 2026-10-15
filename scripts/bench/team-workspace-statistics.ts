@@ -26,7 +26,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
-import { canReadWorkspaceObject } from '../../server/src/modules/authorization/authorization-errors.ts'
+import { canReadWorkspaceObject } from '../../server/src/domain/authorization-errors.ts'
 import { createDatabase, type DatabaseClient } from '../../server/src/infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'

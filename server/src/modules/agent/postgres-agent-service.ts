@@ -19,10 +19,10 @@ import type { PostgresToolConnectorService } from '../tool/postgres-tool-connect
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
-import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
+import { normalizeAgentMcpScope } from '../tool/agent-mcp-scope.ts'
 import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'

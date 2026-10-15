@@ -4,7 +4,7 @@ import type { AdminRunPurpose, RuntimeManifest } from '../../runtime/runtime-typ
 import type { RuntimeAgentSnapshot } from '../../agent/postgres-agent-service.ts'
 import type { TaskBudgetLimits } from '../../task/task-budget-types.ts'
 import { platformToolsForPurpose } from '../../runtime/platform-tool-contracts.ts'
-import { requestInvalid } from '../../authorization/authorization-errors.ts'
+import { requestInvalid } from '../../../domain/authorization-errors.ts'
 
 export function agentDataToolRefs(agent: RuntimeAgentSnapshot): RuntimeManifest['tools'] {
   const names = new Set<string>()

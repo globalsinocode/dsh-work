@@ -5,7 +5,7 @@ import { deriveTaskResult, type TaskResult, type TaskResultEvidence, type TaskRe
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
 

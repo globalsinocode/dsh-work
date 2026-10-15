@@ -2,7 +2,7 @@ import type { AgentDefinition, UpdateAgentDraftInput, UpdateRuntimeConfiguration
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { redactSensitiveText } from '../../../security/safe-observability.ts'
 import { assertDraftCopyFields, assertDraftCopyPlan, DRAFT_COPY_POLICY } from '../../agent/agent-draft-copy-policy.ts'
-import { authorizationDenied, requestInvalid } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'

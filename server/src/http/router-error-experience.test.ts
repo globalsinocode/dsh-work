@@ -139,7 +139,7 @@ test('JSON bodies keep UTF-8 text split across chunks and the limit counts bytes
 })
 
 test('an authorization denial may keep a non-403 answer for the editing request and still revoke runs', async () => {
-  const { authorizationDenied, isAuthorizationDenial } = await import('../modules/authorization/authorization-errors.ts')
+  const { authorizationDenied, isAuthorizationDenial } = await import('../domain/authorization-errors.ts')
   const invalid = authorizationDenied('Agent 必须显式授权所选 Skill 依赖的工具：read', { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
   const missing = authorizationDenied('Skill 不存在、未发布或已停用：skill-x', { status: 404, code: 'resource_not_found' })
   assert.equal(isAuthorizationDenial(invalid), true)

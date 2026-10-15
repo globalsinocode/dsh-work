@@ -8,7 +8,7 @@ import { after, before, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
-import { RequestValidationError } from '../modules/authorization/authorization-errors.ts'
+import { RequestValidationError } from '../domain/authorization-errors.ts'
 import { WorkspaceStateConflictError } from '../modules/workbench/application/workspace-state-conflict-error.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { runMigrations } from '../infrastructure/postgres/migration-runner.ts'

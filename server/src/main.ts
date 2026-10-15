@@ -80,7 +80,7 @@ import { registerAdminExperienceIterationRoutes } from './http/admin/experience-
 import { PostgresControlledMemoryService } from './modules/memory/postgres-controlled-memory-service.ts'
 import { PostgresAgentDataService } from './modules/agent-data/postgres-agent-data-service.ts'
 import { registerAdminAgentDataRoutes } from './http/admin/agent-data-routes.ts'
-import { PostgresTaskQueryService } from './modules/task/postgres-task-query-service.ts'
+import { PostgresTaskQueryService } from './modules/run/postgres-task-query-service.ts'
 import { loadStartupIdentityConfiguration, localIdentityConfiguration } from './modules/identity/config.ts'
 import { portalAuthenticator } from './modules/identity/portal-authenticator.ts'
 import { OidcAuthService } from './modules/identity/auth-service.ts'

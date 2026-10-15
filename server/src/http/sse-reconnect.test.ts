@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 
-import { authorizationDenied } from '../modules/authorization/authorization-errors.ts'
+import { authorizationDenied } from '../domain/authorization-errors.ts'
 import type { StoredRunEvent } from '../modules/run/run-types.ts'
 import { streamRunEvents, streamWorkspaceSessionEvents } from './workbench/conversation-routes.ts'
 

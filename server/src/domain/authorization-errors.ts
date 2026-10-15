@@ -1,4 +1,4 @@
-import { RequestError } from '../../domain/request-errors.ts'
+import { RequestError } from './request-errors.ts'
 
 /**
  * Typed authorization denial (1A-T5).

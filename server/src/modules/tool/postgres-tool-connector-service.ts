@@ -10,23 +10,12 @@ import { DSH_RUNTIME_CONNECTOR_ID, DSH_WORK_EXECUTION_TOOL_REFS } from '../../do
 import type { AddToolInput, AgentMcpScope, ConnectorDefinition, DshRuntimeToolConnectorStatus, McpConnectionTestResult, McpConnectorDeletionResult, McpInvocationAudit, RegisterMcpConnectorInput, TestMcpConnectionInput, ToolCatalogCandidate, ToolCatalogSyncResult, ToolDefinition } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { MAX_MCP_CONNECTIONS_PER_ATTEMPT, type AgentRuntimePort, type McpConnectionSnapshot, type McpInspectionResult, type McpRuntimeConnection, type RuntimeManifest } from '../runtime/runtime-types.ts'
-import {
-  assertDshToolApprovalPolicy,
-  dshBuiltInToolCatalog,
-  defaultAgentDshToolNames,
-  hiddenRuntimeCatalogTools,
-  isDefaultRunLocalAgentTool,
-  isVisibleDshCatalogTool,
-  normalizeToolPolicyInput,
-  publicCatalogCandidate,
-  requiredDshToolApprovalPolicy,
-  runtimeToolToCatalogEntry,
-  type CatalogEntry,
-} from './dsh-built-in-tool-catalog.ts'
+import { assertDshToolApprovalPolicy, dshBuiltInToolCatalog, defaultAgentDshToolNames, hiddenRuntimeCatalogTools, isVisibleDshCatalogTool, normalizeToolPolicyInput, publicCatalogCandidate, requiredDshToolApprovalPolicy, runtimeToolToCatalogEntry, type CatalogEntry } from './dsh-built-in-tool-catalog.ts'
+import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
-import { normalizeAgentMcpScope } from '../agent/agent-mcp-scope.ts'
+import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'

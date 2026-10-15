@@ -16,7 +16,7 @@ import type {
   PostgresAuthorizationService,
   SessionAuthorizationContext,
 } from '../authorization/postgres-authorization-service.ts'
-import { authorizationDenied, requestInvalid } from '../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../domain/authorization-errors.ts'
 import type { PostgresWorkspaceAgentMemberService } from '../workbench/application/postgres-workspace-agent-member-service.ts'
 import type { RunRepository } from './run-repository.ts'
 import type { JsonObject, RunRecord } from './run-types.ts'

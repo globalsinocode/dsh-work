@@ -1,7 +1,7 @@
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
-import { authorizationDenied, isAuthorizationDenial, RequestValidationError } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied, isAuthorizationDenial, RequestValidationError } from '../../../domain/authorization-errors.ts'
 import type { RunRecord } from '../run-types.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 

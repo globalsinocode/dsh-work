@@ -1,5 +1,5 @@
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../../domain/authorization-errors.ts'
 import { notFound } from '../../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'

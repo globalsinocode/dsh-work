@@ -39,33 +39,6 @@ export const defaultAgentDshToolNames = [
   'web_search', 'todo_write',
 ] as const
 
-/** These tools are confined to the current Attempt's isolated workspace/session. */
-const runLocalAgentToolNames = new Set([
-  'read', 'write', 'edit', 'read_image', 'todo_write',
-])
-
-/**
- * The seeded role/scope policy predates independent Agent identities. Only
- * the unchanged default policy has an Agent-side run-local exemption: changing
- * either policy dimension restores the ordinary explicit-grant requirement.
- * Availability, bindings, input mounts and the DSH workspace guard still apply.
- */
-export function isDefaultRunLocalAgentTool(tool: {
-  connectorId: string
-  dshToolName: string | null
-  allowedRoleIds: readonly string[]
-  dataScopes: readonly string[]
-}): boolean {
-  return tool.connectorId === DSH_RUNTIME_CONNECTOR_ID
-    && tool.dshToolName !== null
-    && runLocalAgentToolNames.has(tool.dshToolName)
-    && tool.allowedRoleIds.length === 2
-    && tool.allowedRoleIds.includes('role-employee')
-    && tool.allowedRoleIds.includes('role-platform-admin')
-    && tool.dataScopes.length === 1
-    && tool.dataScopes[0] === 'workspace:authorized'
-}
-
 export function isVisibleDshCatalogTool(toolId: string) {
   return !hiddenRuntimeCatalogTools.has(toolId)
 }

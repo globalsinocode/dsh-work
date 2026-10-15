@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
-import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../authorization/authorization-errors.ts'
+import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../../domain/authorization-errors.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RuntimeControlledMemory, RuntimeManifest } from '../runtime/runtime-types.ts'
 import { RequestError, notFound } from '../../domain/request-errors.ts'

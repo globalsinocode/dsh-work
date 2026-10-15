@@ -4,7 +4,7 @@ import type { RunOrchestrationService } from '../../modules/run/run-orchestratio
 import type { RunRepository } from '../../modules/run/run-repository.ts'
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
-import { authorizationDenied, canReadWorkspaceObject } from '../../modules/authorization/authorization-errors.ts'
+import { authorizationDenied, canReadWorkspaceObject } from '../../domain/authorization-errors.ts'
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import type { TaskRun } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { isAuthorizationDenial, requestInvalid } from '../authorization/authorization-errors.ts'
+import { isAuthorizationDenial, requestInvalid } from '../../domain/authorization-errors.ts'
 import { canonicalJson } from '../runtime/canonical-json.ts'
 import { compileRuntimeManifest } from '../runtime/manifest-compiler.ts'
 import type { DurablePermissionContext, DurableWaitDecision } from '../runtime/dsh-acp-runtime-adapter.ts'

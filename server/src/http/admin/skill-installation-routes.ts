@@ -1,4 +1,4 @@
-import { requestInvalid } from '../../modules/authorization/authorization-errors.ts'
+import { requestInvalid } from '../../domain/authorization-errors.ts'
 import type { IncomingMessage } from 'node:http'
 
 import type { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'

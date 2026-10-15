@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import type { AppendSystemEventInput, RestartRecoveryResult, RunRepository, WorkspaceActiveRun } from './run-repository.ts'
 import { assertAttemptTransition, assertRunTransition, isAttemptTerminalState } from './run-state-machine.ts'
 import type {

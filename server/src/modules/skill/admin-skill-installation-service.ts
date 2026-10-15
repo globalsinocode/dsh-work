@@ -1,7 +1,7 @@
 import { skillNotFound, skillConflict } from './skill-errors.ts'
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { evaluateAttemptEvidence, SKILL_TEST_EVIDENCE_POLICY, SKILL_TEST_SCENARIO_POLICY } from './skill-test-evidence.ts'
-import { authorizationDenied, requestInvalid } from '../authorization/authorization-errors.ts'
+import { authorizationDenied, requestInvalid } from '../../domain/authorization-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { RuntimeSkillConfiguration } from './postgres-skill-service.ts'

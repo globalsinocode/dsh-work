@@ -24,7 +24,7 @@ export function checkSecurity(check) {
   const router = check.read('server/src/http/router.ts')
   check.assert(!/\/[^/\n]*[\u4e00-\u9fff][^/\n]*\/[a-z]*\.test\(/.test(router) && !/\.includes\('[^']*[\u4e00-\u9fff]/.test(router),
     'server/src/http/router.ts 不得按错误消息文字判断状态码，请抛出 server/src/domain/request-errors.ts 中的类型化错误')
-  check.excludes('server/src/modules/authorization/authorization-errors.ts', ['LEGACY_DENIAL_MESSAGES', 'message.includes('])
+  check.excludes('server/src/domain/authorization-errors.ts', ['LEGACY_DENIAL_MESSAGES', 'message.includes('])
   check.excludes('server/src/modules/workbench/application/postgres-workspace-member-service.ts', ['/exactly one owner/'])
   for (const file of serverSourceFiles(check)) {
     check.assert(!/Object\.assign\(new Error\([\s\S]{0,400}?\bstatus:/.test(check.read(file)),

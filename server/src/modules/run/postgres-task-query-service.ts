@@ -1,6 +1,6 @@
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import type { RunRepository } from '../run/run-repository.ts'
-import type { TaskRepository } from './task-repository.ts'
+import type { RunRepository } from './run-repository.ts'
+import type { TaskRepository } from '../task/task-repository.ts'
 
 const tenantId = 'tenant-dsh-work'
 

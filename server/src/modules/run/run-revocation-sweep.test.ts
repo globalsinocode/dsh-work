@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { isAuthorizationDenial, AuthorizationDeniedError, authorizationDenied } from '../authorization/authorization-errors.ts'
+import { isAuthorizationDenial, AuthorizationDeniedError, authorizationDenied } from '../../domain/authorization-errors.ts'
 
 /**
  * Locks the authorization-denial classifier (1A-T5). The authorization service

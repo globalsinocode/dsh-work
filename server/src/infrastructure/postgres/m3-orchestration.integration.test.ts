@@ -28,7 +28,7 @@ import type {
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresTaskRepository, TaskContractConflictError, taskOperationParameterDigest } from '../../modules/task/postgres-task-repository.ts'
-import { PostgresTaskQueryService } from '../../modules/task/postgres-task-query-service.ts'
+import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'

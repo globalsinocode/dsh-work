@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import { authorizationDenied } from '../authorization/authorization-errors.ts'
+import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import type { ReleaseTrialRunner } from './release-trial-runner.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
-import { AuthorizationDeniedError } from '../../modules/authorization/authorization-errors.ts'
+import { AuthorizationDeniedError } from '../../domain/authorization-errors.ts'
 import { classifyHttpError } from '../../http/router.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'

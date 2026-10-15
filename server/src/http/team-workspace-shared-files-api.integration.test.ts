@@ -8,7 +8,7 @@ import { after, before, test } from 'node:test'
 
 import type { RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
-import { AuthorizationDeniedError, isAuthorizationDenial } from '../modules/authorization/authorization-errors.ts'
+import { AuthorizationDeniedError, isAuthorizationDenial } from '../domain/authorization-errors.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructure/postgres/test-database.ts'
 import { testAttemptManifest } from '../infrastructure/postgres/test-attempt-manifest.ts'

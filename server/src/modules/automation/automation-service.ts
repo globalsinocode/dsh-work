@@ -10,7 +10,7 @@ import {
   authorizationDenied,
   isAuthorizationDenial,
   RequestValidationError,
-} from '../authorization/authorization-errors.ts'
+} from '../../domain/authorization-errors.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresAgentService } from '../agent/postgres-agent-service.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
