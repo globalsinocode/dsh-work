@@ -1857,6 +1857,61 @@ export class PostgresContentService {
     return prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length }))
   }
 
+  /**
+   * EX-02 backfill: artifacts published before artifacts kept their text have no extraction and
+   * cannot be attached to a later turn. Re-reads their bytes and records the same extraction
+   * publishing writes now. Idempotent; artifacts whose text is unusable are skipped.
+   */
+  async backfillArtifactExtractions(limit = 1000): Promise<{ inspected: number; extracted: number }> {
+    const rows = await this.database<{ fileId: string; storageKey: string; artifactType: Artifact['type'] }[]>`
+      select distinct on (f.id) f.id as "fileId", f.storage_key as "storageKey", a.artifact_type as "artifactType"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+       where av.tenant_id = ${tenantId} and f.removed_at is null and f.scan_status = 'clean'
+         and not exists (select 1 from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id)
+       order by f.id
+       limit ${limit}
+    `
+    let extracted = 0
+    for (const row of rows) {
+      let bytes: Buffer
+      try {
+        bytes = await this.storage.get(row.storageKey)
+      } catch {
+        continue
+      }
+      const text = artifactInputText(row.artifactType, bytes, row.fileId)
+      if (!text) {
+        // 记为失败解析：成果仍不可引用，但下次启动不再重复读取。
+        await this.database`
+          insert into file_extractions (
+            id, tenant_id, file_id, extractor_version, detected_type, status, error_code, error_message
+          ) values (
+            ${`extraction-${row.fileId}`}, ${tenantId}, ${row.fileId}, 'm4-basic-v1',
+            ${row.artifactType === 'csv' ? 'csv' : 'text'}, 'failed', 'ARTIFACT_TEXT_UNUSABLE',
+            '成果不是有效的 UTF-8 文本、为空或超过 512000 字符，不能在后续对话中引用'
+          )
+          on conflict (id) do nothing
+        `
+        continue
+      }
+      await this.storage.putIfAbsent(text.storageKey, Buffer.from(text.content, 'utf8'))
+      const inserted = await this.database`
+        insert into file_extractions (
+          id, tenant_id, file_id, extractor_version, detected_type, status,
+          text_storage_key, text_sha256, character_count, row_count
+        ) values (
+          ${`extraction-${row.fileId}`}, ${tenantId}, ${row.fileId}, 'm4-basic-v1', ${text.detectedType}, 'succeeded',
+          ${text.storageKey}, ${text.sha256}, ${text.content.length}, ${text.rowCount}
+        )
+        on conflict (id) do nothing
+      `
+      extracted += inserted.count
+    }
+    return { inspected: rows.length, extracted }
+  }
+
   async getRunInputFileIds(runId: string, attemptId?: string | null) {
     // attemptId 显式传入时固定到该 Attempt（评审中2）：重试读取来源输入必须
     // 固定在校验过的来源 Attempt 上，不能跟随随后可能推进的 current 指针。

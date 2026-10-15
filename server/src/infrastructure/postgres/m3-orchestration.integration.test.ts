@@ -497,6 +497,36 @@ test('EX-02 a referenced artifact is mounted next turn and a same-named output b
   )
 })
 
+test('EX-02 backfill makes artifacts published without an extraction referenceable', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '旧成果回填' })
+  const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-backfill-'))
+  await mkdir(join(workspaceDirectory, 'output'))
+  await writeFile(join(workspaceDirectory, 'output', '旧报表.csv'), '物料,库存\nA-01,120\n')
+  let release: () => void = () => undefined
+  runtime.completionGate = new Promise<void>((resolve) => { release = resolve })
+  try {
+    const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '生成报表', idempotencyKey: randomUUID() })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    await content.publishRuntimeArtifacts({ manifest: attempt!.manifest as unknown as RuntimeManifest, workspaceDirectory })
+    release()
+    const published = await waitForTask(created.id, 'succeeded')
+    const artifact = published.result.artifacts[0]!
+    // 模拟此功能上线前发布的成果：没有解析记录，不能引用。
+    await database`delete from file_extractions where tenant_id = 'tenant-dsh-work' and file_id = ${artifact.fileId!}`
+    assert.equal((await conversations.getTask(created.id, 'U00001'))?.result.artifacts[0]?.canReference, false)
+
+    const first = await content.backfillArtifactExtractions()
+    assert.ok(first.extracted >= 1)
+    assert.equal((await conversations.getTask(created.id, 'U00001'))?.result.artifacts[0]?.canReference, true)
+    const again = await content.backfillArtifactExtractions()
+    assert.equal(again.extracted, 0)
+  } finally {
+    release()
+  }
+})
+
 test('HTML Runtime output is published as a previewable html Artifact', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '生成 HTML 成果' })
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-html-'))

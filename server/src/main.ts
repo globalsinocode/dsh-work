@@ -371,6 +371,10 @@ async function start() {
   const restartRecovery = await orchestration.recoverAfterServiceRestart()
   const delegationRecovery = await delegation.reconcileAfterRestart()
   await persistentWait.reconcileOrphans()
+  // EX-02：为旧成果补写原文解析，使其可在后续对话中“继续修改”；失败只记录，不阻断启动。
+  await content.backfillArtifactExtractions()
+    .then(result => { if (result.extracted > 0) console.warn('artifact extraction backfill completed', result) })
+    .catch(error => console.error('artifact extraction backfill failed', error))
   if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
     console.warn('service restart recovery completed', restartRecovery)
   }
