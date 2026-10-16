@@ -62,7 +62,6 @@ pnpm test:e2e
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
 | Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
-| Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 草稿策略、验证发布与 Runtime 契约测试 |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |
 | Agent 定义、默认工具与 MCP 范围 | `pnpm test:agent-package`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
 

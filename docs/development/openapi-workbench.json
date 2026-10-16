@@ -3358,10 +3358,9 @@
             "enum": [
               "answer",
               "artifact",
-              "tool",
-              "record"
+              "tool"
             ],
-            "description": "回执类别：回答提交/成果登记/平台工具动作/结构化记录版本"
+            "description": "回执类别：回答提交/成果登记/平台工具动作"
           },
           "status": {
             "type": "string",

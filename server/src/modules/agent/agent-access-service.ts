@@ -7,8 +7,6 @@ import { RequestError, invalidRequest, notFound } from '../../domain/request-err
 
 const tenantId = 'tenant-dsh-work'
 const MAX_ENTRIES = 100
-/** Scopes the Agent data plane requires for shared collections (see the release data check). */
-const COLLECTION_SCOPES = ['enterprise:authorized', 'workspace:authorized']
 
 export interface AgentAccessRoleOption {
   id: string
@@ -45,7 +43,6 @@ export interface AgentAccess {
   scopeOptions: string[]
   /** Capabilities of the draft (or the current version when no draft exists). */
   capabilities: AgentCapabilityRequirement[]
-  collections: Array<{ key: string; scope: string; actions: string[] }>
   routines: Array<{
     id: string; name: string; status: string; schedule: Record<string, unknown>
     recipientUserId: string; recipientName: string
@@ -102,14 +99,6 @@ export class PostgresAgentAccessService {
       missingRole: item.requiredRoleIds.length > 0 && !item.requiredRoleIds.some(role => grantedRoles.includes(role)),
       missingScopes: item.requiredScopes.filter(scope => !grantedScopes.has(scope)),
     }))
-    const collections = await this.database<Array<{ key: string; scope: string; actions: string[] }>>`
-      select c.collection_key as key, c.access_scope as scope, g.actions
-        from agent_data_collection_grants g
-        join agent_installations i on i.tenant_id = g.tenant_id and i.id = g.agent_installation_id
-        join agent_data_collections c on c.tenant_id = g.tenant_id and c.id = g.collection_id
-       where g.tenant_id = ${tenantId} and i.agent_id = ${agentId} and c.status = 'active'
-       order by c.collection_key
-    `
     const routines = await this.database<AgentAccess['routines']>`
       select r.id, r.name, r.status, r.schedule, r.recipient_user_id as "recipientUserId",
              u.display_name as "recipientName"
@@ -124,7 +113,7 @@ export class PostgresAgentAccessService {
       select distinct jsonb_array_elements_text(data_scopes) as scope from tools where tenant_id = ${tenantId}
     `
     const scopeOptions = [...new Set([
-      ...knownScopes.map(item => item.scope), ...COLLECTION_SCOPES, ...row.dataScopes,
+      ...knownScopes.map(item => item.scope), ...row.dataScopes,
       ...capabilities.flatMap(item => item.requiredScopes),
     ])].filter(Boolean).sort()
     return {
@@ -138,7 +127,6 @@ export class PostgresAgentAccessService {
       roleOptions,
       scopeOptions,
       capabilities,
-      collections,
       routines,
     }
   }

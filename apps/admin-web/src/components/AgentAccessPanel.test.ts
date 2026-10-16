@@ -29,7 +29,6 @@ function accessFixture(): AgentAccess {
       requiredRoleIds: ['role-purchase-analyst'], requiredScopes: ['region:east'],
       missingRole: true, missingScopes: ['region:east'],
     }],
-    collections: [{ key: 'shortage-ledger', scope: 'tenant', actions: ['query', 'create'] }],
     routines: [{
       id: 'routine-1', name: '异常汇总', status: 'active',
       schedule: { kind: 'daily', timezone: 'Asia/Shanghai', timeOfDay: '08:00' },
@@ -58,7 +57,6 @@ describe('AgentAccessPanel', () => {
     const overview = wrapper.get('[data-testid="agent-access-overview"]').text()
     expect(overview).toContain('财务部、采购部可以向它请求工作')
     expect(overview).toContain('未持有岗位角色')
-    expect(overview).toContain('工作数据「shortage-ledger」可查询、新增')
     expect(overview).toContain('每天 08:00，向采购主管交付「异常汇总」')
     expect(wrapper.text()).toContain('缺少角色 采购分析员、数据范围 region:east，暂不可用')
   })

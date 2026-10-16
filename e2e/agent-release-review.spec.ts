@@ -10,7 +10,7 @@ const access = {
   agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
   visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['当前工作空间'],
   roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
-  capabilities: [], collections: [], routines: [],
+  capabilities: [], routines: [],
 }
 
 const passedChecks = { runRecorded: true, executionSucceeded: true, outputNonEmpty: true }

@@ -1030,17 +1030,6 @@ export class PostgresConversationRepository {
            order by tal.occurred_at asc
         `
       : []
-    const recordVersions = attemptIds.length
-      ? await this.database<Array<{ id: string; attemptId: string; runId: string; deleted: boolean }>>`
-          select id, source_attempt_id as "attemptId", source_run_id as "runId", false as deleted
-            from agent_data_record_versions
-           where tenant_id = ${tenantId} and source_attempt_id = any(${attemptIds})
-          union all
-          select version_id as id, source_attempt_id as "attemptId", source_run_id as "runId", true as deleted
-            from agent_data_record_deletions
-           where tenant_id = ${tenantId} and source_attempt_id = any(${attemptIds})
-        `
-      : []
     const unknownOperations = attemptIds.length
       ? await this.database<Array<{ id: string; attemptId: string; runId: string; actionRef: string }>>`
           select id, attempt_id as "attemptId", run_id as "runId", action_ref as "actionRef"
@@ -1064,7 +1053,6 @@ export class PostgresConversationRepository {
           // 历史 Attempt 的交付不并入本次核验（I-06 评审）。
           .filter(artifact => artifact.sourceRunId === row.id && artifact.sourceAttemptId === row.currentAttemptId)
           .map(artifact => mapArtifactEvidenceRow(artifact, row.id)),
-        recordVersions: recordVersions.filter(version => version.runId === row.id && version.attemptId === row.currentAttemptId),
         unknownOperations: unknownOperations.filter(operation => operation.runId === row.id && operation.attemptId === row.currentAttemptId),
         sources: [],
         toolAudits: toolAudits
@@ -1386,17 +1374,6 @@ export class PostgresConversationRepository {
            order by occurred_at asc
         `
       : []
-    const recordVersions = row.currentAttemptId
-      ? await this.database<Array<{ id: string; deleted: boolean }>>`
-          select id, false as deleted from agent_data_record_versions
-           where tenant_id = ${tenantId} and source_run_id = ${row.id}
-             and source_attempt_id = ${row.currentAttemptId}
-          union all
-          select version_id as id, true as deleted from agent_data_record_deletions
-           where tenant_id = ${tenantId} and source_run_id = ${row.id}
-             and source_attempt_id = ${row.currentAttemptId}
-        `
-      : []
     const unknownOperations = row.currentAttemptId
       ? await this.database<Array<{ id: string; actionRef: string }>>`
           select id, action_ref as "actionRef" from task_operations
@@ -1415,7 +1392,6 @@ export class PostgresConversationRepository {
       events,
       committedMessageIds,
       artifacts: artifacts.map(artifact => mapArtifactEvidenceRow(artifact, row.id)),
-      recordVersions,
       unknownOperations,
       sources: sources.map(source => ({
         id: source.id,

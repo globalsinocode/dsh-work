@@ -145,8 +145,6 @@ export interface RuntimeAgentSnapshot {
   principalId?: string
   principalAuthorizationVersion?: number
   modelRequirements: AgentSpec['model']['requirements']
-  dataRequirements?: AgentSpec['data']['collections']
-  stateEnabled?: boolean
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
@@ -762,9 +760,7 @@ export class PostgresAgentService {
              av.timeout_seconds as "timeoutSeconds",
              av.agent_spec as "agentSpec",
              av.binding_refs as "bindingRefs", av.status as "versionStatus",
-             coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements",
-             coalesce(av.agent_spec #> '{data,collections}', '[]'::jsonb) as "dataRequirements",
-             coalesce((av.agent_spec #>> '{data,state}')::boolean, false) as "stateEnabled"
+             coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
@@ -1037,7 +1033,6 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
 }
 
 export function configurationFingerprint(row: AgentFingerprintSource) {
-  const data = row.agentSpec?.data
   return createHash('sha256').update(JSON.stringify({
     versionId: row.versionId,
     name: row.name,
@@ -1054,7 +1049,6 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
-    ...((data?.state || data?.collections?.length) ? { data } : {}),
   })).digest('hex')
 }
 

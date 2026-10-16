@@ -68,7 +68,7 @@ export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_ach
 /** Run 执行状态原文（含 waiting/cancel_requested）；比展示用 RunStatus 更原始。 */
 export type TaskResultExecution = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 
-export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool' | 'record'
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
 
 /**
  * 回执核验状态：completed=已完成且有持久化登记；accepted=仅受理/获准——

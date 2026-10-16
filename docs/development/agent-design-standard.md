@@ -13,7 +13,7 @@ dsh-work Agent 是一种可发布、可复用的受控智能执行定义：声�
 
 Agent 定义与执行进程分离；声明不授予权限；使用业务状态不意味着自行实现存储、调度或身份系统。确定性计算、事务和数据服务可由受控程序执行，业务规则放在扩展或领域服务中。
 
-**产品定位：** Agent 是有稳定身份、职责和人格的独立 AI 员工，不代表某一位员工。人格、记忆、能力、工作数据和主动触发按第 3 节统一设计，但分别治理；Skill、记忆、数据需求和主动任务不因创建 Agent 而全部成为必填。独立执行身份、平台默认 DSH 工具装配与三步创建页已达到代码级，具体能力与真实验收状态以差异清单为准。
+**产品定位：** Agent 是有稳定身份、职责和人格的独立 AI 员工，不代表某一位员工。人格、记忆、能力和主动触发按第 3 节统一设计，但分别治理；Skill、记忆和主动任务不因创建 Agent 而全部成为必填。独立执行身份、平台默认 DSH 工具装配与 Agent 详情页已达到代码级，具体能力与真实验收状态以差异清单为准。
 
 本文中的要求分为：
 
@@ -57,16 +57,16 @@ Agent 定义与执行进程分离；声明不授予权限；使用业务状态�
 
 **状态：目标架构；已实现范围逐项列出，真实验收另记。** 本节是已确认的目标设计；除下文明确标注的已实现范围外，不表示现有 API、Schema、数据库、管理端或 Runtime 已支持。目标字段和示例路径不得直接当作当前契约使用。每项能力落地时按第 4 节相应 AS 条款、[生命周期模板](agent-lifecycle-template.md)同步更新生产者、消费者与验收。
 
-AI 员工是稳定的 Agent 身份，拥有经发布的职责与人格、获准能力、独立授权、可治理的长期经验、可管理的工作数据和主动任务规则。它可以被员工请求协作，也可以在批准范围内由时间或事件唤醒。一次唤醒创建 Task/Run/Attempt，不是启动常驻模型进程；模型执行仍唯一经过 Run/Attempt → Runtime Adapter → DSH。
+AI 员工是稳定的 Agent 身份，拥有经发布的职责与人格、获准能力、独立授权、可治理的长期经验和主动任务规则。它可以被员工请求协作，也可以在批准范围内由时间或事件唤醒。一次唤醒创建 Task/Run/Attempt，不是启动常驻模型进程；模型执行仍唯一经过 Run/Attempt → Runtime Adapter → DSH。
 
 ```text
 AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
-        + 已批准 Skill/Tool 与当前 MCP 能力 + 工作数据集 + 主动任务规则
+        + 已批准 Skill/Tool 与当前 MCP 能力 + 主动任务规则
 一次工作 = 触发来源 + 发起人/执行主体 + 固定 Agent Version
         + 当前授权 + Task/Run/Attempt + 可核验结果
 ```
 
-这些对象的权威存储与生命周期必须分开。独立身份不等于无人负责：管理负责人、发布审核人和停用责任人负责治理，不成为 Agent 的执行身份；发布、记忆审核、数据 Schema 发布和主动任务启用分别留痕。
+这些对象的权威存储与生命周期必须分开。独立身份不等于无人负责：管理负责人、发布审核人和停用责任人负责治理，不成为 Agent 的执行身份；发布、记忆审核和主动任务启用分别留痕。
 
 | 对象 | 目标语义 | 当前差异 |
 | --- | --- | --- |
@@ -75,7 +75,7 @@ AI 员工 = 稳定身份 + 已发布 Soul + 可检索的受控 Memory
 | Experience | Agent 稳定身份下的受控经验申请及不可变版本；`memory.md` 只是 Attempt 内的只读运行投影 | 员工端记忆提交、授权和撤回功能已移除。管理端按稳定 `agent_id` 查看 Agent 从成功 Run/Attempt 提出的申请并人工审核；专属质量评测与显式回滚仍须补齐，不能宣称 Agent 自动学习 |
 | Skill 与内置 Tool | Agent Version 固定所需的精确依赖，按当前状态和权限复核；没有需求时允许空集合 | AE-01 已使界面配置允许空集合（代码级）；业务能力仍须按需显式声明 |
 | MCP Tool | 保留 Connector 整体发现、租户内全部 Agent 可选及每 Attempt 能力摘要复核；调用归因到 Agent Principal、Task 和 Attempt | 当前共享 Connector 凭据不能证明上游区分各 Agent 身份 |
-| 工作数据 | 独立的轻量状态与受治理的数据集合；集合归属企业租户或 Workspace，Agent 仅按当前授权使用；记录版本绑定写入身份、Task/Run/Attempt、来源和 Schema 版本 | AE-03 已接通固定通用表、AgentSpec、管理 API、DSH 工具及 `task-result/v1` 记录引用（代码级）；真实 DSH/OIDC 与外部回执验收另记 |
+| 工作数据 | 跨运行的工作记录放在权威业务系统（经 MCP 或领域 Tool）或 Artifact | AE-03 Agent 数据平面因无实际使用场景已于 2026-10-16 删除（迁移 0087）；确有平台内台账需求时按具体场景重新设计 |
 | 主动任务 | Agent 拥有的版本化 routine，受触发条件、Workspace、身份、授权上限和预算约束 | AE-05 新增 `agent_routines` 与独立执行账本（代码级）；原 `agent_automations` 仍由员工本人拥有，不能当作 AI 员工心跳。真实 DSH/OIDC 与外部事件源仍需另验 |
 
 ### 3.1 独立身份与授权
@@ -107,38 +107,19 @@ attempts/<attempt-id>/workspace/
   memory.md                         # 本次身份、Workspace 和权限过滤后的临时视图
 ```
 
-已发布 `agent_versions.agent_spec` 是运行权威；S3 起平台不再生成或导出版本包，上述目录仅描述逻辑归属。记忆权威是数据库条目、版本、来源和 ACL；`memory.md` 仅为管理员可读导出或本次 Attempt 的有界只读投影，不汇总所有私人、团队及组织记忆，也不存业务台账、文件原文或检查点。工作记录属于第 3.3 节数据集。生产存储经受控包/成果端口访问，不依赖单机绝对路径；Agent 公共目录不得存 Token、Cookie、模型凭据或员工私人记忆。
+已发布 `agent_versions.agent_spec` 是运行权威；S3 起平台不再生成或导出版本包，上述目录仅描述逻辑归属。记忆权威是数据库条目、版本、来源和 ACL；`memory.md` 仅为管理员可读导出或本次 Attempt 的有界只读投影，不汇总所有私人、团队及组织记忆，也不存业务台账、文件原文或检查点。工作记录不属于记忆，见第 3.3 节。生产存储经受控包/成果端口访问，不依赖单机绝对路径；Agent 公共目录不得存 Token、Cookie、模型凭据或员工私人记忆。
 
-### 3.3 统一 Agent 数据平面（AE-03，代码级已实现）
+### 3.3 工作数据（Agent 数据平面已删除）
 
-大量 Agent 共用一套平台数据能力：Agent 在 Run/Attempt → DSH 中决定获准动作，读写经平台受控工具网关进入状态、结构化记录、文件工作空间、企业连接器或专业业务服务。Agent 包和安装实例不拥有独立业务表；新增 Agent 或上传包仅增加定义、集合元数据、命名空间与记录，不执行包内 SQL，也不触发逐 Agent 数据库迁移。AE-03 已完成固定通用表、严格 `AgentSpec.data`、受控工具、管理 API 和结果引用的代码接线；具体契约见 [Agent 数据平面](agent-data-plane.md)。真实 DSH/OIDC 端到端验收仍单独记录。
+平台曾提供 Agent 专属的状态与数据集合（AE-03：`agent_state`、`agent_data_*` 表，`state_get`/`state_put`、`data_*` 受控工具与 `AgentSpec.data` 声明）。没有 Agent 使用它，也没有管理页面，已于 2026-10-16 按“先删除，需要时再按场景设计”整体删除（迁移 0087），不保留兼容；旧版本定义中的 `data` 字段不再读取。
 
 | 数据类别 | 权威存储与边界 |
 | --- | --- |
-| 游标、进度和运行偏好 | 通用 Agent 状态服务，存小型、有界、可过期的键值；写入保留执行来源，不存权威业务事实、长期经验或跨 Attempt 恢复检查点 |
-| 轻量结构化工作记录 | 通用集合与 JSON Schema/JSONB 记录服务，适合表单、跟踪清单、分析结果及提案；不承担财务记账、库存扣减等强事务 |
-| Excel、PDF、报告和附件 | Agent 工作空间与既有 Artifact/对象存储；集合或状态仅保存受权引用，不内嵌大文件 |
-| ERP、CRM、采购与库存等主数据 | 原业务系统，经受控连接器或领域 Tool 访问；不复制为 Agent 数据平面的权威记录 |
+| Excel、PDF、报告和附件 | Agent 工作空间与既有 Artifact/对象存储 |
+| ERP、CRM、采购与库存等主数据与工作台账 | 原业务系统，经受控连接器（MCP）或领域 Tool 访问 |
 | 高并发或强事务核心业务数据 | 独立专业业务服务，仍通过受控 Tool 和结果引用接入 Agent |
-| Run、Attempt、操作回执和审计 | dsh-work 平台运行库；不写入 Agent 状态或记忆来冒充执行证据 |
-
-逻辑对象使用固定通用表；下表列出主要持久化边界：
-
-| 对象 | 最小字段与约束 |
-| --- | --- |
-| `agent_state` | `tenant_id`、`agent_installation_id`、`namespace`、`key`、`value_json`、`version`、`expires_at`、`updated_at`；按完整作用域与 key 唯一，带大小/数量/TTL 配额和期望版本写入 |
-| `agent_data_collections` | 稳定集合 key、`tenant_id`、数据归属类型与 ID（租户或 Workspace）、访问范围（安装实例私有、Workspace 或租户）、管理者引用、JSON Schema ID 与不可变版本、读写/共享策略、保留期、允许查询字段、状态；归属与获授权 Agent 分开 |
-| `agent_data_records` | `tenant_id`、collection、Workspace/可用范围、稳定 `record_key`、当前版本指针、状态、创建主体与时间；`(tenant, collection, workspace, record_key)` 唯一 |
-| `agent_data_record_versions` | 不可变版本号、Schema 版本、校验后的 JSONB 内容及摘要、写入 Principal、来源 Task/Run/Attempt、输入来源引用、审核/工具回执、创建时间 |
-| `agent_data_record_events` | 可选审计投影：记录版本引用、操作、前后版本引用、操作者、Run/Attempt 与时间；不能替代不可变版本和来源证据 |
-
-Agent 安装实例提供私有状态命名空间与集合使用绑定。轻量记录可先限制为该实例私有访问，但其数据仍由租户或 Workspace 归属；不能因升级、卸载或停用 Agent 而自动删除企业记录。租户或 Workspace 拥有的集合可授予多个 Agent 精确读写动作；共享、撤权、保留与删除由数据所有者的治理策略决定。读取、写入、结果披露及重试均复核当前 Agent Principal、发起人适用的披露上限、Workspace 和集合 ACL，历史授权快照不能恢复已撤销权限。
-
-AgentSpec 可声明数据需求和 Schema，例如 `spec.data.collections` 引用 Schema 并声明所需动作；版本导出包可携带相应 Schema 供离线核对，但不能据此自动建表或授权。平台校验 Schema、版本兼容与资源限额，再由管理员或有权数据所有者发布集合及访问策略，创建安装命名空间与授权绑定。共享集合优先引用已发布的稳定集合 key，不能因两个 Agent 使用相同名称就自动合并。Schema 升级须保留旧版本可读性并明确记录迁移/转换策略；不允许静默重写历史记录。
-
-Agent 经平台受控工具 `state_get`/`state_put`、`data_query`、`data_propose`、`data_create`、`data_update`、`data_transition` 操作；下划线名称是现行 DSH Tool 契约。状态和记录写入检查 Schema、大小、当前授权、作用域、业务键及期望版本，以操作键去重，并审计来源 Task/Run/Attempt。查询仅开放批准的过滤、排序与分页字段，不给模型任意 SQL；包中的索引需求只供平台审核，采用平台受控的有限索引策略，不由每次安装执行任意 DDL。为集合与安装实例设置容量、速率和保留配额，避免大量 Agent 共享表时无界增长。
-
-模型生成的 JSON 首先是提案；Schema 合法不等于业务事实正确。确认为工作记录或触发外部写动作须满足集合审核与回执策略。成功写入返回可核验 `recordVersionId`，现行 `task-result/v1` 增加结构化交付引用；Run `succeeded` 不单独证明外部效果完成。外部效果为 `unknown` 时仍需按原系统回执核对，不能仅凭集合记录标记目标达成。复杂查询、强事务或已有权威系统对象由领域服务承接，沿用相同 Agent Tool 与结果引用契约。
+| 可复用的做法与经验 | 受控经验（第 3.2 节），不存业务事实 |
+| Run、Attempt、操作回执和审计 | dsh-work 平台运行库 |
 
 ### 3.4 Agent 主动任务与心跳
 
@@ -315,7 +296,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 管理端管理员负责定义、资源配置及发布；普通员工直接使用 Agent，无需在每次对话中选择底层工具。平台输入包括定义草稿、现有授权、Runtime 能力及 Connector 状态；输出为可检查的候选与实际执行清单。完成判据是界面配置与导出的版本定义一致、三种 MCP 范围真实生效、各入口沿 DSH 执行且结果可追溯。
 
-复用已有 Agent/Version、Principal、Skill、Tool/Binding、Connector、数据平面、记忆、routine、Task/Run/Attempt，不增加另一套身份、授权、发布或 Agent Loop。Memory 保存可复用经验，State 保存游标与进度，Data 保存有来源的业务记录；ERP/CRM 主数据继续由原系统负责。
+复用已有 Agent/Version、Principal、Skill、Tool/Binding、Connector、记忆、routine、Task/Run/Attempt，不增加另一套身份、授权、发布或 Agent Loop。Memory 保存可复用经验；业务记录与 ERP/CRM 主数据继续由原系统负责。
 
 ### 6.2 文件分工与 AGENTS.md
 

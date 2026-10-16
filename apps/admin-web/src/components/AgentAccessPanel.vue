@@ -27,9 +27,6 @@ const form = reactive({
   principalStatus: 'active' as 'active' | 'disabled',
 })
 
-const actionLabels: Record<string, string> = {
-  query: '查询', propose: '提议', create: '新增', update: '修改', transition: '改状态',
-}
 const weekdayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
 function sorted(values: string[]) {
@@ -116,9 +113,6 @@ const overview = computed(() => {
     : '尚未设置可见角色，员工暂时无法使用')
   lines.push(current.roleIds.length ? `持有岗位角色 ${current.roleIds.map(roleName).join('、')}` : '未持有岗位角色')
   lines.push(current.dataScopes.length ? `可访问数据范围 ${current.dataScopes.join('、')}` : '未授予平台数据范围')
-  for (const collection of current.collections) {
-    lines.push(`工作数据「${collection.key}」可${collection.actions.map(action => actionLabels[action] ?? action).join('、')}`)
-  }
   for (const routine of current.routines) {
     lines.push(`${scheduleText(routine.schedule)}，向${routine.recipientName}交付「${routine.name}」${routine.status === 'active' ? '' : '（已暂停）'}`)
   }

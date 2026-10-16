@@ -9,7 +9,7 @@ import type { RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import type { RunCancellation } from './run-cancellation.ts'
-import { agentDataToolRefs, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
+import { toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 
@@ -124,8 +124,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(this.deps.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
-        ...agentDataToolRefs(agent)],
+        ...(this.deps.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : [])],
       // The candidate's frozen bindings; publication rechecks them for drift.
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),

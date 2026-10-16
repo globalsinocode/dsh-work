@@ -10,7 +10,7 @@ import { authorizationDenied } from '../../../domain/authorization-errors.ts'
 import type { JsonObject, RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
-import { agentDataToolRefs, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
+import { toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 /** Turns an accepted request into a persisted, queued Attempt with an immutable Manifest. */
@@ -154,7 +154,6 @@ export class AttemptDispatcher {
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
         ...(this.deps.memory && input.purpose !== 'agent-routine'
           ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
-        ...agentDataToolRefs(agent),
       ],
       // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),

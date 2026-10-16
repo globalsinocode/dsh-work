@@ -5,7 +5,6 @@ import { after, before, test } from 'node:test'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAgentAccessService } from '../../modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService, type AgentValidation } from '../../modules/agent/agent-validation-service.ts'
-import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
 import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
@@ -450,27 +449,6 @@ test('S3 验证案例车道最多并行两路，并为交互执行保留一个�
     trialRuntime.releaseAll()
     await database`update runtimes set capacity = 4 where tenant_id = ${tenantId}`
   }
-})
-
-test('S3 工作数据声明在验证前与发布时复核集合授权', async () => {
-  const agentId = `agent-data-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [], dataScopes: ['enterprise:authorized'] })
-  const dataService = new PostgresAgentDataService(database)
-  const key = `release_data_${randomUUID().slice(0, 8)}`
-  const collectionId = await dataService.publishCollection({ tenantId, key,
-    schema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
-    queryFields: ['code'], retentionDays: 30, actorUserId: ADMIN })
-  await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, changeSummary: '声明结构化数据需求',
-    data: { state: false, collections: [{ key, scope: 'tenant', schemaVersion: 1, actions: ['query'] }] } })
-  assert.equal((await validation.getOverview(agentId)).checks.find(check => check.id === 'data')?.passed, false)
-  await assert.rejects(validation.startValidation(agentId, ADMIN), /工作数据/)
-  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
-  const done = await approveAll(agentId, await runValidation(agentId))
-  assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'data_query'))
-  await dataService.setGrant({ tenantId, collectionId, agentId, actions: [], actorUserId: ADMIN })
-  await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /工作数据/)
-  await dataService.setGrant({ tenantId, collectionId, agentId, actions: ['query'], actorUserId: ADMIN })
-  assert.equal((await validation.publish(agentId, ADMIN, { validationId: done.id })).activeVersion?.version, '0.1.0')
 })
 
 test('S3 验证案例按版本的 MCP 范围装配连接器', async () => {

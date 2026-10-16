@@ -55,32 +55,14 @@ test('workbench OpenAPI keeps session thread and summary operations on their act
   assert.equal(document.paths['/sessions/{sessionId}/summary']?.get?.operationId, 'getSessionForUser')
 })
 
-test('AE-03 OpenAPI exposes every Agent data management route and task result evidence kind', async () => {
-  const admin = JSON.parse(await readFile(
-    new URL('../../../docs/development/openapi-admin.json', import.meta.url), 'utf8',
-  )) as { paths: Record<string, Record<string, { operationId?: string }>> }
-  const operations = [
-    ['/agent-data/collections', 'get', 'listAgentDataCollections'],
-    ['/agent-data/collections', 'post', 'publishAgentDataCollection'],
-    ['/agent-data/collections/{collectionId}/schema', 'patch', 'evolveAgentDataCollectionSchema'],
-    ['/agent-data/collections/{collectionId}/status', 'patch', 'setAgentDataCollectionStatus'],
-    ['/agent-data/collections/{collectionId}/grants', 'get', 'listAgentDataCollectionGrants'],
-    ['/agent-data/collections/{collectionId}/grants/{agentId}', 'patch', 'setAgentDataCollectionGrant'],
-    ['/agent-data/collections/{collectionId}/records', 'get', 'listAgentDataRecords'],
-    ['/agent-data/proposals', 'get', 'listAgentDataProposals'],
-    ['/agent-data/proposals/{proposalId}/review', 'post', 'reviewAgentDataProposal'],
-    ['/agent-data/records/{recordId}', 'delete', 'deleteAgentDataRecord'],
-  ] as const
-  for (const [path, method, operationId] of operations) {
-    assert.equal(admin.paths[path]?.[method]?.operationId, operationId)
-  }
+test('task result evidence kinds in the workbench OpenAPI match the result contract', async () => {
   const workbench = JSON.parse(await readFile(
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url), 'utf8',
   )) as { components: { schemas: {
     TaskResultReceipt: { properties: { kind: { enum: string[] } } }
     TaskResultPendingItem: { properties: { kind: { enum: string[] } } }
   } } }
-  assert.ok(workbench.components.schemas.TaskResultReceipt.properties.kind.enum.includes('record'))
+  assert.deepEqual(workbench.components.schemas.TaskResultReceipt.properties.kind.enum, ['answer', 'artifact', 'tool'])
   assert.ok(workbench.components.schemas.TaskResultPendingItem.properties.kind.enum.includes('external_effect_unknown'))
 })
 

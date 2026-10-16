@@ -13,7 +13,6 @@
 | 团队空间、个人内容、管理助手、Skill 安装与 Python 执行、自动任务的产品与安全规则 | [功能规则](../development/feature-rules.md) |
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
-| Agent 状态与记录的受控数据工具 | [Agent 数据平面](../development/agent-data-plane.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 实施中：Agent 配置、权限、验证与发布的简化 | [Agent 配置与发布简化方案](../design/agent-release-optimization-plan.md) |

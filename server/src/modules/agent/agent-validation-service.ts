@@ -6,12 +6,10 @@ import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresAgentService } from './postgres-agent-service.ts'
 import type { ReleaseTrialResult, ReleaseTrialRunner } from './release-trial-runner.ts'
-import type { AgentDataCollectionRequirement } from './agent-spec.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
-import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
-import { RequestError, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 const MAX_TEST_CASES = 20
@@ -67,7 +65,7 @@ export interface AgentValidation {
 }
 
 export interface ReleaseCheck {
-  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'data' | 'cases' | 'bindings'
+  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
   label: string
   passed: boolean
   detail: string
@@ -120,7 +118,6 @@ interface VersionShape {
   examplePrompts: string[]
   mcpScope: AgentMcpScope | null
   bindingRefs: ManifestToolBinding[]
-  dataCollections: AgentDataCollectionRequirement[]
 }
 
 interface CaseRow {
@@ -590,7 +587,7 @@ export class PostgresAgentValidationService {
 
   /* ---------- Checks ---------- */
 
-  /** Checks of one version against the Agent's current access, dependencies and data grants. */
+  /** Checks of one version against the Agent's current access and dependencies. */
   private async checkVersion(agentId: string, version: VersionShape): Promise<ReleaseCheck[]> {
     const [agent] = await this.database<{ visibleRoleIds: string[] }[]>`
       select visible_role_ids as "visibleRoleIds" from agents where tenant_id = ${tenantId} and id = ${agentId}
@@ -629,14 +626,6 @@ export class PostgresAgentValidationService {
         mcpError = error instanceof Error ? error.message : String(error)
       }
     }
-    let dataError: string | undefined
-    if (version.dataCollections.length) {
-      try {
-        await this.database.begin(tx => this.assertDataRequirements(tx, version.id, agentId))
-      } catch (error) {
-        dataError = error instanceof Error ? error.message : String(error)
-      }
-    }
     const examples = version.examplePrompts.filter(item => item.trim())
     const audienceError = !audience.length ? '请在岗位权限中选择至少一个可见角色'
       : activeAudience.length !== audience.length ? '可见角色包含不存在或已停用的角色' : undefined
@@ -657,10 +646,6 @@ export class PostgresAgentValidationService {
       {
         id: 'mcp', label: 'MCP 范围', passed: !mcpError,
         detail: mcpError ?? (version.mcpScope?.mode === 'none' ? '不使用 MCP' : '可用；验证中不执行 MCP 调用'),
-      },
-      {
-        id: 'data', label: '工作数据', passed: !dataError,
-        detail: dataError ?? (version.dataCollections.length ? '声明的集合与当前授权兼容' : '未声明工作数据集合'),
       },
       {
         id: 'cases', label: '验证案例', passed: examples.length > 0,
@@ -707,7 +692,6 @@ export class PostgresAgentValidationService {
       if (!this.tools) throw new Error('MCP Connector 服务未接入')
       await this.tools.resolveMcpConnectionsForAgentVersion(candidate.id)
     }
-    await this.assertDataRequirements(tx, candidate.id, agentId)
   }
 
   /** Copies a candidate's content into a new frozen version with current bindings. */
@@ -757,41 +741,6 @@ export class PostgresAgentValidationService {
     }
   }
 
-  private async assertDataRequirements(tx: DatabaseTransaction, agentVersionId: string, agentId: string): Promise<void> {
-    const [definition] = await tx<{ collections: AgentDataCollectionRequirement[] }[]>`
-      select coalesce(agent_spec #> '{data,collections}', '[]'::jsonb) as collections
-        from agent_versions where tenant_id = ${tenantId} and id = ${agentVersionId}
-    `
-    if (!definition) throw dependencyUnavailable('Agent 数据声明不可用')
-    const grants = await tx<{ scopeValue: string }[]>`
-      select g.scope_value as "scopeValue" from agent_principal_scope_grants g
-        join execution_principals p on p.tenant_id = g.tenant_id and p.id = g.principal_id
-       where g.tenant_id = ${tenantId} and p.agent_id = ${agentId} and p.status = 'active'
-    `
-    const currentScopes = new Set(grants.map(item => item.scopeValue))
-    for (const requirement of definition.collections) {
-      const neededScope = requirement.scope === 'tenant' ? 'enterprise:authorized'
-        : requirement.scope === 'workspace' ? 'workspace:authorized' : null
-      if (neededScope && !currentScopes.has(neededScope)) {
-        throw stateConflict(`集合 ${requirement.key} 所需的数据范围 ${neededScope} 未授予 Agent 身份`)
-      }
-      const [bound] = await tx<{ scope: string; version: number; schema: Record<string, unknown>; actions: string[] }[]>`
-        select c.access_scope as scope, c.schema_version as version, c.schema_json as schema, g.actions
-          from agent_data_collections c
-          join agent_data_collection_grants g on g.tenant_id = c.tenant_id and g.collection_id = c.id
-          join agent_installations i on i.tenant_id = g.tenant_id and i.id = g.agent_installation_id
-         where c.tenant_id = ${tenantId} and c.collection_key = ${requirement.key}
-           and c.status = 'active' and i.agent_id = ${agentId}
-         for share of c, g
-      `
-      if (!bound || bound.scope !== requirement.scope || bound.version !== requirement.schemaVersion
-        || requirement.actions.some(action => !bound.actions.includes(action))
-        || (requirement.schema && sha256(canonicalJson(requirement.schema.body)) !== sha256(canonicalJson(bound.schema)))) {
-        throw stateConflict(`集合 ${requirement.key} 未发布、版本不兼容或缺少当前授权`)
-      }
-    }
-  }
-
   /* ---------- Queries ---------- */
 
   private async plannedCases(agentId: string, version: VersionShape): Promise<PlannedCase[]> {
@@ -822,8 +771,7 @@ export class PostgresAgentValidationService {
     const [row] = await this.database<VersionShape[]>`
       select id, agent_id as "agentId", version, status, skill_refs as skills, tool_refs as tools,
              example_prompts as "examplePrompts", mcp_scope as "mcpScope",
-             coalesce(binding_refs, '[]'::jsonb) as "bindingRefs",
-             coalesce(agent_spec #> '{data,collections}', '[]'::jsonb) as "dataCollections"
+             coalesce(binding_refs, '[]'::jsonb) as "bindingRefs"
         from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     return row

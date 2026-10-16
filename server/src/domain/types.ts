@@ -301,11 +301,6 @@ export interface AgentDraftConfiguration {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-  /** Optional definition request; collection publication and grants remain platform-owned. */
-  data?: { state: boolean; collections: Array<{
-    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
-    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
-  }> }
   changeSummary: string
 }
 

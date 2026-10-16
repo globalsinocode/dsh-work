@@ -2,7 +2,7 @@
 
 PostgreSQL 是产品事实来源。本文按领域说明表的作用、关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../../server/migrations/) 为准，不维护另一份 DDL 副本。
 
-当前共 104 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
+当前共 93 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
 
 ## 领域总览
 
@@ -158,31 +158,7 @@ flowchart LR
 | `memory_entries`、`memory_versions` | 已发布的记忆与其版本 | 版本不可修改（触发器）；按可见范围（个人、空间、组织）与角色检索 |
 | `run_memory_sources` | Attempt 引用的记忆版本 | 固定到具体版本 |
 
-## 11. Agent 数据平面
-
-```mermaid
-flowchart LR
-  Agent[agents] --> Inst[agent_installations]
-  Inst --> State[agent_state]
-  Inst --> Grant[agent_data_collection_grants] --> Coll[agent_data_collections]
-  Coll --> Schema[agent_data_collection_schema_versions]
-  Coll --> Rec[agent_data_records] --> Ver[agent_data_record_versions]
-  Coll --> Prop[agent_data_proposals] -. 人工批准 .-> Ver
-```
-
-| 表 | 作用 | 关键不变量 |
-| --- | --- | --- |
-| `agent_installations` | Agent 的数据平面实例 | 每个 Agent 一条，随 Agent 创建自动生成 |
-| `agent_state` | Agent 的键值状态 | 每个值不超过 16 KB；按版本并发写；记录写入的 Run/Attempt |
-| `agent_data_collections`、`agent_data_collection_schema_versions` | 数据集合及其结构版本 | 归属租户或空间；只有当前结构版本可写，旧版本保留追溯；设定保留天数 |
-| `agent_data_collection_grants` | Agent 对集合的动作授权（查询、提议、创建、更新、流转） | 授权到具体 Agent 实例 |
-| `agent_data_records`、`agent_data_record_versions` | 记录与其版本 | 记录按集合、范围、键唯一；每次写入新增版本，单条不超过 64 KB |
-| `agent_data_record_operations` | 写入幂等表 | 按来源 Attempt + 操作键唯一，重放返回同一版本 |
-| `agent_data_proposals` | 模型生成的待批准写入 | 人工批准前只是提议；批准后必须指向生成的记录版本 |
-| `agent_data_record_deletions` | 按保留期或管理员删除的记录 | 只保留摘要与来源，不保留正文 |
-| `agent_data_write_counters` | 每个实例每分钟的写入预算 | 每分钟最多 120 次，计数可丢弃 |
-
-## 12. 自动任务与 Agent 主动任务
+## 11. 自动任务与 Agent 主动任务
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
@@ -191,14 +167,14 @@ flowchart LR
 | `agent_routines` | Agent 拥有的主动任务 | 需管理员批准角色与数据范围；接收人只是披露对象，不是发起人 |
 | `agent_routine_executions` | 主动任务的每次触发 | 按规则 + 触发 ID 幂等；受理时必须同时关联 Task 与 Run |
 
-## 13. 管理助手
+## 12. 管理助手
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `admin_assistant_task_proposals` | 通用助手生成的委派提案 | 每个 Run 一条；内容以摘要锁定；确认后才启动专用助手 |
 | `admin_assistant_action_plans` | 专用助手生成的写入计划 | 每个 Run 一条；以变更前状态与摘要锁定，状态已变化则拒绝执行 |
 
-## 14. 审计、用量与运营
+## 13. 审计、用量与运营
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
@@ -220,7 +196,6 @@ flowchart LR
 | `roles_bump_local_authorization`、`user_roles_bump_local_authorization`、`data_scope_grants_bump_local_authorization` | 授权变化递增本地授权版本 |
 | `users_create_execution_principal`、`agents_create_execution_principal`、`tenants_create_execution_principal` | 自动创建人、Agent、系统执行身份 |
 | `agent_role_grant_version`、`agent_scope_grant_version` | Agent 授权变化递增其授权版本 |
-| `agents_create_installation` | 为新 Agent 创建数据平面实例 |
 | `tasks_assign_initiator_principal` | 按来源写入并校验 Task 发起身份 |
 | `run_attempts_pin_task_executor_principal` | 把 Attempt 执行身份固定到声明的 Agent 或平台 |
 | `runs_ensure_task_identity`、`runs_sync_task_status` | 会话 Run 自动建 Task；Run 状态同步到 Task |
@@ -242,11 +217,12 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [Agent 发布治理](../../server/migrations/0039_agent_release_governance.sql)、[自动任务](../../server/migrations/0040_agent_automations.sql)、[工具绑定修订](../../server/migrations/0047_tool_binding_revisions.sql)、[MCP 治理](../../server/migrations/0053_mcp_connector_governance.sql)。
 - [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)、[无 Session 执行与 Task Artifact](../../server/migrations/0051_session_neutral_task_execution.sql)、[累计预算](../../server/migrations/0052_task_cumulative_budgets.sql)。
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
-- [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
+- [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)（已由 0087 删除）、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
 - [删除 Agent 委派](../../server/migrations/0083_remove_agent_delegation.sql)：移除 `task_delegations` 与版本上的委派策略；历史子任务仍保留 `delegation` 来源类型，但不能重试。
 - [Agent 级岗位权限](../../server/migrations/0084_agent_level_access.sql)：可见角色从版本迁到 Agent（取当前发布版本，未发布取草稿），删除版本上的可见角色与数据范围上限。
 - [Agent 验证与发布](../../server/migrations/0085_agent_validations.sql)：版本增加待发布状态并冻结不可变；新增自定义测试问题、验证与验证案例；发布记录转为审计事件后删除候选、试运行、版本证据、Agent 包、早期测试与发布记录六张表。
 - [Agent 运行记录索引](../../server/migrations/0086_agent_run_history_index.sql)：详情页按 Task 的执行身份读取最近 Run。
+- [删除 Agent 数据平面](../../server/migrations/0087_remove_agent_data_plane.sql)：删除工作数据（集合、记录、提案、私有状态、安装实例）共 11 张表；旧版本定义中的 `data` 声明不再读取。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

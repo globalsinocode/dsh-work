@@ -292,7 +292,6 @@ export interface AgentAccess {
   scopeOptions: string[]
   /** 当前草稿（无草稿时为当前版本）各项能力所需的角色与数据范围。 */
   capabilities: AgentCapabilityRequirement[]
-  collections: Array<{ key: string; scope: string; actions: string[] }>
   routines: Array<{
     id: string; name: string; status: string; schedule: Partial<AgentRoutineSchedule>
     recipientUserId: string; recipientName: string
@@ -404,10 +403,6 @@ export interface AgentDraftConfiguration {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-  data?: { state: boolean; collections: Array<{
-    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
-    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
-  }> }
   changeSummary: string
 }
 
@@ -889,7 +884,7 @@ export interface AgentValidation {
 }
 
 export interface AgentReleaseCheck {
-  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'data' | 'cases' | 'bindings'
+  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
   label: string
   passed: boolean
   detail: string

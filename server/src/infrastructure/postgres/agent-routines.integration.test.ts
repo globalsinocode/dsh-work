@@ -11,7 +11,6 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
-import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { AgentRuntimePort, RuntimeExecutionHandle, RuntimeExecutionSnapshot, RuntimeHealth, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { assertCurrentExecutionAuthorization } from '../../modules/run/current-execution-authorization.ts'
@@ -19,8 +18,6 @@ import { assertCurrentExecutionAuthorization } from '../../modules/run/current-e
 const tenantId = 'tenant-dsh-work'
 const agentId = 'agent-dsh-work-assistant'
 const versionId = 'agent-version-dsh-work-assistant-1'
-const isCode = (error: unknown, code: string) =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code
 let throwaway: ThrowawayDatabase
 let database: DatabaseClient
 let service: AgentRoutineService
@@ -236,85 +233,4 @@ test('AE-05 old scheduled slots are recorded as missed and never backfilled', as
   const executions = await service.executions('U00008', agentId, draft.id)
   assert.equal(executions.some(item => item.kind === 'missed' && item.reasonCode === 'slot_expired'), true)
   assert.equal(executions.some(item => item.admissionStatus === 'accepted'), false)
-})
-
-test('AE-05 data proposal review ignores directory visibility for independent Agent roles', async () => {
-  const writerRoleId = 'role-agent-routine-writer'
-  const writerVersionId = 'agent-version-agent-routine-writer-1'
-  const collectionKey = 'routine_review_records'
-  const [workspace] = await database<{ id: string }[]>`
-    select id from workspaces where tenant_id = ${tenantId} and workspace_type = 'personal' and created_by = 'U00001'
-  `
-  assert.ok(workspace)
-  await database`
-    insert into roles (id, tenant_id, code, name, permissions)
-    values (${writerRoleId}, ${tenantId}, 'agent_routine_writer', 'Agent 主动写入', '[]'::jsonb)
-  `
-  const [principal] = await database<{ id: string }[]>`
-    select id from execution_principals where tenant_id = ${tenantId} and agent_id = ${agentId} and kind = 'agent'
-  `
-  assert.ok(principal)
-  await database`
-    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
-    values (${tenantId}, ${principal.id}, ${writerRoleId})
-  `
-  await database`
-    insert into agent_versions (id, tenant_id, agent_id, version, system_prompt, agent_spec, status, published_at)
-    values (${writerVersionId}, ${tenantId}, ${agentId}, '9.9.5', 'Propose governed records.',
-      ${database.json({ instructions: { path: 'SOUL.md', body: 'Propose governed records.' },
-        data: { state: false, collections: [{ key: collectionKey, scope: 'workspace',
-        schemaVersion: 1, actions: ['propose'], schema: null }] } })}, 'published', now())
-  `
-  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${agentId}`
-  const data = new PostgresAgentDataService(database)
-  const schema = { type: 'object', additionalProperties: false,
-    properties: { value: { type: 'string' } }, required: ['value'] }
-  const collectionId = await data.publishCollection({ tenantId, key: collectionKey,
-    ownerWorkspaceId: workspace.id, schema, queryFields: ['value'], retentionDays: 30, actorUserId: 'U00008' })
-  await data.setGrant({ tenantId, collectionId, agentId, actions: ['propose'], actorUserId: 'U00008' })
-  const draft = await service.create('U00008', { agentId, agentVersionId: writerVersionId,
-    workspaceId: workspace.id, recipientUserId: 'U00001', name: '独立角色数据提案',
-    schedule: { kind: 'manual', timezone: 'Asia/Shanghai' }, inputTemplate: { prompt: '提出记录' } })
-  await service.enable('U00008', agentId, draft.id, {
-    expectedRevision: draft.revision, roleIds: [writerRoleId],
-    dataScopes: ['enterprise:authorized', 'workspace:authorized'],
-  })
-  const execution = await service.runNow('U00008', agentId, draft.id, 'writer-proposal')
-  assert.equal(execution.admissionStatus, 'accepted')
-  const run = await runs.getRun(tenantId, execution.runId!)
-  assert.ok(run?.currentAttemptId)
-  const attempt = await runs.getAttempt(tenantId, run.currentAttemptId)
-  assert.ok(attempt)
-  const manifest = attempt.manifest as unknown as RuntimeManifest
-  assert.equal(manifest.purpose, 'agent-routine')
-  assert.deepEqual(manifest.user_context.role_ids, [writerRoleId])
-  assert.equal(manifest.tools.some(tool => tool.id === 'data_propose'), true)
-  await runs.transitionAttempt(tenantId, run.currentAttemptId, 'running')
-  await runs.transitionRun(tenantId, run.id, 'running')
-  const proposal = await data.invokeFromAttempt('data_propose', { collectionKey,
-    recordKey: 'routine-1', data: { value: 'proposed' }, expectedVersion: 0,
-    operationKey: 'routine-proposal' }, manifest) as { proposalId: string }
-  await runs.transitionAttempt(tenantId, run.currentAttemptId, 'succeeded')
-  await runs.transitionRun(tenantId, run.id, 'succeeded')
-  await database`delete from agent_principal_role_grants
-    where tenant_id = ${tenantId} and principal_id = ${principal.id} and role_id = ${writerRoleId}`
-  await assert.rejects(data.reviewProposal({ tenantId, proposalId: proposal.proposalId,
-    decision: 'approved', actorUserId: 'U00008' }), (error: unknown) => isCode(error, 'permission_denied'))
-  await database`insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
-    values (${tenantId}, ${principal.id}, ${writerRoleId})`
-  await database`update user_roles set valid_until = now() - interval '1 minute'
-    where tenant_id = ${tenantId} and user_id = 'U00001' and role_id = 'role-employee'`
-  await assert.rejects(data.reviewProposal({ tenantId, proposalId: proposal.proposalId,
-    decision: 'approved', actorUserId: 'U00008' }), (error: unknown) => isCode(error, 'permission_denied'))
-  await database`update user_roles set valid_until = null
-    where tenant_id = ${tenantId} and user_id = 'U00001' and role_id = 'role-employee'`
-  await database`update data_scope_grants set scope_value = 'workspace:revoked-routine-review'
-    where tenant_id = ${tenantId} and id = 'grant-role-employee-workspace'`
-  await assert.rejects(data.reviewProposal({ tenantId, proposalId: proposal.proposalId,
-    decision: 'approved', actorUserId: 'U00008' }), (error: unknown) => isCode(error, 'permission_denied'))
-  await database`update data_scope_grants set scope_value = 'workspace:authorized'
-    where tenant_id = ${tenantId} and id = 'grant-role-employee-workspace'`
-  const reviewed = await data.reviewProposal({ tenantId, proposalId: proposal.proposalId,
-    decision: 'approved', actorUserId: 'U00008' })
-  assert.ok(reviewed.recordVersionId)
 })
