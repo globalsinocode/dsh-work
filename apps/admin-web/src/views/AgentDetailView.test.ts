@@ -35,7 +35,12 @@ async function mountDetail(section?: string, permissions = ['admin:write']) {
   ] })
   await router.push({ path: `/agents/${agent.id}`, query: section ? { section } : {} })
   await router.isReady()
-  const wrapper = mount(AgentDetailView, { global: { plugins: [pinia, router, ElementPlus], stubs: { teleport: true } } })
+  const wrapper = mount(AgentDetailView, { global: { plugins: [pinia, router, ElementPlus], stubs: {
+    teleport: true,
+    // jsdom 没有布局，真实 ElSelect 的标签宽度测量会反复触发更新；本测试只关心分区与运行记录。
+    ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+    ElOption: true,
+  } } })
   await flushPromises()
   return { wrapper, router }
 }

@@ -147,8 +147,9 @@ onMounted(load)
         <p v-if="selected.reviewComment" class="hint">审核说明：{{ selected.reviewComment }}</p>
         <p v-if="selected.publishedVersionId" class="hint">经验版本：<span class="mono">{{ selected.publishedVersionId }}</span></p>
         <el-form v-if="selected.status === 'pending' && canManage" label-position="top" class="review-form" @submit.prevent>
-          <el-form-item label="审核说明" :error="rejectNoteMissing ? '拒绝时必须填写原因' : ''">
+          <el-form-item label="审核说明">
             <el-input v-model="comment" type="textarea" :rows="2" :maxlength="1000" show-word-limit aria-label="审核说明" placeholder="批准时选填；拒绝时说明为什么不适合作为可复用经验" />
+            <p v-if="rejectNoteMissing" class="field-error" role="alert">拒绝时必须填写原因</p>
           </el-form-item>
         </el-form>
       </template>
@@ -180,5 +181,6 @@ onMounted(load)
 .experience-content { margin: 0; padding: 10px 12px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-size: var(--font-size-caption); line-height: 1.65; white-space: pre-wrap; }
 .hint { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .review-form { margin-top: 14px; }
+.field-error { width: 100%; margin: 5px 0 0; color: var(--color-danger); font-size: var(--font-size-badge); }
 @media (max-width: 640px) { .meta-grid { grid-template-columns: 1fr; } }
 </style>

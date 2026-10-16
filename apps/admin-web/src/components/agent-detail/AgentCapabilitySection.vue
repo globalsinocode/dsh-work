@@ -22,11 +22,16 @@ const limitsSummary = computed(() =>
   `${form.timeoutSeconds} 秒 · ${form.maxToolCalls} 次工具调用 · ${form.maxOutputBytes.toLocaleString()} 字节输出`)
 
 function setMcpMode(mode: AgentMcpScope['mode']) {
+  if (form.mcpScope.mode === mode) return
   form.mcpScope = { mode, connectorIds: [] }
 }
 
+// 相同选择不重新赋值，避免 ElSelect 回写同值时触发无意义的草稿保存与重复渲染。
 function setSelectedMcpIds(ids: string[]) {
-  form.mcpScope = { mode: 'selected', connectorIds: [...new Set(ids.filter(Boolean))] }
+  const next = [...new Set(ids.filter(Boolean))]
+  const current = form.mcpScope.connectorIds
+  if (form.mcpScope.mode === 'selected' && next.length === current.length && next.every((id, index) => id === current[index])) return
+  form.mcpScope = { mode: 'selected', connectorIds: next }
 }
 
 function showMcpTools(connector: ConnectorDefinition) {
