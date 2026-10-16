@@ -289,7 +289,7 @@ flowchart LR
 
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 能力：** 经验迭代（AE-04）缺专属质量评测、显式停用与回滚；`agent-routine` 跳过知识与记忆检索，统一上下文需适配 Agent 独立授权；统一治理总览与跨入口真实验收（AE-06）未完成；模型能力要求 `long-context` 与 `structured-output` 目前一律拒绝，真正支持需定义约束并接通目标模型。
-- **Agent 发布流程与 Runtime 执行：** 分阶段状态见 [Agent 发布流程方案](../design/agent-release-optimization-plan.md) 和 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
+- **Agent 配置发布与 Runtime 执行：** 见 [Agent 配置与发布简化方案](../design/agent-release-optimization-plan.md)（待确认）和 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。

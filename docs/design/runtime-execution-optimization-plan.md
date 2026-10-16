@@ -24,7 +24,7 @@
 | --- | --- |
 | 当前执行、授权及状态语义 | [架构总览](../development/overview.md)、[内部端口与契约](../development/internal-ports.md) |
 | 工具契约（平台工具、DSH 内置工具的 `effect`、重试、并发、完成语义） | [内部端口与契约](../development/internal-ports.md)；已实施，不在本计划维护 |
-| MCP 能力读写标注与试运行隔离 | [Agent 发布流程方案 AR-07](agent-release-optimization-plan.md#ar-07-mcp-能力读写标注与写入型-agent-门禁) |
+| MCP 能力在试运行中的隔离 | [Agent 配置与发布简化方案第 6 节](agent-release-optimization-plan.md#6-验证的执行) |
 | 自动任务、Skill、Python 执行等产品规则 | [功能规则](../development/feature-rules.md) |
 | DSH 安装、精确版本与真实探针 | [Runtime 指南](../release/dsh-runtime-delivery.md) |
 
