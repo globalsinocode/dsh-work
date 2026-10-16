@@ -12,6 +12,6 @@ export interface ReleaseTrialRunner {
     message: string
     idempotencyKey: string
     deadlineMs?: number
-  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string }>
+  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string; failureReason?: string }>
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string): Promise<unknown>
 }

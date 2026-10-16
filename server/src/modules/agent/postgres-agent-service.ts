@@ -21,6 +21,7 @@ import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { isPlatformGovernance } from '../authorization/authorization-roles.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from '../tool/agent-mcp-scope.ts'
 import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
@@ -385,6 +386,7 @@ export class PostgresAgentService {
           ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null
         )
       `
+      await this.assertVisibleRoles(configuration.roleIds)
       await transaction`
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
@@ -418,6 +420,28 @@ export class PostgresAgentService {
     })
     await this.audit(actor.id, 'agent.create', configuration.id, 'success', `创建 Agent ${version}`)
     return this.requireAgentResult(configuration.id, versionId)
+  }
+
+  /**
+   * 可见角色必须是当前存在且启用的角色。
+   *
+   * 此前只校验了**执行**角色（assertInitialAgentGrants），可见角色不做校验，而管理端创建页
+   * 的可见角色选项一旦来自硬编码映射而非 `roles` 表，`role-manager` / `role-supply`
+   * 这类不存在的 id 就会被写进 `agent_versions.visible_role_ids`：选它等于没选（没有任何用户
+   * 能持有该 id），且会让后续「执行授权不得超出定义范围」的校验给出与真实原因无关的报错。
+   * 在这里一次性拦住，并与执行角色使用同一条错误口径。
+   */
+  private async assertVisibleRoles(roleIds: string[]) {
+    if (roleIds.length === 0) return
+    const rows = await this.database<{ id: string }[]>`
+      select id from roles where tenant_id = ${tenantId} and status = 'active'
+        and id in ${this.database(roleIds)}
+    `
+    if (rows.length !== roleIds.length) {
+      const known = new Set(rows.map(row => row.id))
+      const invalid = roleIds.filter(roleId => !known.has(roleId))
+      throw new Error(`Agent 可见角色包含不存在或已停用的角色：${invalid.join('、')}`)
+    }
   }
 
   private async assertInitialAgentGrants(roleIds: string[]) {
@@ -499,6 +523,7 @@ export class PostgresAgentService {
         `
         draftVersionId = `agent-version-${randomUUID()}`
         const newVersion = nextVersion(latest?.version ?? locked.version)
+        await this.assertVisibleRoles(configuration.roleIds)
         await transaction`
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
@@ -745,6 +770,10 @@ export class PostgresAgentService {
         `).map(row => row.roleId)
       : unique(sessionRoleIds)
     if (roleIds.length === 0) return []
+    // 平台治理角色部署团队空间成员时不参与「可见角色」判定，与
+    // assertAgentVersionVisibleToRoles 的豁免保持一致：可见角色表达「哪些员工能看到/使用」，
+    // 不是「谁有权部署」。使用面不变。
+    const governance = isPlatformGovernance(roleIds)
     return this.database<WorkbenchAgentDefinition[]>`
       select a.id, av.name, av.description, av.welcome_message as "welcomeMessage",
              av.version, av.example_prompts as "examplePrompts"
@@ -755,11 +784,11 @@ export class PostgresAgentService {
         join users u on u.tenant_id = a.tenant_id and u.id = ${userId} and u.status = 'active'
        where a.tenant_id = ${tenantId} and a.status = 'published'
          and av.status = 'published'
-         and exists (
+         and (${governance} or exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
               and av.visible_role_ids ? r.id
-         )
+         ))
        order by case when a.id = ${DEFAULT_WORKBENCH_AGENT_ID} then 0 else 1 end,
                 a.updated_at desc, a.id
     `
@@ -819,6 +848,10 @@ export class PostgresAgentService {
         `).map(row => row.roleId)
       : unique(sessionRoleIds)
     if (roleIds.length === 0) return []
+    // 平台治理角色部署团队空间成员时不参与「可见角色」判定，与
+    // assertAgentVersionVisibleToRoles 的豁免保持一致：可见角色表达「哪些员工能看到/使用」，
+    // 不是「谁有权部署」。使用面不变。
+    const governance = isPlatformGovernance(roleIds)
     const rows = await this.database<{
       id: string
       name: string
@@ -838,11 +871,11 @@ export class PostgresAgentService {
          and a.status = 'published'
          and a.allow_workspace_join = true
          and av.status = 'published'
-         and exists (
+         and (${governance} or exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
               and av.visible_role_ids ? r.id
-         )
+         ))
          and not exists (
            select 1 from workspace_agent_members wam
             where wam.tenant_id = a.tenant_id and wam.workspace_id = ${workspaceId}

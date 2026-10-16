@@ -23,6 +23,11 @@ import type { AgentDelegationPolicy, AgentMcpScope } from '../../domain/types.ts
 import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 import { RequestError, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import {
+  describePromptTemplateFinding,
+  findPromptTemplateFindings,
+  PROMPT_TEMPLATE_REMEDIATION,
+} from './prompt-template.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -760,6 +765,7 @@ export class PostgresAgentReleaseService {
         dataRequirementError = error instanceof Error ? error.message : String(error)
       }
     }
+    const promptFindings = findPromptTemplateFindings(draft.systemPrompt)
     return [
       {
         id: 'audience', label: '员工可见范围', status: audienceError ? 'failed' : 'passed',
@@ -846,6 +852,14 @@ export class PostgresAgentReleaseService {
               ? `授权兼容性校验未通过：${resolved.authError}`
               // F-07：此处只核实了授权兼容；DSH 可用性与模型能力要求由每次 Attempt 派发时校验，不在此声称已适配。
               : '授权范围兼容；DSH 执行能力与模型能力要求在试运行派发时校验',
+      },
+      {
+        id: 'prompt',
+        label: '系统提示词模板语法',
+        status: promptFindings.length ? 'failed' : 'passed',
+        detail: promptFindings.length
+          ? `${promptFindings.map(describePromptTemplateFinding).join('；')}。${PROMPT_TEMPLATE_REMEDIATION}`
+          : '未使用 DSH 保留的 {{...}} 模板变量写法',
       },
       {
         id: 'cases',
@@ -1298,6 +1312,8 @@ export class PostgresAgentReleaseService {
           runId: result.runId, attemptId: result.attemptId,
           // 审核人必须能检查完整回答；截取开头会掩盖后文中的越权承诺或错误结论。
           status: result.status, outputExcerpt: result.output,
+          // 运行时失败必须带上原因，否则卡片只剩一个空白失败（见 readRunFailureReason）。
+          ...(result.status === 'failed' && result.failureReason ? { error: result.failureReason } : {}),
         })
       } catch (error) {
         // 派发失败（编译/路由/调度异常）属于基础设施故障，后续案例不再浪费
