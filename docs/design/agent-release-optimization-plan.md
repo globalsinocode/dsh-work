@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | Agent 通用规则（AS-01～AS-12） | [Agent 设计规范](../development/agent-design-standard.md) | 本计划落实其中与发布相关的 AS-06、AS-07、AS-11、AS-12 |
 | 用户旅程与验收 | [e2e/TEST-CATALOG.md](../../e2e/TEST-CATALOG.md) AG-REL-01/02 | 每阶段先更新旅程，再改代码 |
-| 执行观测、恢复与容量 | [Runtime 执行架构渐进优化方案](runtime-execution-optimization-plan.md) | 后台试运行占用 Runtime 容量，规则见 D-5 |
+| 执行观测与容量 | [Runtime 执行架构渐进优化方案](runtime-execution-optimization-plan.md) | 后台试运行占用 Runtime 容量，规则见 D-5 |
 
 ## 2. 现行流程与已完成的修复
 
