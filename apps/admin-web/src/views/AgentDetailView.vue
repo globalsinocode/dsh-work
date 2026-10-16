@@ -7,6 +7,7 @@ import { StatusTag } from '@dsh-work/ui-core'
 import AgentAccessPanel from '@/components/AgentAccessPanel.vue'
 import AgentRoutinePanel from '@/components/AgentRoutinePanel.vue'
 import AgentCapabilitySection from '@/components/agent-detail/AgentCapabilitySection.vue'
+import AgentExperiencePanel from '@/components/agent-detail/AgentExperiencePanel.vue'
 import AgentProfileSection from '@/components/agent-detail/AgentProfileSection.vue'
 import AgentReleasePanel from '@/components/agent-detail/AgentReleasePanel.vue'
 import AgentRunsPanel from '@/components/agent-detail/AgentRunsPanel.vue'
@@ -20,6 +21,7 @@ const sections = [
   { id: 'capabilities', label: '能力' },
   { id: 'access', label: '岗位权限' },
   { id: 'routines', label: '主动任务' },
+  { id: 'experience', label: '经验' },
   { id: 'release', label: '验证与发布' },
   { id: 'runs', label: '运行记录' },
 ] as const
@@ -210,6 +212,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
             <AgentRoutinePanel :agent-id="agent.id" :versions="versions" :can-manage="canManage" />
           </section>
         </div>
+        <div v-else-if="activeSection === 'experience'" class="content-panel detail-card"><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
         <AgentReleasePanel v-else-if="activeSection === 'release'" :agent-id="agent.id" @open-access="openSection('access')" @edit="openSection('profile')" />
         <div v-else-if="activeSection === 'runs'" class="content-panel detail-card"><AgentRunsPanel :agent-id="agent.id" /></div>
       </div>

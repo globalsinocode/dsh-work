@@ -47,7 +47,7 @@ it('详情页默认打开职责与人格，页头显示当前版本与可用性'
     expect(wrapper.text()).toContain('当前版本 v0.1.0')
     expect(wrapper.text()).toContain('已启用')
     const tabs = wrapper.findAll('[role="tab"]').map(tab => tab.text())
-    expect(tabs).toEqual(['职责与人格', '能力', '岗位权限', '主动任务', '验证与发布', '运行记录'])
+    expect(tabs).toEqual(['职责与人格', '能力', '岗位权限', '主动任务', '经验', '验证与发布', '运行记录'])
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('职责与人格')
     expect(wrapper.find('textarea[maxlength="20000"]').exists()).toBe(true)
   } finally {

@@ -70,6 +70,8 @@ function showMcpTools(connector: ConnectorDefinition) {
         <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；验证和新任务将被拒绝，请修正选择或恢复连接。" />
       </div>
 
+      <p class="field-help approval-note">需要人工批准的敏感操作由工具策略决定（“工具权限”页），不按 Agent 单独设置；运行中命中时等待管理员在“动作审批”中处理。</p>
+
       <details class="limits" :open="limitsOpen || undefined" @toggle="limitsOpen = ($event.target as HTMLDetailsElement).open">
         <summary>运行限制 <small>{{ limitsSummary }}</small></summary>
         <div class="limits__grid">
@@ -106,7 +108,8 @@ function showMcpTools(connector: ConnectorDefinition) {
 .selected-mcp > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .selected-mcp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selected-mcp small { color: var(--color-text-muted); overflow-wrap: anywhere; }
-.limits { margin-top: 20px; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
+.approval-note { margin-top: 16px; }
+.limits { margin-top: 12px; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .limits summary { cursor: pointer; color: var(--color-text-heading); font-weight: var(--font-weight-title); }
 .limits summary small { margin-left: 8px; color: var(--color-text-muted); font-weight: normal; }
 .limits__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; margin-top: 12px; }

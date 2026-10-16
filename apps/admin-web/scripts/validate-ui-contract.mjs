@@ -148,6 +148,7 @@ requireFragments('src/views/AgentDetailView.vue', [
   '能力',
   '岗位权限',
   '主动任务',
+  '经验',
   '验证与发布',
   '运行记录',
   'provideAgentDraftEditor',
@@ -168,6 +169,7 @@ requireFragments('src/components/agent-detail/AgentReleasePanel.vue', [
   'data-action="publish-agent"',
   'data-action="rollback-agent"',
 ])
+requireFragments('src/components/agent-detail/AgentExperiencePanel.vue', ['批准并发布', '拒绝时必须填写原因', '/experience-iterations'])
 forbidFragments('src/components/agent-detail/AgentReleasePanel.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
