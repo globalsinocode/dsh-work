@@ -354,6 +354,47 @@ test('S3 已声明能力缺少授权时阻止验证，不产生 Runtime Attempt'
   }
 })
 
+test('验证以可见角色可及的权限为上限：Agent 多出的角色与数据范围不进入试运行', async () => {
+  const agentId = `agent-ceiling-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId, { skills: [], tools: [] })
+  // domain:operations 只授予工作空间，可见角色的员工都拿不到；role-platform-admin 不是可见角色。
+  await setAccess(agentId, {
+    visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'],
+    dataScopes: ['workspace:authorized', 'domain:operations'],
+  })
+  const check = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
+  assert.equal(check?.passed, true)
+  assert.match(check?.detail ?? '', /1 个角色、1 个数据范围/)
+  const done = await runValidation(agentId)
+  const manifest = trialRuntime.manifest(done.cases[0]!.runId!)
+  assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
+  assert.deepEqual(manifest?.data_scopes, ['workspace:authorized'])
+})
+
+test('能力所需授权只有可见角色之外的角色才有时，验证前检查不通过', async () => {
+  await tools.updateToolPermissions({
+    toolId: 'grep', allowedRoles: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none', actor: ADMIN,
+  })
+  try {
+    const agentId = `agent-ceiling-tool-${randomUUID().slice(0, 8)}`
+    const created = await createDraftAgent(agentId, { skills: [], tools: ['grep@1.0.0'] })
+    await setAccess(agentId, { visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'] })
+    const check = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
+    assert.equal(check?.passed, false)
+    assert.match(check?.detail ?? '', /可见角色的员工无法让 Agent 使用这些能力/)
+    await assert.rejects(validation.startValidation(agentId, ADMIN), /能力所需授权/)
+    assert.equal(await attemptCount(created.version.id), 0)
+    await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'] })
+    assert.equal((await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')?.passed, true)
+  } finally {
+    await tools.updateToolPermissions({
+      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
+      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
+    })
+  }
+})
+
 test('S3 放宽岗位权限不作废验证；收窄到撤掉冻结的工具时发布被拒绝', async () => {
   const agentId = `agent-widen-${randomUUID().slice(0, 8)}`
   await createDraftAgent(agentId, { skills: [], tools: [] })

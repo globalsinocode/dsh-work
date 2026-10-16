@@ -5,6 +5,7 @@ import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from './platform-admin-actor.ts'
+import { resolveAudienceCeiling, type AudienceCeiling } from './agent-audience-ceiling.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
 import { invalidRequest, notFound } from '../../domain/request-errors.ts'
@@ -677,44 +678,46 @@ export class PostgresAuthorizationService {
   /**
    * S3 validation: the decision a release trial runs under, in the same shape as an
    * employee run so both share one Manifest builder. The Agent works with its own current
-   * grants (never the audience or the admin's roles); there is no workspace.
+   * grants, capped by what its audience could reach (see resolveAudienceCeiling); never
+   * the admin's roles. There is no workspace.
    */
   async authorizeReleaseTrial(input: { userId: string; agentVersionId: string }): Promise<RuntimeAuthorizationDecision> {
     const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
-    await this.assertAgentPrincipalSnapshot(input.agentVersionId, principal.roleIds, principal.dataScopes)
+    const scope = await resolveAudienceCeiling(this.database, principal.agentId, principal)
+    await this.assertAgentPrincipalSnapshot(input.agentVersionId, scope.roleIds, scope.dataScopes)
     return {
       userId: input.userId,
       workspaceId: null,
       executorPrincipalId: principal.id,
       executorAuthorizationVersion: principal.authorizationVersion,
-      roleIds: principal.roleIds,
-      permissions: await this.permissionsForRoles(principal.roleIds),
-      dataScopes: principal.dataScopes,
+      roleIds: scope.roleIds,
+      permissions: await this.permissionsForRoles(scope.roleIds),
+      dataScopes: scope.dataScopes,
       agentVersionId: input.agentVersionId,
     }
   }
 
-  /** Release trials use the Agent's own grants, never the audience or creator's roles. */
-  async resolveAgentPrincipalTrialScope(agentVersionId: string): Promise<{
-    roleIds: string[]; dataScopes: string[]
-  }> {
+  /** The roles and scopes a release trial runs with: the Agent's grants under the audience ceiling. */
+  async resolveAgentPrincipalTrialScope(agentVersionId: string): Promise<AudienceCeiling> {
     const principal = await this.requireAgentPrincipalGrants(agentVersionId)
-    return { roleIds: principal.roleIds, dataScopes: principal.dataScopes }
+    return resolveAudienceCeiling(this.database, principal.agentId, principal)
   }
 
   private async requireAgentPrincipalGrants(agentVersionId: string): Promise<{
     id: string
+    agentId: string
     authorizationVersion: number
     roleIds: string[]
     dataScopes: string[]
   }> {
     const [row] = await this.database<{
       id: string
+      agentId: string
       authorizationVersion: number
       roleIds: string[]
       dataScopes: string[]
     }[]>`
-      select ep.id, ep.authorization_version as "authorizationVersion",
+      select ep.id, ep.agent_id as "agentId", ep.authorization_version as "authorizationVersion",
              coalesce((select jsonb_agg(g.role_id) from agent_principal_role_grants g
                         join roles r on r.tenant_id = g.tenant_id and r.id = g.role_id and r.status = 'active'
                        where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "roleIds",

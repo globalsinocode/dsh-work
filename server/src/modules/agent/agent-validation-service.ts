@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
+import { resolveAudienceCeiling } from '../authorization/agent-audience-ceiling.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresAgentService } from './postgres-agent-service.ts'
@@ -605,8 +606,16 @@ export class PostgresAgentValidationService {
       try { await this.tools?.assertAvailableReferences([reference]) } catch { missing.push(reference) }
     }
     let authorizationError: string | undefined
+    // Validation runs under the audience ceiling, so what the declared capabilities need
+    // must be reachable by the visible roles too, not only granted to the Agent.
+    const ceiling = await resolveAudienceCeiling(this.database, agentId, principal)
     try {
       await this.tools?.assertAuthorizationCompatibility(version.tools, principal.roleIds, principal.dataScopes)
+      try {
+        await this.tools?.assertAuthorizationCompatibility(version.tools, ceiling.roleIds, ceiling.dataScopes)
+      } catch (error) {
+        throw new Error(`可见角色的员工无法让 Agent 使用这些能力：${error instanceof Error ? error.message : String(error)}`)
+      }
       if (this.skills && !missing.length) {
         const runtimeSkills = await this.skills.resolveRuntimeSkills(version.skills)
         const declared = new Set(version.tools)
@@ -641,7 +650,7 @@ export class PostgresAgentValidationService {
       },
       {
         id: 'authorization', label: '能力所需授权', passed: !authorizationError,
-        detail: authorizationError ?? '已声明的能力都已获授权',
+        detail: authorizationError ?? `已声明的能力都已获授权；验证按可见角色可及的权限执行（${ceiling.roleIds.length} 个角色、${ceiling.dataScopes.length} 个数据范围）`,
       },
       {
         id: 'mcp', label: 'MCP 范围', passed: !mcpError,
