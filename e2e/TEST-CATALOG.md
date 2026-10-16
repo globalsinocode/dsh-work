@@ -917,6 +917,8 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **验收：** 上述测试通过；P2 另需在目标环境用真实 DSH 让 Agent 读取一个不存在的文件，确认执行步骤出现失败的工具调用、任务本身仍可完成，并留证 Run/Attempt 与 DSH 版本。
 
+**本地 P2（2026-10-16）：** 已通过。真实 `read` 失败 1 次，步骤和失败计数可见，`tool.completed` 早于 `run.completed`，Run 为 `succeeded`。服务基线、Run/Attempt、DSH 精确版本与截图见[验收记录](../docs/development/runtime-execution-local-p2-2026-10-16.json)；未覆盖目标部署环境及 ACP 实时通知。
+
 ### EX-ARTIFACT-01 引用上一轮成果并产生新版本
 
 **优先级：** P1 · **角色：** 员工（成果发起人）、同空间外的另一员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器与前端组件<br>
@@ -930,3 +932,17 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **验收：** 两轮后同一成果有 V1、V2，两版下载内容分别为原文与修改后内容；附带的新文件是独立成果；跨用户引用被拒绝。P2 另需在目标环境用真实 DSH 完成“第一轮生成 Markdown/CSV、第二轮修改指定部分”，下载两版核对差异，并留证 Run/Attempt 与 DSH 版本。
 
+**本地 P2（2026-10-16）：** 已通过两轮 Markdown 修改。V1 按 `artifact_revision` 只读挂载，输入权限为 `0400`；同名成果登记 V2，仅改指定行，附录为独立 V1。V2 完成后重新下载 V1 与原文一致。服务基线、Run/Attempt、成果 ID、SHA-256 与截图见[验收记录](../docs/development/runtime-execution-local-p2-2026-10-16.json)；跨用户拒绝仍以既有 P1 证据为准，本次未复跑。
+
+### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>
+**前置数据：** 一个个人会话，较早消息合计超过 64000 字符，首条消息写明目标与约束<br>
+**spec：** `server/src/domain/conversation-context.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/runtime-manifest-schema.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`
+
+1. 摘要尚未生成时，新一轮的历史保留首条消息原文与最新消息，合计不超过 64000 字符，中间较早的消息被裁掉，员工端没有任何提示。
+2. 该轮结束后后台生成一次摘要：`session-summary` 运行没有 Session、不带工具，首条消息不进入摘要输入，摘要回答不写入会话消息。
+3. 下一轮的 Manifest 带首条消息原文、摘要和摘要之后的最近消息；已被摘要覆盖的消息不再以原文带入。
+4. 摘要失败、DSH 不可用或会话被移除时，下一轮退回步骤 1 的裁剪，任务正常执行。
+
+**验收：** 上述测试通过；P2 另需用真实 DSH 跑一段超过 48000 字符的会话，确认摘要生成，并在第 20 轮之后首条消息与中间轮次给出的约束仍被遵守，留证 Run/Attempt、摘要内容与 DSH 版本。

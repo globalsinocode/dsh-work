@@ -108,6 +108,7 @@ export class RunEventRecorder {
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'cancelled', '')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
@@ -128,6 +129,7 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务失败，终止所有活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
@@ -150,6 +152,9 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      // EX-02：会话 Run 结束后按需在后台生成摘要；无 Session 的 Run 可能就是摘要运行本身。
+      if (run.sessionId) void this.deps.sessionSummaries?.scheduleAfterRun(run)
+      else await this.deps.sessionSummaries?.onRunTerminal(run, 'succeeded', assistantOutput)
       this.assistantOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {

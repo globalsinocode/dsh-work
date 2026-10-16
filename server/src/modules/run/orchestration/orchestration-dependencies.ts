@@ -1,3 +1,4 @@
+import type { RunRecord } from '../run-types.ts'
 import type { ModelGovernanceService } from '../../model/model-governance-service.ts'
 import type { AgentRuntimePort } from '../../runtime/runtime-types.ts'
 import type { PostgresConversationRepository } from '../../workbench/application/postgres-conversation-repository.ts'
@@ -45,4 +46,11 @@ export interface OrchestrationDependencies {
   readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
   persistentWait?: PersistentWaitPort
   delegation?: DelegationPort
+  /** EX-02 conversation summaries; wired by the facade after construction. */
+  sessionSummaries?: SessionSummaryPort
+}
+
+export interface SessionSummaryPort {
+  scheduleAfterRun(run: RunRecord): Promise<void>
+  onRunTerminal(run: RunRecord, status: 'succeeded' | 'failed' | 'cancelled', output: string): Promise<boolean>
 }

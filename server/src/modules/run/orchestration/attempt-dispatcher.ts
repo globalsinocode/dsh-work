@@ -49,6 +49,8 @@ export class AttemptDispatcher {
     authorization?: RuntimeAuthorizationDecision
     additionalSkillReferences?: string[]
     history?: RuntimeManifest['input']['conversation_history']
+    /** EX-02 summary of the conversation between the first message and the recent history. */
+    conversationSummary?: RuntimeManifest['input']['conversation_summary'] | null
     /** AG-03/管理侧 purpose；缺省为员工交互运行（无 purpose 字段）。 */
     purpose?: RuntimeManifest['purpose']
     /** 确定性 Attempt ID（自动任务 = attempt-<executionId>），缺省随机。 */
@@ -201,6 +203,7 @@ export class AttemptDispatcher {
         message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.map(file => file.mount),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
+        ...(input.history?.length && input.conversationSummary ? { conversation_summary: input.conversationSummary } : {}),
       },
       budget: await this.budget.manifest(run, limits),
       limits,

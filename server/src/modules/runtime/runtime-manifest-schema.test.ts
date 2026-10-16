@@ -123,6 +123,32 @@ function assertBothAccept(manifest: RuntimeManifest, label: string) {
 }
 
 describe('Runtime Manifest Schema / compiler boundary', () => {
+  it('EX-02 accepts a session-summary run and a conversation summary; rejects misuse', () => {
+    const turn = baseManifest()
+    turn.input.conversation_history = [{ role: 'user', content: '首条' }]
+    turn.input.conversation_summary = { content: '摘要', covered_message_count: 3, sha256: sha256('摘要') }
+    assertBothAccept(turn, 'conversation summary')
+    const forged = structuredClone(turn)
+    forged.input.conversation_summary!.sha256 = sha256('另一段')
+    assert.throws(() => compileRuntimeManifest(forged), /conversation_summary is invalid/)
+
+    const summaryRun = baseManifest()
+    summaryRun.purpose = 'session-summary'
+    summaryRun.summary_target = { session_id: 'session-long', covered_through_message_id: 'message-9' }
+    summaryRun.session_id = null
+    summaryRun.workspace_id = ''
+    summaryRun.agent_version_id = null
+    summaryRun.skills = []
+    summaryRun.tools = []
+    assertBothAccept(summaryRun, 'session-summary run')
+    const withTools = structuredClone(summaryRun)
+    withTools.tools = [{ id: 'read', version: '1.0.0' }]
+    assert.throws(() => compileRuntimeManifest(withTools), /session-summary runs carry no Agent/)
+    const strayTarget = baseManifest()
+    strayTarget.summary_target = { session_id: 's', covered_through_message_id: 'm' }
+    assert.throws(() => compileRuntimeManifest(strayTarget), /summary_target is required for and only allowed/)
+  })
+
   it('accepts a bounded MCP Connector snapshot and rejects secret or unsupported transport fields', () => {
     const manifest = baseManifest()
     manifest.permission_policy.network_policy = 'allowlist'

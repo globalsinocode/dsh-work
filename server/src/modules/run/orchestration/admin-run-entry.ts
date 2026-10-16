@@ -13,7 +13,7 @@ import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
 import type { RunCancellation } from './run-cancellation.ts'
-import { withContinuationOutputs } from './continuation.ts'
+import { adminContinuationBounds, withContinuationOutputs } from './continuation.ts'
 import { adminSystemPrompt, adminTools, assertPrompt, flattenSkillDependencies, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
@@ -93,6 +93,7 @@ export class AdminRunEntry implements AdminRunLauncher {
         await this.deps.conversations.getConversationHistory(run.sessionId!, run.id),
         run.id,
         await this.deps.conversations.getRunPrompt(run.id),
+        adminContinuationBounds,
       )
       const retryPurpose: AdminRunPurpose = manifest.purpose && isAdminRunPurpose(manifest.purpose) ? manifest.purpose : 'admin-skill-install'
       await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', retryPurpose, undefined, continued.history)

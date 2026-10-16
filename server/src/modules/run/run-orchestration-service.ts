@@ -30,6 +30,8 @@ import { AttemptDispatcher } from './orchestration/attempt-dispatcher.ts'
 import { AttemptScheduler } from './orchestration/attempt-scheduler.ts'
 import { BackgroundRunEntry } from './orchestration/background-run-entry.ts'
 import { withContinuationOutputs } from './orchestration/continuation.ts'
+import { buildConversationContext } from '../../domain/conversation-context.ts'
+import { SessionSummaryEntry } from './orchestration/session-summary-entry.ts'
 import { ExecutionAuthorizationGate } from './orchestration/execution-authorization-gate.ts'
 import { assertPrompt, attemptLimitsForBudget, manifestLimitsForRetry } from './orchestration/manifest-helpers.ts'
 import {
@@ -105,6 +107,16 @@ export class RunOrchestrationService {
     this.admin = new AdminRunEntry(this.deps, this.dispatcher, this.scheduler, budget, this.cancellation)
     this.trials = new ReleaseTrialEntry(this.deps, this.dispatcher, budget, this.cancellation)
     this.background = new BackgroundRunEntry(this.deps, this.dispatcher)
+    this.deps.sessionSummaries = new SessionSummaryEntry(this.deps, this.dispatcher, budget)
+  }
+
+  /** EX-02: first message, summary and recent messages carried by a workbench turn. */
+  private async conversationContext(sessionId: string, runId: string) {
+    const [messages, summary] = await Promise.all([
+      this.deps.conversations.getConversationMessages(sessionId, runId),
+      this.deps.conversations.getCurrentConversationSummary(sessionId),
+    ])
+    return buildConversationContext(messages, summary)
   }
 
   setPersistentWaitService(service: PersistentWaitPort): void {
@@ -341,7 +353,7 @@ export class RunOrchestrationService {
       messageId: `message-user-${run.id}`,
     })
     await this.dispatcher.failUndispatchedRun(run, async () => {
-      const history = await this.deps.conversations.getConversationHistory(session.id, run.id)
+      const context = await this.conversationContext(session.id, run.id)
       await this.dispatcher.dispatch(run, {
         prompt,
         workspaceId: session.workspaceId,
@@ -351,7 +363,8 @@ export class RunOrchestrationService {
         preparedFiles,
         authorization,
         additionalSkillReferences,
-        history,
+        history: context.history,
+        conversationSummary: context.summary,
         limits: attemptLimitsForBudget(normalizedBudget),
       })
     })
@@ -575,7 +588,7 @@ export class RunOrchestrationService {
           senderUserId: userId,
           messageId: `message-user-${retried.id}`,
         })
-        const history = await this.deps.conversations.getConversationHistory(session.id, retried.id)
+        const context = await this.conversationContext(session.id, retried.id)
         await this.dispatcher.dispatch(retried, {
           prompt,
           workspaceId: session.workspaceId,
@@ -584,15 +597,17 @@ export class RunOrchestrationService {
           fileIds,
           authorization,
           additionalSkillReferences,
-          history,
+          history: context.history,
+          conversationSummary: context.summary,
         })
       })
       await this.deps.operations?.appendAudit(userId, 'run.retry', retried.id, 'success', `trace-${retried.id}`, `员工重新发起共享运行（来源 ${run.id}）`)
       return this.deps.runs.getRun(tenantId, retried.id)
     }
+    const context = await this.conversationContext(session.id, run.id)
     const continued = await withContinuationOutputs(
       this.deps.conversations,
-      await this.deps.conversations.getConversationHistory(session.id, run.id),
+      context.history,
       run.id,
       prompt,
     )
@@ -606,6 +621,7 @@ export class RunOrchestrationService {
       authorization,
       additionalSkillReferences,
       history: continued.history,
+      conversationSummary: context.summary,
       limits: lastAttempt?.manifest
         ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
         : undefined,

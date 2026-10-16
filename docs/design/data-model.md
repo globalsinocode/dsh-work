@@ -2,7 +2,7 @@
 
 PostgreSQL 是产品事实来源。本文按领域说明表的作用、关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../../server/migrations/) 为准，不维护另一份 DDL 副本。
 
-当前共 108 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
+当前共 109 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
 
 ## 领域总览
 
@@ -88,6 +88,7 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `sessions`、`messages` | 产品会话与消息 | 必须归属空间；个人会话锁定 Agent Version，团队会话按消息绑定 Agent 成员；产品 Session 不等于 DSH Session |
+| `session_summaries` | 长对话中段的摘要（EX-02） | 覆盖首条消息之后、到 `covered_through` 为止的消息；每个会话最多一条 pending；由无 Session 的 `session-summary` 运行生成，成功后不可修改，较新的摘要取代旧的 |
 | `tasks` | 一次业务请求 | 按来源类型和关联键幂等受理；API/event 请求摘要不可漂移；可选关联 Session |
 | `task_operations` | Task 的外部动作与回执 | 按 Task + 操作键唯一，参数摘要不可漂移；效果未知必须查询后收敛 |
 | `runs` | Task 下的执行 | 每个 Run 必须归属 Task：会话 Run 未带 Task 时触发器自动创建，无会话 Run 必须显式提供；Run 状态变化由触发器同步到 Task |

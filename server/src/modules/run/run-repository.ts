@@ -57,6 +57,13 @@ export interface RunRepository {
    * 部署/运维状态——调用方应留队重排而非把排队 Run 收敛为容量失败；
    * 只有 `exists && accepting && allowed <= 0` 才是确定的容量收敛条件。
    */
+  /** EX-02 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use. */
+  backgroundLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    purpose: 'automation' | 'session-summary',
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
   automationLaneUsage(
     tenantId: string,
     runtimeId: string,

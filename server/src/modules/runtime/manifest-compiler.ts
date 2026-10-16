@@ -114,8 +114,32 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)
   }
   const history = input.input.conversation_history ?? []
-  if (history.length > 12 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 24000) {
+  if (history.length > 500 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 64_000) {
     throw new TypeError('conversation_history exceeds the bounded conversation context')
+  }
+  const summary = input.input.conversation_summary
+  if (summary !== undefined) {
+    if (typeof summary.content !== 'string' || !summary.content.trim() || summary.content.length > 8_000
+      || !Number.isInteger(summary.covered_message_count) || summary.covered_message_count < 1
+      || summary.sha256 !== sha256(summary.content)
+      || Object.keys(summary).some(key => !['content', 'covered_message_count', 'sha256'].includes(key))) {
+      throw new TypeError('conversation_summary is invalid')
+    }
+  }
+  if ((input.purpose === 'session-summary') !== (input.summary_target !== undefined)) {
+    throw new TypeError('summary_target is required for and only allowed with the session-summary purpose')
+  }
+  if (input.purpose === 'session-summary') {
+    const target = input.summary_target!
+    if (typeof target.session_id !== 'string' || !target.session_id || typeof target.covered_through_message_id !== 'string' || !target.covered_through_message_id
+      || Object.keys(target).some(key => !['session_id', 'covered_through_message_id'].includes(key))) {
+      throw new TypeError('summary_target is invalid')
+    }
+    if (input.agent_version_id !== null || input.workspace_id !== '' || input.session_id !== null
+      || input.tools.length || input.skills.length || input.mcp_connections?.length
+      || input.input.file_mounts.length || history.length || summary !== undefined) {
+      throw new TypeError('session-summary runs carry no Agent, Workspace, Session, tools, files or history')
+    }
   }
   if (input.input.message.trim().length === 0) throw new TypeError('input.message must not be blank')
   if (input.resume !== undefined) {

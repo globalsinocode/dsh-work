@@ -45,6 +45,11 @@ export class ExecutionAuthorizationGate {
       }
       await this.deps.delegation?.assertActiveDelegation(manifest)
       await this.deps.memory?.assertCurrentReferences(manifest)
+      // EX-02：摘要运行只读取清单内的对话文本，不带工具；只需确认目标会话仍可摘要。
+      if (manifest.purpose === 'session-summary') {
+        if (!await this.summarizable(manifest)) throw authorizationDenied('会话已移除或空间已归档，摘要未执行')
+        return
+      }
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
       // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
@@ -76,6 +81,11 @@ export class ExecutionAuthorizationGate {
     }
   }
 
+  private async summarizable(manifest: RuntimeManifest): Promise<boolean> {
+    const target = manifest.summary_target
+    return Boolean(target && await this.deps.conversations.summarizableSessionWorkspace(target.session_id))
+  }
+
   /** Decides, after a claim and before the Runtime runs, whether the Attempt may still execute. */
   async recheckExecutionAuthorization(
     run: RunRecord,
@@ -104,6 +114,11 @@ export class ExecutionAuthorizationGate {
         }
         throw error
       }
+    }
+    if (manifest.purpose === 'session-summary') {
+      return await this.summarizable(manifest)
+        ? { denied: false }
+        : { denied: true, reason: '会话已移除或空间已归档，摘要未执行' }
     }
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
     // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权

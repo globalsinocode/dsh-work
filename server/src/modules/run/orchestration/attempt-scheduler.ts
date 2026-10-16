@@ -1,4 +1,5 @@
 import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../../runtime/execution-capabilities.ts'
+import { sessionSummaryMaxConcurrent } from '../../../domain/conversation-context.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import type { RunRepository } from '../run-repository.ts'
@@ -123,6 +124,20 @@ export class AttemptScheduler {
             if (lane.exists && lane.accepting && lane.allowed <= 0) {
               this.pendingExecutions.splice(index, 1)
               await this.failAutomationRunForCapacity(next.run, next.manifest)
+              continue
+            }
+            if (lane.exists && lane.accepting && lane.running >= lane.allowed) {
+              index += 1
+              continue
+            }
+          }
+          // EX-02：摘要车道同理——容量不足以保留交互余量时摘要直接失败（下一轮退回裁剪），
+          // 车道满则留队，继续扫描交互任务。
+          if (next.manifest.purpose === 'session-summary') {
+            const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, 'session-summary', sessionSummaryMaxConcurrent)
+            if (lane.exists && lane.accepting && lane.allowed <= 0) {
+              this.pendingExecutions.splice(index, 1)
+              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, 'Runtime 容量不足以在保留交互余量的同时生成摘要')
               continue
             }
             if (lane.exists && lane.accepting && lane.running >= lane.allowed) {

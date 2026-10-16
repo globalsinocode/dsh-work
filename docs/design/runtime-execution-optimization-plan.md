@@ -33,9 +33,9 @@
 | 当前事实 | 依据 |
 | --- | --- |
 | 每个 Attempt 创建目录、准备输入和 Skill 文件、启动 Worker 并新建 ACP Session；Adapter 在 `run.started` 中上报 `prepare_ms`、`worker_spawn_ms`、`worker_init_ms`、`session_ready_ms`，在终态事件中上报 `elapsed_ms`、`execution_ms`、`first_output_ms`、Token 与工具调用数；Worker 启动时限与执行时限分开 | [Runtime Adapter](../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts) |
-| 排队等待可由 `run.queued` 与 `run.started` 的时间差得到；没有汇总脚本，没有成果收集耗时和 CPU/内存记录 | `run_events` |
+| 排队等待取 Attempt 创建到领取（`run_attempts.created_at` → `started_at`）；`pnpm report:run-timings` 汇总各阶段 p50/p95 与失败率；终态事件另报成果收集耗时与 Worker 结束时的 RSS、CPU 时间 | [汇总脚本](../../scripts/runtime/run-timings.ts) |
 | 每次工具调用在 Attempt 结束时以 `tool.completed` 事件补齐（成功、失败原因、未收到结果）；执行过程中看不到工具步骤，ACP `tool_call` 实时通知未经验证 | 同上；测试目录 EX-TOOL-01 |
-| 多轮输入携带最近的 user/assistant 消息，上限 12 条、24000 字符；超出时从最早的消息开始丢弃，用户不知情 | [continuation.ts](../../server/src/modules/run/orchestration/continuation.ts)、[Manifest 编译器](../../server/src/modules/runtime/manifest-compiler.ts) |
+| 员工会话每轮携带首条消息原文、较早对话的摘要与最近消息原文，合计不超过 64000 字符；摘要由后台 `session-summary` 运行生成，缺失时退回保留首条的裁剪。管理会话仍为最近 12 条、24000 字符 | [对话上下文](../../server/src/domain/conversation-context.ts)、[摘要运行](../../server/src/modules/run/orchestration/session-summary-entry.ts) |
 | 超时中断的 Attempt 把已生成的部分回答落库，重试时带入；员工可在对话中“继续修改”上一轮成果，同名输出登记为下一版本 | 测试目录 EX-ARTIFACT-01 |
 | PF-04 持久化审批：Worker 在审批前保存有界检查点（待执行参数、已完成工具结果、输出工作文件、未提交的部分回答），释放 Worker；批准后以 `new-attempt-context-v1` 策略新建 Attempt，从检查点上下文继续 | [持久化等待服务](../../server/src/modules/run/postgres-persistent-wait-service.ts) |
 | 服务重启时排队的 Attempt 重新调度；活动 Attempt 标记 `SERVICE_RESTARTED` 失败，已完成的工具结果与部分回答不保留；用户手动重试新建 Attempt，从头执行 | [Run Repository](../../server/src/modules/run/postgres-run-repository.ts) |
@@ -45,9 +45,9 @@
 
 | 编号 | 阶段 | 依赖 | 状态 |
 | --- | --- | --- | --- |
-| EX-00 | 测量基线与 DSH 能力核实 | 无 | 分段耗时已上报；汇总脚本、固定场景与能力核实未做 |
+| EX-00 | 测量基线与 DSH 能力核实 | 无 | 汇总脚本与补充指标已交付；固定场景采集与 DSH 能力核实未做 |
 | EX-01 | 执行过程可见 | 实时部分依赖 EX-00 的能力核实 | 部分交付：工具步骤在 Attempt 结束时补齐；实时展示未做 |
-| EX-02 | 跨轮上下文 | 无 | 部分交付：超时部分回答带入重试、继续修改成果；对话摘要待实施 |
+| EX-02 | 跨轮上下文 | 无 | 代码已交付：对话摘要与兜底裁剪（未经真实 DSH 验收）；继续修改成果已通过本地真实 DSH 验收；“继续”语义区分未做 |
 | EX-04 | 按瓶颈优化执行开销 | EX-00 的测量结论 | 待测量 |
 
 EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结论前不实施。编号 EX-03 不再使用（中断后继续执行已决定不做，见第 1 节约束 2）。
@@ -56,8 +56,8 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 
 ### 交付物
 
-1. **汇总脚本：** 从 `run_events` 读取指定时间段或指定 Run 的事件，按阶段输出样本量、p50、p95 与失败率：排队等待、准备、Worker 启动、初始化、Session 就绪、首次输出、执行、端到端。缺少的指标标明缺失原因，不填 0。
-2. **补充两项上报：** 成果收集耗时；Attempt 结束时 Worker 进程的峰值 RSS 与 CPU 时间（取不到时标明不可用）。
+1. **汇总脚本（已交付）：** `pnpm report:run-timings -- [--since …] [--until …] [--purpose employee|automation|session-summary|all] [--run <runId>] [--json]`，从 `run_events`、`run_attempts` 读取指定时间段或指定 Run 的事件，按阶段输出样本量、p50、p95 与失败率：排队等待、准备、Worker 启动、初始化、Session 就绪、首次输出、执行、端到端。缺少的指标标明缺失原因，不填 0。
+2. **补充两项上报（已交付）：** `run.completed` 带 `artifact_collect_ms`，以及 prompt 结束时用 `ps` 采样的 Worker `worker_rss_kb`、`worker_cpu_ms`（取不到为 null）。RSS 是结束时的驻留内存，不是峰值；需要峰值时再评估周期采样。
 3. **固定测量场景：** 纯文本、带输入文件、带 Skill、两轮修改同一成果、取消、故障任务；并发 1/3/5 与 50 个 Run 排队（命令见[开发与测试](../development/development.md)）。受控 Runtime 与真实 DSH 分开记录。
 4. **DSH 能力核实表：** 在当前锁定的 DSH 版本上核实 ACP `tool_call`/`tool_call_update` 实时通知与工具调用标识的稳定性。每项区分“上游声明 / 适配器可调用 / 真实链路已验证”，不猜测不存在的 ACP 方法。
 
@@ -80,9 +80,9 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 
 ## 6. EX-02：跨轮上下文
 
-**已交付：** 超时中断保留的部分回答带入重试；员工“继续修改”把上一轮成果作为只读输入挂载，同会话同名输出登记为下一版本（EX-ARTIFACT-01，尚无真实 DSH 验收）。
+**已交付：** 超时中断保留的部分回答带入重试；员工“继续修改”把上一轮成果作为只读输入挂载，同会话同名输出登记为下一版本（EX-ARTIFACT-01，2026-10-16 已通过本地真实 DSH 验收，范围见第 8 节）。
 
-**剩余：对话摘要为主、裁剪兜底（2026-10-16 决定排入）**
+**对话摘要为主、裁剪兜底（2026-10-16 代码已交付，未经真实 DSH 验收）**
 
 现行多轮输入上限（12 条、24000 字符）是平台自设的保守值；超出时从最早的消息开始静默丢弃，首条消息里的目标与约束最先丢失。改为以下结构：
 
@@ -137,6 +137,8 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 
 ## 8. 验证与记录
 
+2026-10-16 本地 P2 验收：**EX-ARTIFACT-01 与 EX-TOOL-01 均通过**。员工页面经真实 Run/Attempt → ACP Adapter → DSH `0.1.2-rc.1`（`76fda729799fe9b3848dbe2c211d4b231032b81e`）、`deepseek-official / deepseek-v4-pro` 执行。两轮同名成果形成 V1/V2，只修改指定行，旧版重新下载保持不变，附录独立；读取不存在文件的 `read` 失败步骤和失败数可见，Run 正常完成。服务基线为 `3627c7f`，验收期间另行开发、未重启加载的源码不在结论内。Run/Attempt、成果摘要、截图位置及范围见[本地验收记录](../development/runtime-execution-local-p2-2026-10-16.json)。该结论不替代目标部署环境、真实 OIDC、跨账号或性能验收。
+
 | 改动 | 验证入口 |
 | --- | --- |
 | 文档与契约 | `pnpm verify`；涉及 Schema 时含 contracts 与 runtime 检查；架构改动执行 `pnpm check:architecture` |
@@ -149,9 +151,9 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 
 ## 9. 下一步
 
-1. **真实 DSH 验收：** EX-ARTIFACT-01（两轮修改同一成果）与 EX-TOOL-01（工具失败可见），在目标环境执行并留证。
-2. **EX-00：** 汇总脚本与两项补充上报（代码量小），然后在受控环境采集基线并完成 DSH 能力核实表。
-3. **EX-02 对话摘要：** 按第 6 节的预算实施（模型窗口 256K token）；首条消息保留的兜底裁剪随之一并完成。
+1. **真实 DSH 验收：** EX-ARTIFACT-01（两轮修改同一成果）与 EX-TOOL-01（工具失败可见）已在本地通过并留证（见第 8 节）；目标部署环境另行回归。
+2. **EX-00 采集：** 在受控环境按固定场景运行后，用 `pnpm report:run-timings` 汇总基线；完成 DSH 能力核实表。
+3. **EX-02 真实验收：** 用真实 DSH 跑一段超过 48000 字符的会话，核对后台摘要生成、首条约束在第 20 轮后仍被遵守（测试目录 EX-CONTEXT-01）；“继续”语义区分另行实施。
 4. **EX-01 实时展示、EX-04：** 依据 EX-00 的能力核实与测量结论决定。
 
 ## 10. 外部参考

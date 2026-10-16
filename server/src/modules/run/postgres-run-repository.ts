@@ -17,6 +17,7 @@ import type {
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
 import { RequestError, accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { sessionSummaryMaxConcurrent } from '../../domain/conversation-context.ts'
 
 interface RunRow {
   id: string
@@ -485,6 +486,17 @@ export class PostgresRunRepository implements RunRepository {
           if ((lane?.active ?? 0) >= laneLimit) return false
         }
       }
+      // EX-02：对话摘要车道——最多一路，且始终为交互执行保留一路 Worker。
+      if (pending.purpose === 'session-summary') {
+        const laneLimit = Math.max(0, Math.min(sessionSummaryMaxConcurrent, runtime.capacity - 1))
+        const [lane] = await transaction<{ active: number }[]>`
+          select count(*)::integer as active from run_attempts
+           where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
+             and status in ('running', 'cancel_requested')
+             and manifest->>'purpose' = 'session-summary'
+        `
+        if ((lane?.active ?? 0) >= laneLimit) return false
+      }
       const [attempt] = await transaction<{ runId: string }[]>`
         update run_attempts set status = 'running', started_at = coalesce(started_at, now())
          where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
@@ -531,12 +543,21 @@ export class PostgresRunRepository implements RunRepository {
     runtimeId: string,
     configuredMax: number,
   ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }> {
+    return this.backgroundLaneUsage(tenantId, runtimeId, 'automation', configuredMax)
+  }
+
+  async backgroundLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    purpose: 'automation' | 'session-summary',
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }> {
     const [row] = await this.database<{ capacity: number; schedulingStatus: string; running: number }[]>`
       select r.capacity, r.scheduling_status as "schedulingStatus",
              (select count(*)::integer from run_attempts a
                where a.tenant_id = r.tenant_id and a.runtime_id = r.id
                  and a.status in ('running', 'cancel_requested')
-                 and a.manifest->>'purpose' = 'automation') as running
+                 and a.manifest->>'purpose' = ${purpose}) as running
         from runtimes r
        where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
     `

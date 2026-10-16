@@ -116,6 +116,7 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 - 审计脱敏、凭据隔离、DSH 子进程环境白名单、权限变化即时生效。
 - MCP Connector 成功检查后按 Agent Version 的 `all`（默认）、`selected` 或 `none` 范围装配；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
 - 容量测试覆盖 1/3/5 并发与 50 Run 排队，记录受理/完成延迟、CPU、RSS、磁盘和失败率。模拟 Runtime 跑分不能推导真实模型吞吐或生产并发。
+- 运行耗时基线：`pnpm report:run-timings`（读取 `DSH_WORK_DATABASE_URL`，只读）按阶段输出样本量、缺失数、p50/p95/最大值与失败率；`--since/--until` 限定时间，`--purpose` 选择员工运行、自动任务、摘要运行或全部，`--json` 输出原始汇总。
 
 测试时间用带时区 ISO 8601，业务 ID 尽量稳定；不提交真实员工、业务正文、凭据或敏感二进制附件。真实模型探针及升级验证命令统一见 Runtime 指南。
 

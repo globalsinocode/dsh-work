@@ -48,7 +48,9 @@ export interface RuntimeManifest {
   manifest_version: '1.0'
   /** Admin-authored, immutable expectations for one trial scenario. */
   test_scenario?: SkillTestScenario
-  purpose?: AdminRunPurpose | 'automation' | 'agent-routine'
+  purpose?: AdminRunPurpose | 'automation' | 'agent-routine' | 'session-summary'
+  /** EX-02: the Session and last message a `session-summary` run summarizes. */
+  summary_target?: { session_id: string; covered_through_message_id: string }
   installation_source?: string
   run_id: string
   attempt_id: string
@@ -111,6 +113,8 @@ export interface RuntimeManifest {
   input: {
     message: string
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
+    /** EX-02: DSH-generated summary of the conversation between the first message and the recent history. */
+    conversation_summary?: { content: string; covered_message_count: number; sha256: string }
     file_mounts: FileMount[]
   }
   /** PF-04 immutable proof used to reconstruct work in a new Attempt. */

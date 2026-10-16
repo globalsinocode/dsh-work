@@ -511,6 +511,71 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
   assert.equal(task.result.evidence.toolFailures, 1)
 })
 
+test('EX-02 long conversations keep the first message, fall back to trimming and then use a background summary', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '长对话摘要' })
+  // 40 条较早的消息，合计 80000 字符，超过 64000 字符的历史预算。
+  const base = Date.now() - 3_600_000
+  for (let index = 0; index < 40; index += 1) {
+    const role = index % 2 === 0 ? 'user' : 'assistant'
+    const content = index === 0 ? `目标：按华东区口径汇总，不要修改原始数据。${'甲'.repeat(1_980)}` : `第${index}条${'乙'.repeat(1_995)}`
+    await database`
+      insert into messages (id, tenant_id, session_id, role, content, created_at)
+      values (${`message-long-${index}`}, 'tenant-dsh-work', ${session.id}, ${role}, ${content}, ${new Date(base + index * 1000)})
+    `
+  }
+  const manifestOf = async (runId: string) => {
+    const run = await runs.getRun('tenant-dsh-work', runId)
+    const attempt = await runs.getAttempt('tenant-dsh-work', run!.currentAttemptId!)
+    return attempt!.manifest as unknown as RuntimeManifest
+  }
+
+  const first = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第一轮', idempotencyKey: randomUUID() })
+  assert.ok(first)
+  await waitForTask(first.id, 'succeeded')
+  const trimmed = await manifestOf(first.id)
+  const trimmedHistory = trimmed.input.conversation_history ?? []
+  assert.ok(trimmedHistory[0]?.content.startsWith('目标：按华东区口径汇总'), '兜底裁剪保留首条消息')
+  assert.ok(trimmedHistory.reduce((total, message) => total + message.content.length, 0) <= 64_000)
+  assert.ok(trimmedHistory.length < 41, '较早的中间消息被裁掉')
+  assert.equal(trimmed.input.conversation_summary, undefined)
+
+  // 该轮结束后在后台生成摘要：一次 session-summary 运行，没有 Session，不产生聊天消息。
+  const deadline = Date.now() + 5_000
+  let stored: { status: string; content: string | null; sourceRunId: string; count: number } | undefined
+  while (Date.now() < deadline) {
+    [stored] = await database<Array<{ status: string; content: string | null; sourceRunId: string; count: number }>>`
+      select status, content, source_run_id as "sourceRunId", covered_message_count as count
+        from session_summaries where session_id = ${session.id} order by created_at desc limit 1
+    `
+    if (stored?.status === 'succeeded') break
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.equal(stored?.status, 'succeeded')
+  assert.equal(stored?.content, 'M3 真实回答')
+  const summaryManifest = await manifestOf(stored!.sourceRunId)
+  assert.equal(summaryManifest.purpose, 'session-summary')
+  assert.equal(summaryManifest.session_id, null)
+  assert.deepEqual(summaryManifest.tools, [])
+  assert.equal(summaryManifest.summary_target?.session_id, session.id)
+  assert.match(summaryManifest.input.message, /第1条/)
+  assert.doesNotMatch(summaryManifest.input.message, /目标：按华东区口径/, '首条消息不进入摘要')
+  const [messageCount] = await database<{ count: number }[]>`
+    select count(*)::integer as count from messages where session_id = ${session.id}
+  `
+  assert.equal(messageCount?.count, 42, '摘要运行的回答不写入会话消息')
+
+  const second = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第二轮', idempotencyKey: randomUUID() })
+  assert.ok(second)
+  await waitForTask(second.id, 'succeeded')
+  const summarized = await manifestOf(second.id)
+  assert.equal(summarized.input.conversation_summary?.content, 'M3 真实回答')
+  assert.equal(summarized.input.conversation_summary?.covered_message_count, stored!.count)
+  const history = summarized.input.conversation_history ?? []
+  assert.ok(history[0]?.content.startsWith('目标：按华东区口径汇总'))
+  assert.ok(history.every(message => !message.content.startsWith('第1条')), '已被摘要覆盖的消息不再以原文带入')
+  assert.ok(history.reduce((total, message) => total + message.content.length, 0) + 'M3 真实回答'.length <= 64_000)
+})
+
 test('EX-02 backfill makes artifacts published without an extraction referenceable', async () => {
   const session = await orchestration.createSession({ userId: 'U00001', title: '旧成果回填' })
   const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-backfill-'))

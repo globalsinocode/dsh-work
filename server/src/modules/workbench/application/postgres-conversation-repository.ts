@@ -8,6 +8,7 @@ import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
+import type { ContextMessage, MessagePosition, StoredConversationSummary } from '../../../domain/conversation-context.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -548,6 +549,151 @@ export class PostgresConversationRepository {
       remaining -= content.length
       return { role: message.role, content }
     }).filter(message => message.content).reverse()
+  }
+
+  /**
+   * EX-02: messages of a workbench Session in chronological order, as input for
+   * buildConversationContext. With `beforeRunId` only messages that existed before
+   * that Run (excluding its own) are returned, like getConversationHistory; without
+   * it the whole Session is returned (used after a Run to decide on a summary).
+   * The first user message and the newest 500 messages are loaded; team Sessions
+   * prefix user messages with the sender's name.
+   */
+  async getConversationMessages(sessionId: string, beforeRunId: string | null): Promise<ContextMessage[]> {
+    const rows = await this.database<Array<ContextMessage & { senderName: string | null; team: boolean }>>`
+      with scoped as (
+        select m.id, m.role, m.content, m.created_at, su.display_name as "senderName",
+               (w.workspace_type = 'team') as team
+          from messages m
+          join sessions s on s.tenant_id = m.tenant_id and s.id = m.session_id
+          join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+          left join runs mr on mr.tenant_id = m.tenant_id and mr.id = m.run_id
+          left join users su
+            on su.tenant_id = m.tenant_id
+           and su.id = coalesce(m.sender_user_id, mr.requested_by, s.created_by)
+          left join runs current_run
+            on current_run.tenant_id = m.tenant_id and current_run.id = ${beforeRunId}
+         where m.tenant_id = ${tenantId}
+           and m.session_id = ${sessionId}
+           and s.audience = 'workbench'
+           and m.role in ('user', 'assistant')
+           and (${beforeRunId}::text is null or (
+             current_run.session_id = ${sessionId}
+             and m.run_id is distinct from current_run.id
+             and m.created_at < current_run.created_at))
+      ),
+      selected as (
+        (select * from scoped where role = 'user' order by created_at, id limit 1)
+        union
+        (select * from scoped order by created_at desc, id desc limit 500)
+      )
+      select id, role, content, "senderName", team,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
+        from selected
+       order by created_at, id
+    `
+    return rows.map(row => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      role: row.role,
+      content: row.team && row.role === 'user' && row.senderName ? `${row.senderName}：${row.content}` : row.content,
+    }))
+  }
+
+  /** EX-02: the latest succeeded summary of a Session. */
+  async getCurrentConversationSummary(sessionId: string): Promise<StoredConversationSummary | null> {
+    const [row] = await this.database<Array<{ content: string; messageId: string; createdAt: string; count: number }>>`
+      select content, covered_through_message_id as "messageId", covered_message_count as count,
+             to_char(covered_through_created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
+        from session_summaries
+       where tenant_id = ${tenantId} and session_id = ${sessionId} and status = 'succeeded'
+       order by covered_through_created_at desc, covered_through_message_id desc, completed_at desc
+       limit 1
+    `
+    return row ? { content: row.content, coveredThrough: { createdAt: row.createdAt, id: row.messageId }, coveredMessageCount: row.count } : null
+  }
+
+  /**
+   * EX-02: reserves the single pending summary slot of a Session. Pending rows older
+   * than 15 minutes are treated as lost and closed first. Returns null when another
+   * summary is already pending or the Session is no longer an active workbench Session.
+   */
+  async beginConversationSummary(input: {
+    sessionId: string
+    coverThrough: MessagePosition
+    coveredMessageCount: number
+  }): Promise<string | null> {
+    return this.database.begin(async transaction => {
+      await transaction`
+        update session_summaries
+           set status = 'failed', failure_reason = 'stale', completed_at = now()
+         where tenant_id = ${tenantId} and session_id = ${input.sessionId}
+           and status = 'pending' and created_at < now() - interval '15 minutes'
+      `
+      const id = `session-summary-${randomUUID()}`
+      const inserted = await transaction<{ id: string }[]>`
+        insert into session_summaries (
+          id, tenant_id, session_id, status, covered_through_message_id,
+          covered_through_created_at, covered_message_count
+        )
+        select ${id}, ${tenantId}, s.id, 'pending', ${input.coverThrough.id},
+               ${input.coverThrough.createdAt}::timestamptz, ${input.coveredMessageCount}
+          from sessions s
+         where s.tenant_id = ${tenantId} and s.id = ${input.sessionId}
+           and s.status = 'active' and s.audience = 'workbench'
+        on conflict (tenant_id, session_id) where status = 'pending' do nothing
+        returning id
+      `
+      return inserted[0]?.id ?? null
+    })
+  }
+
+  async attachConversationSummaryRun(summaryId: string, runId: string): Promise<void> {
+    await this.database`
+      update session_summaries set source_run_id = ${runId}
+       where tenant_id = ${tenantId} and id = ${summaryId} and status = 'pending'
+    `
+  }
+
+  /** Closes the pending summary of a summary Run; returns whether one was closed. */
+  async finishConversationSummary(runId: string, result: { content: string; sha256: string } | { failure: string }): Promise<boolean> {
+    const rows = 'content' in result
+      ? await this.database`
+          update session_summaries
+             set status = 'succeeded', content = ${result.content}, content_sha256 = ${result.sha256}, completed_at = now()
+           where tenant_id = ${tenantId} and source_run_id = ${runId} and status = 'pending'
+          returning id
+        `
+      : await this.database`
+          update session_summaries
+             set status = 'failed', failure_reason = ${result.failure.slice(0, 200)}, completed_at = now()
+           where tenant_id = ${tenantId} and source_run_id = ${runId} and status = 'pending'
+          returning id
+        `
+    return rows.length > 0
+  }
+
+  /** Closes a reserved summary slot whose Run could not be created or dispatched. */
+  async abandonConversationSummary(summaryId: string, reason: string): Promise<void> {
+    await this.database`
+      update session_summaries set status = 'failed', failure_reason = ${reason.slice(0, 200)}, completed_at = now()
+       where tenant_id = ${tenantId} and id = ${summaryId} and status = 'pending'
+    `
+  }
+
+  /**
+   * The Workspace of a Session that may still be summarized (an active workbench
+   * Session in an active Workspace), or null.
+   */
+  async summarizableSessionWorkspace(sessionId: string): Promise<string | null> {
+    const [row] = await this.database<{ workspaceId: string }[]>`
+      select s.workspace_id as "workspaceId"
+        from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+         and s.status = 'active' and s.audience = 'workbench' and w.status = 'active'
+    `
+    return row?.workspaceId ?? null
   }
 
   /**

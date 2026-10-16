@@ -14,6 +14,7 @@ import {
   renderMemoryProjection,
   renderSystemPrompt,
   renderUserPrompt,
+  parsePsTime,
   type DurablePermissionContext,
 } from './dsh-acp-runtime-adapter.ts'
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
@@ -195,8 +196,23 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /https:\/\/github.com\/owner\/repo/)
     assert.match(rendered, /不是新的操作授权/)
     assert.ok(rendered.endsWith(input.input.message))
-    input.input.conversation_history[0]!.content = 'x'.repeat(24001)
+    input.input.conversation_history[0]!.content = 'x'.repeat(64_001)
     assert.throws(() => compileRuntimeManifest(input), /conversation_history/)
+  })
+
+  it('EX-02 renders the summary between the first message and the recent history', () => {
+    const input = manifest('run-summary', 'attempt-1')
+    input.input.conversation_history = [{ role: 'user', content: '目标：按华东区口径汇总' }, { role: 'assistant', content: '最近的回答' }]
+    const content = '已确认：不修改原始数据。'
+    input.input.conversation_summary = { content, covered_message_count: 14, sha256: createHash('sha256').update(content).digest('hex') }
+    input.input.message = '继续'
+    const rendered = renderUserPrompt(compileRuntimeManifest(input).manifest)
+    assert.ok(rendered.indexOf(content) < rendered.indexOf('目标：按华东区口径汇总'))
+    assert.match(rendered, /较早的 14 条消息以平台生成的摘要代替/)
+    assert.match(rendered, /以原文为准/)
+    assert.ok(rendered.endsWith('继续'))
+    input.input.conversation_summary = { content, covered_message_count: 14, sha256: 'a'.repeat(64) }
+    assert.throws(() => compileRuntimeManifest(input), /conversation_summary is invalid/)
   })
 
   it('rejects writable or out-of-root input mounts', () => {
@@ -755,7 +771,18 @@ describe('DSH ACP Runtime Adapter', () => {
     const completed = events.find(event => event.event_type === 'run.completed')
     assert.equal(completed?.safe_metadata['tool_call_count'], 3)
     assert.equal(completed?.safe_metadata['tool_failed_count'], 1)
+    // EX-00：成果收集耗时与 Worker 资源采样（取不到时为 null，不填 0）。
+    assert.equal(typeof completed?.safe_metadata['artifact_collect_ms'], 'number')
+    const rss = completed?.safe_metadata['worker_rss_kb']
+    assert.ok(rss === null || (typeof rss === 'number' && rss > 0))
     assert.ok(!JSON.stringify(tools).includes('SECRET'), 'tool arguments and output stay in the session log')
+  })
+
+  it('EX-00 parses ps CPU time in every format', () => {
+    assert.equal(parsePsTime('0:01.50'), 1_500)
+    assert.equal(parsePsTime('01:02:03'), 3_723_000)
+    assert.equal(parsePsTime('1-00:00:01'), 86_401_000)
+    assert.equal(parsePsTime('garbage'), null)
   })
 
   it('EX-01 keeps the tool trail of a failed Attempt ahead of run.failed', async () => {
