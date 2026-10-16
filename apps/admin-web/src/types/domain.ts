@@ -230,6 +230,9 @@ export interface ManagedWorkspaceDefinition {
 
 export type PublishStatus = 'draft' | 'published' | 'disabled'
 
+/** 验证时草稿冻结为 candidate（不可变），通过验证后发布为 published。 */
+export type AgentVersionStatus = PublishStatus | 'candidate'
+
 export type AgentMcpScope =
   | { mode: 'all' | 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
@@ -446,7 +449,7 @@ export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
-  status: PublishStatus
+  status: AgentVersionStatus
   bindingRefs?: AgentBindingRef[]
   createdAt: string
   createdBy: string
@@ -464,16 +467,6 @@ export interface AgentVersionRecord {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-}
-
-export interface AgentReleaseRecord {
-  id: string
-  agentId: string
-  version: string
-  action: 'published' | 'enabled' | 'disabled' | 'rollback'
-  actor: string
-  time: string
-  note: string
 }
 
 export interface SkillDefinition {
@@ -847,130 +840,80 @@ export interface PlatformStatus {
   artifactStorage: 'not-configured' | 'local-mvp'
 }
 
-/* ---------- Agent 发布治理（与 server agent-release 契约对齐） ---------- */
+/* ---------- Agent 验证与发布（S3，与 server agent-validation 契约对齐） ---------- */
 
-export type AgentSubmissionStatus = 'draft' | 'submitted' | 'changes_requested' | 'published' | 'withdrawn'
+export type ValidationCaseSource = 'example' | 'routine' | 'custom'
+export type ValidationCaseStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled'
 
-export interface AgentEvalCase {
+/** 固定三项机器检查；不全部通过时不能判为通过。 */
+export interface ValidationChecks {
+  runRecorded: boolean
+  executionSucceeded: boolean
+  outputNonEmpty: boolean
+}
+
+export interface ValidationCase {
   id: string
-  evaluationApiVersion: 'dsh-work.ai/evaluation/v1'
-  name: string
-  kind: 'success' | 'invalid_input' | 'permission_denied' | 'prompt_injection' | 'capability_failure'
-  input: string
-  automatedAssertions: Array<'run_attempt_recorded' | 'execution_succeeded' | 'output_non_empty'>
-  manualReview: { required: true; rubric: string }
-  /** 平台按定义自动生成的默认案例来源标记；包内 evals 或管理员登记的案例无此字段 */
-  origin?: 'generated'
+  position: number
+  source: ValidationCaseSource
+  sourceRef: string | null
+  prompt: string
+  status: ValidationCaseStatus
+  runId: string | null
+  attemptId: string | null
+  runCount: number
+  checks: ValidationChecks | null
+  output: string
+  error: string | null
+  verdict: 'passed' | 'failed' | null
+  verdictNote: string | null
+  verdictBy: string | null
+  verdictAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
 }
 
-export interface AgentCapabilityRef { id: string; version: string; path?: string }
-
-export type AgentCheckStatus = 'passed' | 'failed' | 'pending'
-export interface AgentCheckItem { id: string; label: string; status: AgentCheckStatus; detail: string }
-
-export interface AgentPlanItem {
-  kind: 'agent' | 'skill' | 'tool' | 'binding'
-  name: string
-  action: 'create' | 'reuse' | 'upgrade' | 'blocked'
-  version: string
-  detail: string
-}
-
-export type AgentTrialStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
-
-/** 单个评估案例的真实执行证据与审核人逐项确认结论。 */
-export interface AgentTrialCaseRun {
-  caseId: string
-  name: string
-  kind: AgentEvalCase['kind']
-  /** JSONB 中可能仍有升级前试运行；缺少 v1 字段时管理端必须降级展示并阻止发布。 */
-  evaluationApiVersion?: AgentEvalCase['evaluationApiVersion']
-  automatedAssertions?: Array<{
-    assertion: AgentEvalCase['automatedAssertions'][number]
-    passed: boolean
-    detail: string
-  }>
-  manualReview?: AgentEvalCase['manualReview']
-  expect?: string
-  runId?: string | null
-  attemptId?: string | null
-  status: string
-  outputExcerpt: string
-  error?: string
-  verdict?: 'passed' | 'failed'
-  verdictNote?: string
-}
-
-export interface AgentTrialStep {
-  id: string; label: string; status: AgentTrialStepStatus; detail?: string; caseRuns?: AgentTrialCaseRun[]
-  currentCaseId?: string
-}
-
-export interface AgentTrialRun {
-  id: string
-  submissionRevision: number
-  status: 'checking' | 'queued' | 'executing' | 'asserting' | 'passed' | 'failed' | 'cancelled'
-  steps: AgentTrialStep[]
-  progress?: {
-    caseId: string
-    runId: string | null
-    attemptId: string | null
-    runStatus: string | null
-    events: Array<{ type: string; label: string; occurredAt: string }>
-  }
-  startedAt: string
-  finishedAt?: string
-  failureStage?: string
-}
-
-export interface AgentReleaseCandidate {
+export interface AgentValidation {
   id: string
   agentId: string
   agentVersionId: string
   version: string
-  revision: number
-  status: AgentSubmissionStatus
-  source: 'config' | 'zip'
-  sealedRevision?: number
-  sealedAt?: string
-  /** B-03/I-04：封存时固定的平台绑定依据。 */
-  bindingRefs: AgentBindingRef[]
-  cases: AgentEvalCase[]
-  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
-  missingDeps: { skills: string[]; tools: string[] }
-  checks: AgentCheckItem[]
-  plan: AgentPlanItem[]
-  reviewNote?: string
+  status: 'running' | 'completed' | 'superseded' | 'published'
+  createdBy: string
+  createdAt: string
+  completedAt: string | null
+  cases: ValidationCase[]
+  publishable: boolean
 }
 
-export interface AgentVersionEvidence {
-  kind: 'configuration_checked' | 'runtime_verified' | 'business_accepted'
-  summary: string
-  runId?: string
-  at: string
-  by: string
-  scope: string
+export interface AgentReleaseCheck {
+  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'data' | 'cases' | 'bindings'
+  label: string
+  passed: boolean
+  detail: string
 }
 
-export interface AgentReleaseState {
-  candidate?: AgentReleaseCandidate
-  trialRuns: AgentTrialRun[]
-  /** key = 版本号字符串 */
-  evidence: Record<string, AgentVersionEvidence[]>
-  packageWarnings: string[]
-  /** 只读标记：草稿相对候选已变更/尚未同步（由 POST candidate 端点负责落库） */
-  definitionChanged?: boolean
-}
-
-export interface AgentSubmissionSummary {
+export interface AgentReleaseOverview {
   agentId: string
-  revision: number
-  status: AgentSubmissionStatus
-  source: 'config' | 'zip'
+  activeVersion: { id: string; version: string } | null
+  draft: { id: string; version: string; status: 'draft' | 'candidate' } | null
+  candidate: { id: string; version: string } | null
+  draftChanged: boolean
+  testCases: Array<{ id: string; prompt: string }>
+  plannedCases: Array<{ source: ValidationCaseSource; sourceRef: string | null; prompt: string }>
+  checks: AgentReleaseCheck[]
+  usesMcp: boolean
+  validation: AgentValidation | null
 }
 
-export interface AgentVersionEvidenceEntry {
-  agentId: string
+export interface AgentVersionHistoryItem {
+  id: string
   version: string
-  evidence: AgentVersionEvidence[]
+  status: AgentVersionStatus
+  summary: string
+  createdAt: string
+  createdBy: string
+  publishedAt: string | null
+  publishedBy: string | null
+  active: boolean
 }

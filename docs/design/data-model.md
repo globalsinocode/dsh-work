@@ -2,7 +2,7 @@
 
 PostgreSQL 是产品事实来源。本文按领域说明表的作用、关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../../server/migrations/) 为准，不维护另一份 DDL 副本。
 
-当前共 108 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
+当前共 104 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
 
 ## 领域总览
 
@@ -101,13 +101,10 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `agents`、`agent_versions` | Agent 与其版本 | 已发布版本不可修改（触发器）；版本记录精确的 Skill、Tool 引用，不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
-| `agent_release_submissions` | 发布候选 | 每个 Agent 同时只有一个进行中的候选；封存后内容不可改；发布后保留供审计 |
-| `agent_trial_runs` | 候选的试运行 | 绑定候选修订；只有与当前封存修订一致的通过试运行才能支撑发布 |
-| `agent_version_evidence` | 版本级发布依据 | 配置检查、运行验证、业务确认三类，发布时写入 |
-| `agent_release_records` | 发布、启用、停用、回滚记录 | 只追加 |
-| `agent_packages` | 导入的 Agent 包 | 按内容摘要记录来源文件与清单 |
-| `agent_test_runs` | 早期的草稿测试记录 | 只保留历史，不作为当前发布依据 |
+| `agents`、`agent_versions` | Agent 与其版本 | 版本状态为草稿、待发布（`candidate`，验证时原地冻结）、已发布；待发布与已发布版本内容不可修改（触发器，待发布只能改为已发布）；版本记录精确的 Skill、Tool 引用，不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
+| `agent_test_cases` | Agent 的自定义测试问题 | 属于 Agent 而非版本，跨版本复用；每个 Agent 最多 20 条，按位置唯一 |
+| `agent_validations` | 一次验证 | 绑定一个冻结的待发布版本（`candidate`）；每个 Agent 只有一个有效验证（`running`/`completed`），开始新验证时旧验证标为 `superseded`；发布后标为 `published` |
+| `agent_validation_cases` | 验证案例及结果 | 开始验证时快照示例问题、主动任务输入与自定义问题；记录 Run/Attempt、运行次数、三项机器检查与判定；判为不通过必须有原因；服务重启时未完成的案例标为中断 |
 | `agent_version_skills`、`agent_version_tools` | 早期的版本—能力关联表 | 当前引用保存在 `agent_versions` 上，这两张表未被读写 |
 
 ## 6. Skill
@@ -248,6 +245,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
 - [删除 Agent 委派](../../server/migrations/0083_remove_agent_delegation.sql)：移除 `task_delegations` 与版本上的委派策略；历史子任务仍保留 `delegation` 来源类型，但不能重试。
 - [Agent 级岗位权限](../../server/migrations/0084_agent_level_access.sql)：可见角色从版本迁到 Agent（取当前发布版本，未发布取草稿），删除版本上的可见角色与数据范围上限。
+- [Agent 验证与发布](../../server/migrations/0085_agent_validations.sql)：版本增加待发布状态并冻结不可变；新增自定义测试问题、验证与验证案例；发布记录转为审计事件后删除候选、试运行、版本证据、Agent 包、早期测试与发布记录六张表。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

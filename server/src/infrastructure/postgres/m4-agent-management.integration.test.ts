@@ -15,9 +15,8 @@ let throwaway: ThrowawayDatabase
 let agents: PostgresAgentService
 
 /**
- * 草稿发布只能走发布治理链路（封存试运行证据 + 事务内发布）。
- * 本套件验证版本/回滚/可见性等生命周期机制，以治理证据夹具驱动同一个事务内
- * publish 入口；真实 DSH 试运行到发布的端到端覆盖见 agent-release-governance 套件。
+ * 草稿只能验证通过后发布。本套件验证版本/回滚/可见性等生命周期机制，以夹具直接
+ * 发布草稿；验证到发布的端到端覆盖见 agent-release-governance 套件。
  */
 const publishDraft = (agentId: string) => publishDraftWithSealedTrial(database, agents, agentId, 'U00008')
 
@@ -56,10 +55,10 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
   assert.equal(created.agent.status, 'draft')
   assert.equal(created.agent.version, '0.1.0')
 
-  // 状态直改不再能发布草稿：必须走发布工作台的封存试运行链路
+  // 状态直改不再能发布草稿：必须经验证与发布（全部案例判定通过）
   await assert.rejects(
     agents.setStatus({ agentId, status: 'published', actor: 'U00008' }),
-    /发布工作台/,
+    /验证通过后才能发布/,
   )
   await publishDraft(agentId)
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.status, 'published')
@@ -129,6 +128,8 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
   assert.ok((await agents.listWorkbenchAgents('U00001')).some(agent => agent.id === agentId))
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.version, '0.3.0')
 
-  const releases = (await agents.getReleaseRecords()).filter(record => record.agentId === agentId)
-  assert.deepEqual(new Set(releases.map(record => record.action)), new Set(['published', 'rollback', 'disabled', 'enabled']))
+  // 发布历史保存在版本上：每个曾发布的版本保留发布时间与发布人。
+  const published = (await agents.getAgentVersions()).filter(version => version.agentId === agentId && version.status === 'published')
+  assert.deepEqual(published.map(version => version.version).sort(), ['0.1.0', '0.2.0'])
+  assert.ok(published.every(version => version.publishedAt && version.publishedBy))
 })

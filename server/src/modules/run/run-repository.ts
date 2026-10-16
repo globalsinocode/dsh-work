@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import type { BackgroundLanePurpose } from '../../domain/background-lanes.ts'
 import type {
   AttemptState,
   CreateAttemptInput,
@@ -55,11 +56,11 @@ export interface RunRepository {
    * 部署/运维状态——调用方应留队重排而非把排队 Run 收敛为容量失败；
    * 只有 `exists && accepting && allowed <= 0` 才是确定的容量收敛条件。
    */
-  /** EX-02 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use. */
+  /** EX-02, S3 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use. */
   backgroundLaneUsage(
     tenantId: string,
     runtimeId: string,
-    purpose: 'automation' | 'session-summary',
+    purpose: 'automation' | BackgroundLanePurpose,
     configuredMax: number,
   ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
   automationLaneUsage(

@@ -61,27 +61,14 @@ const router = createRouter({
     },
     {
       path: '/agents/:agentId/release',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
+      name: 'agent-release',
+      component: () => import('@/views/AgentValidationView.vue'),
+      meta: { title: 'Agent 验证与发布', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
+    // 旧发布工作台路径（定义/检查/试运行/确认）统一落到验证与发布页。
     {
-      path: '/agents/:agentId/release/definition',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
-    },
-    {
-      path: '/agents/:agentId/release/checks',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
-    },
-    {
-      path: '/agents/:agentId/release/trial',
-      name: 'agent-release-trial',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 人工试运行验证', requiresAdmin: true, requiredPermission: 'adminRead' },
-    },
-    {
-      path: '/agents/:agentId/release/review',
-      name: 'agent-release-review',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 确认发布', requiresAdmin: true, requiredPermission: 'adminRead' },
+      path: '/agents/:agentId/release/:step(definition|checks|trial|review)',
+      redirect: to => ({ name: 'agent-release', params: { agentId: to.params.agentId } }),
     },
     {
       path: '/capabilities',

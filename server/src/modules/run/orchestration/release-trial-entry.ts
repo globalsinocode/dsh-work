@@ -4,7 +4,7 @@ import { assertRuntimeModelRequirements } from '../../runtime/execution-capabili
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
 import { invalidRequest } from '../../../domain/request-errors.ts'
-import type { ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
+import type { ReleaseTrialResult, ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
 import type { RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
@@ -12,12 +12,13 @@ import type { RunCancellation } from './run-cancellation.ts'
 import { agentDataToolRefs, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
-const TRIAL_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled'])
-/** 试运行治理等待在 Attempt 超时之外预留的排队与启动余量。 */
-const TRIAL_WAIT_GRACE_SECONDS = 60
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-/** Entry point for Agent release trials: one evaluation case through the real Runtime path. */
+/**
+ * Entry point for Agent validation (S3): one validation case through the real Runtime path.
+ * Starting a case only creates and queues the Run; the case Attempt waits in the
+ * `agent-release-trial` lane (at most two at a time, always leaving one Worker for
+ * interactive work). The validation service reads the outcome later.
+ */
 export class ReleaseTrialEntry implements ReleaseTrialRunner {
   private readonly deps: OrchestrationDependencies
   private readonly dispatcher: AttemptDispatcher
@@ -31,25 +32,20 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
     this.cancellation = cancellation
   }
 
-  /** ReleaseTrialRunner port: governance cancels a trial through the same system cancellation. */
+  /** ReleaseTrialRunner port: validation cancels a case through the same system cancellation. */
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     return this.cancellation.systemCancelRun(runId, cause, reason)
   }
 
-  /**
-   * 发布试运行：以草稿版本的完整运行时配置经 Run/Attempt → Runtime Adapter → DSH
-   * 真实执行一个评估案例，等待终态并返回输出。治理证据只允许来自这条链路。
-   */
-  async runReleaseTrialCase(input: {
+  /** Creates the case Run in the validation Session and queues its Attempt; does not wait. */
+  async startReleaseTrialCase(input: {
     userId: string
     sessionId: string
-    draftVersionId: string
-    expectedDefinitionFingerprint?: string
+    agentVersionId: string
     message: string
     idempotencyKey: string
-    deadlineMs?: number
-  }): Promise<{ runId: string; attemptId: string | null; status: string; output: string }> {
-    if (!this.deps.agents) throw invalidRequest('试运行执行链路未接入：缺少 Agent 运行时服务')
+  }): Promise<{ runId: string }> {
+    if (!this.deps.agents) throw invalidRequest('验证执行链路未接入：缺少 Agent 运行时服务')
     const run = await this.deps.runs.createRun({
       tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
     })
@@ -58,44 +54,42 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
         sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
       })
       await this.dispatcher.failUndispatchedRun(run, () => this.dispatchTrialAttempt(
-        run, input.userId, input.draftVersionId, input.message, input.expectedDefinitionFingerprint,
+        run, input.userId, input.agentVersionId, input.message,
       ))
     }
-    // F-02：治理等待与生产一致，以本次 Attempt 实际生效的超时（Agent timeoutSeconds 受 Runtime 策略上限约束）
-    // 为准，再留出排队与启动余量；不再固定 150 秒，避免长任务被治理侧提前判失败。
-    let current = await this.deps.runs.getRun(tenantId, run.id)
-    const attempt = current?.currentAttemptId ? await this.deps.runs.getAttempt(tenantId, current.currentAttemptId) : null
-    const attemptTimeoutSeconds = Number((attempt?.manifest as { limits?: { timeout_seconds?: unknown } } | undefined)?.limits?.timeout_seconds)
-    const deadline = Date.now() + (input.deadlineMs ?? (Number.isFinite(attemptTimeoutSeconds) && attemptTimeoutSeconds > 0
-      ? (attemptTimeoutSeconds + TRIAL_WAIT_GRACE_SECONDS) * 1000
-      : 150_000))
-    while (current && !TRIAL_TERMINAL_STATUSES.has(current.status) && Date.now() < deadline) {
-      await delay(200)
-      current = await this.deps.runs.getRun(tenantId, run.id)
-    }
-    // 治理等待超时不能留 Run 继续执行：主动收敛为 cancelled，避免治理侧已放弃
-    // 等待后底层 DSH 仍跑完并留下与试运行记录不一致的执行痕迹。
-    if (current && !TRIAL_TERMINAL_STATUSES.has(current.status)) {
-      await this.cancellation.systemCancelRun(run.id, 'system_revoke', '试运行等待超时，取消仍在运行的执行').catch(() => undefined)
-      current = await this.deps.runs.getRun(tenantId, run.id)
-    }
-    const outputs = await this.deps.conversations.getRunAssistantOutputs(run.id)
+    return { runId: run.id }
+  }
+
+  async getReleaseTrialResult(runId: string): Promise<ReleaseTrialResult | null> {
+    const run = await this.deps.runs.getRun(tenantId, runId)
+    if (!run) return null
+    const attempt = run.currentAttemptId ? await this.deps.runs.getAttempt(tenantId, run.currentAttemptId) : null
+    const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled'
+    const outputs = terminal ? await this.deps.conversations.getRunAssistantOutputs(run.id) : []
     return {
-      runId: run.id,
-      attemptId: current?.currentAttemptId ?? null,
-      status: current && TRIAL_TERMINAL_STATUSES.has(current.status) ? current.status : 'failed',
+      status: run.status,
+      attemptId: run.currentAttemptId ?? null,
+      errorCode: attempt?.errorCode ?? null,
       output: outputs.map(output => output.content).join('\n'),
     }
   }
 
-  private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {
+  private async dispatchTrialAttempt(run: RunRecord, userId: string, agentVersionId: string, message: string) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
-    const agent = await this.deps.agents!.getRuntimeSnapshot(draftVersionId, [], expectedDefinitionFingerprint)
-    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(draftVersionId)
+    const agent = await this.deps.agents!.getRuntimeSnapshot(agentVersionId, [])
+    // The Agent works with its own current grants, exactly as when an employee asks it.
+    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(agentVersionId)
       ?? { roleIds: [], dataScopes: [] }
-    await this.deps.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
+    await this.deps.authorization?.assertAgentPrincipalSnapshot(agentVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
+    // Knowledge is retrieved as in production. Memory needs a workspace and is not
+    // injected into validation runs.
+    const knowledgeContext = this.deps.knowledge
+      ? await this.deps.knowledge.resolveContext({
+          query: message, userId, workspaceId: null, dataScopes: trialScope.dataScopes, roleIds: trialScope.roleIds,
+        })
+      : []
     const limits = {
       timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
       max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
@@ -110,7 +104,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       task_id: run.taskId,
       session_id: run.sessionId,
       workspace_id: '',
-      agent_version_id: draftVersionId,
+      agent_version_id: agentVersionId,
       agent_configuration: {
         system_prompt: agent.systemPrompt,
         skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
@@ -119,9 +113,9 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       ...(agent.principalId && agent.principalAuthorizationVersion ? {
         principal_context: await this.dispatcher.principalContextForRun(run, agent.principalId, agent.principalAuthorizationVersion),
       } : {}),
-      // F-02：与员工执行使用同一权限策略与工具集，评测结论才能代表线上行为。
-      // F-01：外部效果按 purpose 隔离——需审批的工具调用直接拒绝（不创建审批等待），
-      // MCP 调用由 DSH 策略返回 trial_only，平台写工具/数据/记忆/委派各自返回 trial_only 或拒绝。
+      // Same permission policy and tool set as employee execution. External effects are
+      // isolated by purpose: approval-gated calls are refused, MCP and platform writes
+      // return trial_only.
       permission_policy: {
         approval_mode: agent.approvalMode,
         network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
@@ -132,11 +126,19 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
         ...(this.deps.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
         ...agentDataToolRefs(agent)],
-      // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
+      // The candidate's frozen bindings; publication rechecks them for drift.
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: trialScope.dataScopes,
-      knowledge_context: [],
+      knowledge_context: knowledgeContext.map(document => ({
+        documentId: document.documentId,
+        title: document.title,
+        version: document.version,
+        effectiveDate: document.effectiveDate,
+        dataScope: document.dataScope,
+        contentChecksum: document.contentChecksum,
+        excerpt: document.excerpt,
+      })),
       model_route_id: route.routeId,
       input: { message, file_mounts: [] },
       budget: await this.budget.manifest(run, limits),
@@ -144,6 +146,12 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       created_at: new Date().toISOString(),
       trace_id: `trace-${run.id}-trial`,
     }
-    await this.dispatcher.submit(run, manifest, route)
+    await this.dispatcher.submit(run, manifest, route, {
+      knowledgeSources: knowledgeContext.map(document => ({
+        documentId: document.documentId,
+        relevanceScore: document.relevanceScore,
+        excerpt: document.excerpt,
+      })),
+    })
   }
 }

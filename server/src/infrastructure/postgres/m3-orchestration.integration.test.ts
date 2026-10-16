@@ -849,7 +849,7 @@ test('model admission rejects employee, automation and release trial preparation
             getRuntimeSnapshot: async () => snapshot,
           } as unknown as PostgresAgentService)
           const submit = async () => {
-            if (purpose === 'trial') return service.runReleaseTrialCase({ userId: 'U00001', sessionId: session.id, draftVersionId: session.agentVersionId!, message: '测试能力准入', idempotencyKey: randomUUID() })
+            if (purpose === 'trial') return service.startReleaseTrialCase({ userId: 'U00001', sessionId: session.id, agentVersionId: session.agentVersionId!, message: '测试能力准入', idempotencyKey: randomUUID() })
             if (purpose === 'employee') return service.startRun({ userId: 'U00001', sessionId: session.id, prompt: '测试能力准入', idempotencyKey: randomUUID() })
             const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
             return service.dispatchAutomation(run, { userId: 'U00001', workspaceId: session.workspaceId, agentVersionId: session.agentVersionId!, prompt: '测试能力准入', fileIds: [], attemptId: `attempt-${randomUUID()}` })

@@ -5,8 +5,8 @@ import type {
   AgentDefinition,
   AgentDraftConfiguration,
   AgentMcpScope,
-  AgentReleaseRecord,
   AgentVersionRecord,
+  AgentVersionStatus,
   CreateAgentDraftInput,
   PublishStatus,
   UpdateAgentDraftInput,
@@ -38,6 +38,8 @@ export const DEFAULT_WORKBENCH_AGENT_ID = 'agent-dsh-work-assistant'
 
 interface AgentRow {
   agentSpec: AgentSpec | null
+  /** Status of the editable version row: a frozen candidate is no longer edited in place. */
+  versionStatus: 'draft' | 'candidate' | 'published' | 'disabled'
   id: string
   name: string
   description: string
@@ -86,7 +88,7 @@ interface VersionRow {
   bindingRefs?: ManifestToolBinding[]
   name: string
   description: string
-  status: PublishStatus
+  status: AgentVersionStatus
   createdAt: Date
   createdBy: string
   publishedAt: Date | null
@@ -249,22 +251,6 @@ export class PostgresAgentService {
     return rows.map(toVersionRecord)
   }
 
-  async getReleaseRecords(): Promise<AgentReleaseRecord[]> {
-    const rows = await this.database<{
-      id: string; agentId: string; version: string; action: AgentReleaseRecord['action'];
-      actor: string; time: Date; note: string
-    }[]>`
-      select arr.id, arr.agent_id as "agentId", av.version, arr.action,
-             u.display_name as actor, arr.created_at as time, arr.note
-        from agent_release_records arr
-        join agent_versions av on av.tenant_id = arr.tenant_id and av.id = arr.agent_version_id
-        join users u on u.tenant_id = arr.tenant_id and u.id = arr.actor_id
-       where arr.tenant_id = ${tenantId}
-       order by arr.created_at desc
-    `
-    return rows.map(row => ({ ...row, time: formatDateTime(row.time) }))
-  }
-
   async createAgent(input: CreateAgentDraftInput) {
     const actor = await this.requireActor(input.actor)
     const configuration = normalizeConfiguration(input, actor.displayName, actor.department)
@@ -375,7 +361,8 @@ export class PostgresAgentService {
         if (!locked.draftVersionId) throw authorizationDenied('一次确认仅允许修改现有草稿')
         assertDraftCopyPlan(toAgentDefinition(locked), { ...configuration, agentId: input.agentId })
       }
-      draftVersionId = locked.draftVersionId
+      // A frozen candidate is validated as is (S3); editing it starts a new draft version.
+      draftVersionId = locked.draftVersionId && locked.versionStatus === 'draft' ? locked.draftVersionId : null
       if (draftVersionId) {
         await transaction`
           update agent_versions
@@ -392,7 +379,7 @@ export class PostgresAgentService {
            where tenant_id = ${tenantId} and id = ${draftVersionId} and status = 'draft'
         `
       } else {
-        if (!locked.activeVersionId) throw stateConflict('Agent 没有可用于创建新版本的已发布版本')
+        if (!locked.activeVersionId && !locked.draftVersionId) throw stateConflict('Agent 没有可用于创建新版本的版本')
         const [latest] = await transaction<{ version: string }[]>`
           select version from agent_versions
            where tenant_id = ${tenantId} and agent_id = ${input.agentId}
@@ -462,18 +449,18 @@ export class PostgresAgentService {
            returning id
         `
         if (!updated.length) throw stateConflict('仅已发布状态的 Agent 可以停用，或状态已变化请刷新后重试')
-        return this.appendRelease(transaction, activeVersionId, input.agentId, 'disabled', actor.id, '停用当前 Agent，不影响已创建的运行。')
+        return activeVersionId
       })
-      await this.audit(actor.id, 'agent.disable', input.agentId, 'success', release.note)
-      return { agent: await this.requireAgent(input.agentId), release }
+      await this.audit(actor.id, 'agent.disable', input.agentId, 'success', `停用当前 Agent（版本 ${release}），不影响已创建的运行。`)
+      return { agent: await this.requireAgent(input.agentId) }
     }
 
     // 重新启用只翻转管理状态：与进行中草稿独立（停用期间草稿可继续编辑）。
-    // 非停用状态的 published 写入属于"发布草稿"，必须走发布工作台封存试运行链路。
+    // 非停用状态的 published 写入属于"发布"，必须经验证通过后在验证与发布中完成。
     const reenabling = current.persistedStatus === 'disabled' && Boolean(current.activeVersionId)
     if (!reenabling) {
       if (current.draftVersionId) {
-        throw stateConflict('草稿发布必须通过发布工作台完成封存试运行后发起，不能走状态直改')
+        throw stateConflict('草稿必须验证通过后才能发布，不能走状态直改')
       }
       throw stateConflict('当前 Agent 没有可发布草稿，也不处于停用状态')
     }
@@ -492,10 +479,10 @@ export class PostgresAgentService {
          returning id
       `
       if (!updated.length) throw stateConflict('Agent 状态已发生变化，请刷新后重试')
-      return this.appendRelease(transaction, activeVersionId, input.agentId, 'enabled', actor.id, '重新启用当前 Agent 版本。')
+      return activeVersionId
     })
-    await this.audit(actor.id, 'agent.enable', input.agentId, 'success', release.note)
-    return { agent: await this.requireAgent(input.agentId), release }
+    await this.audit(actor.id, 'agent.enable', input.agentId, 'success', `重新启用当前 Agent 版本 ${release}。`)
+    return { agent: await this.requireAgent(input.agentId) }
   }
 
   async rollback(input: { agentId: string; version: string; actor: string }) {
@@ -530,7 +517,7 @@ export class PostgresAgentService {
     const note = `活动版本由 v${activeBefore?.version ?? '—'} 回滚到 v${target.version}；启停状态与进行中的草稿保持不变。`
     // F-03：回滚只移动活动版本指针。行锁 + 比较活动版本防止与并发发布/回滚交错；
     // 不改变 agents.status（停用中的 Agent 回滚后仍停用），也不停用进行中的草稿及其发布候选。
-    const release = await this.database.begin(async transaction => {
+    await this.database.begin(async transaction => {
       const locked = await this.lockAgentForMutation(transaction, input.agentId)
       if (!locked || locked.activeVersionId !== current.activeVersionId) {
         throw stateConflict('Agent 当前版本已发生变化，请刷新后重试')
@@ -550,10 +537,9 @@ export class PostgresAgentService {
         returning id
       `
       if (!moved.length) throw stateConflict('Agent 当前版本已发生变化，请刷新后重试')
-      return this.appendRelease(transaction, target.id, input.agentId, 'rollback', actor.id, note)
     })
-    await this.audit(actor.id, 'agent.rollback', input.agentId, 'success', release.note)
-    return { agent: await this.requireAgent(input.agentId), release }
+    await this.audit(actor.id, 'agent.rollback', input.agentId, 'success', note)
+    return { agent: await this.requireAgent(input.agentId) }
   }
 
   /**
@@ -760,10 +746,9 @@ export class PostgresAgentService {
   async getRuntimeSnapshot(
     versionId: string,
     additionalSkillReferences: string[] = [],
-    expectedDefinitionFingerprint?: string,
   ): Promise<RuntimeAgentSnapshot> {
     const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & AgentFingerprintSource & {
-      agentId: string; agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
+      agentId: string; agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: AgentVersionStatus
     })[]>`
       select av.id as "versionId", av.agent_id as "agentId", ep.id as "principalId",
              ep.authorization_version as "principalAuthorizationVersion",
@@ -785,11 +770,6 @@ export class PostgresAgentService {
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
     `
     if (!row) throw notFound(`Agent Version 不存在或 Agent 执行身份已停用：${versionId}`)
-    // 试运行必须用封存时的定义；指纹与本次取到的配置在同一行快照上计算，
-    // 防止发布服务检查后、Attempt 准备前草稿被修改而混入另一份定义。
-    if (expectedDefinitionFingerprint && configurationFingerprint(row) !== expectedDefinitionFingerprint) {
-      throw stateConflict('Agent 草稿定义已偏离封存内容，请从第一项重新试运行')
-    }
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     const principal = await this.getAgentExecutionPrincipal(row.agentId)
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
@@ -800,6 +780,8 @@ export class PostgresAgentService {
       : []
     const executionTools = skillInstructions.flatMap(skill => skill.tools)
       .filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
+    // A draft resolves platform defaults from current grants; a frozen candidate and a
+    // published version use the tools pinned when the candidate was frozen (S3).
     const platformTools = row.versionStatus === 'draft'
       ? (this.toolService
         ? await this.toolService.resolvePlatformDefaultToolReferences(principal.roleIds, executionScopes)
@@ -823,12 +805,12 @@ export class PostgresAgentService {
     const toolBindings = this.toolService
       ? await this.toolService.resolveToolBindings(tools)
       : []
-    if (row.versionStatus === 'published' && row.bindingRefs?.length
+    if ((row.versionStatus === 'published' || row.versionStatus === 'candidate') && row.bindingRefs?.length
       && bindingBasisKey(toolBindings.map(toManifestToolBinding)) !== bindingBasisKey(row.bindingRefs)) {
-      throw authorizationDenied('Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本')
+      throw authorizationDenied('Agent 版本固定的工具绑定已失效，请重新验证并发布新版本')
     }
     const mcpConnections = this.toolService
-      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId, expectedDefinitionFingerprint ? row.mcpScope : undefined)
+      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
       : []
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
@@ -838,63 +820,6 @@ export class PostgresAgentService {
       : row.systemPrompt
     const { agentId: _agentId, agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
     return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
-  }
-
-  /**
-   * 草稿发布的事务内实现：发布治理借此把版本发布、提交状态与证据写入放进同一事务。
-   * 锁行、修订断言、能力校验与测试/试运行证据门禁均在事务内完成。
-   */
-  async publishDraftWithinTransaction(
-    transaction: DatabaseTransaction,
-    agentId: string,
-    actor: { id: string },
-    expectedRevision?: string,
-    /** B-03/I-04：封存的平台绑定依据随版本发布一并固化；与 status 翻转同一条 UPDATE，不触碰已发布版本的不变约束。 */
-    bindingRefs?: ManifestToolBinding[],
-  ): Promise<AgentReleaseRecord> {
-    const locked = await this.lockAgentForMutation(transaction, agentId)
-    if (!locked || !locked.draftVersionId || locked.versionId !== locked.draftVersionId) throw stateConflict('当前 Agent 草稿已发生变化，请重新测试后再发布')
-    assertAgentMutationRevision(locked, expectedRevision)
-    const principal = await this.getAgentExecutionPrincipal(agentId, transaction)
-    if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
-    await this.assertCapabilityReferences(locked.skills, locked.tools, principal.roleIds, principal.dataScopes)
-
-    const fingerprint = configurationFingerprint(locked)
-    // 发布门禁只认封存试运行：agent_trial_runs 的案例经 Run/Attempt → Runtime Adapter
-    // → DSH 真实执行且 bound_fingerprint/sealed_revision 与当前配置一致。交互式
-    // agent_test_runs 是结构校验，不能作为发布证据（避免绕过发布治理流程）。
-    const [trial] = await transaction<{ id: string }[]>`
-      select t.id from agent_trial_runs t
-        join agent_release_submissions s
-          on s.tenant_id = t.tenant_id and s.id = t.submission_id
-       where t.tenant_id = ${tenantId} and t.status = 'passed'
-         and s.agent_version_id = ${locked.versionId}
-         and s.bound_fingerprint = ${fingerprint}
-         and s.sealed_revision is not null and s.sealed_revision = s.revision
-         and t.submission_revision = s.sealed_revision
-       limit 1
-    `
-    if (!trial) throw invalidRequest('发布前必须在发布工作台完成与当前配置一致的封存试运行')
-
-    const published = await transaction<{ id: string }[]>`
-      update agent_versions set status = 'published', published_at = now(), published_by = ${actor.id},
-             binding_refs = ${transaction.json(asJson(bindingRefs ?? []))}
-       where tenant_id = ${tenantId} and id = ${locked.versionId} and status = 'draft'
-       returning id
-    `
-    if (!published.length) throw stateConflict('Agent 草稿发布状态已发生变化，请刷新后重试')
-
-    // 发布只切换活动版本与草稿指针，不隐式重新启用：停用中的 Agent 发布后仍保持
-    // disabled，重新启用必须走独立的状态变更操作与确认流程。
-    const activated = await transaction<{ id: string }[]>`
-      update agents set active_version_id = ${locked.versionId}, draft_version_id = null,
-                        status = case when status = 'disabled' then 'disabled' else 'published' end,
-                        updated_at = now()
-       where tenant_id = ${tenantId} and id = ${agentId} and draft_version_id = ${locked.versionId}
-       returning id
-    `
-    if (!activated.length) throw stateConflict('Agent 草稿指针已发生变化，请刷新后重试')
-    return this.appendRelease(transaction, locked.versionId, agentId, 'published', actor.id, '封存试运行通过，发布当前 Agent 版本。')
   }
 
   private async assertCapabilityReferences(
@@ -930,31 +855,6 @@ export class PostgresAgentService {
     return effectiveTools
   }
 
-  private async appendRelease(
-    transaction: DatabaseTransaction,
-    versionId: string,
-    agentId: string,
-    action: AgentReleaseRecord['action'],
-    actorId: string,
-    note: string,
-  ): Promise<AgentReleaseRecord> {
-    const id = `agent-release-${randomUUID()}`
-    const [row] = await transaction<{ version: string; actor: string; time: Date }[]>`
-      with inserted as (
-        insert into agent_release_records (
-          id, tenant_id, agent_id, agent_version_id, action, actor_id, note
-        ) values (${id}, ${tenantId}, ${agentId}, ${versionId}, ${action}, ${actorId}, ${note})
-        returning agent_version_id, actor_id, created_at
-      )
-      select av.version, u.display_name as actor, inserted.created_at as time
-        from inserted
-        join agent_versions av on av.tenant_id = ${tenantId} and av.id = inserted.agent_version_id
-        join users u on u.tenant_id = ${tenantId} and u.id = inserted.actor_id
-    `
-    if (!row) throw new Error('Agent 发布记录写入失败')
-    return { id, agentId, version: row.version, action, actor: row.actor, time: formatDateTime(row.time), note }
-  }
-
   private async requireActor(userId: string, sql: DatabaseClient | DatabaseTransaction = this.database) {
     return requirePlatformAdminActor(sql, userId)
   }
@@ -965,6 +865,7 @@ export class PostgresAgentService {
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
+             av.status as "versionStatus",
              av.system_prompt as "systemPrompt", a.visible_role_ids as "roleIds",
              av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",
@@ -987,6 +888,7 @@ export class PostgresAgentService {
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
+             av.status as "versionStatus",
              av.system_prompt as "systemPrompt", a.visible_role_ids as "roleIds",
              av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",

@@ -9,7 +9,6 @@ import type {
   AgentDraftConfiguration,
   CreateAgentDraftInput,
   AgentJoinedWorkspaceRecord,
-  AgentReleaseRecord,
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
@@ -37,7 +36,6 @@ export const useContentStore = defineStore('admin-content', () => {
   const workspaces = ref<ManagedWorkspaceDefinition[]>([])
   const agents = ref<AgentDefinition[]>([])
   const agentVersions = ref<AgentVersionRecord[]>([])
-  const agentReleaseRecords = ref<AgentReleaseRecord[]>([])
   const skills = ref<SkillDefinition[]>([])
   const skillVersions = ref<SkillVersionRecord[]>([])
   const skillReleaseRecords = ref<SkillReleaseRecord[]>([])
@@ -92,7 +90,6 @@ export const useContentStore = defineStore('admin-content', () => {
       workspaceData,
       agentData,
       agentVersionData,
-      agentReleaseData,
       skillData,
       skillVersionData,
       skillReleaseData,
@@ -108,7 +105,6 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getWorkspaces(),
       adminApi.getAgents(),
       adminApi.getAgentVersions(),
-      adminApi.getAgentReleaseRecords(),
       adminApi.getSkills(),
       adminApi.getSkillVersions(),
       adminApi.getSkillReleaseRecords(),
@@ -124,7 +120,6 @@ export const useContentStore = defineStore('admin-content', () => {
     workspaces.value = workspaceData
     agents.value = agentData
     agentVersions.value = agentVersionData
-    agentReleaseRecords.value = agentReleaseData
     skills.value = skillData
     skillVersions.value = skillVersionData
     skillReleaseRecords.value = skillReleaseData
@@ -153,7 +148,6 @@ export const useContentStore = defineStore('admin-content', () => {
   ) {
     const result = await adminApi.setAgentStatus({ agentId, status })
     replaceById(agents.value, result.agent)
-    agentReleaseRecords.value.unshift(result.release)
     const version = agentVersions.value.find(
       (item) => item.agentId === agentId && item.version === result.agent.version,
     )
@@ -183,7 +177,6 @@ export const useContentStore = defineStore('admin-content', () => {
   async function rollbackAgent(agentId: string, version: string) {
     const result = await adminApi.rollbackAgent({ agentId, version })
     replaceById(agents.value, result.agent)
-    agentReleaseRecords.value.unshift(result.release)
     const target = agentVersions.value.find(
       (item) => item.agentId === agentId && item.version === version,
     )
@@ -385,7 +378,6 @@ export const useContentStore = defineStore('admin-content', () => {
     workspaces,
     agents,
     agentVersions,
-    agentReleaseRecords,
     skills,
     skillVersions,
     skillReleaseRecords,

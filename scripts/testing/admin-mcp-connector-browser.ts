@@ -12,13 +12,13 @@ import { createServer } from 'node:http'
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
-import { PostgresAgentReleaseService } from '../../server/src/modules/agent/postgres-agent-release-service.ts'
+import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
-import { registerAgentReleaseRoutes } from '../../server/src/http/admin/agent-release-routes.ts'
+import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { AgentRoutineService } from '../../server/src/modules/automation/agent-routine-service.ts'
@@ -94,8 +94,8 @@ const routineOrchestration = new RunOrchestrationService(routineRuns, routineCon
   new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime,
   undefined, undefined, agents, undefined, authorization,
   { tasks: new PostgresTaskRepository(database.client) })
-// 发布服务第五个参数是试运行编排：此前误传临时目录字符串，导致该夹具中无法发起试运行。
-registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database.client, agents, undefined,
+// 验证服务第五个参数是验证案例的运行编排。
+registerAgentValidationRoutes(router, agents, new PostgresAgentValidationService(database.client, agents, undefined,
   connectorService, routineOrchestration))
 registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
   routineRuns, routineOrchestration, routineConversations))

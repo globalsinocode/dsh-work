@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 
-import { configurationFingerprint, type PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { DatabaseClient } from './database.ts'
 
 const tenantId = 'tenant-dsh-work'
 
 /**
- * 测试夹具：为草稿版本种"封存试运行通过"的治理证据，并调用与发布治理相同的
- * 事务内发布入口。生命周期/引用类套件借此聚焦版本与引用机制；真实 DSH 试运行
- * 到发布的端到端覆盖见 agent-release-governance 集成套件。
+ * 测试夹具：把草稿直接发布为当前版本（不运行验证）。生命周期/引用类套件借此聚焦
+ * 版本与引用机制；验证到发布的完整链路见 agent-release-governance 集成套件。
+ * 与正式发布一样先复核能力引用与执行身份授权，版本不固定平台默认工具。
  */
 export async function publishDraftWithSealedTrial(
   database: DatabaseClient,
@@ -17,43 +16,32 @@ export async function publishDraftWithSealedTrial(
   agentId: string,
   actorId: string,
 ) {
-  const [draft] = await database<{
-    id: string; name: string; description: string; welcomeMessage: string
-    systemPrompt: string; examplePrompts: string[]
-    skills: string[]; tools: string[]
-    maxOutputBytes: number; maxToolCalls: number; timeoutSeconds: number
-  }[]>`
-    select id, name, description, welcome_message as "welcomeMessage",
-           system_prompt as "systemPrompt", example_prompts as "examplePrompts",
-           skill_refs as skills, tool_refs as tools,
-           max_output_bytes as "maxOutputBytes", max_tool_calls as "maxToolCalls",
-           timeout_seconds as "timeoutSeconds"
+  const [draft] = await database<{ id: string; skills: string[]; tools: string[] }[]>`
+    select id, skill_refs as skills, tool_refs as tools
       from agent_versions
-     where tenant_id = ${tenantId} and agent_id = ${agentId} and status = 'draft'
+     where tenant_id = ${tenantId} and agent_id = ${agentId} and status in ('draft', 'candidate')
+     order by created_at desc limit 1
   `
   assert.ok(draft, `Agent ${agentId} 没有可发布的草稿版本`)
+  const principal = await agents.getAgentExecutionPrincipal(agentId)
+  assert.equal(principal.status, 'active', `Agent ${agentId} 执行身份已停用`)
   await database.begin(async tx => {
-    // 单活跃候选约束：收尾上一轮的进行中提交再种新证据
-    await tx`
-      update agent_release_submissions set status = 'published', updated_at = now()
-       where tenant_id = ${tenantId} and agent_id = ${agentId}
-         and status in ('draft', 'submitted', 'changes_requested')
+    const published = await tx`
+      update agent_versions set status = 'published', published_at = now(), published_by = ${actorId}
+       where tenant_id = ${tenantId} and id = ${draft.id} and status in ('draft', 'candidate')
+      returning id
     `
-    const submissionId = `submission-${randomUUID()}`
+    assert.equal(published.length, 1)
     await tx`
-      insert into agent_release_submissions (
-        id, tenant_id, agent_id, agent_version_id, bound_fingerprint, revision,
-        status, source, sealed_revision, sealed_at, created_by
-      ) values (
-        ${submissionId}, ${tenantId}, ${agentId}, ${draft.id},
-        ${configurationFingerprint({ versionId: draft.id, ...draft })}, 1,
-        'submitted', 'config', 1, now(), ${actorId}
-      )
+      update agents a
+         set active_version_id = av.id, name = av.name, description = av.description,
+             welcome_message = av.welcome_message,
+             draft_version_id = case when a.draft_version_id = av.id then null else a.draft_version_id end,
+             status = case when a.status = 'disabled' then 'disabled' else 'published' end,
+             updated_at = now()
+        from agent_versions av
+       where a.tenant_id = ${tenantId} and a.id = ${agentId}
+         and av.tenant_id = a.tenant_id and av.id = ${draft.id}
     `
-    await tx`
-      insert into agent_trial_runs (id, tenant_id, submission_id, agent_id, submission_revision, status, finished_at, created_by)
-      values (${`trial-${randomUUID()}`}, ${tenantId}, ${submissionId}, ${agentId}, 1, 'passed', now(), ${actorId})
-    `
-    await agents.publishDraftWithinTransaction(tx, agentId, { id: actorId })
   })
 }

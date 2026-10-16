@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentDefinition, GrantSourceReconciliationView, SkillDefinition, SkillReleaseRecord, SkillVersionRecord, ToolCatalogCandidate } from '../types/domain'
 
 const api = vi.hoisted(() => ({
-  getAgentReleaseRecords: vi.fn(),
   getAgents: vi.fn(),
   getAgentVersions: vi.fn(),
   getAgentJoinedWorkspaces: vi.fn(),

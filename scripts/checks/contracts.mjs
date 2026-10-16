@@ -4,9 +4,10 @@ const requiredPaths = {
     '/runs/{runId}/events', '/runs/{runId}/cancel', '/artifacts/{artifactId}/versions/{versionId}/download',
   ],
   admin: [
-    '/agents', '/agents/draft', '/agents/status', '/agents/rollback',
-    '/agents/{agentId}', '/agents/{agentId}/workspaces',
-    '/agent-versions', '/agent-release-records', '/skills', '/skills/test', '/skills/status',
+    '/agents', '/agents/{agentId}/draft', '/agents/{agentId}/status', '/agents/{agentId}/rollback',
+    '/agents/{agentId}', '/agents/{agentId}/workspaces', '/agents/{agentId}/versions',
+    '/agents/{agentId}/test-cases', '/agents/{agentId}/validations', '/agents/{agentId}/validations/{validationId}',
+    '/agents/{agentId}/publish', '/agent-versions', '/skills', '/skills/test', '/skills/status',
     '/skills/rollback', '/skill-versions', '/skill-release-records', '/tools', '/tools/status',
     '/tools/permissions', '/connectors', '/connectors/check', '/runtimes', '/runtimes/check',
     '/runtimes/configuration', '/sessions', '/workspaces', '/audit-events', '/health',

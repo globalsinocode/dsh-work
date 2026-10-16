@@ -17,7 +17,7 @@ import type {
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
 import { RequestError, accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
-import { sessionSummaryMaxConcurrent } from '../../domain/conversation-context.ts'
+import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose, type BackgroundLanePurpose } from '../../domain/background-lanes.ts'
 
 interface RunRow {
   id: string
@@ -470,14 +470,14 @@ export class PostgresRunRepository implements RunRepository {
           if ((lane?.active ?? 0) >= laneLimit) return false
         }
       }
-      // EX-02：对话摘要车道——最多一路，且始终为交互执行保留一路 Worker。
-      if (pending.purpose === 'session-summary') {
-        const laneLimit = Math.max(0, Math.min(sessionSummaryMaxConcurrent, runtime.capacity - 1))
+      // EX-02 对话摘要与 S3 验证案例车道：各自有并发上限，且始终为交互执行保留一路 Worker。
+      if (isBackgroundLanePurpose(pending.purpose)) {
+        const laneLimit = Math.max(0, Math.min(backgroundLaneMaxConcurrent[pending.purpose], runtime.capacity - 1))
         const [lane] = await transaction<{ active: number }[]>`
           select count(*)::integer as active from run_attempts
            where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
              and status in ('running', 'cancel_requested')
-             and manifest->>'purpose' = 'session-summary'
+             and manifest->>'purpose' = ${pending.purpose}
         `
         if ((lane?.active ?? 0) >= laneLimit) return false
       }
@@ -514,7 +514,7 @@ export class PostgresRunRepository implements RunRepository {
   async backgroundLaneUsage(
     tenantId: string,
     runtimeId: string,
-    purpose: 'automation' | 'session-summary',
+    purpose: 'automation' | BackgroundLanePurpose,
     configuredMax: number,
   ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }> {
     const [row] = await this.database<{ capacity: number; schedulingStatus: string; running: number }[]>`

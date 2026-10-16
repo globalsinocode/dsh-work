@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "dsh-work 管理平台 API",
-    "version": "0.12.0-agent-routines",
+    "version": "0.13.0-agent-validation",
     "description": "管理面请求使用独立账号密码或 AI Hub OIDC 登录后由 dsh-work 签发的 HttpOnly 服务端 Session。认证模式由部署配置显式选择；admin:read、admin:write、audit:read、角色与数据范围全部由 dsh-work 本地授权。身份同步、账号管理、角色、员工授权和 Session 撤销仅允许本地平台管理员（admin:*）修改。操作人由服务端 Session 注入，请求体不接受 actor。"
   },
   "servers": [
@@ -19,48 +19,6 @@
     }
   ],
   "paths": {
-    "/agents/{agentId}/release/case-trials": {
-      "post": {
-        "operationId": "startAgentReleaseTrial",
-        "summary": "自动检查并只执行第一项发布验证案例",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId"], "properties": { "caseId": { "type": "string" } } } } } },
-        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/release/trials/{trialId}/cases": {
-      "post": {
-        "operationId": "continueAgentReleaseTrialCase",
-        "summary": "上一项经人工确认通过后保存并执行下一项案例",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["caseId", "input", "rubric"], "properties": { "caseId": { "type": "string" }, "input": { "type": "string" }, "rubric": { "type": "string" } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/release/trials/{trialId}/confirm": {
-      "post": {
-        "operationId": "confirmAgentReleaseTrialCase",
-        "summary": "对当前案例的完整输出登记人工结论；五项通过后试运行完成",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }, { "name": "trialId", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["verdicts"], "properties": { "verdicts": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["caseId", "verdict"], "properties": { "caseId": { "type": "string" }, "verdict": { "enum": ["passed", "failed"] }, "note": { "type": "string", "maxLength": 1000, "description": "verdict=failed 时必填（去除首尾空白后非空），否则返回 422" } } } } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
-    "/agents/{agentId}/versions/{versionId}/package": {
-      "get": {
-        "operationId": "exportAgentVersionPackage",
-        "summary": "导出 Agent 版本 ZIP 供审阅和离线核对；不包含平台凭据、连接器或授权，不提供 ZIP 导入",
-        "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": { "description": "Agent 发布包", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } },
-          "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
     "/agents/{agentId}/routines": {
       "get": { "operationId": "listAgentRoutines", "summary": "列出 Agent 拥有的主动任务规则", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } },
       "post": { "operationId": "createAgentRoutine", "summary": "创建固定版本、触发规则、接收人与预算的草稿", "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AgentRoutineDraft" } } } }, "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" } } }
@@ -295,10 +253,15 @@
         }
       }
     },
-    "/agents/draft": {
+    "/agents/{agentId}/draft": {
       "patch": {
         "operationId": "updateAgentDraft",
-        "summary": "更新草稿；编辑已发布 Agent 时创建下一版本草稿。需回传 expectedRevision，发布范围保持不变",
+        "summary": "更新工作草稿；当前没有可编辑草稿（已发布或已冻结为待发布版本）时创建下一版本草稿。需回传 expectedRevision；访问授权不属于草稿",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -312,17 +275,56 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
           }
         }
       }
     },
-    "/agents/status": {
+    "/agents/{agentId}/status": {
       "patch": {
         "operationId": "setAgentStatus",
-        "summary": "发布、启用或停用 Agent；发布要求当前配置测试通过",
+        "summary": "启用或停用已发布的 Agent，写审计；草稿只能经验证后通过 POST /agents/{agentId}/publish 发布",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "published",
+                      "disabled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
           },
           "409": {
             "$ref": "#/components/responses/Error"
@@ -330,13 +332,320 @@
         }
       }
     },
-    "/agents/rollback": {
+    "/agents/{agentId}/rollback": {
       "post": {
         "operationId": "rollbackAgent",
-        "summary": "将活动版本指针回滚到指定已发布版本；不改变启用/停用状态，不影响进行中的草稿",
+        "summary": "把当前版本指针移到任一曾发布的版本，不需要重新验证；不改变启用/停用状态，不影响进行中的草稿，写审计",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/versions": {
+      "get": {
+        "operationId": "listAgentVersionHistory",
+        "summary": "查询该 Agent 的版本历史（草稿、待发布、已发布），含发布时间、发布人和当前版本标记",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/test-cases": {
+      "put": {
+        "operationId": "replaceAgentTestCases",
+        "summary": "整体替换 Agent 的自定义测试问题（最多 20 条，每条 1～2000 字）；属于 Agent，跨版本复用，下一次验证生效",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "prompts"
+                ],
+                "properties": {
+                  "prompts": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations": {
+      "post": {
+        "operationId": "startAgentValidation",
+        "summary": "开始验证：验证前检查全部通过后把工作草稿原地冻结为待发布版本（工具绑定变化时冻结为新版本），取代旧验证，并在后台并行运行示例问题、主动任务与自定义问题；立即返回 202，进度经 GET 轮询",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}": {
+      "get": {
+        "operationId": "getAgentValidation",
+        "summary": "读取验证与各案例状态、三项机器检查（留下运行记录、执行成功、回答非空）、回答与判定；读取时收敛已结束的运行",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "validationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}/cases/{caseId}/rerun": {
+      "post": {
+        "operationId": "rerunAgentValidationCase",
+        "summary": "单独重跑一个已结束的案例（含服务重启中断的案例）；清除该案例原判定",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "validationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}/cases/{caseId}/verdict": {
+      "post": {
+        "operationId": "setAgentValidationVerdict",
+        "summary": "判定案例：机器检查全部通过才可判为通过；判为不通过必须填写原因。案例已重跑时返回 409",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "validationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "verdict"
+                ],
+                "properties": {
+                  "verdict": {
+                    "enum": [
+                      "passed",
+                      "failed"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/publish": {
+      "post": {
+        "operationId": "publishAgent",
+        "summary": "发布已验证的待发布版本：要求该验证是最新验证且全部案例判定通过；在 Agent 与执行身份锁内复核可见角色、执行身份、工具授权、固定绑定、MCP 范围与数据声明，然后移动当前版本指针",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "validationId"
+                ],
+                "properties": {
+                  "validationId": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
           }
         }
       }
@@ -347,6 +656,18 @@
           "$ref": "#/components/parameters/AgentId"
         }
       ],
+      "get": {
+        "operationId": "getAgentRelease",
+        "summary": "读取 Agent 与验证发布总览：当前版本、工作草稿/待发布版本、自定义测试问题、将运行的案例、验证前检查与最新验证",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
       "patch": {
         "operationId": "setAgentWorkspaceJoin",
         "summary": "平台治理开关：允许或禁止该 Agent 加入团队空间；关闭后不再出现在团队空间「添加 Agent」候选",
@@ -396,17 +717,6 @@
       "get": {
         "operationId": "listAgentVersions",
         "summary": "查询不可变 Agent 版本历史",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      }
-    },
-    "/agent-release-records": {
-      "get": {
-        "operationId": "listAgentReleaseRecords",
-        "summary": "查询 Agent 发布、启停和回滚记录",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2258,295 +2568,6 @@
           }
         }
       }
-    },
-    "/agent-release-submissions": {
-      "get": {
-        "operationId": "listAgentReleaseSubmissions",
-        "summary": "列出各 Agent 的发布候选及其状态",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agent-version-evidence": {
-      "get": {
-        "operationId": "listAgentVersionEvidence",
-        "summary": "列出已发布 Agent 版本的发布依据（试运行、确认与审核记录）",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release": {
-      "get": {
-        "operationId": "getAgentReleaseState",
-        "summary": "读取 Agent 当前发布状态；只读，不创建或推进候选",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/candidate": {
-      "post": {
-        "operationId": "ensureAgentReleaseCandidate",
-        "summary": "为当前草稿创建发布候选，或把已有候选同步到最新草稿修订",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/cases": {
-      "post": {
-        "operationId": "updateAgentReleaseCases",
-        "summary": "替换发布候选的评测案例；候选已提交审核时被拒绝",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "cases": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "required": [
-                        "caseId",
-                        "input",
-                        "rubric"
-                      ],
-                      "properties": {
-                        "caseId": {
-                          "type": "string"
-                        },
-                        "input": {
-                          "type": "string"
-                        },
-                        "rubric": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                },
-                "required": [
-                  "cases"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/trials/{trialId}/cancel": {
-      "post": {
-        "operationId": "cancelAgentReleaseTrial",
-        "summary": "取消进行中的发布试运行，并取消其仍在执行的 Run",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          },
-          {
-            "name": "trialId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/request-changes": {
-      "post": {
-        "operationId": "requestAgentReleaseChanges",
-        "summary": "把待审核候选退回修改；必须填写审核意见",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "note": {
-                    "type": "string",
-                    "maxLength": 1000
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/withdraw": {
-      "post": {
-        "operationId": "withdrawAgentReleaseSubmission",
-        "summary": "撤回进行中的发布候选",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/release/publish": {
-      "post": {
-        "operationId": "publishAgentRelease",
-        "summary": "发布候选：要求与当前封存修订一致的通过试运行、检查全部通过且员工可见角色仍有效",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/AgentId"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "note": {
-                    "type": "string",
-                    "maxLength": 1000
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "422": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
     }
   },
   "components": {
@@ -2942,13 +2963,9 @@
             "type": "object",
             "description": "草稿只含版本内容；可见角色、岗位角色与数据范围属于 Agent，只能通过 PATCH /agents/{agentId}/access 修改。",
             "required": [
-              "agentId",
               "expectedRevision"
             ],
             "properties": {
-              "agentId": {
-                "type": "string"
-              },
               "expectedRevision": {
                 "type": "string",
                 "minLength": 1,

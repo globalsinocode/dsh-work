@@ -1,6 +1,5 @@
 import {
   mockAgents,
-  mockAgentReleaseRecords,
   mockAgentVersions,
   mockArtifactFiles,
   mockArtifacts,
@@ -18,7 +17,6 @@ import {
 } from './data.ts'
 import type {
   AgentDefinition,
-  AgentReleaseRecord,
   AgentVersionRecord,
   ConnectorDefinition,
   RuntimeDefinition,
@@ -92,12 +90,6 @@ export class SmokeRepository {
     prototypeData.agents.unshift(copy(agent))
     prototypeData.agentVersions.unshift(copy(version))
     return { agent: copy(agent), version: copy(version) }
-  }
-
-  async appendAgentRelease(record: AgentReleaseRecord): Promise<AgentReleaseRecord> {
-    await simulateIo()
-    prototypeData.agentReleaseRecords.unshift(copy(record))
-    return copy(record)
   }
 
   async createSkill(skill: SkillDefinition): Promise<SkillDefinition> {
@@ -180,7 +172,6 @@ const prototypeData = {
   artifacts: mockArtifacts,
   agents: mockAgents,
   agentVersions: mockAgentVersions,
-  agentReleaseRecords: mockAgentReleaseRecords,
   skills: mockSkills,
   tools: mockTools,
   connectors: mockConnectors,

@@ -251,6 +251,9 @@ export interface Workspace {
 
 export type PublishStatus = 'draft' | 'published' | 'disabled'
 
+/** S3：验证时草稿冻结为 candidate（不可变），通过验证后发布为 published。 */
+export type AgentVersionStatus = PublishStatus | 'candidate'
+
 export interface AgentDefinition {
   id: string
   name: string
@@ -326,7 +329,7 @@ export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
-  status: PublishStatus
+  status: AgentVersionStatus
   /** 发布时封存的平台绑定依据；旧版本可能为空（不回填）。 */
   bindingRefs?: AgentVersionBindingRef[]
   createdAt: string
@@ -345,16 +348,6 @@ export interface AgentVersionRecord {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-}
-
-export interface AgentReleaseRecord {
-  id: string
-  agentId: string
-  version: string
-  action: 'published' | 'enabled' | 'disabled' | 'rollback'
-  actor: string
-  time: string
-  note: string
 }
 
 export interface SkillDefinition {

@@ -1,6 +1,5 @@
 import type {
   AgentDefinition,
-  AgentReleaseRecord,
   AgentVersionRecord,
   Artifact,
   AuditEvent,
@@ -946,15 +945,6 @@ export const mockAgentVersions: AgentVersionRecord[] = [
     skills: ['订单分析'],
     tools: ['erp.get_orders'],
   },
-]
-
-export const mockAgentReleaseRecords: AgentReleaseRecord[] = [
-  { id: 'release-006', agentId: 'dsh-work-assistant', version: '1.2.0', action: 'published', actor: '陈默', time: '2026-08-27 17:42', note: '通过回归测试与安全评审，发布至全体试点员工。' },
-  { id: 'release-005', agentId: 'dsh-work-assistant', version: '1.1.0', action: 'enabled', actor: '陈默', time: '2026-08-21 09:05', note: '试点问题修复后重新启用。' },
-  { id: 'release-004', agentId: 'dsh-work-assistant', version: '1.1.0', action: 'disabled', actor: '沈清', time: '2026-08-20 18:26', note: '安全检查期间临时停用。' },
-  { id: 'release-003', agentId: 'dsh-work-assistant', version: '1.1.0', action: 'published', actor: '陈默', time: '2026-08-13 09:30', note: '新增订单分析能力。' },
-  { id: 'release-002', agentId: 'operations-analyst', version: '0.3.0', action: 'published', actor: '陈默', time: '2026-08-20 16:10', note: '仅向供应链中心灰度发布。' },
-  { id: 'release-001', agentId: 'dsh-work-assistant', version: '1.0.0', action: 'published', actor: '陈默', time: '2026-08-03 15:18', note: '首个企业知识问答试点版本。' },
 ]
 
 export const mockSkills: SkillDefinition[] = [

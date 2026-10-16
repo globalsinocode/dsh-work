@@ -1,5 +1,5 @@
 import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../../runtime/execution-capabilities.ts'
-import { sessionSummaryMaxConcurrent } from '../../../domain/conversation-context.ts'
+import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose } from '../../../domain/background-lanes.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import type { RunRepository } from '../run-repository.ts'
@@ -131,13 +131,16 @@ export class AttemptScheduler {
               continue
             }
           }
-          // EX-02：摘要车道同理——容量不足以保留交互余量时摘要直接失败（下一轮退回裁剪），
-          // 车道满则留队，继续扫描交互任务。
-          if (next.manifest.purpose === 'session-summary') {
-            const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, 'session-summary', sessionSummaryMaxConcurrent)
+          // EX-02 摘要与 S3 验证案例车道同理——容量不足以保留交互余量时直接失败
+          // （摘要下一轮退回裁剪，验证案例可重跑），车道满则留队，继续扫描交互任务。
+          if (isBackgroundLanePurpose(next.manifest.purpose)) {
+            const purpose = next.manifest.purpose
+            const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, purpose, backgroundLaneMaxConcurrent[purpose])
             if (lane.exists && lane.accepting && lane.allowed <= 0) {
               this.pendingExecutions.splice(index, 1)
-              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, 'Runtime 容量不足以在保留交互余量的同时生成摘要')
+              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, purpose === 'session-summary'
+                ? 'Runtime 容量不足以在保留交互余量的同时生成摘要'
+                : 'Runtime 容量不足以在保留交互余量的同时运行验证案例')
               continue
             }
             if (lane.exists && lane.accepting && lane.running >= lane.allowed) {

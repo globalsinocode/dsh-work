@@ -205,10 +205,6 @@ export class AdminQueryService {
     return this.repository.read('agentVersions')
   }
 
-  getAgentReleaseRecords() {
-    return this.repository.read('agentReleaseRecords')
-  }
-
   async createAgentDraft(input: CreateAgentDraftInput) {
     const creatorName = input.actor.trim()
     if (!creatorName) throw stateConflict('创建人不能为空')
@@ -309,20 +305,7 @@ export class AdminQueryService {
       status: input.status,
       ...(action === 'published' ? { publishedAt: timestamp, publishedBy: input.actor } : {}),
     })
-    const release = await this.repository.appendAgentRelease({
-      id: `release-${Date.now()}`,
-      agentId: input.agentId,
-      version: current.version,
-      action,
-      actor: input.actor,
-      time: timestamp,
-      note: action === 'published'
-        ? '通过管理后台发布当前草稿版本。'
-        : action === 'enabled'
-          ? '重新启用当前 Agent 版本。'
-          : '停用当前 Agent，不影响已创建的运行。',
-    })
-    return { agent, release }
+    return { agent }
   }
 
   async rollbackAgent(input: { agentId: string; version: string; actor: string }) {
@@ -356,16 +339,7 @@ export class AdminQueryService {
       updatedAt: timestamp,
     })
     await this.repository.updateAgentVersion(input.agentId, target.version, { status: 'published' })
-    const release = await this.repository.appendAgentRelease({
-      id: `release-${Date.now()}`,
-      agentId: input.agentId,
-      version: target.version,
-      action: 'rollback',
-      actor: input.actor,
-      time: timestamp,
-      note: `活动版本由 v${current.version} 回滚到 v${target.version}；启停状态与进行中的草稿保持不变。`,
-    })
-    return { agent, release }
+    return { agent }
   }
 
   getSkills() {

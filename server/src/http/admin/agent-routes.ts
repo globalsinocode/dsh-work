@@ -8,7 +8,6 @@ const basePath = '/api/admin/v1'
 export function registerAgentRoutes(router: Router, service: PostgresAgentService, access: PostgresAgentAccessService) {
   router.get(`${basePath}/agents`, async () => envelope('admin', await service.getAgents(), 'postgres'))
   router.get(`${basePath}/agent-versions`, async () => envelope('admin', await service.getAgentVersions(), 'postgres'))
-  router.get(`${basePath}/agent-release-records`, async () => envelope('admin', await service.getReleaseRecords(), 'postgres'))
   router.post(`${basePath}/agents`, async (request, context) => {
     const input = await readJsonBody<Omit<CreateAgentDraftInput, 'actor'>>(request)
     return httpResult(201, envelope('admin', await service.createAgent({
@@ -16,36 +15,36 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres'))
   })
-  router.patch(`${basePath}/agents/draft`, async (request, context) => {
-    const { expectedRevision, ...input } = await readJsonBody<Omit<UpdateAgentDraftInput, 'actor'>>(request)
+  router.patch(`${basePath}/agents/:agentId/draft`, async (request, context) => {
+    const { expectedRevision, ...input } = await readJsonBody<Omit<UpdateAgentDraftInput, 'actor' | 'agentId'>>(request)
     if (typeof expectedRevision !== 'string' || !expectedRevision.trim()) {
       throw routeValidationFailed('缺少草稿修订，请刷新 Agent 后重新编辑')
     }
     // 访问授权（可见角色、执行角色、数据范围）不属于草稿，只能经 /agents/:agentId/access 修改。
     return envelope('admin', await service.updateAgent({
       ...input,
+      agentId: context.params.agentId ?? '',
       actor: requireRequestIdentity(context, 'admin').userId,
     }, expectedRevision), 'postgres')
   })
-  router.patch(`${basePath}/agents/status`, async (request, context) => {
-    const input = await readJsonBody<{
-      agentId: string
-      status: Extract<PublishStatus, 'published' | 'disabled'>
-    }>(request)
+  router.patch(`${basePath}/agents/:agentId/status`, async (request, context) => {
+    const input = await readJsonBody<{ status: Extract<PublishStatus, 'published' | 'disabled'> }>(request)
     return envelope('admin', await service.setStatus({
-      ...input,
+      status: input.status,
+      agentId: context.params.agentId ?? '',
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
-  router.post(`${basePath}/agents/rollback`, async (request, context) => {
-    const input = await readJsonBody<{ agentId: string; version: string }>(request)
+  // 回滚只移动当前版本指针到任一曾发布的版本。
+  router.post(`${basePath}/agents/:agentId/rollback`, async (request, context) => {
+    const input = await readJsonBody<{ version: string }>(request)
     return envelope('admin', await service.rollback({
-      ...input,
+      version: input.version,
+      agentId: context.params.agentId ?? '',
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
   })
-  // 平台治理开关（convergence §1）。注册顺序必须在 /agents/draft、/agents/status 之后，
-  // 否则参数路由会抢先匹配固定路径。
+  // 平台治理开关（convergence §1）。
   router.patch(`${basePath}/agents/:agentId`, async (request, context) => {
     const input = await readJsonBody<{ allowWorkspaceJoin: boolean }>(request)
     return envelope('admin', {

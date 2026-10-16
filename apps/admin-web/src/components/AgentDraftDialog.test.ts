@@ -61,7 +61,7 @@ describe('AgentDraftDialog config completion', () => {
     expect(wrapper.text()).toContain('Agent 草稿已保存')
     expect(wrapper.emitted('saved')).toEqual([[importedAgent]])
     expect(wrapper.emitted('continue-release')).toBeUndefined()
-    await wrapper.findAll('button').find(button => button.text() === '进入人工试运行验证')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '进入验证与发布')!.trigger('click')
     expect(wrapper.emitted('continue-release')).toEqual([[importedAgent]])
   })
 

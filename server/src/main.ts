@@ -54,8 +54,8 @@ import { PostgresWorkspaceActivityService } from './modules/workbench/applicatio
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
-import { PostgresAgentReleaseService } from './modules/agent/postgres-agent-release-service.ts'
-import { registerAgentReleaseRoutes } from './http/admin/agent-release-routes.ts'
+import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
+import { registerAgentValidationRoutes } from './http/admin/agent-validation-routes.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
 import { registerSkillInstallationRoutes } from './http/admin/skill-installation-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
@@ -415,11 +415,12 @@ async function start() {
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
   registerAgentRoutes(router, agents, new PostgresAgentAccessService(database, toolService))
   registerAdminAgentDataRoutes(router, agentData)
-  const agentRelease = new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration)
-  // 启动收敛：进程中断留下的执行中试运行标记为“服务重启中断”，允许管理员重新开始（底层 Run 已由重启恢复收敛）。
-  const trialRecovery = await agentRelease.recoverInterruptedTrials()
-  if (trialRecovery.interrupted > 0) console.warn('agent release trial recovery completed', trialRecovery)
-  registerAgentReleaseRoutes(router, agentRelease)
+  const agentValidation = new PostgresAgentValidationService(database, agents, skills, toolService, orchestration)
+  // 启动收敛：重启前尚未取得 Run 的验证案例标为“服务重启中断”，可单独重跑；
+  // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
+  const validationRecovery = await agentValidation.recoverInterruptedValidations()
+  if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
+  registerAgentValidationRoutes(router, agents, agentValidation)
   registerSkillRoutes(router, skills)
   registerToolRoutes(router, toolService)
   registerWorkbenchAgentRoutes(router, agents, authorization)

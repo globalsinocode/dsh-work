@@ -71,7 +71,7 @@ export class AdminRunEntry implements AdminRunLauncher {
     // 试运行 Run 属于发布治理证据：失败应在工作台重新发起完整试运行（封存/案例/确认
     // 全链路），不能按管理助手语义单独重试——那会用 Skill 安装工具集重放治理输入。
     if (manifest.purpose === 'agent-release-trial') {
-      throw invalidRequest('试运行不支持单独重试；请在发布工作台重新发起试运行')
+      throw invalidRequest('验证案例不支持单独重试；请在验证与发布中重跑该案例')
     }
     if (manifest.purpose === 'admin-skill-test') {
       // Reuse the full immutable graph, tool allowlist and original input. The

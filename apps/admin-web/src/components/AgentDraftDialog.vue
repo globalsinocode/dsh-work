@@ -286,14 +286,14 @@ function toVersionedToolReference(reference: string) {
       <el-result
         icon="success"
         title="Agent 草稿已保存"
-        sub-title="草稿已保存在 Agent 管理中。您可以关闭弹窗稍后处理，也可以主动进入发布流程。"
+        sub-title="草稿已保存在 Agent 管理中。您可以关闭弹窗稍后处理，也可以进入验证与发布。"
       />
       <dl class="draft-completion__summary">
         <div><dt>Agent</dt><dd>{{ savedResult.agent.name }}</dd></div>
         <div><dt>草稿版本</dt><dd class="mono">v{{ savedResult.agent.version }}</dd></div>
         <div><dt>能力范围</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · MCP：{{ savedResult.agent.mcpScope?.mode === 'selected' ? '仅选定' : savedResult.agent.mcpScope?.mode === 'none' ? '不使用' : '全部可用' }}</dd></div>
       </dl>
-      <p class="field-help">独立执行身份已自动创建，可直接进行基础试运行。可见角色、岗位角色和数据范围在“岗位权限”中设置，保存后立即生效。</p>
+      <p class="field-help">独立执行身份已自动创建，可直接进行发布前验证。可见角色、岗位角色和数据范围在“岗位权限”中设置，保存后立即生效。</p>
     </section>
 
     <template v-else>
@@ -367,7 +367,7 @@ function toVersionedToolReference(reference: string) {
             <el-button v-if="connector" link type="primary" @click="showMcpTools(connector)">查看工具</el-button>
             <el-button link type="danger" @click="setSelectedMcpIds(form.mcpScope.connectorIds.filter(id => id !== form.mcpScope.connectorIds[index]))">移除</el-button>
           </div>
-          <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；试运行和新任务将被拒绝，请修正选择或恢复连接。" />
+          <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；验证和新任务将被拒绝，请修正选择或恢复连接。" />
         </div>
         <el-alert class="agent-permission-note" type="info" :closable="false" show-icon title="可见角色、岗位角色和数据范围属于 Agent，在详情的“岗位权限”中设置，修改立即生效；敏感操作仍受工具策略约束。" />
       </section>
@@ -415,7 +415,7 @@ function toVersionedToolReference(reference: string) {
     <template #footer>
       <div v-if="savedResult" class="agent-editor__footer">
         <el-button @click="finishSaved">关闭</el-button>
-        <el-button type="primary" @click="continueRelease">进入人工试运行验证</el-button>
+        <el-button type="primary" @click="continueRelease">进入验证与发布</el-button>
       </div>
       <div v-else class="agent-editor__footer">
         <el-button :disabled="saving" @click="requestClose">取消</el-button>

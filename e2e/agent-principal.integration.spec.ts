@@ -100,7 +100,7 @@ test('AE-02 a basic Agent gets an independent executor without inheriting creato
   await dialog.getByRole('button', { name: '下一步' }).click()
   await dialog.getByRole('button', { name: '完成创建' }).click()
   await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' }))
-    .toContainText('独立执行身份已自动创建，可直接进行基础试运行')
+    .toContainText('独立执行身份已自动创建，可直接进行发布前验证')
   const agents = await page.request.get('/api/admin/v1/agents')
   expect(agents.ok()).toBeTruthy()
   const created = ((await agents.json()).data as Array<{ id: string; name: string }>).find(item => item.name === '无默认执行授权测试')
@@ -112,7 +112,7 @@ test('AE-02 a basic Agent gets an independent executor without inheriting creato
   })
 
   await page.getByRole('dialog', { name: 'Agent 草稿已保存' })
-    .getByRole('button', { name: '进入人工试运行验证' }).click()
+    .getByRole('button', { name: '进入验证与发布' }).click()
   const card = page.getByRole('region', { name: '岗位权限' }).first()
   await expect(card).toContainText('还没有设置可见角色')
   await card.getByRole('button', { name: '调整' }).click()

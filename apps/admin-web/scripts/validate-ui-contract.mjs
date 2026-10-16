@@ -83,9 +83,8 @@ requireFragments('src/router/index.ts', [
   "meta: { title: '运营概览'",
   "meta: { title: '管理助手'",
   "meta: { title: 'Agent 管理'",
-  "meta: { title: 'Agent 发布工作台 ·",
-  "path: '/agents/:agentId/release/trial'",
-  "path: '/agents/:agentId/release/review'",
+  "meta: { title: 'Agent 验证与发布'",
+  "path: '/agents/:agentId/release'",
   "meta: { title: 'Skill 管理'",
   "meta: { title: 'DSH 工具管理'",
   "meta: { title: 'MCP 连接器'",
@@ -104,7 +103,7 @@ requireFragments('src/router/index.ts', [
 const businessViews = [
   'AdminOverviewView.vue',
   'AgentManagementView.vue',
-  'AgentReleaseWorkbenchView.vue',
+  'AgentValidationView.vue',
   'CapabilityManagementView.vue',
   'PermissionManagementView.vue',
   'AuditView.vue',
@@ -136,33 +135,36 @@ for (const name of listViews) {
 
 requireFragments('src/views/AgentManagementView.vue', [
   'data-action="view-agent"',
-  'data-action="open-candidate"',
-  '@continue-release="openCandidate"',
+  'data-action="open-release"',
+  '@continue-release="openRelease"',
 ])
 forbidFragments('src/views/AgentManagementView.vue', ["activeDetailTab === 'candidate'", 'data-action="publish-agent"'])
 const agentManagementView = read('src/views/AgentManagementView.vue')
-const savedHandlerStart = agentManagementView.indexOf('function handleDraftSaved')
-const savedHandlerEnd = agentManagementView.indexOf('function evidenceName', savedHandlerStart)
-if (savedHandlerStart < 0 || savedHandlerEnd < 0 || agentManagementView.slice(savedHandlerStart, savedHandlerEnd).includes('router.push')) {
+const draftDialogStart = agentManagementView.indexOf('<AgentDraftDialog')
+const draftDialogEnd = agentManagementView.indexOf('/>', draftDialogStart)
+if (draftDialogStart < 0 || draftDialogEnd < 0 || agentManagementView.slice(draftDialogStart, draftDialogEnd).includes('@saved')) {
   failures.push('Agent 草稿保存后不得自动跳转发布页面')
 }
 requireFragments('src/components/AgentDraftDialog.vue', [
   '草稿已保存在 Agent 管理中',
-  '进入人工试运行验证',
+  '进入验证与发布',
   "'continue-release': [agent: AgentDefinition]",
 ])
 forbidFragments('src/components/AgentDraftDialog.vue', ['AgentZipImportPanel', 'ZIP 导入'])
-requireFragments('src/views/AgentReleaseWorkbenchView.vue', [
+requireFragments('src/views/AgentValidationView.vue', [
+  '验证前检查',
   '验证案例',
-  '运行本项',
+  '自定义测试问题',
+  '机器检查',
+  '重跑本项',
   '确认不通过',
   '不通过原因',
-  '验证结论',
+  '验证结果',
   '确认发布',
-  "activeStep === 'trial'",
+  'data-action="start-validation"',
   'data-action="publish-agent"',
 ])
-forbidFragments('src/views/AgentReleaseWorkbenchView.vue', ['class="workbench-header"', 'Agent 候选发布流程', '查看配置摘要', "activeStep === 'definition'", "activeStep === 'checks'"])
+forbidFragments('src/views/AgentValidationView.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
   'data-action="view-tool"',

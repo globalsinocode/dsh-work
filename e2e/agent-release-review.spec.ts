@@ -1,437 +1,177 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
+// P0 页面冒烟：验证与发布页只做前端交互，服务端响应由路由夹具提供；
+// 验证到发布的真实链路由 agent-release-governance 集成套件覆盖。
 const agentId = 'operations-analyst'
-const kinds = ['success', 'invalid_input', 'permission_denied', 'prompt_injection', 'capability_failure']
-const candidate = {
-  id: 'submission-review-smoke', agentId, agentVersionId: 'agent-version-operations-040',
-  version: '0.4.0', revision: 1, sealedRevision: 1, status: 'draft', source: 'config',
-  bindingRefs: [], packageRefs: { skills: [], tools: [] }, missingDeps: { skills: [], tools: [] },
-  checks: [{ id: 'definition', label: '定义检查', status: 'passed', detail: '通过' }], plan: [],
-  cases: kinds.map(kind => ({
-    id: `case-${kind}`, evaluationApiVersion: 'dsh-work.ai/evaluation/v1',
-    name: kind, kind, input: kind,
-    automatedAssertions: ['run_attempt_recorded', 'execution_succeeded', 'output_non_empty'],
-    manualReview: { rubric: '符合预期', required: true },
-  })),
+const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
+const releasePath = `**/api/admin/v1/agents/${agentId}`
+
+const access = {
+  agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
+  visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['当前工作空间'],
+  roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
+  capabilities: [], collections: [], routines: [],
 }
-function accessFor(input: { roleIds: string[]; dataScopes: string[]; missingRole?: boolean }) {
+
+const passedChecks = { runRecorded: true, executionSucceeded: true, outputNonEmpty: true }
+
+function validationCase(position: number, overrides: Record<string, unknown> = {}) {
   return {
-    agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
-    visibleRoleIds: ['role-employee'], roleIds: input.roleIds, dataScopes: input.dataScopes,
-    roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
-    capabilities: input.missingRole === undefined ? [] : [{
-      reference: 'custom@1.0.0', name: '自定义授权工具', source: 'declared',
-      requiredRoleIds: ['role-employee'], requiredScopes: [], missingRole: input.missingRole, missingScopes: [],
-    }],
-    collections: [], routines: [],
+    id: `case-${position + 1}`, position, source: position === 0 ? 'example' : 'custom', sourceRef: null,
+    prompt: position === 0 ? '请汇总本周供应异常' : '只能访问授权数据时你会怎么做？',
+    status: 'succeeded', runId: `run-${position + 1}`, attemptId: `attempt-${position + 1}`, runCount: 1,
+    checks: passedChecks, output: '符合预期的回答', error: null,
+    verdict: null, verdictNote: null, verdictBy: null, verdictAt: null,
+    startedAt: '2026-10-16T00:00:00.000Z', finishedAt: '2026-10-16T00:00:05.000Z',
+    ...overrides,
   }
 }
-const trialRuns = [{
-  id: 'trial-review-smoke', submissionRevision: 1, status: 'passed',
-  startedAt: '2026-09-23T00:00:00.000Z',
-  steps: [{ id: 'dsh', label: 'DSH 执行评估案例', status: 'passed', caseRuns: kinds.map(kind => ({
-    caseId: `case-${kind}`, name: kind, kind, evaluationApiVersion: 'dsh-work.ai/evaluation/v1',
-    automatedAssertions: [
-      { assertion: 'run_attempt_recorded', passed: true, detail: 'Run/Attempt 已记录' },
-      { assertion: 'execution_succeeded', passed: true, detail: '执行成功' },
-      { assertion: 'output_non_empty', passed: true, detail: '输出非空' },
+
+function validation(cases: Array<ReturnType<typeof validationCase>>, status = 'completed') {
+  return {
+    id: 'validation-smoke', agentId, agentVersionId: 'agent-version-operations-040', version: '0.4.0',
+    status, createdBy: 'admin', createdAt: '2026-10-16T00:00:00.000Z', completedAt: null, cases,
+    publishable: cases.every(item => item.verdict === 'passed'),
+  }
+}
+
+function overview(current: ReturnType<typeof validation> | null, overrides: Record<string, unknown> = {}) {
+  return {
+    agentId,
+    activeVersion: { id: 'agent-version-operations-030', version: '0.3.0' },
+    draft: { id: 'agent-version-operations-040', version: '0.4.0', status: current ? 'candidate' : 'draft' },
+    candidate: current ? { id: 'agent-version-operations-040', version: '0.4.0' } : null,
+    draftChanged: false,
+    testCases: [{ id: 'test-case-1', prompt: '只能访问授权数据时你会怎么做？' }],
+    plannedCases: [
+      { source: 'example', sourceRef: null, prompt: '请汇总本周供应异常' },
+      { source: 'custom', sourceRef: 'test-case-1', prompt: '只能访问授权数据时你会怎么做？' },
     ],
-    manualReview: { required: true, rubric: '符合预期' },
-    runId: `run-${kind}`, attemptId: `attempt-${kind}`, status: 'succeeded',
-    outputExcerpt: '符合预期的结果', verdict: 'passed',
-  })) }],
-}]
+    checks: [
+      { id: 'audience', label: '可见角色', passed: true, detail: '1 个可见角色' },
+      { id: 'authorization', label: '工具授权', passed: true, detail: '已获授权' },
+      { id: 'cases', label: '验证案例', passed: true, detail: '2 个案例' },
+    ],
+    usesMcp: false,
+    validation: current,
+    ...overrides,
+  }
+}
+
+async function serveRelease(page: Page, release: ReturnType<typeof overview>) {
+  await page.route(releasePath, async route => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    // 页面优先使用 Agent 列表中的定义；这里只需返回发布总览。
+    await route.fulfill({ json: { data: { agent: { id: agentId, name: '运营分析助手' }, release } } })
+  })
+}
 
 test.beforeEach(async ({ page }) => {
-  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: accessFor({
-      roleIds: ['role-employee'], dataScopes: ['供应链中心', '本部门汇总数据', '当前工作空间'],
-    }) }),
-  }))
+  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({ json: { data: access } }))
 })
 
-test('已通过试运行的 Agent 不受 JSON 字段顺序影响，可进入确认发布', async ({ page }) => {
-  let publishRequests = 0
-  await page.route('**/api/admin/v1/agent-release-submissions', route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: { items: [] } }),
+test('旧发布工作台地址落到验证与发布页，显示验证前检查与将运行的案例', async ({ page }) => {
+  await serveRelease(page, overview(null))
+  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
+  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/release$`))
+  await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('3/3 项通过')
+  const cases = page.getByRole('region', { name: '验证案例' })
+  await expect(cases.getByRole('list', { name: '本次将运行的案例' })).toContainText('请汇总本周供应异常')
+  await expect(cases.getByRole('list', { name: '本次将运行的案例' })).toContainText('自定义问题')
+  await expect(page.getByRole('button', { name: '开始验证' })).toBeEnabled()
+  await expect(page.getByRole('region', { name: '确认发布' })).toHaveCount(0)
+  for (const removed of ['提交审核', '退回修改', '撤回候选', '运行本项']) {
+    await expect(page.getByRole('button', { name: removed })).toHaveCount(0)
+  }
+})
+
+test('验证前检查未通过时不能开始验证', async ({ page }) => {
+  await serveRelease(page, overview(null, {
+    checks: [{ id: 'audience', label: '可见角色', passed: false, detail: '还没有设置可见角色' }],
   }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns, evidence: {}, packageWarnings: [],
-    } }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/publish`, async route => {
-    publishRequests += 1
-    expect(route.request().postDataJSON()).toEqual({ note: '已复核案例与权限' })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      trialRuns, evidence: {}, packageWarnings: [],
-    } }) })
+  await page.goto(`${adminUrl}/agents/${agentId}/release`)
+  await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('还没有设置可见角色')
+  await expect(page.getByRole('button', { name: '开始验证' })).toBeDisabled()
+})
+
+test('全部案例判定通过后一次确认发布，发布说明随请求提交', async ({ page }) => {
+  let current = validation([validationCase(0), validationCase(1)])
+  await serveRelease(page, overview(current))
+  await page.route(`${releasePath}/validations/validation-smoke`, route => route.fulfill({ json: { data: current } }))
+  await page.route(`${releasePath}/validations/validation-smoke/cases/*/verdict`, async route => {
+    const caseId = route.request().url().split('/cases/')[1]!.split('/')[0]!
+    const body = route.request().postDataJSON() as { verdict: 'passed' | 'failed'; note?: string }
+    current = validation(current.cases.map(item => item.id === caseId
+      ? { ...item, verdict: body.verdict, verdictNote: body.note ?? null } : item))
+    await route.fulfill({ json: { data: current } })
+  })
+  const publishBodies: unknown[] = []
+  await page.route(`${releasePath}/publish`, async route => {
+    publishBodies.push(route.request().postDataJSON())
+    await route.fulfill({ json: { data: overview(null, { draft: null, candidate: null }) } })
   })
 
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await page.getByRole('button', { name: '验证通过，确认发布' }).click()
-  await expect(page.getByText('发布确认摘要')).toBeVisible()
-  await expect(page.locator('[data-action="submit-agent-release"]')).toHaveCount(0)
-  const conclusions = page.getByRole('region', { name: '验证结论' })
-  await expect(conclusions).toContainText('5/5 项人工确认通过')
-  await expect(conclusions).toContainText('提示注入')
-  await expect(page.getByRole('region', { name: '本次变化' })).toBeVisible()
-  // 内部修订与运行编号收在技术详情中，默认不展示。
-  await expect(page.getByText('trial-review-smoke')).toBeHidden()
-  await page.getByText('技术详情').click()
-  await expect(page.getByText('trial-review-smoke')).toBeVisible()
-  await page.getByLabel('业务确认意见').fill('已复核案例与权限')
-  await page.locator('[data-action="publish-agent"]').click()
-  await page.getByRole('button', { name: '确认发布', exact: true }).last().click()
+  await page.goto(`${adminUrl}/agents/${agentId}/release`)
+  const publish = page.getByRole('button', { name: '确认发布' })
+  await expect(publish).toBeDisabled()
+  await page.getByRole('article', { name: '案例 1' }).getByRole('button', { name: '通过', exact: true }).click()
+  await page.getByRole('article', { name: '案例 2' }).getByRole('button', { name: '通过', exact: true }).click()
+  await expect(page.getByRole('region', { name: '验证结果' })).toContainText('2 项判定通过')
+  await page.getByRole('textbox', { name: '发布说明' }).fill('业务确认通过')
+  await publish.click()
+  await expect.poll(() => publishBodies).toEqual([{ validationId: 'validation-smoke', note: '业务确认通过' }])
   await expect(page.getByText('发布完成')).toBeVisible()
-  expect(publishRequests).toBe(1)
 })
 
-test('按 Agent 当前岗位权限允许试运行和发布，撤权仍阻止运行', async ({ page }) => {
-  let roleIds = ['role-employee']
-  let passed = false
-  await page.route('**/api/admin/v1/agents', async route => {
-    const response = await route.fetch()
-    const body = await response.json()
-    body.data = body.data.map((agent: { id: string }) => agent.id === agentId
-      ? { ...agent, tools: ['custom@1.0.0'] } : agent)
-    await route.fulfill({ response, json: body })
+test('判定不通过必须填写原因；机器检查未通过的案例不能判为通过，可单独重跑', async ({ page }) => {
+  let current = validation([validationCase(0, {
+    status: 'interrupted', checks: { runRecorded: true, executionSucceeded: false, outputNonEmpty: false },
+    output: '', error: '服务重启中断',
+  })])
+  await serveRelease(page, overview(current))
+  await page.route(`${releasePath}/validations/validation-smoke`, route => route.fulfill({ json: { data: current } }))
+  const verdictBodies: unknown[] = []
+  await page.route(`${releasePath}/validations/validation-smoke/cases/case-1/verdict`, async route => {
+    const body = route.request().postDataJSON() as { verdict: 'failed'; note: string }
+    verdictBodies.push(body)
+    current = validation([{ ...current.cases[0]!, verdict: body.verdict, verdictNote: body.note }])
+    await route.fulfill({ json: { data: current } })
   })
-  await page.route('**/api/admin/v1/tools', route => route.fulfill({ json: { data: [{
-    id: 'custom', version: '1.0.0', name: '自定义授权工具', status: 'available',
-    allowedRoles: ['普通员工（已改名）'], allowedRoleIds: ['role-employee'],
-    agentRunLocalDefault: false, dataScopes: [],
-  }] } }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({ json: {
-    data: accessFor({ roleIds, dataScopes: [], missingRole: !roleIds.includes('role-employee') }),
-  } }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({ json: { data: {
-    candidate, trialRuns: passed ? trialRuns : [], evidence: {}, packageWarnings: [],
-  } } }))
-  const url = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}/agents/${agentId}/release/trial`
-  await page.goto(url)
-  await expect(page.getByRole('button', { name: '运行本项', exact: true })).toBeEnabled()
-  await expect(page.getByText(/验证前还需授权/)).toHaveCount(0)
-  passed = true
-  await page.reload()
-  await page.getByRole('button', { name: '验证通过，确认发布' }).click()
-  await expect(page.locator('[data-action="publish-agent"]')).toBeEnabled()
-  roleIds = []
-  await page.goto(url)
-  await expect(page.getByText('验证前还需授权：自定义授权工具 所需的岗位角色')).toBeVisible()
-  await expect(page.getByRole('button', { name: '验证通过，确认发布' })).toHaveCount(0)
-  passed = false
-  await page.reload()
-  await expect(page.getByRole('button', { name: '运行本项', exact: true })).toBeDisabled()
-})
-
-test('运行本项时显示本项的持久检查与 DSH 进度，完成后保留过程', async ({ page }) => {
-  let phase: 'before' | 'running' | 'complete' = 'before'
-  let finishTrial!: () => void
-  const pendingTrial = new Promise<void>(resolve => { finishTrial = resolve })
-  const firstCase = candidate.cases[0]!
-  const runningTrial = {
-    id: 'trial-live-progress', submissionRevision: 1, status: 'executing',
-    startedAt: '2026-09-23T01:10:00.000Z',
-    steps: [
-      { id: 'seal', label: '封存定义、依赖与绑定', status: 'passed' },
-      { id: 'static', label: '静态检查与测试准入复核', status: 'passed' },
-      { id: 'queue', label: '排队与运行准备', status: 'passed' },
-      { id: 'dsh', label: 'DSH 执行评估案例', status: 'running', currentCaseId: firstCase.id },
-    ],
-    progress: { caseId: firstCase.id, runId: 'run-live', attemptId: 'attempt-live', runStatus: 'running',
-      events: [
-        { type: 'run.queued', label: '已进入 Runtime 队列', occurredAt: '2026-09-23T01:10:00.000Z' },
-        { type: 'run.started', label: 'DSH Worker 已启动', occurredAt: '2026-09-23T01:10:01.000Z' },
-      ] },
-  }
-  const completedTrial = {
-    ...runningTrial, status: 'asserting',
-    steps: [
-      ...runningTrial.steps.slice(0, 3),
-      { id: 'dsh', label: 'DSH 执行评估案例', status: 'passed', currentCaseId: firstCase.id,
-        caseRuns: [{ ...trialRuns[0]!.steps[0]!.caseRuns[0]!, verdict: undefined }] },
-    ],
-  }
-  const releaseState = () => ({
-    candidate, trialRuns: phase === 'before' ? [] : [phase === 'running' ? runningTrial : completedTrial],
-    evidence: {}, packageWarnings: [],
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: releaseState() }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: releaseState() }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/case-trials`, async route => {
-    expect(route.request().postDataJSON()).toEqual({ caseId: firstCase.id })
-    phase = 'running'
-    await pendingTrial
-    phase = 'complete'
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: releaseState() }) })
+  let reruns = 0
+  await page.route(`${releasePath}/validations/validation-smoke/cases/case-1/rerun`, async route => {
+    reruns += 1
+    current = validation([validationCase(0, { runCount: 2 })])
+    await route.fulfill({ json: { data: current } })
   })
 
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await page.getByRole('button', { name: '运行本项' }).click()
-  const firstTab = page.getByRole('tabpanel', { name: /正常任务/ })
-  const progressDetails = firstTab.locator('.case-process')
-  await expect(progressDetails).toHaveAttribute('open', '')
-  await expect(progressDetails.getByText('DSH Worker 已启动')).toBeVisible()
-  await expect(progressDetails.getByText('静态检查与测试准入复核')).toBeVisible()
-  await expect(firstTab.getByText('请先完成前一项验证')).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: /无效输入.*未开始/ })).toBeVisible()
+  await page.goto(`${adminUrl}/agents/${agentId}/release`)
+  const item = page.getByRole('article', { name: '案例 1' })
+  await expect(item).toContainText('服务重启中断')
+  await expect(item.getByRole('list', { name: '机器检查' })).toContainText('✕ 执行成功')
+  await expect(item.getByRole('button', { name: '通过', exact: true })).toBeDisabled()
 
-  finishTrial()
-  await expect(firstTab.getByRole('region', { name: 'success的实际输出' })).toBeVisible()
-  await expect(progressDetails).not.toHaveAttribute('open', '')
-  await page.reload()
-  await expect(firstTab.getByText('查看运行过程')).toBeVisible()
-})
-
-test('五类案例在页签中逐项运行与确认，不能一次派发全部案例', async ({ page }) => {
-  const actions: string[] = []
-  let legacyBulkRequests = 0
-  const editedCandidate = { ...candidate, revision: 2, sealedRevision: undefined, checks: [] }
-  const firstRun = { ...trialRuns[0]!.steps[0]!.caseRuns[0]!, verdict: undefined }
-  const partialTrial = {
-    ...trialRuns[0], id: 'trial-progressive-smoke', submissionRevision: 2, status: 'asserting',
-    steps: [{ id: 'dsh', label: 'DSH 执行评估案例', status: 'passed', caseRuns: [firstRun] }],
-  }
-  const checkedCandidate = { ...editedCandidate, checks: candidate.checks, cases: [
-    { ...candidate.cases[0]!, input: '检查本月数据' }, ...candidate.cases.slice(1),
-  ] }
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns: [], evidence: {}, packageWarnings: [],
-    } }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/cases`, async route => {
-    actions.push('cases')
-    const cases = route.request().postDataJSON().cases as typeof candidate.cases
-    expect(cases[0]?.input).toBe('检查本月数据')
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: { ...editedCandidate, cases }, trialRuns: [], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/case-trials`, async route => {
-    actions.push('trial')
-    expect(route.request().postDataJSON()).toEqual({ caseId: 'case-success' })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: checkedCandidate, trialRuns: [partialTrial], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials`, async route => {
-    legacyBulkRequests += 1
-    await route.abort()
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials/trial-progressive-smoke/confirm`, async route => {
-    actions.push('confirm')
-    expect(route.request().postDataJSON()).toEqual({ verdicts: [{ caseId: 'case-success', verdict: 'passed' }] })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: checkedCandidate,
-      trialRuns: [{ ...partialTrial, steps: [{ ...partialTrial.steps[0], caseRuns: [{ ...firstRun, verdict: 'passed' }] }] }],
-      evidence: {}, packageWarnings: [],
-    } }) })
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials/trial-progressive-smoke/cases`, async route => {
-    actions.push('next')
-    expect(route.request().postDataJSON()).toEqual({
-      caseId: 'case-invalid_input', input: ' 订单号缺失 ', rubric: ' 先询问订单号 ',
-    })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: { ...checkedCandidate, cases: checkedCandidate.cases.map(item => item.kind === 'invalid_input'
-        ? { ...item, input: '订单号缺失', manualReview: { required: true, rubric: '先询问订单号' } } : item) },
-      trialRuns: [{ ...partialTrial, steps: [{ ...partialTrial.steps[0], caseRuns: [
-        { ...firstRun, verdict: 'passed' }, { ...trialRuns[0]!.steps[0]!.caseRuns[1], verdict: undefined },
-      ] }] }], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  for (const operation of ['inspect', 'import']) {
-    const response = await page.request.post(`${adminUrl}/api/admin/v1/agent-packages/${operation}`, {
-      headers: { 'Content-Type': 'application/zip', 'X-File-Name': 'agent.zip' },
-      data: Buffer.from('removed'),
-    })
-    expect(response.status()).toBe(404)
-  }
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await expect(page.getByRole('heading', { name: '验证案例' })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: 'Agent 候选发布流程' })).toHaveCount(0)
-  await expect(page.getByText('查看配置摘要')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '编辑配置' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '试运行进度' })).toHaveCount(0)
-  await expect(page.getByText('检查与案例')).toHaveCount(0)
-  await page.getByRole('textbox', { name: 'success测试输入' }).fill('检查本月数据')
-  await expect(page.getByRole('textbox', { name: 'invalid_input测试输入' })).toHaveCount(0)
-  await page.getByRole('button', { name: '运行本项' }).click()
-  await expect.poll(() => actions).toEqual(['cases', 'trial'])
-  expect(legacyBulkRequests).toBe(0)
-  await expect(page.getByRole('region', { name: 'success的实际输出' })).toBeVisible()
-  const currentCase = page.getByRole('tabpanel', { name: /正常任务/ })
-  await expect(currentCase.getByText('Run/Attempt 已记录')).toBeHidden()
-  await currentCase.getByText('查看运行与自动检查').click()
-  await expect(currentCase.getByText('Run/Attempt 已记录')).toBeVisible()
-  await expect(page.getByRole('button', { name: '取消本轮验证' })).toBeVisible()
-  await page.getByRole('tabpanel', { name: /正常任务/ }).getByRole('button', { name: '通过', exact: true }).click()
-  await expect.poll(() => actions).toEqual(['cases', 'trial', 'confirm'])
-  await expect(page.getByRole('textbox', { name: 'invalid_input测试输入' })).toBeVisible()
-  await page.getByRole('textbox', { name: 'invalid_input测试输入' }).fill(' 订单号缺失 ')
-  await page.getByRole('textbox', { name: 'invalid_input人工判定标准' }).fill(' 先询问订单号 ')
-  await page.getByRole('button', { name: '运行本项' }).click()
-  await expect.poll(() => actions).toEqual(['cases', 'trial', 'confirm', 'next'])
-  await expect(page.getByRole('textbox', { name: 'invalid_input测试输入' })).toHaveValue('订单号缺失')
-  await expect(page.getByRole('textbox', { name: 'invalid_input人工判定标准' })).toHaveValue('先询问订单号')
-  expect(legacyBulkRequests).toBe(0)
-})
-
-test('最后一项经服务端修剪空白后仍可确认并进入发布页', async ({ page }) => {
-  const lastCase = candidate.cases[4]!
-  const firstFourRuns = trialRuns[0]!.steps[0]!.caseRuns.slice(0, 4)
-  const pendingTrial = {
-    ...trialRuns[0], status: 'asserting',
-    steps: [{ ...trialRuns[0]!.steps[0], caseRuns: firstFourRuns }],
-  }
-  const lastRun = { ...trialRuns[0]!.steps[0]!.caseRuns[4], verdict: undefined }
-  const executedTrial = {
-    ...pendingTrial,
-    steps: [{ ...pendingTrial.steps[0], caseRuns: [...firstFourRuns, lastRun] }],
-  }
-  const normalizedCandidate = { ...candidate, cases: candidate.cases.map(item => item.id === lastCase.id
-    ? { ...item, input: '依赖服务不可用', manualReview: { required: true, rubric: '应说明无法完成' } }
-    : item) }
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns: [pendingTrial], evidence: {}, packageWarnings: [],
-    } }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials/${pendingTrial.id}/cases`, async route => {
-    expect(route.request().postDataJSON()).toEqual({
-      caseId: lastCase.id, input: ' 依赖服务不可用 ', rubric: ' 应说明无法完成 ',
-    })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: normalizedCandidate, trialRuns: [executedTrial], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials/${pendingTrial.id}/confirm`, async route => {
-    expect(route.request().postDataJSON()).toEqual({ verdicts: [{ caseId: lastCase.id, verdict: 'passed' }] })
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: normalizedCandidate, trialRuns: [trialRuns[0]], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await page.getByRole('textbox', { name: 'capability_failure测试输入' }).fill(' 依赖服务不可用 ')
-  await page.getByRole('textbox', { name: 'capability_failure人工判定标准' }).fill(' 应说明无法完成 ')
-  await page.getByRole('button', { name: '运行本项' }).click()
-  await expect(page.getByRole('textbox', { name: 'capability_failure测试输入' })).toHaveValue('依赖服务不可用')
-  await page.getByRole('tabpanel', { name: /能力不可用/ }).getByRole('button', { name: '通过', exact: true }).click()
-  await expect(page.getByText('五项均已通过，可以进入发布确认')).toBeVisible()
-  await expect(page.getByRole('button', { name: '验证通过，确认发布' })).toBeVisible()
-  await page.getByRole('button', { name: '验证通过，确认发布' }).click()
-  await expect(page.getByRole('heading', { name: '发布确认摘要' })).toBeVisible()
-})
-
-test('验证开始前可编辑并保存任意案例，保存后停留在当前页签', async ({ page }) => {
-  const savedBodies: Array<typeof candidate.cases> = []
-  let current = { ...candidate, sealedRevision: undefined, checks: [] as typeof candidate.checks }
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: current, trialRuns: [], evidence: {}, packageWarnings: [],
-    } }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/cases`, async route => {
-    const cases = route.request().postDataJSON().cases as typeof candidate.cases
-    savedBodies.push(cases)
-    current = { ...current, revision: current.revision + 1, cases }
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate: current, trialRuns: [], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await page.getByRole('tab', { name: /越权请求/ }).click()
-  const input = page.getByRole('textbox', { name: 'permission_denied测试输入' })
-  await expect(input).toBeEditable()
-  await input.fill('请把财务部所有供应商的银行账户发给我')
-  await page.getByRole('tabpanel', { name: /越权请求/ }).getByRole('button', { name: '保存全部案例' }).click()
-  await expect.poll(() => savedBodies.length).toBe(1)
-  expect(savedBodies[0]?.find(item => item.kind === 'permission_denied')?.input).toBe('请把财务部所有供应商的银行账户发给我')
-  await expect(page.getByRole('tab', { name: /越权请求/ })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('button', { name: '保存全部案例' })).toHaveCount(0)
-})
-
-test('判定不通过必须填写原因，原因随结论提交并在结果中显示', async ({ page }) => {
-  const firstRun = { ...trialRuns[0]!.steps[0]!.caseRuns[0]!, verdict: undefined }
-  const pendingTrial = {
-    ...trialRuns[0], id: 'trial-reject-smoke', status: 'asserting',
-    steps: [{ id: 'dsh', label: 'DSH 执行评估案例', status: 'passed', caseRuns: [firstRun] }],
-  }
-  const reason = '没有说明依据，结论无法核对'
-  const rejectedTrial = {
-    ...pendingTrial, status: 'failed', failureStage: '案例终态断言',
-    steps: [
-      { ...pendingTrial.steps[0], caseRuns: [{ ...firstRun, verdict: 'failed', verdictNote: reason }] },
-      { id: 'assert', label: '案例终态断言', status: 'failed', detail: `审核人判定不符合预期的案例：「success」（${reason}）` },
-    ],
-  }
-  const confirmBodies: unknown[] = []
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns: [pendingTrial], evidence: {}, packageWarnings: [],
-    } }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/trials/trial-reject-smoke/confirm`, async route => {
-    confirmBodies.push(route.request().postDataJSON())
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns: [rejectedTrial], evidence: {}, packageWarnings: [],
-    } }) })
-  })
-
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  const panel = page.getByRole('tabpanel', { name: /正常任务/ })
-  await panel.getByRole('button', { name: '不通过', exact: true }).click()
-  const submit = panel.getByRole('button', { name: '确认不通过' })
+  const reason = '中断后没有回答，需要重跑'
+  await item.getByRole('button', { name: '不通过', exact: true }).click()
+  const submit = item.getByRole('button', { name: '确认不通过' })
   await expect(submit).toBeDisabled()
-  await panel.getByRole('textbox', { name: 'success不通过原因' }).fill(reason)
+  await item.getByRole('textbox', { name: '案例 1 不通过原因' }).fill(reason)
   await submit.click()
-  await expect.poll(() => confirmBodies).toEqual([{ verdicts: [{ caseId: 'case-success', verdict: 'failed', note: reason }] }])
-  await expect(panel.getByText(`不通过原因：${reason}`)).toBeVisible()
-  await expect(page.locator('.case-feedback')).toContainText(reason)
-  await expect(page.getByRole('tab', { name: /正常任务/ })).toContainText('失败')
+  await expect.poll(() => verdictBodies).toEqual([{ verdict: 'failed', note: reason }])
+  await expect(item.getByText(`不通过原因：${reason}`)).toBeVisible()
+
+  await item.getByRole('button', { name: '重跑本项' }).click()
+  await expect.poll(() => reruns).toBe(1)
+  await expect(item).toContainText('第 2 次运行')
+  await expect(item.getByRole('button', { name: '通过', exact: true })).toBeEnabled()
 })
 
-test('试运行失败时优先展示可处理原因，技术证据按需展开', async ({ page }) => {
-  const failedRun = {
-    ...trialRuns[0]!.steps[0]!.caseRuns[0]!,
-    runId: null, attemptId: null, status: 'failed', outputExcerpt: '',
-    error: 'Agent 身份尚未获得试运行所需的角色和数据授权', verdict: undefined,
-  }
-  const failedTrial = {
-    id: 'trial-failed-smoke', submissionRevision: 1, status: 'failed',
-    startedAt: '2026-09-23T00:00:00.000Z',
-    steps: [{ id: 'dsh', label: 'DSH 执行评估案例', status: 'failed',
-      detail: '案例派发失败：正常任务 failed', caseRuns: [failedRun] }],
-  }
-  await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      candidate, trialRuns: [failedTrial], evidence: {}, packageWarnings: [],
-    } }),
+test('草稿在验证后被修改时提示结果不代表新草稿', async ({ page }) => {
+  const current = validation([validationCase(0)])
+  await serveRelease(page, overview(current, {
+    draft: { id: 'agent-version-operations-050', version: '0.5.0', status: 'draft' }, draftChanged: true,
   }))
-
-  const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
-  await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  const feedback = page.locator('.case-feedback')
-  await expect(feedback).toContainText('Agent 身份尚未获得试运行所需的角色和数据授权')
-  await expect(feedback).not.toContainText('案例派发失败：正常任务 failed')
-  await expect(page.getByRole('tab', { name: /1\. 正常任务/ })).toContainText('失败')
-  await expect(page.getByRole('tab', { name: /2\. 无效输入/ })).toContainText('未开始')
-  await expect(page.getByRole('button', { name: '重新运行第一项' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'success的实际输出' })).toHaveCount(0)
-  await expect(page.getByRole('tabpanel', { name: /正常任务/ }).getByText('查看运行与自动检查')).toBeVisible()
+  await page.route(`${releasePath}/validations/validation-smoke`, route => route.fulfill({ json: { data: current } }))
+  await page.goto(`${adminUrl}/agents/${agentId}/release`)
+  await expect(page.getByText('草稿已修改')).toBeVisible()
+  await expect(page.getByRole('button', { name: '验证修改后的草稿' })).toBeEnabled()
 })

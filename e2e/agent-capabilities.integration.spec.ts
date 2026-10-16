@@ -43,16 +43,12 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   )
   const version = versions.find(item => item.agentId === agentId)
   expect(version?.mcpScope).toEqual({ mode: 'selected', connectorIds: [connector.id] })
-  const exported = await page.request.get(`/api/admin/v1/agents/${agentId}/versions/${version!.id}/package`)
-  expect(exported.ok(), await exported.text()).toBeTruthy()
-  expect(exported.headers()['content-type']).toContain('application/zip')
-  expect((await exported.body()).subarray(0, 2).toString()).toBe('PK')
   await page.getByRole('dialog', { name: 'Agent 草稿已保存' }).getByRole('button', { name: '关闭' }).click()
   await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '查看' }).click()
   await page.getByRole('tab', { name: /版本历史/ }).click()
-  const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: '导出包' }).click()
-  expect((await download).suggestedFilename()).toBe(`${agentId}-v${version!.version}.zip`)
+  // 草稿尚未发布：版本历史只列出草稿，没有回滚目标。
+  await expect(page.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
+  await expect(page.getByRole('button', { name: '回滚至此' })).toHaveCount(0)
   const evidence = async () => data<{ systemPrompt: string; runtimeTools: string[]; mcpConnectorIds: string[] }>(
     await page.request.get(`/api/admin/v1/test/agent-capabilities/evidence?version_id=${version!.id}`),
   )

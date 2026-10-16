@@ -131,8 +131,9 @@ export class RunOrchestrationService {
   cancelAdminRun(runId: string, userId: string) { return this.admin.cancelAdminRun(runId, userId) }
   retryAdminRun(runId: string, userId: string) { return this.admin.retryAdminRun(runId, userId) }
 
-  // Agent release trials.
-  runReleaseTrialCase(input: Parameters<ReleaseTrialEntry['runReleaseTrialCase']>[0]) { return this.trials.runReleaseTrialCase(input) }
+  // Agent validation cases (S3).
+  startReleaseTrialCase(input: Parameters<ReleaseTrialEntry['startReleaseTrialCase']>[0]) { return this.trials.startReleaseTrialCase(input) }
+  getReleaseTrialResult(runId: string) { return this.trials.getReleaseTrialResult(runId) }
 
   // Automation and Agent routines.
   dispatchAutomation(run: RunRecord, input: Parameters<BackgroundRunEntry['dispatchAutomation']>[1]) { return this.background.dispatchAutomation(run, input) }

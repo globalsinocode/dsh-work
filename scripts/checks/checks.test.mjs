@@ -25,7 +25,7 @@ function fixture(t) {
     'apps/admin-web/src/views/AdminAssistantView.vue', 'apps/admin-web/src/stores/admin-assistant.ts',
     'apps/admin-web/src/components/SkillInstallationPanel.vue', 'apps/admin-web/src/components/SkillPackagePreview.vue',
     'apps/admin-web/src/components/AgentDraftDialog.vue', 'apps/admin-web/src/types/domain.ts',
-    'apps/admin-web/src/views/AgentReleaseWorkbenchView.vue',
+    'apps/admin-web/src/views/AgentValidationView.vue',
     'apps/workbench-web/src/views/WorkspacesView.vue', 'apps/workbench-web/src/views/WorkspaceDetailView.vue',
     'apps/workbench-web/src/views/ConversationView.vue',
     'packages/workbench-components/src/WorkspaceInfoPanel.vue', 'packages/design-tokens/src/tokens.css',
@@ -48,9 +48,9 @@ test('current project passes every static group', () => {
 
 test('contract checks reject missing API paths and required error fields', t => {
   const root = fixture(t)
-  editJson(root, 'docs/development/openapi-admin.json', api => { delete api.paths['/agents/rollback'] })
+  editJson(root, 'docs/development/openapi-admin.json', api => { delete api.paths['/agents/{agentId}/rollback'] })
   editJson(root, 'docs/development/openapi-workbench.json', api => { api.components.schemas.ErrorEnvelope.properties.error.required = [] })
-  assert.match(failures(root, 'contracts'), /缺少路径 \/agents\/rollback/)
+  assert.match(failures(root, 'contracts'), /缺少路径 \/agents\/\{agentId\}\/rollback/)
   assert.match(failures(root, 'contracts'), /错误契约缺少 traceId/)
 })
 

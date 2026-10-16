@@ -3,17 +3,15 @@ import type {
   AdminSession,
   AdminTaskSummary,
   AgentDefinition,
-  AgentEvalCase,
   AgentJoinedWorkspaceRecord,
   AgentAccess,
   AgentRoutine,
   AgentRoutineExecution,
-  AgentReleaseState,
-  AgentSubmissionSummary,
-  AgentVersionEvidenceEntry,
   CreateAgentDraftInput,
   CreateSkillInput,
-  AgentReleaseRecord,
+  AgentReleaseOverview,
+  AgentValidation,
+  AgentVersionHistoryItem,
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
@@ -181,26 +179,25 @@ export const adminApi = {
   getWorkspaces: () => request<ManagedWorkspaceDefinition[]>('/workspaces'),
   getAgents: () => request<AgentDefinition[]>('/agents'),
   getAgentVersions: () => request<AgentVersionRecord[]>('/agent-versions'),
-  getAgentReleaseRecords: () => request<AgentReleaseRecord[]>('/agent-release-records'),
   createAgentDraft: (input: CreateAgentDraftInput) =>
     request<{ agent: AgentDefinition; version: AgentVersionRecord }>('/agents', {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateAgentDraft: (input: UpdateAgentDraftInput) =>
-    request<{ agent: AgentDefinition; version: AgentVersionRecord }>('/agents/draft', {
+  updateAgentDraft: ({ agentId, ...input }: UpdateAgentDraftInput) =>
+    request<{ agent: AgentDefinition; version: AgentVersionRecord }>(`/agents/${encodeURIComponent(agentId)}/draft`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
   setAgentStatus: (input: { agentId: string; status: 'published' | 'disabled' }) =>
-    request<{ agent: AgentDefinition; release: AgentReleaseRecord }>('/agents/status', {
+    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/status`, {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ status: input.status }),
     }),
   rollbackAgent: (input: { agentId: string; version: string }) =>
-    request<{ agent: AgentDefinition; release: AgentReleaseRecord }>('/agents/rollback', {
+    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/rollback`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ version: input.version }),
     }),
   setAgentWorkspaceJoin: (input: { agentId: string; allowWorkspaceJoin: boolean }) =>
     request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}`, {
@@ -243,51 +240,28 @@ export const adminApi = {
     }),
   getAgentRoutineExecutions: (agentId: string, routineId: string) =>
     request<AgentRoutineExecution[]>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/executions`),
-  getAgentReleaseSubmissions: () => request<{ items: AgentSubmissionSummary[] }>('/agent-release-submissions'),
-  getAgentVersionEvidence: () => request<{ items: AgentVersionEvidenceEntry[] }>('/agent-version-evidence'),
-  getAgentReleaseState: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
-  ensureAgentReleaseCandidate: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
-  updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
-      method: 'POST',
-      body: JSON.stringify({ cases }),
+  getAgentRelease: (agentId: string) =>
+    request<{ agent: AgentDefinition; release: AgentReleaseOverview }>(`/agents/${encodeURIComponent(agentId)}`),
+  getAgentVersionHistory: (agentId: string) =>
+    request<{ items: AgentVersionHistoryItem[] }>(`/agents/${encodeURIComponent(agentId)}/versions`),
+  replaceAgentTestCases: (agentId: string, prompts: string[]) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/test-cases`, {
+      method: 'PUT', body: JSON.stringify({ prompts }),
     }),
-  startAgentReleaseTrial: (agentId: string, caseId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/case-trials`, { method: 'POST', body: JSON.stringify({ caseId }) }),
-  continueAgentReleaseTrialCase: (agentId: string, trialId: string, input: { caseId: string; input: string; rubric: string }) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cases`, {
+  startAgentValidation: (agentId: string) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/validations`, { method: 'POST' }),
+  getAgentValidation: (agentId: string, validationId: string) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}`),
+  rerunAgentValidationCase: (agentId: string, validationId: string, caseId: string) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}/cases/${encodeURIComponent(caseId)}/rerun`, { method: 'POST' }),
+  setAgentValidationVerdict: (agentId: string, validationId: string, caseId: string, input: { verdict: 'passed' | 'failed'; note?: string }) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}/cases/${encodeURIComponent(caseId)}/verdict`, {
       method: 'POST', body: JSON.stringify(input),
     }),
-  confirmAgentReleaseTrial: (agentId: string, trialId: string, verdicts: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }>) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
-  cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cancel`, { method: 'POST' }),
-  requestAgentReleaseChanges: (agentId: string, note: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/request-changes`, {
-      method: 'POST',
-      body: JSON.stringify({ note }),
+  publishAgent: (agentId: string, input: { validationId: string; note?: string }) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/publish`, {
+      method: 'POST', body: JSON.stringify(input),
     }),
-  withdrawAgentRelease: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/withdraw`, { method: 'POST' }),
-  publishAgentRelease: (agentId: string, note: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publish`, {
-      method: 'POST',
-      body: JSON.stringify({ note }),
-    }),
-  downloadAgentVersionPackage: async (agentId: string, versionId: string): Promise<Blob> => {
-    const response = await fetch(`${baseUrl}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/package`, {
-      credentials: 'include',
-      headers: { Accept: 'application/zip' },
-    })
-    if (!response.ok) {
-      const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
-      if (response.status === 401) redirectToLogin()
-      throw new AdminApiError(payload?.error ?? {}, response.status, `Agent 包导出失败（${response.status}）`)
-    }
-    return response.blob()
-  },
   getAgentJoinedWorkspaces: (agentId: string) =>
     request<{ items: AgentJoinedWorkspaceRecord[] }>(`/agents/${encodeURIComponent(agentId)}/workspaces`),
   getGrantSourceReconciliation: () =>

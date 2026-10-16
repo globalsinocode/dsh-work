@@ -167,7 +167,7 @@ export class PostgresAgentDataService {
     const [definition] = await this.database<{ data: { state?: boolean; collections?: AgentDataCollectionRequirement[] } | null }[]>`
       select av.agent_spec -> 'data' as data from agent_versions av
        where av.tenant_id = ${actor.tenantId} and av.id = ${actor.agentVersionId}
-         and av.status = ${trialOnly ? 'draft' : 'published'}
+         and av.status = ${trialOnly ? 'candidate' : 'published'}
     `
     if (!definition) throw authorizationDenied('Agent 数据声明不可用')
     if (name === 'state_get' || name === 'state_put') {
