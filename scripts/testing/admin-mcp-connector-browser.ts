@@ -14,6 +14,7 @@ import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
 import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
+import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
@@ -97,7 +98,7 @@ const routineOrchestration = new RunOrchestrationService(routineRuns, routineCon
   { tasks: new PostgresTaskRepository(database.client) })
 // 验证服务第五个参数是验证案例的运行编排。
 registerAgentValidationRoutes(router, agents, new PostgresAgentValidationService(database.client, agents, undefined,
-  connectorService, routineOrchestration))
+  connectorService, routineOrchestration), new PostgresAgentRunHistory(database.client))
 registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
   routineRuns, routineOrchestration, routineConversations))
 router.get(`${base}/test/agent-routine/fixture`, async () => {

@@ -1,5 +1,6 @@
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { PostgresAgentValidationService } from '../../modules/agent/agent-validation-service.ts'
+import type { PostgresAgentRunHistory } from '../../modules/agent/agent-run-history.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
 import { RequestError } from '../../domain/request-errors.ts'
 
@@ -13,6 +14,7 @@ export function registerAgentValidationRoutes(
   router: Router,
   agents: PostgresAgentService,
   service?: PostgresAgentValidationService,
+  runs?: PostgresAgentRunHistory,
 ) {
   const available = () => {
     if (!service) throw new RequestError(503, 'agent_validation_unavailable', 'Agent 验证服务不可用：请配置 PostgreSQL')
@@ -26,6 +28,13 @@ export function registerAgentValidationRoutes(
     const agent = (await agents.getAgents()).find(item => item.id === id)
     if (!agent) throw new RequestError(404, 'not_found', `Agent 不存在：${id}`)
     return envelope('admin', { agent, release: await available().getOverview(id) }, 'postgres')
+  })
+
+  router.get(`${basePath}/agents/:agentId/runs`, async (_request, context) => {
+    requireRequestIdentity(context, 'admin')
+    if (!runs) throw new RequestError(503, 'agent_runs_unavailable', 'Agent 运行记录不可用：请配置 PostgreSQL')
+    const limit = Number(context.url.searchParams.get('limit') ?? 20)
+    return envelope('admin', { items: await runs.listRecentRuns(agentId(context), limit) }, 'postgres')
   })
 
   router.get(`${basePath}/agents/:agentId/versions`, async (_request, context) => {

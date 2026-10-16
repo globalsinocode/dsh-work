@@ -12,6 +12,7 @@ import type {
   AgentReleaseOverview,
   AgentValidation,
   AgentVersionHistoryItem,
+  AgentRunSummary,
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
@@ -242,6 +243,8 @@ export const adminApi = {
     request<AgentRoutineExecution[]>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/executions`),
   getAgentRelease: (agentId: string) =>
     request<{ agent: AgentDefinition; release: AgentReleaseOverview }>(`/agents/${encodeURIComponent(agentId)}`),
+  getAgentRuns: (agentId: string, limit = 20) =>
+    request<{ items: AgentRunSummary[] }>(`/agents/${encodeURIComponent(agentId)}/runs?limit=${limit}`),
   getAgentVersionHistory: (agentId: string) =>
     request<{ items: AgentVersionHistoryItem[] }>(`/agents/${encodeURIComponent(agentId)}/versions`),
   replaceAgentTestCases: (agentId: string, prompts: string[]) =>

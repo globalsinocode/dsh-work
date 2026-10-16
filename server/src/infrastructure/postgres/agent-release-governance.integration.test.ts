@@ -27,6 +27,7 @@ import type {
 } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
+import { PostgresAgentRunHistory } from '../../modules/agent/agent-run-history.ts'
 
 if (!process.env.DSH_WORK_TEST_DATABASE_URL) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
 
@@ -231,6 +232,14 @@ test('S3 验证冻结草稿、后台运行案例并在全部判定通过后发�
   const history = await validation.listVersions(agentId)
   assert.deepEqual(history.map(item => [item.version, item.status, item.active]), [['0.1.0', 'published', true]])
   assert.equal(history[0]?.publishedBy, '发布管理员')
+
+  // 详情页运行记录：按 Agent 执行身份读取最近的 Run，验证运行标为“验证”。
+  const runs = await new PostgresAgentRunHistory(database).listRecentRuns(agentId)
+  assert.deepEqual(runs.map(run => [run.runId, run.source, run.version, run.status]),
+    [[first!.runId, 'validation', '0.1.0', 'succeeded']])
+  assert.equal(runs[0]?.requestedBy, '发布管理员')
+  assert.ok(runs[0]?.startedAt && runs[0]?.endedAt)
+  assert.deepEqual(await new PostgresAgentRunHistory(database).listRecentRuns(`${agentId}-other`).catch(error => error.status), 404)
 })
 
 test('S3 案例由示例问题、主动任务提示词与自定义测试问题组成，并在开始时快照', async () => {

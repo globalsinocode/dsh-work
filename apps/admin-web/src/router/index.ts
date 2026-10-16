@@ -60,15 +60,15 @@ const router = createRouter({
       meta: { title: 'Agent 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
-      path: '/agents/:agentId/release',
-      name: 'agent-release',
-      component: () => import('@/views/AgentValidationView.vue'),
-      meta: { title: 'Agent 验证与发布', requiresAdmin: true, requiredPermission: 'adminRead' },
+      path: '/agents/:agentId',
+      name: 'agent-detail',
+      component: () => import('@/views/AgentDetailView.vue'),
+      meta: { title: 'Agent 详情', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
-    // 旧发布工作台路径（定义/检查/试运行/确认）统一落到验证与发布页。
+    // 验证与发布并入详情页；旧的发布工作台与验证页地址落到该分区。
     {
-      path: '/agents/:agentId/release/:step(definition|checks|trial|review)',
-      redirect: to => ({ name: 'agent-release', params: { agentId: to.params.agentId } }),
+      path: '/agents/:agentId/release/:step(definition|checks|trial|review)?',
+      redirect: to => ({ name: 'agent-detail', params: { agentId: to.params.agentId }, query: { section: 'release' } }),
     },
     {
       path: '/capabilities',

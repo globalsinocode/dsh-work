@@ -373,6 +373,36 @@
         }
       }
     },
+    "/agents/{agentId}/runs": {
+      "get": {
+        "operationId": "listAgentRuns",
+        "summary": "Agent 详情页运行记录：以该 Agent 执行身份运行的最近 Run（员工对话、主动任务、自动任务、验证运行），含来源、版本、发起人与起止时间；Run 创建首个 Attempt 后才出现",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agents/{agentId}/versions": {
       "get": {
         "operationId": "listAgentVersionHistory",

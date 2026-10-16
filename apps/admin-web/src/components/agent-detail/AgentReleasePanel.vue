@@ -1,23 +1,30 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
-import AgentAccessPanel from '@/components/AgentAccessPanel.vue'
-import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
 import { adminApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type {
   AgentAccess,
-  AgentDefinition,
   AgentReleaseOverview,
   AgentValidation,
+  AgentVersionHistoryItem,
   ValidationCase,
   ValidationCaseSource,
   ValidationChecks,
 } from '@/types/domain'
+
+const props = defineProps<{
+  agentId: string
+}>()
+const emit = defineEmits<{
+  /** 切换到岗位权限分区。 */
+  'open-access': []
+  /** 切换到职责与人格分区编辑草稿。 */
+  edit: []
+}>()
 
 const MAX_TEST_CASES = 20
 const MAX_TEST_CASE_CHARS = 2000
@@ -42,14 +49,12 @@ const checkLabels: Array<[keyof ValidationChecks, string]> = [
   ['outputNonEmpty', '回答非空'],
 ]
 
-const route = useRoute()
-const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
 
-const agentId = computed(() => String(route.params.agentId ?? ''))
-const loadedAgent = ref<AgentDefinition>()
-const agent = computed(() => contentStore.agents.find(item => item.id === agentId.value) ?? loadedAgent.value)
+const agentId = computed(() => props.agentId)
+const versions = ref<AgentVersionHistoryItem[]>([])
+const versionsError = ref('')
 const overview = ref<AgentReleaseOverview>()
 const validation = ref<AgentValidation>()
 const loadError = ref('')
@@ -57,10 +62,8 @@ const ready = ref(false)
 const busy = ref('')
 const publishedVersion = ref('')
 const publishNote = ref('')
-const editorOpen = ref(false)
 
 const access = ref<AgentAccess>()
-const accessOpen = ref(false)
 const accessLoadError = ref('')
 
 const prompts = ref<string[]>([])
@@ -121,7 +124,6 @@ function applyOverview(next: AgentReleaseOverview) {
 async function loadOverview() {
   try {
     const result = await adminApi.getAgentRelease(agentId.value)
-    loadedAgent.value = result.agent
     applyOverview(result.release)
     // 概览里的验证结果不做案例收敛；再读一次验证详情以拿到最新运行结果。
     if (liveValidation.value) await refreshValidation()
@@ -141,10 +143,36 @@ async function loadAccess() {
   }
 }
 
-async function handleAccessUpdated(value: AgentAccess) {
-  access.value = value
-  // 岗位权限修改立即生效，但会改变发布前检查结果。
-  await Promise.all([contentStore.load(true), loadOverview()])
+async function loadVersions() {
+  try {
+    versions.value = (await adminApi.getAgentVersionHistory(agentId.value)).items
+    versionsError.value = ''
+  } catch (cause) {
+    versionsError.value = cause instanceof Error ? cause.message : '无法读取版本历史'
+  }
+}
+
+/** 回滚只移动当前版本指针到曾发布的版本，不需要重新验证。 */
+async function rollback(item: AgentVersionHistoryItem) {
+  try {
+    await ElMessageBox.confirm(
+      `当前版本将切换为曾发布的 v${item.version}，只移动版本指针，不需要重新验证。启用/停用状态和进行中的草稿保持不变。`,
+      `回滚到 v${item.version}？`,
+      { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  busy.value = `rollback:${item.id}`
+  try {
+    await contentStore.rollbackAgent(agentId.value, item.version)
+    ElMessage.success(`已回滚到 v${item.version}，操作已写入审计`)
+    await Promise.all([loadVersions(), loadOverview()])
+  } catch (cause) {
+    showError(cause, '回滚失败')
+  } finally {
+    busy.value = ''
+  }
 }
 
 async function refreshValidation() {
@@ -279,7 +307,7 @@ async function publish() {
     publishedVersion.value = current.version
     publishNote.value = ''
     applyOverview(next)
-    await contentStore.load(true)
+    await Promise.all([contentStore.load(true), loadVersions()])
   } catch (cause) {
     showError(cause, '发布失败')
     await loadOverview()
@@ -288,89 +316,51 @@ async function publish() {
   }
 }
 
-function openEdit() {
-  if (agent.value) editorOpen.value = true
-}
-
-async function handleDraftSaved() {
-  publishedVersion.value = ''
-  await loadOverview()
-}
-
-function returnToAgents() {
-  void router.push('/agents')
-}
-
 function formatTime(value: string | null) {
   if (!value) return '—'
   const parsed = new Date(value)
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('zh-CN', { hour12: false }) : value
 }
 
-watch(agentId, async () => {
+async function loadAll() {
   stopPolling()
   ready.value = false
-  await Promise.all([contentStore.load(), loadAccess(), loadOverview()])
+  await Promise.all([loadAccess(), loadOverview(), loadVersions()])
   ready.value = true
-})
+}
 
-onMounted(async () => {
-  await Promise.all([contentStore.load(), loadAccess(), loadOverview()])
-  ready.value = true
-})
+watch(agentId, loadAll)
+onMounted(loadAll)
 
 onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div class="ops-page validation-page">
-    <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-
-    <section v-if="!ready" class="content-panel validation-result">
+  <div class="release-panel">
+    <section v-if="!ready" class="content-panel validation-card">
       <el-skeleton :rows="5" animated />
     </section>
 
-    <section v-else-if="loadError && !overview" class="content-panel validation-result">
+    <section v-else-if="loadError && !overview" class="content-panel validation-card">
       <el-result icon="warning" title="无法读取验证与发布" :sub-title="loadError">
-        <template #extra>
-          <el-button type="primary" @click="loadOverview">重新读取</el-button>
-          <el-button @click="returnToAgents">返回 Agent 管理</el-button>
-        </template>
+        <template #extra><el-button type="primary" @click="loadOverview">重新读取</el-button></template>
       </el-result>
     </section>
 
-    <template v-else-if="agent && overview">
-      <section class="content-panel validation-card validation-head">
-        <div>
-          <h2>{{ agent.name }}</h2>
-          <p class="hint">
-            当前版本 <span class="mono">{{ overview.activeVersion ? `v${overview.activeVersion.version}` : '未发布' }}</span>
-            <template v-if="working"> · 待发布 <span class="mono">v{{ working.version }}</span> <StatusTag :status="working.status" :label="working.status === 'candidate' ? '已冻结' : '草稿'" /></template>
-          </p>
-        </div>
-        <div class="validation-head__actions">
-          <el-button v-if="authStore.canManage" data-action="edit-agent" @click="openEdit">{{ working ? '编辑配置' : '创建新版本' }}</el-button>
-          <el-button @click="returnToAgents">返回 Agent 管理</el-button>
-        </div>
-      </section>
+    <template v-else-if="overview">
+      <el-alert v-if="publishedVersion" class="section-alert" type="success" show-icon :closable="false" title="发布完成" :description="`v${publishedVersion} 已成为当前版本；验证结果与判定已随版本保存，可在下方版本历史中回滚。`" />
 
-      <section v-if="publishedVersion" class="content-panel validation-card">
-        <el-result icon="success" title="发布完成" :sub-title="`v${publishedVersion} 已成为当前版本；验证结果与判定已随版本保存，可在版本历史中回滚。`">
-          <template #extra><el-button type="primary" @click="returnToAgents">返回 Agent 管理</el-button></template>
-        </el-result>
-      </section>
-
-      <section v-else-if="!working && !liveValidation" class="content-panel validation-card">
-        <el-empty description="当前没有待发布的草稿；编辑配置会生成新的草稿版本" :image-size="72">
-          <el-button v-if="authStore.canManage" type="primary" @click="openEdit">创建新版本</el-button>
+      <section v-if="!working && !liveValidation" class="content-panel validation-card">
+        <el-empty description="当前没有待发布的草稿；在职责与人格或能力中修改会生成新的草稿版本" :image-size="72">
+          <el-button v-if="authStore.canManage" type="primary" data-action="edit-agent" @click="emit('edit')">编辑配置</el-button>
         </el-empty>
       </section>
 
-      <template v-if="!publishedVersion && (working || liveValidation)">
-        <section class="content-panel validation-card" aria-label="岗位权限">
+      <template v-if="working || liveValidation">
+        <section class="content-panel validation-card" aria-label="岗位权限摘要">
           <div class="card-head">
             <div class="card-head__title"><h3>岗位权限</h3><span>{{ access ? `${access.visibleRoleIds.length} 个可见角色 · ${access.roleIds.length} 个岗位角色 · ${access.dataScopes.length} 个数据范围` : '读取中' }}</span></div>
-            <el-button v-if="authStore.canManage && access" size="small" data-action="edit-agent-access" @click="accessOpen = true">调整</el-button>
+            <el-button v-if="authStore.canManage && access" size="small" data-action="edit-agent-access" @click="emit('open-access')">调整</el-button>
           </div>
           <p class="hint">岗位权限属于 Agent，修改立即生效，不需要重新验证；发布时会按最新权限复核。</p>
           <el-alert v-if="accessLoadError" type="error" :closable="false" :title="accessLoadError">
@@ -378,9 +368,6 @@ onBeforeUnmount(stopPolling)
           </el-alert>
           <el-alert v-else-if="access && !hasAudience" type="warning" :closable="false" title="还没有设置可见角色" description="先在岗位权限中选择可以向它请求工作的员工角色，再开始验证。" />
         </section>
-        <el-drawer v-model="accessOpen" title="岗位权限" size="min(640px, 100vw)" append-to-body>
-          <AgentAccessPanel v-if="accessOpen" :agent-id="agentId" :can-manage="authStore.canManage" @updated="handleAccessUpdated" />
-        </el-drawer>
 
         <section v-if="working" class="content-panel validation-card" aria-label="验证前检查">
           <div class="card-head">
@@ -504,25 +491,36 @@ onBeforeUnmount(stopPolling)
           </div>
         </section>
       </template>
+
+      <section class="content-panel validation-card" aria-label="版本历史">
+        <div class="card-head"><div class="card-head__title"><h3>版本历史</h3><span>回滚只移动当前版本指针，不需要重新验证</span></div></div>
+        <el-alert v-if="versionsError" type="error" :closable="false" :title="versionsError">
+          <el-button link type="primary" @click="loadVersions">重新读取</el-button>
+        </el-alert>
+        <el-table v-else class="data-table" :data="versions" empty-text="暂无版本记录">
+          <el-table-column label="版本" width="120"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span><small v-if="scope.row.active" class="current-version">当前</small></template></el-table-column>
+          <el-table-column label="变更说明" min-width="200"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ formatTime(scope.row.createdAt) }}</small></div></template></el-table-column>
+          <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
+          <el-table-column label="发布" min-width="170"><template #default="scope"><small v-if="scope.row.publishedAt" class="hint">{{ scope.row.publishedBy }} · {{ formatTime(scope.row.publishedAt) }}</small><span v-else class="hint">—</span></template></el-table-column>
+          <el-table-column label="操作" width="110">
+            <template #default="scope">
+              <el-button v-if="authStore.canManage && scope.row.publishedAt && !scope.row.active" link type="primary" :loading="busy === `rollback:${scope.row.id}`" :disabled="busy !== ''" data-action="rollback-agent" @click="rollback(scope.row)">回滚至此</el-button>
+              <span v-else class="hint">—</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
     </template>
-
-    <section v-else class="content-panel validation-result">
-      <el-result icon="warning" title="未找到 Agent" sub-title="该 Agent 可能已被移除。">
-        <template #extra><el-button type="primary" @click="returnToAgents">返回 Agent 管理</el-button></template>
-      </el-result>
-    </section>
-
-    <AgentDraftDialog v-if="agent" v-model="editorOpen" :agent="agent" @saved="handleDraftSaved" />
   </div>
 </template>
 
 <style scoped>
-.validation-page { width: 100%; gap: 8px; }
-.validation-result { min-height: 360px; }
+.release-panel { width: 100%; }
 .validation-card { margin-bottom: 14px; padding: 18px; }
-.validation-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.validation-head h2 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-title); }
-.validation-head__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.current-version { display: inline-flex; margin-left: 5px; padding: 2px 5px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); }
+.version-summary { display: flex; flex-direction: column; }
+.version-summary strong { color: var(--color-text-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-badge); }
+.version-summary small { margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .card-head h3 { margin: 2px 0 0; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .card-head__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }

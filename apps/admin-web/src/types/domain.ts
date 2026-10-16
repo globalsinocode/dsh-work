@@ -250,6 +250,8 @@ export interface AgentDefinition {
   allowWorkspaceJoin: boolean
   status: PublishStatus
   version: string
+  /** 当前版本指针指向的已发布版本；从未发布时为 null。`version` 是工作版本（有草稿时为草稿）。 */
+  activeVersion?: string | null
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -904,6 +906,22 @@ export interface AgentReleaseOverview {
   checks: AgentReleaseCheck[]
   usesMcp: boolean
   validation: AgentValidation | null
+}
+
+export type AgentRunSource = 'conversation' | 'validation' | 'routine' | 'automation' | 'api' | 'event' | 'system'
+
+/** 以 Agent 执行身份运行的最近 Run（详情页运行记录）。 */
+export interface AgentRunSummary {
+  runId: string
+  status: string
+  source: AgentRunSource
+  version: string | null
+  requestedBy: string
+  sessionTitle: string | null
+  errorCode: string | null
+  createdAt: string
+  startedAt: string | null
+  endedAt: string | null
 }
 
 export interface AgentVersionHistoryItem {

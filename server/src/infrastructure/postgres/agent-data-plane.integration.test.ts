@@ -523,8 +523,12 @@ test('AE-03 write-rate quota is atomic and idempotent replay does not consume it
   const data = { materialCode: 'MAT-RATE', expectedArrivalDate: '2026-09-25', status: 'open' }
   const first = await service.writeRecord(actor, { collectionId, recordKey: 'MAT-RATE-1', data,
     expectedVersion: 0, operationKey: 'rate-1' })
-  await database`update agent_data_write_counters set used = 119
-     where tenant_id = ${tenantId} and scope_key = ${`collection:${collectionId}`}`
+  const [installationRow] = await database<{ id: string }[]>`
+    select id from agent_installations where tenant_id = ${tenantId} and agent_id = ${primaryAgentId}
+  `
+  await database`insert into agent_data_write_counters (tenant_id, agent_installation_id, scope_key, bucket_at, used)
+     values (${tenantId}, ${installationRow!.id}, ${`collection:${collectionId}`}, date_trunc('minute', now()), 119)
+     on conflict (tenant_id, agent_installation_id, scope_key, bucket_at) do update set used = 119`
   const competing = await Promise.allSettled(['MAT-RATE-2', 'MAT-RATE-3'].map((recordKey, index) =>
     service.writeRecord(actor, { collectionId, recordKey, data, expectedVersion: 0,
       operationKey: `rate-${index + 2}` })))
@@ -535,8 +539,10 @@ test('AE-03 write-rate quota is atomic and idempotent replay does not consume it
   const [installation] = await database<{ id: string }[]>`
     select id from agent_installations where tenant_id = ${tenantId} and agent_id = ${primaryAgentId}
   `
-  await database`update agent_data_write_counters set used = 119
-     where tenant_id = ${tenantId} and agent_installation_id = ${installation!.id} and scope_key = 'state'`
+  // 本分钟的状态写入计数可能尚不存在（此前没有状态写入）：直接写入 119 而不是只更新已有行。
+  await database`insert into agent_data_write_counters (tenant_id, agent_installation_id, scope_key, bucket_at, used)
+     values (${tenantId}, ${installation!.id}, 'state', date_trunc('minute', now()), 119)
+     on conflict (tenant_id, agent_installation_id, scope_key, bucket_at) do update set used = 119`
   assert.equal(await service.putState(actor, { namespace: 'rate', key: 'last', value: 1,
     expectedVersion: 0, ttlSeconds: 60 }), 1)
   await assert.rejects(service.putState(actor, { namespace: 'rate', key: 'next', value: 2,

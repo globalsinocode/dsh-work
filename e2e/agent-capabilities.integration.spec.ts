@@ -22,34 +22,36 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await create.getByRole('textbox', { name: 'Agent 名称' }).fill(name)
   await create.getByRole('textbox', { name: 'Agent 说明' }).fill('验证工作规程、默认 DSH 工具与 MCP Connector 选择随 Agent 草稿保存。')
   await create.getByRole('textbox', { name: /SOUL\.md/ }).fill('你是独立的 AI 员工，只能处理获准的业务数据，并为每个结论留下可核对的依据。')
-  await create.getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
-  await create.getByRole('button', { name: '下一步' }).click()
-  await create.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
-  const choice = create.getByRole('combobox', { name: '选择 MCP Connector' })
+  await create.getByRole('button', { name: '创建并继续配置' }).click()
+
+  // 详情页草稿自动保存：工作规程与 MCP 选择不需要点击保存。
+  const status = page.getByTestId('draft-save-status')
+  await page.getByRole('tabpanel', { name: '职责与人格' }).getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
+  await expect(status).toHaveText('已保存')
+  await page.getByRole('tab', { name: '能力' }).click()
+  const capabilities = page.getByRole('tabpanel', { name: '能力' })
+  await capabilities.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
+  const choice = capabilities.getByRole('combobox', { name: '选择 MCP Connector' })
   await choice.press('Enter')
   await expect(page.getByRole('option', { name: new RegExp(connectorName) })).toBeVisible()
   await choice.press('ArrowDown')
   await choice.press('Enter')
-  await create.getByRole('button', { name: '下一步' }).click()
-  await expect(create).toContainText('MCP：1 个选定')
-  await create.getByRole('button', { name: '完成创建' }).click()
-  await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })).toBeVisible()
+  await expect(capabilities.getByText(connectorName, { exact: true })).toBeVisible()
 
   const agents = await data<Array<{ id: string; name: string }>>(await page.request.get('/api/admin/v1/agents'))
   const agentId = agents.find(item => item.name === name)?.id
   expect(agentId).toBeTruthy()
-  const versions = await data<Array<{ id: string; agentId: string; version: string; mcpScope: { mode: string; connectorIds: string[] } }>>(
-    await page.request.get('/api/admin/v1/agent-versions'),
-  )
-  const version = versions.find(item => item.agentId === agentId)
-  expect(version?.mcpScope).toEqual({ mode: 'selected', connectorIds: [connector.id] })
-  await page.getByRole('dialog', { name: 'Agent 草稿已保存' }).getByRole('button', { name: '关闭' }).click()
-  await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '查看' }).click()
-  await page.getByRole('tab', { name: /版本历史/ }).click()
+  type Version = { id: string; agentId: string; version: string; mcpScope: { mode: string; connectorIds: string[] } }
+  const draftVersion = async () => (await data<Version[]>(await page.request.get('/api/admin/v1/agent-versions')))
+    .find(item => item.agentId === agentId)
+  await expect.poll(async () => (await draftVersion())?.mcpScope).toEqual({ mode: 'selected', connectorIds: [connector.id] })
+  await expect(status).toHaveText('已保存')
+  const version = await draftVersion()
+  await page.getByRole('tab', { name: '验证与发布' }).click()
   // 草稿尚未发布：版本历史只列出草稿，没有回滚目标。
-  const drawer = page.locator('.el-drawer').filter({ hasText: 'Agent 治理详情' })
-  await expect(drawer.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
-  await expect(drawer.getByRole('button', { name: '回滚至此' })).toHaveCount(0)
+  const history = page.getByRole('region', { name: '版本历史' })
+  await expect(history.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
+  await expect(history.getByRole('button', { name: '回滚至此' })).toHaveCount(0)
   const evidence = async () => data<{ systemPrompt: string; runtimeTools: string[]; mcpConnectorIds: string[] }>(
     await page.request.get(`/api/admin/v1/test/agent-capabilities/evidence?version_id=${version!.id}`),
   )

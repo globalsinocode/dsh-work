@@ -268,6 +268,8 @@ export interface AgentDefinition {
   allowWorkspaceJoin: boolean
   status: PublishStatus
   version: string
+  /** 当前版本指针指向的已发布版本；从未发布时为 null。`version` 是工作版本（有草稿时为草稿）。 */
+  activeVersion?: string | null
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string

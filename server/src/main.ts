@@ -56,6 +56,7 @@ import { PostgresWorkspaceService } from './modules/workbench/application/postgr
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
 import { PostgresAgentValidationService } from './modules/agent/agent-validation-service.ts'
 import { registerAgentValidationRoutes } from './http/admin/agent-validation-routes.ts'
+import { PostgresAgentRunHistory } from './modules/agent/agent-run-history.ts'
 import { registerAssistantRoutes } from './http/admin/assistant-routes.ts'
 import { registerSkillInstallationRoutes } from './http/admin/skill-installation-routes.ts'
 import { AdminSkillInstallationService } from './modules/skill/admin-skill-installation-service.ts'
@@ -420,7 +421,7 @@ async function start() {
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
-  registerAgentValidationRoutes(router, agents, agentValidation)
+  registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills)
   registerToolRoutes(router, toolService)
   registerWorkbenchAgentRoutes(router, agents, authorization)
