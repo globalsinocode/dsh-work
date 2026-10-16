@@ -137,9 +137,9 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 
 ## 8. 验证与记录
 
-2026-10-16 本地 P2 验收：**EX-ARTIFACT-01 与 EX-TOOL-01 均通过**。员工页面经真实 Run/Attempt → ACP Adapter → DSH `0.1.2-rc.1`（`76fda729799fe9b3848dbe2c211d4b231032b81e`）、`deepseek-official / deepseek-v4-pro` 执行。两轮同名成果形成 V1/V2，只修改指定行，旧版重新下载保持不变，附录独立；读取不存在文件的 `read` 失败步骤和失败数可见，Run 正常完成。服务基线为 `3627c7f`，验收期间另行开发、未重启加载的源码不在结论内。Run/Attempt、成果摘要、截图位置及范围见[本地验收记录](../development/runtime-execution-local-p2-2026-10-16.json)。该结论不替代目标部署环境、真实 OIDC、跨账号或性能验收。
+2026-10-16 本地 P2 验收：**EX-ARTIFACT-01 与 EX-TOOL-01 均通过**。员工页面经真实 Run/Attempt → ACP Adapter → DSH `0.1.2-rc.1`（`76fda729799fe9b3848dbe2c211d4b231032b81e`）、`deepseek-official / deepseek-v4-pro` 执行。两轮同名成果形成 V1/V2，只修改指定行，旧版重新下载保持不变，附录独立；读取不存在文件的 `read` 失败步骤和失败数可见，Run 正常完成。服务基线为 `3627c7f`，验收期间另行开发、未重启加载的源码不在结论内。Run/Attempt、成果摘要、截图位置及范围见本地验收记录（Git 历史：提交 `9521be2` 的 `docs/development/runtime-execution-local-p2-2026-10-16.json`）。该结论不替代目标部署环境、真实 OIDC、跨账号或性能验收。
 
-同日基于 `8d63f23` 完成 **EX-CONTEXT-01 本地 P2**：22 轮、72,108 字符，后台生成 872/899 字符的两次增量摘要；首条消息在后续 Manifest 中保持原文，第 21 轮的中间配置仅存在于摘要，且第 21、22 轮均正确回答。**EX-00** 同时采集六类固定场景、每类 3 组、共 21 个 Run：正常完成 15、主动取消 3、预期 Worker 崩溃 3。已按 Run ID 执行 `pnpm report:run-timings` 输出分场景和总体报告；正常完成样本端到端 p50/p95 为 10,470/44,591 ms。带文件场景复用已登记合成文件，新文件上传因浏览器扩展权限未验收。详细 Run/Attempt、摘要原文、用量、指标缺失及截图见[摘要与基线记录](../development/runtime-context-baseline-local-p2-2026-10-16.json)，CLI 原始总体输出见[基线耗时报告](../development/runtime-baseline-local-2026-10-16.txt)。仅为本地并发 1 的小样本基线，未覆盖容量压测、资源峰值或 ACP 实时工具通知。
+同日基于 `8d63f23` 完成 **EX-CONTEXT-01 本地 P2**：22 轮、72,108 字符，后台生成 872/899 字符的两次增量摘要；首条消息在后续 Manifest 中保持原文，第 21 轮的中间配置仅存在于摘要，且第 21、22 轮均正确回答。**EX-00** 同时采集六类固定场景、每类 3 组、共 21 个 Run：正常完成 15、主动取消 3、预期 Worker 崩溃 3。已按 Run ID 执行 `pnpm report:run-timings` 输出分场景和总体报告；正常完成样本端到端 p50/p95 为 10,470/44,591 ms。带文件场景复用已登记合成文件，新文件上传因浏览器扩展权限未验收。详细 Run/Attempt、摘要原文、用量、指标缺失及截图见摘要与基线记录（Git 历史：提交 `e05baa4` 的 `docs/development/runtime-context-baseline-local-p2-2026-10-16.json`），CLI 原始总体输出见基线耗时报告（Git 历史：提交 `e05baa4` 的 `docs/development/runtime-baseline-local-2026-10-16.txt`）。仅为本地并发 1 的小样本基线，未覆盖容量压测、资源峰值或 ACP 实时工具通知。
 
 | 改动 | 验证入口 |
 | --- | --- |
