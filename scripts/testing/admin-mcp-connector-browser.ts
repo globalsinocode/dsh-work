@@ -12,6 +12,7 @@ import { createServer } from 'node:http'
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
@@ -87,7 +88,7 @@ router.get(`${base}/session`, (_request, context) => {
 router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
-registerAgentRoutes(router, agents)
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client, connectorService))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,

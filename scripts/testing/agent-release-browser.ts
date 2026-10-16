@@ -13,6 +13,7 @@ import { createServer } from 'node:http'
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresSkillService } from '../../server/src/modules/skill/postgres-skill-service.ts'
@@ -174,7 +175,7 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
     from roles where tenant_id = 'tenant-dsh-work' order by name
 `, 'postgres'))
-registerAgentRoutes(router, agents)
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client, tools))
 registerAgentValidationRoutes(router, agents, validation)
 registerToolRoutes(router, tools)
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
