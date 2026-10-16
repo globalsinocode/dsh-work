@@ -1,0 +1,4211 @@
+{
+  "record_version": 1,
+  "recorded_at": "2026-10-16T04:22:28.308Z",
+  "timezone": "Asia/Taipei",
+  "overall_status": "passed",
+  "acceptance_level": "local-P2-real-DSH",
+  "environment": {
+    "application_commit": "8d63f23807c6b7f8d68816aa371c45875e63fa85",
+    "application_working_tree_at_start": "clean",
+    "runtime_version": "0.1.2-rc.1",
+    "runtime_commit": "76fda729799fe9b3848dbe2c211d4b231032b81e",
+    "runtime_working_tree": "clean",
+    "provider": "deepseek-official",
+    "model": "deepseek-v4-pro",
+    "adapter": "official-acp-profile",
+    "transport": "acp-stdio",
+    "node": "26.5.0",
+    "hardware": {
+      "cpu": "Apple M4",
+      "cpu_cores": 10,
+      "memory_bytes": 17179869184,
+      "architecture": "arm64",
+      "macos": "26.6.2"
+    },
+    "backend": "http://127.0.0.1:4190",
+    "workbench": "http://localhost:4174",
+    "database": "127.0.0.1:15433/dsh_work",
+    "actor": "existing signed-in roy account, employee portal",
+    "data": "synthetic",
+    "worker_lifecycle": "每 Attempt 新建 Worker；宿主缓存状态未控制",
+    "baseline_foreground_concurrency": 1
+  },
+  "EX-CONTEXT-01": {
+    "status": "passed",
+    "session_id": "session-cf0d8c42-eca2-4f9d-8eef-33a608d883c0",
+    "rounds": 22,
+    "total_chars": 72108,
+    "user_chars": 69877,
+    "summary_threshold_chars": 48000,
+    "trigger_observation": {
+      "after_round": 14,
+      "total_chars": 49152,
+      "user_chars": 47789
+    },
+    "summary_versions": [
+      {
+        "id": "session-summary-25695495-1695-4a27-9779-55f5ae1aa3d7",
+        "tenant_id": "tenant-dsh-work",
+        "session_id": "session-cf0d8c42-eca2-4f9d-8eef-33a608d883c0",
+        "status": "succeeded",
+        "covered_through_message_id": "message-user-run-aa9db665-2e85-4693-9879-adebd30b85d4",
+        "covered_through_created_at": "2026-10-16T03:49:43.374Z",
+        "covered_message_count": 14,
+        "content": "## 1. 用户提出并确认的要求与约束\n\n- 用户在多轮中重复要求：“按此前约定输出一行确认 JSON；不用复述资料，不调用工具。”\n- 用户反复强调每条合成记录“这行是非权威参考资料”。\n- 第 5 轮起追加一项要求：另记一项“只在最终检查时使用”的项目配置（项目代号 MIDDLE-4286、区域为华东），并明确“本轮不在回复中复述这两个值”。\n- 助手每次只回复一行确认 JSON，格式为：`{\"round\": N, \"anchor\": \"ANCHOR-20261016-A7K2\", \"currency\": \"CNY\", \"approved\": false, \"ack\": true}`，未复述资料、未调用工具。\n\n## 2. 已得出的结论与决定\n\n- 全程锚点（anchor）固定为 `ANCHOR-20261016-A7K2`。\n- 币种（currency）固定为 `CNY`。\n- 确认 JSON 中 `approved` 恒为 `false`，`ack` 恒为 `true`。\n- round 值随轮次递增（当前已确认到第 8 轮）。\n- 各轮合成记录均标为“非权威参考资料”，不得视为业务事实。\n\n## 3. 提到过的关键数据、文件与成果名称\n\n- 锚点：`ANCHOR-20261016-A7K2`\n- 币种：`CNY`\n- 项目配置（第 5 轮提及，仅最终检查使用，要求回复中不复述）：项目代号 `MIDDLE-4286`，区域 `华东`。\n- 物料编号规律：第 N 轮（N=2…8）出现 `MAT-N-001` 至至少 `MAT-N-068` 的合成物料记录（可见内容截断于 068，可能有后续）。\n- 数量规律：每轮从 001 起按 11、12、13、14、15、16、10 循环重复。\n- 状态字段统一为“已登记”；来源字段统一为“本轮测试样本”。\n- 第 1 轮仅有助手确认 JSON，未见该轮合成记录正文。\n\n## 4. 尚未解决的问题\n\n- 无。任务处于按轮次持续进行中（已到第 8 轮），未见待决事项或阻塞。",
+        "content_sha256": "6a85f40b789d4b53c165b70c4718d91f46e478bd5e0670dd56dfd8eb7c22cca5",
+        "source_run_id": "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+        "failure_reason": null,
+        "created_at": "2026-10-16T03:51:57.935Z",
+        "completed_at": "2026-10-16T03:52:15.729Z",
+        "attempt_id": "attempt-f3f4e28b-e931-4230-962b-de7d2a1faddf",
+        "manifest_sha256": "dfc173c407f0894071390fde3285cf793de8686a87a478ce832da4d5b528da7a"
+      },
+      {
+        "id": "session-summary-7991d9f8-4661-4012-9b0d-544c9a9a2688",
+        "tenant_id": "tenant-dsh-work",
+        "session_id": "session-cf0d8c42-eca2-4f9d-8eef-33a608d883c0",
+        "status": "succeeded",
+        "covered_through_message_id": "message-user-run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+        "covered_through_created_at": "2026-10-16T03:51:52.548Z",
+        "covered_message_count": 27,
+        "content": "## 1. 用户提出并确认的要求与约束\n\n- 用户在多轮中重复要求：“按此前约定输出一行确认 JSON；不用复述资料，不调用工具。”\n- 用户反复强调每条合成记录“这行是非权威参考资料”。\n- 第 5 轮起追加一项要求：另记一项“只在最终检查时使用”的项目配置（项目代号 MIDDLE-4286、区域为华东），并明确“本轮不在回复中复述这两个值”。\n- 助手每次只回复一行确认 JSON，格式为：`{\"round\": N, \"anchor\": \"ANCHOR-20261016-A7K2\", \"currency\": \"CNY\", \"approved\": false, \"ack\": true}`，未复述资料、未调用工具。\n\n## 2. 已得出的结论与决定\n\n- 全程锚点（anchor）固定为 `ANCHOR-20261016-A7K2`。\n- 币种（currency）固定为 `CNY`。\n- 确认 JSON 中 `approved` 恒为 `false`，`ack` 恒为 `true`。\n- round 值随轮次递增（当前已确认到第 14 轮）。\n- 各轮合成记录均标为“非权威参考资料”，不得视为业务事实。\n\n## 3. 提到过的关键数据、文件与成果名称\n\n- 锚点：`ANCHOR-20261016-A7K2`\n- 币种：`CNY`\n- 项目配置（第 5 轮提及，仅最终检查使用，要求回复中不复述）：项目代号 `MIDDLE-4286`，区域 `华东`。\n- 物料编号规律：第 N 轮（N=2…14）出现 `MAT-N-001` 至至少 `MAT-N-068` 的合成物料记录（第 8 轮可见内容截至 068；第 9–14 轮可见内容截至 067，可能仍有后续）。\n- 数量规律：每轮从 001 起按 11、12、13、14、15、16、10 循环重复。\n- 状态字段统一为“已登记”；来源字段统一为“本轮测试样本”。\n- 第 1 轮仅有助手确认 JSON，未见该轮合成记录正文。\n\n## 4. 尚未解决的问题\n\n- 无。任务处于按轮次持续进行中（已到第 14 轮），未见待决事项或阻塞。",
+        "content_sha256": "5c7402b9ce11c021533677c41f82c03a6ea3c0195bf3521b0d11ab31c4a454f2",
+        "source_run_id": "run-767793cf-2029-4fe5-863b-c53dfc62128a",
+        "failure_reason": null,
+        "created_at": "2026-10-16T03:54:17.988Z",
+        "completed_at": "2026-10-16T03:54:32.666Z",
+        "attempt_id": "attempt-624b6de3-7042-4f82-99e3-f2c967d10b47",
+        "manifest_sha256": "c7624eb818c239c25b6cc442f958b473abed24d69c67793adf52b68d0677fd25"
+      }
+    ],
+    "checks": {
+      "firstMessageVerbatim": true,
+      "historyWithin64000": true,
+      "summaryGeneratedByRealRun": true,
+      "summaryNoSessionToolsFiles": true,
+      "summaryExcludesFirstMessage": true,
+      "summaryNotChatMessage": true,
+      "middleConstraintOnlyInSummaryAtRound21": true,
+      "round21And22ConstraintsPass": true
+    },
+    "incremental_previous_summary_verified": true,
+    "final_replies": [
+      {
+        "round": 21,
+        "runId": "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+        "parsed": {
+          "round": 21,
+          "anchor": "ANCHOR-20261016-A7K2",
+          "currency": "CNY",
+          "approved": false,
+          "ack": true,
+          "project": "MIDDLE-4286",
+          "region": "华东"
+        }
+      },
+      {
+        "round": 22,
+        "runId": "run-58c08fc8-661f-4a94-9d73-6add92487853",
+        "parsed": {
+          "round": 22,
+          "anchor": "ANCHOR-20261016-A7K2",
+          "currency": "CNY",
+          "approved": false,
+          "ack": true,
+          "project": "MIDDLE-4286",
+          "region": "华东"
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "run_id": "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+        "attempt_id": "attempt-fc040161-5ad4-4580-a6db-28de43fcc870",
+        "status": "succeeded",
+        "manifest_sha256": "34af72ef47be33fbc1389fa9512dee3cfd9c5b3e58b35c9f127c50a904a1288b",
+        "history_chars": 0,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+        "attempt_id": "attempt-c9783d66-5e5e-4cc7-b798-3b5bdcd13324",
+        "status": "succeeded",
+        "manifest_sha256": "9ecb6c249ed1aa4f7e3c5ce06cbf0f240a1365f902819e3adbd51ce4b8379b96",
+        "history_chars": 386,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+        "attempt_id": "attempt-c3e338ca-f4fc-4535-a96c-e81372317b4e",
+        "status": "succeeded",
+        "manifest_sha256": "2236b1223023b9836147c926b47b1b0553dce6436be007148cff79a155b45d80",
+        "history_chars": 4132,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+        "attempt_id": "attempt-0e037aee-38d3-46ad-9f74-867383e26fc0",
+        "status": "succeeded",
+        "manifest_sha256": "6d0885470ea4cf2106758cab7f1191df1974befac99e615a9308b907c99651da",
+        "history_chars": 7878,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+        "attempt_id": "attempt-03d8e83f-c216-49eb-aea9-c910479bccd0",
+        "status": "succeeded",
+        "manifest_sha256": "bae95e676ff591c46cd306d882e84da1584232c8f876e9ba663d07bcd901a8b3",
+        "history_chars": 11624,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+        "attempt_id": "attempt-461f4159-2d77-48a3-b66e-d0bb2d231edf",
+        "status": "succeeded",
+        "manifest_sha256": "19471cc1a1b6068e9986ea07d4d327685d4a40905f212bad26f19e61feecd915",
+        "history_chars": 15428,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+        "attempt_id": "attempt-22d9b047-eefc-4a9a-ae2d-32a104764d9b",
+        "status": "succeeded",
+        "manifest_sha256": "e2c824b5719752203dbdd18110a879ea72500012c56d2e5043ab0d96e1753855",
+        "history_chars": 19174,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+        "attempt_id": "attempt-52854057-62f5-46b6-bb73-f7db65c46309",
+        "status": "succeeded",
+        "manifest_sha256": "dd8bf6a2f2e60a06f16baff798640d35efd949a0d328eb3573958a538d51e272",
+        "history_chars": 22920,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+        "attempt_id": "attempt-27c3a045-1e92-4fc5-add6-29af7cf002fd",
+        "status": "succeeded",
+        "manifest_sha256": "8efa5156c8382e26bf4c463c3a2694efc5b08a11d3c48eec675ef541e5cc796e",
+        "history_chars": 26666,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+        "attempt_id": "attempt-e6223474-0075-4e7a-8e8a-a32d3d28e594",
+        "status": "succeeded",
+        "manifest_sha256": "13a7c8bf19fd3827e9559d755ea2d84e7ddad924531ae7a4f89b56145393beb0",
+        "history_chars": 30412,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+        "attempt_id": "attempt-7813e2cf-4e84-42ed-b7ea-35aff41462a5",
+        "status": "succeeded",
+        "manifest_sha256": "4e70757e7430798ed011ec1008faeaf26e6cfc89c8d029179d16ccfe25fbdfb7",
+        "history_chars": 34160,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+        "attempt_id": "attempt-c8a56bc8-85a7-4e26-8318-584ea99fe4e0",
+        "status": "succeeded",
+        "manifest_sha256": "d1ef0254e9cc478159a745a1c623a099c71694828d21bd5a091a0b5acaf17089",
+        "history_chars": 37908,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+        "attempt_id": "attempt-2fbfbc7f-f08c-4542-b892-ab349f70ce7c",
+        "status": "succeeded",
+        "manifest_sha256": "1a4afbcdabf21f7657b77694f4c3642862953509e9e3d4da31c25d044deca2cf",
+        "history_chars": 41656,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+        "attempt_id": "attempt-b7f76a87-fbe8-4569-bf18-100c940b8f68",
+        "status": "succeeded",
+        "manifest_sha256": "b744d519e960c093852413b9817e4720b0e96f6e0598e6ceaa1b20c89ed48a3d",
+        "history_chars": 45404,
+        "summary_chars": 0,
+        "covered_message_count": 0
+      },
+      {
+        "run_id": "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+        "attempt_id": "attempt-6a5fa227-8d7a-4cd0-8600-08a74c751ebb",
+        "status": "succeeded",
+        "manifest_sha256": "3d45df63253dad22bcc8efc132427a8397ce484202b3257bb99536849f9ed32d",
+        "history_chars": 26521,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+        "attempt_id": "attempt-b78c2ba5-2d95-46d9-9178-032e498eb67b",
+        "status": "succeeded",
+        "manifest_sha256": "8aad894d42d9dee69fe7cf95747f87059677417780baedba740b64b7eeb415e4",
+        "history_chars": 30269,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+        "attempt_id": "attempt-c33defef-dad5-4897-afe3-08a30a0c9d96",
+        "status": "succeeded",
+        "manifest_sha256": "37435d53105bc1192e8f5f47da7630beda3506e41940f0facb3dc46fb15bee24",
+        "history_chars": 34017,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+        "attempt_id": "attempt-0c296686-f2d0-4d55-acfc-88d643321305",
+        "status": "succeeded",
+        "manifest_sha256": "7a97d5b1197b71ab89664e13a05e17888d49626820d20f8efd8cafacbf99e8fe",
+        "history_chars": 37765,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+        "attempt_id": "attempt-dfe45ec8-b290-400c-8350-63d4621ca289",
+        "status": "succeeded",
+        "manifest_sha256": "7298a4d9a72126f758fe60fde1c4f944e96f56d05de31ad1d66986c073ca2af2",
+        "history_chars": 41513,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+        "attempt_id": "attempt-ea958b07-a601-4daf-8e38-01369c72ff96",
+        "status": "succeeded",
+        "manifest_sha256": "b278e46b0338bdf5ac9a690e039cc77ea8b211c1d0ebb1d54e3fada71ce0bd35",
+        "history_chars": 45261,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+        "attempt_id": "attempt-9704045a-e825-4829-a879-ba5b7bc4d357",
+        "status": "succeeded",
+        "manifest_sha256": "676d05181f1604a782a1edfd1945d3862b3893e937cad2c5c9e51f37cf2327d0",
+        "history_chars": 49009,
+        "summary_chars": 872,
+        "covered_message_count": 14
+      },
+      {
+        "run_id": "run-58c08fc8-661f-4a94-9d73-6add92487853",
+        "attempt_id": "attempt-decedcf5-d631-4540-8bdf-3fe805639243",
+        "status": "succeeded",
+        "manifest_sha256": "3ed7fc1335aab7088bb8c327dcec57a9edc317259ea1bfe40c37e74dee98aaa7",
+        "history_chars": 26766,
+        "summary_chars": 899,
+        "covered_message_count": 27
+      }
+    ],
+    "source_prompts": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/fixtures/context-prompts.json",
+    "screenshot": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/context-final-22.jpg"
+  },
+  "EX-00": {
+    "status": "collected",
+    "fixed_scenario_groups": 6,
+    "repetitions_per_scenario": 3,
+    "journeys": 18,
+    "attempts": 21,
+    "outcomes": {
+      "completed": 15,
+      "failed": 3,
+      "cancelled": 3,
+      "unfinished": 0
+    },
+    "unexpected_run_failures": 0,
+    "expected_worker_crashes": 3,
+    "overall_observed_failure_rate": 0.16666666666666666,
+    "failure_rate_explanation": "3 个预期故障样本 / 18 个完成或失败样本；3 个取消样本不进入分母。不是可用性估计。",
+    "normal_completed_end_to_end_ms": {
+      "key": "end_to_end_ms",
+      "label": "端到端（创建 Attempt → 终态）",
+      "samples": 15,
+      "missing": 0,
+      "p50": 10470,
+      "p95": 44591,
+      "max": 44591
+    },
+    "normal_completed_execution_ms": {
+      "key": "execution_ms",
+      "label": "执行（prompt → 结束）",
+      "samples": 15,
+      "missing": 0,
+      "p50": 9074,
+      "p95": 43086,
+      "max": 43086
+    },
+    "normal_completed_worker_init_ms": {
+      "key": "worker_init_ms",
+      "label": "ACP 初始化",
+      "samples": 15,
+      "missing": 0,
+      "p50": 1198,
+      "p95": 1332,
+      "max": 1332
+    },
+    "normal_completed_artifact_collect_ms": {
+      "key": "artifact_collect_ms",
+      "label": "成果收集",
+      "samples": 15,
+      "missing": 0,
+      "p50": 8,
+      "p95": 35,
+      "max": 35
+    },
+    "normal_completed_worker_rss_kb": {
+      "key": "worker_rss_kb",
+      "label": "Worker 内存 RSS（KB，结束时）",
+      "samples": 15,
+      "missing": 0,
+      "p50": 254624,
+      "p95": 276352,
+      "max": 276352
+    },
+    "case_results": [
+      {
+        "scenario": "text",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-52a41316-9fbf-4d99-a159-080f7674c40e",
+        "runId": "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+        "prompt": "EX-00 纯文本固定场景。请计算 17 + 25，只输出 EX00_TEXT_OK_20261016|42。不要调用工具。",
+        "sentAt": "2026-10-16T03:57:32.336Z",
+        "expectedMarker": "EX00_TEXT_OK_20261016|42",
+        "status": "succeeded",
+        "sessionId": "session-c1392274-af15-4f5a-963b-57ce004e62fd",
+        "attemptId": "attempt-ffbb5be4-ad5e-4ef8-b1c8-e4a848d46143",
+        "errorCode": null,
+        "startedAt": "2026-10-16T03:57:32.227Z",
+        "endedAt": "2026-10-16T03:57:37.046Z",
+        "reply": "EX00_TEXT_OK_20261016|42",
+        "metrics": {
+          "elapsed_ms": 4773,
+          "stop_reason": "end_turn",
+          "execution_ms": 3368,
+          "input_tokens": 2073,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 40,
+          "worker_cpu_ms": 1350,
+          "worker_rss_kb": 260432,
+          "artifact_count": 0,
+          "first_output_ms": 3367,
+          "tool_call_count": 0,
+          "tool_failed_count": 0,
+          "tool_result_count": 0,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 5
+        },
+        "verifiedAt": "2026-10-16T03:57:40.733Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "text",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+        "runId": "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+        "prompt": "EX-00 纯文本固定场景。请计算 17 + 25，只输出 EX00_TEXT_OK_20261016|42。不要调用工具。",
+        "sentAt": "2026-10-16T03:57:45.735Z",
+        "expectedMarker": "EX00_TEXT_OK_20261016|42",
+        "status": "succeeded",
+        "sessionId": "session-500adc4b-bd1c-4185-844f-cde2c3b0756c",
+        "attemptId": "attempt-1f4ad6d4-524a-464a-a0a5-7afb70af37a6",
+        "errorCode": null,
+        "startedAt": "2026-10-16T03:57:45.614Z",
+        "endedAt": "2026-10-16T03:57:51.568Z",
+        "reply": "EX00_TEXT_OK_20261016|42",
+        "metrics": {
+          "elapsed_ms": 5905,
+          "stop_reason": "end_turn",
+          "execution_ms": 4520,
+          "input_tokens": 2076,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 72,
+          "worker_cpu_ms": 1480,
+          "worker_rss_kb": 265824,
+          "artifact_count": 0,
+          "first_output_ms": 4520,
+          "tool_call_count": 0,
+          "tool_failed_count": 0,
+          "tool_result_count": 0,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 8
+        },
+        "verifiedAt": "2026-10-16T03:57:53.890Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "text",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+        "runId": "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+        "prompt": "EX-00 纯文本固定场景。请计算 17 + 25，只输出 EX00_TEXT_OK_20261016|42。不要调用工具。",
+        "sentAt": "2026-10-16T03:57:58.917Z",
+        "expectedMarker": "EX00_TEXT_OK_20261016|42",
+        "status": "succeeded",
+        "sessionId": "session-ee68758d-c952-4a09-bee2-6082b874aff7",
+        "attemptId": "attempt-f8258780-5f17-4fdc-b4d5-8ee574ae4841",
+        "errorCode": null,
+        "startedAt": "2026-10-16T03:57:58.846Z",
+        "endedAt": "2026-10-16T03:58:03.798Z",
+        "reply": "EX00_TEXT_OK_20261016|42",
+        "metrics": {
+          "elapsed_ms": 4912,
+          "stop_reason": "end_turn",
+          "execution_ms": 3503,
+          "input_tokens": 534,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 73,
+          "worker_cpu_ms": 1520,
+          "worker_rss_kb": 268432,
+          "artifact_count": 0,
+          "first_output_ms": 3503,
+          "tool_call_count": 0,
+          "tool_failed_count": 0,
+          "tool_result_count": 0,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 8
+        },
+        "verifiedAt": "2026-10-16T03:58:06.537Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "file",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-05b4c561-584f-47a4-8401-a125ae0467bb",
+        "runId": "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+        "prompt": "EX-00 带文件固定场景。请用文件读取工具读取我引用的 ex-artifact-01.md，核对标题、状态行与保留项。只输出 EX00_FILE_OK|第一版|KEEP-20261016。",
+        "sentAt": "2026-10-16T04:00:39.947Z",
+        "expectedMarker": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "inputFileId": "file-artifact-476b67cba2924066cd4175b99e25af63",
+        "inputBytes": 106,
+        "fixtureSource": "previous synthetic artifact V1 via My Files",
+        "status": "succeeded",
+        "sessionId": "session-372d1bd5-9ce7-4336-810e-b9c0c5e35cf3",
+        "attemptId": "attempt-e3e38791-ffff-4cc9-b134-0665d2e7176d",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:00:39.853Z",
+        "endedAt": "2026-10-16T04:00:55.771Z",
+        "reply": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "metrics": {
+          "elapsed_ms": 15863,
+          "stop_reason": "end_turn",
+          "execution_ms": 14337,
+          "input_tokens": 17376,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 185,
+          "worker_cpu_ms": 1620,
+          "worker_rss_kb": 244992,
+          "artifact_count": 0,
+          "first_output_ms": 14337,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 7
+        },
+        "verifiedAt": "2026-10-16T04:00:55.970Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "file",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-33719190-5b87-4e63-8e92-46af9c493735",
+        "runId": "run-33719190-5b87-4e63-8e92-46af9c493735",
+        "prompt": "EX-00 带文件固定场景。请用文件读取工具读取我引用的 ex-artifact-01.md，核对标题、状态行与保留项。只输出 EX00_FILE_OK|第一版|KEEP-20261016。",
+        "sentAt": "2026-10-16T04:01:05.010Z",
+        "expectedMarker": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "inputFileId": "file-artifact-476b67cba2924066cd4175b99e25af63",
+        "inputBytes": 106,
+        "status": "succeeded",
+        "sessionId": "session-efba7dfd-ccc8-43f6-ac4c-3409f373f5f7",
+        "attemptId": "attempt-f252e4a1-6a43-4abd-925d-ffee75ea2ad6",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:01:04.848Z",
+        "endedAt": "2026-10-16T04:01:20.156Z",
+        "reply": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "metrics": {
+          "elapsed_ms": 15270,
+          "stop_reason": "end_turn",
+          "execution_ms": 13933,
+          "input_tokens": 4476,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 201,
+          "worker_cpu_ms": 1600,
+          "worker_rss_kb": 254624,
+          "artifact_count": 0,
+          "first_output_ms": 13932,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 4
+        },
+        "verifiedAt": "2026-10-16T04:01:20.365Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "file",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-574562b5-e496-439b-a24f-1563725e9be4",
+        "runId": "run-574562b5-e496-439b-a24f-1563725e9be4",
+        "prompt": "EX-00 带文件固定场景。请用文件读取工具读取我引用的 ex-artifact-01.md，核对标题、状态行与保留项。只输出 EX00_FILE_OK|第一版|KEEP-20261016。",
+        "sentAt": "2026-10-16T04:01:27.469Z",
+        "expectedMarker": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "inputFileId": "file-artifact-476b67cba2924066cd4175b99e25af63",
+        "inputBytes": 106,
+        "status": "succeeded",
+        "sessionId": "session-8cac40f9-105b-437a-95ff-6dd53aa3b30e",
+        "attemptId": "attempt-375f6972-d7c4-4f90-994a-bd01f40b356e",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:01:27.309Z",
+        "endedAt": "2026-10-16T04:01:35.988Z",
+        "reply": "EX00_FILE_OK|第一版|KEEP-20261016",
+        "metrics": {
+          "elapsed_ms": 8638,
+          "stop_reason": "end_turn",
+          "execution_ms": 7287,
+          "input_tokens": 1399,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 202,
+          "worker_cpu_ms": 1610,
+          "worker_rss_kb": 270064,
+          "artifact_count": 0,
+          "first_output_ms": 7287,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 5
+        },
+        "verifiedAt": "2026-10-16T04:01:36.587Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "skill",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-26405e8d-f130-498a-96bc-836933abf67c",
+        "runId": "run-26405e8d-f130-498a-96bc-836933abf67c",
+        "prompt": "EX-00 带 Skill 固定场景。请先激活并遵循当前选中的 grill-me Skill。合成目标是：给 10 人小团队安排一次两小时的内部知识分享。按 Skill 的方法，只向我提出一个澄清问题，然后结束本轮。",
+        "sentAt": "2026-10-16T04:01:52.236Z",
+        "skillId": "skill-3d7c8e0e-934",
+        "skillVersionId": "skill-version-9109975a-adb0-4389-8097-c3d48a1f1d9d",
+        "status": "succeeded",
+        "sessionId": "session-4f9326e4-4731-4696-bb2e-be961cb6c00a",
+        "attemptId": "attempt-42ce39a2-b49e-4a41-be06-e3ebc5645e5d",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:01:52.102Z",
+        "endedAt": "2026-10-16T04:02:18.551Z",
+        "reply": "已激活 **grilling** Skill，并按其「design tree + 逐轮 frontier」方法执行。本轮按你的指示，只抛出 frontier 上最前置的一个澄清问题：\n\n---\n\n❓ **Q1** — **这次知识分享的主题是什么？**：要安排这场两小时、10 人参加的内部分享，第一个需要敲定的是「分享什么」。它决定了由谁来讲、用什么形式、面向哪类听众以及材料深度——主题不定，后面所有安排都无从落地。可选方向例如：一次复盘（项目/事故/季度总结）、一项新技术的入门普及、某个工具或流程的最佳实践、或者团队某个成员的个人经验/作品分享。\n\n➡️ 我的推荐答案：如果暂时没有明确倾向，建议选 **「一项团队近期实际用到的技术或流程的最佳实践」**（例如一次真实踩坑与解法），因为这类主题对 10 人小团队最实用、易找到合适的内部讲者，也方便两小时内讲深讲透。\n\n---\n\n请告诉我你的答案（或直接采纳推荐），我据此进入下一轮、继续推进后续决策。本轮到此结束。",
+        "metrics": {
+          "elapsed_ms": 26374,
+          "stop_reason": "end_turn",
+          "execution_ms": 25003,
+          "input_tokens": 29063,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 1330,
+          "worker_cpu_ms": 2580,
+          "worker_rss_kb": 161376,
+          "artifact_count": 0,
+          "first_output_ms": 25002,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 8
+        },
+        "verifiedAt": "2026-10-16T04:03:31.452Z",
+        "expectedStatusPass": true,
+        "pass": true,
+        "skillActivated": true
+      },
+      {
+        "scenario": "skill",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+        "runId": "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+        "prompt": "EX-00 带 Skill 固定场景。请先激活并遵循当前选中的 grill-me Skill。合成目标是：给 10 人小团队安排一次两小时的内部知识分享。按 Skill 的方法，只向我提出一个澄清问题，然后结束本轮。",
+        "sentAt": "2026-10-16T04:03:38.092Z",
+        "skillId": "skill-3d7c8e0e-934",
+        "skillVersionId": "skill-version-9109975a-adb0-4389-8097-c3d48a1f1d9d",
+        "status": "succeeded",
+        "sessionId": "session-ff8e23a1-9ead-4e0e-85a0-4eb03e5a7beb",
+        "attemptId": "attempt-dc06ce4d-8d4a-47fc-96dd-c79bb7a930e0",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:03:37.979Z",
+        "endedAt": "2026-10-16T04:04:22.584Z",
+        "reply": "已激活 `grilling`（grill-me）Skill v0.1.0 并按其方法执行。说明两点关于“参考资料”：\n\n- 该 Skill 返回的 `dependencies: []`、`pythonEntries: []`，正文自包含，没有附带需要额外读取的参考文件；因此本轮无可读取的资源，我不虚构读取结果。\n- 业务输入缺失明显：合成目标「给 10 人小团队安排一次两小时内部知识分享」未给出分享主题、受众背景、时间窗口、线上线下形式、谁来讲、目标（普及认知 vs 上手实操）等关键决策。按 Skill 的“设计树”方法，这些分支都挂在**根决策——分享主题**之下，主题未定前其余问题属于后续轮次的前沿，本轮不越级提问。\n\n按你的要求，本轮只提一个澄清问题（根决策）：\n\n---\n\n❓ **Q1 - 分享主题**：这次两小时内部知识分享，具体讲什么主题/内容？（它决定了后续的主讲人、形式、材料、时间切分与受众深度，是整棵决策树的根。）\n\n➡️ **我的推荐**：你尚未提供任何主题线索，我无法替你推断具体主题。若一定要给一个默认占位，我建议选「团队近期最常踩坑或反复被问到的那个技术/业务点」，并请你在下轮直接给出确切主题——这只是默认假设，等你回答后我会据此把前沿向外推一轮。\n\n---\n\n本轮结束，等你回答 Q1 后我再继续下一轮提问。",
+        "metrics": {
+          "elapsed_ms": 44562,
+          "stop_reason": "end_turn",
+          "execution_ms": 43086,
+          "input_tokens": 19056,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 3196,
+          "worker_cpu_ms": 4470,
+          "worker_rss_kb": 174784,
+          "artifact_count": 0,
+          "first_output_ms": 43085,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 8
+        },
+        "verifiedAt": "2026-10-16T04:04:22.795Z",
+        "expectedStatusPass": true,
+        "pass": true,
+        "skillActivated": true
+      },
+      {
+        "scenario": "skill",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-fbef2366-2826-4d0a-b785-678c866257be",
+        "runId": "run-fbef2366-2826-4d0a-b785-678c866257be",
+        "prompt": "EX-00 带 Skill 固定场景。请先激活并遵循当前选中的 grill-me Skill。合成目标是：给 10 人小团队安排一次两小时的内部知识分享。按 Skill 的方法，只向我提出一个澄清问题，然后结束本轮。",
+        "sentAt": "2026-10-16T04:05:19.279Z",
+        "skillId": "skill-3d7c8e0e-934",
+        "skillVersionId": "skill-version-9109975a-adb0-4389-8097-c3d48a1f1d9d",
+        "status": "succeeded",
+        "sessionId": "session-2eb60a3d-6566-4560-a7da-0403faad0b87",
+        "attemptId": "attempt-7552a61a-2cd4-4dac-9c5d-ddb52e57d9a0",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:05:19.121Z",
+        "endedAt": "2026-10-16T04:05:42.152Z",
+        "reply": "已激活 grilling Skill（skill-9b17d380-4ac @0.1.0）。按 Skill 方法，我先把设计树的根节点（已无前置依赖、可立即问的第一个决策）摆到你面前，本轮只问这一个问题。\n\n❓ **Q1** - **这次分享的目标是什么**：同样 10 人、两小时，可以服务于完全不同的结果——是（a）让团队掌握一项可立即上手的技能/工具（技能培训），（b）复盘一个刚结束的项目让经验沉淀（项目复盘），（c）由某位成员做一次主题演讲、其余人了解即可（单向宣讲），还是（d）围绕一个议题做结构化讨论、产出共识或决策（工作坊）？目标定了，后续的选题、主讲人、形式和时长分配才有依据。\n\n➡️ 我的建议：先明确为 **(a) 技能培训**——因为“内部知识分享”最常见且可执行性最高的形态是教会团队一项具体技能；两小时足够“40 分钟讲解 + 60 分钟实操/答疑 + 20 分钟总结”的完整闭环。若你其实想要的是复盘或讨论，也请直接告诉我目标，我会据此重建问题树。\n\n本轮到此结束，等你回答后再进入下一轮。",
+        "metrics": {
+          "elapsed_ms": 22995,
+          "stop_reason": "end_turn",
+          "execution_ms": 21469,
+          "input_tokens": 5441,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 1292,
+          "worker_cpu_ms": 2780,
+          "worker_rss_kb": 250672,
+          "artifact_count": 0,
+          "first_output_ms": 21469,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 6
+        },
+        "verifiedAt": "2026-10-16T04:05:42.331Z",
+        "expectedStatusPass": true,
+        "pass": true,
+        "skillActivated": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+        "runId": "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+        "prompt": "EX-00 两轮修改固定场景，第1轮。请用文件工具在 output/ex00-report.md 写入 UTF-8 Markdown，严格为三行并保留末尾换行：\n# EX00\n状态：第一版\n固定标记：ARTIFACT-20261016\n\n请实际写入并作为成果交付，简短回复。",
+        "sentAt": "2026-10-16T04:06:44.724Z",
+        "phase": 1,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-602faaac-b2c2-494d-8aa6-1f6493226e9a",
+        "attemptId": "attempt-7b04deec-0ba5-4522-a198-b99713df7c65",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:06:44.553Z",
+        "endedAt": "2026-10-16T04:06:52.453Z",
+        "reply": "已写入并作为成果交付。\n\n- 文件：`output/ex00-report.md`\n- 内容：严格三行，保留末尾换行\n\n```\n# EX00\n状态：第一版\n固定标记：ARTIFACT-20261016\n```",
+        "metrics": {
+          "elapsed_ms": 7836,
+          "stop_reason": "end_turn",
+          "execution_ms": 6164,
+          "input_tokens": 4468,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 207,
+          "worker_cpu_ms": 1570,
+          "worker_rss_kb": 114464,
+          "artifact_count": 1,
+          "first_output_ms": 6160,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 35
+        },
+        "verifiedAt": "2026-10-16T04:06:55.239Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+        "runId": "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+        "prompt": "EX-00 两轮修改固定场景，第2轮。先读取我引用的 ex00-report.md V1，仅把第二行“状态：第一版”改成“状态：第二版”，其他两行及末尾换行保持不变。将修改后的全文实际写入 output/ex00-report.md，交付同名成果下一版本，简短回复。",
+        "sentAt": "2026-10-16T04:07:01.934Z",
+        "phase": 2,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-602faaac-b2c2-494d-8aa6-1f6493226e9a",
+        "attemptId": "attempt-789bcff5-1ac1-4f93-9a67-ce80925076e9",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:07:01.821Z",
+        "endedAt": "2026-10-16T04:07:14.396Z",
+        "reply": "已读取 V1，仅将第二行改为“状态：第二版”，其余两行及末尾换行保持不变，并写入交付。\n\n- 文件：`output/ex00-report.md`（第 2 版）\n- 内容：\n```\n# EX00\n状态：第二版\n固定标记：ARTIFACT-20261016\n```",
+        "metrics": {
+          "elapsed_ms": 12511,
+          "stop_reason": "end_turn",
+          "execution_ms": 10947,
+          "input_tokens": 28239,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 222,
+          "worker_cpu_ms": 1700,
+          "worker_rss_kb": 132080,
+          "artifact_count": 1,
+          "first_output_ms": 10946,
+          "tool_call_count": 2,
+          "tool_failed_count": 0,
+          "tool_result_count": 2,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 15
+        },
+        "verifiedAt": "2026-10-16T04:07:14.635Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-ba180794-71d5-4118-b9a9-d73a7c327452",
+        "runId": "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+        "prompt": "EX-00 两轮修改固定场景，第1轮。请用文件工具在 output/ex00-report.md 写入 UTF-8 Markdown，严格为三行并保留末尾换行：\n# EX00\n状态：第一版\n固定标记：ARTIFACT-20261016\n\n请实际写入并作为成果交付，简短回复。",
+        "sentAt": "2026-10-16T04:07:19.163Z",
+        "phase": 1,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-618f4743-5911-4c3d-bfb6-d649d2dcebd2",
+        "attemptId": "attempt-05f7b3d0-692b-4b11-811a-31953730a24f",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:07:19.072Z",
+        "endedAt": "2026-10-16T04:07:27.418Z",
+        "reply": "已写入 `output/ex00-report.md`，严格三行并保留末尾换行：\n\n```\n# EX00\n状态：第一版\n固定标记：ARTIFACT-20261016\n```",
+        "metrics": {
+          "elapsed_ms": 8300,
+          "stop_reason": "end_turn",
+          "execution_ms": 6887,
+          "input_tokens": 4444,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 159,
+          "worker_cpu_ms": 1450,
+          "worker_rss_kb": 136400,
+          "artifact_count": 1,
+          "first_output_ms": 6885,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 13
+        },
+        "verifiedAt": "2026-10-16T04:07:27.591Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-8083243d-ad20-4ac7-be7a-cfa962126907",
+        "runId": "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+        "prompt": "EX-00 两轮修改固定场景，第2轮。先读取我引用的 ex00-report.md V1，仅把第二行“状态：第一版”改成“状态：第二版”，其他两行及末尾换行保持不变。将修改后的全文实际写入 output/ex00-report.md，交付同名成果下一版本，简短回复。",
+        "sentAt": "2026-10-16T04:07:31.283Z",
+        "phase": 2,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-618f4743-5911-4c3d-bfb6-d649d2dcebd2",
+        "attemptId": "attempt-67e7fe1e-7f6f-4c05-bc21-2f6d82656728",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:07:31.196Z",
+        "endedAt": "2026-10-16T04:07:41.821Z",
+        "reply": "已读取 V1，仅将第二行改为“状态：第二版”，其余两行及末尾换行保持不变，并写入 `output/ex00-report.md`（第 2 版）：\n\n```\n# EX00\n状态：第二版\n固定标记：ARTIFACT-20261016\n```",
+        "metrics": {
+          "elapsed_ms": 10579,
+          "stop_reason": "end_turn",
+          "execution_ms": 9184,
+          "input_tokens": 18076,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 336,
+          "worker_cpu_ms": 1620,
+          "worker_rss_kb": 254720,
+          "artifact_count": 1,
+          "first_output_ms": 9184,
+          "tool_call_count": 2,
+          "tool_failed_count": 0,
+          "tool_result_count": 2,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 10
+        },
+        "verifiedAt": "2026-10-16T04:07:41.978Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-4ece9309-e65d-4704-ae67-835c53338ba8",
+        "runId": "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+        "prompt": "EX-00 两轮修改固定场景，第1轮。请用文件工具在 output/ex00-report.md 写入 UTF-8 Markdown，严格为三行并保留末尾换行：\n# EX00\n状态：第一版\n固定标记：ARTIFACT-20261016\n\n请实际写入并作为成果交付，简短回复。",
+        "sentAt": "2026-10-16T04:07:48.288Z",
+        "phase": 1,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-64a86a09-42fb-4829-9e48-b79f8c43e102",
+        "attemptId": "attempt-db4efc7b-08d2-4c7b-aed5-016136a2fb38",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:07:48.120Z",
+        "endedAt": "2026-10-16T04:07:55.451Z",
+        "reply": "已写入 `output/ex00-report.md`，内容为三行 UTF-8 Markdown（含末尾换行），文件已作为成果交付。",
+        "metrics": {
+          "elapsed_ms": 7295,
+          "stop_reason": "end_turn",
+          "execution_ms": 5898,
+          "input_tokens": 1406,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 180,
+          "worker_cpu_ms": 1570,
+          "worker_rss_kb": 268272,
+          "artifact_count": 1,
+          "first_output_ms": 5897,
+          "tool_call_count": 1,
+          "tool_failed_count": 0,
+          "tool_result_count": 1,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 18
+        },
+        "verifiedAt": "2026-10-16T04:07:56.531Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "artifact-two-turn",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+        "runId": "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+        "prompt": "EX-00 两轮修改固定场景，第2轮。先读取我引用的 ex00-report.md V1，仅把第二行“状态：第一版”改成“状态：第二版”，其他两行及末尾换行保持不变。将修改后的全文实际写入 output/ex00-report.md，交付同名成果下一版本，简短回复。",
+        "sentAt": "2026-10-16T04:07:59.840Z",
+        "phase": 2,
+        "artifactName": "ex00-report.md",
+        "status": "succeeded",
+        "sessionId": "session-64a86a09-42fb-4829-9e48-b79f8c43e102",
+        "attemptId": "attempt-0122f9e8-562e-472f-8947-dc8d03ca94c8",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:07:59.750Z",
+        "endedAt": "2026-10-16T04:08:10.224Z",
+        "reply": "已读取 V1，仅将第二行改为“状态：第二版”，其余两行及末尾换行保持不变，全文已写入 `output/ex00-report.md`，作为下一版本成果交付。",
+        "metrics": {
+          "elapsed_ms": 10435,
+          "stop_reason": "end_turn",
+          "execution_ms": 9074,
+          "input_tokens": 4845,
+          "usage_source": "dsh-session-log",
+          "output_tokens": 320,
+          "worker_cpu_ms": 1720,
+          "worker_rss_kb": 276352,
+          "artifact_count": 1,
+          "first_output_ms": 9074,
+          "tool_call_count": 2,
+          "tool_failed_count": 0,
+          "tool_result_count": 2,
+          "token_usage_source": "dsh-session-log",
+          "artifact_collect_ms": 10
+        },
+        "verifiedAt": "2026-10-16T04:08:10.456Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "cancel",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+        "runId": "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:08:36.068Z",
+        "expectedStatus": "cancelled",
+        "stopCondition": "after run.started before terminal",
+        "startedEventAt": "2026-10-16T04:08:37.340Z",
+        "status": "cancelled",
+        "sessionId": "session-4e81a746-0885-46fd-b2ed-a0b921775895",
+        "attemptId": "attempt-2b963203-18fe-426d-9df6-fabe737cb545",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:08:35.994Z",
+        "endedAt": "2026-10-16T04:08:58.062Z",
+        "reply": "",
+        "metrics": {
+          "cause": "user"
+        },
+        "verifiedAt": "2026-10-16T04:09:07.710Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "cancel",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+        "runId": "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:09:40.135Z",
+        "expectedStatus": "cancelled",
+        "stopCondition": "after run.started before terminal",
+        "startedEventAt": "2026-10-16T04:09:41.431Z",
+        "status": "cancelled",
+        "sessionId": "session-7a0bbcab-991c-4cdc-8200-59469de5b24b",
+        "attemptId": "attempt-a6cd9e4c-5505-48b5-8672-84fad7c32b66",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:09:40.075Z",
+        "endedAt": "2026-10-16T04:09:57.046Z",
+        "reply": "",
+        "metrics": {
+          "cause": "user"
+        },
+        "verifiedAt": "2026-10-16T04:10:05.314Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "cancel",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+        "runId": "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:10:10.568Z",
+        "expectedStatus": "cancelled",
+        "stopCondition": "after run.started before terminal",
+        "startedEventAt": "2026-10-16T04:10:11.815Z",
+        "status": "cancelled",
+        "sessionId": "session-331be752-f902-4bb3-97cb-b265de082a02",
+        "attemptId": "attempt-1e546ae2-dd9e-4cbd-8255-fb608aa86323",
+        "errorCode": null,
+        "startedAt": "2026-10-16T04:10:10.476Z",
+        "endedAt": "2026-10-16T04:10:26.176Z",
+        "reply": "",
+        "metrics": {
+          "cause": "user"
+        },
+        "verifiedAt": "2026-10-16T04:10:35.685Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 1,
+        "url": "http://localhost:4174/conversations/run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+        "runId": "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:11:11.107Z",
+        "expectedStatus": "failed",
+        "expectedErrorCode": "RUNTIME_WORKER_CRASH",
+        "injection": "SIGKILL exact active test Worker after run.started",
+        "startedEventAt": "2026-10-16T04:11:12.371Z",
+        "faultInjection": {
+          "signal": "SIGKILL",
+          "pid": 69399,
+          "backendPid": 45572,
+          "runId": "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "attemptId": "attempt-28965ff3-659b-4e02-9d71-81b0e1894c28",
+          "verifiedBy": "backend child + exact DSH_SNAPSHOT_SESSIONS_ROOT + manifest identity",
+          "injectedAt": "2026-10-16T04:11:26.564Z"
+        },
+        "status": "failed",
+        "sessionId": "session-8d59dc1a-be86-46e2-bba2-72208174c243",
+        "attemptId": "attempt-28965ff3-659b-4e02-9d71-81b0e1894c28",
+        "errorCode": "RUNTIME_WORKER_CRASH",
+        "startedAt": "2026-10-16T04:11:11.013Z",
+        "endedAt": "2026-10-16T04:11:26.595Z",
+        "reply": "",
+        "metrics": {
+          "reason": "ACP process exited unexpectedly (code=null, signal=SIGKILL)",
+          "elapsed_ms": 15531,
+          "error_code": "RUNTIME_WORKER_CRASH",
+          "timeout_seconds": 300
+        },
+        "verifiedAt": "2026-10-16T04:11:28.437Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 2,
+        "url": "http://localhost:4174/conversations/run-79b61f9b-3018-406a-b434-eda502f63416",
+        "runId": "run-79b61f9b-3018-406a-b434-eda502f63416",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:11:35.404Z",
+        "expectedStatus": "failed",
+        "expectedErrorCode": "RUNTIME_WORKER_CRASH",
+        "injection": "SIGKILL exact active test Worker after run.started",
+        "startedEventAt": "2026-10-16T04:11:36.712Z",
+        "faultInjection": {
+          "signal": "SIGKILL",
+          "pid": 69717,
+          "backendPid": 45572,
+          "runId": "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "attemptId": "attempt-eb696e4a-fd67-41ec-9b47-f5a4ee82dcdb",
+          "verifiedBy": "backend child + exact DSH_SNAPSHOT_SESSIONS_ROOT + manifest identity",
+          "injectedAt": "2026-10-16T04:11:48.908Z"
+        },
+        "status": "failed",
+        "sessionId": "session-e020083d-ba09-46bc-b2d9-5b72a28c2182",
+        "attemptId": "attempt-eb696e4a-fd67-41ec-9b47-f5a4ee82dcdb",
+        "errorCode": "RUNTIME_WORKER_CRASH",
+        "startedAt": "2026-10-16T04:11:35.260Z",
+        "endedAt": "2026-10-16T04:11:48.937Z",
+        "reply": "",
+        "metrics": {
+          "reason": "ACP process exited unexpectedly (code=null, signal=SIGKILL)",
+          "elapsed_ms": 13642,
+          "error_code": "RUNTIME_WORKER_CRASH",
+          "timeout_seconds": 300
+        },
+        "verifiedAt": "2026-10-16T04:11:50.639Z",
+        "expectedStatusPass": true,
+        "pass": true
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 3,
+        "url": "http://localhost:4174/conversations/run-36917889-4b96-49ec-812e-cd7c3910aebe",
+        "runId": "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+        "prompt": "EX-00 中断固定场景。请连续生成一份合成清单，共 5000 条，每条用一句不少于 50 字的中文描述内部知识分享的准备步骤，按序号排列；不要调用工具或生成文件。",
+        "sentAt": "2026-10-16T04:11:55.444Z",
+        "expectedStatus": "failed",
+        "expectedErrorCode": "RUNTIME_WORKER_CRASH",
+        "injection": "SIGKILL exact active test Worker after run.started",
+        "startedEventAt": "2026-10-16T04:11:56.602Z",
+        "faultInjection": {
+          "signal": "SIGKILL",
+          "pid": 70117,
+          "backendPid": 45572,
+          "runId": "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+          "attemptId": "attempt-0e156202-6a00-43d4-88c7-44c220f585df",
+          "verifiedBy": "backend child + exact DSH_SNAPSHOT_SESSIONS_ROOT + manifest identity",
+          "injectedAt": "2026-10-16T04:12:09.424Z"
+        },
+        "status": "failed",
+        "sessionId": "session-da3f002b-f1ee-4aab-af84-843c460425f5",
+        "attemptId": "attempt-0e156202-6a00-43d4-88c7-44c220f585df",
+        "errorCode": "RUNTIME_WORKER_CRASH",
+        "startedAt": "2026-10-16T04:11:55.272Z",
+        "endedAt": "2026-10-16T04:12:09.448Z",
+        "reply": "",
+        "metrics": {
+          "reason": "ACP process exited unexpectedly (code=null, signal=SIGKILL)",
+          "elapsed_ms": 14129,
+          "error_code": "RUNTIME_WORKER_CRASH",
+          "timeout_seconds": 300
+        },
+        "verifiedAt": "2026-10-16T04:12:10.993Z",
+        "expectedStatusPass": true,
+        "pass": true
+      }
+    ],
+    "artifact_versions": [
+      {
+        "repetition": 1,
+        "runIds": [
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a"
+        ],
+        "versions": [
+          {
+            "artifact_id": "artifact-17dac63fd2abe1825f4bc7413e30d8eb",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-94abef46432143905b597c13d1f96632",
+            "version_no": 1,
+            "file_object_id": "file-artifact-94abef46432143905b597c13d1f96632",
+            "source_run_id": "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+            "source_attempt_id": "attempt-7b04deec-0ba5-4522-a198-b99713df7c65",
+            "sha256": "d3b5209178a03a04f77606b2b4fe2c28cf1a3acdc928158987072bdbd2cb1783",
+            "size_bytes": "59"
+          },
+          {
+            "artifact_id": "artifact-17dac63fd2abe1825f4bc7413e30d8eb",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-fc84e740eac509728f9246a765d6e7d7",
+            "version_no": 2,
+            "file_object_id": "file-artifact-fc84e740eac509728f9246a765d6e7d7",
+            "source_run_id": "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+            "source_attempt_id": "attempt-789bcff5-1ac1-4f93-9a67-ce80925076e9",
+            "sha256": "f261dcad6d70ce771eea1d9963e9769beac86be6a8d0d8f08724a30c6da5ecca",
+            "size_bytes": "59"
+          }
+        ],
+        "readOnlyV1Mount": "file-artifact-94abef46432143905b597c13d1f96632"
+      },
+      {
+        "repetition": 2,
+        "runIds": [
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907"
+        ],
+        "versions": [
+          {
+            "artifact_id": "artifact-b8871a6bff48a68c55e4092a65eb61aa",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-41db92e9b7952fb4d40c07086970f19a",
+            "version_no": 1,
+            "file_object_id": "file-artifact-41db92e9b7952fb4d40c07086970f19a",
+            "source_run_id": "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+            "source_attempt_id": "attempt-05f7b3d0-692b-4b11-811a-31953730a24f",
+            "sha256": "d3b5209178a03a04f77606b2b4fe2c28cf1a3acdc928158987072bdbd2cb1783",
+            "size_bytes": "59"
+          },
+          {
+            "artifact_id": "artifact-b8871a6bff48a68c55e4092a65eb61aa",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-e5702a9a3ca053017fab8d09d275ff5e",
+            "version_no": 2,
+            "file_object_id": "file-artifact-e5702a9a3ca053017fab8d09d275ff5e",
+            "source_run_id": "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+            "source_attempt_id": "attempt-67e7fe1e-7f6f-4c05-bc21-2f6d82656728",
+            "sha256": "f261dcad6d70ce771eea1d9963e9769beac86be6a8d0d8f08724a30c6da5ecca",
+            "size_bytes": "59"
+          }
+        ],
+        "readOnlyV1Mount": "file-artifact-41db92e9b7952fb4d40c07086970f19a"
+      },
+      {
+        "repetition": 3,
+        "runIds": [
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+        ],
+        "versions": [
+          {
+            "artifact_id": "artifact-ebfb94f6ce7c0932782278e8ffd6e09c",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-7b337f0022792ee67dda2e9110144805",
+            "version_no": 1,
+            "file_object_id": "file-artifact-7b337f0022792ee67dda2e9110144805",
+            "source_run_id": "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+            "source_attempt_id": "attempt-db4efc7b-08d2-4c7b-aed5-016136a2fb38",
+            "sha256": "d3b5209178a03a04f77606b2b4fe2c28cf1a3acdc928158987072bdbd2cb1783",
+            "size_bytes": "59"
+          },
+          {
+            "artifact_id": "artifact-ebfb94f6ce7c0932782278e8ffd6e09c",
+            "name": "ex00-report.md",
+            "artifact_version_id": "artifact-version-b3913d1b606bd53297a9d60cebe9b6f4",
+            "version_no": 2,
+            "file_object_id": "file-artifact-b3913d1b606bd53297a9d60cebe9b6f4",
+            "source_run_id": "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+            "source_attempt_id": "attempt-0122f9e8-562e-472f-8947-dc8d03ca94c8",
+            "sha256": "f261dcad6d70ce771eea1d9963e9769beac86be6a8d0d8f08724a30c6da5ecca",
+            "size_bytes": "59"
+          }
+        ],
+        "readOnlyV1Mount": "file-artifact-7b337f0022792ee67dda2e9110144805"
+      }
+    ],
+    "interruption_latencies": [
+      {
+        "scenario": "cancel",
+        "repetition": 1,
+        "runId": "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+        "controlAt": "2026-10-16T04:08:58.025Z",
+        "terminalAt": "2026-10-16T04:08:58.053Z",
+        "settleMs": 28
+      },
+      {
+        "scenario": "cancel",
+        "repetition": 2,
+        "runId": "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+        "controlAt": "2026-10-16T04:09:56.997Z",
+        "terminalAt": "2026-10-16T04:09:57.037Z",
+        "settleMs": 40
+      },
+      {
+        "scenario": "cancel",
+        "repetition": 3,
+        "runId": "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+        "controlAt": "2026-10-16T04:10:26.114Z",
+        "terminalAt": "2026-10-16T04:10:26.167Z",
+        "settleMs": 53
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 1,
+        "runId": "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+        "controlAt": "2026-10-16T04:11:26.564Z",
+        "terminalAt": "2026-10-16T04:11:26.576Z",
+        "settleMs": 12
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 2,
+        "runId": "run-79b61f9b-3018-406a-b434-eda502f63416",
+        "controlAt": "2026-10-16T04:11:48.908Z",
+        "terminalAt": "2026-10-16T04:11:48.922Z",
+        "settleMs": 14
+      },
+      {
+        "scenario": "worker-crash",
+        "repetition": 3,
+        "runId": "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+        "controlAt": "2026-10-16T04:12:09.424Z",
+        "terminalAt": "2026-10-16T04:12:09.433Z",
+        "settleMs": 9
+      }
+    ],
+    "input_file_fixture": {
+      "name": "ex-artifact-01.md V1",
+      "file_id": "file-artifact-476b67cba2924066cd4175b99e25af63",
+      "bytes": 106,
+      "sha256": "2e570d9a22a0a16566627d7127dd4fe32f907f3e5ba0e22353e993260860c32d",
+      "source": "上一项本地验收生成的合成成果；从我的文件引用到新对话"
+    },
+    "selected_skill": {
+      "id": "skill-3d7c8e0e-934",
+      "version_id": "skill-version-9109975a-adb0-4389-8097-c3d48a1f1d9d",
+      "version": "0.1.0",
+      "name": "grill-me",
+      "evidence": "实际 activate_skill 成功 tool.completed，不使用模型自述作为激活证据"
+    },
+    "report_command": "pnpm report:run-timings -- --purpose <scope> --run <runId> [--run ...] [--json]",
+    "report_commands": [
+      {
+        "group": "baseline-all",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+          "--run",
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "--run",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "--run",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+          "--run",
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "--run",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "--run",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+          "--run",
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "--run",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "--run",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+          "--run",
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "--run",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "--run",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+        ],
+        "runIds": [
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+        ]
+      },
+      {
+        "group": "baseline-completed",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "employee",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "employee",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+        ],
+        "runIds": [
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+        ]
+      },
+      {
+        "group": "text",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "--run",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "--run",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478"
+        ],
+        "runIds": [
+          "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+          "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+          "run-3be3cf30-f07a-4a18-832a-1bd272bea478"
+        ]
+      },
+      {
+        "group": "file",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "--run",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "--run",
+          "run-574562b5-e496-439b-a24f-1563725e9be4"
+        ],
+        "runIds": [
+          "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+          "run-33719190-5b87-4e63-8e92-46af9c493735",
+          "run-574562b5-e496-439b-a24f-1563725e9be4"
+        ]
+      },
+      {
+        "group": "skill",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "--run",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "--run",
+          "run-fbef2366-2826-4d0a-b785-678c866257be"
+        ],
+        "runIds": [
+          "run-26405e8d-f130-498a-96bc-836933abf67c",
+          "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+          "run-fbef2366-2826-4d0a-b785-678c866257be"
+        ]
+      },
+      {
+        "group": "artifact-two-turn",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "--run",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "--run",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "--run",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "--run",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "--run",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+        ],
+        "runIds": [
+          "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+          "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+          "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+          "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+          "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+          "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+        ]
+      },
+      {
+        "group": "cancel",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "--run",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "--run",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "--run",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "--run",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34"
+        ],
+        "runIds": [
+          "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+          "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+          "run-2b8d611b-c180-4615-8ec6-d42c12f93d34"
+        ]
+      },
+      {
+        "group": "worker-crash",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "--run",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "--run",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "all",
+          "--run",
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "--run",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "--run",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+        ],
+        "runIds": [
+          "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+          "run-79b61f9b-3018-406a-b434-eda502f63416",
+          "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+        ]
+      },
+      {
+        "group": "context",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "employee",
+          "--run",
+          "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+          "--run",
+          "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+          "--run",
+          "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+          "--run",
+          "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+          "--run",
+          "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+          "--run",
+          "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+          "--run",
+          "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+          "--run",
+          "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+          "--run",
+          "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+          "--run",
+          "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+          "--run",
+          "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+          "--run",
+          "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+          "--run",
+          "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+          "--run",
+          "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+          "--run",
+          "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+          "--run",
+          "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+          "--run",
+          "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+          "--run",
+          "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+          "--run",
+          "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+          "--run",
+          "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+          "--run",
+          "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+          "--run",
+          "run-58c08fc8-661f-4a94-9d73-6add92487853",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "employee",
+          "--run",
+          "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+          "--run",
+          "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+          "--run",
+          "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+          "--run",
+          "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+          "--run",
+          "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+          "--run",
+          "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+          "--run",
+          "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+          "--run",
+          "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+          "--run",
+          "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+          "--run",
+          "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+          "--run",
+          "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+          "--run",
+          "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+          "--run",
+          "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+          "--run",
+          "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+          "--run",
+          "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+          "--run",
+          "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+          "--run",
+          "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+          "--run",
+          "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+          "--run",
+          "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+          "--run",
+          "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+          "--run",
+          "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+          "--run",
+          "run-58c08fc8-661f-4a94-9d73-6add92487853"
+        ],
+        "runIds": [
+          "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+          "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+          "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+          "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+          "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+          "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+          "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+          "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+          "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+          "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+          "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+          "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+          "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+          "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+          "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+          "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+          "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+          "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+          "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+          "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+          "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+          "run-58c08fc8-661f-4a94-9d73-6add92487853"
+        ]
+      },
+      {
+        "group": "session-summary",
+        "json": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "session-summary",
+          "--run",
+          "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+          "--run",
+          "run-767793cf-2029-4fe5-863b-c53dfc62128a",
+          "--json"
+        ],
+        "text": [
+          "pnpm",
+          "report:run-timings",
+          "--",
+          "--purpose",
+          "session-summary",
+          "--run",
+          "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+          "--run",
+          "run-767793cf-2029-4fe5-863b-c53dfc62128a"
+        ],
+        "runIds": [
+          "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+          "run-767793cf-2029-4fe5-863b-c53dfc62128a"
+        ]
+      }
+    ],
+    "timing_reports": {
+      "baseline-all": {
+        "options": {
+          "since": "2026-10-09T04:14:53.349Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+            "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+            "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+            "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+            "run-33719190-5b87-4e63-8e92-46af9c493735",
+            "run-574562b5-e496-439b-a24f-1563725e9be4",
+            "run-26405e8d-f130-498a-96bc-836933abf67c",
+            "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+            "run-fbef2366-2826-4d0a-b785-678c866257be",
+            "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+            "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+            "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+            "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+            "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+            "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+            "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+            "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+            "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+            "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+            "run-79b61f9b-3018-406a-b434-eda502f63416",
+            "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 21,
+          "outcomes": {
+            "completed": 15,
+            "failed": 3,
+            "cancelled": 3,
+            "unfinished": 0
+          },
+          "failureRate": 0.16666666666666666,
+          "errorCodes": [
+            {
+              "code": "RUNTIME_WORKER_CRASH",
+              "count": 3
+            }
+          ],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 21,
+              "missing": 0,
+              "p50": 8,
+              "p95": 15,
+              "max": 15
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 21,
+              "missing": 0,
+              "p50": 2,
+              "p95": 4,
+              "max": 5
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 21,
+              "missing": 0,
+              "p50": 31,
+              "p95": 81,
+              "max": 84
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 21,
+              "missing": 0,
+              "p50": 1198,
+              "p95": 1309,
+              "max": 1332
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 21,
+              "missing": 0,
+              "p50": 61,
+              "p95": 76,
+              "max": 83
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 15,
+              "missing": 6,
+              "p50": 9074,
+              "p95": 43085,
+              "max": 43085
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 15,
+              "missing": 6,
+              "p50": 9074,
+              "p95": 43086,
+              "max": 43086
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 15,
+              "missing": 6,
+              "p50": 8,
+              "p95": 35,
+              "max": 35
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 18,
+              "missing": 3,
+              "p50": 10579,
+              "p95": 44562,
+              "max": 44562
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 21,
+              "missing": 0,
+              "p50": 13669,
+              "p95": 26435,
+              "max": 44591
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 15,
+              "missing": 6,
+              "p50": 254624,
+              "p95": 276352,
+              "max": 276352
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 15,
+              "missing": 6,
+              "p50": 1610,
+              "p95": 4470,
+              "max": 4470
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 15,
+              "missing": 6,
+              "p50": 4476,
+              "p95": 29063,
+              "max": 29063
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 15,
+              "missing": 6,
+              "p50": 202,
+              "p95": 3196,
+              "max": 3196
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 15,
+              "missing": 6,
+              "p50": 1,
+              "p95": 2,
+              "max": 2
+            }
+          ]
+        }
+      },
+      "baseline-completed": {
+        "options": {
+          "since": "2026-10-09T04:14:53.961Z",
+          "until": null,
+          "purpose": "employee",
+          "runIds": [
+            "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+            "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+            "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+            "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+            "run-33719190-5b87-4e63-8e92-46af9c493735",
+            "run-574562b5-e496-439b-a24f-1563725e9be4",
+            "run-26405e8d-f130-498a-96bc-836933abf67c",
+            "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+            "run-fbef2366-2826-4d0a-b785-678c866257be",
+            "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+            "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+            "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+            "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+            "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+            "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 15,
+          "outcomes": {
+            "completed": 15,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 15,
+              "missing": 0,
+              "p50": 9,
+              "p95": 15,
+              "max": 15
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 15,
+              "missing": 0,
+              "p50": 2,
+              "p95": 5,
+              "max": 5
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 15,
+              "missing": 0,
+              "p50": 31,
+              "p95": 84,
+              "max": 84
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 15,
+              "missing": 0,
+              "p50": 1198,
+              "p95": 1332,
+              "max": 1332
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 15,
+              "missing": 0,
+              "p50": 63,
+              "p95": 83,
+              "max": 83
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 15,
+              "missing": 0,
+              "p50": 9074,
+              "p95": 43085,
+              "max": 43085
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 15,
+              "missing": 0,
+              "p50": 9074,
+              "p95": 43086,
+              "max": 43086
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 15,
+              "missing": 0,
+              "p50": 8,
+              "p95": 35,
+              "max": 35
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 15,
+              "missing": 0,
+              "p50": 10435,
+              "p95": 44562,
+              "max": 44562
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 15,
+              "missing": 0,
+              "p50": 10470,
+              "p95": 44591,
+              "max": 44591
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 15,
+              "missing": 0,
+              "p50": 254624,
+              "p95": 276352,
+              "max": 276352
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 15,
+              "missing": 0,
+              "p50": 1610,
+              "p95": 4470,
+              "max": 4470
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 15,
+              "missing": 0,
+              "p50": 4476,
+              "p95": 29063,
+              "max": 29063
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 15,
+              "missing": 0,
+              "p50": 202,
+              "p95": 3196,
+              "max": 3196
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 15,
+              "missing": 0,
+              "p50": 1,
+              "p95": 2,
+              "max": 2
+            }
+          ]
+        }
+      },
+      "text": {
+        "options": {
+          "since": "2026-10-09T04:14:54.551Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+            "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+            "run-3be3cf30-f07a-4a18-832a-1bd272bea478"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 3,
+          "outcomes": {
+            "completed": 3,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 7,
+              "p95": 15,
+              "max": 15
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1,
+              "p95": 4,
+              "max": 4
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 3,
+              "missing": 0,
+              "p50": 34,
+              "p95": 39,
+              "max": 39
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1206,
+              "p95": 1246,
+              "max": 1246
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 3,
+              "missing": 0,
+              "p50": 58,
+              "p95": 68,
+              "max": 68
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 3,
+              "missing": 0,
+              "p50": 3503,
+              "p95": 4520,
+              "max": 4520
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 3503,
+              "p95": 4520,
+              "max": 4520
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 3,
+              "missing": 0,
+              "p50": 8,
+              "p95": 8,
+              "max": 8
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 3,
+              "missing": 0,
+              "p50": 4912,
+              "p95": 5905,
+              "max": 5905
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 4941,
+              "p95": 5936,
+              "max": 5936
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 265824,
+              "p95": 268432,
+              "max": 268432
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1480,
+              "p95": 1520,
+              "max": 1520
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 2073,
+              "p95": 2076,
+              "max": 2076
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 72,
+              "p95": 73,
+              "max": 73
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 3,
+              "missing": 0,
+              "p50": 0,
+              "p95": 0,
+              "max": 0
+            }
+          ]
+        }
+      },
+      "file": {
+        "options": {
+          "since": "2026-10-09T04:14:55.136Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+            "run-33719190-5b87-4e63-8e92-46af9c493735",
+            "run-574562b5-e496-439b-a24f-1563725e9be4"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 3,
+          "outcomes": {
+            "completed": 3,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 9,
+              "p95": 12,
+              "max": 12
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 2,
+              "p95": 3,
+              "max": 3
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 3,
+              "missing": 0,
+              "p50": 24,
+              "p95": 81,
+              "max": 81
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1176,
+              "p95": 1260,
+              "max": 1260
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 3,
+              "missing": 0,
+              "p50": 56,
+              "p95": 64,
+              "max": 64
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 3,
+              "missing": 0,
+              "p50": 13932,
+              "p95": 14337,
+              "max": 14337
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 13933,
+              "p95": 14337,
+              "max": 14337
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 3,
+              "missing": 0,
+              "p50": 5,
+              "p95": 7,
+              "max": 7
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 3,
+              "missing": 0,
+              "p50": 15270,
+              "p95": 15863,
+              "max": 15863
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 15302,
+              "p95": 15903,
+              "max": 15903
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 254624,
+              "p95": 270064,
+              "max": 270064
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1610,
+              "p95": 1620,
+              "max": 1620
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 4476,
+              "p95": 17376,
+              "max": 17376
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 201,
+              "p95": 202,
+              "max": 202
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1,
+              "p95": 1,
+              "max": 1
+            }
+          ]
+        }
+      },
+      "skill": {
+        "options": {
+          "since": "2026-10-09T04:14:55.738Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-26405e8d-f130-498a-96bc-836933abf67c",
+            "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+            "run-fbef2366-2826-4d0a-b785-678c866257be"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 3,
+          "outcomes": {
+            "completed": 3,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 8,
+              "p95": 9,
+              "max": 9
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 3,
+              "p95": 5,
+              "max": 5
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 3,
+              "missing": 0,
+              "p50": 20,
+              "p95": 41,
+              "max": 41
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1272,
+              "p95": 1309,
+              "max": 1309
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 3,
+              "missing": 0,
+              "p50": 68,
+              "p95": 83,
+              "max": 83
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 3,
+              "missing": 0,
+              "p50": 25002,
+              "p95": 43085,
+              "max": 43085
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 25003,
+              "p95": 43086,
+              "max": 43086
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 3,
+              "missing": 0,
+              "p50": 8,
+              "p95": 8,
+              "max": 8
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 3,
+              "missing": 0,
+              "p50": 26374,
+              "p95": 44562,
+              "max": 44562
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 26435,
+              "p95": 44591,
+              "max": 44591
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 174784,
+              "p95": 250672,
+              "max": 250672
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 3,
+              "missing": 0,
+              "p50": 2780,
+              "p95": 4470,
+              "max": 4470
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 19056,
+              "p95": 29063,
+              "max": 29063
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1330,
+              "p95": 3196,
+              "max": 3196
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1,
+              "p95": 1,
+              "max": 1
+            }
+          ]
+        }
+      },
+      "artifact-two-turn": {
+        "options": {
+          "since": "2026-10-09T04:14:56.331Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+            "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+            "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+            "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+            "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+            "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 6,
+          "outcomes": {
+            "completed": 6,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 6,
+              "missing": 0,
+              "p50": 9,
+              "p95": 15,
+              "max": 15
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 6,
+              "missing": 0,
+              "p50": 1,
+              "p95": 3,
+              "max": 3
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 6,
+              "missing": 0,
+              "p50": 22,
+              "p95": 84,
+              "max": 84
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 6,
+              "missing": 0,
+              "p50": 1188,
+              "p95": 1332,
+              "max": 1332
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 6,
+              "missing": 0,
+              "p50": 63,
+              "p95": 76,
+              "max": 76
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 6,
+              "missing": 0,
+              "p50": 6885,
+              "p95": 10946,
+              "max": 10946
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 6,
+              "missing": 0,
+              "p50": 6887,
+              "p95": 10947,
+              "max": 10947
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 6,
+              "missing": 0,
+              "p50": 13,
+              "p95": 35,
+              "max": 35
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 6,
+              "missing": 0,
+              "p50": 8300,
+              "p95": 12511,
+              "max": 12511
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 6,
+              "missing": 0,
+              "p50": 8337,
+              "p95": 12566,
+              "max": 12566
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 6,
+              "missing": 0,
+              "p50": 136400,
+              "p95": 276352,
+              "max": 276352
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 6,
+              "missing": 0,
+              "p50": 1570,
+              "p95": 1720,
+              "max": 1720
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 6,
+              "missing": 0,
+              "p50": 4468,
+              "p95": 28239,
+              "max": 28239
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 6,
+              "missing": 0,
+              "p50": 207,
+              "p95": 336,
+              "max": 336
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 6,
+              "missing": 0,
+              "p50": 1,
+              "p95": 2,
+              "max": 2
+            }
+          ]
+        }
+      },
+      "cancel": {
+        "options": {
+          "since": "2026-10-09T04:14:56.922Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+            "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+            "run-2b8d611b-c180-4615-8ec6-d42c12f93d34"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 3,
+          "outcomes": {
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 3,
+            "unfinished": 0
+          },
+          "failureRate": null,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 8,
+              "p95": 10,
+              "max": 10
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1,
+              "p95": 1,
+              "max": 1
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 3,
+              "missing": 0,
+              "p50": 38,
+              "p95": 45,
+              "max": 45
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1196,
+              "p95": 1202,
+              "max": 1202
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 3,
+              "missing": 0,
+              "p50": 55,
+              "p95": 67,
+              "max": 67
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 16967,
+              "p95": 22067,
+              "max": 22067
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            }
+          ]
+        }
+      },
+      "worker-crash": {
+        "options": {
+          "since": "2026-10-09T04:14:57.518Z",
+          "until": null,
+          "purpose": "all",
+          "runIds": [
+            "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+            "run-79b61f9b-3018-406a-b434-eda502f63416",
+            "run-36917889-4b96-49ec-812e-cd7c3910aebe"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 3,
+          "outcomes": {
+            "completed": 0,
+            "failed": 3,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 1,
+          "errorCodes": [
+            {
+              "code": "RUNTIME_WORKER_CRASH",
+              "count": 3
+            }
+          ],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 7,
+              "p95": 8,
+              "max": 8
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 2,
+              "p95": 2,
+              "max": 2
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 3,
+              "missing": 0,
+              "p50": 35,
+              "p95": 55,
+              "max": 55
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 3,
+              "missing": 0,
+              "p50": 1206,
+              "p95": 1225,
+              "max": 1225
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 3,
+              "missing": 0,
+              "p50": 58,
+              "p95": 61,
+              "max": 61
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 3,
+              "missing": 0,
+              "p50": 14129,
+              "p95": 15531,
+              "max": 15531
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 3,
+              "missing": 0,
+              "p50": 14168,
+              "p95": 15571,
+              "max": 15571
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 0,
+              "missing": 3,
+              "p50": null,
+              "p95": null,
+              "max": null
+            }
+          ]
+        }
+      },
+      "context": {
+        "options": {
+          "since": "2026-10-09T04:14:58.115Z",
+          "until": null,
+          "purpose": "employee",
+          "runIds": [
+            "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+            "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+            "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+            "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+            "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+            "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+            "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+            "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+            "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+            "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+            "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+            "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+            "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+            "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+            "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+            "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+            "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+            "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+            "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+            "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+            "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+            "run-58c08fc8-661f-4a94-9d73-6add92487853"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 22,
+          "outcomes": {
+            "completed": 22,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 22,
+              "missing": 0,
+              "p50": 12,
+              "p95": 18,
+              "max": 25
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 22,
+              "missing": 0,
+              "p50": 2,
+              "p95": 4,
+              "max": 5
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 22,
+              "missing": 0,
+              "p50": 22,
+              "p95": 117,
+              "max": 184
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 22,
+              "missing": 0,
+              "p50": 1240,
+              "p95": 1436,
+              "max": 1751
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 22,
+              "missing": 0,
+              "p50": 57,
+              "p95": 70,
+              "max": 79
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 22,
+              "missing": 0,
+              "p50": 4595,
+              "p95": 6469,
+              "max": 6776
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 22,
+              "missing": 0,
+              "p50": 4595,
+              "p95": 6469,
+              "max": 6776
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 22,
+              "missing": 0,
+              "p50": 6,
+              "p95": 15,
+              "max": 17
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 22,
+              "missing": 0,
+              "p50": 6177,
+              "p95": 7800,
+              "max": 8174
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 22,
+              "missing": 0,
+              "p50": 6213,
+              "p95": 7831,
+              "max": 8208
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 22,
+              "missing": 0,
+              "p50": 264448,
+              "p95": 276208,
+              "max": 279120
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 22,
+              "missing": 0,
+              "p50": 1530,
+              "p95": 1610,
+              "max": 1610
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 22,
+              "missing": 0,
+              "p50": 8548,
+              "p95": 18526,
+              "max": 20459
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 22,
+              "missing": 0,
+              "p50": 91,
+              "p95": 140,
+              "max": 141
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 22,
+              "missing": 0,
+              "p50": 0,
+              "p95": 0,
+              "max": 0
+            }
+          ]
+        }
+      },
+      "session-summary": {
+        "options": {
+          "since": "2026-10-09T04:14:58.725Z",
+          "until": null,
+          "purpose": "session-summary",
+          "runIds": [
+            "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+            "run-767793cf-2029-4fe5-863b-c53dfc62128a"
+          ],
+          "json": true
+        },
+        "summary": {
+          "attempts": 2,
+          "outcomes": {
+            "completed": 2,
+            "failed": 0,
+            "cancelled": 0,
+            "unfinished": 0
+          },
+          "failureRate": 0,
+          "errorCodes": [],
+          "stages": [
+            {
+              "key": "queue_wait_ms",
+              "label": "排队等待（创建 Attempt → 领取）",
+              "samples": 2,
+              "missing": 0,
+              "p50": 10,
+              "p95": 10,
+              "max": 10
+            },
+            {
+              "key": "prepare_ms",
+              "label": "准备（受理 → 启动 Worker）",
+              "samples": 2,
+              "missing": 0,
+              "p50": 1,
+              "p95": 1,
+              "max": 1
+            },
+            {
+              "key": "worker_spawn_ms",
+              "label": "Worker 进程启动",
+              "samples": 2,
+              "missing": 0,
+              "p50": 2,
+              "p95": 4,
+              "max": 4
+            },
+            {
+              "key": "worker_init_ms",
+              "label": "ACP 初始化",
+              "samples": 2,
+              "missing": 0,
+              "p50": 731,
+              "p95": 1039,
+              "max": 1039
+            },
+            {
+              "key": "session_ready_ms",
+              "label": "Session 就绪",
+              "samples": 2,
+              "missing": 0,
+              "p50": 48,
+              "p95": 54,
+              "max": 54
+            },
+            {
+              "key": "first_output_ms",
+              "label": "首次输出",
+              "samples": 2,
+              "missing": 0,
+              "p50": 13497,
+              "p95": 16938,
+              "max": 16938
+            },
+            {
+              "key": "execution_ms",
+              "label": "执行（prompt → 结束）",
+              "samples": 2,
+              "missing": 0,
+              "p50": 13497,
+              "p95": 16938,
+              "max": 16938
+            },
+            {
+              "key": "artifact_collect_ms",
+              "label": "成果收集",
+              "samples": 2,
+              "missing": 0,
+              "p50": 0,
+              "p95": 0,
+              "max": 0
+            },
+            {
+              "key": "elapsed_ms",
+              "label": "Adapter 全程",
+              "samples": 2,
+              "missing": 0,
+              "p50": 14621,
+              "p95": 17738,
+              "max": 17738
+            },
+            {
+              "key": "end_to_end_ms",
+              "label": "端到端（创建 Attempt → 终态）",
+              "samples": 2,
+              "missing": 0,
+              "p50": 14638,
+              "p95": 17755,
+              "max": 17755
+            },
+            {
+              "key": "worker_rss_kb",
+              "label": "Worker 内存 RSS（KB，结束时）",
+              "samples": 2,
+              "missing": 0,
+              "p50": 245776,
+              "p95": 248480,
+              "max": 248480
+            },
+            {
+              "key": "worker_cpu_ms",
+              "label": "Worker CPU 时间",
+              "samples": 2,
+              "missing": 0,
+              "p50": 1860,
+              "p95": 2040,
+              "max": 2040
+            },
+            {
+              "key": "input_tokens",
+              "label": "输入 Token",
+              "samples": 2,
+              "missing": 0,
+              "p50": 26252,
+              "p95": 28329,
+              "max": 28329
+            },
+            {
+              "key": "output_tokens",
+              "label": "输出 Token",
+              "samples": 2,
+              "missing": 0,
+              "p50": 923,
+              "p95": 1049,
+              "max": 1049
+            },
+            {
+              "key": "tool_call_count",
+              "label": "工具调用次数",
+              "samples": 2,
+              "missing": 0,
+              "p50": 0,
+              "p95": 0,
+              "max": 0
+            }
+          ]
+        }
+      }
+    }
+  },
+  "verification": {
+    "checks": {
+      "baselineAllExpectedOutcomes": true,
+      "artifactV1V2ContentHashes": true,
+      "threeReadOnlyFileInputs": true,
+      "threeRealSkillActivations": true,
+      "interruptionAfterRunStarted": true,
+      "fortyFiveRealDshAttempts": true,
+      "incrementalSummaryExtendsPrevious": true,
+      "noUnfinishedTestRuns": true
+    },
+    "real_attempts": 45,
+    "interactive_runs": 43,
+    "background_summary_runs": 2,
+    "reported_token_totals": {
+      "input": 396154,
+      "output": 12202,
+      "missing": 6
+    },
+    "script_usage_limits": {
+      "max_total_attempts": 60,
+      "max_input_tokens": 1500000,
+      "max_output_tokens": 100000,
+      "max_run_seconds": 300
+    },
+    "known_constraints": [
+      "本地小样本基线，每类 3 组；p95 使用 nearest-rank，不能视为生产 SLO",
+      "固定并发 1；未执行 1/3/5 并发与 50 Run 排队容量试验",
+      "Worker RSS 是执行结束时采样，不是峰值；没有周期资源采样",
+      "取消/崩溃各 3 个样本缺少执行耗时、成果收集、CPU/RSS 和 Token 的终态上报；保持 null/缺失，不填 0",
+      "取消/崩溃的端到端时间包含人为发起中断前的等待；收敛时延按请求/注入至终态另外记录",
+      "first_output_ms 是平台观察到的输出时间，不是 Provider 首 Token 延迟",
+      "新文件上传受 Edge 扩展 Allow access to file URLs 权限限制；带文件场景改用已登记合成文件，未验收新文件上传",
+      "真实 OIDC、多账号、团队与生产环境不在本次范围；ACP 实时工具通知能力核实未执行",
+      "6 个中断样本未上报 Token，用量合计只代表已上报部分"
+    ]
+  },
+  "evidence": {
+    "local_directory": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016",
+    "verified_facts": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/verified-facts.json",
+    "context_proof": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/context-proof.json",
+    "raw_reports": "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/timings",
+    "model_session_evidence": [
+      {
+        "runId": "run-2312a1a4-676e-49d6-a7dd-7312a496fc07",
+        "attemptId": "attempt-fc040161-5ad4-4580-a6db-28de43fcc870",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-2312a1a4-676e-49d6-a7dd-7312a496fc07-73b63716cd6e/attempt-fc040161-5ad4-4580-a6db-28de43fcc870-2845efeda56c/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-2312a1a4-676e-49d6-a7dd-7312a496fc07-73b63716cd6e-attempt-fc040161-5ad4-4580-a6db-28de43fcc870-2845efeda56c-workspace--/0d082178-3cf4-44ab-9a0b-afdbd237113e/session.jsonl"
+      },
+      {
+        "runId": "run-c8105e07-2088-4023-a438-8ed56923fa9f",
+        "attemptId": "attempt-c9783d66-5e5e-4cc7-b798-3b5bdcd13324",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-c8105e07-2088-4023-a438-8ed56923fa9f-c78d8f7fbbee/attempt-c9783d66-5e5e-4cc7-b798-3b5bdcd13324-ee1b2694fd93/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-c8105e07-2088-4023-a438-8ed56923fa9f-c78d8f7fbbee-attempt-c9783d66-5e5e-4cc7-b798-3b5bdcd13324-ee1b2694fd93-workspace--/c77665c6-f018-4314-ab90-7f9be0387820/session.jsonl"
+      },
+      {
+        "runId": "run-7b535a57-9dd2-4eec-97b2-cff557de831f",
+        "attemptId": "attempt-c3e338ca-f4fc-4535-a96c-e81372317b4e",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-7b535a57-9dd2-4eec-97b2-cff557de831f-ae15345be190/attempt-c3e338ca-f4fc-4535-a96c-e81372317b4e-acfb65f3d45b/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-7b535a57-9dd2-4eec-97b2-cff557de831f-ae15345be190-attempt-c3e338ca-f4fc-4535-a96c-e81372317b4e-acfb65f3d45b-workspace--/ae193a2d-9b60-47e0-958d-d639ac23b892/session.jsonl"
+      },
+      {
+        "runId": "run-4c2de535-ae19-45a9-b005-52f875b71ade",
+        "attemptId": "attempt-0e037aee-38d3-46ad-9f74-867383e26fc0",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-4c2de535-ae19-45a9-b005-52f875b71ade-098df3f2dea7/attempt-0e037aee-38d3-46ad-9f74-867383e26fc0-9538bc16cb2d/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-4c2de535-ae19-45a9-b005-52f875b71ade-098df3f2dea7-attempt-0e037aee-38d3-46ad-9f74-867383e26fc0-9538bc16cb2d-workspace--/08b82164-82f2-4dc0-bf4b-35891f2248f8/session.jsonl"
+      },
+      {
+        "runId": "run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4",
+        "attemptId": "attempt-03d8e83f-c216-49eb-aea9-c910479bccd0",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4-19dbd284793e/attempt-03d8e83f-c216-49eb-aea9-c910479bccd0-9113ae0e302f/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-44ffa35d-730a-41d4-a7f4-6595a54f2ab4-19dbd284793e-attempt-03d8e83f-c216-49eb-aea9-c910479bccd0-9113ae0e302f-workspace--/44b10d3d-fbe8-4928-8bea-e6d6a38af263/session.jsonl"
+      },
+      {
+        "runId": "run-78d71071-3760-4155-b389-8a3b4fad48a6",
+        "attemptId": "attempt-461f4159-2d77-48a3-b66e-d0bb2d231edf",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-78d71071-3760-4155-b389-8a3b4fad48a6-55334c5d7bd5/attempt-461f4159-2d77-48a3-b66e-d0bb2d231edf-9c856e76d297/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-78d71071-3760-4155-b389-8a3b4fad48a6-55334c5d7bd5-attempt-461f4159-2d77-48a3-b66e-d0bb2d231edf-9c856e76d297-workspace--/eb4da698-9ca5-41da-b1ac-07822eb45f8c/session.jsonl"
+      },
+      {
+        "runId": "run-10bc8366-ccc3-4876-839b-d6404feb822b",
+        "attemptId": "attempt-22d9b047-eefc-4a9a-ae2d-32a104764d9b",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-10bc8366-ccc3-4876-839b-d6404feb822b-977c62afd7dd/attempt-22d9b047-eefc-4a9a-ae2d-32a104764d9b-057b62c4db37/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-10bc8366-ccc3-4876-839b-d6404feb822b-977c62afd7dd-attempt-22d9b047-eefc-4a9a-ae2d-32a104764d9b-057b62c4db37-workspace--/dc85d973-94c8-483a-8fd7-d4365b15e056/session.jsonl"
+      },
+      {
+        "runId": "run-aa9db665-2e85-4693-9879-adebd30b85d4",
+        "attemptId": "attempt-52854057-62f5-46b6-bb73-f7db65c46309",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-aa9db665-2e85-4693-9879-adebd30b85d4-f057ba850ecb/attempt-52854057-62f5-46b6-bb73-f7db65c46309-52c77cfd0d7b/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-aa9db665-2e85-4693-9879-adebd30b85d4-f057ba850ecb-attempt-52854057-62f5-46b6-bb73-f7db65c46309-52c77cfd0d7b-workspace--/9415f888-2848-4a04-92d5-2db83f2f1ff0/session.jsonl"
+      },
+      {
+        "runId": "run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837",
+        "attemptId": "attempt-27c3a045-1e92-4fc5-add6-29af7cf002fd",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837-03b91f350d26/attempt-27c3a045-1e92-4fc5-add6-29af7cf002fd-0520ac45c06c/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-fd6b96f0-c8ce-4742-a304-d8ef8b1fa837-03b91f350d26-attempt-27c3a045-1e92-4fc5-add6-29af7cf002fd-0520ac45c06c-workspace--/550f9c08-2317-4b3f-a485-332b956115ab/session.jsonl"
+      },
+      {
+        "runId": "run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e",
+        "attemptId": "attempt-e6223474-0075-4e7a-8e8a-a32d3d28e594",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e-a25feb3b4261/attempt-e6223474-0075-4e7a-8e8a-a32d3d28e594-b2f82f75cfa7/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-fea5e4d3-5932-4594-89fc-87e2aadd8f9e-a25feb3b4261-attempt-e6223474-0075-4e7a-8e8a-a32d3d28e594-b2f82f75cfa7-workspace--/369c16e9-4489-4bc5-94a1-3643d7a82295/session.jsonl"
+      },
+      {
+        "runId": "run-4b1b731a-f8b5-417c-930d-3f721044d8fd",
+        "attemptId": "attempt-7813e2cf-4e84-42ed-b7ea-35aff41462a5",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-4b1b731a-f8b5-417c-930d-3f721044d8fd-e48205ca2469/attempt-7813e2cf-4e84-42ed-b7ea-35aff41462a5-a7bebc4e7c04/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-4b1b731a-f8b5-417c-930d-3f721044d8fd-e48205ca2469-attempt-7813e2cf-4e84-42ed-b7ea-35aff41462a5-a7bebc4e7c04-workspace--/e19a6c8b-65d5-4b1c-93a0-649a1e1d17d6/session.jsonl"
+      },
+      {
+        "runId": "run-59e79b0c-a250-44b3-af73-422b8d87104a",
+        "attemptId": "attempt-c8a56bc8-85a7-4e26-8318-584ea99fe4e0",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-59e79b0c-a250-44b3-af73-422b8d87104a-4dba0e98fccc/attempt-c8a56bc8-85a7-4e26-8318-584ea99fe4e0-3fb97a030257/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-59e79b0c-a250-44b3-af73-422b8d87104a-4dba0e98fccc-attempt-c8a56bc8-85a7-4e26-8318-584ea99fe4e0-3fb97a030257-workspace--/f536f907-78cb-4c54-86ce-4b0723ecc605/session.jsonl"
+      },
+      {
+        "runId": "run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1",
+        "attemptId": "attempt-2fbfbc7f-f08c-4542-b892-ab349f70ce7c",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1-d59e311d0567/attempt-2fbfbc7f-f08c-4542-b892-ab349f70ce7c-7af848ce8197/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-e1285e2c-32aa-48ab-a3cc-71ec84aa7bb1-d59e311d0567-attempt-2fbfbc7f-f08c-4542-b892-ab349f70ce7c-7af848ce8197-workspace--/efb0fb9e-184a-4d78-80a6-2caa2ac5927e/session.jsonl"
+      },
+      {
+        "runId": "run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca",
+        "attemptId": "attempt-b7f76a87-fbe8-4569-bf18-100c940b8f68",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca-de92e471df15/attempt-b7f76a87-fbe8-4569-bf18-100c940b8f68-e812ec2b002d/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-41d17d2b-0d11-48ed-8f6f-9f1c3f3a7aca-de92e471df15-attempt-b7f76a87-fbe8-4569-bf18-100c940b8f68-e812ec2b002d-workspace--/3ed4926a-fbd3-4d22-9c00-8ee909155b39/session.jsonl"
+      },
+      {
+        "runId": "run-b8fde23e-3a2a-4eff-8836-c450de51ef0c",
+        "attemptId": "attempt-f3f4e28b-e931-4230-962b-de7d2a1faddf",
+        "purpose": "session-summary",
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-b8fde23e-3a2a-4eff-8836-c450de51ef0c-d1197618932e/attempt-f3f4e28b-e931-4230-962b-de7d2a1faddf-df4110e98114/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-b8fde23e-3a2a-4eff-8836-c450de51ef0c-d1197618932e-attempt-f3f4e28b-e931-4230-962b-de7d2a1faddf-df4110e98114-workspace--/364ec259-9f6e-45cd-9ff8-4e61b617862e/session.jsonl"
+      },
+      {
+        "runId": "run-4c1dd446-ec59-4749-9384-d9b892e834bd",
+        "attemptId": "attempt-6a5fa227-8d7a-4cd0-8600-08a74c751ebb",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-4c1dd446-ec59-4749-9384-d9b892e834bd-3cbc8c0bf2f9/attempt-6a5fa227-8d7a-4cd0-8600-08a74c751ebb-bc6dfc71fd7a/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-4c1dd446-ec59-4749-9384-d9b892e834bd-3cbc8c0bf2f9-attempt-6a5fa227-8d7a-4cd0-8600-08a74c751ebb-bc6dfc71fd7a-workspace--/6e75d3a3-bfad-4137-89e8-f7efa341b33a/session.jsonl"
+      },
+      {
+        "runId": "run-5666b394-4658-4086-8b7c-a5cb589d0460",
+        "attemptId": "attempt-b78c2ba5-2d95-46d9-9178-032e498eb67b",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-5666b394-4658-4086-8b7c-a5cb589d0460-cfad409ef102/attempt-b78c2ba5-2d95-46d9-9178-032e498eb67b-3b17a1185121/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-5666b394-4658-4086-8b7c-a5cb589d0460-cfad409ef102-attempt-b78c2ba5-2d95-46d9-9178-032e498eb67b-3b17a1185121-workspace--/66c756dc-faff-4806-8464-1d2ea73abfd9/session.jsonl"
+      },
+      {
+        "runId": "run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d",
+        "attemptId": "attempt-c33defef-dad5-4897-afe3-08a30a0c9d96",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d-2085dc1ac376/attempt-c33defef-dad5-4897-afe3-08a30a0c9d96-ecaad15adc10/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-1b2aa13f-69d2-4f91-b9aa-8a1851b5034d-2085dc1ac376-attempt-c33defef-dad5-4897-afe3-08a30a0c9d96-ecaad15adc10-workspace--/712fca16-1896-44ed-a7fb-d8fc4537ecd4/session.jsonl"
+      },
+      {
+        "runId": "run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59",
+        "attemptId": "attempt-0c296686-f2d0-4d55-acfc-88d643321305",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59-098d86620147/attempt-0c296686-f2d0-4d55-acfc-88d643321305-95e7ee3fa1e3/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-50803447-ea0a-4ebb-bb3e-1f0ed01d5f59-098d86620147-attempt-0c296686-f2d0-4d55-acfc-88d643321305-95e7ee3fa1e3-workspace--/ef10a181-7ec3-4e99-abd3-88b8e0fdf6b5/session.jsonl"
+      },
+      {
+        "runId": "run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054",
+        "attemptId": "attempt-dfe45ec8-b290-400c-8350-63d4621ca289",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054-d7a8538938b4/attempt-dfe45ec8-b290-400c-8350-63d4621ca289-d07461ec0f0e/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-38cefbe3-3c6c-44ba-9f19-c8503bd5c054-d7a8538938b4-attempt-dfe45ec8-b290-400c-8350-63d4621ca289-d07461ec0f0e-workspace--/ec51b1ff-f4ad-4bfb-b569-284d481d398a/session.jsonl"
+      },
+      {
+        "runId": "run-87143605-1b62-49ea-8019-32ea4f6f5f37",
+        "attemptId": "attempt-ea958b07-a601-4daf-8e38-01369c72ff96",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-87143605-1b62-49ea-8019-32ea4f6f5f37-d03dd5ee2b38/attempt-ea958b07-a601-4daf-8e38-01369c72ff96-57d51119c8a7/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-87143605-1b62-49ea-8019-32ea4f6f5f37-d03dd5ee2b38-attempt-ea958b07-a601-4daf-8e38-01369c72ff96-57d51119c8a7-workspace--/5ae03b0d-038d-4646-99fe-7ce6753121c5/session.jsonl"
+      },
+      {
+        "runId": "run-767793cf-2029-4fe5-863b-c53dfc62128a",
+        "attemptId": "attempt-624b6de3-7042-4f82-99e3-f2c967d10b47",
+        "purpose": "session-summary",
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-767793cf-2029-4fe5-863b-c53dfc62128a-da27f5f96e0d/attempt-624b6de3-7042-4f82-99e3-f2c967d10b47-da3e25f8a3eb/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-767793cf-2029-4fe5-863b-c53dfc62128a-da27f5f96e0d-attempt-624b6de3-7042-4f82-99e3-f2c967d10b47-da3e25f8a3eb-workspace--/ff31f397-6a52-47fe-a12f-6ad8d8ceb66b/session.jsonl"
+      },
+      {
+        "runId": "run-920768fb-7c78-4567-a5cc-649f9c98f98d",
+        "attemptId": "attempt-9704045a-e825-4829-a879-ba5b7bc4d357",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-920768fb-7c78-4567-a5cc-649f9c98f98d-b5499b16b11a/attempt-9704045a-e825-4829-a879-ba5b7bc4d357-ec7582039a6c/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-920768fb-7c78-4567-a5cc-649f9c98f98d-b5499b16b11a-attempt-9704045a-e825-4829-a879-ba5b7bc4d357-ec7582039a6c-workspace--/b68f33a5-fd5b-45f9-8087-20108b85107b/session.jsonl"
+      },
+      {
+        "runId": "run-58c08fc8-661f-4a94-9d73-6add92487853",
+        "attemptId": "attempt-decedcf5-d631-4540-8bdf-3fe805639243",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-58c08fc8-661f-4a94-9d73-6add92487853-a5746f224cd4/attempt-decedcf5-d631-4540-8bdf-3fe805639243-c4f0565ade2b/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-58c08fc8-661f-4a94-9d73-6add92487853-a5746f224cd4-attempt-decedcf5-d631-4540-8bdf-3fe805639243-c4f0565ade2b-workspace--/67318d53-eff0-42cd-a031-91f933f3e09e/session.jsonl"
+      },
+      {
+        "runId": "run-52a41316-9fbf-4d99-a159-080f7674c40e",
+        "attemptId": "attempt-ffbb5be4-ad5e-4ef8-b1c8-e4a848d46143",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-52a41316-9fbf-4d99-a159-080f7674c40e-86c1c8128df4/attempt-ffbb5be4-ad5e-4ef8-b1c8-e4a848d46143-4ed4c1b5489f/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-52a41316-9fbf-4d99-a159-080f7674c40e-86c1c8128df4-attempt-ffbb5be4-ad5e-4ef8-b1c8-e4a848d46143-4ed4c1b5489f-workspace--/e614c5ef-506a-46ee-bcc2-2809be8ee072/session.jsonl"
+      },
+      {
+        "runId": "run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1",
+        "attemptId": "attempt-1f4ad6d4-524a-464a-a0a5-7afb70af37a6",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1-248d1d95505a/attempt-1f4ad6d4-524a-464a-a0a5-7afb70af37a6-611217a7d58d/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-7aaf28f3-49f6-4753-b2b4-6db085cd3fd1-248d1d95505a-attempt-1f4ad6d4-524a-464a-a0a5-7afb70af37a6-611217a7d58d-workspace--/9d39e5b2-adfc-4c1b-a40c-7f10e1d3b3ef/session.jsonl"
+      },
+      {
+        "runId": "run-3be3cf30-f07a-4a18-832a-1bd272bea478",
+        "attemptId": "attempt-f8258780-5f17-4fdc-b4d5-8ee574ae4841",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-3be3cf30-f07a-4a18-832a-1bd272bea478-4ce62fc92ad8/attempt-f8258780-5f17-4fdc-b4d5-8ee574ae4841-90f2a76cd5ef/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-3be3cf30-f07a-4a18-832a-1bd272bea478-4ce62fc92ad8-attempt-f8258780-5f17-4fdc-b4d5-8ee574ae4841-90f2a76cd5ef-workspace--/614fd121-d08a-4291-bd46-b6884292166f/session.jsonl"
+      },
+      {
+        "runId": "run-05b4c561-584f-47a4-8401-a125ae0467bb",
+        "attemptId": "attempt-e3e38791-ffff-4cc9-b134-0665d2e7176d",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-05b4c561-584f-47a4-8401-a125ae0467bb-4c884d853efa/attempt-e3e38791-ffff-4cc9-b134-0665d2e7176d-74435267423e/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-05b4c561-584f-47a4-8401-a125ae0467bb-4c884d853efa-attempt-e3e38791-ffff-4cc9-b134-0665d2e7176d-74435267423e-workspace--/1db8526f-027d-4dea-ae28-071be9b6f40c/session.jsonl"
+      },
+      {
+        "runId": "run-33719190-5b87-4e63-8e92-46af9c493735",
+        "attemptId": "attempt-f252e4a1-6a43-4abd-925d-ffee75ea2ad6",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-33719190-5b87-4e63-8e92-46af9c493735-174f5fc8e025/attempt-f252e4a1-6a43-4abd-925d-ffee75ea2ad6-ecd1022fbecb/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-33719190-5b87-4e63-8e92-46af9c493735-174f5fc8e025-attempt-f252e4a1-6a43-4abd-925d-ffee75ea2ad6-ecd1022fbecb-workspace--/f6b42982-e8c7-4f0d-b93d-d798075c5c2a/session.jsonl"
+      },
+      {
+        "runId": "run-574562b5-e496-439b-a24f-1563725e9be4",
+        "attemptId": "attempt-375f6972-d7c4-4f90-994a-bd01f40b356e",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-574562b5-e496-439b-a24f-1563725e9be4-43de17cb22b9/attempt-375f6972-d7c4-4f90-994a-bd01f40b356e-749945f77715/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-574562b5-e496-439b-a24f-1563725e9be4-43de17cb22b9-attempt-375f6972-d7c4-4f90-994a-bd01f40b356e-749945f77715-workspace--/a107e25e-2a3d-4847-8da6-cf0b1ff03698/session.jsonl"
+      },
+      {
+        "runId": "run-26405e8d-f130-498a-96bc-836933abf67c",
+        "attemptId": "attempt-42ce39a2-b49e-4a41-be06-e3ebc5645e5d",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-26405e8d-f130-498a-96bc-836933abf67c-892be769509a/attempt-42ce39a2-b49e-4a41-be06-e3ebc5645e5d-6bf845ea486e/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-26405e8d-f130-498a-96bc-836933abf67c-892be769509a-attempt-42ce39a2-b49e-4a41-be06-e3ebc5645e5d-6bf845ea486e-workspace--/cacaeb44-7ef3-4631-b61a-cd231dad3741/session.jsonl"
+      },
+      {
+        "runId": "run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad",
+        "attemptId": "attempt-dc06ce4d-8d4a-47fc-96dd-c79bb7a930e0",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad-4a004e84a7b9/attempt-dc06ce4d-8d4a-47fc-96dd-c79bb7a930e0-bb964e6d67af/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-9102b9d5-4c92-4a54-a2e2-e274e120d6ad-4a004e84a7b9-attempt-dc06ce4d-8d4a-47fc-96dd-c79bb7a930e0-bb964e6d67af-workspace--/66b79f0b-4c2d-4a2e-9415-c1354bc1c143/session.jsonl"
+      },
+      {
+        "runId": "run-fbef2366-2826-4d0a-b785-678c866257be",
+        "attemptId": "attempt-7552a61a-2cd4-4dac-9c5d-ddb52e57d9a0",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-fbef2366-2826-4d0a-b785-678c866257be-195b0a2bdefb/attempt-7552a61a-2cd4-4dac-9c5d-ddb52e57d9a0-62f1277d51ae/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-fbef2366-2826-4d0a-b785-678c866257be-195b0a2bdefb-attempt-7552a61a-2cd4-4dac-9c5d-ddb52e57d9a0-62f1277d51ae-workspace--/d7806b20-cc19-41d9-bae6-68da7b39550b/session.jsonl"
+      },
+      {
+        "runId": "run-57a6fc17-e44d-41b5-b900-c28f94c4b953",
+        "attemptId": "attempt-7b04deec-0ba5-4522-a198-b99713df7c65",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-57a6fc17-e44d-41b5-b900-c28f94c4b953-f62b675aa28f/attempt-7b04deec-0ba5-4522-a198-b99713df7c65-e232c602e8b9/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-57a6fc17-e44d-41b5-b900-c28f94c4b953-f62b675aa28f-attempt-7b04deec-0ba5-4522-a198-b99713df7c65-e232c602e8b9-workspace--/084dae17-e1a1-4e4a-b5a8-a3e7cf40e10c/session.jsonl"
+      },
+      {
+        "runId": "run-45e39b81-ed42-4af1-86d9-ee85385d736a",
+        "attemptId": "attempt-789bcff5-1ac1-4f93-9a67-ce80925076e9",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-45e39b81-ed42-4af1-86d9-ee85385d736a-be26df795b1a/attempt-789bcff5-1ac1-4f93-9a67-ce80925076e9-fd8d719fbe81/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-45e39b81-ed42-4af1-86d9-ee85385d736a-be26df795b1a-attempt-789bcff5-1ac1-4f93-9a67-ce80925076e9-fd8d719fbe81-workspace--/db7a4339-9178-4c53-8d6b-a98ddaa4e68c/session.jsonl"
+      },
+      {
+        "runId": "run-ba180794-71d5-4118-b9a9-d73a7c327452",
+        "attemptId": "attempt-05f7b3d0-692b-4b11-811a-31953730a24f",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-ba180794-71d5-4118-b9a9-d73a7c327452-ca8bc2713dc4/attempt-05f7b3d0-692b-4b11-811a-31953730a24f-f3b7f1c91642/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-ba180794-71d5-4118-b9a9-d73a7c327452-ca8bc2713dc4-attempt-05f7b3d0-692b-4b11-811a-31953730a24f-f3b7f1c91642-workspace--/372a826d-21d7-4e9d-9afd-bbd643c328cf/session.jsonl"
+      },
+      {
+        "runId": "run-8083243d-ad20-4ac7-be7a-cfa962126907",
+        "attemptId": "attempt-67e7fe1e-7f6f-4c05-bc21-2f6d82656728",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-8083243d-ad20-4ac7-be7a-cfa962126907-ee366b8d2d4c/attempt-67e7fe1e-7f6f-4c05-bc21-2f6d82656728-10f89d52afc4/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-8083243d-ad20-4ac7-be7a-cfa962126907-ee366b8d2d4c-attempt-67e7fe1e-7f6f-4c05-bc21-2f6d82656728-10f89d52afc4-workspace--/2441e12e-a818-40bd-96a4-3e346fc86198/session.jsonl"
+      },
+      {
+        "runId": "run-4ece9309-e65d-4704-ae67-835c53338ba8",
+        "attemptId": "attempt-db4efc7b-08d2-4c7b-aed5-016136a2fb38",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-4ece9309-e65d-4704-ae67-835c53338ba8-717d9e15afa1/attempt-db4efc7b-08d2-4c7b-aed5-016136a2fb38-930ea4b6d3e5/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-4ece9309-e65d-4704-ae67-835c53338ba8-717d9e15afa1-attempt-db4efc7b-08d2-4c7b-aed5-016136a2fb38-930ea4b6d3e5-workspace--/ee9e177e-a6d3-4115-ac3b-2c06a3813c91/session.jsonl"
+      },
+      {
+        "runId": "run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a",
+        "attemptId": "attempt-0122f9e8-562e-472f-8947-dc8d03ca94c8",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a-9b541a6fcb0e/attempt-0122f9e8-562e-472f-8947-dc8d03ca94c8-7b4d35e968c4/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-c55b84b9-ca30-425b-a0d1-eced0f8f8d2a-9b541a6fcb0e-attempt-0122f9e8-562e-472f-8947-dc8d03ca94c8-7b4d35e968c4-workspace--/82858cb3-1444-4bf8-9800-fb62ad7efa1c/session.jsonl"
+      },
+      {
+        "runId": "run-18d67891-7d3b-4b22-bab6-3e55600c9ec3",
+        "attemptId": "attempt-2b963203-18fe-426d-9df6-fabe737cb545",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-18d67891-7d3b-4b22-bab6-3e55600c9ec3-d7c58e8477c9/attempt-2b963203-18fe-426d-9df6-fabe737cb545-d020db53ef65/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-18d67891-7d3b-4b22-bab6-3e55600c9ec3-d7c58e8477c9-attempt-2b963203-18fe-426d-9df6-fabe737cb545-d020db53ef65-workspace--/42640ea7-137e-4fda-9c8b-5fad2b3ef08c/session.jsonl"
+      },
+      {
+        "runId": "run-2037ff24-7c73-46f5-a63a-0a49fbeaec27",
+        "attemptId": "attempt-a6cd9e4c-5505-48b5-8672-84fad7c32b66",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-2037ff24-7c73-46f5-a63a-0a49fbeaec27-f22c8db8aa57/attempt-a6cd9e4c-5505-48b5-8672-84fad7c32b66-4f590e50bc31/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-2037ff24-7c73-46f5-a63a-0a49fbeaec27-f22c8db8aa57-attempt-a6cd9e4c-5505-48b5-8672-84fad7c32b66-4f590e50bc31-workspace--/e71a19e5-6381-48eb-b8ef-88dfd2ed8f49/session.jsonl"
+      },
+      {
+        "runId": "run-2b8d611b-c180-4615-8ec6-d42c12f93d34",
+        "attemptId": "attempt-1e546ae2-dd9e-4cbd-8255-fb608aa86323",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-2b8d611b-c180-4615-8ec6-d42c12f93d34-d6f2202cccdf/attempt-1e546ae2-dd9e-4cbd-8255-fb608aa86323-e4779818dba2/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-2b8d611b-c180-4615-8ec6-d42c12f93d34-d6f2202cccdf-attempt-1e546ae2-dd9e-4cbd-8255-fb608aa86323-e4779818dba2-workspace--/557f0356-c9e9-47d9-8e39-b28f64bf543a/session.jsonl"
+      },
+      {
+        "runId": "run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43",
+        "attemptId": "attempt-28965ff3-659b-4e02-9d71-81b0e1894c28",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43-f79aa8f8e1d5/attempt-28965ff3-659b-4e02-9d71-81b0e1894c28-07a1ae3386f6/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-ff63c664-e1db-4ba2-9317-c6eaddd9ec43-f79aa8f8e1d5-attempt-28965ff3-659b-4e02-9d71-81b0e1894c28-07a1ae3386f6-workspace--/a52bb350-ad4c-48c5-9471-74fb2f06c710/session.jsonl"
+      },
+      {
+        "runId": "run-79b61f9b-3018-406a-b434-eda502f63416",
+        "attemptId": "attempt-eb696e4a-fd67-41ec-9b47-f5a4ee82dcdb",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-79b61f9b-3018-406a-b434-eda502f63416-ea4395d0b53a/attempt-eb696e4a-fd67-41ec-9b47-f5a4ee82dcdb-2b2e4259eaf0/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-79b61f9b-3018-406a-b434-eda502f63416-ea4395d0b53a-attempt-eb696e4a-fd67-41ec-9b47-f5a4ee82dcdb-2b2e4259eaf0-workspace--/bd9b80ce-59f5-446c-9321-0cad1169ed1d/session.jsonl"
+      },
+      {
+        "runId": "run-36917889-4b96-49ec-812e-cd7c3910aebe",
+        "attemptId": "attempt-0e156202-6a00-43d4-88c7-44c220f585df",
+        "purpose": null,
+        "requestContexts": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-v4-pro",
+            "contextWindow": 1000000
+          }
+        ],
+        "sessionLog": "/Users/max/projects/dsh-work/.runtime/dsh-attempts/tenant-dsh-work-57c560323d56/run-36917889-4b96-49ec-812e-cd7c3910aebe-5271438a1842/attempt-0e156202-6a00-43d4-88c7-44c220f585df-269405c2e53e/sessions/--Users-max-projects-dsh-work-.runtime-dsh-attempts-tenant-dsh-work-57c560323d56-run-36917889-4b96-49ec-812e-cd7c3910aebe-5271438a1842-attempt-0e156202-6a00-43d4-88c7-44c220f585df-269405c2e53e-workspace--/2755733b-f089-4b58-9491-6d5da43d7e09/session.jsonl"
+      }
+    ],
+    "screenshots": [
+      "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/context-final-22.jpg",
+      "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/baseline-artifact-v2.jpg",
+      "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/baseline-cancelled.jpg",
+      "/Users/max/.codex/visualizations/2026/10/15/01a13d79-8db5-7110-96ff-7262b5e068f6/ex-context-baseline-20261016/baseline-worker-crash.jpg"
+    ]
+  },
+  "implementation_changes": false,
+  "commit_created": false,
+  "pushed": false
+}
