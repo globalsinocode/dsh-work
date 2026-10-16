@@ -104,7 +104,7 @@ export class RunOrchestrationService {
     this.dispatcher = new AttemptDispatcher(this.deps, budget, this.scheduler)
     this.cancellation = new RunCancellation(this.deps)
     this.admin = new AdminRunEntry(this.deps, this.dispatcher, this.scheduler, budget, this.cancellation)
-    this.trials = new ReleaseTrialEntry(this.deps, this.dispatcher, budget, this.cancellation)
+    this.trials = new ReleaseTrialEntry(this.deps, this.dispatcher, this.cancellation)
     this.background = new BackgroundRunEntry(this.deps, this.dispatcher)
     this.deps.sessionSummaries = new SessionSummaryEntry(this.deps, this.dispatcher, budget)
   }

@@ -1,17 +1,9 @@
-import { randomUUID } from 'node:crypto'
-
-import { assertRuntimeModelRequirements } from '../../runtime/execution-capabilities.ts'
-import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
-import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
 import { invalidRequest } from '../../../domain/request-errors.ts'
 import type { ReleaseTrialResult, ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
 import type { RunRecord } from '../run-types.ts'
-import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import type { RunCancellation } from './run-cancellation.ts'
-import { toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
-import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
-
+import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
 /**
  * Entry point for Agent validation (S3): one validation case through the real Runtime path.
@@ -22,13 +14,11 @@ import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestra
 export class ReleaseTrialEntry implements ReleaseTrialRunner {
   private readonly deps: OrchestrationDependencies
   private readonly dispatcher: AttemptDispatcher
-  private readonly budget: AttemptBudget
   private readonly cancellation: RunCancellation
 
-  constructor(deps: OrchestrationDependencies, dispatcher: AttemptDispatcher, budget: AttemptBudget, cancellation: RunCancellation) {
+  constructor(deps: OrchestrationDependencies, dispatcher: AttemptDispatcher, cancellation: RunCancellation) {
     this.deps = deps
     this.dispatcher = dispatcher
-    this.budget = budget
     this.cancellation = cancellation
   }
 
@@ -74,83 +64,23 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
     }
   }
 
+  /**
+   * Same Manifest builder as employee runs. Only three things differ: the
+   * `agent-release-trial` purpose makes the builder authorize with the Agent's own grants
+   * (no employee or admin roles) and isolates external effects (approval-gated calls are
+   * refused, MCP and platform writes return trial_only), and there is no workspace, so no
+   * files or workspace memory. Knowledge, skills, tools, bindings, approvals, write policy
+   * and limits are exactly what production gets.
+   */
   private async dispatchTrialAttempt(run: RunRecord, userId: string, agentVersionId: string, message: string) {
-    const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
-    const agent = await this.deps.agents!.getRuntimeSnapshot(agentVersionId, [])
-    // The Agent works with its own current grants, exactly as when an employee asks it.
-    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(agentVersionId)
-      ?? { roleIds: [], dataScopes: [] }
-    await this.deps.authorization?.assertAgentPrincipalSnapshot(agentVersionId, trialScope.roleIds, trialScope.dataScopes)
-    const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
-    await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
-    // Knowledge is retrieved as in production. Memory needs a workspace and is not
-    // injected into validation runs.
-    const knowledgeContext = this.deps.knowledge
-      ? await this.deps.knowledge.resolveContext({
-          query: message, userId, workspaceId: null, dataScopes: trialScope.dataScopes, roleIds: trialScope.roleIds,
-        })
-      : []
-    const limits = {
-      timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
-      max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
-      max_tool_calls: agent.maxToolCalls,
-    }
-    const manifest: RuntimeManifest = {
-      manifest_version: '1.0',
+    await this.dispatcher.dispatch(run, {
+      prompt: message,
+      workspaceId: '',
+      agentVersionId,
+      userId,
+      fileIds: [],
+      preparedFiles: [],
       purpose: 'agent-release-trial',
-      model_requirements: agent.modelRequirements,
-      run_id: run.id,
-      attempt_id: `attempt-${randomUUID()}`,
-      task_id: run.taskId,
-      session_id: run.sessionId,
-      workspace_id: '',
-      agent_version_id: agentVersionId,
-      agent_configuration: {
-        system_prompt: agent.systemPrompt,
-        skill_instructions: agent.skillInstructions.map(toRuntimeManifestSkill),
-      },
-      user_context: { user_id: userId, tenant_id: tenantId, role_ids: trialScope.roleIds },
-      ...(agent.principalId && agent.principalAuthorizationVersion ? {
-        principal_context: await this.dispatcher.principalContextForRun(run, agent.principalId, agent.principalAuthorizationVersion),
-      } : {}),
-      // Same permission policy and tool set as employee execution. External effects are
-      // isolated by purpose: approval-gated calls are refused, MCP and platform writes
-      // return trial_only.
-      permission_policy: {
-        approval_mode: agent.approvalMode,
-        network_policy: agent.mcpConnections?.length ? 'allowlist' : 'deny',
-        write_policy: 'workspace_only',
-      },
-      skills: agent.skills.map(toCapabilityReference),
-      tools: [...agent.runtimeTools.map(toCapabilityReference),
-        ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(this.deps.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : [])],
-      // The candidate's frozen bindings; publication rechecks them for drift.
-      ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
-      ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
-      data_scopes: trialScope.dataScopes,
-      knowledge_context: knowledgeContext.map(document => ({
-        documentId: document.documentId,
-        title: document.title,
-        version: document.version,
-        effectiveDate: document.effectiveDate,
-        dataScope: document.dataScope,
-        contentChecksum: document.contentChecksum,
-        excerpt: document.excerpt,
-      })),
-      model_route_id: route.routeId,
-      input: { message, file_mounts: [] },
-      budget: await this.budget.manifest(run, limits),
-      limits,
-      created_at: new Date().toISOString(),
-      trace_id: `trace-${run.id}-trial`,
-    }
-    await this.dispatcher.submit(run, manifest, route, {
-      knowledgeSources: knowledgeContext.map(document => ({
-        documentId: document.documentId,
-        relevanceScore: document.relevanceScore,
-        excerpt: document.excerpt,
-      })),
     })
   }
 }

@@ -36,7 +36,12 @@ export class AttemptDispatcher {
     }
   }
 
-  /** Builds the Agent Manifest for an employee, Task, automation or routine Run and submits it. */
+  /**
+   * The single Agent Manifest builder: employee, Task, automation, routine and release-trial
+   * Runs all go through here so validation runs exactly what employees will get. Callers
+   * differ only in the authorization decision they pass (whose grants bound the run), the
+   * purpose (which isolates external effects) and whether there is a workspace.
+   */
   async dispatch(run: RunRecord, input: {
     prompt: string
     /** manifest 输入消息的重写（如续写指令）；缺省时使用 prompt。 */
@@ -79,23 +84,29 @@ export class AttemptDispatcher {
         }
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
-    const authorization = input.authorization ?? await this.deps.authorization?.authorizeRuntime({
-      userId: input.userId,
-      workspaceId: input.workspaceId,
-      agentVersionId: input.agentVersionId,
-      additionalSkillReferences: input.additionalSkillReferences,
-    })
-    const effectiveDataScopes = authorization?.dataScopes ?? ['enterprise:authorized']
+    // Whose grants bound the run is the one thing entry points choose: employees run within
+    // their own access, release trials within the Agent's own grants.
+    const trial = input.purpose === 'agent-release-trial'
+    const authorization = input.authorization ?? (trial
+      ? await this.deps.authorization?.authorizeReleaseTrial({ userId: input.userId, agentVersionId: input.agentVersionId })
+      : await this.deps.authorization?.authorizeRuntime({
+          userId: input.userId,
+          workspaceId: input.workspaceId,
+          agentVersionId: input.agentVersionId,
+          additionalSkillReferences: input.additionalSkillReferences,
+        }))
+    const effectiveDataScopes = authorization?.dataScopes ?? (trial ? [] : ['enterprise:authorized'])
     const knowledgeContext = this.deps.knowledge && input.purpose !== 'agent-routine'
       ? await this.deps.knowledge.resolveContext({
           query: input.prompt,
           userId: input.userId,
-          workspaceId: input.workspaceId,
+          workspaceId: input.workspaceId || null,
           dataScopes: effectiveDataScopes,
           roleIds: authorization?.roleIds,
         })
       : []
-    const memoryContext = this.deps.memory && input.purpose !== 'agent-routine'
+    // Memory belongs to a workspace; runs without one (release trials) get none.
+    const memoryContext = this.deps.memory && input.purpose !== 'agent-routine' && input.workspaceId
       ? await this.deps.memory.resolveContext({
           query: input.prompt,
           userId: input.userId,
@@ -134,7 +145,7 @@ export class AttemptDispatcher {
       user_context: {
         user_id: input.userId,
         tenant_id: tenantId,
-        role_ids: authorization?.roleIds ?? agent.roleIds,
+        role_ids: authorization?.roleIds ?? (trial ? [] : agent.roleIds),
       },
       ...((authorization?.executorPrincipalId ?? agent.principalId) ? {
         principal_context: await this.principalContextForRun(

@@ -674,6 +674,26 @@ export class PostgresAuthorizationService {
     await this.resolveAndAuthorizeTools(version.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference)), roleIds, dataScopes)
   }
 
+  /**
+   * S3 validation: the decision a release trial runs under, in the same shape as an
+   * employee run so both share one Manifest builder. The Agent works with its own current
+   * grants (never the audience or the admin's roles); there is no workspace.
+   */
+  async authorizeReleaseTrial(input: { userId: string; agentVersionId: string }): Promise<RuntimeAuthorizationDecision> {
+    const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
+    await this.assertAgentPrincipalSnapshot(input.agentVersionId, principal.roleIds, principal.dataScopes)
+    return {
+      userId: input.userId,
+      workspaceId: null,
+      executorPrincipalId: principal.id,
+      executorAuthorizationVersion: principal.authorizationVersion,
+      roleIds: principal.roleIds,
+      permissions: await this.permissionsForRoles(principal.roleIds),
+      dataScopes: principal.dataScopes,
+      agentVersionId: input.agentVersionId,
+    }
+  }
+
   /** Release trials use the Agent's own grants, never the audience or creator's roles. */
   async resolveAgentPrincipalTrialScope(agentVersionId: string): Promise<{
     roleIds: string[]; dataScopes: string[]

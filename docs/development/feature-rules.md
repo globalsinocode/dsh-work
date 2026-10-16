@@ -272,4 +272,4 @@ Agent 在详情页 `/agents/:agentId` 一站式管理（S4）：职责与人格�
 - **运行记录：** 列出以 Agent 执行身份运行的最近 Run（员工对话、主动任务、自动任务、验证），Run 创建首个 Attempt 后才出现。
 - **已删除：** 提交审核、退回、撤回、五类固定模板案例、版本证据、Agent 包导出和 ZIP 导入；S4 起删除三步编辑弹窗、管理页详情抽屉与单独的验证页。
 
-未完成：验证运行与生产共用同一 Manifest 构造函数（现为共享装配步骤）；以可见角色的权限作为验证时的员工侧上限（目前按 Agent 自身授权执行）；真实 DSH/OIDC 的 P2 验收。
+验证运行与员工执行共用同一 Manifest 构造函数（`AttemptDispatcher.dispatch`）：差异只有执行授权（Agent 自身授权，`authorizeReleaseTrial`）、`agent-release-trial` 外部效果隔离、无工作空间（无文件与工作空间经验）。未完成：以可见角色的权限作为验证时的员工侧上限（目前按 Agent 自身授权执行）；真实 DSH/OIDC 的 P2 验收。

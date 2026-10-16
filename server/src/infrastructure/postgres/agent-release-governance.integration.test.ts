@@ -547,6 +547,15 @@ test('无 Skill/Tool 的 Soul Agent 可配置创建并验证，默认工具随�
   assert.equal(manifest?.permission_policy.approval_mode, snapshot.approvalMode)
   assert.equal(manifest?.permission_policy.write_policy, 'workspace_only')
   assert.equal(manifest?.limits.timeout_seconds, snapshot.timeoutSeconds)
+  // 试运行与员工执行共用同一 Manifest 构造：工具集、执行身份与输入形状一致，
+  // 只是没有工作空间（无文件、无工作空间经验）。
+  assert.deepEqual(manifest?.tools.map(tool => `${tool.id}@${tool.version}`).filter(ref => snapshot.runtimeTools.includes(ref)),
+    snapshot.runtimeTools)
+  assert.equal(manifest?.principal_context?.executed_as, snapshot.principalId)
+  assert.equal(manifest?.principal_context?.executor_authorization_version, snapshot.principalAuthorizationVersion)
+  assert.deepEqual(manifest?.input.file_mounts, [])
+  assert.equal(manifest?.memory_context, undefined)
+  assert.match(manifest?.trace_id ?? '', new RegExp(`^trace-${done.cases[0]!.runId}-attempt-`))
 })
 
 test('基础 Agent 以空业务权限完成验证并发布', async () => {
