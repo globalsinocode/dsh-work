@@ -53,7 +53,7 @@ pnpm test:e2e
 | 服务端单元测试（全部或按目录） | `pnpm test:unit`、`pnpm test:unit src/modules/run` |
 | 服务端集成测试（全部或按目录） | `pnpm test:integration`、`pnpm test:integration src/http` |
 | 文档、契约与架构 | `pnpm verify`、`pnpm check:architecture` |
-| 类型、UI 与代码规范 | `pnpm typecheck`、`pnpm lint` |
+| 类型、UI 与代码规范 | `pnpm typecheck`（含 `scripts/` 下的 TypeScript 脚本，见 `server/tsconfig.scripts.json`）、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
 | Runtime 与模型治理 | `pnpm test:m1`、`pnpm test:m2` |
 | 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录能力与账号来源运行 `pnpm test:e2e:login-options` |

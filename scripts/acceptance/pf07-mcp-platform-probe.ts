@@ -21,6 +21,7 @@ import { preflightDshRuntime, resolveDshRuntimeInstallation } from '../../server
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
+import { LocalObjectStorage } from '../../server/src/infrastructure/storage/local-object-storage.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresWorkspaceAgentMemberService } from '../../server/src/modules/workbench/application/postgres-workspace-agent-member-service.ts'
 
@@ -67,7 +68,7 @@ try {
   const database = disposable.client
   const authorization = new PostgresAuthorizationService(database)
   const conversations = new PostgresConversationRepository(database)
-  const content = new PostgresContentService(database, resolve(directory, 'storage'), authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(directory, 'storage')), authorization)
   const runs = new PostgresRunRepository(database)
   runtime = new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
@@ -207,7 +208,7 @@ try {
     })
     await database`
       update agent_versions set status = 'published', published_at = now(), published_by = 'U00008',
-         binding_refs = ${database.json(sealedBindings)}
+         binding_refs = ${database.json(sealedBindings as never)}
        where tenant_id = ${tenantId} and id = ${created.version.id} and status = 'draft'
     `
     await database`
@@ -228,6 +229,7 @@ try {
     prompt: `按工作规程执行：调用 mcp__${connector.mcp!.serverName}__put_receipt，参数为 operationKey="${selectedOperationKey}"、value="selected-scope"；再调用 mcp__${connector.mcp!.serverName}__get_receipt 查询相同 operationKey，只报告回执 ID。`,
     idempotencyKey: `pf07-selected-${nonce}`, workspaceAgentMemberId: selectedMember.id,
   })
+  assert.ok(selectedRun, 'selected-scope Run was not created')
   let selectedStatus = ''
   const selectedDeadline = Date.now() + 240_000
   while (Date.now() < selectedDeadline) {
@@ -266,6 +268,7 @@ try {
     prompt: `请使用 write 工具在 output/pf07-agent-output.md 写入一行“PF07_NONE_SCOPE_OK ${nonce}”，再用 read 工具核对该文件内容，最后简短回复。不要调用 MCP。`,
     idempotencyKey: `pf07-none-${nonce}`, workspaceAgentMemberId: noneMember.id,
   })
+  assert.ok(noneRun, 'no-MCP Run was not created')
   let noneStatus = ''
   const noneDeadline = Date.now() + 240_000
   while (Date.now() < noneDeadline) {

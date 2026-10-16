@@ -31,6 +31,7 @@ import { createDatabase, type DatabaseClient } from '../../server/src/infrastruc
 import { createThrowawayDatabase, type ThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
+import { LocalObjectStorage } from '../../server/src/infrastructure/storage/local-object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const agentVersionId = 'agent-version-dsh-work-assistant-1'
@@ -179,7 +180,7 @@ async function main() {
   try {
     const authorization = new PostgresAuthorizationService(database)
     const conversations = new PostgresConversationRepository(database)
-    const content = new PostgresContentService(database, '/tmp/dsh-work-t5-bench-storage', authorization)
+    const content = new PostgresContentService(database, new LocalObjectStorage('/tmp/dsh-work-t5-bench-storage'), authorization)
 
     const seeded = await seed(throwaway.client, options)
     const volumes = await measureVolumes(throwaway.client)
@@ -198,7 +199,7 @@ async function main() {
     await record('冷启动', 'listWorkspaces（可见空间统计）', () => content.listWorkspaces(memberIds[0]!))
     await record('冷启动', 'listWorkspaces（另一成员）', () => content.listWorkspaces(memberIds[1]!))
     await record('冷启动', 'listWorkspaceSessions 首页', () => conversations.listWorkspaceSessions({
-      workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20,
+      workspaceId: seeded.workspaceId, limit: 20,
     }))
     await record('冷启动', 'listWorkspaceFiles 首页', () => content.listWorkspaceFiles({
       workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20,
@@ -210,13 +211,13 @@ async function main() {
     for (let round = 0; round < rounds; round += 1) {
       await recorder.measure('热路径', 'listWorkspaces（可见空间统计）', () => content.listWorkspaces(actor))
       await recorder.measure('热路径', 'listWorkspaceSessions 首页', () => conversations.listWorkspaceSessions({
-        workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20,
+        workspaceId: seeded.workspaceId, limit: 20,
       }))
       await recorder.measure('热路径', 'listWorkspaceSessions 深翻页', () => conversations.listWorkspaceSessions({
-        workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20, cursor: seeded.deepCursor,
+        workspaceId: seeded.workspaceId, limit: 20, cursor: seeded.deepCursor,
       }))
       await recorder.measure('热路径', 'listWorkspaceSessions 标题搜索', () => conversations.listWorkspaceSessions({
-        workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20, query: '热点',
+        workspaceId: seeded.workspaceId, limit: 20, query: '热点',
       }))
       await recorder.measure('热路径', 'listWorkspaceFiles 首页', () => content.listWorkspaceFiles({
         workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20,
@@ -236,9 +237,9 @@ async function main() {
       await Promise.all(Array.from({ length: options.concurrency }, async (_value, index) => {
         switch (index % 4) {
           case 0: return content.listWorkspaces(actor)
-          case 1: return conversations.listWorkspaceSessions({ workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20 })
+          case 1: return conversations.listWorkspaceSessions({ workspaceId: seeded.workspaceId, limit: 20 })
           case 2: return content.listWorkspaceFiles({ workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20 })
-          default: return conversations.listWorkspaceSessions({ workspaceId: seeded.workspaceId, actorUserId: actor, limit: 20, query: '热点' })
+          default: return conversations.listWorkspaceSessions({ workspaceId: seeded.workspaceId, limit: 20, query: '热点' })
         }
       }))
     })
@@ -469,7 +470,7 @@ async function listArtifactsWithPerRowGate(database: DatabaseClient, actorUserId
      where a.tenant_id = ${tenantId} and s.created_by = ${actorUserId}
      order by av.created_at desc
   `
-  const visible: typeof rows = []
+  const visible: Array<(typeof rows)[number]> = []
   for (const row of rows) {
     if (await canReadWorkspaceObject(authorization, row.workspaceId, actorUserId)) visible.push(row)
   }
