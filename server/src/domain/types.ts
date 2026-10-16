@@ -257,9 +257,10 @@ export interface AgentDefinition {
   description: string
   owner: string
   department: string
+  /** 员工可见范围的摘要文字，由 roleIds 派生。 */
   visibility: string
+  /** Agent 级可见角色：哪些角色可以向它请求工作；随时可改、立即生效，不属于版本。 */
   roleIds: string[]
-  dataScopes: string[]
   /** 平台治理开关：关闭后不再出现在团队空间「添加 Agent」候选，也不能被加入（convergence §1）。 */
   allowWorkspaceJoin: boolean
   status: PublishStatus
@@ -285,9 +286,6 @@ export interface AgentDraftConfiguration {
   description: string
   owner: string
   department: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -308,6 +306,8 @@ export interface AgentDraftConfiguration {
 
 export interface CreateAgentDraftInput extends AgentDraftConfiguration {
   actor: string
+  /** 初始访问授权（选填）；之后通过 Agent 访问授权接口调整。 */
+  visibleRoleIds?: string[]
   executionRoleIds?: string[]
   executionDataScopes?: string[]
 }
@@ -335,9 +335,6 @@ export interface AgentVersionRecord {
   publishedBy?: string
   sourceVersion?: string
   summary: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string

@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test'
 
 import type { ApiAudience, RequestIdentity } from '../modules/identity/types.ts'
 import { PostgresAgentService } from '../modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from '../modules/agent/agent-access-service.ts'
 import { PostgresAuthorizationService } from '../modules/authorization/postgres-authorization-service.ts'
 import { AuthorizationDeniedError } from '../domain/authorization-errors.ts'
 import { PostgresOperationsService } from '../modules/admin/application/postgres-operations-service.ts'
@@ -48,7 +49,7 @@ before(async () => {
 
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerWorkspaceAgentMemberRoutes(router, agentMembers, authorization)
-  registerAgentRoutes(router, agents)
+  registerAgentRoutes(router, agents, new PostgresAgentAccessService(database))
   registerOperationsRoutes(router, operations, reconciliation)
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {
@@ -558,16 +559,16 @@ async function createPublishedAgent(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.id}, '1.0.0', 'T7 测试 Agent', 'T7 对账与治理集成测试。',
       '', ${database.json(['测试'] as string[])}, '你是 T7 集成测试 Agent。',
-      ${database.json(['role-employee'])}, ${database.json(['enterprise:authorized'])},
       65536, 20, 300, ${database.json([] as string[])}, ${database.json(input.toolRefs ?? [])},
       'published', ${input.ownerId}, 'T7 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${input.id}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}

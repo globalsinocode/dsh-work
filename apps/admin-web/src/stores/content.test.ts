@@ -290,7 +290,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     department: '数字化中心',
     visibility: '全体试点员工',
     roleIds: ['role-employee'],
-    dataScopes: ['enterprise:authorized'],
     allowWorkspaceJoin: true,
     status: 'published',
     version: '1.0.0',

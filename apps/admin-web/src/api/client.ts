@@ -5,7 +5,7 @@ import type {
   AgentDefinition,
   AgentEvalCase,
   AgentJoinedWorkspaceRecord,
-  AgentPrincipalGovernance,
+  AgentAccess,
   AgentRoutine,
   AgentRoutineExecution,
   AgentReleaseState,
@@ -26,7 +26,7 @@ import type {
   GrantSourceReconciliationView,
   HealthComponent,
   IdentityRoleSummary,
-  AgentPrincipalRoleOption,
+  UpdateAgentAccessInput,
   IdentityUserPage,
   IdentityUserSummary,
   ListPage,
@@ -207,14 +207,11 @@ export const adminApi = {
       method: 'PATCH',
       body: JSON.stringify({ allowWorkspaceJoin: input.allowWorkspaceJoin }),
     }),
-  getAgentPrincipal: (agentId: string) =>
-    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(agentId)}/principal`),
-  getAgentPrincipalRoleOptions: () => request<AgentPrincipalRoleOption[]>('/agents/principal-role-options'),
-  updateAgentPrincipal: (input: AgentPrincipalGovernance) =>
-    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(input.agentId)}/principal`, {
-      method: 'PATCH',
-      body: JSON.stringify({ expectedAuthorizationVersion: input.authorizationVersion,
-        status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes }),
+  getAgentAccess: (agentId: string) =>
+    request<AgentAccess>(`/agents/${encodeURIComponent(agentId)}/access`),
+  updateAgentAccess: (agentId: string, input: UpdateAgentAccessInput) =>
+    request<AgentAccess>(`/agents/${encodeURIComponent(agentId)}/access`, {
+      method: 'PATCH', body: JSON.stringify(input),
     }),
   getAgentRoutines: (agentId: string) =>
     request<AgentRoutine[]>(`/agents/${encodeURIComponent(agentId)}/routines`),
@@ -252,10 +249,6 @@ export const adminApi = {
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
   ensureAgentReleaseCandidate: (agentId: string) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
-  updateAgentPublicationScope: (agentId: string, input: { roleIds: string[]; dataScopes: string[] }) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publication-scope`, {
-      method: 'PATCH', body: JSON.stringify(input),
-    }),
   updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
     request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
       method: 'POST',

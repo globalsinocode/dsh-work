@@ -768,16 +768,16 @@ async function createPublishedAgent(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.id}, '1.0.0', ${input.name ?? 'TW10 测试 Agent'}, 'TW-10 测试。',
       '', ${database.json(['测试'] as string[])}, '你是 TW-10 集成测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
       65536, 20, 300, ${database.json(input.skillRefs ?? [])}, ${database.json(input.toolRefs ?? [])},
       'published', 'U00008', 'TW-10 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${input.id}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}

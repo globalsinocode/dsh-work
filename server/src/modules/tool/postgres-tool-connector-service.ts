@@ -1336,6 +1336,51 @@ export class PostgresToolConnectorService {
     }
   }
 
+  /**
+   * S2 岗位权限：列出 Agent 能力所需的角色与数据范围，供管理端在授权时对齐。
+   * declared 为版本声明的平台工具；default 为平台默认装配、但有角色或数据要求的 DSH 工具。
+   * 运行时本地默认工具（文件读写等）无需授权，不列出。
+   */
+  async describeAuthorizationRequirements(references: string[]): Promise<Array<{
+    reference: string; name: string; source: 'declared' | 'default'
+    requiredRoleIds: string[]; requiredScopes: string[]
+  }>> {
+    const declared = unique(references).filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
+    const rows = await this.database<{
+      id: string; version: string; name: string; connectorId: string; dshToolName: string | null
+      allowedRoleIds: string[]; requiredScopes: string[]; isDefault: boolean
+    }[]>`
+      select distinct on (t.id) t.id, tv.version, t.name,
+             t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
+             t.allowed_role_ids as "allowedRoleIds", t.data_scopes as "requiredScopes",
+             (t.dsh_tool_name = any(${[...defaultAgentDshToolNames]})) as "isDefault"
+        from tools t
+        join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
+       where t.tenant_id = ${tenantId} and t.connector_id = ${DSH_RUNTIME_CONNECTOR_ID}
+         and t.admission_status = 'approved'
+         and ((t.id || '@' || tv.version) = any(${declared})
+           or (t.dsh_tool_name = any(${[...defaultAgentDshToolNames]}) and t.status = 'available' and tv.status = 'published'))
+       order by t.id, ((t.id || '@' || tv.version) = any(${declared})) desc,
+                split_part(tv.version, '.', 1)::integer desc,
+                split_part(tv.version, '.', 2)::integer desc,
+                split_part(tv.version, '.', 3)::integer desc
+    `
+    return rows
+      .filter(row => !isDefaultRunLocalAgentTool({
+        connectorId: row.connectorId, dshToolName: row.dshToolName,
+        allowedRoleIds: row.allowedRoleIds, dataScopes: row.requiredScopes,
+      }))
+      .map(row => {
+        const reference = `${row.id}@${row.version}`
+        return {
+          reference, name: row.name,
+          source: declared.includes(reference) ? 'declared' as const : 'default' as const,
+          requiredRoleIds: unique(row.allowedRoleIds), requiredScopes: unique(row.requiredScopes),
+        }
+      })
+      .sort((left, right) => left.source.localeCompare(right.source) || left.reference.localeCompare(right.reference))
+  }
+
   async resolveRuntimeToolNames(references: string[]): Promise<string[]> {
     await this.assertAvailableReferences(references)
     const names: string[] = []

@@ -5,7 +5,7 @@ import { canonicalJson } from '../runtime/canonical-json.ts'
 /** Copy-only, NOT model instructions. Default deny: additions require a policy review. */
 export const DRAFT_COPY_FIELDS = ['name', 'description', 'welcomeMessage', 'examplePrompts'] as const
 export const DRAFT_COPY_POLICY = 'draft-copy-v1' as const
-const protectedFields = ['owner', 'department', 'visibility', 'roleIds', 'dataScopes', 'systemPrompt',
+const protectedFields = ['owner', 'department', 'systemPrompt',
   'workInstructions', 'mcpScope', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'tools'] as const
 
 type CopyBefore = Pick<AgentDefinition, 'id' | 'status' | typeof DRAFT_COPY_FIELDS[number] | typeof protectedFields[number]>

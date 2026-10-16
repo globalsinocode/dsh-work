@@ -19,15 +19,6 @@
     }
   ],
   "paths": {
-    "/agents/{agentId}/release/publication-scope": {
-      "patch": {
-        "operationId": "updateAgentPublicationScope",
-        "summary": "在发布试运行前配置员工可见角色与可选的平台数据授权上限；变更使旧试运行证据失效",
-        "parameters": [{ "$ref": "#/components/parameters/AgentId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["roleIds", "dataScopes"], "properties": { "roleIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "dataScopes": { "type": "array", "uniqueItems": true, "items": { "type": "string" } } } } } } },
-        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
-      }
-    },
     "/agents/{agentId}/release/case-trials": {
       "post": {
         "operationId": "startAgentReleaseTrial",
@@ -2045,24 +2036,10 @@
         }
       }
     },
-    "/agents/principal-role-options": {
+    "/agents/{agentId}/access": {
       "get": {
-        "operationId": "listAgentPrincipalRoleOptions",
-        "summary": "查询可授予 Agent 独立执行身份的本地角色",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/agents/{agentId}/principal": {
-      "get": {
-        "operationId": "getAgentPrincipal",
-        "summary": "查询 Agent 独立执行身份的状态、角色、数据范围与授权版本",
+        "operationId": "getAgentAccess",
+        "summary": "查询 Agent 岗位权限：可见角色、岗位角色、数据范围、能力所需授权、工作数据授权与主动任务（权限总览）",
         "parameters": [
           {
             "$ref": "#/components/parameters/AgentId"
@@ -2081,8 +2058,8 @@
         }
       },
       "patch": {
-        "operationId": "updateAgentPrincipal",
-        "summary": "修改 Agent 独立执行身份；按 expectedAuthorizationVersion 做乐观并发，授权变化使已有试运行证据失效",
+        "operationId": "updateAgentAccess",
+        "summary": "修改 Agent 岗位权限；属于 Agent 而非版本，立即生效、写审计，不作废验证证据。按 expectedRevision 做乐观并发",
         "parameters": [
           {
             "$ref": "#/components/parameters/AgentId"
@@ -2095,39 +2072,54 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
+                "required": [
+                  "expectedRevision",
+                  "visibleRoleIds",
+                  "roleIds",
+                  "dataScopes"
+                ],
                 "properties": {
-                  "expectedAuthorizationVersion": {
+                  "expectedRevision": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "description": "读取时返回的 revision；已被修改时返回 409 AGENT_ACCESS_REVISION_CONFLICT"
                   },
-                  "status": {
+                  "visibleRoleIds": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "谁可以向 Agent 请求工作；不授予执行权限"
+                  },
+                  "roleIds": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Agent 执行身份持有的岗位角色"
+                  },
+                  "dataScopes": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "description": "Agent 执行身份的数据范围授权"
+                  },
+                  "principalStatus": {
                     "type": "string",
                     "enum": [
                       "active",
                       "disabled"
                     ]
-                  },
-                  "roleIds": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "uniqueItems": true
-                  },
-                  "dataScopes": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "uniqueItems": true
                   }
-                },
-                "required": [
-                  "expectedAuthorizationVersion",
-                  "status",
-                  "roleIds",
-                  "dataScopes"
-                ]
+                }
               }
             }
           }
@@ -2802,11 +2794,8 @@
           "description",
           "owner",
           "department",
-          "visibility",
           "welcomeMessage",
           "examplePrompts",
-          "roleIds",
-          "dataScopes",
           "systemPrompt",
           "maxOutputBytes",
           "maxToolCalls",
@@ -2833,10 +2822,6 @@
           "department": {
             "type": "string",
             "description": "兼容字段；服务端以负责人部门为准"
-          },
-          "visibility": {
-            "type": "string",
-            "description": "展示摘要；授权以 roleIds 为准"
           },
           "welcomeMessage": {
             "type": "string",
@@ -2881,20 +2866,6 @@
             "items": {
               "type": "string",
               "description": "工具标识@版本"
-            },
-            "uniqueItems": true
-          },
-          "roleIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "uniqueItems": true
-          },
-          "dataScopes": {
-            "type": "array",
-            "items": {
-              "type": "string"
             },
             "uniqueItems": true
           },
@@ -2953,7 +2924,10 @@
               "id": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9-]{2,47}$"
-              }
+              },
+              "visibleRoleIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始可见角色（选填）；之后经 /agents/{agentId}/access 调整" },
+              "executionRoleIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始岗位角色（选填）" },
+              "executionDataScopes": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "初始数据范围授权（选填）" }
             }
           }
         ]
@@ -2966,7 +2940,7 @@
           },
           {
             "type": "object",
-            "description": "编辑器不写发布范围：roleIds 与 dataScopes 仅为兼容字段，服务端沿用当前值；发布范围只能通过 PATCH /agents/{agentId}/release/publication-scope 修改。",
+            "description": "草稿只含版本内容；可见角色、岗位角色与数据范围属于 Agent，只能通过 PATCH /agents/{agentId}/access 修改。",
             "required": [
               "agentId",
               "expectedRevision"

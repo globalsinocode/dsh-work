@@ -14,6 +14,18 @@ const candidate = {
     manualReview: { rubric: '符合预期', required: true },
   })),
 }
+function accessFor(input: { roleIds: string[]; dataScopes: string[]; missingRole?: boolean }) {
+  return {
+    agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
+    visibleRoleIds: ['role-employee'], roleIds: input.roleIds, dataScopes: input.dataScopes,
+    roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
+    capabilities: input.missingRole === undefined ? [] : [{
+      reference: 'custom@1.0.0', name: '自定义授权工具', source: 'declared',
+      requiredRoleIds: ['role-employee'], requiredScopes: [], missingRole: input.missingRole, missingScopes: [],
+    }],
+    collections: [], routines: [],
+  }
+}
 const trialRuns = [{
   id: 'trial-review-smoke', submissionRevision: 1, status: 'passed',
   startedAt: '2026-09-23T00:00:00.000Z',
@@ -31,17 +43,10 @@ const trialRuns = [{
 }]
 
 test.beforeEach(async ({ page }) => {
-  await page.route('**/api/admin/v1/agents/principal-role-options', route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: [
-      { id: 'role-employee', name: '员工', status: 'active' },
-    ] }),
-  }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/principal`, route => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify({ data: {
-      principalId: `principal-agent-${agentId}`, agentId, status: 'active',
-      authorizationVersion: 1, roleIds: ['role-employee'],
-      dataScopes: ['供应链中心', '本部门汇总数据', '当前工作空间'],
-    } }),
+  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: accessFor({
+      roleIds: ['role-employee'], dataScopes: ['供应链中心', '本部门汇总数据', '当前工作空间'],
+    }) }),
   }))
 })
 
@@ -83,14 +88,14 @@ test('已通过试运行的 Agent 不受 JSON 字段顺序影响，可进入确�
   expect(publishRequests).toBe(1)
 })
 
-test('按稳定角色 ID 允许试运行和发布，名称变化不影响授权，撤权仍阻止运行', async ({ page }) => {
+test('按 Agent 当前岗位权限允许试运行和发布，撤权仍阻止运行', async ({ page }) => {
   let roleIds = ['role-employee']
   let passed = false
   await page.route('**/api/admin/v1/agents', async route => {
     const response = await route.fetch()
     const body = await response.json()
     body.data = body.data.map((agent: { id: string }) => agent.id === agentId
-      ? { ...agent, tools: ['custom@1.0.0'], dataScopes: [] } : agent)
+      ? { ...agent, tools: ['custom@1.0.0'] } : agent)
     await route.fulfill({ response, json: body })
   })
   await page.route('**/api/admin/v1/tools', route => route.fulfill({ json: { data: [{
@@ -98,24 +103,23 @@ test('按稳定角色 ID 允许试运行和发布，名称变化不影响授权�
     allowedRoles: ['普通员工（已改名）'], allowedRoleIds: ['role-employee'],
     agentRunLocalDefault: false, dataScopes: [],
   }] } }))
-  await page.route(`**/api/admin/v1/agents/${agentId}/principal`, route => route.fulfill({ json: { data: {
-    principalId: `principal-agent-${agentId}`, agentId, status: 'active',
-    authorizationVersion: 1, roleIds, dataScopes: [],
-  } } }))
+  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({ json: {
+    data: accessFor({ roleIds, dataScopes: [], missingRole: !roleIds.includes('role-employee') }),
+  } }))
   await page.route(`**/api/admin/v1/agents/${agentId}/release/candidate`, route => route.fulfill({ json: { data: {
     candidate, trialRuns: passed ? trialRuns : [], evidence: {}, packageWarnings: [],
   } } }))
   const url = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}/agents/${agentId}/release/trial`
   await page.goto(url)
   await expect(page.getByRole('button', { name: '运行本项', exact: true })).toBeEnabled()
-  await expect(page.getByText(/试运行前还需授权/)).toHaveCount(0)
+  await expect(page.getByText(/验证前还需授权/)).toHaveCount(0)
   passed = true
   await page.reload()
   await page.getByRole('button', { name: '验证通过，确认发布' }).click()
   await expect(page.locator('[data-action="publish-agent"]')).toBeEnabled()
   roleIds = []
   await page.goto(url)
-  await expect(page.getByText('试运行前还需授权：工具 自定义授权工具 的执行角色')).toBeVisible()
+  await expect(page.getByText('验证前还需授权：自定义授权工具 所需的岗位角色')).toBeVisible()
   await expect(page.getByRole('button', { name: '验证通过，确认发布' })).toHaveCount(0)
   passed = false
   await page.reload()

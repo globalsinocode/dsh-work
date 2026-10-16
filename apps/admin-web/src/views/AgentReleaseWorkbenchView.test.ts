@@ -9,7 +9,7 @@ import { adminApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useAgentGovernanceStore } from '@/stores/agentGovernance'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentReleaseState, AgentTrialCaseRun, AgentVersionRecord } from '@/types/domain'
+import type { AgentAccess, AgentDefinition, AgentReleaseState, AgentTrialCaseRun, AgentVersionRecord } from '@/types/domain'
 import AgentReleaseWorkbenchView from './AgentReleaseWorkbenchView.vue'
 
 afterEach(() => vi.restoreAllMocks())
@@ -55,14 +55,13 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
     candidate: undefined, trialRuns: state.trialRuns, evidence: {}, packageWarnings: [],
   })
   vi.spyOn(adminApi, 'getAgentReleaseSubmissions').mockResolvedValue({ items: [] })
-  vi.spyOn(adminApi, 'getAgentPrincipalRoleOptions').mockResolvedValue([
-    { id: 'role-employee', name: '员工', status: 'active' },
-  ])
-  const principalState = reactive({
-    principalId: `principal-agent-${agentId}`, agentId, status: 'active' as const,
-    authorizationVersion: 1, roleIds: [] as string[], dataScopes: [] as string[],
+  const accessState = reactive<AgentAccess>({
+    agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
+    visibleRoleIds: ['role-employee'], roleIds: [], dataScopes: [],
+    roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
+    capabilities: [], collections: [], routines: [],
   })
-  vi.spyOn(adminApi, 'getAgentPrincipal').mockResolvedValue(principalState)
+  vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue(accessState)
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue({} as never)
 
   const pinia = createPinia()
@@ -73,15 +72,15 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
     agents: [{
       id: agentId, name: '单次审核 Agent', description: '审核流程测试', owner: '平台管理员',
       department: '治理', visibility: '指定角色', roleIds: ['role-employee'],
-      dataScopes: [], allowWorkspaceJoin: false, status: 'draft', version: '0.1.0',
+      allowWorkspaceJoin: false, status: 'draft', version: '0.1.0',
       welcomeMessage: '', examplePrompts: [], systemPrompt: '你是测试 Agent。',
       maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
       skills: [], tools: [], updatedAt: '2026-09-23T00:00:00.000Z',
     } satisfies AgentDefinition],
     agentVersions: [{
       id: 'agent-version-one-step', agentId, version: '0.1.0', status: 'draft',
-      createdAt: '2026-09-23T00:00:00.000Z', createdBy: 'admin', summary: '', visibility: '指定角色',
-      roleIds: ['role-employee'], dataScopes: [], welcomeMessage: '', examplePrompts: [],
+      createdAt: '2026-09-23T00:00:00.000Z', createdBy: 'admin', summary: '',
+      welcomeMessage: '', examplePrompts: [],
       systemPrompt: '你是测试 Agent。', maxOutputBytes: 65536, maxToolCalls: 20,
       timeoutSeconds: 300, skills: [], tools: [],
     } satisfies AgentVersionRecord],
@@ -100,42 +99,33 @@ it('试运行通过后一次审核确认即发布草稿候选', async () => {
     await flushPromises()
     await router.push(`/agents/${agentId}/release/trial`)
     await flushPromises()
-    expect(wrapper.text()).toContain('发布范围')
-    expect(wrapper.text()).toContain('基础文本试运行无需业务角色或平台数据授权')
+    expect(wrapper.text()).toContain('岗位权限')
+    expect(wrapper.text()).toContain('1 个可见角色 · 0 个岗位角色 · 0 个数据范围')
+    expect(wrapper.text()).not.toContain('验证前还需授权')
     expect(wrapper.get('.stage-footer--forward').text()).toContain('验证通过，确认发布')
-    const baseAgent = content.agents[0]!
-    content.$patch({
-      agents: [{ ...baseAgent, tools: ['read@1.0.0'] }],
-      tools: [{
-        id: 'read', version: '1.0.0', name: '读取文本文件', system: 'DSH Runtime',
-        description: '', connectorId: 'connector-dsh-workspace', risk: 'low', mode: 'read',
-        status: 'available', inputSchema: '{}', outputSchema: '{}', outputValidation: 'unavailable',
-        retryPolicy: 'safe', concurrencyPolicy: 'concurrent', completionSemantics: 'completed',
-        timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
-        allowedRoleIds: ['role-employee', 'role-platform-admin'],
-        dataScopes: ['workspace:authorized'], agentRunLocalDefault: true,
-        approvalPolicy: 'none', lastCheckedAt: '刚刚',
-      }],
-    })
+    // 平台默认能力缺授权时只是不装配，不阻断验证。
+    accessState.capabilities = [{
+      reference: 'grep@1.0.0', name: '内容搜索', source: 'default',
+      requiredRoleIds: ['role-employee'], requiredScopes: [], missingRole: true, missingScopes: [],
+    }]
     await flushPromises()
-    expect(wrapper.text()).not.toContain('试运行前还需授权')
-    content.tools[0]!.agentRunLocalDefault = false
+    expect(wrapper.text()).not.toContain('验证前还需授权')
+    // 已声明能力缺少角色或数据范围时阻断验证，并指出缺什么。
+    accessState.capabilities = [{
+      reference: 'read@1.0.0', name: '读取文本文件', source: 'declared',
+      requiredRoleIds: ['role-employee'], requiredScopes: ['workspace:authorized'], missingRole: true,
+      missingScopes: ['workspace:authorized'],
+    }]
     await flushPromises()
-    expect(wrapper.text()).toContain('工具 读取文本文件 的执行角色')
-    content.tools[0]!.dataScopes = []
-    principalState.roleIds = ['role-employee']
+    expect(wrapper.text()).toContain('读取文本文件 所需的岗位角色')
+    expect(wrapper.text()).toContain('读取文本文件 所需的数据范围 workspace:authorized')
+    accessState.capabilities = [{ ...accessState.capabilities[0]!, missingRole: false, missingScopes: [] }]
     await flushPromises()
-    expect(wrapper.text()).not.toContain('试运行前还需授权')
-    expect(wrapper.get('.stage-footer--forward').text()).toContain('验证通过，确认发布')
-    content.tools[0]!.allowedRoles = ['员工已改名', '管理员已改名']
+    expect(wrapper.text()).not.toContain('验证前还需授权')
+    accessState.visibleRoleIds = []
     await flushPromises()
-    expect(wrapper.text()).not.toContain('试运行前还需授权')
-    // An identically named role cannot substitute for a different stable ID.
-    content.tools[0]!.allowedRoles = ['role-employee']
-    content.tools[0]!.allowedRoleIds = ['role-platform-admin']
-    await flushPromises()
-    expect(wrapper.text()).toContain('工具 读取文本文件 的执行角色')
-    content.$patch({ agents: [baseAgent], tools: [] })
+    expect(wrapper.text()).toContain('还没有设置可见角色')
+    accessState.visibleRoleIds = ['role-employee']
     await flushPromises()
     expect(wrapper.get('.case-run__output').text()).toContain('后续核验内容'.repeat(60))
     expect(wrapper.find('[aria-label="Agent 候选发布流程"]').exists()).toBe(false)
@@ -280,13 +270,14 @@ it('发布确认页按来源版本列出变化与案例结论，技术标识收�
   }
   vi.spyOn(adminApi, 'ensureAgentReleaseCandidate').mockResolvedValue(state)
   vi.spyOn(adminApi, 'getAgentReleaseSubmissions').mockResolvedValue({ items: [] })
-  vi.spyOn(adminApi, 'getAgentPrincipalRoleOptions').mockResolvedValue([
-    { id: 'role-employee', name: '普通员工', status: 'active' },
-    { id: 'role-manager', name: '部门负责人', status: 'active' },
-  ])
-  vi.spyOn(adminApi, 'getAgentPrincipal').mockResolvedValue({
-    principalId: `principal-agent-${agentId}`, agentId, status: 'active',
-    authorizationVersion: 1, roleIds: [], dataScopes: [],
+  vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue({
+    agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
+    visibleRoleIds: ['role-employee', 'role-manager'], roleIds: [], dataScopes: [],
+    roleOptions: [
+      { id: 'role-employee', name: '普通员工', status: 'active' },
+      { id: 'role-manager', name: '部门负责人', status: 'active' },
+    ],
+    scopeOptions: [], capabilities: [], collections: [], routines: [],
   })
 
   const pinia = createPinia()
@@ -295,8 +286,8 @@ it('发布确认页按来源版本列出变化与案例结论，技术标识收�
   const content = useContentStore()
   const version = (overrides: Partial<AgentVersionRecord>): AgentVersionRecord => ({
     id: 'agent-version-diff-010', agentId, version: '0.1.0', status: 'published',
-    createdAt: '2026-10-01T00:00:00.000Z', createdBy: 'admin', summary: '', visibility: '指定角色',
-    roleIds: ['role-employee'], dataScopes: [], welcomeMessage: '', examplePrompts: [],
+    createdAt: '2026-10-01T00:00:00.000Z', createdBy: 'admin', summary: '',
+    welcomeMessage: '', examplePrompts: [],
     systemPrompt: '旧的 Soul 内容', maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300, skills: [], tools: [], ...overrides,
   })
@@ -304,7 +295,7 @@ it('发布确认页按来源版本列出变化与案例结论，技术标识收�
     agents: [{
       id: agentId, name: '差异 Agent', description: '差异测试', owner: '平台管理员',
       department: '治理', visibility: '指定角色', roleIds: ['role-employee', 'role-manager'],
-      dataScopes: [], allowWorkspaceJoin: false, status: 'published', version: '0.2.0',
+      allowWorkspaceJoin: false, status: 'published', version: '0.2.0',
       welcomeMessage: '', examplePrompts: [], systemPrompt: '新的 Soul 内容',
       maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
       skills: [], tools: [], updatedAt: '2026-10-13T00:00:00.000Z',
@@ -313,7 +304,7 @@ it('发布确认页按来源版本列出变化与案例结论，技术标识收�
       version({}),
       version({
         id: 'agent-version-diff-020', version: '0.2.0', status: 'draft', sourceVersion: '0.1.0',
-        systemPrompt: '新的 Soul 内容', roleIds: ['role-employee', 'role-manager'],
+        systemPrompt: '新的 Soul 内容', skills: ['report-writer@1.0.0'],
       }),
     ],
   })
@@ -333,7 +324,7 @@ it('发布确认页按来源版本列出变化与案例结论，技术标识收�
     const changes = wrapper.get('[aria-label="本次变化"]')
     expect(changes.text()).toContain('2 项有变化')
     expect(changes.text()).toContain('SOUL.md')
-    expect(changes.text()).toContain('普通员工 → 普通员工、部门负责人')
+    expect(changes.text()).toContain('report-writer@1.0.0')
     expect(changes.text()).toContain('未变化：AGENTS.md 工作规程')
     expect(changes.text()).not.toContain('运行限制超时')
     const conclusions = wrapper.get('[aria-label="验证结论"]')

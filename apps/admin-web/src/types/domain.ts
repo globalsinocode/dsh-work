@@ -87,7 +87,7 @@ export interface IdentityRoleSummary {
   updatedAt: string
 }
 
-export interface AgentPrincipalRoleOption {
+export interface AgentAccessRoleOption {
   id: string
   name: string
   status: 'active' | 'disabled'
@@ -240,9 +240,10 @@ export interface AgentDefinition {
   description: string
   owner: string
   department: string
+  /** 员工可见范围的摘要文字，由 roleIds 派生。 */
   visibility: string
+  /** Agent 级可见角色：哪些角色可以向它请求工作；在岗位权限中修改，立即生效。 */
   roleIds: string[]
-  dataScopes: string[]
   allowWorkspaceJoin: boolean
   status: PublishStatus
   version: string
@@ -272,13 +273,44 @@ export interface AgentJoinedWorkspaceRecord {
   createdAt: string
 }
 
-export interface AgentPrincipalGovernance {
-  principalId: string
+/** S2 岗位权限：谁可以向 Agent 请求工作、它持有哪些岗位角色、能接触哪些数据。属于 Agent，修改立即生效。 */
+export interface AgentAccess {
   agentId: string
-  status: 'active' | 'disabled'
-  authorizationVersion: number
+  /** 乐观并发修订号，保存时回传为 expectedRevision。 */
+  revision: number
+  principalId: string
+  principalStatus: 'active' | 'disabled'
+  visibleRoleIds: string[]
   roleIds: string[]
   dataScopes: string[]
+  roleOptions: AgentAccessRoleOption[]
+  scopeOptions: string[]
+  /** 当前草稿（无草稿时为当前版本）各项能力所需的角色与数据范围。 */
+  capabilities: AgentCapabilityRequirement[]
+  collections: Array<{ key: string; scope: string; actions: string[] }>
+  routines: Array<{
+    id: string; name: string; status: string; schedule: Partial<AgentRoutineSchedule>
+    recipientUserId: string; recipientName: string
+  }>
+}
+
+export interface AgentCapabilityRequirement {
+  reference: string
+  name: string
+  source: 'declared' | 'default'
+  /** 任选其一即可。 */
+  requiredRoleIds: string[]
+  requiredScopes: string[]
+  missingRole: boolean
+  missingScopes: string[]
+}
+
+export interface UpdateAgentAccessInput {
+  expectedRevision: number
+  visibleRoleIds: string[]
+  roleIds: string[]
+  dataScopes: string[]
+  principalStatus?: 'active' | 'disabled'
 }
 
 export type AgentRoutineSchedule =
@@ -357,9 +389,6 @@ export interface AgentDraftConfiguration {
   description: string
   owner: string
   department: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -425,9 +454,6 @@ export interface AgentVersionRecord {
   publishedBy?: string
   sourceVersion?: string
   summary: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string

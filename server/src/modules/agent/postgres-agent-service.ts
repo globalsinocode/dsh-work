@@ -50,8 +50,8 @@ interface AgentRow {
   versionId: string
   version: string
   systemPrompt: string
+  /** Agent-level audience: roles that may ask this Agent for work. */
   roleIds: string[]
-  dataScopes: string[]
   examplePrompts: string[]
   allowWorkspaceJoin: boolean
   maxOutputBytes: number
@@ -69,8 +69,6 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'description'
   | 'welcomeMessage'
   | 'systemPrompt'
-  | 'roleIds'
-  | 'dataScopes'
   | 'examplePrompts'
   | 'skills'
   | 'tools'
@@ -95,8 +93,6 @@ interface VersionRow {
   publishedBy: string | null
   sourceVersion: string | null
   summary: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -157,8 +153,8 @@ export interface RuntimeAgentSnapshot {
   /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
+  /** Agent-level audience; execution roles come from the authorization decision. */
   roleIds: string[]
-  dataScopes: string[]
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
@@ -231,91 +227,12 @@ export class PostgresAgentService {
     return { ...principal, roleIds: activeRoles.map(role => role.id) }
   }
 
-  async listPrincipalRoleOptions(): Promise<Array<{ id: string; name: string; status: 'active' | 'disabled' }>> {
-    return this.database<Array<{ id: string; name: string; status: 'active' | 'disabled' }>>`
-      select id, name, status from roles
-       where tenant_id = ${tenantId}
-       order by name, id
-    `
-  }
-
-  async updateAgentPrincipal(input: {
-    agentId: string; actor: string; expectedAuthorizationVersion: number
-    status: 'active' | 'disabled'; roleIds: string[]; dataScopes: string[]
-  }): Promise<AgentPrincipalGovernance> {
-    const actor = await this.requireActor(input.actor)
-    if (!Number.isSafeInteger(input.expectedAuthorizationVersion) || input.expectedAuthorizationVersion < 1
-      || !['active', 'disabled'].includes(input.status)
-      || !Array.isArray(input.roleIds) || !Array.isArray(input.dataScopes)
-      || input.roleIds.some(value => typeof value !== 'string' || !value.trim())
-      || input.dataScopes.some(value => typeof value !== 'string' || !value.trim() || value.length > 128)
-      || new Set(input.roleIds).size !== input.roleIds.length
-      || new Set(input.dataScopes).size !== input.dataScopes.length) {
-      throw invalidRequest('Agent 身份授权参数无效')
-    }
-    await this.database.begin(async transaction => {
-      const [principal] = await transaction<{ id: string; authorizationVersion: number }[]>`
-        select id, authorization_version as "authorizationVersion" from execution_principals
-         where tenant_id = ${tenantId} and kind = 'agent' and agent_id = ${input.agentId}
-         for update
-      `
-      if (!principal) throw notFound(`Agent 执行身份不存在：${input.agentId}`)
-      if (principal.authorizationVersion !== input.expectedAuthorizationVersion) {
-        throw new RequestError(409, 'AGENT_PRINCIPAL_REVISION_CONFLICT', 'Agent 身份授权已变化，请刷新后重试')
-      }
-      const requestedRoles = input.roleIds.length ? input.roleIds : ['__none__']
-      const existingRoles = await transaction<{ roleId: string }[]>`
-        select role_id as "roleId" from agent_principal_role_grants
-         where tenant_id = ${tenantId} and principal_id = ${principal.id}
-      `
-      const existingRoleIds = new Set(existingRoles.map(row => row.roleId))
-      const addedRoles = input.roleIds.filter(roleId => !existingRoleIds.has(roleId))
-      const knownRoles = await transaction<{ id: string }[]>`
-        select id from roles where tenant_id = ${tenantId} and status = 'active'
-          and id in ${transaction(addedRoles.length ? addedRoles : ['__none__'])}
-      `
-      if (knownRoles.length !== addedRoles.length) throw invalidRequest('Agent 身份包含无效或停用角色')
-      await transaction`
-        delete from agent_principal_role_grants where tenant_id = ${tenantId} and principal_id = ${principal.id}
-          and role_id not in ${transaction(requestedRoles)}
-      `
-      for (const roleId of input.roleIds) await transaction`
-        insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
-        values (${tenantId}, ${principal.id}, ${roleId}) on conflict do nothing
-      `
-      const requestedScopes = input.dataScopes.length ? input.dataScopes : ['__none__']
-      await transaction`
-        delete from agent_principal_scope_grants where tenant_id = ${tenantId} and principal_id = ${principal.id}
-          and scope_value not in ${transaction(requestedScopes)}
-      `
-      for (const scope of input.dataScopes) await transaction`
-        insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
-        values (${tenantId}, ${principal.id}, ${scope}) on conflict do nothing
-      `
-      await transaction`
-        update execution_principals set status = ${input.status}, updated_at = now(),
-          authorization_version = authorization_version + case when status <> ${input.status} then 1 else 0 end
-         where tenant_id = ${tenantId} and id = ${principal.id}
-      `
-      await transaction`
-        insert into audit_events (id, tenant_id, actor_type, actor_id, action,
-          object_type, object_id, result, trace_id, safe_context)
-        values (${`audit-agent-principal-${randomUUID()}`}, ${tenantId}, 'user', ${actor.id},
-          'agent.principal.update', 'agent', ${input.agentId}, 'success',
-          ${`trace-agent-principal-${randomUUID()}`},
-          ${transaction.json({ status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes })})
-      `
-    })
-    return this.getAgentPrincipal(input.agentId)
-  }
-
   async getAgentVersions(): Promise<AgentVersionRecord[]> {
     const rows = await this.database<VersionRow[]>`
       select av.id, av.agent_id as "agentId", av.version, av.name, av.description, av.status,
              av.created_at as "createdAt", creator.display_name as "createdBy",
              av.published_at as "publishedAt", publisher.display_name as "publishedBy",
              av.source_version as "sourceVersion", av.change_summary as summary,
-             av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
@@ -357,12 +274,14 @@ export class PostgresAgentService {
       || (input.executionDataScopes ?? []).some(scope => typeof scope !== 'string' || !scope.trim() || scope.length > 128)) {
       throw invalidRequest('Agent 执行授权参数无效')
     }
+    if (!Array.isArray(input.visibleRoleIds ?? [])
+      || (input.visibleRoleIds ?? []).some(role => typeof role !== 'string' || !role.trim())) {
+      throw invalidRequest('Agent 可见角色参数无效')
+    }
+    const visibleRoleIds = unique(input.visibleRoleIds ?? [])
     const executionRoleIds = unique(input.executionRoleIds ?? [])
     const executionDataScopes = unique(input.executionDataScopes ?? [])
-    if (executionDataScopes.some(scope => !configuration.dataScopes.includes(scope))) {
-      throw stateConflict('Agent 执行数据授权不能超过当前定义的平台数据范围')
-    }
-    await this.assertInitialAgentGrants(executionRoleIds)
+    await this.assertInitialAgentGrants(unique([...visibleRoleIds, ...executionRoleIds]))
     const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     const versionId = `agent-version-${randomUUID()}`
@@ -373,29 +292,29 @@ export class PostgresAgentService {
       await transaction`
         insert into agents (
           id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
-          status, draft_version_id
+          status, draft_version_id, visible_role_ids
         ) values (
           ${configuration.id}, ${tenantId}, ${configuration.name}, ${configuration.description},
-          ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null
+          ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null,
+          ${transaction.json(visibleRoleIds)}
         )
       `
       await transaction`
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
-          example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+          example_prompts, system_prompt, max_output_bytes,
           max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
-          ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
-          ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
+          ${configuration.systemPrompt}, ${configuration.maxOutputBytes},
           ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
           ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
       // Visibility is not execution authorization. Empty grants fail closed;
-      // only explicit creation grants or a later Principal update can enable it.
+      // only explicit creation grants or a later access update can enable it.
       for (const roleId of executionRoleIds) await transaction`
         insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
         values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${roleId})
@@ -419,7 +338,7 @@ export class PostgresAgentService {
       select id from roles where tenant_id = ${tenantId} and status = 'active'
         and id in ${this.database(roleIds)}
     `
-    if (rows.length !== roleIds.length) throw invalidRequest('Agent 执行授权包含无效或停用角色')
+    if (rows.length !== roleIds.length) throw invalidRequest('Agent 授权包含无效或停用角色')
   }
 
   async getMutationSnapshot(agentId: string): Promise<AgentMutationSnapshot> {
@@ -431,18 +350,14 @@ export class PostgresAgentService {
   async updateAgent(
     input: UpdateAgentDraftInput,
     expectedRevision?: string,
-    options: { draftCopyOnly?: boolean; preservePublicationScope?: boolean } = {},
+    options: { draftCopyOnly?: boolean } = {},
   ) {
     const actor = await this.requireActor(input.actor)
     const [current] = await this.readAgentRows(input.agentId)
     if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
-    // F-05：发布范围（可见角色、平台数据范围上限）只由发布工作台写入。编辑器保存时沿用当前值，
-    // 并由调用方的 expectedRevision 保证“读到的当前值”与加锁后的行一致。
-    const publicationScope = options.preservePublicationScope
-      ? { roleIds: current.roleIds, dataScopes: current.dataScopes, visibility: toAgentDefinition(current).visibility }
-      : {}
+    // Access (audience, roles, data scopes) is not draft content; it changes only through updateAccess.
     const configuration = normalizeConfiguration(
-      { ...input, ...publicationScope, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
+      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
       current.owner,
       current.department,
     )
@@ -468,8 +383,6 @@ export class PostgresAgentService {
                  welcome_message = ${configuration.welcomeMessage},
                  example_prompts = ${transaction.json(configuration.examplePrompts)},
                  system_prompt = ${configuration.systemPrompt},
-                 visible_role_ids = ${transaction.json(configuration.roleIds)},
-                 data_scopes = ${transaction.json(configuration.dataScopes)},
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
                  skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(effectiveTools)},
@@ -493,13 +406,12 @@ export class PostgresAgentService {
         await transaction`
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
-            example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+            example_prompts, system_prompt, max_output_bytes,
             max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
-            ${transaction.json(configuration.roleIds)}, ${transaction.json(configuration.dataScopes)},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
             ${transaction.json(asJson(configuration.mcpScope))},
@@ -594,7 +506,7 @@ export class PostgresAgentService {
       select av.id, av.agent_id as "agentId", av.version, av.name, av.description, av.status, av.created_at as "createdAt",
              creator.display_name as "createdBy", av.published_at as "publishedAt",
              publisher.display_name as "publishedBy", av.source_version as "sourceVersion",
-             av.change_summary as summary, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
+             av.change_summary as summary,
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
@@ -608,8 +520,7 @@ export class PostgresAgentService {
     `
     if (!target) throw notFound(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
     const principal = await this.getAgentExecutionPrincipal(input.agentId)
-    await this.assertCapabilityReferences(target.skills, target.tools, principal.roleIds,
-      target.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
+    await this.assertCapabilityReferences(target.skills, target.tools, principal.roleIds, principal.dataScopes)
 
     if (!current.activeVersionId) throw stateConflict('尚未发布的 Agent 不能回滚')
     if (current.activeVersionId === target.id) throw stateConflict(`v${target.version} 已是当前活动版本，无需回滚`)
@@ -748,7 +659,7 @@ export class PostgresAgentService {
          and exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
-              and av.visible_role_ids ? r.id
+              and a.visible_role_ids ? r.id
          )
        order by case when a.id = ${DEFAULT_WORKBENCH_AGENT_ID} then 0 else 1 end,
                 a.updated_at desc, a.id
@@ -769,11 +680,9 @@ export class PostgresAgentService {
         activeVersionId: string
         skills: string[]
         tools: string[]
-        roleIds: string[]
-        dataScopes: string[]
       }[]>`
         select a.active_version_id as "activeVersionId", av.skill_refs as skills,
-               av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes"
+               av.tool_refs as tools
           from agents a
           join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
          where a.tenant_id = ${tenantId} and a.id = ${candidate.id}
@@ -786,7 +695,7 @@ export class PostgresAgentService {
           mergeSkillReferences(row.skills, additionalSkillReferences),
           row.tools,
           principal.roleIds,
-          row.dataScopes.filter(scope => principal.dataScopes.includes(scope)),
+          principal.dataScopes,
         )
         return row.activeVersionId
       } catch (error) {
@@ -831,7 +740,7 @@ export class PostgresAgentService {
          and exists (
            select 1 from roles r
             where r.tenant_id = a.tenant_id and r.id in ${this.database(roleIds)}
-              and av.visible_role_ids ? r.id
+              and a.visible_role_ids ? r.id
          )
          and not exists (
            select 1 from workspace_agent_members wam
@@ -861,7 +770,7 @@ export class PostgresAgentService {
              av.name, av.description, av.welcome_message as "welcomeMessage",
              av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
-             av.tool_refs as tools, av.visible_role_ids as "roleIds", av.data_scopes as "dataScopes",
+             av.tool_refs as tools, a.visible_role_ids as "roleIds",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.agent_spec as "agentSpec",
@@ -870,6 +779,7 @@ export class PostgresAgentService {
              coalesce(av.agent_spec #> '{data,collections}', '[]'::jsonb) as "dataRequirements",
              coalesce((av.agent_spec #>> '{data,state}')::boolean, false) as "stateEnabled"
         from agent_versions av
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
           and ep.kind = 'agent' and ep.status = 'active'
        where av.tenant_id = ${tenantId} and av.id = ${versionId}
@@ -883,7 +793,7 @@ export class PostgresAgentService {
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     const principal = await this.getAgentExecutionPrincipal(row.agentId)
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
-    const executionScopes = row.dataScopes.filter(scope => principal.dataScopes.includes(scope))
+    const executionScopes = principal.dataScopes
     await this.assertCapabilityReferences(skills, row.tools, principal.roleIds, executionScopes)
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
@@ -947,8 +857,7 @@ export class PostgresAgentService {
     assertAgentMutationRevision(locked, expectedRevision)
     const principal = await this.getAgentExecutionPrincipal(agentId, transaction)
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
-    await this.assertCapabilityReferences(locked.skills, locked.tools, principal.roleIds,
-      locked.dataScopes.filter(scope => principal.dataScopes.includes(scope)))
+    await this.assertCapabilityReferences(locked.skills, locked.tools, principal.roleIds, principal.dataScopes)
 
     const fingerprint = configurationFingerprint(locked)
     // 发布门禁只认封存试运行：agent_trial_runs 的案例经 Run/Attempt → Runtime Adapter
@@ -1056,8 +965,8 @@ export class PostgresAgentService {
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
-             av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
-             av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
+             av.system_prompt as "systemPrompt", a.visible_role_ids as "roleIds",
+             av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
@@ -1078,8 +987,8 @@ export class PostgresAgentService {
              owner.display_name as owner, coalesce(owner.department_id, '未分配部门') as department,
              a.status as "persistedStatus", a.active_version_id as "activeVersionId",
              a.draft_version_id as "draftVersionId", av.id as "versionId", av.version,
-             av.system_prompt as "systemPrompt", av.visible_role_ids as "roleIds",
-             av.data_scopes as "dataScopes", av.example_prompts as "examplePrompts",
+             av.system_prompt as "systemPrompt", a.visible_role_ids as "roleIds",
+             av.example_prompts as "examplePrompts",
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
@@ -1141,9 +1050,6 @@ function normalizeConfiguration(
     description: input.description.trim(),
     owner,
     department,
-    visibility: input.visibility.trim() || '指定角色',
-    roleIds: unique(input.roleIds),
-    dataScopes: unique(input.dataScopes),
     welcomeMessage,
     examplePrompts: unique(input.examplePrompts),
     systemPrompt: input.systemPrompt.trim(),
@@ -1160,8 +1066,8 @@ function assertConfiguration(input: AgentDraftConfiguration) {
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
   // Drafts may start with no audience or business-data access. The release
-  // gate requires an audience before the first trial; an empty scope means a
-  // basic Agent without platform business-data access.
+  // gate requires an audience before the first trial; an Agent without data
+  // grants is a basic Agent without platform business-data access.
   if (!input.examplePrompts.length) throw invalidRequest('必须配置至少一个示例问题')
 }
 
@@ -1172,9 +1078,8 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     description: row.description,
     owner: row.owner,
     department: row.department,
-    visibility: row.roleIds.length === 0 ? '发布时设置' : row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
+    visibility: audienceLabel(row.roleIds),
     roleIds: row.roleIds,
-    dataScopes: row.dataScopes,
     allowWorkspaceJoin: row.allowWorkspaceJoin,
     // 管理状态优先于草稿外观：停用中的 Agent 即使有待发布草稿也显示「已停用」，
     // 否则停用被草稿掩盖且无法从列表重新启用。
@@ -1195,6 +1100,10 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
   }
 }
 
+function audienceLabel(roleIds: string[]) {
+  return roleIds.length === 0 ? '未设置' : roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${roleIds.length} 个角色`
+}
+
 function toVersionRecord(row: VersionRow): AgentVersionRecord {
   return {
     id: row.id,
@@ -1207,9 +1116,6 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     ...(row.publishedBy ? { publishedBy: row.publishedBy } : {}),
     ...(row.sourceVersion ? { sourceVersion: row.sourceVersion } : {}),
     summary: row.summary,
-    visibility: row.roleIds.length === 0 ? '发布时设置' : row.roleIds.includes('role-employee') ? '全体试点员工' : `指定 ${row.roleIds.length} 个角色`,
-    roleIds: row.roleIds,
-    dataScopes: row.dataScopes,
     welcomeMessage: row.welcomeMessage,
     examplePrompts: row.examplePrompts,
     systemPrompt: row.systemPrompt,
@@ -1235,7 +1141,6 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     workInstructions: row.agentSpec?.workProcedures?.body ?? '',
     // F-09：员工可见角色是发布属性，不影响 Agent 行为，也不参与试运行，因此不进入定义指纹；
     // 调整可见范围不作废试运行证据，由发布事务复核角色有效性并单独审计。平台数据范围上限仍计入。
-    dataScopes: [...row.dataScopes].sort(),
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
     tools: [...row.tools].sort(),

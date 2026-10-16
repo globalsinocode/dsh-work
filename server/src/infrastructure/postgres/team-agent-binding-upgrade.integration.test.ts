@@ -23,6 +23,8 @@ test('升级补齐封存默认工具的成员来源，保留旧版本并尊重�
       if (file.endsWith('.sql') && file < migration) await copyFile(resolve(migrationsDirectory, file), resolve(baseline, file))
     }
     await runMigrations(db, baseline)
+    // Current code reads the Agent-level audience (0084); give the pre-0079 schema that column.
+    await db`alter table agents add column visible_role_ids jsonb not null default '["role-employee"]'::jsonb`
     const toolService = new PostgresToolConnectorService(db)
     const bindings = await toolService.resolveToolBindings(['read@1.0.0', 'write@1.0.0'])
     await db`

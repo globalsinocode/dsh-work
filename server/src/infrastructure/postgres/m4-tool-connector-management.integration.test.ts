@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from '../../modules/agent/agent-access-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { AgentRuntimePort, RuntimeHealth } from '../../modules/runtime/runtime-types.ts'
@@ -342,20 +343,20 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   assert.deepEqual(definition?.effectiveTools, ['glob@1.0.0', 'read@1.0.0'])
 
   // 自动解析依赖不授予业务权限；可见角色和定义范围也不替代独立身份授权。
-  let principal = await agents.getAgentExecutionPrincipal(created.agent.id)
+  const principal = await agents.getAgentExecutionPrincipal(created.agent.id)
   assert.deepEqual(principal.roleIds, [])
   assert.deepEqual(principal.dataScopes, [])
   await assert.rejects(agents.getRuntimeSnapshot(created.version.id), /缺少工具 glob@1\.0\.0 所需角色/)
-  principal = await agents.updateAgentPrincipal({
-    agentId: created.agent.id, actor: 'U00008', status: 'active',
-    expectedAuthorizationVersion: principal.authorizationVersion,
-    roleIds: ['role-employee'], dataScopes: [],
+  const access = new PostgresAgentAccessService(database)
+  const before = await access.getAccess(created.agent.id)
+  const granted = await access.updateAccess({
+    agentId: created.agent.id, actor: 'U00008', expectedRevision: before.revision,
+    visibleRoleIds: before.visibleRoleIds, roleIds: ['role-employee'], dataScopes: [],
   })
   await assert.rejects(agents.getRuntimeSnapshot(created.version.id), /缺少工具 glob@1\.0\.0 所需平台数据范围/)
-  await agents.updateAgentPrincipal({
-    agentId: created.agent.id, actor: 'U00008', status: 'active',
-    expectedAuthorizationVersion: principal.authorizationVersion,
-    roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  await access.updateAccess({
+    agentId: created.agent.id, actor: 'U00008', expectedRevision: granted.revision,
+    visibleRoleIds: granted.visibleRoleIds, roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
   })
   await publishDraftWithSealedTrial(database, agents, created.agent.id, 'U00008')
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)

@@ -1,15 +1,14 @@
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import type { PostgresAgentAccessService, UpdateAgentAccessInput } from '../../modules/agent/agent-access-service.ts'
 import { envelope, httpResult, readJsonBody, requireRequestIdentity, routeValidationFailed, type Router } from '../router.ts'
 import type { CreateAgentDraftInput, PublishStatus, UpdateAgentDraftInput } from '../../domain/types.ts'
 
 const basePath = '/api/admin/v1'
 
-export function registerAgentRoutes(router: Router, service: PostgresAgentService) {
+export function registerAgentRoutes(router: Router, service: PostgresAgentService, access: PostgresAgentAccessService) {
   router.get(`${basePath}/agents`, async () => envelope('admin', await service.getAgents(), 'postgres'))
   router.get(`${basePath}/agent-versions`, async () => envelope('admin', await service.getAgentVersions(), 'postgres'))
   router.get(`${basePath}/agent-release-records`, async () => envelope('admin', await service.getReleaseRecords(), 'postgres'))
-  router.get(`${basePath}/agents/principal-role-options`, async () =>
-    envelope('admin', await service.listPrincipalRoleOptions(), 'postgres'))
   router.post(`${basePath}/agents`, async (request, context) => {
     const input = await readJsonBody<Omit<CreateAgentDraftInput, 'actor'>>(request)
     return httpResult(201, envelope('admin', await service.createAgent({
@@ -22,11 +21,11 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
     if (typeof expectedRevision !== 'string' || !expectedRevision.trim()) {
       throw routeValidationFailed('缺少草稿修订，请刷新 Agent 后重新编辑')
     }
-    // F-05：编辑器不再写发布范围；可见角色与平台数据范围只能在发布工作台修改。
+    // 访问授权（可见角色、执行角色、数据范围）不属于草稿，只能经 /agents/:agentId/access 修改。
     return envelope('admin', await service.updateAgent({
       ...input,
       actor: requireRequestIdentity(context, 'admin').userId,
-    }, expectedRevision, { preservePublicationScope: true }), 'postgres')
+    }, expectedRevision), 'postgres')
   })
   router.patch(`${basePath}/agents/status`, async (request, context) => {
     const input = await readJsonBody<{
@@ -61,16 +60,15 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
     envelope('admin', {
       items: await service.listAgentJoinedWorkspaces(context.params.agentId ?? ''),
     }, 'postgres'))
-  router.get(`${basePath}/agents/:agentId/principal`, async (_request, context) =>
-    envelope('admin', await service.getAgentPrincipal(context.params.agentId ?? ''), 'postgres'))
-  router.patch(`${basePath}/agents/:agentId/principal`, async (request, context) => {
-    const input = await readJsonBody<{
-      expectedAuthorizationVersion: number
-      status: 'active' | 'disabled'
-      roleIds: string[]
-      dataScopes: string[]
-    }>(request)
-    return envelope('admin', await service.updateAgentPrincipal({
+  // S2 岗位权限：可见角色、岗位角色、数据范围属于 Agent，修改立即生效并记审计。
+  router.get(`${basePath}/agents/:agentId/access`, async (_request, context) =>
+    envelope('admin', await access.getAccess(context.params.agentId ?? ''), 'postgres'))
+  router.patch(`${basePath}/agents/:agentId/access`, async (request, context) => {
+    const input = await readJsonBody<Omit<UpdateAgentAccessInput, 'agentId' | 'actor'>>(request)
+    if (typeof input?.expectedRevision !== 'number') {
+      throw routeValidationFailed('缺少岗位权限修订号，请刷新后重试')
+    }
+    return envelope('admin', await access.updateAccess({
       ...input,
       agentId: context.params.agentId ?? '',
       actor: requireRequestIdentity(context, 'admin').userId,

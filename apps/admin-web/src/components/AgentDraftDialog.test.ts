@@ -21,7 +21,6 @@ const importedAgent: AgentDefinition = {
   department: '数字化中心',
   visibility: '全体试点员工',
   roleIds: ['role-employee'],
-  dataScopes: ['workspace:authorized'],
   allowWorkspaceJoin: true,
   status: 'draft',
   version: '0.1.0',

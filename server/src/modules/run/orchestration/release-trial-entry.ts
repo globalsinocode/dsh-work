@@ -91,9 +91,8 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = await this.deps.agents!.getRuntimeSnapshot(draftVersionId, [], expectedDefinitionFingerprint)
-    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(
-      draftVersionId, agent.roleIds, agent.dataScopes,
-    ) ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
+    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(draftVersionId)
+      ?? { roleIds: [], dataScopes: [] }
     await this.deps.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)

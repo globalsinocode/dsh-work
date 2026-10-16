@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
+import AgentAccessPanel from '@/components/AgentAccessPanel.vue'
 import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
 import { adminApi } from '@/api/client'
 import {
@@ -12,11 +13,10 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type {
+  AgentAccess,
   AgentDefinition,
   AgentEvalCase,
   AgentMcpScope,
-  AgentPrincipalGovernance,
-  AgentPrincipalRoleOption,
   AgentTrialRun,
   AgentVersionRecord,
 } from '@/types/domain'
@@ -51,13 +51,10 @@ const confirmingTrial = ref(false)
 const savingCases = ref(false)
 const editableCases = ref<AgentEvalCase[]>([])
 const activeCaseId = ref('')
-const publicationRoleIds = ref<string[]>([])
-const publicationDataScopes = ref<string[]>([])
-const publicationSaving = ref(false)
-const publicationScopeOpen = ref(false)
-const principal = ref<AgentPrincipalGovernance>()
-const availableRoles = ref<AgentPrincipalRoleOption[]>([])
-const publicationAuthorizationError = ref('')
+/** S2 岗位权限属于 Agent：修改立即生效，不作废验证证据。 */
+const access = ref<AgentAccess>()
+const accessOpen = ref(false)
+const accessLoadError = ref('')
 const runningCaseId = ref('')
 const progressLoadError = ref(false)
 let progressPollTimer: ReturnType<typeof setTimeout> | undefined
@@ -65,35 +62,19 @@ let progressPollEpoch = 0
 
 const agentId = computed(() => String(route.params.agentId ?? ''))
 const agent = computed(() => contentStore.agents.find(item => item.id === agentId.value))
-const scopeOptions = computed(() => [...new Set([
-  'enterprise:authorized', 'workspace:authorized',
-  ...contentStore.agents.flatMap(item => item.dataScopes),
-  ...contentStore.tools.flatMap(item => item.dataScopes),
-])])
-const publicationScopeDirty = computed(() => Boolean(agent.value && (
-  JSON.stringify([...publicationRoleIds.value].sort()) !== JSON.stringify([...agent.value.roleIds].sort())
-  || JSON.stringify([...publicationDataScopes.value].sort()) !== JSON.stringify([...agent.value.dataScopes].sort())
-)))
 const missingAuthorization = computed(() => {
-  const current = agent.value
-  const identity = principal.value
-  if (!current || !identity) return []
+  const current = access.value
+  if (!current) return []
   const missing: string[] = []
-  if (identity.status !== 'active') missing.push('独立执行身份已停用')
-  for (const scope of current.dataScopes.filter(scope => !identity.dataScopes.includes(scope))) {
-    missing.push(`平台数据范围 ${scope}`)
-  }
-  for (const reference of current.tools) {
-    const tool = contentStore.tools.find(item => `${item.id}@${item.version}` === reference || item.id === reference)
-    if (!tool) continue
-    if (tool.agentRunLocalDefault) continue
-    if (!tool.allowedRoleIds?.some(roleId => identity.roleIds.includes(roleId))) missing.push(`工具 ${tool.name} 的执行角色`)
-    for (const scope of tool.dataScopes.filter(value => !identity.dataScopes.includes(value) || !current.dataScopes.includes(value))) {
-      missing.push(`工具 ${tool.name} 的平台数据范围 ${scope}`)
-    }
+  if (current.principalStatus !== 'active') missing.push('独立执行身份已停用')
+  // 平台默认能力缺授权时只是不装配；已声明的能力缺授权会阻断验证与执行。
+  for (const item of current.capabilities.filter(entry => entry.source === 'declared')) {
+    if (item.missingRole) missing.push(`${item.name} 所需的岗位角色`)
+    for (const scope of item.missingScopes) missing.push(`${item.name} 所需的数据范围 ${scope}`)
   }
   return [...new Set(missing)]
 })
+const hasAudience = computed(() => Boolean(access.value?.visibleRoleIds.length))
 const overlay = computed(() => governance.overlays[agentId.value])
 const draftVersion = computed(() => contentStore.agentVersions.find(
   version => version.agentId === agentId.value && version.status === 'draft',
@@ -150,8 +131,6 @@ const trialExecuting = computed(() => Boolean(currentTrial.value
 const pollProgress = computed(() => activeStep.value === 'trial' && releaseReady.value
   && (Boolean(runningCaseId.value) || trialExecuting.value))
 const candidateLocked = computed(() => candidate.value?.status === 'submitted')
-const publicationScopeLocked = computed(() => trialExecuting.value
-  || currentTrial.value?.status === 'asserting' || candidateLocked.value)
 const failedChecks = computed(() => candidate.value?.checks.filter(check => check.status === 'failed') ?? [])
 const trialFailureDetail = computed(() => failedChecks.value.length
   ? failedChecks.value.map(check => `${check.label}：${check.detail}`).join('；')
@@ -192,8 +171,7 @@ const canEditActiveCase = computed(() => canEditCases.value
 const canSaveCases = computed(() => canEditCases.value && trialNotStarted.value
   && casesChanged.value && governance.busy !== 'trial')
 const canRunActiveCase = computed(() => authStore.canManage
-  && Boolean(agent.value?.roleIds.length) && Boolean(principal.value)
-  && !publicationScopeDirty.value && !publicationSaving.value
+  && hasAudience.value && Boolean(access.value)
   && !missingAuthorization.value.length
   && Boolean(activeCase.value?.input.trim() && activeCase.value?.manualReview.rubric.trim())
   && (!currentTrial.value || currentTrial.value.status === 'failed' || currentTrial.value.status === 'cancelled'
@@ -206,47 +184,23 @@ const canPublish = computed(() => latestTrial.value?.status === 'passed'
   && checksPassed.value
   && candidate.value?.sealedRevision === candidate.value?.revision
   && !casesChanged.value
-  && principal.value?.status === 'active' && !missingAuthorization.value.length
-  && !publicationScopeDirty.value
+  && access.value?.principalStatus === 'active' && hasAudience.value && !missingAuthorization.value.length
   && !definitionChanged.value)
-watch(agent, current => {
-  publicationRoleIds.value = [...(current?.roleIds ?? [])]
-  publicationDataScopes.value = [...(current?.dataScopes ?? [])]
-  if (current && !current.roleIds.length) publicationScopeOpen.value = true
-}, { immediate: true })
-
-async function loadPublicationAuthorization() {
-  const id = agentId.value
-  const [roles, identity] = await Promise.allSettled([
-    adminApi.getAgentPrincipalRoleOptions(), adminApi.getAgentPrincipal(id),
-  ])
-  availableRoles.value = roles.status === 'fulfilled' ? roles.value : []
-  principal.value = identity.status === 'fulfilled' ? identity.value : undefined
-  publicationAuthorizationError.value = roles.status === 'rejected' || identity.status === 'rejected'
-    ? '无法读取当前角色或 Agent 执行身份，请重新读取后再试运行。' : ''
+async function loadAccess() {
+  try {
+    access.value = await adminApi.getAgentAccess(agentId.value)
+    accessLoadError.value = ''
+  } catch {
+    access.value = undefined
+    accessLoadError.value = '无法读取 Agent 岗位权限，请重新读取后再验证。'
+  }
 }
 
-async function savePublicationScope() {
-  if (!agent.value || !publicationRoleIds.value.length || publicationSaving.value) return
-  publicationSaving.value = true
-  // F-09：可见角色是发布属性，不作废试运行证据；只有平台数据范围上限属于 Agent 定义。
-  const dataScopesChanged = [...publicationDataScopes.value].sort().join('\n') !== [...agent.value.dataScopes].sort().join('\n')
-  try {
-    await adminApi.updateAgentPublicationScope(agent.value.id, {
-      roleIds: publicationRoleIds.value, dataScopes: publicationDataScopes.value,
-    })
-    await contentStore.load(true)
-    await governance.ensureCandidate(agentId.value)
-    await loadPublicationAuthorization()
-    publicationScopeOpen.value = false
-    ElMessage.success(dataScopesChanged
-      ? '发布范围已保存；平台数据范围已变化，如已有试运行证据，需从第一项重新验证'
-      : '发布范围已保存；仅调整可见角色，已有试运行证据继续有效')
-  } catch (cause) {
-    fail(cause)
-  } finally {
-    publicationSaving.value = false
-  }
+async function handleAccessUpdated(value: AgentAccess) {
+  access.value = value
+  // 可见角色与授权变化会改变发布前检查，重新同步候选状态。
+  await contentStore.load(true)
+  if (authStore.canManage) await governance.ensureCandidate(agentId.value).catch(() => undefined)
 }
 const canFinalize = computed(() => canPublish.value
   && ['draft', 'changes_requested', 'submitted'].includes(candidate.value?.status ?? ''))
@@ -254,8 +208,7 @@ const canFinalize = computed(() => canPublish.value
 /* ---------- 发布确认：相对来源版本的变化与案例结论 ---------- */
 
 type ReviewSource = Pick<AgentVersionRecord, 'systemPrompt' | 'workInstructions'
-  | 'skills' | 'tools' | 'mcpScope' | 'timeoutSeconds' | 'maxToolCalls' | 'maxOutputBytes'
-  | 'roleIds' | 'dataScopes'>
+  | 'skills' | 'tools' | 'mcpScope' | 'timeoutSeconds' | 'maxToolCalls' | 'maxOutputBytes'>
 interface ReviewChange { key: string; label: string; before?: string; after: string; changed: boolean; long?: boolean }
 
 const baselineVersion = computed(() => {
@@ -264,11 +217,6 @@ const baselineVersion = computed(() => {
     ? contentStore.agentVersions.find(item => item.agentId === agentId.value && item.version === source && item.status !== 'draft')
     : undefined
 })
-function roleLabel(roleIds: string[]) {
-  return roleIds.length
-    ? [...roleIds].sort().map(id => availableRoles.value.find(role => role.id === id)?.name ?? id).join('、')
-    : '未设置'
-}
 function mcpLabel(scope: AgentMcpScope | undefined) {
   if (!scope || scope.mode === 'all') return '全部可用 MCP'
   if (scope.mode === 'none') return '不使用 MCP'
@@ -286,8 +234,6 @@ function reviewFields(source: ReviewSource): Array<{ key: string; label: string;
     { key: 'tools', label: '声明的平台工具', value: listLabel(source.tools, '无（仅平台默认工具）') },
     { key: 'mcp', label: 'MCP 范围', value: mcpLabel(source.mcpScope) },
     { key: 'limits', label: '运行限制', value: `超时 ${source.timeoutSeconds}s · 工具调用 ${source.maxToolCalls} 次 · 输出 ${Math.round(source.maxOutputBytes / 1024)} KB` },
-    { key: 'audience', label: '员工可见角色', value: roleLabel(source.roleIds) },
-    { key: 'scopes', label: '平台数据范围上限', value: listLabel(source.dataScopes, '未设置') },
   ]
 }
 const reviewChanges = computed<ReviewChange[]>(() => {
@@ -558,7 +504,7 @@ async function reviewAndPublish() {
 
 onMounted(async () => {
   await contentStore.load()
-  await loadPublicationAuthorization()
+  await loadAccess()
   // GET 只读：有管理权限时先经 POST 同步候选（创建/重绑/修订推进），只读用户直接拉取现状
   const sync = authStore.canManage ? governance.ensureCandidate : governance.loadReleaseState
   await sync(agentId.value).catch(() => undefined)
@@ -598,35 +544,21 @@ onMounted(async () => {
     <template v-else-if="agent && candidate">
       <div class="stage-page">
         <template v-if="activeStep === 'trial'">
-          <section class="content-panel workbench-card" aria-label="发布范围">
+          <section class="content-panel workbench-card" aria-label="岗位权限">
             <div class="card-head">
-              <div class="card-head__title"><h2>发布范围</h2><span>{{ agent.roleIds.length ? `${agent.roleIds.length} 个可见角色 · ${agent.dataScopes.length} 个平台数据范围` : '发布前设置员工可见角色' }}</span></div>
-              <el-button v-if="authStore.canManage && agent.roleIds.length" size="small" :disabled="publicationScopeLocked" @click="publicationScopeOpen = !publicationScopeOpen">{{ publicationScopeOpen ? '收起' : '调整' }}</el-button>
+              <div class="card-head__title"><h2>岗位权限</h2><span>{{ access ? `${access.visibleRoleIds.length} 个可见角色 · ${access.roleIds.length} 个岗位角色 · ${access.dataScopes.length} 个数据范围` : '读取中' }}</span></div>
+              <el-button v-if="authStore.canManage && access" size="small" data-action="edit-agent-access" @click="accessOpen = true">调整</el-button>
             </div>
-            <template v-if="publicationScopeOpen">
-              <div class="publication-scope-grid">
-                <el-form-item label="员工可见角色（必选）">
-                  <el-select v-model="publicationRoleIds" multiple filterable aria-label="员工可见角色" placeholder="选择发布后可使用 Agent 的员工角色" :disabled="publicationScopeLocked">
-                    <el-option v-for="role in availableRoles.filter(item => item.status === 'active')" :key="role.id" :label="role.name" :value="role.id" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="平台数据范围上限（按需）">
-                  <el-select v-model="publicationDataScopes" multiple filterable allow-create default-first-option aria-label="平台数据范围上限" placeholder="基础 Agent 可留空" :disabled="publicationScopeLocked">
-                    <el-option v-for="scope in scopeOptions" :key="scope" :label="scope" :value="scope" />
-                  </el-select>
-                </el-form-item>
-              </div>
-              <p class="hint">可见角色只控制员工选择 Agent；版本数据范围只是上限，不会授予执行身份权限。实际授权在 Agent 独立身份中设置，仅约束 dsh-work 受控能力，不过滤 MCP 上游数据。</p>
-              <el-button v-if="authStore.canManage" type="primary" size="small" :loading="publicationSaving" :disabled="!publicationRoleIds.length || !publicationScopeDirty || publicationScopeLocked" @click="savePublicationScope">保存发布范围</el-button>
-            </template>
-            <p v-if="currentTrial?.status === 'asserting'" class="hint">调整发布范围前，请先取消本轮验证。只调整可见角色不影响试运行证据；平台数据范围变化后须从第一项重新试运行。</p>
-            <p v-if="!agent.roleIds.length" class="hint">先保存员工可见范围，再逐项试运行；无需企业业务数据时，平台数据范围和 Agent 业务授权均可留空。</p>
-            <el-alert v-if="publicationAuthorizationError" type="error" :closable="false" :title="publicationAuthorizationError">
-              <el-button link type="primary" @click="loadPublicationAuthorization">重新读取</el-button>
+            <p class="hint">岗位权限属于 Agent，修改立即生效，不需要重新验证。</p>
+            <el-alert v-if="accessLoadError" type="error" :closable="false" :title="accessLoadError">
+              <el-button link type="primary" @click="loadAccess">重新读取</el-button>
             </el-alert>
-            <el-alert v-if="missingAuthorization.length" type="warning" :closable="false" :title="`试运行前还需授权：${missingAuthorization.join('、')}`" description="请在 Agent 管理详情的独立执行身份中授予所需能力；可见角色和创建者权限不会自动转为执行授权。" />
-            <p v-else-if="agent.roleIds.length && principal?.status === 'active' && !agent.tools.length && !agent.dataScopes.length" class="hint">独立执行身份有效，基础文本试运行无需业务角色或平台数据授权。</p>
+            <el-alert v-else-if="access && !hasAudience" type="warning" :closable="false" title="还没有设置可见角色" description="先在岗位权限中选择可以向它请求工作的员工角色，再开始验证。" />
+            <el-alert v-if="missingAuthorization.length" type="warning" :closable="false" :title="`验证前还需授权：${missingAuthorization.join('、')}`" description="在岗位权限中补齐所需角色或数据范围；可见角色和创建者权限不会自动转为执行授权。" />
           </section>
+          <el-drawer v-model="accessOpen" title="岗位权限" size="min(640px, 100vw)" append-to-body>
+            <AgentAccessPanel v-if="accessOpen" :agent-id="agentId" :can-manage="authStore.canManage" @updated="handleAccessUpdated" />
+          </el-drawer>
           <section class="content-panel workbench-card">
             <div class="card-head">
               <div class="card-head__title"><h2>验证案例</h2><span>{{ agent.name }}</span></div>
@@ -812,7 +744,6 @@ onMounted(async () => {
 .card-head h2 { margin: 2px 0 0; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .card-head__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .card-head__title span { color: var(--color-text-muted); font-size: var(--font-size-badge); overflow-wrap: anywhere; }
-.publication-scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .case-run__details summary { width: fit-content; cursor: pointer; }
 .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0; }
 .meta-grid--compact > div { padding: 7px 0; }
@@ -875,5 +806,5 @@ onMounted(async () => {
 .submit-card { display: flex; flex-direction: column; gap: 10px; }
 .submit-card .card-head { margin-bottom: 0; }
 .submit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-@media (max-width: 620px) { .meta-grid, .publication-scope-grid, .review-change, .review-change__compare { grid-template-columns: 1fr; } .meta-grid__wide { grid-column: auto; } }
+@media (max-width: 620px) { .meta-grid, .review-change, .review-change__compare { grid-template-columns: 1fr; } .meta-grid__wide { grid-column: auto; } }
 </style>

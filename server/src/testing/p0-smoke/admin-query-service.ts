@@ -228,9 +228,13 @@ export class AdminQueryService {
 
     const timestamp = prototypeTimestamp()
     const version = '0.1.0'
-    const { actor, changeSummary, ...configuration } = normalizedInput
+    const { actor, changeSummary, visibleRoleIds, executionRoleIds: _roles, executionDataScopes: _scopes, ...configuration } = normalizedInput
+    void _roles
+    void _scopes
     const agent: AgentDefinition = {
       ...configuration,
+      roleIds: visibleRoleIds ?? [],
+      visibility: visibleRoleIds?.length ? `指定 ${visibleRoleIds.length} 个角色` : '未设置',
       status: 'draft',
       version,
       updatedAt: timestamp,
@@ -261,10 +265,6 @@ export class AdminQueryService {
     void _revision
     const configuration = {
       ...submittedConfiguration,
-      // F-05：发布范围只由发布工作台写入，编辑器保存沿用当前值。
-      roleIds: current.roleIds,
-      dataScopes: current.dataScopes,
-      visibility: current.visibility,
       owner: current.owner,
       department: current.department,
       welcomeMessage: normalizeWelcomeMessage(submittedConfiguration),
@@ -343,9 +343,6 @@ export class AdminQueryService {
       // F-03：回滚不改变启停状态，停用中的 Agent 回滚后仍停用。
       status: current.status === 'disabled' ? 'disabled' : 'published',
       version: target.version,
-      visibility: target.visibility,
-      roleIds: target.roleIds,
-      dataScopes: target.dataScopes,
       welcomeMessage: target.welcomeMessage,
       examplePrompts: target.examplePrompts,
       systemPrompt: target.systemPrompt,
@@ -792,7 +789,6 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.name.trim().length < 2) throw invalidRequest('Agent 名称至少需要 2 个字符')
   if (input.description.trim().length < 10) throw invalidRequest('Agent 说明至少需要 10 个字符')
   if (!input.owner.trim() || !input.department.trim()) throw stateConflict('负责人和归属部门不能为空')
-  if (!input.visibility.trim()) throw stateConflict('Agent 可见范围描述不能为空')
   if (input.welcomeMessage.trim().length > 120) throw stateConflict('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw invalidRequest('请配置至少一个示例问题')
   if (input.systemPrompt.trim().length < 20) throw invalidRequest('SOUL.md 正文至少需要 20 个字符')
@@ -810,9 +806,6 @@ function assertAgentReady(agent: AgentDefinition) {
     description: agent.description,
     owner: agent.owner,
     department: agent.department,
-    visibility: agent.visibility,
-    roleIds: agent.roleIds,
-    dataScopes: agent.dataScopes,
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: agent.examplePrompts,
     systemPrompt: agent.systemPrompt,
@@ -868,9 +861,6 @@ function unique(values: string[]) {
 
 function agentVersionSnapshot(agent: AgentDefinition) {
   return {
-    visibility: agent.visibility,
-    roleIds: [...agent.roleIds],
-    dataScopes: [...agent.dataScopes],
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,

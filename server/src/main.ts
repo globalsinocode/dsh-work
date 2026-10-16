@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
 import { registerAgentRoutes } from './http/admin/agent-routes.ts'
+import { PostgresAgentAccessService } from './modules/agent/agent-access-service.ts'
 import { registerSkillRoutes } from './http/admin/skill-routes.ts'
 import { registerToolRoutes } from './http/admin/tool-routes.ts'
 import { registerModelGovernanceRoutes } from './http/admin/model-routes.ts'
@@ -412,7 +413,7 @@ async function start() {
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
-  registerAgentRoutes(router, agents)
+  registerAgentRoutes(router, agents, new PostgresAgentAccessService(database, toolService))
   registerAdminAgentDataRoutes(router, agentData)
   const agentRelease = new PostgresAgentReleaseService(database, agents, skills, toolService, orchestration)
   // 启动收敛：进程中断留下的执行中试运行标记为“服务重启中断”，允许管理员重新开始（底层 Run 已由重启恢复收敛）。

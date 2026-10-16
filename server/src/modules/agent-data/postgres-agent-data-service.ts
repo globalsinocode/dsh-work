@@ -822,12 +822,12 @@ export class PostgresAgentDataService {
         }
         const [source] = await tx<{
           installationId: string; agentId: string; workspaceType: string;
-          versionRoleIds: string[]; versionDataScopes: string[];
+          visibleRoleIds: string[];
           dataRequirements: AgentDataCollectionRequirement[];
           collectionKey: string; collectionScope: string; collectionSchemaVersion: number
         }[]>`
           select i.id as "installationId", a.id as "agentId", w.workspace_type as "workspaceType",
-                 av.visible_role_ids as "versionRoleIds", av.data_scopes as "versionDataScopes",
+                 a.visible_role_ids as "visibleRoleIds",
                  coalesce(av.agent_spec #> '{data,collections}', '[]'::jsonb) as "dataRequirements",
                  c.collection_key as "collectionKey", c.access_scope as "collectionScope",
                  c.schema_version as "collectionSchemaVersion"
@@ -927,7 +927,7 @@ export class PostgresAgentDataService {
 
   private async assertReviewSourceAuthorization(tx: DatabaseTransaction, actor: AgentDataActor,
     proposal: ProposalRow, source: {
-      agentId: string; workspaceType: string; versionRoleIds: string[]; versionDataScopes: string[];
+      agentId: string; workspaceType: string; visibleRoleIds: string[];
       dataRequirements: AgentDataCollectionRequirement[];
       collectionKey: string; collectionScope: string; collectionSchemaVersion: number
     }): Promise<void> {
@@ -946,8 +946,7 @@ export class PostgresAgentDataService {
     }
     actor.declaredCollectionSchemaVersion = required.schemaVersion
     if (!proposal.roleIds.length || !proposal.dataScopes.length
-      || (!routine && !proposal.roleIds.some(id => source.versionRoleIds.includes(id)))
-      || proposal.dataScopes.some(scope => !source.versionDataScopes.includes(scope))) {
+      || (!routine && !proposal.roleIds.some(id => source.visibleRoleIds.includes(id)))) {
       throw authorizationDenied('提案来源权限快照已失效')
     }
     const currentUserRoles = await tx<{ id: string; permissions: string[] }[]>`

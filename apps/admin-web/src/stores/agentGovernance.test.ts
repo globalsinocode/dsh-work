@@ -58,7 +58,6 @@ function makeAgent(id: string): AgentDefinition {
     department: '测试部门',
     visibility: '指定角色',
     roleIds: ['role-employee'],
-    dataScopes: ['workspace:authorized'],
     allowWorkspaceJoin: false,
     status: 'draft',
     version: '0.1.0',

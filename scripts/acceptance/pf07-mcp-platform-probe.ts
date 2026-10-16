@@ -196,8 +196,8 @@ try {
     const created = await agents.createAgent({
       id, name: `一次性 ${suffix} 范围验证`,
       description: '仅在可丢弃本地服务中核对 Agent 的 MCP 使用范围。',
-      owner: actorId, department: '验收', visibility: '指定角色',
-      roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+      owner: actorId, department: '验收', 
+      visibleRoleIds: ['role-employee'], 
       executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
       welcomeMessage: '', examplePrompts: ['检查本次任务结果'],
       systemPrompt: '你是一次性 MCP 范围验收助手。只执行本次明确要求的任务，并核对结果。',

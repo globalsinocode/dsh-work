@@ -1379,16 +1379,16 @@ async function seedAgent(workspacePrefix: string, versionId: string, suffix = ''
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
       timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', 'T5 测试 Agent', 'T5 收权测试版本。',
       '', ${database.json([] as string[])}, '你是 T5 集成测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
       65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
       'published', 'U00008', 'T5 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}
@@ -1431,17 +1431,17 @@ async function seedAgentWithVersions(agentId: string, versionIds: string[]) {
     await database`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
+        example_prompts, system_prompt, max_output_bytes, max_tool_calls,
         timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
       ) values (
         ${versionId}, ${tenantId}, ${agentId}, ${`1.0.${index}`}, 'T5 多版本 Agent', 'T5 版本。',
         '', ${database.json([] as string[])}, '你是 T5 集成测试 Agent。',
-        ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'])},
         65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
         'published', 'U00008', ${`T5 版本 ${index}`}
       )
     `
   }
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionIds[versionIds.length - 1] ?? null}
      where tenant_id = ${tenantId} and id = ${agentId}

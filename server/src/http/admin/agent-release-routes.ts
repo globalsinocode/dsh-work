@@ -49,17 +49,6 @@ export function registerAgentReleaseRoutes(router: Router, service?: PostgresAge
     return envelope('admin', await available().ensureCandidate(context.params['agentId'] ?? '', userId), 'postgres')
   })
 
-  router.patch(`${basePath}/agents/:agentId/release/publication-scope`, async (request, context) => {
-    const userId = requireRequestIdentity(context, 'admin').userId
-    const input = await readJsonBody<{ roleIds: string[]; dataScopes: string[] }>(request)
-    if (!Array.isArray(input?.roleIds) || !Array.isArray(input?.dataScopes)) {
-      throw new RequestError(422, 'validation_failed', 'roleIds 和 dataScopes 必须是数组')
-    }
-    return envelope('admin', await available().updatePublicationScope(
-      context.params['agentId'] ?? '', userId, input.roleIds, input.dataScopes,
-    ), 'postgres')
-  })
-
   router.post(`${basePath}/agents/:agentId/release/cases`, async (request, context) => {
     const userId = requireRequestIdentity(context, 'admin').userId
     const input = await readJsonBody<{ cases: ReleaseEvalCase[] }>(request)

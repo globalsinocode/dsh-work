@@ -73,7 +73,6 @@ export class AttemptDispatcher {
           mcpConnections: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
-          dataScopes: ['enterprise:authorized'],
           maxOutputBytes: 65536,
           maxToolCalls: 20,
           timeoutSeconds: 300,
@@ -86,7 +85,7 @@ export class AttemptDispatcher {
       agentVersionId: input.agentVersionId,
       additionalSkillReferences: input.additionalSkillReferences,
     })
-    const effectiveDataScopes = authorization?.dataScopes ?? agent.dataScopes
+    const effectiveDataScopes = authorization?.dataScopes ?? ['enterprise:authorized']
     const knowledgeContext = this.deps.knowledge && input.purpose !== 'agent-routine'
       ? await this.deps.knowledge.resolveContext({
           query: input.prompt,

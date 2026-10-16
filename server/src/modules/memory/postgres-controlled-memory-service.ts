@@ -921,14 +921,15 @@ export class PostgresControlledMemoryService {
   private async currentAgentRoles(agentVersionId: string | null, candidateRoles: string[]): Promise<string[]> {
     if (!agentVersionId || !candidateRoles.length) return []
     const [target] = await this.database<{ declaredRoles: string[]; grantedRoles: string[] }[]>`
-      select av.visible_role_ids as "declaredRoles",
+      select a.visible_role_ids as "declaredRoles",
              coalesce(jsonb_agg(g.role_id) filter (where g.role_id is not null), '[]'::jsonb) as "grantedRoles"
         from agent_versions av
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
           and ep.kind = 'agent' and ep.status = 'active'
         left join agent_principal_role_grants g on g.tenant_id = ep.tenant_id and g.principal_id = ep.id
        where av.tenant_id = ${tenantId} and av.id = ${agentVersionId} and av.status <> 'disabled'
-       group by av.id
+       group by av.id, a.visible_role_ids
     `
     if (!target) return []
     const declared = new Set(target.declaredRoles)

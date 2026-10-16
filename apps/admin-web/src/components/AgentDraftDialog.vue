@@ -82,9 +82,6 @@ function emptyDraft(): DraftForm {
     description: '',
     owner: authStore.user.name,
     department: authStore.user.department,
-    visibility: '发布时设置',
-    roleIds: [],
-    dataScopes: [],
     welcomeMessage: '',
     examplePrompts: ['请介绍你能提供哪些帮助'],
     systemPrompt: '',
@@ -107,9 +104,6 @@ function resetEditor() {
         description: props.agent.description,
         owner: props.agent.owner,
         department: props.agent.department,
-        visibility: props.agent.visibility,
-        roleIds: [...props.agent.roleIds],
-        dataScopes: [...props.agent.dataScopes],
         welcomeMessage: props.agent.welcomeMessage,
         examplePrompts: [...props.agent.examplePrompts],
         systemPrompt: props.agent.systemPrompt,
@@ -221,8 +215,6 @@ function continueRelease() {
 function cloneDraft(value: DraftForm): DraftForm {
   return {
     ...value,
-    roleIds: [...value.roleIds],
-    dataScopes: [...value.dataScopes],
     examplePrompts: [...value.examplePrompts],
     skills: [...value.skills],
     tools: [...value.tools],
@@ -238,7 +230,6 @@ function preparePayload(value: DraftForm): AgentDraftConfiguration {
     payload.owner = authStore.user.name
     payload.department = authStore.user.department
   }
-  payload.visibility = payload.roleIds.length ? payload.visibility : '发布时设置'
   payload.welcomeMessage = employeeWelcome.value
   payload.examplePrompts = [examplePrompt.value.trim() || '请介绍你能提供哪些帮助']
   payload.changeSummary = props.agent ? `更新 ${payload.name} 配置` : '创建 Agent 初始版本'
@@ -302,7 +293,7 @@ function toVersionedToolReference(reference: string) {
         <div><dt>草稿版本</dt><dd class="mono">v{{ savedResult.agent.version }}</dd></div>
         <div><dt>能力范围</dt><dd>{{ savedResult.agent.skills.length }} 个 Skill · MCP：{{ savedResult.agent.mcpScope?.mode === 'selected' ? '仅选定' : savedResult.agent.mcpScope?.mode === 'none' ? '不使用' : '全部可用' }}</dd></div>
       </dl>
-      <p class="field-help">独立执行身份已自动创建，可直接进行基础试运行。员工可见范围在发布工作台设置；业务角色和平台数据权限按需单独授权。</p>
+      <p class="field-help">独立执行身份已自动创建，可直接进行基础试运行。可见角色、岗位角色和数据范围在“岗位权限”中设置，保存后立即生效。</p>
     </section>
 
     <template v-else>
@@ -378,7 +369,7 @@ function toVersionedToolReference(reference: string) {
           </div>
           <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；试运行和新任务将被拒绝，请修正选择或恢复连接。" />
         </div>
-        <el-alert class="agent-permission-note" type="info" :closable="false" show-icon title="员工可见范围在发布验证前设置。业务执行角色和平台数据权限在独立执行身份中按需授予；敏感操作仍受工具策略约束。" />
+        <el-alert class="agent-permission-note" type="info" :closable="false" show-icon title="可见角色、岗位角色和数据范围属于 Agent，在详情的“岗位权限”中设置，修改立即生效；敏感操作仍受工具策略约束。" />
       </section>
 
       <section v-show="activeStep === 2" class="agent-editor__pane" aria-label="Agent 配置确认">
@@ -400,7 +391,7 @@ function toVersionedToolReference(reference: string) {
               <div class="employee-preview__capabilities">
                 <span v-for="skill in form.skills" :key="skill">{{ skill }}</span>
               </div>
-              <small class="employee-preview__visibility">员工可见范围：发布时设置</small>
+              <small class="employee-preview__visibility">员工可见范围：在岗位权限中设置</small>
             </div>
           </section>
           <section class="draft-summary">
@@ -413,7 +404,7 @@ function toVersionedToolReference(reference: string) {
               <div v-if="props.agent"><span>负责人</span><strong>{{ form.owner }}</strong><small>负责配置维护与发布</small></div>
               <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>MCP：{{ form.mcpScope.mode === 'selected' ? `${form.mcpScope.connectorIds.length} 个选定` : form.mcpScope.mode === 'none' ? '不使用' : '全部可用' }}</small></div>
               <div><span>工作规程</span><strong>{{ form.workInstructions.trim() ? '已填写 AGENTS.md' : '未填写' }}</strong><small>与 Soul 一起随版本固定</small></div>
-              <div><span>发布范围</span><strong>发布验证前配置</strong><small>基础运行无需业务授权</small></div>
+              <div><span>岗位权限</span><strong>保存后在岗位权限中设置</strong><small>可见角色、岗位角色与数据范围，立即生效</small></div>
             </div>
           </section>
         </div>

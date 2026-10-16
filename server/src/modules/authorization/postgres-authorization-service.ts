@@ -24,7 +24,6 @@ interface AgentAuthorizationRow {
   toolReferences: string[]
   bindingRefs: Array<{ tool: string }>
   visibleRoleIds: string[]
-  dataScopes: string[]
 }
 
 interface CapabilityVersion {
@@ -202,10 +201,8 @@ export class PostgresAuthorizationService {
     )
     const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
     const roleIds = principal.roleIds.filter(role => input.scopeCeiling.roleIds?.includes(role))
-    const dataScopes = principal.dataScopes.filter(scope => input.scopeCeiling.dataScopes?.includes(scope)
-      && agent.dataScopes.includes(scope))
+    const dataScopes = principal.dataScopes.filter(scope => input.scopeCeiling.dataScopes?.includes(scope))
     if (!roleIds.length) throw authorizationDenied('Agent 主动任务的已批准角色已全部失效')
-    requireScopes(dataScopes, agent.dataScopes, 'Agent 主动任务')
     const workspaceType = await this.workspaceTypeOf(input.workspaceId)
     if (!workspaceType) throw authorizationDenied('主动任务工作空间不存在或已归档')
     // The recipient is only a disclosure boundary. It cannot supply execution
@@ -317,7 +314,9 @@ export class PostgresAuthorizationService {
     const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
     const roleIds = context.roleIds.filter(id => principal.roleIds.includes(id)
       && (input.scopeCeiling?.roleIds === undefined || input.scopeCeiling.roleIds.includes(id)))
-    const principalDataScopes = context.dataScopes.filter(scope => principal.dataScopes.includes(scope)
+    // The Agent works with its own grants; what reaches the requesting employee
+    // never exceeds that employee's own data scopes.
+    const dataScopes = context.dataScopes.filter(scope => principal.dataScopes.includes(scope)
       && (input.scopeCeiling?.dataScopes === undefined || input.scopeCeiling.dataScopes.includes(scope)))
     // AG-03：permissions 由角色派生，上限裁掉角色后必须重算——否则被裁
     // 角色的权限仍随完整集合进入 Manifest，「后来涨权不扩大旧任务」在
@@ -327,9 +326,6 @@ export class PostgresAuthorizationService {
       input.agentVersionId,
       input.additionalSkillReferences ?? [],
     )
-    // A grant added for another Agent Version cannot expand this immutable
-    // version's declared data boundary.
-    const dataScopes = principalDataScopes.filter(scope => agent.dataScopes.includes(scope))
     // Catalog visibility belongs to the human user. Agent execution roles are
     // independent grants and may be empty for a text-only Agent.
     if (!intersects(context.roleIds, agent.visibleRoleIds)) {
@@ -338,8 +334,7 @@ export class PostgresAuthorizationService {
       // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
       throw authorizationDenied('当前用户角色不可使用所选 Agent')
     }
-    // Version scopes are a ceiling. Individual tools and data collections
-    // enforce the scopes they actually require.
+    // Individual tools and data collections enforce the scopes they actually require.
 
     const toolVersions = await this.resolveAndAuthorizeTools(
       agent.toolReferences,
@@ -663,17 +658,12 @@ export class PostgresAuthorizationService {
       || dataScopes.some(scope => !principal.dataScopes.includes(scope))) {
       throw authorizationDenied('Agent 身份的角色或数据授权已撤销')
     }
-    const [version] = await this.database<{
-      roleIds: string[]; dataScopes: string[]; tools: string[]; skills: string[]
-    }[]>`
-      select visible_role_ids as "roleIds", data_scopes as "dataScopes",
-             tool_refs as tools, skill_refs as skills
+    const [version] = await this.database<{ tools: string[]; skills: string[] }[]>`
+      select tool_refs as tools, skill_refs as skills
         from agent_versions
        where tenant_id = ${tenantId} and id = ${agentVersionId}
     `
-    if (!version || dataScopes.some(scope => !version.dataScopes.includes(scope))) {
-      throw authorizationDenied('试运行权限超出 Agent Version 声明范围')
-    }
+    if (!version) throw authorizationDenied('试运行的 Agent Version 不存在')
     const skillVersions = await this.resolveSkillVersions(version.skills)
     const allowedTools = new Set(version.tools)
     const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
@@ -685,16 +675,11 @@ export class PostgresAuthorizationService {
   }
 
   /** Release trials use the Agent's own grants, never the audience or creator's roles. */
-  async resolveAgentPrincipalTrialScope(agentVersionId: string, declaredRoles: string[], declaredScopes: string[]): Promise<{
+  async resolveAgentPrincipalTrialScope(agentVersionId: string): Promise<{
     roleIds: string[]; dataScopes: string[]
   }> {
     const principal = await this.requireAgentPrincipalGrants(agentVersionId)
-    void declaredRoles
-    const roleIds = principal.roleIds
-    const dataScopes = declaredScopes.filter(scope => principal.dataScopes.includes(scope))
-    const missingScopes = declaredScopes.filter(scope => !principal.dataScopes.includes(scope))
-    if (missingScopes.length) throw authorizationDenied(`Agent 身份缺少平台数据授权范围：${missingScopes.join('、')}`)
-    return { roleIds, dataScopes }
+    return { roleIds: principal.roleIds, dataScopes: principal.dataScopes }
   }
 
   private async requireAgentPrincipalGrants(agentVersionId: string): Promise<{
@@ -989,8 +974,7 @@ export class PostgresAuthorizationService {
     const [row] = await this.database<AgentAuthorizationRow[]>`
       select av.agent_id as "agentId", av.id as "versionId", av.skill_refs as "skillReferences",
              av.tool_refs as "toolReferences", av.binding_refs as "bindingRefs",
-             av.visible_role_ids as "visibleRoleIds",
-             av.data_scopes as "dataScopes"
+             a.visible_role_ids as "visibleRoleIds"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id

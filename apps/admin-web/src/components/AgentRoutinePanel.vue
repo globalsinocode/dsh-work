@@ -2,13 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '@/api/client'
-import type { AgentPrincipalGovernance, AgentRoutine, AgentRoutineExecution, AgentRoutineSchedule,
+import type { AgentAccess, AgentRoutine, AgentRoutineExecution, AgentRoutineSchedule,
   AgentVersionRecord, IdentityUserSummary, ManagedWorkspaceDefinition } from '@/types/domain'
 
 const props = defineProps<{
   agentId: string
   versions: AgentVersionRecord[]
-  principal?: AgentPrincipalGovernance
   canManage: boolean
 }>()
 
@@ -24,6 +23,8 @@ const selected = ref<AgentRoutine>()
 const executions = ref<AgentRoutineExecution[]>([])
 const approvedRoleIds = ref<string[]>([])
 const approvedDataScopes = ref<string[]>([])
+/** Agent 当前岗位权限；批准上限只能在其中选择。 */
+const grants = ref<Pick<AgentAccess, 'roleIds' | 'dataScopes'>>({ roleIds: [], dataScopes: [] })
 const name = ref('')
 const versionId = ref('')
 const workspaceId = ref('')
@@ -132,10 +133,17 @@ async function save() {
   } finally { saving.value = false }
 }
 
-function openApproval(routine: AgentRoutine) {
+async function openApproval(routine: AgentRoutine) {
   selected.value = routine
-  approvedRoleIds.value = routine.approvedRoleIds.length ? [...routine.approvedRoleIds] : [...(props.principal?.roleIds ?? [])]
-  approvedDataScopes.value = routine.approvedDataScopes.length ? [...routine.approvedDataScopes] : [...(props.principal?.dataScopes ?? [])]
+  try {
+    const access = await adminApi.getAgentAccess(props.agentId)
+    grants.value = { roleIds: access.roleIds, dataScopes: access.dataScopes }
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '无法读取 Agent 岗位权限')
+    return
+  }
+  approvedRoleIds.value = routine.approvedRoleIds.length ? [...routine.approvedRoleIds] : [...grants.value.roleIds]
+  approvedDataScopes.value = routine.approvedDataScopes.length ? [...routine.approvedDataScopes] : [...grants.value.dataScopes]
   approvalOpen.value = true
 }
 async function enable() {
@@ -222,8 +230,8 @@ async function showExecutions(routine: AgentRoutine) {
 
     <el-dialog v-model="approvalOpen" title="确认 Agent 主动任务授权上限" width="540px" append-to-body>
       <p>执行只使用下列批准范围与 Agent 当前授权的交集；Agent 停用、收权或空间撤权会阻断后续执行。</p>
-      <el-form label-position="top"><el-form-item label="批准角色"><el-select v-model="approvedRoleIds" multiple style="width:100%"><el-option v-for="role in principal?.roleIds ?? []" :key="role" :value="role" :label="role" /></el-select></el-form-item>
-        <el-form-item label="批准数据范围"><el-select v-model="approvedDataScopes" multiple style="width:100%"><el-option v-for="scope in principal?.dataScopes ?? []" :key="scope" :value="scope" :label="scope" /></el-select></el-form-item></el-form>
+      <el-form label-position="top"><el-form-item label="批准角色"><el-select v-model="approvedRoleIds" multiple style="width:100%"><el-option v-for="role in grants.roleIds" :key="role" :value="role" :label="role" /></el-select></el-form-item>
+        <el-form-item label="批准数据范围"><el-select v-model="approvedDataScopes" multiple style="width:100%"><el-option v-for="scope in grants.dataScopes" :key="scope" :value="scope" :label="scope" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="approvalOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="enable">确认并启用</el-button></template>
     </el-dialog>
 

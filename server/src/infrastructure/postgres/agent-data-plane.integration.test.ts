@@ -48,24 +48,24 @@ before(async () => {
   `
   await database`
     insert into agent_versions
-      (id, tenant_id, agent_id, version, system_prompt, visible_role_ids, data_scopes, agent_spec, status, published_at)
+      (id, tenant_id, agent_id, version, system_prompt, agent_spec, status, published_at)
     values ('agent-version-ae03-review-1', ${tenantId}, ${primaryAgentId}, '9.9.2',
-            'Review governed work records.', ${database.json(['role-employee'])},
-            ${database.json(['enterprise:authorized', 'workspace:authorized'])},
+            'Review governed work records.',
             ${database.json({ data: { state: false, collections: [{ key: 'reviewed_work_records',
               scope: 'workspace', schemaVersion: 1, actions: ['propose'], schema: null }] } })},
             'published', now())
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${primaryAgentId}`
   await database`
     insert into agent_versions
-      (id, tenant_id, agent_id, version, system_prompt, visible_role_ids, data_scopes, agent_spec, status, published_at)
+      (id, tenant_id, agent_id, version, system_prompt, agent_spec, status, published_at)
     values ('agent-version-ae03-multirole-1', ${tenantId}, ${primaryAgentId}, '9.9.3',
-            'Review multi-role work records.', ${database.json(['role-employee'])},
-            ${database.json(['enterprise:authorized', 'workspace:authorized'])},
+            'Review multi-role work records.',
             ${database.json({ data: { state: false, collections: [{ key: 'multirole_review_records',
               scope: 'workspace', schemaVersion: 1, actions: ['propose'], schema: null }] } })},
             'published', now())
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${primaryAgentId}`
   await database`
     insert into workspace_capability_grants (tenant_id, workspace_id, capability_type, capability_version_id)
     values (${tenantId}, 'ws-supply', 'agent', 'agent-version-ae03-review-1'),

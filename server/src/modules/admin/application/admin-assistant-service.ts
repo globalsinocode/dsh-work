@@ -88,7 +88,7 @@ interface ActionRow {
 }
 
 type AgentSnapshot = Pick<AgentDefinition,
-  'id' | 'name' | 'description' | 'owner' | 'department' | 'visibility' | 'roleIds' | 'dataScopes'
+  'id' | 'name' | 'description' | 'owner' | 'department'
   | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
   | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'tools'
   | 'status' | 'version'
@@ -500,7 +500,8 @@ export class AdminAssistantService {
       }
     }
 
-    const allowed = ['name', 'description', 'visibility', 'roleIds', 'dataScopes', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'tools', 'changeSummary']
+    // Access (audience, roles, data scopes) is not draft content and is not changed through draft plans.
+    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'tools', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -509,9 +510,6 @@ export class AdminAssistantService {
       description: readChangedString(changes, 'description', agent.description, 1, 1000),
       owner: agent.owner,
       department: agent.department,
-      visibility: readChangedString(changes, 'visibility', agent.visibility, 1, 120),
-      roleIds: readChangedStringArray(changes, 'roleIds', agent.roleIds, 100),
-      dataScopes: readChangedStringArray(changes, 'dataScopes', agent.dataScopes, 100),
       welcomeMessage: readChangedString(changes, 'welcomeMessage', agent.welcomeMessage, 1, 2000),
       examplePrompts: readChangedStringArray(changes, 'examplePrompts', agent.examplePrompts, 20),
       systemPrompt: readChangedString(changes, 'systemPrompt', agent.systemPrompt, 20, 20000),
@@ -818,9 +816,6 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     description: agent.description,
     owner: agent.owner,
     department: agent.department,
-    visibility: agent.visibility,
-    roleIds: [...agent.roleIds],
-    dataScopes: [...agent.dataScopes],
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
@@ -844,9 +839,6 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.description === after.description
     && agent.owner === after.owner
     && agent.department === after.department
-    && agent.visibility === after.visibility
-    && canonicalJson(agent.roleIds) === canonicalJson(after.roleIds)
-    && canonicalJson(agent.dataScopes) === canonicalJson(after.dataScopes)
     && agent.welcomeMessage === after.welcomeMessage
     && canonicalJson(agent.examplePrompts) === canonicalJson(after.examplePrompts)
     && agent.systemPrompt === after.systemPrompt

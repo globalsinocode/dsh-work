@@ -101,7 +101,7 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `agents`、`agent_versions` | Agent 与其版本 | 已发布版本不可修改（触发器）；版本记录精确的 Skill、Tool 引用与授权声明；新建 Agent 自动生成执行身份与数据平面安装记录 |
+| `agents`、`agent_versions` | Agent 与其版本 | 已发布版本不可修改（触发器）；版本记录精确的 Skill、Tool 引用，不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
 | `agent_release_submissions` | 发布候选 | 每个 Agent 同时只有一个进行中的候选；封存后内容不可改；发布后保留供审计 |
 | `agent_trial_runs` | 候选的试运行 | 绑定候选修订；只有与当前封存修订一致的通过试运行才能支撑发布 |
 | `agent_version_evidence` | 版本级发布依据 | 配置检查、运行验证、业务确认三类，发布时写入 |
@@ -247,6 +247,7 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
 - [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
 - [删除 Agent 委派](../../server/migrations/0083_remove_agent_delegation.sql)：移除 `task_delegations` 与版本上的委派策略；历史子任务仍保留 `delegation` 来源类型，但不能重试。
+- [Agent 级岗位权限](../../server/migrations/0084_agent_level_access.sql)：可见角色从版本迁到 Agent（取当前发布版本，未发布取草稿），删除版本上的可见角色与数据范围上限。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 
