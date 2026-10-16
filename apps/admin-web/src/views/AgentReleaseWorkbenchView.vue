@@ -255,7 +255,7 @@ const canFinalize = computed(() => canPublish.value
 
 type ReviewSource = Pick<AgentVersionRecord, 'systemPrompt' | 'workInstructions'
   | 'skills' | 'tools' | 'mcpScope' | 'timeoutSeconds' | 'maxToolCalls' | 'maxOutputBytes'
-  | 'roleIds' | 'dataScopes' | 'delegationPolicy'>
+  | 'roleIds' | 'dataScopes'>
 interface ReviewChange { key: string; label: string; before?: string; after: string; changed: boolean; long?: boolean }
 
 const baselineVersion = computed(() => {
@@ -286,7 +286,6 @@ function reviewFields(source: ReviewSource): Array<{ key: string; label: string;
     { key: 'tools', label: '声明的平台工具', value: listLabel(source.tools, '无（仅平台默认工具）') },
     { key: 'mcp', label: 'MCP 范围', value: mcpLabel(source.mcpScope) },
     { key: 'limits', label: '运行限制', value: `超时 ${source.timeoutSeconds}s · 工具调用 ${source.maxToolCalls} 次 · 输出 ${Math.round(source.maxOutputBytes / 1024)} KB` },
-    { key: 'delegation', label: '委派目标', value: listLabel(source.delegationPolicy?.allowedAgentVersionIds ?? []) },
     { key: 'audience', label: '员工可见角色', value: roleLabel(source.roleIds) },
     { key: 'scopes', label: '平台数据范围上限', value: listLabel(source.dataScopes, '未设置') },
   ]

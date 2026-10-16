@@ -251,13 +251,6 @@ export interface Workspace {
 
 export type PublishStatus = 'draft' | 'published' | 'disabled'
 
-export interface AgentDelegationPolicy {
-  allowedAgentVersionIds: string[]
-  maxDepth: number
-  maxParallel: number
-  timeoutSeconds: number
-}
-
 export interface AgentDefinition {
   id: string
   name: string
@@ -281,7 +274,6 @@ export interface AgentDefinition {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-  delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
   /** 草稿编辑的乐观并发修订：保存时原样回传为 expectedRevision（F-05）。原型模式不提供。 */
   revision?: string
@@ -311,7 +303,6 @@ export interface AgentDraftConfiguration {
     key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
     actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
   }> }
-  delegationPolicy?: AgentDelegationPolicy
   changeSummary: string
 }
 
@@ -357,7 +348,6 @@ export interface AgentVersionRecord {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-  delegationPolicy?: AgentDelegationPolicy
 }
 
 export interface AgentReleaseRecord {

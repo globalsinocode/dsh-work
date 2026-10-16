@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import AgentDraftDialog from './AgentDraftDialog.vue'
 import { useContentStore } from '../stores/content'
-import type { AgentDefinition, AgentVersionRecord } from '../types/domain'
+import type { AgentDefinition } from '../types/domain'
 
 const wrappers: VueWrapper[] = []
 
@@ -33,7 +33,6 @@ const importedAgent: AgentDefinition = {
   timeoutSeconds: 300,
   skills: ['refund-risk@0.1.0'],
   tools: [],
-  delegationPolicy: { allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 },
   updatedAt: '2026-09-16 14:00',
 }
 
@@ -67,22 +66,14 @@ describe('AgentDraftDialog config completion', () => {
     expect(wrapper.emitted('continue-release')).toEqual([[importedAgent]])
   })
 
-  it('preserves an exact published-version delegation policy when saving a draft', async () => {
+  it('saves an edited draft with the revision read when the editor opened', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const contentStore = useContentStore()
-    const targetVersion = {
-      id: 'agent-version-specialist-1', agentId: 'specialist', version: '1.2.0', status: 'published',
-    } as AgentVersionRecord
-    contentStore.agentVersions = [targetVersion]
-    contentStore.agents = [{ ...importedAgent, id: 'specialist', name: '专项分析 Agent', status: 'published', version: '1.2.0' }]
     const editable = {
       ...importedAgent,
       revision: 'rev-editor-1',
       tools: ['tool-runtime-file-read@1.0.0'],
-      delegationPolicy: {
-        allowedAgentVersionIds: [targetVersion.id], maxDepth: 2, maxParallel: 3, timeoutSeconds: 90,
-      },
     }
     const update = vi.spyOn(contentStore, 'updateAgentDraft').mockResolvedValue(editable)
     const wrapper = mount(AgentDraftDialog, {
@@ -105,13 +96,11 @@ describe('AgentDraftDialog config completion', () => {
     await flushPromises()
     await next().trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('1 个目标')
-    expect(wrapper.text()).toContain('深度 2 · 并行 3')
     await wrapper.findAll('button').find(button => button.text() === '保存修改')!.trigger('click')
     await flushPromises()
 
     expect(update).toHaveBeenCalledOnce()
-    expect(update.mock.calls[0]?.[0].delegationPolicy).toEqual(editable.delegationPolicy)
+    expect(update.mock.calls[0]?.[0]).not.toHaveProperty('delegationPolicy')
     // F-05：保存时回传打开编辑器时读取的修订，供服务端拒绝过期编辑。
     expect(update.mock.calls[0]?.[1]).toBe('rev-editor-1')
   })

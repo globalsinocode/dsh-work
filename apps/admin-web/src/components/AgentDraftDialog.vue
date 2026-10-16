@@ -33,7 +33,6 @@ type DraftForm = AgentDraftConfiguration & { workInstructions: string; mcpScope:
 const form = reactive<DraftForm>(emptyDraft())
 const inspectingMcp = ref<ConnectorDefinition | null>(null)
 const mcpToolsDialogOpen = ref(false)
-const governanceSections = ref<string[]>([])
 
 const rules: FormRules = {
   name: [
@@ -61,12 +60,6 @@ const mcpConnectors = computed(() => contentStore.connectors.filter(connector =>
 const selectedMcpConnectors = computed(() => form.mcpScope.connectorIds.map(id =>
   mcpConnectors.value.find(connector => connector.id === id),
 ))
-const delegationTargets = computed(() => contentStore.agentVersions.filter((version) =>
-  version.status === 'published',
-).map((version) => ({
-  id: version.id,
-  label: `${contentStore.agents.find(agent => agent.id === version.agentId)?.name ?? version.agentId} · v${version.version}`,
-})))
 const editorTitle = computed(() => savedResult.value
   ? 'Agent 草稿已保存'
   : props.agent ? `编辑 Agent：${props.agent.name}` : '创建 Agent')
@@ -102,13 +95,8 @@ function emptyDraft(): DraftForm {
     skills: [],
     tools: [],
     mcpScope: { mode: 'none', connectorIds: [] },
-    delegationPolicy: defaultDelegationPolicy(),
     changeSummary: '创建初始草稿版本',
   }
-}
-
-function defaultDelegationPolicy() {
-  return { allowedAgentVersionIds: [] as string[], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 }
 }
 
 function resetEditor() {
@@ -132,10 +120,6 @@ function resetEditor() {
         skills: [...props.agent.skills],
         tools: props.agent.tools.map(toVersionedToolReference),
         mcpScope: props.agent.mcpScope ?? { mode: 'all' as const, connectorIds: [] as [] },
-        delegationPolicy: (() => {
-          const policy = props.agent.delegationPolicy ?? defaultDelegationPolicy()
-          return { ...policy, allowedAgentVersionIds: [...policy.allowedAgentVersionIds] }
-        })(),
         changeSummary: `更新 ${props.agent.name} 草稿配置`,
       }
     : emptyDraft()
@@ -145,7 +129,6 @@ function resetEditor() {
   activeStep.value = 0
   examplePrompt.value = source.examplePrompts[0] ?? '请介绍你能提供哪些帮助'
   initialSnapshot.value = JSON.stringify(form)
-  governanceSections.value = []
   formRef.value?.clearValidate()
 }
 
@@ -246,10 +229,6 @@ function cloneDraft(value: DraftForm): DraftForm {
     mcpScope: value.mcpScope.mode === 'selected'
       ? { mode: 'selected', connectorIds: [...value.mcpScope.connectorIds] }
       : { mode: value.mcpScope.mode, connectorIds: [] },
-    delegationPolicy: {
-      ...value.delegationPolicy,
-      allowedAgentVersionIds: [...value.delegationPolicy.allowedAgentVersionIds],
-    },
   }
 }
 
@@ -399,29 +378,7 @@ function toVersionedToolReference(reference: string) {
           </div>
           <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；试运行和新任务将被拒绝，请修正选择或恢复连接。" />
         </div>
-        <el-collapse v-model="governanceSections" class="agent-governance-collapse">
-          <el-collapse-item name="permissions" title="权限与运行限制">
-        <div class="configuration-section-heading configuration-section-heading--permissions"><strong>受控委派（选填）</strong><span>只允许调用固定的已发布 Agent Version</span></div>
-        <el-form-item label="允许委派的 Agent Version">
-          <el-select v-model="form.delegationPolicy.allowedAgentVersionIds" multiple filterable collapse-tags :max-collapse-tags="2" placeholder="不选择则不开放 Agent 委派">
-            <el-option v-for="target in delegationTargets" :key="target.id" :label="target.label" :value="target.id" />
-          </el-select>
-          <p class="field-help">子任务沿用当前员工、工作空间和根任务累计预算，权限只会继续收窄。</p>
-        </el-form-item>
-        <div class="form-grid form-grid--three">
-          <el-form-item label="最大深度">
-            <el-input-number v-model="form.delegationPolicy.maxDepth" :min="1" :max="4" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
-          </el-form-item>
-          <el-form-item label="并行上限">
-            <el-input-number v-model="form.delegationPolicy.maxParallel" :min="1" :max="4" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
-          </el-form-item>
-          <el-form-item label="单次超时（秒）">
-            <el-input-number v-model="form.delegationPolicy.timeoutSeconds" :min="10" :max="300" :step="10" :disabled="!form.delegationPolicy.allowedAgentVersionIds.length" />
-          </el-form-item>
-        </div>
-        <el-alert type="info" :closable="false" show-icon title="员工可见范围在发布验证前设置。业务执行角色和平台数据权限在独立执行身份中按需授予；敏感操作仍受工具策略约束。" />
-          </el-collapse-item>
-        </el-collapse>
+        <el-alert class="agent-permission-note" type="info" :closable="false" show-icon title="员工可见范围在发布验证前设置。业务执行角色和平台数据权限在独立执行身份中按需授予；敏感操作仍受工具策略约束。" />
       </section>
 
       <section v-show="activeStep === 2" class="agent-editor__pane" aria-label="Agent 配置确认">
@@ -456,7 +413,6 @@ function toVersionedToolReference(reference: string) {
               <div v-if="props.agent"><span>负责人</span><strong>{{ form.owner }}</strong><small>负责配置维护与发布</small></div>
               <div><span>能力</span><strong>{{ form.skills.length }} 个 Skill</strong><small>MCP：{{ form.mcpScope.mode === 'selected' ? `${form.mcpScope.connectorIds.length} 个选定` : form.mcpScope.mode === 'none' ? '不使用' : '全部可用' }}</small></div>
               <div><span>工作规程</span><strong>{{ form.workInstructions.trim() ? '已填写 AGENTS.md' : '未填写' }}</strong><small>与 Soul 一起随版本固定</small></div>
-              <div><span>委派</span><strong>{{ form.delegationPolicy.allowedAgentVersionIds.length }} 个目标</strong><small>深度 {{ form.delegationPolicy.maxDepth }} · 并行 {{ form.delegationPolicy.maxParallel }}</small></div>
               <div><span>发布范围</span><strong>发布验证前配置</strong><small>基础运行无需业务授权</small></div>
             </div>
           </section>
@@ -509,7 +465,6 @@ function toVersionedToolReference(reference: string) {
 .step-badge { padding: 4px 9px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); font-weight: var(--font-weight-badge); }
 .form-grid { display: grid; gap: 0 20px; }
 .form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.form-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field-help { width: 100%; margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .creator-owner { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: var(--spacing-card); padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .creator-owner__avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 50%; color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-body); font-weight: var(--font-weight-title); }
@@ -520,7 +475,6 @@ function toVersionedToolReference(reference: string) {
 .configuration-section-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
 .configuration-section-heading strong { color: var(--color-text-heading); font-size: var(--font-size-body); }
 .configuration-section-heading span { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.configuration-section-heading--permissions { margin-top: 24px; }
 .selection-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .selection-overview > div { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
 .selection-overview span, .draft-summary span { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
@@ -532,7 +486,7 @@ function toVersionedToolReference(reference: string) {
 .selected-mcp strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selected-mcp small { color: var(--color-text-muted); }
 .field-help--error { color: var(--color-danger); }
-.agent-governance-collapse { margin-top: 24px; }
+.agent-permission-note { margin-top: 24px; }
 .mcp-tool-detail { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
 .mcp-tool-detail p { color: var(--color-text-secondary); }
 .mcp-tool-detail pre { max-height: 220px; overflow: auto; padding: 10px; background: var(--color-bg-subtle); }
@@ -564,7 +518,7 @@ function toVersionedToolReference(reference: string) {
 :deep(.el-step__description) { font-size: var(--font-size-badge); }
 :deep(.el-empty) { padding: 24px 0 8px; }
 @media (max-width: 800px) {
-  .form-grid--two, .form-grid--three, .review-grid, .draft-summary__grid, .draft-completion__summary { grid-template-columns: 1fr; }
+  .form-grid--two, .review-grid, .draft-summary__grid, .draft-completion__summary { grid-template-columns: 1fr; }
   .draft-completion__summary > div:nth-last-child(2) { border-bottom: 1px solid var(--color-border); }
   .agent-editor__pane { min-height: 0; }
 }

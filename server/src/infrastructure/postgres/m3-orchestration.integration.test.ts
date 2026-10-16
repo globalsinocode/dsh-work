@@ -987,7 +987,7 @@ test('cancel and retry keep one Run and create a new immutable Attempt', async (
   assert.deepEqual(attempts[1]?.manifest.input.conversation_history, expectedHistory)
 })
 
-test('generic retry rejects a delegated Task even when its Attempt lost delegation context', async () => {
+test('generic retry rejects a historical delegated Task', async () => {
   const task = await tasks.createTask({
     tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'delegation',
     sourceRef: 'task-parent-retry-guard', correlationKey: `delegation-retry-guard-${randomUUID()}`,
@@ -1002,7 +1002,7 @@ test('generic retry rejects a delegated Task even when its Attempt lost delegati
 
   await assert.rejects(
     orchestration.retry(run.id, 'U00001'),
-    /委派子任务不支持通用重试/,
+    /委派子任务不支持重试/,
   )
   assert.equal((await runs.getRun('tenant-dsh-work', run.id))?.currentAttemptId, null)
 })

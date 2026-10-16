@@ -127,12 +127,11 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
 const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'state_get', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'])
-const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent', 'state_get', 'data_query'])
+const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'state_get', 'data_query'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
   ['job_list', 10], ['job_kill', 10], ['bash', 60],
   ['prepare_skill_installation', 120], ['python_execute', 300],
-  ['delegate_agent', 300],
 ])
 
 function publishToolContract(schema) {
@@ -444,21 +443,6 @@ function registerPlatformTools(ctx) {
       required: ['actionType', 'target', 'summary', 'changes'],
       additionalProperties: false,
     },
-  })
-  registerPlatformTool(ctx, socketPath, {
-    name: 'delegate_agent',
-    description: 'Delegate one bounded subtask to an explicitly allowed published Agent Version. The child uses the same user, workspace, cumulative budget and narrowed permission ceiling. Returns a task-result/v1 outcome; failed or unverified child work must not be presented as verified success.',
-    parameters: {
-      type: 'object',
-      properties: {
-        targetAgentVersionId: { type: 'string', minLength: 1, maxLength: 128, description: 'Exact Agent Version ID from the current Run delegation policy.' },
-        task: { type: 'string', minLength: 1, maxLength: 12000, description: 'Bounded subtask with an explicit expected result.' },
-        context: { type: 'string', maxLength: 4000, description: 'Optional minimal context needed by the child. Do not copy the whole conversation.' },
-      },
-      required: ['targetAgentVersionId', 'task'],
-      additionalProperties: false,
-    },
-    concurrencySafe: true,
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'propose_memory',

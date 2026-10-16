@@ -145,15 +145,6 @@ export class AttemptScheduler {
               continue
             }
           }
-          // PF-06: an ordinary item may be ahead of a child whose Worker slot is
-          // already reserved. Keep the ordinary item queued and scan later items;
-          // breaking here would strand the child behind it until the parent times out.
-          // Full capacity and paused Runtimes still take the normal retry path.
-          if (!next.manifest.delegation_context
-            && await this.deps.runs.isBlockedByDelegationReservation(tenantId, runtimeId)) {
-            index += 1
-            continue
-          }
           this.schedulePump()
           break
         }
@@ -228,8 +219,6 @@ export class AttemptScheduler {
           eventType: 'run.failed', displayMessage: '授权检查暂不可用，任务未执行',
           safeMetadata: { error_code: error.code }, traceId: `trace-${run.id}` })
       }
-      await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务执行异常，终止所有活动子任务')
-      await this.deps.delegation?.observeChildTerminal(run.id)
       console.error('runtime dispatch failed', error)
     } finally {
       // 事件链 settle 后清掉本 Attempt 的内存痕迹（assistantOutputs / eventWrites），
@@ -268,8 +257,6 @@ export class AttemptScheduler {
       safeMetadata: { error_code: 'AUTOMATION_CAPACITY_EXHAUSTED' },
       traceId: `trace-${run.id}`,
     })
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务因容量不足失败，终止所有活动子任务')
-    await this.deps.delegation?.observeChildTerminal(run.id)
   }
 
   /**

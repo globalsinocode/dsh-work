@@ -5,8 +5,7 @@ import { tenantId, type OrchestrationDependencies } from './orchestration-depend
 
 /**
  * Persists Runtime events first, then applies their consequences: Run/Attempt state,
- * assistant messages with citations, budget settlement, model usage, audit and
- * delegation bookkeeping. Events of one Run are written strictly in order.
+ * assistant messages with citations, budget settlement, model usage, and audit. Events of one Run are written strictly in order.
  */
 export class RunEventRecorder {
   private readonly eventWrites = new Map<string, Promise<void>>()
@@ -72,7 +71,6 @@ export class RunEventRecorder {
     if (event.event_type === 'run.started') {
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'running')
       await this.deps.runs.transitionRun(tenantId, run.id, 'running')
-      await this.deps.delegation?.markChildRunning(run.id)
     } else if (event.event_type === 'run.waiting') {
       const approvalId = event.safe_metadata['approval_id']
       if (this.deps.persistentWait && typeof approvalId === 'string') {
@@ -106,8 +104,6 @@ export class RunEventRecorder {
       await this.budget.settle(event, 'cancelled', this.assistantOutputs.get(event.attempt_id) ?? '')
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
-      await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
-      await this.deps.delegation?.observeChildTerminal(run.id)
       if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'cancelled', '')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
@@ -127,8 +123,6 @@ export class RunEventRecorder {
         traceId: event.trace_id,
       })
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
-      await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务失败，终止所有活动子任务')
-      await this.deps.delegation?.observeChildTerminal(run.id)
       if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
@@ -150,8 +144,6 @@ export class RunEventRecorder {
           && typeof event.safe_metadata['output_tokens'] === 'number' ? event.safe_metadata['output_tokens'] : undefined,
       })
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
-      await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
-      await this.deps.delegation?.observeChildTerminal(run.id)
       // EX-02：会话 Run 结束后按需在后台生成摘要；无 Session 的 Run 可能就是摘要运行本身。
       if (run.sessionId) void this.deps.sessionSummaries?.scheduleAfterRun(run)
       else await this.deps.sessionSummaries?.onRunTerminal(run, 'succeeded', assistantOutput)

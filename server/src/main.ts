@@ -36,7 +36,6 @@ import { PostgresTaskRepository, platformToolOperationKey, taskOperationParamete
 import { RunOrchestrationService } from './modules/run/run-orchestration-service.ts'
 import { RunRevocationSweep } from './modules/run/run-revocation-sweep.ts'
 import { PostgresPersistentWaitService } from './modules/run/postgres-persistent-wait-service.ts'
-import { PostgresAgentDelegationService } from './modules/run/postgres-agent-delegation-service.ts'
 import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.ts'
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
@@ -173,7 +172,6 @@ async function start() {
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
-  const delegation = new PostgresAgentDelegationService(database, runs, tasks, authorization, taskQueries)
   const toolServiceRef: { current?: PostgresToolConnectorService } = {}
   const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
@@ -207,7 +205,6 @@ async function start() {
       if (!persistentWaitRef.current) return 'reject_once'
       return persistentWaitRef.current.decidePermission(manifest, context)
     },
-    delegateAgent: (input, manifest, signal) => delegation.delegate(input, manifest, signal),
     proposeMemory: (input, manifest, signal) => {
       if (!controlledMemoryRef.current) throw new Error('经验迭代服务尚未就绪')
       return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
@@ -352,11 +349,6 @@ async function start() {
   }, dshInstallation?.version ?? 'unavailable')
   persistentWaitRef.current = persistentWait
   orchestration.setPersistentWaitService(persistentWait)
-  orchestration.setDelegationService(delegation)
-  delegation.setExecutor({
-    dispatchChild: input => orchestration!.dispatchDelegatedRun(input),
-    cancelRun: async (runId, reason) => { await orchestration!.systemCancelRun(runId, 'system_revoke', reason) },
-  })
   persistentWait.start()
   const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
   const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
@@ -369,7 +361,6 @@ async function start() {
   registerAssistantRoutes(router, assistantService)
   registerSkillInstallationRoutes(router, installationService)
   const restartRecovery = await orchestration.recoverAfterServiceRestart()
-  const delegationRecovery = await delegation.reconcileAfterRestart()
   await persistentWait.reconcileOrphans()
   // EX-02：为旧成果补写原文解析，使其可在后续对话中“继续修改”；失败只记录，不阻断启动。
   await content.backfillArtifactExtractions()
@@ -377,9 +368,6 @@ async function start() {
     .catch(error => console.error('artifact extraction backfill failed', error))
   if (restartRecovery.failed > 0 || restartRecovery.resumedQueued > 0) {
     console.warn('service restart recovery completed', restartRecovery)
-  }
-  if (delegationRecovery.cancelled > 0 || delegationRecovery.finalized > 0) {
-    console.warn('agent delegation recovery completed', delegationRecovery)
   }
   const assistantRecovery = await assistantService.recoverInterruptedActions()
   if (assistantRecovery.inspected > 0) {

@@ -97,9 +97,6 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
     await this.deps.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
-    const delegationPolicy = agent.delegationPolicy ?? {
-      allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
-    }
     const limits = {
       timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds),
       max_output_bytes: Math.min(agent.maxOutputBytes, 1024 * 1024),
@@ -134,17 +131,8 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       skills: agent.skills.map(toCapabilityReference),
       tools: [...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
         ...(this.deps.memory ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
         ...agentDataToolRefs(agent)],
-      ...(delegationPolicy.allowedAgentVersionIds.length ? {
-        delegation_policy: {
-          allowed_agent_version_ids: [...delegationPolicy.allowedAgentVersionIds],
-          max_depth: delegationPolicy.maxDepth,
-          max_parallel: delegationPolicy.maxParallel,
-          timeout_seconds: delegationPolicy.timeoutSeconds,
-        },
-      } : {}),
       // B-03/I-04：试运行证据与实际执行同一绑定修订集；后续发布据此复核漂移。
       ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),

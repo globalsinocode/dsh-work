@@ -37,8 +37,6 @@ test('memory proposal operation keys are scoped to an Attempt without changing o
 
 test('all governed platform tool contracts compile in strict JSON Schema mode', () => {
   for (const contract of Object.values(platformToolContracts)) assert.doesNotThrow(() => compileToolContract(contract))
-  assert.equal(platformToolContracts.delegate_agent.completionSemantics, 'accepted',
-    'parent Task must not treat transport-level delegation success as proof that the child goal was achieved')
   assert.equal(platformToolContracts.propose_memory.completionSemantics, 'completed',
     'only the application staging completes; review and publication are separate human actions')
 })
@@ -91,7 +89,7 @@ test('dsh-work built-in tools use one explicit category and governance registry'
       .map(([name]) => name)
       .sort(),
     ['activate_skill', 'data_create', 'data_propose', 'data_query', 'data_transition', 'data_update',
-      'delegate_agent', 'propose_memory', 'python_execute', 'state_get', 'state_put'],
+      'propose_memory', 'python_execute', 'state_get', 'state_put'],
   )
   assert.deepEqual(
     platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),

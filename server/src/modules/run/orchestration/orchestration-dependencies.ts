@@ -13,18 +13,16 @@ import type { PostgresWorkspaceAgentMemberService } from '../../workbench/applic
 import type { RunRepository } from '../run-repository.ts'
 import type { TaskRepository } from '../../task/task-repository.ts'
 import type { PostgresPersistentWaitService } from '../postgres-persistent-wait-service.ts'
-import type { PostgresAgentDelegationService } from '../postgres-agent-delegation-service.ts'
 
 export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
 
 export type PersistentWaitPort = Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>
-export type DelegationPort = Pick<PostgresAgentDelegationService, 'assertActiveDelegation' | 'markChildRunning' | 'observeChildTerminal' | 'cancelActiveDescendants'>
 export type ToolBindingCheckPort = Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
 
 /**
  * Collaborators shared by the orchestration components. Optional members are absent in
- * narrow test wiring. The persistent-wait and delegation services are wired after
+ * narrow test wiring. The persistent-wait service is wired after
  * construction (they depend on orchestration themselves), so components read them at
  * call time rather than copying them.
  */
@@ -45,7 +43,6 @@ export interface OrchestrationDependencies {
   readonly automationMaxConcurrent: number
   readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
   persistentWait?: PersistentWaitPort
-  delegation?: DelegationPort
   /** EX-02 conversation summaries; wired by the facade after construction. */
   sessionSummaries?: SessionSummaryPort
 }

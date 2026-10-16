@@ -37,7 +37,6 @@ import { assertPrompt, attemptLimitsForBudget, manifestLimitsForRetry } from './
 import {
   runtimeId,
   tenantId,
-  type DelegationPort,
   type OrchestrationDependencies,
   type PersistentWaitPort,
   type ToolBindingCheckPort,
@@ -123,10 +122,6 @@ export class RunOrchestrationService {
     this.deps.persistentWait = service
   }
 
-  setDelegationService(service: DelegationPort): void {
-    this.deps.delegation = service
-  }
-
   enqueueResumedAttempt(run: RunRecord, manifest: RuntimeManifest): void {
     this.scheduler.enqueue(run, manifest)
   }
@@ -139,10 +134,9 @@ export class RunOrchestrationService {
   // Agent release trials.
   runReleaseTrialCase(input: Parameters<ReleaseTrialEntry['runReleaseTrialCase']>[0]) { return this.trials.runReleaseTrialCase(input) }
 
-  // Automation, Agent routines and delegated child tasks.
+  // Automation and Agent routines.
   dispatchAutomation(run: RunRecord, input: Parameters<BackgroundRunEntry['dispatchAutomation']>[1]) { return this.background.dispatchAutomation(run, input) }
   dispatchAgentRoutine(run: RunRecord, input: Parameters<BackgroundRunEntry['dispatchAgentRoutine']>[1]) { return this.background.dispatchAgentRoutine(run, input) }
-  dispatchDelegatedRun(input: Parameters<BackgroundRunEntry['dispatchDelegatedRun']>[0]) { return this.background.dispatchDelegatedRun(input) }
   convergeInterruptedAutomationRun(runId: string, reason: string) { return this.background.convergeInterruptedAutomationRun(runId, reason) }
   cancelQueuedAutomationRun(runId: string, reason: string, options?: { transaction?: DatabaseTransaction; deferSystemEvent?: boolean }) {
     return this.background.cancelQueuedAutomationRun(runId, reason, options)
@@ -441,7 +435,6 @@ export class RunOrchestrationService {
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.deps.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
     if (run.status === 'waiting') {
       if (!this.deps.persistentWait) throw new Error('持久化等待服务未接线')
       await this.deps.persistentWait.cancelRun(run.id, userId)
@@ -465,11 +458,9 @@ export class RunOrchestrationService {
       if (!this.deps.tasks) throw requestInvalid('Task 重试服务未接线')
       const task = await this.deps.tasks.getTask(tenantId, run.taskId)
       if (!task) throw requestInvalid('原 Task 不存在，无法重试')
-      // PF-06 子任务的安全边界来自持久化父子关系、父 Attempt 活性、深度和
-      // 权限上限。通用 retry 只会重建普通 Manifest，无法合法延续这些约束；
-      // 因此必须由仍在运行的父 Agent 重新发起委派，而不是脱离父任务重跑。
+      // Agent 委派已删除（2026-10-16）；历史委派子任务脱离父任务后无法合法重跑。
       if (task.sourceType === 'delegation') {
-        throw requestInvalid('委派子任务不支持通用重试；请由仍在运行的父 Agent 重新发起委派')
+        throw requestInvalid('委派子任务不支持重试')
       }
       // 主动任务重跑必须重新经过规则状态、触发去重和已批准授权上限。
       // Task 来源不可变，不能依赖可能缺失或在重试后丢失的 Manifest purpose。

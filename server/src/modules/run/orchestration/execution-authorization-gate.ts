@@ -43,7 +43,6 @@ export class ExecutionAuthorizationGate {
           throw authorizationDenied('Task 与 Attempt 固定身份不一致')
         }
       }
-      await this.deps.delegation?.assertActiveDelegation(manifest)
       await this.deps.memory?.assertCurrentReferences(manifest)
       // EX-02：摘要运行只读取清单内的对话文本，不带工具；只需确认目标会话仍可摘要。
       if (manifest.purpose === 'session-summary') {
@@ -260,7 +259,5 @@ export class ExecutionAuthorizationGate {
       safeMetadata: { error_code: 'AUTHORIZATION_REVOKED', reason },
       traceId: `trace-${run.id}`,
     })
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务授权已撤销，终止所有活动子任务')
-    await this.deps.delegation?.observeChildTerminal(run.id)
   }
 }

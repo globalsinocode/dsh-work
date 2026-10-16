@@ -24,7 +24,7 @@ interface ToolPolicyMetadata {
 
 /**
  * DSH control-plane capabilities are not ordinary business tools. They stay
- * governed by the platform's Skill, workflow and controlled-delegation paths
+ * governed by the platform's Skill and workflow paths
  * instead of appearing in the Agent tool authorization directory.
  */
 export const hiddenRuntimeCatalogTools = new Set([

@@ -103,47 +103,6 @@ export const platformToolContracts = {
     effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 300_000,
     maxOutputBytes: PYTHON_OUTPUT_MAX_BYTES,
   }),
-  delegate_agent: contract({
-    inputSchema: {
-      type: 'object',
-      properties: {
-        targetAgentVersionId: { type: 'string', minLength: 1, maxLength: 128 },
-        task: { type: 'string', minLength: 1, maxLength: 12000 },
-        context: { type: 'string', maxLength: 4000 },
-      },
-      required: ['targetAgentVersionId', 'task'], additionalProperties: false,
-    },
-    outputSchema: {
-      type: 'object', additionalProperties: false,
-      properties: {
-        contract: { const: 'task-result/v1' },
-        delegationId: { type: 'string' }, childTaskId: { type: 'string' }, childRunId: { type: 'string' },
-        targetAgentVersionId: { type: 'string' },
-        execution: { type: 'string', enum: ['succeeded', 'failed', 'cancelled'] },
-        outcome: { type: 'string', enum: ['achieved', 'unverified', 'not_achieved'] },
-        summary: { type: 'string' }, answer: { type: ['string', 'null'] },
-        receipts: {
-          type: 'array', maxItems: 100,
-          items: {
-            type: 'object', additionalProperties: false,
-            properties: {
-              kind: { type: 'string', enum: ['artifact', 'tool'] },
-              status: { type: 'string', enum: ['completed', 'accepted', 'failed', 'unknown'] },
-              ref: { type: 'string', minLength: 1, maxLength: 256 },
-            },
-            required: ['kind', 'status', 'ref'],
-          },
-        },
-      },
-      required: ['contract', 'delegationId', 'childTaskId', 'childRunId', 'targetAgentVersionId', 'execution', 'outcome', 'summary', 'answer', 'receipts'],
-    },
-    // The child task carries the authoritative achieved/unverified/not_achieved result.
-    // Registering the parent-side delegation call as merely accepted prevents the
-    // parent Task projection from treating a successful tool transport as proof
-    // that the delegated business goal was achieved.
-    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'concurrent',
-    completionSemantics: 'accepted', timeoutMs: 300_000,
-  }),
   propose_memory: contract({
     inputSchema: {
       type: 'object', additionalProperties: false,
@@ -281,7 +240,6 @@ export const dshWorkBuiltInToolDefinitions = {
   },
   activate_skill: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   python_execute: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  delegate_agent: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   propose_memory: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   state_get: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
   state_put: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },

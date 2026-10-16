@@ -19,7 +19,7 @@ import { configurationFingerprint, type PostgresAgentService } from './postgres-
 import { exportAgentPackage } from './agent-package-export.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
-import type { AgentDelegationPolicy, AgentMcpScope } from '../../domain/types.ts'
+import type { AgentMcpScope } from '../../domain/types.ts'
 import type { AgentDataCollectionRequirement, AgentSpec } from './agent-spec.ts'
 import { canonicalJson, sha256 } from '../runtime/canonical-json.ts'
 import { RequestError, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
@@ -173,7 +173,6 @@ interface DraftVersionShape {
   skills: string[]
   tools: string[]
   mcpScope?: AgentMcpScope
-  delegationPolicy?: AgentDelegationPolicy
   agentSpec: AgentSpec | null
 }
 
@@ -377,9 +376,6 @@ function draftFingerprint(draft: DraftVersionShape) {
     maxOutputBytes: draft.maxOutputBytes,
     maxToolCalls: draft.maxToolCalls,
     timeoutSeconds: draft.timeoutSeconds,
-    delegationPolicy: draft.delegationPolicy ?? {
-      allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
-    },
     agentSpec: draft.agentSpec,
   })
 }
@@ -1794,7 +1790,6 @@ export class PostgresAgentReleaseService {
       draftSkills: string[] | null
       draftTools: string[] | null
       draftMcpScope: AgentMcpScope | null
-      draftDelegationPolicy: AgentDelegationPolicy | null
       draftAgentSpec: AgentSpec | null
     }[]>`
       select a.id, a.status as "persistedStatus", a.active_version_id as "activeVersionId",
@@ -1807,7 +1802,7 @@ export class PostgresAgentReleaseService {
              draft.timeout_seconds as "draftTimeoutSeconds",
              draft.skill_refs as "draftSkills", draft.tool_refs as "draftTools",
              draft.mcp_scope as "draftMcpScope",
-             draft.delegation_policy as "draftDelegationPolicy", draft.agent_spec as "draftAgentSpec"
+             draft.agent_spec as "draftAgentSpec"
         from agents a
         left join agent_versions draft on draft.tenant_id = a.tenant_id and draft.id = a.draft_version_id
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
@@ -1835,9 +1830,6 @@ export class PostgresAgentReleaseService {
           skills: row.draftSkills ?? [],
           tools: row.draftTools ?? [],
           mcpScope: row.draftMcpScope ?? { mode: 'all', connectorIds: [] },
-          delegationPolicy: row.draftDelegationPolicy ?? {
-            allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120,
-          },
           agentSpec: row.draftAgentSpec,
         },
       } : {}),

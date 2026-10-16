@@ -2,7 +2,7 @@
 
 PostgreSQL 是产品事实来源。本文按领域说明表的作用、关系和不变量；准确字段、索引、外键及升级顺序以 [SQL 迁移](../../server/migrations/) 为准，不维护另一份 DDL 副本。
 
-当前共 109 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
+当前共 108 张表和 1 个视图（不含迁移记录表 `schema_migrations`）。几乎所有表都以 `(tenant_id, id)` 为业务键，跨表外键带 `tenant_id`，所以引用不会跨租户；MVP 只有一个租户 `tenant-dsh-work`。`pnpm verify` 检查迁移创建的每张表都在本文出现，新增表时同步补充所属领域。
 
 ## 领域总览
 
@@ -18,7 +18,6 @@ flowchart LR
   Session -. 可选关联 .-> Task
   Task --> Run[Run] --> Attempt[Attempt / 不可变 Manifest]
   Task --> Budget[累计预算]
-  Task --> Delegation[委派子 Task]
   Principal -. 发起 / 执行 .-> Task
   Agent[Agent Version] --> Session
   Skill[Skill Version] --> Agent
@@ -82,7 +81,6 @@ flowchart LR
   Attempt --> Checkpoint[run_checkpoints] --> Approval[run_approval_requests]
   Approval -. 批准后恢复 .-> Attempt
   Task --> Op[task_operations]
-  Task --> Deleg[task_delegations] --> Child[子 Task / Run]
 ```
 
 | 表 | 作用 | 关键不变量 |
@@ -94,10 +92,9 @@ flowchart LR
 | `runs` | Task 下的执行 | 每个 Run 必须归属 Task：会话 Run 未带 Task 时触发器自动创建，无会话 Run 必须显式提供；Run 状态变化由触发器同步到 Task |
 | `run_attempts` | 一次实际执行 | 按序创建，Manifest 编译后以 SHA-256 锁定且不可变；重试新建 Attempt，不覆盖历史 |
 | `run_events` | 运行事件 | 先落库再推送；按整个 Run 的持久化顺序续传 |
-| `task_budget_accounts`、`attempt_budget_usage` | 累计预算与每个 Attempt 的预留/结算 | 预算范围可跨委派子 Task；Attempt 先预留后结算；Attempt 进入等待或终态而应用未结算时，触发器按时间戳兜底结算或释放 |
+| `task_budget_accounts`、`attempt_budget_usage` | 累计预算与每个 Attempt 的预留/结算 | 预算范围默认是 Task 自身；Attempt 先预留后结算；Attempt 进入等待或终态而应用未结算时，触发器按时间戳兜底结算或释放 |
 | `run_checkpoints` | 审批等待的恢复检查点 | 内容与摘要不可变；每次等待一个关联键；只能被一个恢复 Attempt 消费 |
 | `run_approval_requests` | 动作审批 | 绑定动作、参数摘要、资源、执行身份、数据版本和有效期；决定只能写一次；批准后从检查点新建 Attempt |
-| `task_delegations` | Agent 委派的父子 Task | 按父 Attempt + 请求摘要幂等；深度 1–4；子任务的角色与数据范围不超过父任务快照上限 |
 | `approvals` | 早期的审批记录 | 已由 `run_approval_requests` 取代，当前代码未读写 |
 
 ## 5. Agent 与发布治理
@@ -237,7 +234,7 @@ flowchart LR
 
 Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取消的 Run 接受显式重试：创建新 Attempt 并重新排队，原 Attempt 和事件保持不变。
 
-服务重启将失去 Worker 的活动 Attempt 收敛为失败，只恢复尚未执行的排队 Manifest；委派关系、审批等待和管理助手动作各自在启动时对账。浏览器使用稳定事件 ID 续传，不能用单 Attempt 的序号替代全 Run 顺序。
+服务重启将失去 Worker 的活动 Attempt 收敛为失败，只恢复尚未执行的排队 Manifest；审批等待和管理助手动作各自在启动时对账。浏览器使用稳定事件 ID 续传，不能用单 Attempt 的序号替代全 Run 顺序。
 
 ## 迁移入口
 
@@ -247,8 +244,9 @@ Run 和 Attempt 的普通状态转换不能从终态回退。只有失败或取�
 - [多入口 OIDC 事务](../../server/migrations/0020_multi_origin_oidc.sql)、[团队共享文件逻辑移除](../../server/migrations/0024_workspace_file_removal.sql)、[逻辑文件与版本](../../server/migrations/0025_workspace_file_versions.sql)。
 - [Agent 发布治理](../../server/migrations/0039_agent_release_governance.sql)、[自动任务](../../server/migrations/0040_agent_automations.sql)、[工具绑定修订](../../server/migrations/0047_tool_binding_revisions.sql)、[MCP 治理](../../server/migrations/0053_mcp_connector_governance.sql)。
 - [PF-01 Task 与外部操作基础](../../server/migrations/0050_task_operation_foundation.sql)、[无 Session 执行与 Task Artifact](../../server/migrations/0051_session_neutral_task_execution.sql)、[累计预算](../../server/migrations/0052_task_cumulative_budgets.sql)。
-- [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[Agent 委派](../../server/migrations/0063_controlled_agent_delegation.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
+- [持久化等待与审批](../../server/migrations/0061_persistent_wait_and_approval.sql)、[受控记忆](../../server/migrations/0062_controlled_memory.sql)、[执行身份](../../server/migrations/0064_execution_principals.sql)。
 - [Agent 数据平面](../../server/migrations/0072_agent_data_plane.sql)、[Agent 主动任务](../../server/migrations/0074_agent_owned_routines.sql)、[负责人错误码](../../server/migrations/0080_workspace_owner_errcode.sql)、[知识分段检索](../../server/migrations/0081_knowledge_chunks.sql)。
+- [删除 Agent 委派](../../server/migrations/0083_remove_agent_delegation.sql)：移除 `task_delegations` 与版本上的委派策略；历史子任务仍保留 `delegation` 来源类型，但不能重试。
 
 新增变更使用新的顺序迁移，保留已应用迁移；迁移运行器以咨询锁串行执行并校验已执行迁移的 SHA-256，修改已执行迁移会拒绝启动。应用回滚不会自动降低 Schema，至少保持上一版本兼容；破坏性清理需独立安排。操作流程见 [部署手册](../release/mac-mini-deployment-runbook.md)。
 

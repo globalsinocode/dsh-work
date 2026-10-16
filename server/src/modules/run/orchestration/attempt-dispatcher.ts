@@ -36,7 +36,7 @@ export class AttemptDispatcher {
     }
   }
 
-  /** Builds the Agent Manifest for an employee, Task, automation, routine or delegated Run and submits it. */
+  /** Builds the Agent Manifest for an employee, Task, automation or routine Run and submits it. */
   async dispatch(run: RunRecord, input: {
     prompt: string
     /** manifest 输入消息的重写（如续写指令）；缺省时使用 prompt。 */
@@ -57,8 +57,6 @@ export class AttemptDispatcher {
     attemptId?: string
     /** 任务预算对 limits 的上限钳制（AG-03 budget）。 */
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
-    /** PF-06 immutable parent/root lineage. */
-    delegation?: NonNullable<RuntimeManifest['delegation_context']>
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = this.deps.agents
@@ -79,14 +77,7 @@ export class AttemptDispatcher {
           maxOutputBytes: 65536,
           maxToolCalls: 20,
           timeoutSeconds: 300,
-          delegationPolicy: { allowedAgentVersionIds: [], maxDepth: 1, maxParallel: 1, timeoutSeconds: 120 },
         }
-    const delegationPolicy = agent.delegationPolicy ?? {
-      allowedAgentVersionIds: [],
-      maxDepth: 1,
-      maxParallel: 1,
-      timeoutSeconds: 120,
-    }
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)
     const authorization = input.authorization ?? await this.deps.authorization?.authorizeRuntime({
@@ -162,7 +153,6 @@ export class AttemptDispatcher {
       tools: [
         ...agent.runtimeTools.map(toCapabilityReference),
         ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(delegationPolicy.allowedAgentVersionIds.length ? [{ id: 'delegate_agent', version: '1.0.0' }] : []),
         ...(this.deps.memory && input.purpose !== 'agent-routine'
           ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
         ...agentDataToolRefs(agent),
@@ -189,15 +179,6 @@ export class AttemptDispatcher {
         contentDigest: memory.contentDigest,
         excerpt: memory.excerpt,
       })) } : {}),
-      ...(delegationPolicy.allowedAgentVersionIds.length ? {
-        delegation_policy: {
-          allowed_agent_version_ids: [...delegationPolicy.allowedAgentVersionIds],
-          max_depth: delegationPolicy.maxDepth,
-          max_parallel: delegationPolicy.maxParallel,
-          timeout_seconds: delegationPolicy.timeoutSeconds,
-        },
-      } : {}),
-      ...(input.delegation ? { delegation_context: input.delegation } : {}),
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),
