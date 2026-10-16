@@ -47,8 +47,9 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '查看' }).click()
   await page.getByRole('tab', { name: /版本历史/ }).click()
   // 草稿尚未发布：版本历史只列出草稿，没有回滚目标。
-  await expect(page.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
-  await expect(page.getByRole('button', { name: '回滚至此' })).toHaveCount(0)
+  const drawer = page.locator('.el-drawer').filter({ hasText: 'Agent 治理详情' })
+  await expect(drawer.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
+  await expect(drawer.getByRole('button', { name: '回滚至此' })).toHaveCount(0)
   const evidence = async () => data<{ systemPrompt: string; runtimeTools: string[]; mcpConnectorIds: string[] }>(
     await page.request.get(`/api/admin/v1/test/agent-capabilities/evidence?version_id=${version!.id}`),
   )
