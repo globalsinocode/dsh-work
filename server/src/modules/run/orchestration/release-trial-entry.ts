@@ -67,10 +67,10 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
   /**
    * Same Manifest builder as employee runs. Only three things differ: the
    * `agent-release-trial` purpose makes the builder authorize with the Agent's own grants
-   * (no employee or admin roles) and isolates external effects (approval-gated calls are
-   * refused, MCP and platform writes return trial_only), and there is no workspace, so no
-   * files or workspace memory. Knowledge, skills, tools, bindings, approvals, write policy
-   * and limits are exactly what production gets.
+   * capped by what its audience can reach (no admin roles) and isolates external effects
+   * (approval-gated calls are refused, MCP and platform writes return trial_only), and
+   * there is no workspace, so no files and, by design, no experience. Knowledge, skills,
+   * tools, bindings, approvals, write policy and limits are exactly what production gets.
    */
   private async dispatchTrialAttempt(run: RunRecord, userId: string, agentVersionId: string, message: string) {
     await this.dispatcher.dispatch(run, {

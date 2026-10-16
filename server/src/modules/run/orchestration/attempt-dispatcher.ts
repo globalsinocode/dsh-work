@@ -105,7 +105,9 @@ export class AttemptDispatcher {
           roleIds: authorization?.roleIds,
         })
       : []
-    // Memory belongs to a workspace; runs without one (release trials) get none.
+    // Experience is retrieved per person, workspace or organization. Runs without a
+    // workspace (release trials) get none by design: validation checks SOUL.md, skills,
+    // tools and access, not experience that differs per employee.
     const memoryContext = this.deps.memory && input.purpose !== 'agent-routine' && input.workspaceId
       ? await this.deps.memory.resolveContext({
           query: input.prompt,
