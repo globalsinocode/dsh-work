@@ -274,8 +274,7 @@ onMounted(async () => {
           <section class="agent-detail__section">
             <h3>岗位权限</h3>
             <p class="muted">Agent 以自己的身份工作，像员工一样由管理员授权；修改立即生效，不需要重新验证。</p>
-            <AgentAccessPanel v-if="authStore.identityProvider !== 'prototype-sso'" :agent-id="selectedAgent.id" :can-manage="authStore.canManage" @updated="handleAccessUpdated" />
-            <p v-else class="muted">原型模式不提供岗位权限配置。</p>
+            <AgentAccessPanel :agent-id="selectedAgent.id" :can-manage="authStore.canManage" @updated="handleAccessUpdated" />
           </section>
           <section class="agent-detail__section governance-status">
             <h3>治理状态</h3>
