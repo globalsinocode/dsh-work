@@ -16,6 +16,8 @@ const CONSEQUENTIAL_EVENTS = new Set([
 export class RunEventRecorder {
   private readonly eventWrites = new Map<string, Promise<void>>()
   private readonly assistantOutputs = new Map<string, string>()
+  /** 模型原始回复（不含平台追加的知识/记忆引用页脚），交给档案员整理用。 */
+  private readonly modelOutputs = new Map<string, string>()
   private readonly deps: OrchestrationDependencies
   private readonly budget: AttemptBudget
 
@@ -42,6 +44,7 @@ export class RunEventRecorder {
       this.eventWrites.delete(runId)
     }
     this.assistantOutputs.delete(attemptId)
+    this.modelOutputs.delete(attemptId)
   }
 
   /** Waits for every pending event write (service shutdown). */
@@ -102,6 +105,7 @@ export class RunEventRecorder {
         : event.display_message
       if (this.deps.memory) assistantContent = await this.deps.memory.addCitationFooter(event.attempt_id, assistantContent)
       this.assistantOutputs.set(event.attempt_id, assistantContent)
+      this.modelOutputs.set(event.attempt_id, event.display_message)
       if (run.sessionId) {
         await this.deps.conversations.appendMessage({
           sessionId: run.sessionId,
@@ -161,9 +165,11 @@ export class RunEventRecorder {
       // 项目空间 S2：任务线程的一次执行成功后交给档案员整理（非任务线程时无操作）。
       if (run.sessionId) {
         void this.deps.sessionSummaries?.scheduleAfterRun(run)
-        void this.deps.projectArchivist?.afterTaskRun(run, assistantOutput)
+        // 引用页脚是给读者的出处说明，不是任务成果，不进入档案。
+        void this.deps.projectArchivist?.afterTaskRun(run, this.modelOutputs.get(event.attempt_id) ?? assistantOutput)
       } else await this.onSystemRunTerminal(run, 'succeeded', assistantOutput)
       this.assistantOutputs.delete(event.attempt_id)
+      this.modelOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {
         await this.deps.operations?.appendAudit(run.requestedBy, 'skill.installation.tool.approval', run.id, event.safe_metadata['decision'] === 'allow_once' ? 'success' : 'blocked', event.trace_id, '安装预览工具权限检查；此授权不代表确认安装')

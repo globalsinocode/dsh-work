@@ -341,8 +341,9 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
           </h3>
           <span data-testid="panel-agent-count">{{ agentMembers.length }} 个 Agent</span>
         </div>
+        <!-- 归档空间不允许 Agent 变更，弹窗只剩只读列表（右栏已展示），因此不给入口；成员管理保留移除与转交等治理动作。 -->
         <button
-          v-if="currentUserRole === 'owner'"
+          v-if="currentUserRole === 'owner' && workspace.status !== 'archived'"
           data-testid="panel-manage-agents"
           class="workspace-info-panel__link"
           type="button"

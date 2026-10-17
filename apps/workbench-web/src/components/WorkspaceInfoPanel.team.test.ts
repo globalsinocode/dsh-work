@@ -172,6 +172,10 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     const archived = mountPanel({ workspace: { ...teamWorkspace, status: 'archived' } })
     expect(archived.find('[data-testid="panel-archived-tag"]').text()).toContain('已归档')
     expect(archived.find('.workspace-info-panel__footer').text()).toContain('只读')
+    // 归档后 Agent 不可变更，不给「管理 Agent」入口；「管理成员」保留移除与转交等治理动作。
+    const archivedOwner = mountPanel({ workspace: { ...teamWorkspace, status: 'archived' }, currentUserRole: 'owner' })
+    expect(archivedOwner.find('[data-testid="panel-manage-agents"]').exists()).toBe(false)
+    expect(archivedOwner.find('[data-testid="panel-manage-members"]').exists()).toBe(true)
   })
 
   it('renders no team member UI for a personal workspace (AC-23)', () => {

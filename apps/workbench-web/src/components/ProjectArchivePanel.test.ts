@@ -2,7 +2,7 @@ import ElementPlus, { ElMessageBox } from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { workbenchApi } from '@/api/client'
+import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type { ProjectArchiveVersion } from '@/types/domain'
 import ProjectArchivePanel from './ProjectArchivePanel.vue'
 
@@ -93,6 +93,65 @@ describe('ProjectArchivePanel（项目空间 S2）', () => {
     const meta = wrapper.get('[data-testid="project-archive-meta"]').text()
     expect(meta).toContain('第 4 版')
     expect(meta).toContain('林岚手动编辑')
+  })
+
+  it('re-applies the edit on top of a version the archivist saved meanwhile (人工验收 6.8)', async () => {
+    const conflict = new WorkbenchApiError({ code: 'state_conflict', message: '档案已被更新，请刷新后再修改' }, 409, '')
+    const archivistVersion = version({ versionId: 'warch-4', versionNo: 4, items: ['术语：安全库存', '缺货集中在高周转类目', '饮料类目缺货最严重'] })
+    vi.mocked(workbenchApi.getProjectArchive)
+      .mockResolvedValueOnce({ current: version(), archivistRunning: true })
+      .mockResolvedValueOnce({ current: archivistVersion, archivistRunning: false })
+    const save = vi.spyOn(workbenchApi, 'saveProjectArchive')
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(version({
+        versionId: 'warch-5', versionNo: 5, sourceKind: 'manual', sourceTasks: [], createdBy: { userId: 'u-2', displayName: '周宁' },
+        items: ['术语：安全库存', '缺货集中在高周转 SKU 类目', '饮料类目缺货最严重'],
+      }))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await buttonByText(wrapper, '编辑')[0]!.trigger('click')
+    await wrapper.get('textarea[aria-label="修改第 1 条"]').setValue('缺货集中在高周转 SKU 类目')
+    await buttonByText(wrapper, '保存')[0]!.trigger('click')
+    await flushPromises()
+
+    expect(save).toHaveBeenNthCalledWith(1, 'ws-team', { baseVersionNo: 3, items: ['缺货集中在高周转 SKU 类目', '术语：安全库存'] })
+    expect(save).toHaveBeenNthCalledWith(2, 'ws-team', {
+      baseVersionNo: 4,
+      items: ['术语：安全库存', '缺货集中在高周转 SKU 类目', '饮料类目缺货最严重'],
+    })
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="project-archive-meta"]').text()).toContain('第 5 版')
+    expect(wrapper.emitted('stale')).toBeUndefined()
+  })
+
+  it('keeps the draft in the new-item box when the edited item was changed by someone else', async () => {
+    const conflict = new WorkbenchApiError({ code: 'state_conflict', message: '档案已被更新' }, 409, '')
+    vi.mocked(workbenchApi.getProjectArchive)
+      .mockResolvedValueOnce({ current: version(), archivistRunning: false })
+      .mockResolvedValueOnce({ current: version({ versionId: 'warch-4', versionNo: 4, sourceKind: 'manual', items: ['缺货集中在饮料类目', '术语：安全库存'] }), archivistRunning: false })
+    const save = vi.spyOn(workbenchApi, 'saveProjectArchive').mockRejectedValueOnce(conflict)
+    const wrapper = mountPanel()
+    await flushPromises()
+    await buttonByText(wrapper, '编辑')[0]!.trigger('click')
+    await wrapper.get('textarea[aria-label="修改第 1 条"]').setValue('缺货集中在高周转 SKU 类目')
+    await buttonByText(wrapper, '保存')[0]!.trigger('click')
+    await flushPromises()
+
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('缺货集中在饮料类目')
+    expect(wrapper.find('textarea[aria-label="修改第 1 条"]').exists()).toBe(false)
+    expect((wrapper.get('textarea[aria-label="新条目"]').element as HTMLTextAreaElement).value).toBe('缺货集中在高周转 SKU 类目')
+  })
+
+  it('asks the host to refresh the space when a write is denied (空间已在别处归档)', async () => {
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
+    vi.spyOn(workbenchApi, 'saveProjectArchive')
+      .mockRejectedValueOnce(new WorkbenchApiError({ code: 'authorization_denied', message: '工作空间不存在、已归档或当前用户不是成员' }, 403, ''))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await buttonByText(wrapper, '删除')[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('stale')).toHaveLength(1)
   })
 
   it('confirms before deleting and appends a new item', async () => {

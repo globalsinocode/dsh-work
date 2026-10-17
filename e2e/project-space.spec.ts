@@ -136,4 +136,15 @@ test('PS-E2E-05 项目档案查看、编辑与回退', async ({ page }) => {
   await expect(page.getByTestId('panel-employee-section')).toBeVisible()
   await expect(page.getByTestId('panel-archivist-row')).toContainText('项目档案员')
   await expect(page.getByTestId('panel-archivist-row')).toContainText('系统')
+
+  // 收起状态是本浏览器偏好：两者都收起后刷新，仍保持收起（人工验收 6.9）。
+  await briefToggle.click()
+  await membersToggle.click()
+  await expect(briefToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(membersToggle).toHaveAttribute('aria-expanded', 'false')
+  await page.reload()
+  await expect(page.getByTestId('panel-archivist-row')).toBeVisible()
+  await expect(membersToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(briefToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByTestId('project-brief-content')).toBeHidden()
 })

@@ -4,9 +4,10 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 
-import { workbenchApi } from '@/api/client'
+import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type {
   ProjectTask,
+  ProjectTaskAction,
   ProjectTaskStatus,
   WorkspaceAgentMember,
   WorkspaceFile,
@@ -29,7 +30,11 @@ const props = defineProps<{
   files: WorkspaceFile[]
 }>()
 
-const emit = defineEmits<{ count: [value: number] }>()
+const emit = defineEmits<{
+  count: [value: number]
+  /** 写入被拒绝（如空间已在别处归档、角色变化）：宿主据此刷新空间状态与角色。 */
+  stale: []
+}>()
 
 const router = useRouter()
 const tasks = ref<ProjectTask[]>([])
@@ -64,10 +69,34 @@ async function load() {
   }
 }
 
+/**
+ * 写入失败后的收敛：页面不实时推送空间状态，停留在旧页面时（如空间已被负责人归档）
+ * 写入会被服务端拒绝；此时重新拉取列表并通知宿主刷新空间，写入口随之隐藏（人工验收 7.2）。
+ */
+function onWriteFailed(error: unknown) {
+  if (!(error instanceof WorkbenchApiError) || (error.status !== 403 && error.status !== 409)) return
+  void load()
+  emit('stale')
+}
+
 watch(() => props.workspaceId, () => {
   tasks.value = []
   void load()
 }, { immediate: true })
+
+// 空间归档或本人角色变化后，已加载任务的 allowedActions 已过期：先按 canWrite 收起写入口，再重新拉取。
+watch(() => props.canWrite, (writable) => {
+  if (!writable) {
+    editor.value.open = false
+    completion.value.open = false
+  }
+  void load()
+})
+
+/** 写动作同时要求服务端允许与当前仍可写（归档、降为只读后立即隐藏，不等重新加载）。 */
+function can(task: ProjectTask, action: ProjectTaskAction) {
+  return props.canWrite && task.allowedActions.includes(action)
+}
 
 // ---------------------------------------------------------------------------
 // 新建 / 编辑
@@ -140,6 +169,7 @@ async function saveTask() {
   } catch (error) {
     // 保存失败保留表单输入。
     notifyActionFailure(editor.value.taskId ? '更新任务' : '创建任务', `项目空间“${props.workspaceName}”`, error, '检查承接者与引用文件后重试。')
+    onWriteFailed(error)
   } finally {
     saving.value = false
   }
@@ -159,6 +189,7 @@ async function startTask(task: ProjectTask) {
     openThread(started)
   } catch (error) {
     notifyActionFailure('启动任务', `任务“${task.title}”`, error, '确认承接的 Agent 仍可用后重试。')
+    onWriteFailed(error)
   } finally {
     busyTaskId.value = ''
   }
@@ -178,6 +209,7 @@ async function setStatus(task: ProjectTask, status: 'todo' | 'in_progress') {
     await load()
   } catch (error) {
     notifyActionFailure('更新任务状态', `任务“${task.title}”`, error, '刷新后重试。')
+    onWriteFailed(error)
   } finally {
     busyTaskId.value = ''
   }
@@ -208,6 +240,7 @@ async function completeTask() {
     await load()
   } catch (error) {
     notifyActionFailure('完成任务', `任务“${task.title}”`, error, '检查交付文件后重试。')
+    onWriteFailed(error)
   } finally {
     completing.value = false
   }
@@ -229,6 +262,7 @@ async function removeTask(task: ProjectTask) {
     await load()
   } catch (error) {
     notifyActionFailure('移除任务', `任务“${task.title}”`, error, 'Agent 正在执行时请等待完成或先停止。')
+    onWriteFailed(error)
   }
 }
 
@@ -285,7 +319,7 @@ defineExpose({ reload: load })
         </div>
         <div class="project-task__actions">
           <el-button
-            v-if="task.allowedActions.includes('start')"
+            v-if="can(task, 'start')"
             type="primary"
             size="small"
             :loading="busyTaskId === task.id"
@@ -294,7 +328,7 @@ defineExpose({ reload: load })
             交给 Agent 执行
           </el-button>
           <el-button v-if="task.sessionId" size="small" @click="openThread(task)">打开任务线程</el-button>
-          <template v-if="task.allowedActions.includes('set_status')">
+          <template v-if="can(task, 'set_status')">
             <el-button
               v-if="task.status === 'todo'"
               size="small"
@@ -313,7 +347,7 @@ defineExpose({ reload: load })
             </el-button>
           </template>
           <el-button
-            v-if="task.allowedActions.includes('complete') && task.status !== 'done'"
+            v-if="can(task, 'complete') && task.status !== 'done'"
             size="small"
             type="success"
             plain
@@ -321,8 +355,8 @@ defineExpose({ reload: load })
           >
             完成
           </el-button>
-          <el-button v-if="task.allowedActions.includes('edit')" size="small" text @click="openEdit(task)">编辑</el-button>
-          <el-button v-if="task.allowedActions.includes('remove')" size="small" text type="danger" @click="removeTask(task)">移除</el-button>
+          <el-button v-if="can(task, 'edit')" size="small" text @click="openEdit(task)">编辑</el-button>
+          <el-button v-if="can(task, 'remove')" size="small" text type="danger" @click="removeTask(task)">移除</el-button>
         </div>
       </li>
     </ul>

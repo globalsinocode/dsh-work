@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
-import { archiveDigest, archiveLimits, normalizeArchiveItems, type ArchiveInputMaterial } from '../../../domain/project-archive.ts'
+import { applyArchivistChange, archiveDigest, archiveLimits, normalizeArchiveItems, type ArchiveInputMaterial, type ArchivistChange } from '../../../domain/project-archive.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
@@ -45,7 +45,8 @@ export interface ArchiveUpdate {
   materials: ArchiveInputMaterial[]
 }
 
-export type ArchiveUpdateOutcome = { items: string[] } | { failure: string }
+/** 档案员的整理结果（新增与改写，由本服务在基于的版本上应用），或失败原因。 */
+export type ArchiveUpdateOutcome = { change: ArchivistChange } | { failure: string }
 
 export interface ArchiveUpdateResult {
   /** false：该 Run 不是（或已不再是）档案整理运行。 */
@@ -318,7 +319,16 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
          where tenant_id = ${tenantId} and update_id = ${updateId}
          order by created_at, id
       `
-      if ('failure' in outcome) {
+      const [current] = await this.versionRows(transaction, workspaceId, 1)
+      const currentNo = current?.versionNo ?? 0
+      if (!('failure' in outcome) && currentNo !== state.baseVersionNo) {
+        // 人工优先：整理期间档案已被修改，丢弃本次输出，基于最新版本重新整理。
+        await releaseInputs(transaction, updateId)
+        await clearState(transaction, workspaceId)
+        return { handled: true, workspaceId, reschedule: true }
+      }
+      const applied = 'failure' in outcome ? { error: outcome.failure } : applyArchivistChange(current?.items ?? [], outcome.change)
+      if ('error' in applied) {
         await transaction`
           update workspace_archive_inputs
              set update_id = null, attempts = attempts + 1,
@@ -328,19 +338,12 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
         await clearState(transaction, workspaceId)
         return { handled: true, workspaceId, reschedule: false }
       }
-      const [current] = await this.versionRows(transaction, workspaceId, 1)
-      const currentNo = current?.versionNo ?? 0
-      if (currentNo !== state.baseVersionNo) {
-        // 人工优先：整理期间档案已被修改，丢弃本次输出，基于最新版本重新整理。
-        await releaseInputs(transaction, updateId)
-        await clearState(transaction, workspaceId)
-        return { handled: true, workspaceId, reschedule: true }
-      }
-      const unchanged = current !== undefined && current.items.length === outcome.items.length
-        && current.items.every((item, index) => item === outcome.items[index])
-      if (!unchanged && !(current === undefined && outcome.items.length === 0)) {
+      const outcomeItems = applied.items
+      const unchanged = current !== undefined && current.items.length === outcomeItems.length
+        && current.items.every((item, index) => item === outcomeItems[index])
+      if (!unchanged && !(current === undefined && outcomeItems.length === 0)) {
         await this.insertVersion(transaction, workspaceId, currentNo + 1, {
-          items: outcome.items,
+          items: outcomeItems,
           sourceKind: 'archivist',
           sourceRunId: runId,
           sourceTaskIds: [...new Set(inputs.map(input => input.taskId))],

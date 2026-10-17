@@ -3,14 +3,15 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 
-import { workbenchApi } from '@/api/client'
+import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type { ProjectArchive, ProjectArchiveVersion } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 
 /**
  * 项目空间 S2：档案页签（docs/design/project-space-plan.md 第 7 节）。
  * 档案是条目列表，由项目档案员在任务完成后整理，非只读成员可添加、编辑、删除和回退；
- * 每次保存生成新版本并携带基于的版本号，版本已变化时服务端返回 409。
+ * 每次保存生成新版本并携带基于的版本号，版本已变化时服务端返回 409；
+ * 前端收到 409 时把这一次修改重新应用到最新版本后再保存（人工优先，人工验收 6.6/6.8）。
  * 档案只在本页签展示，其他页面不提示。
  */
 const props = defineProps<{
@@ -20,7 +21,11 @@ const props = defineProps<{
   canWrite: boolean
 }>()
 
-const emit = defineEmits<{ count: [value: number] }>()
+const emit = defineEmits<{
+  count: [value: number]
+  /** 写入被拒绝（如空间已在别处归档、角色变化）：宿主据此刷新空间状态与角色。 */
+  stale: []
+}>()
 
 const archive = ref<ProjectArchive | null>(null)
 const loading = ref(false)
@@ -66,23 +71,69 @@ function applyVersion(version: ProjectArchiveVersion) {
   emit('count', version.items.length)
 }
 
-/** 以整份条目保存为新版本；失败时保留输入，返回是否成功。 */
-async function saveItems(next: string[], action: string): Promise<boolean> {
-  if (!props.canWrite || saving.value) return false
+/**
+ * 一次人工修改：在给定条目上应用本次修改，得到新条目；无法应用（要修改的条目已不在）时返回 null。
+ * 以操作而不是整份结果保存，档案在编辑期间被档案员或其他成员更新时，可以把这一次修改重新落到最新版本上。
+ */
+type ArchiveChange = (base: string[]) => string[] | null
+
+interface ChangeHooks {
+  /** 已保存或最新档案已包含本次修改；与展示新版本在同一时刻执行，避免输入框先随新版本重绘再关闭。 */
+  settled: () => void
+  /** 要修改的条目已被改掉或删掉；与展示最新档案在同一时刻执行。 */
+  stale?: () => void
+}
+
+/**
+ * 以整份条目保存为新版本，失败时保留输入。
+ * 版本已变化（409）时人工优先：取最新档案，把本次修改重新应用后再保存一次。
+ */
+async function saveChange(change: ArchiveChange, action: string, hooks: ChangeHooks) {
+  if (!props.canWrite || saving.value) return
   saving.value = true
   try {
-    applyVersion(await workbenchApi.saveProjectArchive(props.workspaceId, {
-      baseVersionNo: current.value?.versionNo ?? 0,
-      items: next,
-    }))
-    ElMessage.success(`已保存为第 ${current.value?.versionNo} 版`)
-    return true
+    const first = change(items.value)
+    if (!first) return
+    try {
+      applyVersion(await saveVersion(current.value?.versionNo ?? 0, first))
+      hooks.settled()
+      ElMessage.success(`已保存为第 ${current.value?.versionNo} 版`)
+      return
+    } catch (error) {
+      if (!(error instanceof WorkbenchApiError && error.status === 409)) throw error
+    }
+    const latest = await workbenchApi.getProjectArchive(props.workspaceId)
+    const latestItems = latest.current?.items ?? []
+    const rebased = change(latestItems)
+    if (!rebased || sameItems(rebased, latestItems)) {
+      applyArchive(latest)
+      if (rebased) hooks.settled()
+      else hooks.stale?.()
+      return
+    }
+    applyVersion(await saveVersion(latest.current?.versionNo ?? 0, rebased))
+    hooks.settled()
+    ElMessage.success(`档案刚被更新，已在最新内容上保存你的修改（第 ${current.value?.versionNo} 版）`)
   } catch (error) {
-    notifyActionFailure(action, `项目空间“${props.workspaceName}”的档案`, error, '档案可能已被其他成员或档案员更新，刷新页面后重试。')
-    return false
+    notifyActionFailure(action, `项目空间“${props.workspaceName}”的档案`, error, '档案可能已被其他成员或档案员同时更新，请稍后重试。')
+    if (!(error instanceof WorkbenchApiError && error.status === 409)) emit('stale')
   } finally {
     saving.value = false
   }
+}
+
+function saveVersion(baseVersionNo: number, next: string[]) {
+  return workbenchApi.saveProjectArchive(props.workspaceId, { baseVersionNo, items: next })
+}
+
+function applyArchive(value: ProjectArchive) {
+  requestSeq++
+  archive.value = value
+  emit('count', value.current?.items.length ?? 0)
+}
+
+function sameItems(left: string[], right: string[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index])
 }
 
 function startEdit(index: number) {
@@ -109,7 +160,21 @@ async function saveEdit() {
     cancelEdit()
     return
   }
-  if (await saveItems(items.value.map((item, position) => (position === index ? text : item)), '保存档案条目')) cancelEdit()
+  const original = items.value[index]!
+  await saveChange((base) => {
+    const position = base.indexOf(original)
+    return position < 0 ? null : base.map((item, at) => (at === position ? text : item))
+  }, '保存档案条目', {
+    settled: cancelEdit,
+    stale: () => {
+      // 要改的那条已被别人改掉或删掉：输入挪到新条目框，避免丢失。
+      const draft = editDraft.value
+      cancelEdit()
+      adding.value = true
+      addDraft.value = draft
+      ElMessage.warning('你修改的条目刚被其他成员或档案员改动，已显示最新档案；你的内容放在“新条目”里，确认后可添加')
+    },
+  })
 }
 
 async function removeItem(index: number) {
@@ -124,7 +189,8 @@ async function removeItem(index: number) {
   } catch {
     return
   }
-  await saveItems(items.value.filter((_, position) => position !== index), '删除档案条目')
+  // 这一条已被别人删掉时视为完成。
+  await saveChange(base => base.filter(item => item !== text), '删除档案条目', { settled: () => {} })
 }
 
 function startAdd() {
@@ -145,7 +211,7 @@ async function saveNew() {
     ElMessage.warning('请填写条目内容')
     return
   }
-  if (await saveItems([...items.value, text], '添加档案条目')) cancelAdd()
+  await saveChange(base => (base.includes(text) ? base : [...base, text]), '添加档案条目', { settled: cancelAdd })
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +272,7 @@ async function rollbackTo(version: ProjectArchiveVersion) {
     ElMessage.success(`已回退到第 ${version.versionNo} 版，生成第 ${current.value?.versionNo} 版`)
   } catch (error) {
     notifyActionFailure('回退项目档案', `项目空间“${props.workspaceName}”的档案`, error, '档案可能已被更新，重新打开版本历史后重试。')
+    if (!(error instanceof WorkbenchApiError && error.status === 409)) emit('stale')
   } finally {
     saving.value = false
   }
@@ -268,7 +335,7 @@ defineExpose({ reload: load })
     </el-alert>
     <div v-else class="project-archive__body">
       <ol v-if="items.length" class="project-archive__list" aria-label="档案条目">
-        <li v-for="(item, index) in items" :key="`${current?.versionId}-${index}`" class="project-archive__item" data-testid="project-archive-item">
+        <li v-for="(item, index) in items" :key="item" class="project-archive__item" data-testid="project-archive-item">
           <span class="project-archive__index" aria-hidden="true">{{ index + 1 }}</span>
           <template v-if="editIndex === index">
             <el-input

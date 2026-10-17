@@ -124,16 +124,16 @@ test('候选人搜索支持按姓名过滤，离职/停用/非业务/无应用�
   await createDirectoryUser('user-1a-filter-disabled', '员工停用张伟', { status: 'disabled' })
   await createDirectoryUser('user-1a-filter-nonbusiness', '员工平台张伟', { business: false })
   await createDirectoryUser('user-1a-filter-no-access', '员工无权张伟', { grantWorkbench: false })
-  await createDirectoryUser('user-1a-filter-local', '员工本地方伟', { provider: 'local' })
+  // 独立账号（本地）员工与 AI Hub 员工同等可选。
+  await createDirectoryUser('user-1a-filter-local', '员工本地张伟', { provider: 'local' })
 
   const search = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/member-candidates?query=${encodeURIComponent('张伟')}`, { as: ownerId })
   assert.equal(search.status, 200)
   const ids = (search.body.data as { items: Array<{ id: string }> }).items.map(item => item.id)
-  assert.deepEqual(ids, ['user-1a-filter-match-a', 'user-1a-filter-match-b'])
+  assert.deepEqual(ids, ['user-1a-filter-match-a', 'user-1a-filter-match-b', 'user-1a-filter-local'])
   assert.ok(!ids.includes('user-1a-filter-disabled'))
   assert.ok(!ids.includes('user-1a-filter-nonbusiness'))
   assert.ok(!ids.includes('user-1a-filter-no-access'))
-  assert.ok(!ids.includes('user-1a-filter-local'))
   assert.ok(!ids.includes('user-1a-filter-other'))
 })
 
@@ -340,7 +340,7 @@ test('已有成员以不同角色重复添加被明确拒绝（角色变更走 P
   assert.match(errorMessage(result), /已是空间成员/)
 })
 
-test('停用、非业务员工、无应用访问资格与未知员工均不能添加', async () => {
+test('停用、非业务员工、无应用访问资格与未知员工均不能添加；独立账号员工可以添加', async () => {
   const workspaceId = 'ws-1a-add-invalid'
   const ownerId = 'user-1a-add-inv-owner'
   await createDirectoryUser(ownerId, '无效目标负责人')
@@ -375,8 +375,7 @@ test('停用、非业务员工、无应用访问资格与未知员工均不能�
     as: ownerId,
     body: { userId: 'user-1a-add-inv-local', role: 'member' },
   })
-  assert.equal(local.status, 409)
-  assert.match(errorMessage(local), /业务员工目录/)
+  assert.equal(local.status, 201, JSON.stringify(local.body))
 
   const missing = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
     as: ownerId,

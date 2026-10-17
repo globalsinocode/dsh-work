@@ -2,7 +2,7 @@ import ElementPlus, { ElMessageBox } from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { workbenchApi } from '@/api/client'
+import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type { ProjectTask, WorkspaceAgentMember, WorkspaceMember } from '@/types/domain'
 import ProjectTaskPanel from './ProjectTaskPanel.vue'
 
@@ -75,6 +75,23 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     const wrapper = mountPanel({ canWrite: false })
     await flushPromises()
     expect(wrapper.find('[data-testid="project-task-create"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
+  })
+
+  it('hides task write actions as soon as the space becomes read-only and reloads the list', async () => {
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="project-task-row"] button').map(button => button.text())).toEqual(
+      expect.arrayContaining(['编辑', '移除']),
+    )
+
+    // 归档后服务端不再给写动作；重新拉取前写入口也不能留在页面上。
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({ allowedActions: [] })])
+    await wrapper.setProps({ canWrite: false })
+    expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
+    await flushPromises()
+    expect(workbenchApi.listProjectTasks).toHaveBeenCalledTimes(2)
     expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
   })
 
@@ -169,5 +186,20 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     await flushPromises()
     expect(confirm).toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('reloads and asks the host to refresh when a write is denied on a stale page (人工验收 7.2)', async () => {
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
+    vi.spyOn(workbenchApi, 'removeProjectTask')
+      .mockRejectedValueOnce(new WorkbenchApiError({ code: 'authorization_denied', message: '工作空间不存在、已归档或当前用户不是成员' }, 403, ''))
+    const wrapper = mountPanel()
+    await flushPromises()
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({ allowedActions: [] })])
+    await wrapper.findAll('button').find(button => button.text() === '移除')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('stale')).toHaveLength(1)
+    expect(workbenchApi.listProjectTasks).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
   })
 })

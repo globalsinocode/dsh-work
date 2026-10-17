@@ -893,6 +893,15 @@ function onWorkspaceStatusChanged() {
   void contentStore.refresh()
 }
 
+/**
+ * 任务或档案写入被拒绝：页面不实时推送空间状态，可能是空间已在别处归档或本人角色已变化。
+ * 刷新空间与成员名册，只读态与写入口随服务端状态收敛（人工验收 7.2）。
+ */
+function onProjectContentStale() {
+  void contentStore.refresh()
+  void loadWorkspaceMembers()
+}
+
 onMounted(() => {
   void contentStore.refresh()
 })
@@ -1082,6 +1091,7 @@ watch(
           :agent-members="agentMembers"
           :files="workspace.files"
           @count="projectTaskCount = $event"
+          @stale="onProjectContentStale"
         />
 
         <ProjectArchivePanel
@@ -1090,6 +1100,7 @@ watch(
           :workspace-name="workspace.name"
           :can-write="canWriteTeamContent"
           @count="projectArchiveCount = $event"
+          @stale="onProjectContentStale"
         />
 
         <section

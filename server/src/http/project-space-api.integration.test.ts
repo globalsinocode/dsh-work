@@ -136,6 +136,17 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.other })).status, 403)
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 200)
   assert.equal(((await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.member })).body.data as unknown[]).length, 0)
+
+  // 归档后任务只读：负责人与创建人看到的任务都不再带任何写动作。
+  const kept = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '归档前的任务', assignee: { type: 'employee', id: ws.member } },
+  })
+  assert.equal(kept.status, 201)
+  await archive(ws.id)
+  for (const as of [ws.owner, ws.member]) {
+    const archivedList = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as })
+    assert.deepEqual((archivedList.body.data as TaskView[]).map(item => item.allowedActions), [[]])
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -355,7 +366,7 @@ test('项目档案员：员工任务完成后整理，整理期间完成的任�
   assert.equal(manual.status, 200)
 
   // 第一次整理完成时档案已被修改：输出被丢弃，基于最新版本重新整理（两项成果一起）。
-  runtime.archiveReply = () => JSON.stringify({ items: ['不应写入的旧基线输出'] })
+  runtime.archiveReply = () => JSON.stringify({ add: [{ text: '不应写入的旧基线输出', why_new: '旧基线' }], update: [] })
   runtime.releaseAll()
   const [, run2] = await waitForArchiveRuns(ws.id, 2)
   const manifest2 = await waitForManifest(run2!)
@@ -364,7 +375,8 @@ test('项目档案员：员工任务完成后整理，整理期间完成的任�
   assert.match(manifest2.input.message, /确认到货承诺/)
   assert.equal((await archiveVersions(ws)).length, 1)
 
-  runtime.archiveReply = () => '```json\n{"items":["人工条目","供应商名单已按区域分组","到货承诺 5 天"]}\n```'
+  // 档案员只给新增：与现有条目重复的新增被略去，人工条目原样保留在最前。
+  runtime.archiveReply = () => '```json\n{"add":[{"text":"供应商名单已按区域分组","why_new":"分组结论"},{"text":"人工条目。","why_new":"重复"},{"text":"到货承诺 5 天","why_new":"承诺时长"}],"update":[]}\n```'
   runtime.releaseAll()
   const versions = await waitForArchiveVersions(ws, 2)
   assert.deepEqual(pick(versions[0], ['versionNo', 'sourceKind', 'items', 'createdBy']), {
@@ -389,7 +401,7 @@ test('项目档案员：无效输出不写入，成果随下一次触发重试',
   await waitForArchivistIdle(ws)
   assert.equal((await archiveVersions(ws)).length, 0)
 
-  runtime.archiveReply = () => JSON.stringify({ items: ['促销备货不是缺货主因'] })
+  runtime.archiveReply = () => JSON.stringify({ add: [{ text: '促销备货不是缺货主因', why_new: '新结论' }], update: [] })
   await completeEmployeeTask(ws, '复核库存口径', '口径一致')
   const [, run2] = await waitForArchiveRuns(ws.id, 2)
   const manifest2 = await waitForManifest(run2!)
@@ -404,7 +416,7 @@ test('Agent 任务：执行携带当前档案版本，成功后成果交给档�
   await drainRuntime()
   const ws = await seedSpace('archive-agent')
   const agentMemberId = await joinAgent(ws, 'archive-agent')
-  runtime.archiveReply = () => JSON.stringify({ items: ['术语：缺货率按周统计', '分析结论已记录'] })
+  runtime.archiveReply = () => JSON.stringify({ add: [{ text: '分析结论已记录', why_new: '新进展' }], update: [] })
   await api('PUT', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.owner, body: { baseVersionNo: 0, items: ['术语：缺货率按周统计'] } })
 
   const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {

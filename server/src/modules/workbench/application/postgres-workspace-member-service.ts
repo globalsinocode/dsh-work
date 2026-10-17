@@ -99,7 +99,6 @@ export class PostgresWorkspaceMemberService {
         from users u
        where u.tenant_id = ${tenantId}
          and u.status = 'active'
-         and u.identity_provider = 'ai-hub'
          and u.business_user = true
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
          and exists (${this.database.unsafe(workbenchAccessPredicate)})
@@ -580,13 +579,14 @@ export class PostgresWorkspaceMemberService {
   /**
    * Rejects employees outside the addable directory (TW-01): active business
    * employees with current workbench access, same criterion requireIdentity
-   * applies for the workbench:use permission.
+   * applies for the workbench:use permission. AI Hub and local (独立账号)
+   * employees are equally addable.
    */
   private async assertAddableEmployee(userId: string) {
     const [row] = await this.database<{ reason: string | null }[]>`
       select case
         when u.status <> 'active' then 'disabled'
-        when u.identity_provider <> 'ai-hub' or not u.business_user then 'directory'
+        when not u.business_user then 'directory'
         when not exists (${this.database.unsafe(workbenchAccessPredicate)}) then 'no_access'
         else null
       end as reason
