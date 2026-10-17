@@ -1036,3 +1036,75 @@ test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403�
   // 说明：`authorizeTeamRunExecution` 里「成员在读两次之间被移除」的那条（原 500）只能在竞态窗口
   // 触发，无法在集成用例里稳定构造；它与上面第 3 条同处一个方法、同一改造方式，故未单独构造。
 })
+
+// ---------------------------------------------------------------------------
+// 项目空间 S0：团队交付边界 = 全体现任成员
+// ---------------------------------------------------------------------------
+
+test('项目空间 S0：团队 Run 角色只取 Agent 授权，数据范围取全体现任成员交集', async () => {
+  const workspaceId = `ws-s0-audience-${suffix}`
+  const versionId = `${workspaceId}-version`
+  const agentId = `${versionId}-agent`
+  const principalId = `principal-agent-${agentId}`
+  const ownerId = `user-s0-owner-${suffix}`
+  const memberId = `user-s0-member-${suffix}`
+  const narrowId = `user-s0-narrow-${suffix}`
+  const scopeA = `scope-s0-a-${suffix}`
+  const scopeB = `scope-s0-b-${suffix}`
+  await createUser(ownerId, 'S0 负责人')
+  await createUser(memberId, 'S0 成员')
+  await createUser(narrowId, 'S0 窄范围员工')
+  for (const [userId, scopes] of [[ownerId, [scopeA, scopeB]], [memberId, [scopeA, scopeB]], [narrowId, [scopeA]]] as const) {
+    for (const scope of scopes) {
+      await database`
+        insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+        values (${`grant-${randomUUID()}`}, ${tenantId}, 'user', ${userId}, 'capability', ${scope})
+      `
+    }
+  }
+  await createTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  await seedAuthorizableAgent(workspaceId, versionId)
+  // Agent 另持有成员都不具备的岗位角色，以及 A、B 两个数据范围。
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${principalId}, 'role-platform-admin')
+  `
+  for (const scope of [scopeA, scopeB]) {
+    await database`
+      insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+      values (${tenantId}, ${principalId}, ${scope})
+    `
+  }
+  const run = () => authorization.authorizeTeamRunExecution({ userId: memberId, workspaceId, agentVersionId: versionId })
+
+  const full = await run()
+  assert.ok(full.roleIds.includes('role-platform-admin'), '角色只取 Agent 授权，不与发起人求交')
+  assert.ok(full.dataScopes.includes(scopeA) && full.dataScopes.includes(scopeB))
+
+  // 加入只具备 A 的员工（只读成员同样计入交付边界）：B 不再可交付。
+  await database`
+    insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
+    values (${tenantId}, ${workspaceId}, ${narrowId}, 'viewer', ${ownerId})
+  `
+  const narrowed = await run()
+  assert.ok(narrowed.dataScopes.includes(scopeA))
+  assert.ok(!narrowed.dataScopes.includes(scopeB), '共同数据范围随成员加入收紧')
+  assert.ok(narrowed.roleIds.includes('role-platform-admin'), '岗位角色不随成员组成变化')
+
+  // 停用账号不能读取任何内容，不计入交付边界。
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${narrowId}`
+  assert.ok((await run()).dataScopes.includes(scopeB))
+  await database`update users set status = 'active' where tenant_id = ${tenantId} and id = ${narrowId}`
+
+  // 移除后恢复（只影响新的授权决策）。
+  await database`delete from workspace_members where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${narrowId}`
+  assert.ok((await run()).dataScopes.includes(scopeB))
+
+  // 个人请求保持原契约：角色仍与员工求交。
+  const standalone = await authorization.authorizeRuntime({ userId: memberId, agentVersionId: versionId })
+  assert.ok(!standalone.roleIds.includes('role-platform-admin'))
+  assert.ok(standalone.dataScopes.includes(scopeB))
+})

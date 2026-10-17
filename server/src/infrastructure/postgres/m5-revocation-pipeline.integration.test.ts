@@ -543,6 +543,49 @@ test('team_auth_revision 兜底：无事件行的修订变更仍触发全量复�
   assert.equal((await runRow(runId)).status, 'cancelled')
 })
 
+test('项目空间 S0：加入数据范围更小的成员后，清扫取消快照超出共同范围的运行', async () => {
+  const ws = uniqueWorkspace('s0-narrow')
+  const ownerId = `${ws}-owner`
+  const userId = `${ws}-user`
+  const narrowId = `${ws}-narrow`
+  const versionId = `${ws}-version`
+  const scope = `${ws}-scope`
+  await seedUser(ownerId, 'S0 负责人')
+  await seedUser(userId, 'S0 成员')
+  await seedUser(narrowId, 'S0 窄范围员工')
+  for (const subject of [ownerId, userId]) {
+    await database`
+      insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+      values (${`grant-${subject}`}, ${tenantId}, 'user', ${subject}, 'capability', ${scope})
+    `
+  }
+  await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId, role: 'member' }])
+  const { agentId } = await seedAgent(ws, versionId)
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, ${scope})
+  `
+  await grantAgentVersion(ws, versionId)
+  await addAgentMemberRow(ws, `${ws}-wam`, agentId, versionId)
+  const sessionId = `${ws}-session`
+  await createSession(sessionId, ws, userId, versionId)
+  const scopedRun = `${ws}-run-scoped`
+  const plainRun = `${ws}-run-plain`
+  await createRunWithAttempt({ id: scopedRun, sessionId, requestedBy: userId, status: 'queued', agentVersionId: versionId, workspaceId: ws, dataScopes: [scope] })
+  await createRunWithAttempt({ id: plainRun, sessionId, requestedBy: userId, status: 'queued', agentVersionId: versionId, workspaceId: ws })
+  await sweep.sweepOnce()
+  assert.equal((await runRow(scopedRun)).status, 'queued', '成员未变化时不取消')
+
+  await database`
+    insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
+    values (${tenantId}, ${ws}, ${narrowId}, 'viewer', ${ownerId})
+  `
+  await bumpRevision(ws)
+  await sweep.sweepOnce()
+  await waitFor(async () => (await runRow(scopedRun)).status === 'cancelled', '超出共同范围的运行被取消')
+  assert.equal((await runRow(plainRun)).status, 'queued', '未使用被收紧范围的运行不受影响')
+})
+
 // ---------------------------------------------------------------------------
 // 5.2 执行前复核
 // ---------------------------------------------------------------------------
@@ -1477,6 +1520,7 @@ async function createRunWithAttempt(input: {
   status: 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
   agentVersionId: string
   workspaceId: string
+  dataScopes?: string[]
 }) {
   const attemptId = `${input.id}-attempt`
   const manifest = {
@@ -1489,7 +1533,7 @@ async function createRunWithAttempt(input: {
     workspace_id: input.workspaceId,
     agent_version_id: input.agentVersionId,
     user_context: { user_id: input.requestedBy, tenant_id: tenantId, role_ids: [] },
-    skills: [], data_scopes: [], input: { message: 'revocation fixture', file_mounts: [] },
+    skills: [], data_scopes: input.dataScopes ?? [], input: { message: 'revocation fixture', file_mounts: [] },
   }
   // runs_current_attempt_fk is deferrable — both rows must exist at commit.
   await database.begin(async transaction => {

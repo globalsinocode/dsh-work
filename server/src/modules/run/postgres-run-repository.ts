@@ -904,12 +904,13 @@ export class PostgresRunRepository implements RunRepository {
   }
 
   async listActiveRunsInWorkspace(tenantId: string, workspaceId: string): Promise<WorkspaceActiveRun[]> {
-    const rows = await this.database<(RunRow & { agentVersionId: string })[]>`
+    const rows = await this.database<(RunRow & { agentVersionId: string; dataScopes: string[] })[]>`
       select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt",
-             coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') as "agentVersionId"
+             coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') as "agentVersionId",
+             coalesce(ra.manifest->'data_scopes', '[]'::jsonb) as "dataScopes"
         from runs r
         join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
         left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
@@ -920,7 +921,7 @@ export class PostgresRunRepository implements RunRepository {
          and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
        order by r.created_at asc
     `
-    return rows.map(row => ({ ...mapRun(row), agentVersionId: row.agentVersionId }))
+    return rows.map(row => ({ ...mapRun(row), agentVersionId: row.agentVersionId, dataScopes: row.dataScopes }))
   }
 }
 

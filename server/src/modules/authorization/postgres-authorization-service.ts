@@ -313,11 +313,16 @@ export class PostgresAuthorizationService {
       dataScopes: input.dataScopes,
     })
     const principal = await this.requireAgentPrincipalGrants(input.agentVersionId)
-    const roleIds = context.roleIds.filter(id => principal.roleIds.includes(id)
+    // 项目空间 S0：团队空间的回复对全体成员可见，交付边界是全体现任成员而不是发起人。
+    // 角色只取 Agent 授权（成员只是交付边界，不提供执行角色）；数据范围取全体成员的交集。
+    const team = workspaceId !== null && context.workspaceType === 'team'
+    const audienceRoleIds = team ? principal.roleIds : context.roleIds
+    const audienceDataScopes = team ? await this.resolveTeamCommonDataScopes(workspaceId) : context.dataScopes
+    const roleIds = audienceRoleIds.filter(id => principal.roleIds.includes(id)
       && (input.scopeCeiling?.roleIds === undefined || input.scopeCeiling.roleIds.includes(id)))
-    // The Agent works with its own grants; what reaches the requesting employee
-    // never exceeds that employee's own data scopes.
-    const dataScopes = context.dataScopes.filter(scope => principal.dataScopes.includes(scope)
+    // The Agent works with its own grants; what reaches the audience never exceeds
+    // the audience's own data scopes.
+    const dataScopes = audienceDataScopes.filter(scope => principal.dataScopes.includes(scope)
       && (input.scopeCeiling?.dataScopes === undefined || input.scopeCeiling.dataScopes.includes(scope)))
     // AG-03：permissions 由角色派生，上限裁掉角色后必须重算——否则被裁
     // 角色的权限仍随完整集合进入 Manifest，「后来涨权不扩大旧任务」在
@@ -969,6 +974,42 @@ export class PostgresAuthorizationService {
     `
     if (!row) throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
     return row.type
+  }
+
+  /**
+   * 项目空间 S0：团队空间全体现任成员（含只读成员）共同持有的数据范围。每位成员的范围
+   * 与 resolveDataScopes 同口径（本人授予 ∪ 有效角色授予 ∪ 空间授予）；停用账号不能
+   * 读取任何内容，不计入。成员变动推进 team_auth_revision，执行前复核据此收紧在途任务。
+   */
+  async resolveTeamCommonDataScopes(workspaceId: string): Promise<string[]> {
+    const rows = await this.database<{ scopeValue: string }[]>`
+      with members as (
+        select wm.user_id from workspace_members wm
+          join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
+         where wm.tenant_id = ${tenantId} and wm.workspace_id = ${workspaceId}
+      ),
+      member_scopes as (
+        select m.user_id, g.scope_value from members m
+          join data_scope_grants g on g.tenant_id = ${tenantId}
+           and g.subject_type = 'user' and g.subject_id = m.user_id
+        union
+        select m.user_id, g.scope_value from members m
+          join user_roles ur on ur.tenant_id = ${tenantId} and ur.user_id = m.user_id
+           and ur.source_key = 'local' and (ur.valid_until is null or ur.valid_until > now())
+          join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id and r.status = 'active'
+          join data_scope_grants g on g.tenant_id = ${tenantId}
+           and g.subject_type = 'role' and g.subject_id = ur.role_id
+        union
+        select m.user_id, g.scope_value from members m
+          join data_scope_grants g on g.tenant_id = ${tenantId}
+           and g.subject_type = 'workspace' and g.subject_id = ${workspaceId}
+      )
+      select scope_value as "scopeValue" from member_scopes
+       group by scope_value
+      having count(distinct user_id) = (select count(*) from members)
+       order by scope_value
+    `
+    return rows.map(row => row.scopeValue)
   }
 
   private async resolveDataScopes(

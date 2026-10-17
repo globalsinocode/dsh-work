@@ -17,7 +17,8 @@ export interface RestartRecoveryResult {
 }
 
 /** An active run in a team workspace with its session's pinned agent version (1A-T5 sweep). */
-export type WorkspaceActiveRun = RunRecord & { agentVersionId: string }
+/** `dataScopes`：当前 Attempt Manifest 固定的数据范围；尚无 Attempt 时为空。 */
+export type WorkspaceActiveRun = RunRecord & { agentVersionId: string; dataScopes: string[] }
 
 export interface AppendSystemEventInput {
   tenantId: string
