@@ -15,15 +15,13 @@
 
 ## 隔离工作树
 
-在主仓库外建独立工作树，不在当前开发目录里改目标提交：
+工作树路径与分支固定为下面这一条。后续命令都在该目录执行。预检要求 `HEAD` 等于基准里的 `sourceCommit`。
 
 ```powershell
 git fetch target
-git worktree add --detach ..\dsh-work-target-simulation target/main
-git -C ..\dsh-work-target-simulation rev-parse HEAD
+git worktree add C:\Users\23234\local-code\dsh-work-target-hardening -b codex/target-environment-hardening target/main
+git -C C:\Users\23234\local-code\dsh-work-target-hardening rev-parse HEAD
 ```
-
-`HEAD` 必须等于基准里的 `sourceCommit`。若 `target/main` 已经前进，只在这个工作树里 `git switch --detach 667b00ea12db2db599f0966c7866c32238583018`。后续命令都在该工作树根目录执行。
 
 Node 使用 26.8.1，pnpm 使用 11.24.0。DSH 使用锁定提交的独立 checkout，并把 `DSH_RUNTIME_HOME` 指到该目录。profile 以存在 `packages/bundle/acp-app/cordis.patch.yml` 为准。`DSH_RUNTIME_COMPATIBILITY` 保持未设置。不要复制目标机的 `runtime.env`，也不要复制 `~/.dsh`。
 
@@ -32,35 +30,47 @@ Node 使用 26.8.1，pnpm 使用 11.24.0。DSH 使用锁定提交的独立 check
 `.gitignore` 已忽略 `.env.*`（保留 `.env.example`）。在工作树根目录从 [`deploy/runtime.env.example`](../../deploy/runtime.env.example) 生成 `.env.target-simulation`：
 
 - 只保留模板结构。口令、主密钥和其他凭据在本机临时生成，只写入这个文件。
-- 数据库指向下面的容器和库 `dsh_work_target_sim`。同时准备 `DSH_WORK_DATABASE_URL` 与 `DSH_WORK_TEST_DATABASE_URL`。
+- 数据库连接只写 `DSH_WORK_TEST_DATABASE_URL`，指向用户 `postgres`、库 `dsh_work_test`：`postgres://postgres:<本地生成的测试口令>@127.0.0.1:55432/dsh_work_test`。不要设置业务库变量。预检只读 `DSH_WORK_TEST_DATABASE_URL`，不会在它缺失时改用业务库变量。
 - `DSH_RUNTIME_HOME` 指向本次模拟的 DSH checkout。不要把 `DSH_HOME` 指到操作者的 `~/.dsh`。
 - 不要把目标机 `runtime.env` 拷进来，不要把生成后的值贴进本文档、提交或终端回显。
 
-把该文件载入当前进程后再跑预检和测试。不要打印文件内容。
+把该文件载入当前进程后再跑预检和测试。不要打印文件内容，也不要让命令额外加载含业务库连接的 `.env`。
 
 ## 可丢弃 PostgreSQL
 
-只创建这一个容器，使用匿名数据卷，主机端口仅绑定环回地址：
+只创建这一个容器。不挂载宿主机目录；容器删除后，其中的数据一并消失。主机端口仅绑定环回地址。
 
 ```powershell
-docker run -d --name dsh-work-target-sim-pg -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=<本地生成的测试口令> -e POSTGRES_USER=dsh_work_sim -e POSTGRES_DB=dsh_work_target_sim postgres:17.11
+docker run -d --name dsh-work-target-sim-pg -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=<本地生成的测试口令> -e POSTGRES_USER=postgres -e POSTGRES_DB=dsh_work_test postgres:17.11-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
 ```
 
-迁移这个库，并确认 `schema_migrations` 到达 `0081`：
+用 `DSH_WORK_TEST_DATABASE_URL` 对库 `dsh_work_test` 执行迁移，并确认 `schema_migrations` 到达 `0081`。不要设置业务库变量，也不要运行会读取该变量的 `db:migrate`。
 
 ```powershell
-$env:DSH_WORK_DATABASE_URL = '<指向 dsh_work_target_sim 的连接串>'
-pnpm --filter @dsh-work/server db:migrate
+$env:DSH_WORK_TEST_DATABASE_URL = 'postgres://postgres:<本地生成的测试口令>@127.0.0.1:55432/dsh_work_test'
+@'
+import { createDatabase } from './server/src/infrastructure/postgres/database.ts'
+import { runMigrations } from './server/src/infrastructure/postgres/migration-runner.ts'
+const url = process.env.DSH_WORK_TEST_DATABASE_URL
+if (!url) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
+const database = createDatabase({ url, maxConnections: 1 })
+try {
+  for (const result of await runMigrations(database)) {
+    console.log(`${result.applied ? 'applied' : 'skipped'} ${result.version}`)
+  }
+} finally {
+  await database.end()
+}
+'@ | node --experimental-strip-types --input-type=module
 ```
 
-预检读取当前进程的 Node、pnpm、`HEAD`、Runtime lock、`DSH_RUNTIME_HOME` 和 `DSH_WORK_TEST_DATABASE_URL`：
+预检读取当前进程的 Node、pnpm、`HEAD`、Runtime lock、`DSH_RUNTIME_HOME` 和 `DSH_WORK_TEST_DATABASE_URL`。迁移版本只来自该测试库连接；变量未设置时此项为 `not-checked`，不会回退到业务库。
 
 ```powershell
-$env:DSH_WORK_TEST_DATABASE_URL = '<同一可丢弃实例上的连接串>'
 pnpm preflight:target-simulation
 ```
 
-预检通过后再跑 Task 2 与 Task 3 的集成测试。它们会从该实例的 `postgres` 维护库各自创建并销毁一次性库：
+预检通过后再跑 Task 2 与 Task 3 的集成测试。它们使用同一个 `DSH_WORK_TEST_DATABASE_URL`，从该实例的 `postgres` 维护库各自创建、迁移并销毁一次性库：
 
 ```powershell
 node --experimental-strip-types --test server/src/infrastructure/postgres/agent-draft-api.integration.test.ts
@@ -89,15 +99,14 @@ node --experimental-strip-types --test --test-name-pattern "provider-401|provide
 
 ## 清理
 
-只删除这次显式创建的对象：
+容器启动时没有挂载宿主机目录，数据随容器消失。只删除这次显式创建的容器和硬化工作树：
 
 ```powershell
-docker exec dsh-work-target-sim-pg dropdb --if-exists -U dsh_work_sim dsh_work_target_sim
-docker rm -f -v dsh-work-target-sim-pg
-git worktree remove --force ..\dsh-work-target-simulation
+docker rm -f dsh-work-target-sim-pg
+git worktree remove C:\Users\23234\local-code\dsh-work-target-hardening
 ```
 
-`docker rm -v` 只移除容器 `dsh-work-target-sim-pg` 的匿名数据卷。`dropdb` 只删除库 `dsh_work_target_sim`。`git worktree remove` 只删除该工作树（其中的 `.env.target-simulation` 随工作树消失）。不要 `docker volume prune`，不要递归删除父目录或其他容器。
+不要 `docker volume prune`，不要递归删除父目录或其他容器。`.env.target-simulation` 在该工作树内，随工作树一起消失。
 
 ## 证据边界
 
