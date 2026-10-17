@@ -22,8 +22,11 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'brief_updated'
+  | 'project_task_created'
+  | 'project_task_completed'
 
-export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace'
+export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace' | 'brief' | 'project_task'
 
 export type WorkspaceActivityMetadataValue = string | number | boolean | null
 export type WorkspaceActivityMetadata = Record<string, WorkspaceActivityMetadataValue>

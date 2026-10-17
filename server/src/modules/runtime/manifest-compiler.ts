@@ -20,6 +20,7 @@ const RESUME_FIELDS = new Set(['strategy', 'checkpoint_id', 'checkpoint_digest',
 const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
 const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
+const PROJECT_BRIEF_FIELDS = new Set(['version_id', 'version_no', 'content', 'content_sha256', 'due_date'])
 
 function assertId(name: string, value: string): void {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
@@ -228,6 +229,17 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!['private', 'workspace', 'organization'].includes(memory.visibility)) throw new TypeError('memory visibility is invalid')
     if (!/^[a-f0-9]{64}$/.test(memory.contentDigest)) throw new TypeError('memory contentDigest is invalid')
     if (!memory.excerpt.trim() || memory.excerpt.length > 4000) throw new TypeError('memory excerpt is invalid')
+  }
+
+  if (input.project_context !== undefined) {
+    const brief = input.project_context?.brief
+    if (!brief || Object.keys(input.project_context).some(key => key !== 'brief')) throw new TypeError('project_context is invalid')
+    if (Object.keys(brief).some(key => !PROJECT_BRIEF_FIELDS.has(key))) throw new TypeError('project_context brief has unknown fields')
+    assertId('project_context.brief.version_id', brief.version_id)
+    if (!Number.isInteger(brief.version_no) || brief.version_no < 1) throw new TypeError('project brief version_no is invalid')
+    if (typeof brief.content !== 'string' || !brief.content.trim() || brief.content.length > 8000) throw new TypeError('project brief content is invalid')
+    if (brief.content_sha256 !== sha256(brief.content)) throw new TypeError('project brief content_sha256 does not match content')
+    if (brief.due_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(brief.due_date)) throw new TypeError('project brief due_date is invalid')
   }
 
   // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。

@@ -13,6 +13,7 @@ import type { PostgresWorkspaceAgentMemberService } from '../../workbench/applic
 import type { RunRepository } from '../run-repository.ts'
 import type { TaskRepository } from '../../task/task-repository.ts'
 import type { PostgresPersistentWaitService } from '../postgres-persistent-wait-service.ts'
+import type { ProjectTaskThreadPort } from '../../workbench/application/postgres-project-service.ts'
 
 export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
@@ -38,6 +39,8 @@ export interface OrchestrationDependencies {
   readonly memory?: PostgresControlledMemoryService
   readonly authorization?: PostgresAuthorizationService
   readonly agentMembers?: PostgresWorkspaceAgentMemberService
+  /** 项目空间 S1：任务线程固定承接 Agent，并为执行带上当前项目简报。 */
+  readonly projectTasks?: ProjectTaskThreadPort & { assertTaskThreadIdle(sessionId: string): Promise<void> }
   readonly toolBindings?: ToolBindingCheckPort
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number

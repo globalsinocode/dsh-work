@@ -63,6 +63,8 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `workspaces` | 个人或团队空间 | 每位用户唯一默认个人空间；团队空间可归档，归档后只读 |
+| `workspace_brief_versions` | 项目空间简报（迁移 0088） | 每次保存新增版本，最新版本即当前简报；任务线程的执行在 Manifest `project_context` 中固定所用版本 |
+| `project_tasks`、`project_task_files` | 项目任务及其引用的共享文件版本（迁移 0088） | 业务层工作项，不复用执行层 `tasks`；Agent 任务以 `session_id` 关联任务线程，状态由最近一次 Run 推算；逻辑移除 |
 | `workspace_members` | 空间成员与角色（owner、admin、member、viewer） | 个人空间成员关系受触发器保护；团队空间必须有且只有一名负责人（延迟约束触发器，违反时错误码 `DW001`） |
 | `workspace_capability_grants` | 空间可用的 Agent、Skill、Tool 版本 | 团队资源按成员与能力授权，默认拒绝 |
 | `workspace_grant_sources` | 能力授权的来源（Agent 成员、手工、历史未对账） | 一项授权可有多个来源；全部来源撤销后授权失效 |

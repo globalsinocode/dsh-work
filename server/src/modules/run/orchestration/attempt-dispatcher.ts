@@ -124,6 +124,10 @@ export class AttemptDispatcher {
           userId: input.userId,
         })
       : [])
+    // 项目空间 S1：任务线程的员工交互执行固定当时的项目简报版本。
+    const thread = run.sessionId && !input.purpose && this.deps.projectTasks
+      ? await this.deps.projectTasks.resolveTaskThread(run.sessionId)
+      : null
     const attemptId = input.attemptId ?? `attempt-${randomUUID()}`
     const limits = {
       timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
@@ -190,6 +194,7 @@ export class AttemptDispatcher {
         contentDigest: memory.contentDigest,
         excerpt: memory.excerpt,
       })) } : {}),
+      ...(thread?.projectContext ? { project_context: thread.projectContext } : {}),
       model_route_id: route.routeId,
       input: {
         message: (input.message ?? input.prompt).trim(),

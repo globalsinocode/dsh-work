@@ -557,6 +557,78 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/workspaces/{workspaceId}/brief": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getProjectBrief",
+        "summary": "查询项目简报（全部成员）",
+        "description": "项目空间 S1：返回最新版本的项目简报（versionId、versionNo、content、dueDate、updatedBy、updatedAt），尚未填写时为 null。读取轨：归档空间的现任成员可读。个人工作空间返回 422。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "put": {
+        "operationId": "saveProjectBrief",
+        "summary": "保存项目简报（负责人、管理员）",
+        "description": "项目空间 S1：请求体 content（1～8000 字）与可选 dueDate（YYYY-MM-DD 或 null）；每次保存生成新版本并写入最近动态，不覆盖历史版本。归档空间拒绝。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "listProjectTasks",
+        "summary": "查询项目任务（全部成员）",
+        "description": "项目空间 S1：返回未移除的任务。Agent 任务的 status 由任务线程最近一次 Run 推算（todo/in_progress/done/failed），员工任务取存储状态；allowedActions 按当前角色给出。读取轨：归档空间可读。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createProjectTask",
+        "summary": "创建项目任务（非只读成员）",
+        "description": "项目空间 S1：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate。只读成员不能承接任务。",
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "patch": {
+        "operationId": "updateProjectTask",
+        "summary": "编辑项目任务（创建人、负责人、管理员）",
+        "description": "项目空间 S1：可改 title、description、assignee、inputFileIds、dueDate。改派只在任务线程没有执行中的 Run 时允许；改派后从新的任务线程开始。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "removeProjectTask",
+        "summary": "移除项目任务（创建人、负责人、管理员）",
+        "description": "项目空间 S1：逻辑移除；任务线程与成果保留。执行中的任务不能移除。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/start": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "startProjectTask",
+        "summary": "启动 Agent 任务（非只读成员）",
+        "description": "项目空间 S1：首次启动创建绑定承接 Agent 成员的任务线程，首条消息为任务标题与说明，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）。已启动的任务返回 409，后续在任务线程中回复即可续接。",
+        "responses": { "202": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/status": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "setProjectTaskStatus",
+        "summary": "更新员工任务状态（承接人、创建人、负责人、管理员）",
+        "description": "项目空间 S1：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务的状态由执行结果决定，返回 409。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/project-task": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "markSessionAsProjectTask",
+        "summary": "把讨论线程设为任务（非只读成员）",
+        "description": "项目空间 S1：承接者为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/workspaces/{workspaceId}/agent-members/{id}": {
       "parameters": [
         {

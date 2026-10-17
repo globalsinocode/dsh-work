@@ -18,6 +18,7 @@ import { registerWorkspaceActivityRoutes } from './http/workbench/workspace-acti
 import { registerWorkspaceUsageRoutes } from './http/workbench/workspace-usage-routes.ts'
 import { registerWorkspaceMemberRoutes } from './http/workbench/workspace-member-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-agent-member-routes.ts'
+import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
@@ -50,6 +51,7 @@ import { PostgresContentService } from './modules/workbench/application/postgres
 import { PostgresWorkspaceMemberService } from './modules/workbench/application/postgres-workspace-member-service.ts'
 import { PostgresWorkspaceLifecycleService } from './modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { PostgresWorkspaceAgentMemberService } from './modules/workbench/application/postgres-workspace-agent-member-service.ts'
+import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
 import { PostgresWorkspaceActivityService } from './modules/workbench/application/postgres-workspace-activity-service.ts'
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
@@ -295,6 +297,8 @@ async function start() {
   }, 6 * 60 * 60 * 1000)
   memoryProposalSweep.unref()
   const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
+  // 项目空间 S1：任务线程端口供编排使用，编排构造后再接回启动执行能力。
+  const projects = new PostgresProjectService(database, workspaceAgentMembers)
   // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
   const automationRepository = new PostgresAutomationRepository(database)
   orchestration = new RunOrchestrationService(
@@ -315,8 +319,10 @@ async function start() {
       toolBindings: toolService,
       tasks,
       memory: controlledMemory,
+      projectTasks: projects,
     },
   )
+  projects.attachRunStarter(orchestration)
   persistentWait = new PostgresPersistentWaitService(database, runs, {
     reauthorize: manifest => orchestration!.assertWaitingRunAuthorization(manifest),
     enqueue: (run, manifest) => orchestration!.enqueueResumedAttempt(run, manifest),
@@ -385,6 +391,7 @@ async function start() {
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
+  registerProjectRoutes(router, projects, authorization)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
   registerAgentRoutes(router, agents, new PostgresAgentAccessService(database, toolService))
   const agentValidation = new PostgresAgentValidationService(database, agents, skills, toolService, orchestration)

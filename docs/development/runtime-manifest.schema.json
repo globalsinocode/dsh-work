@@ -373,6 +373,26 @@
         "additionalProperties": false
       }
     },
+    "project_context": {
+      "type": "object",
+      "description": "项目空间 S1：项目任务线程的执行固定当时的项目简报版本；参考资料，不是操作授权。",
+      "required": ["brief"],
+      "properties": {
+        "brief": {
+          "type": "object",
+          "required": ["version_id", "version_no", "content", "content_sha256", "due_date"],
+          "properties": {
+            "version_id": { "type": "string", "minLength": 1 },
+            "version_no": { "type": "integer", "minimum": 1 },
+            "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
+            "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "due_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "memory_context": {
       "type": "array",
       "maxItems": 3,

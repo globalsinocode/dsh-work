@@ -451,6 +451,23 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     } as RuntimeManifest, /contentDigest/, 'invalid memory digest')
   })
 
+  it('项目空间 S1 pins the project brief version with a matching digest', () => {
+    const manifest = baseManifest()
+    const content = '目标：本季度把华东区缺货率降到 3% 以下。'
+    manifest.project_context = {
+      brief: { version_id: 'wbrief-1', version_no: 2, content, content_sha256: sha256(content), due_date: '2026-12-31' },
+    }
+    assertBothAccept(manifest, 'project brief context')
+    assertBothAccept({ ...manifest, project_context: { brief: { ...manifest.project_context.brief, due_date: null } } }, 'brief without due date')
+    const tampered = { ...manifest, project_context: { brief: { ...manifest.project_context.brief, content: '已被篡改' } } }
+    assert.equal(schemaErrors(tampered).valid, true, 'digest/body matching belongs to the compiler')
+    assert.throws(() => compileRuntimeManifest(tampered), /content_sha256/)
+    assertBothReject({
+      ...manifest,
+      project_context: { brief: { ...manifest.project_context.brief, extra: true } },
+    } as unknown as RuntimeManifest, /project_context|brief/, 'unknown brief field')
+  })
+
   it('rejects the removed Agent delegation fields', () => {
     const manifest = { ...baseManifest(), delegation_policy: { allowed_agent_version_ids: [] } } as unknown as RuntimeManifest
     assert.equal(schemaErrors(manifest).valid, false)

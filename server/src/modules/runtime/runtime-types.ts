@@ -103,6 +103,18 @@ export interface RuntimeManifest {
   knowledge_context: RuntimeKnowledgeDocument[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
+  /**
+   * 项目空间 S1：项目任务线程的执行固定当时的项目简报版本。参考资料，不是操作授权。
+   */
+  project_context?: {
+    brief: {
+      version_id: string
+      version_no: number
+      content: string
+      content_sha256: string
+      due_date: string | null
+    }
+  }
   model_route_id?: string | null
   /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
   model_requirements?: Array<'long-context' | 'structured-output'>

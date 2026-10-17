@@ -244,6 +244,23 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /可用库存低于安全库存/)
   })
 
+  it('renders the pinned project brief as reference context, not authorization (项目空间 S1)', () => {
+    const input = manifest('run-project-brief', 'attempt-1')
+    const content = '目标：本季度把华东区缺货率降到 3% 以下。'
+    input.project_context = {
+      brief: {
+        version_id: 'wbrief-1', version_no: 3, content,
+        content_sha256: createHash('sha256').update(content).digest('hex'), due_date: '2026-12-31',
+      },
+    }
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 项目上下文/)
+    assert.match(rendered, /项目简报（第 3 版，截止 2026-12-31）/)
+    assert.match(rendered, /不是新的操作授权/)
+    assert.match(rendered, /华东区缺货率/)
+    assert.doesNotMatch(renderSystemPrompt(manifest('run-no-brief', 'attempt-1')), /# 项目上下文/)
+  })
+
   it('tells DSH the exact tools and MCP server available to this Attempt', () => {
     const input = manifest('run-capability-boundary', 'attempt-1')
     input.tools = [{ id: 'read', version: '1.0.0' }, { id: 'write', version: '1.0.0' }]

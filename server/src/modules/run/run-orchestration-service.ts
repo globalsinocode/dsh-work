@@ -86,6 +86,8 @@ export class RunOrchestrationService {
       /** PF-01 stable Task ownership for non-conversation execution. */
       tasks?: TaskRepository
       memory?: PostgresControlledMemoryService
+      /** 项目空间 S1：任务线程端口。 */
+      projectTasks?: OrchestrationDependencies['projectTasks']
     },
   ) {
     this.deps = {
@@ -96,6 +98,7 @@ export class RunOrchestrationService {
       toolBindings: options?.toolBindings,
       tasks: options?.tasks,
       memory: options?.memory,
+      projectTasks: options?.projectTasks,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)
@@ -299,13 +302,23 @@ export class RunOrchestrationService {
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
     let agentVersionId = session.agentVersionId
     if (session.workspaceType === 'team') {
+      // 项目空间 S1：任务线程固定承接 Agent，回复无需 @；同一时间只允许一个执行。
+      const thread = await this.deps.projectTasks?.resolveTaskThread(session.id)
+      let workspaceAgentMemberId = input.workspaceAgentMemberId
+      if (thread) {
+        if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
+          throw requestInvalid('任务线程只能交给承接该任务的 Agent')
+        }
+        workspaceAgentMemberId = thread.agentMemberId
+        await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
+      }
       // TW-10 @ 触发：团队会话每次执行都必须显式绑定当前可用的 Agent 成员；
       // 不再回退到会话级 agentVersionId，避免历史绑定绕过成员状态复核。
-      if (!input.workspaceAgentMemberId || !this.deps.agentMembers) {
+      if (!workspaceAgentMemberId || !this.deps.agentMembers) {
         throw requestInvalid('团队空间对话必须通过 @Agent 成员发起执行')
       }
       agentVersionId = (
-        await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, input.workspaceAgentMemberId)
+        await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, workspaceAgentMemberId)
       ).agentVersionId
     }
     if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法发起执行')
