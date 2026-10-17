@@ -713,9 +713,9 @@ Nginx 访问日志和后端 `http.request.failed` 使用同一个 `requestId`。
 
 判断 504 落在哪一层：
 
-1. `upstream_connect_time` 为空，或大约为 5 秒：按宿主机反向代理不可达处理。这表示 Nginx 在连接超时内没有连上上游。
+1. `upstream_connect_time` 为空时，Nginx 会写成 `"-"`，表示这次请求没有连上上游。大约为 5 秒时，表示连接超时。两种情况都按宿主机反向代理不可达处理。
 2. 连接时间已经有值，但响应时间很长：按应用或依赖变慢处理，而不是连接没有建立。
 
-`proxy_connect_timeout 5s` 只是失败快速暴露的缓解，不是可用性修复。若 504 仍然持续，另开一份计划，把后端放到与 Nginx 相同的容器网络。不要把这次超时调大当成恢复手段。
+`proxy_connect_timeout 5s` 只是失败快速暴露的缓解，不是根因修复，也不是可用性修复。若 504 仍然持续，另开一份计划，把后端放到与 Nginx 相同的容器网络。不要把这次超时调大当成恢复手段。
 
 回滚这一项时，只恢复 `deploy/nginx/default.conf.template`、`deploy/nginx/proxy_params` 和候选 Release。不要修改历史 Release 目录。
