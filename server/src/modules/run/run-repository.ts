@@ -86,6 +86,8 @@ export interface RunRepository {
    */
   workspaceStatusForAttempt(tenantId: string, attemptId: string): Promise<'active' | 'archived' | null>
   transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord>
+  /** 记录第一个请求停止该 Run 的员工（线程中标注由谁停止）；已有记录时不覆盖。 */
+  recordCancelRequester(tenantId: string, runId: string, userId: string): Promise<void>
   transitionAttempt(
     tenantId: string,
     attemptId: string,

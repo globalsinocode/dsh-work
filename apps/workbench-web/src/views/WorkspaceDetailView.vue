@@ -574,6 +574,18 @@ function download(item: Artifact) {
   void downloadArtifactFile(item)
 }
 
+/** 项目空间成果的来源说明：所属任务、承接 Agent 及版本、发起人（项目空间方案第 6 节）。 */
+function artifactOrigin(item: Artifact): string | undefined {
+  const origin = item.origin
+  if (!origin) return undefined
+  const parts = [
+    origin.projectTask ? `任务「${origin.projectTask.title}」` : null,
+    origin.agent ? `${origin.agent.name} ${origin.agent.version}` : null,
+    origin.initiatedBy ? `${origin.initiatedBy} 发起` : null,
+  ].filter((part): part is string => Boolean(part))
+  return parts.length ? parts.join(' · ') : undefined
+}
+
 function openArtifactPreview(item: Artifact) {
   previewArtifact.value = item
   previewOpen.value = true
@@ -1275,6 +1287,7 @@ watch(
               v-for="artifact in workspaceArtifacts"
               :key="artifact.id"
               :artifact="artifact"
+              :origin="artifactOrigin(artifact)"
               @download="download(artifact)"
               @preview="openArtifactPreview(artifact)"
             />

@@ -55,6 +55,12 @@ export interface Artifact {
   fileId?: string
   canReference?: boolean
   summary: string
+  /** 项目空间成果的来源：所属项目任务、承接 Agent 及版本、发起人；个人空间为 null。 */
+  origin?: {
+    projectTask: { id: string; title: string } | null
+    agent: { name: string; version: string } | null
+    initiatedBy: string | null
+  } | null
 }
 
 /**
@@ -204,6 +210,8 @@ export interface SessionThread {
     status: string
     requestedBy: string
     requesterName: string
+    /** 已停止的执行：请求停止的员工姓名。 */
+    stoppedByName?: string | null
     createdAt: string
   }>
   /** 还有更早的消息页时 true；用 messagesCursor 作 before 翻页。 */
@@ -231,6 +239,8 @@ export interface TaskRun {
   owner: string
   /** 触发人用户 id（TW-10 共享线程里区分「我发起的」与他人发起的 Run）。 */
   requestedBy: string
+  /** 已停止的 Run：请求停止的员工姓名（项目空间方案第 5 节）；系统撤权取消为 null。 */
+  stoppedBy?: string | null
   /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
   currentUserRole?: TeamMemberRole | null
   messages: ChatMessage[]

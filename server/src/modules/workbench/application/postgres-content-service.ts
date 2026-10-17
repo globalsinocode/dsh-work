@@ -474,16 +474,29 @@ export class PostgresContentService {
       workspaceId: string
       sourceSessionStatus: string
       workspaceType: string | null
+      taskId: string | null
+      taskTitle: string | null
+      agentName: string | null
+      agentVersion: string | null
+      initiatedBy: string | null
     }[]>`
       select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt",
              av.source_run_id as "runId", a.workspace_id as "workspaceId",
-             w.workspace_type as "workspaceType", s.status as "sourceSessionStatus"
+             w.workspace_type as "workspaceType", s.status as "sourceSessionStatus",
+             pt.id as "taskId", pt.title as "taskTitle",
+             agv.name as "agentName", agv.version as "agentVersion", ru.display_name as "initiatedBy"
         from artifacts a
         join artifact_versions av on av.tenant_id = a.tenant_id and av.artifact_id = a.id
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
         join sessions s on s.tenant_id = a.tenant_id and s.id = a.session_id
         left join workspaces w on w.tenant_id = a.tenant_id and w.id = a.workspace_id
+        -- 项目空间：成果所属任务（任务线程即会话）、产生它的 Run 的承接 Agent 版本与发起人。
+        left join project_tasks pt on pt.tenant_id = a.tenant_id and pt.session_id = a.session_id and pt.removed_at is null
+        left join runs r on r.tenant_id = av.tenant_id and r.id = av.source_run_id
+        left join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join agent_versions agv on agv.tenant_id = ra.tenant_id and agv.id = ra.manifest->>'agent_version_id'
        where a.tenant_id = ${tenantId}
          -- TW-10：团队会话成果对空间成员可见（下方 canReadWorkspaceObject 复核
          -- 移出/归档口径）；个人会话仍限创建者。
@@ -529,6 +542,11 @@ export class PostgresContentService {
       runId: row.runId,
       workspaceId: row.workspaceId,
       summary: row.sourceSessionStatus === 'archived' ? '原对话已从历史中移除；成果独立保留，下载仍需当前授权。' : '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
+      origin: row.workspaceType === 'team' ? {
+        projectTask: row.taskId && row.taskTitle ? { id: row.taskId, title: row.taskTitle } : null,
+        agent: row.agentName && row.agentVersion ? { name: row.agentName, version: row.agentVersion } : null,
+        initiatedBy: row.initiatedBy,
+      } : null,
     }))
   }
 

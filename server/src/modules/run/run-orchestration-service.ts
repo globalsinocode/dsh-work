@@ -459,6 +459,9 @@ export class RunOrchestrationService {
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.deps.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
+    if (['queued', 'running', 'cancel_requested', 'waiting'].includes(run.status)) {
+      await this.deps.runs.recordCancelRequester(tenantId, run.id, userId)
+    }
     if (run.status === 'waiting') {
       if (!this.deps.persistentWait) throw new Error('持久化等待服务未接线')
       await this.deps.persistentWait.cancelRun(run.id, userId)

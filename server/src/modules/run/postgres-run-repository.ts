@@ -389,6 +389,13 @@ export class PostgresRunRepository implements RunRepository {
       return mapAttempt(created)
   }
 
+  async recordCancelRequester(tenantId: string, runId: string, userId: string): Promise<void> {
+    await this.database`
+      update runs set cancel_requested_by = ${userId}
+       where tenant_id = ${tenantId} and id = ${runId} and cancel_requested_by is null
+    `
+  }
+
   async transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord> {
     return this.database.begin(async (transaction) => {
       const [current] = await transaction<RunRow[]>`

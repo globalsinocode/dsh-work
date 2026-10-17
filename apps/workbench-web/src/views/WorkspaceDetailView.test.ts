@@ -531,6 +531,19 @@ describe('WorkspaceDetailView 归档只读态（design §2.7 / AC-14 / AC-23）'
     expect(wrapper.text()).toContain('季度报告.xlsx')
   })
 
+  it('labels project space artifacts with their task, Agent version and initiator (项目空间方案第 6 节)', async () => {
+    route.query = { tab: 'artifacts' }
+    const { wrapper } = await mountView(workspace(), {
+      artifacts: [
+        { ...artifact, id: 'artifact-task', name: '缺货分析.md', origin: { projectTask: { id: 'ptask-1', title: '分析缺货原因' }, agent: { name: '缺货分析助手', version: '1.2.0' }, initiatedBy: '周衡' } },
+        { ...artifact, id: 'artifact-chat', name: '临时汇总.md', origin: { projectTask: null, agent: { name: '缺货分析助手', version: '1.2.0' }, initiatedBy: '林岚' } },
+        { ...artifact, id: 'artifact-plain', name: '无来源.md', origin: null },
+      ],
+    })
+    const origins = wrapper.findAll('[data-testid="artifact-card-origin"]').map(node => node.text())
+    expect(origins).toEqual(['任务「分析缺货原因」 · 缺货分析助手 1.2.0 · 周衡 发起', '缺货分析助手 1.2.0 · 林岚 发起'])
+  })
+
   it('offers 恢复空间 only to the owner and restores after confirmation', async () => {
     vi.mocked(workbenchApi.listWorkspaceMembers).mockResolvedValue({
       items: [{ userId: 'u-current', displayName: '周航', role: 'owner', joinedAt: '2026-09-01T00:00:00.000Z' }],

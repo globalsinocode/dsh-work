@@ -44,6 +44,7 @@ let storageRoot: string
 let server: Server
 let baseUrl = ''
 let runtime: ControlledRuntime
+let content: PostgresContentService
 
 interface TaskView {
   id: string
@@ -202,6 +203,35 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   assert.equal((await api('POST', `${base}/sessions/${running.sessionId}/runs`, {
     as: ws.other, body: { prompt: '换个 Agent', idempotencyKey: `wrong-${task.id}`, workspaceAgentMemberId: otherAgent },
   })).status, 422)
+})
+
+test('任务线程：停止执行后标注由谁停止', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('stop')
+  const agentMemberId = await joinAgent(ws, 'stop')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '核对到货承诺', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `stop-start-${task.id}` },
+  })
+  const running = started.body.data as TaskView
+  await waitForManifest(running.latestRunId!)
+  const before = await api('GET', `${base}/runs/${running.latestRunId}`, { as: ws.viewer })
+  assert.equal((before.body.data as { stoppedBy?: string | null }).stoppedBy, null, '未停止时不标注')
+
+  // 只读成员不能停止；另一位成员停止后，Run 详情与线程执行记录都标注停止人。
+  assert.equal((await api('POST', `${base}/runs/${running.latestRunId}/cancel`, { as: ws.viewer })).status, 403)
+  assert.equal((await api('POST', `${base}/runs/${running.latestRunId}/cancel`, { as: ws.other })).status, 202)
+  await waitForRun(running.latestRunId!)
+  const detail = await api('GET', `${base}/runs/${running.latestRunId}`, { as: ws.viewer })
+  assert.equal((detail.body.data as { status: string }).status, 'cancelled')
+  assert.equal((detail.body.data as { stoppedBy?: string | null }).stoppedBy, 'stop-other')
+  const thread = await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.viewer })
+  const runs = (thread.body.data as { runs: Array<{ runId: string; stoppedByName: string | null }> }).runs
+  assert.deepEqual(runs.map(run => [run.runId, run.stoppedByName]), [[running.latestRunId, 'stop-other']])
+  assert.equal((await taskById(ws, task.id)).status, 'failed', '停止后任务状态为执行失败')
 })
 
 test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设置与未执行线程被拒', async () => {
@@ -400,6 +430,51 @@ test('Agent 任务：执行携带当前档案版本，成功后成果交给档�
   assert.deepEqual(versions[0]!.sourceTasks.map(item => item.id), [task.id])
 })
 
+test('团队成果：标注所属项目任务、承接 Agent 版本与发起人，任务移除后不再标注', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('artifact-origin')
+  const agentMemberId = await joinAgent(ws, 'artifact-origin')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '输出缺货分析报告', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `origin-start-${task.id}` },
+  })
+  const running = started.body.data as TaskView
+  await waitForManifest(running.latestRunId!)
+  await seedArtifact({ workspaceId: ws.id, sessionId: running.sessionId!, runId: running.latestRunId!, createdBy: ws.member, label: 'task' })
+
+  // 普通讨论中 @Agent 产生的成果：没有所属任务，但仍标注 Agent 与发起人。
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.other, body: { title: '临时讨论', workspaceId: ws.id } })
+  const discussionId = (discussion.body.data as { id: string }).id
+  const asked = await api('POST', `${base}/sessions/${discussionId}/runs`, {
+    as: ws.other, body: { prompt: '@助手 汇总一下', idempotencyKey: `origin-ask-${discussionId}`, workspaceAgentMemberId: agentMemberId },
+  })
+  const askedRunId = (asked.body.data as { runId?: string; id?: string }).runId ?? (asked.body.data as { id: string }).id
+  await waitForManifest(askedRunId)
+  await seedArtifact({ workspaceId: ws.id, sessionId: discussionId, runId: askedRunId, createdBy: ws.other, label: 'discussion' })
+  runtime.releaseAll()
+
+  const artifacts = await content.listArtifacts(ws.viewer)
+  const byName = (name: string) => artifacts.find(artifact => artifact.name === name)
+  assert.deepEqual(byName(`${ws.id}-task.txt`)?.origin, {
+    projectTask: { id: task.id, title: '输出缺货分析报告' },
+    agent: { name: '项目助手', version: '1.0.0' },
+    initiatedBy: 'artifact-origin-member',
+  })
+  assert.deepEqual(byName(`${ws.id}-discussion.txt`)?.origin, {
+    projectTask: null,
+    agent: { name: '项目助手', version: '1.0.0' },
+    initiatedBy: 'artifact-origin-other',
+  })
+
+  // 任务被移除后成果保留，但不再标注所属任务。
+  await waitForRun(running.latestRunId!)
+  assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 200)
+  assert.equal((await content.listArtifacts(ws.viewer)).find(artifact => artifact.name === `${ws.id}-task.txt`)?.origin?.projectTask, null)
+})
+
 // ---------------------------------------------------------------------------
 // fixtures
 // ---------------------------------------------------------------------------
@@ -482,6 +557,28 @@ async function drainRuntime(timeoutMs = 10_000) {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error('等待受控 Runtime 清空超时')
+}
+
+async function seedArtifact(input: { workspaceId: string; sessionId: string; runId: string; createdBy: string; label: string }) {
+  const fileId = `file-${input.workspaceId}-${input.label}`
+  const artifactId = `artifact-${input.workspaceId}-${input.label}`
+  await database`
+    insert into file_objects (
+      id, tenant_id, workspace_id, session_id, storage_key, original_name, mime_type,
+      size_bytes, sha256, scan_status, uploaded_by
+    ) values (
+      ${fileId}, ${tenantId}, ${input.workspaceId}, ${input.sessionId}, ${`storage/${fileId}`}, ${`${input.workspaceId}-${input.label}.txt`},
+      'text/plain', 16, ${'a'.repeat(64)}, 'clean', ${input.createdBy}
+    )
+  `
+  await database`
+    insert into artifacts (id, tenant_id, workspace_id, session_id, name, artifact_type, created_by)
+    values (${artifactId}, ${tenantId}, ${input.workspaceId}, ${input.sessionId}, ${`${input.workspaceId}-${input.label}.txt`}, 'text', ${input.createdBy})
+  `
+  await database`
+    insert into artifact_versions (id, tenant_id, artifact_id, version_no, file_object_id, source_run_id)
+    values (${`${artifactId}-v1`}, ${tenantId}, ${artifactId}, 1, ${fileId}, ${input.runId})
+  `
 }
 
 async function completeEmployeeTask(ws: { id: string; member: string; admin: string }, title: string, note: string): Promise<TaskView> {
@@ -629,6 +726,7 @@ class ControlledRuntime implements AgentRuntimePort {
     listeners: Set<(event: RuntimeEvent) => void>
     events: RuntimeEvent[]
     finish?: () => void
+    cancel?: () => void
   }>()
 
   /** 档案员运行的回答（JSON 条目列表）；未设置时回答普通文本，平台按无效输出处理。 */
@@ -644,7 +742,7 @@ class ControlledRuntime implements AgentRuntimePort {
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     const now = new Date().toISOString()
-    const state: { manifest: RuntimeManifest; listeners: Set<(event: RuntimeEvent) => void>; events: RuntimeEvent[]; finish?: () => void } = {
+    const state: { manifest: RuntimeManifest; listeners: Set<(event: RuntimeEvent) => void>; events: RuntimeEvent[]; finish?: () => void; cancel?: () => void } = {
       manifest, listeners: new Set(), events: [],
     }
     this.executions.set(manifest.run_id, state)
@@ -661,8 +759,20 @@ class ControlledRuntime implements AgentRuntimePort {
     emit('run.queued', '已排队')
     emit('run.started', '已启动')
     const done = new Promise<RuntimeExecutionSnapshot>((resolve) => {
+      state.cancel = () => {
+        state.finish = undefined
+        state.cancel = undefined
+        emit('run.cancel_requested', '已请求停止')
+        emit('run.cancelled', '已停止')
+        resolve({
+          runId: manifest.run_id, attemptId: manifest.attempt_id, status: 'cancelled', acceptedAt: now,
+          startedAt: now, endedAt: new Date().toISOString(), manifestSha256: createHash('sha256').update(manifest.run_id).digest('hex'),
+          attemptDirectory: '/tmp/test', errorCode: null, errorMessage: null,
+        })
+      }
       state.finish = () => {
         state.finish = undefined
+        state.cancel = undefined
         emit('assistant.completed', manifest.purpose === 'project-archive' && this.archiveReply
           ? this.archiveReply(manifest)
           : '项目空间测试回答')
@@ -685,8 +795,11 @@ class ControlledRuntime implements AgentRuntimePort {
     return () => state.listeners.delete(listener)
   }
 
-  async cancel(): Promise<{ accepted: boolean }> {
-    return { accepted: false }
+  async cancel(runId: string): Promise<{ accepted: boolean }> {
+    const state = this.executions.get(runId)
+    if (!state?.cancel) return { accepted: false }
+    state.cancel()
+    return { accepted: true }
   }
 
   status(): RuntimeExecutionSnapshot | undefined {
@@ -712,7 +825,7 @@ before(async () => {
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   const projectArchive = new PostgresProjectArchiveService(database)
   const projects = new PostgresProjectService(database, agentMembers, projectArchive)
-  const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
+  content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)
   runtime = new ControlledRuntime()

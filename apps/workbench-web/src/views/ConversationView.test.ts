@@ -393,6 +393,26 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('task-composer-stub').exists()).toBe(true)
   })
 
+  it('marks who stopped a run in the thread run list and the run view (项目空间方案第 5 节)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      runs: [
+        { runId: 'run-7', status: 'cancelled', requestedBy: 'U00002', requesterName: '周航', stoppedByName: '林岚', createdAt: '2026-09-10T10:00:00.000Z' },
+        { runId: 'run-8', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', stoppedByName: null, createdAt: '2026-09-10T10:05:00.000Z' },
+      ],
+    }))
+    const { wrapper } = await mountView({ item: null })
+    const rows = wrapper.findAll('[data-testid="session-run"]').map(row => row.text().replace(/\s+/g, ' '))
+    expect(rows[0]).toContain('周航 发起 · 林岚 停止')
+    expect(rows[1]).not.toContain('停止')
+
+    route.params = { id: 'run-001' }
+    const stopped = await mountView({ item: task({ status: 'cancelled', stoppedBy: '林岚' }) })
+    expect(stopped.wrapper.get('[data-testid="run-stopped-by"]').text()).toBe('本轮执行已由 林岚 停止')
+    const failed = await mountView({ item: task({ status: 'failed', stoppedBy: null }) })
+    expect(failed.wrapper.find('[data-testid="run-stopped-by"]').exists()).toBe(false)
+  })
+
   it('aligns my user messages to the right and other members/agents to the left', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({

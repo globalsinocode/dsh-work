@@ -1074,7 +1074,7 @@
       "get": {
         "operationId": "getSessionThread",
         "summary": "获取会话共享线程（消息流 + Run 列表 + 发送者/触发人归因）；团队会话对全部现任成员可读，个人会话限创建者",
-        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。",
+        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。runs[].stoppedByName 为已停止执行的停止人。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1197,7 +1197,7 @@
       ],
       "get": {
         "operationId": "getRun",
-        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。",
+        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。已停止的 Run 返回 stoppedBy（请求停止的员工姓名，系统撤权取消为 null）。",
         "summary": "获取 Run 当前状态",
         "responses": {
           "200": {
@@ -1308,7 +1308,7 @@
             "$ref": "#/components/responses/Ok"
           }
         },
-        "description": "返回当前员工可见的成果（本人会话产生的成果）。团队空间的成果与被移出/退出成员的空间读权限同一口径：失去空间读权限后该空间成果不再返回；个人空间成果不受影响（AC-09/AC-23）。"
+        "description": "返回当前员工可见的成果（本人会话产生的成果）。团队空间的成果与被移出/退出成员的空间读权限同一口径：失去空间读权限后该空间成果不再返回；个人空间成果不受影响（AC-09/AC-23）。项目空间成果另返回 origin：所属项目任务（projectTask，任务线程产生的成果；任务移除后为 null）、承接 Agent 及版本（agent）与发起人（initiatedBy）；个人空间为 null。"
       }
     },
     "/files/{fileId}/download": {

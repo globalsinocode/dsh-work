@@ -64,6 +64,17 @@ export interface Artifact {
   fileId?: string
   canReference?: boolean
   summary: string
+  /**
+   * 项目空间成果的来源（团队空间才返回）：所属项目任务、承接 Agent 及版本、发起人。
+   * 个人空间与无法解析时为 null。
+   */
+  origin?: ArtifactOrigin | null
+}
+
+export interface ArtifactOrigin {
+  projectTask: { id: string; title: string } | null
+  agent: { name: string; version: string } | null
+  initiatedBy: string | null
 }
 
 export interface ChatMessage {
@@ -111,6 +122,8 @@ export interface TaskRun {
   owner: string
   /** 触发人用户 id（TW-10 共享线程里用于区分「我发起的」与他人发起的 Run）。 */
   requestedBy: string
+  /** 已停止的 Run：请求停止的员工姓名（项目空间方案第 5 节，线程中标注由谁停止）。 */
+  stoppedBy?: string | null
   /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
   currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]

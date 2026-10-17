@@ -70,6 +70,8 @@ interface TaskRow {
   selectedSkillId: string | null
   selectedSkillName: string | null
   selectedSkillVersion: string | null
+  /** 已停止的 Run：请求停止的员工姓名（系统撤权取消为 null）。 */
+  stoppedByName: string | null
 }
 
 /** One Session summary row for the team history list (no message bodies). */
@@ -864,10 +866,12 @@ export class PostgresConversationRepository {
              av.version as "agentVersion", ag.name as "agentName",
              u.display_name as owner, r.requested_by as "requestedBy",
              ra.error_code as "errorCode", selected_skill.skill_id as "selectedSkillId",
-             selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion"
+             selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
         from runs r
         join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
         left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
         left join agent_versions av on av.tenant_id = s.tenant_id
           and av.id = coalesce(ra.manifest ->> 'agent_version_id', s.agent_version_id)
@@ -897,10 +901,12 @@ export class PostgresConversationRepository {
              av.version as "agentVersion", ag.name as "agentName",
              u.display_name as owner, r.requested_by as "requestedBy",
              ra.error_code as "errorCode", selected_skill.skill_id as "selectedSkillId",
-             selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion"
+             selected_skill.name as "selectedSkillName", selected_skill.version as "selectedSkillVersion",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
         from runs r
         join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
         left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
         left join agent_versions av on av.tenant_id = s.tenant_id
           and av.id = coalesce(ra.manifest ->> 'agent_version_id', s.agent_version_id)
@@ -1270,12 +1276,15 @@ export class PostgresConversationRepository {
       status: RunState
       requestedBy: string
       requesterName: string
+      stoppedByName: string | null
       createdAt: Date
     }[]>`
       select r.id, r.status, r.requested_by as "requestedBy",
-             ru.display_name as "requesterName", r.created_at as "createdAt"
+             ru.display_name as "requesterName", r.created_at as "createdAt",
+             case when r.status = 'cancelled' then stopper.display_name end as "stoppedByName"
         from runs r
         join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join users stopper on stopper.tenant_id = r.tenant_id and stopper.id = r.cancel_requested_by
        where r.tenant_id = ${tenantId} and r.session_id = ${sessionId}
        order by r.created_at asc
     `
@@ -1303,6 +1312,7 @@ export class PostgresConversationRepository {
         status: run.status,
         requestedBy: run.requestedBy,
         requesterName: run.requesterName,
+        stoppedByName: run.stoppedByName,
         createdAt: run.createdAt.toISOString(),
       })),
       latestRun: runs.length > 0
@@ -1447,6 +1457,7 @@ export class PostgresConversationRepository {
       updatedAt: formatDateTime(row.updatedAt),
       owner: row.owner,
       requestedBy: row.requestedBy,
+      stoppedBy: row.stoppedByName,
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, evidence.events, row.status),
       result: deriveTaskResult(evidence),

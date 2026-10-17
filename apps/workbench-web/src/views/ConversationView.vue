@@ -684,7 +684,9 @@ watch(
               @click="openSessionRun(run.runId)"
             >
               <StatusTag :status="run.status" dot />
-              <span class="session-run__requester">{{ run.requesterName }} 发起</span>
+              <span class="session-run__requester">
+                {{ run.requesterName }} 发起<template v-if="run.stoppedByName"> · {{ run.stoppedByName }} 停止</template>
+              </span>
               <time>{{ formatSessionRunTime(run.createdAt) }}</time>
             </button>
           </section>
@@ -927,6 +929,10 @@ watch(
             </div>
             <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
           </section>
+
+          <p v-if="task.status === 'cancelled' && task.stoppedBy" class="conversation-stopped-by" data-testid="run-stopped-by">
+            本轮执行已由 {{ task.stoppedBy }} 停止
+          </p>
 
           <div class="conversation-end" aria-hidden="true"></div>
         </div>
@@ -1520,6 +1526,12 @@ watch(
     transform: translateY(-3px);
     opacity: 1;
   }
+}
+
+.conversation-stopped-by {
+  margin: 24px 0 0 34px;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-caption);
 }
 
 .conversation-notice {
