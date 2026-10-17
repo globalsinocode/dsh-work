@@ -69,7 +69,7 @@ test('AE-05 Agent routine pins Agent initiator, recipient, version and budget wi
   assert.ok(workspace)
   const routine = await service.create('U00008', {
     agentId, agentVersionId: versionId, workspaceId: workspace.id, recipientUserId: 'U00001',
-    name: 'Agent 日常巡检', schedule: { kind: 'manual', timezone: 'Asia/Shanghai' },
+    name: 'Agent 日常巡检', schedule: { kind: 'manual', timezone: 'Asia/Taipei' },
     inputTemplate: { prompt: '核对今日事项', budget: { maxToolCalls: 3 } },
   })
   assert.equal(routine.status, 'draft')
@@ -107,6 +107,8 @@ test('AE-05 Agent routine pins Agent initiator, recipient, version and budget wi
   assert.equal(row?.sessionId, null)
   assert.equal(row?.manifest.purpose, 'agent-routine')
   assert.equal(row?.manifest.agent_version_id, versionId)
+  // "今日" in the prompt means the routine's local day: the Manifest carries its schedule zone.
+  assert.equal(row?.manifest.timezone, 'Asia/Taipei')
   await assertCurrentExecutionAuthorization(authorization, undefined, row!.manifest)
   await service.setStatus('U00008', agentId, routine.id, 'paused')
   await assert.rejects(assertCurrentExecutionAuthorization(authorization, undefined, row!.manifest))

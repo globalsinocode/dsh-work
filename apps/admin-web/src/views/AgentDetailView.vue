@@ -37,7 +37,10 @@ const statusSaving = ref(false)
 const agentId = computed(() => String(route.params.agentId ?? ''))
 const agent = computed(() => contentStore.agents.find(item => item.id === agentId.value))
 const versions = computed(() => contentStore.agentVersions.filter(version => version.agentId === agentId.value))
-const pendingVersion = computed(() => versions.value.find(version => version.status === 'draft' || version.status === 'candidate'))
+// 以 Agent 的工作版本指针为准（`version` = 草稿指针，否则为当前版本）。被取代的旧候选版本仍是
+// candidate 状态但已不在指针上，不能当作待发布。
+const pendingVersion = computed(() => versions.value.find(version => version.version === agent.value?.version
+  && (version.status === 'draft' || version.status === 'candidate')))
 const activeSection = computed<SectionId>(() => {
   const value = String(route.query.section ?? '')
   return sections.some(section => section.id === value) ? value as SectionId : 'profile'
@@ -167,7 +170,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
           <p>
             <StatusTag v-bind="displayStatus" />
             <span>当前版本 <span class="mono">{{ activeVersionLabel }}</span></span>
-            <span v-if="pendingVersion">· 待发布 <span class="mono">v{{ pendingVersion.version }}</span>（{{ pendingVersion.status === 'candidate' ? '验证中' : '草稿' }}）</span>
+            <span v-if="pendingVersion">· 待发布 <span class="mono">v{{ pendingVersion.version }}</span>（{{ pendingVersion.status === 'candidate' ? '已冻结' : '草稿' }}）</span>
             <span>· 负责人 {{ agent.owner }}</span>
           </p>
         </div>

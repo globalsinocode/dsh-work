@@ -1,3 +1,4 @@
+import { DEFAULT_PLATFORM_TIMEZONE } from '../../domain/execution-time.ts'
 import { createHash } from 'node:crypto'
 
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
@@ -92,12 +93,15 @@ export class RunOrchestrationService {
       projectTasks?: OrchestrationDependencies['projectTasks']
       /** 项目空间 S2：项目档案与档案员整理批次。 */
       projectArchive?: OrchestrationDependencies['projectArchive']
+      /** Platform default IANA timezone for a run's current time; defaults to Asia/Shanghai. */
+      timezone?: string
     },
   ) {
     this.deps = {
       runs, conversations, models, runtime, content, operations, agents, knowledge, authorization,
       agentMembers: options?.agentMembers,
       automationMaxConcurrent: options?.automationMaxConcurrent ?? 2,
+      timezone: options?.timezone ?? DEFAULT_PLATFORM_TIMEZONE,
       automationStatusLookup: options?.automationStatusLookup,
       toolBindings: options?.toolBindings,
       tasks: options?.tasks,

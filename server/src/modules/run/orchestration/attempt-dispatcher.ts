@@ -62,6 +62,8 @@ export class AttemptDispatcher {
     attemptId?: string
     /** 任务预算对 limits 的上限钳制（AG-03 budget）。 */
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+    /** IANA timezone for the run's "now" (routine/automation schedule); defaults to the platform's. */
+    timezone?: string
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = this.deps.agents
@@ -205,6 +207,7 @@ export class AttemptDispatcher {
       budget: await this.budget.manifest(run, limits),
       limits,
       created_at: new Date().toISOString(),
+      timezone: input.timezone ?? this.deps.timezone,
       trace_id: `trace-${run.id}-${attemptId}`,
     }
     await this.submit(run, manifest, route, {

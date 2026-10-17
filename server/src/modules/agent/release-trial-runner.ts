@@ -13,6 +13,8 @@ export interface ReleaseTrialRunner {
     agentVersionId: string
     message: string
     idempotencyKey: string
+    /** A routine case runs in the routine's schedule timezone, as the routine itself will. */
+    timezone?: string
   }): Promise<{ runId: string }>
   getReleaseTrialResult(runId: string): Promise<ReleaseTrialResult | null>
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string): Promise<unknown>

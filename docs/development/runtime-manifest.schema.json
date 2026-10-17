@@ -663,6 +663,12 @@
       "type": "string",
       "format": "date-time"
     },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA timezone the run's current time is expressed in; the Runtime Adapter renders created_at in it for the model."
+    },
     "trace_id": {
       "type": "string"
     },

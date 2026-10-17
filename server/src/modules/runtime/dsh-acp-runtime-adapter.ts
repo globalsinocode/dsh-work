@@ -1,3 +1,4 @@
+import { formatExecutionTime } from '../../domain/execution-time.ts'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -1139,6 +1140,13 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
     `MCP Server：${manifest.mcp_connections?.length ? manifest.mcp_connections.map(connection => connection.server_name).join('、') : '无'}`,
     '回答能力范围问题时，只依据本清单；未列出的 Shell 命令、后台任务、网页获取、平台数据写入或 Agent 委派等能力不得声称可用。实际调用仍以执行时权限校验为准。',
   ].join('\n'))
+  if (manifest.timezone) {
+    sections.push([
+      '# 当前时间',
+      `本次执行开始于 ${formatExecutionTime(manifest.created_at, manifest.timezone)}。`,
+      '“今天”“昨天”“本周”“本月”等相对日期一律以此时间和时区换算；不要使用模型自身推测或其他来源的日期。',
+    ].join('\n'))
+  }
   if (manifest.resume) {
     sections.push([
       '# 已批准动作恢复',

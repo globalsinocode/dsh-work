@@ -526,12 +526,17 @@ export class PostgresAgentValidationService {
       return
     }
     try {
+      // A routine case runs in the routine's schedule timezone, exactly as the routine will.
+      const [routine] = row.source === 'routine' && row.sourceRef ? await this.database<{ timezone: string | null }[]>`
+        select schedule->>'timezone' as timezone from agent_routines where tenant_id = ${tenantId} and id = ${row.sourceRef}
+      ` : []
       const { runId } = await this.runner.startReleaseTrialCase({
         userId: actorId,
         sessionId: target.sessionId,
         agentVersionId: target.agentVersionId,
         message: row.prompt,
         idempotencyKey: `${row.id}-${runCount}`,
+        ...(routine?.timezone ? { timezone: routine.timezone } : {}),
       })
       await this.database`
         update agent_validation_cases set status = 'running', run_id = ${runId}

@@ -463,7 +463,7 @@ export class AgentRoutineService {
         return { execution: mapExecution(row!), run: run ?? null, decision: decision ?? null,
           frozen: run ? { prompt: routine.inputTemplate.prompt, workspaceId: routine.workspaceId,
             agentVersionId: routine.agentVersionId, recipientUserId: routine.recipientUserId,
-            budget: routine.inputTemplate.budget } : null }
+            budget: routine.inputTemplate.budget, timezone: routine.schedule.timezone } : null }
       }
       if (routine.status !== 'enabled') return insert('routine_inactive')
       const [overlap] = await tx<{ id: string }[]>`
@@ -523,7 +523,7 @@ export class AgentRoutineService {
           prompt: result.frozen.prompt, workspaceId: result.frozen.workspaceId,
           agentVersionId: result.frozen.agentVersionId, recipientUserId: result.frozen.recipientUserId,
           attemptId: `attempt-${result.execution.id}`, authorization: result.decision,
-          budget: result.frozen.budget,
+          budget: result.frozen.budget, timezone: result.frozen.timezone,
         })
       } catch (error) {
         await this.orchestration.convergeInterruptedAutomationRun(result.run.id, 'Agent 主动任务派发中断')

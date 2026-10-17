@@ -47,6 +47,8 @@ export interface OrchestrationDependencies {
   readonly toolBindings?: ToolBindingCheckPort
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number
+  /** Platform default IANA timezone for a run's current time (DSH_WORK_TIMEZONE). */
+  readonly timezone: string
   readonly automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
   persistentWait?: PersistentWaitPort
   /** EX-02 conversation summaries; wired by the facade after construction. */

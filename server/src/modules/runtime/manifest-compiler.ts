@@ -3,6 +3,7 @@ import { archiveDigest, normalizeArchiveItems } from '../../domain/project-archi
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
+import { isValidTimezone } from '../../domain/execution-time.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import {
   MAX_MCP_CONNECTIONS_PER_ATTEMPT,
@@ -316,6 +317,9 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   if (input.mcp_connections?.length && input.permission_policy.network_policy !== 'allowlist') {
     throw new TypeError('mcp_connections 要求 network_policy=allowlist')
   }
+
+  if (input.timezone !== undefined && !isValidTimezone(input.timezone)) throw new TypeError('timezone must be a valid IANA timezone')
+  if (Number.isNaN(Date.parse(input.created_at))) throw new TypeError('created_at must be an ISO date-time')
 
   const manifest = structuredClone(input)
   const serialized = canonicalJson(manifest)

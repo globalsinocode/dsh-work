@@ -261,6 +261,15 @@ describe('Runtime Manifest compiler', () => {
     assert.doesNotMatch(renderSystemPrompt(manifest('run-no-brief', 'attempt-1')), /# 项目上下文/)
   })
 
+  it('renders the current time in the Manifest timezone, so "today" is the local day', () => {
+    const input = { ...manifest('run-time', 'attempt-1'), created_at: '2026-10-16T23:32:00.000Z', timezone: 'Asia/Taipei' }
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 当前时间/)
+    assert.match(rendered, /2026-10-17 星期六 07:32（Asia\/Taipei，UTC\+08:00）/)
+    assert.doesNotMatch(renderSystemPrompt(manifest('run-no-time', 'attempt-1')), /# 当前时间/)
+    assert.throws(() => compileRuntimeManifest({ ...input, timezone: 'Mars/Base' }), /timezone must be a valid IANA timezone/)
+  })
+
   it('renders the pinned project archive items alongside the brief (项目空间 S2)', () => {
     const input = manifest('run-project-archive', 'attempt-1')
     const items = ['缺货集中在高周转 SKU 类目。', '决策：按类目设置安全库存。']

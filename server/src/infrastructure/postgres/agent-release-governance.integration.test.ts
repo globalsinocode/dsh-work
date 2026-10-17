@@ -248,7 +248,7 @@ test('S3 案例由示例问题、主动任务提示词与自定义测试问题�
     insert into agent_routines (id, tenant_id, agent_id, agent_version_id, workspace_id, recipient_user_id, name,
       schedule, input_template, created_by)
     values (${`routine-${agentId}`}, ${tenantId}, ${agentId}, ${created.version.id}, 'ws-supply', 'U00001', '每日异常汇总',
-      ${database.json({ kind: 'manual', timezone: 'Asia/Shanghai' })}, ${database.json({ prompt: '汇总今天的退款异常', budget: {} })}, ${ADMIN})
+      ${database.json({ kind: 'manual', timezone: 'Asia/Taipei' })}, ${database.json({ prompt: '汇总今天的退款异常', budget: {} })}, ${ADMIN})
   `
   await assert.rejects(validation.replaceTestCases(agentId, ADMIN, ['']), /自定义测试问题/)
   await assert.rejects(validation.replaceTestCases(agentId, ADMIN, Array.from({ length: 21 }, (_, index) => `问题${index}`)), /最多 20 条/)
@@ -263,6 +263,9 @@ test('S3 案例由示例问题、主动任务提示词与自定义测试问题�
   assert.deepEqual(done.cases.map(item => item.prompt), ['示例问题一', '示例问题二', '汇总今天的退款异常', '请给我其他部门的订单明细'])
   assert.ok(done.cases.every(item => item.status === 'succeeded'))
   assert.equal(done.cases[2]?.sourceRef, `routine-${agentId}`)
+  // 主动任务案例按该主动任务的日程时区执行；其他案例使用平台默认时区。
+  assert.equal(trialRuntime.manifest(done.cases[2]!.runId!)?.timezone, 'Asia/Taipei')
+  assert.equal(trialRuntime.manifest(done.cases[0]!.runId!)?.timezone, 'Asia/Shanghai')
 })
 
 test('S3 冻结后编辑草稿生成新版本，待发布版本不变且仍可发布', async () => {

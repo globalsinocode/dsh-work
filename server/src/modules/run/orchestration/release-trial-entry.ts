@@ -34,6 +34,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
     agentVersionId: string
     message: string
     idempotencyKey: string
+    timezone?: string
   }): Promise<{ runId: string }> {
     if (!this.deps.agents) throw invalidRequest('验证执行链路未接入：缺少 Agent 运行时服务')
     const run = await this.deps.runs.createRun({
@@ -44,7 +45,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
         sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
       })
       await this.dispatcher.failUndispatchedRun(run, () => this.dispatchTrialAttempt(
-        run, input.userId, input.agentVersionId, input.message,
+        run, input.userId, input.agentVersionId, input.message, input.timezone,
       ))
     }
     return { runId: run.id }
@@ -72,7 +73,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
    * there is no workspace, so no files and, by design, no experience. Knowledge, skills,
    * tools, bindings, approvals, write policy and limits are exactly what production gets.
    */
-  private async dispatchTrialAttempt(run: RunRecord, userId: string, agentVersionId: string, message: string) {
+  private async dispatchTrialAttempt(run: RunRecord, userId: string, agentVersionId: string, message: string, timezone?: string) {
     await this.dispatcher.dispatch(run, {
       prompt: message,
       workspaceId: '',
@@ -81,6 +82,7 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       fileIds: [],
       preparedFiles: [],
       purpose: 'agent-release-trial',
+      timezone,
     })
   }
 }

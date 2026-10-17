@@ -8,7 +8,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { adminApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition } from '@/types/domain'
+import type { AgentDefinition, AgentVersionRecord } from '@/types/domain'
 import AgentDetailView from './AgentDetailView.vue'
 
 afterEach(() => vi.restoreAllMocks())
@@ -22,12 +22,22 @@ const agent: AgentDefinition = {
   skills: [], tools: [], mcpScope: { mode: 'none', connectorIds: [] }, updatedAt: '2026-10-16 08:00', revision: 'rev-1',
 }
 
-async function mountDetail(section?: string, permissions = ['admin:write']) {
+function versionRecord(version: string, status: AgentVersionRecord['status']): AgentVersionRecord {
+  return {
+    id: `agent-version-${version}`, agentId: agent.id, version, status, createdAt: '2026-10-16 08:00', createdBy: '陈默',
+    summary: '', welcomeMessage: '', examplePrompts: [], systemPrompt: agent.systemPrompt,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], tools: [],
+  }
+}
+
+async function mountDetail(section?: string, permissions = ['admin:write'], options: {
+  agent?: AgentDefinition; versions?: AgentVersionRecord[]
+} = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().$patch({ permissions })
   const content = useContentStore()
-  content.$patch({ agents: [agent], agentVersions: [] })
+  content.$patch({ agents: [options.agent ?? agent], agentVersions: options.versions ?? [] })
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/agents/:agentId', name: 'agent-detail', component: AgentDetailView },
@@ -97,5 +107,26 @@ it('安全审计员只读：没有启停按钮，草稿字段只读', async () =
     expect(wrapper.find('input[readonly]').exists()).toBe(true)
   } finally {
     wrapper.unmount()
+  }
+})
+
+it('页头只把工作版本指针上的版本当作待发布，被取代的旧候选版本不显示', async () => {
+  const published: AgentDefinition = { ...agent, status: 'published', version: '0.3.0', activeVersion: '0.3.0' }
+  const stale = await mountDetail(undefined, ['admin:write'], {
+    agent: published, versions: [versionRecord('0.3.0', 'published'), versionRecord('0.2.0', 'candidate')],
+  })
+  try {
+    expect(stale.wrapper.get('.detail-hero').text()).not.toContain('待发布')
+  } finally {
+    stale.wrapper.unmount()
+  }
+  const frozen = await mountDetail(undefined, ['admin:write'], {
+    agent: { ...published, version: '0.4.0' },
+    versions: [versionRecord('0.4.0', 'candidate'), versionRecord('0.3.0', 'published'), versionRecord('0.2.0', 'candidate')],
+  })
+  try {
+    expect(frozen.wrapper.get('.detail-hero').text()).toContain('待发布 v0.4.0（已冻结）')
+  } finally {
+    frozen.wrapper.unmount()
   }
 })

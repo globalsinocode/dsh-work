@@ -1,3 +1,4 @@
+import { resolvePlatformTimezone } from './domain/execution-time.ts'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
@@ -323,6 +324,7 @@ async function start() {
       memory: controlledMemory,
       projectTasks: projects,
       projectArchive,
+      timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
     },
   )
   projects.attachRunStarter(orchestration)

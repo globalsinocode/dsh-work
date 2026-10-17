@@ -32,10 +32,15 @@ const filteredAgents = computed(() => {
 const { currentPage: agentPage, pagedItems: pagedAgents } =
   useListPagination(filteredAgents, { resetOn: [query, statusFilter] })
 
-/** 尚未发布的工作版本：可编辑草稿，或验证时冻结的待发布版本。 */
+/**
+ * 尚未发布的工作版本：可编辑草稿，或验证时冻结的待发布版本。以 Agent 的工作版本指针为准，
+ * 被取代的旧候选版本不算。
+ */
 function pendingVersionOf(agentId: string) {
+  const working = contentStore.agents.find((agent) => agent.id === agentId)?.version
   return contentStore.agentVersions.find(
-    (version) => version.agentId === agentId && (version.status === 'draft' || version.status === 'candidate'),
+    (version) => version.agentId === agentId && version.version === working
+      && (version.status === 'draft' || version.status === 'candidate'),
   )
 }
 
@@ -123,7 +128,7 @@ onMounted(async () => {
               class="candidate-tag"
               data-action="open-release"
               @click.stop="openDetail(scope.row, 'release')"
-            >v{{ pendingVersionOf(scope.row.id)?.version }} · {{ pendingVersionOf(scope.row.id)?.status === 'candidate' ? '验证中' : '草稿' }}</button>
+            >v{{ pendingVersionOf(scope.row.id)?.version }} · {{ pendingVersionOf(scope.row.id)?.status === 'candidate' ? '已冻结' : '草稿' }}</button>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>

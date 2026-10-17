@@ -177,6 +177,11 @@ export interface RuntimeManifest {
     max_tool_calls: number
   }
   created_at: string
+  /**
+   * IANA timezone the run's "now" is expressed in (a routine's schedule zone, otherwise the
+   * platform default). The adapter renders `created_at` in this zone for the model.
+   */
+  timezone?: string
   trace_id?: string
 }
 
