@@ -25,6 +25,7 @@ import type { Artifact, ChatMessage, ProjectTask, SessionThread, TaskResultOutco
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
+import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
 
 const route = useRoute()
 const router = useRouter()
@@ -350,6 +351,32 @@ function formatSessionRunTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
+/**
+ * EX-02「继续」的语义：只发一句“继续”时先问清楚是重新执行上一轮、继续修改成果，
+ * 还是作为新消息接着讨论。关闭对话框表示取消，输入保留。
+ */
+async function askContinueIntent(choice: ContinueChoice): Promise<'primary' | 'message' | 'abort'> {
+  const names = choice.kind === 'revise' ? choice.artifacts.map(item => `《${item.name}》`).join('、') : ''
+  try {
+    await ElMessageBox.confirm(
+      choice.kind === 'retry'
+        ? '上一轮没有完成。重新执行会从头再跑上一轮的原问题；作为新消息发送则让 Agent 接着当前对话回应。'
+        : `继续修改会把${names}作为本条消息的输入，Agent 输出同名文件时登记为新版本；作为新消息发送则只接着讨论。`,
+      '你想怎么继续？',
+      {
+        confirmButtonText: choice.kind === 'retry' ? '重新执行上一轮'
+          : choice.artifacts.length === 1 ? `继续修改${names}` : `继续修改 ${choice.artifacts.length} 个成果`,
+        cancelButtonText: '作为新消息发送',
+        distinguishCancelAndClose: true,
+        type: 'info',
+      },
+    )
+    return 'primary'
+  } catch (action) {
+    return action === 'cancel' ? 'message' : 'abort'
+  }
+}
+
 async function submitFollowUp(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
   // TW-10 防线：viewer/角色未知不允许发言或触发执行，不能只靠模板不渲染
   // composer——函数本身也要 fail-closed。服务端写轨仍是最终裁决。
@@ -371,6 +398,23 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
         ElMessage.warning('讨论消息已发送，但对话状态刷新失败，请稍后手动刷新。')
       }
     } else {
+      const choice = continueChoice({
+        prompt: payload.prompt,
+        hasAttachments: payload.files.length > 0 || referencedArtifacts.value.length > 0,
+        status: task.value.status,
+        canRetry: canRetry.value,
+        artifacts: task.value.result.artifacts,
+      })
+      if (choice) {
+        const decision = await askContinueIntent(choice)
+        if (decision === 'abort') return
+        if (decision === 'primary' && choice.kind === 'retry') {
+          await retryRun()
+          payload.confirm?.()
+          return
+        }
+        if (decision === 'primary' && choice.kind === 'revise') referencedArtifacts.value = [...choice.artifacts]
+      }
       const nextTask = await taskStore.sendMessage(
         task.value.id, payload.prompt, payload.files, mentionedMemberId,
         referencedArtifacts.value.map(item => item.fileId),
