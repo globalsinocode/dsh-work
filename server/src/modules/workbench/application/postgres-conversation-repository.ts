@@ -1600,14 +1600,32 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
   if (events.length === 0) {
     return [{ id: `${runId}-queued`, title: '等待执行调度', detail: '任务已进入执行队列。', status: 'pending' }]
   }
+  // EX-01：同一调用的“正在调用”在其结果到达后由结果替代，执行步骤里每个调用只占一行。
+  const completedCalls = new Set(events
+    .filter(event => event.eventType === 'tool.completed' && typeof event.safeMetadata['call_id'] === 'string')
+    .map(event => event.safeMetadata['call_id'] as string))
   return events
     .filter((event) => !['assistant.delta', 'assistant.completed'].includes(event.eventType))
-    .map((event, index, visibleEvents) => event.eventType === 'tool.completed' ? toolStep(event) : ({
+    .filter(event => event.eventType !== 'tool.started' || !completedCalls.has(event.safeMetadata['call_id'] as string))
+    .map((event, index, visibleEvents) => event.eventType === 'tool.started' ? toolStartedStep(event, status) : event.eventType === 'tool.completed' ? toolStep(event) : ({
       id: event.id,
       title: eventTitle(event.eventType),
       detail: event.displayMessage ?? '执行状态已更新。',
       status: eventStepStatus(event.eventType, status, index === visibleEvents.length - 1),
     }))
+}
+
+/** EX-01：执行中正在进行的工具调用；本轮已结束仍无结果时显示为未收到结果。 */
+function toolStartedStep(event: EventRow, status: RunState): RunStep {
+  const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const ended = ['succeeded', 'failed', 'cancelled'].includes(status)
+  return {
+    id: event.id,
+    title: ended ? '工具结果未返回' : '正在调用工具',
+    detail: ended ? `${toolName ?? '工具'}：未收到调用结果` : event.displayMessage ?? '工具调用进行中。',
+    status: ended ? 'pending' : 'running',
+    ...(toolName ? { tool: toolName } : {}),
+  }
 }
 
 /** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */

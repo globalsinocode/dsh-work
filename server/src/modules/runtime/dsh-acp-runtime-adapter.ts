@@ -1,4 +1,3 @@
-import { formatExecutionTime } from '../../domain/execution-time.ts'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -12,12 +11,15 @@ import {
   type AcpSessionUpdate,
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
+import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
   MAX_TOOL_CALL_EVENTS,
+  liveToolCallSummary,
   summarizeToolCalls,
   toolCallDisplayMessage,
   toolFailureReason,
   type ToolCallObservation,
+  type ToolCallSummary,
 } from './tool-call-summary.ts'
 import { assertPlatformToolPurpose, platformToolContracts, type PlatformToolName } from './platform-tool-contracts.ts'
 import {
@@ -77,6 +79,10 @@ interface ExecutionRecord {
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
   durableWait?: DurableWaitDecision
   toolCallsReported?: boolean
+  /** EX-01 live steps: calls DSH reported during the Attempt, keyed by ACP toolCallId. */
+  liveToolCalls: Map<string, { toolName: string; completed: boolean }>
+  /** `tool.completed` events emitted so far (live and end-of-run), bounded per Attempt. */
+  toolEventsEmitted: number
 }
 
 export interface DurablePermissionContext {
@@ -270,6 +276,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       acceptedMono,
       activatedSkills: new Set(),
       auditedMcpCallIds: new Set(),
+      liveToolCalls: new Map(),
+      toolEventsEmitted: 0,
       materializedSkills,
     }
     this.executions.set(manifest.run_id, record)
@@ -714,16 +722,57 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.toolCallsReported || record.terminal) return { failed: 0, omitted: 0 }
     record.toolCallsReported = true
     const summaries = summarizeToolCalls(evidence?.toolCalls, record.bridge?.outcomes() ?? [])
-    for (const summary of summaries.slice(0, MAX_TOOL_CALL_EVENTS)) {
-      this.emit(record, 'tool.completed', toolCallDisplayMessage(summary), {
-        ...summary,
-        ...(summary.status === 'failed' ? { reason: toolFailureReason(summary.error_code) } : {}),
-      })
+    // Reconcile with the session log: calls already finished live are not emitted again;
+    // calls DSH never reported live (or whose result never arrived) are filled in here.
+    let omitted = 0
+    for (const summary of summaries) {
+      if (record.liveToolCalls.get(summary.call_id)?.completed) continue
+      if (record.toolEventsEmitted >= MAX_TOOL_CALL_EVENTS) { omitted += 1; continue }
+      this.emitToolCompleted(record, summary, false)
     }
     return {
       failed: summaries.filter(summary => summary.status === 'failed').length,
-      omitted: Math.max(0, summaries.length - MAX_TOOL_CALL_EVENTS),
+      omitted,
     }
+  }
+
+  private emitToolCompleted(record: ExecutionRecord, summary: ToolCallSummary, live: boolean): void {
+    record.toolEventsEmitted += 1
+    this.emit(record, 'tool.completed', toolCallDisplayMessage(summary), {
+      ...summary,
+      ...(summary.status === 'failed' ? { reason: toolFailureReason(summary.error_code) } : {}),
+      ...(live ? { live: true } : {}),
+    })
+  }
+
+  /**
+   * EX-01 live steps from the ACP tool lifecycle DSH sends while it works: `tool_call`
+   * (started) and `tool_call_update` (completed/failed), correlated by `toolCallId`.
+   * Only the tool name and status leave the Worker; arguments and results never do.
+   */
+  private onToolCallUpdate(record: ExecutionRecord, updateType: 'tool_call' | 'tool_call_update', update: Record<string, unknown>): void {
+    if (record.toolCallsReported) return
+    const callId = update['toolCallId']
+    if (typeof callId !== 'string' || callId.length === 0 || callId.length > 200) return
+    const title = typeof update['title'] === 'string' && update['title'].length > 0 ? update['title'].slice(0, 120) : undefined
+    let call = record.liveToolCalls.get(callId)
+    if (!call) {
+      if (record.liveToolCalls.size >= MAX_TOOL_CALL_EVENTS) return
+      call = { toolName: title ?? '工具', completed: false }
+      record.liveToolCalls.set(callId, call)
+      if (updateType === 'tool_call') {
+        this.emit(record, 'tool.started', `${call.toolName}：正在调用`, {
+          call_id: callId, tool_name: call.toolName, status: 'running', live: true,
+        })
+      }
+    }
+    const status = update['status']
+    if (updateType !== 'tool_call_update' || call.completed || (status !== 'completed' && status !== 'failed')) return
+    if (record.toolEventsEmitted >= MAX_TOOL_CALL_EVENTS) return
+    call.completed = true
+    this.emitToolCompleted(record, liveToolCallSummary(
+      { callId, toolName: call.toolName, status }, record.bridge?.outcomes() ?? [],
+    ), true)
   }
 
   /** On a failed Attempt the tool trail helps explain why; never let it mask the failure. */
@@ -805,6 +854,10 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private onSessionUpdate(record: ExecutionRecord, notification: AcpSessionUpdate): void {
     if (record.terminal || notification.sessionId !== record.acpSessionId) return
     const updateType = notification.update['sessionUpdate']
+    if (updateType === 'tool_call' || updateType === 'tool_call_update') {
+      this.onToolCallUpdate(record, updateType, notification.update)
+      return
+    }
     const content = notification.update['content']
     if (updateType !== 'agent_message_chunk' || !isRecord(content) || content['type'] !== 'text') return
     const text = content['text']

@@ -505,6 +505,8 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
   const toolSteps = task.steps.filter(step => step.tool)
   assert.deepEqual(toolSteps.map(step => [step.title, step.status, step.tool, step.detail]), [
     ['调用工具', 'succeeded', 'read', 'read：调用成功'],
+    // 已有结果的“正在调用”被结果替代；本轮结束仍无结果的显示为未收到结果。
+    ['工具结果未返回', 'pending', 'web_fetch', 'web_fetch：未收到调用结果'],
     ['工具调用失败', 'failed', 'data_create', 'data_create：调用失败，调用参数不符合工具要求'],
   ])
   assert.equal(task.result.evidence.toolCalls, 2)
@@ -1363,8 +1365,12 @@ class DeterministicRuntime implements AgentRuntimePort {
         return
       }
       if (manifest.input.message === '工具调用有一次失败') {
-        // EX-01 夹具：工具调用结果以 tool.completed 事件上报，终态声明失败次数。
+        // EX-01 夹具：工具调用实时以 tool.started 开始、tool.completed 结束，终态声明失败次数；
+        // c3 只开始、没有结果。
+        this.emit(execution, 'tool.started', 'read：正在调用', { call_id: 'c1', tool_name: 'read', status: 'running', live: true })
         this.emit(execution, 'tool.completed', 'read：调用成功', { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null })
+        this.emit(execution, 'tool.started', 'data_create：正在调用', { call_id: 'c2', tool_name: 'data_create', status: 'running', live: true })
+        this.emit(execution, 'tool.started', 'web_fetch：正在调用', { call_id: 'c3', tool_name: 'web_fetch', status: 'running', live: true })
         this.emit(execution, 'tool.completed', 'data_create：调用失败，调用参数不符合工具要求', {
           call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
         })

@@ -95,3 +95,24 @@ export function summarizeToolCalls(
     }
   })
 }
+
+/**
+ * EX-01 live step: the result of one call as DSH reports it during the Attempt (ACP
+ * `tool_call_update`). A typed failure code is taken only from the platform tool bridge
+ * outcome with the same call id; name-only matching is left to the end-of-run log.
+ */
+export function liveToolCallSummary(
+  call: { callId: string; toolName: string; status: 'completed' | 'failed' },
+  bridgeOutcomes: PlatformToolOutcome[],
+): ToolCallSummary {
+  const outcome = bridgeOutcomes.find(item => item.callId === call.callId)
+  if (outcome?.errorCode) {
+    return { call_id: call.callId, tool_name: call.toolName, status: 'failed', error_code: outcome.errorCode }
+  }
+  return {
+    call_id: call.callId,
+    tool_name: call.toolName,
+    status: call.status === 'failed' ? 'failed' : 'succeeded',
+    error_code: null,
+  }
+}

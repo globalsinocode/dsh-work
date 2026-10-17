@@ -171,6 +171,18 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[tool-live]')) {
+      // EX-01: the ACP tool lifecycle exactly as DSH 0.1.2-rc.1 sends it (packages/acp/acp/src/updates.ts):
+      // tool_call (in_progress, rawInput) then tool_call_update (completed/failed, content), by toolCallId.
+      const update = (value: Record<string, unknown>) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-read', title: 'read', kind: 'other', status: 'in_progress', rawInput: { path: 'input/SECRET-ARG.md' } })
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-read', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'SECRET-OUTPUT' } }] })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-bash', title: 'bash', kind: 'other', status: 'in_progress', rawInput: { command: 'cat SECRET-ARG' } })
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-bash', status: 'failed', content: [] })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-fetch', title: 'web_fetch', kind: 'other', status: 'in_progress', rawInput: { url: 'https://example.test' } })
+      void writeToolLog().then(() => finishPrompt(pending, 'end_turn'), () => failPrompt(pending, 'Session log write failed', 'tool'))
+      return
+    }
     if (text.includes('[tool-log]') || text.includes('[tool-log-fail]')) {
       const failing = text.includes('[tool-log-fail]')
       void writeToolLog().then(

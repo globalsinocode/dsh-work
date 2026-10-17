@@ -209,9 +209,15 @@ async function loadAgentMembers(workspaceId: string | undefined) {
     agentMembers.value = []
   }
 }
+// 最近一个进行中的步骤（EX-01 实时工具调用会排在“开始执行”之后）。
 const currentStep = computed(() =>
-  task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
+  [...(task.value?.steps ?? [])].reverse().find((step) => ['running', 'awaiting_approval'].includes(step.status)),
 )
+const currentStepLabel = computed(() => {
+  const step = currentStep.value
+  if (!step) return '正在准备回答'
+  return step.tool && step.status === 'running' ? `正在调用 ${step.tool}` : step.title
+})
 // EX-01：执行中长时间没有新事件时提示仍在运行。时钟每 5 秒走一次，只驱动这条提示。
 const clock = ref(Date.now())
 const clockTimer = setInterval(() => { clock.value = Date.now() }, 5000)
@@ -924,7 +930,7 @@ watch(
             </div>
             <div class="working-answer">
               <span class="working-dots"><i></i><i></i><i></i></span>
-              <span>{{ currentStep?.title ?? '正在准备回答' }}</span>
+              <span data-testid="current-step">{{ currentStepLabel }}</span>
               <button type="button" @click="detailsOpen = true">查看执行过程</button>
             </div>
             <p v-if="quietLabel" class="working-quiet" role="status" data-testid="run-quiet-hint">

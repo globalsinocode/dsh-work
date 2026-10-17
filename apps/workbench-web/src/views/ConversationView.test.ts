@@ -277,6 +277,15 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     active.wrapper.unmount()
   })
 
+  it('names the tool being called right now in the working indicator (EX-01)', async () => {
+    const running = { status: 'running' as const, result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) }
+    const { wrapper } = await mountView({ item: task({ ...running, steps: [
+      { id: 'event-started', title: 'DSH Worker 开始执行', detail: '开始执行', status: 'running' },
+      { id: 'tool-call-call-read', title: '正在调用工具', detail: 'read：正在调用', status: 'running', tool: 'read' },
+    ] }) })
+    expect(wrapper.get('[data-testid="current-step"]').text()).toBe('正在调用 read')
+  })
+
   it('lets any writable member retry a shared run, not only the requester (TW-10)', async () => {
     // 服务端 requireWritableRun 的口径是「会话写轨」：团队空间内任一可写成员
     // 都可停止/重试共享会话里的 Run，不限发起人（前端此前误收窄为仅发起人）。

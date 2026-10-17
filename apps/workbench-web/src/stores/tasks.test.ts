@@ -584,4 +584,33 @@ describe('task store', () => {
       vi.useRealTimers()
     }
   })
+
+  it('shows a tool call live and updates the same row when its result arrives (EX-01)', async () => {
+    const { useTaskStore } = await import('./tasks')
+    // 事件流登记在模块级、跨用例保留，因此用独立的 Run，避免沿用其他用例未关闭的流。
+    api.getTasks.mockResolvedValue([{ ...structuredClone(baseTask), id: 'run-tool-live', status: 'running', attemptId: 'attempt-001', steps: [] }])
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances.find((item) => item.url === '/events/run-tool-live')
+    expect(stream).toBeDefined()
+    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>) =>
+      stream?.emit(eventType, {
+        event_id: eventId, run_id: 'run-tool-live', attempt_id: 'attempt-001', sequence: 1, event_type: eventType,
+        occurred_at: new Date().toISOString(), display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
+      })
+
+    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(1))
+    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '正在调用工具', status: 'running', tool: 'read' })
+
+    emit('tool.completed', 'event-done-read', 'read：调用失败，工具返回失败', { call_id: 'call-read', tool_name: 'read', status: 'failed', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps[0]?.status).toBe('failed'))
+    expect(store.tasks[0]?.steps).toHaveLength(1)
+    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '工具调用失败', detail: 'read：调用失败，工具返回失败' })
+
+    // 结束时由会话日志补齐、从未实时开始的调用照常追加一行。
+    emit('tool.completed', 'event-done-fetch', 'web_fetch：未收到调用结果', { call_id: 'call-fetch', tool_name: 'web_fetch', status: 'unknown' })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(2))
+    expect(store.tasks[0]?.steps[1]).toMatchObject({ id: 'event-done-fetch', status: 'pending' })
+  })
 })

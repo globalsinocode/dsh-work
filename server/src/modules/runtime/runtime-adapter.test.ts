@@ -822,6 +822,33 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.ok(!JSON.stringify(tools).includes('SECRET'), 'tool arguments and output stay in the session log')
   })
 
+  it('EX-01 shows tool calls live as DSH reports them and fills in the rest from the session log once', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-tool-live', 'attempt-1', '[tool-live] use tools')
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    const tools = events.filter(event => event.event_type === 'tool.started' || event.event_type === 'tool.completed')
+    assert.deepEqual(tools.map(event => [event.event_type, event.safe_metadata['call_id'], event.safe_metadata['status'], event.safe_metadata['live'] ?? false]), [
+      ['tool.started', 'call-read', 'running', true],
+      ['tool.completed', 'call-read', 'succeeded', true],
+      ['tool.started', 'call-bash', 'running', true],
+      ['tool.completed', 'call-bash', 'failed', true],
+      ['tool.started', 'call-fetch', 'running', true],
+      // 结果从未到达：结束时按会话日志补齐，且已实时完成的调用不再重复。
+      ['tool.completed', 'call-fetch', 'unknown', false],
+    ])
+    assert.equal(tools[3]?.display_message, 'bash：调用失败，工具返回失败')
+    const types = events.map(event => event.event_type)
+    assert.ok(types.lastIndexOf('tool.completed') < types.indexOf('run.completed'))
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['tool_call_count'], 3)
+    assert.equal(completed?.safe_metadata['tool_failed_count'], 1)
+    assert.ok(!JSON.stringify(tools).includes('SECRET'), 'tool arguments and output stay in the Worker')
+  })
+
   it('EX-00 parses ps CPU time in every format', () => {
     assert.equal(parsePsTime('0:01.50'), 1_500)
     assert.equal(parsePsTime('01:02:03'), 3_723_000)

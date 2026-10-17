@@ -23,7 +23,7 @@ const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
 let sessionEventSeq = 0
 const runtimeEventTypes = [
   'run.queued', 'run.started', 'assistant.delta', 'assistant.completed',
-  'tool.completed', 'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
+  'tool.started', 'tool.completed', 'approval.required', 'approval.resolved', 'run.waiting', 'run.cancel_requested',
   'run.cancelled', 'run.failed', 'run.completed',
 ]
 
@@ -437,7 +437,14 @@ export const useTaskStore = defineStore('tasks', () => {
       } else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚', runId: event.run_id })
     }
 
-    if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
+    // EX-01：工具调用实时显示为“正在调用”，结果到达后在同一行原地更新。
+    const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : null
+    const liveStepIndex = callId ? task.steps.findIndex((item) => item.id === `tool-call-${callId}`) : -1
+    if (event.event_type === 'tool.started' && callId) {
+      if (liveStepIndex < 0 && !task.steps.some((item) => item.id === event.event_id)) task.steps.push(toolStartedStep(callId, event))
+    } else if (event.event_type === 'tool.completed' && liveStepIndex >= 0) {
+      task.steps.splice(liveStepIndex, 1, { ...toolStep(event), id: `tool-call-${callId}` })
+    } else if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
       if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
         id: event.event_id,
@@ -506,6 +513,17 @@ function toolStep(event: { event_id: string; display_message: string | null; saf
     title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
     detail: event.display_message ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
+    ...(toolName ? { tool: toolName } : {}),
+  }
+}
+
+function toolStartedStep(callId: string, event: { display_message: string | null; safe_metadata: Record<string, unknown> }) {
+  const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
+  return {
+    id: `tool-call-${callId}`,
+    title: '正在调用工具',
+    detail: event.display_message ?? '工具调用进行中。',
+    status: 'running' as const,
     ...(toolName ? { tool: toolName } : {}),
   }
 }

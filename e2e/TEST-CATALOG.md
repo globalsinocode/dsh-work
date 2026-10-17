@@ -1057,15 +1057,16 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、Mock ACP Worker、平台工具桥<br>
 **前置数据：** 一次 Run 中有成功、失败和未返回结果的工具调用<br>
-**spec：** `server/src/modules/runtime/tool-call-summary.test.ts`、`server/src/modules/runtime/platform-tool-bridge.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`
+**spec：** `server/src/modules/runtime/tool-call-summary.test.ts`、`server/src/modules/runtime/platform-tool-bridge.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`apps/workbench-web/src/stores/tasks.test.ts`、`apps/workbench-web/src/views/ConversationView.test.ts`
 
 1. Attempt 成功结束时，每次工具调用按顺序产生一条 `tool.completed` 事件，均在 `run.completed` 之前；`run.completed` 带工具调用总数和失败数。
 2. Attempt 失败时，已发生的工具调用仍在 `run.failed` 之前登记。
 3. 平台工具失败显示与错误码对应的固定原因（如“调用参数不符合工具要求”“已达到本次执行的工具调用次数上限”）；未知错误码和内置工具失败显示“工具返回失败”；无结果记录显示“未收到调用结果”。
 4. 事件不含工具参数和输出内容。
 5. 工作台执行步骤逐条显示工具名与结果，失败步骤为失败状态；结果核验显示“工具调用 N（失败 M，原因见执行步骤）”。
+6. **实时（2026-10-17）：** DSH 在执行中发出 ACP `tool_call`/`tool_call_update` 时，平台随即产生 `tool.started`（“正在调用”）与带 `live: true` 的 `tool.completed`，同一 `call_id` 在执行步骤中只占一行并原地更新；“正在处理”提示显示“正在调用 工具名”。结束时按会话日志补齐未实时完成的调用，已实时完成的不重复；`run.completed` 的总数与失败数不变。本轮结束仍无结果的“正在调用”显示为“未收到调用结果”。
 
-**验收：** 上述测试通过；P2 另需在目标环境用真实 DSH 让 Agent 读取一个不存在的文件，确认执行步骤出现失败的工具调用、任务本身仍可完成，并留证 Run/Attempt 与 DSH 版本。
+**验收：** 上述测试通过；P2 另需在目标环境用真实 DSH 让 Agent 读取一个不存在的文件，确认执行步骤出现失败的工具调用、任务本身仍可完成，并留证 Run/Attempt 与 DSH 版本。实时部分另需确认：执行过程中（而非结束后）出现“正在调用 read”，随后原地变为失败，最终每个调用只有一行。
 
 **本地 P2（2026-10-16）：** 已通过。真实 `read` 失败 1 次，步骤和失败计数可见，`tool.completed` 早于 `run.completed`，Run 为 `succeeded`。服务基线、Run/Attempt、DSH 精确版本与截图见验收记录（Git 历史：提交 `9521be2` 的 `docs/development/runtime-execution-local-p2-2026-10-16.json`）；未覆盖目标部署环境及 ACP 实时通知。
 
