@@ -21,7 +21,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ChatMessage, ProjectTask, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
@@ -147,6 +147,54 @@ const mentionOptions = computed(() =>
     .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
     .map(member => ({ id: member.id, name: member.name })),
 )
+
+/**
+ * 项目空间 S1：当前线程若是 Agent 任务线程，回复默认交给承接 Agent，无需 @；
+ * 服务端同样按任务线程固定承接 Agent，这里只决定输入框的默认行为与提示。
+ */
+const projectTask = ref<ProjectTask | null>(null)
+const currentSessionId = computed(() => task.value?.sessionId ?? sessionThread.value?.sessionId ?? null)
+const taskThreadAgentId = computed(() =>
+  projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.agentMemberId : undefined)
+const taskThreadAgentName = computed(() =>
+  projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.name : '')
+const markingAsTask = ref(false)
+/** 已经过 @Agent 执行、但还不是任务的团队线程，可由非只读成员设为任务。 */
+const canMarkAsTask = computed(() => {
+  if (!isTeamSession.value || projectTask.value || !currentSessionId.value) return false
+  if (task.value) return canOperateRun.value
+  return canWriteSession.value && (sessionThread.value?.runs.length ?? 0) > 0
+})
+
+async function loadProjectTask(workspaceId: string | undefined) {
+  const sessionId = currentSessionId.value
+  if (!workspaceId || !isTeamSession.value || !sessionId) {
+    projectTask.value = null
+    return
+  }
+  try {
+    const tasks = await workbenchApi.listProjectTasks(workspaceId)
+    if (currentSessionId.value !== sessionId) return
+    projectTask.value = tasks.find(item => item.sessionId === sessionId) ?? null
+  } catch {
+    projectTask.value = null
+  }
+}
+
+async function markAsTask() {
+  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
+  const sessionId = currentSessionId.value
+  if (!workspaceId || !sessionId || markingAsTask.value) return
+  markingAsTask.value = true
+  try {
+    projectTask.value = await workbenchApi.markSessionAsProjectTask(workspaceId, sessionId)
+    ElMessage.success('已设为任务，可在项目空间的“任务”页签查看')
+  } catch (error) {
+    notifyActionFailure('设为任务', '当前线程', error, '确认该线程已由 Agent 执行过且尚未设为任务后重试。')
+  } finally {
+    markingAsTask.value = false
+  }
+}
 
 async function loadAgentMembers(workspaceId: string | undefined) {
   if (!workspaceId || !isTeamSession.value) {
@@ -302,7 +350,7 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
   // composer——函数本身也要 fail-closed。服务端写轨仍是最终裁决。
   if (!task.value || workspaceArchived.value || isRunViewer.value) return
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
+    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
     if (isTeamSession.value && !mentionedMemberId) {
       // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
       if (payload.files.length || referencedArtifacts.value.length) {
@@ -337,7 +385,7 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
   const thread = sessionThread.value
   if (!thread || !canWriteSession.value) return
   try {
-    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
+    const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
     // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
     if (mentionedMemberId || !isTeamSession.value) {
       const createdRun = await taskStore.startRunWithSessionFiles(thread.sessionId, {
@@ -398,6 +446,7 @@ async function initializeConversation() {
   const thread = await loadConversationTarget(routeTargetId.value)
   await reconcileConversationRoute()
   await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  await loadProjectTask(task.value?.workspaceId ?? thread?.workspaceId)
   await nextTick()
   scrollToBottom('auto')
 }
@@ -467,6 +516,7 @@ watch(
     const thread = await loadConversationTarget(String(id))
     await reconcileConversationRoute()
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    await loadProjectTask(task.value?.workspaceId ?? thread?.workspaceId)
   },
 )
 
@@ -561,6 +611,10 @@ watch(
           </button>
           <h1>{{ sessionThread.title }}</h1>
           <span class="conversation-skill"><span>发起人</span>{{ sessionThread.creatorName }}</span>
+          <span v-if="projectTask" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
+        </div>
+        <div v-if="canMarkAsTask" class="conversation-header__actions">
+          <el-button data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
         </div>
       </header>
 
@@ -640,11 +694,14 @@ watch(
 
       <div class="conversation-composer-dock">
         <div class="conversation-composer-dock__inner">
+          <p v-if="canWriteSession && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
+            任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+          </p>
           <TaskComposer
             v-if="canWriteSession"
             compact
             :mention-options="isTeamSession ? mentionOptions : []"
-            :files-require-mention="isTeamSession"
+            :files-require-mention="isTeamSession && !taskThreadAgentId"
             @submit="submitSessionMessage"
           />
           <p v-else-if="sessionArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
@@ -687,6 +744,8 @@ watch(
           </span>
         </div>
         <div class="conversation-header__actions">
+          <span v-if="projectTask" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
+          <el-button v-if="canMarkAsTask" data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
           <StatusTag :status="task.status" dot />
           <el-button text :icon="DataLine" @click="detailsOpen = true">
             <span class="header-action-label">对话详情</span>
@@ -900,13 +959,16 @@ watch(
               {{ item.name }} · V{{ item.version }}
             </el-tag>
           </div>
+          <p v-if="canFollowUp && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
+            任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+          </p>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
             v-if="canFollowUp"
             compact
             :running="canStop"
             :stopping="stopping"
             :mention-options="isTeamSession ? mentionOptions : []"
-            :files-require-mention="isTeamSession"
+            :files-require-mention="isTeamSession && !taskThreadAgentId"
             @submit="submitFollowUp"
             @stop="stopCurrentRun"
           />
@@ -1634,7 +1696,16 @@ watch(
 }
 
 /* 归档只读态：以提示替代续写输入，避免提交后才被服务端拒绝（design §2.7）。 */
-.conversation-composer-dock__inner > p.conversation-archived-notice {
+.conversation-composer-dock__inner > p.conversation-task-thread-notice {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: var(--dsh-radius-sm);
+  background: var(--dsh-color-brand-soft);
+  color: var(--dsh-color-brand-dark);
+  font-size: var(--dsh-font-size-micro);
+}
+
+.conversation-archived-notice {
   margin-top: 0;
   padding: 12px 16px;
   border: 1px solid #f0d9b5;

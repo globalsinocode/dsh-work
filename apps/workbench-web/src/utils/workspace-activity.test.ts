@@ -9,7 +9,7 @@ import {
 import type { WorkspaceActivityItem, WorkspaceFile } from '@/types/domain'
 import { buildActivityDisplayItems, resolveActivityFileName } from './workspace-activity'
 
-/** 服务端 migration 0026 的闭合集合，前端必须逐一给出可读文案。 */
+/** 服务端动态 kind 的闭合集合（迁移 0026，0088 扩充项目空间动态），前端必须逐一给出可读文案。 */
 const ALL_KINDS: WorkspaceActivityKind[] = [
   'member_added',
   'member_removed',
@@ -23,6 +23,9 @@ const ALL_KINDS: WorkspaceActivityKind[] = [
   'file_removed',
   'file_version_added',
   'workspace_restored',
+  'brief_updated',
+  'project_task_created',
+  'project_task_completed',
 ]
 
 function item(overrides: Partial<WorkspaceActivityItem> = {}): WorkspaceActivityItem {
@@ -52,7 +55,7 @@ const files: WorkspaceFile[] = [
 ]
 
 describe('团队动态文案（design §2.9 / TW-08）', () => {
-  it('12 种 kind 都映射为非空且互不相同的描述', () => {
+  it('全部 kind 都映射为非空且互不相同的描述', () => {
     const descriptions = ALL_KINDS.map(kind => describeWorkspaceActivity({ kind, actorDisplayName: '林岚' }))
 
     expect(descriptions.every(text => text.length > 0)).toBe(true)
@@ -143,11 +146,11 @@ describe('团队动态文案（design §2.9 / TW-08）', () => {
 })
 
 describe('团队动态 kind 集合与服务端契约一致', () => {
-  it('前端 12 种 kind 与迁移 0026 的 CHECK 约束逐一相等', () => {
-    // 判别性：任何一侧加了第 13 种 kind 而另一侧没跟上，这条用例都会红——避免只靠
+  it('前端 kind 集合与最新迁移（0088）的 CHECK 约束逐一相等', () => {
+    // 判别性：任何一侧加了新 kind 而另一侧没跟上，这条用例都会红——避免只靠
     // 「两处联合类型长得一样」这种人工同步。
-    const sql = readFileSync(findMigration0026(), 'utf8')
-    const check = sql.match(/kind\s+text\s+not null\s+check\s*\(kind\s+in\s*\(([\s\S]*?)\)\)/i)
+    const sql = readFileSync(findMigration('0088_project_space.sql'), 'utf8')
+    const check = sql.match(/workspace_activity_events_kind_check\s+check\s*\(kind\s+in\s*\(([\s\S]*?)\)\)/i)
     expect(check).not.toBeNull()
     const serverKinds = [...check![1]!.matchAll(/'([a-z_]+)'/g)].map(match => match[1]!).sort()
 
@@ -156,14 +159,14 @@ describe('团队动态 kind 集合与服务端契约一致', () => {
 })
 
 /** 从当前工作目录向上找迁移文件（vitest 的 cwd 是包目录，也兼容仓库根目录运行）。 */
-function findMigration0026(): string {
+function findMigration(name: string): string {
   let directory = process.cwd()
   for (let depth = 0; depth < 6; depth += 1) {
-    const candidate = resolve(directory, 'server/migrations/0026_workspace_activity.sql')
+    const candidate = resolve(directory, `server/migrations/${name}`)
     if (existsSync(candidate)) return candidate
     directory = resolve(directory, '..')
   }
-  throw new Error('未找到迁移 0026：无法校验 kind 契约')
+  throw new Error(`未找到迁移 ${name}：无法校验 kind 契约`)
 }
 
 describe('团队动态展示项装配', () => {

@@ -24,6 +24,9 @@ import type {
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
   MemberDisclosureImpact,
+  ProjectBrief,
+  ProjectTask,
+  ProjectTaskInput,
   WorkspaceFile,
   WorkspaceFileVersionPage,
   WorkspaceLifecycleResult,
@@ -358,6 +361,48 @@ export const workbenchApi = {
   listWorkspaceAgentMembers: (workspaceId: string) =>
     request<WorkspaceAgentMember[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'GET',
+    }),
+  getProjectBrief: (workspaceId: string) =>
+    request<ProjectBrief | null>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, { method: 'GET' }),
+  saveProjectBrief: (workspaceId: string, input: { content: string; dueDate: string | null }) =>
+    request<ProjectBrief>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  listProjectTasks: (workspaceId: string) =>
+    request<ProjectTask[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, { method: 'GET' }),
+  createProjectTask: (workspaceId: string, input: ProjectTaskInput) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateProjectTask: (workspaceId: string, taskId: string, input: Partial<ProjectTaskInput>) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  removeProjectTask: (workspaceId: string, taskId: string) =>
+    request<{ removed: true }>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    }),
+  startProjectTask: (workspaceId: string, taskId: string, idempotencyKey: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ idempotencyKey }),
+    }),
+  setProjectTaskStatus: (
+    workspaceId: string,
+    taskId: string,
+    input: { status: 'todo' | 'in_progress' | 'done'; completionNote?: string; deliverableFileIds?: string[] },
+  ) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/status`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
+      method: 'POST',
+      body: JSON.stringify(title ? { title } : {}),
     }),
   previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
     request<MemberDisclosureImpact[]>(

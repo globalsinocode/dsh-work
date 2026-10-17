@@ -386,8 +386,62 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'brief_updated'
+  | 'project_task_created'
+  | 'project_task_completed'
 
-export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace'
+export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace' | 'brief' | 'project_task'
+
+/** 项目空间 S1：项目简报（最新版本）。 */
+export interface ProjectBrief {
+  versionId: string
+  versionNo: number
+  content: string
+  dueDate: string | null
+  updatedBy: { userId: string; displayName: string }
+  updatedAt: string
+}
+
+/** Agent 任务的状态由任务线程最近一次执行推算；员工任务没有 failed。 */
+export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done' | 'failed'
+export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete'
+
+export interface ProjectTaskFile {
+  fileObjectId: string
+  logicalFileId: string
+  name: string
+  versionNo: number
+}
+
+export interface ProjectTask {
+  id: string
+  title: string
+  description: string
+  createdBy: { userId: string; displayName: string }
+  assignee:
+    | { type: 'employee'; userId: string; displayName: string }
+    | { type: 'agent'; agentMemberId: string; name: string }
+  status: ProjectTaskStatus
+  /** Agent 任务的任务线程；未启动时为 null。 */
+  sessionId: string | null
+  latestRunId: string | null
+  inputFiles: ProjectTaskFile[]
+  deliverableFiles: ProjectTaskFile[]
+  completionNote: string | null
+  completedAt: string | null
+  dueDate: string | null
+  createdAt: string
+  updatedAt: string
+  allowedActions: ProjectTaskAction[]
+}
+
+export interface ProjectTaskInput {
+  title: string
+  description?: string
+  assignee: { type: 'employee' | 'agent'; id: string }
+  inputFileIds?: string[]
+  dueDate?: string | null
+}
 
 /**
  * 一条团队动态。`objectId` 只是安全对象引用（成员／Agent／逻辑文件／空间 id），

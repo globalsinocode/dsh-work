@@ -9,6 +9,7 @@ import {
   Document,
   Files,
   InfoFilled,
+  List,
   Plus,
 } from '@element-plus/icons-vue'
 
@@ -31,6 +32,8 @@ import type {
 } from '@/types/domain'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
+import ProjectBriefCard from '@/components/ProjectBriefCard.vue'
+import ProjectTaskPanel from '@/components/ProjectTaskPanel.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
 import WorkspaceAgentMemberDialog from '@/components/WorkspaceAgentMemberDialog.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
@@ -42,7 +45,8 @@ import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
-type WorkspaceTab = 'conversation' | 'files' | 'artifacts'
+type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts'
+const WORKSPACE_TABS: WorkspaceTab[] = ['tasks', 'conversation', 'files', 'artifacts']
 /** 对话页签内的视图：新对话（默认）/ 历史对话（design §2.2）。 */
 type ConversationView = 'new' | 'history'
 
@@ -185,12 +189,18 @@ function invalidateActivityRequests() {
   drawerRequestSeq += 1
 }
 
-const requestedTab = String(route.query.tab ?? 'conversation')
+/**
+ * 项目空间 S1：项目空间默认进入“任务”页签，个人空间仍默认“对话”。空间类型在
+ * 加载后才确定，因此未指定 `?tab=` 时由下方 watch 按类型落到默认页签。
+ */
+const requestedTab = String(route.query.tab ?? '')
 const activeTab = ref<WorkspaceTab>(
-  ['conversation', 'files', 'artifacts'].includes(requestedTab)
+  WORKSPACE_TABS.includes(requestedTab as WorkspaceTab) && requestedTab !== 'tasks'
     ? (requestedTab as WorkspaceTab)
     : 'conversation',
 )
+/** 项目任务数（页签计数），由任务面板加载后回传。 */
+const projectTaskCount = ref(0)
 /** 默认新对话；`?view=history` 深链在空间对象就绪后由 watch 恢复（仅团队）。 */
 const conversationView = ref<ConversationView>('new')
 const conversationViews: Array<{ id: ConversationView; label: string }> = [
@@ -215,6 +225,7 @@ const isTeam = computed(() => workspace.value?.type === 'team')
  * active，即使夹具强行带上归档状态也不渲染归档提示，AC-23）。
  */
 const isArchived = computed(() => isTeam.value && workspace.value?.status === 'archived')
+const defaultTab = computed<WorkspaceTab>(() => (isTeam.value ? 'tasks' : 'conversation'))
 /**
  * 归档执行轨（design §2.7）：归档隐藏新对话、上传等写入口，但历史、文件与成果
  * 内容保持可读。新对话入口只在活动空间渲染；归档时对话页签固定展示历史。
@@ -266,6 +277,9 @@ const canWriteTeamContent = computed(() =>
   && !isArchived.value
   && currentUserRole.value !== null
   && currentUserRole.value !== 'viewer')
+/** 项目简报只由负责人与管理员在活动空间编辑（项目空间 S1）。 */
+const canEditBrief = computed(() =>
+  isTeam.value && !isArchived.value && (currentUserRole.value === 'owner' || currentUserRole.value === 'admin'))
 /**
  * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
  * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
@@ -302,6 +316,12 @@ const activityDrawerRows = computed(() => activityDrawerItems.value.map((item) =
   }
 }))
 const workspaceTabs = computed(() => [
+  ...(isTeam.value ? [{
+    id: 'tasks' as const,
+    label: '任务',
+    count: projectTaskCount.value,
+    icon: List,
+  }] : []),
   {
     id: 'conversation' as const,
     label: '对话',
@@ -337,7 +357,7 @@ function workspaceBaseLocation(query: LocationQuery) {
 function selectTab(tab: WorkspaceTab) {
   activeTab.value = tab
   const query = { ...route.query }
-  if (tab === 'conversation') delete query.tab
+  if (tab === defaultTab.value) delete query.tab
   else query.tab = tab
   return router.replace(workspaceBaseLocation(query))
 }
@@ -534,13 +554,17 @@ function openArtifactPreview(item: Artifact) {
 }
 
 watch(
-  () => route.query.tab,
-  (tab) => {
-    const value = String(tab ?? 'conversation')
-    if (['conversation', 'files', 'artifacts'].includes(value)) {
-      activeTab.value = value as WorkspaceTab
+  () => [route.query.tab, isTeam.value] as const,
+  ([tab]) => {
+    const value = tab === undefined || tab === null || tab === '' ? defaultTab.value : String(tab)
+    // 个人空间没有任务页签：深链 ?tab=tasks 退回默认页签。
+    if (value === 'tasks' && !isTeam.value) {
+      activeTab.value = defaultTab.value
+      return
     }
+    if (WORKSPACE_TABS.includes(value as WorkspaceTab)) activeTab.value = value as WorkspaceTab
   },
+  { immediate: true },
 )
 
 /**
@@ -1011,6 +1035,17 @@ watch(
       </el-alert>
 
       <div class="workspace-context-page__content">
+        <ProjectTaskPanel
+          v-if="isTeam && activeTab === 'tasks'"
+          :workspace-id="workspace.id"
+          :workspace-name="workspace.name"
+          :can-write="canWriteTeamContent"
+          :members="workspaceMembers"
+          :agent-members="agentMembers"
+          :files="workspace.files"
+          @count="projectTaskCount = $event"
+        />
+
         <section
           v-show="activeTab === 'conversation'"
           id="workspace-panel-conversation"
@@ -1216,7 +1251,15 @@ watch(
     </main>
 
     <aside v-if="!panelCollapsed" class="workspace-context-page__aside">
+      <ProjectBriefCard
+        v-if="isTeam"
+        class="workspace-context-page__brief"
+        :workspace-id="workspace.id"
+        :workspace-name="workspace.name"
+        :can-edit="canEditBrief"
+      />
       <WorkspaceInfoPanel
+        class="workspace-context-page__info"
         :workspace="workspace"
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
@@ -1252,7 +1295,15 @@ watch(
       size="min(360px, 100vw)"
       :with-header="false"
     >
+      <ProjectBriefCard
+        v-if="isTeam"
+        class="workspace-context-page__brief"
+        :workspace-id="workspace.id"
+        :workspace-name="workspace.name"
+        :can-edit="canEditBrief"
+      />
       <WorkspaceInfoPanel
+        class="workspace-context-page__info"
         :workspace="workspace"
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
@@ -1694,11 +1745,25 @@ watch(
 }
 
 .workspace-context-page__aside {
+  display: flex;
   min-width: 0;
   height: 100vh;
-  overflow: hidden;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-left: 1px solid #e5e7e4;
   box-shadow: -8px 0 28px rgb(32 42 36 / 3%);
+}
+
+.workspace-context-page__brief {
+  flex: 0 0 auto;
+  margin: 12px 12px 0;
+}
+
+/* 简报在上、空间信息在下：信息面板占剩余高度并自行滚动。 */
+.workspace-context-page__info {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .workspace-tab-pane {

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
+import type { ProjectTask, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
 
@@ -22,6 +22,8 @@ const api = vi.hoisted(() => ({
   getSessionThread: vi.fn(),
   postSessionMessage: vi.fn(),
   listWorkspaceAgentMembers: vi.fn(),
+  listProjectTasks: vi.fn(),
+  markSessionAsProjectTask: vi.fn(),
   startRun: vi.fn(),
   cancelRun: vi.fn(),
   retryRun: vi.fn(),
@@ -150,6 +152,28 @@ function sessionThread(overrides: Partial<SessionThread> = {}): SessionThread {
   }
 }
 
+function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
+  return {
+    id: 'ptask-1',
+    title: '分析缺货原因',
+    description: '',
+    createdBy: { userId: 'U00002', displayName: '周航' },
+    assignee: { type: 'agent', agentMemberId: 'wam-7', name: '缺货分析助手' },
+    status: 'done',
+    sessionId: 'session-001',
+    latestRunId: 'run-9',
+    inputFiles: [],
+    deliverableFiles: [],
+    completionNote: null,
+    completedAt: null,
+    dueDate: null,
+    createdAt: '2026-09-10T09:00:00.000Z',
+    updatedAt: '2026-09-10T10:00:00.000Z',
+    allowedActions: ['edit', 'remove'],
+    ...overrides,
+  }
+}
+
 async function mountView(options: { item?: TaskRun | null; workspace?: Workspace } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -186,6 +210,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.listProjectTasks.mockResolvedValue([])
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
@@ -586,6 +611,41 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('[data-testid="run-result-unverified"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('缺失成果不视为已交付')
     expect(wrapper.text()).not.toContain('目标已达成')
+  })
+
+  it('routes a task-thread reply to the assigned Agent without @ (项目空间 S1)', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockResolvedValue([projectTask()])
+    api.startRun.mockResolvedValue(task({ id: 'run-new', sessionId: 'session-001' }))
+    const { wrapper, taskStore } = await mountView({ item: null })
+    vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})
+
+    expect(wrapper.get('[data-testid="task-thread-notice"]').text()).toContain('“缺货分析助手”')
+    expect(wrapper.get('[data-testid="task-thread-badge"]').text()).toContain('分析缺货原因')
+    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
+    })
+    await flushPromises()
+
+    expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({ workspaceAgentMemberId: 'wam-7' }))
+    expect(api.postSessionMessage).not.toHaveBeenCalled()
+  })
+
+  it('offers “设为任务” on an Agent-executed shared thread that is not yet a task', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread({
+      runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T10:00:00.000Z' }],
+    }))
+    api.markSessionAsProjectTask.mockResolvedValue(projectTask({ title: '供应商讨论' }))
+    const { wrapper } = await mountView({ item: null })
+
+    await wrapper.get('[data-testid="mark-as-task"]').trigger('click')
+    await flushPromises()
+    expect(api.markSessionAsProjectTask).toHaveBeenCalledWith('ws-team', 'session-001')
+    expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="task-thread-notice"]').exists()).toBe(true)
   })
 
   it('renders session run statuses as links in the shared discussion thread', async () => {
