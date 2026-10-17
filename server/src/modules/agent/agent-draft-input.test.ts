@@ -184,6 +184,18 @@ test('optional fields may be omitted, and illegal values are rejected without ec
   }
 })
 
+test('delegation target list is a string array before unique() trims it', () => {
+  for (const parse of [parseCreateAgentDraftInput, parseUpdateAgentDraftInput]) {
+    const base = parse === parseCreateAgentDraftInput ? createDraft : updateDraft
+    assertInvalid(() => parse({ ...base, delegationPolicy: leaked }), 'delegationPolicy')
+    assertInvalid(() => parse({ ...base, delegationPolicy: [leaked] }), 'delegationPolicy')
+    assertInvalid(() => parse({ ...base, delegationPolicy: { maxDepth: 1 } }), 'allowedAgentVersionIds')
+    assertInvalid(() => parse({ ...base, delegationPolicy: { allowedAgentVersionIds: { leak: leaked } } }), 'allowedAgentVersionIds')
+    assertInvalid(() => parse({ ...base, delegationPolicy: { allowedAgentVersionIds: ['ok', { leak: leaked }] } }), 'allowedAgentVersionIds')
+    assert.equal(parse({ ...base, delegationPolicy: null }).delegationPolicy, null)
+  }
+})
+
 test('quota fields must be positive safe integers and do not copy business bounds', () => {
   for (const parse of [parseCreateAgentDraftInput, parseUpdateAgentDraftInput]) {
     const base = parse === parseCreateAgentDraftInput ? createDraft : updateDraft

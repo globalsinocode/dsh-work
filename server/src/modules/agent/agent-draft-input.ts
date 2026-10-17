@@ -2,8 +2,8 @@ import type { CreateAgentDraftInput, UpdateAgentDraftInput } from '../../domain/
 import { invalidRequest } from '../../domain/request-errors.ts'
 
 /**
- * HTTP 草稿入口的结构校验。只保证后续 `.trim()`、`unique()` 和额度比较不会抛 TypeError；
- * 空白字符串、MCP 范围、委派策略和 AgentSpec 内容仍由既有领域校验决定。
+ * HTTP 草稿入口的结构校验。只保证后续 `.trim()`、`unique()` 和额度比较不会抛 TypeError。
+ * 空白字符串、MCP 范围、委派目标数量与标识格式、深度/并行/超时，以及 AgentSpec 内容仍由既有领域校验决定。
  */
 export function parseCreateAgentDraftInput(value: unknown): Omit<CreateAgentDraftInput, 'actor'> {
   const record = requirePlainObject(value)
@@ -61,9 +61,26 @@ function readExecutionGrants(record: Record<string, unknown>) {
 function domainPassthrough(record: Record<string, unknown>): Pick<CreateAgentDraftInput, 'mcpScope' | 'delegationPolicy' | 'data'> {
   return {
     ...(Object.hasOwn(record, 'mcpScope') ? { mcpScope: record.mcpScope as CreateAgentDraftInput['mcpScope'] } : {}),
-    ...(Object.hasOwn(record, 'delegationPolicy') ? { delegationPolicy: record.delegationPolicy as CreateAgentDraftInput['delegationPolicy'] } : {}),
+    ...readDelegationPolicy(record),
     ...(Object.hasOwn(record, 'data') ? { data: record.data as CreateAgentDraftInput['data'] } : {}),
   }
+}
+
+/** `unique()` 会在领域校验之前对目标标识调用 `.trim()`。null/undefined 仍交给 `normalizeDelegationPolicy` 取默认值。 */
+function readDelegationPolicy(record: Record<string, unknown>): Pick<CreateAgentDraftInput, 'delegationPolicy'> {
+  if (!Object.hasOwn(record, 'delegationPolicy')) return {}
+  const value = record.delegationPolicy
+  if (value === undefined || value === null) {
+    return { delegationPolicy: value as CreateAgentDraftInput['delegationPolicy'] }
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidRequest('delegationPolicy 必须是对象')
+  }
+  const ids = (value as Record<string, unknown>).allowedAgentVersionIds
+  if (!Array.isArray(ids) || ids.some(item => typeof item !== 'string')) {
+    throw invalidRequest('allowedAgentVersionIds 必须是字符串数组')
+  }
+  return { delegationPolicy: value as CreateAgentDraftInput['delegationPolicy'] }
 }
 
 function requirePlainObject(value: unknown): Record<string, unknown> {
