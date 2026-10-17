@@ -459,10 +459,37 @@ test('S3 服务重启：未取得 Run 的案例与被重启终止的案例都标
   const after = await validation.getValidation(agentId, running.id)
   assert.deepEqual(after.cases.map(item => [item.status, item.error]), [['interrupted', '服务重启中断'], ['interrupted', '服务重启中断']])
   assert.equal(after.status, 'completed')
-  trialRuntime.releaseAll()
-  for (const item of after.cases) await validation.rerunCase(agentId, after.id, item.id, ADMIN)
-  const done = await waitFor(agentId, after.id, completed, '重跑未完成')
-  assert.ok(done.cases.every(item => item.status === 'succeeded'))
+  // 被收敛的 Attempt 随后又收到 Runtime 的完成事件：只入事件日志，不改状态、不写回答。
+  const logged: string[] = []
+  const consoleError = console.error
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); consoleError(...args) }
+  try {
+    trialRuntime.releaseAll()
+    for (const item of after.cases) await validation.rerunCase(agentId, after.id, item.id, ADMIN)
+    const done = await waitFor(agentId, after.id, completed, '重跑未完成')
+    assert.ok(done.cases.every(item => item.status === 'succeeded'))
+    for (let tries = 0; tries < 100; tries += 1) {
+      const [row] = await database<{ count: number }[]>`
+        select count(*)::integer as count from run_events
+         where tenant_id = ${tenantId} and run_id = ${runId} and event_type = 'run.completed'
+      `
+      if (row?.count) break
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    // 事件写入后其后果在同一条链上处理；再等一拍让链尾落定。
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const [late] = await database<{ runStatus: string; attemptStatus: string; answers: number; events: number }[]>`
+      select r.status as "runStatus", a.status as "attemptStatus",
+             (select count(*)::integer from messages m where m.tenant_id = r.tenant_id and m.run_id = r.id and m.role = 'assistant') as answers,
+             (select count(*)::integer from run_events e where e.tenant_id = r.tenant_id and e.run_id = r.id and e.event_type = 'run.completed') as events
+        from runs r join run_attempts a on a.tenant_id = r.tenant_id and a.run_id = r.id
+       where r.tenant_id = ${tenantId} and r.id = ${runId}
+    `
+    assert.deepEqual({ ...late }, { runStatus: 'failed', attemptStatus: 'failed', answers: 0, events: 1 })
+    assert.deepEqual(logged.filter(line => line.includes('persist runtime event failed')), [])
+  } finally {
+    console.error = consoleError
+  }
 })
 
 test('S3 验证案例车道最多并行两路，并为交互执行保留一个执行位', async () => {

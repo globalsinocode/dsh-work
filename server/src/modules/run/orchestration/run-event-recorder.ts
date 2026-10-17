@@ -2,6 +2,12 @@ import type { RuntimeEvent, RuntimeManifest } from '../../runtime/runtime-types.
 import type { JsonObject, RunRecord, StoredRunEvent } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+import { isRunTerminalState } from '../run-state-machine.ts'
+
+/** Events that change state, messages or budget; deltas and tool progress are log-only. */
+const CONSEQUENTIAL_EVENTS = new Set([
+  'run.started', 'run.waiting', 'assistant.completed', 'run.cancel_requested', 'run.cancelled', 'run.failed', 'run.completed',
+])
 
 /**
  * Persists Runtime events first, then applies their consequences: Run/Attempt state,
@@ -68,6 +74,13 @@ export class RunEventRecorder {
     await this.deps.runs.appendEvent(stored)
     const eventRun = await this.deps.runs.getRun(tenantId, run.id)
     if (eventRun?.currentAttemptId !== event.attempt_id) return
+    // A late event for an Attempt the platform already ended (revoked authorization, system
+    // cancel, timeout, restart convergence) stays in the event log but has no consequences:
+    // no answer appended to the conversation, no budget settlement, no state change.
+    if (CONSEQUENTIAL_EVENTS.has(event.event_type)) {
+      const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+      if (attempt && isRunTerminalState(attempt.status)) return
+    }
     if (event.event_type === 'run.started') {
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'running')
       await this.deps.runs.transitionRun(tenantId, run.id, 'running')
