@@ -21,9 +21,9 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   await commonTasks.getByRole('button', { name: '分析文件' }).click()
   await expect(page.getByLabel('对话输入')).toHaveValue('分析我上传的文件，概括主要指标、异常项和需要跟进的问题。')
 
-  await page.getByRole('button', { name: '团队空间', exact: true }).click()
+  await page.getByRole('button', { name: '项目空间', exact: true }).click()
   await expect(page).toHaveURL(/\/workspaces$/)
-  await expect(page.getByRole('heading', { name: '团队空间', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '项目空间', exact: true })).toBeVisible()
   await expect(page.getByText('供应链经营分析', { exact: true })).toBeVisible()
 
   await page.getByText('供应链经营分析', { exact: true }).first().click()

@@ -29,6 +29,6 @@ onBeforeUnmount(()=>{generation++})
 </script>
 <template>
  <WorkspaceDetailView v-if="ready" />
- <el-result v-else-if="error" icon="warning" :title="error"><template #extra><el-button @click="load">重试</el-button><el-button @click="router.push('/workspaces')">返回团队空间</el-button></template></el-result>
+ <el-result v-else-if="error" icon="warning" :title="error"><template #extra><el-button @click="load">重试</el-button><el-button @click="router.push('/workspaces')">返回项目空间</el-button></template></el-result>
  <el-skeleton v-else :rows="6" animated />
 </template>

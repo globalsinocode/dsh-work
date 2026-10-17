@@ -184,7 +184,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
   <div class="workspace-info-panel">
     <header class="workspace-info-panel__header">
       <div>
-        <span>{{ workspace.type === 'personal' ? '个人上下文' : '团队上下文' }}</span>
+        <span>{{ workspace.type === 'personal' ? '个人上下文' : '项目上下文' }}</span>
         <strong>工作空间信息</strong>
       </div>
       <button
@@ -202,7 +202,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       <div class="workspace-info-panel__status">
         <span class="workspace-info-panel__folder"><el-icon><FolderOpened /></el-icon></span>
         <span class="workspace-info-panel__tags">
-          <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '团队工作空间'" />
+          <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '项目空间'" />
           <StatusTag
             v-if="workspace.type === 'team' && workspace.status === 'archived'"
             data-testid="panel-archived-tag"
@@ -460,7 +460,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
         data-testid="panel-activity-empty"
         class="workspace-info-panel__empty"
       >
-        暂无团队动态
+        暂无项目动态
       </p>
     </section>
 
@@ -474,7 +474,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       <el-icon><UserFilled /></el-icon>
       <span v-if="workspace.type === 'personal'">系统已为你创建唯一的默认个人空间</span>
       <span v-else-if="workspace.status === 'archived'">该空间已归档，仅保留有权限的只读查看与下载；恢复入口由负责人操作。</span>
-      <span v-else>团队工作空间用于成员之间协作和内容归档</span>
+      <span v-else>项目空间用于同事与 Agent 协同完成项目</span>
     </footer>
   </div>
 </template>

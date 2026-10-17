@@ -720,7 +720,7 @@ async function markActivityRead() {
     notificationError.value = false
   } catch (error) {
     if (!isCurrentActivityRequest(seq, current.id, 'notification')) return
-    notifyActionFailure('标记全部已读', `工作空间“${current.name}”的团队动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
+    notifyActionFailure('标记全部已读', `工作空间“${current.name}”的项目动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
   }
 }
 
@@ -739,7 +739,7 @@ async function toggleActivityMute() {
     notificationError.value = false
   } catch (error) {
     if (!isCurrentActivityRequest(seq, current.id, 'notification')) return
-    notifyActionFailure(muted ? '恢复提醒' : '关闭提醒', `工作空间“${current.name}”的团队动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
+    notifyActionFailure(muted ? '恢复提醒' : '关闭提醒', `工作空间“${current.name}”的项目动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
   }
 }
 
@@ -1113,9 +1113,9 @@ watch(
         >
           <header class="workspace-tab-pane__header">
             <div>
-              <span class="workspace-tab-pane__eyebrow">{{ isPersonal ? '个人资料' : '团队资源' }}</span>
+              <span class="workspace-tab-pane__eyebrow">{{ isPersonal ? '个人资料' : '项目资源' }}</span>
               <h1>{{ isPersonal ? '文件' : '共享文件' }}</h1>
-              <p>{{ isPersonal ? '管理仅你可访问的资料，并将指定文件直接引用到新对话。' : '查看团队在当前工作空间共享的资料，并将指定文件直接引用到新对话。' }}</p>
+              <p>{{ isPersonal ? '管理仅你可访问的资料，并将指定文件直接引用到新对话。' : '查看项目成员共享的资料，并将指定文件直接引用到新对话。' }}</p>
             </div>
             <el-button
               v-if="!isArchived"
@@ -1342,7 +1342,7 @@ watch(
       <div class="workspace-activity-drawer__body" data-testid="activity-drawer">
         <header class="workspace-activity-drawer__header">
           <div>
-            <span>团队上下文</span>
+            <span>项目上下文</span>
             <strong>全部动态</strong>
           </div>
           <button
@@ -1386,7 +1386,7 @@ watch(
           <el-button @click="loadActivityPage()">重试</el-button>
         </div>
 
-        <el-empty v-else-if="!activityDrawerItems.length" description="暂无团队动态" />
+        <el-empty v-else-if="!activityDrawerItems.length" description="暂无项目动态" />
 
         <div v-else-if="activityDrawerItems.length" class="workspace-activity-drawer__list">
           <article

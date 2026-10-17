@@ -738,7 +738,7 @@ watch(
           <button type="button" class="conversation-header__back" aria-label="返回" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">团队：{{ currentWorkspace.name }}</span>
+          <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">项目空间：{{ currentWorkspace.name }}</span>
           <span v-if="task.skill" class="conversation-skill">
             <span>Skill</span>{{ task.skill.name }} · v{{ task.skill.version }}
           </span>

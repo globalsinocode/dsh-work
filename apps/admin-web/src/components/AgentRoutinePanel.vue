@@ -215,7 +215,7 @@ async function showExecutions(routine: AgentRoutine) {
       <el-form label-position="top">
         <el-form-item label="规则名称"><el-input v-model="name" maxlength="120" show-word-limit /></el-form-item>
         <el-form-item label="固定 Agent Version"><el-select v-model="versionId" style="width:100%"><el-option v-for="version in publishedVersions" :key="version.id" :value="version.id" :label="`v${version.version}`" /></el-select></el-form-item>
-        <el-form-item label="工作空间"><el-select v-model="workspaceId" filterable allow-create default-first-option placeholder="选择团队空间，或输入已授权个人空间 ID" style="width:100%"><el-option v-for="space in workspaces" :key="space.id" :value="space.id" :label="space.name" /></el-select></el-form-item>
+        <el-form-item label="工作空间"><el-select v-model="workspaceId" filterable allow-create default-first-option placeholder="选择项目空间，或输入已授权个人空间 ID" style="width:100%"><el-option v-for="space in workspaces" :key="space.id" :value="space.id" :label="space.name" /></el-select></el-form-item>
         <el-form-item label="结果接收人"><el-select v-model="recipientUserId" filterable allow-create default-first-option placeholder="选择员工，或输入员工 ID" style="width:100%"><el-option v-for="user in recipients" :key="user.id" :value="user.id" :label="`${user.name} · ${user.id}`" /></el-select></el-form-item>
         <el-form-item label="触发方式"><el-select v-model="scheduleKind" style="width:100%"><el-option label="手动" value="manual" /><el-option label="每天" value="daily" /><el-option label="每周" value="weekly" /><el-option label="事件" value="event" /></el-select></el-form-item>
         <el-form-item label="时区"><el-input v-model="timezone" placeholder="例如 Asia/Shanghai" /></el-form-item>

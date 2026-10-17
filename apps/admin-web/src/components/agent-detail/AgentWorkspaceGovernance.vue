@@ -33,9 +33,9 @@ async function toggle(next: boolean) {
   try {
     await ElMessageBox.confirm(
       next
-        ? '开启后该 Agent 会重新出现在团队空间的「添加 Agent」搜索结果中。'
-        : '关闭后该 Agent 不再出现在团队空间的「添加 Agent」搜索结果中，也不能被加入；已加入的成员关联与既有授权不受影响。',
-      `${next ? '开启' : '关闭'}「允许加入团队空间」“${props.agent.name}”？`,
+        ? '开启后该 Agent 会重新出现在项目空间的「添加 Agent」搜索结果中。'
+        : '关闭后该 Agent 不再出现在项目空间的「添加 Agent」搜索结果中，也不能被加入；已加入的成员关联与既有授权不受影响。',
+      `${next ? '开启' : '关闭'}「允许加入项目空间」“${props.agent.name}”？`,
       { confirmButtonText: `确认${next ? '开启' : '关闭'}`, cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -44,7 +44,7 @@ async function toggle(next: boolean) {
   saving.value = true
   try {
     await contentStore.setAgentWorkspaceJoin(props.agent.id, next)
-    ElMessage.success(`已${next ? '开启' : '关闭'}「允许加入团队空间」，操作已写入审计`)
+    ElMessage.success(`已${next ? '开启' : '关闭'}「允许加入项目空间」，操作已写入审计`)
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : '修改失败')
   } finally {
@@ -62,11 +62,11 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="content-panel workspace-governance" aria-label="团队空间">
+  <section class="content-panel workspace-governance" aria-label="项目空间">
     <div class="governance-row">
       <div>
-        <strong>允许加入团队空间</strong>
-        <p>关闭后该 Agent 不再出现在团队空间的「添加 Agent」搜索结果中，也不能被加入；已加入的空间、成员关联与既有授权不受影响。</p>
+        <strong>允许加入项目空间</strong>
+        <p>关闭后该 Agent 不再出现在项目空间的「添加 Agent」搜索结果中，也不能被加入；已加入的空间、成员关联与既有授权不受影响。</p>
       </div>
       <el-switch
         v-if="canManage"
@@ -83,7 +83,7 @@ onMounted(load)
     <el-alert v-if="loadError" type="error" :closable="false" :title="loadError">
       <el-button link type="primary" @click="load">重新读取</el-button>
     </el-alert>
-    <el-table v-else v-loading="loading" class="data-table" :data="pagedItems" empty-text="该 Agent 尚未加入任何团队空间">
+    <el-table v-else v-loading="loading" class="data-table" :data="pagedItems" empty-text="该 Agent 尚未加入任何项目空间">
       <el-table-column prop="workspaceName" label="空间" min-width="180" />
       <el-table-column label="固定版本" width="100"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
       <el-table-column label="成员状态" width="110"><template #default="scope"><StatusTag :status="scope.row.memberStatus === 'available' ? 'published' : 'disabled'" :label="scope.row.memberStatus === 'available' ? '可用' : '已停用'" /></template></el-table-column>

@@ -58,7 +58,7 @@ const filteredWorkspaces = computed(() => {
 })
 
 const emptyDescription = computed(() =>
-  statusFilter.value === 'archived' && !query.value.trim() ? '暂无已归档的团队空间' : '没有匹配的工作空间',
+  statusFilter.value === 'archived' && !query.value.trim() ? '暂无已归档的项目空间' : '没有匹配的工作空间',
 )
 
 const canCreate = computed(() => Boolean(newWorkspaceName.value.trim()))
@@ -163,7 +163,7 @@ async function createWorkspace() {
       name: newWorkspaceName.value.trim(),
       description: newWorkspaceDescription.value.trim(),
     })
-    ElMessage.success(`已创建团队工作空间“${newWorkspaceName.value.trim()}”`)
+    ElMessage.success(`已创建项目空间“${newWorkspaceName.value.trim()}”`)
     newWorkspaceName.value = ''
     newWorkspaceDescription.value = ''
     createDialogOpen.value = false
@@ -182,10 +182,10 @@ onMounted(() => contentStore.refresh())
   <div class="page-container page-container--wide workspace-page">
     <header class="page-header">
       <div>
-        <h1 class="page-title">团队空间</h1>
-        <p class="page-description">进入已加入的团队，使用团队资料和获准的 Agent 开展工作。个人对话和文件请使用左侧入口。</p>
+        <h1 class="page-title">项目空间</h1>
+        <p class="page-description">进入已加入的项目空间，与同事和 Agent 一起推进项目。个人对话和文件请使用左侧入口。</p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="createDialogOpen = true">创建团队工作空间</el-button>
+      <el-button type="primary" :icon="Plus" @click="createDialogOpen = true">创建项目空间</el-button>
     </header>
 
     <div class="workspace-toolbar">
@@ -230,7 +230,7 @@ onMounted(() => contentStore.refresh())
             <el-icon><UserFilled /></el-icon>
           </span>
           <span class="workspace-card__tags">
-            <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '团队工作空间'" />
+            <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '项目空间'" />
             <StatusTag
               v-if="workspace.type === 'team' && workspace.status === 'archived'"
               data-testid="workspace-card-archived-tag"
@@ -267,7 +267,7 @@ onMounted(() => contentStore.refresh())
       <el-button @click="query = ''">清除筛选</el-button>
     </el-empty>
 
-    <el-dialog v-model="createDialogOpen" title="创建团队工作空间" width="min(520px, calc(100vw - 32px))">
+    <el-dialog v-model="createDialogOpen" title="创建项目空间" width="min(520px, calc(100vw - 32px))">
       <el-form label-position="top">
         <el-form-item label="工作空间名称" required>
           <el-input v-model="newWorkspaceName" maxlength="40" show-word-limit placeholder="例如：九月交付风险分析" />
@@ -279,7 +279,7 @@ onMounted(() => contentStore.refresh())
             :rows="3"
             maxlength="120"
             show-word-limit
-            placeholder="说明团队将围绕什么业务主题开展协作"
+            placeholder="说明这个项目的目标与范围"
           />
         </el-form-item>
       </el-form>

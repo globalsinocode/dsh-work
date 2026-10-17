@@ -51,13 +51,13 @@ const router = createRouter({
       path: '/workspaces',
       name: 'workspaces',
       component: () => import('@/views/WorkspacesView.vue'),
-      meta: { title: '团队空间', section: '员工工作台' },
+      meta: { title: '项目空间', section: '员工工作台' },
     },
     {
       path: '/workspaces/:id',
       name: 'workspace-detail',
       component: () => import('@/views/WorkspaceEntryView.vue'),
-      meta: { title: '团队空间', section: '员工工作台' },
+      meta: { title: '项目空间', section: '员工工作台' },
       children: [
         {
           // TW-10 空间内对话视图：团队会话在空间外壳内打开，不再跳到

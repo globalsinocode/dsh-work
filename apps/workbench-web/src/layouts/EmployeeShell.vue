@@ -41,7 +41,7 @@ const navigation = [
   { label: '新对话', path: '/workbench', icon: HomeFilled },
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
-  { label: '团队空间', path: '/workspaces', icon: Collection },
+  { label: '项目空间', path: '/workspaces', icon: Collection },
   { label: '自动任务', path: '/automations', icon: AlarmClock },
 ]
 
