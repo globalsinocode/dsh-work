@@ -377,7 +377,8 @@ onBeforeUnmount(stopPolling)
             <li v-for="check in overview.checks" :key="check.id" :class="check.passed ? 'check-list__item--passed' : 'check-list__item--failed'">
               <span class="check-list__mark" aria-hidden="true">{{ check.passed ? '✓' : '✕' }}</span>
               <strong>{{ check.label }}</strong>
-              <span>{{ check.detail }}</span>
+              <span class="check-list__detail">{{ check.detail }}</span>
+              <span v-if="check.warning" class="check-list__warning" data-testid="release-check-warning">{{ check.warning }}</span>
             </li>
           </ul>
           <el-alert v-if="overview.usesMcp" class="section-alert" type="info" :closable="false" show-icon title="验证运行不调用 MCP 连接器" description="MCP 的上游权限由连接器凭据决定；发布时会复核连接范围，正式运行才会调用。" />
@@ -530,7 +531,8 @@ onBeforeUnmount(stopPolling)
 .section-alert { margin: 10px 0; }
 .check-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .check-list li { display: grid; grid-template-columns: 20px minmax(90px, auto) minmax(0, 1fr); align-items: baseline; gap: 8px; padding: 7px 10px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-size: var(--font-size-caption); }
-.check-list li > span:last-child { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.check-list__detail { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.check-list__warning { grid-column: 3; color: var(--color-warning-strong); overflow-wrap: anywhere; }
 .check-list__item--passed .check-list__mark { color: var(--color-success); }
 .check-list__item--failed .check-list__mark { color: var(--color-danger); }
 .planned-cases { display: grid; gap: 6px; margin: 12px 0 0; padding-left: 20px; }
@@ -561,7 +563,7 @@ onBeforeUnmount(stopPolling)
 .publish-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 @media (max-width: 700px) {
   .check-list li { grid-template-columns: 20px minmax(0, 1fr); }
-  .check-list li > span:last-child { grid-column: 2; }
+  .check-list__detail, .check-list__warning { grid-column: 2; }
   .meta-grid { grid-template-columns: 1fr; }
 }
 </style>

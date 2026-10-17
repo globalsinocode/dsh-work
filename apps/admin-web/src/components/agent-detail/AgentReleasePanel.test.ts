@@ -225,3 +225,22 @@ it('版本历史可以回滚到曾发布的版本，当前版本没有回滚按�
     wrapper.unmount()
   }
 })
+
+it('验证前检查展示不阻断的未验证角色提示（项目空间 S0）', async () => {
+  const release = overview(null)
+  release.checks = [
+    ...release.checks,
+    {
+      id: 'authorization', label: '能力所需授权', passed: true, detail: '已声明的能力都已获授权',
+      warning: '岗位角色“平台管理员”不在可见角色内，验证不会覆盖；在项目空间中执行时这些角色的能力可用。',
+    },
+  ]
+  vi.spyOn(adminApi, 'getAgentRelease').mockResolvedValue({ agent, release })
+  const wrapper = await mountView()
+  try {
+    expect(wrapper.text()).toContain('3/3 项通过')
+    expect(wrapper.get('[data-testid="release-check-warning"]').text()).toContain('“平台管理员”不在可见角色内')
+  } finally {
+    wrapper.unmount()
+  }
+})

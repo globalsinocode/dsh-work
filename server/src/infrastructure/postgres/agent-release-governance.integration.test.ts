@@ -365,6 +365,8 @@ test('验证以可见角色可及的权限为上限：Agent 多出的角色与�
   const check = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
   assert.equal(check?.passed, true)
   assert.match(check?.detail ?? '', /1 个角色、1 个数据范围/)
+  // 项目空间按 Agent 全部岗位角色执行：可见角色以外的角色要提示未经验证，但不阻断。
+  assert.match(check?.warning ?? '', /不在可见角色内，验证不会覆盖/)
   const done = await runValidation(agentId)
   const manifest = trialRuntime.manifest(done.cases[0]!.runId!)
   assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
@@ -386,7 +388,9 @@ test('能力所需授权只有可见角色之外的角色才有时，验证前�
     await assert.rejects(validation.startValidation(agentId, ADMIN), /能力所需授权/)
     assert.equal(await attemptCount(created.version.id), 0)
     await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'] })
-    assert.equal((await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')?.passed, true)
+    const covered = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
+    assert.equal(covered?.passed, true)
+    assert.equal(covered?.warning, undefined, '岗位角色都在可见角色内时不提示')
   } finally {
     await tools.updateToolPermissions({
       toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],

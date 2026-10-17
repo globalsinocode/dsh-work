@@ -888,6 +888,8 @@ export interface AgentReleaseCheck {
   label: string
   passed: boolean
   detail: string
+  /** 不阻断验证的提示。 */
+  warning?: string
 }
 
 export interface AgentReleaseOverview {

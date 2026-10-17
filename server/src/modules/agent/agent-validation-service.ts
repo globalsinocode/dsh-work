@@ -70,6 +70,8 @@ export interface ReleaseCheck {
   label: string
   passed: boolean
   detail: string
+  /** 不阻断验证的提示，例如有能力在验证范围之外。 */
+  warning?: string
 }
 
 export interface PlannedCase {
@@ -609,6 +611,12 @@ export class PostgresAgentValidationService {
     // Validation runs under the audience ceiling, so what the declared capabilities need
     // must be reachable by the visible roles too, not only granted to the Agent.
     const ceiling = await resolveAudienceCeiling(this.database, agentId, principal)
+    // 项目空间 S0：团队空间按 Agent 全部岗位角色执行，可见角色以外的角色不在验证范围内。
+    const unverifiedRoleIds = principal.roleIds.filter(role => !ceiling.roleIds.includes(role))
+    const unverifiedRoles = unverifiedRoleIds.length ? await this.database<{ name: string }[]>`
+      select name from roles where tenant_id = ${tenantId} and status = 'active' and id = any(${unverifiedRoleIds})
+       order by name
+    ` : []
     try {
       await this.tools?.assertAuthorizationCompatibility(version.tools, principal.roleIds, principal.dataScopes)
       try {
@@ -651,6 +659,9 @@ export class PostgresAgentValidationService {
       {
         id: 'authorization', label: '能力所需授权', passed: !authorizationError,
         detail: authorizationError ?? `已声明的能力都已获授权；验证按可见角色可及的权限执行（${ceiling.roleIds.length} 个角色、${ceiling.dataScopes.length} 个数据范围）`,
+        ...(unverifiedRoles.length ? {
+          warning: `岗位角色“${unverifiedRoles.map(role => role.name).join('、')}”不在可见角色内，验证不会覆盖；在项目空间中执行时这些角色的能力可用。`,
+        } : {}),
       },
       {
         id: 'mcp', label: 'MCP 范围', passed: !mcpError,
