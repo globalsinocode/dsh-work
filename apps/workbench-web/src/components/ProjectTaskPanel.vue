@@ -359,7 +359,7 @@ defineExpose({ reload: load })
         </div>
         <div class="project-tasks__field">
           <span>承接者</span>
-          <el-select v-model="editor.assignee" data-testid="project-task-assignee" placeholder="选择同事或 Agent" aria-label="承接者">
+          <el-select v-model="editor.assignee" class="project-field__control" data-testid="project-task-assignee" placeholder="选择同事或 Agent" aria-label="承接者">
             <el-option-group v-if="employeeOptions.length" label="同事">
               <el-option v-for="option in employeeOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-option-group>
@@ -371,6 +371,7 @@ defineExpose({ reload: load })
         <div v-if="editorAssigneeIsAgent" class="project-tasks__field">
           <span>引用共享文件（可选，最多 5 个）</span>
           <el-select
+            class="project-field__control"
             v-model="editor.inputFileIds"
             multiple
             :multiple-limit="5"
@@ -387,7 +388,7 @@ defineExpose({ reload: load })
         </div>
         <div class="project-tasks__field">
           <span>截止时间（可选）</span>
-          <el-date-picker v-model="editor.dueDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable aria-label="截止时间" />
+          <el-date-picker v-model="editor.dueDate" class="project-field__control" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable aria-label="截止时间" />
         </div>
         <p v-if="editor.taskId && editorAssigneeIsAgent" class="project-tasks__muted">改派给其他 Agent 后会从新的任务线程开始。</p>
       </form>
@@ -417,7 +418,7 @@ defineExpose({ reload: load })
         </div>
         <div class="project-tasks__field">
           <span>交付文件（可选，从共享文件中选择）</span>
-          <el-select v-model="completion.fileIds" multiple :multiple-limit="5" placeholder="选择共享文件" aria-label="交付文件">
+          <el-select v-model="completion.fileIds" class="project-field__control" multiple :multiple-limit="5" placeholder="选择共享文件" aria-label="交付文件">
             <el-option v-for="file in deliverableFiles" :key="file.id" :label="file.name" :value="file.id" />
           </el-select>
         </div>
@@ -590,5 +591,10 @@ defineExpose({ reload: load })
     justify-content: flex-start;
     max-width: none;
   }
+}
+
+/* 下拉与日期控件在网格表单中显式撑满：宽度由内容决定时，Element Plus 的尺寸计算会在视口变化后反复抖动。 */
+.project-field__control {
+  width: 100%;
 }
 </style>

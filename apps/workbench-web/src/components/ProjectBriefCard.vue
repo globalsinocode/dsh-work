@@ -145,6 +145,7 @@ defineExpose({ reload: load })
         <div class="project-brief__field">
           <span>截止时间（可选）</span>
           <el-date-picker
+            class="project-field__control"
             v-model="draftDueDate"
             data-testid="project-brief-due-input"
             type="date"
@@ -236,5 +237,10 @@ defineExpose({ reload: load })
   gap: 6px;
   color: var(--dsh-color-text);
   font-size: var(--dsh-font-size-caption);
+}
+
+/* 下拉与日期控件在网格表单中显式撑满：宽度由内容决定时，Element Plus 的尺寸计算会在视口变化后反复抖动。 */
+.project-field__control {
+  width: 100%;
 }
 </style>

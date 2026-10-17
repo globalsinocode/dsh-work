@@ -10,14 +10,14 @@
 | 理解业务、权限、系统边界和未完成事项 | [架构总览](../development/overview.md) |
 | 修改模块接口与事件 | [内部端口与契约](../development/internal-ports.md) |
 | 理解数据关系与迁移约束 | [数据模型](../design/data-model.md) |
-| 团队空间、个人内容、管理助手、Skill 安装与 Python 执行、自动任务的产品与安全规则 | [功能规则](../development/feature-rules.md) |
+| 项目空间（团队空间）、个人内容、管理助手、Skill 安装与 Python 执行、自动任务的产品与安全规则 | [功能规则](../development/feature-rules.md) |
 | 设计和评审 Agent，区分现行规则与扩展门槛 | [Agent 设计规范](../development/agent-design-standard.md) |
 | 按统一阶段定义、发布、运行和退役 Agent | [通用 Agent 全生命周期模板](../development/agent-lifecycle-template.md) |
 | 移动端 H5 接入 | [移动端接入规范](../development/mobile-integration-guide.md) |
 | 平台基线真实验收（PF-07） | [PF-07 验收手册](../development/pf07-platform-acceptance.md) |
 | 实施中：Agent 配置、权限、验证与发布的简化 | [Agent 配置与发布简化方案](../design/agent-release-optimization-plan.md) |
 | 进行中：执行观测、上下文延续与性能 | [Runtime 执行架构渐进优化方案](../design/runtime-execution-optimization-plan.md) |
-| 待实施：团队空间改造为项目空间 | [项目空间方案](../design/project-space-plan.md) |
+| 实施中：团队空间改造为项目空间（S0、S1 已完成） | [项目空间方案](../design/project-space-plan.md) |
 | 独立账号登录 | [独立登录](../release/local-authentication.md) |
 | 配置 AI Hub 登录、员工目录和首位管理员 | [AI Hub 身份接入](../release/ai-hub-sso-integration.md) |
 | 安装、验证与升级执行内核 | [DSH Runtime](../release/dsh-runtime-delivery.md) |

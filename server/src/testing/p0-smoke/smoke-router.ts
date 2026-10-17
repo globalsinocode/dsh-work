@@ -12,6 +12,7 @@ import { ModelGovernanceService } from '../../modules/model/model-governance-ser
 import { testApiAuthenticator } from '../test-identity.ts'
 import { AdminQueryService } from './admin-query-service.ts'
 import { registerAdminRoutes } from './admin-routes.ts'
+import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
 import { registerUnavailableWorkbenchCommandRoutes } from './unavailable-routes.ts'
 import { WorkbenchQueryService } from './workbench-query-service.ts'
@@ -31,6 +32,7 @@ export function createSmokeRouter() {
   registerAssistantRoutes(router)
   registerSkillInstallationRoutes(router)
   registerWorkbenchRoutes(router, workbenchQueries)
+  registerSmokeProjectRoutes(router)
   registerAdminRoutes(router, new AdminQueryService(repository))
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   router.get('/health/live', () => ({ status: 'ok', service: 'dsh-work-p0-smoke' }))

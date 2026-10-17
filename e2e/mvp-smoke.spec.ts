@@ -31,7 +31,9 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   // 页签可访问名是「标签 + 计数」（如「对话 12」）；对话页签内还有一层
   // 「新对话／历史对话」切换（同为 role=tab），因此限定在外层 tablist 内匹配。
   const workspaceTabs = page.getByRole('tablist', { name: '工作空间内容' })
-  await expect(workspaceTabs.getByRole('tab', { name: /^对话/ })).toHaveAttribute('aria-selected', 'true')
+  // 项目空间默认进入“任务”页签（项目空间 S1）。
+  await expect(workspaceTabs.getByRole('tab', { name: /^任务/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(workspaceTabs.getByRole('tab', { name: /^对话/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^成果/ })).toBeVisible()
 })
