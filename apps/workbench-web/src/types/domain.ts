@@ -402,6 +402,24 @@ export interface ProjectBrief {
   updatedAt: string
 }
 
+/** 项目空间 S2：项目档案的一个版本（条目列表）。来源按版本记录。 */
+export interface ProjectArchiveVersion {
+  versionId: string
+  versionNo: number
+  items: string[]
+  sourceKind: 'archivist' | 'manual' | 'rollback'
+  /** 档案员版本所依据的项目任务。 */
+  sourceTasks: Array<{ id: string; title: string }>
+  rollbackFromVersionNo: number | null
+  createdBy: { userId: string; displayName: string } | null
+  createdAt: string
+}
+
+export interface ProjectArchive {
+  current: ProjectArchiveVersion | null
+  archivistRunning: boolean
+}
+
 /** Agent 任务的状态由任务线程最近一次执行推算；员工任务没有 failed。 */
 export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done' | 'failed'
 export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete'

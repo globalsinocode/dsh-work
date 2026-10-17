@@ -83,6 +83,37 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     expect(agentSection.findAll('[data-testid="panel-agent-status"]')).toHaveLength(2)
   })
 
+  it('lists the built-in 项目档案员 under Agent without counting it (项目空间 S2)', () => {
+    const wrapper = mountPanel({ agentMembers: [] })
+    const archivist = wrapper.get('[data-testid="panel-archivist-row"]')
+    expect(archivist.text()).toContain('项目档案员')
+    expect(archivist.text()).toContain('系统')
+    expect(wrapper.get('[data-testid="panel-agent-count"]').text()).toBe('0 个 Agent')
+    expect(wrapper.text()).toContain('尚未加入 Agent')
+  })
+
+  it('collapses and expands the member and Agent sections independently (项目空间 S2)', async () => {
+    window.localStorage?.clear?.()
+    const wrapper = mountPanel()
+    const membersToggle = wrapper.get('[data-testid="panel-members-toggle"]')
+    expect(membersToggle.attributes('aria-expanded')).toBe('true')
+    await membersToggle.trigger('click')
+    expect(membersToggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('[data-testid="panel-employee-section"]').attributes('style')).toContain('display: none')
+    expect(wrapper.get('#workspace-info-panel-agents').attributes('style') ?? '').not.toContain('display: none')
+
+    const agentsToggle = wrapper.get('[data-testid="panel-agents-toggle"]')
+    await agentsToggle.trigger('click')
+    expect(agentsToggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('#workspace-info-panel-agents').attributes('style')).toContain('display: none')
+    // 计数在收起时仍显示。
+    expect(wrapper.get('[data-testid="panel-employee-count"]').text()).toBe('4 位员工')
+
+    await membersToggle.trigger('click')
+    expect(wrapper.get('[data-testid="panel-employee-section"]').attributes('style') ?? '').not.toContain('display: none')
+    await agentsToggle.trigger('click')
+  })
+
   it('Agent 行只读展示，不提供行内发起入口（Agent 选择走输入区 @ 提及）', () => {
     // 右栏「开始对话」入口已按产品决定移除：可用、停用、不可用成员都只展示
     // 名称与状态点；任何人重新加回行内操作都会命中这两条断言。

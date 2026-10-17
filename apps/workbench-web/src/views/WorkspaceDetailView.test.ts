@@ -184,6 +184,7 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     vi.spyOn(workbenchApi, 'listWorkspaceUsage').mockResolvedValue(usageFixture())
     vi.spyOn(workbenchApi, 'getProjectBrief').mockResolvedValue(null)
     vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue([])
+    vi.spyOn(workbenchApi, 'getProjectArchive').mockResolvedValue({ current: null, archivistRunning: false })
   })
 
   it('renders the Agent segment for a team space and loads members via the T4 API', async () => {
@@ -266,12 +267,22 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
   it('opens a project space on the 任务 tab with the brief in the side panel (项目空间 S1)', async () => {
     const { wrapper } = await mountView(workspace())
 
-    expect(wrapper.findAll('.workspace-context-tabs [role="tab"]').map(tab => tab.text().replace(/\d+$/, ''))).toEqual(['任务', '对话', '共享文件', '成果'])
+    expect(wrapper.findAll('.workspace-context-tabs [role="tab"]').map(tab => tab.text().replace(/\d+$/, ''))).toEqual(['任务', '对话', '共享文件', '成果', '档案'])
     expect(wrapper.get('#workspace-tab-tasks').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('#workspace-panel-tasks').exists()).toBe(true)
     expect(wrapper.find('[data-testid="project-brief"]').exists()).toBe(true)
     expect(workbenchApi.listProjectTasks).toHaveBeenCalledWith('ws-team')
     expect(workbenchApi.getProjectBrief).toHaveBeenCalledWith('ws-team')
+    // 项目空间 S2：档案只在打开档案页签时加载。
+    expect(workbenchApi.getProjectArchive).not.toHaveBeenCalled()
+  })
+
+  it('opens the 档案 tab from ?tab=archive and loads the project archive (项目空间 S2)', async () => {
+    route.query = { tab: 'archive' }
+    const { wrapper } = await mountView(workspace())
+    expect(wrapper.get('#workspace-tab-archive').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('#workspace-panel-archive').exists()).toBe(true)
+    expect(workbenchApi.getProjectArchive).toHaveBeenCalledWith('ws-team')
   })
 
   it('selecting the default 任务 tab drops ?tab from the URL', async () => {
@@ -418,6 +429,7 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.text()).toContain('系统已为你创建唯一的默认个人空间')
     // 项目空间 S1：个人空间没有任务页签与简报，也不发相关请求。
     expect(wrapper.find('#workspace-tab-tasks').exists()).toBe(false)
+    expect(wrapper.find('#workspace-tab-archive').exists()).toBe(false)
     expect(wrapper.find('[data-testid="project-brief"]').exists()).toBe(false)
     expect(workbenchApi.listProjectTasks).not.toHaveBeenCalled()
     expect(workbenchApi.getProjectBrief).not.toHaveBeenCalled()

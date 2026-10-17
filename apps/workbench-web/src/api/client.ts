@@ -24,6 +24,8 @@ import type {
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
   MemberDisclosureImpact,
+  ProjectArchive,
+  ProjectArchiveVersion,
   ProjectBrief,
   ProjectTask,
   ProjectTaskInput,
@@ -367,6 +369,20 @@ export const workbenchApi = {
   saveProjectBrief: (workspaceId: string, input: { content: string; dueDate: string | null }) =>
     request<ProjectBrief>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, {
       method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  getProjectArchive: (workspaceId: string) =>
+    request<ProjectArchive>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, { method: 'GET' }),
+  saveProjectArchive: (workspaceId: string, input: { baseVersionNo: number; items: string[] }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  listProjectArchiveVersions: (workspaceId: string) =>
+    request<ProjectArchiveVersion[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/versions`, { method: 'GET' }),
+  rollbackProjectArchive: (workspaceId: string, input: { versionNo: number; baseVersionNo: number }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/rollback`, {
+      method: 'POST',
       body: JSON.stringify(input),
     }),
   listProjectTasks: (workspaceId: string) =>

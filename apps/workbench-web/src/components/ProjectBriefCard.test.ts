@@ -37,6 +37,21 @@ describe('ProjectBriefCard（项目空间 S1）', () => {
     expect(wrapper.find('[data-testid="project-brief-edit"]').exists()).toBe(false)
   })
 
+  it('collapses the brief body and hides the edit entry while collapsed (项目空间 S2)', async () => {
+    vi.spyOn(workbenchApi, 'getProjectBrief').mockResolvedValue(brief)
+    const wrapper = mountCard()
+    await flushPromises()
+    const toggle = wrapper.get('[data-testid="project-brief-toggle"]')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('#project-brief-body').attributes('style')).toContain('display: none')
+    expect(wrapper.find('[data-testid="project-brief-edit"]').exists()).toBe(false)
+    await toggle.trigger('click')
+    expect(wrapper.get('#project-brief-body').attributes('style') ?? '').not.toContain('display: none')
+    expect(wrapper.find('[data-testid="project-brief-edit"]').exists()).toBe(true)
+  })
+
   it('invites editors to write the first brief and tells others who can', async () => {
     vi.spyOn(workbenchApi, 'getProjectBrief').mockResolvedValue(null)
     const editor = mountCard()

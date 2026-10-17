@@ -19,9 +19,20 @@ interface SmokeTask {
   updatedAt: string
 }
 
+interface SmokeArchiveVersion {
+  versionId: string
+  versionNo: number
+  items: string[]
+  sourceKind: 'archivist' | 'manual' | 'rollback'
+  sourceTasks: Array<{ id: string; title: string }>
+  rollbackFromVersionNo: number | null
+  createdBy: { userId: string; displayName: string } | null
+  createdAt: string
+}
+
 /**
- * P0 冒烟（项目空间 S1）：`ws-supply` 的成员名册、项目简报与员工任务的内存实现，
- * 只用于验证页面交互（PS-E2E-01/02）。不实现 Agent 任务执行、权限矩阵或持久化——
+ * P0 冒烟（项目空间 S1/S2）：`ws-supply` 的成员名册、项目简报、员工任务与项目档案的内存实现，
+ * 只用于验证页面交互（PS-E2E-01/02/05）。不实现 Agent 任务执行、权限矩阵或持久化——
  * 这些由服务端集成测试与 P1 旅程覆盖。每次启动冒烟服务都从同一种子开始。
  */
 export function registerSmokeProjectRoutes(router: Router) {
@@ -38,6 +49,43 @@ export function registerSmokeProjectRoutes(router: Router) {
     updatedAt: '2026-10-17T08:00:00.000Z',
   }
   const tasks: SmokeTask[] = []
+  const lin = { userId: 'U00001', displayName: '林岚' }
+  const zhou = { userId: 'U00002', displayName: '周衡' }
+  // 档案按版本倒序保存，第一项即当前版本。
+  const archiveVersions: SmokeArchiveVersion[] = [
+    {
+      versionId: 'warch-smoke-3', versionNo: 3, sourceKind: 'manual', sourceTasks: [], rollbackFromVersionNo: null,
+      items: ['华东缺货集中在高周转 SKU 类目，主因是采购到货周期波动。', '决策：按 SKU 类目分别设置安全库存。', '术语：安全库存按“日均出库 × 波动天数”计算。'],
+      createdBy: zhou, createdAt: '2026-10-17T02:05:00.000Z',
+    },
+    {
+      versionId: 'warch-smoke-2', versionNo: 2, sourceKind: 'archivist', rollbackFromVersionNo: null, createdBy: null,
+      sourceTasks: [{ id: 'ptask-smoke-analysis', title: '分析华东缺货原因' }],
+      items: ['华东缺货集中在高周转 SKU 类目，主因是采购到货周期波动。', '决策：按 SKU 类目分别设置安全库存。', '术语：安全库存固定为 7 天销量。'],
+      createdAt: '2026-10-16T09:40:00.000Z',
+    },
+    {
+      versionId: 'warch-smoke-1', versionNo: 1, sourceKind: 'manual', sourceTasks: [], rollbackFromVersionNo: null,
+      items: ['决策：按 SKU 类目分别设置安全库存。'], createdBy: lin, createdAt: '2026-10-15T08:00:00.000Z',
+    },
+  ]
+  const appendArchiveVersion = (
+    items: string[],
+    actor: { userId: string; displayName: string },
+    rollbackFromVersionNo: number | null,
+  ) => {
+    const versionNo = (archiveVersions[0]?.versionNo ?? 0) + 1
+    const version: SmokeArchiveVersion = {
+      versionId: `warch-smoke-${versionNo}`, versionNo, items, sourceTasks: [],
+      sourceKind: rollbackFromVersionNo === null ? 'manual' : 'rollback', rollbackFromVersionNo,
+      createdBy: actor, createdAt: new Date().toISOString(),
+    }
+    archiveVersions.unshift(version)
+    return version
+  }
+  const archiveConflict = (baseVersionNo: unknown) => baseVersionNo !== (archiveVersions[0]?.versionNo ?? 0)
+    ? httpResult(409, { error: { code: 'state_conflict', message: '档案已被更新，请刷新后再修改' } })
+    : null
 
   const requireSmokeSpace = (workspaceId: string | undefined) => {
     if (workspaceId !== smokeWorkspaceId) return httpResult(422, { error: { code: 'invalid_request', message: '冒烟数据仅包含 ws-supply 的项目协作数据' } })
@@ -109,6 +157,42 @@ export function registerSmokeProjectRoutes(router: Router) {
       updatedAt: new Date().toISOString(),
     }
     return envelope('workbench', brief)
+  })
+
+  router.get(`${basePath}/workspaces/:workspaceId/project-archive`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    return requireSmokeSpace(context.params['workspaceId'])
+      ?? envelope('workbench', { current: archiveVersions[0] ?? null, archivistRunning: false })
+  })
+  router.get(`${basePath}/workspaces/:workspaceId/project-archive/versions`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    return requireSmokeSpace(context.params['workspaceId']) ?? envelope('workbench', archiveVersions)
+  })
+  router.put(`${basePath}/workspaces/:workspaceId/project-archive`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const invalid = requireSmokeSpace(context.params['workspaceId'])
+    if (invalid) return invalid
+    const body = await readJsonBody<{ baseVersionNo?: unknown; items?: unknown }>(request)
+    const conflict = archiveConflict(body.baseVersionNo)
+    if (conflict) return conflict
+    const items = Array.isArray(body.items) ? body.items.map(item => (typeof item === 'string' ? item.trim() : '')) : null
+    if (!items || items.some(item => !item || item.length > 500) || new Set(items).size !== items.length || items.length > 50) {
+      return httpResult(422, { error: { code: 'invalid_request', message: '档案条目无效' } })
+    }
+    return envelope('workbench', appendArchiveVersion(items, { userId: identity.userId, displayName: identity.profile.name }, null))
+  })
+  router.post(`${basePath}/workspaces/:workspaceId/project-archive/rollback`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const invalid = requireSmokeSpace(context.params['workspaceId'])
+    if (invalid) return invalid
+    const body = await readJsonBody<{ versionNo?: unknown; baseVersionNo?: unknown }>(request)
+    const conflict = archiveConflict(body.baseVersionNo)
+    if (conflict) return conflict
+    const target = archiveVersions.find(version => version.versionNo === body.versionNo)
+    if (!target || target === archiveVersions[0]) {
+      return httpResult(422, { error: { code: 'invalid_request', message: '要回退的档案版本不存在或已是当前版本' } })
+    }
+    return envelope('workbench', appendArchiveVersion([...target.items], { userId: identity.userId, displayName: identity.profile.name }, target.versionNo))
   })
 
   router.get(`${basePath}/workspaces/:workspaceId/project-tasks`, (_request, context) => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { EditPen } from '@element-plus/icons-vue'
+import { ArrowDown, EditPen } from '@element-plus/icons-vue'
 
 import { workbenchApi } from '@/api/client'
 import type { ProjectBrief } from '@/types/domain'
@@ -27,6 +27,27 @@ const draftContent = ref('')
 const draftDueDate = ref<string | null>(null)
 const saving = ref(false)
 let requestSeq = 0
+
+/** 右栏卡片可收起（项目空间 S2）；收起状态只是本浏览器的偏好，读写失败时按展开处理。 */
+const collapsedStorageKey = 'dsh-work.project-brief.collapsed'
+const collapsed = ref(readCollapsed())
+
+function readCollapsed() {
+  try {
+    return window.localStorage.getItem(collapsedStorageKey) === '1'
+  } catch {
+    return false
+  }
+}
+
+function toggleCollapsed() {
+  collapsed.value = !collapsed.value
+  try {
+    window.localStorage.setItem(collapsedStorageKey, collapsed.value ? '1' : '0')
+  } catch {
+    // 偏好未能保存不影响当前展示。
+  }
+}
 
 async function load() {
   const workspaceId = props.workspaceId
@@ -89,9 +110,21 @@ defineExpose({ reload: load })
 <template>
   <section class="project-brief" aria-labelledby="project-brief-title" data-testid="project-brief">
     <header class="project-brief__header">
-      <h2 id="project-brief-title">项目简报</h2>
+      <h2 id="project-brief-title">
+        <button
+          class="project-brief__toggle"
+          type="button"
+          data-testid="project-brief-toggle"
+          :aria-expanded="!collapsed"
+          aria-controls="project-brief-body"
+          @click="toggleCollapsed"
+        >
+          <el-icon class="project-brief__chevron" :class="{ 'is-collapsed': collapsed }"><ArrowDown /></el-icon>
+          项目简报
+        </button>
+      </h2>
       <el-button
-        v-if="canEdit && brief"
+        v-if="canEdit && brief && !collapsed"
         data-testid="project-brief-edit"
         text
         :icon="EditPen"
@@ -101,6 +134,7 @@ defineExpose({ reload: load })
       </el-button>
     </header>
 
+    <div v-show="!collapsed" id="project-brief-body">
     <p v-if="loading && !brief" class="project-brief__muted">正在加载简报…</p>
     <p v-else-if="loadError" class="project-brief__muted">
       简报加载失败。
@@ -119,6 +153,7 @@ defineExpose({ reload: load })
         填写简报
       </el-button>
       <small v-else>负责人或管理员可以填写简报。</small>
+    </div>
     </div>
 
     <el-dialog
@@ -184,6 +219,34 @@ defineExpose({ reload: load })
   color: var(--dsh-color-ink);
   font-size: var(--dsh-font-size-title);
   font-weight: 650;
+}
+
+.project-brief__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-brief__toggle:focus-visible {
+  outline: 2px solid var(--dsh-color-brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.project-brief__chevron {
+  color: var(--dsh-color-muted);
+  transition: transform 0.15s ease;
+}
+
+.project-brief__chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .project-brief__content {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { ArrowRight, Cpu, FolderOpened, Lock, Setting, UserFilled } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { ArrowDown, ArrowRight, Cpu, FolderOpened, Lock, Setting, UserFilled } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { describeWorkspaceActivity, type WorkspaceActivityKind } from './workspace-activity'
@@ -137,6 +137,37 @@ const effectiveUnread = computed(() => {
   return Number.isFinite(count) && count >= 1 ? Math.floor(count) : 0
 })
 
+/**
+ * 项目空间 S2：成员与 Agent 区块可收起。收起状态只是本浏览器的偏好，读写失败时按展开处理。
+ */
+type CollapsibleSection = 'members' | 'agents'
+const collapsedSections = ref<Record<CollapsibleSection, boolean>>({
+  members: readSectionCollapsed('members'),
+  agents: readSectionCollapsed('agents'),
+})
+
+function sectionStorageKey(section: CollapsibleSection) {
+  return `dsh-work.workspace-panel.${section}.collapsed`
+}
+
+function readSectionCollapsed(section: CollapsibleSection) {
+  try {
+    return window.localStorage.getItem(sectionStorageKey(section)) === '1'
+  } catch {
+    return false
+  }
+}
+
+function toggleSection(section: CollapsibleSection) {
+  const next = !collapsedSections.value[section]
+  collapsedSections.value = { ...collapsedSections.value, [section]: next }
+  try {
+    window.localStorage.setItem(sectionStorageKey(section), next ? '1' : '0')
+  } catch {
+    // 偏好未能保存不影响当前展示。
+  }
+}
+
 function memberInitial(name: string) {
   return Array.from(name)[0] ?? '成'
 }
@@ -239,7 +270,19 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
     <section v-if="workspace.type === 'team'" class="workspace-info-panel__section">
       <div class="workspace-info-panel__section-heading">
         <div>
-          <h3>成员</h3>
+          <h3>
+            <button
+              class="workspace-info-panel__toggle"
+              type="button"
+              data-testid="panel-members-toggle"
+              :aria-expanded="!collapsedSections.members"
+              aria-controls="workspace-info-panel-members"
+              @click="toggleSection('members')"
+            >
+              <el-icon class="workspace-info-panel__chevron" :class="{ 'is-collapsed': collapsedSections.members }"><ArrowDown /></el-icon>
+              成员
+            </button>
+          </h3>
           <span data-testid="panel-employee-count">{{ workspace.memberCount }} 位员工</span>
         </div>
         <button
@@ -254,6 +297,8 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </div>
 
       <div
+        v-show="!collapsedSections.members"
+        id="workspace-info-panel-members"
         data-testid="panel-employee-section"
         class="workspace-member-list"
         :aria-label="`${workspace.name}员工成员`"
@@ -281,7 +326,19 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
     >
       <div class="workspace-info-panel__section-heading">
         <div>
-          <h3>Agent</h3>
+          <h3>
+            <button
+              class="workspace-info-panel__toggle"
+              type="button"
+              data-testid="panel-agents-toggle"
+              :aria-expanded="!collapsedSections.agents"
+              aria-controls="workspace-info-panel-agents"
+              @click="toggleSection('agents')"
+            >
+              <el-icon class="workspace-info-panel__chevron" :class="{ 'is-collapsed': collapsedSections.agents }"><ArrowDown /></el-icon>
+              Agent
+            </button>
+          </h3>
           <span data-testid="panel-agent-count">{{ agentMembers.length }} 个 Agent</span>
         </div>
         <button
@@ -294,6 +351,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
           管理 Agent
         </button>
       </div>
+      <div v-show="!collapsedSections.agents" id="workspace-info-panel-agents">
       <div v-if="agentMembers.length" class="workspace-agent-list">
         <article
           v-for="agent in agentMembers"
@@ -314,6 +372,15 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
         </article>
       </div>
       <p v-else class="workspace-info-panel__empty">尚未加入 Agent</p>
+      <!-- 项目空间 S2：项目档案员是平台内置的系统运行，每个项目空间都有，不占 Agent 名额、不可移除。 -->
+      <div class="workspace-agent-list">
+        <article data-testid="panel-archivist-row" class="workspace-agent workspace-agent--system">
+          <span class="workspace-agent__icon"><el-icon><Cpu /></el-icon></span>
+          <strong>项目档案员</strong>
+          <span class="workspace-agent__system">系统</span>
+        </article>
+      </div>
+      </div>
     </section>
 
     <section
@@ -729,6 +796,47 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
   grid-template-columns: 26px minmax(0, 1fr) 5px;
   align-items: center;
   gap: 8px;
+}
+
+.workspace-agent--system {
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+}
+
+.workspace-agent__system {
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #6f756f;
+  background: #e9ebe8;
+  font-size: var(--dsh-font-size-micro);
+  line-height: 18px;
+}
+
+.workspace-info-panel__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-info-panel__toggle:focus-visible {
+  outline: 2px solid #2e8b70;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.workspace-info-panel__chevron {
+  color: #9ba09c;
+  transition: transform 0.15s ease;
+}
+
+.workspace-info-panel__chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .workspace-agent__icon {

@@ -10,6 +10,7 @@ import {
   Files,
   InfoFilled,
   List,
+  Notebook,
   Plus,
 } from '@element-plus/icons-vue'
 
@@ -33,6 +34,7 @@ import type {
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import ProjectBriefCard from '@/components/ProjectBriefCard.vue'
+import ProjectArchivePanel from '@/components/ProjectArchivePanel.vue'
 import ProjectTaskPanel from '@/components/ProjectTaskPanel.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
 import WorkspaceAgentMemberDialog from '@/components/WorkspaceAgentMemberDialog.vue'
@@ -45,8 +47,10 @@ import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
-type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts'
-const WORKSPACE_TABS: WorkspaceTab[] = ['tasks', 'conversation', 'files', 'artifacts']
+type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts' | 'archive'
+const WORKSPACE_TABS: WorkspaceTab[] = ['tasks', 'conversation', 'files', 'artifacts', 'archive']
+/** 只有项目空间才有的页签；个人空间深链到这些页签时退回默认页签。 */
+const TEAM_ONLY_TABS: WorkspaceTab[] = ['tasks', 'archive']
 /** 对话页签内的视图：新对话（默认）/ 历史对话（design §2.2）。 */
 type ConversationView = 'new' | 'history'
 
@@ -195,12 +199,14 @@ function invalidateActivityRequests() {
  */
 const requestedTab = String(route.query.tab ?? '')
 const activeTab = ref<WorkspaceTab>(
-  WORKSPACE_TABS.includes(requestedTab as WorkspaceTab) && requestedTab !== 'tasks'
+  WORKSPACE_TABS.includes(requestedTab as WorkspaceTab) && !TEAM_ONLY_TABS.includes(requestedTab as WorkspaceTab)
     ? (requestedTab as WorkspaceTab)
     : 'conversation',
 )
 /** 项目任务数（页签计数），由任务面板加载后回传。 */
 const projectTaskCount = ref(0)
+/** 项目档案条目数（页签计数，项目空间 S2），由档案面板加载后回传；未打开过档案页签时不显示计数。 */
+const projectArchiveCount = ref<number | null>(null)
 /** 默认新对话；`?view=history` 深链在空间对象就绪后由 watch 恢复（仅团队）。 */
 const conversationView = ref<ConversationView>('new')
 const conversationViews: Array<{ id: ConversationView; label: string }> = [
@@ -340,6 +346,12 @@ const workspaceTabs = computed(() => [
     count: workspaceArtifacts.value.length,
     icon: Document,
   },
+  ...(isTeam.value ? [{
+    id: 'archive' as const,
+    label: '档案',
+    count: projectArchiveCount.value ?? '',
+    icon: Notebook,
+  }] : []),
 ])
 
 /**
@@ -353,6 +365,20 @@ function workspaceBaseLocation(query: LocationQuery) {
     ? { path: `/workspaces/${workspaceId.value}`, query }
     : { query }
 }
+
+/**
+ * 页签栏在窄屏横向滚动（项目空间 S2 起有五个页签）：激活的页签（含 `?tab=` 深链）滚入可视区域。
+ */
+watch(
+  () => [activeTab.value, workspace.value?.id] as const,
+  ([tab, workspaceId]) => {
+    if (!workspaceId) return
+    void nextTick(() => {
+      document.getElementById(`workspace-tab-${tab}`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    })
+  },
+  { immediate: true, flush: 'post' },
+)
 
 function selectTab(tab: WorkspaceTab) {
   activeTab.value = tab
@@ -557,8 +583,8 @@ watch(
   () => [route.query.tab, isTeam.value] as const,
   ([tab]) => {
     const value = tab === undefined || tab === null || tab === '' ? defaultTab.value : String(tab)
-    // 个人空间没有任务页签：深链 ?tab=tasks 退回默认页签。
-    if (value === 'tasks' && !isTeam.value) {
+    // 个人空间没有任务与档案页签：深链 ?tab=tasks / ?tab=archive 退回默认页签。
+    if (TEAM_ONLY_TABS.includes(value as WorkspaceTab) && !isTeam.value) {
       activeTab.value = defaultTab.value
       return
     }
@@ -1044,6 +1070,14 @@ watch(
           :agent-members="agentMembers"
           :files="workspace.files"
           @count="projectTaskCount = $event"
+        />
+
+        <ProjectArchivePanel
+          v-if="isTeam && activeTab === 'archive'"
+          :workspace-id="workspace.id"
+          :workspace-name="workspace.name"
+          :can-write="canWriteTeamContent"
+          @count="projectArchiveCount = $event"
         />
 
         <section
