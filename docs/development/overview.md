@@ -77,7 +77,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 - **禁止第二套 Agent 执行逻辑。** 不得在前端、业务后端或独立服务中绕过 DSH，直接调用模型 API 实现 Agent 对话、工具调用循环、多步推理、模型上下文推进或循环内重试；不得为安装助手等场景另引入并行 Agent 执行框架。
 - **DSH 持有单次 Attempt 内的执行循环。** 模型交互、工具调用编排与循环上下文由 DSH 负责；平台复用现有 Runtime Adapter 处理启动、取消、超时、事件转换和进程回收。
 - **平台持有业务事实和工具实现。** 身份与权限、会话和安装记录、队列调度、Attempt 重试、断线恢复、幂等及审计由平台负责。下载、解包、校验、入库和版本发布是受控业务工具；其确定性流程与事务恢复不属于另一套 Agent Loop。管理端安装工具按管理身份授权，不扩大员工 Agent 的工具权限。
-- **暂不提供 Agent 委派。** 原 PF-06 `delegate_agent` 已于 2026-10-16 删除；AI 员工之间需要交接工作时再按[简化方案](../design/agent-release-optimization-plan.md#9-删除-agent-委派)重新设计。历史委派子 Task 保留记录但不能重试。
+- **暂不提供 Agent 委派。** 原 PF-06 `delegate_agent` 已于 2026-10-16 删除；AI 员工之间需要交接工作时再按 AI 员工交接场景重新设计。历史委派子 Task 保留记录但不能重试。
 - **模型治理不承担 Agent 执行。** Model 模块只承担路由、凭据引用和计量等治理职责，不能自行发起一条绕过 DSH 的业务 Agent 路线；当前路由也尚未传给 DSH（见 4.4）。
 - **DSH 不可用时禁止绕过。** 需要 Agent 的对话和试运行明确报告不可用，不能自动降级到直接调用模型。已有安装记录和确定性平台管理操作可按自身权限继续工作；这不代表 Agent 仍可运行。
 - **扩展现有链路。** 安装助手所需工具调用或资源能力不足时，应扩展现有 Run/Runtime 契约和 DSH 能力。Runtime 可替换表示通过既有端口统一迁移执行内核，不表示允许各业务场景自行选择或维护第二套引擎。Mock Runtime 仅供测试与原型使用，不是生产回退方案。
@@ -288,7 +288,8 @@ flowchart LR
 
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 能力：** 经验迭代（AE-04）缺专属质量评测、显式停用与回滚；`agent-routine` 跳过知识与记忆检索，统一上下文需适配 Agent 独立授权；统一治理总览与跨入口真实验收（AE-06）未完成；模型能力要求 `long-context` 与 `structured-output` 目前一律拒绝，真正支持需定义约束并接通目标模型。
-- **Agent 配置发布与 Runtime 执行：** 见 [Agent 配置与发布简化方案](../design/agent-release-optimization-plan.md)（实施中）和 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
+- **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
+- **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
 - **项目空间：** S0（团队交付边界）、S1（改名、简报、项目任务）与 S2（项目档案与档案员）已实现；项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。P1 浏览器旅程与真实 DSH 验收未完成，见 [项目空间方案](../design/project-space-plan.md)。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
