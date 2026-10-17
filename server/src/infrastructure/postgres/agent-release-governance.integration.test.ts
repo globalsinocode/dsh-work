@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { after, before, test } from 'node:test'
 
+import { registerAgentReleaseRoutes } from '../../http/admin/agent-release-routes.ts'
+import { Router } from '../../http/router.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import type { ApiAudience, RequestIdentity } from '../../modules/identity/types.ts'
 import { PostgresAgentDataService } from '../../modules/agent-data/postgres-agent-data-service.ts'
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import { parseAgentPackage } from '../../modules/agent/agent-package.ts'
@@ -40,6 +45,8 @@ let release: PostgresAgentReleaseService
 let orchestration: RunOrchestrationService
 let trialRuntime: TrialStubRuntime
 let tools: PostgresToolConnectorService
+let releaseHttp: Server | undefined
+let releaseBaseUrl = ''
 
 before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_release_test', maxConnections: 8 })
@@ -64,12 +71,72 @@ before(async () => {
   )
   release = new PostgresAgentReleaseService(database, agents, skills, tools, orchestration)
   await createAdminUser(ADMIN)
+  const router = new Router({ authenticateApi: releaseTestAuthenticator })
+  registerAgentReleaseRoutes(router, release)
+  releaseHttp = createServer((request, response) => void router.handle(request, response))
+  await new Promise<void>((resolve, reject) => {
+    releaseHttp!.once('error', reject)
+    releaseHttp!.listen(0, '127.0.0.1', () => resolve())
+  })
+  const address = releaseHttp.address()
+  if (!address || typeof address === 'string') throw new Error('测试 HTTP Server 没有获得端口')
+  releaseBaseUrl = `http://127.0.0.1:${address.port}`
 })
 
 after(async () => {
+  if (releaseHttp?.listening) {
+    await new Promise<void>((resolve, reject) => releaseHttp!.close(error => error ? reject(error) : resolve()))
+  }
   await orchestration.close()
   await throwaway.dispose()
 })
+
+function releaseTestAuthenticator(request: IncomingMessage, audience: ApiAudience): Promise<RequestIdentity> {
+  const header = request.headers['x-test-user-id']
+  const userId = Array.isArray(header) ? header[0] : header
+  if (!userId) {
+    const error = new Error('请先登录') as Error & { status: number; code: string }
+    error.status = 401
+    error.code = 'authentication_required'
+    throw error
+  }
+  return Promise.resolve({
+    audience,
+    applicationId: 'test-admin',
+    sessionHash: `test-session-${userId}`,
+    userId,
+    subject: `directory:${userId}`,
+    profile: {
+      id: userId,
+      name: '发布管理员',
+      title: '平台管理员',
+      department: '平台治理',
+      avatarText: '发',
+      role: 'platform_admin',
+      dataScopes: ['enterprise:authorized'],
+    },
+    roleIds: ['role-platform-admin'],
+    permissions: ['admin:*'],
+    dataScopes: ['enterprise:authorized'],
+    authorizationVersion: 1,
+    identityProvider: 'ai-hub-oidc',
+  })
+}
+
+async function releaseApi(method: string, path: string, options: { as?: string; body?: unknown } = {}) {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (options.as) headers['x-test-user-id'] = options.as
+  const init: RequestInit = { method, headers }
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify(options.body)
+  }
+  const response = await fetch(`${releaseBaseUrl}${path}`, init)
+  const body = await response.json().catch(() => null) as {
+    error?: { code?: string; message?: string }
+  }
+  return { status: response.status, body }
+}
 
 async function createAdminUser(id: string) {
   await database`
@@ -610,6 +677,65 @@ test('发起试运行自动检查失效依赖，阻塞时不创建试运行或 A
      where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${created.version.id}
   `
   assert.equal(attempts[0]?.count, 0)
+})
+
+test('发布前置条件未满足时 case-trials 返回 409，且不创建试运行、Run 或 Attempt', async () => {
+  const agentId = `agent-http-conflict-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, [], [])
+  const candidate = await release.ensureCandidate(agentId, ADMIN)
+  const caseId = candidate.candidate?.cases[0]?.id
+  assert.ok(caseId)
+  await database`
+    update agent_versions set skill_refs = ${database.json(['skill-unavailable@1.0.0'])}
+     where tenant_id = ${tenantId} and id = ${created.version.id}
+  `
+
+  const blocked = await releaseApi('POST', `/api/admin/v1/agents/${agentId}/release/case-trials`, {
+    as: ADMIN,
+    body: { caseId },
+  })
+  assert.equal(blocked.status, 409)
+  assert.equal(blocked.body.error?.code, 'state_conflict')
+  assert.match(blocked.body.error?.message ?? '', /试运行被阻塞/)
+
+  const state = await release.getReleaseState(agentId)
+  assert.equal(state.trialRuns.length, 0)
+  const [trials] = await database<{ count: number }[]>`
+    select count(*)::integer as count from agent_trial_runs
+     where tenant_id = ${tenantId} and agent_id = ${agentId}
+  `
+  const [runs] = await database<{ count: number }[]>`
+    select count(*)::integer as count from runs
+     where tenant_id = ${tenantId} and session_id in (
+       select id from sessions
+        where tenant_id = ${tenantId} and title like ${`发布试运行 ${agentId}%`}
+     )
+  `
+  const [attempts] = await database<{ count: number }[]>`
+    select count(*)::integer as count from run_attempts
+     where tenant_id = ${tenantId} and manifest->>'agent_version_id' = ${created.version.id}
+  `
+  assert.equal(trials?.count, 0)
+  assert.equal(runs?.count, 0)
+  assert.equal(attempts?.count, 0)
+})
+
+test('旧的整轮试运行入口已移除，OpenAPI 不再发布无 trialId 的启动路径', async () => {
+  const missing = await releaseApi('POST', `/api/admin/v1/agents/agent-removed-start/release/trials`, {
+    as: ADMIN,
+    body: {},
+  })
+  assert.equal(missing.status, 404)
+  assert.equal(missing.body.error?.code, 'route_not_found')
+
+  const document = JSON.parse(await readFile(
+    new URL('../../../../docs/development/openapi-admin.json', import.meta.url),
+    'utf8',
+  )) as { paths: Record<string, unknown> }
+  assert.equal(document.paths['/agents/{agentId}/release/trials'], undefined)
+  assert.ok(document.paths['/agents/{agentId}/release/trials/{trialId}/cases'])
+  assert.ok(document.paths['/agents/{agentId}/release/trials/{trialId}/confirm'])
+  assert.ok(document.paths['/agents/{agentId}/release/trials/{trialId}/cancel'])
 })
 
 test('配置创建自动装配 Skill 工具依赖，移除 Skill 后不保留隐式工具', async () => {
