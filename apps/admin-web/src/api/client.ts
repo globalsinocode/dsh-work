@@ -38,6 +38,7 @@ import type {
   OperationsSummary,
   PlatformStatus,
   PersistentApproval,
+  AgentExperience,
   ExperienceIterationAgentSummary,
   ExperienceIterationApplication,
   RuntimeDefinition,
@@ -144,6 +145,12 @@ export const adminApi = {
   reviewExperienceIterationApplication: (applicationId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
     request<ExperienceIterationApplication>(`/experience-iterations/applications/${encodeURIComponent(applicationId)}/review`, {
       method: 'POST', body: JSON.stringify(input),
+    }),
+  getAgentExperiences: (agentId: string) =>
+    request<AgentExperience[]>(`/experience-iterations/agents/${encodeURIComponent(agentId)}/experiences`),
+  setAgentExperienceVersion: (agentId: string, entryId: string, input: { versionId: string | null; expectedVersionId: string | null; reason: string }) =>
+    request<AgentExperience>(`/experience-iterations/agents/${encodeURIComponent(agentId)}/experiences/${encodeURIComponent(entryId)}/current`, {
+      method: 'PUT', body: JSON.stringify(input),
     }),
   getApprovals: (status?: PersistentApproval['status']) => request<PersistentApproval[]>(`/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   resolveApproval: (approvalId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>

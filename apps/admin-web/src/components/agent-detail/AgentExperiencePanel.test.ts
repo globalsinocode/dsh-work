@@ -1,11 +1,12 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { adminApi } from '@/api/client'
-import type { ExperienceIterationApplication } from '@/types/domain'
+import type { AgentExperience, ExperienceIterationApplication } from '@/types/domain'
 import AgentExperiencePanel from './AgentExperiencePanel.vue'
 
+beforeEach(() => { vi.spyOn(adminApi, 'getAgentExperiences').mockResolvedValue([]) })
 afterEach(() => vi.restoreAllMocks())
 
 const base: ExperienceIterationApplication = {
@@ -89,5 +90,77 @@ it('只读时只能查看，没有审核操作', async () => {
     expect(wrapper.findAll('button').some(item => item.text() === '批准并发布')).toBe(false)
   } finally {
     wrapper.unmount()
+  }
+})
+
+const experience: AgentExperience = {
+  entryId: 'memory-entry-1', agentId: 'agent-quality', title: '异常分析核对方法', currentVersionId: 'memory-version-2',
+  updatedAt: '2026-10-17T00:00:00.000Z',
+  versions: [
+    { id: 'memory-version-2', version: 2, title: '异常分析核对方法', content: '先核对数据版本、缺失字段和外部回执。', contentDigest: 'b'.repeat(64), publishedAt: '2026-10-17T00:00:00.000Z', publishedBy: '陈默', usable: true },
+    { id: 'memory-version-1', version: 1, title: '异常分析核对方法', content: '先核对数据版本和缺失字段。', contentDigest: 'a'.repeat(64), publishedAt: '2026-10-16T00:00:00.000Z', publishedBy: '陈默', usable: true },
+  ],
+}
+
+it('停用、回滚与启用经验都只移动当前版本，并要求填写原因（AE-04）', async () => {
+  vi.spyOn(adminApi, 'getExperienceIterationApplications').mockResolvedValue([])
+  vi.spyOn(adminApi, 'getAgentExperiences').mockResolvedValue([experience])
+  const prompt = vi.spyOn(ElMessageBox, 'prompt')
+    .mockResolvedValueOnce({ value: '内容待核实', action: 'confirm' } as never)
+    .mockResolvedValueOnce({ value: '核实无误', action: 'confirm' } as never)
+    .mockResolvedValueOnce({ value: '新版本有误', action: 'confirm' } as never)
+  const set = vi.spyOn(adminApi, 'setAgentExperienceVersion')
+    .mockResolvedValueOnce({ ...experience, currentVersionId: null })
+    .mockResolvedValueOnce(experience)
+    .mockResolvedValueOnce({ ...experience, currentVersionId: 'memory-version-1' })
+  const wrapper = mountPanel()
+  try {
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在使用的经验')
+    expect(wrapper.text()).toContain('v2')
+
+    await wrapper.get('[data-action="disable-experience"]').trigger('click')
+    await flushPromises()
+    expect(set).toHaveBeenLastCalledWith('agent-quality', 'memory-entry-1', { versionId: null, expectedVersionId: 'memory-version-2', reason: '内容待核实' })
+    expect(wrapper.text()).toContain('已停用，不再被检索')
+
+    await wrapper.get('[data-action="enable-experience"]').trigger('click')
+    await flushPromises()
+    expect(set).toHaveBeenLastCalledWith('agent-quality', 'memory-entry-1', { versionId: 'memory-version-2', expectedVersionId: null, reason: '核实无误' })
+
+    await wrapper.get('[data-action="experience-versions"]').trigger('click')
+    await flushPromises()
+    const rollback = wrapper.findAll('[data-action="use-experience-version"]')
+    expect(rollback.map(item => item.text())).toEqual(['回滚至此'])
+    await rollback[0]!.trigger('click')
+    await flushPromises()
+    expect(set).toHaveBeenLastCalledWith('agent-quality', 'memory-entry-1', { versionId: 'memory-version-1', expectedVersionId: 'memory-version-2', reason: '新版本有误' })
+    expect(prompt).toHaveBeenCalledTimes(3)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('取消填写原因时不修改经验；只读时没有停用入口', async () => {
+  vi.spyOn(adminApi, 'getExperienceIterationApplications').mockResolvedValue([])
+  vi.spyOn(adminApi, 'getAgentExperiences').mockResolvedValue([experience])
+  vi.spyOn(ElMessageBox, 'prompt').mockRejectedValue('cancel')
+  const set = vi.spyOn(adminApi, 'setAgentExperienceVersion')
+  const wrapper = mountPanel()
+  try {
+    await flushPromises()
+    await wrapper.get('[data-action="disable-experience"]').trigger('click')
+    await flushPromises()
+    expect(set).not.toHaveBeenCalled()
+  } finally {
+    wrapper.unmount()
+  }
+  const readonly = mountPanel(false)
+  try {
+    await flushPromises()
+    expect(readonly.find('[data-action="disable-experience"]').exists()).toBe(false)
+    expect(readonly.find('[data-action="experience-versions"]').exists()).toBe(true)
+  } finally {
+    readonly.unmount()
   }
 })

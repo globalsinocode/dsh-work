@@ -29,6 +29,7 @@ test('详情页经验分区按 Agent 审核：拒绝须写原因，批准后进�
     await route.fulfill({ json: { data: current[0] } })
   })
 
+  await page.route('**/api/admin/v1/experience-iterations/agents/*/experiences', route => route.fulfill({ json: { data: [] } }))
   await page.goto(`${adminUrl}/agents/${agentId}?section=experience`)
   const section = page.getByRole('region', { name: '经验' })
   await expect(page.getByRole('tab', { name: '经验', selected: true })).toBeVisible()
@@ -57,6 +58,7 @@ test('全局经验迭代页可跳到对应 Agent 的经验分区', async ({ page
     latestApplicationAt: pending.createdAt,
   }] } }))
   await page.route('**/api/admin/v1/experience-iterations/applications**', route => route.fulfill({ json: { data: [pending] } }))
+  await page.route('**/api/admin/v1/experience-iterations/agents/*/experiences', route => route.fulfill({ json: { data: [] } }))
   await page.goto(`${adminUrl}/experience-iterations`)
   await page.getByRole('link', { name: `打开 ${pending.agentName} 的经验分区` }).click()
   await expect(page).toHaveURL(new RegExp(`/agents/${agentId}\\?section=experience$`))

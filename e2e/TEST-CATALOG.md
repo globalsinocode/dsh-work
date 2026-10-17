@@ -972,6 +972,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 3. 只有成功 Attempt 产生的未过期经验提案进入待审核列表；员工端没有提交、授权或撤回入口。
 4. 平台管理员批准后创建不可变经验版本，拒绝则不发布；两种决定都保留审核人、审核时间和说明。批准经验仅属于同一稳定 Agent，不跨 Agent 使用。
 5. 经验是非权威参考，不能自动修改 Soul、Skill、Tool、权限或权威业务事实；这些变化仍必须创建新 Agent Version 并重新评测发布。
+6. **停用、启用与回滚（AE-04，2026-10-17）：** Agent 详情“经验”分区的“正在使用的经验”列出每条经验的当前版本；停用、启用和回滚只移动当前版本指针，均须填写原因并写审计，过期的当前版本返回 409。停用后不再检索，排队或执行中引用它的 Attempt 在执行前复核时拒绝；回滚只影响之后的运行；来源授权撤回或过保留期的版本不能设为当前版本。只读管理员只能查看版本。spec：`server/src/infrastructure/postgres/pf05-controlled-memory.integration.test.ts`、`apps/admin-web/src/components/agent-detail/AgentExperiencePanel.test.ts`。
 
 **验收：** 管理员进入页面即可查看跨 Agent 的申请列表，可按 Agent 筛选并核对 Run/Attempt 证据后批准或拒绝；列表、审核 API 与页面均使用经验迭代契约，不再暴露管理端受控记忆端点。
 

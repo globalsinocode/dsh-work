@@ -287,7 +287,6 @@ flowchart LR
 代码和测试存在不等于目标环境已验收。以下事项仍开放，按对应文档跟踪：
 
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
-- **Agent 能力：** 经验迭代（AE-04）缺专属质量评测、显式停用与回滚；`agent-routine` 跳过知识与记忆检索，统一上下文需适配 Agent 独立授权；统一治理总览与跨入口真实验收（AE-06）未完成；模型能力要求 `long-context` 与 `structured-output` 目前一律拒绝，真正支持需定义约束并接通目标模型。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
 - **项目空间：** S0（团队交付边界）、S1（改名、简报、项目任务）与 S2（项目档案与档案员）已实现；项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。P1 浏览器旅程与真实 DSH 验收未完成，见 [项目空间方案](../design/project-space-plan.md)。

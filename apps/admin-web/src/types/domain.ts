@@ -37,6 +37,25 @@ export interface ExperienceIterationAgentSummary {
   latestApplicationAt: string | null
 }
 
+/** AE-04 已发布经验；当前版本为空表示已停用，不再被检索。 */
+export interface AgentExperience {
+  entryId: string
+  agentId: string
+  title: string
+  currentVersionId: string | null
+  versions: Array<{
+    id: string
+    version: number
+    title: string
+    content: string
+    contentDigest: string
+    publishedAt: string
+    publishedBy: string
+    usable: boolean
+  }>
+  updatedAt: string
+}
+
 export interface ExperienceIterationApplication {
   id: string
   agentId: string

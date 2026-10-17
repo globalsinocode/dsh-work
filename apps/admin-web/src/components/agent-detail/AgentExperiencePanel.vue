@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { adminApi } from '@/api/client'
-import type { ExperienceIterationApplication } from '@/types/domain'
+import type { AgentExperience, ExperienceIterationApplication } from '@/types/domain'
 
 type Status = ExperienceIterationApplication['status']
 
@@ -38,10 +38,69 @@ const visible = computed(() => filter.value === 'all'
   : applications.value.filter(item => item.status === filter.value))
 const rejectNoteMissing = computed(() => rejectAttempted.value && !comment.value.trim())
 
+// AE-04：已发布经验的当前版本——停用、启用与回滚只移动指针，已发布版本不变。
+const experiences = ref<AgentExperience[]>([])
+const versionsOf = ref<AgentExperience | null>(null)
+const versionsOpen = ref(false)
+const switching = ref('')
+
+function currentVersion(item: AgentExperience) {
+  return item.versions.find(version => version.id === item.currentVersionId) ?? null
+}
+
+function latestUsable(item: AgentExperience) {
+  return item.versions.find(version => version.usable) ?? null
+}
+
+async function askReason(title: string, message: string): Promise<string | null> {
+  try {
+    const { value } = await ElMessageBox.prompt(message, title, {
+      confirmButtonText: '确认', cancelButtonText: '取消', inputType: 'textarea',
+      inputPlaceholder: '说明原因，写入审计', inputValidator: (text: string) => (text.trim().length >= 2 && text.trim().length <= 500) || '请填写 2～500 字的原因',
+    })
+    return String(value).trim()
+  } catch {
+    return null
+  }
+}
+
+async function setCurrent(item: AgentExperience, versionId: string | null, kind: 'disable' | 'enable' | 'rollback') {
+  const target = item.versions.find(version => version.id === versionId)
+  const reason = await askReason(
+    kind === 'disable' ? '停用经验' : kind === 'enable' ? '启用经验' : '回滚经验',
+    kind === 'disable'
+      ? `停用后《${item.title}》不再被检索，正在排队或执行中引用它的任务会在执行前被拒绝。`
+      : `之后的运行将使用《${item.title}》v${target?.version ?? ''}。`,
+  )
+  if (reason === null) return
+  switching.value = item.entryId
+  try {
+    const updated = await adminApi.setAgentExperienceVersion(props.agentId, item.entryId, {
+      versionId, expectedVersionId: item.currentVersionId, reason,
+    })
+    experiences.value = experiences.value.map(entry => entry.entryId === updated.entryId ? updated : entry)
+    if (versionsOf.value?.entryId === updated.entryId) versionsOf.value = updated
+    ElMessage.success(kind === 'disable' ? '经验已停用' : kind === 'enable' ? '经验已启用' : '已回滚到所选版本')
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '操作失败')
+    await load()
+  } finally {
+    switching.value = ''
+  }
+}
+
+function openVersions(item: AgentExperience) {
+  versionsOf.value = item
+  versionsOpen.value = true
+}
+
 async function load() {
   loading.value = true
   try {
-    applications.value = await adminApi.getExperienceIterationApplications(props.agentId)
+    ;[applications.value, experiences.value] = await Promise.all([
+      adminApi.getExperienceIterationApplications(props.agentId),
+      adminApi.getAgentExperiences(props.agentId),
+    ])
     loadError.value = ''
   } catch (cause) {
     loadError.value = cause instanceof Error ? cause.message : '无法读取经验申请'
@@ -110,6 +169,32 @@ onMounted(load)
       </div>
     </header>
 
+    <div class="published-experiences" aria-label="正在使用的经验">
+      <h4 class="experience-subhead">正在使用的经验</h4>
+      <el-table class="data-table" :data="experiences" empty-text="还没有已发布的经验">
+        <el-table-column label="经验" min-width="240">
+          <template #default="{ row }"><div class="primary-cell"><strong>{{ row.title }}</strong><small>{{ currentVersion(row)?.content ?? '已停用，不再被检索' }}</small></div></template>
+        </el-table-column>
+        <el-table-column label="当前版本" width="110">
+          <template #default="{ row }">
+            <StatusTag v-if="row.currentVersionId" status="published" :label="`v${currentVersion(row)?.version ?? '?'}`" />
+            <StatusTag v-else status="disabled" label="已停用" />
+          </template>
+        </el-table-column>
+        <el-table-column label="版本数" width="80"><template #default="{ row }">{{ row.versions.length }}</template></el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <template v-if="canManage">
+              <el-button v-if="row.currentVersionId" link type="danger" data-action="disable-experience" :loading="switching === row.entryId" @click="setCurrent(row, null, 'disable')">停用</el-button>
+              <el-button v-else link type="primary" data-action="enable-experience" :disabled="!latestUsable(row)" :loading="switching === row.entryId" @click="setCurrent(row, latestUsable(row)!.id, 'enable')">启用</el-button>
+            </template>
+            <el-button link type="primary" data-action="experience-versions" @click="openVersions(row)">版本</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <h4 class="experience-subhead">经验申请</h4>
     <div class="status-tabs experience-tabs" role="tablist" aria-label="经验申请状态">
       <button v-for="item in filters" :key="item.id" class="status-tab" :class="{ active: filter === item.id }" type="button" role="tab" :aria-selected="filter === item.id" @click="filter = item.id">
         {{ item.label }} <span class="tab-count">{{ counts[item.id] }}</span>
@@ -133,6 +218,22 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="versionsOpen" :title="`经验版本 · ${versionsOf?.title ?? ''}`" width="min(720px, 92vw)" append-to-body>
+      <div v-for="version in versionsOf?.versions ?? []" :key="version.id" class="experience-version">
+        <div class="experience-version__head">
+          <strong>v{{ version.version }}</strong>
+          <StatusTag v-if="version.id === versionsOf?.currentVersionId" status="published" label="当前" />
+          <small>{{ formatTime(version.publishedAt) }} · {{ version.publishedBy }}</small>
+          <el-button
+            v-if="canManage && versionsOf && version.id !== versionsOf.currentVersionId && version.usable"
+            link type="primary" data-action="use-experience-version" :loading="switching === versionsOf.entryId"
+            @click="setCurrent(versionsOf, version.id, versionsOf.currentVersionId ? 'rollback' : 'enable')"
+          >{{ versionsOf.currentVersionId ? '回滚至此' : '启用此版本' }}</el-button>
+        </div>
+        <p class="experience-content">{{ version.content }}</p>
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="detailOpen" title="经验申请" width="min(720px, 92vw)" append-to-body>
       <template v-if="selected">
@@ -181,6 +282,12 @@ onMounted(load)
 .experience-content { margin: 0; padding: 10px 12px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-size: var(--font-size-caption); line-height: 1.65; white-space: pre-wrap; }
 .hint { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .review-form { margin-top: 14px; }
+.published-experiences { margin-bottom: 18px; }
+.experience-subhead { margin: 0 0 8px; color: var(--color-text-heading); font-size: var(--font-size-body); }
+.experience-version { padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+.experience-version__head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.experience-version__head small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.experience-version__head .el-button { margin-left: auto; }
 .field-error { width: 100%; margin: 5px 0 0; color: var(--color-danger); font-size: var(--font-size-badge); }
 @media (max-width: 640px) { .meta-grid { grid-template-columns: 1fr; } }
 </style>

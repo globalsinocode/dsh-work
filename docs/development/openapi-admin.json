@@ -60,6 +60,49 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" } }
       }
     },
+    "/experience-iterations/agents/{agentId}/experiences": {
+      "get": {
+        "operationId": "listAgentExperiences",
+        "summary": "列出 Agent 已发布的经验及其版本",
+        "description": "每条经验含全部不可变版本与当前版本；当前版本为空表示已停用、不再被检索。来源授权撤回、超过保留期或来源不可访问的版本不返回正文且不可设为当前版本。",
+        "parameters": [{ "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/experience-iterations/agents/{agentId}/experiences/{entryId}/current": {
+      "put": {
+        "operationId": "setAgentExperienceVersion",
+        "summary": "停用、启用或回滚 Agent 经验",
+        "description": "只移动经验的当前版本指针，已发布版本不变：versionId 为 null 即停用，此后不再检索，引用它的排队或执行中 Attempt 在执行前复核时拒绝；指向较早版本为回滚，指向任一可用版本为启用。expectedVersionId 必须等于读取时的当前版本，否则返回 409；原因写入审计。",
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "entryId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["versionId", "expectedVersionId", "reason"],
+                "properties": {
+                  "versionId": { "type": ["string", "null"] },
+                  "expectedVersionId": { "type": ["string", "null"] },
+                  "reason": { "type": "string", "minLength": 2, "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/experience-iterations/applications/{applicationId}/review": {
       "post": {
         "operationId": "reviewExperienceIterationApplication",
