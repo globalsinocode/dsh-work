@@ -268,7 +268,10 @@ onMounted(() => contentStore.refresh())
     </el-empty>
 
     <el-dialog v-model="createDialogOpen" title="创建团队工作空间" width="min(520px, calc(100vw - 32px))">
-      <el-form label-position="top">
+      <!-- el-form 渲染的是原生 <form>，而 Element Plus 既不绑定 submit 也不阻止默认行为。
+           弹窗内只有「工作空间名称」一个会阻止隐式提交的字段（说明是 textarea，不计入），
+           不拦截时按回车会触发浏览器隐式表单提交 → 整页重载 → 弹窗与已输入内容一起丢失。 -->
+      <el-form label-position="top" @submit.prevent>
         <el-form-item label="工作空间名称" required>
           <el-input v-model="newWorkspaceName" maxlength="40" show-word-limit placeholder="例如：九月交付风险分析" />
         </el-form-item>

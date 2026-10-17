@@ -238,3 +238,52 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
     expect(wrapper.find('[data-testid="workspace-filter-error"]').exists()).toBe(false)
   })
 })
+
+/**
+ * 创建团队工作空间弹窗（缺陷回归）：
+ * `el-form` 渲染的是原生 <form>，Element Plus 不绑定 submit / 不阻止默认行为。
+ * 弹窗里只有「工作空间名称」一个会阻止隐式提交的字段（说明是 textarea，不计入），
+ * 因此按回车会触发浏览器隐式表单提交 → 整页导航/重载 → 弹窗与已输入内容一起丢失。
+ * 这里锁定契约：该表单的原生提交必须被拦截。
+ */
+describe('WorkspacesView 创建团队工作空间弹窗（回车不得触发原生表单提交）', () => {
+  beforeEach(() => {
+    vi.spyOn(workbenchApi, 'getWorkspaces').mockResolvedValue([])
+  })
+
+  /**
+   * el-dialog 未开启 append-to-body，teleport 被禁用，弹窗内容原地渲染在组件树内
+   * （与 WorkspaceMemberDialog.test.ts 的同一约定），因此从 wrapper 查询。
+   */
+  function dialogForm(wrapper: Awaited<ReturnType<typeof mountView>>['wrapper']) {
+    const form = wrapper.find('form.el-form')
+    return form.exists() ? (form.element as HTMLFormElement) : null
+  }
+
+  it('intercepts the native submit so the dialog and the typed name survive Enter', async () => {
+    const { wrapper } = await mountView()
+    const trigger = wrapper.findAll('button').find(button => button.text().includes('创建团队工作空间'))
+    expect(trigger).toBeTruthy()
+    await trigger?.trigger('click')
+    await flushPromises()
+
+    const form = dialogForm(wrapper)
+    expect(form).toBeTruthy()
+    const input = form?.querySelector('input')
+    expect(input).toBeTruthy()
+    input!.value = '九月交付风险分析'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+
+    const submit = new Event('submit', { bubbles: true, cancelable: true })
+    form!.dispatchEvent(submit)
+    await flushPromises()
+
+    // 未拦截时浏览器会按 action 提交（无 action 则重载当前地址），弹窗随即消失。
+    expect(submit.defaultPrevented).toBe(true)
+    expect(dialogForm(wrapper)).toBeTruthy()
+    expect(dialogForm(wrapper)?.querySelector('input')?.value).toBe('九月交付风险分析')
+
+    wrapper.unmount()
+  })
+})

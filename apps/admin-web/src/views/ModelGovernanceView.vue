@@ -224,7 +224,8 @@ onMounted(() => void load())
 
     <el-dialog v-model="credentialDialogOpen" :title="`配置 ${selectedProvider?.name ?? ''} 的密钥引用`" width="620px" destroy-on-close>
       <el-alert type="warning" :closable="false" show-icon title="这里只登记引用，不输入密钥正文。当前 DSH 管理的密钥请继续在 DSH Credentials Provider 中更新。" />
-      <el-form class="dialog-form" label-position="top" :model="credentialForm"><el-form-item label="密钥后端" required><el-select v-model="credentialForm.backend"><el-option label="DSH 受管凭据" value="dsh-managed" /></el-select></el-form-item><el-form-item label="外部引用" required><el-input v-model="credentialForm.externalRef" placeholder="例如：DEEPSEEK_API_KEY" /></el-form-item><el-form-item label="配置状态" required><el-radio-group v-model="credentialForm.status"><el-radio value="configured">已配置</el-radio><el-radio value="missing">缺失</el-radio><el-radio value="revoked">已撤销</el-radio></el-radio-group></el-form-item></el-form>
+      <!-- el-form 渲染的是原生 <form>：拦截隐式提交，避免在「外部引用」按回车重载页面丢失输入。 -->
+      <el-form class="dialog-form" label-position="top" :model="credentialForm" @submit.prevent><el-form-item label="密钥后端" required><el-select v-model="credentialForm.backend"><el-option label="DSH 受管凭据" value="dsh-managed" /></el-select></el-form-item><el-form-item label="外部引用" required><el-input v-model="credentialForm.externalRef" placeholder="例如：DEEPSEEK_API_KEY" /></el-form-item><el-form-item label="配置状态" required><el-radio-group v-model="credentialForm.status"><el-radio value="configured">已配置</el-radio><el-radio value="missing">缺失</el-radio><el-radio value="revoked">已撤销</el-radio></el-radio-group></el-form-item></el-form>
       <template #footer><el-button @click="credentialDialogOpen = false">取消</el-button><el-button type="primary" :icon="SetUp" @click="saveCredentialReference">保存引用</el-button></template>
     </el-dialog>
 

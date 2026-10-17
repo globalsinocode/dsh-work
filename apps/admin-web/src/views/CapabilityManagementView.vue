@@ -938,7 +938,8 @@ onUnmounted(() => clearSkillTestPoll())
     </el-dialog>
 
     <el-dialog v-model="mcpCredentialDialogOpen" :title="`轮换 Bearer Token · ${selectedMcpCredentialConnector?.name ?? ''}`" width="min(520px, calc(100vw - 32px))" destroy-on-close @closed="mcpCredentialToken = ''">
-      <el-form label-position="top">
+      <!-- el-form 渲染的是原生 <form>：拦截隐式提交，避免在 Token 输入框按回车重载页面丢失输入。 -->
+      <el-form label-position="top" @submit.prevent>
         <el-form-item label="新 Bearer Token" required><el-input v-model="mcpCredentialToken" type="password" autocomplete="new-password" placeholder="输入新的 Token" /><small>提交后将覆盖旧 Token；密文写入数据库，明文不会回显。</small></el-form-item>
       </el-form>
       <el-alert type="info" :closable="false" show-icon title="轮换后连接器会重新检查。人工停用状态不会被自动解除。" />

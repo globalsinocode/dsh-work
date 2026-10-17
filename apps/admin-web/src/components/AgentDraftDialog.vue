@@ -335,7 +335,9 @@ function toVersionedToolReference(reference: string) {
       </el-steps>
       </div>
 
-      <el-form ref="formRef" :model="form" :rules="rules" label-position="top" status-icon>
+      <!-- el-form 渲染的是原生 <form>：不拦截 submit 时，在「Agent 名称」按回车会触发隐式
+           表单提交 → 整页重载，整个三步向导与已填内容一起丢失。 -->
+      <el-form ref="formRef" :model="form" :rules="rules" label-position="top" status-icon @submit.prevent>
       <section v-show="activeStep === 0" class="agent-editor__pane" aria-label="Agent 基础信息">
         <header class="pane-heading">
           <div><h3>定义 Agent</h3><p>填写员工识别和理解 Agent 所需的基础信息。</p></div>
