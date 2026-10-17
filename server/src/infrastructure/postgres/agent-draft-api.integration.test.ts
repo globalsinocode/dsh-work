@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import type { ApiAudience, RequestIdentity } from '../../modules/identity/types.ts'
+import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
@@ -25,7 +26,7 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_agent_draft_api_test', maxConnections: 4 })
   database = throwaway.client
   const router = new Router({ authenticateApi: testApiAuthenticator })
-  registerAgentRoutes(router, new PostgresAgentService(database))
+  registerAgentRoutes(router, new PostgresAgentService(database, new PostgresOperationsService(database)))
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -48,6 +49,7 @@ test('creating an Agent returns 201, and a duplicate id is a state conflict with
   assert.equal(created.status, 201)
   assert.equal(created.body.data?.agent.id, agentId)
   assert.equal(typeof created.body.data?.agent.revision, 'string')
+  assert.equal(await countAudits(agentId, 'agent.create', 'success'), 1)
 
   const duplicate = await api('POST', '/api/admin/v1/agents', body)
   assert.equal(duplicate.status, 409)
@@ -55,6 +57,7 @@ test('creating an Agent returns 201, and a duplicate id is a state conflict with
   assert.equal(duplicate.body.error?.message, 'Agent 标识已存在，请刷新列表后重新创建')
   assert.equal(await countRows('agents', agentId), 1)
   assert.equal(await countRows('agent_versions', agentId), 1)
+  assert.equal(await countAudits(agentId, 'agent.create', 'success'), 1)
 })
 
 test('illegal draft updates return 422 and leave revision and version count unchanged', async () => {
@@ -81,6 +84,7 @@ test('illegal draft updates return 422 and leave revision and version count unch
     assert.equal(rejected.body.error?.code, 'invalid_request', field)
     assert.equal(await currentRevision(agentId), revision, field)
     assert.equal(await countRows('agent_versions', agentId), versionsBefore, field)
+    assert.equal(await countAudits(agentId, 'agent.draft.update', 'success'), 0, field)
   }
 
   const nonStringItem = await api('PATCH', '/api/admin/v1/agents/draft', {
@@ -91,6 +95,7 @@ test('illegal draft updates return 422 and leave revision and version count unch
   assert.equal(nonStringItem.body.error?.code, 'invalid_request')
   assert.equal(await currentRevision(agentId), revision)
   assert.equal(await countRows('agent_versions', agentId), versionsBefore)
+  assert.equal(await countAudits(agentId, 'agent.draft.update', 'success'), 0)
 })
 
 function validDraft(id: string) {
@@ -150,6 +155,17 @@ async function currentRevision(agentId: string) {
   assert.equal(listed.status, 200)
   const agents = listed.body.data as unknown as Array<{ id: string; revision?: string }>
   return agents.find(agent => agent.id === agentId)?.revision
+}
+
+async function countAudits(agentId: string, action: string, result: string) {
+  const [row] = await database<{ count: number }[]>`
+    select count(*)::integer as count from audit_events
+     where tenant_id = ${tenantId}
+       and object_id = ${agentId}
+       and action = ${action}
+       and result = ${result}
+  `
+  return row?.count ?? 0
 }
 
 async function countRows(table: 'agents' | 'agent_versions', agentId: string) {
