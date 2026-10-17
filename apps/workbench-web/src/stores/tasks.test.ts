@@ -558,7 +558,9 @@ describe('task store', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'))
-      api.getTasks.mockResolvedValue([structuredClone(baseTask)])
+      // 其他用例把共享的 baseTask 直接交给 store，可能已带上时刻；这里从一份干净的副本开始。
+      const fresh = (): TaskRun => ({ ...structuredClone(baseTask), lastActivityAt: undefined })
+      api.getTasks.mockResolvedValue([fresh()])
       const store = useTaskStore()
       await store.load()
       expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:00.000Z'))
@@ -572,7 +574,7 @@ describe('task store', () => {
       await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z')))
 
       vi.setSystemTime(new Date('2026-10-17T12:01:30.000Z'))
-      api.getRun.mockResolvedValue(structuredClone(baseTask))
+      api.getRun.mockResolvedValue(fresh())
       await store.refreshRun('run-001')
       expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z'))
     } finally {
