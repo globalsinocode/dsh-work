@@ -620,6 +620,112 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/workspaces/{workspaceId}/project-archive": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getProjectArchive",
+        "summary": "查询项目档案（全部成员）",
+        "description": "项目空间 S2：返回 current（最新档案版本：versionId、versionNo、items 条目数组、sourceKind archivist/manual/rollback、sourceTasks、rollbackFromVersionNo、createdBy、createdAt；尚无档案时为 null）与 archivistRunning（档案员是否正在整理）。读取轨：归档空间的现任成员可读。个人工作空间返回 422。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveProjectArchive",
+        "summary": "保存项目档案（非只读成员）",
+        "description": "项目空间 S2：请求体 baseVersionNo（当前版本号，尚无档案为 0）与 items（最多 50 条，每条 1～500 字，不可重复）；生成来源为手动编辑的新版本，不写入最近动态。版本号已变化返回 409；只读成员与归档空间拒绝。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/project-archive/versions": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listProjectArchiveVersions",
+        "summary": "查询项目档案版本历史（全部成员）",
+        "description": "项目空间 S2：按版本号倒序返回最近 100 个档案版本，每个版本含完整条目与来源，供客户端对比变更。读取轨：归档空间的现任成员可读。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/project-archive/rollback": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "rollbackProjectArchive",
+        "summary": "回退项目档案（非只读成员）",
+        "description": "项目空间 S2：请求体 versionNo（要回退到的历史版本）与 baseVersionNo（当前版本号）；以该历史版本的条目生成来源为回退的新版本，历史保留。版本号已变化返回 409；回退到当前版本或不存在的版本返回 422；只读成员与归档空间拒绝。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/workspaces/{workspaceId}/sessions/{sessionId}/project-task": {
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {

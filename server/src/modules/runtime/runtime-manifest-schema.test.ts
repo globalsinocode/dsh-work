@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import Ajv2020Module from 'ajv/dist/2020.js'
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
+import { archiveDigest } from '../../domain/project-archive.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson } from './canonical-json.ts'
 import { normalizePersistedRuntimeManifest } from './runtime-manifest-compatibility.ts'
@@ -147,6 +148,28 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     const strayTarget = baseManifest()
     strayTarget.summary_target = { session_id: 's', covered_through_message_id: 'm' }
     assert.throws(() => compileRuntimeManifest(strayTarget), /summary_target is required for and only allowed/)
+  })
+
+  it('项目空间 S2 accepts a project-archive run and rejects tools, data scopes or a stray target', () => {
+    const archiveRun = baseManifest()
+    archiveRun.purpose = 'project-archive'
+    archiveRun.archive_target = { workspace_id: 'ws-team', update_id: 'warchup-1' }
+    archiveRun.session_id = null
+    archiveRun.workspace_id = ''
+    archiveRun.agent_version_id = null
+    archiveRun.skills = []
+    archiveRun.tools = []
+    archiveRun.data_scopes = []
+    assertBothAccept(archiveRun, 'project-archive run')
+    const withTools = structuredClone(archiveRun)
+    withTools.tools = [{ id: 'read', version: '1.0.0' }]
+    assertBothReject(withTools, /project-archive runs carry no Agent|maxItems|must NOT have more/, 'archive run with tools')
+    const withScopes = structuredClone(archiveRun)
+    withScopes.data_scopes = ['scope-east']
+    assertBothReject(withScopes, /project-archive runs carry no Agent|must NOT have more/, 'archive run with data scopes')
+    const strayTarget = baseManifest()
+    strayTarget.archive_target = { workspace_id: 'ws-team', update_id: 'warchup-1' }
+    assert.throws(() => compileRuntimeManifest(strayTarget), /archive_target is required for and only allowed/)
   })
 
   it('accepts a bounded MCP Connector snapshot and rejects secret or unsupported transport fields', () => {
@@ -458,14 +481,40 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
       brief: { version_id: 'wbrief-1', version_no: 2, content, content_sha256: sha256(content), due_date: '2026-12-31' },
     }
     assertBothAccept(manifest, 'project brief context')
-    assertBothAccept({ ...manifest, project_context: { brief: { ...manifest.project_context.brief, due_date: null } } }, 'brief without due date')
-    const tampered = { ...manifest, project_context: { brief: { ...manifest.project_context.brief, content: '已被篡改' } } }
+    assertBothAccept({ ...manifest, project_context: { brief: { ...manifest.project_context.brief!, due_date: null } } }, 'brief without due date')
+    const tampered = { ...manifest, project_context: { brief: { ...manifest.project_context.brief!, content: '已被篡改' } } }
     assert.equal(schemaErrors(tampered).valid, true, 'digest/body matching belongs to the compiler')
     assert.throws(() => compileRuntimeManifest(tampered), /content_sha256/)
     assertBothReject({
       ...manifest,
-      project_context: { brief: { ...manifest.project_context.brief, extra: true } },
+      project_context: { brief: { ...manifest.project_context.brief!, extra: true } },
     } as unknown as RuntimeManifest, /project_context|brief/, 'unknown brief field')
+  })
+
+  it('项目空间 S2 pins the project archive version with a matching digest', () => {
+    const manifest = baseManifest()
+    const items = ['缺货集中在高周转 SKU 类目。', '决策：按类目设置安全库存。']
+    manifest.project_context = {
+      archive: { version_id: 'warch-1', version_no: 3, items, items_sha256: archiveDigest(items) },
+    }
+    assertBothAccept(manifest, 'archive-only project context')
+    const content = '目标：缺货率降到 3%'
+    assertBothAccept({
+      ...manifest,
+      project_context: {
+        ...manifest.project_context,
+        brief: { version_id: 'wbrief-1', version_no: 1, content, content_sha256: sha256(content), due_date: null },
+      },
+    }, 'brief and archive')
+    const tampered = { ...manifest, project_context: { archive: { ...manifest.project_context.archive!, items: ['已被篡改'] } } }
+    assert.equal(schemaErrors(tampered).valid, true, 'digest/items matching belongs to the compiler')
+    assert.throws(() => compileRuntimeManifest(tampered), /items_sha256/)
+    const duplicated = ['同一条', '同一条']
+    assertBothReject({
+      ...manifest,
+      project_context: { archive: { ...manifest.project_context.archive!, items: duplicated, items_sha256: archiveDigest(duplicated) } },
+    }, /archive items are invalid/, 'duplicated archive items')
+    assertBothReject({ ...manifest, project_context: {} } as RuntimeManifest, /project_context|fewer than 1/, 'empty project context')
   })
 
   it('rejects the removed Agent delegation fields', () => {

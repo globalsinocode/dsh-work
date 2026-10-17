@@ -1,4 +1,5 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { archiveDigest, normalizeArchiveItems } from '../../domain/project-archive.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
 import { canonicalJson, sha256 } from './canonical-json.ts'
@@ -21,6 +22,7 @@ const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
 const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
 const PROJECT_BRIEF_FIELDS = new Set(['version_id', 'version_no', 'content', 'content_sha256', 'due_date'])
+const PROJECT_ARCHIVE_FIELDS = new Set(['version_id', 'version_no', 'items', 'items_sha256'])
 
 function assertId(name: string, value: string): void {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
@@ -130,6 +132,20 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   if ((input.purpose === 'session-summary') !== (input.summary_target !== undefined)) {
     throw new TypeError('summary_target is required for and only allowed with the session-summary purpose')
   }
+  if ((input.purpose === 'project-archive') !== (input.archive_target !== undefined)) {
+    throw new TypeError('archive_target is required for and only allowed with the project-archive purpose')
+  }
+  if (input.purpose === 'project-archive') {
+    const target = input.archive_target!
+    if (!target || Object.keys(target).some(key => key !== 'workspace_id' && key !== 'update_id')) throw new TypeError('archive_target is invalid')
+    assertId('archive_target.workspace_id', target.workspace_id)
+    assertId('archive_target.update_id', target.update_id)
+    if (input.agent_version_id !== null || input.workspace_id !== '' || input.session_id !== null
+      || input.tools.length || input.skills.length || input.mcp_connections?.length || input.data_scopes.length
+      || input.input.file_mounts.length || history.length || summary !== undefined || input.project_context !== undefined) {
+      throw new TypeError('project-archive runs carry no Agent, Workspace, Session, tools, data scopes, files or history')
+    }
+  }
   if (input.purpose === 'session-summary') {
     const target = input.summary_target!
     if (typeof target.session_id !== 'string' || !target.session_id || typeof target.covered_through_message_id !== 'string' || !target.covered_through_message_id
@@ -232,14 +248,28 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   }
 
   if (input.project_context !== undefined) {
-    const brief = input.project_context?.brief
-    if (!brief || Object.keys(input.project_context).some(key => key !== 'brief')) throw new TypeError('project_context is invalid')
-    if (Object.keys(brief).some(key => !PROJECT_BRIEF_FIELDS.has(key))) throw new TypeError('project_context brief has unknown fields')
-    assertId('project_context.brief.version_id', brief.version_id)
-    if (!Number.isInteger(brief.version_no) || brief.version_no < 1) throw new TypeError('project brief version_no is invalid')
-    if (typeof brief.content !== 'string' || !brief.content.trim() || brief.content.length > 8000) throw new TypeError('project brief content is invalid')
-    if (brief.content_sha256 !== sha256(brief.content)) throw new TypeError('project brief content_sha256 does not match content')
-    if (brief.due_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(brief.due_date)) throw new TypeError('project brief due_date is invalid')
+    const context = input.project_context
+    if (!context || typeof context !== 'object' || Object.keys(context).some(key => key !== 'brief' && key !== 'archive')
+      || (context.brief === undefined && context.archive === undefined)) throw new TypeError('project_context is invalid')
+    const brief = context.brief
+    if (brief !== undefined) {
+      if (!brief || Object.keys(brief).some(key => !PROJECT_BRIEF_FIELDS.has(key))) throw new TypeError('project_context brief has unknown fields')
+      assertId('project_context.brief.version_id', brief.version_id)
+      if (!Number.isInteger(brief.version_no) || brief.version_no < 1) throw new TypeError('project brief version_no is invalid')
+      if (typeof brief.content !== 'string' || !brief.content.trim() || brief.content.length > 8000) throw new TypeError('project brief content is invalid')
+      if (brief.content_sha256 !== sha256(brief.content)) throw new TypeError('project brief content_sha256 does not match content')
+      if (brief.due_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(brief.due_date)) throw new TypeError('project brief due_date is invalid')
+    }
+    const archive = context.archive
+    if (archive !== undefined) {
+      if (!archive || Object.keys(archive).some(key => !PROJECT_ARCHIVE_FIELDS.has(key))) throw new TypeError('project_context archive has unknown fields')
+      assertId('project_context.archive.version_id', archive.version_id)
+      if (!Number.isInteger(archive.version_no) || archive.version_no < 1) throw new TypeError('project archive version_no is invalid')
+      const normalized = normalizeArchiveItems(archive.items)
+      if ('error' in normalized || normalized.items.length !== archive.items.length
+        || normalized.items.some((item, index) => item !== archive.items[index])) throw new TypeError('project archive items are invalid')
+      if (archive.items_sha256 !== archiveDigest(archive.items)) throw new TypeError('project archive items_sha256 does not match items')
+    }
   }
 
   // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。

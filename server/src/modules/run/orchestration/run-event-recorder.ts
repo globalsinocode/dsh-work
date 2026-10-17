@@ -104,7 +104,7 @@ export class RunEventRecorder {
       await this.budget.settle(event, 'cancelled', this.assistantOutputs.get(event.attempt_id) ?? '')
       await this.transitionIfNeeded(run.id, event.attempt_id, 'cancelled')
       await this.deps.persistentWait?.cancelPreparingForAttempt({ runId: run.id, attemptId: event.attempt_id })
-      if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'cancelled', '')
+      if (!run.sessionId) await this.onSystemRunTerminal(run, 'cancelled', '')
     } else if (event.event_type === 'run.failed') {
       const code = typeof event.safe_metadata['error_code'] === 'string'
         ? event.safe_metadata['error_code']
@@ -123,7 +123,7 @@ export class RunEventRecorder {
         traceId: event.trace_id,
       })
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
-      if (!run.sessionId) await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
+      if (!run.sessionId) await this.onSystemRunTerminal(run, 'failed', '')
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
@@ -145,8 +145,11 @@ export class RunEventRecorder {
       })
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       // EX-02：会话 Run 结束后按需在后台生成摘要；无 Session 的 Run 可能就是摘要运行本身。
-      if (run.sessionId) void this.deps.sessionSummaries?.scheduleAfterRun(run)
-      else await this.deps.sessionSummaries?.onRunTerminal(run, 'succeeded', assistantOutput)
+      // 项目空间 S2：任务线程的一次执行成功后交给档案员整理（非任务线程时无操作）。
+      if (run.sessionId) {
+        void this.deps.sessionSummaries?.scheduleAfterRun(run)
+        void this.deps.projectArchivist?.afterTaskRun(run, assistantOutput)
+      } else await this.onSystemRunTerminal(run, 'succeeded', assistantOutput)
       this.assistantOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {
@@ -170,6 +173,12 @@ export class RunEventRecorder {
         result: decision === 'allow_once' ? 'success' : 'blocked',
       })
     }
+  }
+
+  /** 无 Session 的系统运行（档案整理、会话摘要）结束时，交给对应入口保存结果。 */
+  private async onSystemRunTerminal(run: RunRecord, status: 'succeeded' | 'failed' | 'cancelled', output: string) {
+    if (await this.deps.projectArchivist?.onRunTerminal(run, status, output)) return
+    await this.deps.sessionSummaries?.onRunTerminal(run, status, output)
   }
 
   private async transitionIfNeeded(runId: string, attemptId: string, state: 'cancel_requested' | 'cancelled') {

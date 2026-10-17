@@ -1,5 +1,5 @@
 import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../../runtime/execution-capabilities.ts'
-import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose } from '../../../domain/background-lanes.ts'
+import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose, type BackgroundLanePurpose } from '../../../domain/background-lanes.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import type { RunRepository } from '../run-repository.ts'
@@ -7,6 +7,13 @@ import type { RunRecord } from '../run-types.ts'
 import type { ExecutionAuthorizationGate } from './execution-authorization-gate.ts'
 import type { RunEventRecorder } from './run-event-recorder.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+
+/** 后台车道容量不足以保留交互余量时的失败说明；摘要与档案在下一次触发时重试，验证案例可重跑。 */
+const backgroundCapacityMessage: Record<BackgroundLanePurpose, string> = {
+  'session-summary': 'Runtime 容量不足以在保留交互余量的同时生成摘要',
+  'agent-release-trial': 'Runtime 容量不足以在保留交互余量的同时运行验证案例',
+  'project-archive': 'Runtime 容量不足以在保留交互余量的同时整理项目档案',
+}
 
 /**
  * In-process scheduler: claims persisted Attempts within Runtime capacity (keeping one
@@ -138,9 +145,7 @@ export class AttemptScheduler {
             const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, purpose, backgroundLaneMaxConcurrent[purpose])
             if (lane.exists && lane.accepting && lane.allowed <= 0) {
               this.pendingExecutions.splice(index, 1)
-              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, purpose === 'session-summary'
-                ? 'Runtime 容量不足以在保留交互余量的同时生成摘要'
-                : 'Runtime 容量不足以在保留交互余量的同时运行验证案例')
+              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, backgroundCapacityMessage[purpose])
               continue
             }
             if (lane.exists && lane.accepting && lane.running >= lane.allowed) {

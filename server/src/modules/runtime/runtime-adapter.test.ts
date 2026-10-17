@@ -261,6 +261,22 @@ describe('Runtime Manifest compiler', () => {
     assert.doesNotMatch(renderSystemPrompt(manifest('run-no-brief', 'attempt-1')), /# 项目上下文/)
   })
 
+  it('renders the pinned project archive items alongside the brief (项目空间 S2)', () => {
+    const input = manifest('run-project-archive', 'attempt-1')
+    const items = ['缺货集中在高周转 SKU 类目。', '决策：按类目设置安全库存。']
+    input.project_context = {
+      archive: {
+        version_id: 'warch-1', version_no: 7, items,
+        items_sha256: createHash('sha256').update(JSON.stringify(items)).digest('hex'),
+      },
+    }
+    const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
+    assert.match(rendered, /# 项目上下文/)
+    assert.match(rendered, /## 项目档案（第 7 版）\n- 缺货集中在高周转 SKU 类目。\n- 决策：按类目设置安全库存。/)
+    assert.doesNotMatch(rendered, /## 项目简报/)
+    assert.match(rendered, /不是新的操作授权/)
+  })
+
   it('tells DSH the exact tools and MCP server available to this Attempt', () => {
     const input = manifest('run-capability-boundary', 'attempt-1')
     input.tools = [{ id: 'read', version: '1.0.0' }, { id: 'write', version: '1.0.0' }]

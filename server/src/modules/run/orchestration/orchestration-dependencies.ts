@@ -14,6 +14,7 @@ import type { RunRepository } from '../run-repository.ts'
 import type { TaskRepository } from '../../task/task-repository.ts'
 import type { PostgresPersistentWaitService } from '../postgres-persistent-wait-service.ts'
 import type { ProjectTaskThreadPort } from '../../workbench/application/postgres-project-service.ts'
+import type { ProjectArchivePort } from '../../workbench/application/postgres-project-archive-service.ts'
 
 export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
@@ -41,6 +42,8 @@ export interface OrchestrationDependencies {
   readonly agentMembers?: PostgresWorkspaceAgentMemberService
   /** 项目空间 S1：任务线程固定承接 Agent，并为执行带上当前项目简报。 */
   readonly projectTasks?: ProjectTaskThreadPort & { assertTaskThreadIdle(sessionId: string): Promise<void> }
+  /** 项目空间 S2：项目档案与档案员整理批次。 */
+  readonly projectArchive?: ProjectArchivePort
   readonly toolBindings?: ToolBindingCheckPort
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number
@@ -48,9 +51,16 @@ export interface OrchestrationDependencies {
   persistentWait?: PersistentWaitPort
   /** EX-02 conversation summaries; wired by the facade after construction. */
   sessionSummaries?: SessionSummaryPort
+  /** 项目空间 S2 项目档案员；wired by the facade after construction. */
+  projectArchivist?: ProjectArchivistPort
 }
 
 export interface SessionSummaryPort {
   scheduleAfterRun(run: RunRecord): Promise<void>
+  onRunTerminal(run: RunRecord, status: 'succeeded' | 'failed' | 'cancelled', output: string): Promise<boolean>
+}
+
+export interface ProjectArchivistPort {
+  afterTaskRun(run: RunRecord, output: string): Promise<void>
   onRunTerminal(run: RunRecord, status: 'succeeded' | 'failed' | 'cancelled', output: string): Promise<boolean>
 }

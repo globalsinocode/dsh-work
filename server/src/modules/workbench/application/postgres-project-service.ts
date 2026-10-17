@@ -6,6 +6,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructur
 import { sha256 } from '../../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { SessionAuthorizationContext } from '../../authorization/postgres-authorization-service.ts'
+import type { PostgresProjectArchiveService } from './postgres-project-archive-service.ts'
 import { activityTransitionToken, recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
@@ -94,6 +95,11 @@ export interface ProjectRunStarter {
   }): Promise<{ id: string } | null | undefined>
 }
 
+/** 任务完成后触发项目档案员（RunOrchestrationService 的子集）；不抛错。 */
+export interface ProjectArchivistTrigger {
+  scheduleProjectArchive(workspaceId: string, requestedBy: string): Promise<void>
+}
+
 export interface ProjectAgentMembers {
   requireAvailableAgentMemberVersion(workspaceId: string, workspaceAgentMemberId: string): Promise<{ agentId: string; agentVersionId: string }>
 }
@@ -128,17 +134,21 @@ interface TaskRow {
  */
 export class PostgresProjectService implements ProjectTaskThreadPort {
   private runs?: ProjectRunStarter
+  private archivist?: ProjectArchivistTrigger
   private readonly database: DatabaseClient
   private readonly agentMembers: ProjectAgentMembers
+  private readonly archive?: PostgresProjectArchiveService
 
-  constructor(database: DatabaseClient, agentMembers: ProjectAgentMembers) {
+  constructor(database: DatabaseClient, agentMembers: ProjectAgentMembers, archive?: PostgresProjectArchiveService) {
     this.database = database
     this.agentMembers = agentMembers
+    this.archive = archive
   }
 
   /** 编排服务依赖本服务的线程端口，故在构造后接线。 */
-  attachRunStarter(runs: ProjectRunStarter) {
+  attachRunStarter(runs: ProjectRunStarter & Partial<ProjectArchivistTrigger>) {
     this.runs = runs
+    if (runs.scheduleProjectArchive) this.archivist = runs as ProjectArchivistTrigger
   }
 
   // ---------------------------------------------------------------------------
@@ -310,6 +320,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     const status = input.status
     const note = status === 'done' ? optionalText(input.completionNote, '完成说明', 4000) || null : null
     const deliverables = status === 'done' ? parseFileIds(input.deliverableFileIds, '交付文件') : []
+    let completed = false
     await this.database.begin(async (transaction) => {
       await lockActiveWorkspace(transaction, workspaceId)
       const role = await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
@@ -333,8 +344,21 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           workspaceId, kind: 'project_task_completed', actorUserId, objectType: 'project_task', objectId: taskId,
           dedupeKey: `project-task-completed:${taskId}:${await activityTransitionToken(transaction)}`,
         })
+        if (this.archive) {
+          // 项目空间 S2：员工任务的完成说明与交付文件名交给档案员整理。
+          const names = deliverables.length ? await transaction<{ name: string }[]>`
+            select f.name from workspace_file_versions v
+              join workspace_files f on f.tenant_id = v.tenant_id and f.id = v.logical_file_id
+             where v.tenant_id = ${tenantId} and v.file_object_id in ${transaction(deliverables)}
+          ` : []
+          await this.archive.recordEmployeeTaskResult(transaction, {
+            workspaceId, taskId, title: task.title, note, deliverableNames: names.map(row => row.name),
+          })
+          completed = true
+        }
       }
     })
+    if (completed) await this.archivist?.scheduleProjectArchive(workspaceId, actorUserId)
     return this.requireTask(workspaceId, taskId, actorUserId)
   }
 
@@ -446,18 +470,24 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
          and assignee_type = 'agent'
     `
     if (!row) return null
-    const brief = await this.latestBrief(this.database, row.workspaceId)
+    const [brief, archive] = await Promise.all([
+      this.latestBrief(this.database, row.workspaceId),
+      this.archive?.archiveContext(row.workspaceId) ?? null,
+    ])
     return {
       taskId: row.taskId,
       agentMemberId: row.agentMemberId,
-      projectContext: brief ? {
-        brief: {
-          version_id: brief.versionId,
-          version_no: brief.versionNo,
-          content: brief.content,
-          content_sha256: sha256(brief.content),
-          due_date: brief.dueDate,
-        },
+      projectContext: brief || archive ? {
+        ...(brief ? {
+          brief: {
+            version_id: brief.versionId,
+            version_no: brief.versionNo,
+            content: brief.content,
+            content_sha256: sha256(brief.content),
+            due_date: brief.dueDate,
+          },
+        } : {}),
+        ...(archive ? { archive } : {}),
       } : null,
     }
   }

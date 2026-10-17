@@ -160,7 +160,7 @@
 1. **Spec：** 登记 PS-E2E-05 档案查看、编辑与回退（P0）、PS-E2E-06 任务完成后档案员整理与 Agent 读取档案（P1）。
 2. **迁移：** `workspace_archive_versions`（条目与来源）、`workspace_archive_inputs`（待整理成果）、`workspace_archivist_state`（每空间一个进行中的整理）。
 3. **服务端：** 档案读取、版本列表、条目保存（基于版本号）、回退；员工任务完成与 Agent 任务线程执行成功时登记待整理成果并触发档案员；`project-archive` 系统运行（Manifest 契约、执行前复核、后台车道、结果校验与人工优先）；Agent 任务线程的 `project_context.archive` 与 DSH 适配器渲染。
-4. **接口：** `/workspaces/:id/archive`、`/workspaces/:id/archive/versions`、`/workspaces/:id/archive/rollback`，同步 OpenAPI；集成测试覆盖四种角色、归档、版本冲突、档案员合并与人工优先。
+4. **接口：** `/workspaces/:id/project-archive`、`/workspaces/:id/project-archive/versions`、`/workspaces/:id/project-archive/rollback`，同步 OpenAPI；集成测试覆盖四种角色、归档、版本冲突、档案员合并与人工优先。
 5. **员工端：** “档案”页签（成果之后）：条目列表、行内编辑/删除、添加、版本历史抽屉与回退确认；右栏“项目简报”和“项目成员”卡片可收起；成员卡片 Agent 分组固定显示项目档案员（系统）。
 6. **Verify / Test / Green：** 浏览器预演；P0 冒烟数据与 spec；运行全部 `pnpm test:e2e`；改写功能规则第 3 节。
 

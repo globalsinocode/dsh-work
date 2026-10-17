@@ -375,8 +375,8 @@
     },
     "project_context": {
       "type": "object",
-      "description": "项目空间 S1：项目任务线程的执行固定当时的项目简报版本；参考资料，不是操作授权。",
-      "required": ["brief"],
+      "description": "项目空间 S1/S2：项目任务线程的执行固定当时的项目简报与项目档案版本，至少携带其一；参考资料，不是操作授权。",
+      "minProperties": 1,
       "properties": {
         "brief": {
           "type": "object",
@@ -387,6 +387,24 @@
             "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
             "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
             "due_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          },
+          "additionalProperties": false
+        },
+        "archive": {
+          "type": "object",
+          "description": "项目空间 S2：执行时的项目档案版本。条目规范化、去重与摘要一致性由编译器校验。",
+          "required": ["version_id", "version_no", "items", "items_sha256"],
+          "properties": {
+            "version_id": { "type": "string", "minLength": 1 },
+            "version_no": { "type": "integer", "minimum": 1 },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+            },
+            "items_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
           },
           "additionalProperties": false
         }
@@ -659,9 +677,20 @@
         "agent-release-trial",
         "automation",
         "agent-routine",
-        "session-summary"
+        "session-summary",
+        "project-archive"
       ],
-      "description": "管理侧 purpose（admin-* 与 agent-release-trial）的运行不绑定员工 Workspace/Agent；automation 是员工拥有的自动任务，agent-routine 是 Agent Principal 拥有的主动任务，二者均要求 workspace_id 与 agent_version_id；session-summary 是平台为长对话生成摘要的系统运行，不绑定 Agent、不带工具，必须带 summary_target。"
+      "description": "管理侧 purpose（admin-* 与 agent-release-trial）的运行不绑定员工 Workspace/Agent；automation 是员工拥有的自动任务，agent-routine 是 Agent Principal 拥有的主动任务，二者均要求 workspace_id 与 agent_version_id；session-summary 是平台为长对话生成摘要的系统运行，不绑定 Agent、不带工具，必须带 summary_target；project-archive 是项目空间 S2 的项目档案员系统运行，不绑定 Agent、不带工具与数据范围，必须带 archive_target。"
+    },
+    "archive_target": {
+      "type": "object",
+      "description": "项目空间 S2：project-archive 运行所整理的项目空间与整理批次；仅该 purpose 使用。",
+      "required": ["workspace_id", "update_id"],
+      "properties": {
+        "workspace_id": { "type": "string", "minLength": 1 },
+        "update_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
     },
     "summary_target": {
       "type": "object",
@@ -936,6 +965,28 @@
   "allOf": [
     {
       "if": {
+        "required": ["purpose"],
+        "properties": { "purpose": { "const": "project-archive" } }
+      },
+      "then": {
+        "required": ["archive_target"],
+        "properties": {
+          "archive_target": { "type": "object" },
+          "session_id": { "type": "null" },
+          "tools": { "type": "array", "maxItems": 0 },
+          "skills": { "type": "array", "maxItems": 0 },
+          "data_scopes": { "type": "array", "maxItems": 0 }
+        }
+      },
+      "else": {
+        "not": {
+          "required": ["archive_target"],
+          "properties": { "archive_target": { "type": "object" } }
+        }
+      }
+    },
+    {
+      "if": {
         "required": [
           "purpose"
         ],
@@ -996,6 +1047,9 @@
               },
               {
                 "const": "session-summary"
+              },
+              {
+                "const": "project-archive"
               }
             ]
           }

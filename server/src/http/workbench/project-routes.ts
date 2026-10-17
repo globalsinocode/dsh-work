@@ -1,4 +1,5 @@
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import type { PostgresProjectArchiveService } from '../../modules/workbench/application/postgres-project-archive-service.ts'
 import type { PostgresProjectService } from '../../modules/workbench/application/postgres-project-service.ts'
 import {
   envelope,
@@ -15,15 +16,17 @@ const basePath = '/api/workbench/v1'
 const allRoles = ['owner', 'admin', 'member', 'viewer'] as const
 const writerRoles = ['owner', 'admin', 'member'] as const
 const projectOnly = { teamOnlyMessage: '仅项目空间支持简报与任务' }
+const archiveOnly = { teamOnlyMessage: '仅项目空间支持项目档案' }
 
 /**
- * 项目空间 S1：项目简报与项目任务（docs/design/project-space-plan.md 第 4～6 节）。
+ * 项目空间 S1/S2：项目简报、项目任务与项目档案（docs/design/project-space-plan.md 第 4～7 节）。
  * 读取走读取轨（归档空间现任成员可读），写入走执行轨；服务层在事务内复核角色与空间状态。
  */
 export function registerProjectRoutes(
   router: Router,
   projects: PostgresProjectService,
   authorization: PostgresAuthorizationService,
+  archive: PostgresProjectArchiveService,
 ) {
   router.get(`${basePath}/workspaces/:workspaceId/brief`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
@@ -121,6 +124,42 @@ export function registerProjectRoutes(
       title: body.title,
     })
     return httpResult(201, envelope('workbench', task, 'postgres'))
+  })
+
+  router.get(`${basePath}/workspaces/:workspaceId/project-archive`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...allRoles], { ...archiveOnly, allowArchived: true })
+    return envelope('workbench', await archive.getArchive(workspaceId, identity.userId), 'postgres')
+  })
+
+  router.put(`${basePath}/workspaces/:workspaceId/project-archive`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...writerRoles], archiveOnly)
+    const body = await readObject(request)
+    return envelope('workbench', await archive.saveArchive(workspaceId, identity.userId, {
+      baseVersionNo: body.baseVersionNo,
+      items: body.items,
+    }), 'postgres')
+  })
+
+  router.get(`${basePath}/workspaces/:workspaceId/project-archive/versions`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...allRoles], { ...archiveOnly, allowArchived: true })
+    return envelope('workbench', await archive.listVersions(workspaceId, identity.userId), 'postgres')
+  })
+
+  router.post(`${basePath}/workspaces/:workspaceId/project-archive/rollback`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...writerRoles], archiveOnly)
+    const body = await readObject(request)
+    return envelope('workbench', await archive.rollbackArchive(workspaceId, identity.userId, {
+      versionNo: body.versionNo,
+      baseVersionNo: body.baseVersionNo,
+    }), 'postgres')
   })
 }
 

@@ -13,6 +13,7 @@ import { ModelGovernanceService } from '../modules/model/model-governance-servic
 import { PostgresModelGovernanceRepository } from '../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../modules/run/run-orchestration-service.ts'
 import { PostgresRunRepository } from '../modules/run/postgres-run-repository.ts'
+import { PostgresTaskRepository } from '../modules/task/postgres-task-repository.ts'
 import type {
   AgentRuntimePort,
   RuntimeEvent,
@@ -23,6 +24,7 @@ import type {
 } from '../modules/runtime/runtime-types.ts'
 import { PostgresContentService } from '../modules/workbench/application/postgres-content-service.ts'
 import { PostgresConversationRepository } from '../modules/workbench/application/postgres-conversation-repository.ts'
+import { PostgresProjectArchiveService } from '../modules/workbench/application/postgres-project-archive-service.ts'
 import { PostgresProjectService } from '../modules/workbench/application/postgres-project-service.ts'
 import { PostgresWorkspaceAgentMemberService } from '../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from '../infrastructure/postgres/database.ts'
@@ -166,8 +168,8 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
 
   const manifest = await waitForManifest(running.latestRunId!)
   assert.equal(manifest?.input.message, '任务：分析缺货原因\n\n列出前三个原因')
-  assert.equal(manifest?.project_context?.brief.content, '目标：本季度缺货率降到 3%')
-  assert.equal(manifest?.project_context?.brief.version_no, 1)
+  assert.equal(manifest?.project_context?.brief?.content, '目标：本季度缺货率降到 3%')
+  assert.equal(manifest?.project_context?.brief?.version_no, 1)
 
   // 执行中：线程内再回复被拒绝（同一时间只允许一个执行），改派与移除同样被拒。
   const busy = await api('POST', `${base}/sessions/${running.sessionId}/runs`, {
@@ -189,7 +191,7 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   assert.equal(reply.status, 202, JSON.stringify(reply.body))
   const replyRunId = (reply.body.data as { runId?: string; id?: string }).runId ?? (reply.body.data as { id: string }).id
   const replyManifest = await waitForManifest(replyRunId)
-  assert.equal(replyManifest?.project_context?.brief.version_no, 2)
+  assert.equal(replyManifest?.project_context?.brief?.version_no, 2)
   assert.equal(replyManifest?.user_context.user_id, ws.other, '回复人记为发起人')
   assert.equal((await taskById(ws, task.id)).status, 'in_progress')
   runtime.releaseAll()
@@ -234,6 +236,168 @@ test('个人空间不支持简报与任务', async () => {
   const personal = `ws-personal-${userId}`
   assert.equal((await api('GET', `${base}/workspaces/${personal}/project-tasks`, { as: userId })).status, 422)
   assert.equal((await api('PUT', `${base}/workspaces/${personal}/brief`, { as: userId, body: { content: 'x' } })).status, 422)
+})
+
+// ---------------------------------------------------------------------------
+// 项目档案（S2）
+// ---------------------------------------------------------------------------
+
+interface ArchiveVersionView {
+  versionNo: number
+  items: string[]
+  sourceKind: string
+  sourceTasks: Array<{ id: string; title: string }>
+  rollbackFromVersionNo: number | null
+  createdBy: { userId: string } | null
+}
+
+test('项目档案：非只读成员按版本号编辑与回退，只读成员只读，归档后只读，不写入动态', async () => {
+  const ws = await seedSpace('archive')
+  const initial = await api('GET', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.viewer })
+  assert.equal(initial.status, 200)
+  assert.deepEqual(initial.body.data, { current: null, archivistRunning: false })
+
+  const put = (as: string, baseVersionNo: unknown, items: unknown) =>
+    api('PUT', `${base}/workspaces/${ws.id}/project-archive`, { as, body: { baseVersionNo, items } })
+  assert.equal((await put(ws.viewer, 0, ['只读成员不能写'])).status, 403)
+  assert.equal((await put(ws.member, 0, ['同一条', '同一条'])).status, 422)
+  assert.equal((await put(ws.member, 0, ['长'.repeat(501)])).status, 422)
+  assert.equal((await put(ws.member, 'x', ['版本号无效'])).status, 422)
+
+  const first = await put(ws.member, 0, ['  缺货集中在高周转类目  ', '术语：安全库存'])
+  assert.equal(first.status, 200, JSON.stringify(first.body))
+  const v1 = first.body.data as ArchiveVersionView
+  assert.deepEqual(pick(v1, ['versionNo', 'items', 'sourceKind', 'rollbackFromVersionNo']), {
+    versionNo: 1, items: ['缺货集中在高周转类目', '术语：安全库存'], sourceKind: 'manual', rollbackFromVersionNo: null,
+  })
+  assert.equal(v1.createdBy?.userId, ws.member)
+  assert.equal((await put(ws.admin, 0, ['基于旧版本'])).status, 409)
+
+  const v2 = (await put(ws.admin, 1, ['缺货集中在高周转类目', '决策：按类目设置安全库存'])).body.data as ArchiveVersionView
+  assert.equal(v2.versionNo, 2)
+
+  const rollback = (as: string, versionNo: unknown, baseVersionNo: unknown) =>
+    api('POST', `${base}/workspaces/${ws.id}/project-archive/rollback`, { as, body: { versionNo, baseVersionNo } })
+  assert.equal((await rollback(ws.viewer, 1, 2)).status, 403)
+  assert.equal((await rollback(ws.other, 2, 2)).status, 422)
+  assert.equal((await rollback(ws.other, 9, 2)).status, 422)
+  assert.equal((await rollback(ws.other, 1, 1)).status, 409)
+  const v3 = (await rollback(ws.other, 1, 2)).body.data as ArchiveVersionView
+  assert.deepEqual(pick(v3, ['versionNo', 'items', 'sourceKind', 'rollbackFromVersionNo']), {
+    versionNo: 3, items: ['缺货集中在高周转类目', '术语：安全库存'], sourceKind: 'rollback', rollbackFromVersionNo: 1,
+  })
+
+  const versions = await api('GET', `${base}/workspaces/${ws.id}/project-archive/versions`, { as: ws.viewer })
+  assert.deepEqual((versions.body.data as ArchiveVersionView[]).map(version => [version.versionNo, version.sourceKind]), [
+    [3, 'rollback'], [2, 'manual'], [1, 'manual'],
+  ])
+  assert.deepEqual(await activityKinds(ws.id), [], '档案变更不写入最近动态')
+
+  await archive(ws.id)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.viewer })).status, 200)
+  assert.equal((await put(ws.owner, 3, ['归档后不能改'])).status, 403)
+  assert.equal((await rollback(ws.owner, 1, 3)).status, 403)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.outsider })).status, 403)
+})
+
+test('项目档案员：员工任务完成后整理，整理期间完成的任务并入下一次，人工修改优先', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('archivist')
+  runtime.archiveReply = null
+  const first = await completeEmployeeTask(ws, '整理供应商名单', '已按华东、华南分组')
+
+  const [run1] = await waitForArchiveRuns(ws.id, 1)
+  const manifest1 = await waitForManifest(run1!)
+  assert.equal(manifest1.purpose, 'project-archive')
+  assert.equal(manifest1.archive_target?.workspace_id, ws.id)
+  assert.equal(manifest1.workspace_id, '')
+  assert.equal(manifest1.session_id, null)
+  assert.deepEqual([manifest1.tools, manifest1.data_scopes, manifest1.input.file_mounts], [[], [], []])
+  assert.match(manifest1.input.message, /整理供应商名单/)
+  assert.match(manifest1.input.message, /已按华东、华南分组/)
+  assert.equal(((await api('GET', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.viewer })).body.data as { archivistRunning: boolean }).archivistRunning, true)
+
+  // 整理期间：再完成一个任务不会另起整理；成员手动修改档案。
+  await completeEmployeeTask(ws, '确认到货承诺', '供应商承诺 5 天内到货')
+  assert.equal((await archiveRuns(ws.id)).length, 1, '同一空间同时只有一次整理')
+  const manual = await api('PUT', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.member, body: { baseVersionNo: 0, items: ['人工条目'] } })
+  assert.equal(manual.status, 200)
+
+  // 第一次整理完成时档案已被修改：输出被丢弃，基于最新版本重新整理（两项成果一起）。
+  runtime.archiveReply = () => JSON.stringify({ items: ['不应写入的旧基线输出'] })
+  runtime.releaseAll()
+  const [, run2] = await waitForArchiveRuns(ws.id, 2)
+  const manifest2 = await waitForManifest(run2!)
+  assert.match(manifest2.input.message, /\["人工条目"\]/)
+  assert.match(manifest2.input.message, /整理供应商名单/)
+  assert.match(manifest2.input.message, /确认到货承诺/)
+  assert.equal((await archiveVersions(ws)).length, 1)
+
+  runtime.archiveReply = () => '```json\n{"items":["人工条目","供应商名单已按区域分组","到货承诺 5 天"]}\n```'
+  runtime.releaseAll()
+  const versions = await waitForArchiveVersions(ws, 2)
+  assert.deepEqual(pick(versions[0], ['versionNo', 'sourceKind', 'items', 'createdBy']), {
+    versionNo: 2, sourceKind: 'archivist', items: ['人工条目', '供应商名单已按区域分组', '到货承诺 5 天'], createdBy: null,
+  })
+  assert.deepEqual(versions[0]!.sourceTasks.map(task => task.title), ['整理供应商名单', '确认到货承诺'])
+  assert.equal(versions[0]!.sourceTasks[0]!.id, first.id)
+  await waitForArchivistIdle(ws)
+  assert.equal((await archiveRuns(ws.id)).length, 2, '没有待整理成果时不再触发')
+  assert.deepEqual((await activityKinds(ws.id)).sort(), ['project_task_completed', 'project_task_completed', 'project_task_created', 'project_task_created'])
+})
+
+test('项目档案员：无效输出不写入，成果随下一次触发重试', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('archivist-invalid')
+  runtime.archiveReply = () => '好的，我整理了档案。'
+  await completeEmployeeTask(ws, '核对促销备货', '促销备货不是主因')
+  const [run1] = await waitForArchiveRuns(ws.id, 1)
+  await waitForManifest(run1!)
+  runtime.releaseAll()
+  await waitForRun(run1!)
+  await waitForArchivistIdle(ws)
+  assert.equal((await archiveVersions(ws)).length, 0)
+
+  runtime.archiveReply = () => JSON.stringify({ items: ['促销备货不是缺货主因'] })
+  await completeEmployeeTask(ws, '复核库存口径', '口径一致')
+  const [, run2] = await waitForArchiveRuns(ws.id, 2)
+  const manifest2 = await waitForManifest(run2!)
+  assert.match(manifest2.input.message, /核对促销备货/, '失败批次的成果在下一次整理中重试')
+  assert.match(manifest2.input.message, /复核库存口径/)
+  runtime.releaseAll()
+  const versions = await waitForArchiveVersions(ws, 1)
+  assert.deepEqual(versions[0]!.items, ['促销备货不是缺货主因'])
+})
+
+test('Agent 任务：执行携带当前档案版本，成功后成果交给档案员整理', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('archive-agent')
+  const agentMemberId = await joinAgent(ws, 'archive-agent')
+  runtime.archiveReply = () => JSON.stringify({ items: ['术语：缺货率按周统计', '分析结论已记录'] })
+  await api('PUT', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.owner, body: { baseVersionNo: 0, items: ['术语：缺货率按周统计'] } })
+
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '分析缺货原因', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `archive-start-${task.id}` },
+  })
+  const running = started.body.data as TaskView
+  const manifest = await waitForManifest(running.latestRunId!)
+  assert.equal(manifest.project_context?.brief, undefined, '没有简报时只携带档案')
+  assert.deepEqual(pick(manifest.project_context?.archive, ['version_no', 'items']), { version_no: 1, items: ['术语：缺货率按周统计'] })
+
+  runtime.releaseAll()
+  await waitForRun(running.latestRunId!)
+  const [archiveRun] = await waitForArchiveRuns(ws.id, 1)
+  const archiveManifest = await waitForManifest(archiveRun!)
+  assert.match(archiveManifest.input.message, /分析缺货原因/)
+  assert.match(archiveManifest.input.message, /项目空间测试回答/)
+  runtime.releaseAll()
+  const versions = await waitForArchiveVersions(ws, 2)
+  assert.equal(versions[0]!.sourceKind, 'archivist')
+  assert.deepEqual(versions[0]!.sourceTasks.map(item => item.id), [task.id])
 })
 
 // ---------------------------------------------------------------------------
@@ -295,6 +459,87 @@ async function taskById(ws: { id: string; member: string }, taskId: string): Pro
   const task = (list.body.data as TaskView[]).find(item => item.id === taskId)
   assert.ok(task, `任务不存在：${taskId}`)
   return task
+}
+
+/**
+ * 受控 Runtime 不会自行结束执行：前面用例触发的档案整理会一直占着全局档案员车道（并发 1）。
+ * 档案员用例开始前放行全部执行，直到没有进行中的 Run。
+ */
+async function drainRuntime(timeoutMs = 10_000) {
+  const archiveReply = runtime.archiveReply
+  runtime.archiveReply = null
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    runtime.releaseAll()
+    const [row] = await database<{ count: number }[]>`
+      select count(*)::integer as count from runs
+       where tenant_id = ${tenantId} and status in ('queued', 'running', 'waiting', 'cancel_requested')
+    `
+    if (row!.count === 0) {
+      runtime.archiveReply = archiveReply
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error('等待受控 Runtime 清空超时')
+}
+
+async function completeEmployeeTask(ws: { id: string; member: string; admin: string }, title: string, note: string): Promise<TaskView> {
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title, assignee: { type: 'employee', id: ws.admin } },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const task = created.body.data as TaskView
+  const done = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/status`, {
+    as: ws.admin, body: { status: 'done', completionNote: note },
+  })
+  assert.equal(done.status, 200, JSON.stringify(done.body))
+  return task
+}
+
+async function archiveRuns(workspaceId: string): Promise<string[]> {
+  const rows = await database<{ runId: string }[]>`
+    select r.id as "runId" from runs r
+      join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
+     where r.tenant_id = ${tenantId} and t.source_ref = ${`project-archive:${workspaceId}`}
+     order by r.created_at, r.id
+  `
+  return rows.map(row => row.runId)
+}
+
+async function waitForArchiveRuns(workspaceId: string, count: number, timeoutMs = 10_000): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const runs = await archiveRuns(workspaceId)
+    if (runs.length >= count) return runs
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  throw new Error(`等待第 ${count} 次档案整理超时：${workspaceId}`)
+}
+
+async function archiveVersions(ws: { id: string; viewer: string }): Promise<ArchiveVersionView[]> {
+  const response = await api('GET', `${base}/workspaces/${ws.id}/project-archive/versions`, { as: ws.viewer })
+  return response.body.data as ArchiveVersionView[]
+}
+
+async function waitForArchiveVersions(ws: { id: string; viewer: string }, count: number, timeoutMs = 10_000): Promise<ArchiveVersionView[]> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const versions = await archiveVersions(ws)
+    if (versions.length >= count) return versions
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  throw new Error(`等待档案第 ${count} 版超时：${ws.id}`)
+}
+
+async function waitForArchivistIdle(ws: { id: string; viewer: string }, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const response = await api('GET', `${base}/workspaces/${ws.id}/project-archive`, { as: ws.viewer })
+    if (!(response.body.data as { archivistRunning: boolean }).archivistRunning) return
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  throw new Error(`等待档案员空闲超时：${ws.id}`)
 }
 
 async function activityKinds(workspaceId: string): Promise<string[]> {
@@ -386,6 +631,9 @@ class ControlledRuntime implements AgentRuntimePort {
     finish?: () => void
   }>()
 
+  /** 档案员运行的回答（JSON 条目列表）；未设置时回答普通文本，平台按无效输出处理。 */
+  archiveReply: ((manifest: RuntimeManifest) => string) | null = null
+
   manifest(runId: string): RuntimeManifest | undefined {
     return this.executions.get(runId)?.manifest
   }
@@ -415,7 +663,9 @@ class ControlledRuntime implements AgentRuntimePort {
     const done = new Promise<RuntimeExecutionSnapshot>((resolve) => {
       state.finish = () => {
         state.finish = undefined
-        emit('assistant.completed', '项目空间测试回答')
+        emit('assistant.completed', manifest.purpose === 'project-archive' && this.archiveReply
+          ? this.archiveReply(manifest)
+          : '项目空间测试回答')
         emit('run.completed', '已完成')
         resolve({
           runId: manifest.run_id, attemptId: manifest.attempt_id, status: 'completed', acceptedAt: now,
@@ -460,20 +710,21 @@ before(async () => {
   const authorization = new PostgresAuthorizationService(database)
   const agents = new PostgresAgentService(database)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
-  const projects = new PostgresProjectService(database, agentMembers)
+  const projectArchive = new PostgresProjectArchiveService(database)
+  const projects = new PostgresProjectService(database, agentMembers, projectArchive)
   const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)
   runtime = new ControlledRuntime()
   const orchestration = new RunOrchestrationService(
     runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
-    content, undefined, agents, undefined, authorization, { agentMembers, projectTasks: projects },
+    content, undefined, agents, undefined, authorization, { agentMembers, projectTasks: projects, projectArchive, tasks: new PostgresTaskRepository(database) },
   )
   projects.attachRunStarter(orchestration)
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerWorkspaceAgentMemberRoutes(router, agentMembers, authorization)
   registerConversationRoutes(router, conversations, orchestration, runs, agents, authorization, undefined, undefined, agentMembers)
-  registerProjectRoutes(router, projects, authorization)
+  registerProjectRoutes(router, projects, authorization, projectArchive)
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)

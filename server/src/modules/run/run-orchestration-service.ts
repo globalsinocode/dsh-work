@@ -32,6 +32,7 @@ import { BackgroundRunEntry } from './orchestration/background-run-entry.ts'
 import { withContinuationOutputs } from './orchestration/continuation.ts'
 import { buildConversationContext } from '../../domain/conversation-context.ts'
 import { SessionSummaryEntry } from './orchestration/session-summary-entry.ts'
+import { ProjectArchiveEntry } from './orchestration/project-archive-entry.ts'
 import { ExecutionAuthorizationGate } from './orchestration/execution-authorization-gate.ts'
 import { assertPrompt, attemptLimitsForBudget, manifestLimitsForRetry } from './orchestration/manifest-helpers.ts'
 import {
@@ -60,6 +61,7 @@ export class RunOrchestrationService {
   private readonly admin: AdminRunEntry
   private readonly trials: ReleaseTrialEntry
   private readonly background: BackgroundRunEntry
+  private readonly archivist: ProjectArchiveEntry
 
   constructor(
     runs: RunRepository,
@@ -88,6 +90,8 @@ export class RunOrchestrationService {
       memory?: PostgresControlledMemoryService
       /** 项目空间 S1：任务线程端口。 */
       projectTasks?: OrchestrationDependencies['projectTasks']
+      /** 项目空间 S2：项目档案与档案员整理批次。 */
+      projectArchive?: OrchestrationDependencies['projectArchive']
     },
   ) {
     this.deps = {
@@ -99,6 +103,7 @@ export class RunOrchestrationService {
       tasks: options?.tasks,
       memory: options?.memory,
       projectTasks: options?.projectTasks,
+      projectArchive: options?.projectArchive,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)
@@ -110,7 +115,12 @@ export class RunOrchestrationService {
     this.trials = new ReleaseTrialEntry(this.deps, this.dispatcher, this.cancellation)
     this.background = new BackgroundRunEntry(this.deps, this.dispatcher)
     this.deps.sessionSummaries = new SessionSummaryEntry(this.deps, this.dispatcher, budget)
+    this.archivist = new ProjectArchiveEntry(this.deps, this.dispatcher, budget)
+    this.deps.projectArchivist = this.archivist
   }
+
+  /** 项目空间 S2：员工任务完成后触发档案员；不抛错。 */
+  scheduleProjectArchive(workspaceId: string, requestedBy: string) { return this.archivist.schedule(workspaceId, requestedBy) }
 
   /** EX-02: first message, summary and recent messages carried by a workbench turn. */
   private async conversationContext(sessionId: string, runId: string) {
