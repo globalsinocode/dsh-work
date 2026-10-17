@@ -164,6 +164,19 @@
 
 **验收：** 界面配置形成统一发布契约；默认工具由平台准入和当前授权约束，MCP 范围在 Manifest 与实际调用处一致，三个运行入口均沿既有 Run/Attempt 链路。P1 不替代真实 DSH/OIDC 与获准 MCP 的 P2 验收。
 
+### AG-DRAFT-ERR-P1 Agent 草稿请求错误分类
+
+**优先级：** P1 · **角色：** 平台管理员 · **运行层级：** P1 集成用户旅程<br>
+**前置数据：** 专用可丢弃 PostgreSQL、受控 Runtime；不连接真实 DSH 或 OIDC<br>
+**spec：** `e2e/agent-capabilities.integration.spec.ts` 证明合法创建只发出一次 POST、出现“Agent 草稿已保存”，以及同一标识再次提交返回 409。冲突与不完整结构都不增加版本、也不留下成功审计，该证据由 `server/src/infrastructure/postgres/agent-draft-api.integration.test.ts` 持有；不完整结构作为输入错误（422）同样由该 PostgreSQL 集成测试覆盖，本旅程不另走浏览器点击
+
+1. 管理员提交一份结构完整的 Agent 草稿：创建只发出一次 POST，草稿保存成功。
+2. 用已经保存的同一 Agent 标识再次提交：这是可恢复的冲突，已保存的草稿仍然有效。
+3. 提交结构不完整的草稿：这是输入错误，不会保存。
+4. 上述两种失败都不产生额外版本，也不留下成功的审计记录。
+
+**验收：** 浏览器旅程证明单次 POST、保存对话框和重复标识的 409。冲突与非法请求体不增加版本、不写入成功审计的证据由 `server/src/infrastructure/postgres/agent-draft-api.integration.test.ts` 持有。P1 使用可丢弃 PostgreSQL 和受控 Runtime，不证明真实 DSH 或 OIDC。
+
 ### AG-CAP-P2 真实 DSH 能力装配验收
 
 **优先级：** P2 · **角色：** 平台管理员、OIDC 员工及独立 Agent 身份 · **运行层级：** 真实 DSH/模型与 OIDC；本轮获准的 MCP 验收范围仅为本地可丢弃服务<br>
