@@ -59,6 +59,20 @@ describe('WorkspaceAgentMemberDialog', () => {
     vi.spyOn(workbenchApi, 'listWorkspaceAgentCandidates').mockResolvedValue({ items: [], nextCursor: null })
   })
 
+  it('shows the deliverable data scopes only when the server returns them (项目空间 S0)', async () => {
+    const [first, second] = agents
+    const wrapper = mountDialog({
+      agentMembers: [{ ...first, deliverableDataScopes: ['scope:sales', 'scope:supply'] }, { ...second, deliverableDataScopes: [] }],
+    })
+    await flushPromises()
+    const scopes = panelOf(wrapper).findAll('[data-testid="agent-deliverable-scopes"]').map(node => node.text())
+    expect(scopes).toEqual(['本空间可交付数据范围：scope:sales、scope:supply', '本空间可交付数据范围：无'])
+
+    const memberView = mountDialog({ currentUserRole: 'member' })
+    await flushPromises()
+    expect(panelOf(memberView).find('[data-testid="agent-deliverable-scopes"]').exists()).toBe(false)
+  })
+
   it('loads Agent members from the API when the dialog opens', async () => {
     vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue(agents)
     const wrapper = mountDialog({ agentMembers: [], loadAgentMembers: true })

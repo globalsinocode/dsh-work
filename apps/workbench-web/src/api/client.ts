@@ -23,6 +23,7 @@ import type {
   WorkspaceActivityPage,
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
+  MemberDisclosureImpact,
   WorkspaceFile,
   WorkspaceFileVersionPage,
   WorkspaceLifecycleResult,
@@ -358,6 +359,11 @@ export const workbenchApi = {
     request<WorkspaceAgentMember[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'GET',
     }),
+  previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
+    request<MemberDisclosureImpact[]>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/agent-members/disclosure-impact?userId=${encodeURIComponent(userId)}`,
+      { method: 'GET' },
+    ),
   addWorkspaceAgentMember: (workspaceId: string, input: { agentId: string }) =>
     request<WorkspaceAgentMember>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'POST',

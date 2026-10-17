@@ -494,7 +494,7 @@
       "get": {
         "operationId": "listWorkspaceAgentMembers",
         "summary": "查询团队空间的 Agent 成员列表（所有成员）",
-        "description": "仅返回未移除的 Agent 成员，包含固定版本、加入人与当前操作人允许的动作；负责人看到管理动作，成员在可用状态看到「开始对话」。Agent 成员不套用员工角色语义。个人工作空间不支持。 读取轨（3-T1）：归档空间的现任成员仍可读取 Agent 名册；Agent 候选与加入/停用/升级/移出保持执行轨，在归档空间拒绝。",
+        "description": "仅返回未移除的 Agent 成员，包含固定版本、加入人与当前操作人允许的动作；负责人看到管理动作，成员在可用状态看到「开始对话」。Agent 成员不套用员工角色语义。个人工作空间不支持。 读取轨（3-T1）：归档空间的现任成员仍可读取 Agent 名册；Agent 候选与加入/停用/升级/移出保持执行轨，在归档空间拒绝。 项目空间 S0：负责人与管理员另获得每个 Agent 的 `deliverableDataScopes`（Agent 授权 ∩ 全体现任成员共同数据范围）。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -541,6 +541,20 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/workspaces/{workspaceId}/agent-members/disclosure-impact": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "get": {
+        "operationId": "previewMemberDisclosureImpact",
+        "summary": "预览添加成员对 Agent 可交付数据范围的影响（负责人、管理员）",
+        "description": "项目空间 S0：团队空间的 Agent 交付数据范围取全体现任成员的交集。把查询参数 userId 指定的员工视为成员计算，返回会失去部分可交付数据范围的 Agent 成员（agentMemberId、name、lostDataScopes）；只读，不改变状态。归档空间拒绝。个人工作空间不支持。",
+        "parameters": [{ "name": "userId", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/workspaces/{workspaceId}/agent-members/{id}": {

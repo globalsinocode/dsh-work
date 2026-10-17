@@ -600,6 +600,18 @@ export interface WorkspaceAgentMember {
    * 恒为 null，前端只在非空时展示行内 tooltip 与红色状态点。
    */
   unavailableReason?: string | null
+  /**
+   * 项目空间 S0：Agent 在本空间可交付的数据范围（Agent 授权 ∩ 全体现任成员共同范围）。
+   * 仅负责人与管理员获得；其他角色缺省。
+   */
+  deliverableDataScopes?: string[]
+}
+
+/** 项目空间 S0：添加某位员工后会失去部分可交付数据范围的 Agent 成员。 */
+export interface MemberDisclosureImpact {
+  agentMemberId: string
+  name: string
+  lostDataScopes: string[]
 }
 
 export interface WorkbenchSession {

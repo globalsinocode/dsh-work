@@ -413,7 +413,7 @@ test('成员列表仅返回非移除成员，并按当前角色给出允许动�
   const ownerItems = asOwner.body.data as Array<Record<string, unknown>>
   assert.equal(ownerItems.length, 1)
   const [ownerItem] = ownerItems
-  assert.deepEqual(Object.keys(ownerItem ?? {}).sort(), ['addedBy', 'agentId', 'allowedActions', 'createdAt', 'description', 'id', 'name', 'status', 'unavailableReason', 'version'].sort())
+  assert.deepEqual(Object.keys(ownerItem ?? {}).sort(), ['addedBy', 'agentId', 'allowedActions', 'createdAt', 'deliverableDataScopes', 'description', 'id', 'name', 'status', 'unavailableReason', 'version'].sort())
   assert.equal(ownerItem?.id, wamId)
   assert.equal(ownerItem?.name, '列表Agent')
   assert.deepEqual(ownerItem?.allowedActions, ['start_conversation', 'disable', 'upgrade', 'remove'])
@@ -421,10 +421,12 @@ test('成员列表仅返回非移除成员，并按当前角色给出允许动�
   const asAdmin = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: adminId })
   const [adminItem] = asAdmin.body.data as Array<Record<string, unknown>>
   assert.deepEqual(adminItem?.allowedActions, ['start_conversation'])
+  assert.ok(Array.isArray(adminItem?.deliverableDataScopes), '管理员可见可交付数据范围')
 
   const asMember = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: memberId })
   const [memberItem] = asMember.body.data as Array<Record<string, unknown>>
   assert.deepEqual(memberItem?.allowedActions, ['start_conversation'])
+  assert.equal('deliverableDataScopes' in (memberItem ?? {}), false, '普通成员不返回治理信息')
 
   const asViewer = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: viewerId })
   const [viewerItem] = asViewer.body.data as Array<Record<string, unknown>>
@@ -448,6 +450,57 @@ test('成员列表仅返回非移除成员，并按当前角色给出允许动�
   assert.equal(removed.status, 200)
   const afterRemove = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId })
   assert.equal((afterRemove.body.data as unknown[]).length, 0)
+})
+
+test('项目空间 S0：名册返回可交付数据范围，添加成员前可预览收紧影响', async () => {
+  const workspaceId = 'ws-s0-impact'
+  const ownerId = 'user-s0-impact-owner'
+  const memberId = 'user-s0-impact-member'
+  const narrowId = 'user-s0-impact-narrow'
+  const scopeA = 'scope-s0-impact-a'
+  const scopeB = 'scope-s0-impact-b'
+  await createDirectoryUser(ownerId, 'S0影响负责人')
+  await createDirectoryUser(memberId, 'S0影响成员')
+  await createDirectoryUser(narrowId, 'S0影响窄范围员工')
+  for (const [userId, scopes] of [[ownerId, [scopeA, scopeB]], [memberId, [scopeA, scopeB]], [narrowId, [scopeA]]] as const) {
+    for (const scope of scopes) {
+      await database`
+        insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+        values (${`grant-${userId}-${scope}`}, ${tenantId}, 'user', ${userId}, 'capability', ${scope})
+      `
+    }
+  }
+  await createTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  const agent = await createPublishedAgent({ id: 'agent-s0-impact', name: '范围Agent' })
+  for (const scope of [scopeA, scopeB]) {
+    await database`
+      insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+      values (${tenantId}, ${`principal-agent-${agent.id}`}, ${scope})
+    `
+  }
+  const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
+  assert.equal(joined.status, 201)
+  const wamId = (joined.body.data as { id: string }).id
+
+  const listed = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId })
+  const [item] = listed.body.data as Array<{ deliverableDataScopes: string[] }>
+  assert.ok(item?.deliverableDataScopes.includes(scopeA) && item.deliverableDataScopes.includes(scopeB))
+
+  const impact = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/disclosure-impact?userId=${narrowId}`, { as: ownerId })
+  assert.equal(impact.status, 200)
+  assert.deepEqual(impact.body.data, [{ agentMemberId: wamId, name: '范围Agent', lostDataScopes: [scopeB] }])
+  // 预览不改变状态。
+  const unchanged = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId })
+  assert.ok((unchanged.body.data as Array<{ deliverableDataScopes: string[] }>)[0]?.deliverableDataScopes.includes(scopeB))
+  // 已具备全部范围的候选人不产生影响。
+  const none = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/disclosure-impact?userId=${memberId}`, { as: ownerId })
+  assert.deepEqual(none.body.data, [])
+  // 普通成员不能预览。
+  const denied = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/disclosure-impact?userId=${narrowId}`, { as: memberId })
+  assert.equal(denied.status, 403)
 })
 
 // ---------------------------------------------------------------------------

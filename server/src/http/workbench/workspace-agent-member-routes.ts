@@ -52,6 +52,15 @@ export function registerWorkspaceAgentMemberRoutes(
     return envelope('workbench', await agentMembers.listAgentMembers(workspaceId, identity.userId), 'postgres')
   })
 
+  // 项目空间 S0：添加成员前预览对 Agent 可交付数据范围的影响（只读，不改状态）。
+  router.get(`${basePath}/workspaces/:workspaceId/agent-members/disclosure-impact`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'])
+    const userId = requireNonEmptyString(context.url.searchParams.get('userId') ?? undefined, 'userId')
+    return envelope('workbench', await agentMembers.previewMemberDisclosureImpact(workspaceId, userId, identity.userId), 'postgres')
+  })
+
   router.post(`${basePath}/workspaces/:workspaceId/agent-members`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''

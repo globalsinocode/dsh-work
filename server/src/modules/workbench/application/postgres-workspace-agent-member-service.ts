@@ -78,6 +78,11 @@ export interface AgentMemberRecord {
    * （灰色「已停用」已足够）。
    */
   unavailableReason: string | null
+  /**
+   * 项目空间 S0：Agent 在本空间可交付的数据范围（Agent 授权 ∩ 全体现任成员共同范围）。
+   * 属于治理信息，只返回给负责人与管理员。
+   */
+  deliverableDataScopes?: string[]
   allowedActions: AgentMemberAction[]
 }
 
@@ -181,6 +186,10 @@ export class PostgresWorkspaceAgentMemberService {
          and wam.status <> 'removed'
        order by wam.created_at asc, wam.id asc
     `
+    const governance = actorRole === 'owner' || actorRole === 'admin'
+    const deliverable = governance
+      ? await this.deliverableDataScopesByAgent(workspaceId, rows.map(row => row.agentId))
+      : null
     return rows.map(row => ({
       id: row.id,
       agentId: row.agentId,
@@ -192,7 +201,60 @@ export class PostgresWorkspaceAgentMemberService {
       createdAt: row.createdAt.toISOString(),
       unavailableReason: row.unavailableReason,
       allowedActions: allowedActionsFor(actorRole, row.status, row.unavailableReason),
+      ...(deliverable ? { deliverableDataScopes: deliverable.get(row.agentId) ?? [] } : {}),
     }))
+  }
+
+  /**
+   * 项目空间 S0：添加成员前预览。返回加入该员工后会失去部分可交付数据范围的 Agent 成员；
+   * 不改变任何状态。负责人与管理员可用（与添加成员同权限）。
+   */
+  async previewMemberDisclosureImpact(
+    workspaceId: string,
+    candidateUserId: string,
+    actorUserId: string,
+  ): Promise<Array<{ agentMemberId: string; name: string; lostDataScopes: string[] }>> {
+    await this.assertTeamWorkspace(workspaceId)
+    await this.requireActorRole(workspaceId, actorUserId, ['owner', 'admin'])
+    const members = await this.database<{ id: string; agentId: string; name: string }[]>`
+      select wam.id, wam.agent_id as "agentId", a.name
+        from workspace_agent_members wam
+        join agents a on a.tenant_id = wam.tenant_id and a.id = wam.agent_id
+       where wam.tenant_id = ${tenantId} and wam.workspace_id = ${workspaceId} and wam.status <> 'removed'
+       order by wam.created_at asc, wam.id asc
+    `
+    if (!members.length) return []
+    const agentIds = members.map(member => member.agentId)
+    const before = await this.deliverableDataScopesByAgent(workspaceId, agentIds)
+    const after = await this.deliverableDataScopesByAgent(workspaceId, agentIds, candidateUserId)
+    return members.flatMap(member => {
+      const remaining = new Set(after.get(member.agentId) ?? [])
+      const lostDataScopes = (before.get(member.agentId) ?? []).filter(scope => !remaining.has(scope))
+      return lostDataScopes.length ? [{ agentMemberId: member.id, name: member.name, lostDataScopes }] : []
+    })
+  }
+
+  private async deliverableDataScopesByAgent(
+    workspaceId: string,
+    agentIds: string[],
+    includeUserId?: string,
+  ): Promise<Map<string, string[]>> {
+    if (!agentIds.length) return new Map()
+    const common = new Set(await this.authorization.resolveTeamCommonDataScopes(workspaceId, { includeUserId }))
+    const rows = await this.database<{ agentId: string; scopeValue: string }[]>`
+      select ep.agent_id as "agentId", g.scope_value as "scopeValue"
+        from execution_principals ep
+        join agent_principal_scope_grants g on g.tenant_id = ep.tenant_id and g.principal_id = ep.id
+       where ep.tenant_id = ${tenantId} and ep.kind = 'agent' and ep.status = 'active'
+         and ep.agent_id in ${this.database(agentIds)}
+       order by g.scope_value
+    `
+    const result = new Map<string, string[]>()
+    for (const row of rows) {
+      if (!common.has(row.scopeValue)) continue
+      result.set(row.agentId, [...(result.get(row.agentId) ?? []), row.scopeValue])
+    }
+    return result
   }
 
   /**

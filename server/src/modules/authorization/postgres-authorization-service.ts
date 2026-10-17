@@ -980,13 +980,21 @@ export class PostgresAuthorizationService {
    * 项目空间 S0：团队空间全体现任成员（含只读成员）共同持有的数据范围。每位成员的范围
    * 与 resolveDataScopes 同口径（本人授予 ∪ 有效角色授予 ∪ 空间授予）；停用账号不能
    * 读取任何内容，不计入。成员变动推进 team_auth_revision，执行前复核据此收紧在途任务。
+   * `includeUserId` 用于添加成员前预览：把候选人视为成员计算。
    */
-  async resolveTeamCommonDataScopes(workspaceId: string): Promise<string[]> {
+  async resolveTeamCommonDataScopes(workspaceId: string, options: { includeUserId?: string } = {}): Promise<string[]> {
+    const includeUserId = options.includeUserId ?? ''
     const rows = await this.database<{ scopeValue: string }[]>`
       with members as (
-        select wm.user_id from workspace_members wm
-          join users u on u.tenant_id = wm.tenant_id and u.id = wm.user_id and u.status = 'active'
-         where wm.tenant_id = ${tenantId} and wm.workspace_id = ${workspaceId}
+        select u.id as user_id from users u
+         where u.tenant_id = ${tenantId} and u.status = 'active'
+           and (
+             exists (
+               select 1 from workspace_members wm
+                where wm.tenant_id = u.tenant_id and wm.workspace_id = ${workspaceId} and wm.user_id = u.id
+             )
+             or u.id = ${includeUserId}
+           )
       ),
       member_scopes as (
         select m.user_id, g.scope_value from members m
