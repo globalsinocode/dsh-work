@@ -555,7 +555,7 @@ describe('task store', () => {
 
   it('stamps the last runtime event time for the quiet hint and keeps it across refreshes', async () => {
     const { useTaskStore } = await import('./tasks')
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['Date'] })
     try {
       vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'))
       // 其他用例把共享的 baseTask 直接交给 store，可能已带上时刻；这里从一份干净的副本开始。
@@ -571,12 +571,15 @@ describe('task store', () => {
         event_type: 'assistant.delta', occurred_at: new Date().toISOString(), display_message: '部分',
         safe_metadata: {}, trace_id: 'trace-001',
       })
-      await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z')))
+      // vi.waitFor 在假时钟下每次轮询都会推进时钟，因此只断言时刻已推进到事件之后。
+      await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBeGreaterThanOrEqual(Date.parse('2026-10-17T12:00:40.000Z')))
+      const stamped = store.tasks[0]!.lastActivityAt!
+      expect(stamped).toBeLessThan(Date.parse('2026-10-17T12:00:41.000Z'))
 
       vi.setSystemTime(new Date('2026-10-17T12:01:30.000Z'))
       api.getRun.mockResolvedValue(fresh())
       await store.refreshRun('run-001')
-      expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z'))
+      expect(store.tasks[0]?.lastActivityAt).toBe(stamped)
     } finally {
       vi.useRealTimers()
     }
