@@ -266,6 +266,17 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(cancelTask).toHaveBeenCalledWith('run-001')
   })
 
+  it('tells the employee a quiet running task is still running after 30 seconds without events (EX-01)', async () => {
+    const running = { status: 'running' as const, result: result({ execution: 'running', outcome: 'pending', error: null, completedAt: null }) }
+    const quiet = await mountView({ item: task({ ...running, lastActivityAt: Date.now() - 40_000 }) })
+    expect(quiet.wrapper.get('[data-testid="run-quiet-hint"]').text()).toContain('已 40 秒没有新的输出，任务仍在运行')
+    quiet.wrapper.unmount()
+
+    const active = await mountView({ item: task({ ...running, lastActivityAt: Date.now() - 5_000 }) })
+    expect(active.wrapper.find('[data-testid="run-quiet-hint"]').exists()).toBe(false)
+    active.wrapper.unmount()
+  })
+
   it('lets any writable member retry a shared run, not only the requester (TW-10)', async () => {
     // 服务端 requireWritableRun 的口径是「会话写轨」：团队空间内任一可写成员
     // 都可停止/重试共享会话里的 Run，不限发起人（前端此前误收窄为仅发起人）。

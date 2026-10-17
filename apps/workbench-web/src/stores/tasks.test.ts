@@ -552,4 +552,31 @@ describe('task store', () => {
     store.unsubscribeWorkspaceSessions('ws-team')
     expect(FakeEventSource.instances[1]?.closed).toBe(true)
   })
+
+  it('stamps the last runtime event time for the quiet hint and keeps it across refreshes', async () => {
+    const { useTaskStore } = await import('./tasks')
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'))
+      api.getTasks.mockResolvedValue([structuredClone(baseTask)])
+      const store = useTaskStore()
+      await store.load()
+      expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:00.000Z'))
+
+      vi.setSystemTime(new Date('2026-10-17T12:00:40.000Z'))
+      FakeEventSource.instances[0]?.emit('assistant.delta', {
+        event_id: 'event-delta-1', run_id: 'run-001', attempt_id: 'attempt-001', sequence: 3,
+        event_type: 'assistant.delta', occurred_at: new Date().toISOString(), display_message: '部分',
+        safe_metadata: {}, trace_id: 'trace-001',
+      })
+      await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z')))
+
+      vi.setSystemTime(new Date('2026-10-17T12:01:30.000Z'))
+      api.getRun.mockResolvedValue(structuredClone(baseTask))
+      await store.refreshRun('run-001')
+      expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:40.000Z'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

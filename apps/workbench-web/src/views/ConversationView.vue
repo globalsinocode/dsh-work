@@ -24,6 +24,7 @@ import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ChatMessage, ProjectTask, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
+import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
 
 const route = useRoute()
 const router = useRouter()
@@ -210,6 +211,10 @@ async function loadAgentMembers(workspaceId: string | undefined) {
 const currentStep = computed(() =>
   task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
 )
+// EX-01：执行中长时间没有新事件时提示仍在运行。时钟每 5 秒走一次，只驱动这条提示。
+const clock = ref(Date.now())
+const clockTimer = setInterval(() => { clock.value = Date.now() }, 5000)
+const quietLabel = computed(() => runQuietLabel(runQuietMs(task.value, clock.value)))
 const lastAssistantMessageId = computed(() =>
   [...(task.value?.messages ?? [])]
     .reverse()
@@ -584,6 +589,7 @@ watch(streamWorkspaceId, (workspaceId, previous) => {
 })
 
 onBeforeUnmount(() => {
+  clearInterval(clockTimer)
   if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
   if (streamWorkspaceId.value) taskStore.unsubscribeWorkspaceSessions(streamWorkspaceId.value)
 })
@@ -877,6 +883,9 @@ watch(
               <span>{{ currentStep?.title ?? '正在准备回答' }}</span>
               <button type="button" @click="detailsOpen = true">查看执行过程</button>
             </div>
+            <p v-if="quietLabel" class="working-quiet" role="status" data-testid="run-quiet-hint">
+              已 {{ quietLabel }}没有新的输出，任务仍在运行。Agent 可能在等待模型或工具返回，无需重复提交。
+            </p>
           </article>
 
           <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
@@ -1035,6 +1044,7 @@ watch(
 
         <section class="drawer-section">
           <h2>本轮执行步骤</h2>
+          <p v-if="quietLabel" class="working-quiet working-quiet--drawer" role="status">已 {{ quietLabel }}没有新的执行事件，任务仍在运行。</p>
           <RunTimeline :steps="task.steps" />
         </section>
 
@@ -1482,6 +1492,17 @@ watch(
   gap: 10px;
   color: #6e746f;
   font-size: var(--dsh-font-size-caption);
+}
+
+.working-quiet {
+  margin: 4px 0 0 34px;
+  color: #8a6d1f;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+}
+
+.working-quiet--drawer {
+  margin: 0 0 10px;
 }
 
 .working-answer > button {

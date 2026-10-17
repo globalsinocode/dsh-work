@@ -245,6 +245,11 @@ export interface TaskRun {
   currentUserRole?: TeamMemberRole | null
   messages: ChatMessage[]
   steps: RunStep[]
+  /**
+   * 客户端收到该 Run 最后一个运行事件的时刻（毫秒）；只用于“长时间无输出”提示，
+   * 不来自服务端。开始关注一个执行中的 Run 时以当时为起点。
+   */
+  lastActivityAt?: number
   attachments: string[]
   skill?: Pick<WorkbenchSkill, 'id' | 'name' | 'version'>
   /**
