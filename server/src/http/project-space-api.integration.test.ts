@@ -45,6 +45,7 @@ let server: Server
 let baseUrl = ''
 let runtime: ControlledRuntime
 let content: PostgresContentService
+let orchestration: RunOrchestrationService
 
 interface TaskView {
   id: string
@@ -829,7 +830,7 @@ before(async () => {
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)
   runtime = new ControlledRuntime()
-  const orchestration = new RunOrchestrationService(
+  orchestration = new RunOrchestrationService(
     runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
     content, undefined, agents, undefined, authorization, { agentMembers, projectTasks: projects, projectArchive, tasks: new PostgresTaskRepository(database) },
   )
@@ -849,7 +850,10 @@ before(async () => {
 })
 
 after(async () => {
-  runtime?.releaseAll()
+  // 先放行并等待所有 Run 结束（含触发的档案整理），再关闭调度器等待事件写完，最后才关库；
+  // 否则排队中的运行事件写入会撞上已关闭的连接（CONNECTION_ENDED）。
+  if (runtime) await drainRuntime().catch((error: unknown) => console.error(error))
+  if (orchestration) await orchestration.close()
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
   await throwaway.dispose()
   await rm(storageRoot, { recursive: true, force: true })

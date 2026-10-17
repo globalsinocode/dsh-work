@@ -320,25 +320,27 @@ test('并发互斥：归档先提交时，正在等待锁的空间设置改写�
   let lockHeld: () => void = () => undefined
   const held = new Promise<void>(resolve => { lockHeld = resolve })
   const release = new Promise<void>(resolve => { releaseLock = resolve })
+  let holderPid = 0
   const holder = database.begin(async transaction => {
-    await transaction`
-      select id from workspaces
+    const [locked] = await transaction<{ pid: number }[]>`
+      select pg_backend_pid() as pid from workspaces
        where tenant_id = ${tenantId} and id = ${ws}
        for update
     `
+    holderPid = locked!.pid
     lockHeld()
     await release
   })
   await held
 
   const archivePromise = lifecycle.archiveWorkspace(ws, ownerId)
-  await waitForWorkspaceLockWaiters(1, '归档进入空间行锁等待队列')
+  await waitForWorkspaceLockWaiters(holderPid, 1, '归档进入空间行锁等待队列')
   // Attach the outcome handler immediately: the rejection may settle while we await the
   // archive below, and a late handler would surface it as an unhandled rejection.
   const patchOutcome = content.updateWorkspace(ws, { description: '归档后不应写入' }, ownerId).then(() => null, (error: unknown) => (
     error instanceof Error ? error.message : String(error)
   ))
-  await waitForWorkspaceLockWaiters(2, '空间设置改写排在归档之后等待同一行锁')
+  await waitForWorkspaceLockWaiters(holderPid, 2, '空间设置改写排在归档之后等待同一行锁')
   releaseLock()
   await holder
 
@@ -531,12 +533,14 @@ test('并发互斥：归档先提交时，正在等待锁的成员变更不得�
   let lockHeld: () => void = () => undefined
   const held = new Promise<void>(resolve => { lockHeld = resolve })
   const release = new Promise<void>(resolve => { releaseLock = resolve })
+  let holderPid = 0
   const holder = database.begin(async transaction => {
-    await transaction`
-      select id from workspaces
+    const [locked] = await transaction<{ pid: number }[]>`
+      select pg_backend_pid() as pid from workspaces
        where tenant_id = ${tenantId} and id = ${ws}
        for update
     `
+    holderPid = locked!.pid
     lockHeld()
     await release
   })
@@ -544,9 +548,9 @@ test('并发互斥：归档先提交时，正在等待锁的成员变更不得�
 
   // ② 先确认归档进入等待队列，再让新增成员排在它之后等待同一把锁。
   const archivePromise = lifecycle.archiveWorkspace(ws, ownerId)
-  await waitForWorkspaceLockWaiters(1, '归档进入空间行锁等待队列')
+  await waitForWorkspaceLockWaiters(holderPid, 1, '归档进入空间行锁等待队列')
   const addPromise = members.addMember(ws, newMemberId, 'member', ownerId)
-  await waitForWorkspaceLockWaiters(2, '新增成员排在归档之后等待同一行锁')
+  await waitForWorkspaceLockWaiters(holderPid, 2, '新增成员排在归档之后等待同一行锁')
 
   // ③ 释放锁：两者按取得锁的顺序串行，归档先提交则新增必须被拒绝。
   releaseLock()
@@ -1090,16 +1094,21 @@ async function waitFor(condition: () => Promise<boolean> | boolean, label: strin
   throw new Error(`等待超时：${label}`)
 }
 
-async function waitForWorkspaceLockWaiters(minimum: number, label: string) {
+/**
+ * 只统计被本用例持锁会话（直接或经排队链间接）阻塞的会话：按查询文本匹配会把同库里
+ * 其他后台会话的锁等待也算进来，全量跑时可能在归档尚未排队前就误判「已排队」。
+ */
+async function waitForWorkspaceLockWaiters(holderPid: number, minimum: number, label: string) {
   await waitFor(async () => {
     const [row] = await database<{ count: number }[]>`
-      select count(*)::integer as count
-        from pg_stat_activity
-       where datname = current_database()
-         and pid <> pg_backend_pid()
-         and state = 'active'
-         and wait_event_type = 'Lock'
-         and query ilike '%from workspaces%'
+      with recursive blocked(pid) as (
+        select activity.pid from pg_stat_activity activity
+         where ${holderPid}::integer = any(pg_blocking_pids(activity.pid))
+        union
+        select activity.pid from pg_stat_activity activity
+          join blocked on blocked.pid = any(pg_blocking_pids(activity.pid))
+      )
+      select count(*)::integer as count from blocked
     `
     return (row?.count ?? 0) >= minimum
   }, label)

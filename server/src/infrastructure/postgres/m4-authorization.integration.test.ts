@@ -76,7 +76,16 @@ test('authorization is fail-closed and compiles the effective identity into Runt
     workspaceId: 'ws-supply',
     agentVersionId: 'agent-version-dsh-work-assistant-1',
   })
-  assert.deepEqual(allowed.roleIds, ['role-employee'])
+  // 项目空间 S0（D4）：团队空间的岗位角色只取 Agent 授权，不与发起人角色求交。
+  const [assistantRoles] = await database<{ roleIds: string[] }[]>`
+    select coalesce(array_agg(g.role_id order by g.role_id), '{}') as "roleIds"
+      from agent_principal_role_grants g
+      join execution_principals ep on ep.tenant_id = g.tenant_id and ep.id = g.principal_id
+      join agent_versions av on av.tenant_id = ep.tenant_id and av.agent_id = ep.agent_id
+     where av.id = 'agent-version-dsh-work-assistant-1'
+  `
+  assert.deepEqual([...allowed.roleIds].sort(), assistantRoles?.roleIds)
+  assert.ok(allowed.roleIds.includes('role-platform-admin'), '发起人不是平台管理员，也不应裁掉 Agent 自身的岗位角色')
   assert.ok(allowed.permissions.includes('workbench:use'))
   assert.ok(allowed.dataScopes.includes('enterprise:authorized'))
   assert.ok(allowed.dataScopes.includes('workspace:authorized'))
@@ -90,6 +99,8 @@ test('authorization is fail-closed and compiles the effective identity into Runt
     agentVersionId: 'agent-version-dsh-work-assistant-1',
   })
   assert.equal(personalAllowed.workspaceId, personalWorkspaceId)
+  // 个人空间仍按发起员工裁剪角色。
+  assert.deepEqual(personalAllowed.roleIds, ['role-employee'])
   const [personalGrantCount] = await database<{ count: number }[]>`
     select count(*)::integer as count from workspace_capability_grants
      where tenant_id = 'tenant-dsh-work' and workspace_id = ${personalWorkspaceId}
@@ -213,7 +224,7 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   assert.ok(run)
   await waitForRun(run.id)
   const manifest = runtime.manifest(run.id)
-  assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
+  assert.deepEqual(manifest?.user_context.role_ids, allowed.roleIds)
   assert.deepEqual(manifest?.principal_context, {
     initiated_by: 'principal-human-U00001',
     executed_as: 'principal-agent-agent-dsh-work-assistant',
