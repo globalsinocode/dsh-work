@@ -507,9 +507,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         `
       } catch (error) {
         // 并发“设为任务”撞 project_tasks_session_unique 时与预检同义返回 409，而不是落到 500；
+        // postgres.js 把约束名放在 constraint_name（见 postgres-run-repository 的序列冲突判断），
         // 其他唯一约束冲突保持原错误，避免把无关的 23505 误报成“该线程已经是任务”。
-        const failure = error as { code?: string; constraint?: string }
-        if (failure.code === '23505' && failure.constraint === 'project_tasks_session_unique') {
+        const failure = error as { code?: string; constraint_name?: string }
+        if (failure.code === '23505' && failure.constraint_name === 'project_tasks_session_unique') {
           throw workspaceStateConflict('该线程已经是任务')
         }
         throw error

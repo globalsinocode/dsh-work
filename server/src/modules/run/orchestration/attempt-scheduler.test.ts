@@ -78,7 +78,11 @@ test('后台车道容量不足：以 BACKGROUND_CAPACITY_EXHAUSTED 收敛并立�
       },
     }),
     projectArchivist: permissive({
-      onRunTerminal: async () => { finalized.push('archivist'); return true },
+      // 档案员只接手 project-archive 运行；摘要运行返回 false 后才交给摘要入口。
+      onRunTerminal: async (terminalRun: RunRecord) => {
+        finalized.push('archivist')
+        return terminalRun.id !== run.id
+      },
     }),
     sessionSummaries: permissive({
       onRunTerminal: async () => { finalized.push('summary'); return true },
@@ -90,7 +94,7 @@ test('后台车道容量不足：以 BACKGROUND_CAPACITY_EXHAUSTED 收敛并立�
   const scheduler = new AttemptScheduler(deps, new ExecutionAuthorizationGate(deps), new RunEventRecorder(deps, permissive<AttemptBudget>()))
   try {
     scheduler.enqueue(run, manifest)
-    await waitFor(() => transitions.length >= 2 && finalized.length > 0, '容量失败收敛')
+    await waitFor(() => transitions.length >= 2 && finalized.length >= 2, '容量失败收敛')
   } finally {
     await scheduler.close()
   }
@@ -99,7 +103,7 @@ test('后台车道容量不足：以 BACKGROUND_CAPACITY_EXHAUSTED 收敛并立�
   assert.equal(events.length, 1)
   assert.equal(events[0]?.safeMetadata['error_code'], 'BACKGROUND_CAPACITY_EXHAUSTED')
   assert.match(events[0]?.displayMessage ?? '', /容量不足以在保留交互余量的同时生成摘要/)
-  assert.deepEqual(finalized, ['archivist'], '无 Session 的系统运行直接交给对应的终结入口')
+  assert.deepEqual(finalized, ['archivist', 'summary'], '档案员不接摘要运行，随后交给摘要入口收尾')
 })
 
 test('后台车道容量不足不额外终结有 Session 的验证运行（P2-4）', async () => {

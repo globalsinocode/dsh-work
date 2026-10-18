@@ -113,7 +113,7 @@ export class AttemptScheduler {
           // 2.6s 内重试 6 次、run 永远 queued）。这里收敛为终态并落说明事件。
           if (await this.isWorkspaceArchivedForAttempt(attemptId)) {
             this.pendingExecutions.splice(index, 1)
-            await this.gate.failRunForRevokedAuthorization(
+            await this.gate.failRunBeforeStart(
               next.run,
               next.manifest,
               '工作空间已归档，任务未执行',
@@ -148,8 +148,8 @@ export class AttemptScheduler {
               const reason = backgroundCapacityMessage[purpose]
               // 容量不足是配置问题，不是授权撤销：用独立错误码；无 Session 的系统运行由
               // gate 直接交给摘要/档案入口收敛。项目档案的失败分支会计入整理重试次数
-              // （上限 3 次），长期容量不足可能放弃该批输入，运维手册已注明需先扩容量。
-              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, reason, {
+              // （上限 3 次），长期容量不足可能放弃该批输入，功能规则“限额”一节已注明需先扩容量。
+              await this.gate.failRunBeforeStart(next.run, next.manifest, reason, {
                 errorCode: 'BACKGROUND_CAPACITY_EXHAUSTED',
                 displayMessage: `${reason}，任务未执行`,
               })
@@ -194,7 +194,7 @@ export class AttemptScheduler {
       // 只决定是否执行，绝不改写 Manifest；个人空间不再豁免。
       const recheck = await this.gate.recheckExecutionAuthorization(run, manifest)
       if (recheck.denied) {
-        await this.gate.failRunForRevokedAuthorization(run, manifest, recheck.reason)
+        await this.gate.failRunBeforeStart(run, manifest, recheck.reason)
         return
       }
       // 撤权清扫可能在「领取 → 复核」之间已经把这个 run 收敛为终态（系统取消）。

@@ -246,11 +246,12 @@ export class ExecutionAuthorizationGate {
   }
 
   /**
-   * Converges a recheck-denied run to failed with a clear run_events note.
+   * Converges a run that must not start (recheck denied, workspace archived, background
+   * lane capacity exhausted) to failed with a clear run_events note.
    * Defensive against concurrent convergence (systemCancelRun may already
    * have cancelled the run): terminal states are left untouched.
    */
-  async failRunForRevokedAuthorization(
+  async failRunBeforeStart(
     run: RunRecord,
     manifest: RuntimeManifest,
     reason: string,
