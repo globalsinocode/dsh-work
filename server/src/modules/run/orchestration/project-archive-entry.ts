@@ -100,6 +100,8 @@ export class ProjectArchiveEntry {
       session_id: null,
       workspace_id: '',
       agent_version_id: null,
+      // feature-rules 第 12 条：系统运行同样按平台时区理解“今天/本周”。
+      timezone: this.deps.timezone,
       agent_configuration: { system_prompt: prompt.systemPrompt, skill_instructions: [] },
       user_context: { user_id: run.requestedBy, tenant_id: tenantId, role_ids: [] },
       principal_context: await this.dispatcher.principalContextForRun(run, `principal-system-${tenantId}`, 1),

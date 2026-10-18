@@ -665,7 +665,7 @@ export class PostgresAgentValidationService {
         id: 'authorization', label: '能力所需授权', passed: !authorizationError,
         detail: authorizationError ?? `已声明的能力都已获授权；验证按可见角色可及的权限执行（${ceiling.roleIds.length} 个角色、${ceiling.dataScopes.length} 个数据范围）`,
         ...(unverifiedRoles.length ? {
-          warning: `岗位角色“${unverifiedRoles.map(role => role.name).join('、')}”不在可见角色内，验证不会覆盖；在项目空间中执行时这些角色的能力可用。`,
+          warning: `岗位角色“${unverifiedRoles.map(role => role.name).join('、')}”不在可见角色内，验证不会覆盖这些角色；平台默认工具只固定可见角色可及的部分。`,
         } : {}),
       },
       {
@@ -696,8 +696,11 @@ export class PostgresAgentValidationService {
     // Widening grants keeps the candidate's frozen default tools; narrowing that withdraws a
     // frozen tool, or a binding that drifted since freezing, fails closed.
     const declared = candidate.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
+    // 冻结时默认工具按当时的可见角色上限固定；发布时用同一口径复核，避免可见角色
+    // 收窄后仍把已不可交付的默认工具带进发布版本。
+    const ceiling = await resolveAudienceCeiling(tx, agentId, principal)
     const defaults = this.tools
-      ? await this.tools.resolvePlatformDefaultToolReferences(principal.roleIds, principal.dataScopes)
+      ? await this.tools.resolvePlatformDefaultToolReferences(ceiling.roleIds, ceiling.dataScopes)
       : []
     const allowed = new Set([...declared, ...defaults])
     const withdrawn = candidate.bindingRefs.filter(pin => !allowed.has(pin.tool)).map(pin => pin.tool)
@@ -757,8 +760,11 @@ export class PostgresAgentValidationService {
   private async resolvePins(agentId: string, version: VersionShape, actorId: string): Promise<ManifestToolBinding[]> {
     if (!this.tools) return []
     const principal = await this.agents.getAgentExecutionPrincipal(agentId)
+    // S3：验证以可见角色可及的权限为上限。自动解析的平台默认工具同样只固定可见角色
+    // 可及的部分，避免验证（以及按冻结绑定执行的发布版本）执行员工够不到的能力。
+    const ceiling = await resolveAudienceCeiling(this.database, agentId, principal)
     try {
-      const defaults = await this.tools.resolvePlatformDefaultToolReferences(principal.roleIds, principal.dataScopes)
+      const defaults = await this.tools.resolvePlatformDefaultToolReferences(ceiling.roleIds, ceiling.dataScopes)
       const bindings = await this.tools.resolveToolBindings([...new Set([...version.tools, ...defaults])], actorId)
       return bindings.map(toManifestToolBinding)
     } catch (error) {

@@ -271,6 +271,21 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
 })
 
+test('设为任务：并发设置同一线程只有一个成功，另一个 409（P2-7）', async () => {
+  const ws = await seedSpace('mark-race')
+  const agentMemberId = await joinAgent(ws, 'mark-race')
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '并发设为任务', workspaceId: ws.id } })
+  const sessionId = (discussion.body.data as { id: string }).id
+  const run = await api('POST', `${base}/sessions/${sessionId}/runs`, {
+    as: ws.member, body: { prompt: '@助手 并发设为任务', idempotencyKey: `mark-race-${sessionId}`, workspaceAgentMemberId: agentMemberId },
+  })
+  assert.equal(run.status, 202, JSON.stringify(run.body))
+  runtime.releaseAll()
+  const results = await Promise.all([0, 1].map(() =>
+    api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })))
+  assert.deepEqual(results.map(result => result.status).sort(), [201, 409], JSON.stringify(results.map(result => result.body)))
+})
+
 test('任务线程：并发回复只受理一个执行；启动未能受理时任务可重新启动（P1-1、P1-2）', async () => {
   await drainRuntime()
   const ws = await seedSpace('race')

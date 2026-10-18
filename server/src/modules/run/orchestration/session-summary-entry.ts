@@ -109,6 +109,8 @@ export class SessionSummaryEntry {
       session_id: null,
       workspace_id: '',
       agent_version_id: null,
+      // feature-rules 第 12 条：每个执行的 Manifest 必须带时区，系统运行也按平台时区理解“今天/本周”。
+      timezone: this.deps.timezone,
       agent_configuration: { system_prompt: prompt.systemPrompt, skill_instructions: [] },
       user_context: { user_id: run.requestedBy, tenant_id: tenantId, role_ids: [] },
       principal_context: await this.dispatcher.principalContextForRun(run, `principal-system-${tenantId}`, 1),

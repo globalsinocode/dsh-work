@@ -495,15 +495,21 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       `
       if (existing) throw workspaceStateConflict('该线程已经是任务')
       const title = input.title === undefined ? session.title.slice(0, 120) : requireText(input.title, '任务标题', 120)
-      await transaction`
-        insert into project_tasks (
-          id, tenant_id, workspace_id, title, description, created_by, assignee_type,
-          assignee_agent_member_id, session_id
-        ) values (
-          ${taskId}, ${tenantId}, ${workspaceId}, ${title}, '', ${actorUserId}, 'agent',
-          ${session.agentMemberId}, ${sessionId}
-        )
-      `
+      try {
+        await transaction`
+          insert into project_tasks (
+            id, tenant_id, workspace_id, title, description, created_by, assignee_type,
+            assignee_agent_member_id, session_id
+          ) values (
+            ${taskId}, ${tenantId}, ${workspaceId}, ${title}, '', ${actorUserId}, 'agent',
+            ${session.agentMemberId}, ${sessionId}
+          )
+        `
+      } catch (error) {
+        // 并发“设为任务”撞 project_tasks_session_unique 时与预检同义返回 409，而不是落到 500。
+        if ((error as { code?: string }).code === '23505') throw workspaceStateConflict('该线程已经是任务')
+        throw error
+      }
       await recordWorkspaceActivity(transaction, {
         workspaceId, kind: 'project_task_created', actorUserId, objectType: 'project_task', objectId: taskId,
         dedupeKey: `project-task-created:${taskId}`, metadata: { assigneeType: 'agent' },

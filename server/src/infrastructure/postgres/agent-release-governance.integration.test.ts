@@ -402,6 +402,29 @@ test('能力所需授权只有可见角色之外的角色才有时，验证前�
   }
 })
 
+test('S3 默认工具按可见角色上限固定：岗位角色独有的默认工具不进入验证', async () => {
+  // grep 是平台默认工具候选；只由可见角色之外的岗位角色授予时，员工侧够不到它。
+  await tools.updateToolPermissions({
+    toolId: 'grep', allowedRoles: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
+    approvalPolicy: 'none', actor: ADMIN,
+  })
+  try {
+    const agentId = `agent-default-ceiling-${randomUUID().slice(0, 8)}`
+    await createDraftAgent(agentId, { skills: [], tools: [] })
+    await setAccess(agentId, { visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'] })
+    const done = await approveAll(agentId, await runValidation(agentId))
+    const pins = (await versionRow(done.agentVersionId))?.bindingRefs ?? []
+    assert.ok(pins.some(pin => pin.tool === 'read@1.0.0'), '基础默认工具仍固定')
+    assert.ok(!pins.some(pin => pin.tool === 'grep@1.0.0'), '可见角色够不到的默认工具不固定')
+    assert.ok(!(trialRuntime.manifest(done.cases[0]!.runId!)?.tool_bindings ?? []).some(pin => pin.tool === 'grep@1.0.0'))
+  } finally {
+    await tools.updateToolPermissions({
+      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
+      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
+    })
+  }
+})
+
 test('S3 放宽岗位权限不作废验证；收窄到撤掉冻结的工具时发布被拒绝', async () => {
   const agentId = `agent-widen-${randomUUID().slice(0, 8)}`
   await createDraftAgent(agentId, { skills: [], tools: [] })
