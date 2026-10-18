@@ -807,6 +807,7 @@ export class PostgresSkillService {
       const events = await transaction<{ attemptId: string; eventType: string; displayMessage: string | null }[]>`
         select attempt_id as "attemptId", event_type as "eventType", display_message as "displayMessage"
           from run_events where tenant_id = ${tenantId} and run_id = ${row.runId} and attempt_id = ${row.attemptId}
+           and safe_metadata->>'late' is distinct from 'true'
          order by stream_position, sequence
       `
       const result = evaluateAttemptEvidence({ ...row, activations, pythonExecutions, events })

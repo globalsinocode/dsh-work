@@ -149,6 +149,10 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
     drop table if exists workspace_files;
     drop table if exists workspace_revocation_events;
     drop table if exists workspace_grant_sources;
+    -- 0091 的项目任务约束依赖 workspace_agent_members，随 0022 一并回滚，重新升级时重建。
+    alter table project_tasks drop constraint if exists project_tasks_assignee_agent_member_fk;
+    alter table project_tasks drop constraint if exists project_tasks_completed_by_fk;
+    alter table project_tasks drop constraint if exists project_tasks_removed_by_fk;
     drop table if exists workspace_agent_members;
     alter table agents drop column if exists allow_workspace_join;
     alter table workspaces drop column if exists team_auth_revision;
@@ -157,7 +161,8 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
       '0023_revocation_event_dead_letter.sql',
       '0025_workspace_file_versions.sql',
       '0026_workspace_activity.sql',
-      '0028_runs_and_usage_indexes.sql'
+      '0028_runs_and_usage_indexes.sql',
+      '0091_project_task_references.sql'
     );
   `)
 

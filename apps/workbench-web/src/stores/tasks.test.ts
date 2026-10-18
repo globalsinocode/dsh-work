@@ -613,4 +613,35 @@ describe('task store', () => {
     await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(2))
     expect(store.tasks[0]?.steps[1]).toMatchObject({ id: 'event-done-fetch', status: 'pending' })
   })
+
+  it('merges live tool events into the snapshot row of the same call across a reconnect (EX-01)', async () => {
+    const { useTaskStore } = await import('./tasks')
+    // 快照中的步骤 id 是服务端事件 id，与实时行的 id 不同；合并只依据 callId。
+    api.getTasks.mockResolvedValue([{
+      ...structuredClone(baseTask), id: 'run-tool-snapshot', status: 'running', attemptId: 'attempt-001',
+      steps: [
+        { id: 'event-start-grep', title: '正在调用工具', detail: 'grep：正在调用', status: 'running', tool: 'grep', callId: 'call-grep' },
+        { id: 'event-done-read', title: '调用工具', detail: 'read：调用成功', status: 'succeeded', tool: 'read', callId: 'call-read' },
+      ],
+    }])
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances.find((item) => item.url === '/events/run-tool-snapshot')
+    expect(stream).toBeDefined()
+    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>) =>
+      stream?.emit(eventType, {
+        event_id: eventId, run_id: 'run-tool-snapshot', attempt_id: 'attempt-001', sequence: 1, event_type: eventType,
+        occurred_at: new Date().toISOString(), display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
+      })
+
+    // 重连后重放：已在快照中的调用不再追加。
+    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true })
+    emit('tool.completed', 'event-done-read', 'read：调用成功', { call_id: 'call-read', tool_name: 'read', status: 'succeeded', live: true })
+    // 快照之后才到达的结果原地替换“正在调用”。
+    emit('tool.completed', 'event-done-grep', 'grep：调用成功', { call_id: 'call-grep', tool_name: 'grep', status: 'succeeded', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps[0]?.status).toBe('succeeded'))
+    expect(store.tasks[0]?.steps).toHaveLength(2)
+    expect(store.tasks[0]?.steps.map(step => step.callId)).toEqual(['call-grep', 'call-read'])
+    expect(store.tasks[0]?.steps.some(step => step.status === 'running')).toBe(false)
+  })
 })

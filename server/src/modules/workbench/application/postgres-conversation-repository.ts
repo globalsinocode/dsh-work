@@ -1004,6 +1004,7 @@ export class PostgresConversationRepository {
                  e.attempt_id as "attemptId"
             from run_events e
            where e.tenant_id = ${tenantId} and e.attempt_id = any(${attemptIds})
+             and e.safe_metadata->>'late' is distinct from 'true'
            order by e.attempt_id asc, e.sequence asc
         `
       : []
@@ -1343,6 +1344,7 @@ export class PostgresConversationRepository {
                  safe_metadata as "safeMetadata", occurred_at as "occurredAt"
             from run_events
            where tenant_id = ${tenantId} and attempt_id = ${row.currentAttemptId}
+             and safe_metadata->>'late' is distinct from 'true'
            order by sequence asc
         `
       : []
@@ -1618,6 +1620,7 @@ function mapSteps(runId: string, events: EventRow[], status: RunState): RunStep[
 /** EX-01：执行中正在进行的工具调用；本轮已结束仍无结果时显示为未收到结果。 */
 function toolStartedStep(event: EventRow, status: RunState): RunStep {
   const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const callId = typeof event.safeMetadata['call_id'] === 'string' ? event.safeMetadata['call_id'] : undefined
   const ended = ['succeeded', 'failed', 'cancelled'].includes(status)
   return {
     id: event.id,
@@ -1625,12 +1628,14 @@ function toolStartedStep(event: EventRow, status: RunState): RunStep {
     detail: ended ? `${toolName ?? '工具'}：未收到调用结果` : event.displayMessage ?? '工具调用进行中。',
     status: ended ? 'pending' : 'running',
     ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
   }
 }
 
 /** EX-01：一次工具调用的结果（成功、失败原因或未收到结果）。 */
 function toolStep(event: EventRow): RunStep {
   const toolName = typeof event.safeMetadata['tool_name'] === 'string' ? event.safeMetadata['tool_name'] : undefined
+  const callId = typeof event.safeMetadata['call_id'] === 'string' ? event.safeMetadata['call_id'] : undefined
   const outcome = event.safeMetadata['status']
   return {
     id: event.id,
@@ -1638,6 +1643,7 @@ function toolStep(event: EventRow): RunStep {
     detail: event.displayMessage ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' : outcome === 'unknown' ? 'pending' : 'succeeded',
     ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
   }
 }
 

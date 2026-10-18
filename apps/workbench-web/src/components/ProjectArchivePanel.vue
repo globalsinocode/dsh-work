@@ -224,13 +224,14 @@ const historyError = ref(false)
 const versions = ref<ProjectArchiveVersion[]>([])
 const selectedVersionNo = ref<number | null>(null)
 
-async function openHistory() {
+async function openHistory(keepSelection = false) {
   historyOpen.value = true
   historyLoading.value = true
   historyError.value = false
   try {
     versions.value = await workbenchApi.listProjectArchiveVersions(props.workspaceId)
-    selectedVersionNo.value = versions.value[0]?.versionNo ?? null
+    const selected = keepSelection && versions.value.some(version => version.versionNo === selectedVersionNo.value)
+    if (!selected) selectedVersionNo.value = versions.value[0]?.versionNo ?? null
   } catch {
     historyError.value = true
   } finally {
@@ -271,8 +272,19 @@ async function rollbackTo(version: ProjectArchiveVersion) {
     historyOpen.value = false
     ElMessage.success(`已回退到第 ${version.versionNo} 版，生成第 ${current.value?.versionNo} 版`)
   } catch (error) {
+    if (error instanceof WorkbenchApiError && error.status === 409) {
+      // 回退基于的版本已过时：刷新当前档案与版本历史，确认最新内容后可以再次回退。
+      try {
+        applyArchive(await workbenchApi.getProjectArchive(props.workspaceId))
+        await openHistory(true)
+        ElMessage.warning(`档案刚被更新，已刷新到第 ${current.value?.versionNo} 版；确认后可再次回退`)
+      } catch (refreshError) {
+        notifyActionFailure('回退项目档案', `项目空间“${props.workspaceName}”的档案`, refreshError, '档案已被更新，刷新页面后重试。')
+      }
+      return
+    }
     notifyActionFailure('回退项目档案', `项目空间“${props.workspaceName}”的档案`, error, '档案可能已被更新，重新打开版本历史后重试。')
-    if (!(error instanceof WorkbenchApiError && error.status === 409)) emit('stale')
+    emit('stale')
   } finally {
     saving.value = false
   }
@@ -326,7 +338,7 @@ defineExpose({ reload: load })
           <span v-if="archive?.archivistRunning" class="project-archive__source project-archive__source--archivist">档案员整理中</span>
         </p>
       </div>
-      <el-button v-if="current" data-testid="project-archive-history" @click="openHistory">版本历史</el-button>
+      <el-button v-if="current" data-testid="project-archive-history" @click="openHistory()">版本历史</el-button>
     </header>
 
     <p v-if="loading && !archive" class="project-archive__muted">正在加载档案…</p>
@@ -398,7 +410,7 @@ defineExpose({ reload: load })
     >
       <p v-if="historyLoading" class="project-archive__muted">正在加载版本历史…</p>
       <el-alert v-else-if="historyError" type="error" :closable="false" show-icon title="版本历史加载失败">
-        <el-button size="small" @click="openHistory">重试</el-button>
+        <el-button size="small" @click="openHistory()">重试</el-button>
       </el-alert>
       <template v-else>
         <ul class="project-archive__versions" aria-label="档案版本">

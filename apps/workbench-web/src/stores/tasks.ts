@@ -378,6 +378,8 @@ export const useTaskStore = defineStore('tasks', () => {
     const current = generation
     let task = getTask(event.run_id)
     if (!task) return
+    // 服务端标记的迟到事件（平台已结束的 Attempt 发来的终态等）不改变页面状态。
+    if (event.safe_metadata['late'] === true) return
     if (task.attemptId !== null && event.attempt_id !== task.attemptId) {
       // PF-04 resumes a waiting Run with a new Attempt while keeping the same
       // Run-level SSE stream. Confirm the authoritative current Attempt before
@@ -438,12 +440,14 @@ export const useTaskStore = defineStore('tasks', () => {
     }
 
     // EX-01：工具调用实时显示为“正在调用”，结果到达后在同一行原地更新。
+    // 按 callId 合并，快照（服务端）与实时事件产生的同一调用始终只占一行。
     const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : null
-    const liveStepIndex = callId ? task.steps.findIndex((item) => item.id === `tool-call-${callId}`) : -1
+    const callStepIndex = callId ? task.steps.findIndex((item) => item.callId === callId) : -1
     if (event.event_type === 'tool.started' && callId) {
-      if (liveStepIndex < 0 && !task.steps.some((item) => item.id === event.event_id)) task.steps.push(toolStartedStep(callId, event))
-    } else if (event.event_type === 'tool.completed' && liveStepIndex >= 0) {
-      task.steps.splice(liveStepIndex, 1, { ...toolStep(event), id: `tool-call-${callId}` })
+      if (callStepIndex < 0) task.steps.push(toolStartedStep(callId, event))
+    } else if (event.event_type === 'tool.completed' && callId) {
+      if (callStepIndex < 0) task.steps.push(toolStep(event))
+      else if (task.steps[callStepIndex]!.status === 'running') task.steps.splice(callStepIndex, 1, { ...toolStep(event), id: task.steps[callStepIndex]!.id })
     } else if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
       if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
@@ -508,12 +512,14 @@ function eventTitle(eventType: string) {
 function toolStep(event: { event_id: string; display_message: string | null; safe_metadata: Record<string, unknown> }) {
   const outcome = event.safe_metadata['status']
   const toolName = typeof event.safe_metadata['tool_name'] === 'string' ? event.safe_metadata['tool_name'] : undefined
+  const callId = typeof event.safe_metadata['call_id'] === 'string' ? event.safe_metadata['call_id'] : undefined
   return {
     id: event.event_id,
     title: outcome === 'failed' ? '工具调用失败' : outcome === 'unknown' ? '工具结果未返回' : '调用工具',
     detail: event.display_message ?? '工具调用已结束。',
     status: outcome === 'failed' ? 'failed' as const : outcome === 'unknown' ? 'pending' as const : 'succeeded' as const,
     ...(toolName ? { tool: toolName } : {}),
+    ...(callId ? { callId } : {}),
   }
 }
 
@@ -524,6 +530,7 @@ function toolStartedStep(callId: string, event: { display_message: string | null
     title: '正在调用工具',
     detail: event.display_message ?? '工具调用进行中。',
     status: 'running' as const,
+    callId,
     ...(toolName ? { tool: toolName } : {}),
   }
 }

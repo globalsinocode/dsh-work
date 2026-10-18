@@ -592,7 +592,7 @@
     "/agents/{agentId}/publish": {
       "post": {
         "operationId": "publishAgent",
-        "summary": "发布已验证的待发布版本：要求该验证是最新验证且全部案例判定通过；在 Agent 与执行身份锁内复核可见角色、执行身份、工具授权、固定绑定、MCP 范围与数据声明，然后移动当前版本指针",
+        "summary": "发布已验证的待发布版本：要求该验证是最新验证且全部案例判定通过；在 Agent 与执行身份锁内复核可见角色、执行身份、工具授权、固定绑定与 MCP 范围，然后移动当前版本指针",
         "parameters": [
           {
             "$ref": "#/components/parameters/AgentId"

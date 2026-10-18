@@ -61,7 +61,23 @@ export class RunEventRecorder {
     this.eventWrites.set(run.id, next)
   }
 
+  /**
+   * A consequential event for an Attempt that is no longer current, or that the platform
+   * already ended (revoked authorization, system cancel, timeout, restart convergence).
+   */
+  private async isLateEvent(run: RunRecord, event: RuntimeEvent): Promise<boolean> {
+    const eventRun = await this.deps.runs.getRun(tenantId, run.id)
+    if (eventRun?.currentAttemptId !== event.attempt_id) return true
+    if (!CONSEQUENTIAL_EVENTS.has(event.event_type)) return false
+    const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
+    return Boolean(attempt && isRunTerminalState(attempt.status))
+  }
+
   private async persistEvent(run: RunRecord, event: RuntimeEvent) {
+    // Late events stay in the event log, marked `late` so projections and the live stream
+    // skip them: a run.completed arriving after the platform failed the Attempt must not
+    // read as success.
+    const markedLate = CONSEQUENTIAL_EVENTS.has(event.event_type) && await this.isLateEvent(run, event)
     const stored: StoredRunEvent = {
       id: event.event_id,
       tenantId,
@@ -70,19 +86,18 @@ export class RunEventRecorder {
       sequence: event.sequence,
       eventType: event.event_type,
       displayMessage: event.display_message,
-      safeMetadata: JSON.parse(JSON.stringify(event.safe_metadata)) as JsonObject,
+      safeMetadata: { ...(JSON.parse(JSON.stringify(event.safe_metadata)) as JsonObject), ...(markedLate ? { late: true } : {}) },
       traceId: event.trace_id,
       occurredAt: event.occurred_at,
     }
-    await this.deps.runs.appendEvent(stored)
-    const eventRun = await this.deps.runs.getRun(tenantId, run.id)
-    if (eventRun?.currentAttemptId !== event.attempt_id) return
-    // A late event for an Attempt the platform already ended (revoked authorization, system
-    // cancel, timeout, restart convergence) stays in the event log but has no consequences:
-    // no answer appended to the conversation, no budget settlement, no state change.
-    if (CONSEQUENTIAL_EVENTS.has(event.event_type)) {
-      const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
-      if (attempt && isRunTerminalState(attempt.status)) return
+    const appended = await this.deps.runs.appendEvent(stored)
+    // A late event has no consequences: no answer appended to the conversation, no budget
+    // settlement, no state change. Checked again after the write: the Attempt may have
+    // ended meanwhile, and then the stored event is marked late too.
+    if (markedLate) return
+    if (await this.isLateEvent(run, event)) {
+      if (CONSEQUENTIAL_EVENTS.has(event.event_type)) await this.deps.runs.markEventLate(tenantId, appended.id)
+      return
     }
     if (event.event_type === 'run.started') {
       await this.deps.runs.transitionAttempt(tenantId, event.attempt_id, 'running')

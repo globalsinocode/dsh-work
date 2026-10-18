@@ -603,6 +603,8 @@ export async function streamRunEvents(
     if (events.length > 0 && !(await canDeliver())) break
     for (const event of events) {
       cursor = event.id
+      // 迟到事件（平台已结束的 Attempt 发来的终态等）只留在日志里，不推给页面。
+      if (event.safeMetadata['late'] === true) continue
       response.write(`id: ${event.id}\n`)
       response.write(`event: ${event.eventType}\n`)
       response.write(`data: ${JSON.stringify({

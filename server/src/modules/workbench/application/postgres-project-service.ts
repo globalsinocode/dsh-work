@@ -65,6 +65,9 @@ export interface ProjectTaskAssigneeInput {
 }
 
 /** 任务线程与 Run 编排之间的窄端口，避免项目服务与编排服务互相构造。 */
+/** 任务线程同一时间只允许一个执行；受理前复核与 createRun 锁内复核共用此提示。 */
+export const TASK_THREAD_BUSY = 'Agent 正在执行该任务，请等待完成或先停止后再回复'
+
 export interface ProjectTaskThreadPort {
   resolveTaskThread(sessionId: string): Promise<ProjectTaskThread | null>
 }
@@ -377,6 +380,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       throw requestInvalid('必须提供 idempotencyKey')
     }
     await this.requireRole(this.database, workspaceId, actorUserId, writerRoles)
+    // 预检读取（不在事务中，不持锁）；并发启动由下方的条件绑定裁决。
     const task = await this.lockTask(this.database, workspaceId, taskId)
     if (task.assigneeType !== 'agent' || !task.assigneeAgentMemberId) throw workspaceStateConflict('员工任务不需要启动执行')
     if (task.sessionId) throw workspaceStateConflict('任务已启动，请在任务线程中回复以继续')
@@ -395,18 +399,64 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
          and assignee_agent_member_id = ${task.assigneeAgentMemberId}
       returning id
     `
-    if (!bound) throw workspaceStateConflict('任务已被其他成员启动或已改派，请刷新后查看')
-    const inputFileIds = await this.taskFileIds(taskId, 'input')
-    await this.runs.startRun({
-      userId: actorUserId,
-      sessionId: session.id,
-      prompt: task.description ? `任务：${task.title}\n\n${task.description}` : `任务：${task.title}`,
-      idempotencyKey: input.idempotencyKey,
-      fileIds: inputFileIds,
-      workspaceAgentMemberId: task.assigneeAgentMemberId,
-      authorizationContext: input.authorizationContext,
-    })
+    if (!bound) {
+      await this.discardUnstartedThread(session.id, null)
+      throw workspaceStateConflict('任务已被其他成员启动或已改派，请刷新后查看')
+    }
+    try {
+      const inputFileIds = await this.taskFileIds(taskId, 'input')
+      await this.runs.startRun({
+        userId: actorUserId,
+        sessionId: session.id,
+        prompt: task.description ? `任务：${task.title}\n\n${task.description}` : `任务：${task.title}`,
+        idempotencyKey: input.idempotencyKey,
+        fileIds: inputFileIds,
+        workspaceAgentMemberId: task.assigneeAgentMemberId,
+        authorizationContext: input.authorizationContext,
+      })
+    } catch (error) {
+      // 受理前失败（授权、Runtime 不可用等）不留下“已绑定线程却从未执行”的任务，可直接重新启动；
+      // 已创建 Run 的失败由 Run 自身记录，线程保留以便回复续接。
+      await this.discardUnstartedThread(session.id, taskId)
+      throw error
+    }
     return this.requireTask(workspaceId, taskId, actorUserId)
+  }
+
+  /** 启动未能创建 Run 时的补偿：解绑任务线程并归档这条空会话；已有 Run 的线程原样保留。 */
+  private async discardUnstartedThread(sessionId: string, taskId: string | null) {
+    await this.database.begin(async (transaction) => {
+      // 锁顺序与 createRun 一致：workspaces -> sessions -> runs。
+      const [owner] = await transaction<{ workspaceId: string }[]>`
+        select workspace_id as "workspaceId" from sessions where tenant_id = ${tenantId} and id = ${sessionId}
+      `
+      if (!owner) return
+      await transaction`select id from workspaces where tenant_id = ${tenantId} and id = ${owner.workspaceId} for update`
+      const [session] = await transaction<{ workspaceId: string }[]>`
+        select workspace_id as "workspaceId" from sessions
+         where tenant_id = ${tenantId} and id = ${sessionId} and status = 'active'
+         for update
+      `
+      if (!session) return
+      const [run] = await transaction<{ id: string }[]>`
+        select id from runs where tenant_id = ${tenantId} and session_id = ${sessionId} limit 1
+      `
+      if (run) return
+      if (taskId) {
+        await transaction`
+          update project_tasks set session_id = null, updated_at = now()
+           where tenant_id = ${tenantId} and id = ${taskId} and session_id = ${sessionId}
+        `
+      }
+      await transaction`
+        update sessions set status = 'archived', last_active_at = now()
+         where tenant_id = ${tenantId} and id = ${sessionId}
+      `
+      await transaction`
+        update workspaces set team_auth_revision = team_auth_revision + 1
+         where tenant_id = ${tenantId} and id = ${session.workspaceId}
+      `
+    })
   }
 
   /** 把讨论中 @Agent 的线程设为任务：承接者为该线程最近一次执行的 Agent 成员。 */
@@ -436,6 +486,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       `
       if (!session) throw requestInvalid('线程不存在或不属于该项目空间')
       if (!session.agentMemberId) throw workspaceStateConflict('只有 @Agent 执行过的线程可以设为任务')
+      const [member] = await transaction<{ status: string }[]>`
+        select status from workspace_agent_members where tenant_id = ${tenantId} and id = ${session.agentMemberId}
+      `
+      if (member?.status !== 'available') throw workspaceStateConflict('该 Agent 成员已停用，不能承接新任务')
       const [existing] = await transaction<{ id: string }[]>`
         select id from project_tasks where tenant_id = ${tenantId} and session_id = ${sessionId}
       `
@@ -495,7 +549,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   /** 任务线程同一时间只允许一个执行；执行中的回复需等待完成或先停止。 */
   async assertTaskThreadIdle(sessionId: string): Promise<void> {
     if (await hasActiveRun(this.database, sessionId)) {
-      throw workspaceStateConflict('Agent 正在执行该任务，请等待完成或先停止后再回复')
+      throw workspaceStateConflict(TASK_THREAD_BUSY)
     }
   }
 
@@ -759,9 +813,16 @@ function optionalText(value: unknown, field: string, max: number): string {
   return text
 }
 
+function isCalendarDate(value: string): boolean {
+  const parsed = new Date(`${value}T00:00:00Z`)
+  // PostgreSQL 没有公元 0 年。
+  return !value.startsWith('0000') && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+
 function optionalDate(value: unknown, field: string): string | null {
   if (value === undefined || value === null || value === '') return null
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) {
+  // Date.parse 会接受 2026-02-30 这类越界日期，按 UTC 回读核对年月日，避免到 PostgreSQL 才报错。
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !isCalendarDate(value)) {
     throw requestInvalid(`${field}必须是 YYYY-MM-DD 格式的日期`)
   }
   return value

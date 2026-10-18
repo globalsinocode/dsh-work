@@ -56,3 +56,61 @@ test('任务线程的成果交给档案员时不带平台追加的知识与记�
   assert.match(messages[0]!, /知识引用/)
   assert.deepEqual(archived, ['缺货集中在饮料类目。'])
 })
+
+test('迟到的终态事件标记为 late 落库，不改变 Run 状态也不写回复（P1-8）', async () => {
+  const stored: Array<{ eventType: string; safeMetadata: Record<string, unknown> }> = []
+  const transitions: string[] = []
+  const messages: string[] = []
+  const deps = permissive<OrchestrationDependencies>({
+    runs: permissive({
+      getRun: async () => ({ ...run, status: 'failed' }),
+      getAttempt: async () => ({ id: 'attempt-1', status: 'failed' }),
+      appendEvent: async (input: { id: string; eventType: string; safeMetadata: Record<string, unknown> }) => { stored.push(input); return input },
+      transitionAttempt: async (_tenant: string, _id: string, to: string) => { transitions.push(`attempt:${to}`) },
+      transitionRun: async (_tenant: string, _id: string, to: string) => { transitions.push(`run:${to}`) },
+      markEventLate: async () => { throw new Error('已在写入时标记，不应再补标') },
+    }),
+    conversations: permissive({ appendMessage: async (input: { content: string }) => { messages.push(input.content) } }),
+    operations: undefined,
+    sessionSummaries: undefined,
+    persistentWait: undefined,
+  })
+  const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
+
+  recorder.record(run, event(1, 'tool.started'))
+  recorder.record(run, event(2, 'assistant.completed', '迟到的回答'))
+  recorder.record(run, event(3, 'run.completed'))
+  await recorder.flush(run.id)
+
+  assert.deepEqual(stored.map(item => [item.eventType, item.safeMetadata['late'] === true]), [
+    ['tool.started', false], ['assistant.completed', true], ['run.completed', true],
+  ])
+  assert.deepEqual(transitions, [])
+  assert.deepEqual(messages, [])
+})
+
+test('写入期间 Attempt 被平台结束时补标 late（P1-8）', async () => {
+  let attemptStatus = 'running'
+  const marked: string[] = []
+  const transitions: string[] = []
+  const deps = permissive<OrchestrationDependencies>({
+    runs: permissive({
+      getRun: async () => run,
+      getAttempt: async () => ({ id: 'attempt-1', status: attemptStatus }),
+      appendEvent: async (input: { id: string }) => { attemptStatus = 'cancelled'; return input },
+      markEventLate: async (_tenant: string, eventId: string) => { marked.push(eventId) },
+      transitionAttempt: async (_tenant: string, _id: string, to: string) => { transitions.push(`attempt:${to}`) },
+      transitionRun: async (_tenant: string, _id: string, to: string) => { transitions.push(`run:${to}`) },
+    }),
+    operations: undefined,
+    sessionSummaries: undefined,
+    persistentWait: undefined,
+  })
+  const recorder = new RunEventRecorder(deps, permissive<AttemptBudget>())
+
+  recorder.record(run, event(1, 'run.completed'))
+  await recorder.flush(run.id)
+
+  assert.deepEqual(marked, ['event-1'])
+  assert.deepEqual(transitions, [])
+})

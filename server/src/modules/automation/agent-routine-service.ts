@@ -315,6 +315,7 @@ export class AgentRoutineService {
           select event.display_message from run_events event
            where event.tenant_id = run.tenant_id and event.attempt_id = run.current_attempt_id
              and event.event_type = 'assistant.completed'
+             and event.safe_metadata->>'late' is distinct from 'true'
            order by event.sequence desc limit 1
         ) answer on true
        where execution.tenant_id = ${tenantId} and task.requested_by = ${userId}

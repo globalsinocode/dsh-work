@@ -178,10 +178,16 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
   ): Promise<void> {
     const parts = [input.note?.trim() || '（未填写完成说明）']
     if (input.deliverableNames.length) parts.push(`交付文件：${input.deliverableNames.join('、')}`)
+    const content = parts.join('\n').slice(0, 8000)
+    // 完成 → 重开 → 再完成且说明与交付未变时不重复登记；内容变化则作为新成果交给档案员。
     await transaction`
       insert into workspace_archive_inputs (id, tenant_id, workspace_id, project_task_id, title, content)
-      values (${`warchin-${randomUUID()}`}, ${tenantId}, ${input.workspaceId}, ${input.taskId}, ${input.title},
-              ${parts.join('\n').slice(0, 8000)})
+      select ${`warchin-${randomUUID()}`}, ${tenantId}, ${input.workspaceId}, ${input.taskId}, ${input.title}, ${content}
+       where not exists (
+         select 1 from workspace_archive_inputs
+          where tenant_id = ${tenantId} and project_task_id = ${input.taskId} and source_run_id is null
+            and content = ${content}
+       )
     `
   }
 

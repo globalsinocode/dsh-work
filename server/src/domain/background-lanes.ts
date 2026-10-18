@@ -19,3 +19,14 @@ export type BackgroundLanePurpose = keyof typeof backgroundLaneMaxConcurrent
 export function isBackgroundLanePurpose(purpose: string | null | undefined): purpose is BackgroundLanePurpose {
   return purpose !== null && purpose !== undefined && Object.hasOwn(backgroundLaneMaxConcurrent, purpose)
 }
+
+/**
+ * Every purpose that runs in the background, automation included. Besides its own lane,
+ * all of them together stay below capacity - 1, so concurrent lanes cannot add up to
+ * the whole Runtime and crowd out interactive work.
+ */
+export const backgroundPurposes: readonly string[] = ['automation', ...Object.keys(backgroundLaneMaxConcurrent)]
+
+export function isBackgroundPurpose(purpose: string | null | undefined): boolean {
+  return purpose !== null && purpose !== undefined && backgroundPurposes.includes(purpose)
+}

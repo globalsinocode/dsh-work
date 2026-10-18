@@ -36,6 +36,8 @@ export interface RunStep {
   detail: string
   status: StepStatus
   tool?: string
+  /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
+  callId?: string
   duration?: string
 }
 

@@ -1,5 +1,5 @@
 import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../../runtime/execution-capabilities.ts'
-import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose, type BackgroundLanePurpose } from '../../../domain/background-lanes.ts'
+import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose, isBackgroundPurpose, type BackgroundLanePurpose } from '../../../domain/background-lanes.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import type { RunRepository } from '../run-repository.ts'
@@ -122,7 +122,7 @@ export class AttemptScheduler {
           }
           // AG-03：自动任务并发车道——有效上限 = min(配置, capacity-1)。
           // 车道为 0（容量不足以保留交互余量）时收敛为「容量不足」而非空转；
-          // 车道满则该项留队，继续扫描后续任务，不阻塞交互执行。
+          // 车道满（含后台车道合计已占 capacity-1）则该项留队，继续扫描后续任务，不阻塞交互执行。
           // Runtime 行缺失或暂停接活只是「暂不可调度」——落到下方统一的
           // schedulePump+break 重排路径，不得误收敛为容量失败。
           if (next.manifest.purpose === 'automation') {
@@ -133,7 +133,7 @@ export class AttemptScheduler {
               await this.failAutomationRunForCapacity(next.run, next.manifest)
               continue
             }
-            if (lane.exists && lane.accepting && lane.running >= lane.allowed) {
+            if (lane.exists && lane.accepting && (lane.running >= lane.allowed || lane.backgroundFull)) {
               index += 1
               continue
             }
@@ -148,7 +148,7 @@ export class AttemptScheduler {
               await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, backgroundCapacityMessage[purpose])
               continue
             }
-            if (lane.exists && lane.accepting && lane.running >= lane.allowed) {
+            if (lane.exists && lane.accepting && (lane.running >= lane.allowed || lane.backgroundFull)) {
               index += 1
               continue
             }
@@ -157,8 +157,8 @@ export class AttemptScheduler {
           break
         }
         this.pendingExecutions.splice(index, 1)
-        // 自动任务领取成功即占一路车道，缓存读数失效，下一个 automation 项重查。
-        if (next.manifest.purpose === 'automation') automationLane = null
+        // 后台任务领取成功即占一路车道（及后台合计），缓存读数失效，下一个 automation 项重查。
+        if (isBackgroundPurpose(next.manifest.purpose)) automationLane = null
         void this.executeClaimed(next.run, next.manifest)
       }
       // 车道满等原因留队的项：补一次延迟重排兜底。运行中的 Attempt 结束时

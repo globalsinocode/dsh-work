@@ -557,7 +557,7 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
 ```
 
 回滚仍会验证 GitHub Release 并执行备份，因此需要 GitHub 可达和 NAS 就绪；不是离线
-切软链接。它只回滚应用，不降级数据库，不能用来修复破坏性迁移。备份恢复属于破坏性操作，
+切软链接。它只回滚应用，不降级数据库，不能用来修复破坏性迁移；破坏性迁移之后要先恢复发布前备份。备份恢复属于破坏性操作，
 需在确认的维护窗口按本文第 12 节执行。
 
 最后安排共享服务器的维护窗口，验证 Mac mini 重启并登录、Docker Desktop 重启后两个
@@ -583,10 +583,15 @@ bash "${DWP_ROOT}/current/scripts/deploy/rollback.sh" "${DWP_ROLLBACK_VERSION}" 
    `.verified.json` 回执；只有异机验证成功后才应用候选 PostgreSQL Compose；
 5. 执行向前数据库迁移；
 6. 原子切换 `current`，安装/重启 `launchd`，重建 Nginx 容器；
-7. 从内网 HTTPS 地址执行健康检查；失败时恢复旧应用版本与旧 PostgreSQL Compose 配置。
+7. 从内网 HTTPS 地址执行健康检查。迁移未改动数据库（全部 `skipped`）时，失败会恢复旧应用
+   版本与旧 PostgreSQL Compose 配置；本次实际执行了迁移（输出含 `applied`）时，旧版本可能读取
+   已删除的表或列，脚本不再自动拉起旧版本，而是保持服务停止并提示处理方式（fail-closed）。
 
 数据库迁移不会自动降级。因此每次迁移必须保持至少一个版本的向后兼容，确认新版本稳定
-后再进行破坏性清理。
+后再进行破坏性清理。包含删除表或列的版本（例如 0083、0085、0087 移除委派、旧发布记录与
+Agent 数据平面）不具备向后兼容，发布前必须确认第 3～4 步的备份已异机校验；迁移后失败只有两条
+路：发布修复版本向前修复，或在维护窗口用本次发布前的备份执行 `restore.sh` 恢复数据库，
+再用 `rollback.sh` 回到旧应用版本。不要在新 Schema 上手工启动旧版本。
 
 自动部署接受新的稳定版本 `vYYYY.MM.DD-NN`；为兼容已发布版本，也保留对旧
 `vMAJOR.MINOR.PATCH` Tag 的读取和回滚支持。自动部署只允许升级，不会自动降级。

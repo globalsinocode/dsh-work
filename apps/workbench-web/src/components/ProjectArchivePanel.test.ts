@@ -210,4 +210,38 @@ describe('ProjectArchivePanel（项目空间 S2）', () => {
     expect(meta).toContain('第 4 版')
     expect(meta).toContain('周衡回退到第 1 版')
   })
+
+  it('refreshes the base version after a rollback conflict so a second rollback can succeed', async () => {
+    const conflict = new WorkbenchApiError({ code: 'state_conflict', message: '档案已被更新' }, 409, '')
+    const updated = version({ versionId: 'warch-4', versionNo: 4, sourceKind: 'manual', sourceTasks: [], items: ['新结论'] })
+    const older = version({ versionId: 'warch-1', versionNo: 1, sourceKind: 'manual', sourceTasks: [], items: ['旧结论'] })
+    vi.mocked(workbenchApi.getProjectArchive)
+      .mockResolvedValueOnce({ current: version(), archivistRunning: false })
+      .mockResolvedValueOnce({ current: updated, archivistRunning: false })
+    vi.spyOn(workbenchApi, 'listProjectArchiveVersions')
+      .mockResolvedValueOnce([version(), older])
+      .mockResolvedValueOnce([updated, version(), older])
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const rollback = vi.spyOn(workbenchApi, 'rollbackProjectArchive')
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(version({ versionId: 'warch-5', versionNo: 5, sourceKind: 'rollback', sourceTasks: [], rollbackFromVersionNo: 1, items: ['旧结论'] }))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-testid="project-archive-history"]').trigger('click')
+    await flushPromises()
+
+    const rollbackButton = () => wrapper.findAll('[data-testid="project-archive-version"]')
+      .find(row => row.get('strong').text() === '第 1 版')!
+      .findAll('button').find(button => button.text() === '回退到此版')!
+    await rollbackButton().trigger('click')
+    await flushPromises()
+    expect(rollback).toHaveBeenLastCalledWith('ws-team', { versionNo: 1, baseVersionNo: 3 })
+    expect(wrapper.get('[data-testid="project-archive-meta"]').text()).toContain('第 4 版')
+    expect(wrapper.emitted('stale')).toBeUndefined()
+
+    await rollbackButton().trigger('click')
+    await flushPromises()
+    expect(rollback).toHaveBeenLastCalledWith('ws-team', { versionNo: 1, baseVersionNo: 4 })
+    expect(wrapper.get('[data-testid="project-archive-meta"]').text()).toContain('第 5 版')
+  })
 })

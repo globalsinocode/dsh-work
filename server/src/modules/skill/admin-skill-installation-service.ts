@@ -120,6 +120,7 @@ export class AdminSkillInstallationService {
     const events = await this.db<{ attemptId: string; eventType: string; displayMessage: string | null; occurredAt: Date }[]>`
       select attempt_id as "attemptId", event_type as "eventType", display_message as "displayMessage", occurred_at as "occurredAt"
         from run_events where tenant_id = ${tenant} and run_id = ${runId} and attempt_id = ${attempt.id}
+         and safe_metadata->>'late' is distinct from 'true'
         order by stream_position, sequence
     `
     const [current] = await this.db<{ attemptId: string | null }[]>`

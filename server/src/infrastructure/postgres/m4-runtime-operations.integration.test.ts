@@ -193,6 +193,52 @@ test('Runtime configuration controls timeout, capacity and scheduling with versi
   assert.ok((history?.audits ?? 0) >= 5)
 })
 
+test('Background lanes together leave one Worker for interactive runs', async () => {
+  await operations.updateRuntimeConfiguration({
+    runtimeId: 'runtime-local-01',
+    maxConcurrentWorkers: 3,
+    attemptTimeoutMinutes: 3,
+    schedulingStatus: 'accepting',
+    actor: 'U00008',
+  })
+  const session = await orchestration.createSession({
+    userId: 'U00001',
+    title: '后台车道合计验证',
+    agentVersionId: 'agent-version-dsh-work-assistant-1',
+  })
+  const created = await orchestration.startRun({
+    userId: 'U00001',
+    sessionId: session.id,
+    prompt: '捕获一份 Runtime Manifest',
+    idempotencyKey: randomUUID(),
+  })
+  assert.ok(created)
+  await waitForRun(created.id)
+  const captured = runtime.manifest(created.id)
+  assert.ok(captured)
+  const withPurpose = (purpose: string) => ({ ...captured, purpose }) as RuntimeManifest
+
+  // 容量 3：摘要与档案员各自车道未满，但合计已占 capacity - 1，验证案例与自动任务留队。
+  const summary = await createQueuedAttempt(withPurpose('session-summary'))
+  const archive = await createQueuedAttempt(withPurpose('project-archive'))
+  const trial = await createQueuedAttempt(withPurpose('agent-release-trial'))
+  const automation = await createQueuedAttempt(withPurpose('automation'))
+  const interactive = await createQueuedAttempt(captured)
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', summary.attemptId, 'runtime-local-01'), true)
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', archive.attemptId, 'runtime-local-01'), true)
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', trial.attemptId, 'runtime-local-01'), false)
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', automation.attemptId, 'runtime-local-01', { automationMaxConcurrent: 2 }), false)
+  const lane = await runs.backgroundLaneUsage('tenant-dsh-work', 'runtime-local-01', 'agent-release-trial', 2)
+  assert.deepEqual({ allowed: lane.allowed, running: lane.running, backgroundFull: lane.backgroundFull }, { allowed: 2, running: 0, backgroundFull: true })
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', interactive.attemptId, 'runtime-local-01'), true)
+
+  await completeAttempt(summary)
+  assert.equal(await runs.claimAttempt('tenant-dsh-work', trial.attemptId, 'runtime-local-01'), true)
+  for (const item of [archive, trial, interactive]) await completeAttempt(item)
+  await runs.transitionAttempt('tenant-dsh-work', automation.attemptId, 'cancelled')
+  await runs.transitionRun('tenant-dsh-work', automation.runId, 'cancelled')
+})
+
 async function createQueuedAttempt(source: RuntimeManifest | undefined) {
   if (!source) throw new Error('缺少已捕获的 Runtime Manifest')
   const session = await conversations.createSession({

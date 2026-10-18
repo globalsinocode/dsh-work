@@ -271,6 +271,90 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
 })
 
+test('任务线程：并发回复只受理一个执行；启动未能受理时任务可重新启动（P1-1、P1-2）', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('race')
+  const agentMemberId = await joinAgent(ws, 'race')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '核对库存差异', assignee: { type: 'agent', id: agentMemberId } },
+  })
+  const task = created.body.data as TaskView
+
+  // 受理前失败（Runtime 不可用）：不留下已绑定线程却从未执行的任务。
+  const assertAvailable = runtime.assertAvailable
+  runtime.assertAvailable = async () => { throw new Error('Runtime 暂不可用') }
+  try {
+    const failed = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+      as: ws.member, body: { idempotencyKey: `race-fail-${task.id}` },
+    })
+    assert.notEqual(failed.status, 202)
+  } finally {
+    runtime.assertAvailable = assertAvailable
+  }
+  const unbound = await taskById(ws, task.id)
+  assert.equal(unbound.sessionId, null)
+  assert.ok(unbound.allowedActions.includes('start'))
+  const [orphans] = await database<{ count: number }[]>`
+    select count(*)::integer as count from sessions
+     where tenant_id = ${tenantId} and workspace_id = ${ws.id} and status = 'active'
+  `
+  assert.equal(orphans?.count, 0, '补偿后不留下空会话')
+
+  const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
+    as: ws.member, body: { idempotencyKey: `race-start-${task.id}` },
+  })
+  assert.equal(started.status, 202, JSON.stringify(started.body))
+  const running = started.body.data as TaskView
+  await waitForManifest(running.latestRunId!)
+  runtime.releaseAll()
+  await waitForRun(running.latestRunId!)
+
+  const replies = await Promise.all([0, 1, 2].map(index => api('POST', `${base}/sessions/${running.sessionId}/runs`, {
+    as: index % 2 ? ws.other : ws.member, body: { prompt: `并发回复 ${index}`, idempotencyKey: `race-reply-${index}-${task.id}` },
+  })))
+  assert.deepEqual(replies.map(reply => reply.status).sort(), [202, 409, 409], JSON.stringify(replies.map(reply => reply.body)))
+  const [active] = await database<{ count: number }[]>`
+    select count(*)::integer as count from runs
+     where tenant_id = ${tenantId} and session_id = ${running.sessionId}
+       and status in ('queued', 'running', 'waiting', 'cancel_requested')
+  `
+  assert.equal(active?.count, 1)
+  await drainRuntime()
+})
+
+test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完成不重复登记档案成果（P2-5、P2-11、P2-13）', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('detail')
+  const invalid = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '越界日期', assignee: { type: 'employee', id: ws.member }, dueDate: '2026-02-30' },
+  })
+  assert.equal(invalid.status, 422, JSON.stringify(invalid.body))
+
+  const done = await completeEmployeeTask(ws, '整理到货记录', '已核对')
+  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${done.id}/status`, {
+    as: ws.member, body: { status: 'todo' },
+  })).status, 200)
+  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${done.id}/status`, {
+    as: ws.member, body: { status: 'done', completionNote: '已核对' },
+  })).status, 200)
+  const [inputs] = await database<{ count: number }[]>`
+    select count(*)::integer as count from workspace_archive_inputs where tenant_id = ${tenantId} and project_task_id = ${done.id}
+  `
+  assert.equal(inputs?.count, 1)
+
+  const agentMemberId = await joinAgent(ws, 'detail')
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '到货讨论', workspaceId: ws.id } })
+  const sessionId = (discussion.body.data as { id: string }).id
+  const run = await api('POST', `${base}/sessions/${sessionId}/runs`, {
+    as: ws.member, body: { prompt: '@助手 看看到货', idempotencyKey: `detail-${sessionId}`, workspaceAgentMemberId: agentMemberId },
+  })
+  assert.equal(run.status, 202, JSON.stringify(run.body))
+  runtime.releaseAll()
+  await database`update workspace_agent_members set status = 'disabled' where tenant_id = ${tenantId} and id = ${agentMemberId}`
+  assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
+  await drainRuntime()
+})
+
 test('个人空间不支持简报与任务', async () => {
   const userId = `user-ps-personal-${randomUUID().slice(0, 8)}`
   await createDirectoryUser(userId, '个人空间员工')
@@ -734,6 +818,8 @@ async function api(method: string, path: string, options: { as?: string; body?: 
 
 /** 确定性 Runtime：受理后保持运行，直到测试调用 releaseAll 才完成，便于验证“执行中”状态。 */
 class ControlledRuntime implements AgentRuntimePort {
+  /** 用例可替换为抛错，模拟受理前 Runtime 不可用。 */
+  assertAvailable?: (manifest?: RuntimeManifest) => Promise<void>
   private readonly executions = new Map<string, {
     manifest: RuntimeManifest
     listeners: Set<(event: RuntimeEvent) => void>

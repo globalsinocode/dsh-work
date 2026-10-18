@@ -57,18 +57,21 @@ export interface RunRepository {
    * 部署/运维状态——调用方应留队重排而非把排队 Run 收敛为容量失败；
    * 只有 `exists && accepting && allowed <= 0` 才是确定的容量收敛条件。
    */
-  /** EX-02, S3 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use. */
+  /**
+   * EX-02, S3 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use.
+   * `backgroundFull`: all background purposes together already hold capacity - 1 Workers.
+   */
   backgroundLaneUsage(
     tenantId: string,
     runtimeId: string,
     purpose: 'automation' | BackgroundLanePurpose,
     configuredMax: number,
-  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }>
   automationLaneUsage(
     tenantId: string,
     runtimeId: string,
     configuredMax: number,
-  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }>
   /**
    * AG-03 条件收敛：仅当 Run 仍停在「无 Attempt 的 queued」时落终态。
    */
@@ -97,6 +100,8 @@ export interface RunRepository {
   appendEvent(event: StoredRunEvent): Promise<StoredRunEvent>
   /** Appends a server-authored event, computing the next per-attempt sequence transactionally. */
   appendSystemEvent(input: AppendSystemEventInput): Promise<StoredRunEvent>
+  /** Marks a stored Runtime event as late (safe_metadata.late): kept in the log, hidden from projections. */
+  markEventLate(tenantId: string, eventId: string): Promise<void>
   readEvents(tenantId: string, runId: string, afterSequence?: number): Promise<StoredRunEvent[]>
   readEventsAfterEvent(tenantId: string, runId: string, afterEventId?: string): Promise<StoredRunEvent[]>
   recoverAfterRestart(tenantId: string, runtimeId: string): Promise<RestartRecoveryResult>

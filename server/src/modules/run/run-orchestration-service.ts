@@ -44,6 +44,7 @@ import {
   type ToolBindingCheckPort,
 } from './orchestration/orchestration-dependencies.ts'
 import { ReleaseTrialEntry } from './orchestration/release-trial-entry.ts'
+import { TASK_THREAD_BUSY } from '../workbench/application/postgres-project-service.ts'
 import { RunCancellation } from './orchestration/run-cancellation.ts'
 import { RunEventRecorder } from './orchestration/run-event-recorder.ts'
 
@@ -315,9 +316,12 @@ export class RunOrchestrationService {
     }
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
     let agentVersionId = session.agentVersionId
+    let taskThread = false
     if (session.workspaceType === 'team') {
       // 项目空间 S1：任务线程固定承接 Agent，回复无需 @；同一时间只允许一个执行。
+      // 此处先行拒绝避免无谓授权；并发回复由 createRun 在 Session 行锁内复核。
       const thread = await this.deps.projectTasks?.resolveTaskThread(session.id)
+      taskThread = Boolean(thread)
       let workspaceAgentMemberId = input.workspaceAgentMemberId
       if (thread) {
         if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
@@ -364,6 +368,7 @@ export class RunOrchestrationService {
       requestedBy: input.userId,
       idempotencyKey: input.idempotencyKey,
       taskBudget: input.cumulativeBudget,
+      ...(taskThread ? { requireIdleSession: { conflictMessage: TASK_THREAD_BUSY } } : {}),
     })
     if (run.currentAttemptId || run.status !== 'queued') return run
     await this.deps.conversations.appendMessage({
@@ -562,6 +567,9 @@ export class RunOrchestrationService {
       throw requestInvalid('原运行缺少 Agent 版本记录，无法重试；请重新 @Agent 发起执行')
     }
     if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法重试')
+    // 项目空间 S1：任务线程的重试同样受“同一时间只允许一个执行”约束。
+    const taskThread = workspaceType === 'team' && Boolean(await this.deps.projectTasks?.resolveTaskThread(session.id))
+    if (taskThread) await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []
@@ -597,6 +605,7 @@ export class RunOrchestrationService {
         sessionId: session.id,
         requestedBy: userId,
         idempotencyKey: `retry-of-${run.id}-${run.currentAttemptId ?? 'none'}`,
+        ...(taskThread ? { requireIdleSession: { conflictMessage: TASK_THREAD_BUSY } } : {}),
       })
       if (retried.currentAttemptId || retried.status !== 'queued') return retried
       await this.dispatcher.failUndispatchedRun(retried, async () => {
