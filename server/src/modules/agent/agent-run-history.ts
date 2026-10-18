@@ -66,7 +66,9 @@ export class PostgresAgentRunHistory {
         left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
         left join users u on u.tenant_id = r.tenant_id and u.id = r.requested_by
        where t.tenant_id = ${tenantId} and t.executed_as_principal_id = ${principal.id}
-       order by r.created_at desc, r.id desc
+       -- 与 0086 的 tasks(tenant_id, executed_as_principal_id, created_at desc) 索引同序；
+       -- 一个 Run 对应一个 Task，按任务创建时间排序与按 Run 创建时间近似等价。
+       order by t.created_at desc, r.id desc
        limit ${size}
     `
     return rows.map(row => ({

@@ -347,6 +347,11 @@ async function start() {
   registerSkillInstallationRoutes(router, installationService)
   const restartRecovery = await orchestration.recoverAfterServiceRestart()
   await persistentWait.reconcileOrphans()
+  // 项目空间 S2：清扫重启中断的档案整理批次，避免空间长期停在“整理中”。
+  const archiveRecovery = await projectArchive.recoverInterruptedUpdates()
+  if (archiveRecovery.finished > 0 || archiveRecovery.abandoned > 0) {
+    console.warn('project archive recovery completed', archiveRecovery)
+  }
   // EX-02：为旧成果补写原文解析，使其可在后续对话中“继续修改”；失败只记录，不阻断启动。
   await content.backfillArtifactExtractions()
     .then(result => { if (result.extracted > 0) console.warn('artifact extraction backfill completed', result) })

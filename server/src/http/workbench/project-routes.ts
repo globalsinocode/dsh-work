@@ -2,6 +2,10 @@ import type { PostgresAuthorizationService } from '../../modules/authorization/p
 import type { PostgresProjectArchiveService } from '../../modules/workbench/application/postgres-project-archive-service.ts'
 import type { PostgresProjectService } from '../../modules/workbench/application/postgres-project-service.ts'
 import {
+  projectAllRoles as allRoles,
+  projectWriterRoles as writerRoles,
+} from '../../domain/project-roles.ts'
+import {
   envelope,
   httpResult,
   readJsonBody,
@@ -13,8 +17,6 @@ import {
 import { requireTeamActor } from './workspace-member-routes.ts'
 
 const basePath = '/api/workbench/v1'
-const allRoles = ['owner', 'admin', 'member', 'viewer'] as const
-const writerRoles = ['owner', 'admin', 'member'] as const
 const projectOnly = { teamOnlyMessage: '仅项目空间支持简报与任务' }
 const archiveOnly = { teamOnlyMessage: '仅项目空间支持项目档案' }
 

@@ -49,11 +49,11 @@ test('EX-01 unknown codes fall back to a fixed reason instead of echoing tool te
 
 test('EX-01 live summary takes a typed failure only from the bridge outcome with the same call id', () => {
   const outcomes = [
-    { toolName: 'data_create', callId: 'call-1', errorCode: 'TOOL_INPUT_INVALID' },
+    { toolName: 'demo_tool', callId: 'call-1', errorCode: 'TOOL_INPUT_INVALID' },
     { toolName: 'read', callId: null, errorCode: 'TOOL_TIMEOUT' },
   ]
-  assert.deepEqual(liveToolCallSummary({ callId: 'call-1', toolName: 'data_create', status: 'completed' }, outcomes),
-    { call_id: 'call-1', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID' })
+  assert.deepEqual(liveToolCallSummary({ callId: 'call-1', toolName: 'demo_tool', status: 'completed' }, outcomes),
+    { call_id: 'call-1', tool_name: 'demo_tool', status: 'failed', error_code: 'TOOL_INPUT_INVALID' })
   // 没有同 call id 的平台结果：按 DSH 报告的状态，不按名称猜测。
   assert.deepEqual(liveToolCallSummary({ callId: 'call-2', toolName: 'read', status: 'completed' }, outcomes),
     { call_id: 'call-2', tool_name: 'read', status: 'succeeded', error_code: null })

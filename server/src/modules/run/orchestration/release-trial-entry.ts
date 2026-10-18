@@ -41,12 +41,13 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
       tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
     })
     if (!run.currentAttemptId && run.status === 'queued') {
-      await this.deps.conversations.appendMessage({
-        sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
+      // 消息写入与派发同属“未派发 Run”的保护范围：任一失败都收敛该 Run，避免留下无 Attempt 的 queued Run。
+      await this.dispatcher.failUndispatchedRun(run, async () => {
+        await this.deps.conversations.appendMessage({
+          sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
+        })
+        await this.dispatchTrialAttempt(run, input.userId, input.agentVersionId, input.message, input.timezone)
       })
-      await this.dispatcher.failUndispatchedRun(run, () => this.dispatchTrialAttempt(
-        run, input.userId, input.agentVersionId, input.message, input.timezone,
-      ))
     }
     return { runId: run.id }
   }

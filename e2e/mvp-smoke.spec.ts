@@ -36,6 +36,7 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   await expect(workspaceTabs.getByRole('tab', { name: /^对话/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^成果/ })).toBeVisible()
+  await expect(workspaceTabs.getByRole('tab', { name: /^档案/ })).toBeVisible()
 })
 
 test('employee can inspect shared files and workspace artifacts', async ({ page }) => {

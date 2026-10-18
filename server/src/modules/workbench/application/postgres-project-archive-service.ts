@@ -2,15 +2,17 @@ import { randomUUID } from 'node:crypto'
 
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { applyArchivistChange, archiveDigest, archiveLimits, normalizeArchiveItems, type ArchiveInputMaterial, type ArchivistChange } from '../../../domain/project-archive.ts'
+import {
+  projectAllRoles as allRoles,
+  projectWriterRoles as writerRoles,
+  type ProjectTeamRole as TeamRole,
+} from '../../../domain/project-roles.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
 const tenantId = 'tenant-dsh-work'
 
-type TeamRole = 'owner' | 'admin' | 'member' | 'viewer'
-const writerRoles: TeamRole[] = ['owner', 'admin', 'member']
-const allRoles: TeamRole[] = ['owner', 'admin', 'member', 'viewer']
 const terminalRunStatuses = ['succeeded', 'failed', 'cancelled']
 /** 认领后迟迟没有挂上 Run 的整理视为已中断，可由下一次触发接管。 */
 const staleUnattachedMinutes = 10
@@ -64,6 +66,8 @@ export interface ProjectArchivePort {
   abandonArchiveUpdate(updateId: string): Promise<void>
   finishArchiveUpdate(runId: string, outcome: ArchiveUpdateOutcome): Promise<ArchiveUpdateResult>
   archivable(workspaceId: string, updateId: string): Promise<boolean>
+  /** 服务重启后清扫中断的整理批次，避免空间长期停在“整理中”。 */
+  recoverInterruptedUpdates(): Promise<{ finished: number; abandoned: number }>
 }
 
 interface VersionRow {
@@ -110,7 +114,15 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
   async listVersions(workspaceId: string, actorUserId: string): Promise<ProjectArchiveVersion[]> {
     await this.requireRole(this.database, workspaceId, actorUserId, allRoles, { allowArchived: true })
     const rows = await this.versionRows(this.database, workspaceId, 100)
-    return Promise.all(rows.map(row => this.toVersion(row)))
+    // 来源任务标题一次批量取，避免每个版本一次查询（最多 100 个版本）。
+    const taskIds = [...new Set(rows.flatMap(row => row.sourceTaskIds))]
+    const titles = taskIds.length
+      ? await this.database<{ id: string; title: string }[]>`
+          select id, title from project_tasks where tenant_id = ${tenantId} and id in ${this.database(taskIds)}
+        `
+      : []
+    const titleById = new Map(titles.map(task => [task.id, task.title]))
+    return Promise.all(rows.map(row => this.toVersion(row, { titleById })))
   }
 
   async saveArchive(
@@ -301,6 +313,38 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
     })
   }
 
+  /**
+   * 服务重启后清扫中断的整理批次：Run 已终态的按失败收尾（计入重试次数），
+   * 认领后未挂上 Run 且已过期的直接释放。返回处理数量；启动时调用，不抛错。
+   */
+  async recoverInterruptedUpdates(): Promise<{ finished: number; abandoned: number }> {
+    const rows = await this.database<{ updateId: string; runId: string | null; runStatus: string | null; stale: boolean }[]>`
+      select s.update_id as "updateId", s.run_id as "runId", r.status as "runStatus",
+             (s.run_id is null and s.started_at < now() - make_interval(mins => ${staleUnattachedMinutes})) as stale
+        from workspace_archivist_state s
+        left join runs r on r.tenant_id = s.tenant_id and r.id = s.run_id
+       where s.tenant_id = ${tenantId} and s.update_id is not null
+    `
+    let finished = 0
+    let abandoned = 0
+    for (const row of rows) {
+      try {
+        if (row.runId !== null && row.runStatus !== null && terminalRunStatuses.includes(row.runStatus)) {
+          await this.finishArchiveUpdate(row.runId, { failure: '服务重启中断' })
+          finished += 1
+          continue
+        }
+        if (row.runId === null && row.stale) {
+          await this.abandonArchiveUpdate(row.updateId)
+          abandoned += 1
+        }
+      } catch (error) {
+        console.error('project archive recovery failed', row.updateId, error)
+      }
+    }
+    return { finished, abandoned }
+  }
+
   async finishArchiveUpdate(runId: string, outcome: ArchiveUpdateOutcome): Promise<ArchiveUpdateResult> {
     const [owner] = await this.database<{ workspaceId: string }[]>`
       select workspace_id as "workspaceId" from workspace_archivist_state
@@ -417,7 +461,7 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
     `
     const [row] = await this.versionRows(transaction, workspaceId, 1)
     if (!row || row.versionId !== versionId) throw new Error('档案版本保存后无法读取')
-    return this.toVersion(row, transaction)
+    return this.toVersion(row, { database: transaction })
   }
 
   private async versionRows(database: DatabaseClient | DatabaseTransaction, workspaceId: string, limit: number): Promise<VersionRow[]> {
@@ -433,13 +477,19 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
     `
   }
 
-  private async toVersion(row: VersionRow, database: DatabaseClient | DatabaseTransaction = this.database): Promise<ProjectArchiveVersion> {
-    const titles = row.sourceTaskIds.length
-      ? await database<{ id: string; title: string }[]>`
-          select id, title from project_tasks where tenant_id = ${tenantId} and id in ${database(row.sourceTaskIds)}
-        `
-      : []
-    const byId = new Map(titles.map(task => [task.id, task.title]))
+  private async toVersion(
+    row: VersionRow,
+    options: { titleById?: Map<string, string>; database?: DatabaseClient | DatabaseTransaction } = {},
+  ): Promise<ProjectArchiveVersion> {
+    const database = options.database ?? this.database
+    const titles = options.titleById
+      ? []
+      : row.sourceTaskIds.length
+        ? await database<{ id: string; title: string }[]>`
+            select id, title from project_tasks where tenant_id = ${tenantId} and id in ${database(row.sourceTaskIds)}
+          `
+        : []
+    const byId = options.titleById ?? new Map(titles.map(task => [task.id, task.title]))
     return {
       versionId: row.versionId,
       versionNo: row.versionNo,

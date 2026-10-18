@@ -83,7 +83,7 @@
     "report:run-timings": "node --experimental-strip-types --env-file-if-exists=.env scripts/runtime/run-timings.ts",
     "bench:team-workspace-statistics": "node --experimental-strip-types --env-file-if-exists=.env scripts/bench/team-workspace-statistics.ts",
     "test:skill-install": "pnpm --filter @dsh-work/server test:skill-install",
-    "test:agent-package": "pnpm --filter @dsh-work/server test:agent-package",
+    "test:agent-draft-policy": "pnpm --filter @dsh-work/server test:agent-draft-policy",
     "test:skill-install:integration": "pnpm --filter @dsh-work/server test:skill-install:integration",
     "test:review:unit": "pnpm --filter @dsh-work/server test:review:unit",
     "test:review:integration": "pnpm --filter @dsh-work/server test:review:integration",

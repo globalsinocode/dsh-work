@@ -25,8 +25,8 @@
 机器可读契约与测试夹具放在 `development/`：
 
 - [员工端 OpenAPI](../development/openapi-workbench.json)、[管理端 OpenAPI](../development/openapi-admin.json)、[认证 OpenAPI](../development/openapi-auth.json)、[移动端 OpenAPI](../development/openapi-mobile-h5.json)
-- [Runtime Manifest Schema](../development/runtime-manifest.schema.json)、[Run Event Schema](../development/run-event.schema.json)、[Agent 包 Schema](../development/agent-package.schema.json)
-- [平台能力矩阵](../development/agent-platform-capabilities.v1.json)、[Agent 评测模板](../development/agent-evaluation-template.yaml)
+- [Runtime Manifest Schema](../development/runtime-manifest.schema.json)、[Run Event Schema](../development/run-event.schema.json)
+- [平台能力矩阵](../development/agent-platform-capabilities.v1.json)
 - [通用参考 Agent 包](../development/fixtures/reference-text-agent/agent.yaml)、[合成测试数据](../development/fixtures/mvp-fixtures.json)
 
 维护规则：

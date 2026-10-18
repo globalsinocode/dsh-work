@@ -919,7 +919,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(completed?.safe_metadata['output_truncated'], true)
   })
 
-  it('bridges general admin inspection and delegation proposal tools without executing a platform write', async () => {
+  it('bridges general admin inspection and proposal tools without executing a platform write', async () => {
     const calls: Array<{ name: string; input: Record<string, unknown> }> = []
     const adapter = await createAdapter(500, undefined, undefined, {
       inspectAdminState: async (input) => { calls.push({ name: 'inspect_admin_state', input }); return { skills: { total: 3 } } },

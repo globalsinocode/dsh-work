@@ -68,8 +68,11 @@ export class SessionSummaryEntry {
           taskCorrelationKey: summaryId,
           taskRequestDigest: sha256(JSON.stringify(['session-summary/v1', sessionId, request.coverThrough, request.coveredMessageCount])),
         })
-        await this.deps.conversations.attachConversationSummaryRun(summaryId, summaryRun.id)
-        await this.dispatcher.failUndispatchedRun(summaryRun, () => this.dispatch(summaryRun, sessionId, request))
+        // 关联摘要与派发同属“未派发 Run”的保护范围：任一失败都收敛该 Run，避免留下孤儿 queued Run。
+        await this.dispatcher.failUndispatchedRun(summaryRun, async () => {
+          await this.deps.conversations.attachConversationSummaryRun(summaryId, summaryRun.id)
+          await this.dispatch(summaryRun, sessionId, request)
+        })
       } catch (error) {
         await this.deps.conversations.abandonConversationSummary(summaryId, error instanceof Error ? error.message : String(error))
         throw error

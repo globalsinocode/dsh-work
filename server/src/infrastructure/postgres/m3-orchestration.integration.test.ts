@@ -507,7 +507,7 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
     ['调用工具', 'succeeded', 'read', 'read：调用成功'],
     // 已有结果的“正在调用”被结果替代；本轮结束仍无结果的显示为未收到结果。
     ['工具结果未返回', 'pending', 'web_fetch', 'web_fetch：未收到调用结果'],
-    ['工具调用失败', 'failed', 'data_create', 'data_create：调用失败，调用参数不符合工具要求'],
+    ['工具调用失败', 'failed', 'demo_tool', 'demo_tool：调用失败，调用参数不符合工具要求'],
   ])
   assert.equal(task.result.evidence.toolCalls, 2)
   assert.equal(task.result.evidence.toolFailures, 1)
@@ -1369,10 +1369,10 @@ class DeterministicRuntime implements AgentRuntimePort {
         // c3 只开始、没有结果。
         this.emit(execution, 'tool.started', 'read：正在调用', { call_id: 'c1', tool_name: 'read', status: 'running', live: true })
         this.emit(execution, 'tool.completed', 'read：调用成功', { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null })
-        this.emit(execution, 'tool.started', 'data_create：正在调用', { call_id: 'c2', tool_name: 'data_create', status: 'running', live: true })
+        this.emit(execution, 'tool.started', 'demo_tool：正在调用', { call_id: 'c2', tool_name: 'demo_tool', status: 'running', live: true })
         this.emit(execution, 'tool.started', 'web_fetch：正在调用', { call_id: 'c3', tool_name: 'web_fetch', status: 'running', live: true })
-        this.emit(execution, 'tool.completed', 'data_create：调用失败，调用参数不符合工具要求', {
-          call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
+        this.emit(execution, 'tool.completed', 'demo_tool：调用失败，调用参数不符合工具要求', {
+          call_id: 'c2', tool_name: 'demo_tool', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
         })
         this.emit(execution, 'assistant.completed', '已改用其他方式完成')
         execution.snapshot.status = 'completed'

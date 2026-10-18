@@ -13,7 +13,7 @@ import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 export const AGENT_SPEC_API_VERSION = 'dsh-work.ai/v2'
 
-/** AgentSpec 的版本化格式标识；包清单 kind 为 AgentPackage（交付物），此处为归一化定义。 */
+/** AgentSpec 的版本化格式标识；已删除的 Agent 包（AgentPackage）交付物不再使用该标识。 */
 export interface AgentSpecLimits {
   timeoutSeconds: number
   maxToolCalls: number

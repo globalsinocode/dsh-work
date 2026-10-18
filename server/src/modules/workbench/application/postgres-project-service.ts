@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
+import {
+  projectGovernanceRoles as governanceRoles,
+  projectWriterRoles as writerRoles,
+  type ProjectTeamRole as TeamRole,
+} from '../../../domain/project-roles.ts'
 import { RequestError } from '../../../domain/request-errors.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { sha256 } from '../../runtime/canonical-json.ts'
@@ -12,9 +17,6 @@ import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
 const tenantId = 'tenant-dsh-work'
 
-type TeamRole = 'owner' | 'admin' | 'member' | 'viewer'
-const writerRoles: TeamRole[] = ['owner', 'admin', 'member']
-const governanceRoles: TeamRole[] = ['owner', 'admin']
 /** Run 仍会继续推进的状态：任务线程同一时间只允许一个。 */
 const activeRunStatuses = ['queued', 'running', 'waiting', 'cancel_requested']
 

@@ -60,8 +60,11 @@ export class ProjectArchiveEntry {
           taskCorrelationKey: update.updateId,
           taskRequestDigest: sha256(JSON.stringify(['project-archive/v1', workspaceId, update.updateId, update.baseVersionNo])),
         })
-        await archive.attachArchiveUpdateRun(update.updateId, run.id)
-        await this.dispatcher.failUndispatchedRun(run, () => this.dispatch(run, update))
+        // 认领关联与派发同属“未派发 Run”的保护范围：任一失败都收敛该 Run，避免留下孤儿 queued Run。
+        await this.dispatcher.failUndispatchedRun(run, async () => {
+          await archive.attachArchiveUpdateRun(update.updateId, run.id)
+          await this.dispatch(run, update)
+        })
       } catch (error) {
         await archive.abandonArchiveUpdate(update.updateId)
         throw error

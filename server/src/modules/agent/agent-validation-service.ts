@@ -516,6 +516,7 @@ export class PostgresAgentValidationService {
         from agent_validations v
        where c.tenant_id = ${tenantId} and c.id = ${row.id} and c.run_count = ${row.runCount}
          and v.tenant_id = c.tenant_id and v.id = c.validation_id
+         and v.status = 'running' and c.status <> 'running'
       returning v.session_id as "sessionId", v.agent_version_id as "agentVersionId"
     `
     const target = claimed[0]
@@ -542,6 +543,14 @@ export class PostgresAgentValidationService {
         update agent_validation_cases set status = 'running', run_id = ${runId}
          where tenant_id = ${tenantId} and id = ${row.id} and run_count = ${runCount} and status = 'queued'
       `
+      // 认领后验证被取代（supersede 会把案例改为 cancelled）：不再跟踪这次执行，立即取消刚创建的 Run。
+      const [assigned] = await this.database<{ id: string }[]>`
+        select id from agent_validation_cases
+         where tenant_id = ${tenantId} and id = ${row.id} and run_count = ${runCount} and run_id = ${runId}
+      `
+      if (!assigned) {
+        await this.runner.systemCancelRun(runId, 'system_revoke', '验证已被取代，取消本次案例执行').catch(() => undefined)
+      }
     } catch (error) {
       await this.failCase(row.id, runCount, error instanceof Error ? error.message : String(error))
       await this.finishIfDone(validationId)
