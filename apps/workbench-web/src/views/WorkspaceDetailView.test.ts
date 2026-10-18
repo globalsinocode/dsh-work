@@ -334,6 +334,17 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { tab: 'files' } })
   })
 
+  it('keeps the conversation tab active for an embedded task thread even with ?tab=tasks (PS-E2E-03)', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'run-001' }
+    route.query = { tab: 'tasks' }
+    const { wrapper } = await mountView(workspace())
+
+    const tabs = wrapper.findAll('[role="tab"]')
+    expect(tabs[1]!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('[data-testid="project-task-row"]').exists()).toBe(false)
+  })
+
   it('restores the history view from a ?view=history deep link after the workspace resolves', async () => {
     route.query = { view: 'history' }
     const { wrapper } = await mountView(workspace())

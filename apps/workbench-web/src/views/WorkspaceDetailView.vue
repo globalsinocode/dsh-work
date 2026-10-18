@@ -592,8 +592,14 @@ function openArtifactPreview(item: Artifact) {
 }
 
 watch(
-  () => [route.query.tab, isTeam.value] as const,
-  ([tab]) => {
+  () => [route.query.tab, isTeam.value, isConversationThreadRoute.value] as const,
+  ([tab, , isThread]) => {
+    // 项目任务线程以子路由打开（openThread 只写路径，不带 ?tab=），必须切到对话页签；
+    // 线程内再次导航（如发送后续消息）也要保持，不能被默认页签覆盖。
+    if (isThread) {
+      activeTab.value = 'conversation'
+      return
+    }
     const value = tab === undefined || tab === null || tab === '' ? defaultTab.value : String(tab)
     // 个人空间没有任务与档案页签：深链 ?tab=tasks / ?tab=archive 退回默认页签。
     if (TEAM_ONLY_TABS.includes(value as WorkspaceTab) && !isTeam.value) {
