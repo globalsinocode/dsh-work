@@ -137,4 +137,4 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ### 个人工作闭环增量
 
-规则见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
+规则见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。项目空间 P1 旅程运行 `pnpm test:e2e:project-space`（专用可丢弃 PostgreSQL + 合成 Runtime）。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。

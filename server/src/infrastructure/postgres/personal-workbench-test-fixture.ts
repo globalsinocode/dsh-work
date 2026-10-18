@@ -26,6 +26,21 @@ import { AutomationService } from '../../modules/automation/automation-service.t
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
+import { PostgresProjectArchiveService } from '../../modules/workbench/application/postgres-project-archive-service.ts'
+import { PostgresProjectService } from '../../modules/workbench/application/postgres-project-service.ts'
+import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
+import { PostgresWorkspaceMemberService } from '../../modules/workbench/application/postgres-workspace-member-service.ts'
+import { PostgresWorkspaceLifecycleService } from '../../modules/workbench/application/postgres-workspace-lifecycle-service.ts'
+import { PostgresWorkspaceActivityService } from '../../modules/workbench/application/postgres-workspace-activity-service.ts'
+import { PostgresWorkspaceUsageService } from '../../modules/workbench/application/postgres-workspace-usage-service.ts'
+import { PostgresWorkspaceService } from '../../modules/workbench/application/postgres-workspace-service.ts'
+import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
+import { registerProjectRoutes } from '../../http/workbench/project-routes.ts'
+import { registerWorkspaceAgentMemberRoutes } from '../../http/workbench/workspace-agent-member-routes.ts'
+import { registerWorkspaceMemberRoutes } from '../../http/workbench/workspace-member-routes.ts'
+import { registerWorkspaceLifecycleRoutes } from '../../http/workbench/workspace-lifecycle-routes.ts'
+import { registerWorkspaceActivityRoutes } from '../../http/workbench/workspace-activity-routes.ts'
+import { registerWorkspaceUsageRoutes } from '../../http/workbench/workspace-usage-routes.ts'
 
 export const testTenant = 'tenant-dsh-work'
 export async function personalWorkbenchFixture(prefix: string, options: {
@@ -33,6 +48,8 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   runtime?: AgentRuntimePort
   browser?: boolean
   automationMaxConcurrent?: number
+  /** P1 项目空间浏览器夹具：额外注册成员、Agent 成员、项目、生命周期、动态与用量路由。 */
+  projectSpace?: boolean
 } = {}) {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
@@ -43,12 +60,24 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const agents = new PostgresAgentService(db.client)
   const automationRepository = new PostgresAutomationRepository(db.client)
   const runtime = options.runtime ?? new UnavailableRuntime('runtime-local-01')
+  const projectArchive = options.projectSpace ? new PostgresProjectArchiveService(db.client) : undefined
+  const workspaceAgentMembers = options.projectSpace
+    ? new PostgresWorkspaceAgentMemberService(db.client, auth, agents)
+    : undefined
+  const projects = projectArchive && workspaceAgentMembers
+    ? new PostgresProjectService(db.client, workspaceAgentMembers, projectArchive)
+    : undefined
   const orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
     content, undefined, agents, undefined, auth, {
       automationMaxConcurrent: options.automationMaxConcurrent,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+      agentMembers: workspaceAgentMembers,
+      tasks: new PostgresTaskRepository(db.client),
+      projectTasks: projects,
+      projectArchive,
     })
+  if (projects) projects.attachRunStarter(orchestration)
   const automationService = new AutomationService(
     db.client,
     automationRepository,
@@ -68,6 +97,29 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   } })
   registerConversationRoutes(router, conversations, orchestration, runs, agents, auth)
   registerContentRoutes(router, content, auth)
+  let projectResources: {
+    projectArchive: PostgresProjectArchiveService
+    workspaceAgentMembers: PostgresWorkspaceAgentMemberService
+    projects: PostgresProjectService
+    workspaceMembers: PostgresWorkspaceMemberService
+    lifecycle: PostgresWorkspaceLifecycleService
+    activity: PostgresWorkspaceActivityService
+    usage: PostgresWorkspaceUsageService
+  } | undefined
+  if (options.projectSpace && projects && projectArchive && workspaceAgentMembers) {
+    const workspaceService = new PostgresWorkspaceService(db.client)
+    const workspaceMembers = new PostgresWorkspaceMemberService(db.client, auth)
+    const lifecycle = new PostgresWorkspaceLifecycleService(db.client)
+    const activity = new PostgresWorkspaceActivityService(db.client, workspaceService)
+    const usage = new PostgresWorkspaceUsageService(db.client, workspaceService, auth)
+    registerWorkspaceMemberRoutes(router, workspaceMembers, auth)
+    registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, auth)
+    registerProjectRoutes(router, projects, auth, projectArchive)
+    registerWorkspaceLifecycleRoutes(router, lifecycle, auth)
+    registerWorkspaceActivityRoutes(router, activity, auth)
+    registerWorkspaceUsageRoutes(router, usage, auth)
+    projectResources = { projectArchive, workspaceAgentMembers, projects, workspaceMembers, lifecycle, activity, usage }
+  }
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
     registerAutomationRoutes(router, automationService)
@@ -84,8 +136,9 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   assert.ok(address && typeof address !== 'string')
   const origin = `http://127.0.0.1:${address.port}/api/workbench/v1`
   return {
-    db, root, auth, content, conversations, runs, orchestration, automationRepository,
+    db, root, auth, content, conversations, runs, orchestration, agents, automationRepository,
     automationService, origin, router,
+    ...projectResources,
     async api(path: string, init?: RequestInit) {
       const response = await fetch(origin + path, init)
       return { status: response.status, body: await response.json() }

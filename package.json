@@ -93,6 +93,7 @@
     "test:review:8b:integration": "pnpm --filter @dsh-work/server test:review:8b:integration",
     "test:review:batch03:integration": "pnpm --filter @dsh-work/server test:review:batch03:integration",
     "test:e2e:personal": "playwright test --config playwright.personal.config.ts",
+    "test:e2e:project-space": "playwright test --config playwright.project-space.config.ts",
     "test:e2e:automation": "playwright test --config playwright.automation.config.ts",
     "test:e2e:mcp-admin": "playwright test --config playwright.mcp-admin.config.ts",
     "test:e2e:agent-principal": "playwright test --config playwright.agent-principal.config.ts",
