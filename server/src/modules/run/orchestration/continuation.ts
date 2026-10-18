@@ -8,9 +8,10 @@ import type { PostgresConversationRepository } from '../../workbench/application
  * before the partial outputs — otherwise the model sees "partial answer →
  * question" and re-answers instead of continuing. The manifest message then
  * becomes a continue instruction rather than the question repeated.
- * The merge stays inside the conversation budget (EX-02, 64000 chars); history
- * 是摘要覆盖点之后的对话，淘汰它会留下摘要与保留历史之间的静默空档，因此优先
- * 淘汰最旧的部分回答；只有历史与原始问题本身超限时才动历史（保留首条消息）。
+ * The merge stays inside the conversation budget (EX-02, 64000 chars): older
+ * partial outputs go first, then the oldest history (keeping the first message),
+ * and the newest partial output is only ever truncated, never dropped — dropping
+ * it would silently turn the continuation into a fresh answer.
  */
 export interface ContinuationBounds {
   maxMessages: number
@@ -43,20 +44,23 @@ export async function withContinuationOutputs(
   for (const output of outputs) merged.push({ role: 'assistant' as const, content: output.content })
   let keptOutputs = outputs.length
   let used = merged.reduce((total, entry) => total + entry.content.length, 0)
-  // 优先淘汰最旧的部分回答：history 是摘要覆盖点之后的对话，淘汰它会留下
-  // “摘要覆盖到 X、保留历史却从 Y 开始”的静默空档。部分回答全部淘汰且历史仍超限时，
-  // 才动历史并保留首条消息（EX-02）。
-  const firstOutputIndex = questionIndex >= 0 ? questionIndex + 1 : merged.length
-  while ((used > maxChars || merged.length > maxMessages) && merged.length > firstOutputIndex) {
+  const overBudget = () => used > maxChars || merged.length > maxMessages
+  // 淘汰顺序（P2-26）：
+  // 1. 较早的部分回答——最新一条是续写的断点，必须保留；
+  // 2. 最旧的会话历史（保留首条消息，EX-02）——会在摘要与保留历史之间留下空档，只在 1 不够时动；
+  // 3. 最后截取最新部分回答的结尾。整段丢掉最新输出会让续写退回重新作答。
+  const firstOutputIndex = questionIndex + 1
+  while (overBudget() && keptOutputs > 1) {
     used -= merged.splice(firstOutputIndex, 1)[0]!.content.length
     keptOutputs -= 1
   }
-  if (keptOutputs === 0 && questionIndex >= 0) {
-    used -= merged.splice(questionIndex, 1)[0]!.content.length
-  }
-  const protectedTail = evictFrom + 1
-  while ((used > maxChars || merged.length > maxMessages) && merged.length > protectedTail) {
+  // 受保护的尾部：原始问题与最新部分回答（无部分输出时是最后一条历史）。
+  const protectedTail = keptOutputs > 0 ? 2 : 1
+  while (overBudget() && merged.length > evictFrom + protectedTail) {
     used -= merged.splice(evictFrom, 1)[0]!.content.length
+  }
+  while (overBudget() && evictFrom > 0 && merged.length > protectedTail) {
+    used -= merged.splice(0, 1)[0]!.content.length
   }
   if (used > maxChars && merged.length) {
     const last = merged.at(-1)!
