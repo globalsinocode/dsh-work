@@ -35,23 +35,30 @@ export async function withContinuationOutputs(
   const outputs = (await conversations.getRunAssistantOutputs(runId)).filter(output => output.content.trim())
   // Index of the oldest entry that may be evicted.
   const evictFrom = bounds.keepFirst && history.length > 0 ? 1 : 0
-  // 尾部受保护段 = 原始问题 + 各次已提交的部分回答。history 是摘要覆盖点之后的对话：
-  // 淘汰它会留下“摘要说覆盖到 X、保留历史却从 Y 开始”的静默空档，因此优先淘汰最旧的
-  // 部分回答；只有历史 + 原始问题本身超限时才动历史（并保留首条消息，EX-02）。
-  const merged = [...history, { role: 'user' as const, content: prompt }]
-  const firstOutputIndex = merged.length
+  // 没有部分输出时不追加问题：调用方会把 prompt 作为 input.message 单独发送，
+  // 追加会在上下文里重复同一句话。
+  const merged = [...history]
+  const questionIndex = outputs.length ? merged.length : -1
+  if (questionIndex >= 0) merged.push({ role: 'user' as const, content: prompt })
   for (const output of outputs) merged.push({ role: 'assistant' as const, content: output.content })
   let keptOutputs = outputs.length
   let used = merged.reduce((total, entry) => total + entry.content.length, 0)
+  // 优先淘汰最旧的部分回答：history 是摘要覆盖点之后的对话，淘汰它会留下
+  // “摘要覆盖到 X、保留历史却从 Y 开始”的静默空档。部分回答全部淘汰且历史仍超限时，
+  // 才动历史并保留首条消息（EX-02）。
+  const firstOutputIndex = questionIndex >= 0 ? questionIndex + 1 : merged.length
   while ((used > maxChars || merged.length > maxMessages) && merged.length > firstOutputIndex) {
     used -= merged.splice(firstOutputIndex, 1)[0]!.content.length
     keptOutputs -= 1
   }
+  if (keptOutputs === 0 && questionIndex >= 0) {
+    used -= merged.splice(questionIndex, 1)[0]!.content.length
+  }
   const protectedTail = evictFrom + 1
-  while ((used > maxChars || merged.length > maxMessages) && merged.length > protectedTail + 1) {
+  while ((used > maxChars || merged.length > maxMessages) && merged.length > protectedTail) {
     used -= merged.splice(evictFrom, 1)[0]!.content.length
   }
-  if (used > maxChars) {
+  if (used > maxChars && merged.length) {
     const last = merged.at(-1)!
     const room = Math.max(0, maxChars - (used - last.content.length))
     merged[merged.length - 1] = { ...last, content: last.content.slice(-room) }

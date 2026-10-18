@@ -372,7 +372,7 @@ test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完
   await drainRuntime()
 })
 
-test('重启恢复：Run 已不存在的中断整理批次释放认领（P2-6）', async () => {
+test('重启恢复：认领后未挂 Run 且过期的整理批次被释放（P2-6）', async () => {
   const ws = await seedSpace('archive-recovery')
   const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
     as: ws.member, body: { title: '恢复测试任务', assignee: { type: 'employee', id: ws.member } },
@@ -382,7 +382,7 @@ test('重启恢复：Run 已不存在的中断整理批次释放认领（P2-6）
   const updateId = `warchup-${randomUUID()}`
   await database`
     insert into workspace_archivist_state (tenant_id, workspace_id, update_id, run_id, base_version_no, started_at, updated_at)
-    values (${tenantId}, ${ws.id}, ${updateId}, ${`run-missing-${randomUUID()}`}, 0, now(), now())
+    values (${tenantId}, ${ws.id}, ${updateId}, null, 0, now() - interval '20 minutes', now())
   `
   await database`
     insert into workspace_archive_inputs (id, tenant_id, workspace_id, project_task_id, title, content, update_id)

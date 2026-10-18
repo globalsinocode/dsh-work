@@ -24,8 +24,8 @@ test('续写超预算时先淘汰最旧的部分回答，保留摘要后的完�
   ]
   // 历史 + 问题 = 67 字，加 40 字部分回答会到 107，超过 100 的预算。
   const result = await withContinuationOutputs(port(['C'.repeat(40)]), history, 'run-1', '继续', bounds(100))
-  // 历史与问题原样保留，不出现“摘要后从中间开始”的空档。
-  assert.deepEqual(result.history, [...history, message('user', '继续')])
+  // 历史原样保留，不出现“摘要后从中间开始”的空档；问题由 input.message 单独携带。
+  assert.deepEqual(result.history, history)
   // 部分回答全部被淘汰后不能再声称“从断点续写”，回退为原始问题。
   assert.equal(result.message, '继续')
 })
@@ -44,7 +44,7 @@ test('历史与问题本身超限时才淘汰历史，且保留首条消息（EX
     message('user', 'B'.repeat(40)),
   ]
   const result = await withContinuationOutputs(port([]), history, 'run-1', '继续', bounds(60))
-  assert.deepEqual(result.history, [history[0], history[2], message('user', '继续')])
+  assert.deepEqual(result.history, [history[0], history[2]])
   assert.equal(result.message, '继续')
 })
 
