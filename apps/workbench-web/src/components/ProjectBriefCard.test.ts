@@ -42,13 +42,14 @@ describe('ProjectBriefCard（项目空间 S1）', () => {
     const wrapper = mountCard()
     await flushPromises()
     const toggle = wrapper.get('[data-testid="project-brief-toggle"]')
+    const bodyId = toggle.attributes('aria-controls')!
     expect(toggle.attributes('aria-expanded')).toBe('true')
     await toggle.trigger('click')
     expect(toggle.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.get('#project-brief-body').attributes('style')).toContain('display: none')
+    expect(wrapper.get(`#${bodyId}`).attributes('style')).toContain('display: none')
     expect(wrapper.find('[data-testid="project-brief-edit"]').exists()).toBe(false)
     await toggle.trigger('click')
-    expect(wrapper.get('#project-brief-body').attributes('style') ?? '').not.toContain('display: none')
+    expect(wrapper.get(`#${bodyId}`).attributes('style') ?? '').not.toContain('display: none')
     expect(wrapper.find('[data-testid="project-brief-edit"]').exists()).toBe(true)
   })
 

@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useId } from 'vue'
 import { ArrowDown, ArrowRight, Cpu, FolderOpened, Lock, Setting, UserFilled } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { describeWorkspaceActivity, type WorkspaceActivityKind } from './workspace-activity'
+
+// 桌面右栏与移动抽屉可能同时存在实例；组件级唯一 id 让 aria-controls 指向自己的面板。
+const membersPanelId = useId()
+const agentsPanelId = useId()
 
 type TeamMemberRole = 'owner' | 'admin' | 'member' | 'viewer'
 
@@ -276,7 +280,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
               type="button"
               data-testid="panel-members-toggle"
               :aria-expanded="!collapsedSections.members"
-              aria-controls="workspace-info-panel-members"
+              :aria-controls="membersPanelId"
               @click="toggleSection('members')"
             >
               <el-icon class="workspace-info-panel__chevron" :class="{ 'is-collapsed': collapsedSections.members }"><ArrowDown /></el-icon>
@@ -298,7 +302,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 
       <div
         v-show="!collapsedSections.members"
-        id="workspace-info-panel-members"
+        :id="membersPanelId"
         data-testid="panel-employee-section"
         class="workspace-member-list"
         :aria-label="`${workspace.name}员工成员`"
@@ -332,7 +336,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
               type="button"
               data-testid="panel-agents-toggle"
               :aria-expanded="!collapsedSections.agents"
-              aria-controls="workspace-info-panel-agents"
+              :aria-controls="agentsPanelId"
               @click="toggleSection('agents')"
             >
               <el-icon class="workspace-info-panel__chevron" :class="{ 'is-collapsed': collapsedSections.agents }"><ArrowDown /></el-icon>
@@ -352,7 +356,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
           管理 Agent
         </button>
       </div>
-      <div v-show="!collapsedSections.agents" id="workspace-info-panel-agents">
+      <div v-show="!collapsedSections.agents" :id="agentsPanelId">
       <div v-if="agentMembers.length" class="workspace-agent-list">
         <article
           v-for="agent in agentMembers"
@@ -756,15 +760,15 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 }
 
 .workspace-member--more {
-  color: #6f756f;
-  background: #e9ebe8;
+  color: var(--dsh-color-muted);
+  background: var(--dsh-color-canvas);
 }
 
 .workspace-member-list__names {
   min-width: 0;
   margin-left: 9px;
   overflow: hidden;
-  color: #777d78;
+  color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -826,13 +830,13 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 }
 
 .workspace-info-panel__toggle:focus-visible {
-  outline: 2px solid #2e8b70;
+  outline: 2px solid var(--dsh-color-brand);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 .workspace-info-panel__chevron {
-  color: #9ba09c;
+  color: var(--dsh-color-subtle);
   transition: transform 0.15s ease;
 }
 

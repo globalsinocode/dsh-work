@@ -100,12 +100,14 @@ describe('WorkspaceInfoPanel 团队分支', () => {
     await membersToggle.trigger('click')
     expect(membersToggle.attributes('aria-expanded')).toBe('false')
     expect(wrapper.get('[data-testid="panel-employee-section"]').attributes('style')).toContain('display: none')
-    expect(wrapper.get('#workspace-info-panel-agents').attributes('style') ?? '').not.toContain('display: none')
 
     const agentsToggle = wrapper.get('[data-testid="panel-agents-toggle"]')
+    const agentsPanelId = agentsToggle.attributes('aria-controls')!
+    expect(wrapper.get(`#${agentsPanelId}`).attributes('style') ?? '').not.toContain('display: none')
+
     await agentsToggle.trigger('click')
     expect(agentsToggle.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.get('#workspace-info-panel-agents').attributes('style')).toContain('display: none')
+    expect(wrapper.get(`#${agentsPanelId}`).attributes('style')).toContain('display: none')
     // 计数在收起时仍显示。
     expect(wrapper.get('[data-testid="panel-employee-count"]').text()).toBe('4 位员工')
 

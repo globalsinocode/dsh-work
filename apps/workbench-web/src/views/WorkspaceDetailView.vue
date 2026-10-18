@@ -1353,39 +1353,42 @@ watch(
       size="min(360px, 100vw)"
       :with-header="false"
     >
-      <ProjectBriefCard
-        v-if="isTeam"
-        class="workspace-context-page__brief"
-        :workspace-id="workspace.id"
-        :workspace-name="workspace.name"
-        :can-edit="canEditBrief"
-      />
-      <WorkspaceInfoPanel
-        class="workspace-context-page__info"
-        :workspace="workspace"
-        :data-scopes="authStore.user.dataScopes"
-        :current-user-role="currentUserRole"
-        :agent-members="agentMembers"
-        :activity-items="activitySummaryItems"
-        :activity-loading="activityLoading"
-        :activity-error="activityError"
-        :notification-error="notificationError"
-        :unread-count="activityUnread"
-        :muted="activityMuted"
-        :can-view-usage="canViewUsage"
-        :usage-summary="usageSummary"
-        :usage-loading="usageLoading"
-        :usage-error="usageError"
-        @manage-members="memberDialogOpen = true"
-        @manage-agents="agentDialogOpen = true"
-        @open-settings="settingsDialogOpen = true"
-        @view-all-activity="openActivityDrawer"
-        @mark-activity-read="markActivityRead"
-        @toggle-activity-mute="toggleActivityMute"
-        @retry-activity="retryActivity"
-        @view-usage-detail="openUsageDialog"
-        @retry-usage="retryUsage"
-      />
+      <!-- 仅在抽屉打开时挂载：桌面端不会打开它，避免与右栏 aside 同时挂载产生重复请求与 DOM id。 -->
+      <template v-if="mobileInfoOpen">
+        <ProjectBriefCard
+          v-if="isTeam"
+          class="workspace-context-page__brief"
+          :workspace-id="workspace.id"
+          :workspace-name="workspace.name"
+          :can-edit="canEditBrief"
+        />
+        <WorkspaceInfoPanel
+          class="workspace-context-page__info"
+          :workspace="workspace"
+          :data-scopes="authStore.user.dataScopes"
+          :current-user-role="currentUserRole"
+          :agent-members="agentMembers"
+          :activity-items="activitySummaryItems"
+          :activity-loading="activityLoading"
+          :activity-error="activityError"
+          :notification-error="notificationError"
+          :unread-count="activityUnread"
+          :muted="activityMuted"
+          :can-view-usage="canViewUsage"
+          :usage-summary="usageSummary"
+          :usage-loading="usageLoading"
+          :usage-error="usageError"
+          @manage-members="memberDialogOpen = true"
+          @manage-agents="agentDialogOpen = true"
+          @open-settings="settingsDialogOpen = true"
+          @view-all-activity="openActivityDrawer"
+          @mark-activity-read="markActivityRead"
+          @toggle-activity-mute="toggleActivityMute"
+          @retry-activity="retryActivity"
+          @view-usage-detail="openUsageDialog"
+          @retry-usage="retryUsage"
+        />
+      </template>
     </el-drawer>
 
     <el-drawer

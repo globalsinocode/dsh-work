@@ -38,7 +38,7 @@ test('PS-E2E-02 员工任务创建与完成', async ({ page }) => {
   await expect(tabs.getByRole('tab', { name: /^任务/ })).toHaveAttribute('aria-selected', 'true')
 
   const title = `整理华东供应商名单 ${Date.now()}`
-  await page.getByTestId('project-task-create').click()
+  await page.getByRole('button', { name: '新建任务' }).first().click()
   const editor = page.getByRole('dialog', { name: '新建任务' })
   await editor.getByLabel('任务标题').fill(title)
   await editor.getByLabel('任务说明').fill('按区域分组')
@@ -93,7 +93,7 @@ test('PS-E2E-05 项目档案查看、编辑与回退', async ({ page }) => {
 
   // 添加一条、删除一条（删除前确认）：每次保存都生成新版本。
   const added = `进展：安全库存方案待评审（${Date.now()}）`
-  await page.getByTestId('project-archive-add').click()
+  await page.getByRole('button', { name: '添加一条' }).click()
   await page.getByLabel('新条目').fill(added)
   await page.getByRole('button', { name: '添加', exact: true }).click()
   await expect(items.last()).toContainText(added)
@@ -107,7 +107,7 @@ test('PS-E2E-05 项目档案查看、编辑与回退', async ({ page }) => {
   await expect(meta).toContainText(`第 ${start + 3} 版`)
 
   // 版本历史：查看档案员版本的变更，回退到第 1 版生成新版本，历史保留。
-  await page.getByTestId('project-archive-history').click()
+  await page.getByRole('button', { name: '版本历史' }).click()
   const history = page.getByRole('dialog', { name: '档案版本历史' })
   const versions = history.getByTestId('project-archive-version')
   await expect(versions).toHaveCount(start + 3)

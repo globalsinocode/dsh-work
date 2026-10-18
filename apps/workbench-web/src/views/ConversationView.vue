@@ -161,6 +161,8 @@ const taskThreadAgentId = computed(() =>
 const taskThreadAgentName = computed(() =>
   projectTask.value?.assignee.type === 'agent' ? projectTask.value.assignee.name : '')
 const markingAsTask = ref(false)
+const projectTaskLoading = ref(false)
+const projectTaskError = ref('')
 /** 已经过 @Agent 执行、但还不是任务的团队线程，可由非只读成员设为任务。 */
 const canMarkAsTask = computed(() => {
   if (!isTeamSession.value || projectTask.value || !currentSessionId.value) return false
@@ -172,15 +174,29 @@ async function loadProjectTask(workspaceId: string | undefined) {
   const sessionId = currentSessionId.value
   if (!workspaceId || !isTeamSession.value || !sessionId) {
     projectTask.value = null
+    projectTaskError.value = ''
+    projectTaskLoading.value = false
     return
   }
+  projectTaskLoading.value = true
+  projectTaskError.value = ''
   try {
     const tasks = await workbenchApi.listProjectTasks(workspaceId)
     if (currentSessionId.value !== sessionId) return
     projectTask.value = tasks.find(item => item.sessionId === sessionId) ?? null
-  } catch {
+  } catch (error) {
+    // 读取失败时不能把任务线程当作普通讨论线程：回复会静默不触发 Agent。
     projectTask.value = null
+    projectTaskError.value = error instanceof Error ? error.message : '任务线程信息读取失败'
+  } finally {
+    projectTaskLoading.value = false
   }
+}
+
+/** 任务线程信息读取失败后手动重试。 */
+function reloadProjectTask() {
+  const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId ?? currentWorkspace.value?.id
+  void loadProjectTask(workspaceId)
 }
 
 async function markAsTask() {
@@ -297,13 +313,16 @@ async function stopCurrentRun() {
   }
 }
 
-async function retryRun() {
-  if (!task.value || !canOperateRun.value) return
+async function retryRun(): Promise<boolean> {
+  if (!task.value || !canOperateRun.value) return false
   try {
-    await taskStore.retryTask(task.value.id)
+    const next = await taskStore.retryTask(task.value.id)
     ElMessage.success('已创建新的运行尝试')
+    if (next && next.id !== task.value.id) await router.replace(conversationPath(next.id))
+    return true
   } catch (error) {
     notifyActionFailure('重新执行', `运行 ${task.value.id}`, error, '刷新对话状态；确认本轮仍为失败或已停止后再重试。')
+    return false
   }
 }
 
@@ -387,6 +406,13 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
   // TW-10 防线：viewer/角色未知不允许发言或触发执行，不能只靠模板不渲染
   // composer——函数本身也要 fail-closed。服务端写轨仍是最终裁决。
   if (!task.value || workspaceArchived.value || isRunViewer.value) return
+  // 任务线程识别完成前不把回复当讨论消息发送：那会静默不触发承接 Agent。
+  if (isTeamSession.value && (projectTaskLoading.value || projectTaskError.value)) {
+    ElMessage.warning(projectTaskError.value
+      ? '任务线程信息读取失败，为避免误发为讨论消息，请先重试读取'
+      : '正在确认任务线程，请稍候再发送')
+    return
+  }
   try {
     const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
     if (isTeamSession.value && !mentionedMemberId) {
@@ -415,8 +441,7 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
         const decision = await askContinueIntent(choice)
         if (decision === 'abort') return
         if (decision === 'primary' && choice.kind === 'retry') {
-          await retryRun()
-          payload.confirm?.()
+          if (await retryRun()) payload.confirm?.()
           return
         }
         if (decision === 'primary' && choice.kind === 'revise') referencedArtifacts.value = [...choice.artifacts]
@@ -439,6 +464,12 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
 async function submitSessionMessage(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
   const thread = sessionThread.value
   if (!thread || !canWriteSession.value) return
+  if (isTeamSession.value && (projectTaskLoading.value || projectTaskError.value)) {
+    ElMessage.warning(projectTaskError.value
+      ? '任务线程信息读取失败，为避免误发为讨论消息，请先重试读取'
+      : '正在确认任务线程，请稍候再发送')
+    return
+  }
   try {
     const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] ?? taskThreadAgentId.value : undefined
     // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
@@ -755,6 +786,10 @@ watch(
           <p v-if="canWriteSession && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
             任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
           </p>
+          <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
+            任务线程信息读取失败：{{ projectTaskError }}
+            <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
+          </p>
           <TaskComposer
             v-if="canWriteSession"
             compact
@@ -1026,6 +1061,10 @@ watch(
           </div>
           <p v-if="canFollowUp && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
             任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+          </p>
+          <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
+            任务线程信息读取失败：{{ projectTaskError }}
+            <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
           </p>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
             v-if="canFollowUp"
@@ -1540,13 +1579,13 @@ watch(
   align-items: center;
   min-height: 42px;
   gap: 10px;
-  color: #6e746f;
+  color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-caption);
 }
 
 .working-quiet {
   margin: 4px 0 0 34px;
-  color: #8a6d1f;
+  color: var(--dsh-color-warning);
   font-size: var(--dsh-font-size-caption);
   line-height: 1.6;
 }

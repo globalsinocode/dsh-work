@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const MAX_TEST_CASES = 20
 const MAX_TEST_CASE_CHARS = 2000
 const POLL_INTERVAL_MS = 2000
+const MAX_POLL_FAILURES = 3
 
 const sourceLabel: Record<ValidationCaseSource, string> = {
   example: '示例问题',
@@ -67,6 +68,9 @@ const access = ref<AgentAccess>()
 const accessLoadError = ref('')
 
 const prompts = ref<string[]>([])
+const promptsInitialized = ref(false)
+const pollError = ref('')
+let pollFailures = 0
 const rejectingCaseId = ref('')
 const rejectNote = ref('')
 const changingVerdictId = ref('')
@@ -115,7 +119,13 @@ function showError(cause: unknown, fallback: string) {
 
 function applyOverview(next: AgentReleaseOverview) {
   overview.value = next
-  if (!promptsDirty.value || !prompts.value.length) prompts.value = next.testCases.map(item => item.prompt)
+  // 首次读取或本地无未保存修改时才覆盖输入框；用户把问题删空但未保存时不回填旧值。
+  if (!promptsInitialized.value) {
+    prompts.value = next.testCases.map(item => item.prompt)
+    promptsInitialized.value = true
+  } else if (!promptsDirty.value) {
+    prompts.value = next.testCases.map(item => item.prompt)
+  }
   if (next.validation) validation.value = next.validation
   else validation.value = undefined
   schedulePoll()
@@ -175,14 +185,32 @@ async function rollback(item: AgentVersionHistoryItem) {
   }
 }
 
-async function refreshValidation() {
+async function refreshValidation(): Promise<boolean> {
   const current = validation.value
-  if (!current) return
+  if (!current) return true
   try {
     validation.value = await adminApi.getAgentValidation(agentId.value, current.id)
+    pollError.value = ''
+    pollFailures = 0
+    return true
   } catch (cause) {
-    showError(cause, '验证进度读取失败')
+    // 轮询失败不连续弹全局错误；累计到上限后暂停自动刷新，页面内提供重试。
+    pollFailures += 1
+    pollError.value = cause instanceof Error ? cause.message : '验证进度读取失败'
+    if (pollFailures >= MAX_POLL_FAILURES) {
+      stopPolling()
+      pollError.value = `${pollError.value}（已暂停自动刷新）`
+    }
+    return false
   }
+}
+
+/** 手动重试读取验证进度；成功后恢复轮询。 */
+async function retryPolling() {
+  pollFailures = 0
+  pollError.value = ''
+  await refreshValidation()
+  if (!pollError.value) schedulePoll()
 }
 
 function stopPolling() {
@@ -198,8 +226,9 @@ function schedulePoll() {
   const epoch = pollEpoch
   pollTimer = setTimeout(async () => {
     if (epoch !== pollEpoch) return
-    await refreshValidation()
+    const ok = await refreshValidation()
     if (epoch !== pollEpoch) return
+    if (!ok && pollFailures >= MAX_POLL_FAILURES) return
     if (validation.value?.status === 'running') schedulePoll()
     else await loadOverview()
   }, POLL_INTERVAL_MS)
@@ -349,6 +378,9 @@ onBeforeUnmount(stopPolling)
 
     <template v-else-if="overview">
       <el-alert v-if="publishedVersion" class="section-alert" type="success" show-icon :closable="false" title="发布完成" :description="`v${publishedVersion} 已成为当前版本；验证结果与判定已随版本保存，可在下方版本历史中回滚。`" />
+      <el-alert v-if="pollError" class="section-alert" type="warning" show-icon :closable="false" :title="pollError">
+        <el-button link type="primary" @click="retryPolling">重试读取</el-button>
+      </el-alert>
 
       <section v-if="!working && !liveValidation" class="content-panel validation-card">
         <el-empty description="当前没有待发布的草稿；在职责与人格或能力中修改会生成新的草稿版本" :image-size="72">

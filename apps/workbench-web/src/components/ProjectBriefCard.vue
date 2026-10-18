@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, useId, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, EditPen } from '@element-plus/icons-vue'
 
 import { workbenchApi } from '@/api/client'
 import type { ProjectBrief } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+
+// 桌面右栏与移动抽屉可能同时存在实例；用组件级唯一 id 避免 aria 关联指向另一份副本。
+const briefTitleId = useId()
+const briefBodyId = useId()
 
 /**
  * 项目空间 S1：右栏顶部的项目简报（docs/design/project-space-plan.md 第 4 节）。
@@ -108,15 +112,15 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <section class="project-brief" aria-labelledby="project-brief-title" data-testid="project-brief">
+  <section class="project-brief" :aria-labelledby="briefTitleId" data-testid="project-brief">
     <header class="project-brief__header">
-      <h2 id="project-brief-title">
+      <h2 :id="briefTitleId">
         <button
           class="project-brief__toggle"
           type="button"
           data-testid="project-brief-toggle"
           :aria-expanded="!collapsed"
-          aria-controls="project-brief-body"
+          :aria-controls="briefBodyId"
           @click="toggleCollapsed"
         >
           <el-icon class="project-brief__chevron" :class="{ 'is-collapsed': collapsed }"><ArrowDown /></el-icon>
@@ -134,7 +138,7 @@ defineExpose({ reload: load })
       </el-button>
     </header>
 
-    <div v-show="!collapsed" id="project-brief-body">
+    <div v-show="!collapsed" :id="briefBodyId">
     <p v-if="loading && !brief" class="project-brief__muted">正在加载简报…</p>
     <p v-else-if="loadError" class="project-brief__muted">
       简报加载失败。

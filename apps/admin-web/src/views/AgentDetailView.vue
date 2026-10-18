@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 
@@ -45,6 +45,10 @@ const activeSection = computed<SectionId>(() => {
   const value = String(route.query.section ?? '')
   return sections.some(section => section.id === value) ? value as SectionId : 'profile'
 })
+// 分区首次访问后保持挂载（v-show 切换）：岗位权限与自定义测试问题的未保存输入不会因切分区丢失。
+const visitedSections = ref(new Set<SectionId>([activeSection.value]))
+watch(activeSection, id => visitedSections.value.add(id), { immediate: true })
+const loadFailed = computed(() => Boolean(contentStore.error) && !agent.value)
 const canManage = computed(() => authStore.canManage)
 const editor = provideAgentDraftEditor(agent, { canEdit: canManage })
 
@@ -78,6 +82,25 @@ const activeVersionLabel = computed(() => activeVersion.value ? `v${activeVersio
 async function openSection(id: SectionId) {
   if (id === activeSection.value) return
   await router.replace({ query: { ...route.query, section: id } })
+}
+
+/** WAI-ARIA tabs 键盘导航：方向键循环、Home/End 到首尾，并移动焦点。 */
+function onTabKeydown(event: KeyboardEvent, index: number) {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? sections.length - 1
+      : ['ArrowLeft', 'ArrowUp'].includes(event.key)
+        ? (index - 1 + sections.length) % sections.length
+        : (index + 1) % sections.length
+  const target = sections[next]!
+  void openSection(target.id)
+  void nextTick(() => document.getElementById(`agent-detail-tab-${target.id}`)?.focus())
+}
+
+async function reloadDetail() {
+  contentStore.error = ''
+  await contentStore.load(true)
 }
 
 async function reloadDraft() {
@@ -156,6 +179,15 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
       <el-skeleton :rows="6" animated />
     </section>
 
+    <section v-else-if="loadFailed" class="content-panel detail-placeholder">
+      <el-result icon="error" title="Agent 加载失败" :sub-title="contentStore.error || '管理数据暂时无法读取。'">
+        <template #extra>
+          <el-button type="primary" @click="reloadDetail">重试</el-button>
+          <el-button @click="router.push('/agents')">返回 Agent 管理</el-button>
+        </template>
+      </el-result>
+    </section>
+
     <section v-else-if="!agent" class="content-panel detail-placeholder">
       <el-result icon="warning" title="未找到 Agent" sub-title="该 Agent 可能已被移除。">
         <template #extra><el-button type="primary" @click="router.push('/agents')">返回 Agent 管理</el-button></template>
@@ -186,21 +218,30 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
 
       <nav class="status-tabs detail-tabs" role="tablist" aria-label="Agent 详情分区">
         <button
-          v-for="section in sections"
+          v-for="(section, index) in sections"
+          :id="`agent-detail-tab-${section.id}`"
           :key="section.id"
           class="status-tab"
           :class="{ active: activeSection === section.id }"
           type="button"
           role="tab"
           :aria-selected="activeSection === section.id"
+          :aria-controls="`agent-detail-panel-${section.id}`"
+          :tabindex="activeSection === section.id ? 0 : -1"
           @click="openSection(section.id)"
+          @keydown="onTabKeydown($event, index)"
         >{{ section.label }}</button>
       </nav>
 
-      <div class="detail-body" role="tabpanel" :aria-label="sections.find(section => section.id === activeSection)?.label">
+      <div
+        :id="`agent-detail-panel-${activeSection}`"
+        class="detail-body"
+        role="tabpanel"
+        :aria-labelledby="`agent-detail-tab-${activeSection}`"
+      >
         <div v-show="activeSection === 'profile'" class="content-panel detail-card"><AgentProfileSection /></div>
         <div v-show="activeSection === 'capabilities'" class="content-panel detail-card"><AgentCapabilitySection /></div>
-        <template v-if="activeSection === 'access'">
+        <div v-if="visitedSections.has('access')" v-show="activeSection === 'access'">
           <div class="content-panel detail-card">
             <section class="detail-section">
               <header class="detail-section__head"><div><h3>岗位权限</h3><p>谁可以向它请求工作、它持有哪些岗位角色、能接触哪些数据。属于 Agent 而非版本，修改立即生效并写审计，不需要重新验证。</p></div></header>
@@ -208,16 +249,16 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
             </section>
           </div>
           <AgentWorkspaceGovernance :agent="agent" :can-manage="canManage" />
-        </template>
-        <div v-else-if="activeSection === 'routines'" class="content-panel detail-card">
+        </div>
+        <div v-if="visitedSections.has('routines')" v-show="activeSection === 'routines'" class="content-panel detail-card">
           <section class="detail-section" aria-label="主动任务">
             <header class="detail-section__head"><div><h3>主动任务</h3><p>按时间或事件主动工作，结果交给接收人。规则启用时固定当时的发布版本；启用中的任务提示词会自动列入验证案例。</p></div></header>
             <AgentRoutinePanel :agent-id="agent.id" :versions="versions" :can-manage="canManage" />
           </section>
         </div>
-        <div v-else-if="activeSection === 'experience'" class="content-panel detail-card"><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
-        <AgentReleasePanel v-else-if="activeSection === 'release'" :agent-id="agent.id" @open-access="openSection('access')" @edit="openSection('profile')" />
-        <div v-else-if="activeSection === 'runs'" class="content-panel detail-card"><AgentRunsPanel :agent-id="agent.id" /></div>
+        <div v-if="visitedSections.has('experience')" v-show="activeSection === 'experience'" class="content-panel detail-card"><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
+        <AgentReleasePanel v-if="visitedSections.has('release')" v-show="activeSection === 'release'" :agent-id="agent.id" @open-access="openSection('access')" @edit="openSection('profile')" />
+        <div v-if="visitedSections.has('runs')" v-show="activeSection === 'runs'" class="content-panel detail-card"><AgentRunsPanel :agent-id="agent.id" /></div>
       </div>
     </template>
   </div>
