@@ -20,7 +20,25 @@ import type {
 } from '../../server/src/modules/runtime/runtime-types.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4394)
-const archivedItem = 'P1 归档：员工任务已完成'
+// 档案条目按本次整理的任务标题生成：用例标题带随机后缀，重跑时条目不重复，
+// 断言也不会被上一次运行留下的同名条目“提前满足”。
+const archivedItemPrefix = 'P1 归档：'
+
+/** 从档案员输入中取出本批任务标题（archivistRunPrompt 的“新完成的任务成果”JSON）。 */
+function archivedItemsFor(manifest: RuntimeManifest): string[] {
+  const message = manifest.input.message
+  const marker = '新完成的任务成果（JSON，按完成顺序）：\n'
+  const start = message.indexOf(marker)
+  if (start < 0) return []
+  try {
+    const materials = JSON.parse(message.slice(start + marker.length)) as Array<{ task?: unknown }>
+    return materials
+      .map(material => typeof material.task === 'string' ? `${archivedItemPrefix}${material.task}已完成` : '')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
 
 interface ArchiveExecution {
   snapshot: RuntimeExecutionSnapshot
@@ -56,7 +74,7 @@ class ProjectSpaceBrowserRuntime implements AgentRuntimePort {
     const done = new Promise<RuntimeExecutionSnapshot>(resolve => {
       setImmediate(() => {
         emit('run.started', 'P1 档案整理开始')
-        emit('assistant.completed', `\`\`\`json\n${JSON.stringify({ add: [archivedItem] })}\n\`\`\``)
+        emit('assistant.completed', `\`\`\`json\n${JSON.stringify({ add: archivedItemsFor(manifest) })}\n\`\`\``)
         snapshot.status = 'completed'
         snapshot.startedAt = new Date().toISOString()
         snapshot.endedAt = new Date().toISOString()
@@ -199,7 +217,7 @@ fixture.router.get('/api/workbench/v1/test/fixtures', () => envelope('workbench'
   agentId: created.agent.id,
   agentMemberId: agentMember.id,
   ownerTaskId: ownerTask.id,
-  archivedItem,
+  archivedItemPrefix,
   synthetic: true,
 }))
 
