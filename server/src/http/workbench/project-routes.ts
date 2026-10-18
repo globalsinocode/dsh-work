@@ -53,7 +53,10 @@ export function registerProjectRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
     await requireTeamActor(authorization, identity, workspaceId, [...allRoles], { ...projectOnly, allowArchived: true })
-    return envelope('workbench', await projects.listTasks(workspaceId, identity.userId), 'postgres')
+    return envelope('workbench', await projects.listTasks(workspaceId, identity.userId, {
+      limit: context.url.searchParams.get('limit') ?? undefined,
+      cursor: context.url.searchParams.get('cursor') ?? undefined,
+    }), 'postgres')
   })
 
   router.post(`${basePath}/workspaces/:workspaceId/project-tasks`, async (request, context) => {

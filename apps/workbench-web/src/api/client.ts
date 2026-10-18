@@ -29,6 +29,7 @@ import type {
   ProjectBrief,
   ProjectTask,
   ProjectTaskInput,
+  ProjectTaskPage,
   WorkspaceFile,
   WorkspaceFileVersionPage,
   WorkspaceLifecycleResult,
@@ -385,8 +386,13 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  listProjectTasks: (workspaceId: string) =>
-    request<ProjectTask[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, { method: 'GET' }),
+  listProjectTasks: (workspaceId: string, options: { limit?: number; cursor?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    if (options.cursor) query.set('cursor', options.cursor)
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return request<ProjectTaskPage>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks${suffix}`, { method: 'GET' })
+  },
   createProjectTask: (workspaceId: string, input: ProjectTaskInput) =>
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, {
       method: 'POST',

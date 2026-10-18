@@ -112,7 +112,7 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   assert.deepEqual(task.allowedActions, ['edit', 'remove', 'set_status', 'complete'])
 
   const viewerList = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.viewer })
-  assert.deepEqual((viewerList.body.data as TaskView[]).map(item => item.allowedActions), [[]])
+  assert.deepEqual((viewerList.body.data as { items: TaskView[] }).items.map(item => item.allowedActions), [[]])
 
   // 与任务无关的普通成员不能推进状态、不能编辑他人任务。
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/status`, {
@@ -135,7 +135,7 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   // 创建人移除；移除后不再出现在列表。
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.other })).status, 403)
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 200)
-  assert.equal(((await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.member })).body.data as unknown[]).length, 0)
+  assert.equal(((await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.member })).body.data as { items: unknown[] }).items.length, 0)
 
   // 归档后任务只读：负责人与创建人看到的任务都不再带任何写动作。
   const kept = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
@@ -145,7 +145,7 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   await archive(ws.id)
   for (const as of [ws.owner, ws.member]) {
     const archivedList = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as })
-    assert.deepEqual((archivedList.body.data as TaskView[]).map(item => item.allowedActions), [[]])
+    assert.deepEqual((archivedList.body.data as { items: TaskView[] }).items.map(item => item.allowedActions), [[]])
   }
 })
 
@@ -675,7 +675,7 @@ async function joinAgent(ws: { id: string; owner: string }, label: string): Prom
 
 async function taskById(ws: { id: string; member: string }, taskId: string): Promise<TaskView> {
   const list = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.member })
-  const task = (list.body.data as TaskView[]).find(item => item.id === taskId)
+  const task = (list.body.data as { items: TaskView[] }).items.find(item => item.id === taskId)
   assert.ok(task, `任务不存在：${taskId}`)
   return task
 }

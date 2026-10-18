@@ -576,8 +576,12 @@
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "get": {
         "operationId": "listProjectTasks",
-        "summary": "查询项目任务（全部成员）",
-        "description": "项目空间 S1：返回未移除的任务。Agent 任务的 status 由任务线程最近一次 Run 推算（todo/in_progress/done/failed），员工任务取存储状态；allowedActions 按当前角色给出。读取轨：归档空间可读。",
+        "summary": "查询项目任务（全部成员，游标分页）",
+        "description": "项目空间 S1：按 created_at、id 倒序返回未移除的任务，响应为 { items, nextCursor, total }；limit 默认 50、最大 100，nextCursor 非空时作为 cursor 取下一页。Agent 任务的 status 由任务线程最近一次 Run 推算（todo/in_progress/done/failed），员工任务取存储状态；allowedActions 按当前角色给出。读取轨：归档空间可读。",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       },
       "post": {

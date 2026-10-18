@@ -470,6 +470,13 @@ export interface ProjectTask {
   allowedActions: ProjectTaskAction[]
 }
 
+/** 项目任务分页：`nextCursor` 非空时可用它加载下一页；`total` 是当前空间的全部未移除任务数。 */
+export interface ProjectTaskPage {
+  items: ProjectTask[]
+  nextCursor: string | null
+  total: number
+}
+
 export interface ProjectTaskInput {
   title: string
   description?: string

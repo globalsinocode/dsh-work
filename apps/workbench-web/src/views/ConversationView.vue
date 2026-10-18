@@ -181,9 +181,9 @@ async function loadProjectTask(workspaceId: string | undefined) {
   projectTaskLoading.value = true
   projectTaskError.value = ''
   try {
-    const tasks = await workbenchApi.listProjectTasks(workspaceId)
+    const page = await workbenchApi.listProjectTasks(workspaceId)
     if (currentSessionId.value !== sessionId) return
-    projectTask.value = tasks.find(item => item.sessionId === sessionId) ?? null
+    projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
   } catch (error) {
     // 旧会话的失败不能写到新会话上；新会话的加载状态也不能被旧请求提前结束。
     if (currentSessionId.value !== sessionId) return

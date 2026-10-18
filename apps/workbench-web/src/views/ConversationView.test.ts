@@ -6,9 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { ProjectTask, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
+import type { ProjectTask, ProjectTaskPage, SessionThread, TaskResult, TaskRun, Workspace } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import ConversationView from './ConversationView.vue'
+
+function page(items: ProjectTask[], nextCursor: string | null = null): ProjectTaskPage {
+  return { items, nextCursor, total: items.length }
+}
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
 const route = vi.hoisted(() => ({
@@ -210,7 +214,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     route.params = { id: 'run-001' }
     api.listWorkspaceAgentMembers.mockResolvedValue([])
-    api.listProjectTasks.mockResolvedValue([])
+    api.listProjectTasks.mockResolvedValue(page([]))
     api.deleteSessionFile.mockResolvedValue({ id: 'file-001', removed: true })
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
@@ -703,7 +707,7 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
   it('routes a task-thread reply to the assigned Agent without @ (项目空间 S1)', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread())
-    api.listProjectTasks.mockResolvedValue([projectTask()])
+    api.listProjectTasks.mockResolvedValue(page([projectTask()]))
     api.startRun.mockResolvedValue(task({ id: 'run-new', sessionId: 'session-001' }))
     const { wrapper, taskStore } = await mountView({ item: null })
     vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})

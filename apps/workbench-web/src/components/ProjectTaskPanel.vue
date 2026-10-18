@@ -38,7 +38,9 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const tasks = ref<ProjectTask[]>([])
+const nextCursor = ref<string | null>(null)
 const loading = ref(false)
+const loadingMore = ref(false)
 const loadError = ref(false)
 const busyTaskId = ref('')
 let requestSeq = 0
@@ -57,15 +59,33 @@ async function load() {
   loading.value = true
   loadError.value = false
   try {
-    const result = await workbenchApi.listProjectTasks(workspaceId)
+    const page = await workbenchApi.listProjectTasks(workspaceId)
     if (seq !== requestSeq) return
-    tasks.value = result
-    emit('count', result.length)
+    tasks.value = page.items
+    nextCursor.value = page.nextCursor
+    emit('count', page.total)
   } catch {
     if (seq !== requestSeq) return
     loadError.value = true
   } finally {
     if (seq === requestSeq) loading.value = false
+  }
+}
+
+/** 加载下一页；游标由服务端给出，失败保留已加载内容并允许重试。 */
+async function loadMore() {
+  const workspaceId = props.workspaceId
+  const cursor = nextCursor.value
+  if (!workspaceId || !cursor || loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const page = await workbenchApi.listProjectTasks(workspaceId, { cursor })
+    tasks.value = [...tasks.value, ...page.items]
+    nextCursor.value = page.nextCursor
+  } catch {
+    ElMessage.error('加载更多任务失败，请重试')
+  } finally {
+    loadingMore.value = false
   }
 }
 
@@ -360,6 +380,15 @@ defineExpose({ reload: load })
         </div>
       </li>
     </ul>
+    <el-button
+      v-if="nextCursor"
+      class="project-tasks__more"
+      :loading="loadingMore"
+      data-testid="project-task-more"
+      @click="loadMore"
+    >
+      加载更多任务
+    </el-button>
     <el-empty v-else description="还没有任务">
       <template v-if="canWrite">
         <p class="project-tasks__muted">从简报出发拆出第一项任务，交给同事或 Agent。</p>
@@ -506,6 +535,11 @@ defineExpose({ reload: load })
 .project-tasks__muted {
   color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-caption);
+}
+
+.project-tasks__more {
+  justify-self: center;
+  margin-top: 4px;
 }
 
 .project-tasks__list {

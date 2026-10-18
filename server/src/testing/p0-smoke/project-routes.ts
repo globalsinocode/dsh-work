@@ -197,7 +197,17 @@ export function registerSmokeProjectRoutes(router: Router) {
 
   router.get(`${basePath}/workspaces/:workspaceId/project-tasks`, (_request, context) => {
     requireRequestIdentity(context, 'workbench')
-    return requireSmokeSpace(context.params['workspaceId']) ?? envelope('workbench', tasks.map(view))
+    const invalid = requireSmokeSpace(context.params['workspaceId'])
+    if (invalid) return invalid
+    // 冒烟实现用 offset 充当游标，响应形状与生产的分页一致。
+    const limit = Math.max(1, Math.min(Number(context.url.searchParams.get('limit') ?? tasks.length) || tasks.length, 100))
+    const offset = Math.max(0, Number(context.url.searchParams.get('cursor') ?? 0) || 0)
+    const items = tasks.slice(offset, offset + limit)
+    return envelope('workbench', {
+      items: items.map(view),
+      nextCursor: offset + limit < tasks.length ? String(offset + limit) : null,
+      total: tasks.length,
+    })
   })
   router.post(`${basePath}/workspaces/:workspaceId/project-tasks`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')

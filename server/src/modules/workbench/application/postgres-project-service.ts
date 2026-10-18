@@ -198,11 +198,31 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   // 项目任务
   // ---------------------------------------------------------------------------
 
-  async listTasks(workspaceId: string, actorUserId: string): Promise<ProjectTask[]> {
+  async listTasks(
+    workspaceId: string,
+    actorUserId: string,
+    input: { limit?: unknown; cursor?: unknown } = {},
+  ): Promise<{ items: ProjectTask[]; nextCursor: string | null; total: number }> {
     const role = await this.requireRole(this.database, workspaceId, actorUserId, ['owner', 'admin', 'member', 'viewer'], { allowArchived: true })
     const archived = await this.isArchived(workspaceId)
-    const rows = await this.taskRows(this.database, workspaceId)
-    return this.toTasks(rows, actorUserId, role, archived)
+    const limit = parseTaskPageLimit(input.limit)
+    const cursor = parseTaskCursor(input.cursor)
+    // 多取一条用于判断是否还有下一页；游标按 (created_at, id) 倒序，与列表排序一致。
+    const rows = await this.taskRows(this.database, workspaceId, undefined, { limit: limit + 1, cursor })
+    const hasMore = rows.length > limit
+    const page = hasMore ? rows.slice(0, limit) : rows
+    const last = page.at(-1)
+    const [count] = await this.database<{ total: number }[]>`
+      select count(*)::integer as total from project_tasks
+       where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and removed_at is null
+    `
+    return {
+      items: await this.toTasks(page, actorUserId, role, archived),
+      nextCursor: hasMore && last
+        ? encodeTaskCursor(last.createdAt.toISOString(), last.id)
+        : null,
+      total: count?.total ?? 0,
+    }
   }
 
   async createTask(
@@ -711,7 +731,13 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     return rows.map(row => row.fileObjectId)
   }
 
-  private async taskRows(database: DatabaseClient | DatabaseTransaction, workspaceId: string, taskId?: string): Promise<TaskRow[]> {
+  private async taskRows(
+    database: DatabaseClient | DatabaseTransaction,
+    workspaceId: string,
+    taskId?: string,
+    page?: { limit: number; cursor: { createdAt: string; id: string } | null },
+  ): Promise<TaskRow[]> {
+    const cursor = page?.cursor ?? null
     return database<TaskRow[]>`
       select t.id, t.workspace_id as "workspaceId", t.title, t.description,
              t.created_by as "createdBy", cu.display_name as "createdByName",
@@ -732,7 +758,9 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         ) lr on true
        where t.tenant_id = ${tenantId} and t.workspace_id = ${workspaceId} and t.removed_at is null
          and (${taskId ?? null}::text is null or t.id = ${taskId ?? null})
+         and (${cursor === null} or (t.created_at, t.id) < (${cursor?.createdAt ?? null}::timestamptz, ${cursor?.id ?? null}))
        order by t.created_at desc, t.id desc
+       limit ${page?.limit ?? null}
     `
   }
 
@@ -839,6 +867,39 @@ function optionalDate(value: unknown, field: string): string | null {
     throw requestInvalid(`${field}必须是 YYYY-MM-DD 格式的日期`)
   }
   return value
+}
+
+const TASK_PAGE_DEFAULT = 50
+const TASK_PAGE_MAX = 100
+
+/** 任务列表分页：默认 50 条，最大 100 条。 */
+function parseTaskPageLimit(value: unknown): number {
+  if (value === undefined || value === null || value === '') return TASK_PAGE_DEFAULT
+  const limit = Number(value)
+  if (!Number.isInteger(limit) || limit < 1) throw requestInvalid('limit 必须是 1 到 100 的整数')
+  return Math.min(limit, TASK_PAGE_MAX)
+}
+
+/** 游标按 (created_at, id) 倒序；id 用于同一时间戳内稳定推进。 */
+function encodeTaskCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`, 'utf8').toString('base64url')
+}
+
+function parseTaskCursor(value: unknown): { createdAt: string; id: string } | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string') throw requestInvalid('cursor 无效')
+  let decoded: string
+  try {
+    decoded = Buffer.from(value, 'base64url').toString('utf8')
+  } catch {
+    throw requestInvalid('cursor 无效')
+  }
+  const separator = decoded.lastIndexOf('|')
+  if (separator <= 0) throw requestInvalid('cursor 无效')
+  const createdAt = decoded.slice(0, separator)
+  const id = decoded.slice(separator + 1)
+  if (!id || Number.isNaN(Date.parse(createdAt))) throw requestInvalid('cursor 无效')
+  return { createdAt, id }
 }
 
 function parseAssignee(value: unknown): ProjectTaskAssigneeInput {

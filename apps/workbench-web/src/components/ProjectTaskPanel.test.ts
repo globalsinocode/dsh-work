@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WorkbenchApiError, workbenchApi } from '@/api/client'
-import type { ProjectTask, WorkspaceAgentMember, WorkspaceMember } from '@/types/domain'
+import type { ProjectTask, ProjectTaskPage, WorkspaceAgentMember, WorkspaceMember } from '@/types/domain'
 import ProjectTaskPanel from './ProjectTaskPanel.vue'
 
 const router = vi.hoisted(() => ({ push: vi.fn() }))
@@ -40,6 +40,10 @@ function task(overrides: Partial<ProjectTask> = {}): ProjectTask {
   }
 }
 
+function page(items: ProjectTask[], nextCursor: string | null = null): ProjectTaskPage {
+  return { items, nextCursor, total: items.length }
+}
+
 function mountPanel(props: Record<string, unknown> = {}) {
   return mount(ProjectTaskPanel, {
     props: {
@@ -59,7 +63,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     router.push.mockReset()
-    vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue([])
+    vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue(page([]))
   })
 
   it('shows an empty state with a create entry for writers and reports the count', async () => {
@@ -71,7 +75,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('hides every write entry for read-only members', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({ allowedActions: [] })])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task({ allowedActions: [] })]))
     const wrapper = mountPanel({ canWrite: false })
     await flushPromises()
     expect(wrapper.find('[data-testid="project-task-create"]').exists()).toBe(false)
@@ -79,7 +83,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('hides task write actions as soon as the space becomes read-only and reloads the list', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
     const wrapper = mountPanel()
     await flushPromises()
     expect(wrapper.findAll('[data-testid="project-task-row"] button').map(button => button.text())).toEqual(
@@ -87,7 +91,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     )
 
     // 归档后服务端不再给写动作；重新拉取前写入口也不能留在页面上。
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({ allowedActions: [] })])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task({ allowedActions: [] })]))
     await wrapper.setProps({ canWrite: false })
     expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
     await flushPromises()
@@ -96,14 +100,14 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('lists tasks with derived status labels and assignee', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([
       task({ id: 't1', status: 'in_progress', sessionId: 's1', latestRunId: 'r1', allowedActions: [] }),
       task({ id: 't2', status: 'failed', sessionId: 's2', latestRunId: 'r2', allowedActions: [] }),
       task({
         id: 't3', title: '整理供应商名单', status: 'done', completionNote: '已分组',
         assignee: { type: 'employee', userId: 'u-owner', displayName: '林岚' }, allowedActions: [],
       }),
-    ])
+    ]))
     const wrapper = mountPanel()
     await flushPromises()
     const statuses = wrapper.findAll('[data-testid="project-task-status"]').map(node => node.text())
@@ -144,7 +148,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('starts an Agent task and opens its task thread', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
     const start = vi.spyOn(workbenchApi, 'startProjectTask')
       .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9', allowedActions: [] }))
     const wrapper = mountPanel()
@@ -158,11 +162,11 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('completes an employee task with a note', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task({
       assignee: { type: 'employee', userId: 'u-owner', displayName: '林岚' },
       status: 'in_progress',
       allowedActions: ['edit', 'remove', 'set_status', 'complete'],
-    })])
+    })]))
     const setStatus = vi.spyOn(workbenchApi, 'setProjectTaskStatus').mockResolvedValue(task({ status: 'done' }))
     const wrapper = mountPanel()
     await flushPromises()
@@ -177,7 +181,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('confirms before removing a task', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel')
     const remove = vi.spyOn(workbenchApi, 'removeProjectTask')
     const wrapper = mountPanel()
@@ -189,17 +193,36 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   })
 
   it('reloads and asks the host to refresh when a write is denied on a stale page (人工验收 7.2)', async () => {
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task()])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce('confirm' as never)
     vi.spyOn(workbenchApi, 'removeProjectTask')
       .mockRejectedValueOnce(new WorkbenchApiError({ code: 'authorization_denied', message: '工作空间不存在、已归档或当前用户不是成员' }, 403, ''))
     const wrapper = mountPanel()
     await flushPromises()
-    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue([task({ allowedActions: [] })])
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task({ allowedActions: [] })]))
     await wrapper.findAll('button').find(button => button.text() === '移除')!.trigger('click')
     await flushPromises()
     expect(wrapper.emitted('stale')).toHaveLength(1)
     expect(workbenchApi.listProjectTasks).toHaveBeenCalledTimes(2)
     expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
+  })
+
+  it('分页加载：首屏报告 total，按游标追加下一页（P2-15）', async () => {
+    vi.mocked(workbenchApi.listProjectTasks)
+      .mockResolvedValueOnce({ items: [task()], nextCursor: 'cursor-2', total: 3 })
+      .mockResolvedValueOnce({
+        items: [task({ id: 't2', title: '第二页任务' }), task({ id: 't3', title: '第三页任务' })],
+        nextCursor: null,
+        total: 3,
+      })
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.emitted('count')?.at(-1)).toEqual([3])
+    expect(wrapper.findAll('[data-testid="project-task-row"]')).toHaveLength(1)
+    await wrapper.get('[data-testid="project-task-more"]').trigger('click')
+    await flushPromises()
+    expect(workbenchApi.listProjectTasks).toHaveBeenLastCalledWith('ws-team', { cursor: 'cursor-2' })
+    expect(wrapper.findAll('[data-testid="project-task-row"]')).toHaveLength(3)
+    expect(wrapper.find('[data-testid="project-task-more"]').exists()).toBe(false)
   })
 })

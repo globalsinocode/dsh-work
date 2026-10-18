@@ -10,6 +10,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type {
   Artifact,
+  ProjectTask,
+  ProjectTaskPage,
   Workspace,
   WorkspaceActivityItem,
   WorkspaceActivityPage,
@@ -24,6 +26,10 @@ import type {
 import ConversationStarter from '@/components/ConversationStarter.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceDetailView from './WorkspaceDetailView.vue'
+
+function page(items: ProjectTask[], nextCursor: string | null = null): ProjectTaskPage {
+  return { items, nextCursor, total: items.length }
+}
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 const route = vi.hoisted(() => ({
@@ -183,7 +189,7 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     vi.spyOn(workbenchApi, 'getWorkspaceNotifications').mockResolvedValue(notificationView())
     vi.spyOn(workbenchApi, 'listWorkspaceUsage').mockResolvedValue(usageFixture())
     vi.spyOn(workbenchApi, 'getProjectBrief').mockResolvedValue(null)
-    vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue([])
+    vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue(page([]))
     vi.spyOn(workbenchApi, 'getProjectArchive').mockResolvedValue({ current: null, archivistRunning: false })
   })
 
