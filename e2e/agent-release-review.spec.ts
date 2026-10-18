@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 // P0 页面冒烟：验证与发布页只做前端交互，服务端响应由路由夹具提供；
 // 验证到发布的真实链路由 agent-release-governance 集成套件覆盖。
 const agentId = 'operations-analyst'

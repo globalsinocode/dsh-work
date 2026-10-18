@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 /**
  * AG-AUTO-00：自动任务入口与配置反馈（P0 浏览器冒烟）。
  * 只证明导航、页面渲染、可访问名称与空/错误反馈；不证明 PostgreSQL、

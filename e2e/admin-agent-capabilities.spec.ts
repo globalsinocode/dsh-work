@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 
 test('Agent detail autosaves AGENTS.md and MCP scope while hiding per-Agent DSH tools', async ({ page }) => {

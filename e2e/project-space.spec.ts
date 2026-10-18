@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 // 项目空间 S1/S2 的 P0 冒烟旅程（e2e/TEST-CATALOG.md PS-E2E-01、PS-E2E-02、PS-E2E-05）。
 // 冒烟服务只提供 ws-supply 的内存名册、简报、员工任务与项目档案；档案员整理、Agent 任务执行、权限矩阵与
 // 持久化由服务端集成测试和 P1 旅程覆盖，这里不能据此宣称真实链路通过。

@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { mockTasks } from '../server/src/testing/p0-smoke/data.ts'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 
 test('employee can open the workbench and enter a team workspace', async ({ page }) => {

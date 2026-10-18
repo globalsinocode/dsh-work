@@ -25,7 +25,9 @@ export default defineConfig({
   testIgnore: ['**/personal-integration/**', '**/*.integration.spec.ts'],
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // P0 用例通过 POST /api/testing/p0/reset 重置同一份内存夹具，必须串行执行，
+  // 否则并行用例会互相清空对方的数据。CI 与本机都固定 1 个 worker。
+  workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   use: {
     // Browser navigation, sibling-app links and readiness checks use one origin.
