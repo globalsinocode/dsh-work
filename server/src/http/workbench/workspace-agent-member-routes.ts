@@ -4,6 +4,11 @@ import type {
   PostgresWorkspaceAgentMemberService,
 } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import {
+  projectAllRoles as allRoles,
+  projectGovernanceRoles as governanceRoles,
+  projectOwnerRoles as ownerRoles,
+} from '../../domain/project-roles.ts'
+import {
   envelope,
   httpResult,
   readJsonBody,
@@ -31,7 +36,7 @@ export function registerWorkspaceAgentMemberRoutes(
   router.get(`${basePath}/workspaces/:workspaceId/agent-candidates`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'])
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles)
     const query = (context.url.searchParams.get('query') ?? '').trim()
     const limit = parseLimit(context.url.searchParams.get('limit'))
     const cursor = context.url.searchParams.get('cursor') ?? undefined
@@ -48,15 +53,16 @@ export function registerWorkspaceAgentMemberRoutes(
   router.get(`${basePath}/workspaces/:workspaceId/agent-members`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin', 'member', 'viewer'], { allowArchived: true })
+    await requireTeamActor(authorization, identity, workspaceId, allRoles, { allowArchived: true })
     return envelope('workbench', await agentMembers.listAgentMembers(workspaceId, identity.userId), 'postgres')
   })
 
-  // 项目空间 S0：添加成员前预览对 Agent 可交付数据范围的影响（只读，不改状态）。
+  // 项目空间 S0：添加“员工”前预览对 Agent 可交付数据范围的影响（只读，不改状态）。
+  // 与添加员工同权限（负责人与管理员）；Agent 成员的添加/停用/移出仍是负责人专属。
   router.get(`${basePath}/workspaces/:workspaceId/agent-members/disclosure-impact`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'])
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles)
     const userId = requireNonEmptyString(context.url.searchParams.get('userId') ?? undefined, 'userId')
     return envelope('workbench', await agentMembers.previewMemberDisclosureImpact(workspaceId, userId, identity.userId), 'postgres')
   })
@@ -64,7 +70,7 @@ export function registerWorkspaceAgentMemberRoutes(
   router.post(`${basePath}/workspaces/:workspaceId/agent-members`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'])
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles)
     const body = await readJsonBody<{ agentId?: unknown }>(request)
     const agentId = requireNonEmptyString(body.agentId, 'agentId')
     const member = await agentMembers.addAgentMember(
@@ -80,7 +86,7 @@ export function registerWorkspaceAgentMemberRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
     const memberId = context.params['id'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'])
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles)
     const body = await readJsonBody<{ action?: unknown }>(request)
     const action = parseAgentMemberAction(body.action)
     const member = await agentMembers.updateAgentMember(workspaceId, memberId, action, identity.userId)
@@ -91,7 +97,7 @@ export function registerWorkspaceAgentMemberRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
     const memberId = context.params['id'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'])
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles)
     const result = await agentMembers.removeAgentMember(workspaceId, memberId, identity.userId)
     return envelope('workbench', result, 'postgres')
   })

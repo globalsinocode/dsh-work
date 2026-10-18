@@ -1,4 +1,4 @@
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -242,5 +242,54 @@ it('验证前检查展示不阻断的未验证角色提示（项目空间 S0）'
     expect(wrapper.get('[data-testid="release-check-warning"]').text()).toContain('“平台管理员”不在可见角色内')
   } finally {
     wrapper.unmount()
+  }
+})
+
+it('分区重新显示时重新读取，隐藏时停止轮询（P2-19/P2-21）', async () => {
+  const load = vi.spyOn(adminApi, 'getAgentRelease').mockResolvedValue({ agent, release: overview(null) })
+  const wrapper = await mountView()
+  try {
+    expect(load).toHaveBeenCalledTimes(1)
+    await wrapper.setProps({ active: false })
+    await flushPromises()
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+    expect(load).toHaveBeenCalledTimes(2)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('轮询连续失败后暂停自动刷新，并在页面内重试（P2-21）', async () => {
+  vi.useFakeTimers()
+  let wrapper: Awaited<ReturnType<typeof mountView>> | undefined
+  try {
+    const running = validation([validationCase({ status: 'running', checks: null, verdict: null })])
+    running.status = 'running'
+    running.completedAt = null
+    running.publishable = false
+    vi.spyOn(adminApi, 'getAgentRelease').mockResolvedValue({ agent, release: overview(running) })
+    const getValidation = vi.spyOn(adminApi, 'getAgentValidation').mockRejectedValue(new Error('网络中断'))
+    const toast = vi.spyOn(ElMessage, 'error')
+
+    const mounting = mountView()
+    await vi.advanceTimersByTimeAsync(0)
+    wrapper = await mounting
+    expect(wrapper.text()).toContain('网络中断')
+    await vi.advanceTimersByTimeAsync(2000)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(getValidation.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(wrapper.text()).toContain('已暂停自动刷新')
+    expect(toast).not.toHaveBeenCalled()
+
+    getValidation.mockResolvedValue(validation([validationCase({ verdict: null })]))
+    const retry = wrapper.findAll('button').find(item => item.text() === '重试读取')
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(wrapper.text()).not.toContain('已暂停自动刷新')
+  } finally {
+    wrapper?.unmount()
+    vi.useRealTimers()
   }
 })

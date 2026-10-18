@@ -315,7 +315,8 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
 
   /**
    * 服务重启后清扫中断的整理批次：Run 已终态的按失败收尾（计入重试次数），
-   * 认领后未挂上 Run 且已过期的直接释放。返回处理数量；启动时调用，不抛错。
+   * Run 记录已不存在、认领后未挂上 Run 且已过期的直接释放。
+   * 启动时调用；单批失败只记录日志，整批查询失败由调用方（main.ts）记录后继续启动。
    */
   async recoverInterruptedUpdates(): Promise<{ finished: number; abandoned: number }> {
     const rows = await this.database<{ updateId: string; runId: string | null; runStatus: string | null; stale: boolean }[]>`
@@ -332,6 +333,12 @@ export class PostgresProjectArchiveService implements ProjectArchivePort {
         if (row.runId !== null && row.runStatus !== null && terminalRunStatuses.includes(row.runStatus)) {
           await this.finishArchiveUpdate(row.runId, { failure: '服务重启中断' })
           finished += 1
+          continue
+        }
+        // 状态引用的 Run 已不存在（历史清理）：释放认领，否则这批整理会一直挂着。
+        if (row.runId !== null && row.runStatus === null) {
+          await this.abandonArchiveUpdate(row.updateId)
+          abandoned += 1
           continue
         }
         if (row.runId === null && row.stale) {

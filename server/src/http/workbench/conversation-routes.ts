@@ -5,6 +5,10 @@ import type { RunRepository } from '../../modules/run/run-repository.ts'
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject } from '../../domain/authorization-errors.ts'
+import {
+  projectAllRoles as allRoles,
+  projectWriterRoles as writerRoles,
+} from '../../domain/project-roles.ts'
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import type { TaskRun } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
@@ -66,7 +70,7 @@ export function registerConversationRoutes(
     await authorization.requireTeamRole(
       workspaceId,
       userId,
-      ['owner', 'admin', 'member', 'viewer'],
+      allRoles,
       { purpose: 'read' },
     )
     const limit = parseSessionPageLimit(context.url.searchParams.get('limit'))
@@ -137,7 +141,7 @@ export function registerConversationRoutes(
     // 普通消息不产生 Run，@Agent 时才按成员固定版本执行。只读成员不得创建
     // 讨论串；显式携带成员关联时仍校验其可用性并记录固定版本（会话级默认值）。
     if (workspaceType === 'team') {
-      await authorization.requireTeamRole(workspaceId!, userId, ['owner', 'admin', 'member'])
+      await authorization.requireTeamRole(workspaceId!, userId, writerRoles)
       // 单独传 agentId 不传成员关联是有歧义的输入：拒绝而不是静默创建
       // 未绑定会话，避免调用方误以为 Agent 已绑定（发现延迟到首次 startRun）。
       if (agentId !== undefined && !workspaceAgentMemberId) {
@@ -415,7 +419,7 @@ export function registerConversationRoutes(
     await authorization.requireTeamRole(
       workspaceId,
       userId,
-      ['owner', 'admin', 'member', 'viewer'],
+      allRoles,
       { purpose: 'read' },
     )
     // since：客户端「状态为最新」的水位线（二审残留——建流前已归档的会话

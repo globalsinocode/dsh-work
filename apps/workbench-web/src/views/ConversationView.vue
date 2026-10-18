@@ -185,11 +185,12 @@ async function loadProjectTask(workspaceId: string | undefined) {
     if (currentSessionId.value !== sessionId) return
     projectTask.value = tasks.find(item => item.sessionId === sessionId) ?? null
   } catch (error) {
-    // 读取失败时不能把任务线程当作普通讨论线程：回复会静默不触发 Agent。
+    // 旧会话的失败不能写到新会话上；新会话的加载状态也不能被旧请求提前结束。
+    if (currentSessionId.value !== sessionId) return
     projectTask.value = null
     projectTaskError.value = error instanceof Error ? error.message : '任务线程信息读取失败'
   } finally {
-    projectTaskLoading.value = false
+    if (currentSessionId.value === sessionId) projectTaskLoading.value = false
   }
 }
 

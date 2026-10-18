@@ -18,6 +18,8 @@ import type {
 
 const props = defineProps<{
   agentId: string
+  /** 当前分区是否可见；隐藏时停止轮询，重新显示时刷新数据。 */
+  active?: boolean
 }>()
 const emit = defineEmits<{
   /** 切换到岗位权限分区。 */
@@ -359,6 +361,12 @@ async function loadAll() {
 }
 
 watch(agentId, loadAll)
+// 分区保持挂载后，重新显示时必须重新读取：草稿、岗位权限可能在其它分区被改过；
+// 隐藏时停止轮询，避免不可见面板继续请求。
+watch(() => props.active, (isActive) => {
+  if (isActive) void loadAll()
+  else stopPolling()
+})
 onMounted(loadAll)
 
 onBeforeUnmount(stopPolling)

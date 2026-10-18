@@ -372,6 +372,36 @@ test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完
   await drainRuntime()
 })
 
+test('重启恢复：Run 已不存在的中断整理批次释放认领（P2-6）', async () => {
+  const ws = await seedSpace('archive-recovery')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '恢复测试任务', assignee: { type: 'employee', id: ws.member } },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const task = created.body.data as TaskView
+  const updateId = `warchup-${randomUUID()}`
+  await database`
+    insert into workspace_archivist_state (tenant_id, workspace_id, update_id, run_id, base_version_no, started_at, updated_at)
+    values (${tenantId}, ${ws.id}, ${updateId}, ${`run-missing-${randomUUID()}`}, 0, now(), now())
+  `
+  await database`
+    insert into workspace_archive_inputs (id, tenant_id, workspace_id, project_task_id, title, content, update_id)
+    values (${`warchin-${randomUUID()}`}, ${tenantId}, ${ws.id}, ${task.id}, '恢复测试任务', '恢复测试成果', ${updateId})
+  `
+
+  const service = new PostgresProjectArchiveService(database)
+  const result = await service.recoverInterruptedUpdates()
+  assert.ok(result.abandoned >= 1)
+  const [state] = await database<{ updateId: string | null }[]>`
+    select update_id as "updateId" from workspace_archivist_state where tenant_id = ${tenantId} and workspace_id = ${ws.id}
+  `
+  assert.equal(state?.updateId, null)
+  const [input] = await database<{ updateId: string | null }[]>`
+    select update_id as "updateId" from workspace_archive_inputs where tenant_id = ${tenantId} and project_task_id = ${task.id}
+  `
+  assert.equal(input?.updateId, null)
+})
+
 test('个人空间不支持简报与任务', async () => {
   const userId = `user-ps-personal-${randomUUID().slice(0, 8)}`
   await createDirectoryUser(userId, '个人空间员工')

@@ -3,6 +3,7 @@ import type { PostgresProjectArchiveService } from '../../modules/workbench/appl
 import type { PostgresProjectService } from '../../modules/workbench/application/postgres-project-service.ts'
 import {
   projectAllRoles as allRoles,
+  projectGovernanceRoles as governanceRoles,
   projectWriterRoles as writerRoles,
 } from '../../domain/project-roles.ts'
 import {
@@ -40,7 +41,7 @@ export function registerProjectRoutes(
   router.put(`${basePath}/workspaces/:workspaceId/brief`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'], projectOnly)
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles, projectOnly)
     const body = await readObject(request)
     return envelope('workbench', await projects.saveBrief(workspaceId, identity.userId, {
       content: body.content,

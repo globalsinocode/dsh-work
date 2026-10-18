@@ -720,6 +720,22 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(api.postSessionMessage).not.toHaveBeenCalled()
   })
 
+  it('任务线程信息读取失败时阻止发送，避免静默降级为讨论消息（P2-8）', async () => {
+    route.params = { id: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    api.listProjectTasks.mockRejectedValue(new Error('项目任务读取失败'))
+    const { wrapper } = await mountView({ item: null })
+
+    expect(wrapper.get('[data-testid="task-thread-error"]').text()).toContain('项目任务读取失败')
+    wrapper.getComponent(TaskComposer).vm.$emit('submit', {
+      prompt: '再看看华南', files: [], workspaceId: 'ws-team', mentions: [],
+    })
+    await flushPromises()
+
+    expect(api.postSessionMessage).not.toHaveBeenCalled()
+    expect(api.startRun).not.toHaveBeenCalled()
+  })
+
   it('offers “设为任务” on an Agent-executed shared thread that is not yet a task', async () => {
     route.params = { id: 'session-001' }
     api.getSessionThread.mockResolvedValue(sessionThread({

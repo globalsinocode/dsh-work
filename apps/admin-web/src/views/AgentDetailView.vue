@@ -233,15 +233,28 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
         >{{ section.label }}</button>
       </nav>
 
-      <div
-        :id="`agent-detail-panel-${activeSection}`"
-        class="detail-body"
-        role="tabpanel"
-        :aria-labelledby="`agent-detail-tab-${activeSection}`"
-      >
-        <div v-show="activeSection === 'profile'" class="content-panel detail-card"><AgentProfileSection /></div>
-        <div v-show="activeSection === 'capabilities'" class="content-panel detail-card"><AgentCapabilitySection /></div>
-        <div v-if="visitedSections.has('access')" v-show="activeSection === 'access'">
+      <div class="detail-body">
+        <div
+          v-show="activeSection === 'profile'"
+          id="agent-detail-panel-profile"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-profile"
+          class="content-panel detail-card"
+        ><AgentProfileSection /></div>
+        <div
+          v-show="activeSection === 'capabilities'"
+          id="agent-detail-panel-capabilities"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-capabilities"
+          class="content-panel detail-card"
+        ><AgentCapabilitySection /></div>
+        <div
+          v-if="visitedSections.has('access')"
+          v-show="activeSection === 'access'"
+          id="agent-detail-panel-access"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-access"
+        >
           <div class="content-panel detail-card">
             <section class="detail-section">
               <header class="detail-section__head"><div><h3>岗位权限</h3><p>谁可以向它请求工作、它持有哪些岗位角色、能接触哪些数据。属于 Agent 而非版本，修改立即生效并写审计，不需要重新验证。</p></div></header>
@@ -250,15 +263,43 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
           </div>
           <AgentWorkspaceGovernance :agent="agent" :can-manage="canManage" />
         </div>
-        <div v-if="visitedSections.has('routines')" v-show="activeSection === 'routines'" class="content-panel detail-card">
+        <div
+          v-if="activeSection === 'routines'"
+          id="agent-detail-panel-routines"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-routines"
+          class="content-panel detail-card"
+        >
           <section class="detail-section" aria-label="主动任务">
             <header class="detail-section__head"><div><h3>主动任务</h3><p>按时间或事件主动工作，结果交给接收人。规则启用时固定当时的发布版本；启用中的任务提示词会自动列入验证案例。</p></div></header>
             <AgentRoutinePanel :agent-id="agent.id" :versions="versions" :can-manage="canManage" />
           </section>
         </div>
-        <div v-if="visitedSections.has('experience')" v-show="activeSection === 'experience'" class="content-panel detail-card"><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
-        <AgentReleasePanel v-if="visitedSections.has('release')" v-show="activeSection === 'release'" :agent-id="agent.id" @open-access="openSection('access')" @edit="openSection('profile')" />
-        <div v-if="visitedSections.has('runs')" v-show="activeSection === 'runs'" class="content-panel detail-card"><AgentRunsPanel :agent-id="agent.id" /></div>
+        <div
+          v-if="activeSection === 'experience'"
+          id="agent-detail-panel-experience"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-experience"
+          class="content-panel detail-card"
+        ><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
+        <AgentReleasePanel
+          v-if="visitedSections.has('release')"
+          v-show="activeSection === 'release'"
+          id="agent-detail-panel-release"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-release"
+          :agent-id="agent.id"
+          :active="activeSection === 'release'"
+          @open-access="openSection('access')"
+          @edit="openSection('profile')"
+        />
+        <div
+          v-if="activeSection === 'runs'"
+          id="agent-detail-panel-runs"
+          role="tabpanel"
+          aria-labelledby="agent-detail-tab-runs"
+          class="content-panel detail-card"
+        ><AgentRunsPanel :agent-id="agent.id" /></div>
       </div>
     </template>
   </div>

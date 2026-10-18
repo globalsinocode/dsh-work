@@ -12,3 +12,6 @@ export const projectWriterRoles: ProjectTeamRole[] = ['owner', 'admin', 'member'
 
 /** 治理：负责人与管理员（成员、Agent 名册、简报等）。 */
 export const projectGovernanceRoles: ProjectTeamRole[] = ['owner', 'admin']
+
+/** 仅负责人（转交、归档、添加/移出 Agent 等）。 */
+export const projectOwnerRoles: ProjectTeamRole[] = ['owner']

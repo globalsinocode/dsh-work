@@ -348,7 +348,12 @@ async function start() {
   const restartRecovery = await orchestration.recoverAfterServiceRestart()
   await persistentWait.reconcileOrphans()
   // 项目空间 S2：清扫重启中断的档案整理批次，避免空间长期停在“整理中”。
+  // 与下面的成果解析补写一样，恢复失败只记录日志，不阻断服务启动。
   const archiveRecovery = await projectArchive.recoverInterruptedUpdates()
+    .catch(error => {
+      console.error('project archive recovery failed', error)
+      return { finished: 0, abandoned: 0 }
+    })
   if (archiveRecovery.finished > 0 || archiveRecovery.abandoned > 0) {
     console.warn('project archive recovery completed', archiveRecovery)
   }
