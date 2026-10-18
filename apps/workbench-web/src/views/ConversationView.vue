@@ -181,7 +181,8 @@ async function loadProjectTask(workspaceId: string | undefined) {
   projectTaskLoading.value = true
   projectTaskError.value = ''
   try {
-    const page = await workbenchApi.listProjectTasks(workspaceId)
+    // 按线程精确查找：任务较多时，较早任务的线程不在列表第一页。
+    const page = await workbenchApi.listProjectTasks(workspaceId, { sessionId, limit: 1 })
     if (currentSessionId.value !== sessionId) return
     projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
   } catch (error) {

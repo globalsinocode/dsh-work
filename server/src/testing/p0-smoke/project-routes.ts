@@ -202,10 +202,12 @@ export function registerSmokeProjectRoutes(router: Router) {
     // 冒烟实现用 offset 充当游标，响应形状与生产的分页一致。
     const limit = Math.max(1, Math.min(Number(context.url.searchParams.get('limit') ?? tasks.length) || tasks.length, 100))
     const offset = Math.max(0, Number(context.url.searchParams.get('cursor') ?? 0) || 0)
-    const items = tasks.slice(offset, offset + limit)
+    // 冒烟任务都没有任务线程（view 固定 sessionId: null）：按线程查找时恒为空。
+    const matched = context.url.searchParams.get('sessionId') ? [] : tasks
+    const items = matched.slice(offset, offset + limit)
     return envelope('workbench', {
       items: items.map(view),
-      nextCursor: offset + limit < tasks.length ? String(offset + limit) : null,
+      nextCursor: offset + limit < matched.length ? String(offset + limit) : null,
       total: tasks.length,
     })
   })

@@ -111,6 +111,8 @@ export interface ProjectAgentMembers {
 
 interface TaskRow {
   id: string
+  /** 微秒精度的 created_at（UTC），只用于分页游标；Date 只到毫秒，会让同一毫秒内的任务被跳过。 */
+  cursorTimestamp: string
   workspaceId: string
   title: string
   description: string
@@ -201,14 +203,15 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   async listTasks(
     workspaceId: string,
     actorUserId: string,
-    input: { limit?: unknown; cursor?: unknown } = {},
+    input: { limit?: unknown; cursor?: unknown; sessionId?: unknown } = {},
   ): Promise<{ items: ProjectTask[]; nextCursor: string | null; total: number }> {
     const role = await this.requireRole(this.database, workspaceId, actorUserId, ['owner', 'admin', 'member', 'viewer'], { allowArchived: true })
     const archived = await this.isArchived(workspaceId)
     const limit = parseTaskPageLimit(input.limit)
     const cursor = parseTaskCursor(input.cursor)
+    const sessionId = parseTaskSessionFilter(input.sessionId)
     // 多取一条用于判断是否还有下一页；游标按 (created_at, id) 倒序，与列表排序一致。
-    const rows = await this.taskRows(this.database, workspaceId, undefined, { limit: limit + 1, cursor })
+    const rows = await this.taskRows(this.database, workspaceId, undefined, { limit: limit + 1, cursor, sessionId })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
     const last = page.at(-1)
@@ -219,7 +222,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     return {
       items: await this.toTasks(page, actorUserId, role, archived),
       nextCursor: hasMore && last
-        ? encodeTaskCursor(last.createdAt.toISOString(), last.id)
+        ? encodeTaskCursor(last.cursorTimestamp, last.id)
         : null,
       total: count?.total ?? 0,
     }
@@ -735,9 +738,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     database: DatabaseClient | DatabaseTransaction,
     workspaceId: string,
     taskId?: string,
-    page?: { limit: number; cursor: { createdAt: string; id: string } | null },
+    page?: { limit: number; cursor: { createdAt: string; id: string } | null; sessionId?: string | null },
   ): Promise<TaskRow[]> {
     const cursor = page?.cursor ?? null
+    const sessionId = page?.sessionId ?? null
     return database<TaskRow[]>`
       select t.id, t.workspace_id as "workspaceId", t.title, t.description,
              t.created_by as "createdBy", cu.display_name as "createdByName",
@@ -745,6 +749,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
              t.assignee_agent_member_id as "assigneeAgentMemberId", a.name as "assigneeAgentName",
              t.session_id as "sessionId", t.status, t.completion_note as "completionNote", t.completed_at as "completedAt",
              t.due_date::text as "dueDate", t.created_at as "createdAt", t.updated_at as "updatedAt",
+             to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorTimestamp",
              lr.id as "latestRunId", lr.status as "latestRunStatus"
         from project_tasks t
         join users cu on cu.tenant_id = t.tenant_id and cu.id = t.created_by
@@ -758,7 +763,9 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         ) lr on true
        where t.tenant_id = ${tenantId} and t.workspace_id = ${workspaceId} and t.removed_at is null
          and (${taskId ?? null}::text is null or t.id = ${taskId ?? null})
-         and (${cursor === null} or (t.created_at, t.id) < (${cursor?.createdAt ?? null}::timestamptz, ${cursor?.id ?? null}))
+         and (${sessionId}::text is null or t.session_id = ${sessionId})
+         -- ::text 先行：postgres.js 按 timestamptz 参数序列化时会经 Date 截到毫秒，游标失去微秒精度。
+         and (${cursor === null} or (t.created_at, t.id) < (${cursor?.createdAt ?? null}::text::timestamptz, ${cursor?.id ?? null}))
        order by t.created_at desc, t.id desc
        limit ${page?.limit ?? null}
     `
@@ -876,8 +883,15 @@ const TASK_PAGE_MAX = 100
 function parseTaskPageLimit(value: unknown): number {
   if (value === undefined || value === null || value === '') return TASK_PAGE_DEFAULT
   const limit = Number(value)
-  if (!Number.isInteger(limit) || limit < 1) throw requestInvalid('limit 必须是 1 到 100 的整数')
-  return Math.min(limit, TASK_PAGE_MAX)
+  if (!Number.isInteger(limit) || limit < 1 || limit > TASK_PAGE_MAX) throw requestInvalid('limit 必须是 1 到 100 的整数')
+  return limit
+}
+
+/** 按任务线程查找：对话页只需判断当前线程是不是任务，不能靠翻页（较早的任务不在第一页）。 */
+function parseTaskSessionFilter(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string' || value.length > 200) throw requestInvalid('sessionId 无效')
+  return value
 }
 
 /** 游标按 (created_at, id) 倒序；id 用于同一时间戳内稳定推进。 */

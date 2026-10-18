@@ -56,6 +56,7 @@ export function registerProjectRoutes(
     return envelope('workbench', await projects.listTasks(workspaceId, identity.userId, {
       limit: context.url.searchParams.get('limit') ?? undefined,
       cursor: context.url.searchParams.get('cursor') ?? undefined,
+      sessionId: context.url.searchParams.get('sessionId') ?? undefined,
     }), 'postgres')
   })
 

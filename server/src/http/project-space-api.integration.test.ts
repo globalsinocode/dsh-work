@@ -271,6 +271,52 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
 })
 
+test('任务分页：同一毫秒内创建的任务按微秒游标逐页取全；sessionId 精确查找线程任务；limit 越界 422（P2-15）', async () => {
+  const ws = await seedSpace('paging')
+  const ids: string[] = []
+  for (const title of ['分页一', '分页二', '分页三']) {
+    const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+      as: ws.member, body: { title, assignee: { type: 'employee', id: ws.member } },
+    })
+    assert.equal(created.status, 201, JSON.stringify(created.body))
+    ids.push((created.body.data as { id: string }).id)
+  }
+  // 三个任务落在同一毫秒、不同微秒：毫秒精度的游标会把后两条跳过。
+  for (const [index, micros] of ['123456', '123300', '123100'].entries()) {
+    await database`
+      update project_tasks set created_at = ${`2026-10-18T08:00:00.${micros}Z`}::text::timestamptz
+       where tenant_id = ${tenantId} and id = ${ids[index]!}
+    `
+  }
+  const seen: string[] = []
+  let cursor: string | null = null
+  do {
+    const query: string = cursor ? `?limit=1&cursor=${encodeURIComponent(cursor)}` : '?limit=1'
+    const pageResponse = await api('GET', `${base}/workspaces/${ws.id}/project-tasks${query}`, { as: ws.viewer })
+    assert.equal(pageResponse.status, 200, JSON.stringify(pageResponse.body))
+    const pageData = pageResponse.body.data as { items: Array<{ id: string }>; nextCursor: string | null; total: number }
+    assert.equal(pageData.total, 3)
+    seen.push(...pageData.items.map(item => item.id))
+    cursor = pageData.nextCursor
+  } while (cursor && seen.length < 10)
+  assert.deepEqual(seen, ids)
+
+  const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '分页线程', workspaceId: ws.id } })
+  const sessionId = (discussion.body.data as { id: string }).id
+  const agentMemberId = await joinAgent(ws, 'paging')
+  // 只有 Agent 任务能绑定线程（project_tasks_assignee_shape）。
+  await database`
+    update project_tasks
+       set assignee_type = 'agent', assignee_user_id = null, assignee_agent_member_id = ${agentMemberId}, session_id = ${sessionId}
+     where tenant_id = ${tenantId} and id = ${ids[2]!}
+  `
+  const bySession = await api('GET', `${base}/workspaces/${ws.id}/project-tasks?limit=1&sessionId=${encodeURIComponent(sessionId)}`, { as: ws.member })
+  assert.deepEqual((bySession.body.data as { items: Array<{ id: string }> }).items.map(item => item.id), [ids[2]])
+
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks?limit=101`, { as: ws.member })).status, 422)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks?cursor=bm90LWEtY3Vyc29y`, { as: ws.member })).status, 422)
+})
+
 test('设为任务：并发设置同一线程只有一个成功，另一个 409（空间锁串行化，P2-7 兜底）', async () => {
   // 空间行锁把两次请求串行：后到者通常先命中预检的 409。服务端另把唯一索引冲突映射为
   // 409，覆盖锁范围外的并发/重放；该分支难以在集成测试里稳定构造，保留为防御性路径。

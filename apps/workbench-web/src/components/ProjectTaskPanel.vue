@@ -77,12 +77,16 @@ async function loadMore() {
   const workspaceId = props.workspaceId
   const cursor = nextCursor.value
   if (!workspaceId || !cursor || loadingMore.value) return
+  const seq = requestSeq
   loadingMore.value = true
   try {
     const page = await workbenchApi.listProjectTasks(workspaceId, { cursor })
+    // 加载期间切换了空间或列表已重新加载：丢弃这一页，避免把旧列表的任务追加进来。
+    if (seq !== requestSeq) return
     tasks.value = [...tasks.value, ...page.items]
     nextCursor.value = page.nextCursor
   } catch {
+    if (seq !== requestSeq) return
     ElMessage.error('加载更多任务失败，请重试')
   } finally {
     loadingMore.value = false
@@ -315,80 +319,82 @@ defineExpose({ reload: load })
     <el-alert v-else-if="loadError" type="error" :closable="false" show-icon title="任务加载失败">
       <el-button size="small" @click="load">重试</el-button>
     </el-alert>
-    <ul v-else-if="tasks.length" class="project-tasks__list" aria-label="项目任务">
-      <li v-for="task in tasks" :key="task.id" class="project-task" data-testid="project-task-row">
-        <div class="project-task__main">
-          <div class="project-task__title">
-            <strong>{{ task.title }}</strong>
-            <span class="project-task__status" :class="`project-task__status--${task.status}`" data-testid="project-task-status">
-              {{ statusLabels[task.status] }}
-            </span>
+    <template v-else-if="tasks.length">
+      <ul class="project-tasks__list" aria-label="项目任务">
+        <li v-for="task in tasks" :key="task.id" class="project-task" data-testid="project-task-row">
+          <div class="project-task__main">
+            <div class="project-task__title">
+              <strong>{{ task.title }}</strong>
+              <span class="project-task__status" :class="`project-task__status--${task.status}`" data-testid="project-task-status">
+                {{ statusLabels[task.status] }}
+              </span>
+            </div>
+            <p v-if="task.description" class="project-task__description">{{ task.description }}</p>
+            <p class="project-task__meta">
+              承接：{{ assigneeLabel(task) }} · 创建：{{ task.createdBy.displayName }}
+              <template v-if="task.dueDate"> · 截止 {{ task.dueDate }}</template>
+            </p>
+            <p v-if="task.inputFiles.length" class="project-task__meta">
+              引用文件：{{ task.inputFiles.map(file => `${file.name}（V${file.versionNo}）`).join('、') }}
+            </p>
+            <p v-if="task.completionNote" class="project-task__note" data-testid="project-task-note">完成说明：{{ task.completionNote }}</p>
+            <p v-if="task.deliverableFiles.length" class="project-task__meta">
+              交付文件：{{ task.deliverableFiles.map(file => file.name).join('、') }}
+            </p>
           </div>
-          <p v-if="task.description" class="project-task__description">{{ task.description }}</p>
-          <p class="project-task__meta">
-            承接：{{ assigneeLabel(task) }} · 创建：{{ task.createdBy.displayName }}
-            <template v-if="task.dueDate"> · 截止 {{ task.dueDate }}</template>
-          </p>
-          <p v-if="task.inputFiles.length" class="project-task__meta">
-            引用文件：{{ task.inputFiles.map(file => `${file.name}（V${file.versionNo}）`).join('、') }}
-          </p>
-          <p v-if="task.completionNote" class="project-task__note" data-testid="project-task-note">完成说明：{{ task.completionNote }}</p>
-          <p v-if="task.deliverableFiles.length" class="project-task__meta">
-            交付文件：{{ task.deliverableFiles.map(file => file.name).join('、') }}
-          </p>
-        </div>
-        <div class="project-task__actions">
-          <el-button
-            v-if="can(task, 'start')"
-            type="primary"
-            size="small"
-            :loading="busyTaskId === task.id"
-            @click="startTask(task)"
-          >
-            交给 Agent 执行
-          </el-button>
-          <el-button v-if="task.sessionId" size="small" @click="openThread(task)">打开任务线程</el-button>
-          <template v-if="can(task, 'set_status')">
+          <div class="project-task__actions">
             <el-button
-              v-if="task.status === 'todo'"
+              v-if="can(task, 'start')"
+              type="primary"
               size="small"
               :loading="busyTaskId === task.id"
-              @click="setStatus(task, 'in_progress')"
+              @click="startTask(task)"
             >
-              开始处理
+              交给 Agent 执行
             </el-button>
+            <el-button v-if="task.sessionId" size="small" @click="openThread(task)">打开任务线程</el-button>
+            <template v-if="can(task, 'set_status')">
+              <el-button
+                v-if="task.status === 'todo'"
+                size="small"
+                :loading="busyTaskId === task.id"
+                @click="setStatus(task, 'in_progress')"
+              >
+                开始处理
+              </el-button>
+              <el-button
+                v-if="task.status === 'done'"
+                size="small"
+                :loading="busyTaskId === task.id"
+                @click="setStatus(task, 'in_progress')"
+              >
+                重新打开
+              </el-button>
+            </template>
             <el-button
-              v-if="task.status === 'done'"
+              v-if="can(task, 'complete') && task.status !== 'done'"
               size="small"
-              :loading="busyTaskId === task.id"
-              @click="setStatus(task, 'in_progress')"
+              type="success"
+              plain
+              @click="openComplete(task)"
             >
-              重新打开
+              完成
             </el-button>
-          </template>
-          <el-button
-            v-if="can(task, 'complete') && task.status !== 'done'"
-            size="small"
-            type="success"
-            plain
-            @click="openComplete(task)"
-          >
-            完成
-          </el-button>
-          <el-button v-if="can(task, 'edit')" size="small" text @click="openEdit(task)">编辑</el-button>
-          <el-button v-if="can(task, 'remove')" size="small" text type="danger" @click="removeTask(task)">移除</el-button>
-        </div>
-      </li>
-    </ul>
-    <el-button
-      v-if="nextCursor"
-      class="project-tasks__more"
-      :loading="loadingMore"
-      data-testid="project-task-more"
-      @click="loadMore"
-    >
-      加载更多任务
-    </el-button>
+            <el-button v-if="can(task, 'edit')" size="small" text @click="openEdit(task)">编辑</el-button>
+            <el-button v-if="can(task, 'remove')" size="small" text type="danger" @click="removeTask(task)">移除</el-button>
+          </div>
+        </li>
+      </ul>
+      <el-button
+        v-if="nextCursor"
+        class="project-tasks__more"
+        :loading="loadingMore"
+        data-testid="project-task-more"
+        @click="loadMore"
+      >
+        加载更多任务
+      </el-button>
+    </template>
     <el-empty v-else description="还没有任务">
       <template v-if="canWrite">
         <p class="project-tasks__muted">从简报出发拆出第一项任务，交给同事或 Agent。</p>

@@ -712,6 +712,8 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     const { wrapper, taskStore } = await mountView({ item: null })
     vi.spyOn(taskStore, 'subscribe').mockImplementation(() => {})
 
+    // 按线程精确查找，而不是在列表第一页里找（较早任务不在第一页）。
+    expect(api.listProjectTasks).toHaveBeenCalledWith('ws-team', { sessionId: 'session-001', limit: 1 })
     expect(wrapper.get('[data-testid="task-thread-notice"]').text()).toContain('“缺货分析助手”')
     expect(wrapper.get('[data-testid="task-thread-badge"]').text()).toContain('分析缺货原因')
     expect(wrapper.find('[data-testid="mark-as-task"]').exists()).toBe(false)

@@ -224,5 +224,38 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     expect(workbenchApi.listProjectTasks).toHaveBeenLastCalledWith('ws-team', { cursor: 'cursor-2' })
     expect(wrapper.findAll('[data-testid="project-task-row"]')).toHaveLength(3)
     expect(wrapper.find('[data-testid="project-task-more"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('还没有任务')
+  })
+
+  it('有任务时不显示空状态，无论是否还有下一页（P2-15 回归）', async () => {
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
+    const lastPage = mountPanel()
+    await flushPromises()
+    expect(lastPage.findAll('[data-testid="project-task-row"]')).toHaveLength(1)
+    expect(lastPage.text()).not.toContain('还没有任务')
+    expect(lastPage.findAll('[data-testid="project-task-create"]')).toHaveLength(1)
+
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()], 'cursor-2'))
+    const firstPage = mountPanel()
+    await flushPromises()
+    expect(firstPage.find('[data-testid="project-task-more"]').exists()).toBe(true)
+    expect(firstPage.text()).not.toContain('还没有任务')
+  })
+
+  it('加载更多期间切换空间时丢弃旧空间的下一页', async () => {
+    let resolveMore!: (value: ProjectTaskPage) => void
+    vi.mocked(workbenchApi.listProjectTasks)
+      .mockResolvedValueOnce(page([task()], 'cursor-2'))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveMore = resolve }))
+      .mockResolvedValueOnce(page([task({ id: 'other', title: '另一个空间的任务' })]))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-testid="project-task-more"]').trigger('click')
+    await wrapper.setProps({ workspaceId: 'ws-other' })
+    await flushPromises()
+    resolveMore(page([task({ id: 'stale', title: '旧空间第二页' })]))
+    await flushPromises()
+    expect(wrapper.text()).toContain('另一个空间的任务')
+    expect(wrapper.text()).not.toContain('旧空间第二页')
   })
 })

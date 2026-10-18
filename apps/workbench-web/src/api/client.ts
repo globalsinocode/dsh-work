@@ -386,10 +386,11 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  listProjectTasks: (workspaceId: string, options: { limit?: number; cursor?: string } = {}) => {
+  listProjectTasks: (workspaceId: string, options: { limit?: number; cursor?: string; sessionId?: string } = {}) => {
     const query = new URLSearchParams()
     if (options.limit !== undefined) query.set('limit', String(options.limit))
     if (options.cursor) query.set('cursor', options.cursor)
+    if (options.sessionId) query.set('sessionId', options.sessionId)
     const suffix = query.size ? `?${query.toString()}` : ''
     return request<ProjectTaskPage>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks${suffix}`, { method: 'GET' })
   },
