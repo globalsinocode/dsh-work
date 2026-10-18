@@ -250,13 +250,20 @@ export class ExecutionAuthorizationGate {
    * Defensive against concurrent convergence (systemCancelRun may already
    * have cancelled the run): terminal states are left untouched.
    */
-  async failRunForRevokedAuthorization(run: RunRecord, manifest: RuntimeManifest, reason: string) {
+  async failRunForRevokedAuthorization(
+    run: RunRecord,
+    manifest: RuntimeManifest,
+    reason: string,
+    failure: { errorCode?: string; displayMessage?: string } = {},
+  ) {
+    const errorCode = failure.errorCode ?? 'AUTHORIZATION_REVOKED'
+    const displayMessage = failure.displayMessage ?? '授权已撤销，任务未执行'
     const attempt = await this.deps.runs.getAttempt(tenantId, manifest.attempt_id)
     const currentRun = await this.deps.runs.getRun(tenantId, run.id)
     const attemptId = attempt?.id ?? manifest.attempt_id
     let converged = false
     if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
-      await this.deps.runs.transitionAttempt(tenantId, attemptId, 'failed', 'AUTHORIZATION_REVOKED')
+      await this.deps.runs.transitionAttempt(tenantId, attemptId, 'failed', errorCode)
       converged = true
     }
     if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
@@ -270,9 +277,20 @@ export class ExecutionAuthorizationGate {
       runId: run.id,
       attemptId,
       eventType: 'run.failed',
-      displayMessage: '授权已撤销，任务未执行',
-      safeMetadata: { error_code: 'AUTHORIZATION_REVOKED', reason },
+      displayMessage,
+      safeMetadata: { error_code: errorCode, reason },
       traceId: `trace-${run.id}`,
     })
+    // 无 Session 的系统运行（摘要、项目档案）没有会话可回放终态：直接交给入口收敛，
+    // 不再等事件回放或过期清理。终结器失败不影响已落库的终态。
+    if (!run.sessionId) {
+      try {
+        if (!await this.deps.projectArchivist?.onRunTerminal(run, 'failed', '')) {
+          await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
+        }
+      } catch (error) {
+        console.error('system run finalizer failed', run.id, error)
+      }
+    }
   }
 }

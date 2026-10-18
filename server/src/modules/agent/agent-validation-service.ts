@@ -704,7 +704,7 @@ export class PostgresAgentValidationService {
       : []
     const allowed = new Set([...declared, ...defaults])
     const withdrawn = candidate.bindingRefs.filter(pin => !allowed.has(pin.tool)).map(pin => pin.tool)
-    if (withdrawn.length) throw validationBlocked(`岗位权限收窄后不再获准的工具：${withdrawn.join('、')}，请重新验证`)
+    if (withdrawn.length) throw validationBlocked(`可见角色或岗位权限收窄后不再获准的工具：${withdrawn.join('、')}，请重新验证`)
     if (declared.some(reference => !candidate.bindingRefs.some(pin => pin.tool === reference))) {
       throw validationBlocked('待发布版本缺少工具的固定绑定，请重新验证')
     }

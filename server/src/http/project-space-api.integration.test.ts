@@ -271,7 +271,9 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
 })
 
-test('设为任务：并发设置同一线程只有一个成功，另一个 409（P2-7）', async () => {
+test('设为任务：并发设置同一线程只有一个成功，另一个 409（空间锁串行化，P2-7 兜底）', async () => {
+  // 空间行锁把两次请求串行：后到者通常先命中预检的 409。服务端另把唯一索引冲突映射为
+  // 409，覆盖锁范围外的并发/重放；该分支难以在集成测试里稳定构造，保留为防御性路径。
   const ws = await seedSpace('mark-race')
   const agentMemberId = await joinAgent(ws, 'mark-race')
   const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '并发设为任务', workspaceId: ws.id } })

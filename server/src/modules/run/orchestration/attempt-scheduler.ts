@@ -145,7 +145,14 @@ export class AttemptScheduler {
             const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, purpose, backgroundLaneMaxConcurrent[purpose])
             if (lane.exists && lane.accepting && lane.allowed <= 0) {
               this.pendingExecutions.splice(index, 1)
-              await this.failBackgroundRunForCapacity(next.run, next.manifest, purpose)
+              const reason = backgroundCapacityMessage[purpose]
+              // 容量不足是配置问题，不是授权撤销：用独立错误码；无 Session 的系统运行由
+              // gate 直接交给摘要/档案入口收敛。项目档案的失败分支会计入整理重试次数
+              // （上限 3 次），长期容量不足可能放弃该批输入，运维手册已注明需先扩容量。
+              await this.gate.failRunForRevokedAuthorization(next.run, next.manifest, reason, {
+                errorCode: 'BACKGROUND_CAPACITY_EXHAUSTED',
+                displayMessage: `${reason}，任务未执行`,
+              })
               continue
             }
             if (lane.exists && lane.accepting && (lane.running >= lane.allowed || lane.backgroundFull)) {
@@ -265,48 +272,6 @@ export class AttemptScheduler {
       safeMetadata: { error_code: 'AUTOMATION_CAPACITY_EXHAUSTED' },
       traceId: `trace-${run.id}`,
     })
-  }
-
-  /**
-   * 后台车道（摘要/验证案例/项目档案）容量不足以保留交互余量时的收敛：使用独立的
-   * 容量错误码，不能被读成授权撤销；无 Session 的系统运行同时交给对应入口收敛，
-   * 不再等到下一次触发或过期清理。
-   */
-  private async failBackgroundRunForCapacity(run: RunRecord, manifest: RuntimeManifest, purpose: BackgroundLanePurpose) {
-    const attempt = await this.deps.runs.getAttempt(tenantId, manifest.attempt_id)
-    const currentRun = await this.deps.runs.getRun(tenantId, run.id)
-    const attemptId = attempt?.id ?? manifest.attempt_id
-    let converged = false
-    if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
-      await this.deps.runs.transitionAttempt(tenantId, attemptId, 'failed', 'BACKGROUND_CAPACITY_EXHAUSTED')
-      converged = true
-    }
-    if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
-      await this.deps.runs.transitionRun(tenantId, run.id, 'failed')
-      converged = true
-    }
-    // 并发收敛（取消、超时）已落终态时不补写失败事件。
-    if (!converged) return
-    const reason = backgroundCapacityMessage[purpose]
-    await this.deps.runs.appendSystemEvent({
-      tenantId,
-      runId: run.id,
-      attemptId,
-      eventType: 'run.failed',
-      displayMessage: `${reason}，任务未执行`,
-      safeMetadata: { error_code: 'BACKGROUND_CAPACITY_EXHAUSTED', reason },
-      traceId: `trace-${run.id}`,
-    })
-    if (!run.sessionId) {
-      try {
-        if (!await this.deps.projectArchivist?.onRunTerminal(run, 'failed', '')) {
-          await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
-        }
-      } catch (error) {
-        // 收敛已经落库；终结器失败只影响摘要/档案的清理时机，不能反过来阻塞调度。
-        console.error('background capacity finalizer failed', run.id, error)
-      }
-    }
   }
 
   /**

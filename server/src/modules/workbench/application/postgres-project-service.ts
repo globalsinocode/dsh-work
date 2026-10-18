@@ -506,8 +506,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           )
         `
       } catch (error) {
-        // 并发“设为任务”撞 project_tasks_session_unique 时与预检同义返回 409，而不是落到 500。
-        if ((error as { code?: string }).code === '23505') throw workspaceStateConflict('该线程已经是任务')
+        // 并发“设为任务”撞 project_tasks_session_unique 时与预检同义返回 409，而不是落到 500；
+        // 其他唯一约束冲突保持原错误，避免把无关的 23505 误报成“该线程已经是任务”。
+        const failure = error as { code?: string; constraint?: string }
+        if (failure.code === '23505' && failure.constraint === 'project_tasks_session_unique') {
+          throw workspaceStateConflict('该线程已经是任务')
+        }
         throw error
       }
       await recordWorkspaceActivity(transaction, {
