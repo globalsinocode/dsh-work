@@ -23,19 +23,43 @@ watch(() => route.params.id, async value => {
   finally { if (current === generation) loading.value = false }
 }, { immediate: true })
 onBeforeUnmount(() => { generation++ })
-async function submit(payload: { prompt: string; files: File[] }) {
+async function submit(payload: {
+  prompt: string
+  files: File[]
+  confirm?: () => void
+  release?: () => void
+}) {
   const target = session.value, current = generation
-  if (!target?.canContinue) return
+  if (!target?.canContinue) {
+    payload.release?.()
+    return
+  }
   try {
     const fileIds: string[] = []
     for (const file of payload.files) {
-      if (current !== generation) return
+      if (current !== generation) {
+        payload.release?.()
+        return
+      }
       fileIds.push((await workbenchApi.uploadSessionFile(target.sessionId, file)).id)
     }
-    if (current !== generation) return
+    if (current !== generation) {
+      payload.release?.()
+      return
+    }
     const task = await workbenchApi.startRun(target.sessionId, { prompt: payload.prompt, fileIds, idempotencyKey: crypto.randomUUID() })
-    if (current === generation) await router.replace(`/conversations/${task.id}`)
-  } catch(cause) { if (current === generation) notifyActionFailure('继续对话', target.title, cause) }
+    if (current === generation) {
+      await router.replace(`/conversations/${task.id}`)
+      payload.confirm?.()
+    } else {
+      payload.release?.()
+    }
+  } catch (cause) {
+    if (current === generation) {
+      payload.release?.()
+      notifyActionFailure('继续对话', target.title, cause)
+    }
+  }
 }
 </script>
 <template>

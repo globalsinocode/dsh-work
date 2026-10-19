@@ -4,7 +4,7 @@ import { assertRuntimeModelRequirements } from '../../runtime/execution-capabili
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
 import { invalidRequest } from '../../../domain/request-errors.ts'
-import { redactSensitiveText } from '../../../security/safe-observability.ts'
+import { extractRunFailureReason } from '../../../domain/run-failure-reason.ts'
 import type { ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
 import type { RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
@@ -98,15 +98,11 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
   /** 取该 Run 最近一条失败事件的遥测原因，供治理侧展示；没有则返回 undefined。 */
   private async readRunFailureReason(runId: string): Promise<string | undefined> {
     const events = await this.deps.runs.readEvents(tenantId, runId).catch(() => [])
-    for (const event of [...events].reverse()) {
-      if (!event.eventType.endsWith('.failed')) continue
-      const reason = event.safeMetadata['reason']
-      if (typeof reason === 'string' && reason.trim()) return redactSensitiveText(reason.trim()).slice(0, 500)
-      const code = event.safeMetadata['error_code']
-      if (typeof code === 'string' && code.trim()) return code.trim()
-      if (event.displayMessage?.trim()) return redactSensitiveText(event.displayMessage.trim()).slice(0, 500)
-    }
-    return undefined
+    return extractRunFailureReason(events.map(event => ({
+      eventType: event.eventType,
+      displayMessage: event.displayMessage,
+      safeMetadata: event.safeMetadata,
+    })))
   }
 
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {

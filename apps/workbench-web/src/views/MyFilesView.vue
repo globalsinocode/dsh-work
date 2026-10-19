@@ -8,6 +8,7 @@ import { usePagedQuery } from '@/composables/usePagedQuery'
 import type { PersonalFile } from '@/types/domain'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
+import { runGuardedDownload, triggerBlobDownload } from '@/utils/download-file'
 let mounted = true
 onBeforeUnmount(() => { mounted = false })
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -30,16 +31,20 @@ async function upload(event: Event) {
   catch(cause) { notifyActionFailure('上传文件', file.name, cause) }
   finally { uploading.value = false; target.value = ''; await reload() }
 }
-async function download(file: PersonalFile) {
-  busy.value = file.id
-  try {
-    const actor = auth.user.id
-    const blob = await workbenchApi.downloadPersonalFile(file.id)
-    if (!mounted || actor !== auth.user.id) return
-    const url = URL.createObjectURL(blob), anchor = document.createElement('a')
-    anchor.href = url; anchor.download = file.name; anchor.click(); URL.revokeObjectURL(url)
-  } catch(cause) { notifyActionFailure('下载文件', file.name, cause) }
-  finally { busy.value = '' }
+function download(file: PersonalFile) {
+  void runGuardedDownload(`personal-file:${file.id}`, async () => {
+    busy.value = file.id
+    try {
+      const actor = auth.user.id
+      const blob = await workbenchApi.downloadPersonalFile(file.id)
+      if (!mounted || actor !== auth.user.id) return
+      triggerBlobDownload(blob, file.name)
+    } catch (cause) {
+      notifyActionFailure('下载文件', file.name, cause)
+    } finally {
+      busy.value = ''
+    }
+  })
 }
 async function remove(file: PersonalFile) {
   try { await ElMessageBox.confirm(fileRemovalNotice, '移除文件？', { confirmButtonText: '移除文件', cancelButtonText: '取消' }) }

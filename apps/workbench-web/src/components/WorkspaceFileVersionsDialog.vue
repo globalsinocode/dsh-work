@@ -6,6 +6,7 @@ import { Close } from '@element-plus/icons-vue'
 import { workbenchApi } from '@/api/client'
 import type { WorkspaceFileVersion } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { runGuardedDownload, triggerBlobDownload } from '@/utils/download-file'
 import { canReferenceVersion, describeVersionParseStatus } from '@/utils/workspace-file-versions'
 
 /**
@@ -95,28 +96,26 @@ onBeforeUnmount(() => {
 })
 
 /** 历史版本下载：是否可下载一律以服务端 `canDownload` 为准（入口已按其渲染）。 */
-async function downloadVersion(version: WorkspaceFileVersion) {
-  try {
-    const blob = await workbenchApi.downloadWorkspaceFileVersion(
-      props.workspaceId,
-      props.logicalFileId,
-      version.versionNo,
-    )
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = version.name
-    anchor.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success(`已下载“${version.name}”V${version.versionNo}`)
-  } catch (cause) {
-    notifyActionFailure(
-      '版本下载',
-      `文件“${version.name}”V${version.versionNo}`,
-      cause,
-      '刷新版本列表后重试；若仍失败，请联系工作空间管理员。',
-    )
-  }
+function downloadVersion(version: WorkspaceFileVersion) {
+  const key = `workspace-file:${props.workspaceId}:${props.logicalFileId}:v${version.versionNo}`
+  void runGuardedDownload(key, async () => {
+    try {
+      const blob = await workbenchApi.downloadWorkspaceFileVersion(
+        props.workspaceId,
+        props.logicalFileId,
+        version.versionNo,
+      )
+      triggerBlobDownload(blob, version.name)
+      ElMessage.success(`已下载“${version.name}”V${version.versionNo}`)
+    } catch (cause) {
+      notifyActionFailure(
+        '版本下载',
+        `文件“${version.name}”V${version.versionNo}`,
+        cause,
+        '刷新版本列表后重试；若仍失败，请联系工作空间管理员。',
+      )
+    }
+  })
 }
 </script>
 

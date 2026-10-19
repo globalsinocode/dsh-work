@@ -103,4 +103,8 @@ export interface RunRepository {
   listActiveRunsForAgentMember(tenantId: string, workspaceId: string, agentMemberId: string): Promise<RunRecord[]>
   /** All active runs in a workspace with the session's pinned agent version. */
   listActiveRunsInWorkspace(tenantId: string, workspaceId: string): Promise<WorkspaceActiveRun[]>
+  /** 任一 Attempt Manifest 上记录的最后已知 agent_version_id（团队重试回退）。 */
+  findPinnedAgentVersionIdForRun(tenantId: string, runId: string): Promise<string | null>
+  /** 任一 Attempt Manifest 上记录的最后已知 workspace_agent_member_id。 */
+  findWorkspaceAgentMemberIdForRun(tenantId: string, runId: string): Promise<string | null>
 }

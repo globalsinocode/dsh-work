@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, readFile, readdir } from 'node:fs/promises'
-import { extname, join, resolve } from 'node:path'
+import { extname, resolve } from 'node:path'
+
+import { isStrictResolvedPathInside } from '../../../domain/host-path.ts'
 
 import type { Artifact, Workspace, WorkspaceFile } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
@@ -14,7 +16,7 @@ import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceTyp
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
-import type { ObjectStorage } from '../../../domain/object-storage.ts'
+import { joinObjectKey, type ObjectStorage } from '../../../domain/object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
@@ -1684,7 +1686,7 @@ export class PostgresContentService {
 
     const workspaceRoot = resolve(input.workspaceDirectory)
     const outputRoot = resolve(workspaceRoot, 'output')
-    if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw invalidRequest('Runtime 成果目录无效')
+    if (!isStrictResolvedPathInside(workspaceRoot, outputRoot)) throw invalidRequest('Runtime 成果目录无效')
     const entries = await readdir(outputRoot, { withFileTypes: true })
     if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 
@@ -1713,7 +1715,7 @@ export class PostgresContentService {
       const type = artifactTypeForExtension(extension)
       if (!type) throw new Error(`成果文件格式不受支持：${entry.name}`)
       const sourcePath = resolve(outputRoot, entry.name)
-      if (!sourcePath.startsWith(`${outputRoot}/`)) throw invalidRequest(`成果文件路径无效：${entry.name}`)
+      if (!isStrictResolvedPathInside(outputRoot, sourcePath)) throw invalidRequest(`成果文件路径无效：${entry.name}`)
       const details = await lstat(sourcePath)
       if (!details.isFile() || details.nlink !== 1) throw new Error(`成果文件不是独立普通文件：${entry.name}`)
       if (details.size < 1 || details.size > 10 * 1024 * 1024) throw invalidRequest(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
@@ -1735,7 +1737,7 @@ export class PostgresContentService {
         mimeType: artifactMimeType(type),
         bytes,
         sha256: contentSha256,
-        storageKey: join('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
+        storageKey: joinObjectKey('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
         text: artifactInputText(type, bytes, fileId),
       })
     }
@@ -1959,7 +1961,7 @@ export class PostgresContentService {
     }
     const fileId = `file-${randomUUID()}`
     const sha256 = createHash('sha256').update(bytes).digest('hex')
-    const storageKey = join(sessionId ? 'session-files' : 'workspace-files', sessionId ?? workspaceId ?? 'unknown', `${fileId}${extension}`)
+    const storageKey = joinObjectKey(sessionId ? 'session-files' : 'workspace-files', sessionId ?? workspaceId ?? 'unknown', `${fileId}${extension}`)
     await this.storage.putIfAbsent(storageKey, bytes)
     return { fileId, extension, sha256, storageKey }
   }
@@ -1975,7 +1977,7 @@ export class PostgresContentService {
       const extraction = extractDocument(name, bytes)
       const textBytes = Buffer.from(extraction.text, 'utf8')
       const textSha256 = createHash('sha256').update(textBytes).digest('hex')
-      const textStorageKey = join('extractions', fileId, 'm4-basic-v1.txt')
+      const textStorageKey = joinObjectKey('extractions', fileId, 'm4-basic-v1.txt')
       await this.storage.putIfAbsent(textStorageKey, textBytes)
       await this.database`
         insert into file_extractions (
@@ -2217,7 +2219,7 @@ function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string
   return {
     content,
     sha256: createHash('sha256').update(content).digest('hex'),
-    storageKey: join('extractions', fileId, 'm4-basic-v1.txt'),
+    storageKey: joinObjectKey('extractions', fileId, 'm4-basic-v1.txt'),
     detectedType: type === 'csv' ? 'csv' : 'text',
     rowCount: content.split('\n').length,
   }

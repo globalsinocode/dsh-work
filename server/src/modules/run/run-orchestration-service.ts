@@ -291,6 +291,7 @@ export class RunOrchestrationService {
     }
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
     let agentVersionId = session.agentVersionId
+    const teamAgentMemberId = session.workspaceType === 'team' ? input.workspaceAgentMemberId : undefined
     if (session.workspaceType === 'team') {
       // TW-10 @ 触发：团队会话每次执行都必须显式绑定当前可用的 Agent 成员；
       // 不再回退到会话级 agentVersionId，避免历史绑定绕过成员状态复核。
@@ -346,6 +347,7 @@ export class RunOrchestrationService {
         prompt,
         workspaceId: session.workspaceId,
         agentVersionId,
+        workspaceAgentMemberId: teamAgentMemberId,
         userId: input.userId,
         fileIds: input.fileIds ?? [],
         preparedFiles,
@@ -520,14 +522,33 @@ export class RunOrchestrationService {
     // TW-10：共享会话按消息绑定 Agent——重试必须沿用原 Attempt Manifest 记录的
     // 固定版本（requireWritableRun 已完成写轨校验）。会话级绑定对未绑定讨论串
     // 恒为 null、对已绑定会话也可能与触发时成员版本漂移，不能回落；缺失即拒绝。
-    const manifestAgentVersionId = (lastAttempt?.manifest as RuntimeManifest | undefined)?.agent_version_id
-    const agentVersionId = workspaceType === 'team'
-      ? manifestAgentVersionId ?? null
+    const manifest = lastAttempt?.manifest as RuntimeManifest | undefined
+    let agentVersionId = workspaceType === 'team'
+      ? manifest?.agent_version_id ?? null
       : session.agentVersionId
-    if (workspaceType === 'team' && !manifestAgentVersionId) {
-      throw requestInvalid('原运行缺少 Agent 版本记录，无法重试；请重新 @Agent 发起执行')
+    if (workspaceType === 'team') {
+      if (!agentVersionId) {
+        agentVersionId = await this.deps.runs.findPinnedAgentVersionIdForRun(tenantId, run.id)
+      }
+      if (!agentVersionId) {
+        const memberId = manifest?.workspace_agent_member_id
+          ?? await this.deps.runs.findWorkspaceAgentMemberIdForRun(tenantId, run.id)
+        if (memberId && this.deps.agentMembers) {
+          agentVersionId = (
+            await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, memberId)
+          ).agentVersionId
+        }
+      }
+      if (!agentVersionId) {
+        throw requestInvalid(
+          run.currentAttemptId
+            ? '原运行缺少 Agent 版本记录，无法重试；请在下方输入框重新 @Agent 发起执行'
+            : '原运行未完成派发，无法重试；请在下方输入框重新 @Agent 发起执行',
+        )
+      }
+    } else if (!agentVersionId) {
+      throw requestInvalid('Session 未绑定 Agent，无法重试')
     }
-    if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法重试')
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []

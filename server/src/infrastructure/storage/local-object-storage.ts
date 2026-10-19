@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { link, mkdir, open, rm, writeFile } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
+import { isStrictResolvedPathInside } from '../../domain/host-path.ts'
 import { assertObjectKey, ObjectNotFoundError, type ObjectStorage } from '../../domain/object-storage.ts'
 
 /**
@@ -52,7 +53,7 @@ export class LocalObjectStorage implements ObjectStorage {
   private pathFor(key: string) {
     assertObjectKey(key)
     const target = resolve(this.root, key)
-    if (!target.startsWith(`${this.root}${sep}`)) throw new Error(`非法存储键：${key}`)
+    if (!isStrictResolvedPathInside(this.root, target)) throw new Error(`非法存储键：${key}`)
     return target
   }
 }

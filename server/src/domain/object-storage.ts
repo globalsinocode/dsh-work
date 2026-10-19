@@ -1,4 +1,9 @@
+import { posix } from 'node:path'
+
 /**
+ * 对象存储键：与进程 OS 无关的逻辑路径，**始终**为 `/` 分隔（POSIX）。
+ * 本机磁盘上的实际文件位置由 `LocalObjectStorage` 用 `host-path.ts` 解析。
+ *
  * Durable storage for immutable business objects: uploaded files, extracted text, run
  * artifacts and Skill folders. PostgreSQL holds the metadata and the key; the bytes live
  * behind this port so the local disk can later be replaced by NAS or object storage
@@ -32,4 +37,11 @@ export function assertObjectKey(key: string): void {
     || segments.some(segment => !segment || segment === '.' || segment === '..')) {
     throw new Error(`非法存储键：${JSON.stringify(key)}`)
   }
+}
+
+/** Build a platform-neutral object key (always `/` separators). */
+export function joinObjectKey(...segments: string[]): string {
+  const key = posix.join(...segments)
+  assertObjectKey(key)
+  return key
 }

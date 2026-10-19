@@ -39,6 +39,17 @@ pnpm test:e2e
 
 只做业务功能升级无需启动或修改 AI Hub。SSO、目录、Bootstrap、凭据及身份映射修改必须另外联调；冒烟测试身份不能证明生产权限正确。
 
+### 路径与操作系统（Windows 本机 / Linux Docker）
+
+服务端代码在 **Node 进程所在环境** 解析本机路径：Windows 上 `pnpm dev:all` 用反斜杠，容器内用正斜杠，二者都正确。实现约定：
+
+| 场景 | 用法 | 权威模块 |
+| --- | --- | --- |
+| Run 工作区、对象存储根目录、本地读写 | `path.resolve` / `path.join`；判断目录包含关系用 `path.relative`，勿用硬编码 `'/'` 做 `startsWith` | [`host-path.ts`](../../server/src/domain/host-path.ts) |
+| 数据库 `storage_key`、对象存储逻辑键、写入 Manifest 的 `output/...` | 始终 POSIX `/`，与 OS 无关 | [`object-storage.ts`](../../server/src/domain/object-storage.ts) 的 `joinObjectKey()` |
+
+浏览器在 Windows、服务在 Docker 时，只要数据目录挂载进容器，**容器内只看到 Linux 路径**；在 Windows 上直接跑 server 则走 Windows 路径。两套环境都应通过上述 API，而不是混用 `path.join` 生成存储键。
+
 ## 自动化验证
 
 统一质量入口是 `pnpm ci:check`（= `pnpm ci:static` + `pnpm ci:unit`），具体脚本以 [package.json](../../package.json)、[服务端脚本](../../server/package.json) 和 [CI 工作流](../../.github/workflows/ci.yml) 为准。CI 拆成四个并行 Job：`static`（部署配置、静态检查、类型、lint、构建）、`unit`（服务端与双前端单测）、`integration`（全部 PostgreSQL 集成套件）、`browser`（P0 冒烟与各 P1 浏览器旅程）。

@@ -21,6 +21,7 @@ function submitPayload(wrapper: ReturnType<typeof mountComposer>) {
     workspaceId: string
     mentions: string[]
     confirm: () => void
+    release: () => void
   }
 }
 
@@ -91,6 +92,28 @@ describe('TaskComposer', () => {
     expect(wrapper.emitted('submit')).toHaveLength(1)
     expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).toBe('看看这个文件')
     expect(wrapper.text()).toContain('库存计划.xlsx')
+  })
+
+  it('shows send loading immediately and blocks duplicate submits until release or confirm', async () => {
+    const wrapper = mountComposer({ initialPrompt: '查询库存' })
+    const send = wrapper.get('[aria-label="发送消息"]')
+
+    await send.trigger('click')
+
+    expect(wrapper.emitted('submit')).toHaveLength(1)
+    expect(send.attributes('aria-busy')).toBe('true')
+    expect(send.attributes('disabled')).toBeDefined()
+
+    await send.trigger('click')
+    await wrapper.get('[aria-label="对话输入"]').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('submit')).toHaveLength(1)
+
+    submitPayload(wrapper).release()
+    await wrapper.vm.$nextTick()
+    expect(send.attributes('disabled')).toBeUndefined()
+
+    await send.trigger('click')
+    expect(wrapper.emitted('submit')).toHaveLength(2)
   })
 
   it('submits with Enter and keeps Shift+Enter available for a new line', async () => {

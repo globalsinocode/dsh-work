@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ChatMessage, RunStep, TaskRun, TaskRunError } from '../../../domain/types.ts'
 import { deriveTaskResult, type TaskResult, type TaskResultEvidence, type TaskResultOutcome } from '../../../domain/task-result.ts'
+import { enrichTaskRunError } from '../../../domain/run-failure-reason.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { JsonObject, RunState } from '../../../domain/run-state.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres-workspace-service.ts'
@@ -908,10 +909,11 @@ export class PostgresConversationRepository {
       : []
     for (const row of rows) {
       const committed = new Set(messageIds.filter(message => message.runId === row.id).map(message => message.id))
+      const rowEvents = events.filter(event => event.attemptId === row.currentAttemptId)
       const evidence: TaskResultEvidence = {
         run: { id: row.id, status: row.status, updatedAt: row.updatedAt },
         attemptId: row.currentAttemptId,
-        events: events.filter(event => event.attemptId === row.currentAttemptId),
+        events: rowEvents,
         committedMessageIds: committed,
         artifacts: artifacts
           // 与 loadTaskResultEvidence 同口径：只认当前 Attempt 登记的成果，
@@ -924,7 +926,9 @@ export class PostgresConversationRepository {
         toolAudits: toolAudits
           .filter(audit => audit.attemptId === row.currentAttemptId)
           .map(mapToolAuditRow),
-        runError: row.status === 'failed' ? toRunError(row.id, row.errorCode) : null,
+        runError: row.status === 'failed'
+          ? enrichTaskRunError(toRunError(row.id, row.errorCode), rowEvents)
+          : null,
       }
       outcomes.set(row.id, deriveTaskResult(evidence).outcome)
     }
@@ -1283,7 +1287,9 @@ export class PostgresConversationRepository {
         updatedAt: formatDate(source.effectiveAt),
       })),
       toolAudits: toolAudits.map(mapToolAuditRow),
-      runError: row.status === 'failed' ? toRunError(row.id, row.errorCode) : null,
+      runError: row.status === 'failed'
+        ? enrichTaskRunError(toRunError(row.id, row.errorCode), events)
+        : null,
     }
   }
 
@@ -1434,8 +1440,8 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
     },
     RUNTIME_EXECUTION_FAILED: {
       message: '本轮执行失败',
-      reason: 'DSH 运行时未能正常完成当前执行尝试。',
-      suggestion: '可重新执行创建新的 Attempt；若再次失败，请在对话详情中复制运行编号交给管理员排查。',
+      reason: 'DSH 运行时未能正常完成当前执行尝试（具体原因见下方「原因」或对话详情中的执行过程）。',
+      suggestion: '先根据「原因」调整输入或环境后重新执行；若仍失败，在对话详情复制运行编号与错误码交给管理员排查 Runtime 日志。',
       retryable: true,
     },
   }

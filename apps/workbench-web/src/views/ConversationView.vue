@@ -24,6 +24,7 @@ import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ChatMessage, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
+import { runFailureDetailReason } from '@/utils/run-error-display'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,6 +36,7 @@ const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
 const stopping = ref(false)
+const retrying = ref(false)
 
 /**
  * TW-10 会话模式：路由 id 不是任何 Run 时，按 Session 直接加载共享线程；
@@ -106,12 +108,24 @@ const canStop = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['queued', 'running', 'awaiting_approval'].includes(task.value.status),
 ))
+const teamRunMissingPinnedAgent = computed(() => Boolean(
+  task.value?.workspaceType === 'team'
+  && ['failed', 'cancelled'].includes(task.value.status)
+  && !task.value.agentVersion,
+))
 const canRetry = computed(() => Boolean(
   task.value && canOperateRun.value
   && ['failed', 'cancelled'].includes(task.value.status)
+  && !teamRunMissingPinnedAgent.value
   && !task.value.result.pendingItems.some(item => item.kind === 'external_effect_unknown')
   && (task.value.result.error?.retryable ?? true)))
 const canFollowUp = computed(() => !workspaceArchived.value && !isRunViewer.value)
+/** 失败通知框「原因」：展示 Runtime/平台遥测的具体说明（非目录占位文案）。 */
+const runFailureDetail = computed(() => {
+  const error = task.value?.result.error
+  if (!error) return ''
+  return runFailureDetailReason(error)
+})
 /**
  * 会话模式写权限：团队会话要求非只读成员（服务端 currentUserRole，读轨，
  * 归档空间仍返回角色但由 sessionArchived 拦截）；个人会话仅创建者可写。
@@ -272,12 +286,15 @@ async function stopCurrentRun() {
 }
 
 async function retryRun() {
-  if (!task.value || !canOperateRun.value) return
+  if (!task.value || !canOperateRun.value || retrying.value) return
+  retrying.value = true
   try {
     await taskStore.retryTask(task.value.id)
     ElMessage.success('已创建新的运行尝试')
   } catch (error) {
     notifyActionFailure('重新执行', `运行 ${task.value.id}`, error, '刷新对话状态；确认本轮仍为失败或已停止后再重试。')
+  } finally {
+    retrying.value = false
   }
 }
 
@@ -331,16 +348,27 @@ function formatSessionRunTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-async function submitFollowUp(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
+async function submitFollowUp(payload: {
+  prompt: string
+  files: File[]
+  workspaceId: string
+  mentions: string[]
+  confirm?: () => void
+  release?: () => void
+}) {
   // TW-10 防线：viewer/角色未知不允许发言或触发执行，不能只靠模板不渲染
   // composer——函数本身也要 fail-closed。服务端写轨仍是最终裁决。
-  if (!task.value || workspaceArchived.value || isRunViewer.value) return
+  if (!task.value || workspaceArchived.value || isRunViewer.value) {
+    payload.release?.()
+    return
+  }
   try {
     const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
     if (isTeamSession.value && !mentionedMemberId) {
       // TW-10：团队共享会话里不 @ 的消息是全员可见的讨论，不产生执行。
       if (payload.files.length || referencedArtifacts.value.length) {
         ElMessage.warning('带附件或引用成果的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+        payload.release?.()
         return
       }
       await taskStore.postSessionMessage(task.value.sessionId, payload.prompt)
@@ -362,14 +390,25 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
     }
     await nextTick(() => scrollToBottom())
   } catch (error) {
+    payload.release?.()
     notifyActionFailure('发送消息', `对话“${task.value.title}”`, error, '检查输入和附件后重试；已有对话内容不会丢失。')
   }
 }
 
 /** 会话模式：@ 触发新的 Run 并跳到 Run 详情；普通消息留在共享讨论线程。 */
-async function submitSessionMessage(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
+async function submitSessionMessage(payload: {
+  prompt: string
+  files: File[]
+  workspaceId: string
+  mentions: string[]
+  confirm?: () => void
+  release?: () => void
+}) {
   const thread = sessionThread.value
-  if (!thread || !canWriteSession.value) return
+  if (!thread || !canWriteSession.value) {
+    payload.release?.()
+    return
+  }
   try {
     const mentionedMemberId = isTeamSession.value ? payload.mentions?.[0] : undefined
     // 团队会话 @ 成员，或个人会话（沿用会话绑定 Agent）：发起 Run。
@@ -386,6 +425,7 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
     }
     if (payload.files.length) {
       ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+      payload.release?.()
       return
     }
     await taskStore.postSessionMessage(thread.sessionId, payload.prompt)
@@ -397,6 +437,7 @@ async function submitSessionMessage(payload: { prompt: string; files: File[]; wo
       ElMessage.warning('讨论消息已发送，但会话刷新失败，请稍后手动刷新。')
     }
   } catch (error) {
+    payload.release?.()
     notifyActionFailure('发送消息', `对话“${thread.title}”`, error, '检查输入后重试；已有讨论内容不会丢失。')
   }
 }
@@ -755,6 +796,8 @@ watch(
             text
             :icon="RefreshRight"
             aria-label="重新执行本轮"
+            :loading="retrying"
+            :disabled="retrying"
             @click="retryRun"
           />
         </div>
@@ -899,15 +942,32 @@ watch(
             <StatusTag status="awaiting_approval" label="等待确认" />
           </section>
 
-          <section v-if="task.result.error" class="conversation-notice error-notice">
+          <section
+            v-if="task.result.error"
+            class="conversation-notice error-notice"
+            data-testid="run-failure-notice"
+            role="alert"
+          >
             <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
             <div>
               <strong>{{ task.result.error.message }}</strong>
               <dl>
                 <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
-                <div><dt>原因</dt><dd>{{ task.result.error.reason }}</dd></div>
+                <div>
+                  <dt>原因</dt>
+                  <dd
+                    class="error-notice__reason"
+                    :class="{ 'error-notice__reason--detail': runFailureDetail }"
+                    data-testid="run-failure-reason"
+                  >
+                    {{ runFailureDetail || task.result.error.reason }}
+                  </dd>
+                </div>
               </dl>
               <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
+              <p v-if="teamRunMissingPinnedAgent" class="error-notice__hint" data-testid="run-retry-requires-mention">
+                此运行无法使用「重新执行本轮」。请在下方输入框重新 @Agent 发起执行。
+              </p>
               <ul v-if="task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')" class="result-pending">
                 <li v-for="item in task.result.pendingItems.filter(item => item.kind === 'external_effect_unknown')" :key="item.message">{{ item.message }}</li>
               </ul>
@@ -918,6 +978,8 @@ watch(
               type="primary"
               plain
               :icon="RefreshRight"
+              :loading="retrying"
+              :disabled="retrying"
               @click="retryRun"
             >
               重新执行本轮
@@ -1594,6 +1656,25 @@ watch(
 .error-notice .conversation-notice__icon {
   color: #a92e3c;
   background: #ffe2e5;
+}
+
+.error-notice__reason {
+  margin: 0;
+  color: #5c3036;
+  line-height: 1.55;
+}
+
+.error-notice__reason--detail {
+  color: #7a1f2c;
+  font-size: var(--dsh-font-size-subheading);
+  font-weight: 650;
+}
+
+.error-notice__hint {
+  margin: 8px 0 0;
+  color: #7a1f2c;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.55;
 }
 
 .error-notice code {

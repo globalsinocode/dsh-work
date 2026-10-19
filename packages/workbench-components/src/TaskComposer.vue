@@ -83,6 +83,8 @@ const emit = defineEmits<{
      * 不要调用——输入、附件与提及选择全部保留，用户可直接重试。
      */
     confirm: () => void
+    /** 异步提交失败或父级拦截时调用，解除发送锁定。 */
+    release: () => void
   }]
   stop: []
   'clear-skill': []
@@ -96,6 +98,10 @@ const files = ref<File[]>([])
 const fileInput = ref<HTMLInputElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 const isDragging = ref(false)
+/** 父级尚未 confirm/release 前的前端提交锁，用于即时反馈与防连点。 */
+const localSubmitting = ref(false)
+const SUBMIT_DEBOUNCE_MS = 600
+let lastSubmitAt = 0
 
 // ---- TW-10 @Agent 提及补全 ----
 // 光标前最近的 `@非空白*` 片段即提及查询；选中后把该片段替换为 `@名称 `，
@@ -238,9 +244,11 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+const sendBusy = computed(() => props.submitting || localSubmitting.value)
+
 const canSubmit = computed(() => (
   prompt.value.trim().length > 0
-  && !props.submitting
+  && !sendBusy.value
   && !props.running
   && !props.blockedReason
 ))
@@ -321,13 +329,24 @@ function showVoiceMessage() {
   ElMessage.info('语音输入不在当前版本范围内，可继续使用文字或文件输入')
 }
 
+function releaseSubmitLock() {
+  localSubmitting.value = false
+  lastSubmitAt = 0
+}
+
 function submit() {
   if (!canSubmit.value) return
+  const now = Date.now()
+  if (now - lastSubmitAt < SUBMIT_DEBOUNCE_MS) return
+  lastSubmitAt = now
+  localSubmitting.value = true
+
   const mentions = resolveMentions(prompt.value)
   // 团队会话里带附件的消息必须 @Agent 发起执行；拦截在组件内完成，
   // 保留输入与已选文件，避免发出后才发现附件被丢弃。
   if (props.filesRequireMention && files.value.length > 0 && mentions.length === 0) {
     ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+    releaseSubmitLock()
     return
   }
   const workspace = activeWorkspaceId()
@@ -339,7 +358,11 @@ function submit() {
     files: [...files.value],
     workspaceId: workspaceId.value,
     mentions,
-    confirm: clearComposer,
+    confirm: () => {
+      clearComposer()
+      releaseSubmitLock()
+    },
+    release: releaseSubmitLock,
   })
 }
 
@@ -536,12 +559,12 @@ function performPrimaryAction() {
             type="button"
             :aria-label="running ? (stopping ? '正在停止本轮执行' : '停止本轮执行') : '发送消息'"
             :title="running ? (stopping ? '正在停止' : '停止本轮执行') : '发送消息'"
-            :aria-busy="running ? stopping : submitting"
+            :aria-busy="running ? stopping : sendBusy"
             :disabled="running ? stopping : !canSubmit"
             @click="performPrimaryAction"
           >
-            <el-icon :class="{ 'is-loading': submitting || stopping }">
-              <Loading v-if="submitting || stopping" />
+            <el-icon :class="{ 'is-loading': sendBusy || stopping }">
+              <Loading v-if="sendBusy || stopping" />
               <VideoPause v-else-if="running" />
               <ArrowUp v-else />
             </el-icon>

@@ -56,6 +56,8 @@ export interface RuntimeManifest {
   session_id: string | null
   workspace_id: string
   agent_version_id: string | null
+  /** TW-10：团队会话 @ 触发的 Agent 成员 id，供重试在 Manifest 缺版本时回退解析。 */
+  workspace_agent_member_id?: string
   /**
    * 会话级指定 Skill 的 `id@version`（未指定时字段不出现）。
    * 授权与快照固定在前置环节完成；这里只把"指定"语义带进 Manifest，

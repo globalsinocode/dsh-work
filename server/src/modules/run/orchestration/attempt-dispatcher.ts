@@ -43,6 +43,7 @@ export class AttemptDispatcher {
     message?: string
     workspaceId: string
     agentVersionId: string
+    workspaceAgentMemberId?: string
     userId: string
     fileIds: string[]
     preparedFiles?: PreparedRuntimeFile[]
@@ -140,6 +141,7 @@ export class AttemptDispatcher {
       session_id: run.sessionId,
       workspace_id: input.workspaceId,
       agent_version_id: input.agentVersionId,
+      ...(input.workspaceAgentMemberId ? { workspace_agent_member_id: input.workspaceAgentMemberId } : {}),
       // 会话级指定 Skill：授权与快照固定在前置环节已完成，这里只把"指定"语义
       // 带进 Manifest（未指定时不出现该键），由提示词渲染让模型优先使用它。
       ...(input.selectedSkillReference ? { selected_skill: input.selectedSkillReference } : {}),

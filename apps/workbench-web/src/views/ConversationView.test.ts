@@ -214,6 +214,28 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('button[aria-label="重新执行本轮"]').exists()).toBe(true)
   })
 
+  it('shows the runtime failure detail in the error notice reason row', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        result: result({
+          error: {
+            code: 'RUNTIME_EXECUTION_FAILED',
+            message: '本轮执行失败',
+            object: '运行 run-cf5aa78a-2657-4383-8341-880afb3038b0',
+            reason: 'Runtime 成果目录无效',
+            suggestion: '先根据「原因」调整输入或环境后重新执行；若仍失败，在对话详情复制运行编号与错误码交给管理员排查 Runtime 日志。',
+            retryable: true,
+          },
+        }),
+      }),
+    })
+
+    const notice = wrapper.get('[data-testid="run-failure-notice"]')
+    expect(notice.text()).toContain('本轮执行失败')
+    expect(wrapper.get('[data-testid="run-failure-reason"]').text()).toBe('Runtime 成果目录无效')
+    expect(notice.text()).toContain('RUNTIME_EXECUTION_FAILED')
+  })
+
   it('shows an unknown external effect and hides both retry entries', async () => {
     const item = task({ result: result({
       pendingItems: [{ kind: 'external_effect_unknown', message: 'MCP 写入效果未知，须先核对权威回执。' }],

@@ -917,6 +917,30 @@ export class PostgresRunRepository implements RunRepository {
     return rows.map(mapRun)
   }
 
+  async findPinnedAgentVersionIdForRun(tenantId: string, runId: string): Promise<string | null> {
+    const [row] = await this.database<{ agentVersionId: string }[]>`
+      select manifest ->> 'agent_version_id' as "agentVersionId"
+        from run_attempts
+       where tenant_id = ${tenantId} and run_id = ${runId}
+         and manifest ->> 'agent_version_id' is not null
+       order by attempt_no desc
+       limit 1
+    `
+    return row?.agentVersionId ?? null
+  }
+
+  async findWorkspaceAgentMemberIdForRun(tenantId: string, runId: string): Promise<string | null> {
+    const [row] = await this.database<{ memberId: string }[]>`
+      select manifest ->> 'workspace_agent_member_id' as "memberId"
+        from run_attempts
+       where tenant_id = ${tenantId} and run_id = ${runId}
+         and manifest ->> 'workspace_agent_member_id' is not null
+       order by attempt_no desc
+       limit 1
+    `
+    return row?.memberId ?? null
+  }
+
   async listActiveRunsInWorkspace(tenantId: string, workspaceId: string): Promise<WorkspaceActiveRun[]> {
     const rows = await this.database<(RunRow & { agentVersionId: string })[]>`
       select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",

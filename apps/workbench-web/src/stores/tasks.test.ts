@@ -363,6 +363,30 @@ describe('task store', () => {
     expect(store.tasks[0]?.status).toBe('succeeded')
   })
 
+  it('does not revert to running when run refresh lags behind SSE terminal state', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const running = structuredClone(baseTask)
+    api.getTasks.mockResolvedValue([running])
+    api.getRun.mockResolvedValue({ ...running, status: 'running' as const })
+    const store = useTaskStore()
+    await store.load()
+
+    FakeEventSource.instances[0]?.emit('run.completed', {
+      event_id: 'event-terminal',
+      run_id: baseTask.id,
+      attempt_id: 'attempt-001',
+      sequence: 9,
+      event_type: 'run.completed',
+      occurred_at: new Date().toISOString(),
+      display_message: '执行完成',
+      safe_metadata: {},
+      trace_id: 'trace-terminal',
+    })
+    await new Promise(resolve => setTimeout(resolve, 200))
+
+    expect(store.tasks[0]?.status).toBe('succeeded')
+  })
+
   it('switches a waiting Run to its server-confirmed resumed Attempt before applying events', async () => {
     const { useTaskStore } = await import('./tasks')
     const waiting = {
@@ -415,6 +439,38 @@ describe('task store', () => {
     })
     await Promise.resolve()
     expect(store.tasks[0]?.status).toBe('running')
+    store.reset()
+  })
+
+  it('keeps streamed assistant text after a failed terminal refresh when nothing was persisted', async () => {
+    const { useTaskStore } = await import('./tasks')
+    const running = structuredClone(baseTask)
+    const failed = {
+      ...structuredClone(baseTask),
+      status: 'failed' as const,
+      messages: [{ id: 'message-user-1', role: 'user' as const, content: '分析库存', createdAt: '刚刚', runId: baseTask.id }],
+      result: { ...structuredClone(baseTask).result, execution: 'failed' as const, outcome: 'not_achieved' as const },
+    }
+    api.getTasks.mockResolvedValue([running])
+    api.getRun.mockResolvedValue(failed)
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances[0]
+
+    stream?.emit('assistant.delta', {
+      event_id: 'event-stream', run_id: baseTask.id, attempt_id: 'attempt-001',
+      sequence: 2, event_type: 'assistant.delta', occurred_at: new Date().toISOString(),
+      display_message: '已生成预览说明', safe_metadata: {}, trace_id: 'trace-1',
+    })
+    stream?.emit('run.failed', {
+      event_id: 'event-failed', run_id: baseTask.id, attempt_id: 'attempt-001',
+      sequence: 3, event_type: 'run.failed', occurred_at: new Date().toISOString(),
+      display_message: '执行失败', safe_metadata: { error_code: 'RUNTIME_EXECUTION_FAILED' }, trace_id: 'trace-1',
+    })
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    expect(store.tasks[0]?.status).toBe('failed')
+    expect(store.tasks[0]?.messages.some(message => message.content.includes('已生成预览说明'))).toBe(true)
     store.reset()
   })
 

@@ -25,7 +25,7 @@ import {
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson } from './canonical-json.ts'
-import { isResolvedPathInsideDirectory } from './contained-resolved-path.ts'
+import { isResolvedPathInsideDirectory, portableRelativePath } from '../../domain/host-path.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
@@ -1374,7 +1374,7 @@ async function readCheckpointWorkspaceFiles(
         throw invalidRequest('等待审批前的输出文件超过安全恢复上限，无法创建持久化检查点')
       }
       result.push({
-        path: `output/${relative(outputRoot, path).split('\\').join('/')}`,
+        path: `output/${portableRelativePath(outputRoot, path)}`,
         content,
         sha256: createHash('sha256').update(content).digest('hex'),
       })

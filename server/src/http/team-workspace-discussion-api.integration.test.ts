@@ -665,7 +665,7 @@ test('共享会话取消/重试：写轨成员均可操作他人发起的 Run，
       update runs set status = 'failed' where tenant_id = ${tenantId} and id = ${runId}
     `
     await transaction`
-      update run_attempts set manifest = manifest - 'agent_version_id'
+      update run_attempts set manifest = manifest - 'agent_version_id' - 'workspace_agent_member_id'
        where tenant_id = ${tenantId} and id = (
          select current_attempt_id from runs where tenant_id = ${tenantId} and id = ${runId}
        )

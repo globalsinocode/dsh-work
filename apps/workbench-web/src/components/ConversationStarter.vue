@@ -167,9 +167,17 @@ function conversationPath(workspaceId: string, target: string) {
     : `/conversations/${target}`
 }
 
-async function submitTask(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
+async function submitTask(payload: {
+  prompt: string
+  files: File[]
+  workspaceId: string
+  mentions: string[]
+  confirm?: () => void
+  release?: () => void
+}) {
   if (blockedReason.value) {
     ElMessage.warning(blockedReason.value)
+    payload.release?.()
     return
   }
   try {
@@ -183,6 +191,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
       // 团队空间、无 @ 也无预选：开启纯讨论会话（不产生 Run）。
       if (payload.files.length || referencedWorkspaceFileIds.value.length) {
         ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
+        payload.release?.()
         return
       }
       const session = await workbenchApi.createSession({
@@ -209,6 +218,7 @@ async function submitTask(payload: { prompt: string; files: File[]; workspaceId:
     payload.confirm?.()
     referencedWorkspaceFileIds.value = []
   } catch (error) {
+    payload.release?.()
     notifyActionFailure('创建对话', props.workspaceLocked ? `工作空间“${props.workspaceName}”` : '新对话', error, '检查 Agent、工作空间、附件和输入内容后重新提交。')
   }
 }

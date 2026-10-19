@@ -17,6 +17,7 @@ interface RuntimeEvent {
 }
 
 const streams = new Map<string, EventSource>()
+const reconcileTimers = new Map<string, number>()
 /** 空间级会话活动流按 workspaceId 共享一条连接，多个视图（线程/历史列表）引用计数复用。 */
 const sessionStreams = new Map<string, { source: EventSource; refs: number }>()
 /** 会话活动标记的单调序号：保证每个事件产生唯一标记字符串。 */
@@ -288,7 +289,14 @@ export const useTaskStore = defineStore('tasks', () => {
       })
     }
     stream.onerror = () => {
-      if (isTerminal(getTask(runId)?.status)) closeStream(runId)
+      const task = getTask(runId)
+      if (isTerminal(task?.status)) {
+        closeStream(runId)
+        return
+      }
+      void settleRunSnapshot(runId).finally(() => {
+        if (isTerminal(getTask(runId)?.status)) closeStream(runId)
+      })
     }
   }
 
@@ -414,8 +422,14 @@ export const useTaskStore = defineStore('tasks', () => {
       task.approval = undefined
     }
     if (event.event_type === 'run.cancel_requested') task.status = 'running'
-    if (event.event_type === 'run.cancelled') task.status = 'cancelled'
-    if (event.event_type === 'run.failed') task.status = 'failed'
+    if (event.event_type === 'run.cancelled') {
+      task.status = 'cancelled'
+      patchTerminalRunError(task, event)
+    }
+    if (event.event_type === 'run.failed') {
+      task.status = 'failed'
+      patchTerminalRunError(task, event)
+    }
     if (event.event_type === 'run.completed') task.status = 'succeeded'
     task.updatedAt = '刚刚'
 
@@ -432,6 +446,7 @@ export const useTaskStore = defineStore('tasks', () => {
         message.content = event.display_message
         message.runId = event.run_id
       } else task.messages.push({ id: messageId, role: 'assistant', content: event.display_message, createdAt: '刚刚', runId: event.run_id })
+      scheduleRunReconciliation(event.run_id)
     }
 
     if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
@@ -447,7 +462,7 @@ export const useTaskStore = defineStore('tasks', () => {
     if (isTerminal(task.status)) {
       await wait(100)
       if (current !== generation) return
-      await refreshRun(task.id)
+      await settleRunSnapshot(task.id)
       closeStream(task.id)
     }
   }
@@ -456,11 +471,47 @@ export const useTaskStore = defineStore('tasks', () => {
     return loadTask(runId)
   }
 
+  /** 终态 SSE 之后拉取 Run 快照；服务端投影略滞后时重试，避免把 status 打回 running。 */
+  async function settleRunSnapshot(runId: string) {
+    const localBefore = getTask(runId)
+    const expectTerminal = Boolean(localBefore && isTerminal(localBefore.status))
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const current = generation
+      try {
+        const task = await workbenchApi.getRun(runId)
+        if (current !== generation) return localBefore
+        upsert(task)
+        const updated = getTask(runId)
+        if (!expectTerminal || isTerminal(updated?.status)) return updated ?? task
+      } catch (error) {
+        if (expectTerminal) return localBefore
+        throw error
+      }
+      await wait(120 * (attempt + 1))
+    }
+    return getTask(runId) ?? localBefore
+  }
+
+  function scheduleRunReconciliation(runId: string) {
+    const existing = reconcileTimers.get(runId)
+    if (existing !== undefined) window.clearTimeout(existing)
+    reconcileTimers.set(runId, window.setTimeout(() => {
+      reconcileTimers.delete(runId)
+      void (async () => {
+        const task = getTask(runId)
+        if (!task || isTerminal(task.status)) return
+        await settleRunSnapshot(runId)
+      })()
+    }, 2_500))
+  }
+
   function upsert(task: TaskRun | null | undefined) {
     if (!task) return
     const index = tasks.value.findIndex((item) => item.id === task.id)
-    if (index >= 0) tasks.value.splice(index, 1, task)
-    else tasks.value.unshift(task)
+    if (index >= 0) {
+      const merged = mergeTaskSnapshot(tasks.value[index]!, task)
+      tasks.value.splice(index, 1, merged)
+    } else tasks.value.unshift(task)
   }
 
   function closeStream(runId: string) {
@@ -513,6 +564,79 @@ function eventStepStatus(eventType: string) {
 
 function isTerminal(status: RunStatus | undefined) {
   return status !== undefined && ['succeeded', 'failed', 'cancelled'].includes(status)
+}
+
+/**
+ * 终态 refresh 用服务端快照覆盖本地 Run 时，保留尚未落库的流式回答
+ *（`-streaming` 临时 id）。否则会出现「先看到字、失败后刷新整段消失」的错觉。
+ */
+function patchTerminalRunError(
+  task: TaskRun,
+  event: RuntimeEvent,
+) {
+  const telemetryReason = typeof event.safe_metadata['reason'] === 'string'
+    ? event.safe_metadata['reason'].trim()
+    : ''
+  const detail = telemetryReason || event.display_message?.trim() || ''
+  const code = typeof event.safe_metadata['error_code'] === 'string'
+    ? event.safe_metadata['error_code']
+    : (event.event_type === 'run.cancelled' ? 'RUN_CANCELLED' : 'RUNTIME_EXECUTION_FAILED')
+  const baseline = task.result.error ?? {
+    code,
+    message: event.event_type === 'run.cancelled' ? '本轮执行已取消' : '本轮执行失败',
+    object: `运行 ${task.id}`,
+    reason: 'DSH 运行时未能正常完成当前执行尝试。',
+    suggestion: '可重新执行创建新的 Attempt；若再次失败，请在对话详情中复制运行编号交给管理员排查。',
+    retryable: true,
+  }
+  task.result = {
+    ...task.result,
+    execution: event.event_type === 'run.cancelled' ? 'cancelled' : 'failed',
+    outcome: 'not_achieved',
+    error: {
+      ...baseline,
+      code,
+      ...(detail ? { reason: detail } : {}),
+    },
+  }
+}
+
+function mergeRunMessages(previous: TaskRun, incoming: TaskRun): TaskRun {
+  if (previous.id !== incoming.id) return incoming
+  const incomingIds = new Set(incoming.messages.map(message => message.id))
+  const hasPersistedAssistant = incoming.messages.some(
+    message => message.role === 'assistant' && message.runId === incoming.id,
+  )
+  const ephemeral = previous.messages.filter((message) => {
+    if (incomingIds.has(message.id)) return false
+    if (message.role !== 'assistant' || message.runId !== incoming.id) return false
+    if (hasPersistedAssistant) return false
+    if (!message.id.endsWith('-streaming')) return false
+    return message.content.trim().length > 0
+  })
+  if (!ephemeral.length) return incoming
+  return { ...incoming, messages: [...incoming.messages, ...ephemeral] }
+}
+
+/**
+ * 合并 GET Run 快照与本地 SSE 状态。终态事件后的快照若仍显示 running（落库/投影滞后），
+ * 不能把 UI 打回「正在处理」。
+ */
+function mergeTaskSnapshot(previous: TaskRun, incoming: TaskRun): TaskRun {
+  const merged = mergeRunMessages(previous, incoming)
+  const staleActiveSnapshot = isTerminal(previous.status)
+    && !isTerminal(incoming.status)
+    && incoming.attemptId === previous.attemptId
+  if (!staleActiveSnapshot) return merged
+  return {
+    ...merged,
+    status: previous.status,
+    result: isTerminalResultExecution(previous.result.execution) ? previous.result : merged.result,
+  }
+}
+
+function isTerminalResultExecution(execution: TaskRun['result']['execution']) {
+  return execution === 'succeeded' || execution === 'failed' || execution === 'cancelled'
 }
 
 function wait(milliseconds: number) {
