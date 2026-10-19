@@ -1,4 +1,20 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
+
+/** Windows 盘符或反斜杠路径在 Linux 容器内仍可能作为本机路径出现，需用 win32 语义解析。 */
+function usesWindowsPathSemantics(input: string): boolean {
+  return win32.isAbsolute(input) || /^[A-Za-z]:[\\/]/.test(input) || input.includes('\\')
+}
+
+function resolveHostPath(input: string): string {
+  return usesWindowsPathSemantics(input) ? win32.resolve(input) : resolve(input)
+}
+
+function relativeHostPath(from: string, to: string): string {
+  if (usesWindowsPathSemantics(from) || usesWindowsPathSemantics(to)) {
+    return win32.relative(resolveHostPath(from), resolveHostPath(to))
+  }
+  return relative(resolve(from), resolve(to))
+}
 
 /**
  * 本机文件系统路径（Node 进程所在 OS：Windows 本地开发、Linux Docker 容器等）。
@@ -13,25 +29,31 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 
 /** `target` 解析后等于 `directory` 或位于其之下（跨平台）。 */
 export function isResolvedPathInsideDirectory(directory: string, target: string): boolean {
-  const base = resolve(directory)
-  const resolved = resolve(target)
+  const base = resolveHostPath(directory)
+  const resolved = resolveHostPath(target)
   if (base === resolved) return true
-  const rel = relative(base, resolved)
+  const rel = relativeHostPath(directory, target)
   if (rel === '') return true
-  return !rel.startsWith('..') && !isAbsolute(rel)
+  const relIsAbsolute =
+    usesWindowsPathSemantics(directory) || usesWindowsPathSemantics(target)
+      ? win32.isAbsolute(rel)
+      : isAbsolute(rel)
+  return !rel.startsWith('..') && !relIsAbsolute
 }
 
 /** `child` 必须严格位于 `parent` 之下（不能等于 `parent`）。 */
 export function isStrictResolvedPathInside(parent: string, child: string): boolean {
-  const base = resolve(parent)
-  const resolved = resolve(child)
+  const base = resolveHostPath(parent)
+  const resolved = resolveHostPath(child)
   if (base === resolved) return false
   return isResolvedPathInsideDirectory(parent, child)
 }
 
 /** 将本机绝对路径转为相对 `base` 的 POSIX 路径（`/` 分隔，供 DSH/Manifest 使用）。 */
 export function portableRelativePath(base: string, target: string): string {
-  const rel = relative(resolve(base), resolve(target))
+  const rel = relativeHostPath(base, target)
   if (rel === '') return ''
-  return rel.split(sep).join('/')
+  const pathSep =
+    usesWindowsPathSemantics(base) || usesWindowsPathSemantics(target) ? win32.sep : sep
+  return rel.split(pathSep).join('/')
 }

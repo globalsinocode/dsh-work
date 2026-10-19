@@ -7,7 +7,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "jsx": "preserve",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
   },
   "include": [
     "apps/admin-web/**/*.ts",
@@ -16,7 +17,6 @@
     "apps/workbench-web/**/*.vue",
     "packages/**/*.ts",
     "packages/**/*.vue",
-    "server/src/**/*.ts",
     "scripts/**/*.ts"
   ],
   "exclude": ["**/dist/**", "**/node_modules/**"]
