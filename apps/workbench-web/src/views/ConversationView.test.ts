@@ -630,6 +630,86 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(assistants[1]!.find('.assistant-run-meta').exists()).toBe(false)
   })
 
+  it('keeps artifact cards on earlier runs after continuing the session', async () => {
+    const earlierArtifact = {
+      id: 'artifact-1',
+      name: '欠料分析.xlsx',
+      type: 'xlsx' as const,
+      version: 1,
+      size: '12 KB',
+      createdAt: '2026-09-10 10:05',
+      runId: 'run-001',
+      workspaceId: 'ws-team',
+      summary: '本轮成果',
+    }
+    const earlierRun = task({
+      id: 'run-001',
+      status: 'succeeded',
+      result: result({
+        execution: 'succeeded',
+        outcome: 'achieved',
+        summary: '第一轮完成',
+        error: null,
+        artifacts: [earlierArtifact],
+      }),
+      messages: [
+        { id: 'm-user', role: 'user', content: '查欠料', createdAt: '10:00', runId: 'run-001' },
+        { id: 'm-current', role: 'assistant', content: '本轮回答', createdAt: '10:01', runId: 'run-001' },
+      ],
+    })
+    const latestRun = task({
+      id: 'run-002',
+      sessionId: earlierRun.sessionId,
+      status: 'succeeded',
+      result: result({
+        execution: 'succeeded',
+        outcome: 'achieved',
+        summary: '第二轮完成',
+        error: null,
+        artifacts: [],
+      }),
+      messages: [
+        { id: 'm-user', role: 'user', content: '查欠料', createdAt: '10:00', runId: 'run-001' },
+        { id: 'm-current', role: 'assistant', content: '本轮回答', createdAt: '10:01', runId: 'run-001' },
+        { id: 'm-user-2', role: 'user', content: '继续', createdAt: '10:02', runId: 'run-002' },
+        { id: 'm-later', role: 'assistant', content: '另一轮回答', createdAt: '10:03', runId: 'run-002' },
+      ],
+    })
+    route.params = { id: 'run-002' }
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    api.getSession.mockResolvedValue({
+      user: {
+        id: 'U00001', name: '林岚', title: '', department: '', avatarText: '林',
+        role: 'employee', dataScopes: [],
+      },
+      identityProvider: 'local',
+    })
+    const authStore = useAuthStore(pinia)
+    await authStore.load()
+    const taskStore = useTaskStore(pinia)
+    taskStore.tasks.splice(0, taskStore.tasks.length, earlierRun, latestRun)
+    api.getRun.mockImplementation(async (runId: string) => {
+      if (runId === 'run-002') return latestRun
+      if (runId === 'run-001') return earlierRun
+      throw new Error('not a run')
+    })
+    vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
+    const contentStore = useContentStore(pinia)
+    contentStore.workspaces.splice(0, contentStore.workspaces.length, workspace())
+    const wrapper = mount(ConversationView, {
+      global: {
+        plugins: [pinia, ElementPlus],
+        stubs: { TaskComposer: true, RunTimeline: true, teleport: true },
+      },
+    })
+    await flushPromises()
+
+    const assistants = wrapper.findAll('article.conversation-message--assistant')
+    expect(assistants[0]!.text()).toContain('欠料分析.xlsx')
+    expect(assistants[1]!.text()).not.toContain('欠料分析.xlsx')
+  })
+
   it('attaches a referenceable artifact to the next message with “继续修改” (EX-02)', async () => {
     const artifact = (overrides: Record<string, unknown>) => ({
       id: 'artifact-1', name: '周报.md', type: 'markdown' as const, version: 1, size: '2 KB',

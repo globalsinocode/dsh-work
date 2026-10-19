@@ -220,6 +220,59 @@ const conversationMessages = computed<ChatMessage[]>(() => {
   ]
 })
 
+/** 各 Run 在消息流里最后一条 assistant 回复的 id，成果卡片挂在这条消息下。 */
+const terminalAssistantMessageIdByRun = computed(() => {
+  const map = new Map<string, string>()
+  for (const message of conversationMessages.value) {
+    if (message.role === 'assistant' && message.runId) map.set(message.runId, message.id)
+  }
+  return map
+})
+
+/** 同一会话内各 Run 已登记成果（列表缓存 + 按需拉取的 Run 详情）。 */
+const runArtifactsById = computed(() => {
+  const map = new Map<string, Artifact[]>()
+  const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
+  if (!sessionId) {
+    if (task.value?.result.artifacts.length) map.set(task.value.id, task.value.result.artifacts)
+    return map
+  }
+  for (const item of taskStore.tasks) {
+    if (item.sessionId === sessionId && item.result.artifacts.length) {
+      map.set(item.id, item.result.artifacts)
+    }
+  }
+  return map
+})
+
+function messageArtifacts(message: ChatMessage): Artifact[] {
+  if (message.role !== 'assistant' || !message.runId) return []
+  if (terminalAssistantMessageIdByRun.value.get(message.runId) !== message.id) return []
+  return runArtifactsById.value.get(message.runId) ?? []
+}
+
+let prefetchRunArtifactsEpoch = 0
+
+async function prefetchSessionRunArtifacts() {
+  const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
+  if (!sessionId) return
+  const epoch = ++prefetchRunArtifactsEpoch
+  const runIds = new Set(
+    conversationMessages.value
+      .filter(message => message.role === 'assistant' && message.runId)
+      .map(message => message.runId as string),
+  )
+  for (const runId of runIds) {
+    if (epoch !== prefetchRunArtifactsEpoch) return
+    if (taskStore.getTask(runId)?.result.artifacts.length) continue
+    try {
+      await taskStore.loadTask(runId)
+    } catch {
+      // 无权、已删除或尚未终态的 Run 忽略，不阻塞对话渲染。
+    }
+  }
+}
+
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
   erp: '业务系统',
@@ -477,6 +530,7 @@ async function initializeConversation() {
   const thread = await loadConversationTarget(routeTargetId.value)
   await reconcileConversationRoute()
   await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  void prefetchSessionRunArtifacts()
   await nextTick()
   scrollToBottom('auto')
 }
@@ -560,12 +614,23 @@ onMounted(initializeConversation)
 watch(
   () => routeTargetId.value,
   async id => {
+    prefetchRunArtifactsEpoch++
     sessionThread.value = null
     threadMissing.value = false
     const thread = await loadConversationTarget(String(id))
     await reconcileConversationRoute()
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    void prefetchSessionRunArtifacts()
   },
+)
+
+watch(
+  () => [
+    task.value?.sessionId,
+    sessionThread.value?.sessionId,
+    conversationMessages.value.map(message => `${message.id}:${message.runId ?? ''}`).join('|'),
+  ],
+  () => { void prefetchSessionRunArtifacts() },
 )
 
 /**
@@ -860,11 +925,11 @@ watch(
                 <AssistantMessageContent :text="message.content" />
 
                 <div
-                  v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
+                  v-if="messageArtifacts(message).length"
                   class="answer-artifacts"
                 >
                   <div
-                    v-for="artifact in task.result.artifacts"
+                    v-for="artifact in messageArtifacts(message)"
                     :key="artifact.id"
                     class="answer-artifact"
                   >
@@ -881,7 +946,7 @@ watch(
                       <el-icon><ArrowDown /></el-icon>
                     </button>
                     <button
-                      v-if="canFollowUp && artifact.canReference && artifact.fileId"
+                      v-if="canFollowUp && belongsToCurrentRun(message) && artifact.canReference && artifact.fileId"
                       type="button"
                       class="answer-artifact__revise"
                       :data-testid="`continue-editing-${artifact.id}`"
