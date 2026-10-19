@@ -38,6 +38,7 @@ export class IdentityDirectorySyncService {
   async synchronize(input: { actorId: string; full?: boolean }) {
     const applicationId = this.configuration.applicationId
     const environment = this.configuration.environment
+    await this.repository.recoverStaleDirectorySync(applicationId, environment)
     if (input.full) await this.repository.resetDirectoryCursor(applicationId, environment)
     const run = await this.repository.beginDirectorySync(applicationId, environment)
     if (!run) throw stateConflict('员工目录同步当前状态为运行中，请稍后刷新状态')

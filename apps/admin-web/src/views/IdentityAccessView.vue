@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -70,6 +70,31 @@ const groupedPermissions = computed(() => {
   return [...groups.entries()].map(([category, items]) => ({ category, items }))
 })
 const { currentPage: rolePage, pagedItems: pagedRoles } = useListPagination(roles)
+
+let directoryPollTimer: ReturnType<typeof setInterval> | undefined
+
+async function refreshDirectoryState() {
+  if (!directoryEnabled.value) return
+  try {
+    directoryState.value = await adminApi.getDirectorySyncState()
+  } catch {
+    // 轮询失败不打断页面；用户仍可手动刷新
+  }
+}
+
+watch(() => directoryState.value?.status, (status) => {
+  if (directoryPollTimer) {
+    clearInterval(directoryPollTimer)
+    directoryPollTimer = undefined
+  }
+  if (status === 'running') {
+    directoryPollTimer = setInterval(() => { void refreshDirectoryState() }, 3000)
+  }
+})
+
+onUnmounted(() => {
+  if (directoryPollTimer) clearInterval(directoryPollTimer)
+})
 
 async function load() {
   loading.value = true

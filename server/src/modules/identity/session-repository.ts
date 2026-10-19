@@ -490,6 +490,23 @@ export class IdentitySessionRepository {
     })
   }
 
+  /** 进程中断后可能长期停留在 running；超时后标记失败以便重新同步。 */
+  async recoverStaleDirectorySync(
+    applicationId: string,
+    environment: string,
+    staleAfterMs = 2 * 60 * 1000,
+  ) {
+    const staleBefore = new Date(Date.now() - staleAfterMs)
+    await this.database`
+      update identity_directory_sync_state
+         set status = 'failed', run_id = null,
+             last_error = '上次目录同步未完成即中断，请重新同步',
+             updated_at = now()
+       where application_id = ${applicationId} and environment = ${environment}
+         and status = 'running' and last_started_at < ${staleBefore}
+    `
+  }
+
   async beginDirectorySync(applicationId: string, environment: string) {
     const runId = `directory-sync-${randomUUID()}`
     const staleBefore = new Date(Date.now() - 15 * 60 * 1000)

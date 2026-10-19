@@ -6,6 +6,7 @@ import {
   type JsonWebKey,
 } from 'node:crypto'
 
+import { identityHttpTimeoutMs } from './identity-http-timeout.ts'
 import type { OAuthTokenResponse, VerifiedToken } from './types.ts'
 
 interface OidcMetadata {
@@ -211,7 +212,7 @@ export class OidcProviderClient {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body,
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(identityHttpTimeoutMs()),
       })
     } catch {
       throw new OidcProtocolError('identity_provider_unavailable', 'OIDC Token Endpoint 不可用')
@@ -270,7 +271,7 @@ export class OidcProviderClient {
     try {
       const response = await fetch(url, {
         headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(identityHttpTimeoutMs()),
       })
       if (!response.ok) throw new Error('non-success response')
       const payload = await response.json() as unknown

@@ -1,3 +1,4 @@
+import { identityHttpTimeoutMs } from './identity-http-timeout.ts'
 import type {
   AdminBootstrapClaim,
   CurrentPlatformUser,
@@ -72,7 +73,7 @@ export class AiHubClient {
           ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
           ...init?.headers,
         },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(identityHttpTimeoutMs()),
       })
     } catch {
       throw new AiHubApiError(503, 'ai_hub_unavailable', 'AI Hub Platform API 当前不可用')
