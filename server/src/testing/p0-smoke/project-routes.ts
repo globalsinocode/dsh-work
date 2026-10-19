@@ -211,6 +211,15 @@ export function registerSmokeProjectRoutes(router: Router) {
       total: tasks.length,
     })
   })
+  router.get(`${basePath}/workspaces/:workspaceId/project-tasks/:taskId`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    const invalid = requireSmokeSpace(context.params['workspaceId'])
+    if (invalid) return invalid
+    const task = tasks.find(item => item.id === context.params['taskId'])
+    if (!task) return httpResult(404, { error: { code: 'project_task_not_found', message: '任务不存在或已移除' } })
+    return envelope('workbench', view(task))
+  })
+
   router.post(`${basePath}/workspaces/:workspaceId/project-tasks`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const invalid = requireSmokeSpace(context.params['workspaceId'])

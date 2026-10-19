@@ -28,6 +28,7 @@ import type {
   ProjectArchiveVersion,
   ProjectBrief,
   ProjectTask,
+  ProjectTaskEvent,
   ProjectTaskInput,
   ProjectTaskPage,
   WorkspaceFile,
@@ -394,6 +395,8 @@ export const workbenchApi = {
     const suffix = query.size ? `?${query.toString()}` : ''
     return request<ProjectTaskPage>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks${suffix}`, { method: 'GET' })
   },
+  getProjectTask: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }),
   createProjectTask: (workspaceId: string, input: ProjectTaskInput) =>
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, {
       method: 'POST',
@@ -408,11 +411,14 @@ export const workbenchApi = {
     request<{ removed: true }>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE',
     }),
-  startProjectTask: (workspaceId: string, taskId: string, idempotencyKey: string) =>
+  /** 启动 Agent 任务；prompt 为成员在任务对话里写下的补充要求（可省略）。 */
+  startProjectTask: (workspaceId: string, taskId: string, idempotencyKey: string, prompt?: string) =>
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/start`, {
       method: 'POST',
-      body: JSON.stringify({ idempotencyKey }),
+      body: JSON.stringify(prompt ? { idempotencyKey, prompt } : { idempotencyKey }),
     }),
+  listProjectTaskEvents: (workspaceId: string, taskId: string) =>
+    request<ProjectTaskEvent[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/events`, { method: 'GET' }),
   setProjectTaskStatus: (
     workspaceId: string,
     taskId: string,

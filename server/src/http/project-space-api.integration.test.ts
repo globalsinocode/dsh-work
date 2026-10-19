@@ -110,9 +110,21 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   const task = created.body.data as TaskView
   assert.equal(task.status, 'todo')
   assert.deepEqual(task.allowedActions, ['edit', 'remove', 'set_status', 'complete'])
+  // S3：员工任务创建时就有任务对话，首条消息为任务标题与说明。
+  assert.ok(task.sessionId)
+  const conversation = await api('GET', `${base}/sessions/${task.sessionId}`, { as: ws.viewer })
+  assert.deepEqual((conversation.body.data as { messages: Array<{ content: string }> }).messages.map(message => message.content), ['整理供应商名单\n\n按区域分组'])
 
   const viewerList = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.viewer })
   assert.deepEqual((viewerList.body.data as { items: TaskView[] }).items.map(item => item.allowedActions), [[]])
+
+  // 任务详情：现任成员（含只读）可读，动作按本人角色裁剪；非成员拒绝，不存在返回 404。
+  const viewerDetail = await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.viewer })
+  assert.equal(viewerDetail.status, 200)
+  assert.equal((viewerDetail.body.data as TaskView).id, task.id)
+  assert.deepEqual((viewerDetail.body.data as TaskView).allowedActions, [])
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.outsider })).status, 403)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks/missing-task`, { as: ws.member })).status, 404)
 
   // 与任务无关的普通成员不能推进状态、不能编辑他人任务。
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/status`, {
@@ -130,12 +142,22 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
   })
   assert.equal((done.body.data as TaskView).status, 'done')
   assert.equal((done.body.data as TaskView).completionNote, '已按华东、华南分组')
+  // S3：状态推进与完成写入任务事件，现任成员（含只读）可读。
+  const events = await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/events`, { as: ws.viewer })
+  assert.equal(events.status, 200)
+  const eventRows = events.body.data as Array<{ kind: string; actor: { userId: string }; metadata: Record<string, unknown> }>
+  assert.deepEqual(eventRows.map(event => event.kind), ['status_changed', 'completed'])
+  assert.deepEqual(eventRows[0]!.metadata, { from: 'todo', to: 'in_progress' })
+  assert.equal(eventRows[1]!.metadata['note'], '已按华东、华南分组')
+  assert.equal(eventRows[1]!.actor.userId, ws.admin)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/events`, { as: ws.outsider })).status, 403)
   assert.deepEqual((await activityKinds(ws.id)).sort(), ['project_task_completed', 'project_task_created'])
 
   // 创建人移除；移除后不再出现在列表。
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.other })).status, 403)
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 200)
   assert.equal(((await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as: ws.member })).body.data as { items: unknown[] }).items.length, 0)
+  assert.equal((await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 404)
 
   // 归档后任务只读：负责人与创建人看到的任务都不再带任何写动作。
   const kept = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
@@ -147,6 +169,9 @@ test('员工任务：成员创建并指派，承接人推进到完成，只读�
     const archivedList = await api('GET', `${base}/workspaces/${ws.id}/project-tasks`, { as })
     assert.deepEqual((archivedList.body.data as { items: TaskView[] }).items.map(item => item.allowedActions), [[]])
   }
+  const archivedDetail = await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${(kept.body.data as TaskView).id}`, { as: ws.member })
+  assert.equal(archivedDetail.status, 200)
+  assert.deepEqual((archivedDetail.body.data as TaskView).allowedActions, [])
 })
 
 // ---------------------------------------------------------------------------
@@ -164,14 +189,19 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   const task = created.body.data as TaskView
   assert.equal(task.status, 'todo')
   assert.ok(task.allowedActions.includes('start'))
+  assert.ok(task.sessionId, 'S3：Agent 任务创建时就有任务对话')
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, { as: ws.member, body: {} })).status, 422)
+  // 未开始执行前可以先评论（不触发执行）。
+  assert.equal((await api('POST', `${base}/sessions/${task.sessionId}/messages`, {
+    as: ws.other, body: { content: '先等华南数据', idempotencyKey: `early-comment-${task.id}` },
+  })).status, 201)
 
   const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
     as: ws.member, body: { idempotencyKey: `start-${task.id}` },
   })
   assert.equal(started.status, 202, JSON.stringify(started.body))
   const running = started.body.data as TaskView
-  assert.ok(running.sessionId)
+  assert.equal(running.sessionId, task.sessionId, '在创建时的任务对话中执行')
   assert.ok(running.latestRunId)
   assert.equal(running.status, 'in_progress')
   assert.equal(running.allowedActions.includes('start'), false)
@@ -180,7 +210,7 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   })).status, 409)
 
   const manifest = await waitForManifest(running.latestRunId!)
-  assert.equal(manifest?.input.message, '任务：分析缺货原因\n\n列出前三个原因')
+  assert.equal(manifest?.input.message, '请开始执行任务“分析缺货原因”。')
   assert.equal(manifest?.project_context?.brief?.content, '目标：本季度缺货率降到 3%')
   assert.equal(manifest?.project_context?.brief?.version_no, 1)
 
@@ -190,6 +220,10 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   })
   assert.equal(busy.status, 409)
   assert.equal((await api('DELETE', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, { as: ws.member })).status, 409)
+  // “仅评论”：执行中仍可发表评论，不产生新的执行。
+  assert.equal((await api('POST', `${base}/sessions/${running.sessionId}/messages`, {
+    as: ws.other, body: { content: '原因二的口径要和上周一致', idempotencyKey: `busy-comment-${task.id}` },
+  })).status, 201)
 
   runtime.releaseAll()
   await waitForRun(running.latestRunId!)
@@ -269,6 +303,12 @@ test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设�
   assert.equal(task.sessionId, sessionId)
   assert.equal(task.assignee.agentMemberId, agentMemberId)
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/sessions/${sessionId}/project-task`, { as: ws.member, body: {} })).status, 409)
+
+  // 团队历史列表标注任务线程所属的项目任务；普通讨论为 null。
+  const history = await api('GET', `${base}/workspaces/${ws.id}/sessions`, { as: ws.member })
+  const rows = (history.body.data as { items: Array<{ sessionId: string; projectTaskId: string | null }> }).items
+  assert.equal(rows.find(row => row.sessionId === sessionId)?.projectTaskId, (task as TaskView).id)
+  assert.equal(rows.find(row => row.sessionId === emptyId)?.projectTaskId, null)
 })
 
 test('任务分页：同一毫秒内创建的任务按微秒游标逐页取全；sessionId 精确查找线程任务；limit 越界 422（P2-15）', async () => {
@@ -354,14 +394,11 @@ test('任务线程：并发回复只受理一个执行；启动未能受理时�
   } finally {
     runtime.assertAvailable = assertAvailable
   }
-  const unbound = await taskById(ws, task.id)
-  assert.equal(unbound.sessionId, null)
-  assert.ok(unbound.allowedActions.includes('start'))
-  const [orphans] = await database<{ count: number }[]>`
-    select count(*)::integer as count from sessions
-     where tenant_id = ${tenantId} and workspace_id = ${ws.id} and status = 'active'
-  `
-  assert.equal(orphans?.count, 0, '补偿后不留下空会话')
+  // S3：任务对话在创建时已存在，受理前失败不影响它；任务仍未开始，可重新启动。
+  const unstarted = await taskById(ws, task.id)
+  assert.equal(unstarted.sessionId, task.sessionId)
+  assert.equal(unstarted.latestRunId, null)
+  assert.ok(unstarted.allowedActions.includes('start'))
 
   const started = await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
     as: ws.member, body: { idempotencyKey: `race-start-${task.id}` },
@@ -383,6 +420,60 @@ test('任务线程：并发回复只受理一个执行；启动未能受理时�
   `
   assert.equal(active?.count, 1)
   await drainRuntime()
+})
+
+test('S3 员工任务对话：承接人首次发言自动进行中，不能交给 Agent；同类改派沿用对话，跨类型改派换新对话', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('conversation')
+  const agentMemberId = await joinAgent(ws, 'conversation')
+  const created = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.owner, body: { title: '核对交付差异', assignee: { type: 'employee', id: ws.member } },
+  })
+  const task = created.body.data as TaskView
+  const sessionId = task.sessionId!
+  assert.ok(sessionId)
+
+  // 任务说明（首条消息）由平台以创建人身份写入，不算承接人发言：自己承接自己创建的任务仍是待办。
+  const own = await api('POST', `${base}/workspaces/${ws.id}/project-tasks`, {
+    as: ws.member, body: { title: '自己承接的任务', assignee: { type: 'employee', id: ws.member } },
+  })
+  assert.equal((own.body.data as TaskView).status, 'todo')
+
+  // 其他成员评论不推进状态；承接人首次发言推进为进行中，并留下自动的状态记录。
+  assert.equal((await api('POST', `${base}/sessions/${sessionId}/messages`, {
+    as: ws.other, body: { content: '需要周三前完成', idempotencyKey: `conv-other-${task.id}` },
+  })).status, 201)
+  assert.equal((await taskById(ws, task.id)).status, 'todo')
+  assert.equal((await api('POST', `${base}/sessions/${sessionId}/messages`, {
+    as: ws.member, body: { content: '已核对前 20 个 SKU', idempotencyKey: `conv-assignee-${task.id}` },
+  })).status, 201)
+  assert.equal((await taskById(ws, task.id)).status, 'in_progress')
+  const autoEvents = (await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/events`, { as: ws.member })).body.data as Array<{ kind: string; metadata: Record<string, unknown> }>
+  assert.deepEqual(autoEvents.map(event => [event.kind, event.metadata['auto']]), [['status_changed', true]])
+
+  // 员工任务的对话不能 @Agent 发起执行。
+  assert.equal((await api('POST', `${base}/sessions/${sessionId}/runs`, {
+    as: ws.member, body: { prompt: '@助手 帮忙核对', idempotencyKey: `conv-run-${task.id}`, workspaceAgentMemberId: agentMemberId },
+  })).status, 422)
+
+  // 员工换员工：沿用原对话，记一条改派事件。
+  const toOther = await api('PATCH', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, {
+    as: ws.owner, body: { assignee: { type: 'employee', id: ws.other } },
+  })
+  assert.equal(toOther.status, 200, JSON.stringify(toOther.body))
+  assert.equal((toOther.body.data as TaskView).sessionId, sessionId)
+  const reassignEvents = (await api('GET', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/events`, { as: ws.member })).body.data as Array<{ kind: string }>
+  assert.equal(reassignEvents.at(-1)?.kind, 'reassigned')
+
+  // 改派给 Agent：从新的任务对话开始，首条消息仍是任务标题。
+  const toAgent = await api('PATCH', `${base}/workspaces/${ws.id}/project-tasks/${task.id}`, {
+    as: ws.owner, body: { assignee: { type: 'agent', id: agentMemberId } },
+  })
+  assert.equal(toAgent.status, 200, JSON.stringify(toAgent.body))
+  const agentSessionId = (toAgent.body.data as TaskView).sessionId
+  assert.ok(agentSessionId && agentSessionId !== sessionId)
+  const fresh = await api('GET', `${base}/sessions/${agentSessionId}`, { as: ws.member })
+  assert.deepEqual((fresh.body.data as { messages: Array<{ content: string }> }).messages.map(message => message.content), ['核对交付差异'])
 })
 
 test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完成不重复登记档案成果（P2-5、P2-11、P2-13）', async () => {

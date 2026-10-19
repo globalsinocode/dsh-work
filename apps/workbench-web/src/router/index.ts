@@ -67,6 +67,21 @@ const router = createRouter({
           component: () => import('@/views/ConversationView.vue'),
           meta: { title: '对话', section: '员工工作台' },
         },
+        {
+          // 项目任务详情：在“任务”页签内展示任务信息与操作，由任务面板自行渲染（本记录不挂组件）；
+          // Agent 任务的任务线程作为子路由嵌在详情下方，:conversationId 同样兼容 Run ID 与 Session ID。
+          path: 'tasks/:taskId',
+          name: 'workspace-task',
+          meta: { title: '任务', section: '员工工作台' },
+          children: [
+            {
+              path: 'thread/:conversationId',
+              name: 'workspace-task-thread',
+              component: () => import('@/views/ConversationView.vue'),
+              meta: { title: '任务', section: '员工工作台' },
+            },
+          ],
+        },
       ],
     },
     { path: '/files', name: 'my-files', component: () => import('@/views/MyFilesView.vue'), meta: { title: '我的文件', section: '员工工作台' } },

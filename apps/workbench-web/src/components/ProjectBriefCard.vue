@@ -204,11 +204,12 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
+/* 与右栏其他卡片一致的外观。 */
 .project-brief {
-  padding: 16px;
-  border: 1px solid var(--dsh-color-border);
-  border-radius: var(--dsh-radius-md);
-  background: var(--dsh-color-panel);
+  padding: 16px 18px;
+  border: 1px solid #ebecee;
+  border-radius: 14px;
+  background: #fff;
 }
 
 .project-brief__header {
@@ -222,7 +223,7 @@ defineExpose({ reload: load })
   margin: 0;
   color: var(--dsh-color-ink);
   font-size: var(--dsh-font-size-title);
-  font-weight: 650;
+  font-weight: 680;
 }
 
 .project-brief__toggle {

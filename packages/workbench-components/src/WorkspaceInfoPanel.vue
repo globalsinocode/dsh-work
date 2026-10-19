@@ -90,8 +90,17 @@ const props = withDefaults(
     usageLoading?: boolean
     /** 用量摘要加载失败：就地错误 + 「重试」，绝不渲染成零消耗。 */
     usageError?: boolean
+    /**
+     * 紧凑模式（项目任务详情的右栏）：面板标题由宿主指定，只保留成员与最近动态的一行摘要；
+     * 空间概况、成员列表、Agent 列表、用量、设置与页脚不渲染。
+     */
+    compact?: boolean
+    /** 面板标题；缺省为“工作空间信息”。 */
+    title?: string
   }>(),
   {
+    compact: false,
+    title: '工作空间信息',
     collapsible: false,
     currentUserRole: null,
     agentMembers: () => [],
@@ -218,10 +227,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 <template>
   <div class="workspace-info-panel">
     <header class="workspace-info-panel__header">
-      <div>
-        <span>{{ workspace.type === 'personal' ? '个人上下文' : '项目上下文' }}</span>
-        <strong>工作空间信息</strong>
-      </div>
+      <strong>{{ title }}</strong>
       <button
         v-if="collapsible"
         class="workspace-info-panel__collapse"
@@ -233,7 +239,11 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </button>
     </header>
 
-    <section class="workspace-info-panel__hero">
+    <!-- 宿主放在面板标题之下、空间概况之前的卡片（如项目简报）。 -->
+    <slot name="lead" />
+
+    <section v-if="!compact" class="workspace-info-panel__card workspace-info-panel__overview">
+    <div class="workspace-info-panel__hero">
       <div class="workspace-info-panel__status">
         <span class="workspace-info-panel__folder"><el-icon><FolderOpened /></el-icon></span>
         <span class="workspace-info-panel__tags">
@@ -248,7 +258,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </div>
       <h2>{{ workspace.name }}</h2>
       <p>{{ workspace.description }}</p>
-    </section>
+    </div>
 
     <dl class="workspace-info-panel__facts">
       <div>
@@ -270,12 +280,15 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       <span v-if="workspace.type === 'personal'">此处发起的对话自动归入你的个人空间，仅你可以访问；企业数据仍按当前身份权限提供。</span>
       <span v-else>此处发起的对话自动归入当前空间；工作空间只能收窄权限，不能扩大你的企业数据范围。</span>
     </div>
+    </section>
 
-    <section v-if="workspace.type === 'team'" class="workspace-info-panel__section">
+    <section v-if="workspace.type === 'team'" class="workspace-info-panel__card workspace-info-panel__section">
       <div class="workspace-info-panel__section-heading">
         <div>
           <h3>
+            <template v-if="compact">成员</template>
             <button
+              v-else
               class="workspace-info-panel__toggle"
               type="button"
               data-testid="panel-members-toggle"
@@ -287,7 +300,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
               成员
             </button>
           </h3>
-          <span data-testid="panel-employee-count">{{ workspace.memberCount }} 位员工</span>
+          <span data-testid="panel-employee-count">{{ workspace.memberCount }} 位员工<template v-if="compact"> · {{ agentMembers.length }} 个 Agent</template></span>
         </div>
         <button
           v-if="currentUserRole === 'owner' || currentUserRole === 'admin'"
@@ -301,6 +314,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </div>
 
       <div
+        v-if="!compact"
         v-show="!collapsedSections.members"
         :id="membersPanelId"
         data-testid="panel-employee-section"
@@ -324,9 +338,9 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
     </section>
 
     <section
-      v-if="workspace.type === 'team'"
+      v-if="workspace.type === 'team' && !compact"
       data-testid="panel-agent-section"
-      class="workspace-info-panel__section"
+      class="workspace-info-panel__card workspace-info-panel__section"
     >
       <div class="workspace-info-panel__section-heading">
         <div>
@@ -389,9 +403,9 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
     </section>
 
     <section
-      v-if="canViewUsage && workspace.type === 'team'"
+      v-if="canViewUsage && workspace.type === 'team' && !compact"
       data-testid="panel-usage-section"
-      class="workspace-info-panel__section"
+      class="workspace-info-panel__card workspace-info-panel__section"
     >
       <div class="workspace-info-panel__section-heading">
         <div>
@@ -448,7 +462,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
     <section
       v-if="workspace.type === 'team'"
       data-testid="panel-activity-section"
-      class="workspace-info-panel__section"
+      class="workspace-info-panel__card workspace-info-panel__section"
     >
       <div class="workspace-info-panel__section-heading">
         <div>
@@ -472,7 +486,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
         </button>
       </div>
 
-      <div class="workspace-info-panel__activity-actions">
+      <div v-if="!compact" class="workspace-info-panel__activity-actions">
         <button
           v-if="effectiveUnread > 0"
           data-testid="panel-activity-mark-read"
@@ -493,7 +507,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </div>
 
       <el-skeleton
-        v-if="activityLoading && !activityItems.length"
+        v-if="!compact && activityLoading && !activityItems.length"
         class="workspace-info-panel__activity-skeleton"
         :rows="3"
         animated
@@ -515,7 +529,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
         </button>
       </div>
 
-      <ul v-if="visibleActivity.length" class="workspace-activity-list">
+      <ul v-if="!compact && visibleActivity.length" class="workspace-activity-list">
         <li
           v-for="item in visibleActivity"
           :key="item.id"
@@ -528,7 +542,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </ul>
 
       <p
-        v-else-if="!activityLoading && !activityError && !notificationError"
+        v-else-if="!compact && !activityLoading && !activityError && !notificationError"
         data-testid="panel-activity-empty"
         class="workspace-info-panel__empty"
       >
@@ -536,13 +550,13 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
       </p>
     </section>
 
-    <div v-if="workspace.type === 'team' && currentUserRole === 'owner'" class="workspace-info-panel__settings">
+    <div v-if="!compact && workspace.type === 'team' && currentUserRole === 'owner'" class="workspace-info-panel__settings">
       <el-button data-testid="panel-workspace-settings" plain :icon="Setting" @click="emit('open-settings')">
         空间设置
       </el-button>
     </div>
 
-    <footer class="workspace-info-panel__footer">
+    <footer v-if="!compact" class="workspace-info-panel__footer">
       <el-icon><UserFilled /></el-icon>
       <span v-if="workspace.type === 'personal'">系统已为你创建唯一的默认个人空间</span>
       <span v-else-if="workspace.status === 'archived'">该空间已归档，仅保留有权限的只读查看与下载；恢复入口由负责人操作。</span>
@@ -552,12 +566,20 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 </template>
 
 <style scoped>
+/* “项目配置”式右栏：顶部标题 + 收起按钮，下方是一列独立卡片。 */
 .workspace-info-panel {
+  display: flex;
   height: 100%;
-  padding: 19px 18px 24px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 16px 24px;
   overflow-y: auto;
   color: #2c302d;
-  background: #fafbf9;
+  background: #fff;
+}
+
+.workspace-info-panel > * {
+  flex: 0 0 auto;
 }
 
 .workspace-info-panel__header {
@@ -565,28 +587,20 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #e5e8e4;
-}
-
-.workspace-info-panel__header > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.workspace-info-panel__header span {
-  color: #969b97;
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 650;
-  letter-spacing: 0.08em;
+  padding: 0 4px 6px;
 }
 
 .workspace-info-panel__header strong {
-  margin-top: 3px;
-  color: #252825;
-  font-size: var(--dsh-font-size-body);
-  font-weight: 650;
+  color: #1d201e;
+  font-size: var(--dsh-font-size-section);
+  font-weight: 680;
+}
+
+.workspace-info-panel__card {
+  padding: 16px 18px;
+  border: 1px solid #ebecee;
+  border-radius: 14px;
+  background: #fff;
 }
 
 .workspace-info-panel__collapse {
@@ -608,7 +622,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 }
 
 .workspace-info-panel__hero {
-  padding: 20px 2px 17px;
+  padding: 0 0 14px;
 }
 
 .workspace-info-panel__tags {
@@ -636,7 +650,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 }
 
 .workspace-info-panel__hero h2 {
-  margin: 15px 0 0;
+  margin: 12px 0 0;
   color: #202320;
   font-size: var(--dsh-font-size-section);
   font-weight: 680;
@@ -652,10 +666,8 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 
 .workspace-info-panel__facts {
   margin: 0;
-  padding: 3px 13px;
-  border: 1px solid #e6e8e5;
-  border-radius: 11px;
-  background: #fff;
+  padding: 0;
+  border-top: 1px solid #eef0ed;
 }
 
 .workspace-info-panel__facts div {
@@ -702,7 +714,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 }
 
 .workspace-info-panel__section {
-  margin-top: 22px;
+  margin: 0;
 }
 
 .workspace-info-panel__section-heading,
@@ -723,9 +735,9 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 
 .workspace-info-panel__section-heading h3 {
   margin: 0;
-  color: #303430;
-  font-size: var(--dsh-font-size-caption);
-  font-weight: 650;
+  color: #1d201e;
+  font-size: var(--dsh-font-size-title);
+  font-weight: 680;
 }
 
 .workspace-info-panel__section-heading span {
@@ -747,7 +759,7 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
   flex: 0 0 auto;
   margin-left: -5px;
   place-items: center;
-  border: 2px solid #fafbf9;
+  border: 2px solid #fff;
   border-radius: 50%;
   color: #31443e;
   background: hsl(calc(155 + var(--member-index, 0) * 13) 40% 86%);
@@ -986,15 +998,14 @@ const usageEstimatedCount = computed(() => normalizeUsageCount(props.usageSummar
 .workspace-info-panel__settings {
   display: flex;
   justify-content: flex-end;
-  margin-top: 18px;
 }
 
 .workspace-info-panel__footer {
   display: flex;
   align-items: flex-start;
   gap: 7px;
-  margin-top: 24px;
-  padding-top: 15px;
+  margin-top: 4px;
+  padding: 12px 4px 0;
   border-top: 1px solid #e5e8e4;
   color: #969b97;
   font-size: var(--dsh-font-size-micro);

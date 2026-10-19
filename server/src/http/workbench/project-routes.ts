@@ -60,6 +60,20 @@ export function registerProjectRoutes(
     }), 'postgres')
   })
 
+  router.get(`${basePath}/workspaces/:workspaceId/project-tasks/:taskId`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...allRoles], { ...projectOnly, allowArchived: true })
+    return envelope('workbench', await projects.getTask(workspaceId, context.params['taskId'] ?? '', identity.userId), 'postgres')
+  })
+
+  router.get(`${basePath}/workspaces/:workspaceId/project-tasks/:taskId/events`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...allRoles], { ...projectOnly, allowArchived: true })
+    return envelope('workbench', await projects.listTaskEvents(workspaceId, context.params['taskId'] ?? '', identity.userId), 'postgres')
+  })
+
   router.post(`${basePath}/workspaces/:workspaceId/project-tasks`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
@@ -71,7 +85,7 @@ export function registerProjectRoutes(
       assignee: body.assignee,
       inputFileIds: body.inputFileIds,
       dueDate: body.dueDate,
-    })
+    }, sessionAuthorizationContext(identity))
     return httpResult(201, envelope('workbench', task, 'postgres'))
   })
 
@@ -86,7 +100,7 @@ export function registerProjectRoutes(
       assignee: body.assignee,
       inputFileIds: body.inputFileIds,
       dueDate: body.dueDate,
-    }), 'postgres')
+    }, sessionAuthorizationContext(identity)), 'postgres')
   })
 
   router.delete(`${basePath}/workspaces/:workspaceId/project-tasks/:taskId`, async (_request, context) => {
@@ -105,6 +119,7 @@ export function registerProjectRoutes(
     const headerKey = request.headers['idempotency-key']
     const task = await projects.startAgentTask(workspaceId, context.params['taskId'] ?? '', identity.userId, {
       idempotencyKey: body.idempotencyKey ?? (Array.isArray(headerKey) ? headerKey[0] : headerKey),
+      prompt: body.prompt,
       authorizationContext: sessionAuthorizationContext(identity),
     })
     return httpResult(202, envelope('workbench', task, 'postgres'))

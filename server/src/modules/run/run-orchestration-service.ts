@@ -261,6 +261,8 @@ export class RunOrchestrationService {
     content: unknown
     /** Client-supplied dedupe key; absent keys fall back to a fresh message id. */
     idempotencyKey?: string | null
+    /** 项目空间 S3：平台写入的任务说明（任务对话首条消息）不算成员发言，不推进任务状态。 */
+    skipProjectTaskSync?: boolean
   }) {
     if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
     const content = input.content.trim()
@@ -286,6 +288,10 @@ export class RunOrchestrationService {
       content,
       messageId,
     })
+    // 项目空间 S3：任务对话中的发言可能推进员工任务状态（承接人首次发言）。
+    if (committed.created && !input.skipProjectTaskSync) {
+      await this.deps.projectTasks?.noteTaskConversationMessage(session.id, input.userId)
+    }
     return { messageId: committed.messageId, sessionId: session.id, created: committed.created }
   }
 
@@ -329,6 +335,9 @@ export class RunOrchestrationService {
         }
         workspaceAgentMemberId = thread.agentMemberId
         await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
+      } else {
+        // S3：员工任务的任务对话不能 @Agent 发起执行。
+        await this.deps.projectTasks?.assertNotEmployeeTaskThread(session.id)
       }
       // TW-10 @ 触发：团队会话每次执行都必须显式绑定当前可用的 Agent 成员；
       // 不再回退到会话级 agentVersionId，避免历史绑定绕过成员状态复核。

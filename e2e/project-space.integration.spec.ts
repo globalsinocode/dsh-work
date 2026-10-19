@@ -48,10 +48,11 @@ test.describe('PS-E2E-03 Agent 任务执行、线程续接与成果', () => {
     await expect(row).toHaveCount(1)
     await row.getByRole('button', { name: '交给 Agent 执行' }).click()
 
-    // 启动后直接进入任务线程；无须 @ 承接 Agent。
-    await expect(page).toHaveURL(new RegExp(`/workspaces/${seed.workspaceId}/conversations/run-`))
-    await expect(page.getByTestId('task-thread-badge')).toContainText(title)
-    await expect(page.getByTestId('task-thread-notice')).toContainText('项目空间助手')
+    // 启动后停留在任务详情的任务对话（S3：页签行隐藏，面包屑到任务名）；无须 @ 承接 Agent。
+    await expect(page).toHaveURL(new RegExp(`/workspaces/${seed.workspaceId}/tasks/[^/]+/thread/session-`))
+    await expect(page.getByTestId('workspace-crumb-task')).toHaveText(title)
+    await expect(page.getByTestId('project-task-detail')).toContainText(title)
+    await expect(page.getByTestId('task-send-agent')).toContainText('项目空间助手')
     await expect(page.getByText(/受控测试运行已完成/).first()).toBeVisible({ timeout: 20_000 })
 
     const listResponse = await page.request.get(`/api/workbench/v1/workspaces/${seed.workspaceId}/project-tasks`)

@@ -42,6 +42,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => router,
   useRoute: () => route,
   RouterView: { template: '<div data-testid="router-view" />' },
+  RouterLink: { props: ['to'], template: '<a :href="String(to)"><slot /></a>' },
 }))
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {

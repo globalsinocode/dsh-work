@@ -60,7 +60,7 @@ test('PS-E2E-02 员工任务创建与完成', async ({ page }) => {
 
   const row = page.getByTestId('project-task-row').filter({ hasText: title })
   await expect(row.getByTestId('project-task-status')).toHaveText('待办')
-  await expect(row).toContainText('承接：周衡')
+  await expect(row.getByTestId('project-task-assignee-cell')).toContainText('周衡')
 
   await row.getByRole('button', { name: '开始处理' }).click()
   await expect(row.getByTestId('project-task-status')).toHaveText('进行中')

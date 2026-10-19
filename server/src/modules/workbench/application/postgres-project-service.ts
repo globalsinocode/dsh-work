@@ -72,6 +72,20 @@ export const TASK_THREAD_BUSY = 'Agent 正在执行该任务，请等待完成�
 
 export interface ProjectTaskThreadPort {
   resolveTaskThread(sessionId: string): Promise<ProjectTaskThread | null>
+  /** S3：员工任务的任务对话只能评论，不能交给 Agent 执行。 */
+  assertNotEmployeeTaskThread(sessionId: string): Promise<void>
+  /** S3：任务对话中有人发言后的收敛（承接人首次发言时把待办的员工任务推进为进行中）；不抛错。 */
+  noteTaskConversationMessage(sessionId: string, userId: string): Promise<void>
+}
+
+/** S3：任务事件（员工任务的状态推进、完成与同类改派），在任务对话中作为系统记录展示。 */
+export interface ProjectTaskEvent {
+  id: string
+  kind: 'status_changed' | 'completed' | 'reassigned'
+  sessionId: string | null
+  actor: { userId: string; displayName: string }
+  metadata: Record<string, unknown>
+  createdAt: string
 }
 
 export interface ProjectTaskThread {
@@ -89,6 +103,13 @@ export interface ProjectRunStarter {
     agentVersionId?: string | null
     authorizationContext?: SessionAuthorizationContext
   }): Promise<{ id: string }>
+  postDiscussionMessage(input: {
+    userId: string
+    sessionId: string
+    content: unknown
+    idempotencyKey?: string | null
+    skipProjectTaskSync?: boolean
+  }): Promise<unknown>
   startRun(input: {
     userId: string
     sessionId: string
@@ -228,10 +249,16 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     }
   }
 
+  /** 任务详情（读取轨）：全部现任成员可读，归档后仍可读；已移除或不存在返回 404。 */
+  async getTask(workspaceId: string, taskId: string, actorUserId: string): Promise<ProjectTask> {
+    return this.requireTask(workspaceId, taskId, actorUserId)
+  }
+
   async createTask(
     workspaceId: string,
     actorUserId: string,
     input: { title: unknown; description?: unknown; assignee: unknown; inputFileIds?: unknown; dueDate?: unknown },
+    authorizationContext?: SessionAuthorizationContext,
   ): Promise<ProjectTask> {
     const title = requireText(input.title, '任务标题', 120)
     const description = optionalText(input.description, '任务说明', 4000)
@@ -240,6 +267,11 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     const inputFileIds = parseFileIds(input.inputFileIds, '引用文件')
     if (assignee.type === 'employee' && inputFileIds.length) throw requestInvalid('只有 Agent 任务可以引用执行输入文件')
     const taskId = `ptask-${randomUUID()}`
+    // S3：两类任务创建时都有任务对话。会话先于任务建立（经既有 createSession 的授权）；
+    // 任务写入失败时归档这条空会话。
+    await this.requireRole(this.database, workspaceId, actorUserId, writerRoles)
+    const sessionId = await this.openTaskConversation(workspaceId, actorUserId, title, authorizationContext)
+    try {
     await this.database.begin(async (transaction) => {
       await lockActiveWorkspace(transaction, workspaceId)
       await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
@@ -248,10 +280,11 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       await transaction`
         insert into project_tasks (
           id, tenant_id, workspace_id, title, description, created_by, assignee_type,
-          assignee_user_id, assignee_agent_member_id, due_date
+          assignee_user_id, assignee_agent_member_id, due_date, session_id
         ) values (
           ${taskId}, ${tenantId}, ${workspaceId}, ${title}, ${description}, ${actorUserId}, ${assignee.type},
-          ${assignee.type === 'employee' ? assignee.id : null}, ${assignee.type === 'agent' ? assignee.id : null}, ${dueDate}
+          ${assignee.type === 'employee' ? assignee.id : null}, ${assignee.type === 'agent' ? assignee.id : null}, ${dueDate},
+          ${sessionId}
         )
       `
       await this.replaceTaskFiles(transaction, taskId, 'input', inputFileIds)
@@ -260,7 +293,83 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         dedupeKey: `project-task-created:${taskId}`, metadata: { assigneeType: assignee.type },
       })
     })
+    } catch (error) {
+      await this.discardUnstartedThread(sessionId, null)
+      throw error
+    }
+    await this.postTaskBrief(sessionId, actorUserId, taskId, title, description)
     return this.requireTask(workspaceId, taskId, actorUserId)
+  }
+
+  /** 读取任务事件（读取轨）：全部现任成员可读，归档可读；按发生时间正序。 */
+  async listTaskEvents(workspaceId: string, taskId: string, actorUserId: string): Promise<ProjectTaskEvent[]> {
+    await this.requireTask(workspaceId, taskId, actorUserId)
+    const rows = await this.database<{
+      id: string; kind: ProjectTaskEvent['kind']; sessionId: string | null
+      actorUserId: string; actorName: string; metadata: Record<string, unknown>; createdAt: Date
+    }[]>`
+      select e.id, e.kind, e.session_id as "sessionId", e.actor_user_id as "actorUserId",
+             u.display_name as "actorName", e.metadata, e.created_at as "createdAt"
+        from project_task_events e
+        join users u on u.tenant_id = e.tenant_id and u.id = e.actor_user_id
+       where e.tenant_id = ${tenantId} and e.task_id = ${taskId}
+       order by e.created_at, e.id
+    `
+    return rows.map(row => ({
+      id: row.id,
+      kind: row.kind,
+      sessionId: row.sessionId,
+      actor: { userId: row.actorUserId, displayName: row.actorName },
+      metadata: row.metadata,
+      createdAt: row.createdAt.toISOString(),
+    }))
+  }
+
+  /** 新建任务对话（团队会话，不预先绑定 Agent；Agent 任务每次执行按承接成员绑定版本）。 */
+  private async openTaskConversation(
+    workspaceId: string,
+    actorUserId: string,
+    title: string,
+    authorizationContext?: SessionAuthorizationContext,
+  ): Promise<string> {
+    if (!this.runs) throw new Error('项目任务对话未接线')
+    const session = await this.runs.createSession({
+      userId: actorUserId,
+      title,
+      workspaceId,
+      agentVersionId: null,
+      authorizationContext,
+    })
+    return session.id
+  }
+
+  /** 任务对话的首条消息：任务标题与说明，发言人为创建（或改派）的成员。失败只记录，不影响任务本身。 */
+  private async postTaskBrief(sessionId: string, actorUserId: string, taskId: string, title: string, description: string) {
+    try {
+      await this.runs?.postDiscussionMessage({
+        userId: actorUserId,
+        sessionId,
+        content: description ? `${title}\n\n${description}` : title,
+        idempotencyKey: `project-task-brief-${taskId}-${sessionId}`,
+        skipProjectTaskSync: true,
+      })
+    } catch (error) {
+      console.error('Project task brief message failed:', error)
+    }
+  }
+
+  private async recordTaskEvent(transaction: DatabaseTransaction, input: {
+    taskId: string
+    sessionId: string | null
+    kind: ProjectTaskEvent['kind']
+    actorUserId: string
+    metadata?: Record<string, unknown>
+  }) {
+    await transaction`
+      insert into project_task_events (id, tenant_id, task_id, session_id, kind, actor_user_id, metadata)
+      values (${`ptevent-${randomUUID()}`}, ${tenantId}, ${input.taskId}, ${input.sessionId}, ${input.kind},
+              ${input.actorUserId}, ${transaction.json((input.metadata ?? {}) as never)})
+    `
   }
 
   async updateTask(
@@ -268,7 +377,23 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     taskId: string,
     actorUserId: string,
     input: { title?: unknown; description?: unknown; assignee?: unknown; inputFileIds?: unknown; dueDate?: unknown },
+    authorizationContext?: SessionAuthorizationContext,
   ): Promise<ProjectTask> {
+    // S3 改派：员工换员工沿用原任务对话并记一条事件；跨类型或换 Agent 从新的任务对话开始。
+    // 新会话需经 createSession 的授权，因此先于事务建立；事务中改派条件已变化时丢弃它。
+    let freshSessionId: string | null = null
+    let freshUsed = false
+    if (input.assignee !== undefined) {
+      const preview = await this.lockTask(this.database, workspaceId, taskId)
+      if (needsNewConversation(preview, parseAssignee(input.assignee))) {
+        await this.requireRole(this.database, workspaceId, actorUserId, writerRoles)
+        const nextTitle = input.title === undefined ? preview.title : requireText(input.title, '任务标题', 120)
+        freshSessionId = await this.openTaskConversation(workspaceId, actorUserId, nextTitle, authorizationContext)
+      }
+    }
+    let briefTitle = ''
+    let briefDescription = ''
+    try {
     await this.database.begin(async (transaction) => {
       await lockActiveWorkspace(transaction, workspaceId)
       const role = await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
@@ -292,13 +417,30 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
             throw workspaceStateConflict('Agent 正在执行该任务，请等待完成或停止后再改派')
           }
           await this.assertAssignee(transaction, workspaceId, assignee)
+          if (needsNewConversation(task, assignee)) {
+            if (!freshSessionId) throw workspaceStateConflict('任务已被其他成员修改，请刷新后重试')
+            sessionId = freshSessionId
+            freshUsed = true
+          } else {
+            const names = await transaction<{ id: string; name: string }[]>`
+              select id, display_name as name from users
+               where tenant_id = ${tenantId} and id in ${transaction([task.assigneeUserId ?? '', assignee.id])}
+            `
+            await this.recordTaskEvent(transaction, {
+              taskId, sessionId: task.sessionId, kind: 'reassigned', actorUserId,
+              metadata: {
+                from: names.find(row => row.id === task.assigneeUserId)?.name ?? '',
+                to: names.find(row => row.id === assignee.id)?.name ?? '',
+              },
+            })
+          }
           assigneeType = assignee.type
           assigneeUserId = assignee.type === 'employee' ? assignee.id : null
           assigneeAgentMemberId = assignee.type === 'agent' ? assignee.id : null
-          // 一个任务线程固定一个 Agent 版本：改派后从新线程开始。
-          sessionId = null
         }
       }
+      briefTitle = title
+      briefDescription = description
       const inputFileIds = input.inputFileIds === undefined ? undefined : parseFileIds(input.inputFileIds, '引用文件')
       if (assigneeType === 'employee' && inputFileIds?.length) throw requestInvalid('只有 Agent 任务可以引用执行输入文件')
       if (inputFileIds) await this.assertWorkspaceFiles(transaction, workspaceId, inputFileIds, 'input')
@@ -313,6 +455,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       if (inputFileIds) await this.replaceTaskFiles(transaction, taskId, 'input', inputFileIds)
       else if (assigneeType === 'employee') await this.replaceTaskFiles(transaction, taskId, 'input', [])
     })
+    } catch (error) {
+      if (freshSessionId) await this.discardUnstartedThread(freshSessionId, null)
+      throw error
+    }
+    if (freshSessionId && !freshUsed) await this.discardUnstartedThread(freshSessionId, null)
+    if (freshSessionId && freshUsed) await this.postTaskBrief(freshSessionId, actorUserId, taskId, briefTitle, briefDescription)
     return this.requireTask(workspaceId, taskId, actorUserId)
   }
 
@@ -367,18 +515,29 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
          where tenant_id = ${tenantId} and id = ${taskId}
       `
       await this.replaceTaskFiles(transaction, taskId, 'deliverable', deliverables)
+      // S3：状态推进与完成在任务对话中作为系统记录展示。
+      if (status !== 'done' && task.status !== status) {
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId: task.sessionId, kind: 'status_changed', actorUserId,
+          metadata: { from: task.status, to: status },
+        })
+      }
       if (status === 'done' && task.status !== 'done') {
+        const names = deliverables.length ? await transaction<{ name: string }[]>`
+          select f.name from workspace_file_versions v
+            join workspace_files f on f.tenant_id = v.tenant_id and f.id = v.logical_file_id
+           where v.tenant_id = ${tenantId} and v.file_object_id in ${transaction(deliverables)}
+        ` : []
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId: task.sessionId, kind: 'completed', actorUserId,
+          metadata: { note, deliverables: names.map(row => row.name) },
+        })
         await recordWorkspaceActivity(transaction, {
           workspaceId, kind: 'project_task_completed', actorUserId, objectType: 'project_task', objectId: taskId,
           dedupeKey: `project-task-completed:${taskId}:${await activityTransitionToken(transaction)}`,
         })
         if (this.archive) {
           // 项目空间 S2：员工任务的完成说明与交付文件名交给档案员整理。
-          const names = deliverables.length ? await transaction<{ name: string }[]>`
-            select f.name from workspace_file_versions v
-              join workspace_files f on f.tenant_id = v.tenant_id and f.id = v.logical_file_id
-             where v.tenant_id = ${tenantId} and v.file_object_id in ${transaction(deliverables)}
-          ` : []
           await this.archive.recordEmployeeTaskResult(transaction, {
             workspaceId, taskId, title: task.title, note, deliverableNames: names.map(row => row.name),
           })
@@ -391,60 +550,55 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   }
 
   /**
-   * 启动 Agent 任务：首次启动创建任务线程，首条消息为任务标题与说明；之后在线程中回复即续接。
-   * 执行经既有 createSession / startRun，授权、复核与收权与团队对话一致。
+   * 启动 Agent 任务（S3）：任务对话在创建时已存在，首次执行在该对话中发起，带上任务引用的文件；
+   * 可附补充要求（成员在对话里写下后“交给 Agent”），未附时以开始执行的指令发起。之后在对话中回复即续接。
+   * 执行经既有 startRun，授权、复核与收权与团队对话一致。没有任务对话的旧任务先补建。
    */
   async startAgentTask(
     workspaceId: string,
     taskId: string,
     actorUserId: string,
-    input: { idempotencyKey: unknown; authorizationContext?: SessionAuthorizationContext },
+    input: { idempotencyKey: unknown; prompt?: unknown; authorizationContext?: SessionAuthorizationContext },
   ): Promise<ProjectTask> {
     if (!this.runs) throw new Error('项目任务执行未接线')
     if (typeof input.idempotencyKey !== 'string' || !input.idempotencyKey.trim()) {
       throw requestInvalid('必须提供 idempotencyKey')
     }
+    const extra = optionalText(input.prompt, '补充要求', 20000)
     await this.requireRole(this.database, workspaceId, actorUserId, writerRoles)
-    // 预检读取（不在事务中，不持锁）；并发启动由下方的条件绑定裁决。
     const task = await this.lockTask(this.database, workspaceId, taskId)
     if (task.assigneeType !== 'agent' || !task.assigneeAgentMemberId) throw workspaceStateConflict('员工任务不需要启动执行')
-    if (task.sessionId) throw workspaceStateConflict('任务已启动，请在任务线程中回复以继续')
-    const { agentVersionId } = await this.agentMembers.requireAvailableAgentMemberVersion(workspaceId, task.assigneeAgentMemberId)
-    const session = await this.runs.createSession({
+    await this.agentMembers.requireAvailableAgentMemberVersion(workspaceId, task.assigneeAgentMemberId)
+    let sessionId = task.sessionId
+    if (!sessionId) {
+      const created = await this.openTaskConversation(workspaceId, actorUserId, task.title, input.authorizationContext)
+      // 并发补建只有一个能绑定；落败方丢弃自己的会话，沿用已绑定的。
+      const [bound] = await this.database<{ id: string }[]>`
+        update project_tasks set session_id = ${created}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${taskId} and session_id is null and removed_at is null
+        returning id
+      `
+      if (!bound) {
+        await this.discardUnstartedThread(created, null)
+        throw workspaceStateConflict('任务已被其他成员启动或已改派，请刷新后查看')
+      }
+      sessionId = created
+      await this.postTaskBrief(sessionId, actorUserId, taskId, task.title, task.description)
+    }
+    const [run] = await this.database<{ id: string }[]>`
+      select id from runs where tenant_id = ${tenantId} and session_id = ${sessionId} limit 1
+    `
+    if (run) throw workspaceStateConflict('任务已开始执行，请在任务对话中回复以继续')
+    const inputFileIds = await this.taskFileIds(taskId, 'input')
+    await this.runs.startRun({
       userId: actorUserId,
-      title: task.title,
-      workspaceId,
-      agentVersionId,
+      sessionId,
+      prompt: extra || `请开始执行任务“${task.title}”。`,
+      idempotencyKey: input.idempotencyKey,
+      fileIds: inputFileIds,
+      workspaceAgentMemberId: task.assigneeAgentMemberId,
       authorizationContext: input.authorizationContext,
     })
-    // 并发启动只有一个能绑定线程；落败方不发起执行。
-    const [bound] = await this.database<{ id: string }[]>`
-      update project_tasks set session_id = ${session.id}, updated_at = now()
-       where tenant_id = ${tenantId} and id = ${taskId} and session_id is null and removed_at is null
-         and assignee_agent_member_id = ${task.assigneeAgentMemberId}
-      returning id
-    `
-    if (!bound) {
-      await this.discardUnstartedThread(session.id, null)
-      throw workspaceStateConflict('任务已被其他成员启动或已改派，请刷新后查看')
-    }
-    try {
-      const inputFileIds = await this.taskFileIds(taskId, 'input')
-      await this.runs.startRun({
-        userId: actorUserId,
-        sessionId: session.id,
-        prompt: task.description ? `任务：${task.title}\n\n${task.description}` : `任务：${task.title}`,
-        idempotencyKey: input.idempotencyKey,
-        fileIds: inputFileIds,
-        workspaceAgentMemberId: task.assigneeAgentMemberId,
-        authorizationContext: input.authorizationContext,
-      })
-    } catch (error) {
-      // 受理前失败（授权、Runtime 不可用等）不留下“已绑定线程却从未执行”的任务，可直接重新启动；
-      // 已创建 Run 的失败由 Run 自身记录，线程保留以便回复续接。
-      await this.discardUnstartedThread(session.id, taskId)
-      throw error
-    }
     return this.requireTask(workspaceId, taskId, actorUserId)
   }
 
@@ -586,6 +740,42 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   async assertTaskThreadIdle(sessionId: string): Promise<void> {
     if (await hasActiveRun(this.database, sessionId)) {
       throw workspaceStateConflict(TASK_THREAD_BUSY)
+    }
+  }
+
+  /** S3：员工任务的任务对话只用于进度与评论，@Agent 发起执行一律拒绝。 */
+  async assertNotEmployeeTaskThread(sessionId: string): Promise<void> {
+    const [row] = await this.database<{ id: string }[]>`
+      select id from project_tasks
+       where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null
+         and assignee_type = 'employee'
+    `
+    if (row) throw requestInvalid('员工任务的对话只能发表进度与评论，不能交给 Agent 执行')
+  }
+
+  /** S3：承接人在待办的员工任务对话中首次发言时，任务自动推进为进行中，并留下系统记录。不抛错。 */
+  async noteTaskConversationMessage(sessionId: string, userId: string): Promise<void> {
+    try {
+      await this.database.begin(async (transaction) => {
+        const [task] = await transaction<{ id: string; workspaceId: string; status: string; assigneeUserId: string | null }[]>`
+          select id, workspace_id as "workspaceId", status, assignee_user_id as "assigneeUserId"
+            from project_tasks
+           where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null
+             and assignee_type = 'employee'
+           for update
+        `
+        if (!task || task.status !== 'todo' || task.assigneeUserId !== userId) return
+        await transaction`
+          update project_tasks set status = 'in_progress', updated_at = now()
+           where tenant_id = ${tenantId} and id = ${task.id}
+        `
+        await this.recordTaskEvent(transaction, {
+          taskId: task.id, sessionId, kind: 'status_changed', actorUserId: userId,
+          metadata: { from: 'todo', to: 'in_progress', auto: true },
+        })
+      })
+    } catch (error) {
+      console.error('Project task conversation sync failed:', error)
     }
   }
 
@@ -795,7 +985,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       const canManage = writer && (row.createdBy === actorUserId || governance)
       const allowedActions: ProjectTaskAction[] = []
       if (canManage) allowedActions.push('edit', 'remove')
-      if (writer && row.assigneeType === 'agent' && !row.sessionId) allowedActions.push('start')
+      if (writer && row.assigneeType === 'agent' && !row.latestRunId) allowedActions.push('start')
       if (writer && row.assigneeType === 'employee' && (canManage || row.assigneeUserId === actorUserId)) {
         allowedActions.push('set_status', 'complete')
       }
@@ -821,6 +1011,16 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       }
     })
   }
+}
+
+/** 改派是否需要新的任务对话：承接者变化且不是“员工换员工”。 */
+function needsNewConversation(
+  task: { assigneeType: 'employee' | 'agent'; assigneeUserId: string | null; assigneeAgentMemberId: string | null },
+  assignee: ProjectTaskAssigneeInput,
+): boolean {
+  const changed = assignee.type !== task.assigneeType
+    || assignee.id !== (task.assigneeType === 'employee' ? task.assigneeUserId : task.assigneeAgentMemberId)
+  return changed && !(task.assigneeType === 'employee' && assignee.type === 'employee')
 }
 
 function agentTaskStatus(runStatus: string | null): ProjectTaskStatus {

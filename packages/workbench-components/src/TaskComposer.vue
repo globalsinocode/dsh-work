@@ -47,6 +47,8 @@ const props = withDefaults(
      * 开启后提交时在组件内拦截并保留输入与文件，而不是交给调用方丢弃。
      */
     filesRequireMention?: boolean
+    /** 输入框占位文字；缺省按 compact 使用通用提示（如项目任务对话按发送方式给出专门提示）。 */
+    placeholder?: string
   }>(),
   {
     initialPrompt: '',
@@ -395,9 +397,10 @@ function performPrimaryAction() {
         :rows="compact ? 2 : 4"
         aria-label="对话输入"
         :placeholder="
-          compact
-            ? '继续提问，可 @ 提及 Agent 或引用对话文件…'
-            : '今天想完成什么？可 @ 提及 Agent、引用企业数据，或从左下角添加文件'
+          placeholder
+            || (compact
+              ? '继续提问，可 @ 提及 Agent 或引用对话文件…'
+              : '今天想完成什么？可 @ 提及 Agent、引用企业数据，或从左下角添加文件')
         "
         @keydown="onKeydown"
         @input="refreshMentionState"

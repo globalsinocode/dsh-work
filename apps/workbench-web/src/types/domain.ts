@@ -186,6 +186,8 @@ export interface SessionThreadMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** ISO 发送时间（createdAt 只是展示用的时分）；旧服务端可能缺省。 */
+  sentAt?: string
   runId: string | null
   senderId: string | null
   senderName: string | null
@@ -471,6 +473,22 @@ export interface ProjectTask {
 }
 
 /** 项目任务分页：`nextCursor` 非空时可用它加载下一页；`total` 是当前空间的全部未移除任务数。 */
+/** S3：任务事件（员工任务的状态推进、完成与同类改派），在任务对话中作为系统记录展示。 */
+export interface ProjectTaskEvent {
+  id: string
+  kind: 'status_changed' | 'completed' | 'reassigned'
+  sessionId: string | null
+  actor: { userId: string; displayName: string }
+  metadata: {
+    from?: string
+    to?: string
+    auto?: boolean
+    note?: string | null
+    deliverables?: string[]
+  }
+  createdAt: string
+}
+
 export interface ProjectTaskPage {
   items: ProjectTask[]
   nextCursor: string | null
@@ -630,6 +648,8 @@ export interface WorkspaceSessionSummary {
   lastActiveAt: string
   runCount: number
   latestRun: { id: string; status: RunStatus } | null
+  /** 任务线程所属的项目任务；普通讨论为 null（旧数据可能缺省）。 */
+  projectTaskId?: string | null
 }
 
 export interface WorkspaceSessionPage {

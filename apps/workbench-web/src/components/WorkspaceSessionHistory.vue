@@ -186,6 +186,11 @@ function openSession(item: WorkspaceSessionSummary) {
   // 服务端兼容 Run ID 链接并解析回 Session；没有 Run 的会话退回 Session 身份。
   // TW-10 空间内对话视图：历史会话在空间外壳内打开，停留在 /workspaces/:id 上下文。
   const target = item.latestRun?.id ?? item.sessionId
+  // 任务线程在所属任务的详情里打开（“任务”页签），与任务信息和操作放在一起。
+  if (item.projectTaskId) {
+    void router.push(`/workspaces/${props.workspaceId}/tasks/${item.projectTaskId}/thread/${target}`)
+    return
+  }
   void router.push(`/workspaces/${props.workspaceId}/conversations/${target}`)
 }
 
@@ -326,7 +331,9 @@ onBeforeUnmount(() => {
           role="img"
           :aria-label="dotLabel(item)"
         ></span>
-        <span class="session-history-row__title" :title="item.title">{{ item.title }}</span>
+        <span class="session-history-row__title" :title="item.title">
+          <span v-if="item.projectTaskId" class="session-history-row__task" data-testid="session-history-task-badge">任务</span>{{ item.title }}
+        </span>
         <span class="session-history-row__creator" data-testid="session-history-creator">{{ item.creatorName }}</span>
         <span class="session-history-row__time">
           <span class="session-history-row__time-full" data-testid="session-history-time">{{ formatActivityTime(item.lastActiveAt) }}</span>
@@ -463,6 +470,19 @@ onBeforeUnmount(() => {
   font-weight: 630;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-history-row__task {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: #2f6bdc;
+  background: #eef4ff;
+  font-size: var(--dsh-font-size-micro);
+  font-weight: 600;
+  line-height: 18px;
+  vertical-align: 1px;
 }
 
 .session-history-row__creator,

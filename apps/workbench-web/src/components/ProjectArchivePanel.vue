@@ -325,11 +325,9 @@ defineExpose({ reload: load })
     role="tabpanel"
     aria-labelledby="workspace-tab-archive"
   >
-    <header class="project-archive__header">
+    <header v-if="current" class="project-archive__header">
       <div>
-        <span class="project-archive__eyebrow">项目协作</span>
-        <h1>档案</h1>
-        <p v-if="current" class="project-archive__meta" data-testid="project-archive-meta">
+        <p class="project-archive__meta" data-testid="project-archive-meta">
           <span>第 {{ current.versionNo }} 版</span>
           <span class="project-archive__source" :class="`project-archive__source--${current.sourceKind}`">
             {{ sourceKindLabels[current.sourceKind] }}
@@ -338,7 +336,7 @@ defineExpose({ reload: load })
           <span v-if="archive?.archivistRunning" class="project-archive__source project-archive__source--archivist">档案员整理中</span>
         </p>
       </div>
-      <el-button v-if="current" data-testid="project-archive-history" @click="openHistory()">版本历史</el-button>
+      <el-button data-testid="project-archive-history" @click="openHistory()">版本历史</el-button>
     </header>
 
     <p v-if="loading && !archive" class="project-archive__muted">正在加载档案…</p>
@@ -481,24 +479,10 @@ defineExpose({ reload: load })
 
 .project-archive__header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 20px;
-}
-
-.project-archive__eyebrow {
-  color: var(--dsh-color-brand);
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 750;
-  letter-spacing: 0.1em;
-}
-
-.project-archive__header h1 {
-  margin: 5px 0 0;
-  color: var(--dsh-color-ink);
-  font-size: var(--dsh-font-size-page-title);
-  font-weight: 680;
 }
 
 .project-archive__meta {
@@ -506,7 +490,7 @@ defineExpose({ reload: load })
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-micro);
 }

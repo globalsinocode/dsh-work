@@ -49,7 +49,7 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
 
   const workspaceTabs = page.getByRole('tablist', { name: '工作空间内容' })
   await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('heading', { name: '共享文件', exact: true })).toBeVisible()
+  await expect(page.locator('#workspace-panel-files')).toBeVisible()
 
   const filesPanel = page.locator('#workspace-panel-files')
   await expect(filesPanel.getByText('八月生产计划_v3.xlsx', { exact: true })).toBeVisible()
@@ -58,7 +58,7 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
   await expect(filesPanel.getByRole('button', { name: '引用到对话' })).toHaveCount(0)
 
   await workspaceTabs.getByRole('tab', { name: /^成果/ }).click()
-  await expect(page.getByRole('heading', { name: '成果', exact: true })).toBeVisible()
+  await expect(page.locator('#workspace-panel-artifacts')).toBeVisible()
   await expect(page.getByText('华东区订单交付风险清单.xlsx', { exact: true })).toBeVisible()
   await expect(page.getByText('华东区交付风险分析报告.pdf', { exact: true })).toBeVisible()
 })

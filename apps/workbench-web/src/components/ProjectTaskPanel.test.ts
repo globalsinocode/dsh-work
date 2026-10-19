@@ -6,8 +6,26 @@ import { WorkbenchApiError, workbenchApi } from '@/api/client'
 import type { ProjectTask, ProjectTaskPage, WorkspaceAgentMember, WorkspaceMember } from '@/types/domain'
 import ProjectTaskPanel from './ProjectTaskPanel.vue'
 
-const router = vi.hoisted(() => ({ push: vi.fn() }))
-vi.mock('vue-router', () => ({ useRouter: () => router }))
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+const route = vi.hoisted(() => ({ name: 'workspace-detail' as string, params: {} as Record<string, string> }))
+vi.mock('vue-router', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    useRouter: () => router,
+    useRoute: () => route,
+    RouterLink: defineComponent({
+      props: { to: { type: [String, Object], required: true } },
+      setup(props, { slots, attrs }) {
+        return () => h('a', { ...attrs, href: String(props.to) }, slots.default?.())
+      },
+    }),
+    RouterView: defineComponent({
+      setup() {
+        return () => h('div', { 'data-testid': 'router-view-stub' })
+      },
+    }),
+  }
+})
 
 const members: WorkspaceMember[] = [
   { userId: 'u-owner', displayName: '林岚', role: 'owner', joinedAt: '2026-09-01T00:00:00.000Z' },
@@ -63,6 +81,10 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     router.push.mockReset()
+    router.replace.mockReset()
+    route.name = 'workspace-detail'
+    route.params = {}
+    vi.spyOn(workbenchApi, 'listProjectTaskEvents').mockResolvedValue([])
     vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue(page([]))
   })
 
@@ -112,7 +134,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     await flushPromises()
     const statuses = wrapper.findAll('[data-testid="project-task-status"]').map(node => node.text())
     expect(statuses).toEqual(['进行中', '执行失败', '已完成'])
-    expect(wrapper.text()).toContain('承接：Agent · 缺货分析助手')
+    expect(wrapper.text()).toContain('Agent · 缺货分析助手')
     expect(wrapper.get('[data-testid="project-task-note"]').text()).toContain('已分组')
     expect(wrapper.emitted('count')?.at(-1)).toEqual([3])
   })
@@ -157,8 +179,93 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     expect(startButton).toBeTruthy()
     await startButton!.trigger('click')
     await flushPromises()
-    expect(start).toHaveBeenCalledWith('ws-team', 'ptask-1', expect.stringMatching(/^project-task-start-ptask-1-/))
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/run-9')
+    // 从表格启动不带补充要求（第 4 个参数只在任务对话里“交给 Agent”时传入）。
+    expect(start).toHaveBeenCalledWith('ws-team', 'ptask-1', expect.stringMatching(/^project-task-start-ptask-1-/), undefined)
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/session-9')
+  })
+
+  it('links each task title to its detail inside the 任务 tab', async () => {
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="project-task-open"]').attributes('href')).toBe('/workspaces/ws-team/tasks/ptask-1')
+  })
+
+  it('任务详情：两类任务都直接打开任务对话（会话），标题与任务信息分开展示', async () => {
+    route.name = 'workspace-task'
+    route.params = { id: 'ws-team', taskId: 'ptask-1' }
+    const get = vi.spyOn(workbenchApi, 'getProjectTask')
+      .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9' }))
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1' })
+    await flushPromises()
+    expect(get).toHaveBeenCalledWith('ws-team', 'ptask-1')
+    expect(workbenchApi.listProjectTaskEvents).toHaveBeenCalledWith('ws-team', 'ptask-1')
+    expect(wrapper.find('[data-testid="project-task-row"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="project-task-detail"]').text()).toContain('分析缺货原因')
+    // 右栏不可见（未传传送目标）时任务信息卡片就地显示。
+    expect(wrapper.get('[data-testid="project-task-info"]').text()).toContain('缺货分析助手')
+    expect(wrapper.get('[data-testid="project-task-detail-status"]').text()).toBe('进行中')
+    expect(router.replace).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/session-9')
+    expect(wrapper.emitted('detail-title')?.at(-1)).toEqual(['分析缺货原因'])
+
+    vi.mocked(workbenchApi.getProjectTask).mockResolvedValue(task({
+      id: 'ptask-2', assignee: { type: 'employee', userId: 'u-owner', displayName: '林岚' }, sessionId: 'session-2', allowedActions: [],
+    }))
+    await wrapper.setProps({ detailTaskId: 'ptask-2' })
+    await flushPromises()
+    expect(router.replace).toHaveBeenLastCalledWith('/workspaces/ws-team/tasks/ptask-2/thread/session-2')
+    expect(wrapper.get('[data-testid="project-task-info"]').text()).toContain('交付文件')
+  })
+
+  it('任务详情：执行中的 Agent 任务可查看执行详情与停止', async () => {
+    route.name = 'workspace-task-thread'
+    route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-9' }
+    vi.spyOn(workbenchApi, 'getProjectTask')
+      .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9' }))
+    const cancel = vi.spyOn(workbenchApi, 'cancelRun').mockResolvedValue({} as never)
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="router-view-stub"]').exists()).toBe(true)
+    expect(router.replace).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="project-task-run-detail"]').trigger('click')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/run-9')
+    await wrapper.get('[data-testid="project-task-stop"]').trigger('click')
+    await flushPromises()
+    expect(cancel).toHaveBeenCalledWith('run-9')
+  })
+
+  it('任务详情：没有任务对话的旧任务给出说明', async () => {
+    route.name = 'workspace-task'
+    vi.spyOn(workbenchApi, 'getProjectTask').mockResolvedValue(task({ sessionId: null }))
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('这个任务还没有任务对话')
+    expect(router.replace).not.toHaveBeenCalled()
+  })
+
+  it('任务详情：任务不存在时提示并可重试', async () => {
+    route.name = 'workspace-task'
+    const get = vi.spyOn(workbenchApi, 'getProjectTask')
+      .mockRejectedValue(new WorkbenchApiError({ code: 'project_task_not_found', message: '任务不存在或已移除' }, 404, ''))
+    const wrapper = mountPanel({ detailTaskId: 'missing' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('任务不存在或已被移除')
+    expect(wrapper.emitted('detail-title')?.at(-1)).toEqual([''])
+    await wrapper.findAll('button').find(button => button.text() === '重试')!.trigger('click')
+    expect(get).toHaveBeenCalledTimes(2)
+  })
+
+  it('任务详情：移除任务后回到任务表格', async () => {
+    route.name = 'workspace-task'
+    vi.spyOn(workbenchApi, 'getProjectTask').mockResolvedValue(task({ sessionId: null }))
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const remove = vi.spyOn(workbenchApi, 'removeProjectTask').mockResolvedValue({ removed: true })
+    const wrapper = mountPanel({ detailTaskId: 'ptask-1' })
+    await flushPromises()
+    await wrapper.get('[data-testid="project-task-info"]').findAll('button').find(button => button.text() === '移除')!.trigger('click')
+    await flushPromises()
+    expect(remove).toHaveBeenCalledWith('ws-team', 'ptask-1')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team')
   })
 
   it('completes an employee task with a note', async () => {

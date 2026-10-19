@@ -85,8 +85,13 @@ export interface WorkspaceSessionSummary {
   latestRun: { id: string; status: RunState } | null
 }
 
+/** 团队历史列表的一行：另带所属项目任务（任务线程），普通讨论为 null。 */
+export interface TeamSessionSummary extends WorkspaceSessionSummary {
+  projectTaskId: string | null
+}
+
 export interface WorkspaceSessionPage {
-  items: WorkspaceSessionSummary[]
+  items: TeamSessionSummary[]
   nextCursor: string | null
 }
 
@@ -731,6 +736,7 @@ export class PostgresConversationRepository {
       runCount: number
       latestRunId: string | null
       latestRunStatus: RunState | null
+      projectTaskId: string | null
     }[]>`
       select s.id as "sessionId", s.title,
              s.created_by as "creatorId", u.display_name as "creatorName",
@@ -738,9 +744,13 @@ export class PostgresConversationRepository {
              to_char(s.last_active_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorTimestamp",
              (select count(*)::integer from runs r
                where r.tenant_id = s.tenant_id and r.session_id = s.id) as "runCount",
-             latest.id as "latestRunId", latest.status as "latestRunStatus"
+             latest.id as "latestRunId", latest.status as "latestRunStatus",
+             pt.id as "projectTaskId"
         from sessions s
         join users u on u.tenant_id = s.tenant_id and u.id = s.created_by
+        -- 任务线程：一个线程至多属于一个未移除的项目任务（project_tasks_session_unique）。
+        left join project_tasks pt
+          on pt.tenant_id = s.tenant_id and pt.session_id = s.id and pt.removed_at is null
         left join lateral (
           select r.id, r.status
             from runs r
@@ -768,6 +778,7 @@ export class PostgresConversationRepository {
       lastActiveAt: row.lastActiveAt.toISOString(),
       runCount: Number(row.runCount),
       latestRun: row.latestRunId ? { id: row.latestRunId, status: row.latestRunStatus as RunState } : null,
+      projectTaskId: row.projectTaskId,
       cursorTimestamp: row.cursorTimestamp,
     }))
     const last = items[items.length - 1]
@@ -1301,6 +1312,8 @@ export class PostgresConversationRepository {
       lastActiveAt: row.lastActiveAt.toISOString(),
       messages: messages.map(message => ({
         ...mapMessage(message),
+        // createdAt 是展示用的时分；sentAt 供前端把消息与执行记录、任务事件按时间合并排序。
+        sentAt: message.createdAt.toISOString(),
         runId: message.runId,
         senderId: message.senderId,
         senderName: message.senderName,

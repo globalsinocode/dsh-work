@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   Close,
   Document,
   Files,
+  FolderOpened,
   InfoFilled,
   List,
   Notebook,
@@ -72,6 +73,18 @@ const starterRef = ref<{
 }>()
 const tabButtonRefs = ref<HTMLButtonElement[]>([])
 const panelCollapsed = ref(false)
+/** 右栏只在宽屏显示（≤1180px 时改为信息抽屉）：任务信息卡片据此决定传送到右栏还是就地显示。 */
+const wideQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(min-width: 1181px)')
+  : null
+const wideLayout = ref(wideQuery?.matches ?? true)
+function onWideChange(event: MediaQueryListEvent) {
+  wideLayout.value = event.matches
+}
+wideQuery?.addEventListener?.('change', onWideChange)
+onBeforeUnmount(() => wideQuery?.removeEventListener?.('change', onWideChange))
+/** 任务详情的标题（面包屑），由任务面板读取任务后回传。 */
+const taskDetailTitle = ref('')
 const mobileInfoOpen = ref(false)
 const uploadInput = ref<HTMLInputElement>()
 const uploading = ref(false)
@@ -219,6 +232,12 @@ const conversationViews: Array<{ id: ConversationView; label: string }> = [
  * 由线程自身的返回控件回到列表。
  */
 const isConversationThreadRoute = computed(() => route.name === 'workspace-conversation')
+/** 项目任务详情（含其任务线程子路由）：始终停留在“任务”页签。 */
+const taskDetailId = computed(() =>
+  route.name === 'workspace-task' || route.name === 'workspace-task-thread' ? String(route.params.taskId ?? '') : null)
+/** 任务信息卡片的传送目标：任务详情且右栏可见时为右栏顶部的占位元素。 */
+const taskInfoTarget = computed(() =>
+  taskDetailId.value && !panelCollapsed.value && wideLayout.value ? '#workspace-task-info' : null)
 
 const workspaceId = computed(() => String(route.params.id ?? ''))
 const workspace = computed(() =>
@@ -361,7 +380,7 @@ const workspaceTabs = computed(() => [
  * 输入框与文件引用永远无法浮现（评审修复）。
  */
 function workspaceBaseLocation(query: LocationQuery) {
-  return isConversationThreadRoute.value
+  return isConversationThreadRoute.value || taskDetailId.value
     ? { path: `/workspaces/${workspaceId.value}`, query }
     : { query }
 }
@@ -592,12 +611,16 @@ function openArtifactPreview(item: Artifact) {
 }
 
 watch(
-  () => [route.query.tab, isTeam.value, isConversationThreadRoute.value] as const,
+  () => [route.query.tab, isTeam.value, isConversationThreadRoute.value, taskDetailId.value] as const,
   ([tab, , isThread]) => {
     // 项目任务线程以子路由打开（openThread 只写路径，不带 ?tab=），必须切到对话页签；
     // 线程内再次导航（如发送后续消息）也要保持，不能被默认页签覆盖。
     if (isThread) {
       activeTab.value = 'conversation'
+      return
+    }
+    if (taskDetailId.value) {
+      activeTab.value = 'tasks'
       return
     }
     const value = tab === undefined || tab === null || tab === '' ? defaultTab.value : String(tab)
@@ -1016,7 +1039,47 @@ watch(
     :class="{ 'workspace-context-page--collapsed': panelCollapsed }"
   >
     <main class="workspace-context-page__main">
-      <header class="workspace-context-page__header">
+      <div class="workspace-context-page__topbar">
+        <nav class="workspace-context-crumbs" aria-label="当前位置">
+          <el-icon class="workspace-context-crumbs__icon" aria-hidden="true"><FolderOpened /></el-icon>
+          <RouterLink class="workspace-context-crumbs__link" to="/workspaces">{{ isPersonal ? '空间' : '项目' }}</RouterLink>
+          <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+          <template v-if="taskDetailId">
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-name" :to="`/workspaces/${workspace.id}`">{{ workspace.name }}</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-tasks" :to="`/workspaces/${workspace.id}`">任务</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+            <strong class="workspace-context-crumbs__current" data-testid="workspace-crumb-task" aria-current="page">{{ taskDetailTitle || '任务详情' }}</strong>
+          </template>
+          <strong v-else class="workspace-context-crumbs__current" data-testid="workspace-crumb-name" aria-current="page">{{ workspace.name }}</strong>
+        </nav>
+        <div class="workspace-context-page__header-actions">
+          <button
+            v-if="panelCollapsed"
+            class="workspace-context-page__panel-open"
+            type="button"
+            aria-label="展开工作空间信息"
+            @click="panelCollapsed = false"
+          >
+            <el-icon><InfoFilled /></el-icon>
+            <span>空间信息</span>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+  
+          <button
+            class="workspace-context-page__mobile-info"
+            type="button"
+            aria-label="查看工作空间信息"
+            @click="mobileInfoOpen = true"
+          >
+            <el-icon><InfoFilled /></el-icon>
+            <span>空间信息</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 任务详情（S3）隐藏页签行，经面包屑返回任务表格。 -->
+      <header v-if="!taskDetailId" class="workspace-context-page__header">
         <nav class="workspace-context-tabs" role="tablist" aria-label="工作空间内容">
           <button
             v-for="(tab, index) in workspaceTabs"
@@ -1033,35 +1096,10 @@ watch(
             @click="selectTab(tab.id)"
             @keydown="onTabKeydown($event, index)"
           >
-            <el-icon><component :is="tab.icon" /></el-icon>
             <span>{{ tab.label }}</span>
-            <small>{{ tab.count }}</small>
           </button>
         </nav>
 
-        <div class="workspace-context-page__header-actions">
-          <button
-            v-if="panelCollapsed"
-            class="workspace-context-page__panel-open"
-            type="button"
-            aria-label="展开工作空间信息"
-            @click="panelCollapsed = false"
-          >
-            <el-icon><InfoFilled /></el-icon>
-            <span>空间信息</span>
-            <el-icon><ArrowRight /></el-icon>
-          </button>
-
-          <button
-            class="workspace-context-page__mobile-info"
-            type="button"
-            aria-label="查看工作空间信息"
-            @click="mobileInfoOpen = true"
-          >
-            <el-icon><InfoFilled /></el-icon>
-            <span>空间信息</span>
-          </button>
-        </div>
       </header>
 
       <el-alert
@@ -1096,7 +1134,10 @@ watch(
           :members="workspaceMembers"
           :agent-members="agentMembers"
           :files="workspace.files"
+          :detail-task-id="taskDetailId"
+          :task-info-target="taskInfoTarget"
           @count="projectTaskCount = $event"
+          @detail-title="taskDetailTitle = $event"
           @stale="onProjectContentStale"
         />
 
@@ -1174,14 +1215,9 @@ watch(
           role="tabpanel"
           aria-labelledby="workspace-tab-files"
         >
-          <header class="workspace-tab-pane__header">
-            <div>
-              <span class="workspace-tab-pane__eyebrow">{{ isPersonal ? '个人资料' : '项目资源' }}</span>
-              <h1>{{ isPersonal ? '文件' : '共享文件' }}</h1>
-              <p>{{ isPersonal ? '管理仅你可访问的资料，并将指定文件直接引用到新对话。' : '查看项目成员共享的资料，并将指定文件直接引用到新对话。' }}</p>
-            </div>
+          <!-- 列表为空时由空状态提供“上传第一个文件”，页头不再重复上传入口。 -->
+          <header v-if="!isArchived && workspace.files.length" class="workspace-tab-pane__header">
             <el-button
-              v-if="!isArchived"
               data-testid="workspace-upload"
               type="primary"
               :icon="Plus"
@@ -1190,18 +1226,18 @@ watch(
             >
               上传文件
             </el-button>
-            <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="onUploadSelected" />
-            <!-- 执行轨：上传新版本入口只在「团队 + 活跃 + 非只读成员」时存在。 -->
-            <input
-              v-if="canUploadFileVersions"
-              ref="versionUploadInput"
-              data-testid="workspace-file-upload-input"
-              class="visually-hidden"
-              type="file"
-              accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
-              @change="onVersionUploadSelected"
-            />
           </header>
+          <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="onUploadSelected" />
+          <!-- 执行轨：上传新版本入口只在「团队 + 活跃 + 非只读成员」时存在。 -->
+          <input
+            v-if="canUploadFileVersions"
+            ref="versionUploadInput"
+            data-testid="workspace-file-upload-input"
+            class="visually-hidden"
+            type="file"
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+            @change="onVersionUploadSelected"
+          />
 
           <div v-if="workspace.files.length" class="workspace-file-list panel">
             <article v-for="file in workspace.files" :key="file.id" class="workspace-file-row">
@@ -1276,6 +1312,7 @@ watch(
               data-testid="workspace-upload-empty"
               type="primary"
               :icon="Plus"
+              :loading="uploading"
               @click="uploadFile"
             >
               上传第一个文件
@@ -1291,11 +1328,6 @@ watch(
           aria-labelledby="workspace-tab-artifacts"
         >
           <header class="workspace-tab-pane__header">
-            <div>
-              <span class="workspace-tab-pane__eyebrow">成果文件</span>
-              <h1>成果</h1>
-              <p>集中查看当前工作空间内生成的报告、表格和分析文件，并追溯来源运行。</p>
-            </div>
             <span class="workspace-tab-pane__count">{{ workspaceArtifacts.length }} 个已加载成果</span>
           </header>
 
@@ -1315,13 +1347,6 @@ watch(
     </main>
 
     <aside v-if="!panelCollapsed" class="workspace-context-page__aside">
-      <ProjectBriefCard
-        v-if="isTeam"
-        class="workspace-context-page__brief"
-        :workspace-id="workspace.id"
-        :workspace-name="workspace.name"
-        :can-edit="canEditBrief"
-      />
       <WorkspaceInfoPanel
         class="workspace-context-page__info"
         :workspace="workspace"
@@ -1338,6 +1363,8 @@ watch(
         :usage-summary="usageSummary"
         :usage-loading="usageLoading"
         :usage-error="usageError"
+        :compact="Boolean(taskDetailId)"
+        :title="taskDetailId ? '任务信息' : '工作空间信息'"
         collapsible
         @collapse="panelCollapsed = true"
         @manage-members="memberDialogOpen = true"
@@ -1349,7 +1376,20 @@ watch(
         @retry-activity="retryActivity"
         @view-usage-detail="openUsageDialog"
         @retry-usage="retryUsage"
-      />
+      >
+        <template v-if="isTeam" #lead>
+          <!-- 任务详情：任务信息卡片传送到这里，其下是所属空间的简报与摘要。 -->
+          <template v-if="taskDetailId">
+            <div id="workspace-task-info" class="workspace-context-page__task-info"></div>
+            <span class="workspace-context-page__space-label">所属空间 · {{ workspace.name }}</span>
+          </template>
+          <ProjectBriefCard
+            :workspace-id="workspace.id"
+            :workspace-name="workspace.name"
+            :can-edit="canEditBrief"
+          />
+        </template>
+      </WorkspaceInfoPanel>
     </aside>
 
     <el-drawer
@@ -1361,13 +1401,6 @@ watch(
     >
       <!-- 仅在抽屉打开时挂载：桌面端不会打开它，避免与右栏 aside 同时挂载产生重复请求与 DOM id。 -->
       <template v-if="mobileInfoOpen">
-        <ProjectBriefCard
-          v-if="isTeam"
-          class="workspace-context-page__brief"
-          :workspace-id="workspace.id"
-          :workspace-name="workspace.name"
-          :can-edit="canEditBrief"
-        />
         <WorkspaceInfoPanel
           class="workspace-context-page__info"
           :workspace="workspace"
@@ -1393,7 +1426,15 @@ watch(
           @retry-activity="retryActivity"
           @view-usage-detail="openUsageDialog"
           @retry-usage="retryUsage"
-        />
+        >
+          <template v-if="isTeam" #lead>
+            <ProjectBriefCard
+              :workspace-id="workspace.id"
+              :workspace-name="workspace.name"
+              :can-edit="canEditBrief"
+            />
+          </template>
+        </WorkspaceInfoPanel>
       </template>
     </el-drawer>
 
@@ -1603,10 +1644,64 @@ watch(
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
-  border-bottom: 1px solid #e5e7e4;
-  background: rgb(255 255 255 / 96%);
-  box-shadow: 0 4px 18px rgb(31 40 35 / 3%);
-  backdrop-filter: blur(10px);
+  padding-top: 6px;
+  background: #fff;
+}
+
+/* 顶栏：左侧“项目 / 项目名称”面包屑，右侧收起右栏后的“空间信息”入口。 */
+.workspace-context-page__topbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 24px 0 28px;
+  border-bottom: 1px solid #ececee;
+  background: #fff;
+}
+
+.workspace-context-crumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--dsh-font-size-body);
+}
+
+.workspace-context-crumbs__icon {
+  flex: 0 0 auto;
+  color: #6b6f6c;
+  font-size: var(--dsh-font-size-subheading);
+}
+
+.workspace-context-crumbs__link {
+  flex: 0 0 auto;
+  color: #6b6f6c;
+  text-decoration: none;
+}
+
+.workspace-context-crumbs__link:hover {
+  color: #1d201e;
+}
+
+.workspace-context-crumbs__link:focus-visible {
+  outline: 2px solid #7bb8a6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.workspace-context-crumbs__sep {
+  color: #b4b8b5;
+}
+
+.workspace-context-crumbs__current {
+  min-width: 0;
+  overflow: hidden;
+  color: #1d201e;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-context-page__header-actions {
@@ -1614,7 +1709,6 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 0 18px 0 8px;
 }
 
 .workspace-context-page__panel-open,
@@ -1646,11 +1740,11 @@ watch(
 .workspace-context-tabs {
   display: flex;
   min-width: 0;
-  height: 52px;
+  height: 56px;
   flex: 1;
   align-items: stretch;
-  gap: 3px;
-  padding: 0 18px;
+  gap: 8px;
+  padding: 0 20px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1659,71 +1753,52 @@ watch(
   display: none;
 }
 
+/* 参考“动态 / 计划 / 任务 / 资产”式页签：大字、无图标，选中项加粗并带短下划线。 */
 .workspace-context-tabs__item {
   position: relative;
   display: inline-flex;
-  min-width: 118px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 13px;
+  gap: 5px;
+  padding: 0 12px;
   border: 0;
-  color: #777c77;
+  color: #6b6f6c;
   background: transparent;
   cursor: pointer;
-  font-size: var(--dsh-font-size-caption);
-  transition: color 140ms ease, background 140ms ease;
+  font-size: var(--dsh-font-size-section);
+  transition: color 140ms ease;
 }
 
 .workspace-context-tabs__item::after {
   position: absolute;
-  right: 12px;
-  bottom: -1px;
-  left: 12px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
+  bottom: 6px;
+  left: 50%;
+  width: 26px;
+  height: 3px;
+  border-radius: 3px;
   background: transparent;
   content: '';
+  transform: translateX(-50%);
 }
 
 .workspace-context-tabs__item:hover {
-  color: #2b3b35;
-  background: #f7f9f7;
+  color: #202420;
 }
 
 .workspace-context-tabs__item:focus-visible {
   outline: 2px solid #7bb8a6;
-  outline-offset: -3px;
-  border-radius: 8px 8px 0 0;
+  outline-offset: -4px;
+  border-radius: 8px;
 }
 
 .workspace-context-tabs__item.is-active {
-  color: #205f4d;
+  color: #1d201e;
   font-weight: 650;
 }
 
 .workspace-context-tabs__item.is-active::after {
-  background: #2e8b70;
-}
-
-.workspace-context-tabs__item .el-icon {
-  font-size: var(--dsh-font-size-subheading);
-}
-
-.workspace-context-tabs__item small {
-  min-width: 20px;
-  padding: 2px 5px;
-  border-radius: 999px;
-  color: #8b908c;
-  background: #f0f2ef;
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 650;
-}
-
-.workspace-context-tabs__item.is-active small {
-  color: #296c59;
-  background: #e8f4ef;
+  background: #1d201e;
 }
 
 .workspace-context-page__content {
@@ -1816,18 +1891,22 @@ watch(
   min-width: 0;
   height: 100vh;
   flex-direction: column;
-  overflow-x: hidden;
-  overflow-y: auto;
-  border-left: 1px solid #e5e7e4;
-  box-shadow: -8px 0 28px rgb(32 42 36 / 3%);
+  overflow: hidden;
+  border-left: 1px solid #ececee;
 }
 
-.workspace-context-page__brief {
-  flex: 0 0 auto;
-  margin: 12px 12px 0;
+/* 右栏整体是一列卡片（简报经插槽排在面板标题之下），由信息面板统一滚动。 */
+.workspace-context-page__task-info:empty {
+  display: none;
 }
 
-/* 简报在上、空间信息在下：信息面板占剩余高度并自行滚动。 */
+.workspace-context-page__space-label {
+  margin-top: 6px;
+  padding: 0 4px;
+  color: #8a8e8b;
+  font-size: var(--dsh-font-size-micro);
+}
+
 .workspace-context-page__info {
   flex: 1 1 auto;
   min-height: 0;
@@ -1843,33 +1922,11 @@ watch(
 
 .workspace-tab-pane__header {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   width: 100%;
   gap: 24px;
   margin-bottom: 20px;
-}
-
-.workspace-tab-pane__eyebrow {
-  color: #2d8068;
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 750;
-  letter-spacing: 0.1em;
-}
-
-.workspace-tab-pane__header h1 {
-  margin: 5px 0 0;
-  color: #202420;
-  font-size: var(--dsh-font-size-page-title);
-  font-weight: 680;
-  letter-spacing: -0.025em;
-}
-
-.workspace-tab-pane__header p {
-  margin: 7px 0 0;
-  color: #737a75;
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.6;
 }
 
 .workspace-tab-pane__count {
@@ -2164,13 +2221,11 @@ watch(
     padding: 0 8px;
   }
 
-  .workspace-context-page__header-actions {
-    padding-right: 10px;
-    padding-left: 4px;
+  .workspace-context-page__topbar {
+    padding: 0 12px 0 16px;
   }
 
   .workspace-context-tabs__item {
-    min-width: 104px;
     padding: 0 8px;
   }
 
@@ -2180,12 +2235,6 @@ watch(
 
   .workspace-conversation-pane__viewbar {
     margin: 10px 14px 0;
-  }
-
-  .workspace-tab-pane__header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
   }
 
   .workspace-file-row {
@@ -2217,10 +2266,6 @@ watch(
     width: 30px;
     padding: 0;
     justify-content: center;
-  }
-
-  .workspace-context-tabs__item small {
-    display: none;
   }
 }
 </style>

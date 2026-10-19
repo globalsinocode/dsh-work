@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { projectTaskDetailKey } from '@/composables/project-task-detail'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
@@ -21,7 +22,7 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, ProjectTask, SessionThread, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { Artifact, ChatMessage, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
@@ -55,13 +56,23 @@ const targetLoading = ref(false)
  * 路径仍按原样解析。团队会话的外部链接加载后归位到空间 URL
  * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
  */
-const isEmbeddedInWorkspace = computed(() => route.name === 'workspace-conversation')
+/**
+ * 项目任务详情内嵌：作为 /workspaces/:id/tasks/:taskId/thread/:conversationId 渲染时，
+ * 任务信息、返回与任务标识由外层任务详情提供，线程内导航（续接产生新 Run、查看执行记录）
+ * 停留在任务详情下。
+ */
+const isTaskThreadRoute = computed(() => route.name === 'workspace-task-thread')
+const isEmbeddedInWorkspace = computed(() =>
+  route.name === 'workspace-conversation' || isTaskThreadRoute.value)
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
 const routeTargetId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.conversationId) : String(route.params.id))
 
 function conversationPath(target: string) {
+  if (isTaskThreadRoute.value) {
+    return `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}/thread/${target}`
+  }
   return isEmbeddedInWorkspace.value
     ? `/workspaces/${embeddedWorkspaceId.value}/conversations/${target}`
     : `/conversations/${target}`
@@ -185,6 +196,10 @@ async function loadProjectTask(workspaceId: string | undefined) {
     const page = await workbenchApi.listProjectTasks(workspaceId, { sessionId, limit: 1 })
     if (currentSessionId.value !== sessionId) return
     projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
+    // 任务线程统一在所属任务的详情里打开（“任务”页签）：从历史、侧栏等入口进入“对话”页签时归位。
+    if (projectTask.value && route.name === 'workspace-conversation') {
+      await router.replace(`/workspaces/${workspaceId}/tasks/${projectTask.value.id}/thread/${routeTargetId.value}`)
+    }
   } catch (error) {
     // 旧会话的失败不能写到新会话上；新会话的加载状态也不能被旧请求提前结束。
     if (currentSessionId.value !== sessionId) return
@@ -207,8 +222,13 @@ async function markAsTask() {
   if (!workspaceId || !sessionId || markingAsTask.value) return
   markingAsTask.value = true
   try {
-    projectTask.value = await workbenchApi.markSessionAsProjectTask(workspaceId, sessionId)
-    ElMessage.success('已设为任务，可在项目空间的“任务”页签查看')
+    const marked = await workbenchApi.markSessionAsProjectTask(workspaceId, sessionId)
+    projectTask.value = marked
+    ElMessage.success('已设为任务')
+    // 任务线程在所属任务的详情里继续（“任务”页签），与任务信息和操作放在一起。
+    if (!isTaskThreadRoute.value) {
+      await router.replace(`/workspaces/${workspaceId}/tasks/${marked.id}/thread/${routeTargetId.value}`)
+    }
   } catch (error) {
     notifyActionFailure('设为任务', '当前线程', error, '确认该线程已由 Agent 执行过且尚未设为任务后重试。')
   } finally {
@@ -270,6 +290,12 @@ const isTerminalRun = computed(() =>
   Boolean(task.value && ['succeeded', 'failed', 'cancelled'].includes(task.value.status)))
 
 function goBack() {
+  // 任务详情内的执行详情：返回任务对话（会话视图）。
+  if (isTaskThreadRoute.value) {
+    const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
+    void router.push(sessionId ? conversationPath(sessionId) : `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}`)
+    return
+  }
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
@@ -373,6 +399,186 @@ function openSessionRun(runId: string) {
   void router.push(conversationPath(runId))
 }
 
+// ---------------------------------------------------------------------------
+// 项目空间 S3：任务详情内的任务对话（会话视图）
+// ---------------------------------------------------------------------------
+
+/** 任务详情经 provide 提供的任务、事件与写动作；不在任务详情内时为 null。 */
+const taskDetail = inject(projectTaskDetailKey, null)
+/** 任务详情内的任务对话（会话视图）；执行详情（Run 视图）不算。 */
+const inTaskConversation = computed(() => isTaskThreadRoute.value && !task.value && Boolean(sessionThread.value))
+const conversationTask = computed(() => taskDetail?.task.value ?? projectTask.value)
+const isAgentTaskConversation = computed(() => inTaskConversation.value && conversationTask.value?.assignee.type === 'agent')
+const isEmployeeTaskConversation = computed(() => inTaskConversation.value && conversationTask.value?.assignee.type === 'employee')
+const taskAgentLabel = computed(() =>
+  conversationTask.value?.assignee.type === 'agent' ? conversationTask.value.assignee.name : 'Agent')
+const ACTIVE_RUN_STATUSES = ['queued', 'running', 'awaiting_approval', 'waiting', 'cancel_requested']
+const threadHasActiveRun = computed(() =>
+  (sessionThread.value?.runs ?? []).some(run => ACTIVE_RUN_STATUSES.includes(run.status)))
+/** 尚未执行过的 Agent 任务：“交给 Agent”经任务启动（带上任务引用的文件）。 */
+const taskNotStarted = computed(() => isAgentTaskConversation.value && !(sessionThread.value?.runs.length ?? 0))
+/** Agent 任务对话的发送方式：默认交给 Agent，可选“仅评论”；执行中只能评论。 */
+const sendMode = ref<'agent' | 'comment'>('agent')
+const effectiveSendMode = computed<'agent' | 'comment'>(() =>
+  !isAgentTaskConversation.value || threadHasActiveRun.value ? 'comment' : sendMode.value)
+const canCompleteFromConversation = computed(() =>
+  isEmployeeTaskConversation.value && conversationTask.value?.status !== 'done' && Boolean(taskDetail?.can('complete')))
+const canStartFromConversation = computed(() => taskNotStarted.value && Boolean(taskDetail?.can('start')))
+const taskComposerPlaceholder = computed(() => {
+  if (!inTaskConversation.value) return ''
+  if (isEmployeeTaskConversation.value) return '更新进度或写评论…'
+  if (threadHasActiveRun.value) return `写评论…（${taskAgentLabel.value} 执行中，暂不能交给 Agent）`
+  if (effectiveSendMode.value === 'comment') return '写评论…'
+  return taskNotStarted.value ? `补充要求，交给 ${taskAgentLabel.value} 开始执行…` : `继续交代，交给 ${taskAgentLabel.value} 处理…`
+})
+
+const runStatusLabels: Record<string, string> = {
+  queued: '排队中',
+  running: '执行中',
+  waiting: '等待中',
+  awaiting_approval: '等待确认',
+  cancel_requested: '正在停止',
+  succeeded: '执行完成',
+  failed: '执行失败',
+  cancelled: '已停止',
+}
+const taskStatusLabels: Record<string, string> = { todo: '待办', in_progress: '进行中', done: '已完成' }
+
+type SessionRunRecord = SessionThread['runs'][number]
+type TimelineItem =
+  | { kind: 'message'; key: string; at: string; message: SessionThreadMessage }
+  | { kind: 'run'; key: string; at: string; run: SessionRunRecord }
+  | { kind: 'event'; key: string; at: string; event: ProjectTaskEvent }
+
+/**
+ * 任务对话时间线：消息按原顺序；每次执行的记录紧跟在发起它的那条消息之后；其余执行记录与
+ * 任务事件（员工任务的状态推进、完成、改派）按时间插入。
+ */
+const taskTimeline = computed<TimelineItem[]>(() => {
+  const thread = sessionThread.value
+  if (!thread) return []
+  const runs = new Map(thread.runs.map(run => [run.runId, run]))
+  const placed = new Set<string>()
+  const items: TimelineItem[] = []
+  for (const message of thread.messages) {
+    items.push({ kind: 'message', key: message.id, at: message.sentAt ?? '', message })
+    const run = message.role === 'user' && message.runId ? runs.get(message.runId) : undefined
+    if (run && !placed.has(run.runId)) {
+      placed.add(run.runId)
+      items.push({ kind: 'run', key: `run-${run.runId}`, at: run.createdAt, run })
+    }
+  }
+  const extras: TimelineItem[] = [
+    ...thread.runs.filter(run => !placed.has(run.runId))
+      .map(run => ({ kind: 'run' as const, key: `run-${run.runId}`, at: run.createdAt, run })),
+    ...(taskDetail?.events.value ?? [])
+      .filter(event => !event.sessionId || event.sessionId === thread.sessionId)
+      .map(event => ({ kind: 'event' as const, key: event.id, at: event.createdAt, event })),
+  ].sort((left, right) => left.at.localeCompare(right.at))
+  for (const extra of extras) {
+    const index = items.findIndex(item => item.at !== '' && item.at > extra.at)
+    if (index < 0) items.push(extra)
+    else items.splice(index, 0, extra)
+  }
+  return items
+})
+
+function runRecordText(run: SessionRunRecord) {
+  const status = runStatusLabels[run.status] ?? run.status
+  const stopped = run.status === 'cancelled' && run.stoppedByName ? `（${run.stoppedByName} 停止）` : ''
+  return `${run.requesterName} 交给 ${taskAgentLabel.value} 执行 · ${status}${stopped}`
+}
+
+function runRecordTone(run: SessionRunRecord) {
+  if (run.status === 'succeeded') return 'success'
+  if (run.status === 'failed') return 'danger'
+  if (ACTIVE_RUN_STATUSES.includes(run.status)) return 'active'
+  return 'muted'
+}
+
+function eventText(event: ProjectTaskEvent) {
+  if (event.kind === 'completed') return `${event.actor.displayName} 标记完成`
+  if (event.kind === 'reassigned') return `${event.actor.displayName} 将承接人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}`
+  const to = taskStatusLabels[event.metadata.to ?? ''] ?? event.metadata.to ?? ''
+  return event.metadata.auto
+    ? `${event.actor.displayName} 更新了进度，任务进入${to}`
+    : `${event.actor.displayName} 将状态改为${to}`
+}
+
+function formatTimelineTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+/** 任务对话的首条消息是任务标题与说明（创建任务时写入），不算评论。 */
+const briefMessageId = computed(() =>
+  sessionThread.value && !sessionThread.value.hasMoreMessages ? sessionThread.value.messages[0]?.id ?? null : null)
+
+/** 消息旁的标记：Agent 任务里不交给 Agent 的发言是“评论”；员工任务里承接人的发言标“承接人”。 */
+function messageTag(message: SessionThreadMessage) {
+  if (message.role !== 'user' || message.id === briefMessageId.value) return ''
+  if (isAgentTaskConversation.value && !message.runId) return '评论'
+  const assignee = conversationTask.value?.assignee
+  if (isEmployeeTaskConversation.value && assignee?.type === 'employee' && message.senderId === assignee.userId) return '承接人'
+  return ''
+}
+
+async function refreshTaskConversation() {
+  const sessionId = sessionThread.value?.sessionId
+  if (!sessionId) return
+  try {
+    sessionThread.value = await taskStore.loadSessionThread(sessionId)
+    await nextTick(() => scrollToBottom())
+  } catch {
+    ElMessage.warning('已发送，但对话刷新失败，请稍后手动刷新。')
+  }
+  await taskDetail?.refresh()
+}
+
+async function startTaskFromConversation() {
+  if (!taskDetail) return
+  if (await taskDetail.start()) await refreshTaskConversation()
+}
+
+/** 任务对话的发送：按发送方式交给 Agent 或发表评论，停留在任务对话中。 */
+async function submitTaskConversation(
+  sessionId: string,
+  payload: { prompt: string; files: File[]; confirm?: () => void },
+) {
+  const title = conversationTask.value?.title ?? sessionThread.value?.title ?? ''
+  try {
+    if (effectiveSendMode.value === 'agent') {
+      if (taskNotStarted.value && taskDetail) {
+        if (payload.files.length) {
+          ElMessage.warning('开始执行时会带上任务引用的共享文件；附件请在开始执行后随回复发送。')
+          return
+        }
+        if (!(await taskDetail.start(payload.prompt))) return
+      } else {
+        const createdRun = await taskStore.startRunWithSessionFiles(sessionId, {
+          prompt: payload.prompt,
+          attachments: payload.files,
+          workspaceAgentMemberId: taskThreadAgentId.value,
+        })
+        taskStore.subscribe(createdRun.id)
+      }
+    } else {
+      if (payload.files.length) {
+        ElMessage.warning(isAgentTaskConversation.value
+          ? '评论不支持附件；需要 Agent 处理文件时请选择“交给 Agent”。'
+          : '任务对话中的发言暂不支持附件，请上传到共享文件后在发言中说明。')
+        return
+      }
+      await taskStore.postSessionMessage(sessionId, payload.prompt)
+    }
+    payload.confirm?.()
+    await refreshTaskConversation()
+  } catch (error) {
+    notifyActionFailure('发送', `任务“${title}”`, error, '检查输入后重试；已有对话内容不会丢失。')
+  }
+}
+
+
 function formatSessionRunTime(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
@@ -411,8 +617,8 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
   // 任务线程识别完成前不把回复当讨论消息发送：那会静默不触发承接 Agent。
   if (isTeamSession.value && (projectTaskLoading.value || projectTaskError.value)) {
     ElMessage.warning(projectTaskError.value
-      ? '任务线程信息读取失败，为避免误发为讨论消息，请先重试读取'
-      : '正在确认任务线程，请稍候再发送')
+      ? '任务信息读取失败，为避免误发为评论，请先重试读取'
+      : '正在读取任务信息，请稍候再发送')
     return
   }
   try {
@@ -466,10 +672,18 @@ async function submitFollowUp(payload: { prompt: string; files: File[]; workspac
 async function submitSessionMessage(payload: { prompt: string; files: File[]; workspaceId: string; mentions: string[]; confirm?: () => void }) {
   const thread = sessionThread.value
   if (!thread || !canWriteSession.value) return
+  if (inTaskConversation.value) {
+    if (projectTaskLoading.value || projectTaskError.value) {
+      ElMessage.warning(projectTaskError.value ? '任务信息读取失败，请先重试读取' : '正在读取任务信息，请稍候再发送')
+      return
+    }
+    await submitTaskConversation(thread.sessionId, payload)
+    return
+  }
   if (isTeamSession.value && (projectTaskLoading.value || projectTaskError.value)) {
     ElMessage.warning(projectTaskError.value
-      ? '任务线程信息读取失败，为避免误发为讨论消息，请先重试读取'
-      : '正在确认任务线程，请稍候再发送')
+      ? '任务信息读取失败，为避免误发为评论，请先重试读取'
+      : '正在读取任务信息，请稍候再发送')
     return
   }
   try {
@@ -635,6 +849,8 @@ async function refreshSharedTarget() {
     if (sessionThread.value) {
       try {
         sessionThread.value = await taskStore.loadSessionThread(sessionThread.value.sessionId)
+        // 任务对话：执行结束或他人发言可能改变任务状态，同步刷新任务信息。
+        if (isTaskThreadRoute.value) void taskDetail?.refresh()
       } catch {
         // 会话被删除或已失权：与初次加载同一口径落到「未找到对话」。
         sessionThread.value = null
@@ -687,20 +903,21 @@ watch(
 </script>
 
 <template>
-  <div class="conversation-page" :class="{ 'conversation-page--embedded': isEmbeddedInWorkspace }">
+  <div class="conversation-page" :class="{ 'conversation-page--embedded': isEmbeddedInWorkspace, 'conversation-page--task': inTaskConversation }">
     <div v-if="(taskStore.loading || targetLoading) && !task && !sessionThread && !threadMissing" class="conversation-state">
       <el-skeleton :rows="8" animated />
     </div>
 
     <template v-else-if="!task && sessionThread">
-      <header class="conversation-header">
+      <!-- 任务详情内的任务对话：标题与操作由外层任务详情给出。 -->
+      <header v-if="!inTaskConversation" class="conversation-header">
         <div class="conversation-header__left">
-          <button type="button" class="conversation-header__back" aria-label="返回" @click="goBack">
+          <button type="button" class="conversation-header__back" :aria-label="isTaskThreadRoute ? '返回任务对话' : '返回'" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <h1>{{ sessionThread.title }}</h1>
+          <h1 v-if="!isTaskThreadRoute">{{ sessionThread.title }}</h1>
           <span class="conversation-skill"><span>发起人</span>{{ sessionThread.creatorName }}</span>
-          <span v-if="projectTask" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
+          <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
         </div>
         <div v-if="canMarkAsTask" class="conversation-header__actions">
           <el-button data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
@@ -722,6 +939,68 @@ watch(
             :disabled="loadingEarlierMessages"
             @click="loadEarlierMessages"
           >{{ loadingEarlierMessages ? '正在加载…' : '加载更早消息' }}</button>
+          <template v-if="inTaskConversation">
+            <template v-for="item in taskTimeline" :key="item.key">
+              <article
+                v-if="item.kind === 'message'"
+                class="conversation-message"
+                data-testid="task-conversation-message"
+                :class="[`conversation-message--${item.message.role}`, { 'conversation-message--own': isOwnMessage(item.message) }]"
+              >
+                <div class="assistant-identity">
+                  <span class="assistant-avatar" :class="{ 'assistant-avatar--user': item.message.role === 'user' }">
+                    {{ (item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work').slice(0, 1) }}
+                  </span>
+                  <div>
+                    <strong>{{ item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work' }}</strong>
+                    <span>{{ item.message.createdAt }}</span>
+                  </div>
+                  <span v-if="messageTag(item.message)" class="task-conversation-tag" data-testid="task-conversation-tag">{{ messageTag(item.message) }}</span>
+                </div>
+                <div v-if="item.message.role === 'user'" class="assistant-answer user-message">
+                  <p>{{ item.message.content }}</p>
+                </div>
+                <div v-else class="assistant-answer">
+                  <AssistantMessageContent :text="item.message.content" />
+                </div>
+              </article>
+              <button
+                v-else-if="item.kind === 'run'"
+                type="button"
+                class="task-conversation-record task-conversation-record--run"
+                :class="`task-conversation-record--${runRecordTone(item.run)}`"
+                data-testid="task-conversation-run"
+                :title="'查看执行详情'"
+                @click="openSessionRun(item.run.runId)"
+              >
+                <span class="task-conversation-record__line" aria-hidden="true"></span>
+                <span>{{ formatTimelineTime(item.run.createdAt) }} · {{ runRecordText(item.run) }}</span>
+                <span class="task-conversation-record__line" aria-hidden="true"></span>
+              </button>
+              <div v-else class="task-conversation-event" data-testid="task-conversation-event">
+                <p class="task-conversation-record">
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                  <span>{{ formatTimelineTime(item.event.createdAt) }} · {{ eventText(item.event) }}</span>
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                </p>
+                <div v-if="item.event.kind === 'completed' && (item.event.metadata.note || item.event.metadata.deliverables?.length)" class="task-conversation-completion">
+                  <p v-if="item.event.metadata.note">{{ item.event.metadata.note }}</p>
+                  <p v-if="item.event.metadata.deliverables?.length" class="task-conversation-completion__files">
+                    交付文件：{{ item.event.metadata.deliverables.join('、') }}
+                  </p>
+                </div>
+              </div>
+            </template>
+
+            <div v-if="taskNotStarted" class="task-conversation-start" data-testid="task-conversation-start">
+              <div>
+                <strong>还没有交给 {{ taskAgentLabel }}</strong>
+                <span>在下方写补充要求并“交给 {{ taskAgentLabel }}”即开始执行；也可以直接开始。</span>
+              </div>
+              <el-button v-if="canStartFromConversation" type="primary" @click="startTaskFromConversation">开始执行</el-button>
+            </div>
+          </template>
+          <template v-else>
           <p v-if="!sessionThread.messages.length" class="thread-empty">
             还没有讨论内容。直接发送即发表全员可见的讨论消息；@ Agent 成员则发起一次执行。
           </p>
@@ -779,24 +1058,68 @@ watch(
               <time>{{ formatSessionRunTime(run.createdAt) }}</time>
             </button>
           </section>
+          </template>
           <div class="conversation-end" aria-hidden="true"></div>
         </div>
       </main>
 
       <div class="conversation-composer-dock">
         <div class="conversation-composer-dock__inner">
-          <p v-if="canWriteSession && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
-            任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+          <p v-if="canWriteSession && taskThreadAgentName && !inTaskConversation" data-testid="task-thread-notice" class="conversation-task-thread-notice">
+            回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
           </p>
           <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
-            任务线程信息读取失败：{{ projectTaskError }}
+            任务信息读取失败：{{ projectTaskError }}
             <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
           </p>
+          <div v-if="canWriteSession && inTaskConversation" class="task-conversation-modes" data-testid="task-conversation-modes">
+            <div v-if="isAgentTaskConversation" class="task-conversation-modes__switch" role="radiogroup" aria-label="发送方式">
+              <button
+                type="button"
+                role="radio"
+                data-testid="task-send-agent"
+                :aria-checked="effectiveSendMode === 'agent'"
+                :disabled="threadHasActiveRun"
+                :class="{ 'is-active': effectiveSendMode === 'agent' }"
+                @click="sendMode = 'agent'"
+              >
+                交给 {{ taskAgentLabel }}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                data-testid="task-send-comment"
+                :aria-checked="effectiveSendMode === 'comment'"
+                :class="{ 'is-active': effectiveSendMode === 'comment' }"
+                @click="sendMode = 'comment'"
+              >
+                仅评论
+              </button>
+            </div>
+            <span class="task-conversation-modes__hint" data-testid="task-send-hint">
+              <template v-if="isEmployeeTaskConversation">发言对空间成员可见，不会触发 Agent</template>
+              <template v-else-if="threadHasActiveRun">{{ taskAgentLabel }} 执行中，暂时只能评论</template>
+              <template v-else-if="effectiveSendMode === 'agent'">{{ taskNotStarted ? '发送即开始执行' : '发送后交给 Agent 继续处理' }}</template>
+              <template v-else>评论对空间成员可见，不会触发 Agent</template>
+            </span>
+            <el-button
+              v-if="canCompleteFromConversation"
+              class="task-conversation-modes__complete"
+              data-testid="task-complete-from-conversation"
+              type="success"
+              plain
+              size="small"
+              @click="taskDetail?.openComplete()"
+            >
+              标记完成
+            </el-button>
+          </div>
           <TaskComposer
             v-if="canWriteSession"
             compact
-            :mention-options="isTeamSession ? mentionOptions : []"
-            :files-require-mention="isTeamSession && !taskThreadAgentId"
+            :mention-options="isTeamSession && !inTaskConversation ? mentionOptions : []"
+            :files-require-mention="isTeamSession && !taskThreadAgentId && !inTaskConversation"
+            :placeholder="taskComposerPlaceholder"
             @submit="submitSessionMessage"
           />
           <p v-else-if="sessionArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
@@ -830,16 +1153,19 @@ watch(
     <template v-else>
       <header class="conversation-header">
         <div class="conversation-header__left">
-          <button type="button" class="conversation-header__back" aria-label="返回" @click="goBack">
+          <button type="button" class="conversation-header__back" :aria-label="isTaskThreadRoute ? '返回任务对话' : '返回'" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </button>
-          <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">项目空间：{{ currentWorkspace.name }}</span>
+          <!-- 任务详情内：标题与所属空间已由外层任务信息与面包屑给出。 -->
+          <template v-if="!isTaskThreadRoute">
+            <h1>{{ task.title }}</h1><span v-if="currentWorkspace?.type === 'team'">项目空间：{{ currentWorkspace.name }}</span>
+          </template>
           <span v-if="task.skill" class="conversation-skill">
             <span>Skill</span>{{ task.skill.name }} · v{{ task.skill.version }}
           </span>
         </div>
         <div class="conversation-header__actions">
-          <span v-if="projectTask" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
+          <span v-if="projectTask && !isTaskThreadRoute" class="conversation-skill" data-testid="task-thread-badge"><span>任务</span>{{ projectTask.title }}</span>
           <el-button v-if="canMarkAsTask" data-testid="mark-as-task" text :loading="markingAsTask" @click="markAsTask">设为任务</el-button>
           <StatusTag :status="task.status" dot />
           <el-button text :icon="DataLine" @click="detailsOpen = true">
@@ -1062,10 +1388,10 @@ watch(
             </el-tag>
           </div>
           <p v-if="canFollowUp && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
-            任务线程：回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+            回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
           </p>
           <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
-            任务线程信息读取失败：{{ projectTaskError }}
+            任务信息读取失败：{{ projectTaskError }}
             <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
           </p>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
@@ -1294,6 +1620,172 @@ watch(
 
 .conversation-page--embedded .conversation-thread {
   min-height: calc(100% - 330px);
+}
+
+/* 项目空间 S3：任务详情内的任务对话——没有会话标题栏，时间线与系统记录。 */
+.conversation-page--task .conversation-scroll {
+  padding-top: 8px;
+}
+
+.conversation-page--task .conversation-thread {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 18px;
+  width: min(100%, 760px);
+}
+
+.task-conversation-tag {
+  padding: 0 6px;
+  border-radius: 5px;
+  color: #6b6f6c;
+  background: #f1f2f3;
+  font-size: var(--dsh-font-size-micro);
+  line-height: 18px;
+}
+
+.task-conversation-record {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #8a8e8b;
+  background: transparent;
+  font: inherit;
+  font-size: var(--dsh-font-size-micro);
+  text-align: center;
+}
+
+.task-conversation-record__line {
+  height: 1px;
+  flex: 1 1 auto;
+  background: #eeeff0;
+}
+
+.task-conversation-record--run {
+  cursor: pointer;
+}
+
+.task-conversation-record--run:hover span:not(.task-conversation-record__line) {
+  text-decoration: underline;
+}
+
+.task-conversation-record--run:focus-visible {
+  outline: 2px solid #7bb8a6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.task-conversation-record--success {
+  color: #1f8a4c;
+}
+
+.task-conversation-record--danger {
+  color: var(--dsh-color-danger);
+}
+
+.task-conversation-record--active {
+  color: #2f6bdc;
+}
+
+.task-conversation-completion {
+  margin: 8px auto 0;
+  max-width: 560px;
+  padding: 10px 14px;
+  border: 1px solid #cfe6d8;
+  border-radius: 10px;
+  color: #2c2f2d;
+  background: #f2faf5;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.task-conversation-completion p {
+  margin: 0;
+}
+
+.task-conversation-completion__files {
+  color: #4b4f4c;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.task-conversation-start {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px dashed #d9dbde;
+  border-radius: 12px;
+}
+
+.task-conversation-start > div {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-conversation-start span {
+  color: #6b6f6c;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.task-conversation-modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.task-conversation-modes__switch {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f2f3f4;
+}
+
+.task-conversation-modes__switch button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: #6b6f6c;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.task-conversation-modes__switch button.is-active {
+  color: #1d201e;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  font-weight: 600;
+}
+
+.task-conversation-modes__switch button:disabled {
+  color: #a6a9ad;
+  cursor: not-allowed;
+}
+
+.task-conversation-modes__switch button:focus-visible {
+  outline: 2px solid #7bb8a6;
+  outline-offset: 1px;
+}
+
+.task-conversation-modes__hint {
+  color: #8a8e8b;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.task-conversation-modes__complete {
+  margin-left: auto;
 }
 
 .conversation-message {

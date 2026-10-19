@@ -588,16 +588,22 @@
       "post": {
         "operationId": "createProjectTask",
         "summary": "创建项目任务（非只读成员）",
-        "description": "项目空间 S1：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate。只读成员不能承接任务。",
+        "description": "项目空间 S1/S3：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate。只读成员不能承接任务。两类任务创建时都建立任务对话（返回的 sessionId），首条消息为任务标题与说明。",
         "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/workspaces/{workspaceId}/project-tasks/{taskId}": {
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getProjectTask",
+        "summary": "读取单个项目任务（全部现任成员）",
+        "description": "项目空间任务详情页使用。读取轨：全部现任成员（含只读成员）可读，空间归档后仍可读；allowedActions 按调用者角色与空间状态裁剪。已移除或不存在的任务返回 404，非成员与个人空间按不可枚举文案拒绝。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
       "patch": {
         "operationId": "updateProjectTask",
         "summary": "编辑项目任务（创建人、负责人、管理员）",
-        "description": "项目空间 S1：可改 title、description、assignee、inputFileIds、dueDate。改派只在任务线程没有执行中的 Run 时允许；改派后从新的任务线程开始。",
+        "description": "项目空间 S1/S3：可改 title、description、assignee、inputFileIds、dueDate。改派只在任务对话没有执行中的 Run 时允许；员工换员工沿用原任务对话并记改派事件，跨类型改派或换 Agent 从新的任务对话开始。",
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       },
       "delete": {
@@ -607,12 +613,21 @@
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/events": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "listProjectTaskEvents",
+        "summary": "读取项目任务事件（全部现任成员）",
+        "description": "项目空间 S3：员工任务的状态推进（status_changed，metadata.from/to/auto）、完成（completed，metadata.note/deliverables）与同类改派（reassigned，metadata.from/to），按发生时间正序；在任务对话中作为系统记录展示。读取轨，归档可读；已移除或不存在的任务返回 404。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/workspaces/{workspaceId}/project-tasks/{taskId}/start": {
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "startProjectTask",
         "summary": "启动 Agent 任务（非只读成员）",
-        "description": "项目空间 S1：首次启动创建绑定承接 Agent 成员的任务线程，首条消息为任务标题与说明，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）。已启动的任务返回 409，后续在任务线程中回复即可续接。",
+        "description": "项目空间 S1/S3：在任务创建时已有的任务对话中发起首次执行，带上任务引用的文件，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）；可选 prompt 为成员写下的补充要求，缺省以开始执行的指令发起。已有执行的任务返回 409，后续在任务对话中“交给 Agent”即可续接。",
         "responses": { "202": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -1431,7 +1446,7 @@
       "get": {
         "operationId": "listWorkspaceSessions",
         "summary": "分页查询团队空间中本人发起的历史会话",
-        "description": "按最近活动倒序返回 Session 摘要（稳定 Session 身份、标题、发起人、最近活动时间、Run 计数与最新 Run 指针），不含对话正文。范围固定为调用者本人发起的会话（服务端按 created_by 强制过滤，不接受范围参数）；keyset 游标分页 + 标题关键词过滤；不返回其他成员的标题、摘要或数量。任何当前成员可读本人范围，非成员与个人空间被拒绝。3-T1 读取轨：空间归档后现任成员仍可读取本人范围的历史会话；非成员与不存在空间按不可枚举文案拒绝。",
+        "description": "按最近活动倒序返回 Session 摘要（稳定 Session 身份、标题、发起人、最近活动时间、Run 计数、最新 Run 指针，以及任务线程所属项目任务 projectTaskId，普通讨论为 null），不含对话正文。范围固定为调用者本人发起的会话（服务端按 created_by 强制过滤，不接受范围参数）；keyset 游标分页 + 标题关键词过滤；不返回其他成员的标题、摘要或数量。任何当前成员可读本人范围，非成员与个人空间被拒绝。3-T1 读取轨：空间归档后现任成员仍可读取本人范围的历史会话；非成员与不存在空间按不可枚举文案拒绝。",
         "parameters": [
           {
             "name": "query",
