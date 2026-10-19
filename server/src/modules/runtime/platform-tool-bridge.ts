@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -58,7 +59,10 @@ export async function createPlatformToolBridge(
     { ...registration, validators: compileToolContract(registration.contract) },
   ]))
   const directory = await mkdtemp(join(tmpdir(), 'dsh-tool-'))
-  const socket = join(directory, 'bridge.sock')
+  // Windows cannot reliably bind HTTP to a filesystem socket under %TEMP%; use a named pipe instead.
+  const socket = process.platform === 'win32'
+    ? `\\\\.\\pipe\\dsh-work-tool-${randomUUID()}`
+    : join(directory, 'bridge.sock')
   const controller = new AbortController()
   let count = 0
   const active = new Set<Promise<void>>()
@@ -202,7 +206,7 @@ export async function createPlatformToolBridge(
     void task.catch(() => response.destroy()).finally(() => active.delete(task))
   })
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socket, resolve) })
-  await chmod(socket, 0o600)
+  if (process.platform !== 'win32') await chmod(socket, 0o600)
   return {
     socket,
     abort: () => controller.abort(),

@@ -5,6 +5,7 @@ apps/*/dist/
 *.tsbuildinfo
 *.log
 .runtime/
+.tmp-esbuild/
 test-results/
 playwright-report/
 blob-report/

@@ -1,7 +1,11 @@
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import js from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import pluginVue from 'eslint-plugin-vue'
+
+const packageRoot = dirname(fileURLToPath(import.meta.url))
 
 export default tseslint.config(
   { ignores: ['dist/**', 'node_modules/**'] },
@@ -18,6 +22,8 @@ export default tseslint.config(
       },
       parserOptions: {
         parser: tseslint.parser,
+        tsconfigRootDir: packageRoot,
+        projectService: true,
       },
     },
     rules: {
