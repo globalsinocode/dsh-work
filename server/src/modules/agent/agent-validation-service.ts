@@ -66,7 +66,7 @@ export interface AgentValidation {
 }
 
 export interface ReleaseCheck {
-  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
+  id: 'audience' | 'roles' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
   label: string
   passed: boolean
   detail: string
@@ -662,6 +662,11 @@ export class PostgresAgentValidationService {
       : activeAudience.length !== audience.length ? '可见角色包含不存在或已停用的角色' : undefined
     return [
       { id: 'audience', label: '可见角色', passed: !audienceError, detail: audienceError ?? `${audience.length} 个当前有效角色可以请求工作` },
+      // 岗位角色必填：Agent 作为 AI 员工必须由管理员明确授予至少一个当前有效的岗位角色（已停用的授予不计）。
+      {
+        id: 'roles', label: '岗位角色', passed: principal.roleIds.length > 0,
+        detail: principal.roleIds.length ? `持有 ${principal.roleIds.length} 个当前有效岗位角色` : '请在岗位权限中授予至少一个有效的岗位角色',
+      },
       {
         id: 'principal', label: '执行身份', passed: principal.status === 'active',
         detail: principal.status === 'active' ? '执行身份有效' : '执行身份已停用',
@@ -701,6 +706,8 @@ export class PostgresAgentValidationService {
     if (activeAudience.length !== audience.length) throw validationBlocked('可见角色已失效，请在岗位权限中更新')
     const principal = await this.agents.getAgentExecutionPrincipal(agentId, tx)
     if (principal.status !== 'active') throw validationBlocked('Agent 执行身份已停用')
+    // 与验证前检查一致：岗位角色必填，验证后撤掉全部岗位角色时不能发布。
+    if (!principal.roleIds.length) throw validationBlocked('发布前必须在岗位权限中授予至少一个有效的岗位角色')
     await this.tools?.assertAuthorizationCompatibility(candidate.tools, principal.roleIds, principal.dataScopes)
     // Widening grants keeps the candidate's frozen default tools; narrowing that withdraws a
     // frozen tool, or a binding that drifted since freezing, fails closed.

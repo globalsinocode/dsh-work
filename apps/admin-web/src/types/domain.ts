@@ -110,6 +110,8 @@ export interface AgentAccessRoleOption {
   id: string
   name: string
   status: 'active' | 'disabled'
+  /** 角色带有管理端或审计权限；授予 Agent 时提示风险。旧服务端未返回时视为 false。 */
+  privileged?: boolean
 }
 
 export interface IdentityUserSummary {
@@ -903,7 +905,7 @@ export interface AgentValidation {
 }
 
 export interface AgentReleaseCheck {
-  id: 'audience' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
+  id: 'audience' | 'roles' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
   label: string
   passed: boolean
   detail: string

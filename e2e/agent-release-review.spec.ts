@@ -5,11 +5,12 @@ test.beforeEach(async ({ page }) => {
   await page.request.post('/api/testing/p0/reset')
 })
 
-// P0 页面冒烟：验证与发布页只做前端交互，服务端响应由路由夹具提供；
+// P0 页面冒烟：草稿编辑流程「验证与发布」步骤只做前端交互，服务端响应由路由夹具提供；
 // 验证到发布的真实链路由 agent-release-governance 集成套件覆盖。
 const agentId = 'operations-analyst'
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 const releasePath = `**/api/admin/v1/agents/${agentId}`
+const releaseStep = `${adminUrl}/agents/${agentId}/draft?step=release`
 
 const access = {
   agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
@@ -76,11 +77,13 @@ test.beforeEach(async ({ page }) => {
   await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({ json: { data: access } }))
 })
 
-test('旧发布工作台地址落到详情页的验证与发布分区，显示验证前检查与将运行的案例', async ({ page }) => {
+test('旧发布地址落到草稿流程的验证与发布步骤，显示验证前检查与将运行的案例', async ({ page }) => {
   await serveRelease(page, overview(null))
   await page.goto(`${adminUrl}/agents/${agentId}/release/trial`)
-  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}\\?section=release$`))
-  await expect(page.getByRole('tab', { name: '验证与发布', selected: true })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/draft\\?step=release$`))
+  await expect(page.getByRole('navigation', { name: '编辑步骤' }).getByRole('button', { name: /验证与发布/ })).toHaveAttribute('aria-current', 'step')
+  // 版本历史属于详情页，不在发布流程中。
+  await expect(page.getByRole('region', { name: '版本历史' })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('3/3 项通过')
   const cases = page.getByRole('region', { name: '验证案例' })
   await expect(cases.getByRole('list', { name: '本次将运行的案例' })).toContainText('请汇总本周供应异常')
@@ -90,13 +93,34 @@ test('旧发布工作台地址落到详情页的验证与发布分区，显示�
   for (const removed of ['提交审核', '退回修改', '撤回候选', '运行本项']) {
     await expect(page.getByRole('button', { name: removed })).toHaveCount(0)
   }
+
+  await page.goto(`${adminUrl}/agents/${agentId}?section=release`)
+  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/draft\\?step=release$`))
+})
+
+test('缺少可见角色时在抽屉中调整岗位权限，不离开验证与发布', async ({ page }) => {
+  await page.route(`**/api/admin/v1/agents/${agentId}/access`, route => route.fulfill({ json: { data: { ...access, visibleRoleIds: [] } } }))
+  await serveRelease(page, overview(null, {
+    checks: [{ id: 'audience', label: '可见角色', passed: false, detail: '还没有设置可见角色' }],
+  }))
+  await page.goto(releaseStep)
+  const summary = page.getByRole('region', { name: '岗位权限摘要' })
+  await expect(summary).toContainText('还没有设置可见角色')
+  await summary.getByRole('button', { name: '调整' }).click()
+  const drawer = page.getByRole('dialog', { name: '岗位权限', exact: true })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole('region', { name: '岗位权限' })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/draft\\?step=release$`))
+  await drawer.getByRole('button', { name: 'Close this dialog' }).click()
+  await expect(drawer).toBeHidden()
+  await expect(page.getByRole('region', { name: '验证前检查' })).toBeVisible()
 })
 
 test('验证前检查未通过时不能开始验证', async ({ page }) => {
   await serveRelease(page, overview(null, {
     checks: [{ id: 'audience', label: '可见角色', passed: false, detail: '还没有设置可见角色' }],
   }))
-  await page.goto(`${adminUrl}/agents/${agentId}?section=release`)
+  await page.goto(releaseStep)
   await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('还没有设置可见角色')
   await expect(page.getByRole('button', { name: '开始验证' })).toBeDisabled()
 })
@@ -118,7 +142,7 @@ test('全部案例判定通过后一次确认发布，发布说明随请求提�
     await route.fulfill({ json: { data: overview(null, { draft: null, candidate: null }) } })
   })
 
-  await page.goto(`${adminUrl}/agents/${agentId}?section=release`)
+  await page.goto(releaseStep)
   const publish = page.getByRole('button', { name: '确认发布' })
   await expect(publish).toBeDisabled()
   await page.getByRole('article', { name: '案例 1' }).getByRole('button', { name: '通过', exact: true }).click()
@@ -127,7 +151,10 @@ test('全部案例判定通过后一次确认发布，发布说明随请求提�
   await page.getByRole('textbox', { name: '发布说明' }).fill('业务确认通过')
   await publish.click()
   await expect.poll(() => publishBodies).toEqual([{ validationId: 'validation-smoke', note: '业务确认通过' }])
-  await expect(page.getByText('发布完成')).toBeVisible()
+  // 发布后回到只读详情页的版本历史。
+  await expect(page.getByText('发布完成：v0.4.0 已成为当前版本')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}\\?section=versions$`))
+  await expect(page.getByRole('tab', { name: '版本历史', selected: true })).toBeVisible()
 })
 
 test('判定不通过必须填写原因；机器检查未通过的案例不能判为通过，可单独重跑', async ({ page }) => {
@@ -151,7 +178,7 @@ test('判定不通过必须填写原因；机器检查未通过的案例不能�
     await route.fulfill({ json: { data: current } })
   })
 
-  await page.goto(`${adminUrl}/agents/${agentId}?section=release`)
+  await page.goto(releaseStep)
   const item = page.getByRole('article', { name: '案例 1' })
   await expect(item).toContainText('服务重启中断')
   await expect(item.getByRole('list', { name: '机器检查' })).toContainText('✕ 执行成功')
@@ -178,7 +205,7 @@ test('草稿在验证后被修改时提示结果不代表新草稿', async ({ pa
     draft: { id: 'agent-version-operations-050', version: '0.5.0', status: 'draft' }, draftChanged: true,
   }))
   await page.route(`${releasePath}/validations/validation-smoke`, route => route.fulfill({ json: { data: current } }))
-  await page.goto(`${adminUrl}/agents/${agentId}?section=release`)
+  await page.goto(releaseStep)
   await expect(page.getByText('草稿已修改')).toBeVisible()
   await expect(page.getByRole('button', { name: '验证修改后的草稿' })).toBeEnabled()
 })

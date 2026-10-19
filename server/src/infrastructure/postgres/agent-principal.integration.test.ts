@@ -114,6 +114,9 @@ test('new Agent has a stable principal distinct from its governance owner, and d
   const ungranted = await access.getAccess(agentId)
   assert.deepEqual({ visible: ungranted.visibleRoleIds, roles: ungranted.roleIds, scopes: ungranted.dataScopes },
     { visible: ['role-employee'], roles: [], scopes: [] })
+  // 角色选项标出含管理/审计权限的角色，页面据此提示风险。
+  assert.equal(ungranted.roleOptions.find(role => role.id === 'role-platform-admin')?.privileged, true)
+  assert.equal(ungranted.roleOptions.find(role => role.id === 'role-employee')?.privileged, false)
   const basicDecision = await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })
   assert.deepEqual(basicDecision.roleIds, [])
   assert.deepEqual(basicDecision.dataScopes, [])

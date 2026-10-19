@@ -100,7 +100,7 @@ async function setAccess(agentId: string, change: { visibleRoleIds?: string[]; r
 }
 
 async function createDraftAgent(id: string, options: {
-  skills?: string[]; tools?: string[]; dataScopes?: string[]; visibleRoleIds?: string[]
+  skills?: string[]; tools?: string[]; dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
   mcpScope?: AgentMcpScope; examplePrompts?: string[]
 } = {}) {
   return agents.createAgent({
@@ -110,7 +110,7 @@ async function createDraftAgent(id: string, options: {
     owner: '发布管理员',
     department: '平台治理',
     visibleRoleIds: options.visibleRoleIds ?? ['role-employee'],
-    executionRoleIds: ['role-employee'],
+    executionRoleIds: options.roleIds ?? ['role-employee'],
     executionDataScopes: options.dataScopes ?? ['workspace:authorized'],
     welcomeMessage: '',
     examplePrompts: options.examplePrompts ?? [EXAMPLE],
@@ -335,6 +335,21 @@ test('S3 验证前检查未通过时不冻结、不创建 Attempt；补齐岗位
   assert.equal(done.cases[0]?.status, 'succeeded')
 })
 
+test('S3 岗位角色必填：未授予时验证前检查不通过，撤掉全部岗位角色后不能发布', async () => {
+  const agentId = `agent-roles-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, { skills: [], tools: [], roleIds: [], dataScopes: [] })
+  const overview = await validation.getOverview(agentId)
+  assert.equal(overview.checks.find(check => check.id === 'roles')?.passed, false)
+  await assert.rejects(validation.startValidation(agentId, ADMIN), /验证前检查未通过：岗位角色/)
+  assert.equal(await attemptCount(created.version.id), 0)
+
+  await setAccess(agentId, { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
+  assert.equal((await validation.getOverview(agentId)).checks.find(check => check.id === 'roles')?.passed, true)
+  const done = await approveAll(agentId, await runValidation(agentId))
+  await setAccess(agentId, { roleIds: [] })
+  await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /岗位角色/)
+})
+
 test('S3 已声明能力缺少授权时阻止验证，不产生 Runtime Attempt', async () => {
   await tools.updateToolPermissions({
     toolId: 'grep', allowedRoles: ['role-employee'], dataScopes: ['workspace:authorized'],
@@ -433,7 +448,8 @@ test('S3 放宽岗位权限不作废验证；收窄到撤掉冻结的工具时�
   assert.ok(pins.some(pin => pin.tool === 'read@1.0.0'), '平台默认工具在冻结时固定')
   await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'], dataScopes: ['workspace:authorized', 'enterprise:authorized'] })
   assert.equal((await validation.getValidation(agentId, done.id)).publishable, true)
-  await setAccess(agentId, { roleIds: [], dataScopes: [] })
+  // 保留岗位角色（必填），只收窄数据范围，撤掉冻结时固定的默认工具。
+  await setAccess(agentId, { dataScopes: [] })
   await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /收窄后不再获准的工具/)
   await setAccess(agentId, { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
   assert.equal((await validation.publish(agentId, ADMIN, { validationId: done.id })).activeVersion?.version, '0.1.0')
@@ -656,7 +672,7 @@ test('无 Skill/Tool 的 Soul Agent 可配置创建并验证，默认工具随�
   assert.match(manifest?.trace_id ?? '', new RegExp(`^trace-${done.cases[0]!.runId}-attempt-`))
 })
 
-test('基础 Agent 以空业务权限完成验证并发布', async () => {
+test('基础 Agent 不继承创建者权限；岗位角色必填，授予后无数据范围也能完成验证并发布', async () => {
   const agentId = `agent-basic-${randomUUID().slice(0, 8)}`
   await agents.createAgent({
     id: agentId, name: '文本整理助手', description: '只整理用户本次输入的文字并指出不确定信息。',
@@ -666,9 +682,11 @@ test('基础 Agent 以空业务权限完成验证并发布', async () => {
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
     skills: [], tools: [], changeSummary: '创建基础草稿', actor: ADMIN,
   })
+  await assert.rejects(validation.startValidation(agentId, ADMIN), /验证前检查未通过：岗位角色/)
+  await setAccess(agentId, { roleIds: ['role-employee'] })
   const done = await runValidation(agentId)
   const manifest = trialRuntime.manifest(done.cases[0]!.runId!)
-  assert.deepEqual(manifest?.user_context.role_ids, [])
+  assert.deepEqual(manifest?.user_context.role_ids, ['role-employee'])
   assert.deepEqual(manifest?.data_scopes, [])
   await approveAll(agentId, done)
   assert.equal((await validation.publish(agentId, ADMIN, { validationId: done.id })).activeVersion?.version, '0.1.0')

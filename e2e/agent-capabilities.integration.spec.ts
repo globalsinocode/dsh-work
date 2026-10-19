@@ -24,12 +24,13 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await create.getByRole('textbox', { name: /SOUL\.md/ }).fill('你是独立的 AI 员工，只能处理获准的业务数据，并为每个结论留下可核对的依据。')
   await create.getByRole('button', { name: '创建并继续配置' }).click()
 
-  // 详情页草稿自动保存：工作规程与 MCP 选择不需要点击保存。
+  // 草稿编辑流程自动保存：工作规程与 MCP 选择不需要点击保存。
+  await expect(page).toHaveURL(/\/draft\?step=profile$/)
   const status = page.getByTestId('draft-save-status')
-  await page.getByRole('tabpanel', { name: '职责与人格' }).getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
+  await page.getByRole('region', { name: '职责与人格' }).getByRole('textbox', { name: /AGENTS\.md/ }).fill(procedures)
   await expect(status).toHaveText('已保存')
-  await page.getByRole('tab', { name: '能力' }).click()
-  const capabilities = page.getByRole('tabpanel', { name: '能力' })
+  await page.getByRole('button', { name: '下一步：能力' }).click()
+  const capabilities = page.getByRole('region', { name: '能力' })
   await capabilities.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
   const choice = capabilities.getByRole('combobox', { name: '选择 MCP Connector' })
   await choice.press('Enter')
@@ -47,8 +48,9 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await expect.poll(async () => (await draftVersion())?.mcpScope).toEqual({ mode: 'selected', connectorIds: [connector.id] })
   await expect(status).toHaveText('已保存')
   const version = await draftVersion()
-  await page.getByRole('tab', { name: '验证与发布' }).click()
-  // 草稿尚未发布：版本历史只列出草稿，没有回滚目标。
+  // 退出编辑回到只读详情页。草稿尚未发布：版本历史只列出草稿，没有回滚目标。
+  await page.getByRole('button', { name: '退出编辑' }).click()
+  await page.getByRole('tab', { name: '版本历史' }).click()
   const history = page.getByRole('region', { name: '版本历史' })
   await expect(history.getByRole('row', { name: new RegExp(`v${version!.version}`) })).toContainText('草稿')
   await expect(history.getByRole('button', { name: '回滚至此' })).toHaveCount(0)

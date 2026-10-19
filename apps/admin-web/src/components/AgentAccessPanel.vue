@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { adminApi } from '@/api/client'
 import type { AgentAccess, AgentRoutineSchedule } from '@/types/domain'
+import { planCapabilityGrants } from '@/utils/agent-access'
 
 /**
  * S2 岗位权限：Agent 作为 AI 员工，与人类员工一样由管理员授权。
@@ -13,6 +14,11 @@ import type { AgentAccess, AgentRoutineSchedule } from '@/types/domain'
 const props = defineProps<{
   agentId: string
   canManage: boolean
+  /**
+   * 嵌入草稿编辑流程的一步：不显示自己的保存按钮，由流程在“下一步”时调用 save 保存，
+   * 避免同一页面出现两个前进/保存入口。
+   */
+  embedded?: boolean
 }>()
 const emit = defineEmits<{ updated: [access: AgentAccess] }>()
 
@@ -40,6 +46,17 @@ const activeRoles = computed(() => access.value?.roleOptions.filter(role => role
 function roleName(id: string) {
   return access.value?.roleOptions.find(role => role.id === id)?.name ?? id
 }
+/** 当前能力需要的角色（任选其一即可）：在岗位角色选项中标为“能力需要”，不自动选择。 */
+const neededRoleIds = computed(() => new Set((access.value?.capabilities ?? []).flatMap(item => item.requiredRoleIds)))
+/** 岗位角色选项：能力需要的业务角色排在前，含管理权限的角色（即使能力也接受）排在最后，其余按原顺序。 */
+const jobRoleOptions = computed(() => {
+  const options = access.value?.roleOptions ?? []
+  const rank = (role: { id: string; privileged?: boolean }) => (role.privileged ? 2 : neededRoleIds.value.has(role.id) ? 0 : 1)
+  return [...options].sort((left, right) => rank(left) - rank(right))
+})
+const privilegedSelected = computed(() => (access.value?.roleOptions ?? [])
+  .filter(role => role.privileged && form.roleIds.includes(role.id)).map(role => role.name))
+
 function roleSelectable(id: string, selected: string[]) {
   return activeRoles.value.some(role => role.id === id) || selected.includes(id)
 }
@@ -74,22 +91,35 @@ function gapText(item: { missingRole: boolean; requiredRoleIds: string[]; missin
   return `缺少${parts.join('、')}，暂不可用`
 }
 
-/** 一键补齐：每项缺角色的能力补一个当前有效的所需角色，并补齐缺少的数据范围。 */
+/** 补齐所需授权：按能力需求补一个当前有效的所需角色与缺少的数据范围，只增不减。 */
 function fillGaps() {
-  const roles = new Set(form.roleIds)
-  const scopes = new Set(form.dataScopes)
-  for (const item of blockedCapabilities.value) {
-    if (item.missingRole) {
-      const candidate = item.requiredRoleIds.find(role => activeRoles.value.some(option => option.id === role))
-      if (candidate) roles.add(candidate)
-    }
-    for (const scope of item.missingScopes) scopes.add(scope)
-  }
-  form.roleIds = sorted([...roles])
-  form.dataScopes = sorted([...scopes])
+  const current = access.value
+  if (!current) return
+  const plan = planCapabilityGrants(current, form)
+  form.roleIds = plan.roleIds
+  form.dataScopes = plan.dataScopes
 }
 const gapsFillable = computed(() => blockedCapabilities.value.some(item => item.missingScopes.length
   || (item.missingRole && item.requiredRoleIds.some(role => activeRoles.value.some(option => option.id === role)))))
+
+/**
+ * 草稿流程（embedded）：可见角色与岗位角色必填，数据范围选填，全部由管理员手动选择，不预填、不自动授予。
+ * 选择岗位角色或数据范围之前不提示能力缺授权；之后按表单实时显示每项能力是否可用。
+ */
+const attempted = ref(false)
+const requiredErrors = computed(() => ({
+  visibleRoleIds: form.visibleRoleIds.length ? '' : '请选择可以使用它的员工角色',
+  roleIds: form.roleIds.length ? '' : '请选择它持有的岗位角色',
+}))
+const complete = computed(() => !requiredErrors.value.visibleRoleIds && !requiredErrors.value.roleIds)
+const grantsChosen = computed(() => form.roleIds.length > 0 || form.dataScopes.length > 0)
+const capabilitiesOpen = ref(false)
+
+/** 前进到下一步前调用：缺必填项时显示字段错误并返回 false。 */
+function validateRequired() {
+  attempted.value = true
+  return complete.value
+}
 
 const scopeOptions = computed(() => [...new Set([...(access.value?.scopeOptions ?? []), ...form.dataScopes])].sort())
 
@@ -146,23 +176,31 @@ async function load() {
   }
 }
 
-async function save() {
+/**
+ * 保存岗位权限，返回是否已与服务端一致（没有修改也视为成功）。
+ * confirm=false 用于草稿流程从未发布的 Agent：员工尚不可见，不再额外确认。
+ */
+async function save({ confirm = true }: { confirm?: boolean } = {}): Promise<boolean> {
   const current = access.value
-  if (!current || !dirty.value || saving.value) return
+  if (!current) return !loadError.value
+  if (!dirty.value) return true
+  if (saving.value) return false
   const narrowing = current.roleIds.some(role => !form.roleIds.includes(role))
     || current.dataScopes.some(scope => !form.dataScopes.includes(scope))
     || current.visibleRoleIds.some(role => !form.visibleRoleIds.includes(role))
     || (current.principalStatus === 'active' && form.principalStatus === 'disabled')
-  try {
-    await ElMessageBox.confirm(
-      narrowing
-        ? '保存后立即生效：被撤销的角色、数据范围或可见范围会阻止排队中和后续的执行。'
-        : '保存后立即生效，不需要重新验证。',
-      '确认更新岗位权限？',
-      { confirmButtonText: '确认更新', cancelButtonText: '取消', type: narrowing ? 'warning' : 'info' },
-    )
-  } catch {
-    return
+  if (confirm) {
+    try {
+      await ElMessageBox.confirm(
+        narrowing
+          ? '保存后立即生效：被撤销的角色、数据范围或可见范围会阻止排队中和后续的执行。'
+          : '保存后立即生效，不需要重新验证。',
+        '确认更新岗位权限？',
+        { confirmButtonText: '确认更新', cancelButtonText: '取消', type: narrowing ? 'warning' : 'info' },
+      )
+    } catch {
+      return false
+    }
   }
   saving.value = true
   try {
@@ -177,10 +215,12 @@ async function save() {
     resetForm(updated)
     emit('updated', updated)
     ElMessage.success('岗位权限已更新')
+    return true
   } catch (cause) {
     ElMessage.error(cause instanceof Error ? cause.message : '岗位权限保存失败')
     // 修订冲突等失败后重新读取，避免基于过期数据继续编辑。
     await load()
+    return false
   } finally {
     saving.value = false
   }
@@ -191,7 +231,7 @@ function discard() {
 }
 
 watch(() => props.agentId, () => { void load() }, { immediate: true })
-defineExpose({ reload: load, access })
+defineExpose({ reload: load, access, dirty, save, complete, validateRequired })
 </script>
 
 <template>
@@ -199,7 +239,54 @@ defineExpose({ reload: load, access })
     <el-alert v-if="loadError" type="error" :closable="false" :title="loadError">
       <el-button link type="primary" @click="load">重新读取</el-button>
     </el-alert>
-    <template v-if="access">
+
+    <!-- 草稿流程「角色与权限」：可见角色、岗位角色必填，数据范围选填；不预填，不自动授予，执行身份不在这里管理。 -->
+    <template v-if="access && embedded">
+      <el-form label-position="top" class="agent-access__form">
+        <el-form-item label="谁可以使用它" required :error="attempted ? requiredErrors.visibleRoleIds : ''">
+          <el-select v-model="form.visibleRoleIds" multiple filterable aria-label="可见角色" placeholder="选择可以使用该 Agent 的员工角色" :disabled="!canManage">
+            <el-option v-for="role in access.roleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="!roleSelectable(role.id, form.visibleRoleIds)" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="岗位角色" required :error="attempted ? requiredErrors.roleIds : ''">
+          <el-select v-model="form.roleIds" multiple filterable aria-label="岗位角色" placeholder="选择它持有的岗位角色，决定它能使用哪些能力" :disabled="!canManage">
+            <el-option v-for="role in jobRoleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="!roleSelectable(role.id, form.roleIds)">
+              <span class="agent-access__option">
+                <span>{{ role.status === 'active' ? role.name : `${role.name}（已停用）` }}</span>
+                <el-tag v-if="neededRoleIds.has(role.id)" size="small" type="success" effect="plain" data-testid="role-needed-tag">能力需要</el-tag>
+                <el-tag v-if="role.privileged" size="small" type="warning" effect="plain" data-testid="role-privileged-tag">含管理权限</el-tag>
+              </span>
+            </el-option>
+          </el-select>
+          <p v-if="privilegedSelected.length" class="agent-access__risk" data-testid="role-privileged-warning">{{ privilegedSelected.join('、') }} 含管理权限。Agent 只需要能力所需的业务角色，非必要请改选标记为“能力需要”的角色。</p>
+        </el-form-item>
+        <el-form-item label="数据范围（选填）">
+          <el-select v-model="form.dataScopes" multiple filterable allow-create default-first-option aria-label="数据范围" placeholder="不需要企业数据时可留空" :disabled="!canManage">
+            <el-option v-for="scope in scopeOptions" :key="scope" :label="scope" :value="scope" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="grantsChosen && capabilityRows.length" class="agent-access__summary" :class="{ 'is-blocked': blockedCapabilities.length }" data-testid="agent-access-capability-summary">
+        <div class="agent-access__summary-text">
+          <strong>能力可用情况</strong>
+          <span v-if="!blockedCapabilities.length">{{ capabilityRows.length }} 项能力均可用</span>
+          <span v-else>{{ capabilityRows.length - blockedCapabilities.length }}/{{ capabilityRows.length }} 项可用，{{ blockedCapabilities.map(item => item.name).join('、') }} 缺少授权</span>
+        </div>
+        <details class="agent-access__advanced" :open="capabilitiesOpen || undefined" @toggle="capabilitiesOpen = ($event.target as HTMLDetailsElement).open">
+          <summary>查看各项能力所需授权</summary>
+          <ul class="agent-access__compact">
+            <li v-for="item in capabilityRows" :key="item.reference" :class="{ 'is-blocked': !item.usable }">
+              <span aria-hidden="true">{{ item.usable ? '✓' : '!' }}</span>
+              <span class="agent-access__name">{{ item.name }}</span>
+              <small>{{ item.usable ? requirementText(item) : gapText(item) }}</small>
+            </li>
+          </ul>
+        </details>
+      </div>
+    </template>
+
+    <template v-else-if="access">
       <div class="agent-access__overview" data-testid="agent-access-overview">
         <strong>权限总览</strong>
         <ul><li v-for="line in overview" :key="line">{{ line }}</li></ul>
@@ -214,8 +301,15 @@ defineExpose({ reload: load, access })
         </el-form-item>
         <el-form-item label="它持有的岗位角色">
           <el-select v-model="form.roleIds" multiple filterable aria-label="岗位角色" placeholder="按能力需要授予" :disabled="!canManage">
-            <el-option v-for="role in access.roleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="!roleSelectable(role.id, form.roleIds)" />
+            <el-option v-for="role in jobRoleOptions" :key="role.id" :label="role.status === 'active' ? role.name : `${role.name}（已停用）`" :value="role.id" :disabled="!roleSelectable(role.id, form.roleIds)">
+              <span class="agent-access__option">
+                <span>{{ role.status === 'active' ? role.name : `${role.name}（已停用）` }}</span>
+                <el-tag v-if="neededRoleIds.has(role.id)" size="small" type="success" effect="plain" data-testid="role-needed-tag">能力需要</el-tag>
+                <el-tag v-if="role.privileged" size="small" type="warning" effect="plain" data-testid="role-privileged-tag">含管理权限</el-tag>
+              </span>
+            </el-option>
           </el-select>
+          <p v-if="privilegedSelected.length" class="agent-access__risk" data-testid="role-privileged-warning">{{ privilegedSelected.join('、') }} 含管理权限。Agent 只需要能力所需的业务角色，非必要请改选标记为“能力需要”的角色。</p>
         </el-form-item>
         <el-form-item label="它能接触的数据范围">
           <el-select v-model="form.dataScopes" multiple filterable allow-create default-first-option aria-label="数据范围" placeholder="不需要企业数据时可留空" :disabled="!canManage">
@@ -225,13 +319,14 @@ defineExpose({ reload: load, access })
         </el-form-item>
         <el-form-item label="执行身份">
           <el-switch v-model="form.principalStatus" active-value="active" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="!canManage" />
+          <p class="field-help">紧急止损用：停用后它不能执行任何任务，排队中的执行也会被拒绝。日常上下线请用页头的“停用 Agent”。</p>
         </el-form-item>
       </el-form>
 
       <div class="agent-access__capabilities">
         <div class="agent-access__heading">
           <strong>能力所需授权</strong>
-          <el-button v-if="canManage && gapsFillable" size="small" data-action="fill-access-gaps" @click="fillGaps">一键补齐</el-button>
+          <el-button v-if="canManage && gapsFillable" size="small" data-action="fill-access-gaps" @click="fillGaps">补齐所需授权</el-button>
         </div>
         <p v-if="!capabilityRows.length" class="field-help">当前能力都无需额外角色或数据范围。</p>
         <ul v-else>
@@ -249,7 +344,7 @@ defineExpose({ reload: load, access })
 
       <div v-if="canManage" class="agent-access__actions">
         <el-button :disabled="!dirty || saving" @click="discard">放弃修改</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!dirty" data-action="save-agent-access" @click="save">保存岗位权限</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!dirty" data-action="save-agent-access" @click="save()">保存岗位权限</el-button>
       </div>
     </template>
   </section>
@@ -273,4 +368,22 @@ defineExpose({ reload: load, access })
 .agent-access__capabilities small.agent-access__gap { color: var(--color-warning); }
 .agent-access__warning { margin: 10px 0 0; color: var(--color-warning); font-size: var(--font-size-badge); }
 .agent-access__actions { display: flex; justify-content: flex-end; gap: 10px; }
+.agent-access__option { display: inline-flex; align-items: center; gap: 6px; }
+.agent-access__risk { margin: 6px 0 0; color: var(--color-warning-strong, var(--color-warning)); font-size: var(--font-size-badge); line-height: 1.5; }
+.agent-access__summary { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
+.agent-access__summary.is-blocked { border-color: var(--color-warning); }
+.agent-access__summary-text { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: var(--font-size-caption); }
+.agent-access__summary-text strong { color: var(--color-text-heading); }
+.agent-access__summary-text span { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.agent-access__summary small { color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
+.agent-access__summary small.agent-access__gap { color: var(--color-warning-strong, var(--color-warning)); }
+.agent-access__advanced { margin-top: 4px; }
+.agent-access__advanced summary { cursor: pointer; color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
+.agent-access__advanced summary small { margin-left: 8px; color: var(--color-text-muted); font-weight: normal; }
+.agent-access__advanced .agent-access__compact { margin-top: 8px; }
+.agent-access__compact { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.agent-access__compact li { display: grid; grid-template-columns: 16px auto minmax(0, 1fr); align-items: baseline; gap: 8px; font-size: var(--font-size-caption); }
+.agent-access__compact li > span:first-child { color: var(--color-success); }
+.agent-access__compact li.is-blocked > span:first-child, .agent-access__compact li.is-blocked small { color: var(--color-warning-strong, var(--color-warning)); }
+.agent-access__compact small { color: var(--color-text-muted); font-size: var(--font-size-badge); overflow-wrap: anywhere; }
 </style>

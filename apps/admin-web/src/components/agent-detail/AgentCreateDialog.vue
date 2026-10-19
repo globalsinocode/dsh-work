@@ -61,7 +61,7 @@ async function create() {
 
 <template>
   <el-dialog v-model="open" title="创建 Agent" width="min(640px, calc(100vw - 32px))" :close-on-click-modal="false" destroy-on-close>
-    <p class="intro">先填写基础定义，创建后在详情页继续配置能力、岗位权限并验证发布。平台会自动创建独立执行身份，不继承你的权限。</p>
+    <p class="intro">先填写基础定义。创建后按步骤完成职责与人格、能力、可见范围，再验证并发布。平台会自动创建独立执行身份，不继承你的权限。</p>
     <el-form label-position="top" @submit.prevent="create">
       <el-form-item label="Agent 名称" :error="errors.name" required>
         <el-input v-model="form.name" :maxlength="AGENT_DRAFT_BOUNDS.name.max" show-word-limit placeholder="例如：质量异常分析助手" />

@@ -1,28 +1,30 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import AgentAccessPanel from '@/components/AgentAccessPanel.vue'
 import AgentRoutinePanel from '@/components/AgentRoutinePanel.vue'
-import AgentCapabilitySection from '@/components/agent-detail/AgentCapabilitySection.vue'
 import AgentExperiencePanel from '@/components/agent-detail/AgentExperiencePanel.vue'
-import AgentProfileSection from '@/components/agent-detail/AgentProfileSection.vue'
-import AgentReleasePanel from '@/components/agent-detail/AgentReleasePanel.vue'
+import AgentOverviewSection from '@/components/agent-detail/AgentOverviewSection.vue'
 import AgentRunsPanel from '@/components/agent-detail/AgentRunsPanel.vue'
+import AgentVersionsPanel from '@/components/agent-detail/AgentVersionsPanel.vue'
 import AgentWorkspaceGovernance from '@/components/agent-detail/AgentWorkspaceGovernance.vue'
-import { provideAgentDraftEditor } from '@/composables/use-agent-draft'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { activeVersionOf, availabilityOf, draftEntryStep, pendingVersionOf } from '@/utils/agent-status'
 
+/**
+ * Agent 详情：只读查看与运维。版本内容（职责与人格、能力）只在草稿编辑流程中修改，
+ * 这里只保留属于 Agent、立即生效的设置（岗位权限、主动任务）以及经验、版本与运行查看。
+ */
 const sections = [
-  { id: 'profile', label: '职责与人格' },
-  { id: 'capabilities', label: '能力' },
+  { id: 'overview', label: '概览' },
   { id: 'access', label: '岗位权限' },
   { id: 'routines', label: '主动任务' },
   { id: 'experience', label: '经验' },
-  { id: 'release', label: '验证与发布' },
+  { id: 'versions', label: '版本历史' },
   { id: 'runs', label: '运行记录' },
 ] as const
 type SectionId = typeof sections[number]['id']
@@ -37,51 +39,39 @@ const statusSaving = ref(false)
 const agentId = computed(() => String(route.params.agentId ?? ''))
 const agent = computed(() => contentStore.agents.find(item => item.id === agentId.value))
 const versions = computed(() => contentStore.agentVersions.filter(version => version.agentId === agentId.value))
-// 以 Agent 的工作版本指针为准（`version` = 草稿指针，否则为当前版本）。被取代的旧候选版本仍是
-// candidate 状态但已不在指针上，不能当作待发布。
-const pendingVersion = computed(() => versions.value.find(version => version.version === agent.value?.version
-  && (version.status === 'draft' || version.status === 'candidate')))
+const pendingVersion = computed(() => pendingVersionOf(agent.value, contentStore.agentVersions))
 const activeSection = computed<SectionId>(() => {
   const value = String(route.query.section ?? '')
-  return sections.some(section => section.id === value) ? value as SectionId : 'profile'
+  return sections.some(section => section.id === value) ? value as SectionId : 'overview'
 })
-// 分区首次访问后保持挂载（v-show 切换）：岗位权限与自定义测试问题的未保存输入不会因切分区丢失。
+// 分区首次访问后保持挂载（v-show 切换）：岗位权限的未保存输入不会因切分区丢失。
 const visitedSections = ref(new Set<SectionId>([activeSection.value]))
 watch(activeSection, id => visitedSections.value.add(id), { immediate: true })
 const loadFailed = computed(() => Boolean(contentStore.error) && !agent.value)
 const canManage = computed(() => authStore.canManage)
-const editor = provideAgentDraftEditor(agent, { canEdit: canManage })
 
-const saveStatus = computed(() => {
-  switch (editor.state.value) {
-    case 'pending': return { type: 'info', text: '有未保存的修改' }
-    case 'saving': return { type: 'info', text: '保存中…' }
-    case 'invalid': return { type: 'warning', text: '内容不完整，未保存' }
-    case 'conflict': return { type: 'danger', text: '已被其他操作修改' }
-    case 'error': return { type: 'danger', text: '保存失败' }
-    default: return { type: 'success', text: editor.savedAt.value ? '已保存' : '草稿与服务端一致' }
-  }
-})
-
-function availability(status: string) {
-  if (status === 'published') return { status: 'published', label: '已启用' }
-  if (status === 'disabled') return { status: 'disabled', label: '已停用' }
-  return { status: 'draft', label: '未发布' }
-}
-
-/** 当前版本指针；从未发布时为空，只有草稿的 Agent 不能启停。 */
-const activeVersion = computed(() => agent.value?.activeVersion
-  ?? (agent.value && agent.value.status !== 'draft' ? agent.value.version : null))
+const activeVersion = computed(() => activeVersionOf(agent.value))
 const hasActiveVersion = computed(() => Boolean(activeVersion.value))
-const displayStatus = computed(() => {
-  if (agent.value?.status === 'disabled') return availability('disabled')
-  return hasActiveVersion.value ? availability('published') : availability('draft')
-})
+const displayStatus = computed(() => availabilityOf(agent.value))
 const activeVersionLabel = computed(() => activeVersion.value ? `v${activeVersion.value}` : '未发布')
+/** 管理员的主操作：编辑配置或继续未完成的草稿；审计员只能查看待发布版本。 */
+const draftAction = computed(() => {
+  const pending = pendingVersion.value
+  if (canManage.value) return pending ? `继续编辑 v${pending.version}` : '编辑配置'
+  return pending ? `查看待发布 v${pending.version}` : ''
+})
 
 async function openSection(id: SectionId) {
   if (id === activeSection.value) return
   await router.replace({ query: { ...route.query, section: id } })
+}
+
+function openDraft() {
+  void router.push({
+    name: 'agent-draft',
+    params: { agentId: agentId.value },
+    query: { step: draftEntryStep(pendingVersion.value) },
+  })
 }
 
 /** WAI-ARIA tabs 键盘导航：方向键循环、Home/End 到首尾，并移动焦点。 */
@@ -101,11 +91,6 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
 async function reloadDetail() {
   contentStore.error = ''
   await contentStore.load(true)
-}
-
-async function reloadDraft() {
-  await contentStore.load(true)
-  editor.reload()
 }
 
 async function changeAvailability() {
@@ -135,40 +120,10 @@ async function changeAvailability() {
   }
 }
 
-function warnBeforeUnload(event: BeforeUnloadEvent) {
-  if (editor.hasUnsavedChanges.value) event.preventDefault()
-}
-
-/** 离开详情页或切换 Agent 前先保存；内容不合法时确认是否放弃。 */
-async function guardLeave() {
-  await editor.flush()
-  if (editor.state.value !== 'invalid' && editor.state.value !== 'error') return true
-  try {
-    await ElMessageBox.confirm(
-      editor.state.value === 'invalid' ? '有内容不符合要求，离开后这些修改不会保存。' : '最近的修改保存失败，离开后不会保存。',
-      '放弃未保存的修改？',
-      { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' },
-    )
-    return true
-  } catch {
-    return false
-  }
-}
-
-onBeforeRouteLeave(guardLeave)
-onBeforeRouteUpdate(async (to, from) => (to.params.agentId === from.params.agentId ? true : guardLeave()))
-
-watch(activeSection, async (_next, previous) => {
-  // 切到验证与发布前先把草稿保存下来，让检查与案例基于最新内容。
-  if (previous === 'profile' || previous === 'capabilities') await editor.flush()
-})
-
 onMounted(async () => {
-  window.addEventListener('beforeunload', warnBeforeUnload)
   await contentStore.load()
   ready.value = true
 })
-onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 </script>
 
 <template>
@@ -207,13 +162,11 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
           </p>
         </div>
         <div class="detail-hero__actions">
-          <span v-if="canManage" class="save-status" :class="`save-status--${saveStatus.type}`" data-testid="draft-save-status" role="status" aria-live="polite">{{ saveStatus.text }}</span>
-          <el-button v-if="editor.state.value === 'conflict'" size="small" @click="reloadDraft">重新载入</el-button>
+          <el-button v-if="draftAction" :type="canManage ? 'primary' : 'default'" data-action="edit-agent-draft" @click="openDraft">{{ draftAction }}</el-button>
           <el-button v-if="canManage && hasActiveVersion" :type="agent.status === 'disabled' ? 'primary' : 'danger'" plain :loading="statusSaving" :data-action="agent.status === 'disabled' ? 'enable-agent' : 'disable-agent'" @click="changeAvailability">{{ agent.status === 'disabled' ? '启用 Agent' : '停用 Agent' }}</el-button>
           <el-button @click="router.push('/agents')">返回列表</el-button>
         </div>
       </header>
-      <el-alert v-if="canManage && editor.message.value && (editor.state.value === 'conflict' || editor.state.value === 'error' || editor.state.value === 'invalid')" class="save-alert" :type="editor.state.value === 'invalid' ? 'warning' : 'error'" :closable="false" show-icon :title="editor.message.value" />
       <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，只能查看，不能修改。" />
 
       <nav class="status-tabs detail-tabs" role="tablist" aria-label="Agent 详情分区">
@@ -235,19 +188,12 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
 
       <div class="detail-body">
         <div
-          v-show="activeSection === 'profile'"
-          id="agent-detail-panel-profile"
+          v-if="activeSection === 'overview'"
+          id="agent-detail-panel-overview"
           role="tabpanel"
-          aria-labelledby="agent-detail-tab-profile"
+          aria-labelledby="agent-detail-tab-overview"
           class="content-panel detail-card"
-        ><AgentProfileSection /></div>
-        <div
-          v-show="activeSection === 'capabilities'"
-          id="agent-detail-panel-capabilities"
-          role="tabpanel"
-          aria-labelledby="agent-detail-tab-capabilities"
-          class="content-panel detail-card"
-        ><AgentCapabilitySection /></div>
+        ><AgentOverviewSection :agent="agent" :active-version="activeVersion" :pending-version="pendingVersion" :can-manage="canManage" @edit="openDraft" /></div>
         <div
           v-if="visitedSections.has('access')"
           v-show="activeSection === 'access'"
@@ -271,7 +217,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
           class="content-panel detail-card"
         >
           <section class="detail-section" aria-label="主动任务">
-            <header class="detail-section__head"><div><h3>主动任务</h3><p>按时间或事件主动工作，结果交给接收人。规则启用时固定当时的发布版本；启用中的任务提示词会自动列入验证案例。</p></div></header>
+            <header class="detail-section__head"><div><h3>主动任务</h3><p>按时间或事件主动工作，结果交给接收人。属于 Agent，修改立即生效；规则启用时固定当时的发布版本，启用中的任务提示词会自动列入验证案例。</p></div></header>
             <AgentRoutinePanel :agent-id="agent.id" :versions="versions" :can-manage="canManage" />
           </section>
         </div>
@@ -282,17 +228,13 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
           aria-labelledby="agent-detail-tab-experience"
           class="content-panel detail-card"
         ><AgentExperiencePanel :agent-id="agent.id" :can-manage="canManage" /></div>
-        <AgentReleasePanel
-          v-if="visitedSections.has('release')"
-          v-show="activeSection === 'release'"
-          id="agent-detail-panel-release"
+        <div
+          v-if="activeSection === 'versions'"
+          id="agent-detail-panel-versions"
           role="tabpanel"
-          aria-labelledby="agent-detail-tab-release"
-          :agent-id="agent.id"
-          :active="activeSection === 'release'"
-          @open-access="openSection('access')"
-          @edit="openSection('profile')"
-        />
+          aria-labelledby="agent-detail-tab-versions"
+          class="content-panel detail-card"
+        ><AgentVersionsPanel :agent-id="agent.id" :can-manage="canManage" /></div>
         <div
           v-if="activeSection === 'runs'"
           id="agent-detail-panel-runs"
@@ -314,11 +256,6 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnloa
 .detail-hero__title h2 { margin: 0; overflow: hidden; color: var(--color-text-heading); font-size: var(--font-size-title); text-overflow: ellipsis; white-space: nowrap; }
 .detail-hero__title p { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin: 6px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
 .detail-hero__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
-.save-status { font-size: var(--font-size-badge); }
-.save-status--success { color: var(--color-success); }
-.save-status--info { color: var(--color-text-muted); }
-.save-status--warning { color: var(--color-warning, var(--color-text-secondary)); }
-.save-status--danger { color: var(--color-danger); }
 .detail-tabs { flex-wrap: wrap; }
 .detail-card { padding: 18px; }
 .mono { font-family: monospace; }

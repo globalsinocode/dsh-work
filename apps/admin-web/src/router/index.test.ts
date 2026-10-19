@@ -47,4 +47,17 @@ describe('admin authentication routes', () => {
     expect(route.meta.subtitle).toContain('按稳定 Agent 归属')
     expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill、Tool 或权限')
   })
+
+  it('keeps Agent detail read-only and sends editing addresses into the draft flow', async () => {
+    expect(router.resolve('/agents/agent-a/draft').name).toBe('agent-draft')
+    const legacy = router.resolve('/agents/agent-a/release/trial')
+    const redirect = legacy.matched[0]!.redirect as (to: unknown) => unknown
+    expect(redirect(legacy)).toMatchObject({ name: 'agent-draft', params: { agentId: 'agent-a' }, query: { step: 'release' } })
+
+    const release = router.resolve('/agents/agent-a?section=release')
+    const guard = router.getRoutes().find(route => route.name === 'agent-detail')!.beforeEnter as (to: unknown) => unknown
+    expect(guard(release)).toMatchObject({ name: 'agent-draft', params: { agentId: 'agent-a' }, query: { step: 'release' } })
+    expect(guard(router.resolve('/agents/agent-a?section=profile'))).toMatchObject({ name: 'agent-detail', query: { section: 'overview' } })
+    expect(guard(router.resolve('/agents/agent-a?section=runs'))).toBe(true)
+  })
 })

@@ -37,12 +37,16 @@ function accessFixture(): AgentAccess {
   }
 }
 
-function mountPanel() {
+function mountPanel(embedded = false) {
   const wrapper = mount(AgentAccessPanel, {
-    props: { agentId: 'purchase-analyst', canManage: true },
+    props: { agentId: 'purchase-analyst', canManage: true, embedded },
     global: {
       plugins: [ElementPlus],
-      stubs: { teleport: true, ElSelect: { template: '<div class="el-select-stub"><slot /></div>' }, ElOption: true },
+      stubs: {
+        teleport: true,
+        ElSelect: { template: '<div class="el-select-stub"><slot /></div>' },
+        ElOption: { props: ['value', 'label'], template: '<div class="option-stub" :data-value="value"><slot /></div>' },
+      },
     },
   })
   wrappers.push(wrapper)
@@ -83,5 +87,62 @@ describe('AgentAccessPanel', () => {
       principalStatus: 'active',
     })
     expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ revision: 4 })
+  })
+
+  it('embedded in the draft flow: job role is required, nothing is pre-filled, and no gap hints before a choice', async () => {
+    vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue(accessFixture())
+    const update = vi.spyOn(adminApi, 'updateAgentAccess')
+    const wrapper = mountPanel(true)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="agent-access-overview"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('执行身份')
+    expect(wrapper.find('[data-action="save-agent-access"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="fill-access-gaps"]').exists()).toBe(false)
+    // 未选择岗位角色和数据范围：不预填，也不提示能力缺授权。
+    expect(wrapper.find('[data-testid="agent-access-capability-summary"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('缺少授权')
+
+    const exposed = wrapper.vm as unknown as { validateRequired: () => boolean; dirty: boolean; complete: boolean }
+    expect(exposed.dirty).toBe(false)
+    expect(exposed.validateRequired()).toBe(false)
+    await flushPromises()
+    // 可见角色已选，岗位角色必填项标为错误（错误文案由 ElFormItem 过渡渲染，这里断言错误状态）。
+    expect(wrapper.findAll('.el-form-item.is-error')).toHaveLength(1)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('embedded: after a job role is chosen, shows which capabilities are usable and saves without confirmation', async () => {
+    vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue({ ...accessFixture(), roleIds: ['role-finance'] })
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const wrapper = mountPanel(true)
+    await flushPromises()
+    const summary = wrapper.get('[data-testid="agent-access-capability-summary"]').text()
+    expect(summary).toContain('0/1 项可用，订单查询 缺少授权')
+    const exposed = wrapper.vm as unknown as { validateRequired: () => boolean; save: (options?: { confirm?: boolean }) => Promise<boolean> }
+    expect(exposed.validateRequired()).toBe(true)
+    await expect(exposed.save({ confirm: false })).resolves.toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('marks roles needed by capabilities and warns when a role with management permissions is granted', async () => {
+    const fixture = accessFixture()
+    fixture.roleOptions = [
+      { id: 'role-platform-admin', name: '平台管理员', status: 'active', privileged: true },
+      ...fixture.roleOptions,
+    ]
+    // 能力也接受平台管理员时，它仍排在最后并带风险标记。
+    fixture.capabilities = [{ ...fixture.capabilities[0]!, requiredRoleIds: ['role-platform-admin', 'role-purchase-analyst'] }]
+    vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue({ ...fixture, roleIds: ['role-platform-admin'] })
+    const wrapper = mountPanel(true)
+    await flushPromises()
+    const jobRoleSelect = wrapper.findAll('.el-select-stub')[1]!
+    const options = jobRoleSelect.findAll('.option-stub')
+    // 能力需要的角色排在最前，含管理权限的排在最后；只做标记，不自动选择。
+    expect(options[0]!.attributes('data-value')).toBe('role-purchase-analyst')
+    expect(options[0]!.find('[data-testid="role-needed-tag"]').exists()).toBe(true)
+    expect(options.at(-1)!.attributes('data-value')).toBe('role-platform-admin')
+    expect(options.at(-1)!.find('[data-testid="role-privileged-tag"]').exists()).toBe(true)
+    expect(options.at(-1)!.find('[data-testid="role-needed-tag"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="role-privileged-warning"]').text()).toContain('平台管理员 含管理权限')
   })
 })

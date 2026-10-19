@@ -1,4 +1,4 @@
-import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -11,7 +11,6 @@ import type {
   AgentDefinition,
   AgentReleaseOverview,
   AgentValidation,
-  AgentVersionHistoryItem,
   ValidationCase,
 } from '@/types/domain'
 import AgentReleasePanel from './AgentReleasePanel.vue'
@@ -70,7 +69,7 @@ function overview(current: AgentValidation | null): AgentReleaseOverview {
   }
 }
 
-async function mountView(history: AgentVersionHistoryItem[] = []) {
+async function mountView() {
   const access: AgentAccess = {
     agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
     visibleRoleIds: ['role-employee'], roleIds: [], dataScopes: [],
@@ -84,7 +83,6 @@ async function mountView(history: AgentVersionHistoryItem[] = []) {
   const content = useContentStore()
   content.$patch({ agents: [agent] })
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
-  vi.spyOn(adminApi, 'getAgentVersionHistory').mockResolvedValue({ items: history })
   const wrapper = mount(AgentReleasePanel, {
     props: { agentId },
     global: { plugins: [pinia, ElementPlus], stubs: { teleport: true } },
@@ -133,6 +131,10 @@ it('全部案例判定通过后才能发布，发布提交当前验证', async (
     await flushPromises()
     expect(publish).toHaveBeenCalledWith(agentId, { validationId: 'validation-1', note: '' })
     expect(wrapper.text()).toContain('发布完成')
+    // 草稿流程据此回到详情页；版本历史与回滚不在验证与发布中。
+    expect(wrapper.emitted('published')).toEqual([['0.1.0']])
+    expect(wrapper.find('[aria-label="版本历史"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="rollback-agent"]').exists()).toBe(false)
   } finally {
     wrapper.unmount()
   }
@@ -196,31 +198,6 @@ it('自定义测试问题未保存时不能开始验证', async () => {
     await flushPromises()
     expect(start).toHaveBeenCalledWith(agentId)
     expect(wrapper.text()).toContain('正在运行，完成后自动刷新。')
-  } finally {
-    wrapper.unmount()
-  }
-})
-
-it('版本历史可以回滚到曾发布的版本，当前版本没有回滚按钮', async () => {
-  vi.spyOn(adminApi, 'getAgentRelease').mockResolvedValue({
-    agent, release: { ...overview(null), draft: null, candidate: null, activeVersion: { id: 'agent-version-2', version: '0.2.0' } },
-  })
-  const history: AgentVersionHistoryItem[] = [
-    { id: 'agent-version-2', version: '0.2.0', status: 'published', summary: '第二版', createdAt: '2026-10-16T01:00:00.000Z',
-      createdBy: '管理员', publishedAt: '2026-10-16T01:10:00.000Z', publishedBy: '管理员', active: true },
-    { id: 'agent-version-1', version: '0.1.0', status: 'published', summary: '第一版', createdAt: '2026-10-15T01:00:00.000Z',
-      createdBy: '管理员', publishedAt: '2026-10-15T01:10:00.000Z', publishedBy: '管理员', active: false },
-  ]
-  const wrapper = await mountView(history)
-  const content = useContentStore()
-  const rollback = vi.spyOn(content, 'rollbackAgent').mockResolvedValue(agent)
-  vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue({} as never)
-  try {
-    const buttons = wrapper.findAll('[data-action="rollback-agent"]')
-    expect(buttons).toHaveLength(1)
-    await buttons[0]!.trigger('click')
-    await flushPromises()
-    expect(rollback).toHaveBeenCalledWith(agentId, '0.1.0')
   } finally {
     wrapper.unmount()
   }

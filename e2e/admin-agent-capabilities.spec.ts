@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 
-test('Agent detail autosaves AGENTS.md and MCP scope while hiding per-Agent DSH tools', async ({ page }) => {
+test('Agent draft flow autosaves AGENTS.md and MCP scope; detail shows it read-only', async ({ page }) => {
   const name = `能力范围浏览器验证 ${Date.now()}`
   const procedures = '先核对任务目标与已授权资料，再选择必要的工具；完成后列出可验证的结果和未解决事项。'
   await page.goto(`${adminUrl}/agents`)
@@ -21,7 +21,7 @@ test('Agent detail autosaves AGENTS.md and MCP scope while hiding per-Agent DSH 
   const status = page.getByTestId('draft-save-status')
 
   // 不合法的内容不保存，修正后自动保存。
-  const profile = page.getByRole('tabpanel', { name: '职责与人格' })
+  const profile = page.getByRole('region', { name: '职责与人格' })
   const workProcedures = profile.getByRole('textbox', { name: /AGENTS\.md/ })
   await workProcedures.fill('太短')
   await expect(status).toHaveText('内容不完整，未保存')
@@ -30,8 +30,8 @@ test('Agent detail autosaves AGENTS.md and MCP scope while hiding per-Agent DSH 
   await profile.getByRole('textbox', { name: '员工端示例问题 1' }).fill('请核对本周的待办事项')
   await expect(status).toHaveText('已保存')
 
-  await page.getByRole('tab', { name: '能力' }).click()
-  const capabilities = page.getByRole('tabpanel', { name: '能力' })
+  await page.getByRole('navigation', { name: '编辑步骤' }).getByRole('button', { name: /能力/ }).click()
+  const capabilities = page.getByRole('region', { name: '能力' })
   await expect(capabilities.getByRole('radio', { name: '不使用 MCP（默认）' })).toBeChecked()
   await expect(capabilities.getByText('工具允许列表（选填）')).toHaveCount(0)
   await capabilities.getByRole('radio', { name: '仅使用选定 MCP' }).press('Space')
@@ -57,13 +57,26 @@ test('Agent detail autosaves AGENTS.md and MCP scope while hiding per-Agent DSH 
   await capabilities.getByText('运行限制').click()
   await expect(capabilities.getByText('运行超时（秒）', { exact: true })).toBeVisible()
 
-  // 回到列表再打开，保存结果回显。
+  // 退出编辑回到只读详情：概览显示草稿内容，没有输入框与保存状态。
+  await page.getByRole('button', { name: '退出编辑' }).click()
+  await expect(page).toHaveURL(/\/agents\/agent-[0-9a-f]+$/)
+  await expect(page.getByRole('tab', { name: '概览', selected: true })).toBeVisible()
+  const overview = page.getByRole('tabpanel', { name: '概览' })
+  await expect(overview).toContainText('尚未发布')
+  await expect(overview).toContainText('企业知识 MCP')
+  await expect(overview).toContainText('请核对本周的待办事项')
+  await expect(overview.getByRole('textbox')).toHaveCount(0)
+  await expect(page.getByTestId('draft-save-status')).toHaveCount(0)
+  await expect(page.getByRole('tab')).toHaveText(['概览', '岗位权限', '主动任务', '经验', '版本历史', '运行记录'])
+
+  // 从列表继续编辑，保存结果回显。
   await page.getByRole('button', { name: '返回列表' }).click()
-  await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '查看' }).click()
-  await expect(page.getByRole('tabpanel', { name: '职责与人格' }).getByRole('textbox', { name: /AGENTS\.md/ })).toHaveValue(procedures)
+  await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: '继续编辑' }).click()
+  await expect(page).toHaveURL(/\/draft\?step=profile$/)
+  await expect(page.getByRole('region', { name: '职责与人格' }).getByRole('textbox', { name: /AGENTS\.md/ })).toHaveValue(procedures)
   await expect(page.getByRole('textbox', { name: '员工端示例问题 1' })).toHaveValue('请核对本周的待办事项')
-  await page.getByRole('tab', { name: '能力' }).click()
-  const reopened = page.getByRole('tabpanel', { name: '能力' })
+  await page.getByRole('button', { name: '下一步：能力' }).click()
+  const reopened = page.getByRole('region', { name: '能力' })
   await expect(reopened.getByRole('radio', { name: '仅使用选定 MCP' })).toBeChecked()
   await expect(reopened.getByText('企业知识 MCP', { exact: true })).toBeVisible()
   await reopened.getByRole('radio', { name: '不使用 MCP' }).press('Space')

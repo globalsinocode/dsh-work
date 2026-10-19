@@ -64,11 +64,27 @@ const router = createRouter({
       name: 'agent-detail',
       component: () => import('@/views/AgentDetailView.vue'),
       meta: { title: 'Agent 详情', requiresAdmin: true, requiredPermission: 'adminRead' },
+      // 编辑类分区已移到草稿编辑流程：旧的验证与发布地址进入流程最后一步，旧的定义分区落到只读概览。
+      beforeEnter: to => {
+        const section = String(to.query.section ?? '')
+        if (section === 'release') {
+          return { name: 'agent-draft', params: to.params, query: { step: 'release' } }
+        }
+        if (section === 'profile' || section === 'capabilities') {
+          return { name: 'agent-detail', params: to.params, query: { ...to.query, section: 'overview' } }
+        }
+        return true
+      },
     },
-    // 验证与发布并入详情页；旧的发布工作台与验证页地址落到该分区。
+    {
+      path: '/agents/:agentId/draft',
+      name: 'agent-draft',
+      component: () => import('@/views/AgentDraftView.vue'),
+      meta: { title: '编辑 Agent', requiresAdmin: true, requiredPermission: 'adminRead' },
+    },
     {
       path: '/agents/:agentId/release/:step(definition|checks|trial|review)?',
-      redirect: to => ({ name: 'agent-detail', params: { agentId: to.params.agentId }, query: { section: 'release' } }),
+      redirect: to => ({ name: 'agent-draft', params: { agentId: to.params.agentId }, query: { step: 'release' } }),
     },
     {
       path: '/capabilities',

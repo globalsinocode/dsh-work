@@ -10,8 +10,7 @@ import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import type { AgentDefinition } from '@/types/domain'
-
-type DetailSection = 'profile' | 'release'
+import { activeVersionOf, availabilityOf, draftEntryStep, pendingVersionOf as pendingOf, type AgentDraftStep } from '@/utils/agent-status'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -32,31 +31,25 @@ const filteredAgents = computed(() => {
 const { currentPage: agentPage, pagedItems: pagedAgents } =
   useListPagination(filteredAgents, { resetOn: [query, statusFilter] })
 
-/**
- * 尚未发布的工作版本：可编辑草稿，或验证时冻结的待发布版本。以 Agent 的工作版本指针为准，
- * 被取代的旧候选版本不算。
- */
 function pendingVersionOf(agentId: string) {
-  const working = contentStore.agents.find((agent) => agent.id === agentId)?.version
-  return contentStore.agentVersions.find(
-    (version) => version.agentId === agentId && version.version === working
-      && (version.status === 'draft' || version.status === 'candidate'),
-  )
+  return pendingOf(contentStore.agents.find(agent => agent.id === agentId), contentStore.agentVersions)
 }
 
-/** 当前版本指针；有草稿时 `version` 是草稿版本，所以优先用 activeVersion。 */
-function activeVersionOf(agent: AgentDefinition) {
-  return agent.activeVersion ?? (agent.status !== 'draft' ? agent.version : null)
+function availabilityTag(agent: AgentDefinition) {
+  return availabilityOf(agent)
 }
 
-function availabilityTag(agent: AgentDefinition): { status: string; label: string } {
-  if (agent.status === 'disabled') return { status: 'disabled', label: '已停用' }
-  if (activeVersionOf(agent)) return { status: 'published', label: '已启用' }
-  return { status: 'draft', label: '未发布' }
+/** 详情页只读查看与运维。 */
+function openDetail(agent: AgentDefinition) {
+  void router.push({ path: `/agents/${encodeURIComponent(agent.id)}` })
 }
 
-function openDetail(agent: AgentDefinition, section?: DetailSection) {
-  void router.push({ path: `/agents/${encodeURIComponent(agent.id)}`, query: section ? { section } : {} })
+/** 草稿编辑流程：已冻结待发布时直接进入验证与发布，否则从职责与人格开始。 */
+function openDraft(agent: AgentDefinition, step?: AgentDraftStep) {
+  void router.push({
+    path: `/agents/${encodeURIComponent(agent.id)}/draft`,
+    query: { step: step ?? draftEntryStep(pendingVersionOf(agent.id)) },
+  })
 }
 
 function formatUpdatedAt(value: string) {
@@ -127,7 +120,7 @@ onMounted(async () => {
               type="button"
               class="candidate-tag"
               data-action="open-release"
-              @click.stop="openDetail(scope.row, 'release')"
+              @click.stop="openDraft(scope.row, 'release')"
             >v{{ pendingVersionOf(scope.row.id)?.version }} · {{ pendingVersionOf(scope.row.id)?.status === 'candidate' ? '已冻结' : '草稿' }}</button>
             <span v-else class="muted">—</span>
           </template>
@@ -140,7 +133,7 @@ onMounted(async () => {
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="scope">
             <el-button link type="primary" :icon="View" data-action="view-agent" @click.stop="openDetail(scope.row)">查看</el-button>
-            <el-button v-if="authStore.canManage" link type="primary" data-action="open-release" @click.stop="openDetail(scope.row, 'release')">验证与发布</el-button>
+            <el-button v-if="authStore.canManage" link type="primary" data-action="edit-agent-draft" @click.stop="openDraft(scope.row)">{{ pendingVersionOf(scope.row.id) ? '继续编辑' : '编辑配置' }}</el-button>
             <el-button v-if="authStore.canManage && activeVersionOf(scope.row)" link type="primary" :loading="actionLoading === `status:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-agent' : 'disable-agent'" @click.stop="changeAvailability(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button>
           </template>
         </el-table-column>
@@ -148,7 +141,7 @@ onMounted(async () => {
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="agentPage" background layout="prev, pager, next" :total="filteredAgents.length" :page-size="10" /></div>
     </section>
 
-    <AgentCreateDialog v-model="createOpen" @created="(agent: AgentDefinition) => openDetail(agent)" />
+    <AgentCreateDialog v-model="createOpen" @created="(agent: AgentDefinition) => openDraft(agent, 'profile')" />
   </div>
 </template>
 

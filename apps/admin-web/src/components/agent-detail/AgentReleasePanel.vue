@@ -10,7 +10,6 @@ import type {
   AgentAccess,
   AgentReleaseOverview,
   AgentValidation,
-  AgentVersionHistoryItem,
   ValidationCase,
   ValidationCaseSource,
   ValidationChecks,
@@ -22,10 +21,12 @@ const props = defineProps<{
   active?: boolean
 }>()
 const emit = defineEmits<{
-  /** 切换到岗位权限分区。 */
+  /** 打开岗位权限（草稿流程中以抽屉打开，不离开验证与发布）。 */
   'open-access': []
-  /** 切换到职责与人格分区编辑草稿。 */
+  /** 回到职责与人格步骤编辑草稿。 */
   edit: []
+  /** 发布成功，参数为新的当前版本。 */
+  published: [version: string]
 }>()
 
 const MAX_TEST_CASES = 20
@@ -56,8 +57,6 @@ const authStore = useAuthStore()
 const contentStore = useContentStore()
 
 const agentId = computed(() => props.agentId)
-const versions = ref<AgentVersionHistoryItem[]>([])
-const versionsError = ref('')
 const overview = ref<AgentReleaseOverview>()
 const validation = ref<AgentValidation>()
 const loadError = ref('')
@@ -152,38 +151,6 @@ async function loadAccess() {
   } catch {
     access.value = undefined
     accessLoadError.value = '无法读取 Agent 岗位权限，请重新读取后再验证。'
-  }
-}
-
-async function loadVersions() {
-  try {
-    versions.value = (await adminApi.getAgentVersionHistory(agentId.value)).items
-    versionsError.value = ''
-  } catch (cause) {
-    versionsError.value = cause instanceof Error ? cause.message : '无法读取版本历史'
-  }
-}
-
-/** 回滚只移动当前版本指针到曾发布的版本，不需要重新验证。 */
-async function rollback(item: AgentVersionHistoryItem) {
-  try {
-    await ElMessageBox.confirm(
-      `当前版本将切换为曾发布的 v${item.version}，只移动版本指针，不需要重新验证。启用/停用状态和进行中的草稿保持不变。`,
-      `回滚到 v${item.version}？`,
-      { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  busy.value = `rollback:${item.id}`
-  try {
-    await contentStore.rollbackAgent(agentId.value, item.version)
-    ElMessage.success(`已回滚到 v${item.version}，操作已写入审计`)
-    await Promise.all([loadVersions(), loadOverview()])
-  } catch (cause) {
-    showError(cause, '回滚失败')
-  } finally {
-    busy.value = ''
   }
 }
 
@@ -338,7 +305,8 @@ async function publish() {
     publishedVersion.value = current.version
     publishNote.value = ''
     applyOverview(next)
-    await Promise.all([contentStore.load(true), loadVersions()])
+    await contentStore.load(true)
+    emit('published', current.version)
   } catch (cause) {
     showError(cause, '发布失败')
     await loadOverview()
@@ -356,7 +324,7 @@ function formatTime(value: string | null) {
 async function loadAll() {
   stopPolling()
   ready.value = false
-  await Promise.all([loadAccess(), loadOverview(), loadVersions()])
+  await Promise.all([loadAccess(), loadOverview()])
   ready.value = true
 }
 
@@ -368,6 +336,8 @@ watch(() => props.active, (isActive) => {
   else stopPolling()
 })
 onMounted(loadAll)
+/** 岗位权限在抽屉中修改后，由父组件触发重新读取摘要与验证前检查。 */
+defineExpose({ reload: loadAll })
 
 onBeforeUnmount(stopPolling)
 </script>
@@ -385,13 +355,13 @@ onBeforeUnmount(stopPolling)
     </section>
 
     <template v-else-if="overview">
-      <el-alert v-if="publishedVersion" class="section-alert" type="success" show-icon :closable="false" title="发布完成" :description="`v${publishedVersion} 已成为当前版本；验证结果与判定已随版本保存，可在下方版本历史中回滚。`" />
+      <el-alert v-if="publishedVersion" class="section-alert" type="success" show-icon :closable="false" title="发布完成" :description="`v${publishedVersion} 已成为当前版本；验证结果与判定已随版本保存，可在详情页版本历史中回滚。`" />
       <el-alert v-if="pollError" class="section-alert" type="warning" show-icon :closable="false" :title="pollError">
         <el-button link type="primary" @click="retryPolling">重试读取</el-button>
       </el-alert>
 
       <section v-if="!working && !liveValidation" class="content-panel validation-card">
-        <el-empty description="当前没有待发布的草稿；在职责与人格或能力中修改会生成新的草稿版本" :image-size="72">
+        <el-empty description="当前没有待发布的草稿；在职责与人格或能力步骤中修改会生成新的草稿版本" :image-size="72">
           <el-button v-if="authStore.canManage" type="primary" data-action="edit-agent" @click="emit('edit')">编辑配置</el-button>
         </el-empty>
       </section>
@@ -533,24 +503,6 @@ onBeforeUnmount(stopPolling)
         </section>
       </template>
 
-      <section class="content-panel validation-card" aria-label="版本历史">
-        <div class="card-head"><div class="card-head__title"><h3>版本历史</h3><span>回滚只移动当前版本指针，不需要重新验证</span></div></div>
-        <el-alert v-if="versionsError" type="error" :closable="false" :title="versionsError">
-          <el-button link type="primary" @click="loadVersions">重新读取</el-button>
-        </el-alert>
-        <el-table v-else class="data-table" :data="versions" empty-text="暂无版本记录">
-          <el-table-column label="版本" width="120"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span><small v-if="scope.row.active" class="current-version">当前</small></template></el-table-column>
-          <el-table-column label="变更说明" min-width="200"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ formatTime(scope.row.createdAt) }}</small></div></template></el-table-column>
-          <el-table-column label="状态" width="100"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
-          <el-table-column label="发布" min-width="170"><template #default="scope"><small v-if="scope.row.publishedAt" class="hint">{{ scope.row.publishedBy }} · {{ formatTime(scope.row.publishedAt) }}</small><span v-else class="hint">—</span></template></el-table-column>
-          <el-table-column label="操作" width="110">
-            <template #default="scope">
-              <el-button v-if="authStore.canManage && scope.row.publishedAt && !scope.row.active" link type="primary" :loading="busy === `rollback:${scope.row.id}`" :disabled="busy !== ''" data-action="rollback-agent" @click="rollback(scope.row)">回滚至此</el-button>
-              <span v-else class="hint">—</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </section>
     </template>
   </div>
 </template>
@@ -558,10 +510,6 @@ onBeforeUnmount(stopPolling)
 <style scoped>
 .release-panel { width: 100%; }
 .validation-card { margin-bottom: 14px; padding: 18px; }
-.current-version { display: inline-flex; margin-left: 5px; padding: 2px 5px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); }
-.version-summary { display: flex; flex-direction: column; }
-.version-summary strong { color: var(--color-text-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-badge); }
-.version-summary small { margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .card-head h3 { margin: 2px 0 0; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .card-head__title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }

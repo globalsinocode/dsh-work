@@ -105,6 +105,7 @@ const businessViews = [
   'AdminOverviewView.vue',
   'AgentManagementView.vue',
   'AgentDetailView.vue',
+  'AgentDraftView.vue',
   'CapabilityManagementView.vue',
   'PermissionManagementView.vue',
   'AuditView.vue',
@@ -137,23 +138,41 @@ for (const name of listViews) {
 requireFragments('src/views/AgentManagementView.vue', [
   'data-action="view-agent"',
   'data-action="open-release"',
+  'data-action="edit-agent-draft"',
   'AgentCreateDialog',
 ])
-// S4：详情抽屉与三步编辑弹窗并入详情页，列表只负责导航。
+// 列表只负责导航：查看进入只读详情，编辑进入草稿编辑流程。
 forbidFragments('src/views/AgentManagementView.vue', ['el-drawer', 'AgentDraftDialog', 'AgentAccessPanel', 'data-action="publish-agent"'])
 requireFragments('src/components/agent-detail/AgentCreateDialog.vue', ['SOUL.md', '创建并继续配置'])
 forbidFragments('src/components/agent-detail/AgentCreateDialog.vue', ['AgentZipImportPanel', 'ZIP 导入', 'visibleRoleIds', 'dataScopes'])
+// 详情页只读查看与运维；版本内容只在草稿编辑流程中修改，两处不混用。
 requireFragments('src/views/AgentDetailView.vue', [
-  '职责与人格',
-  '能力',
+  '概览',
   '岗位权限',
   '主动任务',
   '经验',
-  '验证与发布',
+  '版本历史',
   '运行记录',
+  'data-action="edit-agent-draft"',
+])
+forbidFragments('src/views/AgentDetailView.vue', [
+  'provideAgentDraftEditor',
+  'AgentProfileSection',
+  'AgentCapabilitySection',
+  'AgentReleasePanel',
+  'draft-save-status',
+])
+requireFragments('src/views/AgentDraftView.vue', [
+  '职责与人格',
+  '能力',
+  '角色与权限',
+  '验证与发布',
   'provideAgentDraftEditor',
   'onBeforeRouteLeave',
+  'draft-save-status',
+  'data-action="exit-draft"',
 ])
+requireFragments('src/components/agent-detail/AgentVersionsPanel.vue', ['版本历史', 'data-action="rollback-agent"'])
 requireFragments('src/components/agent-detail/AgentReleasePanel.vue', [
   '验证前检查',
   '验证案例',
@@ -164,13 +183,11 @@ requireFragments('src/components/agent-detail/AgentReleasePanel.vue', [
   '不通过原因',
   '验证结果',
   '确认发布',
-  '版本历史',
   'data-action="start-validation"',
   'data-action="publish-agent"',
-  'data-action="rollback-agent"',
 ])
 requireFragments('src/components/agent-detail/AgentExperiencePanel.vue', ['批准并发布', '拒绝时必须填写原因', '/experience-iterations'])
-forbidFragments('src/components/agent-detail/AgentReleasePanel.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准'])
+forbidFragments('src/components/agent-detail/AgentReleasePanel.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准', 'data-action="rollback-agent"'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
   'data-action="view-tool"',

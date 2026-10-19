@@ -12,6 +12,8 @@ export interface AgentAccessRoleOption {
   id: string
   name: string
   status: 'active' | 'disabled'
+  /** 角色带有管理端或审计权限（admin:*、audit:*）；授予 Agent 时页面提示风险。 */
+  privileged: boolean
 }
 
 /** One capability of the Agent and what its execution identity needs to use it. */
@@ -88,7 +90,12 @@ export class PostgresAgentAccessService {
     `
     if (!row) throw notFound(`Agent 不存在：${agentId}`)
     const roleOptions = await this.database<AgentAccessRoleOption[]>`
-      select id, name, status from roles where tenant_id = ${tenantId} order by name, id
+      select id, name, status,
+             exists (
+               select 1 from jsonb_array_elements_text(coalesce(permissions, '[]'::jsonb)) as permission(code)
+                where permission.code like 'admin:%' or permission.code like 'audit:%'
+             ) as privileged
+        from roles where tenant_id = ${tenantId} order by name, id
     `
     const activeRoles = new Set(roleOptions.filter(role => role.status === 'active').map(role => role.id))
     const grantedRoles = row.roleIds.filter(role => activeRoles.has(role))
