@@ -51,7 +51,7 @@ export function pnpmCommands(source) {
 export function workflowCommands(source) {
   const commands = []
   let blockIndent
-  for (const line of source.split('\n')) {
+  for (const line of source.split(/\r?\n/)) {
     const run = line.match(/^(\s*)run:\s*(.*)$/)
     if (run) {
       blockIndent = /^[|>][-+]?\s*$/.test(run[2]) ? run[1].length : undefined

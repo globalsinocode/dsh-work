@@ -27,7 +27,8 @@ const importPattern = /(?:\bfrom\s*|\bimport\s*\(\s*|^\s*import\s+)['"](\.{1,2}\
 
 /** Relative imports of one file, resolved to server/src-relative paths. */
 export function importsOf(path, content) {
-  return [...content.matchAll(importPattern)].map(match => normalize(join(dirname(path), match[1])))
+  return [...content.matchAll(importPattern)].map(match =>
+    normalize(join(dirname(path), match[1])).replace(/\\/g, '/'))
 }
 
 const forbidden = [

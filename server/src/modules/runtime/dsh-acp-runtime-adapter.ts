@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   AcpJsonRpcClient,
   AcpProtocolError,

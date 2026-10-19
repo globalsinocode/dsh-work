@@ -103,7 +103,7 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
 }
 
 .artifact-card__icon-graphic {
-  font-size: 20px;
+  font-size: var(--dsh-font-size-header);
   line-height: 1;
 }
 
@@ -115,7 +115,7 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
   border-radius: 4px;
   color: inherit;
   background: rgb(255 255 255 / 58%);
-  font-size: 9px;
+  font-size: var(--dsh-font-size-micro);
   font-weight: 750;
   line-height: 1.15;
   letter-spacing: 0.03em;
@@ -216,7 +216,7 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
   }
 
   .artifact-card__icon-graphic {
-    font-size: 18px;
+    font-size: var(--dsh-font-size-section);
   }
 
   .artifact-card__actions {

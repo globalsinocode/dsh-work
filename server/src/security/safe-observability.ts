@@ -1,3 +1,5 @@
+import { redactSensitiveText } from '../domain/redact-sensitive-text.ts'
+
 const redacted = '[REDACTED]'
 export type SafeJsonValue = null | boolean | number | string | SafeJsonValue[] | { [key: string]: SafeJsonValue }
 const sensitiveKeys = new Set([
@@ -31,13 +33,7 @@ export function sanitizeSafeMetadata(value: unknown): SafeJsonValue {
   return String(value)
 }
 
-export function redactSensitiveText(value: string) {
-  return value
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
-    .replace(/\b(api[_-]?key|password|passwd|secret|access[_-]?token|refresh[_-]?token)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]')
-    .replace(/(https?:\/\/[^\s:/]+:)[^\s@/]+@/gi, '$1[REDACTED]@')
-    .replace(/\b(sk-(?:ant-|proj-)?[A-Za-z0-9_-]{12,})\b/g, '[REDACTED]')
-}
+export { redactSensitiveText } from '../domain/redact-sensitive-text.ts'
 
 function isSensitiveKey(key: string) {
   return sensitiveKeys.has(key.replaceAll(/[^A-Za-z0-9]/g, '').toLowerCase())

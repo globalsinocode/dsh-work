@@ -1,5 +1,5 @@
 import type { TaskRunError } from './types.ts'
-import { redactSensitiveText } from '../security/safe-observability.ts'
+import { redactSensitiveText } from './redact-sensitive-text.ts'
 
 export interface RunFailureEvent {
   eventType: string
