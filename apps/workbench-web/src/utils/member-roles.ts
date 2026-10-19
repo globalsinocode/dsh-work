@@ -13,7 +13,8 @@ export interface MemberRoleCapabilities {
   removable: boolean
 }
 
-const roleValues: TeamMemberRole[] = ['owner', 'admin', 'member', 'viewer']
+/** 成员弹窗内可任免的角色；负责人仅能通过空间设置「转交负责人」变更。 */
+const assignableMemberRoles: TeamMemberRole[] = ['admin', 'member', 'viewer']
 
 /**
  * plan 第 5 节权限矩阵在员工成员行上的落地：负责人可改全员；管理员只能改
@@ -24,7 +25,7 @@ export function memberRoleCapabilities(input: MemberRoleCapabilitiesInput): Memb
   const lastOwner = input.member.role === 'owner' && input.ownerCount <= 1
   if (lastOwner) return { editableRoles: [], lastOwner, removable: false }
   if (input.actorRole === 'owner') {
-    return { editableRoles: [...roleValues], lastOwner, removable: true }
+    return { editableRoles: [...assignableMemberRoles], lastOwner, removable: true }
   }
   if (input.actorRole === 'admin' && ['member', 'viewer'].includes(input.member.role)) {
     return { editableRoles: ['member', 'viewer'], lastOwner, removable: true }

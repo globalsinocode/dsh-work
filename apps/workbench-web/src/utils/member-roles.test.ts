@@ -29,7 +29,7 @@ describe('memberRoleCapabilities', () => {
       ownerCount: 2,
     })
 
-    expect(capabilities.editableRoles).toEqual(['owner', 'admin', 'member', 'viewer'])
+    expect(capabilities.editableRoles).toEqual(['admin', 'member', 'viewer'])
     expect(capabilities.lastOwner).toBe(false)
     expect(capabilities.removable).toBe(true)
   })

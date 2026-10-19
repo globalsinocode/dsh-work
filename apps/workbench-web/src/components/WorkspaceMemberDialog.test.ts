@@ -1,4 +1,4 @@
-import ElementPlus, { ElMessageBox } from 'element-plus'
+import ElementPlus, { ElMessage, ElMessageBox } from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { ElOption, ElSelect } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -160,10 +160,26 @@ describe('WorkspaceMemberDialog', () => {
     const options = memberSelect.findAllComponents(ElOption)
     expect(options.map((option: { props: (name: string) => unknown }) => option.props('value')))
       .toEqual(['owner', 'admin', 'member', 'viewer'])
+    expect(options[0].props('disabled')).toBe(false)
+    expect(options[0].classes()).toContain('member-dialog__role-option--owner-blocked')
     memberSelect.vm.$emit('change', 'admin')
     await flushPromises()
     expect(changeRole).toHaveBeenCalledWith('ws-team', 'u-member', { role: 'admin' })
     expect(wrapper.emitted('refresh')).toHaveLength(1)
+  })
+
+  it('blocks assigning owner from the member dialog and points users to space settings', async () => {
+    const message = vi.spyOn(ElMessage, 'warning').mockImplementation(() => ({}) as never)
+    const changeRole = vi.spyOn(workbenchApi, 'updateMemberRole')
+    const wrapper = mountDialog({ currentUserRole: 'owner' })
+    await flushPromises()
+
+    const memberSelect = panelOf(wrapper).findAllComponents(ElSelect)[3]
+    memberSelect.vm.$emit('change', 'owner')
+    await flushPromises()
+
+    expect(message).toHaveBeenCalledWith('请在空间设置中转交负责人')
+    expect(changeRole).not.toHaveBeenCalled()
   })
 
   it('restricts an admin to member/viewer roles and disables self and other admins', async () => {
@@ -179,8 +195,12 @@ describe('WorkspaceMemberDialog', () => {
     // 成员/只读成员行：只有「成员/只读成员」可选项，负责人与管理员被禁用。
     expect(selects[3].props('disabled')).toBe(false)
     expect(selects[4].props('disabled')).toBe(false)
-    expect(selects[3].findAllComponents(ElOption)
-      .filter((option: { props: (name: string) => unknown }) => option.props('disabled') === false)
+    const memberRowOptions = selects[3].findAllComponents(ElOption)
+    expect(memberRowOptions.find((option: { props: (name: string) => unknown }) => option.props('value') === 'owner')
+      ?.classes()).toContain('member-dialog__role-option--owner-blocked')
+    expect(memberRowOptions
+      .filter((option: { props: (name: string) => unknown; classes: () => string[] }) =>
+        option.props('disabled') === false && !option.classes().includes('member-dialog__role-option--owner-blocked'))
       .map((option: { props: (name: string) => unknown }) => option.props('value'))).toEqual(['member', 'viewer'])
     // 只能移除「成员/只读成员」：负责人（行 0/1）与自己（行 2）都没有移除入口。
     expect(panelOf(wrapper).findAll('[data-testid="member-remove"]')).toHaveLength(2)

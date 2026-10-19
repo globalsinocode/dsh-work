@@ -53,6 +53,7 @@ const roleLabels: Record<TeamMemberRole, string> = {
   viewer: '只读成员',
 }
 const roleValues: TeamMemberRole[] = ['owner', 'admin', 'member', 'viewer']
+const ownerRoleTransferHint = '请在空间设置中转交负责人'
 
 const employeeSearch = ref<{
   open: boolean
@@ -118,6 +119,29 @@ function isLastOwner(member: WorkspaceMember) {
     member,
     ownerCount: ownerCount.value,
   }).lastOwner
+}
+
+/** 负责人选项在成员弹窗内不可选，仅能在空间设置中转交。 */
+function isOwnerRoleOption(role: TeamMemberRole) {
+  return role === 'owner'
+}
+
+function isMemberRoleOptionDisabled(member: WorkspaceMember, role: TeamMemberRole) {
+  if (isOwnerRoleOption(role)) return false
+  return !editableRoles(member).includes(role)
+}
+
+let lastOwnerRoleHintAt = 0
+function warnOwnerRoleTransfer() {
+  const now = Date.now()
+  if (now - lastOwnerRoleHintAt < 400) return
+  lastOwnerRoleHintAt = now
+  ElMessage.warning(ownerRoleTransferHint)
+}
+
+function onOwnerRoleOptionClick(role: TeamMemberRole) {
+  if (!isOwnerRoleOption(role)) return
+  warnOwnerRoleTransfer()
 }
 
 watch(() => props.members, () => {
@@ -210,6 +234,10 @@ async function addEmployee(candidateUserId: string) {
 }
 
 async function changeMemberRole(member: WorkspaceMember, role: TeamMemberRole) {
+  if (isOwnerRoleOption(role)) {
+    warnOwnerRoleTransfer()
+    return
+  }
   if (!editableRoles(member).includes(role) || role === member.role) return
   const workspaceId = props.workspaceId
   const gen = dialogGeneration
@@ -310,6 +338,7 @@ defineExpose({ ensureEmployeeCandidates })
                 v-else
                 data-testid="member-role-select"
                 class="member-dialog__role"
+                popper-class="member-dialog__role-popper"
                 :model-value="roleSelectValue(member)"
                 :disabled="editableRoles(member).length === 0"
                 :aria-label="`调整“${member.displayName}”的角色`"
@@ -320,7 +349,9 @@ defineExpose({ ensureEmployeeCandidates })
                   :key="role"
                   :label="roleLabels[role]"
                   :value="role"
-                  :disabled="!editableRoles(member).includes(role)"
+                  :disabled="isMemberRoleOptionDisabled(member, role)"
+                  :class="{ 'member-dialog__role-option--owner-blocked': isOwnerRoleOption(role) }"
+                  @click="onOwnerRoleOptionClick(role)"
                 />
               </el-select>
             </template>
@@ -396,6 +427,13 @@ defineExpose({ ensureEmployeeCandidates })
     </div>
   </el-dialog>
 </template>
+
+<style>
+.member-dialog__role-popper .el-select-dropdown__item.member-dialog__role-option--owner-blocked {
+  color: var(--el-text-color-placeholder);
+  cursor: not-allowed;
+}
+</style>
 
 <style scoped>
 .member-dialog__footer {
