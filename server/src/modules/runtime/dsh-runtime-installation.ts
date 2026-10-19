@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { AcpJsonRpcClient } from './acp-json-rpc-client.ts'
 import { assertAcpModelRoute, resolveAcpModelRoute } from '../../domain/acp-model-route.ts'
@@ -198,9 +199,10 @@ async function writeDeploymentOverlay(
   }
   const toolPolicySource = resolve(dirname(templatePath), 'dsh-work-tool-policy.js')
   await access(toolPolicySource, constants.R_OK)
+  const toolPolicyModule = pathToFileURL(toolPolicySource).href
   const withToolPolicy = rendered.replace(
     '__DSH_WORK_TOOL_POLICY_MODULE__',
-    JSON.stringify(toolPolicySource),
+    JSON.stringify(toolPolicyModule),
   )
   if (withToolPolicy === rendered) {
     throw new Error(`DSH deployment overlay template has no tool policy placeholder: ${templatePath}`)

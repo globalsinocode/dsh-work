@@ -89,11 +89,13 @@ export async function migrateSkillFilesToFileSystem(database: DatabaseClient, st
       from skill_versions where artifact_ref is not null
   `
   const versionArtifacts = new Map(indexedVersions.map(row => [`${row.skillId}@${row.version}`, row.artifact]))
-  const attempts = await database<{ id: string; manifest: RuntimeManifest; manifestSha256: string }[]>`
-    select id, manifest, manifest_sha256 as "manifestSha256" from run_attempts
-     where legacy_manifest_sha256 is null
-       and jsonb_array_length(coalesce(manifest #> '{agent_configuration,skill_instructions}', '[]'::jsonb)) > 0
-       and manifest::text like '%"instructions"%'
+  const attempts = await database<{ id: string; manifest: RuntimeManifest; manifestSha256: string; runTaskId: string }[]>`
+    select a.id, a.manifest, a.manifest_sha256 as "manifestSha256", r.task_id as "runTaskId"
+      from run_attempts a
+      join runs r on r.id = a.run_id
+     where a.legacy_manifest_sha256 is null
+       and jsonb_array_length(coalesce(a.manifest #> '{agent_configuration,skill_instructions}', '[]'::jsonb)) > 0
+       and a.manifest::text like '%"instructions"%'
   `
   for (const row of attempts) {
     const manifest = structuredClone(row.manifest)
@@ -127,6 +129,7 @@ export async function migrateSkillFilesToFileSystem(database: DatabaseClient, st
       changed = true
     }
     if (!changed) continue
+    upgradeLegacyAttemptManifest(manifest, row.runTaskId)
     const compiled = compileRuntimeManifest(manifest)
     await database`
       update run_attempts
@@ -134,6 +137,25 @@ export async function migrateSkillFilesToFileSystem(database: DatabaseClient, st
              manifest_sha256 = ${compiled.sha256}, legacy_manifest_sha256 = ${row.manifestSha256}
        where id = ${row.id} and legacy_manifest_sha256 is null
     `
+  }
+}
+
+/** PF-02 之前持久化的 Attempt 可能缺少 task_id / budget，重编译前按 Run 与 limits 补齐。 */
+function upgradeLegacyAttemptManifest(manifest: RuntimeManifest, runTaskId: string): void {
+  if (!manifest.task_id?.trim()) manifest.task_id = runTaskId
+  if (manifest.budget) return
+  manifest.budget = {
+    scope_task_id: manifest.task_id,
+    cumulative_limits: { max_duration_ms: null, max_tool_calls: null, max_output_bytes: null },
+    reservation: {
+      duration_ms: manifest.limits.timeout_seconds * 1000,
+      tool_calls: manifest.limits.max_tool_calls,
+      output_bytes: manifest.limits.max_output_bytes,
+    },
+    enforcement: {
+      duration: 'hard', tool_calls: 'hard', output_bytes: 'hard',
+      tokens: 'unsupported', cost: 'unsupported',
+    },
   }
 }
 
