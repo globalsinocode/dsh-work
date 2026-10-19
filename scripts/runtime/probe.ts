@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -249,21 +250,41 @@ export async function verifyArtifact(workspace: string, marker: string) {
   return { bytes: artifact.byteLength, sha256: createHash('sha256').update(artifact).digest('hex') }
 }
 
+async function resolvePsExecutable(): Promise<string | undefined> {
+  if (process.platform === 'win32') return undefined
+  for (const candidate of ['/bin/ps', '/usr/bin/ps']) {
+    try {
+      await access(candidate, constants.X_OK)
+      return candidate
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
 async function samplePeakRss(roots: number[], active: () => boolean, observe: (rssKiB: number) => void) {
+  const ps = await resolvePsExecutable()
   while (active()) {
-    const { stdout } = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid=,rss='], { timeout: 5000 })
-    const processes = stdout.trim().split('\n').map(line => line.trim().split(/\s+/u).map(Number))
-    const descendants = new Set(roots)
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const [pid, parent] of processes) {
-        if (pid === undefined || parent === undefined || descendants.has(pid) || !descendants.has(parent)) continue
-        descendants.add(pid)
-        changed = true
+    if (ps) {
+      try {
+        const { stdout } = await execFileAsync(ps, ['-axo', 'pid=,ppid=,rss='], { timeout: 5000 })
+        const processes = stdout.trim().split('\n').map(line => line.trim().split(/\s+/u).map(Number))
+        const descendants = new Set(roots)
+        let changed = true
+        while (changed) {
+          changed = false
+          for (const [pid, parent] of processes) {
+            if (pid === undefined || parent === undefined || descendants.has(pid) || !descendants.has(parent)) continue
+            descendants.add(pid)
+            changed = true
+          }
+        }
+        observe(processes.reduce((total, [pid, , rss]) => pid !== undefined && rss !== undefined && descendants.has(pid) ? total + rss : total, 0))
+      } catch {
+        // procps may be absent in minimal images; concurrency still validates batching without RSS samples.
       }
     }
-    observe(processes.reduce((total, [pid, , rss]) => pid !== undefined && rss !== undefined && descendants.has(pid) ? total + rss : total, 0))
     await delay(100)
   }
 }
