@@ -8,11 +8,37 @@
 
 ## 分支与合入约定
 
-- 所有改动先提交到 `dev`，不在 `main` 上直接开发。
-- 零星的少量改动（单点缺陷修复、局部文案/样式、少量测试或文档，通常 1–3 个提交）在 `dev` 提交后，用 `git cherry-pick` 精选到 `main`；`main` 保持线性，只接收验证过的改动。
-- 改动较大、跨模块或需要整体回滚时，走 `dev` → `main` 的合并，合并前跑完类型检查、单测与必要的 E2E；不要把这类改动拆成一串 cherry-pick。
-- `main` 始终处于可发布状态，发布以 `main` 上的提交打 tag。cherry-pick 会在 `main` 上产生与 `dev` 内容相同但 SHA 不同的提交，这是预期结果，不要为此改写 `main` 历史。
-- 紧急修复同样先落 `dev` 再 cherry-pick 到 `main`；只有 `dev` 不可用时才直接在 `main` 修复，并事后同步回 `dev`。
+**基本方向**：所有改动先落 `dev`，`main` 只接收验证过的改动；`main` 始终处于可发布状态。
+
+1. **提交前一定先拉取**（不允许在落后状态直接提交）：
+
+   ```bash
+   git switch dev
+   git pull --ff-only origin dev     # 有本地未推提交时改用 git pull --rebase origin dev
+   git fetch origin main
+   ```
+
+   非快进（提示分叉）说明远端已有新提交：先按第 2 步同步，再继续开发或提交。
+
+2. **同步 `main` → `dev`**：`main` 上有 `dev` 没有的提交时，先判断规模再决定方式：
+
+   ```bash
+   git cherry -v dev origin/main     # 行首 `+` 才是 dev 真正缺的；`-` 表示内容已在 dev
+   ```
+
+   - 零星小改动（通常 1–3 个提交）：把 `+` 的提交 `git cherry-pick <sha>` 到 `dev`；
+   - 批量或较大改动：`git merge origin/main` 合并进 `dev`，冲突在本地逐个解决并提交；
+   - 已被 `git cherry` 标成 `-` 的提交不要重复 cherry-pick：内容等价，只会产生空提交或冲突。
+
+3. **冲突本地解决**：不提交带冲突标记的文件；解决后先跑类型检查与相关单测，确认再提交。
+
+4. **回填 `main`**：
+   - 零星小改动：`git switch main && git pull --ff-only origin main && git cherry-pick <dev 上的提交>`；
+   - 批量或较大改动：`git switch main && git merge --no-ff dev`，合并前跑完类型检查、单测与必要的 E2E。
+
+5. **发布**以 `main` 上的提交打 tag。cherry-pick 会在两侧产生内容相同、SHA 不同的提交，这是预期结果，不要为此改写已推送的历史。
+
+6. **紧急修复**同样先落 `dev` 再回填 `main`；只有 `dev` 不可用时才直接在 `main` 修复，并事后立即同步回 `dev`。
 
 ## 本轮安全修复边界
 
