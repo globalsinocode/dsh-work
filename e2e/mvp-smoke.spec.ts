@@ -61,12 +61,9 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
 
   const htmlCard = page.locator('.artifact-card', { hasText: '华东区交付风险看板.html' })
   await expect(htmlCard).toBeVisible()
-  await expect(htmlCard.getByRole('button', { name: '预览' })).toBeVisible()
-  // 非 HTML 成果不提供预览入口。
-  const xlsxCard = page.locator('.artifact-card', { hasText: '华东区订单交付风险清单.xlsx' })
-  await expect(xlsxCard.getByRole('button', { name: '预览' })).toHaveCount(0)
+  await expect(htmlCard.getByRole('button', { name: '预览' })).toHaveCount(0)
+  await htmlCard.getByRole('button', { name: '华东区交付风险看板.html' }).click()
 
-  await htmlCard.getByRole('button', { name: '预览' }).click()
   const dialog = page.getByRole('dialog', { name: /成果预览/ })
   await expect(dialog).toBeVisible()
 
@@ -81,6 +78,11 @@ test('employee can preview an HTML artifact inside a sandboxed frame', async ({ 
 
   await dialog.getByRole('button', { name: '关闭成果预览' }).click()
   await expect(dialog).toBeHidden()
+
+  const xlsxCard = page.locator('.artifact-card', { hasText: '华东区订单交付风险清单.xlsx' })
+  await xlsxCard.getByRole('button', { name: '华东区订单交付风险清单.xlsx' }).click()
+  await expect(dialog.getByText('暂不支持在线预览')).toBeVisible()
+  await expect(dialog.locator('iframe')).toHaveCount(0)
 })
 
 test('administrator can navigate governance modules and switch Skill tabs', async ({ page }) => {

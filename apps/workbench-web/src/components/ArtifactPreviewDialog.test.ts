@@ -148,3 +148,74 @@ describe('ArtifactPreviewDialog 竞态', () => {
     expect(wrapper.find('[data-testid="artifact-preview-frame"]').attributes('srcdoc')).toContain('artifact-b')
   })
 })
+
+describe('ArtifactPreviewDialog 分类型预览', () => {
+  it('Markdown 渲染标题且不插入脚本标签', async () => {
+    vi.spyOn(workbenchApi, 'downloadArtifact').mockResolvedValue(
+      new Blob(['# 周报\n\n<script>alert(1)</script>'], { type: 'text/markdown' }),
+    )
+    const wrapper = mountDialog({ artifact: artifact({ name: '周报.md', type: 'markdown' }) })
+    await flushPromises()
+
+    const body = wrapper.get('[data-testid="artifact-preview-markdown"]')
+    expect(body.html()).toContain('<h1>周报</h1>')
+    expect(body.html()).toContain('&lt;script&gt;')
+    expect(body.find('script').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="artifact-preview-frame"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="radio"]').exists()).toBe(false)
+  })
+
+  it('CSV 超过 500 行数据时提示截断', async () => {
+    const lines = ['名称,数量']
+    for (let index = 1; index <= 501; index += 1) lines.push(`行${index},${index}`)
+    vi.spyOn(workbenchApi, 'downloadArtifact').mockResolvedValue(new Blob([lines.join('\n')]))
+    const wrapper = mountDialog({ artifact: artifact({ name: '明细.csv', type: 'csv' }) })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="artifact-preview-csv-notice"]').text()).toContain('仅显示前 500 行，完整内容请下载')
+    expect(wrapper.findAll('[data-testid="artifact-preview-csv"] tbody tr')).toHaveLength(500)
+  })
+
+  it('纯文本放进等宽区域，空文件不显示加载失败', async () => {
+    vi.spyOn(workbenchApi, 'downloadArtifact').mockResolvedValue(new Blob(['']))
+    const wrapper = mountDialog({ artifact: artifact({ name: '备注.txt', type: 'text' }) })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="artifact-preview-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="artifact-preview-text"]').text()).toBe('')
+  })
+
+  it('PDF 使用取回的 blob 对象地址，关闭时释放', async () => {
+    const created: string[] = []
+    const revoked: string[] = []
+    vi.stubGlobal('URL', {
+      createObjectURL: () => {
+        created.push('blob:preview')
+        return 'blob:preview'
+      },
+      revokeObjectURL: (value: string) => revoked.push(value),
+    })
+    vi.spyOn(workbenchApi, 'downloadArtifact').mockResolvedValue(new Blob(['%PDF-1.4'], { type: 'application/pdf' }))
+    const wrapper = mountDialog({ artifact: artifact({ name: '报告.pdf', type: 'pdf' }) })
+    await flushPromises()
+
+    const frame = wrapper.get('[data-testid="artifact-preview-pdf"]')
+    expect(frame.attributes('src')).toBe('blob:preview')
+    expect(workbenchApi.downloadArtifact).toHaveBeenCalledWith('artifact-1', 2)
+
+    await wrapper.setProps({ open: false })
+    expect(revoked).toContain('blob:preview')
+    vi.unstubAllGlobals()
+  })
+
+  it('Excel 与 Word 不请求文件字节，并提供下载', async () => {
+    const download = vi.spyOn(workbenchApi, 'downloadArtifact')
+    const wrapper = mountDialog({ artifact: artifact({ name: '清单.xlsx', type: 'xlsx' }) })
+    await flushPromises()
+
+    expect(download).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="artifact-preview-unsupported"]').text()).toContain('暂不支持在线预览')
+    await wrapper.get('[data-testid="artifact-preview-download"]').trigger('click')
+    expect(downloadArtifactFile).toHaveBeenCalledWith(expect.objectContaining({ name: '清单.xlsx', version: 2 }))
+  })
+})

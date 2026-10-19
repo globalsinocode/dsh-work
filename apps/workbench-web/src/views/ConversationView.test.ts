@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   createSession: vi.fn(),
   uploadSessionFile: vi.fn(),
   deleteSessionFile: vi.fn(),
+  downloadArtifact: vi.fn(),
   runEventsUrl: vi.fn((runId: string) => `/events/${runId}`),
   workspaceSessionEventsUrl: vi.fn((workspaceId: string) => `/session-events/${workspaceId}`),
 }))
@@ -708,6 +709,54 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     const assistants = wrapper.findAll('article.conversation-message--assistant')
     expect(assistants[0]!.text()).toContain('欠料分析.xlsx')
     expect(assistants[1]!.text()).not.toContain('欠料分析.xlsx')
+  })
+
+  it('opens a preview instead of downloading when the artifact name is clicked', async () => {
+    const downloadArtifact = vi.fn().mockResolvedValue(new Blob(['# 周报']))
+    api.downloadArtifact = downloadArtifact
+    const { wrapper } = await mountView({
+      item: task({
+        status: 'succeeded',
+        result: result({
+          execution: 'succeeded', outcome: 'achieved', summary: '执行完成', error: null,
+          artifacts: [{
+            id: 'artifact-1', name: '周报.md', type: 'markdown', version: 1, size: '2 KB',
+            createdAt: '2026-10-15 10:05', runId: 'run-001', workspaceId: 'ws-personal', summary: '本轮成果',
+            fileId: 'file-artifact-1', canReference: true,
+          }],
+        }),
+        messages: [
+          { id: 'm-user', role: 'user', content: '写周报', createdAt: '10:00', runId: 'run-001' },
+          { id: 'm-answer', role: 'assistant', content: '已生成周报.md', createdAt: '10:01', runId: 'run-001' },
+        ],
+      }),
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+    })
+
+    await wrapper.get('[data-testid="artifact-open-preview"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('成果预览')
+    expect(wrapper.text()).toContain('周报.md')
+    expect(wrapper.get('[data-testid="artifact-preview-markdown"]').text()).toContain('周报')
+    expect(downloadArtifact).toHaveBeenCalledTimes(1)
+    expect(downloadArtifact).toHaveBeenCalledWith('artifact-1', 1)
+
+    await wrapper.get('[data-testid="artifact-download"]').trigger('click')
+    await flushPromises()
+    expect(downloadArtifact).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-testid="continue-editing-artifact-1"]').text()).toContain('继续修改')
+
+    await wrapper.get('[aria-label="关闭成果预览"]').trigger('click')
+    await wrapper.get('.header-action-label').trigger('click')
+    await wrapper.get('[data-testid="drawer-artifact-preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('周报.md')
+    expect(downloadArtifact).toHaveBeenLastCalledWith('artifact-1', 1)
+
+    await wrapper.get('[data-testid="drawer-artifact-download"]').trigger('click')
+    await flushPromises()
+    expect(downloadArtifact.mock.calls.length).toBeGreaterThan(2)
   })
 
   it('attaches a referenceable artifact to the next message with “继续修改” (EX-02)', async () => {

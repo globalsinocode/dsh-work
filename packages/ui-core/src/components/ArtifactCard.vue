@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Download, Document, View } from '@element-plus/icons-vue'
+import { Download, Document } from '@element-plus/icons-vue'
 
 interface ArtifactCardItem {
   name: string
@@ -40,7 +40,13 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
       <el-icon class="artifact-card__icon-graphic" aria-hidden="true"><Document /></el-icon>
       <span class="artifact-card__type">{{ typeLabel }}</span>
     </div>
-    <div class="artifact-card__body">
+    <button
+      type="button"
+      class="artifact-card__body"
+      data-testid="artifact-card-open"
+      :aria-label="artifact.name"
+      @click="emit('preview')"
+    >
       <div class="artifact-card__title-row">
         <strong :title="artifact.name">{{ artifact.name }}</strong>
         <span>V{{ artifact.version }}</span>
@@ -50,16 +56,14 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
         <span>{{ artifact.size }}</span>
         <span>{{ artifact.createdAt }}</span>
       </div>
-    </div>
+    </button>
     <div class="artifact-card__actions">
       <el-button
-        v-if="artifact.type === 'html'"
         text
-        :icon="View"
-        data-testid="artifact-preview-open"
-        @click="emit('preview')"
-      >预览</el-button>
-      <el-button text :icon="Download" @click="emit('download')">下载</el-button>
+        :icon="Download"
+        data-testid="artifact-card-download"
+        @click.stop="emit('download')"
+      >下载</el-button>
     </div>
   </article>
 </template>
@@ -140,6 +144,17 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
 
 .artifact-card__body {
   min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.artifact-card__body:hover {
+  background: rgb(237 243 255 / 45%);
 }
 
 .artifact-card__title-row {

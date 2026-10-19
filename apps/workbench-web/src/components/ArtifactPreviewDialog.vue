@@ -4,6 +4,7 @@ import { Close, Download } from '@element-plus/icons-vue'
 
 import { workbenchApi } from '@/api/client'
 import type { Artifact } from '@/types/domain'
+import { parseCsvPreview, renderMarkdownPreview } from '@/utils/artifact-preview'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 
 /**
@@ -18,7 +19,6 @@ import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
  */
 const PREVIEW_CSP_TAG = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">`
 
-/** 把预览 CSP 注入 <head>；没有 <head>/<html> 时前置，解析器会自动归入 head。 */
 function withPreviewCsp(markup: string) {
   if (!markup) return markup
   const headMatch = markup.match(/<head[^>]*>/i)
@@ -27,6 +27,11 @@ function withPreviewCsp(markup: string) {
   if (htmlMatch) return markup.replace(htmlMatch[0], `${htmlMatch[0]}<head>${PREVIEW_CSP_TAG}</head>`)
   return `${PREVIEW_CSP_TAG}${markup}`
 }
+
+function isOfficeUnsupported(type: Artifact['type'] | undefined) {
+  return type === 'xlsx' || type === 'docx'
+}
+
 const props = defineProps<{
   open: boolean
   artifact: Artifact | null
@@ -36,33 +41,45 @@ const emit = defineEmits<{
   'update:open': [boolean]
 }>()
 
-const html = ref('')
-/** 交给 iframe srcdoc 的版本：注入 CSP 后的副本；源代码视图仍展示原始内容。 */
-const sandboxedHtml = computed(() => withPreviewCsp(html.value))
+const rawText = ref('')
+const pdfObjectUrl = ref('')
+const sandboxedHtml = computed(() => withPreviewCsp(rawText.value))
 const loading = ref(false)
 const error = ref(false)
 const viewMode = ref<'preview' | 'source'>('preview')
 
-/**
- * 请求世代号：切换成果或关闭再打开时，晚到的旧响应不得写进当前预览
- * （与文件版本对话框同一防竞态口径）。
- */
+const artifactType = computed(() => props.artifact?.type)
+const csvPreview = computed(() => (artifactType.value === 'csv' ? parseCsvPreview(rawText.value) : null))
+const markdownHtml = computed(() => (artifactType.value === 'markdown' ? renderMarkdownPreview(rawText.value) : ''))
+
 let requestSeq = 0
+
+function revokePdfUrl() {
+  if (!pdfObjectUrl.value) return
+  URL.revokeObjectURL(pdfObjectUrl.value)
+  pdfObjectUrl.value = ''
+}
 
 async function loadContent() {
   const artifact = props.artifact
-  if (!artifact) return
+  if (!artifact || isOfficeUnsupported(artifact.type)) return
   const seq = ++requestSeq
   loading.value = true
   try {
     const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
-    const text = await blob.text()
     if (seq !== requestSeq) return
-    html.value = text
+    if (artifact.type === 'pdf') {
+      revokePdfUrl()
+      pdfObjectUrl.value = URL.createObjectURL(blob)
+      rawText.value = ''
+    } else {
+      rawText.value = await blob.text()
+    }
     error.value = false
   } catch (cause) {
     if (seq !== requestSeq) return
-    html.value = ''
+    rawText.value = ''
+    revokePdfUrl()
     error.value = true
     notifyActionFailure('加载成果预览', `成果“${artifact.name}”V${artifact.version}`, cause, '稍后点击「重试」；若仍失败，请联系工作空间管理员。')
   } finally {
@@ -70,16 +87,21 @@ async function loadContent() {
   }
 }
 
-/** 打开/切换/关闭都先作废在途请求并清空上一份内容，避免 A 的页面渲染在 B 的名下。 */
+function resetPreviewState() {
+  requestSeq += 1
+  rawText.value = ''
+  revokePdfUrl()
+  error.value = false
+  loading.value = false
+  viewMode.value = 'preview'
+}
+
 watch(
-  () => [props.open, props.artifact?.id, props.artifact?.version] as const,
+  () => [props.open, props.artifact?.id, props.artifact?.version, props.artifact?.type] as const,
   ([open]) => {
-    requestSeq += 1
-    html.value = ''
-    error.value = false
-    loading.value = false
-    viewMode.value = 'preview'
-    if (!open) return
+    resetPreviewState()
+    if (!open || !props.artifact) return
+    if (isOfficeUnsupported(props.artifact.type)) return
     void loadContent()
   },
   { immediate: true },
@@ -87,6 +109,7 @@ watch(
 
 onBeforeUnmount(() => {
   requestSeq += 1
+  revokePdfUrl()
 })
 
 function download() {
@@ -102,7 +125,6 @@ function download() {
     :show-close="false"
     @update:model-value="(value: boolean) => emit('update:open', value)"
   >
-    <!-- 不传 title：aria-labelledby 指向同时含「成果预览」与文件名的头部元素。 -->
     <template #header="{ titleId, titleClass }">
       <div class="artifact-preview__header">
         <div :id="titleId" class="artifact-preview__title">
@@ -110,7 +132,12 @@ function download() {
           <strong>{{ artifact?.name }}</strong>
         </div>
         <div class="artifact-preview__header-actions">
-          <el-radio-group v-model="viewMode" size="small" aria-label="预览方式">
+          <el-radio-group
+            v-if="artifactType === 'html'"
+            v-model="viewMode"
+            size="small"
+            aria-label="预览方式"
+          >
             <el-radio-button value="preview">渲染预览</el-radio-button>
             <el-radio-button value="source">源代码</el-radio-button>
           </el-radio-group>
@@ -129,12 +156,13 @@ function download() {
     </template>
 
     <div class="artifact-preview__body" data-testid="artifact-preview-dialog">
-      <p class="artifact-preview__hint">
+      <p v-if="artifactType === 'html'" class="artifact-preview__hint">
         内容在隔离沙箱中渲染：页面脚本不能访问工作台数据、Cookie 或存储。V{{ artifact?.version }}
       </p>
+      <p v-else class="artifact-preview__hint">V{{ artifact?.version }}</p>
 
       <el-skeleton
-        v-if="loading && !html"
+        v-if="loading"
         data-testid="artifact-preview-skeleton"
         :rows="6"
         animated
@@ -145,8 +173,16 @@ function download() {
         <el-button data-testid="artifact-preview-retry" @click="loadContent()">重试</el-button>
       </div>
 
+      <p
+        v-else-if="isOfficeUnsupported(artifactType)"
+        data-testid="artifact-preview-unsupported"
+        class="artifact-preview__unsupported"
+      >
+        暂不支持在线预览
+      </p>
+
       <iframe
-        v-else-if="viewMode === 'preview'"
+        v-else-if="artifactType === 'html' && viewMode === 'preview'"
         data-testid="artifact-preview-frame"
         class="artifact-preview__frame"
         sandbox="allow-scripts"
@@ -154,7 +190,53 @@ function download() {
         :srcdoc="sandboxedHtml"
         :title="`成果预览：${artifact?.name ?? ''}`"
       />
-      <pre v-else data-testid="artifact-preview-source" class="artifact-preview__source"><code>{{ html }}</code></pre>
+      <pre
+        v-else-if="artifactType === 'html' && viewMode === 'source'"
+        data-testid="artifact-preview-source"
+        class="artifact-preview__source"
+      ><code>{{ rawText }}</code></pre>
+
+      <div
+        v-else-if="artifactType === 'markdown'"
+        data-testid="artifact-preview-markdown"
+        class="artifact-preview__markdown"
+        v-html="markdownHtml"
+      />
+
+      <template v-else-if="artifactType === 'csv' && csvPreview">
+        <p v-if="csvPreview.truncated" data-testid="artifact-preview-csv-notice" class="artifact-preview__notice">
+          仅显示前 500 行，完整内容请下载
+        </p>
+        <div class="artifact-preview__csv-wrap">
+          <table data-testid="artifact-preview-csv" class="artifact-preview__csv">
+            <thead>
+              <tr>
+                <th v-for="(header, index) in csvPreview.headers" :key="`h-${index}`">{{ header }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, rowIndex) in csvPreview.rows" :key="`r-${rowIndex}`">
+                <td v-for="(cell, cellIndex) in row" :key="`c-${rowIndex}-${cellIndex}`">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <pre
+        v-else-if="artifactType === 'text'"
+        data-testid="artifact-preview-text"
+        class="artifact-preview__source"
+      >{{ rawText }}</pre>
+
+      <iframe
+        v-else-if="artifactType === 'pdf' && pdfObjectUrl"
+        data-testid="artifact-preview-pdf"
+        class="artifact-preview__frame"
+        referrerpolicy="no-referrer"
+        :src="pdfObjectUrl"
+        :title="`成果预览：${artifact?.name ?? ''}`"
+      />
     </div>
   </el-dialog>
 </template>
@@ -217,7 +299,14 @@ function download() {
   line-height: 1.6;
 }
 
-.artifact-preview__error {
+.artifact-preview__notice {
+  margin: 0 0 8px;
+  color: #8b918c;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.artifact-preview__error,
+.artifact-preview__unsupported {
   padding: 18px 0;
   color: #6c726d;
   font-size: var(--dsh-font-size-caption);
@@ -245,5 +334,57 @@ function download() {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.artifact-preview__markdown {
+  overflow: auto;
+  max-height: min(62vh, 560px);
+  padding: 12px;
+  border: 1px solid var(--dsh-color-border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: var(--dsh-font-size-body);
+  line-height: 1.65;
+}
+
+.artifact-preview__markdown :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.artifact-preview__markdown :deep(th),
+.artifact-preview__markdown :deep(td) {
+  padding: 6px 8px;
+  border: 1px solid var(--dsh-color-border);
+  text-align: left;
+}
+
+.artifact-preview__csv-wrap {
+  overflow: auto;
+  max-height: min(62vh, 560px);
+  border: 1px solid var(--dsh-color-border);
+  border-radius: 8px;
+}
+
+.artifact-preview__csv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--dsh-font-size-badge);
+}
+
+.artifact-preview__csv th,
+.artifact-preview__csv td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsh-color-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.artifact-preview__csv th {
+  position: sticky;
+  top: 0;
+  background: #f7f8fa;
+  font-weight: 650;
 }
 </style>

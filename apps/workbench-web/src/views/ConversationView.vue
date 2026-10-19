@@ -23,6 +23,7 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ChatMessage, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
+import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { runFailureDetailReason } from '@/utils/run-error-display'
@@ -34,6 +35,8 @@ const authStore = useAuthStore()
 const contentStore = useContentStore()
 
 const detailsOpen = ref(false)
+const previewOpen = ref(false)
+const previewArtifact = ref<Artifact | null>(null)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
 const stopping = ref(false)
@@ -367,6 +370,11 @@ function copyConversationLink() {
 
 function download(item: Artifact) {
   void downloadArtifactFile(item)
+}
+
+function openPreview(item: Artifact) {
+  previewArtifact.value = item
+  previewOpen.value = true
 }
 
 /**
@@ -935,15 +943,23 @@ watch(
                   >
                     <button
                       type="button"
-                      class="answer-artifact__download"
-                      @click="download(artifact)"
+                      class="answer-artifact__open"
+                      data-testid="artifact-open-preview"
+                      @click="openPreview(artifact)"
                     >
                       <span><el-icon><Document /></el-icon></span>
                       <span>
                         <strong>{{ artifact.name }}</strong>
                         <small>{{ artifact.size }} · V{{ artifact.version }}</small>
                       </span>
-                      <el-icon><ArrowDown /></el-icon>
+                    </button>
+                    <button
+                      type="button"
+                      class="answer-artifact__download"
+                      data-testid="artifact-download"
+                      @click="download(artifact)"
+                    >
+                      下载
                     </button>
                     <button
                       v-if="canFollowUp && belongsToCurrentRun(message) && artifact.canReference && artifact.fileId"
@@ -1189,19 +1205,39 @@ watch(
         <section class="drawer-section">
           <h2>成果文件</h2>
           <div v-if="task.result.artifacts.length" class="drawer-artifacts">
-            <button
+            <div
               v-for="artifact in task.result.artifacts"
               :key="artifact.id"
-              type="button"
-              @click="download(artifact)"
+              class="drawer-artifact-row"
             >
-              <el-icon><Document /></el-icon>
-              <span><strong>{{ artifact.name }}</strong><small>{{ artifact.size }}</small></span>
-            </button>
+              <button
+                type="button"
+                class="drawer-artifact-row__open"
+                data-testid="drawer-artifact-preview"
+                @click="openPreview(artifact)"
+              >
+                <el-icon><Document /></el-icon>
+                <span><strong>{{ artifact.name }}</strong><small>{{ artifact.size }}</small></span>
+              </button>
+              <button
+                type="button"
+                class="drawer-artifact-row__download"
+                data-testid="drawer-artifact-download"
+                @click="download(artifact)"
+              >
+                下载
+              </button>
+            </div>
           </div>
           <el-empty v-else :image-size="56" description="本轮暂未生成成果" />
         </section>
       </el-drawer>
+
+      <ArtifactPreviewDialog
+        v-if="previewArtifact"
+        v-model:open="previewOpen"
+        :artifact="previewArtifact"
+      />
 
     </template>
   </div>
@@ -1556,11 +1592,12 @@ watch(
   font-size: var(--dsh-font-size-badge);
 }
 
-.answer-artifact__download {
+.answer-artifact__open {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 16px;
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
-  min-width: 230px;
+  min-width: 200px;
+  flex: 1 1 auto;
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid #e2e4e1;
@@ -1571,12 +1608,12 @@ watch(
   text-align: left;
 }
 
-.answer-artifact__download:hover {
+.answer-artifact__open:hover {
   border-color: #bdcbc5;
   background: #f5f8f6;
 }
 
-.answer-artifact__download > span:first-child {
+.answer-artifact__open > span:first-child {
   display: grid;
   width: 30px;
   height: 30px;
@@ -1586,10 +1623,27 @@ watch(
   background: #eaf4f0;
 }
 
-.answer-artifact__download > span:nth-child(2) {
+.answer-artifact__open > span:nth-child(2) {
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.answer-artifact__download {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  color: #356858;
+  background: #fafbfa;
+  cursor: pointer;
+  font-size: var(--dsh-font-size-badge);
+  white-space: nowrap;
+}
+
+.answer-artifact__download:hover {
+  border-color: #bdcbc5;
+  background: #f5f8f6;
 }
 
 .answer-artifacts strong {
@@ -1979,8 +2033,16 @@ watch(
   gap: 8px;
 }
 
-.drawer-artifacts button {
+.drawer-artifact-row {
   display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.drawer-artifact-row__open {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   gap: 9px;
   padding: 10px;
@@ -1990,6 +2052,17 @@ watch(
   background: #fff;
   cursor: pointer;
   text-align: left;
+}
+
+.drawer-artifact-row__download {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid #e5e7e4;
+  border-radius: 9px;
+  color: #48695e;
+  background: #fff;
+  cursor: pointer;
+  font-size: var(--dsh-font-size-badge);
 }
 
 .drawer-artifacts button > span {
@@ -2087,7 +2160,7 @@ watch(
     width: 100%;
   }
 
-  .answer-artifact__download {
+  .answer-artifact__open {
     flex: 1;
     min-width: 0;
   }
