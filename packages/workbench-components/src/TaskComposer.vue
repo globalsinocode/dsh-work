@@ -17,6 +17,11 @@ import {
   VideoPause,
 } from '@element-plus/icons-vue'
 
+import {
+  getRecentWorkspaceAgentMemberId,
+  recordRecentWorkspaceAgentMember,
+} from './workspace-agent-recency'
+
 const props = withDefaults(
   defineProps<{
     initialPrompt?: string
@@ -106,6 +111,10 @@ const mentionIndex = ref(0)
  */
 const appliedMentions = ref<Array<{ id: string; name: string; start: number }>>([])
 
+/** Tab 和弦：松开 Tab 选最近 Agent；按住 Tab 再按 1–9 选列表第 N 项。 */
+const tabChordHeld = ref(false)
+const tabChordConsumed = ref(false)
+
 const filteredMentions = computed(() => {
   const query = mentionQuery.value
   if (query === null) return []
@@ -136,6 +145,23 @@ function refreshMentionState() {
     mentionStart.value = match && validStart ? start : -1
     if (!match) mentionIndex.value = 0
   })
+}
+
+function activeWorkspaceId() {
+  return workspaceId.value || props.initialWorkspaceId
+}
+
+function quickMentionOptions() {
+  return props.mentionOptions
+}
+
+function applyRecentAgentMention() {
+  const workspace = activeWorkspaceId()
+  const options = quickMentionOptions()
+  if (!workspace || !options.length) return
+  const recentId = getRecentWorkspaceAgentMemberId(workspace)
+  const option = (recentId ? options.find(item => item.id === recentId) : undefined) ?? options[0]
+  applyMention(option)
 }
 
 function applyMention(option: { id: string; name: string }) {
@@ -304,6 +330,10 @@ function submit() {
     ElMessage.warning('带附件的消息需要 @Agent 发起执行；纯讨论消息不支持附件。')
     return
   }
+  const workspace = activeWorkspaceId()
+  const firstMention = mentions[0]
+  if (workspace && firstMention) recordRecentWorkspaceAgentMember(workspace, firstMention)
+
   emit('submit', {
     prompt: prompt.value.trim(),
     files: [...files.value],
@@ -321,6 +351,22 @@ function clearComposer() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  const quickOptions = quickMentionOptions()
+
+  if (event.key === 'Tab' && !event.shiftKey) {
+    tabChordHeld.value = true
+    tabChordConsumed.value = false
+    if (quickOptions.length && !mentionOpen.value) event.preventDefault()
+  }
+
+  if (tabChordHeld.value && /^[1-9]$/.test(event.key) && quickOptions.length && !mentionOpen.value) {
+    event.preventDefault()
+    tabChordConsumed.value = true
+    const option = quickOptions[Number(event.key) - 1]
+    if (option) applyMention(option)
+    return
+  }
+
   // Esc 关闭整个浮层（含「没有匹配的 Agent」空态），不只挂在有候选的分支。
   if (mentionPanelOpen.value && event.key === 'Escape') {
     event.preventDefault()
@@ -336,6 +382,7 @@ function onKeydown(event: KeyboardEvent) {
     }
     if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && !event.isComposing)) {
       event.preventDefault()
+      tabChordConsumed.value = true
       const option = filteredMentions.value[mentionIndex.value] ?? filteredMentions.value[0]
       if (option) applyMention(option)
       return
@@ -345,6 +392,22 @@ function onKeydown(event: KeyboardEvent) {
   if (props.running) return
   event.preventDefault()
   submit()
+}
+
+function onKeyup(event: KeyboardEvent) {
+  if (event.key === 'Tab') {
+    const quickOptions = quickMentionOptions()
+    if (
+      tabChordHeld.value
+      && !tabChordConsumed.value
+      && !mentionOpen.value
+      && quickOptions.length
+    ) {
+      applyRecentAgentMention()
+    }
+    tabChordHeld.value = false
+  }
+  refreshMentionState()
 }
 
 function performPrimaryAction() {
@@ -400,8 +463,8 @@ function performPrimaryAction() {
             : '今天想完成什么？可 @ 提及 Agent、引用企业数据，或从左下角添加文件'
         "
         @keydown="onKeydown"
+        @keyup="onKeyup"
         @input="refreshMentionState"
-        @keyup="refreshMentionState"
         @click="refreshMentionState"
       ></textarea>
 

@@ -5,3 +5,7 @@ export type {
   WorkspaceActivityDescriptor,
   WorkspaceActivityKind,
 } from './workspace-activity'
+export {
+  getRecentWorkspaceAgentMemberId,
+  recordRecentWorkspaceAgentMember,
+} from './workspace-agent-recency'

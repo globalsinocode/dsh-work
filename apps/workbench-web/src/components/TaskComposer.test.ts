@@ -2,7 +2,10 @@ import ElementPlus from 'element-plus'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
-import { TaskComposer } from '@dsh-work/workbench-components'
+import {
+  recordRecentWorkspaceAgentMember,
+  TaskComposer,
+} from '@dsh-work/workbench-components'
 
 function mountComposer(props: Record<string, unknown> = {}) {
   return mount(TaskComposer, {
@@ -252,6 +255,71 @@ describe('TaskComposer', () => {
     await wrapper.get('[aria-label="发送消息"]').trigger('click')
 
     expect(submitPayload(wrapper).mentions).toEqual([])
+  })
+
+  it('selects the first listed agent on Tab when there is no recent workspace record', async () => {
+    const wrapper = mountComposer({
+      initialWorkspaceId: 'ws-team',
+      workspaceLocked: true,
+      mentionOptions: [
+        { id: 'wam-1', name: '订单助手' },
+        { id: 'wam-2', name: '库存助手' },
+      ],
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.trigger('keydown', { key: 'Tab' })
+    await input.trigger('keyup', { key: 'Tab' })
+    expect(input.element.value).toBe('@订单助手 ')
+  })
+
+  it('selects the recent workspace agent on Tab and options by Tab+digit (TW-10)', async () => {
+    const mentionOptions = [
+      { id: 'wam-1', name: '订单助手' },
+      { id: 'wam-2', name: '库存助手' },
+    ]
+    recordRecentWorkspaceAgentMember('ws-team', 'wam-2')
+
+    const wrapper = mountComposer({
+      initialWorkspaceId: 'ws-team',
+      workspaceLocked: true,
+      mentionOptions,
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+
+    await input.trigger('keydown', { key: 'Tab' })
+    await input.trigger('keyup', { key: 'Tab' })
+    expect(input.element.value).toBe('@库存助手 ')
+
+    await input.setValue('')
+    await input.trigger('keydown', { key: 'Tab' })
+    await input.trigger('keydown', { key: '2' })
+    await input.trigger('keyup', { key: 'Tab' })
+    expect(input.element.value).toBe('@库存助手 ')
+  })
+
+  it('records the first @Agent mention as recent for the workspace on submit', async () => {
+    const wrapper = mountComposer({
+      initialWorkspaceId: 'ws-team',
+      initialPrompt: '@订单助手 汇总',
+      mentionOptions: [
+        { id: 'wam-1', name: '订单助手' },
+        { id: 'wam-2', name: '库存助手' },
+      ],
+    })
+    await wrapper.get('[aria-label="发送消息"]').trigger('click')
+    expect(submitPayload(wrapper).mentions).toEqual(['wam-1'])
+
+    const followUp = mountComposer({
+      initialWorkspaceId: 'ws-team',
+      mentionOptions: [
+        { id: 'wam-1', name: '订单助手' },
+        { id: 'wam-2', name: '库存助手' },
+      ],
+    })
+    const input = followUp.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.trigger('keydown', { key: 'Tab' })
+    await input.trigger('keyup', { key: 'Tab' })
+    expect(input.element.value).toBe('@订单助手 ')
   })
 
   it('defaults to the personal workspace and never offers an unassigned conversation', () => {
