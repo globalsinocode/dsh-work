@@ -360,6 +360,29 @@ function download() {
   text-align: left;
 }
 
+.artifact-preview__markdown :deep(blockquote) {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #c5d4e8;
+  border-radius: 0 6px 6px 0;
+  color: #5c6570;
+  background: #f5f8fc;
+}
+
+.artifact-preview__markdown :deep(blockquote p) {
+  margin: 0;
+}
+
+.artifact-preview__markdown :deep(blockquote p + p) {
+  margin-top: 6px;
+}
+
+.artifact-preview__markdown :deep(hr) {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--dsh-color-border);
+}
+
 .artifact-preview__csv-wrap {
   overflow: auto;
   max-height: min(62vh, 560px);

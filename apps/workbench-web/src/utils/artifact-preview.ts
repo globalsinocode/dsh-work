@@ -60,6 +60,11 @@ function parseTableRow(line: string) {
   return parts.slice(1, parts.length - (trimmed.endsWith('|') ? 1 : 0)).map(cell => cell.trim())
 }
 
+function isHorizontalRule(line: string) {
+  const trimmed = line.trim()
+  return /^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)
+}
+
 export function renderMarkdownPreview(source: string): string {
   if (!source) return ''
   const lines = source.replace(/\r\n/g, '\n').split('\n')
@@ -87,6 +92,25 @@ export function renderMarkdownPreview(source: string): string {
       const level = heading[1]?.length ?? 1
       blocks.push(`<h${level}>${renderInlineMarkdown(heading[2] ?? '')}</h${level}>`)
       lineIndex += 1
+      continue
+    }
+
+    if (isHorizontalRule(line)) {
+      blocks.push('<hr>')
+      lineIndex += 1
+      continue
+    }
+
+    if (/^>\s?/.test(line)) {
+      const quoteLines: string[] = []
+      while (lineIndex < lines.length && /^>\s?/.test(lines[lineIndex] ?? '')) {
+        quoteLines.push((lines[lineIndex] ?? '').replace(/^>\s?/, ''))
+        lineIndex += 1
+      }
+      const body = quoteLines
+        .map(quoteLine => `<p>${quoteLine ? renderInlineMarkdown(quoteLine) : ''}</p>`)
+        .join('')
+      blocks.push(`<blockquote>${body}</blockquote>`)
       continue
     }
 

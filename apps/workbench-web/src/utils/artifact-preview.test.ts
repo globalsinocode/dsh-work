@@ -28,6 +28,24 @@ describe('renderMarkdownPreview', () => {
     expect(html).not.toContain('<script')
   })
 
+  it('渲染引用块与分隔线', () => {
+    const html = renderMarkdownPreview([
+      '> 这是说明文字',
+      '',
+      '正文段落',
+      '',
+      '---',
+      '',
+      '下文',
+    ].join('\n'))
+
+    expect(html).toContain('<blockquote>')
+    expect(html).toContain('这是说明文字')
+    expect(html).toContain('<hr>')
+    expect(html).toContain('<p>正文段落</p>')
+    expect(html).toContain('<p>下文</p>')
+  })
+
   it('只保留 http(s) 与 mailto 链接，图片只留替代文字', () => {
     const html = renderMarkdownPreview([
       '[文档](https://example.com/a)',
