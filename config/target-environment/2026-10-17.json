@@ -1,0 +1,10 @@
+{
+  "capturedAt": "2026-10-17",
+  "sourceCommit": "667b00ea12db2db599f0966c7866c32238583018",
+  "release": { "version": "v2026.10.16-01", "commit": "af0faca9a86ab8fdecb937286c69199572232e3a" },
+  "node": "26.8.1",
+  "pnpm": "11.24.0",
+  "postgres": "17.11",
+  "dsh": { "version": "0.1.2-rc.1", "commit": "76fda729799fe9b3848dbe2c211d4b231032b81e", "profile": "acp-app", "compatibility": null },
+  "migrationsThrough": "0081"
+}

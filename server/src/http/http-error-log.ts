@@ -4,6 +4,7 @@ import { redactSensitiveText } from '../security/safe-observability.ts'
 
 /** Safe, bounded diagnostic projection. Never serialize the request, response or Error object. */
 export function logHttpFailure(input: {
+  requestId: string
   traceId: string
   method: string
   /** Registered route template; raw URLs/parameters may themselves contain credentials. */
@@ -20,7 +21,10 @@ export function logHttpFailure(input: {
       : input.error instanceof Error ? input.error.message
         : input.error === undefined ? input.safeMessage : '未知服务端错误'
     console.error(JSON.stringify({
-      event: 'http.request.failed', traceId: input.traceId,
+      event: 'http.request.failed',
+      timestamp: new Date().toISOString(),
+      requestId: input.requestId,
+      traceId: input.traceId,
       method: input.method.slice(0, 24), path: input.path.slice(0, 512),
       status: input.status, code: input.code,
       message: diagnosticMessage(typeof original === 'string' ? original : input.safeMessage),

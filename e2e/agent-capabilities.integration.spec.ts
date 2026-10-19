@@ -32,8 +32,25 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await choice.press('Enter')
   await create.getByRole('button', { name: '下一步' }).click()
   await expect(create).toContainText('MCP：1 个选定')
+  const agentCreatePosts: string[] = []
+  page.on('request', request => {
+    if (request.method() !== 'POST') return
+    if (new URL(request.url()).pathname !== '/api/admin/v1/agents') return
+    agentCreatePosts.push(request.postData() ?? '')
+  })
   await create.getByRole('button', { name: '完成创建' }).click()
   await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' })).toBeVisible()
+  expect(agentCreatePosts).toHaveLength(1)
+  const createdDraft = JSON.parse(agentCreatePosts[0] ?? '') as { id?: string }
+  expect(createdDraft.id).toBeTruthy()
+  const versionCount = async (agentId: string) => {
+    const listed = await data<Array<{ agentId: string }>>(await page.request.get('/api/admin/v1/agent-versions'))
+    return listed.filter(item => item.agentId === agentId).length
+  }
+  const versionsBeforeConflict = await versionCount(createdDraft.id!)
+  const conflict = await page.request.post('/api/admin/v1/agents', { data: createdDraft })
+  expect(conflict.status()).toBe(409)
+  expect(await versionCount(createdDraft.id!)).toBe(versionsBeforeConflict)
 
   const agents = await data<Array<{ id: string; name: string }>>(await page.request.get('/api/admin/v1/agents'))
   const agentId = agents.find(item => item.name === name)?.id

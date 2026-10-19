@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 
 import { logHttpFailure } from './http-error-log.ts'
 
@@ -98,6 +98,8 @@ export class Router {
   }
 
   async handle(request: IncomingMessage, response: ServerResponse) {
+    const requestId = resolveRequestId(request)
+    response.setHeader('X-Request-Id', requestId)
     if (request.method === 'OPTIONS') {
       response.writeHead(204, { Allow: 'GET, POST, PATCH, DELETE, OPTIONS' })
       response.end()
@@ -116,7 +118,7 @@ export class Router {
         suggestion: '请刷新页面；若问题持续，请确认前后端版本一致。',
         traceId: `trace-http-${randomUUID()}`,
       }
-      logHttpFailure({ traceId: error.traceId, method, path: '[unmatched]', status: 404,
+      logHttpFailure({ requestId, traceId: error.traceId, method, path: '[unmatched]', status: 404,
         code: error.code, safeMessage: '未匹配到路由', responseStarted: false })
       writeJson(response, 404, { error })
       return
@@ -135,12 +137,12 @@ export class Router {
       const result = await route.handler(request, { params, url, identity }, response)
       if (response.headersSent || response.writableEnded) return
       if (isHttpResult(result)) {
-        if (result.status >= 400 && result.status <= 599) logErrorResult(result, method, route.path)
+        if (result.status >= 400 && result.status <= 599) logErrorResult(result, method, route.path, requestId)
         writeJson(response, result.status, result.body)
       } else writeJson(response, 200, result)
     } catch (error) {
       const failure = classifyHttpError(error, url.pathname)
-      logHttpFailure({ traceId: failure.error.traceId, method, path: route.path,
+      logHttpFailure({ requestId, traceId: failure.error.traceId, method, path: route.path,
         status: failure.status, code: failure.error.code, error,
         safeMessage: failure.error.message, responseStarted: response.headersSent || response.writableEnded })
       if (response.headersSent || response.writableEnded) {
@@ -368,7 +370,16 @@ export function routePermissionDenied(message: string) {
 /** Explicit httpResult errors also get a diagnostic, without logging the surrounding payload.
  * Existing response bodies are not changed; absent trace IDs are server-side correlations only.
  */
-function logErrorResult(result: HttpResult, method: string, path: string) {
+const requestIdPattern = /^[a-f0-9]{32}$/
+
+/** Accept only a 16-byte lowercase hex id. Anything else is replaced, never normalized. */
+function resolveRequestId(request: IncomingMessage): string {
+  const header = request.headers['x-request-id']
+  if (typeof header === 'string' && requestIdPattern.test(header)) return header
+  return randomBytes(16).toString('hex')
+}
+
+function logErrorResult(result: HttpResult, method: string, path: string, requestId: string) {
   const body = result.body
   const detail = body && typeof body === 'object' && 'error' in body
     && body.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : {}
@@ -377,6 +388,6 @@ function logErrorResult(result: HttpResult, method: string, path: string) {
   const code = typeof detail.code === 'string' && /^[a-z0-9_]{1,80}$/i.test(detail.code)
     ? detail.code : 'http_error_response'
   const message = typeof detail.message === 'string' ? detail.message : '接口返回错误状态'
-  logHttpFailure({ traceId, method, path, status: result.status, code,
+  logHttpFailure({ requestId, traceId, method, path, status: result.status, code,
     error: new Error(message), safeMessage: '接口返回错误状态', responseStarted: false })
 }

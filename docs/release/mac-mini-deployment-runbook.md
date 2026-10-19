@@ -706,3 +706,16 @@ bash current/scripts/deploy/set-macmini-endpoints.sh rollback \
 地址回滚不恢复 DNS、AI Hub 回调或证书文件，需分别核对。域名不变仅改变其 DNS IP 通常无需重签；新增直接访问的 IP/域名必须已在 SAN 中。所有副本续期后分别生效。
 
 旧自签 CA 若曾将私钥放在服务器，应换成离线 CA 签发方案并在客户端完成信任切换；不要沿用服务器持有根私钥的模式。异机备份目录仍为所有发布的前置条件。
+
+## 14. 504 与跨层请求关联
+
+Nginx 访问日志和后端 `http.request.failed` 使用同一个 `requestId`。访问日志里的 `request_id` 由 Nginx 生成，并以 `X-Request-Id` 覆盖客户端传入的值后转发给后端；后端只接受 32 位小写十六进制，并把它写进错误日志的 `requestId`。`traceId` 仍是产品错误信封里的 `trace-http-UUID`，不与 `requestId` 合并。对照时用同一次请求的 `requestId` 把 Nginx JSON 访问日志和后端错误日志对齐。
+
+判断 504 落在哪一层：
+
+1. `upstream_connect_time` 为空时，Nginx 会写成 `"-"`，表示这次请求没有连上上游。大约为 5 秒时，表示连接超时。两种情况都按宿主机反向代理不可达处理。
+2. 连接时间已经有值，但响应时间很长：按应用或依赖变慢处理，而不是连接没有建立。
+
+`proxy_connect_timeout 5s` 只是失败快速暴露的缓解，不是根因修复，也不是可用性修复。若 504 仍然持续，另开一份计划，把后端放到与 Nginx 相同的容器网络。不要把这次超时调大当成恢复手段。
+
+回滚这一项时，只恢复 `deploy/nginx/default.conf.template`、`deploy/nginx/proxy_params` 和候选 Release。不要修改历史 Release 目录。

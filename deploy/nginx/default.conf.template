@@ -3,6 +3,10 @@ map $http_upgrade $connection_upgrade {
   '' close;
 }
 
+# Query strings stay out of this log: $uri is the path only. $request_id is nginx's
+# own id, forwarded as X-Request-Id so the app error log can be correlated with it.
+log_format dsh_work_json escape=json '{"time":"$time_iso8601","request_id":"$request_id","method":"$request_method","uri":"$uri","status":$status,"request_time":$request_time,"upstream_connect_time":"$upstream_connect_time","upstream_header_time":"$upstream_header_time","upstream_response_time":"$upstream_response_time","upstream_addr":"$upstream_addr"}';
+
 # 上游解析参数化（站点取值，不进产品默认行为）：
 # Docker Desktop 的 host.docker.internal 同时返回 A(192.168.65.254) 与 AAAA，
 # 而容器内该 IPv6 不可达；nginx 在加载配置时会把解析到的每个地址各建成一个 upstream
@@ -22,6 +26,7 @@ server {
   listen 8443 ssl default_server;
   listen 8444 ssl default_server;
   server_name _;
+  access_log /var/log/nginx/access.log dsh_work_json;
 
   ssl_certificate /etc/dsh-work/tls/server.crt;
   ssl_certificate_key /etc/dsh-work/tls/server.key;
@@ -32,6 +37,7 @@ server {
 server {
   listen 8443 ssl;
   server_name ${DSH_WORK_WORKBENCH_SERVER_NAMES};
+  access_log /var/log/nginx/access.log dsh_work_json;
 
   ssl_certificate /etc/dsh-work/tls/server.crt;
   ssl_certificate_key /etc/dsh-work/tls/server.key;
@@ -82,6 +88,7 @@ server {
 server {
   listen 8444 ssl;
   server_name ${DSH_WORK_ADMIN_SERVER_NAMES};
+  access_log /var/log/nginx/access.log dsh_work_json;
 
   ssl_certificate /etc/dsh-work/tls/server.crt;
   ssl_certificate_key /etc/dsh-work/tls/server.key;

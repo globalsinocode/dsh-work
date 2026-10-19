@@ -1,6 +1,7 @@
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
-import { envelope, httpResult, readJsonBody, requireRequestIdentity, routeValidationFailed, type Router } from '../router.ts'
-import type { CreateAgentDraftInput, PublishStatus, UpdateAgentDraftInput } from '../../domain/types.ts'
+import { parseCreateAgentDraftInput, parseUpdateAgentDraftInput } from '../../modules/agent/agent-draft-input.ts'
+import { envelope, httpResult, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+import type { PublishStatus } from '../../domain/types.ts'
 
 const basePath = '/api/admin/v1'
 
@@ -11,20 +12,18 @@ export function registerAgentRoutes(router: Router, service: PostgresAgentServic
   router.get(`${basePath}/agents/principal-role-options`, async () =>
     envelope('admin', await service.listPrincipalRoleOptions(), 'postgres'))
   router.post(`${basePath}/agents`, async (request, context) => {
-    const input = await readJsonBody<Omit<CreateAgentDraftInput, 'actor'>>(request)
+    const input = parseCreateAgentDraftInput(await readJsonBody<unknown>(request))
     return httpResult(201, envelope('admin', await service.createAgent({
       ...input,
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres'))
   })
   router.patch(`${basePath}/agents/draft`, async (request, context) => {
-    const { expectedRevision, ...input } = await readJsonBody<Omit<UpdateAgentDraftInput, 'actor'>>(request)
-    if (typeof expectedRevision !== 'string' || !expectedRevision.trim()) {
-      throw routeValidationFailed('缺少草稿修订，请刷新 Agent 后重新编辑')
-    }
+    const input = parseUpdateAgentDraftInput(await readJsonBody<unknown>(request))
+    const { expectedRevision, ...draft } = input
     // F-05：编辑器不再写发布范围；可见角色与平台数据范围只能在发布工作台修改。
     return envelope('admin', await service.updateAgent({
-      ...input,
+      ...draft,
       actor: requireRequestIdentity(context, 'admin').userId,
     }, expectedRevision, { preservePublicationScope: true }), 'postgres')
   })

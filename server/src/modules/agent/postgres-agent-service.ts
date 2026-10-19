@@ -376,48 +376,53 @@ export class PostgresAgentService {
     const version = '0.1.0'
     const spec = agentSpecFromConfiguration(configuration, version)
 
-    await this.database.begin(async transaction => {
-      await transaction`
-        insert into agents (
-          id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
-          status, draft_version_id
-        ) values (
-          ${configuration.id}, ${tenantId}, ${configuration.name}, ${configuration.description},
-          ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null
-        )
-      `
-      await this.assertVisibleRoles(configuration.roleIds)
-      await transaction`
-        insert into agent_versions (
-          id, tenant_id, agent_id, version, name, description, welcome_message,
-          example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
-          max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
-        ) values (
-          ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
-          ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
-          ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
-          ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
-          ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-          ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
-          ${transaction.json(asJson(configuration.delegationPolicy))},
-          ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
-        )
-      `
-      // Visibility is not execution authorization. Empty grants fail closed;
-      // only explicit creation grants or a later Principal update can enable it.
-      for (const roleId of executionRoleIds) await transaction`
-        insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
-        values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${roleId})
-      `
-      for (const scope of executionDataScopes) await transaction`
-        insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
-        values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${scope})
-      `
-      await transaction`
-        update agents set draft_version_id = ${versionId}, updated_at = now()
-         where tenant_id = ${tenantId} and id = ${configuration.id}
-      `
-    })
+    try {
+      await this.database.begin(async transaction => {
+        await transaction`
+          insert into agents (
+            id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
+            status, draft_version_id
+          ) values (
+            ${configuration.id}, ${tenantId}, ${configuration.name}, ${configuration.description},
+            ${configuration.welcomeMessage}, ${actor.id}, ${actor.id}, 'draft', null
+          )
+        `
+        await this.assertVisibleRoles(configuration.roleIds)
+        await transaction`
+          insert into agent_versions (
+            id, tenant_id, agent_id, version, name, description, welcome_message,
+            example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes,
+            max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, delegation_policy, agent_spec, status, created_by, change_summary
+          ) values (
+            ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
+            ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
+            ${configuration.systemPrompt}, ${transaction.json(configuration.roleIds)},
+            ${transaction.json(configuration.dataScopes)}, ${configuration.maxOutputBytes},
+            ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
+            ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
+            ${transaction.json(asJson(configuration.delegationPolicy))},
+            ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
+          )
+        `
+        // Visibility is not execution authorization. Empty grants fail closed;
+        // only explicit creation grants or a later Principal update can enable it.
+        for (const roleId of executionRoleIds) await transaction`
+          insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+          values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${roleId})
+        `
+        for (const scope of executionDataScopes) await transaction`
+          insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+          values (${tenantId}, ${`principal-agent-${configuration.id}`}, ${scope})
+        `
+        await transaction`
+          update agents set draft_version_id = ${versionId}, updated_at = now()
+           where tenant_id = ${tenantId} and id = ${configuration.id}
+        `
+      })
+    } catch (error) {
+      if (isAgentIdConflict(error)) throw stateConflict('Agent 标识已存在，请刷新列表后重新创建')
+      throw error
+    }
     await this.audit(actor.id, 'agent.create', configuration.id, 'success', `创建 Agent ${version}`)
     return this.requireAgentResult(configuration.id, versionId)
   }
@@ -1341,6 +1346,11 @@ function assertAgentMutationRevision(row: AgentRow, expectedRevision?: string) {
 function nextVersion(current: string) {
   const [major = 0, minor = 0] = current.split('.').map(Number)
   return `${major}.${minor + 1}.0`
+}
+
+function isAgentIdConflict(error: unknown): boolean {
+  const candidate = error as { code?: unknown; constraint_name?: unknown }
+  return candidate?.code === '23505' && candidate.constraint_name === 'agents_pkey'
 }
 
 function unique(values: string[]) {

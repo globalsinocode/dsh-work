@@ -298,6 +298,9 @@
           "201": {
             "$ref": "#/components/responses/Ok"
           },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
           "422": {
             "$ref": "#/components/responses/Error"
           }
@@ -321,6 +324,12 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
           }
         }
       }
@@ -2822,8 +2831,6 @@
         "required": [
           "name",
           "description",
-          "owner",
-          "department",
           "visibility",
           "welcomeMessage",
           "examplePrompts",
@@ -2835,7 +2842,6 @@
           "timeoutSeconds",
           "skills",
           "tools",
-          "delegationPolicy",
           "changeSummary"
         ],
         "properties": {
