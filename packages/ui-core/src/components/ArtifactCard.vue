@@ -20,14 +20,25 @@ const emit = defineEmits<{
   preview: []
 }>()
 
-const typeLabel = computed(() => props.artifact.type.toUpperCase())
+/** 图标角标：短缩写，避免 MARKDOWN 等长文案溢出 48px 图标区。 */
+const ARTIFACT_TYPE_ABBREV: Record<ArtifactCardItem['type'], string> = {
+  markdown: 'MD',
+  xlsx: 'XLS',
+  docx: 'DOC',
+  pdf: 'PDF',
+  csv: 'CSV',
+  text: 'TXT',
+  html: 'HTML',
+}
+
+const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
 </script>
 
 <template>
   <article class="artifact-card">
     <div class="artifact-card__icon" :class="`artifact-card__icon--${artifact.type}`">
-      <el-icon><Document /></el-icon>
-      <small>{{ typeLabel }}</small>
+      <el-icon class="artifact-card__icon-graphic" aria-hidden="true"><Document /></el-icon>
+      <span class="artifact-card__type">{{ typeLabel }}</span>
     </div>
     <div class="artifact-card__body">
       <div class="artifact-card__title-row">
@@ -56,9 +67,9 @@ const typeLabel = computed(() => props.artifact.type.toUpperCase())
 <style scoped>
 .artifact-card {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 13px;
+  gap: 12px;
   padding: 14px;
   border: 1px solid var(--dsh-color-border);
   border-radius: 10px;
@@ -72,23 +83,39 @@ const typeLabel = computed(() => props.artifact.type.toUpperCase())
 }
 
 .artifact-card__icon {
-  position: relative;
-  display: grid;
-  width: 48px;
-  height: 50px;
-  place-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 52px;
+  height: 52px;
+  padding: 7px 4px 6px;
   border-radius: 9px;
   color: #315ab7;
   background: #edf3ff;
-  font-size: var(--dsh-font-size-header);
 }
 
-.artifact-card__icon small {
-  position: absolute;
-  right: 4px;
-  bottom: 3px;
-  font-size: var(--dsh-font-size-micro);
+.artifact-card__icon-graphic {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.artifact-card__type {
+  display: block;
+  min-width: 26px;
+  max-width: 100%;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: inherit;
+  background: rgb(255 255 255 / 58%);
+  font-size: 9px;
   font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: 0.03em;
+  text-align: center;
 }
 
 .artifact-card__icon--xlsx {
@@ -164,12 +191,17 @@ const typeLabel = computed(() => props.artifact.type.toUpperCase())
 
 @media (max-width: 640px) {
   .artifact-card {
-    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-columns: 48px minmax(0, 1fr);
   }
 
   .artifact-card__icon {
-    width: 42px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
+    padding: 6px 3px 5px;
+  }
+
+  .artifact-card__icon-graphic {
+    font-size: 18px;
   }
 
   .artifact-card__actions {

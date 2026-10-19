@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -15,6 +15,7 @@ import {
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { useTaskStore } from '@/stores/tasks'
 import { workbenchApi } from '@/api/client'
 import type {
   Artifact,
@@ -59,6 +60,10 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
+const taskStore = useTaskStore()
+/** 团队空间会话活动 SSE 的 since 水位线（与 ConversationView / SessionHistory 同口径）。 */
+const workspaceSyncedAt = ref(new Date().toISOString())
+let artifactLiveRefreshTimer: ReturnType<typeof setTimeout> | undefined
 const starterRef = ref<{
   useWorkspaceFile: (file: WorkspaceFile) => void
 }>()
@@ -833,6 +838,49 @@ function onWorkspaceStatusChanged() {
 
 onMounted(() => {
   void contentStore.refresh()
+})
+
+async function refreshWorkspaceArtifactsLive() {
+  try {
+    await contentStore.refreshArtifacts()
+  } catch {
+    // 后台刷新失败保留已加载列表，不打断空间浏览（与 SessionHistory 一致）。
+  }
+}
+
+/**
+ * TW-10：团队空间内 Run 完成会推高会话活动标记；成果 Tab 与对话页共用
+ * 空间级 SSE，防抖后静默重拉成果列表，避免必须整页刷新。
+ */
+watch(
+  () => taskStore.sessionActivity,
+  () => {
+    if (!isTeam.value) return
+    if (artifactLiveRefreshTimer) clearTimeout(artifactLiveRefreshTimer)
+    artifactLiveRefreshTimer = setTimeout(() => void refreshWorkspaceArtifactsLive(), 300)
+  },
+)
+
+watch(
+  () => (workspace.value?.type === 'team' ? workspaceId.value : ''),
+  (id, previous) => {
+    if (previous) taskStore.unsubscribeWorkspaceSessions(previous)
+    if (id) {
+      workspaceSyncedAt.value = new Date().toISOString()
+      taskStore.subscribeWorkspaceSessions(id, workspaceSyncedAt.value)
+    }
+  },
+  { immediate: true },
+)
+
+watch(activeTab, (tab, previous) => {
+  if (tab === 'artifacts' && tab !== previous) void refreshWorkspaceArtifactsLive()
+})
+
+onBeforeUnmount(() => {
+  if (artifactLiveRefreshTimer) clearTimeout(artifactLiveRefreshTimer)
+  const id = workspace.value?.type === 'team' ? workspaceId.value : ''
+  if (id) taskStore.unsubscribeWorkspaceSessions(id)
 })
 
 /**

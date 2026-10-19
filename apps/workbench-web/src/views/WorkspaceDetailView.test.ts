@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { useTaskStore } from '@/stores/tasks'
 import type {
   Artifact,
   Workspace,
@@ -170,6 +171,20 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     vi.spyOn(workbenchApi, 'listWorkspaceActivity').mockResolvedValue(activityPage([]))
     vi.spyOn(workbenchApi, 'getWorkspaceNotifications').mockResolvedValue(notificationView())
     vi.spyOn(workbenchApi, 'listWorkspaceUsage').mockResolvedValue(usageFixture())
+  })
+
+  it('refreshes workspace artifacts when team session activity updates', async () => {
+    const { contentStore } = await mountView(workspace())
+    const taskStore = useTaskStore()
+    const refreshArtifacts = vi.spyOn(contentStore, 'refreshArtifacts').mockResolvedValue(undefined)
+    refreshArtifacts.mockClear()
+
+    taskStore.sessionActivity = {
+      ...taskStore.sessionActivity,
+      'session-001': 'updated:2026-10-19T06:42:00.000Z:1',
+    }
+
+    await vi.waitFor(() => expect(refreshArtifacts).toHaveBeenCalled(), { timeout: 800 })
   })
 
   it('renders the Agent segment for a team space and loads members via the T4 API', async () => {
