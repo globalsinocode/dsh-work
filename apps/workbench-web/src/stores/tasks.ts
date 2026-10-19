@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
 import type { RunStatus, TaskRun } from '../types/domain'
+import { isNotFoundError } from '../utils/request-error'
 
 interface RuntimeEvent {
   event_id: string
@@ -96,7 +97,10 @@ export const useTaskStore = defineStore('tasks', () => {
       if (!isTerminal(task.status)) subscribe(task.id)
       return task
     } catch (cause) {
-      if (current === generation) {
+      // 只有「Run 确实不存在或无权访问」才逐出缓存。5xx（含网关 504）、超时与
+      // 网络错误都属于暂时性失败：逐出会把仍在的对话渲染成「未找到对话」，而且
+      // 没有任何自动恢复路径。保留条目，让页面继续展示已有快照等下一次刷新。
+      if (current === generation && isNotFoundError(cause)) {
         tasks.value = tasks.value.filter(item => item.id !== id)
         closeStream(id)
       }

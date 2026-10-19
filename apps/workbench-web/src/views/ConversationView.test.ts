@@ -151,7 +151,11 @@ function sessionThread(overrides: Partial<SessionThread> = {}): SessionThread {
   }
 }
 
-async function mountView(options: { item?: TaskRun | null; workspace?: Workspace } = {}) {
+async function mountView(options: {
+  item?: TaskRun | null
+  workspace?: Workspace
+  getRun?: () => Promise<TaskRun>
+} = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   api.getSession.mockResolvedValue({
@@ -167,7 +171,8 @@ async function mountView(options: { item?: TaskRun | null; workspace?: Workspace
   const item = options.item === undefined ? task() : options.item
   taskStore.tasks.splice(0, taskStore.tasks.length, ...(item ? [item] : []))
   // B5：详情刷新失败会把条目从缓存移除；Run 存在时详情请求应返回它本身。
-  if (item) api.getRun.mockResolvedValue(item)
+  if (options.getRun) api.getRun.mockImplementation(options.getRun)
+  else if (item) api.getRun.mockResolvedValue(item)
   vi.spyOn(taskStore, 'load').mockResolvedValue(undefined)
   const contentStore = useContentStore(pinia)
   contentStore.workspaces.splice(0, contentStore.workspaces.length, options.workspace ?? workspace())
@@ -1036,5 +1041,85 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     await mountView({ item: null })
     expect(NoopSessionStream.instances).toHaveLength(0)
     vi.unstubAllGlobals()
+  })
+})
+
+describe('ConversationView 成果预拉取不得自激成请求环（v2026.10.19-02 回归）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('EventSource', FakeEventSource)
+    route.name = undefined
+    route.params = { id: 'run-001' }
+    api.listWorkspaceAgentMembers.mockResolvedValue([])
+    api.getSessionThread.mockRejectedValue(new Error('not found'))
+  })
+
+  /** 个人会话里「已成功、无成果文件」的一轮：正是把预拉取打成死循环的输入。 */
+  function personalFinishedRun(): TaskRun {
+    return task({
+      status: 'succeeded',
+      workspaceId: 'ws-personal',
+      workspaceName: '我的空间',
+      workspaceType: 'personal',
+      currentUserRole: null,
+      messages: [
+        { id: 'message-user-run-001', role: 'user', content: '你好', createdAt: '2026-10-19 15:41', runId: 'run-001' },
+        { id: 'message-assistant-run-001', role: 'assistant', content: '你好！有什么可以帮你？', createdAt: '2026-10-19 15:41', runId: 'run-001' },
+      ],
+      result: result({ execution: 'succeeded', outcome: 'achieved', summary: '已完成', error: null }),
+    })
+  }
+
+  it('does not refetch a finished run without artifacts in a loop', async () => {
+    const item = personalFinishedRun()
+    const { wrapper } = await mountView({
+      item,
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+    })
+    const settled = api.getRun.mock.calls.length
+    // 反复 flush 等价于页面上任意来源的 store 变更：不得再触发新的详情请求。
+    for (let round = 0; round < 30; round += 1) await flushPromises()
+
+    expect(api.getRun.mock.calls.length).toBe(settled)
+    // 挂载期只允许「解析目标」与「按需预拉取」两次，且预拉取本身要幂等。
+    expect(settled).toBeLessThanOrEqual(2)
+    expect(wrapper.text()).not.toContain('未找到对话')
+  })
+
+  it('keeps the cached run when the detail refresh fails with a gateway timeout', async () => {
+    const { wrapper, taskStore } = await mountView({
+      item: personalFinishedRun(),
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+      getRun: () => Promise.reject(Object.assign(new Error('员工工作台接口请求失败（504）'), { status: 504, code: 'gateway_timeout' })),
+    })
+
+    // 504 是暂时性失败：条目必须留在缓存里，页面不得谎报「未找到对话」。
+    expect(taskStore.getTask('run-001')).toBeTruthy()
+    expect(wrapper.text()).not.toContain('未找到对话')
+    expect(wrapper.text()).toContain('你好')
+  })
+
+  it('shows a retryable failure instead of “未找到对话” when the detail is temporarily unavailable', async () => {
+    const { wrapper } = await mountView({
+      item: null,
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+      getRun: () => Promise.reject(Object.assign(new Error('员工工作台接口请求失败（504）'), { status: 504, code: 'gateway_timeout' })),
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('对话加载失败')
+    expect(text).not.toContain('未找到对话')
+    expect(wrapper.findAll('button').some(button => button.text().includes('重新加载'))).toBe(true)
+  })
+
+  it('still reports “未找到对话” when the run really does not exist', async () => {
+    const { wrapper } = await mountView({
+      item: null,
+      workspace: workspace({ id: 'ws-personal', type: 'personal' }),
+      getRun: () => Promise.reject(Object.assign(new Error('Run 不存在或不可访问'), { status: 404, code: 'run_not_found' })),
+    })
+
+    expect(wrapper.text()).toContain('未找到对话')
+    expect(wrapper.text()).not.toContain('对话加载失败')
   })
 })

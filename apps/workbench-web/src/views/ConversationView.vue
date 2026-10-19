@@ -26,6 +26,7 @@ import { TaskComposer } from '@dsh-work/workbench-components'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
+import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
 
 const route = useRoute()
@@ -255,6 +256,27 @@ function messageArtifacts(message: ChatMessage): Artifact[] {
 }
 
 let prefetchRunArtifactsEpoch = 0
+/**
+ * 已确认无需再拉取详情的 Run。预拉取本身会写 store，若重复触发就会形成
+ * 「监控 → 拉取 → store 变更 → 监控」的自我驱动请求环，因此必须幂等。
+ */
+const prefetchedRunArtifacts = new Set<string>()
+
+function isFinishedStatus(status: TaskRun['status']) {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled'
+}
+
+/** 缓存里已有结论（有成果，或终态且无成果）时不必再拉。返回 true 表示可跳过。 */
+function artifactPrefetchSettled(runId: string) {
+  if (prefetchedRunArtifacts.has(runId)) return true
+  const cached = taskStore.getTask(runId)
+  if (!cached) return false
+  if (cached.result.artifacts.length || isFinishedStatus(cached.status)) {
+    prefetchedRunArtifacts.add(runId)
+    return true
+  }
+  return false
+}
 
 async function prefetchSessionRunArtifacts() {
   const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
@@ -267,9 +289,13 @@ async function prefetchSessionRunArtifacts() {
   )
   for (const runId of runIds) {
     if (epoch !== prefetchRunArtifactsEpoch) return
-    if (taskStore.getTask(runId)?.result.artifacts.length) continue
+    if (artifactPrefetchSettled(runId)) continue
     try {
-      await taskStore.loadTask(runId)
+      const loaded = await taskStore.loadTask(runId)
+      // 只有拿到结论才记账：仍在执行且暂无成果的 Run 允许后续轮次再补一次。
+      if (loaded.result.artifacts.length || isFinishedStatus(loaded.status)) {
+        prefetchedRunArtifacts.add(runId)
+      }
     } catch {
       // 无权、已删除或尚未终态的 Run 忽略，不阻塞对话渲染。
     }
@@ -575,13 +601,29 @@ async function reconcileConversationRoute() {
  * 服务端基线轮补推 session.archived。
  */
 const contentSyncedAt = ref<string>(new Date().toISOString())
+/** Run 详情暂时取不到（5xx/超时/断网）时的失败态：与「确实不存在」分开展示。 */
+const targetLoadFailed = ref(false)
 
 async function loadConversationTarget(id: string): Promise<SessionThread | null> {
   targetLoading.value = true
   contentSyncedAt.value = new Date().toISOString()
   try {
-    const run = await taskStore.refreshRun(id).catch(() => null) ?? taskStore.getTask(id) ?? null
-    if (!run) return await loadSessionMode(id)
+    let refreshError: unknown = null
+    const run = await taskStore.refreshRun(id).catch((cause: unknown) => {
+      refreshError = cause
+      return null
+    }) ?? taskStore.getTask(id) ?? null
+    if (!run) {
+      // 暂时性失败（网关 504、超时、断网、限流）不能落成「未找到对话」：那会让员工
+      // 以为对话丢了。改成可重试的失败态；其余情形仍按原语义回退到会话线程
+      // （旧链接可能本来就指向会话，也可能指向已删除的 Run）。
+      if (refreshError && isTransientRequestError(refreshError)) {
+        targetLoadFailed.value = true
+        return null
+      }
+      return await loadSessionMode(id)
+    }
+    targetLoadFailed.value = false
     // 团队 Run 目标：Run 详情只含本轮消息，补拉共享线程让对话页保留完整历史。
     await loadRunSharedThread(run)
     return null
@@ -623,6 +665,7 @@ watch(
   () => routeTargetId.value,
   async id => {
     prefetchRunArtifactsEpoch++
+    prefetchedRunArtifacts.clear()
     sessionThread.value = null
     threadMissing.value = false
     const thread = await loadConversationTarget(String(id))
@@ -632,11 +675,14 @@ watch(
   },
 )
 
+// 必须是多源写法（数组里放多个 getter），Vue 才会逐个元素比较；写成
+// 「一个 getter 返回新数组」时按对象标识比较，任何一次 store 变更——包括本回调
+// 自己触发的成果预拉取——都会被判成“变了”，从而把预拉取打成无限请求环。
 watch(
-  () => [
-    task.value?.sessionId,
-    sessionThread.value?.sessionId,
-    conversationMessages.value.map(message => `${message.id}:${message.runId ?? ''}`).join('|'),
+  [
+    () => task.value?.sessionId,
+    () => sessionThread.value?.sessionId,
+    () => conversationMessages.value.map(message => `${message.id}:${message.runId ?? ''}`).join('|'),
   ],
   () => { void prefetchSessionRunArtifacts() },
 )
@@ -838,13 +884,23 @@ watch(
     <el-result
       v-else-if="!task"
       class="conversation-state"
-      icon="warning"
-      title="未找到对话"
-      sub-title="该对话可能已从历史中移除，或当前账号无权访问。文件和成果按保留策略独立管理。"
+      :icon="targetLoadFailed ? 'error' : 'warning'"
+      :title="targetLoadFailed ? '对话加载失败' : '未找到对话'"
+      :sub-title="targetLoadFailed
+        ? '工作台暂时没能取回这个对话，通常是网络或服务繁忙。稍后点「重新加载」即可，对话内容不会丢失。'
+        : '该对话可能已从历史中移除，或当前账号无权访问。文件和成果按保留策略独立管理。'"
     >
       <template #extra>
         <el-button
+          v-if="targetLoadFailed"
           type="primary"
+          :loading="targetLoading"
+          @click="initializeConversation"
+        >
+          重新加载
+        </el-button>
+        <el-button
+          :type="targetLoadFailed ? 'default' : 'primary'"
           @click="isEmbeddedInWorkspace ? router.push(`/workspaces/${embeddedWorkspaceId}`) : router.push('/workbench')"
         >
           {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
