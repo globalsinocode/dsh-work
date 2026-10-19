@@ -163,6 +163,7 @@ describe('WorkspaceMemberDialog', () => {
     memberSelect.vm.$emit('change', 'admin')
     await flushPromises()
     expect(changeRole).toHaveBeenCalledWith('ws-team', 'u-member', { role: 'admin' })
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
   })
 
   it('restricts an admin to member/viewer roles and disables self and other admins', async () => {

@@ -44,7 +44,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:open': [value: boolean]
   refresh: []
-  'role-changed': []
 }>()
 
 const roleLabels: Record<TeamMemberRole, string> = {
@@ -218,7 +217,7 @@ async function changeMemberRole(member: WorkspaceMember, role: TeamMemberRole) {
     await workbenchApi.updateMemberRole(workspaceId, member.userId, { role })
     if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     ElMessage.success(`已将“${member.displayName}”调整为${roleLabels[role]}`)
-    emit('role-changed')
+    emit('refresh')
   } catch (error) {
     if (!generationAlive(gen) || props.workspaceId !== workspaceId) return
     notifyActionFailure('调整角色', `成员“${member.displayName}”`, error, '确认你仍拥有该角色的任免权限后重试。')
