@@ -7,14 +7,40 @@ import { IdentityAccessError } from '../modules/identity/auth-service.ts'
 import { skillConflict } from '../modules/skill/skill-errors.ts'
 import { httpResult, readJsonBody, Router } from './router.ts'
 
-interface LogRecord { event: string; traceId: string; method: string; path: string; status: number; code: string; message: string; responseStarted: boolean }
+interface LogRecord {
+  event: string
+  timestamp: string
+  requestId: string
+  traceId: string
+  method: string
+  path: string
+  status: number
+  code: string
+  message: string
+  responseStarted: boolean
+}
+const failureLogKeys = ['event', 'timestamp', 'requestId', 'traceId', 'method', 'path', 'status', 'code', 'message', 'responseStarted']
 function capture(t: TestContext) {
   const lines: unknown[][] = []
   t.mock.method(console, 'error', (...args: unknown[]) => { lines.push(args) })
   return () => lines.map(args => {
     assert.equal(args.length, 1, 'log must be a single serialized record, not an Error object')
     assert.equal(typeof args[0], 'string')
-    return { raw: args[0] as string, record: JSON.parse(args[0] as string) as LogRecord }
+    const record = JSON.parse(args[0] as string) as LogRecord
+    assert.equal(record.event, 'http.request.failed')
+    assert.match(record.timestamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    assert.match(record.requestId, /^[a-f0-9]{32}$/)
+    assert.match(record.traceId, /^trace-http-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    assert.notEqual(record.requestId, record.traceId)
+    assert.equal(record.traceId.includes(record.requestId), false)
+    assert.equal(typeof record.method, 'string')
+    assert.equal(typeof record.path, 'string')
+    assert.equal(typeof record.status, 'number')
+    assert.equal(typeof record.code, 'string')
+    assert.equal(typeof record.message, 'string')
+    assert.equal(typeof record.responseStarted, 'boolean')
+    assert.deepEqual(Object.keys(record).sort(), [...failureLogKeys].sort())
+    return { raw: args[0] as string, record }
   })
 }
 async function withServer(router: Router, run: (url: string) => Promise<void>) {
@@ -44,8 +70,10 @@ test('P2-3 RED: thrown 5xx logs correlation and original sanitized message, not 
     assert.equal(record.method, 'POST'); assert.equal(record.status, 500)
     assert.equal(record.path, '/api/admin/v1/skills/:skillId/test')
     assert.equal(record.code, 'operation_failed'); assert.match(record.message, /synthetic service broke/)
+    assert.match(response.headers.get('x-request-id') ?? '', /^[a-f0-9]{32}$/)
+    assert.equal(record.requestId, response.headers.get('x-request-id'))
     assert.doesNotMatch(raw, /message-secret|path-secret|query-secret|header-secret|cookie-secret|REQUEST_BODY_SECRET|INTERNAL_STACK_SECRET|CAUSE_SECRET|error-body-secret|error-headers-secret/)
-    assert.deepEqual(Object.keys(record).sort(), ['event', 'traceId', 'method', 'path', 'status', 'code', 'message', 'responseStarted'].sort())
+    assert.deepEqual(Object.keys(record).sort(), [...failureLogKeys].sort())
   })
 })
 for (const [error, status] of [[skillConflict('已有草稿未完成'), 409], [new IdentityAccessError(421, 'unknown_request_origin', '请求入口不在允许列表中'), 421]] as const) {
@@ -144,7 +172,9 @@ test('P2-3: successful responses are not error-logged; non-Error throws never se
   router.get('/ok', () => ({ data: 'ok' }))
   router.get('/object', () => { throw { message: 'ARBITRARY_SECRET', payload: 'OBJECT_BODY_SECRET' } })
   await withServer(router, async url => {
-    assert.equal((await fetch(url + '/ok')).status, 200); assert.equal(logs().length, 0)
+    const ok = await fetch(url + '/ok')
+    assert.equal(ok.status, 200); assert.match(ok.headers.get('x-request-id') ?? '', /^[a-f0-9]{32}$/)
+    assert.equal(logs().length, 0)
     const response = await fetch(url + '/object'); await response.text()
     assert.equal(logs().length, 1); assert.doesNotMatch(logs()[0]!.raw, /ARBITRARY_SECRET|OBJECT_BODY_SECRET/)
   })
@@ -154,8 +184,47 @@ test('P2-3: logging failure cannot change HTTP error classification or strand th
   t.mock.method(console, 'error', () => { throw new Error('synthetic unavailable log sink') })
   const router = new Router(); router.get('/failure', () => { throw skillConflict('synthetic conflict') })
   await withServer(router, async url => {
-    const response = await fetch(url + '/failure'), body = await response.json() as { error: { code: string } }
+    const response = await fetch(url + '/failure'), body = await response.json() as { error: { code: string; traceId: string } }
     assert.equal(response.status, 409); assert.equal(body.error.code, 'skill_state_conflict')
+    assert.match(response.headers.get('x-request-id') ?? '', /^[a-f0-9]{32}$/)
+    assert.match(body.error.traceId, /^trace-http-/)
+    assert.notEqual(response.headers.get('x-request-id'), body.error.traceId)
+  })
+})
+
+test('P2-3: valid X-Request-Id is kept; missing or invalid values become a new 16-byte hex id', async t => {
+  const logs = capture(t), router = new Router()
+  router.get('/failure', () => { throw new Error('synthetic request id failure') })
+  const valid = 'ab'.repeat(16)
+  const invalidValues = [
+    'AB'.repeat(16),
+    'a'.repeat(31),
+    'a'.repeat(33),
+    'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+    'token=REQUEST_ID_SECRET',
+    'trace-http-00000000-0000-4000-8000-000000000000',
+  ]
+  await withServer(router, async url => {
+    const accepted = await fetch(url + '/failure', { headers: { 'x-request-id': valid } })
+    assert.equal(accepted.status, 500)
+    assert.equal(accepted.headers.get('x-request-id'), valid)
+    assert.equal(logs()[0]!.record.requestId, valid)
+    const missing = await fetch(url + '/failure')
+    const missingId = missing.headers.get('x-request-id') ?? ''
+    assert.match(missingId, /^[a-f0-9]{32}$/)
+    assert.notEqual(missingId, valid)
+    assert.equal(logs()[1]!.record.requestId, missingId)
+    for (const invalid of invalidValues) {
+      const response = await fetch(url + '/failure', { headers: { 'x-request-id': invalid } })
+      const requestId = response.headers.get('x-request-id') ?? ''
+      assert.match(requestId, /^[a-f0-9]{32}$/)
+      assert.notEqual(requestId, invalid)
+      assert.notEqual(requestId, invalid.toLowerCase())
+      const log = logs().at(-1)!
+      assert.equal(log.record.requestId, requestId)
+      assert.equal(log.raw.includes(invalid), false)
+      assert.doesNotMatch(log.raw, /REQUEST_ID_SECRET/)
+    }
   })
 })
 

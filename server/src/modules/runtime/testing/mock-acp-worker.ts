@@ -127,6 +127,16 @@ lines.on('line', (line) => {
       failPrompt(pending, 'Network connection unavailable', 'network')
       return
     }
+    // 供应商 401/403 发生在 session/prompt 的模型回合。category 不能是 model，
+    // 否则 classifyRuntimeFailure 会改写成 MODEL_INVOCATION_FAILED。
+    if (text.includes('[provider-401]')) {
+      failPrompt(pending, 'Invalid token', 'provider')
+      return
+    }
+    if (text.includes('[provider-quota-403]')) {
+      failPrompt(pending, 'quota is not enough', 'provider')
+      return
+    }
     if (text.includes('[partial-hang]')) {
       send({
         jsonrpc: '2.0',

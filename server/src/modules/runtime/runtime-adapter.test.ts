@@ -1219,6 +1219,14 @@ describe('DSH ACP Runtime Adapter', () => {
     }
   })
 
+  it('provider-401 keeps the model-turn failure and one audit warning', async () => {
+    await assertProviderRejectionAudit('[provider-401]', 'Invalid token')
+  })
+
+  it('provider-quota-403 keeps the model-turn failure and one audit warning', async () => {
+    await assertProviderRejectionAudit('[provider-quota-403]', 'quota is not enough')
+  })
+
   it('marks an active execution as a retryable service shutdown failure', async () => {
     const adapter = await createAdapter(100)
     const handle = await adapter.execute(manifest('run-shutdown', 'attempt-1', '[hang] service shutdown'))
@@ -1229,6 +1237,115 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(result.errorCode, 'SERVICE_SHUTDOWN')
   })
 })
+
+let providerAuditWarnLock = Promise.resolve()
+
+async function assertProviderRejectionAudit(marker: string, providerMessage: string): Promise<void> {
+  await withProviderAuditWarnSpy(async (warnings) => {
+    const adapter = await createAdapter(500, undefined, undefined, {
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--profile', 'test'],
+        cwd: process.cwd(),
+      },
+      resolveMcpConnections: async current => current.mcp_connections?.map(snapshot => ({ snapshot, headers: {} })) ?? [],
+    })
+    const input = manifest(`run-${marker.slice(1, -1)}`, 'attempt-1', `${marker} reject the model turn`)
+    input.mcp_connections = [{
+      connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+    }]
+    input.permission_policy.network_policy = 'allowlist'
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+
+    const result = await handle.done
+    assert.equal(result.status, 'failed', result.errorMessage ?? undefined)
+    assert.equal(result.errorCode, 'RUNTIME_EXECUTION_FAILED')
+    assert.equal(result.errorMessage, providerMessage)
+    assert.notEqual(result.errorCode, 'MCP_AUTHENTICATION_REQUIRED')
+    assert.notEqual(result.errorCode, 'MCP_AUTHENTICATION_FAILED')
+    assert.notEqual(result.errorCode, 'dependency_unavailable')
+    assert.equal(events.some(event => event.event_type === 'run.started'), true)
+    assert.equal(events.some(event => event.event_type === 'assistant.completed'), false)
+    const failed = events.find(event => event.event_type === 'run.failed')
+    assert.equal(failed?.safe_metadata['error_code'], 'RUNTIME_EXECUTION_FAILED')
+    assert.equal(failed?.safe_metadata['reason'], providerMessage)
+
+    const auditWarnings = await waitForAuditWarnings(warnings)
+    assert.equal(auditWarnings.length, 1, JSON.stringify(warnings))
+    assert.match(String(auditWarnings[0]?.[1] ?? ''), /会话日志不可用/)
+    assert.equal(result.errorCode, 'RUNTIME_EXECUTION_FAILED')
+    assert.equal(result.errorMessage, providerMessage)
+    assert.equal(await findSessionLogs(join(result.attemptDirectory, 'sessions')), 0)
+
+    const observed = [
+      JSON.stringify(events),
+      JSON.stringify(auditWarnings),
+      result.errorMessage ?? '',
+      await readAttemptText(result.attemptDirectory),
+    ].join('\n')
+    assert.equal(observed.includes('synthetic-provider-token'), false)
+    assert.equal(/Authorization\s*[:=]\s*\S/.test(observed), false)
+    assert.equal(/Bearer\s+\S/.test(observed), false)
+    assert.equal(/HTTP\/1\.[01]\s+\d{3}/.test(observed), false)
+    assert.equal(result.errorMessage, providerMessage)
+  })
+}
+
+async function withProviderAuditWarnSpy<T>(body: (warnings: unknown[][]) => Promise<T>): Promise<T> {
+  const previous = providerAuditWarnLock
+  let release: () => void = () => undefined
+  providerAuditWarnLock = new Promise<void>(resolve => { release = () => resolve() })
+  await previous
+  const warnings: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args)
+    original.apply(console, args)
+  }
+  try {
+    return await body(warnings)
+  } finally {
+    console.warn = original
+    release()
+  }
+}
+
+async function waitForAuditWarnings(warnings: unknown[][]): Promise<unknown[][]> {
+  const deadline = Date.now() + 4_000
+  while (Date.now() < deadline) {
+    const matched = warnings.filter(args => args[0] === 'mcp invocation audit failed')
+    if (matched.length > 0) return matched
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  return warnings.filter(args => args[0] === 'mcp invocation audit failed')
+}
+
+async function findSessionLogs(directory: string): Promise<number> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  let count = 0
+  for (const entry of entries) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) count += await findSessionLogs(path)
+    else if (entry.isFile() && entry.name === 'session.jsonl') count += 1
+  }
+  return count
+}
+
+async function readAttemptText(directory: string): Promise<string> {
+  const chunks: string[] = []
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) chunks.push(await readAttemptText(path))
+    else if (entry.isFile() && ['.json', '.jsonl', '.yml', '.yaml', '.md', '.txt'].some(suffix => entry.name.endsWith(suffix))) {
+      chunks.push(await readFile(path, 'utf8'))
+    }
+  }
+  return chunks.join('\n')
+}
 
 async function createAdapter(
   shutdownGraceMs = 500,

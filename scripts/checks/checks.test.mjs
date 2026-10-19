@@ -13,6 +13,7 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const path of [
     'AGENTS.md', 'README.md', 'package.json', '.env.example', '.github/workflows/ci.yml', 'docs',
+    'config/target-environment/2026-10-17.json',
     'server/package.json', 'server/config', 'server/src', 'server/migrations',
     'deploy/runtime.env.example', 'scripts/deploy/preflight.sh', 'scripts/runtime/probe.ts',
     'scripts/checks/contracts.mjs', 'scripts/testing/p0-smoke-server.ts',
