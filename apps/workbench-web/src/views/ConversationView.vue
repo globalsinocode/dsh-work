@@ -23,6 +23,7 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { Artifact, ChatMessage, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskRun, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
+import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { runFailureDetailReason } from '@/utils/run-error-display'
 
@@ -285,17 +286,20 @@ async function stopCurrentRun() {
   }
 }
 
-async function retryRun() {
-  if (!task.value || !canOperateRun.value || retrying.value) return
-  retrying.value = true
-  try {
-    await taskStore.retryTask(task.value.id)
-    ElMessage.success('已创建新的运行尝试')
-  } catch (error) {
-    notifyActionFailure('重新执行', `运行 ${task.value.id}`, error, '刷新对话状态；确认本轮仍为失败或已停止后再重试。')
-  } finally {
-    retrying.value = false
-  }
+function retryRun() {
+  const current = task.value
+  if (!current || !canOperateRun.value) return
+  void runGuardedAction(`run-retry:${current.id}`, async () => {
+    retrying.value = true
+    try {
+      await taskStore.retryTask(current.id)
+      ElMessage.success('已创建新的运行尝试')
+    } catch (error) {
+      notifyActionFailure('重新执行', `运行 ${current.id}`, error, '刷新对话状态；确认本轮仍为失败或已停止后再重试。')
+    } finally {
+      retrying.value = false
+    }
+  })
 }
 
 function copyAnswer(content: string) {

@@ -8,7 +8,8 @@ import { usePagedQuery } from '@/composables/usePagedQuery'
 import type { PersonalFile } from '@/types/domain'
 import { fileRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
-import { runGuardedDownload, triggerBlobDownload } from '@/utils/download-file'
+import { runGuardedAction } from '@/utils/action-guard'
+import { triggerBlobDownload } from '@/utils/download-file'
 let mounted = true
 onBeforeUnmount(() => { mounted = false })
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -32,7 +33,7 @@ async function upload(event: Event) {
   finally { uploading.value = false; target.value = ''; await reload() }
 }
 function download(file: PersonalFile) {
-  void runGuardedDownload(`personal-file:${file.id}`, async () => {
+  void runGuardedAction(`personal-file:${file.id}`, async () => {
     busy.value = file.id
     try {
       const actor = auth.user.id

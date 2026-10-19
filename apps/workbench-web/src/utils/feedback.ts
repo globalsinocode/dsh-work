@@ -2,7 +2,8 @@ import { ElMessage, ElNotification } from 'element-plus'
 
 import { workbenchApi } from '@/api/client'
 import type { Artifact } from '@/types/domain'
-import { runGuardedDownload, triggerBlobDownload } from '@/utils/download-file'
+import { runGuardedAction } from '@/utils/action-guard'
+import { triggerBlobDownload } from '@/utils/download-file'
 
 interface StructuredFailure extends Error {
   object?: string
@@ -29,7 +30,7 @@ export function notifyActionFailure(
 
 export function downloadArtifactFile(artifact: Artifact) {
   const key = `artifact:${artifact.id}:v${artifact.version}`
-  return runGuardedDownload(key, async () => {
+  return runGuardedAction(key, async () => {
     try {
       const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
       triggerBlobDownload(blob, artifact.name)

@@ -6,7 +6,8 @@ import { Close } from '@element-plus/icons-vue'
 import { workbenchApi } from '@/api/client'
 import type { WorkspaceFileVersion } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
-import { runGuardedDownload, triggerBlobDownload } from '@/utils/download-file'
+import { runGuardedAction } from '@/utils/action-guard'
+import { triggerBlobDownload } from '@/utils/download-file'
 import { canReferenceVersion, describeVersionParseStatus } from '@/utils/workspace-file-versions'
 
 /**
@@ -98,7 +99,7 @@ onBeforeUnmount(() => {
 /** 历史版本下载：是否可下载一律以服务端 `canDownload` 为准（入口已按其渲染）。 */
 function downloadVersion(version: WorkspaceFileVersion) {
   const key = `workspace-file:${props.workspaceId}:${props.logicalFileId}:v${version.versionNo}`
-  void runGuardedDownload(key, async () => {
+  void runGuardedAction(key, async () => {
     try {
       const blob = await workbenchApi.downloadWorkspaceFileVersion(
         props.workspaceId,

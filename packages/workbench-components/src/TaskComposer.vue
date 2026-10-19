@@ -21,6 +21,7 @@ import {
   getRecentWorkspaceAgentMemberId,
   recordRecentWorkspaceAgentMember,
 } from './workspace-agent-recency'
+import { createActionGate } from './action-guard.ts'
 
 const props = withDefaults(
   defineProps<{
@@ -100,8 +101,7 @@ const inputRef = ref<HTMLTextAreaElement>()
 const isDragging = ref(false)
 /** 父级尚未 confirm/release 前的前端提交锁，用于即时反馈与防连点。 */
 const localSubmitting = ref(false)
-const SUBMIT_DEBOUNCE_MS = 600
-let lastSubmitAt = 0
+const submitGate = createActionGate()
 
 // ---- TW-10 @Agent 提及补全 ----
 // 光标前最近的 `@非空白*` 片段即提及查询；选中后把该片段替换为 `@名称 `，
@@ -331,14 +331,12 @@ function showVoiceMessage() {
 
 function releaseSubmitLock() {
   localSubmitting.value = false
-  lastSubmitAt = 0
+  submitGate.release()
 }
 
 function submit() {
   if (!canSubmit.value) return
-  const now = Date.now()
-  if (now - lastSubmitAt < SUBMIT_DEBOUNCE_MS) return
-  lastSubmitAt = now
+  if (!submitGate.tryBegin()) return
   localSubmitting.value = true
 
   const mentions = resolveMentions(prompt.value)
