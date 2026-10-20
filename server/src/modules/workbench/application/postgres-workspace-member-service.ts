@@ -73,10 +73,14 @@ export class PostgresWorkspaceMemberService {
   }
 
   /**
-   * Directory candidates searchable by name, ordered by (display_name, id) to
-   * match the users_business_directory partial index. Only active business
-   * employees with current workbench access are selectable (TW-01); existing
-   * members are excluded.
+   * Business-employee candidates searchable by name, ordered by (display_name,
+   * id) to match the users_business_directory partial index. Only active
+   * business employees with current workbench access are selectable (TW-01);
+   * existing members are excluded.
+   *
+   * 身份来源不参与过滤：2026-10-19 企业员工已从 AI Hub 目录原地迁为本地账号
+   * （identity_provider='local'，business_user 保留），只认 ai-hub 会把全部
+   * 在职员工排除在候选之外。目录语义由 business_user + 工作台权限表达。
    */
   async listMemberCandidates(
     workspaceId: string,
@@ -99,7 +103,6 @@ export class PostgresWorkspaceMemberService {
         from users u
        where u.tenant_id = ${tenantId}
          and u.status = 'active'
-         and u.identity_provider = 'ai-hub'
          and u.business_user = true
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
          and exists (${this.database.unsafe(workbenchAccessPredicate)})
@@ -580,13 +583,15 @@ export class PostgresWorkspaceMemberService {
   /**
    * Rejects employees outside the addable directory (TW-01): active business
    * employees with current workbench access, same criterion requireIdentity
-   * applies for the workbench:use permission.
+   * applies for the workbench:use permission. The identity provider is not part
+   * of the criterion — local accounts converted from the AI Hub directory keep
+   * business_user, and only business accounts are addable.
    */
   private async assertAddableEmployee(userId: string) {
     const [row] = await this.database<{ reason: string | null }[]>`
       select case
         when u.status <> 'active' then 'disabled'
-        when u.identity_provider <> 'ai-hub' or not u.business_user then 'directory'
+        when not u.business_user then 'directory'
         when not exists (${this.database.unsafe(workbenchAccessPredicate)}) then 'no_access'
         else null
       end as reason
