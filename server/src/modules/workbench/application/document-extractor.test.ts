@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { deflateRawSync, deflateSync } from 'node:zlib'
 import { describe, it } from 'node:test'
+import XLSX from 'xlsx'
 
 import { extractDocument } from './document-extractor.ts'
 
@@ -62,6 +63,90 @@ describe('document extractor', () => {
       Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1'),
     ])
     assert.throws(() => extractDocument('bomb.pdf', pdf), errorWithCode('PDF_DECOMPRESSED_SIZE_LIMIT_EXCEEDED'))
+  })
+
+  it('reads legacy .xls workbooks by signature even when they were renamed to .csv', () => {
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.aoa_to_sheet(
+      [
+        ['序号', '机种型号', '出货时间'],
+        [1, 'TSX30', new Date(2025, 6, 1)],
+        [2, 'TSX60', new Date(2026, 8, 1)],
+      ],
+      { cellDates: true },
+    )
+    sheet['!merges'] = [{ s: { r: 1, c: 1 }, e: { r: 2, c: 1 } }]
+    XLSX.utils.book_append_sheet(workbook, sheet, '客诉')
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'buffer' }) as Buffer
+
+    const result = extractDocument('跟进记录.csv', bytes)
+    assert.equal(result.detectedType, 'xlsx')
+    assert.equal(result.sheetCount, 1)
+    assert.equal(result.rowCount, 2)
+    assert.match(result.text, /合并单元格：B2:B3/)
+    assert.match(result.text, /1\tTSX30\t2025-07-01/)
+    assert.match(result.text, /2\tTSX30\t2026-09-01/)
+  })
+
+  it('renders form-shaped workbooks as label and value lines', () => {
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['供应商整改行动报告', '', '', ''],
+      ['物料', 'MT4000.C2', '数量', 504],
+      ['结论', '合格', '', ''],
+      ['', '', '', ''],
+    ])
+    sheet['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+      { s: { r: 1, c: 0 }, e: { r: 2, c: 0 } },
+      { s: { r: 2, c: 1 }, e: { r: 2, c: 3 } },
+      { s: { r: 1, c: 2 }, e: { r: 1, c: 2 } },
+    ]
+    XLSX.utils.book_append_sheet(workbook, sheet, '报告')
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'buffer' }) as Buffer
+
+    const result = extractDocument('整改报告.xls', bytes)
+    assert.match(result.text, /形态：表单/)
+    assert.match(result.text, /A1:D1=供应商整改行动报告/)
+    assert.match(result.text, /MT4000\.C2/)
+  })
+
+  it('merges a two-row grouped header into column names', () => {
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['物料', '出货信息', '', '备注'],
+      ['', '日期', '数量', ''],
+      ['A-01', new Date(2026, 0, 5), 12, '首批'],
+    ])
+    sheet['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 1, c: 0 } },
+      { s: { r: 0, c: 1 }, e: { r: 0, c: 2 } },
+      { s: { r: 0, c: 3 }, e: { r: 1, c: 3 } },
+    ]
+    XLSX.utils.book_append_sheet(workbook, sheet, '出货')
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'buffer' }) as Buffer
+
+    const result = extractDocument('shipment.xls', bytes)
+    assert.equal(result.rowCount, 1)
+    assert.match(result.text, /物料\t出货信息 日期\t出货信息 数量\t备注/)
+    assert.match(result.text, /A-01\t2026-01-05\t12\t首批/)
+  })
+
+  it('rejects a .xls that is not an Excel container and caps legacy cell counts', () => {
+    assert.throws(() => extractDocument('old.xls', Buffer.from('not an excel file')), errorWithCode('FILE_TYPE_UNSUPPORTED'))
+
+    const legacyWord = Buffer.concat([
+      Buffer.from('d0cf11e0a1b11ae1', 'hex'),
+      Buffer.alloc(504),
+      Buffer.from('WordDocument', 'utf16le'),
+    ])
+    assert.throws(() => extractDocument('旧稿.doc', legacyWord), /Word 97-2003/)
+
+    const workbook = XLSX.utils.book_new()
+    const rows = Array.from({ length: 300 }, (_, row) => Array.from({ length: 100 }, (_, column) => row * 100 + column))
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'big')
+    const bytes = XLSX.write(workbook, { bookType: 'biff8', type: 'buffer' }) as Buffer
+    assert.throws(() => extractDocument('big.xls', bytes), errorWithCode('XLSX_CELL_LIMIT_EXCEEDED'))
   })
 })
 

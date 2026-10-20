@@ -1,6 +1,8 @@
 import { inflateRawSync, inflateSync } from 'node:zlib'
 import { extname } from 'node:path'
 
+import { extractLegacyWorkbook, isCompoundFile, isLegacyWordDocument } from './legacy-workbook.ts'
+
 const maxExtractedCharacters = 512_000
 const maxSpreadsheetCells = 20_000
 const maxCsvRows = 10_000
@@ -21,12 +23,22 @@ export interface DocumentExtractionResult {
 export function extractDocument(name: string, bytes: Buffer): DocumentExtractionResult {
   const extension = extname(name).toLowerCase()
   let result: DocumentExtractionResult
-  if (extension === '.pdf') result = extractPdf(bytes)
+  // Legacy Excel workbooks are OLE2 containers and get renamed to .csv/.xlsx all the
+  // time, so the signature decides before the extension does.
+  if (isCompoundFile(bytes)) {
+    if (isLegacyWordDocument(bytes)) {
+      throw extractionError('FILE_TYPE_UNSUPPORTED', '这是 Word 97-2003（.doc）文件，请用 Word 打开后另存为 .docx 再上传')
+    }
+    const legacy = extractLegacyWorkbook(bytes)
+    result = { detectedType: 'xlsx', text: legacy.text, pageCount: null, sheetCount: legacy.sheetCount, rowCount: legacy.rowCount }
+  } else if (extension === '.xls') {
+    throw extractionError('FILE_TYPE_UNSUPPORTED', '这个 .xls 不是标准 Excel 文件，请用 Excel 打开后另存为 .xlsx 再上传')
+  } else if (extension === '.pdf') result = extractPdf(bytes)
   else if (extension === '.docx') result = extractDocx(bytes)
   else if (extension === '.xlsx') result = extractXlsx(bytes)
   else if (extension === '.csv') result = extractCsv(bytes)
   else if (extension === '.txt' || extension === '.md') result = extractText(bytes)
-  else throw extractionError('FILE_TYPE_UNSUPPORTED', '当前仅支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown')
+  else throw extractionError('FILE_TYPE_UNSUPPORTED', '当前仅支持 PDF、DOCX、XLSX、XLS、CSV、TXT 和 Markdown')
 
   const text = normalizeText(result.text)
   if (!text) throw extractionError('FILE_NO_EXTRACTABLE_TEXT', '文件中没有可提取的文本内容')

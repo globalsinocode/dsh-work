@@ -380,7 +380,7 @@ defineExpose({ useWorkspaceFile })
         <el-skeleton v-else class="workbench-composer" :rows="3" animated />
 
         <footer class="workbench-trust">
-          <span>支持 PDF、DOCX、XLSX、CSV，单文件不超过 20 MB</span>
+          <span>支持 PDF、DOCX、XLSX、XLS、CSV，单文件不超过 20 MB</span>
           <span v-if="workspaceLocked && mentionOptions.length">Tab 最近/首位 Agent · Tab+1~9 快速选择 · Enter 发送 · Shift + Enter 换行</span>
           <span v-else>Enter 发送 · Shift + Enter 换行</span>
         </footer>

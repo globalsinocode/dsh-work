@@ -19,7 +19,7 @@ import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts
 import { joinObjectKey, type ObjectStorage } from '../../../domain/object-storage.ts'
 
 const tenantId = 'tenant-dsh-work'
-const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
+const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.md'])
 
 interface FileRow {
   id: string
@@ -1951,7 +1951,7 @@ export class PostgresContentService {
   }) {
     const { workspaceId, sessionId, name, mimeType, bytes } = input
     const extension = extname(name).toLowerCase()
-    if (!allowedExtensions.has(extension)) throw invalidRequest('仅支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown 文件')
+    if (!allowedExtensions.has(extension)) throw invalidRequest('仅支持 PDF、DOCX、XLSX、XLS、CSV、TXT 和 Markdown 文件')
     if (bytes.length < 1 || bytes.length > 20 * 1024 * 1024) throw invalidRequest('文件大小必须为 1 B～20 MB')
     const scan = await this.scanner.scan({ name, mimeType, bytes })
     // 安全扫描拒绝是请求内容不合法，不是服务器故障：裸 Error 不含分类关键字会被
@@ -2180,7 +2180,7 @@ function formatSize(bytes: number) {
 function detectedType(extension: string): 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text' {
   if (extension === '.pdf') return 'pdf'
   if (extension === '.docx') return 'docx'
-  if (extension === '.xlsx') return 'xlsx'
+  if (extension === '.xlsx' || extension === '.xls') return 'xlsx'
   if (extension === '.csv') return 'csv'
   return 'text'
 }
