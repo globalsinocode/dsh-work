@@ -1,0 +1,294 @@
+/* Shared Markdown prose — assistant messages and artifact file preview. */
+.dsh-markdown-content,
+.assistant-message-content {
+  color: var(--dsh-color-text, var(--color-text-primary));
+  font-size: var(--dsh-font-size-body, var(--font-size-body));
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.dsh-markdown-content > :first-child,
+.assistant-message-content > :first-child {
+  margin-top: 0;
+}
+
+.dsh-markdown-content > :last-child,
+.assistant-message-content > :last-child {
+  margin-bottom: 0;
+}
+
+.dsh-markdown-content p,
+.assistant-message-content p {
+  margin: 8px 0;
+}
+
+.dsh-markdown-content h1,
+.dsh-markdown-content h2,
+.dsh-markdown-content h3,
+.dsh-markdown-content h4,
+.dsh-markdown-content h5,
+.dsh-markdown-content h6,
+.assistant-message-content h1,
+.assistant-message-content h2,
+.assistant-message-content h3,
+.assistant-message-content h4,
+.assistant-message-content h5,
+.assistant-message-content h6 {
+  margin: 18px 0 8px;
+  color: var(--dsh-color-ink, var(--color-text-heading));
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.dsh-markdown-content h1,
+.assistant-message-content h1 {
+  font-size: calc(var(--dsh-font-size-subheading, var(--font-size-title)) + 2px);
+}
+
+.dsh-markdown-content h2,
+.assistant-message-content h2 {
+  font-size: var(--dsh-font-size-subheading, var(--font-size-title));
+}
+
+.dsh-markdown-content h3,
+.assistant-message-content h3 {
+  font-size: var(--dsh-font-size-title, var(--font-size-body));
+}
+
+.dsh-markdown-content h4,
+.dsh-markdown-content h5,
+.dsh-markdown-content h6,
+.assistant-message-content h4,
+.assistant-message-content h5,
+.assistant-message-content h6 {
+  font-size: var(--dsh-font-size-body, var(--font-size-body));
+}
+
+.dsh-markdown-content strong,
+.assistant-message-content strong {
+  font-weight: 650;
+  color: var(--dsh-color-ink, var(--color-text-heading));
+}
+
+.dsh-markdown-content ul,
+.dsh-markdown-content ol,
+.assistant-message-content ul,
+.assistant-message-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.dsh-markdown-content ul,
+.assistant-message-content ul {
+  list-style-type: disc;
+}
+
+.dsh-markdown-content ul ul,
+.assistant-message-content ul ul {
+  list-style-type: circle;
+}
+
+.dsh-markdown-content li + li,
+.assistant-message-content li + li {
+  margin-top: 5px;
+}
+
+.dsh-markdown-content li::marker,
+.assistant-message-content li::marker {
+  color: var(--dsh-color-subtle, #98a2b3);
+}
+
+.dsh-markdown-content .md-task-item,
+.assistant-message-content .md-task-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  list-style: none;
+  margin-left: 0;
+}
+
+.dsh-markdown-content .md-task-badge,
+.assistant-message-content .md-task-badge {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #eef2f6;
+  color: #5f6b7a;
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.dsh-markdown-content .md-task-item--done .md-task-badge,
+.assistant-message-content .md-task-item--done .md-task-badge {
+  background: #e8f3ee;
+  color: #2f6f52;
+}
+
+.dsh-markdown-content .md-task-text,
+.assistant-message-content .md-task-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.dsh-markdown-content .md-kbd,
+.assistant-message-content .md-kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  background: #f8fafc;
+  box-shadow: inset 0 -1px 0 #e4e7ec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.dsh-markdown-content .md-details,
+.assistant-message-content .md-details {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--dsh-color-border, #e4e8ef);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.dsh-markdown-content .md-details__body,
+.assistant-message-content .md-details__body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--dsh-color-border, #e8ebef);
+}
+
+.dsh-markdown-content .md-math-block,
+.assistant-message-content .md-math-block {
+  margin: 12px 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.dsh-markdown-content .md-footnote-ref a,
+.assistant-message-content .md-footnote-ref a {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.dsh-markdown-content .md-footnotes__title,
+.assistant-message-content .md-footnotes__title {
+  margin: 0 0 6px;
+  color: var(--dsh-color-subtle, #667085);
+  font-size: 0.85em;
+  font-weight: 650;
+}
+
+.dsh-markdown-content .md-inline-code,
+.assistant-message-content .md-inline-code {
+  padding: 2px 6px;
+  border-radius: var(--dsh-radius-sm, var(--radius-tag));
+  background: var(--dsh-color-canvas, var(--color-bg-page));
+  color: var(--dsh-color-brand, var(--color-primary));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.dsh-markdown-content a,
+.assistant-message-content a {
+  color: var(--dsh-color-brand, var(--color-primary));
+  text-decoration: none;
+}
+
+.dsh-markdown-content a:hover,
+.assistant-message-content a:hover {
+  text-decoration: underline;
+}
+
+.dsh-markdown-content pre,
+.assistant-message-content pre {
+  margin: 12px 0;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--dsh-color-border, #e4e8ef);
+  border-radius: var(--dsh-radius-md, 12px);
+  background: var(--dsh-color-canvas, #f3f5f8);
+}
+
+.dsh-markdown-content pre code,
+.assistant-message-content pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}
+
+.dsh-markdown-content table,
+.assistant-message-content table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.dsh-markdown-content th,
+.dsh-markdown-content td,
+.assistant-message-content th,
+.assistant-message-content td {
+  padding: 8px 10px;
+  border: 1px solid var(--dsh-color-border, #e4e8ef);
+  text-align: left;
+  vertical-align: top;
+}
+
+.dsh-markdown-content th,
+.assistant-message-content th {
+  background: var(--dsh-color-canvas, #f3f5f8);
+  font-weight: 650;
+}
+
+.dsh-markdown-content blockquote,
+.assistant-message-content blockquote {
+  margin: 10px 0;
+  padding: 8px 14px;
+  border-left: 3px solid var(--dsh-color-border, #d0d5dd);
+  color: var(--dsh-color-subtle, #667085);
+  background: rgb(243 245 248 / 55%);
+}
+
+.dsh-markdown-content blockquote blockquote,
+.assistant-message-content blockquote blockquote {
+  margin-top: 8px;
+}
+
+.dsh-markdown-content blockquote p,
+.assistant-message-content blockquote p {
+  margin: 0;
+}
+
+.dsh-markdown-content blockquote p + p,
+.assistant-message-content blockquote p + p {
+  margin-top: 6px;
+}
+
+.dsh-markdown-content hr,
+.assistant-message-content hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--dsh-color-border, #e4e8ef);
+}
+
+.dsh-markdown-content del,
+.assistant-message-content del {
+  color: var(--dsh-color-subtle, #98a2b3);
+}
+
+.dsh-markdown-content .md-footnotes,
+.assistant-message-content .md-footnotes {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--dsh-color-border, #e4e8ef);
+  font-size: 0.92em;
+  color: var(--dsh-color-subtle, #667085);
+}
+
+.dsh-markdown-content .md-footnote-back,
+.assistant-message-content .md-footnote-back {
+  margin-left: 6px;
+  text-decoration: none;
+}

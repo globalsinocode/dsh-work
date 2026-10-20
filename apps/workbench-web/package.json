@@ -18,6 +18,7 @@
     "@dsh-work/workbench-components": "workspace:*",
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.10.7",
+    "katex": "^0.19.0",
     "pinia": "^3.0.3",
     "vue": "^3.5.22",
     "vue-router": "^4.6.3"

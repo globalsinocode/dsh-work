@@ -275,6 +275,19 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(workbenchApi.listWorkspaceSessions).not.toHaveBeenCalled()
   })
 
+  it('supports keyboard navigation on the 新对话／历史对话 switch (roving tabindex)', async () => {
+    const { wrapper } = await mountView(workspace())
+    const viewbar = wrapper.find('[data-testid="conversation-view-switch"]')
+    const buttons = viewbar.findAll('button')
+    expect(buttons[0]?.attributes('tabindex')).toBe('0')
+    expect(buttons[1]?.attributes('tabindex')).toBe('-1')
+
+    await buttons[0]!.trigger('keydown', { key: 'ArrowRight' })
+    await flushPromises()
+    expect(router.replace).toHaveBeenCalledWith({ query: { view: 'history' } })
+    expect(buttons[1]?.classes()).toContain('is-active')
+  })
+
   it('writes ?view=history and replaces the starter with the history view', async () => {
     const { wrapper } = await mountView(workspace())
 
@@ -282,7 +295,9 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     await flushPromises()
 
     expect(router.replace).toHaveBeenCalledWith({ query: { view: 'history' } })
+    expect(wrapper.find('[data-testid="workspace-conversation-history-layout"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="workspace-session-history"]').exists()).toBe(true)
+    expect(wrapper.findAll('conversation-starter-stub')).toHaveLength(1)
     // 1B 历史视图默认按本人范围拉取。
     expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledWith('ws-team', { limit: 20 })
   })

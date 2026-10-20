@@ -64,9 +64,17 @@ const taskStore = useTaskStore()
 /** 团队空间会话活动 SSE 的 since 水位线（与 ConversationView / SessionHistory 同口径）。 */
 const workspaceSyncedAt = ref(new Date().toISOString())
 let artifactLiveRefreshTimer: ReturnType<typeof setTimeout> | undefined
-const starterRef = ref<{
+type WorkspaceComposerHandle = {
   useWorkspaceFile: (file: WorkspaceFile) => void
-}>()
+  focusComposer: () => void
+}
+const starterRef = ref<WorkspaceComposerHandle>()
+const historyComposerRef = ref<WorkspaceComposerHandle>()
+
+function activeWorkspaceComposer() {
+  return conversationView.value === 'history' ? historyComposerRef.value : starterRef.value
+}
+const conversationViewButtonRefs = ref<HTMLButtonElement[]>([])
 const tabButtonRefs = ref<HTMLButtonElement[]>([])
 const panelCollapsed = ref(false)
 const mobileInfoOpen = ref(false)
@@ -356,7 +364,29 @@ function setConversationView(view: ConversationView) {
   const query = { ...route.query }
   if (view === 'history') query.view = 'history'
   else delete query.view
+  if (view === 'new') {
+    void nextTick(() => {
+      const composer = activeWorkspaceComposer()
+      if (typeof composer?.focusComposer === 'function') composer.focusComposer()
+    })
+  }
   return router.replace(workspaceBaseLocation(query))
+}
+
+function onConversationViewKeydown(event: KeyboardEvent, index: number) {
+  const keyTargets: Record<string, number> = {
+    ArrowLeft: (index - 1 + conversationViews.length) % conversationViews.length,
+    ArrowRight: (index + 1) % conversationViews.length,
+    Home: 0,
+    End: conversationViews.length - 1,
+  }
+  const targetIndex = keyTargets[event.key]
+  if (targetIndex === undefined) return
+  event.preventDefault()
+  const target = conversationViews[targetIndex]
+  if (!target) return
+  void setConversationView(target.id)
+  void nextTick(() => conversationViewButtonRefs.value[targetIndex]?.focus())
 }
 
 watch(
@@ -394,7 +424,7 @@ async function useWorkspaceFile(file: WorkspaceFile) {
     await selectTab('conversation')
     mobileInfoOpen.value = false
     await nextTick()
-    starterRef.value?.useWorkspaceFile(file)
+    activeWorkspaceComposer()?.useWorkspaceFile(file)
     ElMessage.success(`已将“${file.name}”带入新对话`)
   } catch (error) {
     notifyActionFailure('引用文件到对话', `文件“${file.name}”`, error, '请重试或刷新页面。')
@@ -1074,14 +1104,18 @@ watch(
             aria-label="对话视图"
           >
             <button
-              v-for="view in conversationViews"
+              v-for="(view, index) in conversationViews"
+              :id="`workspace-conversation-view-${view.id}`"
               :key="view.id"
+              ref="conversationViewButtonRefs"
               class="workspace-conversation-pane__view"
               :class="{ 'is-active': conversationView === view.id }"
               type="button"
               role="tab"
               :aria-selected="conversationView === view.id"
+              :tabindex="conversationView === view.id ? 0 : -1"
               @click="setConversationView(view.id)"
+              @keydown="onConversationViewKeydown($event, index)"
             >
               {{ view.label }}
             </button>
@@ -1090,9 +1124,43 @@ watch(
           <div class="workspace-conversation-pane__body">
             <RouterView v-if="isConversationThreadRoute" />
             <template v-else>
+              <div
+                v-if="conversationView === 'history' && isTeam && showConversationStarter"
+                class="workspace-conversation-pane__history-layout"
+                data-testid="workspace-conversation-history-layout"
+              >
+                <WorkspaceSessionHistory
+                  :workspace-id="workspace.id"
+                  :workspace-name="workspace.name"
+                  :can-start-conversation="canWriteTeamContent"
+                  :archived="false"
+                  @start-new="setConversationView('new')"
+                />
+                <ConversationStarter
+                  ref="historyComposerRef"
+                  composer-only
+                  embedded
+                  :workspace-id="workspace.id"
+                  :workspace-name="workspace.name"
+                  workspace-locked
+                  :startable-agent-member-ids="startableAgentMemberIds"
+                  requires-agent-member
+                  :can-discuss="canWriteTeamContent"
+                  :mention-options="startableMentionOptions"
+                />
+              </div>
+
+              <WorkspaceSessionHistory
+                v-else-if="showSessionHistory"
+                :workspace-id="workspace.id"
+                :workspace-name="workspace.name"
+                :can-start-conversation="!isArchived && canWriteTeamContent"
+                :archived="isArchived"
+                @start-new="setConversationView('new')"
+              />
+
               <ConversationStarter
-                v-if="showConversationStarter"
-                v-show="conversationView === 'new'"
+                v-else-if="showConversationStarter && conversationView === 'new'"
                 ref="starterRef"
                 embedded
                 :workspace-id="workspace.id"
@@ -1103,15 +1171,6 @@ watch(
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
                 :mention-options="isTeam ? startableMentionOptions : []"
-              />
-
-              <WorkspaceSessionHistory
-                v-if="showSessionHistory"
-                :workspace-id="workspace.id"
-                :workspace-name="workspace.name"
-                :can-start-conversation="!isArchived && canWriteTeamContent"
-                :archived="isArchived"
-                @start-new="setConversationView('new')"
               />
             </template>
           </div>
@@ -1739,6 +1798,19 @@ watch(
   min-height: 0;
   flex: 1;
   overflow: hidden;
+}
+
+.workspace-conversation-pane__history-layout {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+}
+
+.workspace-conversation-pane__history-layout :deep(.session-history) {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .workspace-context-page__aside {

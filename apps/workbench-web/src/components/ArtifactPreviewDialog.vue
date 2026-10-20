@@ -199,7 +199,7 @@ function download() {
       <div
         v-else-if="artifactType === 'markdown'"
         data-testid="artifact-preview-markdown"
-        class="artifact-preview__markdown"
+        class="dsh-markdown-content artifact-preview__markdown"
         v-html="markdownHtml"
       />
 
@@ -240,6 +240,10 @@ function download() {
     </div>
   </el-dialog>
 </template>
+
+<style>
+@import '@dsh-work/ui-core/markdown-content.css';
+</style>
 
 <style scoped>
 .artifact-preview__header {
@@ -293,16 +297,17 @@ function download() {
 }
 
 .artifact-preview__hint {
-  margin: 0 0 10px;
-  color: #8b918c;
+  margin: 0 0 12px;
+  color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-micro);
   line-height: 1.6;
 }
 
 .artifact-preview__notice {
-  margin: 0 0 8px;
-  color: #8b918c;
+  margin: 0 0 10px;
+  color: var(--dsh-color-muted);
   font-size: var(--dsh-font-size-micro);
+  line-height: 1.5;
 }
 
 .artifact-preview__error,
@@ -318,96 +323,69 @@ function download() {
   width: 100%;
   height: min(62vh, 560px);
   border: 1px solid var(--dsh-color-border);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: var(--dsh-radius-md, 12px);
+  background: var(--dsh-color-panel, #fff);
 }
 
 .artifact-preview__source {
   overflow: auto;
   max-height: min(62vh, 560px);
   margin: 0;
-  padding: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--dsh-color-border);
-  border-radius: 8px;
-  background: #f7f8fa;
-  font-size: var(--dsh-font-size-badge);
-  line-height: 1.6;
+  border-radius: var(--dsh-radius-md, 12px);
+  color: var(--dsh-color-text);
+  background: var(--dsh-color-canvas);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--dsh-font-size-caption, 13px);
+  line-height: 1.65;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .artifact-preview__markdown {
   overflow: auto;
   max-height: min(62vh, 560px);
-  padding: 12px;
+  padding: 16px 18px;
   border: 1px solid var(--dsh-color-border);
-  border-radius: 8px;
-  background: #fff;
-  font-size: var(--dsh-font-size-body);
-  line-height: 1.65;
-}
-
-.artifact-preview__markdown :deep(table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 8px 0;
-}
-
-.artifact-preview__markdown :deep(th),
-.artifact-preview__markdown :deep(td) {
-  padding: 6px 8px;
-  border: 1px solid var(--dsh-color-border);
-  text-align: left;
-}
-
-.artifact-preview__markdown :deep(blockquote) {
-  margin: 10px 0;
-  padding: 10px 12px;
-  border-left: 3px solid #c5d4e8;
-  border-radius: 0 6px 6px 0;
-  color: #5c6570;
-  background: #f5f8fc;
-}
-
-.artifact-preview__markdown :deep(blockquote p) {
-  margin: 0;
-}
-
-.artifact-preview__markdown :deep(blockquote p + p) {
-  margin-top: 6px;
-}
-
-.artifact-preview__markdown :deep(hr) {
-  margin: 14px 0;
-  border: 0;
-  border-top: 1px solid var(--dsh-color-border);
+  border-radius: var(--dsh-radius-md, 12px);
+  background: var(--dsh-color-panel, #fff);
 }
 
 .artifact-preview__csv-wrap {
   overflow: auto;
   max-height: min(62vh, 560px);
   border: 1px solid var(--dsh-color-border);
-  border-radius: 8px;
+  border-radius: var(--dsh-radius-md, 12px);
+  background: var(--dsh-color-panel, #fff);
 }
 
 .artifact-preview__csv {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--dsh-font-size-badge);
+  font-size: 0.95em;
 }
 
 .artifact-preview__csv th,
 .artifact-preview__csv td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--dsh-color-border);
+  padding: 8px 10px;
+  border: 1px solid var(--dsh-color-border);
   text-align: left;
-  white-space: nowrap;
+  vertical-align: top;
 }
 
 .artifact-preview__csv th {
   position: sticky;
   top: 0;
-  background: #f7f8fa;
+  z-index: 1;
+  background: var(--dsh-color-canvas);
+  color: var(--dsh-color-ink);
   font-weight: 650;
+  white-space: nowrap;
+}
+
+.artifact-preview__csv td {
+  color: var(--dsh-color-text);
+  white-space: nowrap;
 }
 </style>

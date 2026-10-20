@@ -22,7 +22,7 @@ describe('renderMarkdownPreview', () => {
 
     expect(html).toContain('<h1>周报</h1>')
     expect(html).toContain('<li>要点</li>')
-    expect(html).toContain('<td>值</td>')
+    expect(html).toContain('>值</td>')
     expect(html).toContain('<code>')
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(html).not.toContain('<script')
@@ -44,6 +44,78 @@ describe('renderMarkdownPreview', () => {
     expect(html).toContain('<hr>')
     expect(html).toContain('<p>正文段落</p>')
     expect(html).toContain('<p>下文</p>')
+  })
+
+  it('渲染加粗与行内代码', () => {
+    const html = renderMarkdownPreview('这是**重点**和`变量名`说明')
+
+    expect(html).toContain('<strong>重点</strong>')
+    expect(html).toContain('<code class="md-inline-code">变量名</code>')
+  })
+
+  it('渲染含反引号的行内代码，不泄漏分隔符', () => {
+    const html = renderMarkdownPreview(
+      '命令写作 `` `git switch dev` ``，也可以写成 `pnpm test:e2e`。',
+    )
+
+    expect(html).toContain('<code class="md-inline-code">`git switch dev`</code>')
+    expect(html).toContain('<code class="md-inline-code">pnpm test:e2e</code>')
+    expect(html).not.toMatch(/<code[^>]*>[^<]*``/)
+    expect(html).not.toContain('``')
+  })
+
+  it('两个反引号包裹单个反引号', () => {
+    const html = renderMarkdownPreview('符号 `` ` `` 示例')
+
+    expect(html).toContain('<code class="md-inline-code">`</code>')
+    expect(html).not.toContain('``')
+  })
+
+  it('渲染嵌套引用块', () => {
+    const html = renderMarkdownPreview([
+      '> 外层说明',
+      '> > 嵌套引用：来自 main 的改动先落到 dev。',
+    ].join('\n'))
+
+    expect(html).toContain('<blockquote><p>外层说明</p><blockquote>')
+    expect(html).toContain('嵌套引用：来自 main 的改动先落到 dev。')
+  })
+
+  it('渲染缩进二级无序列表', () => {
+    const html = renderMarkdownPreview(['- 一级', '  - 二级'].join('\n'))
+
+    expect(html).toContain('<ul><li>一级<ul><li>二级</li></ul></li></ul>')
+  })
+
+  it('渲染斜体、删除线与任务清单', () => {
+    const html = renderMarkdownPreview([
+      '*斜体*与~~删除线~~',
+      '',
+      '- [x] 已完成',
+      '- [ ] 待办',
+    ].join('\n'))
+
+    expect(html).toContain('<em>斜体</em>')
+    expect(html).toContain('<del>删除线</del>')
+    expect(html).toContain('md-task-item--done')
+    expect(html).toContain('md-task-item--open')
+    expect(html).toContain('md-task-badge')
+    expect(html).toContain('已完成')
+    expect(html).toContain('待办')
+    expect(html).not.toContain('md-task-checkbox')
+  })
+
+  it('渲染行内与块级数学公式', () => {
+    const html = renderMarkdownPreview([
+      '能量 $E = mc^2$。',
+      '',
+      '$$',
+      '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}',
+      '$$',
+    ].join('\n'))
+
+    expect(html).toContain('class="katex"')
+    expect(html).toContain('md-math-block')
   })
 
   it('只保留 http(s) 与 mailto 链接，图片只留替代文字', () => {
