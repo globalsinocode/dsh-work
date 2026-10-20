@@ -336,7 +336,9 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
 
     expect(wrapper.get('.user-message p').text()).toBe('**不要加粗**')
     expect(wrapper.find('.user-message strong').exists()).toBe(false)
-    expect(wrapper.get('.assistant-answer h4').text()).toBe('无法安装的原因')
+    // renderMarkdownPreview 按原文层级输出标题（## → h2）；此处只验证结构化渲染，
+    // 不再假设旧渲染器「降两级」的行为。
+    expect(wrapper.get('.assistant-answer h2').text()).toBe('无法安装的原因')
     expect(wrapper.get('.assistant-answer strong').text()).toBe('运行时未授权工具')
     expect(wrapper.get('.assistant-answer pre code').text()).toBe('Error: tool is not authorized')
     expect(wrapper.get('.assistant-answer').text()).not.toContain('```')
