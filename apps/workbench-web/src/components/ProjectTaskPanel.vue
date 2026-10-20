@@ -267,7 +267,7 @@ const editor = ref<{
 }>({ open: false, taskId: null, title: '', description: '', assignee: '', inputFileIds: [], dueDate: null })
 const saving = ref(false)
 
-/** 承接者选项：非只读员工成员 + 可用 Agent 成员；值编码为 `employee:<id>` / `agent:<id>`。 */
+/** 负责人选项：非只读员工成员 + 可用 Agent 成员；值编码为 `employee:<id>` / `agent:<id>`。 */
 const employeeOptions = computed(() => props.members
   .filter(member => member.role !== 'viewer')
   .map(member => ({ value: `employee:${member.userId}`, label: member.displayName })))
@@ -303,7 +303,7 @@ async function saveTask() {
   }
   const [type, id] = editor.value.assignee.split(/:(.*)/s)
   if ((type !== 'employee' && type !== 'agent') || !id) {
-    ElMessage.warning('请选择承接者')
+    ElMessage.warning('请选择负责人')
     return
   }
   const input = {
@@ -322,7 +322,7 @@ async function saveTask() {
     await refresh()
   } catch (error) {
     // 保存失败保留表单输入。
-    notifyActionFailure(editor.value.taskId ? '更新任务' : '创建任务', `项目空间“${props.workspaceName}”`, error, '检查承接者与引用文件后重试。')
+    notifyActionFailure(editor.value.taskId ? '更新任务' : '创建任务', `项目空间“${props.workspaceName}”`, error, '检查负责人与引用文件后重试。')
     onWriteFailed(error)
   } finally {
     saving.value = false
@@ -348,7 +348,7 @@ async function startTask(task: ProjectTask, prompt?: string): Promise<boolean> {
     }
     return true
   } catch (error) {
-    notifyActionFailure('启动任务', `任务“${task.title}”`, error, '确认承接的 Agent 仍可用后重试。')
+    notifyActionFailure('启动任务', `任务“${task.title}”`, error, '确认负责的 Agent 仍可用后重试。')
     onWriteFailed(error)
     return false
   } finally {
@@ -469,7 +469,7 @@ defineExpose({ reload: load })
               <th class="project-tasks__col-index" scope="col"><span class="visually-hidden">序号</span></th>
               <th scope="col">标题</th>
               <th class="project-tasks__col-status" scope="col">状态</th>
-              <th class="project-tasks__col-assignee" scope="col">承接人</th>
+              <th class="project-tasks__col-assignee" scope="col">负责人</th>
               <th class="project-tasks__col-creator" scope="col">创建人</th>
               <th class="project-tasks__col-due" scope="col">截止</th>
               <th class="project-tasks__col-actions" scope="col">操作</th>
@@ -605,7 +605,7 @@ defineExpose({ reload: load })
                   {{ statusLabels[detailTask.status] }}
                 </span>
               </dd>
-              <dt>承接人</dt>
+              <dt>负责人</dt>
               <dd>
                 <span class="project-task__person">
                   <span class="project-task__avatar" :class="{ 'project-task__avatar--agent': detailTask.assignee.type === 'agent' }" aria-hidden="true">
@@ -674,8 +674,8 @@ defineExpose({ reload: load })
           />
         </div>
         <div class="project-tasks__field">
-          <span>承接者</span>
-          <el-select v-model="editor.assignee" class="project-field__control" data-testid="project-task-assignee" placeholder="选择同事或 Agent" aria-label="承接者">
+          <span>负责人</span>
+          <el-select v-model="editor.assignee" class="project-field__control" data-testid="project-task-assignee" placeholder="选择同事或 Agent" aria-label="负责人">
             <el-option-group v-if="employeeOptions.length" label="同事">
               <el-option v-for="option in employeeOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-option-group>

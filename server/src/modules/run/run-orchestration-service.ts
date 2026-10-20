@@ -331,7 +331,7 @@ export class RunOrchestrationService {
       let workspaceAgentMemberId = input.workspaceAgentMemberId
       if (thread) {
         if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
-          throw requestInvalid('任务线程只能交给承接该任务的 Agent')
+          throw requestInvalid('任务对话只能交给负责该任务的 Agent')
         }
         workspaceAgentMemberId = thread.agentMemberId
         await this.deps.projectTasks!.assertTaskThreadIdle(session.id)

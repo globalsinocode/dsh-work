@@ -172,7 +172,7 @@ test.describe('PS-E2E-07 任务对话（项目空间 S3）', () => {
     return ((await thread.json()).data as { runs: unknown[] }).runs.length
   }
 
-  test('承接人在任务对话中更新进度并标记完成，不触发 Agent', async ({ page }) => {
+  test('负责人在任务对话中更新进度并标记完成，不触发 Agent', async ({ page }) => {
     const seed = await loadSeed(page)
     const title = uniqueTitle('PS-E2E-07 员工任务')
     await createTask(page, seed.workspaceId, title, '周衡')
@@ -181,11 +181,11 @@ test.describe('PS-E2E-07 任务对话（项目空间 S3）', () => {
     await expect(page.getByTestId('task-send-agent')).toHaveCount(0)
     await expect(page.getByTestId('task-send-hint')).toHaveText('发言对空间成员可见，不会触发 Agent')
 
-    // 承接人首次发言：带“承接人”标记，任务自动进入“进行中”并留下系统记录。
+    // 负责人首次发言：带“负责人”标记，任务自动进入“进行中”并留下系统记录。
     await page.getByPlaceholder('更新进度或写评论…').fill('已完成数据收集')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(page.getByTestId('task-conversation-message').filter({ hasText: '已完成数据收集' })
-      .getByTestId('task-conversation-tag')).toHaveText('承接人')
+      .getByTestId('task-conversation-tag')).toHaveText('负责人')
     await expect(page.getByTestId('task-conversation-event').filter({ hasText: '周衡 更新了进度，任务进入进行中' })).toHaveCount(1)
     await expect(page.getByTestId('project-task-detail-status')).toHaveText('进行中')
 

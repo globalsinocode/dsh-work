@@ -48,7 +48,7 @@ test('PS-E2E-02 员工任务创建与完成', async ({ page }) => {
   await editor.getByLabel('任务标题').fill(title)
   await editor.getByLabel('任务说明').fill('按区域分组')
   // Element Plus 下拉按既有 E2E 约定用键盘操作。
-  const assignee = editor.getByRole('combobox', { name: '承接者' })
+  const assignee = editor.getByRole('combobox', { name: '负责人' })
   await assignee.press('Enter')
   await expect(page.getByRole('option', { name: '周衡' })).toBeVisible()
   await assignee.press('ArrowDown')

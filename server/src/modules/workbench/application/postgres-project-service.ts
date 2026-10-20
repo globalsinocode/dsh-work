@@ -483,7 +483,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     })
   }
 
-  /** 员工任务的状态推进：承接人、创建人、负责人或管理员。完成时可附说明与共享文件。 */
+  /** 员工任务的状态推进：任务负责人、创建人、空间负责人或管理员。完成时可附说明与共享文件。 */
   async setEmployeeTaskStatus(
     workspaceId: string,
     taskId: string,
@@ -503,7 +503,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       const task = await this.lockTask(transaction, workspaceId, taskId)
       if (task.assigneeType !== 'employee') throw workspaceStateConflict('Agent 任务的状态由执行结果决定，不能手动修改')
       if (![task.assigneeUserId, task.createdBy].includes(actorUserId) && !governanceRoles.includes(role)) {
-        throw authorizationDenied('只有承接人、任务创建人、负责人或管理员可以更新任务状态')
+        throw authorizationDenied('只有任务负责人、任务创建人、空间负责人或管理员可以更新任务状态')
       }
       await this.assertWorkspaceFiles(transaction, workspaceId, deliverables, 'deliverable')
       await transaction`
@@ -865,7 +865,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         select member_role as role from workspace_members
          where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${assignee.id}
       `
-      if (!member) throw requestInvalid('承接员工必须是本空间成员')
+      if (!member) throw requestInvalid('任务负责人必须是本空间成员')
       if (member.role === 'viewer') throw requestInvalid('只读成员不能承接任务')
       return
     }
@@ -873,7 +873,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       select status from workspace_agent_members
        where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${assignee.id}
     `
-    if (!agent) throw requestInvalid('承接 Agent 必须是本空间的 Agent 成员')
+    if (!agent) throw requestInvalid('负责任务的 Agent 必须是本空间的 Agent 成员')
     if (agent.status !== 'available') throw workspaceStateConflict('该 Agent 成员已停用，不能承接新任务')
   }
 
@@ -1117,10 +1117,10 @@ function parseTaskCursor(value: unknown): { createdAt: string; id: string } | nu
 }
 
 function parseAssignee(value: unknown): ProjectTaskAssigneeInput {
-  if (!value || typeof value !== 'object') throw requestInvalid('必须选择承接者')
+  if (!value || typeof value !== 'object') throw requestInvalid('必须选择任务负责人')
   const { type, id } = value as { type?: unknown; id?: unknown }
   if ((type !== 'employee' && type !== 'agent') || typeof id !== 'string' || !id.trim()) {
-    throw requestInvalid('承接者必须是本空间的一位员工或一个 Agent 成员')
+    throw requestInvalid('任务负责人必须是本空间的一位员工或一个 Agent 成员')
   }
   return { type, id: id.trim() }
 }

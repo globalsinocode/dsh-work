@@ -635,7 +635,7 @@
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "setProjectTaskStatus",
-        "summary": "更新员工任务状态（承接人、创建人、负责人、管理员）",
+        "summary": "更新员工任务状态（任务负责人、创建人、空间负责人、管理员）",
         "description": "项目空间 S1：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务的状态由执行结果决定，返回 409。",
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
@@ -751,7 +751,7 @@
       "post": {
         "operationId": "markSessionAsProjectTask",
         "summary": "把讨论线程设为任务（非只读成员）",
-        "description": "项目空间 S1：承接者为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
+        "description": "项目空间 S1：负责人为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
         "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },

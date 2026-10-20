@@ -498,7 +498,7 @@ function runRecordTone(run: SessionRunRecord) {
 
 function eventText(event: ProjectTaskEvent) {
   if (event.kind === 'completed') return `${event.actor.displayName} 标记完成`
-  if (event.kind === 'reassigned') return `${event.actor.displayName} 将承接人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}`
+  if (event.kind === 'reassigned') return `${event.actor.displayName} 将负责人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}`
   const to = taskStatusLabels[event.metadata.to ?? ''] ?? event.metadata.to ?? ''
   return event.metadata.auto
     ? `${event.actor.displayName} 更新了进度，任务进入${to}`
@@ -514,12 +514,12 @@ function formatTimelineTime(value: string) {
 const briefMessageId = computed(() =>
   sessionThread.value && !sessionThread.value.hasMoreMessages ? sessionThread.value.messages[0]?.id ?? null : null)
 
-/** 消息旁的标记：Agent 任务里不交给 Agent 的发言是“评论”；员工任务里承接人的发言标“承接人”。 */
+/** 消息旁的标记：Agent 任务里不交给 Agent 的发言是“评论”；员工任务里负责人的发言标“负责人”。 */
 function messageTag(message: SessionThreadMessage) {
   if (message.role !== 'user' || message.id === briefMessageId.value) return ''
   if (isAgentTaskConversation.value && !message.runId) return '评论'
   const assignee = conversationTask.value?.assignee
-  if (isEmployeeTaskConversation.value && assignee?.type === 'employee' && message.senderId === assignee.userId) return '承接人'
+  if (isEmployeeTaskConversation.value && assignee?.type === 'employee' && message.senderId === assignee.userId) return '负责人'
   return ''
 }
 

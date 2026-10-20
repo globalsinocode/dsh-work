@@ -952,7 +952,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
       })
       const { wrapper } = await mountView({ item: null, bridge: detail })
       expect(wrapper.find('[data-testid="task-send-agent"]').exists()).toBe(false)
-      expect(wrapper.get('[data-testid="task-conversation-tag"]').text()).toBe('承接人')
+      expect(wrapper.get('[data-testid="task-conversation-tag"]').text()).toBe('负责人')
       const events = wrapper.findAll('[data-testid="task-conversation-event"]').map(node => node.text())
       expect(events[0]).toContain('周航 更新了进度，任务进入进行中')
       expect(events[1]).toContain('周航 标记完成')
