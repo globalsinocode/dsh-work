@@ -303,6 +303,7 @@ describe('Runtime Manifest compiler', () => {
     const systemPrompt = renderSystemPrompt(stored)
     assert.match(systemPrompt, /# 当前 Run 输入附件（图片）/)
     assert.match(systemPrompt, /读取路径：input\/attachments\/image-1\.png/)
+    assert.match(systemPrompt, /如果当前模型不支持读图/)
     assert.match(systemPrompt, /S1 第 4 行/)
   })
 

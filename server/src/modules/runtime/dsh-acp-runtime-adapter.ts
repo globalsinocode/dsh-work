@@ -1169,7 +1169,8 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
   if (attachments.length > 0) {
     sections.push([
       '# 当前 Run 输入附件（图片）',
-      '这些是原文件里的内嵌图片（照片、截图），已按只读方式放到工作目录。表格文字里看不到它们的内容，需要看图时必须用 read_image 读取下面给出的路径，不要猜测文件名。',
+      '这些是原文件里的内嵌图片（照片、截图），已按只读方式放到工作目录，表格文字里看不到它们的内容。需要看图时用 read_image 读取下面给出的路径，不要猜测文件名。',
+      '如果当前模型不支持读图，工具会明确报错：这时只能说明「原文件里有这些图片、但当前模型看不到」，不要凭文件名或上下文猜测图片内容。',
       ...attachments.map((attachment, index) => [
         `${index + 1}. ${attachment.name}${attachment.source ? `（原表格位置：${attachment.source}）` : ''}`,
         `   - 读取路径：${attachment.mount_path.slice('/workspace/'.length)}`,
