@@ -333,6 +333,7 @@ export class RunOrchestrationService {
         if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
           throw requestInvalid('任务对话只能交给负责该任务的 Agent')
         }
+        if (thread.status === 'done') throw stateConflict('任务已完成，改回进行中后才能交给 Agent')
         workspaceAgentMemberId = thread.agentMemberId
         await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
       } else {
@@ -380,6 +381,8 @@ export class RunOrchestrationService {
       ...(taskThread ? { requireIdleSession: { conflictMessage: TASK_THREAD_BUSY } } : {}),
     })
     if (run.currentAttemptId || run.status !== 'queued') return run
+    // 项目空间 S4：任务对话的第一次执行让待办的 Agent 任务进入进行中。
+    if (taskThread) await this.deps.projectTasks?.noteTaskRunStarted?.(session.id)
     await this.deps.conversations.appendMessage({
       sessionId: session.id,
       runId: run.id,

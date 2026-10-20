@@ -165,9 +165,15 @@ function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
     description: '',
     createdBy: { userId: 'U00002', displayName: '周航' },
     assignee: { type: 'agent', agentMemberId: 'wam-7', name: '缺货分析助手' },
-    status: 'done',
+    status: 'in_progress',
     sessionId: 'session-001',
     latestRunId: 'run-9',
+    latestRunStatus: 'succeeded',
+    latestRunAt: '2026-09-10T10:00:00.000Z',
+    schedule: { kind: 'manual', timezone: 'Asia/Shanghai' },
+    scheduleState: 'active',
+    scheduleReason: null,
+    nextRunAt: null,
     inputFiles: [],
     deliverableFiles: [],
     completionNote: null,
@@ -902,6 +908,39 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
       await flushPromises()
       expect(api.postSessionMessage).toHaveBeenCalledWith('session-001', '口径要和上周一致', expect.any(String))
       expect(api.startRun).toHaveBeenCalledTimes(1)
+    })
+
+    it('S4：定时执行以“定时执行”标注，不显示固定提示，“无变化”回复折叠', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        messages: [
+          { id: 'm1', role: 'user', content: '分析缺货原因', createdAt: '09:00', sentAt: '2026-09-10T09:00:00.000Z', runId: null, senderId: 'U00002', senderName: '周航', runRequesterId: null, runRequesterName: null, agentName: null },
+          { id: 'm2', role: 'user', content: '按任务说明执行本期工作', createdAt: '09:00', sentAt: '2026-09-11T01:00:00.000Z', runId: 'run-s1', senderId: 'U00002', senderName: '周航', runRequesterId: 'U00002', runRequesterName: '周航', agentName: null },
+          { id: 'm3', role: 'assistant', content: '无变化：数据与昨日一致', createdAt: '09:01', sentAt: '2026-09-11T01:01:00.000Z', runId: 'run-s1', senderId: null, senderName: null, runRequesterId: 'U00002', runRequesterName: '周航', agentName: '缺货分析助手' },
+        ],
+        runs: [{ runId: 'run-s1', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-11T01:00:00.000Z' }],
+      }))
+      const events: ProjectTaskEvent[] = [
+        { id: 'e1', kind: 'scheduled_run', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { runId: 'run-s1', slot: '2026-09-11T01:00:00.000Z' }, createdAt: '2026-09-11T01:00:00.100Z' },
+        { id: 'e2', kind: 'schedule_paused', sessionId: 'session-001', actor: { userId: 'U00002', displayName: '周航' }, metadata: { reason: 'consecutive_failures' }, createdAt: '2026-09-12T01:00:00.000Z' },
+      ]
+      const { wrapper } = await mountView({ item: null, bridge: bridge({ eventValues: events }) })
+      expect(wrapper.text()).not.toContain('按任务说明执行本期工作')
+      expect(wrapper.get('[data-testid="task-conversation-run"]').text()).toContain('定时执行 · 执行完成')
+      expect(wrapper.get('[data-testid="task-conversation-quiet"]').text()).toContain('无变化（展开）')
+      expect(wrapper.findAll('[data-testid="task-conversation-event"]').map(node => node.text()).join(' ')).toContain('定时执行已暂停：连续失败 3 次')
+    })
+
+    it('S4：已完成的 Agent 任务只能评论；未完成时可在对话中标记完成', async () => {
+      api.getSessionThread.mockResolvedValue(sessionThread({
+        runs: [{ runId: 'run-9', status: 'succeeded', requestedBy: 'U00002', requesterName: '周航', createdAt: '2026-09-10T09:05:00.000Z' }],
+      }))
+      const open = await mountView({ item: null, bridge: bridge() })
+      expect(open.wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(true)
+      open.wrapper.unmount()
+      const done = await mountView({ item: null, bridge: bridge({ taskValue: projectTask({ status: 'done' }) }) })
+      expect(done.wrapper.get('[data-testid="task-send-agent"]').attributes('disabled')).toBeDefined()
+      expect(done.wrapper.get('[data-testid="task-send-hint"]').text()).toContain('任务已完成')
+      expect(done.wrapper.find('[data-testid="task-complete-from-conversation"]').exists()).toBe(false)
     })
 
     it('执行中只能评论', async () => {

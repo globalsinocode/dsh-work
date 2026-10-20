@@ -16,10 +16,26 @@ import type {
   WorkspaceMember,
 } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import {
+  defaultScheduleDraft,
+  draftFromSchedule,
+  formatRunMoment,
+  isActiveRunStatus,
+  runOutcomeLabel,
+  runOutcomeTone,
+  scheduleInputFromDraft,
+  scheduleLabel,
+  scheduleModeLabels,
+  scheduleReasonLabel,
+  weekdayOptions,
+  type ScheduleDraft,
+  type ScheduleMode,
+} from '@/utils/project-task-schedule'
 
 /**
  * 项目空间 S1：任务页签（docs/design/project-space-plan.md 第 5 节）。
- * 员工任务手动推进；Agent 任务即任务线程——启动后在线程里回复即可续接，状态由最近一次执行推算。
+ * S4（第 11 节）：两类任务都由人推进状态、标记完成；Agent 任务另有执行规则（手动 / 每天 / 工作日 / 每周），
+ * 单次执行的结果只作为“最近执行”展示，不改任务状态。
  * 写入口按服务端返回的 allowedActions 渲染，服务端仍是最终裁决。
  *
  * 传入 detailTaskId 时展示任务详情（/workspaces/:id/tasks/:taskId，S3 设计稿）：主区是任务标题与
@@ -62,7 +78,6 @@ const statusLabels: Record<ProjectTaskStatus, string> = {
   todo: '待办',
   in_progress: '进行中',
   done: '已完成',
-  failed: '执行失败',
 }
 
 async function load() {
@@ -189,7 +204,7 @@ watch(() => props.detailTaskId, (taskId) => {
 
 /** 当前任务对话里是否有执行中的 Agent 执行（停止入口）。 */
 const detailRunning = computed(() =>
-  detailTask.value?.assignee.type === 'agent' && detailTask.value.status === 'in_progress' && Boolean(detailTask.value.latestRunId))
+  detailTask.value?.assignee.type === 'agent' && isActiveRunStatus(detailTask.value.latestRunStatus))
 
 /** 执行详情：最近一次执行的步骤、工具调用与成果核验。 */
 function openRunDetail() {
@@ -264,7 +279,9 @@ const editor = ref<{
   assignee: string
   inputFileIds: string[]
   dueDate: string | null
-}>({ open: false, taskId: null, title: '', description: '', assignee: '', inputFileIds: [], dueDate: null })
+  /** S4：Agent 任务的执行规则。 */
+  schedule: ScheduleDraft
+}>({ open: false, taskId: null, title: '', description: '', assignee: '', inputFileIds: [], dueDate: null, schedule: defaultScheduleDraft() })
 const saving = ref(false)
 
 /** 负责人选项：非只读员工成员 + 可用 Agent 成员；值编码为 `employee:<id>` / `agent:<id>`。 */
@@ -279,8 +296,13 @@ const editorAssigneeIsAgent = computed(() => editor.value.assignee.startsWith('a
 const referenceableFiles = computed(() => props.files.filter(file => file.canReference === true))
 
 function openCreate() {
-  editor.value = { open: true, taskId: null, title: '', description: '', assignee: '', inputFileIds: [], dueDate: null }
+  editor.value = {
+    open: true, taskId: null, title: '', description: '', assignee: '', inputFileIds: [], dueDate: null,
+    schedule: defaultScheduleDraft(),
+  }
 }
+
+const scheduleModes = Object.entries(scheduleModeLabels).map(([value, label]) => ({ value: value as ScheduleMode, label }))
 
 function openEdit(task: ProjectTask) {
   editor.value = {
@@ -291,10 +313,12 @@ function openEdit(task: ProjectTask) {
     assignee: task.assignee.type === 'agent' ? `agent:${task.assignee.agentMemberId}` : `employee:${task.assignee.userId}`,
     inputFileIds: task.inputFiles.map(file => file.fileObjectId),
     dueDate: task.dueDate,
+    schedule: draftFromSchedule(task.schedule),
   }
 }
 
-async function saveTask() {
+/** 保存任务；新建 Agent 任务时可“保存并立即执行”。 */
+async function saveTask(startNow = false) {
   if (saving.value) return
   const title = editor.value.title.trim()
   if (!title) {
@@ -312,14 +336,26 @@ async function saveTask() {
     assignee: { type, id } as const,
     inputFileIds: type === 'agent' ? editor.value.inputFileIds : [],
     dueDate: editor.value.dueDate || null,
+    ...(type === 'agent' ? { schedule: scheduleInputFromDraft(editor.value.schedule) } : {}),
+  }
+  if (type === 'agent' && editor.value.schedule.mode === 'weekly' && !editor.value.schedule.weekdays.length) {
+    ElMessage.warning('请选择每周执行的星期')
+    return
   }
   saving.value = true
   try {
-    if (editor.value.taskId) await workbenchApi.updateProjectTask(props.workspaceId, editor.value.taskId, input)
-    else await workbenchApi.createProjectTask(props.workspaceId, input)
-    ElMessage.success(editor.value.taskId ? '任务已更新' : '任务已创建')
-    editor.value.open = false
-    await refresh()
+    if (editor.value.taskId) {
+      await workbenchApi.updateProjectTask(props.workspaceId, editor.value.taskId, input)
+      ElMessage.success('任务已更新')
+      editor.value.open = false
+      await refresh()
+    } else {
+      const created = await workbenchApi.createProjectTask(props.workspaceId, { ...input, ...(startNow ? { startNow: true } : {}) })
+      ElMessage.success(startNow ? '任务已创建并开始执行' : '任务已创建')
+      editor.value.open = false
+      await refresh()
+      if (startNow) openThread(created)
+    }
   } catch (error) {
     // 保存失败保留表单输入。
     notifyActionFailure(editor.value.taskId ? '更新任务' : '创建任务', `项目空间“${props.workspaceName}”`, error, '检查负责人与引用文件后重试。')
@@ -362,6 +398,29 @@ function openThread(task: ProjectTask) {
   if (!path) return
   if (props.detailTaskId === task.id) void router.replace(path)
   else void router.push(path)
+}
+
+/** S4：恢复因连续失败或规则设置人失效而暂停的定时执行。 */
+async function resumeSchedule(task: ProjectTask) {
+  if (busyTaskId.value) return
+  busyTaskId.value = task.id
+  try {
+    await workbenchApi.resumeProjectTaskSchedule(props.workspaceId, task.id)
+    ElMessage.success('已恢复定时执行')
+    await refresh()
+  } catch (error) {
+    notifyActionFailure('恢复定时执行', `任务“${task.title}”`, error, '刷新后重试。')
+    onWriteFailed(error)
+  } finally {
+    busyTaskId.value = ''
+  }
+}
+
+/** 执行列 / 任务信息：规则状态（暂停、停止）与原因。 */
+function scheduleStateText(task: ProjectTask): string {
+  if (task.scheduleState === 'paused') return '已暂停'
+  if (task.scheduleState === 'stopped' && task.schedule?.kind !== 'manual') return task.scheduleReason === 'completed' ? '已结束' : '已停止'
+  return ''
 }
 
 async function setStatus(task: ProjectTask, status: 'todo' | 'in_progress') {
@@ -470,6 +529,7 @@ defineExpose({ reload: load })
               <th scope="col">标题</th>
               <th class="project-tasks__col-status" scope="col">状态</th>
               <th class="project-tasks__col-assignee" scope="col">负责人</th>
+              <th class="project-tasks__col-schedule" scope="col">执行</th>
               <th class="project-tasks__col-creator" scope="col">创建人</th>
               <th class="project-tasks__col-due" scope="col">截止</th>
               <th class="project-tasks__col-actions" scope="col">操作</th>
@@ -503,22 +563,45 @@ defineExpose({ reload: load })
                   <span class="project-task__person-name">{{ assigneeLabel(task) }}</span>
                 </span>
               </td>
+              <td class="project-tasks__col-schedule" data-testid="project-task-schedule-cell">
+                <template v-if="task.assignee.type === 'agent'">
+                  <span class="project-task__schedule">
+                    <span v-if="scheduleStateText(task)" class="project-task__schedule-state" :class="`project-task__schedule-state--${task.scheduleState}`">{{ scheduleStateText(task) }}</span>
+                    {{ scheduleLabel(task.schedule) }}
+                  </span>
+                  <span v-if="task.scheduleState === 'paused' || (task.scheduleState === 'stopped' && task.scheduleReason !== 'completed' && task.schedule?.kind !== 'manual')" class="project-task__schedule-sub project-task__schedule-sub--danger">
+                    {{ scheduleReasonLabel(task.scheduleReason) }}
+                  </span>
+                  <span v-else-if="task.latestRunStatus" class="project-task__schedule-sub" :class="`project-task__schedule-sub--${runOutcomeTone(task.latestRunStatus)}`">
+                    上次{{ runOutcomeLabel(task.latestRunStatus) }} · {{ formatRunMoment(task.latestRunAt) }}
+                  </span>
+                  <span v-else class="project-task__schedule-sub">尚未执行</span>
+                </template>
+                <span v-else class="project-task__muted">—</span>
+              </td>
               <td class="project-tasks__col-creator project-task__muted">{{ task.createdBy.displayName }}</td>
               <td class="project-tasks__col-due project-task__muted">{{ task.dueDate || '—' }}</td>
               <td class="project-tasks__col-actions">
                 <div class="project-task__actions">
                   <el-button
-                    v-if="can(task, 'start')"
-                    type="primary"
+                    v-if="can(task, 'resume')"
+                    size="small"
+                    :loading="busyTaskId === task.id"
+                    @click="resumeSchedule(task)"
+                  >
+                    恢复
+                  </el-button>
+                  <el-button
+                    v-if="can(task, 'start') && !isActiveRunStatus(task.latestRunStatus)"
                     size="small"
                     :loading="busyTaskId === task.id"
                     @click="startTask(task)"
                   >
-                    交给 Agent 执行
+                    立即执行
                   </el-button>
                   <template v-if="can(task, 'set_status')">
                     <el-button
-                      v-if="task.status === 'todo'"
+                      v-if="task.status === 'todo' && task.assignee.type === 'employee'"
                       size="small"
                       :loading="busyTaskId === task.id"
                       @click="setStatus(task, 'in_progress')"
@@ -583,6 +666,15 @@ defineExpose({ reload: load })
           <div class="project-task-detail__header-actions">
             <el-button v-if="detailTask.latestRunId" data-testid="project-task-run-detail" :icon="DataLine" @click="openRunDetail">执行详情</el-button>
             <el-button
+              v-if="can(detailTask, 'start') && !detailRunning"
+              data-testid="project-task-run-now"
+              type="primary"
+              :loading="busyTaskId === detailTask.id"
+              @click="startTask(detailTask)"
+            >
+              立即执行
+            </el-button>
+            <el-button
               v-if="detailRunning && canWrite"
               data-testid="project-task-stop"
               type="danger"
@@ -615,6 +707,35 @@ defineExpose({ reload: load })
                   <span class="project-task__person-name">{{ assigneeLabel(detailTask) }}</span>
                 </span>
               </dd>
+              <template v-if="detailTask.assignee.type === 'agent'">
+                <dt>执行规则</dt>
+                <dd class="project-task-info__schedule" data-testid="project-task-schedule">
+                  <span>
+                    <span v-if="scheduleStateText(detailTask)" class="project-task__schedule-state" :class="`project-task__schedule-state--${detailTask.scheduleState}`">{{ scheduleStateText(detailTask) }}</span>
+                    {{ scheduleLabel(detailTask.schedule) }}
+                  </span>
+                  <el-button v-if="can(detailTask, 'edit')" link type="primary" size="small" data-testid="project-task-schedule-edit" @click="openEdit(detailTask)">修改</el-button>
+                </dd>
+                <template v-if="detailTask.scheduleState === 'paused' || (detailTask.scheduleState === 'stopped' && detailTask.schedule?.kind !== 'manual' && detailTask.scheduleReason !== 'completed')">
+                  <dt>定时</dt>
+                  <dd class="project-task-info__schedule" data-testid="project-task-schedule-reason">
+                    <span class="project-task__schedule-sub--danger">{{ scheduleReasonLabel(detailTask.scheduleReason) }}</span>
+                    <el-button v-if="can(detailTask, 'resume')" link type="primary" size="small" data-testid="project-task-schedule-resume" :loading="busyTaskId === detailTask.id" @click="resumeSchedule(detailTask)">恢复</el-button>
+                  </dd>
+                </template>
+                <template v-else-if="detailTask.schedule?.kind !== 'manual' && detailTask.nextRunAt">
+                  <dt>下次执行</dt>
+                  <dd data-testid="project-task-next-run">{{ formatRunMoment(detailTask.nextRunAt) }}</dd>
+                </template>
+                <dt>最近执行</dt>
+                <dd :class="{ 'project-task-info__empty': !detailTask.latestRunStatus }" data-testid="project-task-latest-run">
+                  <template v-if="detailTask.latestRunStatus">
+                    <span class="project-task__run-dot" :class="`project-task__run-dot--${runOutcomeTone(detailTask.latestRunStatus)}`" aria-hidden="true"></span>
+                    {{ runOutcomeLabel(detailTask.latestRunStatus) }} · {{ formatRunMoment(detailTask.latestRunAt) }}
+                  </template>
+                  <template v-else>尚未执行</template>
+                </dd>
+              </template>
               <dt>创建人</dt>
               <dd>{{ detailTask.createdBy.displayName }}</dd>
               <dt>截止</dt>
@@ -656,7 +777,7 @@ defineExpose({ reload: load })
       :close-on-click-modal="false"
       :append-to-body="false"
     >
-      <form class="project-tasks__form" @submit.prevent="saveTask">
+      <form class="project-tasks__form" @submit.prevent="saveTask()">
         <div class="project-tasks__field">
           <span>任务标题</span>
           <el-input v-model="editor.title" data-testid="project-task-title" maxlength="120" show-word-limit aria-label="任务标题" />
@@ -706,11 +827,51 @@ defineExpose({ reload: load })
           <span>截止时间（可选）</span>
           <el-date-picker v-model="editor.dueDate" class="project-field__control" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable aria-label="截止时间" />
         </div>
-        <p v-if="editor.taskId && editorAssigneeIsAgent" class="project-tasks__muted">改派给其他 Agent 后会从新的任务线程开始。</p>
+        <fieldset v-if="editorAssigneeIsAgent" class="project-tasks__schedule" data-testid="project-task-schedule-editor">
+          <legend>执行规则</legend>
+          <el-radio-group v-model="editor.schedule.mode" aria-label="执行频率" data-testid="project-task-schedule-mode">
+            <el-radio-button v-for="option in scheduleModes" :key="option.value" :value="option.value">{{ option.label }}</el-radio-button>
+          </el-radio-group>
+          <el-checkbox-group v-if="editor.schedule.mode === 'weekly'" v-model="editor.schedule.weekdays" aria-label="每周执行的星期">
+            <el-checkbox-button v-for="day in weekdayOptions" :key="day.value" :value="day.value">{{ day.label }}</el-checkbox-button>
+          </el-checkbox-group>
+          <div v-if="editor.schedule.mode !== 'manual'" class="project-tasks__schedule-time">
+            <span>执行时间</span>
+            <el-time-select
+              v-model="editor.schedule.timeOfDay"
+              start="00:00"
+              step="00:30"
+              end="23:30"
+              :clearable="false"
+              aria-label="执行时间"
+              data-testid="project-task-schedule-time"
+            />
+          </div>
+          <p class="project-tasks__muted">
+            任何规则下都可以随时“立即执行”。任务标记完成、过了截止日期或连续失败 3 次时，定时执行会停止或暂停。
+          </p>
+        </fieldset>
+        <p v-if="editor.taskId && editorAssigneeIsAgent" class="project-tasks__muted">改派给其他 Agent 后会从新的任务对话开始。</p>
       </form>
       <template #footer>
         <el-button @click="editor.open = false">取消</el-button>
-        <el-button type="primary" data-testid="project-task-save" :loading="saving" @click="saveTask">保存</el-button>
+        <el-button
+          :type="!editor.taskId && editorAssigneeIsAgent ? 'default' : 'primary'"
+          data-testid="project-task-save"
+          :loading="saving"
+          @click="saveTask()"
+        >
+          保存
+        </el-button>
+        <el-button
+          v-if="!editor.taskId && editorAssigneeIsAgent"
+          type="primary"
+          data-testid="project-task-save-run"
+          :loading="saving"
+          @click="saveTask(true)"
+        >
+          保存并立即执行
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1016,9 +1177,105 @@ defineExpose({ reload: load })
   background: currentcolor;
 }
 
-.project-task__status--failed {
-  background: var(--dsh-color-danger-soft);
+/* S4：执行列与任务信息中的执行规则、最近执行。 */
+.project-tasks__col-schedule {
+  min-width: 132px;
+}
+
+.project-task__schedule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.project-task__schedule-state {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: #f1f2f3;
+  color: #4b4f4c;
+  font-size: var(--dsh-font-size-badge);
+  line-height: 18px;
+}
+
+.project-task__schedule-state--paused {
+  background: #fff3e6;
+  color: #a2520b;
+}
+
+.project-task__schedule-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsh-color-muted);
+  font-size: var(--dsh-font-size-caption);
+}
+
+.project-task__schedule-sub--success {
+  color: var(--dsh-color-success);
+}
+
+.project-task__schedule-sub--danger {
   color: var(--dsh-color-danger);
+}
+
+.project-task__schedule-sub--active {
+  color: #2459c2;
+}
+
+.project-task-info__schedule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-task__run-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--dsh-color-muted);
+  vertical-align: middle;
+}
+
+.project-task__run-dot--success {
+  background: var(--dsh-color-success);
+}
+
+.project-task__run-dot--danger {
+  background: var(--dsh-color-danger);
+}
+
+.project-task__run-dot--active {
+  background: #2459c2;
+}
+
+.project-tasks__schedule {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #e6e8ea;
+  border-radius: 12px;
+}
+
+.project-tasks__schedule legend {
+  padding: 0 6px;
+  color: var(--dsh-color-text);
+  font-size: var(--dsh-font-size-caption);
+}
+
+.project-tasks__schedule-time {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dsh-color-text);
+  font-size: var(--dsh-font-size-caption);
+}
+
+.project-tasks__schedule .project-tasks__muted {
+  margin: 0;
 }
 
 .project-task__person {

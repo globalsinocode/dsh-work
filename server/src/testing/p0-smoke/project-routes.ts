@@ -95,6 +95,13 @@ export function registerSmokeProjectRoutes(router: Router) {
     ...task,
     sessionId: null,
     latestRunId: null,
+    latestRunStatus: null,
+    latestRunAt: null,
+    // S4：冒烟数据只有员工任务，没有执行规则。
+    schedule: null,
+    scheduleState: null,
+    scheduleReason: null,
+    nextRunAt: null,
     inputFiles: [],
     deliverableFiles: [],
     allowedActions: ['edit', 'remove', 'set_status', 'complete'],

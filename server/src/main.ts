@@ -389,7 +389,7 @@ async function start() {
     database, authorization, runs, orchestration, conversations, operations,
   )
   automationSweep = new AutomationTriggerSweep(
-    database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService,
+    database, automationRepository, automationService, defaultAutomationConfig, agentRoutineService, projects,
   )
   await automationSweep.start()
   registerAutomationRoutes(router, automationService)

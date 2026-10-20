@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
+import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
 import {
   projectGovernanceRoles as governanceRoles,
   projectWriterRoles as writerRoles,
@@ -12,6 +12,9 @@ import { sha256 } from '../../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { SessionAuthorizationContext } from '../../authorization/postgres-authorization-service.ts'
 import type { PostgresProjectArchiveService } from './postgres-project-archive-service.ts'
+import { nextSlotUtc, normalizeSchedule, slotsBetween } from '../../automation/automation-calendar.ts'
+import type { AutomationSchedule } from '../../automation/automation-types.ts'
+import { resolvePlatformTimezone } from '../../../domain/execution-time.ts'
 import { activityTransitionToken, recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
@@ -29,8 +32,22 @@ export interface ProjectBrief {
   updatedAt: string
 }
 
-export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done' | 'failed'
-export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete'
+/** S4：两类任务状态相同，由人推进；Agent 任务第一次执行开始时自动进入进行中。 */
+export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done'
+export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete' | 'resume'
+
+/** S4：Agent 任务的执行规则（与自动任务同一日历语义；“工作日”存为每周一至五）。 */
+export type ProjectTaskSchedule = AutomationSchedule
+export type ProjectTaskScheduleState = 'active' | 'paused' | 'stopped'
+
+/** 定时执行的固定提示；任务说明、评论与历史结论经对话历史与摘要带入。 */
+export const SCHEDULED_RUN_PROMPT = '按任务说明执行本期工作；与上次结论相比有变化时说明变化；没有新进展时以“无变化”开头并说明原因。'
+/** 连续失败达到该次数时暂停定时执行。 */
+export const SCHEDULE_FAILURE_LIMIT = 3
+/** 定时槽位迟到容差：超出视为错过（服务停机），不补跑；与自动任务一致。 */
+const SCHEDULE_MAX_LATENESS_MS = 10 * 60_000
+/** 每个空间启用定时规则的 Agent 任务上限。 */
+const SCHEDULED_TASKS_PER_WORKSPACE = 20
 
 export interface ProjectTaskFile {
   fileObjectId: string
@@ -47,10 +64,20 @@ export interface ProjectTask {
   assignee:
     | { type: 'employee'; userId: string; displayName: string }
     | { type: 'agent'; agentMemberId: string; name: string }
-  /** Agent 任务由任务线程最近一次 Run 推算；员工任务取存储状态。 */
+  /** S4：两类任务都取存储状态（由人推进），不再由执行推算。 */
   status: ProjectTaskStatus
   sessionId: string | null
   latestRunId: string | null
+  /** 最近一次执行的状态与时间（Agent 任务）；单次执行结果不改任务状态。 */
+  latestRunStatus: string | null
+  latestRunAt: string | null
+  /** S4：Agent 任务的执行规则；员工任务为 null。 */
+  schedule: ProjectTaskSchedule | null
+  scheduleState: ProjectTaskScheduleState | null
+  /** 暂停或停止的原因：completed、due_passed、consecutive_failures、setter_ineligible、agent_unavailable、workspace_archived。 */
+  scheduleReason: string | null
+  /** 下一次定时执行（UTC ISO）；手动规则、暂停或停止时为 null。 */
+  nextRunAt: string | null
   inputFiles: ProjectTaskFile[]
   deliverableFiles: ProjectTaskFile[]
   completionNote: string | null
@@ -76,12 +103,19 @@ export interface ProjectTaskThreadPort {
   assertNotEmployeeTaskThread(sessionId: string): Promise<void>
   /** S3：任务对话中有人发言后的收敛（承接人首次发言时把待办的员工任务推进为进行中）；不抛错。 */
   noteTaskConversationMessage(sessionId: string, userId: string): Promise<void>
+  /** S4：任务对话中的执行已受理：待办的 Agent 任务进入进行中。不抛错。 */
+  noteTaskRunStarted?(sessionId: string): Promise<void>
+  /** S4：任务对话中的执行结束：成功清零、失败累计，连续失败达到上限时暂停定时执行。不抛错。 */
+  noteTaskRunTerminal?(sessionId: string, status: 'succeeded' | 'failed'): Promise<void>
 }
 
 /** S3：任务事件（员工任务的状态推进、完成与同类改派），在任务对话中作为系统记录展示。 */
 export interface ProjectTaskEvent {
   id: string
-  kind: 'status_changed' | 'completed' | 'reassigned'
+  kind:
+    | 'status_changed' | 'completed' | 'reassigned'
+    | 'schedule_changed' | 'schedule_paused' | 'schedule_resumed' | 'schedule_stopped'
+    | 'scheduled_run' | 'execution_skipped' | 'execution_missed'
   sessionId: string | null
   actor: { userId: string; displayName: string }
   metadata: Record<string, unknown>
@@ -91,6 +125,8 @@ export interface ProjectTaskEvent {
 export interface ProjectTaskThread {
   taskId: string
   agentMemberId: string
+  /** S4：已完成的任务不再执行，重新打开后才能交给 Agent。 */
+  status: ProjectTaskStatus
   projectContext: NonNullable<RuntimeManifest['project_context']> | null
 }
 
@@ -153,6 +189,11 @@ interface TaskRow {
   updatedAt: Date
   latestRunId: string | null
   latestRunStatus: string | null
+  latestRunAt: Date | null
+  schedule: ProjectTaskSchedule | null
+  scheduleState: ProjectTaskScheduleState | null
+  scheduleReason: string | null
+  nextSlotUtc: Date | null
 }
 
 /**
@@ -257,7 +298,10 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   async createTask(
     workspaceId: string,
     actorUserId: string,
-    input: { title: unknown; description?: unknown; assignee: unknown; inputFileIds?: unknown; dueDate?: unknown },
+    input: {
+      title: unknown; description?: unknown; assignee: unknown; inputFileIds?: unknown; dueDate?: unknown
+      schedule?: unknown; startNow?: unknown
+    },
     authorizationContext?: SessionAuthorizationContext,
   ): Promise<ProjectTask> {
     const title = requireText(input.title, '任务标题', 120)
@@ -266,6 +310,13 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     const dueDate = optionalDate(input.dueDate, '截止时间')
     const inputFileIds = parseFileIds(input.inputFileIds, '引用文件')
     if (assignee.type === 'employee' && inputFileIds.length) throw requestInvalid('只有 Agent 任务可以引用执行输入文件')
+    // S4：每个 Agent 任务都有执行规则，未指定时默认每天 09:00；员工任务没有执行规则。
+    if (assignee.type === 'employee' && input.schedule !== undefined && input.schedule !== null) {
+      throw requestInvalid('只有 Agent 任务可以设置执行规则')
+    }
+    if (input.startNow !== undefined && typeof input.startNow !== 'boolean') throw requestInvalid('startNow 必须是布尔值')
+    if (input.startNow && assignee.type !== 'agent') throw requestInvalid('只有 Agent 任务可以立即执行')
+    const schedule = assignee.type === 'agent' ? parseSchedule(input.schedule) : null
     const taskId = `ptask-${randomUUID()}`
     // S3：两类任务创建时都有任务对话。会话先于任务建立（经既有 createSession 的授权）；
     // 任务写入失败时归档这条空会话。
@@ -277,14 +328,18 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
       await this.assertAssignee(transaction, workspaceId, assignee)
       await this.assertWorkspaceFiles(transaction, workspaceId, inputFileIds, 'input')
+      if (schedule) await assertScheduleQuota(transaction, workspaceId, schedule, null)
       await transaction`
         insert into project_tasks (
           id, tenant_id, workspace_id, title, description, created_by, assignee_type,
-          assignee_user_id, assignee_agent_member_id, due_date, session_id
+          assignee_user_id, assignee_agent_member_id, due_date, session_id,
+          schedule, schedule_state, schedule_set_by, next_slot_utc
         ) values (
           ${taskId}, ${tenantId}, ${workspaceId}, ${title}, ${description}, ${actorUserId}, ${assignee.type},
           ${assignee.type === 'employee' ? assignee.id : null}, ${assignee.type === 'agent' ? assignee.id : null}, ${dueDate},
-          ${sessionId}
+          ${sessionId},
+          ${schedule ? transaction.json(schedule as never) : null}, ${schedule ? 'active' : null},
+          ${schedule ? actorUserId : null}, ${schedule ? nextSlotUtc(schedule, new Date()) : null}
         )
       `
       await this.replaceTaskFiles(transaction, taskId, 'input', inputFileIds)
@@ -298,6 +353,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       throw error
     }
     await this.postTaskBrief(sessionId, actorUserId, taskId, title, description)
+    // S4：“保存并立即执行”。任务已建好，执行受理失败时把错误交给调用方，任务保留，可再“立即执行”。
+    if (input.startNow) {
+      return this.startAgentTask(workspaceId, taskId, actorUserId, {
+        idempotencyKey: `project-task-start-now-${taskId}`, authorizationContext,
+      })
+    }
     return this.requireTask(workspaceId, taskId, actorUserId)
   }
 
@@ -376,9 +437,13 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     workspaceId: string,
     taskId: string,
     actorUserId: string,
-    input: { title?: unknown; description?: unknown; assignee?: unknown; inputFileIds?: unknown; dueDate?: unknown },
+    input: {
+      title?: unknown; description?: unknown; assignee?: unknown; inputFileIds?: unknown; dueDate?: unknown
+      schedule?: unknown
+    },
     authorizationContext?: SessionAuthorizationContext,
   ): Promise<ProjectTask> {
+    const scheduleInput = input.schedule === undefined ? undefined : parseSchedule(input.schedule)
     // S3 改派：员工换员工沿用原任务对话并记一条事件；跨类型或换 Agent 从新的任务对话开始。
     // 新会话需经 createSession 的授权，因此先于事务建立；事务中改派条件已变化时丢弃它。
     let freshSessionId: string | null = null
@@ -444,14 +509,47 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       const inputFileIds = input.inputFileIds === undefined ? undefined : parseFileIds(input.inputFileIds, '引用文件')
       if (assigneeType === 'employee' && inputFileIds?.length) throw requestInvalid('只有 Agent 任务可以引用执行输入文件')
       if (inputFileIds) await this.assertWorkspaceFiles(transaction, workspaceId, inputFileIds, 'input')
+      if (assigneeType === 'employee' && scheduleInput && input.schedule !== null) {
+        throw requestInvalid('只有 Agent 任务可以设置执行规则')
+      }
+      // S4：执行规则只属于 Agent 任务。改派给员工时删除；从员工改派给 Agent 时按输入或默认每天建立；
+      // 修改规则时由修改人接管归因，暂停清除、失败计数清零，从当前时刻重新计算下次时间点。
+      const becameAgent = assigneeType === 'agent' && task.assigneeType !== 'agent'
+      const schedule = assigneeType === 'agent'
+        ? (scheduleInput ?? (becameAgent ? parseSchedule(undefined) : task.schedule))
+        : null
+      const scheduleTouched = assigneeType === 'agent' && (becameAgent || scheduleInput !== undefined)
+      if (scheduleTouched && schedule) await assertScheduleQuota(transaction, workspaceId, schedule, taskId)
+      // 一条语句同时改负责人与执行规则：两者受 project_tasks_schedule_shape 共同约束。
+      const scheduleMode = assigneeType === 'employee' ? 'clear' : scheduleTouched ? 'set' : 'keep'
+      const finished = task.status === 'done'
+      const nextSlot = scheduleMode === 'set' && schedule && !finished ? nextSlotUtc(schedule, new Date()) : null
       await transaction`
         update project_tasks
            set title = ${title}, description = ${description}, due_date = ${dueDate},
                assignee_type = ${assigneeType}, assignee_user_id = ${assigneeUserId},
                assignee_agent_member_id = ${assigneeAgentMemberId}, session_id = ${sessionId},
+               schedule = case ${scheduleMode}::text when 'clear' then null
+                 when 'set' then ${transaction.json((schedule ?? {}) as never)} else schedule end,
+               schedule_revision = case ${scheduleMode}::text when 'set' then schedule_revision + 1 else schedule_revision end,
+               schedule_state = case ${scheduleMode}::text when 'clear' then null
+                 when 'set' then ${finished ? 'stopped' : 'active'}::text else schedule_state end,
+               schedule_reason = case ${scheduleMode}::text when 'clear' then null
+                 when 'set' then ${finished ? 'completed' : null}::text else schedule_reason end,
+               schedule_set_by = case ${scheduleMode}::text when 'clear' then null
+                 when 'set' then ${actorUserId}::text else schedule_set_by end,
+               next_slot_utc = case ${scheduleMode}::text when 'clear' then null
+                 when 'set' then ${nextSlot}::timestamptz else next_slot_utc end,
+               consecutive_failures = case ${scheduleMode}::text when 'keep' then consecutive_failures else 0 end,
                updated_at = now()
          where tenant_id = ${tenantId} and id = ${taskId}
       `
+      if (scheduleMode === 'set' && !becameAgent && schedule && !sameSchedule(task.schedule, schedule)) {
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId, kind: 'schedule_changed', actorUserId,
+          metadata: { schedule },
+        })
+      }
       if (inputFileIds) await this.replaceTaskFiles(transaction, taskId, 'input', inputFileIds)
       else if (assigneeType === 'employee') await this.replaceTaskFiles(transaction, taskId, 'input', [])
     })
@@ -483,8 +581,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     })
   }
 
-  /** 员工任务的状态推进：任务负责人、创建人、空间负责人或管理员。完成时可附说明与共享文件。 */
-  async setEmployeeTaskStatus(
+  /**
+   * 任务状态推进（S4 起两类任务相同）：员工任务由任务负责人、创建人、空间负责人或管理员推进；
+   * Agent 任务由创建人、空间负责人或管理员推进。完成时可附说明与共享文件。
+   * Agent 任务标记完成时停止定时执行；改回待办或进行中时按规则从当前时刻恢复。
+   */
+  async setTaskStatus(
     workspaceId: string,
     taskId: string,
     actorUserId: string,
@@ -501,9 +603,11 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       await lockActiveWorkspace(transaction, workspaceId)
       const role = await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
       const task = await this.lockTask(transaction, workspaceId, taskId)
-      if (task.assigneeType !== 'employee') throw workspaceStateConflict('Agent 任务的状态由执行结果决定，不能手动修改')
       if (![task.assigneeUserId, task.createdBy].includes(actorUserId) && !governanceRoles.includes(role)) {
         throw authorizationDenied('只有任务负责人、任务创建人、空间负责人或管理员可以更新任务状态')
+      }
+      if (task.assigneeType === 'agent' && status === 'done' && task.sessionId && await hasActiveRun(transaction, task.sessionId)) {
+        throw workspaceStateConflict('Agent 正在执行该任务，请等待完成或停止后再标记完成')
       }
       await this.assertWorkspaceFiles(transaction, workspaceId, deliverables, 'deliverable')
       await transaction`
@@ -514,6 +618,21 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
                updated_at = now()
          where tenant_id = ${tenantId} and id = ${taskId}
       `
+      if (task.assigneeType === 'agent' && task.schedule && task.status !== status) {
+        if (status === 'done') {
+          await transaction`
+            update project_tasks set schedule_state = 'stopped', schedule_reason = 'completed', next_slot_utc = null
+             where tenant_id = ${tenantId} and id = ${taskId}
+          `
+        } else if (task.status === 'done') {
+          await transaction`
+            update project_tasks
+               set schedule_state = 'active', schedule_reason = null, consecutive_failures = 0,
+                   next_slot_utc = ${nextSlotUtc(task.schedule, new Date())}
+             where tenant_id = ${tenantId} and id = ${taskId}
+          `
+        }
+      }
       await this.replaceTaskFiles(transaction, taskId, 'deliverable', deliverables)
       // S3：状态推进与完成在任务对话中作为系统记录展示。
       if (status !== 'done' && task.status !== status) {
@@ -537,7 +656,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
           dedupeKey: `project-task-completed:${taskId}:${await activityTransitionToken(transaction)}`,
         })
         if (this.archive) {
-          // 项目空间 S2：员工任务的完成说明与交付文件名交给档案员整理。
+          // 项目空间 S2：完成说明与交付文件名交给档案员整理（S4 起 Agent 任务标记完成同样登记）。
           await this.archive.recordEmployeeTaskResult(transaction, {
             workspaceId, taskId, title: task.title, note, deliverableNames: names.map(row => row.name),
           })
@@ -546,6 +665,30 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       }
     })
     if (completed) await this.archivist?.scheduleProjectArchive(workspaceId, actorUserId)
+    return this.requireTask(workspaceId, taskId, actorUserId)
+  }
+
+  /** S4：恢复已暂停的定时执行；恢复人接管归因，失败计数清零，从当前时刻计算下次时间点。 */
+  async resumeTaskSchedule(workspaceId: string, taskId: string, actorUserId: string): Promise<ProjectTask> {
+    await this.database.begin(async (transaction) => {
+      await lockActiveWorkspace(transaction, workspaceId)
+      const role = await this.requireRole(transaction, workspaceId, actorUserId, writerRoles)
+      const task = await this.lockTask(transaction, workspaceId, taskId)
+      if (task.createdBy !== actorUserId && !governanceRoles.includes(role)) {
+        throw authorizationDenied('只有任务创建人、空间负责人或管理员可以恢复定时执行')
+      }
+      if (task.assigneeType !== 'agent' || !task.schedule) throw workspaceStateConflict('员工任务没有执行规则')
+      if (task.scheduleState !== 'paused') throw workspaceStateConflict('定时执行未暂停')
+      await transaction`
+        update project_tasks
+           set schedule_state = 'active', schedule_reason = null, schedule_set_by = ${actorUserId},
+               consecutive_failures = 0, next_slot_utc = ${nextSlotUtc(task.schedule, new Date())}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${taskId}
+      `
+      await this.recordTaskEvent(transaction, {
+        taskId, sessionId: task.sessionId, kind: 'schedule_resumed', actorUserId,
+      })
+    })
     return this.requireTask(workspaceId, taskId, actorUserId)
   }
 
@@ -568,6 +711,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     await this.requireRole(this.database, workspaceId, actorUserId, writerRoles)
     const task = await this.lockTask(this.database, workspaceId, taskId)
     if (task.assigneeType !== 'agent' || !task.assigneeAgentMemberId) throw workspaceStateConflict('员工任务不需要启动执行')
+    if (task.status === 'done') throw workspaceStateConflict('任务已完成，改回进行中后才能执行')
     await this.agentMembers.requireAvailableAgentMemberVersion(workspaceId, task.assigneeAgentMemberId)
     let sessionId = task.sessionId
     if (!sessionId) {
@@ -585,15 +729,15 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       sessionId = created
       await this.postTaskBrief(sessionId, actorUserId, taskId, task.title, task.description)
     }
+    // S4：“立即执行”在任何执行规则下都可用；同一时间只有一个执行由 startRun 在会话锁内复核（409）。
     const [run] = await this.database<{ id: string }[]>`
       select id from runs where tenant_id = ${tenantId} and session_id = ${sessionId} limit 1
     `
-    if (run) throw workspaceStateConflict('任务已开始执行，请在任务对话中回复以继续')
     const inputFileIds = await this.taskFileIds(taskId, 'input')
     await this.runs.startRun({
       userId: actorUserId,
       sessionId,
-      prompt: extra || `请开始执行任务“${task.title}”。`,
+      prompt: extra || (run ? SCHEDULED_RUN_PROMPT : `请开始执行任务“${task.title}”。`),
       idempotencyKey: input.idempotencyKey,
       fileIds: inputFileIds,
       workspaceAgentMemberId: task.assigneeAgentMemberId,
@@ -674,14 +818,19 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       `
       if (existing) throw workspaceStateConflict('该线程已经是任务')
       const title = input.title === undefined ? session.title.slice(0, 120) : requireText(input.title, '任务标题', 120)
+      // S4：设为任务的线程已经执行过，直接进入进行中；执行规则取默认（每天 09:00）。
+      const schedule = parseSchedule(undefined)
+      await assertScheduleQuota(transaction, workspaceId, schedule, null)
       try {
         await transaction`
           insert into project_tasks (
             id, tenant_id, workspace_id, title, description, created_by, assignee_type,
-            assignee_agent_member_id, session_id
+            assignee_agent_member_id, session_id, status,
+            schedule, schedule_state, schedule_set_by, next_slot_utc
           ) values (
             ${taskId}, ${tenantId}, ${workspaceId}, ${title}, '', ${actorUserId}, 'agent',
-            ${session.agentMemberId}, ${sessionId}
+            ${session.agentMemberId}, ${sessionId}, 'in_progress',
+            ${transaction.json(schedule as never)}, 'active', ${actorUserId}, ${nextSlotUtc(schedule, new Date())}
           )
         `
       } catch (error) {
@@ -707,8 +856,8 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
   // ---------------------------------------------------------------------------
 
   async resolveTaskThread(sessionId: string): Promise<ProjectTaskThread | null> {
-    const [row] = await this.database<{ taskId: string; workspaceId: string; agentMemberId: string }[]>`
-      select id as "taskId", workspace_id as "workspaceId", assignee_agent_member_id as "agentMemberId"
+    const [row] = await this.database<{ taskId: string; workspaceId: string; agentMemberId: string; status: ProjectTaskStatus }[]>`
+      select id as "taskId", workspace_id as "workspaceId", assignee_agent_member_id as "agentMemberId", status
         from project_tasks
        where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null
          and assignee_type = 'agent'
@@ -721,6 +870,7 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
     return {
       taskId: row.taskId,
       agentMemberId: row.agentMemberId,
+      status: row.status,
       projectContext: brief || archive ? {
         ...(brief ? {
           brief: {
@@ -776,6 +926,184 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       })
     } catch (error) {
       console.error('Project task conversation sync failed:', error)
+    }
+  }
+
+  /** S4：任务对话中的执行已受理时，待办的 Agent 任务进入进行中。不抛错。 */
+  async noteTaskRunStarted(sessionId: string): Promise<void> {
+    try {
+      await this.database`
+        update project_tasks set status = 'in_progress', updated_at = now()
+         where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null
+           and assignee_type = 'agent' and status = 'todo'
+      `
+    } catch (error) {
+      console.error('Project task run start sync failed:', error)
+    }
+  }
+
+  /**
+   * S4：任务对话中的执行结束。成功清零失败计数；失败累计，连续失败达到上限且定时执行启用中时暂停，
+   * 并在任务对话中留下系统记录。停止（取消）不计入。不抛错。
+   */
+  async noteTaskRunTerminal(sessionId: string, status: 'succeeded' | 'failed'): Promise<void> {
+    try {
+      if (status === 'succeeded') {
+        await this.database`
+          update project_tasks set consecutive_failures = 0
+           where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null
+             and assignee_type = 'agent' and consecutive_failures <> 0
+        `
+        return
+      }
+      await this.database.begin(async (transaction) => {
+        const [task] = await transaction<{
+          id: string; schedule: ProjectTaskSchedule | null; scheduleState: ProjectTaskScheduleState | null
+          setBy: string | null; failures: number
+        }[]>`
+          select id, schedule, schedule_state as "scheduleState", schedule_set_by as "setBy",
+                 consecutive_failures as failures
+            from project_tasks
+           where tenant_id = ${tenantId} and session_id = ${sessionId} and removed_at is null and assignee_type = 'agent'
+           for update
+        `
+        if (!task) return
+        const failures = task.failures + 1
+        const pause = failures >= SCHEDULE_FAILURE_LIMIT && task.scheduleState === 'active'
+          && task.schedule !== null && task.schedule.kind !== 'manual'
+        await transaction`
+          update project_tasks
+             set consecutive_failures = ${failures},
+                 schedule_state = ${pause ? 'paused' : task.scheduleState},
+                 schedule_reason = ${pause ? 'consecutive_failures' : null},
+                 next_slot_utc = case when ${pause} then null else next_slot_utc end
+           where tenant_id = ${tenantId} and id = ${task.id}
+        `
+        if (pause && task.setBy) {
+          await this.recordTaskEvent(transaction, {
+            taskId: task.id, sessionId, kind: 'schedule_paused', actorUserId: task.setBy,
+            metadata: { reason: 'consecutive_failures', failures },
+          })
+        }
+      })
+    } catch (error) {
+      console.error('Project task run terminal sync failed:', error)
+    }
+  }
+
+  /**
+   * S4 调度：处理到期的定时执行（由自动任务触发扫描在同一调度所有者锁下按轮调用）。
+   * 每个任务每轮只受理最近一个未迟到的时间点；超出迟到容差的时间点合并为一条“错过”记录，不补跑。
+   */
+  async processDueSchedules(now: Date = new Date()): Promise<void> {
+    const due = await this.database<{ id: string }[]>`
+      select id from project_tasks
+       where tenant_id = ${tenantId} and schedule_state = 'active' and removed_at is null
+         and next_slot_utc is not null and next_slot_utc <= ${now}
+       order by next_slot_utc, id
+       limit 50
+    `
+    for (const { id } of due) {
+      await this.processScheduledSlot(id, now).catch((error: unknown) => {
+        console.error(`project task ${id} schedule failed`, error)
+      })
+    }
+  }
+
+  private async processScheduledSlot(taskId: string, now: Date): Promise<void> {
+    if (!this.runs) throw new Error('项目任务执行未接线')
+    const plan = await this.database.begin(async (transaction) => {
+      const [task] = await transaction<{
+        id: string; workspaceId: string; sessionId: string | null; agentMemberId: string | null
+        schedule: ProjectTaskSchedule | null; scheduleState: ProjectTaskScheduleState | null
+        setBy: string | null; nextSlot: Date | null; status: ProjectTaskStatus; dueDate: string | null
+        workspaceStatus: string; agentStatus: string | null
+      }[]>`
+        select t.id, t.workspace_id as "workspaceId", t.session_id as "sessionId",
+               t.assignee_agent_member_id as "agentMemberId", t.schedule, t.schedule_state as "scheduleState",
+               t.schedule_set_by as "setBy", t.next_slot_utc as "nextSlot", t.status, t.due_date::text as "dueDate",
+               w.status as "workspaceStatus", wam.status as "agentStatus"
+          from project_tasks t
+          join workspaces w on w.tenant_id = t.tenant_id and w.id = t.workspace_id
+          left join workspace_agent_members wam on wam.tenant_id = t.tenant_id and wam.id = t.assignee_agent_member_id
+         where t.tenant_id = ${tenantId} and t.id = ${taskId} and t.removed_at is null and t.assignee_type = 'agent'
+         for update of t
+      `
+      if (!task?.schedule || !task.setBy || task.scheduleState !== 'active' || !task.nextSlot || task.nextSlot > now) return null
+      const setBy = task.setBy
+      const stop = async (reason: string) => {
+        await transaction`
+          update project_tasks set schedule_state = 'stopped', schedule_reason = ${reason}, next_slot_utc = null
+           where tenant_id = ${tenantId} and id = ${taskId}
+        `
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId: task.sessionId, kind: 'schedule_stopped', actorUserId: setBy, metadata: { reason },
+        })
+        return null
+      }
+      if (task.workspaceStatus !== 'active') return stop('workspace_archived')
+      if (task.agentStatus !== 'available') return stop('agent_unavailable')
+      if (task.status === 'done') return stop('completed')
+      if (task.dueDate && task.dueDate < localDate(now, task.schedule.timezone)) return stop('due_passed')
+
+      const slots = slotsBetween(task.schedule, new Date(task.nextSlot.getTime() - 1), now)
+      const missed = slots.filter(slot => now.getTime() - slot.getTime() > SCHEDULE_MAX_LATENESS_MS)
+      const slot = slots.filter(item => now.getTime() - item.getTime() <= SCHEDULE_MAX_LATENESS_MS).at(-1)
+      await transaction`
+        update project_tasks set next_slot_utc = ${nextSlotUtc(task.schedule, now)}
+         where tenant_id = ${tenantId} and id = ${taskId}
+      `
+      if (missed.length) {
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId: task.sessionId, kind: 'execution_missed', actorUserId: setBy,
+          metadata: { from: missed[0]!.toISOString(), to: missed.at(-1)!.toISOString(), count: missed.length },
+        })
+      }
+      if (!slot || !task.sessionId || !task.agentMemberId) return null
+      if (await hasActiveRun(transaction, task.sessionId)) {
+        await this.recordTaskEvent(transaction, {
+          taskId, sessionId: task.sessionId, kind: 'execution_skipped', actorUserId: setBy,
+          metadata: { slot: slot.toISOString(), reason: 'busy' },
+        })
+        return null
+      }
+      return {
+        workspaceId: task.workspaceId, sessionId: task.sessionId, agentMemberId: task.agentMemberId,
+        setBy, slot: slot.toISOString(),
+      }
+    })
+    if (!plan) return
+    const record = async (kind: ProjectTaskEvent['kind'], metadata: Record<string, unknown>, pause = false) => {
+      await this.database.begin(async (transaction) => {
+        if (pause) {
+          await transaction`
+            update project_tasks set schedule_state = 'paused', schedule_reason = ${String(metadata.reason)}, next_slot_utc = null
+             where tenant_id = ${tenantId} and id = ${taskId} and schedule_state = 'active'
+          `
+        }
+        await this.recordTaskEvent(transaction, { taskId, sessionId: plan.sessionId, kind, actorUserId: plan.setBy, metadata })
+      })
+    }
+    try {
+      // 执行身份仍是 Agent（数据范围取 Agent 授权与全体成员交集）；规则设置人只用于 Run 归因与准入。
+      const run = await this.runs.startRun({
+        userId: plan.setBy,
+        sessionId: plan.sessionId,
+        prompt: SCHEDULED_RUN_PROMPT,
+        idempotencyKey: `project-task-schedule-${taskId}-${plan.slot}`,
+        fileIds: await this.taskFileIds(taskId, 'input'),
+        workspaceAgentMemberId: plan.agentMemberId,
+      })
+      await record('scheduled_run', { slot: plan.slot, runId: run?.id ?? null })
+    } catch (error) {
+      if (isAuthorizationDenial(error)) {
+        await record('schedule_paused', { reason: 'setter_ineligible', slot: plan.slot }, true)
+      } else if ((error as { status?: unknown }).status === 409) {
+        await record('execution_skipped', { slot: plan.slot, reason: 'busy' })
+      } else {
+        await record('execution_skipped', { slot: plan.slot, reason: 'start_failed' })
+        console.error(`project task ${taskId} scheduled run was not accepted`, error)
+      }
     }
   }
 
@@ -847,10 +1175,12 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       id: string; title: string; description: string; createdBy: string
       assigneeType: 'employee' | 'agent'; assigneeUserId: string | null; assigneeAgentMemberId: string | null
       sessionId: string | null; status: 'todo' | 'in_progress' | 'done'; dueDate: string | null
+      schedule: ProjectTaskSchedule | null; scheduleState: ProjectTaskScheduleState | null
     }[]>`
       select id, title, description, created_by as "createdBy", assignee_type as "assigneeType",
              assignee_user_id as "assigneeUserId", assignee_agent_member_id as "assigneeAgentMemberId",
-             session_id as "sessionId", status, due_date::text as "dueDate"
+             session_id as "sessionId", status, due_date::text as "dueDate",
+             schedule, schedule_state as "scheduleState"
         from project_tasks
        where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id = ${taskId} and removed_at is null
        for update
@@ -940,14 +1270,16 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
              t.session_id as "sessionId", t.status, t.completion_note as "completionNote", t.completed_at as "completedAt",
              t.due_date::text as "dueDate", t.created_at as "createdAt", t.updated_at as "updatedAt",
              to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorTimestamp",
-             lr.id as "latestRunId", lr.status as "latestRunStatus"
+             lr.id as "latestRunId", lr.status as "latestRunStatus", lr.created_at as "latestRunAt",
+             t.schedule, t.schedule_state as "scheduleState", t.schedule_reason as "scheduleReason",
+             t.next_slot_utc as "nextSlotUtc"
         from project_tasks t
         join users cu on cu.tenant_id = t.tenant_id and cu.id = t.created_by
         left join users au on au.tenant_id = t.tenant_id and au.id = t.assignee_user_id
         left join workspace_agent_members wam on wam.tenant_id = t.tenant_id and wam.id = t.assignee_agent_member_id
         left join agents a on a.tenant_id = wam.tenant_id and a.id = wam.agent_id
         left join lateral (
-          select r.id, r.status from runs r
+          select r.id, r.status, r.created_at from runs r
            where r.tenant_id = t.tenant_id and r.session_id = t.session_id
            order by r.created_at desc, r.id desc limit 1
         ) lr on true
@@ -981,14 +1313,14 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
       const own = files.filter(file => file.taskId === row.id)
       const pick = (purpose: 'input' | 'deliverable') => own.filter(file => file.purpose === purpose)
         .map(({ fileObjectId, logicalFileId, name, versionNo }) => ({ fileObjectId, logicalFileId, name, versionNo }))
-      const status = row.assigneeType === 'agent' ? agentTaskStatus(row.latestRunStatus) : row.status
       const canManage = writer && (row.createdBy === actorUserId || governance)
       const allowedActions: ProjectTaskAction[] = []
       if (canManage) allowedActions.push('edit', 'remove')
-      if (writer && row.assigneeType === 'agent' && !row.latestRunId) allowedActions.push('start')
-      if (writer && row.assigneeType === 'employee' && (canManage || row.assigneeUserId === actorUserId)) {
+      if (writer && row.assigneeType === 'agent' && row.status !== 'done') allowedActions.push('start')
+      if (writer && (canManage || (row.assigneeType === 'employee' && row.assigneeUserId === actorUserId))) {
         allowedActions.push('set_status', 'complete')
       }
+      if (canManage && row.assigneeType === 'agent' && row.scheduleState === 'paused') allowedActions.push('resume')
       return {
         id: row.id,
         title: row.title,
@@ -997,9 +1329,15 @@ export class PostgresProjectService implements ProjectTaskThreadPort {
         assignee: row.assigneeType === 'employee'
           ? { type: 'employee' as const, userId: row.assigneeUserId ?? '', displayName: row.assigneeUserName ?? '' }
           : { type: 'agent' as const, agentMemberId: row.assigneeAgentMemberId ?? '', name: row.assigneeAgentName ?? '' },
-        status,
+        status: row.status,
         sessionId: row.sessionId,
         latestRunId: row.latestRunId,
+        latestRunStatus: row.latestRunStatus,
+        latestRunAt: row.latestRunAt?.toISOString() ?? null,
+        schedule: row.schedule,
+        scheduleState: row.scheduleState,
+        scheduleReason: row.scheduleReason,
+        nextRunAt: row.nextSlotUtc?.toISOString() ?? null,
         inputFiles: pick('input'),
         deliverableFiles: pick('deliverable'),
         completionNote: row.completionNote,
@@ -1023,11 +1361,49 @@ function needsNewConversation(
   return changed && !(task.assigneeType === 'employee' && assignee.type === 'employee')
 }
 
-function agentTaskStatus(runStatus: string | null): ProjectTaskStatus {
-  if (!runStatus) return 'todo'
-  if (runStatus === 'succeeded') return 'done'
-  if (runStatus === 'failed' || runStatus === 'cancelled') return 'failed'
-  return 'in_progress'
+const platformTimezone = resolvePlatformTimezone(process.env['DSH_WORK_TIMEZONE'])
+
+/** S4：解析执行规则；未指定时默认每天 09:00。时区取平台默认时区，不接受客户端指定。 */
+function parseSchedule(value: unknown): ProjectTaskSchedule {
+  if (value === undefined || value === null) return { kind: 'daily', timezone: platformTimezone, timeOfDay: '09:00' }
+  if (typeof value !== 'object' || Array.isArray(value)) throw requestInvalid('执行规则无效')
+  const { kind, timeOfDay, weekdays } = value as { kind?: unknown; timeOfDay?: unknown; weekdays?: unknown }
+  if (weekdays !== undefined && !Array.isArray(weekdays)) throw requestInvalid('执行星期必须是数组')
+  try {
+    return normalizeSchedule({ kind, timezone: platformTimezone, timeOfDay, weekdays } as AutomationSchedule)
+  } catch (error) {
+    if (error instanceof RequestError) throw requestInvalid(error.message)
+    throw error
+  }
+}
+
+function sameSchedule(a: ProjectTaskSchedule | null, b: ProjectTaskSchedule | null): boolean {
+  return JSON.stringify([a?.kind, a?.timeOfDay ?? null, a?.weekdays ?? null])
+    === JSON.stringify([b?.kind, b?.timeOfDay ?? null, b?.weekdays ?? null])
+}
+
+/** 每个空间启用定时规则（非手动）的未完成 Agent 任务不超过上限。 */
+async function assertScheduleQuota(
+  transaction: DatabaseTransaction,
+  workspaceId: string,
+  schedule: ProjectTaskSchedule,
+  excludeTaskId: string | null,
+) {
+  if (schedule.kind === 'manual') return
+  const [row] = await transaction<{ count: number }[]>`
+    select count(*)::integer as count from project_tasks
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and removed_at is null
+       and assignee_type = 'agent' and status <> 'done' and schedule->>'kind' <> 'manual'
+       and (${excludeTaskId}::text is null or id <> ${excludeTaskId})
+  `
+  if ((row?.count ?? 0) >= SCHEDULED_TASKS_PER_WORKSPACE) {
+    throw workspaceStateConflict(`每个项目空间最多 ${SCHEDULED_TASKS_PER_WORKSPACE} 个定时执行的 Agent 任务，请先完成或改为手动`)
+  }
+}
+
+/** 规则时区下的日历日期 YYYY-MM-DD（截止日期按当地日期比较）。 */
+function localDate(instant: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant)
 }
 
 async function hasActiveRun(database: DatabaseClient | DatabaseTransaction, sessionId: string): Promise<boolean> {

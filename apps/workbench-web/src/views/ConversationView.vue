@@ -27,6 +27,7 @@ import { TaskComposer } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
+import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
 
 const route = useRoute()
 const router = useRouter()
@@ -419,15 +420,19 @@ const threadHasActiveRun = computed(() =>
 const taskNotStarted = computed(() => isAgentTaskConversation.value && !(sessionThread.value?.runs.length ?? 0))
 /** Agent 任务对话的发送方式：默认交给 Agent，可选“仅评论”；执行中只能评论。 */
 const sendMode = ref<'agent' | 'comment'>('agent')
+/** S4：已完成的 Agent 任务不再执行，改回进行中后才能交给 Agent。 */
+const agentTaskDone = computed(() => isAgentTaskConversation.value && conversationTask.value?.status === 'done')
 const effectiveSendMode = computed<'agent' | 'comment'>(() =>
-  !isAgentTaskConversation.value || threadHasActiveRun.value ? 'comment' : sendMode.value)
+  !isAgentTaskConversation.value || threadHasActiveRun.value || agentTaskDone.value ? 'comment' : sendMode.value)
+/** S4：两类任务都可在对话中“标记完成”。 */
 const canCompleteFromConversation = computed(() =>
-  isEmployeeTaskConversation.value && conversationTask.value?.status !== 'done' && Boolean(taskDetail?.can('complete')))
+  inTaskConversation.value && conversationTask.value?.status !== 'done' && Boolean(taskDetail?.can('complete')))
 const canStartFromConversation = computed(() => taskNotStarted.value && Boolean(taskDetail?.can('start')))
 const taskComposerPlaceholder = computed(() => {
   if (!inTaskConversation.value) return ''
   if (isEmployeeTaskConversation.value) return '更新进度或写评论…'
   if (threadHasActiveRun.value) return `写评论…（${taskAgentLabel.value} 执行中，暂不能交给 Agent）`
+  if (agentTaskDone.value) return '写评论…（任务已完成，改回进行中后才能交给 Agent）'
   if (effectiveSendMode.value === 'comment') return '写评论…'
   return taskNotStarted.value ? `补充要求，交给 ${taskAgentLabel.value} 开始执行…` : `继续交代，交给 ${taskAgentLabel.value} 处理…`
 })
@@ -446,7 +451,7 @@ const taskStatusLabels: Record<string, string> = { todo: '待办', in_progress: 
 
 type SessionRunRecord = SessionThread['runs'][number]
 type TimelineItem =
-  | { kind: 'message'; key: string; at: string; message: SessionThreadMessage }
+  | { kind: 'message'; key: string; at: string; message: SessionThreadMessage; quiet?: boolean }
   | { kind: 'run'; key: string; at: string; run: SessionRunRecord }
   | { kind: 'event'; key: string; at: string; event: ProjectTaskEvent }
 
@@ -454,14 +459,24 @@ type TimelineItem =
  * 任务对话时间线：消息按原顺序；每次执行的记录紧跟在发起它的那条消息之后；其余执行记录与
  * 任务事件（员工任务的状态推进、完成、改派）按时间插入。
  */
+/** S4：定时执行发起的 Run（由 scheduled_run 事件登记）。 */
+const scheduledRunIds = computed(() => new Set((taskDetail?.events.value ?? [])
+  .filter(event => event.kind === 'scheduled_run' && event.metadata.runId)
+  .map(event => String(event.metadata.runId))))
+
 const taskTimeline = computed<TimelineItem[]>(() => {
   const thread = sessionThread.value
   if (!thread) return []
   const runs = new Map(thread.runs.map(run => [run.runId, run]))
+  const scheduled = scheduledRunIds.value
   const placed = new Set<string>()
   const items: TimelineItem[] = []
   for (const message of thread.messages) {
-    items.push({ kind: 'message', key: message.id, at: message.sentAt ?? '', message })
+    // 定时执行的固定提示不是成员发言，由“定时执行”记录代替；没有新进展的回复折叠为一行。
+    if (message.role === 'user' && message.runId && scheduled.has(message.runId)) continue
+    const quiet = message.role !== 'user' && Boolean(message.runId && scheduled.has(message.runId))
+      && message.content.trim().startsWith('无变化')
+    items.push({ kind: 'message', key: message.id, at: message.sentAt ?? '', message, quiet })
     const run = message.role === 'user' && message.runId ? runs.get(message.runId) : undefined
     if (run && !placed.has(run.runId)) {
       placed.add(run.runId)
@@ -472,6 +487,7 @@ const taskTimeline = computed<TimelineItem[]>(() => {
     ...thread.runs.filter(run => !placed.has(run.runId))
       .map(run => ({ kind: 'run' as const, key: `run-${run.runId}`, at: run.createdAt, run })),
     ...(taskDetail?.events.value ?? [])
+      .filter(event => event.kind !== 'scheduled_run')
       .filter(event => !event.sessionId || event.sessionId === thread.sessionId)
       .map(event => ({ kind: 'event' as const, key: event.id, at: event.createdAt, event })),
   ].sort((left, right) => left.at.localeCompare(right.at))
@@ -486,6 +502,7 @@ const taskTimeline = computed<TimelineItem[]>(() => {
 function runRecordText(run: SessionRunRecord) {
   const status = runStatusLabels[run.status] ?? run.status
   const stopped = run.status === 'cancelled' && run.stoppedByName ? `（${run.stoppedByName} 停止）` : ''
+  if (scheduledRunIds.value.has(run.runId)) return `定时执行 · ${status}${stopped}`
   return `${run.requesterName} 交给 ${taskAgentLabel.value} 执行 · ${status}${stopped}`
 }
 
@@ -498,6 +515,15 @@ function runRecordTone(run: SessionRunRecord) {
 
 function eventText(event: ProjectTaskEvent) {
   if (event.kind === 'completed') return `${event.actor.displayName} 标记完成`
+  // S4：执行规则与定时执行的系统记录；定时类记录的 actor 只是归因人，不展示。
+  if (event.kind === 'schedule_changed') return `${event.actor.displayName} 将执行规则改为${scheduleLabel(event.metadata.schedule ?? null)}`
+  if (event.kind === 'schedule_resumed') return `${event.actor.displayName} 恢复了定时执行`
+  if (event.kind === 'schedule_paused') return `定时执行已暂停：${scheduleReasonLabel(event.metadata.reason ?? null)}`
+  if (event.kind === 'schedule_stopped') return `定时执行已停止：${scheduleReasonLabel(event.metadata.reason ?? null)}`
+  if (event.kind === 'execution_skipped') {
+    return event.metadata.reason === 'busy' ? '定时执行跳过：上一次执行尚未结束' : '定时执行跳过：未能受理，下次到点再试'
+  }
+  if (event.kind === 'execution_missed') return `错过 ${event.metadata.count ?? 1} 次定时执行（服务未运行），不补跑`
   if (event.kind === 'reassigned') return `${event.actor.displayName} 将负责人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}`
   const to = taskStatusLabels[event.metadata.to ?? ''] ?? event.metadata.to ?? ''
   return event.metadata.auto
@@ -941,8 +967,22 @@ watch(
           >{{ loadingEarlierMessages ? '正在加载…' : '加载更早消息' }}</button>
           <template v-if="inTaskConversation">
             <template v-for="item in taskTimeline" :key="item.key">
+              <details
+                v-if="item.kind === 'message' && item.quiet"
+                class="task-conversation-quiet"
+                data-testid="task-conversation-quiet"
+              >
+                <summary class="task-conversation-record">
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                  <span>{{ formatTimelineTime(item.message.sentAt ?? '') }} · {{ item.message.agentName ?? taskAgentLabel }} · 无变化（展开）</span>
+                  <span class="task-conversation-record__line" aria-hidden="true"></span>
+                </summary>
+                <div class="assistant-answer task-conversation-quiet__body">
+                  <AssistantMessageContent :text="item.message.content" />
+                </div>
+              </details>
               <article
-                v-if="item.kind === 'message'"
+                v-else-if="item.kind === 'message'"
                 class="conversation-message"
                 data-testid="task-conversation-message"
                 :class="[`conversation-message--${item.message.role}`, { 'conversation-message--own': isOwnMessage(item.message) }]"
@@ -1079,7 +1119,7 @@ watch(
                 role="radio"
                 data-testid="task-send-agent"
                 :aria-checked="effectiveSendMode === 'agent'"
-                :disabled="threadHasActiveRun"
+                :disabled="threadHasActiveRun || agentTaskDone"
                 :class="{ 'is-active': effectiveSendMode === 'agent' }"
                 @click="sendMode = 'agent'"
               >
@@ -1099,6 +1139,7 @@ watch(
             <span class="task-conversation-modes__hint" data-testid="task-send-hint">
               <template v-if="isEmployeeTaskConversation">发言对空间成员可见，不会触发 Agent</template>
               <template v-else-if="threadHasActiveRun">{{ taskAgentLabel }} 执行中，暂时只能评论</template>
+              <template v-else-if="agentTaskDone">任务已完成，暂时只能评论</template>
               <template v-else-if="effectiveSendMode === 'agent'">{{ taskNotStarted ? '发送即开始执行' : '发送后交给 Agent 继续处理' }}</template>
               <template v-else>评论对空间成员可见，不会触发 Agent</template>
             </span>
@@ -1649,6 +1690,20 @@ watch(
   background: #f1f2f3;
   font-size: var(--dsh-font-size-micro);
   line-height: 18px;
+}
+
+/* S4：定时执行“无变化”的回复默认折叠为一行。 */
+.task-conversation-quiet > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.task-conversation-quiet > summary::-webkit-details-marker {
+  display: none;
+}
+
+.task-conversation-quiet__body {
+  margin: 10px 0 0 34px;
 }
 
 .task-conversation-record {

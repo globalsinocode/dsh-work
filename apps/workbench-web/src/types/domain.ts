@@ -439,9 +439,27 @@ export interface ProjectArchive {
   archivistRunning: boolean
 }
 
-/** Agent 任务的状态由任务线程最近一次执行推算；员工任务没有 failed。 */
-export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done' | 'failed'
-export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete'
+/** S4：两类任务状态相同，由人推进；单次执行的结果见 `latestRunStatus`。 */
+export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done'
+export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete' | 'resume'
+
+/** S4：Agent 任务的执行规则；“工作日”是 weekly + 周一至周五。 */
+export interface ProjectTaskSchedule {
+  kind: 'manual' | 'daily' | 'weekly'
+  timezone: string
+  timeOfDay?: string
+  /** 0=周日 … 6=周六 */
+  weekdays?: number[]
+}
+
+export type ProjectTaskScheduleState = 'active' | 'paused' | 'stopped'
+
+/** 新建 / 编辑时提交的执行规则（时区由服务端取平台默认时区）。 */
+export interface ProjectTaskScheduleInput {
+  kind: 'manual' | 'daily' | 'weekly'
+  timeOfDay?: string
+  weekdays?: number[]
+}
 
 export interface ProjectTaskFile {
   fileObjectId: string
@@ -459,9 +477,17 @@ export interface ProjectTask {
     | { type: 'employee'; userId: string; displayName: string }
     | { type: 'agent'; agentMemberId: string; name: string }
   status: ProjectTaskStatus
-  /** Agent 任务的任务线程；未启动时为 null。 */
+  /** 任务对话（S3 起两类任务创建时都有）。 */
   sessionId: string | null
   latestRunId: string | null
+  /** 最近一次执行的状态与时间（Agent 任务）。 */
+  latestRunStatus: string | null
+  latestRunAt: string | null
+  /** S4：Agent 任务的执行规则；员工任务为 null。 */
+  schedule: ProjectTaskSchedule | null
+  scheduleState: ProjectTaskScheduleState | null
+  scheduleReason: string | null
+  nextRunAt: string | null
   inputFiles: ProjectTaskFile[]
   deliverableFiles: ProjectTaskFile[]
   completionNote: string | null
@@ -473,11 +499,18 @@ export interface ProjectTask {
 }
 
 /** 项目任务分页：`nextCursor` 非空时可用它加载下一页；`total` 是当前空间的全部未移除任务数。 */
-/** S3：任务事件（员工任务的状态推进、完成与同类改派），在任务对话中作为系统记录展示。 */
+/**
+ * 任务事件，在任务对话中作为系统记录展示：状态推进、完成、改派（S3），
+ * 以及执行规则变更、暂停 / 恢复 / 停止与定时执行的受理、跳过、错过（S4）。
+ */
 export interface ProjectTaskEvent {
   id: string
-  kind: 'status_changed' | 'completed' | 'reassigned'
+  kind:
+    | 'status_changed' | 'completed' | 'reassigned'
+    | 'schedule_changed' | 'schedule_paused' | 'schedule_resumed' | 'schedule_stopped'
+    | 'scheduled_run' | 'execution_skipped' | 'execution_missed'
   sessionId: string | null
+  /** 定时执行类事件的 actor 是规则设置人（仅归因），界面显示为“定时执行”。 */
   actor: { userId: string; displayName: string }
   metadata: {
     from?: string
@@ -485,6 +518,12 @@ export interface ProjectTaskEvent {
     auto?: boolean
     note?: string | null
     deliverables?: string[]
+    schedule?: ProjectTaskSchedule
+    reason?: string
+    runId?: string | null
+    slot?: string
+    count?: number
+    failures?: number
   }
   createdAt: string
 }
@@ -501,6 +540,10 @@ export interface ProjectTaskInput {
   assignee: { type: 'employee' | 'agent'; id: string }
   inputFileIds?: string[]
   dueDate?: string | null
+  /** S4：Agent 任务的执行规则；不传时服务端默认每天 09:00。 */
+  schedule?: ProjectTaskScheduleInput
+  /** S4：新建时“保存并立即执行”。 */
+  startNow?: boolean
 }
 
 /**

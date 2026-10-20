@@ -46,6 +46,7 @@ let baseUrl = ''
 let runtime: ControlledRuntime
 let content: PostgresContentService
 let orchestration: RunOrchestrationService
+let projects: PostgresProjectService
 
 interface TaskView {
   id: string
@@ -55,6 +56,11 @@ interface TaskView {
   assignee: { type: string; agentMemberId?: string; userId?: string }
   completionNote: string | null
   allowedActions: string[]
+  latestRunStatus?: string | null
+  schedule?: { kind: string; timezone: string; timeOfDay?: string; weekdays?: number[] } | null
+  scheduleState?: string | null
+  scheduleReason?: string | null
+  nextRunAt?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +196,11 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   assert.equal(task.status, 'todo')
   assert.ok(task.allowedActions.includes('start'))
   assert.ok(task.sessionId, 'S3：Agent 任务创建时就有任务对话')
+  // S4：未指定执行规则时默认每天 09:00（平台时区），下一次时间点已排好。
+  assert.equal(task.schedule?.kind, 'daily')
+  assert.equal(task.schedule?.timeOfDay, '09:00')
+  assert.equal(task.scheduleState, 'active')
+  assert.ok(task.nextRunAt)
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, { as: ws.member, body: {} })).status, 422)
   // 未开始执行前可以先评论（不触发执行）。
   assert.equal((await api('POST', `${base}/sessions/${task.sessionId}/messages`, {
@@ -204,7 +215,7 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   assert.equal(running.sessionId, task.sessionId, '在创建时的任务对话中执行')
   assert.ok(running.latestRunId)
   assert.equal(running.status, 'in_progress')
-  assert.equal(running.allowedActions.includes('start'), false)
+  assert.ok(running.allowedActions.includes('start'), 'S4：立即执行在任何规则下可用，执行中由 409 拒绝')
   assert.equal((await api('POST', `${base}/workspaces/${ws.id}/project-tasks/${task.id}/start`, {
     as: ws.member, body: { idempotencyKey: `start-again-${task.id}` },
   })).status, 409)
@@ -228,7 +239,8 @@ test('Agent 任务：启动生成任务线程并带上当前简报，线程内�
   runtime.releaseAll()
   await waitForRun(running.latestRunId!)
   const afterRun = await taskById(ws, task.id)
-  assert.equal(afterRun.status, 'done')
+  assert.equal(afterRun.status, 'in_progress', 'S4：执行成功不改任务状态，由人标记完成')
+  assert.equal(afterRun.latestRunStatus, 'succeeded')
 
   // 简报更新后，线程内回复（不 @、不带成员关联）交给同一 Agent，并带上新版本简报。
   await api('PUT', `${base}/workspaces/${ws.id}/brief`, { as: ws.owner, body: { content: '目标：缺货率降到 2%' } })
@@ -277,7 +289,9 @@ test('任务线程：停止执行后标注由谁停止', async () => {
   const thread = await api('GET', `${base}/sessions/${running.sessionId}`, { as: ws.viewer })
   const runs = (thread.body.data as { runs: Array<{ runId: string; stoppedByName: string | null }> }).runs
   assert.deepEqual(runs.map(run => [run.runId, run.stoppedByName]), [[running.latestRunId, 'stop-other']])
-  assert.equal((await taskById(ws, task.id)).status, 'failed', '停止后任务状态为执行失败')
+  const stopped = await taskById(ws, task.id)
+  assert.equal(stopped.status, 'in_progress', 'S4：停止只体现在最近执行，任务状态不变')
+  assert.equal(stopped.latestRunStatus, 'cancelled')
 })
 
 test('设为任务：@Agent 执行过的讨论线程可设为任务，重复设置与未执行线程被拒', async () => {
@@ -343,11 +357,9 @@ test('任务分页：同一毫秒内创建的任务按微秒游标逐页取全�
 
   const discussion = await api('POST', `${base}/sessions`, { as: ws.member, body: { title: '分页线程', workspaceId: ws.id } })
   const sessionId = (discussion.body.data as { id: string }).id
-  const agentMemberId = await joinAgent(ws, 'paging')
-  // 只有 Agent 任务能绑定线程（project_tasks_assignee_shape）。
+  // S3 起两类任务都可以绑定任务对话；这里直接把分页任务三绑定到一条讨论线程。
   await database`
-    update project_tasks
-       set assignee_type = 'agent', assignee_user_id = null, assignee_agent_member_id = ${agentMemberId}, session_id = ${sessionId}
+    update project_tasks set session_id = ${sessionId}
      where tenant_id = ${tenantId} and id = ${ids[2]!}
   `
   const bySession = await api('GET', `${base}/workspaces/${ws.id}/project-tasks?limit=1&sessionId=${encodeURIComponent(sessionId)}`, { as: ws.member })
@@ -474,6 +486,205 @@ test('S3 员工任务对话：承接人首次发言自动进行中，不能交�
   assert.ok(agentSessionId && agentSessionId !== sessionId)
   const fresh = await api('GET', `${base}/sessions/${agentSessionId}`, { as: ws.member })
   assert.deepEqual((fresh.body.data as { messages: Array<{ content: string }> }).messages.map(message => message.content), ['核对交付差异'])
+})
+
+test('S4 执行规则：默认每天、保存并立即执行、由人标记完成，完成后停止定时、重新打开恢复', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('schedule')
+  const agentMemberId = await joinAgent(ws, 'schedule')
+  const tasksPath = `${base}/workspaces/${ws.id}/project-tasks`
+
+  // 规则校验：员工任务不能带执行规则；每周必须选星期；手动规则没有下次时间点。
+  assert.equal((await api('POST', tasksPath, {
+    as: ws.member, body: { title: '员工带规则', assignee: { type: 'employee', id: ws.member }, schedule: { kind: 'daily', timeOfDay: '09:00' } },
+  })).status, 422)
+  assert.equal((await api('POST', tasksPath, {
+    as: ws.member, body: { title: '每周无星期', assignee: { type: 'agent', id: agentMemberId }, schedule: { kind: 'weekly', timeOfDay: '09:00', weekdays: [] } },
+  })).status, 422)
+  const manual = (await api('POST', tasksPath, {
+    as: ws.member, body: { title: '手动任务', assignee: { type: 'agent', id: agentMemberId }, schedule: { kind: 'manual' } },
+  })).body.data as TaskView
+  assert.equal(manual.schedule?.kind, 'manual')
+  assert.equal(manual.nextRunAt, null)
+  assert.equal(manual.status, 'todo')
+
+  // 保存并立即执行：任务创建后立刻受理第一次执行，进入进行中。
+  const created = await api('POST', tasksPath, {
+    as: ws.member, body: {
+      title: '每日缺货汇总', assignee: { type: 'agent', id: agentMemberId },
+      schedule: { kind: 'weekly', timeOfDay: '18:30', weekdays: [5, 1, 2, 3, 4] }, startNow: true,
+    },
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.body))
+  const task = created.body.data as TaskView
+  assert.deepEqual(task.schedule?.weekdays, [1, 2, 3, 4, 5])
+  assert.equal(task.status, 'in_progress')
+  assert.ok(task.latestRunId)
+  // 先等 Runtime 收到这次执行再放行；否则 releaseAll 时执行尚未登记，放行落空。
+  await waitForManifest(task.latestRunId!)
+  runtime.releaseAll()
+  await waitForRun(task.latestRunId!)
+  assert.equal((await taskById(ws, task.id)).status, 'in_progress')
+
+  // 修改规则：写入系统记录，修改人接管归因。
+  const changed = await api('PATCH', `${tasksPath}/${task.id}`, {
+    as: ws.admin, body: { schedule: { kind: 'daily', timeOfDay: '07:00' } },
+  })
+  assert.equal(changed.status, 200, JSON.stringify(changed.body))
+  assert.equal((changed.body.data as TaskView).schedule?.timeOfDay, '07:00')
+  const [setter] = await database<{ setBy: string }[]>`
+    select schedule_set_by as "setBy" from project_tasks where tenant_id = ${tenantId} and id = ${task.id}
+  `
+  assert.equal(setter?.setBy, ws.admin)
+
+  // Agent 任务由人标记完成：停止定时、不能再立即执行或在对话中交给 Agent，完成说明登记进档案。
+  assert.equal((await api('POST', `${tasksPath}/${task.id}/status`, { as: ws.other, body: { status: 'done' } })).status, 403)
+  const done = await api('POST', `${tasksPath}/${task.id}/status`, { as: ws.member, body: { status: 'done', completionNote: '本月汇总完毕' } })
+  assert.equal(done.status, 200, JSON.stringify(done.body))
+  const doneTask = done.body.data as TaskView
+  assert.equal(doneTask.status, 'done')
+  assert.equal(doneTask.scheduleState, 'stopped')
+  assert.equal(doneTask.scheduleReason, 'completed')
+  assert.equal(doneTask.nextRunAt, null)
+  assert.equal(doneTask.allowedActions.includes('start'), false)
+  assert.equal((await api('POST', `${tasksPath}/${task.id}/start`, { as: ws.member, body: { idempotencyKey: `done-${task.id}` } })).status, 409)
+  assert.equal((await api('POST', `${base}/sessions/${task.sessionId}/runs`, {
+    as: ws.member, body: { prompt: '再跑一次', idempotencyKey: `done-reply-${task.id}` },
+  })).status, 409)
+  const [archived] = await database<{ count: number }[]>`
+    select count(*)::integer as count from workspace_archive_inputs where tenant_id = ${tenantId} and project_task_id = ${task.id}
+  `
+  assert.ok((archived?.count ?? 0) >= 1)
+  const events = (await api('GET', `${tasksPath}/${task.id}/events`, { as: ws.viewer })).body.data as Array<{ kind: string }>
+  assert.ok(events.some(event => event.kind === 'schedule_changed'))
+  assert.ok(events.some(event => event.kind === 'completed'))
+
+  // 重新打开：定时从当前时刻恢复。
+  const reopened = (await api('POST', `${tasksPath}/${task.id}/status`, { as: ws.member, body: { status: 'in_progress' } })).body.data as TaskView
+  assert.equal(reopened.scheduleState, 'active')
+  assert.ok(reopened.nextRunAt)
+
+  // 改派给员工：删除执行规则。
+  const reassigned = (await api('PATCH', `${tasksPath}/${task.id}`, {
+    as: ws.member, body: { assignee: { type: 'employee', id: ws.other } },
+  })).body.data as TaskView
+  assert.equal(reassigned.schedule, null)
+  assert.equal(reassigned.scheduleState, null)
+  await drainRuntime()
+})
+
+test('S4 定时执行：到点以 Agent 身份执行、执行中跳过、停机错过不补跑、过截止停止、规则设置人失效暂停', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('tick')
+  const agentMemberId = await joinAgent(ws, 'tick')
+  const tasksPath = `${base}/workspaces/${ws.id}/project-tasks`
+  const task = (await api('POST', tasksPath, {
+    as: ws.member, body: { title: '每日到货跟踪', assignee: { type: 'agent', id: agentMemberId } },
+  })).body.data as TaskView
+  const timezone = task.schedule!.timezone
+
+  // 把规则设为“两分钟前”的时刻，并把下次时间点拨到该时刻，模拟到点。
+  const fireSoon = async () => {
+    const slot = new Date(Math.floor((Date.now() - 2 * 60_000) / 60_000) * 60_000)
+    await api('PATCH', `${tasksPath}/${task.id}`, { as: ws.member, body: { schedule: { kind: 'daily', timeOfDay: wallClock(slot, timezone) } } })
+    await database`update project_tasks set next_slot_utc = ${slot} where tenant_id = ${tenantId} and id = ${task.id}`
+    await projects.processDueSchedules(new Date())
+  }
+  const kinds = async () => ((await api('GET', `${tasksPath}/${task.id}/events`, { as: ws.viewer })).body.data as Array<{ kind: string; metadata: Record<string, unknown> }>)
+
+  await fireSoon()
+  const scheduled = (await kinds()).filter(event => event.kind === 'scheduled_run')
+  assert.equal(scheduled.length, 1)
+  const runId = String(scheduled[0]!.metadata.runId)
+  const manifest = await waitForManifest(runId)
+  assert.match(manifest.input.message, /没有新进展时以“无变化”开头/)
+  assert.equal(manifest.user_context.user_id, ws.member, '规则设置人只作为归因')
+  const running = await taskById(ws, task.id)
+  assert.equal(running.status, 'in_progress', '第一次执行开始时进入进行中')
+  assert.ok(running.nextRunAt && new Date(running.nextRunAt).getTime() > Date.now())
+
+  // 上一执行未结束：本次跳过，不排队。
+  await fireSoon()
+  assert.ok((await kinds()).some(event => event.kind === 'execution_skipped' && event.metadata.reason === 'busy'))
+  runtime.releaseAll()
+  await waitForRun(runId)
+
+  // 停机错过的时间点合并为一条“错过”记录，不补跑。
+  await database`update project_tasks set next_slot_utc = now() - interval '3 days' where tenant_id = ${tenantId} and id = ${task.id}`
+  await projects.processDueSchedules(new Date())
+  const missed = (await kinds()).filter(event => event.kind === 'execution_missed')
+  assert.equal(missed.length, 1)
+  assert.ok(Number(missed[0]!.metadata.count) >= 2)
+
+  // 规则设置人降为只读：暂停，由其他成员恢复后接管。
+  await database`update workspace_members set member_role = 'viewer' where tenant_id = ${tenantId} and workspace_id = ${ws.id} and user_id = ${ws.member}`
+  const slot = new Date(Math.floor((Date.now() - 60_000) / 60_000) * 60_000)
+  await database`
+    update project_tasks set schedule = ${database.json({ kind: 'daily', timezone, timeOfDay: wallClock(slot, timezone) })}, next_slot_utc = ${slot}
+     where tenant_id = ${tenantId} and id = ${task.id}
+  `
+  await projects.processDueSchedules(new Date())
+  const paused = await taskById(ws, task.id)
+  assert.equal(paused.scheduleState, 'paused')
+  assert.equal(paused.scheduleReason, 'setter_ineligible')
+  assert.equal((await api('POST', `${tasksPath}/${task.id}/schedule/resume`, { as: ws.viewer })).status, 403)
+  const resumed = await api('POST', `${tasksPath}/${task.id}/schedule/resume`, { as: ws.owner })
+  assert.equal(resumed.status, 200, JSON.stringify(resumed.body))
+  assert.equal((resumed.body.data as TaskView).scheduleState, 'active')
+
+  // 过了截止日期：停止定时，任务保持进行中。
+  await database`update project_tasks set due_date = current_date - 2, next_slot_utc = now() - interval '1 minute' where tenant_id = ${tenantId} and id = ${task.id}`
+  await projects.processDueSchedules(new Date())
+  const overdue = await taskById(ws, task.id)
+  assert.equal(overdue.scheduleState, 'stopped')
+  assert.equal(overdue.scheduleReason, 'due_passed')
+  assert.equal(overdue.status, 'in_progress')
+  await drainRuntime()
+})
+
+test('S4 连续失败：连续失败 3 次暂停定时执行，成功清零，恢复后继续', async () => {
+  await drainRuntime()
+  const ws = await seedSpace('failing')
+  const agentMemberId = await joinAgent(ws, 'failing')
+  const tasksPath = `${base}/workspaces/${ws.id}/project-tasks`
+  const task = (await api('POST', tasksPath, {
+    as: ws.member, body: { title: '每日对账', assignee: { type: 'agent', id: agentMemberId } },
+  })).body.data as TaskView
+  const runOnce = async (index: number, outcome: 'fail' | 'succeed', expectedFailures: number) => {
+    const started = await api('POST', `${tasksPath}/${task.id}/start`, { as: ws.member, body: { idempotencyKey: `failing-${index}-${task.id}` } })
+    assert.equal(started.status, 202, JSON.stringify(started.body))
+    const runId = (started.body.data as TaskView).latestRunId!
+    await waitForManifest(runId)
+    if (outcome === 'fail') runtime.failAll()
+    else runtime.releaseAll()
+    await waitForRun(runId)
+    await waitForCondition(async () => {
+      const [row] = await database<{ failures: number }[]>`
+        select consecutive_failures as failures from project_tasks where tenant_id = ${tenantId} and id = ${task.id}
+      `
+      return row?.failures === expectedFailures
+    })
+  }
+  await runOnce(1, 'fail', 1)
+  await runOnce(2, 'fail', 2)
+  await runOnce(3, 'succeed', 0)
+  assert.equal((await taskById(ws, task.id)).scheduleState, 'active', '成功清零')
+  await runOnce(4, 'fail', 1)
+  await runOnce(5, 'fail', 2)
+  await runOnce(6, 'fail', 3)
+  await waitForCondition(async () => (await taskById(ws, task.id)).scheduleState === 'paused')
+  const paused = await taskById(ws, task.id)
+  assert.equal(paused.scheduleReason, 'consecutive_failures')
+  assert.equal(paused.status, 'in_progress', '失败不改任务状态')
+  assert.equal(paused.latestRunStatus, 'failed')
+  assert.ok(paused.allowedActions.includes('resume'))
+  assert.ok(paused.allowedActions.includes('start'), '暂停不影响手动执行')
+  const events = (await api('GET', `${tasksPath}/${task.id}/events`, { as: ws.viewer })).body.data as Array<{ kind: string }>
+  assert.ok(events.some(event => event.kind === 'schedule_paused'))
+  const resumed = (await api('POST', `${tasksPath}/${task.id}/schedule/resume`, { as: ws.member })).body.data as TaskView
+  assert.equal(resumed.scheduleState, 'active')
+  assert.ok(resumed.nextRunAt)
+  await drainRuntime()
 })
 
 test('任务细节：越界日期 422，停用的 Agent 不能承接，重复完成不重复登记档案成果（P2-5、P2-11、P2-13）', async () => {
@@ -760,6 +971,20 @@ test('团队成果：标注所属项目任务、承接 Agent 版本与发起人�
 // fixtures
 // ---------------------------------------------------------------------------
 
+/** 规则时区下的墙钟 HH:mm。 */
+function wallClock(instant: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(instant)
+}
+
+async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await check()) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error('等待条件超时')
+}
+
 async function seedSpace(label: string) {
   const id = `ws-ps-${label}-${randomUUID().slice(0, 8)}`
   const users = {
@@ -1010,6 +1235,7 @@ class ControlledRuntime implements AgentRuntimePort {
     events: RuntimeEvent[]
     finish?: () => void
     cancel?: () => void
+    fail?: () => void
   }>()
 
   /** 档案员运行的回答（JSON 条目列表）；未设置时回答普通文本，平台按无效输出处理。 */
@@ -1023,9 +1249,14 @@ class ControlledRuntime implements AgentRuntimePort {
     for (const state of this.executions.values()) state.finish?.()
   }
 
+  /** 让所有进行中的执行失败（S4 连续失败暂停）。 */
+  failAll() {
+    for (const state of this.executions.values()) state.fail?.()
+  }
+
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
     const now = new Date().toISOString()
-    const state: { manifest: RuntimeManifest; listeners: Set<(event: RuntimeEvent) => void>; events: RuntimeEvent[]; finish?: () => void; cancel?: () => void } = {
+    const state: { manifest: RuntimeManifest; listeners: Set<(event: RuntimeEvent) => void>; events: RuntimeEvent[]; finish?: () => void; cancel?: () => void; fail?: () => void } = {
       manifest, listeners: new Set(), events: [],
     }
     this.executions.set(manifest.run_id, state)
@@ -1045,6 +1276,7 @@ class ControlledRuntime implements AgentRuntimePort {
       state.cancel = () => {
         state.finish = undefined
         state.cancel = undefined
+        state.fail = undefined
         emit('run.cancel_requested', '已请求停止')
         emit('run.cancelled', '已停止')
         resolve({
@@ -1053,9 +1285,21 @@ class ControlledRuntime implements AgentRuntimePort {
           attemptDirectory: '/tmp/test', errorCode: null, errorMessage: null,
         })
       }
+      state.fail = () => {
+        state.finish = undefined
+        state.cancel = undefined
+        state.fail = undefined
+        emit('run.failed', '执行失败')
+        resolve({
+          runId: manifest.run_id, attemptId: manifest.attempt_id, status: 'failed', acceptedAt: now,
+          startedAt: now, endedAt: new Date().toISOString(), manifestSha256: createHash('sha256').update(manifest.run_id).digest('hex'),
+          attemptDirectory: '/tmp/test', errorCode: 'RUNTIME_EXECUTION_FAILED', errorMessage: '测试失败',
+        })
+      }
       state.finish = () => {
         state.finish = undefined
         state.cancel = undefined
+        state.fail = undefined
         emit('assistant.completed', manifest.purpose === 'project-archive' && this.archiveReply
           ? this.archiveReply(manifest)
           : '项目空间测试回答')
@@ -1107,7 +1351,7 @@ before(async () => {
   const agents = new PostgresAgentService(database)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   const projectArchive = new PostgresProjectArchiveService(database)
-  const projects = new PostgresProjectService(database, agentMembers, projectArchive)
+  projects = new PostgresProjectService(database, agentMembers, projectArchive)
   content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const conversations = new PostgresConversationRepository(database)
   const runs = new PostgresRunRepository(database)

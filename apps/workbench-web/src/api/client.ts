@@ -428,6 +428,10 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  resumeProjectTaskSchedule: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/schedule/resume`, {
+      method: 'POST',
+    }),
   markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
     request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
       method: 'POST',

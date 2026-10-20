@@ -41,12 +41,12 @@ test.describe('PS-E2E-03 Agent 任务执行、线程续接与成果', () => {
     await dialog.getByLabel('任务标题').fill(title)
     await dialog.getByTestId('project-task-assignee').click()
     await page.getByRole('option', { name: /项目空间助手/ }).click()
-    await dialog.getByRole('button', { name: '保存' }).click()
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog).toBeHidden()
 
     const row = page.getByTestId('project-task-row').filter({ hasText: title })
     await expect(row).toHaveCount(1)
-    await row.getByRole('button', { name: '交给 Agent 执行' }).click()
+    await row.getByRole('button', { name: '立即执行' }).click()
 
     // 启动后停留在任务详情的任务对话（S3：页签行隐藏，面包屑到任务名）；无须 @ 承接 Agent。
     await expect(page).toHaveURL(new RegExp(`/workspaces/${seed.workspaceId}/tasks/[^/]+/thread/session-`))
@@ -73,9 +73,10 @@ test.describe('PS-E2E-03 Agent 任务执行、线程续接与成果', () => {
     }, { timeout: 20_000 }).toBeGreaterThanOrEqual(2)
 
     const finalList = await page.request.get(`/api/workbench/v1/workspaces/${seed.workspaceId}/project-tasks`)
-    const finalTask = ((await finalList.json()).data.items as Array<{ title: string; status: string }>)
+    const finalTask = ((await finalList.json()).data.items as Array<{ title: string; status: string; latestRunStatus: string | null }>)
       .find(item => item.title === title)
-    expect(finalTask?.status).toBe('done')
+    // S4：执行成功不改任务状态，任务保持进行中，等成员标记完成。
+    expect(finalTask?.status).toBe('in_progress')
   })
 })
 
@@ -121,7 +122,7 @@ test.describe('PS-E2E-06 任务完成后档案员整理', () => {
     await dialog.getByLabel('任务标题').fill(title)
     await dialog.getByTestId('project-task-assignee').click()
     await page.getByRole('option', { name: '林岚' }).click()
-    await dialog.getByRole('button', { name: '保存' }).click()
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog).toBeHidden()
 
     const row = page.getByTestId('project-task-row').filter({ hasText: title })
@@ -156,7 +157,7 @@ test.describe('PS-E2E-07 任务对话（项目空间 S3）', () => {
     await dialog.getByLabel('任务标题').fill(title)
     await dialog.getByTestId('project-task-assignee').click()
     await page.getByRole('option', { name: assignee }).click()
-    await dialog.getByRole('button', { name: '保存' }).click()
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog).toBeHidden()
     await page.getByTestId('project-task-row').filter({ hasText: title }).getByTestId('project-task-open').click()
     await expect(page).toHaveURL(new RegExp(`/workspaces/${workspaceId}/tasks/[^/]+/thread/session-`))
@@ -227,7 +228,9 @@ test.describe('PS-E2E-07 任务对话（项目空间 S3）', () => {
     const runRecord = page.getByTestId('task-conversation-run').filter({ hasText: '周衡 交给 项目空间助手 执行 · 执行完成' })
     await expect(runRecord).toHaveCount(1, { timeout: 20_000 })
     await expect(page.getByTestId('task-conversation-start')).toHaveCount(0)
-    await expect(page.getByTestId('project-task-detail-status')).toHaveText('已完成')
+    // S4：执行成功只体现在“最近执行”，任务保持进行中。
+    await expect(page.getByTestId('project-task-detail-status')).toHaveText('进行中')
+    await expect(page.getByTestId('project-task-latest-run')).toContainText('成功')
     expect(await runCount(page, seed.workspaceId, title)).toBe(1)
 
     // 执行详情不提供输入框，只能回到任务对话发言。
@@ -237,5 +240,61 @@ test.describe('PS-E2E-07 任务对话（项目空间 S3）', () => {
     await page.getByTestId('run-view-back-to-task').click()
     await expect(page.getByTestId('task-conversation-modes')).toBeVisible()
     await expect(page.getByTestId('task-conversation-run')).toHaveCount(1)
+
+    // S4：Agent 任务同样由人标记完成；完成后只能评论。
+    await page.getByTestId('task-complete-from-conversation').click()
+    const completion = page.getByRole('dialog', { name: `完成任务“${title}”` })
+    await completion.getByLabel('完成说明').fill('首轮分析已交付')
+    await completion.getByRole('button', { name: '确认完成' }).click()
+    await expect(completion).toBeHidden()
+    await expect(page.getByTestId('project-task-detail-status')).toHaveText('已完成')
+    await expect(page.getByTestId('task-send-agent')).toBeDisabled()
   })
+})
+
+// S4 执行规则：新建时选择规则并“保存并立即执行”；到点的定时执行以“定时执行”记录出现在任务对话中。
+test.describe('PS-E2E-08 执行规则（项目空间 S4）', () => {
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00002' } })
+
+  test('新建工作日规则并立即执行，修改规则，到点的定时执行出现在任务对话中', async ({ page }) => {
+    const seed = await loadSeed(page)
+    await page.goto(`/workspaces/${seed.workspaceId}?tab=tasks`)
+    const title = uniqueTitle('PS-E2E-08 定时任务')
+    await page.getByRole('button', { name: '新建任务' }).click()
+    const dialog = page.getByRole('dialog', { name: '新建任务' })
+    await dialog.getByLabel('任务标题').fill(title)
+    await dialog.getByTestId('project-task-assignee').click()
+    await page.getByRole('option', { name: /项目空间助手/ }).click()
+    const rule = dialog.getByTestId('project-task-schedule-editor')
+    await expect(rule.getByRole('radio', { name: '每天' })).toBeChecked()
+    await rule.getByText('工作日', { exact: true }).click()
+    await dialog.getByRole('button', { name: '保存并立即执行' }).click()
+    await expect(dialog).toBeHidden()
+
+    // 保存后直接进入任务对话并开始第一次执行。
+    await expect(page).toHaveURL(new RegExp(`/workspaces/${seed.workspaceId}/tasks/[^/]+/thread/session-`))
+    await expect(page.getByTestId('project-task-schedule')).toContainText('工作日 09:00')
+    await expect(page.getByTestId('task-conversation-run').filter({ hasText: '周衡 交给 项目空间助手 执行 · 执行完成' }))
+      .toHaveCount(1, { timeout: 20_000 })
+    await expect(page.getByTestId('project-task-detail-status')).toHaveText('进行中')
+
+    // 修改规则：对话中出现系统记录。
+    await page.getByTestId('project-task-schedule-edit').click()
+    const editor = page.getByRole('dialog', { name: '编辑任务' })
+    await editor.getByTestId('project-task-schedule-editor').getByText('手动', { exact: true }).click()
+    await editor.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(editor).toBeHidden()
+    await expect(page.getByTestId('project-task-schedule')).toContainText('手动')
+    await expect(page.getByTestId('task-conversation-event').filter({ hasText: '将执行规则改为手动' })).toHaveCount(1)
+
+    // 到点（测试钩子拨动时间点）：以“定时执行”记录出现，不显示固定提示。
+    const taskId = page.url().match(/tasks\/([^/]+)/)![1]!
+    const fired = await page.request.post(`/api/workbench/v1/test/project-tasks/${taskId}/fire-schedule`)
+    expect(fired.ok()).toBeTruthy()
+    await page.reload()
+    await expect(page.getByTestId('task-conversation-run').filter({ hasText: /定时执行 · 执行完成/ }))
+      .toHaveCount(1, { timeout: 20_000 })
+    await expect(page.getByText('按任务说明执行本期工作')).toHaveCount(0)
+  })
+
 })

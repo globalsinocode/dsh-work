@@ -577,7 +577,7 @@
       "get": {
         "operationId": "listProjectTasks",
         "summary": "查询项目任务（全部成员，游标分页）",
-        "description": "项目空间 S1：按 created_at、id 倒序返回未移除的任务，响应为 { items, nextCursor, total }；limit 默认 50、最大 100（超出返回 422），nextCursor 非空时作为 cursor 取下一页；sessionId 只返回绑定该线程的任务（用于判断当前线程是否为任务），total 始终是空间内全部未移除任务数。Agent 任务的 status 由任务线程最近一次 Run 推算（todo/in_progress/done/failed），员工任务取存储状态；allowedActions 按当前角色给出。读取轨：归档空间可读。",
+        "description": "项目空间 S1：按 created_at、id 倒序返回未移除的任务，响应为 { items, nextCursor, total }；limit 默认 50、最大 100（超出返回 422），nextCursor 非空时作为 cursor 取下一页；sessionId 只返回绑定该线程的任务（用于判断当前线程是否为任务），total 始终是空间内全部未移除任务数。S4 起两类任务的 status 都取存储状态（todo/in_progress/done，由人推进），单次执行结果见 latestRunStatus、latestRunAt；Agent 任务另返回 schedule（kind manual/daily/weekly、timezone、timeOfDay、weekdays）、scheduleState（active/paused/stopped）、scheduleReason 与 nextRunAt；allowedActions 按当前角色给出（含 resume）。读取轨：归档空间可读。",
         "parameters": [
           { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
           { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
@@ -588,7 +588,7 @@
       "post": {
         "operationId": "createProjectTask",
         "summary": "创建项目任务（非只读成员）",
-        "description": "项目空间 S1/S3：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate。只读成员不能承接任务。两类任务创建时都建立任务对话（返回的 sessionId），首条消息为任务标题与说明。",
+        "description": "项目空间 S1/S3：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate；S4：Agent 任务可选 schedule（{ kind: manual|daily|weekly, timeOfDay: HH:mm, weekdays: 0～6 }，缺省每天 09:00，时区取平台默认）与 startNow（保存并立即执行，响应为已开始执行的任务）；员工任务带 schedule 返回 422；每个空间未完成的定时 Agent 任务超过 20 个返回 409。只读成员不能承接任务。两类任务创建时都建立任务对话（返回的 sessionId），首条消息为任务标题与说明。",
         "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -603,7 +603,7 @@
       "patch": {
         "operationId": "updateProjectTask",
         "summary": "编辑项目任务（创建人、负责人、管理员）",
-        "description": "项目空间 S1/S3：可改 title、description、assignee、inputFileIds、dueDate。改派只在任务对话没有执行中的 Run 时允许；员工换员工沿用原任务对话并记改派事件，跨类型改派或换 Agent 从新的任务对话开始。",
+        "description": "项目空间 S1/S3：可改 title、description、assignee、inputFileIds、dueDate；S4：Agent 任务可改 schedule（修改人接替为规则设置人，清除暂停并写入 schedule_changed 事件），改派给员工时删除执行规则，从员工改派给 Agent 时缺省每天 09:00。改派只在任务对话没有执行中的 Run 时允许；员工换员工沿用原任务对话并记改派事件，跨类型改派或换 Agent 从新的任务对话开始。",
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       },
       "delete": {
@@ -618,7 +618,7 @@
       "get": {
         "operationId": "listProjectTaskEvents",
         "summary": "读取项目任务事件（全部现任成员）",
-        "description": "项目空间 S3：员工任务的状态推进（status_changed，metadata.from/to/auto）、完成（completed，metadata.note/deliverables）与同类改派（reassigned，metadata.from/to），按发生时间正序；在任务对话中作为系统记录展示。读取轨，归档可读；已移除或不存在的任务返回 404。",
+        "description": "项目空间 S3：员工任务的状态推进（status_changed，metadata.from/to/auto）、完成（completed，metadata.note/deliverables）与同类改派（reassigned，metadata.from/to）；S4 起还有 schedule_changed（metadata.schedule）、schedule_paused / schedule_stopped（metadata.reason）、schedule_resumed、scheduled_run（metadata.slot/runId）、execution_skipped（metadata.slot/reason）、execution_missed（metadata.from/to/count），定时类事件的 actor 是规则设置人（仅归因）。按发生时间正序；在任务对话中作为系统记录展示。读取轨，归档可读；已移除或不存在的任务返回 404。",
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -626,8 +626,8 @@
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "startProjectTask",
-        "summary": "启动 Agent 任务（非只读成员）",
-        "description": "项目空间 S1/S3：在任务创建时已有的任务对话中发起首次执行，带上任务引用的文件，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）；可选 prompt 为成员写下的补充要求，缺省以开始执行的指令发起。已有执行的任务返回 409，后续在任务对话中“交给 Agent”即可续接。",
+        "summary": "立即执行 Agent 任务（非只读成员）",
+        "description": "项目空间 S1/S3/S4：在任务对话中发起一次执行（任何执行规则下都可用），带上任务引用的文件，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）；可选 prompt 为成员写下的补充要求，缺省以开始执行的指令发起。缺省时第一次以开始执行的指令、之后以定时执行的固定提示发起。执行中或任务已完成返回 409。",
         "responses": { "202": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -635,8 +635,17 @@
       "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
       "post": {
         "operationId": "setProjectTaskStatus",
-        "summary": "更新员工任务状态（任务负责人、创建人、空间负责人、管理员）",
-        "description": "项目空间 S1：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务的状态由执行结果决定，返回 409。",
+        "summary": "更新任务状态（员工任务：任务负责人、创建人、空间负责人、管理员；Agent 任务：创建人、空间负责人、管理员）",
+        "description": "项目空间 S1/S4：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务标记完成时停止定时执行，改回待办或进行中时从当前时刻恢复；执行中标记完成返回 409。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/schedule/resume": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "resumeProjectTaskSchedule",
+        "summary": "恢复已暂停的定时执行（创建人、空间负责人、管理员）",
+        "description": "项目空间 S4：恢复因连续失败或规则设置人失去发起资格而暂停的定时执行；恢复人接替为规则设置人，失败计数清零，从当前时刻计算下次时间点，写入 schedule_resumed 事件。未暂停或员工任务返回 409。",
         "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },

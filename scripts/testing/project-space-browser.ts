@@ -1,5 +1,5 @@
 /**
- * P1 项目空间浏览器夹具（PS-E2E-03/04/06）。
+ * P1 项目空间浏览器夹具（PS-E2E-03/04/06/07/08）。
  *
  * 专用可丢弃 PostgreSQL + 真实 HTTP API；Runtime 是确定性合成实现，
  * 不连接 OIDC、模型、MCP 或真实 DSH。档案整理运行返回固定的 JSON 整理结果，
@@ -220,6 +220,28 @@ fixture.router.get('/api/workbench/v1/test/fixtures', () => envelope('workbench'
   archivedItemPrefix,
   synthetic: true,
 }))
+
+// S4（PS-E2E-08）：测试钩子，把任务的执行规则拨到“一分钟前”并立即跑一轮调度，模拟到点的定时执行。
+// 仅本可丢弃夹具注册；生产没有此路由。
+fixture.router.post('/api/workbench/v1/test/project-tasks/:taskId/fire-schedule', async (_request, context) => {
+  const taskId = context.params['taskId'] ?? ''
+  const slot = new Date(Math.floor((Date.now() - 60_000) / 60_000) * 60_000)
+  const [task] = await database<{ timezone: string }[]>`
+    select schedule->>'timezone' as timezone from project_tasks where id = ${taskId} and schedule is not null
+  `
+  if (!task) return envelope('workbench', { fired: false })
+  const timeOfDay = new Intl.DateTimeFormat('en-GB', {
+    timeZone: task.timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(slot)
+  await database`
+    update project_tasks
+       set schedule = ${database.json({ kind: 'daily', timezone: task.timezone, timeOfDay })},
+           schedule_state = 'active', schedule_reason = null, next_slot_utc = ${slot}
+     where id = ${taskId}
+  `
+  await projects.processDueSchedules(new Date())
+  return envelope('workbench', { fired: true })
+})
 
 console.log('P1 project space ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/model.')
 let closing = false

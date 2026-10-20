@@ -85,6 +85,8 @@ export function registerProjectRoutes(
       assignee: body.assignee,
       inputFileIds: body.inputFileIds,
       dueDate: body.dueDate,
+      schedule: body.schedule,
+      startNow: body.startNow,
     }, sessionAuthorizationContext(identity))
     return httpResult(201, envelope('workbench', task, 'postgres'))
   })
@@ -100,6 +102,7 @@ export function registerProjectRoutes(
       assignee: body.assignee,
       inputFileIds: body.inputFileIds,
       dueDate: body.dueDate,
+      schedule: body.schedule,
     }, sessionAuthorizationContext(identity)), 'postgres')
   })
 
@@ -130,11 +133,19 @@ export function registerProjectRoutes(
     const workspaceId = context.params['workspaceId'] ?? ''
     await requireTeamActor(authorization, identity, workspaceId, [...writerRoles], projectOnly)
     const body = await readObject(request)
-    return envelope('workbench', await projects.setEmployeeTaskStatus(workspaceId, context.params['taskId'] ?? '', identity.userId, {
+    return envelope('workbench', await projects.setTaskStatus(workspaceId, context.params['taskId'] ?? '', identity.userId, {
       status: body.status,
       completionNote: body.completionNote,
       deliverableFileIds: body.deliverableFileIds,
     }), 'postgres')
+  })
+
+  // S4：恢复因连续失败或规则设置人失效而暂停的定时执行。
+  router.post(`${basePath}/workspaces/:workspaceId/project-tasks/:taskId/schedule/resume`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const workspaceId = context.params['workspaceId'] ?? ''
+    await requireTeamActor(authorization, identity, workspaceId, [...writerRoles], projectOnly)
+    return envelope('workbench', await projects.resumeTaskSchedule(workspaceId, context.params['taskId'] ?? '', identity.userId), 'postgres')
   })
 
   router.post(`${basePath}/workspaces/:workspaceId/sessions/:sessionId/project-task`, async (request, context) => {

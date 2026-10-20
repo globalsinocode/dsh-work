@@ -46,6 +46,12 @@ function task(overrides: Partial<ProjectTask> = {}): ProjectTask {
     status: 'todo',
     sessionId: null,
     latestRunId: null,
+    latestRunStatus: null,
+    latestRunAt: null,
+    schedule: { kind: 'daily', timezone: 'Asia/Shanghai', timeOfDay: '09:00' },
+    scheduleState: 'active',
+    scheduleReason: null,
+    nextRunAt: null,
     inputFiles: [],
     deliverableFiles: [],
     completionNote: null,
@@ -121,19 +127,30 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     expect(wrapper.findAll('[data-testid="project-task-row"] button')).toHaveLength(0)
   })
 
-  it('lists tasks with derived status labels and assignee', async () => {
+  it('lists tasks with status labels, assignee and the S4 execution column', async () => {
     vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([
-      task({ id: 't1', status: 'in_progress', sessionId: 's1', latestRunId: 'r1', allowedActions: [] }),
-      task({ id: 't2', status: 'failed', sessionId: 's2', latestRunId: 'r2', allowedActions: [] }),
+      task({ id: 't1', status: 'in_progress', sessionId: 's1', latestRunId: 'r1', latestRunStatus: 'succeeded', latestRunAt: '2026-09-10T01:00:00.000Z', allowedActions: [] }),
+      task({
+        id: 't2', status: 'in_progress', sessionId: 's2', latestRunId: 'r2', latestRunStatus: 'failed',
+        schedule: { kind: 'weekly', timezone: 'Asia/Shanghai', timeOfDay: '09:00', weekdays: [1] },
+        scheduleState: 'paused', scheduleReason: 'consecutive_failures', allowedActions: [],
+      }),
       task({
         id: 't3', title: '整理供应商名单', status: 'done', completionNote: '已分组',
-        assignee: { type: 'employee', userId: 'u-owner', displayName: '林岚' }, allowedActions: [],
+        assignee: { type: 'employee', userId: 'u-owner', displayName: '林岚' }, schedule: null, scheduleState: null, allowedActions: [],
       }),
     ]))
     const wrapper = mountPanel()
     await flushPromises()
     const statuses = wrapper.findAll('[data-testid="project-task-status"]').map(node => node.text())
-    expect(statuses).toEqual(['进行中', '执行失败', '已完成'])
+    expect(statuses).toEqual(['进行中', '进行中', '已完成'])
+    const schedules = wrapper.findAll('[data-testid="project-task-schedule-cell"]').map(node => node.text().replace(/\s+/g, ' '))
+    expect(schedules[0]).toContain('每天 09:00')
+    expect(schedules[0]).toContain('上次成功')
+    expect(schedules[1]).toContain('已暂停')
+    expect(schedules[1]).toContain('每周一 09:00')
+    expect(schedules[1]).toContain('连续失败 3 次')
+    expect(schedules[2]).toBe('—')
     expect(wrapper.text()).toContain('Agent · 缺货分析助手')
     expect(wrapper.get('[data-testid="project-task-note"]').text()).toContain('已分组')
     expect(wrapper.emitted('count')?.at(-1)).toEqual([3])
@@ -169,13 +186,51 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     expect(workbenchApi.listProjectTasks).toHaveBeenCalledTimes(2)
   })
 
+  it('S4：新建 Agent 任务带执行规则，可“保存并立即执行”', async () => {
+    const create = vi.spyOn(workbenchApi, 'createProjectTask')
+      .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-3', latestRunId: 'run-3' }))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-testid="project-task-create"]').trigger('click')
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { editor: { assignee: string; schedule: { mode: string; timeOfDay: string; weekdays: number[] } } }
+    await wrapper.get('input[data-testid="project-task-title"]').setValue('每日缺货汇总')
+    vm.editor.assignee = 'agent:wam-1'
+    await flushPromises()
+    expect(wrapper.find('[data-testid="project-task-schedule-editor"]').exists()).toBe(true)
+    expect(vm.editor.schedule).toEqual({ mode: 'daily', timeOfDay: '09:00', weekdays: [1] })
+    vm.editor.schedule.mode = 'weekdays'
+    vm.editor.schedule.timeOfDay = '18:00'
+    await flushPromises()
+    await wrapper.get('[data-testid="project-task-save-run"]').trigger('click')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith('ws-team', expect.objectContaining({
+      assignee: { type: 'agent', id: 'wam-1' },
+      schedule: { kind: 'weekly', timeOfDay: '18:00', weekdays: [1, 2, 3, 4, 5] },
+      startNow: true,
+    }))
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-1/thread/session-3')
+  })
+
+  it('S4：暂停的定时执行可恢复', async () => {
+    vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([
+      task({ scheduleState: 'paused', scheduleReason: 'consecutive_failures', allowedActions: ['resume'] }),
+    ]))
+    const resume = vi.spyOn(workbenchApi, 'resumeProjectTaskSchedule').mockResolvedValue(task())
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '恢复')!.trigger('click')
+    await flushPromises()
+    expect(resume).toHaveBeenCalledWith('ws-team', 'ptask-1')
+  })
+
   it('starts an Agent task and opens its task thread', async () => {
     vi.mocked(workbenchApi.listProjectTasks).mockResolvedValue(page([task()]))
     const start = vi.spyOn(workbenchApi, 'startProjectTask')
       .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9', allowedActions: [] }))
     const wrapper = mountPanel()
     await flushPromises()
-    const startButton = wrapper.findAll('button').find(button => button.text() === '交给 Agent 执行')
+    const startButton = wrapper.findAll('button').find(button => button.text() === '立即执行')
     expect(startButton).toBeTruthy()
     await startButton!.trigger('click')
     await flushPromises()
@@ -221,7 +276,7 @@ describe('ProjectTaskPanel（项目空间 S1）', () => {
     route.name = 'workspace-task-thread'
     route.params = { id: 'ws-team', taskId: 'ptask-1', conversationId: 'session-9' }
     vi.spyOn(workbenchApi, 'getProjectTask')
-      .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9' }))
+      .mockResolvedValue(task({ status: 'in_progress', sessionId: 'session-9', latestRunId: 'run-9', latestRunStatus: 'running' }))
     const cancel = vi.spyOn(workbenchApi, 'cancelRun').mockResolvedValue({} as never)
     const wrapper = mountPanel({ detailTaskId: 'ptask-1' })
     await flushPromises()

@@ -7,6 +7,11 @@ import type { AutomationService } from './automation-service.ts'
 import type { AutomationModuleConfig, AutomationRecord } from './automation-types.ts'
 import type { AgentRoutineService } from './agent-routine-service.ts'
 
+/** 项目空间 S4：Agent 任务的定时执行，与自动任务共用调度所有者锁与扫描节奏。 */
+export interface ProjectTaskScheduleSource {
+  processDueSchedules(now: Date): Promise<void>
+}
+
 const OWNER_LOCK_NAME = 'dsh-work-automation-trigger-sweep'
 
 /**
@@ -23,6 +28,7 @@ export class AutomationTriggerSweep {
   private readonly service: AutomationService
   private readonly config: AutomationModuleConfig
   private readonly agentRoutines?: AgentRoutineService
+  private readonly projectTasks?: ProjectTaskScheduleSource
   private timer?: NodeJS.Timeout
   private lockConnection?: ReservedSql
   private processing = false
@@ -34,12 +40,14 @@ export class AutomationTriggerSweep {
     service: AutomationService,
     config: AutomationModuleConfig,
     agentRoutines?: AgentRoutineService,
+    projectTasks?: ProjectTaskScheduleSource,
   ) {
     this.database = database
     this.automations = automations
     this.service = service
     this.config = config
     this.agentRoutines = agentRoutines
+    this.projectTasks = projectTasks
   }
 
   /** 返回 false 表示已有其它进程持有调度所有权，本进程不启动扫描。 */
@@ -115,6 +123,9 @@ export class AutomationTriggerSweep {
         })
       }
       await this.agentRoutines?.processDue(now)
+      await this.projectTasks?.processDueSchedules(now).catch((error: unknown) => {
+        console.error('project task schedule sweep failed', error)
+      })
     } finally {
       this.processing = false
     }

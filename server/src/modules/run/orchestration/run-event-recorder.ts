@@ -156,6 +156,8 @@ export class RunEventRecorder {
       })
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
       if (!run.sessionId) await this.onSystemRunTerminal(run, 'failed', '')
+      // 项目空间 S4：任务对话中的执行失败累计，连续失败时暂停定时执行（非任务对话时无操作）。
+      else void this.deps.projectTasks?.noteTaskRunTerminal?.(run.sessionId, 'failed')
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
@@ -182,6 +184,7 @@ export class RunEventRecorder {
         void this.deps.sessionSummaries?.scheduleAfterRun(run)
         // 引用页脚是给读者的出处说明，不是任务成果，不进入档案。
         void this.deps.projectArchivist?.afterTaskRun(run, this.modelOutputs.get(event.attempt_id) ?? assistantOutput)
+        void this.deps.projectTasks?.noteTaskRunTerminal?.(run.sessionId, 'succeeded')
       } else await this.onSystemRunTerminal(run, 'succeeded', assistantOutput)
       this.assistantOutputs.delete(event.attempt_id)
       this.modelOutputs.delete(event.attempt_id)
