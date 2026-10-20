@@ -350,8 +350,14 @@ function onTeamStageSubmit(payload: {
   confirm?: () => void
   release?: () => void
 }) {
-  const { contextKey: _ignored, ...rest } = payload
-  void submitTask(rest)
+  void submitTask({
+    prompt: payload.prompt,
+    files: payload.files,
+    workspaceId: payload.workspaceId,
+    mentions: payload.mentions,
+    confirm: payload.confirm,
+    release: payload.release,
+  })
 }
 
 defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask })
