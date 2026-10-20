@@ -83,8 +83,19 @@ onMounted(() => {
   void nextTick(() => restoreDraftForKey(props.contextKey))
 })
 
-function restoreDraftForKey(key: string) {
+/**
+ * 从父级草稿表恢复输入。首次挂载时若该 key 无已存草稿，不要 setDraft(空)，
+ * 否则会冲掉用户在上传/输入与 nextTick 恢复之间的本地附件。
+ * 切换 contextKey 时则强制恢复（含空草稿），以清空上一上下文的残留。
+ */
+function restoreDraftForKey(key: string, force = false) {
   const draft = props.drafts[key] ?? emptyComposerDraft()
+  const hasStoredDraft = Boolean(
+    draft.prompt.trim()
+    || draft.files.length
+    || draft.mentions.length,
+  )
+  if (!force && !hasStoredDraft) return
   composerRef.value?.setDraft(draft)
 }
 
@@ -97,7 +108,7 @@ watch(
     }
     appliedContextKey.value = newKey
     await nextTick()
-    restoreDraftForKey(newKey)
+    restoreDraftForKey(newKey, true)
   },
 )
 
@@ -108,7 +119,11 @@ function focusComposer() {
   })
 }
 
-defineExpose({ focusComposer })
+function setDraft(draft: ComposerDraft) {
+  composerRef.value?.setDraft(draft)
+}
+
+defineExpose({ focusComposer, setDraft })
 
 function onSubmit(payload: {
   prompt: string

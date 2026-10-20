@@ -10,7 +10,7 @@ import {
   Reading,
 } from '@element-plus/icons-vue'
 
-import { TaskComposer, type ComposerDraft } from '@dsh-work/workbench-components'
+import { emptyComposerDraft, TaskComposer, type ComposerDraft } from '@dsh-work/workbench-components'
 
 import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
 import { workbenchApi } from '@/api/client'
@@ -91,12 +91,17 @@ const route = useRoute()
 const taskStore = useTaskStore()
 const contentStore = useContentStore()
 const rootRef = ref<HTMLElement>()
-const teamComposerRef = ref<{ focusComposer: () => void }>()
 
+type ComposerHandle = {
+  focusComposer: () => void
+  setDraft: (draft: ComposerDraft) => void
+}
+
+const teamComposerRef = ref<ComposerHandle>()
+const personalComposerRef = ref<ComposerHandle>()
 
 const selectedTask = ref('')
 const presetPrompt = ref('')
-const composerKey = ref(0)
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
 const selectedSkillId = ref('')
@@ -155,6 +160,14 @@ function focusComposer() {
   })
 }
 
+function resetComposerDraft() {
+  void nextTick(() => {
+    const empty = emptyComposerDraft()
+    teamComposerRef.value?.setDraft(empty)
+    personalComposerRef.value?.setDraft(empty)
+  })
+}
+
 function selectTask(item: (typeof commonTasks)[number]) {
   referenceError.value = ''; referenceName.value = ''; referenceSequence++
   if (!props.workspaceLocked && route.query.file) {
@@ -163,7 +176,6 @@ function selectTask(item: (typeof commonTasks)[number]) {
   selectedTask.value = item.label
   referencedWorkspaceFileIds.value = []
   presetPrompt.value = item.prompt
-  composerKey.value += 1
   focusComposer()
 }
 
@@ -171,7 +183,6 @@ function useWorkspaceFile(file: WorkspaceFile) {
   selectedTask.value = '分析文件'
   referencedWorkspaceFileIds.value = [file.id]
   presetPrompt.value = `请分析工作空间文件“${file.name}”，概括关键信息、异常项和需要跟进的问题。 @工作空间文件`
-  composerKey.value += 1
   focusComposer()
 }
 
@@ -248,7 +259,6 @@ function syncSkillFromRoute() {
   if (skill) {
     selectedTask.value = ''
     presetPrompt.value = skill.testPrompt
-    composerKey.value += 1
     focusComposer()
   }
 }
@@ -264,7 +274,6 @@ function syncAgentFromRoute() {
   if (agent) {
     selectedTask.value = ''
     presetPrompt.value = agent.examplePrompts[0] ?? ''
-    composerKey.value += 1
     focusComposer()
   }
 }
@@ -319,14 +328,16 @@ async function syncPersonalReference() {
     if (sequence !== referenceSequence) return
     if (!file.canReference) throw new Error('该文件当前不可引用，请查看文件的解析和安全状态')
     referencedWorkspaceFileIds.value = [file.id]; referenceName.value = file.name
-    presetPrompt.value = `请分析文件“${file.name}”。`; composerKey.value++
+    presetPrompt.value = `请分析文件“${file.name}”。`
   } catch(cause) {
     if (sequence === referenceSequence) referenceError.value = cause instanceof Error ? cause.message : '无法引用文件'
   } finally { if (sequence === referenceSequence) referenceLoading.value = false }
 }
 watch(() => route.query.file, () => { void syncPersonalReference() }, { immediate: true })
 watch(() => props.workspaceId, () => {
-  clearPersonalReference(); presetPrompt.value = ''; composerKey.value++
+  clearPersonalReference()
+  presetPrompt.value = ''
+  resetComposerDraft()
 })
 onBeforeUnmount(() => { referenceSequence++ })
 
@@ -393,7 +404,6 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
         <TeamSpaceComposer
           v-if="composerReady && useTeamSpaceComposer"
           ref="teamComposerRef"
-          :key="composerKey"
           placement="stage"
           context-key="stage"
           :workspace-id="composerWorkspaceId"
@@ -408,7 +418,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
         />
         <TaskComposer
           v-else-if="composerReady"
-          :key="composerKey"
+          ref="personalComposerRef"
           class="workbench-composer"
           :initial-prompt="presetPrompt"
           :initial-workspace-id="composerWorkspaceId"

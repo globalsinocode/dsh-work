@@ -266,6 +266,14 @@ watch(
     if (!workspaceId.value || workspaceId.value === previous) workspaceId.value = next
   },
 )
+
+/** 父级切换预设文案（常用任务、Skill、路由引用）时同步输入，但不重挂载以保留附件。 */
+watch(
+  () => props.initialPrompt,
+  (next) => {
+    if (next !== prompt.value) prompt.value = next
+  },
+)
 function openFilePicker() {
   fileInput.value?.click()
 }

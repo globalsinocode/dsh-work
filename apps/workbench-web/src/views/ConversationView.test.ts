@@ -323,6 +323,35 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('[data-testid="conversation-archived-notice"]').exists()).toBe(false)
   })
 
+  it('shows run input file names on the triggering user message', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        attachments: ['库存计划.xlsx', '供应商清单.pdf'],
+        messages: [
+          {
+            id: 'message-user',
+            role: 'user',
+            content: '请分析附件',
+            createdAt: '2026-09-10 10:00',
+            runId: 'run-001',
+          },
+          {
+            id: 'message-assistant',
+            role: 'assistant',
+            content: '已收到材料。',
+            createdAt: '2026-09-10 10:01',
+            runId: 'run-001',
+          },
+        ],
+      }),
+    })
+
+    const attachments = wrapper.get('[data-testid="user-message-attachments"]')
+    expect(attachments.text()).toContain('库存计划.xlsx')
+    expect(attachments.text()).toContain('供应商清单.pdf')
+    expect(wrapper.get('.user-message p').text()).toBe('请分析附件')
+  })
+
   it('renders assistant Markdown as structured content and keeps user input plain', async () => {
     const { wrapper } = await mountView({
       item: task({

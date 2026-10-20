@@ -76,6 +76,34 @@ describe('team-space-composer', () => {
     expect(hintBefore).toContain('Tab')
   })
 
+  it('does not wipe attachments on mount when the parent has no stored draft yet', async () => {
+    const wrapper = mountTeamComposer({ drafts: {} })
+    const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['材料'], '挂载前.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('挂载前.pdf')
+  })
+
+  it('applies a new initialPrompt without clearing selected files', async () => {
+    const wrapper = mountTeamComposer({ initialPrompt: '' })
+    const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['材料'], '业务材料.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+    await flushPromises()
+
+    await wrapper.setProps({
+      initialPrompt: '请整理我接下来提供的业务材料，提炼关键事实、待办事项和责任人。',
+    })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('业务材料.pdf')
+    expect(wrapper.get('textarea').element.value).toContain('请整理我接下来提供的业务材料')
+  })
+
   it('includes contextKey on submit and clears current draft on confirm', async () => {
     const drafts: Record<string, ReturnType<typeof emptyComposerDraft>> = {}
     const wrapper = mountTeamComposer({

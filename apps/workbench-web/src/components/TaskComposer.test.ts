@@ -132,6 +132,21 @@ describe('TaskComposer', () => {
     expect(wrapper.emitted('submit')).toBeUndefined()
   })
 
+  it('applies a new initialPrompt without clearing selected files', async () => {
+    const wrapper = mountComposer({ initialPrompt: '' })
+    const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['材料'], '业务材料.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+
+    await wrapper.setProps({ initialPrompt: '请整理我接下来提供的业务材料，提炼关键事实、待办事项和责任人。' })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('业务材料.pdf')
+    expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value)
+      .toContain('请整理我接下来提供的业务材料')
+  })
+
   it('renders uploaded attachments in the upper-left before the prompt input', async () => {
     const wrapper = mountComposer({ initialPrompt: '帮我分析一下这个文件' })
     const fileInput = wrapper.get<HTMLInputElement>('input[type="file"]')

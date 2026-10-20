@@ -298,6 +298,77 @@ function messageArtifacts(message: ChatMessage): Artifact[] {
   return runArtifactsById.value.get(message.runId) ?? []
 }
 
+type ThreadMessageLike = Pick<ChatMessage, 'id' | 'role' | 'runId'>
+
+function firstUserMessageIdByRunIn(messages: ThreadMessageLike[]) {
+  const map = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role === 'user' && message.runId && !map.has(message.runId)) {
+      map.set(message.runId, message.id)
+    }
+  }
+  return map
+}
+
+const firstUserMessageIdByRun = computed(() => firstUserMessageIdByRunIn(conversationMessages.value))
+
+const firstUserMessageIdByRunInThread = computed(() =>
+  firstUserMessageIdByRunIn(sessionThread.value?.messages ?? []),
+)
+
+/** 各 Run 首轮用户消息附带的输入文件（文件名来自 Run 详情 attachments）。 */
+const runAttachmentsById = computed(() => {
+  const map = new Map<string, string[]>()
+  const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
+  if (!sessionId) {
+    if (task.value?.attachments.length) map.set(task.value.id, task.value.attachments)
+    return map
+  }
+  for (const item of taskStore.tasks) {
+    if (item.sessionId === sessionId && item.attachments.length) {
+      map.set(item.id, item.attachments)
+    }
+  }
+  if (task.value?.attachments.length) map.set(task.value.id, task.value.attachments)
+  return map
+})
+
+function messageInputAttachments(
+  message: ThreadMessageLike,
+  firstByRun: Map<string, string>,
+) {
+  if (message.role !== 'user') return []
+
+  const runId = message.runId ?? (task.value?.attachments.length ? task.value.id : null)
+  if (!runId) return []
+
+  const firstUserId = firstByRun.get(runId)
+    ?? conversationMessages.value.find(item => item.role === 'user' && item.runId === runId)?.id
+
+  if (firstUserId !== message.id) {
+    // 旧夹具/投影未带 runId：本轮仅一条用户消息时仍展示 Run 级 attachments。
+    const loneUser = conversationMessages.value.filter(item => item.role === 'user')
+    if (loneUser.length !== 1 || loneUser[0]!.id !== message.id || task.value?.id !== runId) return []
+  }
+
+  return runAttachmentsById.value.get(runId) ?? (task.value?.id === runId ? task.value.attachments : [])
+}
+
+function inputAttachmentSubtitle(fileName: string) {
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? ''
+  const labels: Record<string, string> = {
+    pdf: 'PDF',
+    docx: 'Word',
+    xlsx: 'Excel',
+    xls: 'Excel',
+    csv: 'CSV',
+    txt: '文本',
+    md: 'Markdown',
+  }
+  const kind = labels[extension] ?? (extension ? extension.toUpperCase() : '文件')
+  return `${kind} · 已上传`
+}
+
 let prefetchRunArtifactsEpoch = 0
 /**
  * 已确认无需再拉取详情的 Run。预拉取本身会写 store，若重复触发就会形成
@@ -327,7 +398,7 @@ async function prefetchSessionRunArtifacts() {
   const epoch = ++prefetchRunArtifactsEpoch
   const runIds = new Set(
     conversationMessages.value
-      .filter(message => message.role === 'assistant' && message.runId)
+      .filter(message => message.runId)
       .map(message => message.runId as string),
   )
   for (const runId of runIds) {
@@ -900,6 +971,26 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
+                <div
+                  v-if="messageInputAttachments(message, firstUserMessageIdByRunInThread).length"
+                  class="user-message-attachments answer-artifacts"
+                  data-testid="user-message-attachments"
+                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRunInThread).length} 个`"
+                >
+                  <div
+                    v-for="name in messageInputAttachments(message, firstUserMessageIdByRunInThread)"
+                    :key="name"
+                    class="answer-artifact"
+                  >
+                    <div class="answer-artifact__card">
+                      <span><el-icon><Document /></el-icon></span>
+                      <span>
+                        <strong>{{ name }}</strong>
+                        <small>{{ inputAttachmentSubtitle(name) }}</small>
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 <p>{{ message.content }}</p>
               </div>
             </template>
@@ -1054,6 +1145,26 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
+                <div
+                  v-if="messageInputAttachments(message, firstUserMessageIdByRun).length"
+                  class="user-message-attachments answer-artifacts"
+                  data-testid="user-message-attachments"
+                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRun).length} 个`"
+                >
+                  <div
+                    v-for="name in messageInputAttachments(message, firstUserMessageIdByRun)"
+                    :key="name"
+                    class="answer-artifact"
+                  >
+                    <div class="answer-artifact__card">
+                      <span><el-icon><Document /></el-icon></span>
+                      <span>
+                        <strong>{{ name }}</strong>
+                        <small>{{ inputAttachmentSubtitle(name) }}</small>
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 <p>{{ message.content }}</p>
               </div>
             </template>
@@ -1549,6 +1660,57 @@ watch(
 
 .user-message {
   padding-bottom: 16px;
+}
+
+/* 用户附件挂在气泡顶部，视觉与 Agent 成果卡片一致，但不提供操作按钮。 */
+.user-message .user-message-attachments.answer-artifacts {
+  justify-content: flex-start;
+  margin-top: 0;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef0ee;
+}
+
+.user-message .answer-artifact {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.user-message .answer-artifact__card {
+  display: grid;
+  width: fit-content;
+  max-width: min(100%, 22rem);
+  grid-template-columns: 30px minmax(0, auto);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  color: #4c514c;
+  background: #fafbfa;
+}
+
+.user-message .answer-artifact__card > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: #356858;
+  background: #eaf4f0;
+}
+
+.user-message .answer-artifact__card > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.user-message .answer-artifact__card strong {
+  overflow: hidden;
+  max-width: 16rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-message p {
@@ -2334,7 +2496,7 @@ watch(
   }
 
 
-  .answer-artifact {
+  .assistant-answer:not(.user-message) .answer-artifact {
     width: 100%;
   }
 
