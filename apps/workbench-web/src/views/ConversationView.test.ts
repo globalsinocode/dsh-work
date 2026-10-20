@@ -14,6 +14,7 @@ const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(
 const route = vi.hoisted(() => ({
   name: undefined as string | undefined,
   params: {} as Record<string, string>,
+  query: {} as Record<string, string | string[]>,
 }))
 const api = vi.hoisted(() => ({
   getTasks: vi.fn(),
@@ -867,6 +868,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     vi.clearAllMocks()
     route.name = undefined
     route.params = { id: 'run-001' }
+    route.query = {}
     api.listWorkspaceAgentMembers.mockResolvedValue([])
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))

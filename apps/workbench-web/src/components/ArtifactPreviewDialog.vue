@@ -363,7 +363,7 @@ function download() {
 .artifact-preview__csv {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.95em;
+  font-size: var(--dsh-font-size-body);
 }
 
 .artifact-preview__csv th,
