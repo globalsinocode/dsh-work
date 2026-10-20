@@ -162,10 +162,10 @@ function quickMentionOptions() {
 }
 
 function applyRecentAgentMention() {
-  const workspace = activeWorkspaceId()
   const options = quickMentionOptions()
-  if (!workspace || !options.length) return
-  const recentId = getRecentWorkspaceAgentMemberId(workspace)
+  if (!options.length) return
+  const workspace = activeWorkspaceId()
+  const recentId = workspace ? getRecentWorkspaceAgentMemberId(workspace) : undefined
   const option = (recentId ? options.find(item => item.id === recentId) : undefined) ?? options[0]
   applyMention(option)
 }

@@ -107,6 +107,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     // 最新运行状态用 StatusTag 呈现。
     expect(rows[0]?.find('.status-tag').text()).toBe('执行中')
+
     expect(rows[1]?.find('.status-tag').text()).toBe('已完成')
   })
 

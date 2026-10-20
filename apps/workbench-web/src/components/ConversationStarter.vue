@@ -16,6 +16,7 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
 
 const props = withDefaults(
   defineProps<{
@@ -46,12 +47,15 @@ const props = withDefaults(
      * startable 过滤口径一致；非团队锁定场景传空。
      */
     mentionOptions?: Array<{ id: string; name: string }>
+    /** 团队「历史对话」底部输入条：只渲染输入区，用于浏览列表时继续发起讨论。 */
+    composerOnly?: boolean
   }>(),
   {
     workspaceId: '',
     workspaceName: '',
     workspaceLocked: false,
     embedded: false,
+    composerOnly: false,
     title: 'dsh-work，我帮你',
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
@@ -312,16 +316,53 @@ watch(() => props.workspaceId, () => {
 })
 onBeforeUnmount(() => { referenceSequence++ })
 
-defineExpose({ useWorkspaceFile })
+defineExpose({ useWorkspaceFile, focusComposer })
 </script>
 
 <template>
   <div
     ref="rootRef"
     class="conversation-starter"
-    :class="{ 'conversation-starter--embedded': embedded }"
+    :class="{
+      'conversation-starter--embedded': embedded,
+      'conversation-starter--composer-only': composerOnly,
+    }"
   >
-    <main class="workbench-stage">
+    <section
+      v-if="composerOnly"
+      class="workspace-composer-strip"
+      aria-label="发起新讨论"
+      data-testid="workspace-composer-strip"
+    >
+      <TaskComposer
+        v-if="composerReady"
+        :key="composerKey"
+        class="workbench-composer"
+        compact
+        :initial-prompt="presetPrompt"
+        :initial-workspace-id="composerWorkspaceId"
+        :initial-workspace-name="composerWorkspaceName"
+        :workspaces="[]"
+        :workspace-locked="workspaceLocked"
+        :show-workspace-context="workspaceLocked"
+        :selected-skill-name="selectedSkill?.name"
+        :selected-agent-name="selectedAgent?.name"
+        :blocked-reason="blockedReason"
+        :mention-options="workspaceLocked ? mentionOptions : []"
+        :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
+        @submit="submitTask"
+        @clear-skill="clearSelectedSkill"
+        @clear-agent="clearSelectedAgent"
+        @open-files="router.push('/files')"
+      />
+      <el-skeleton v-else class="workbench-composer" :rows="2" animated />
+      <footer class="workbench-trust workbench-trust--compact">
+        <span v-if="workspaceLocked && requiresAgentMember && mentionOptions.length">{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
+        <span v-else>Enter 发送 · Shift + Enter 换行</span>
+      </footer>
+    </section>
+
+    <main v-else class="workbench-stage">
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">
         <div class="workbench-welcome__copy">
           <h1 id="conversation-starter-title">{{ title }}</h1>
@@ -381,8 +422,8 @@ defineExpose({ useWorkspaceFile })
 
         <footer class="workbench-trust">
           <span>支持 PDF、DOCX、XLSX、CSV，单文件不超过 20 MB</span>
-          <span v-if="workspaceLocked && mentionOptions.length">Tab 最近/首位 Agent · Tab+1~9 快速选择 · Enter 发送 · Shift + Enter 换行</span>
-          <span v-else>Enter 发送 · Shift + Enter 换行</span>
+          <span v-if="workspaceLocked && requiresAgentMember && mentionOptions.length">{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
+          <span v-else-if="!workspaceLocked || !requiresAgentMember">Enter 发送 · Shift + Enter 换行</span>
         </footer>
       </section>
     </main>
@@ -524,6 +565,29 @@ defineExpose({ useWorkspaceFile })
 .conversation-starter--embedded {
   min-height: 100%;
   height: 100%;
+}
+
+.conversation-starter--composer-only {
+  min-height: 0;
+  height: auto;
+  flex: 0 0 auto;
+  background: #fff;
+}
+
+.conversation-starter--composer-only.conversation-starter--embedded {
+  min-height: 0;
+  height: auto;
+}
+
+.workspace-composer-strip {
+  padding: 12px 20px 14px;
+  border-top: 1px solid #e8ebe8;
+  background: #fff;
+}
+
+.workbench-trust--compact {
+  justify-content: flex-start;
+  margin-top: 6px;
 }
 
 .conversation-starter--embedded .workbench-welcome {

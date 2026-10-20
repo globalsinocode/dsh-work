@@ -28,6 +28,7 @@ import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
+import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
 
 const route = useRoute()
 const router = useRouter()
@@ -166,6 +167,7 @@ const mentionOptions = computed(() =>
     .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
     .map(member => ({ id: member.id, name: member.name })),
 )
+const showTeamComposerShortcutHint = computed(() => isTeamSession.value && mentionOptions.value.length > 0)
 
 async function loadAgentMembers(workspaceId: string | undefined) {
   if (!workspaceId || !isTeamSession.value) {
@@ -866,6 +868,7 @@ watch(
           <TaskComposer
             v-if="canWriteSession"
             compact
+            :initial-workspace-id="streamWorkspaceId"
             :mention-options="isTeamSession ? mentionOptions : []"
             :files-require-mention="isTeamSession"
             @submit="submitSessionMessage"
@@ -875,6 +878,13 @@ watch(
           </p>
           <p v-else-if="sessionReadOnly" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
             当前角色为只读成员，仅可查看讨论内容。
+          </p>
+          <p
+            v-if="showTeamComposerShortcutHint && canWriteSession"
+            class="conversation-composer-hint"
+            data-testid="team-composer-shortcut-hint"
+          >
+            {{ TEAM_COMPOSER_SHORTCUT_HINT }}
           </p>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
@@ -1173,6 +1183,7 @@ watch(
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
             v-if="canFollowUp"
             compact
+            :initial-workspace-id="streamWorkspaceId"
             :running="canStop"
             :stopping="stopping"
             :mention-options="isTeamSession ? mentionOptions : []"
@@ -1185,6 +1196,13 @@ watch(
           </p>
           <p v-else-if="isRunViewer" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
             当前角色为只读成员，仅可查看讨论内容。
+          </p>
+          <p
+            v-if="showTeamComposerShortcutHint && canFollowUp"
+            class="conversation-composer-hint"
+            data-testid="team-composer-shortcut-hint"
+          >
+            {{ TEAM_COMPOSER_SHORTCUT_HINT }}
           </p>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
@@ -1951,6 +1969,14 @@ watch(
   width: min(100%, 920px);
   margin: 0 auto;
   pointer-events: auto;
+}
+
+.conversation-composer-hint {
+  margin: 0;
+  color: #8b918c;
+  font-size: var(--dsh-font-size-micro);
+  line-height: 1.5;
+  text-align: center;
 }
 
 .conversation-composer-dock__inner > p {

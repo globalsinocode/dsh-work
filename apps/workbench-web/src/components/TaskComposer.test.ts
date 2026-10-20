@@ -280,6 +280,19 @@ describe('TaskComposer', () => {
     expect(submitPayload(wrapper).mentions).toEqual([])
   })
 
+  it('selects the first listed agent on Tab even without a workspace id (e.g. team thread composer)', async () => {
+    const wrapper = mountComposer({
+      mentionOptions: [
+        { id: 'wam-1', name: '订单助手' },
+        { id: 'wam-2', name: '库存助手' },
+      ],
+    })
+    const input = wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]')
+    await input.trigger('keydown', { key: 'Tab' })
+    await input.trigger('keyup', { key: 'Tab' })
+    expect(input.element.value).toBe('@订单助手 ')
+  })
+
   it('selects the first listed agent on Tab when there is no recent workspace record', async () => {
     const wrapper = mountComposer({
       initialWorkspaceId: 'ws-team',
