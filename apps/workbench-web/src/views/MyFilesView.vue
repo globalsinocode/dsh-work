@@ -59,7 +59,7 @@ async function remove(file: PersonalFile) {
 <template>
   <section class="my-files-page panel">
     <header><div><h1>我的文件</h1><p>个人材料、对话附件和生成成果集中查找；团队资料请进入相应团队。</p></div><el-button type="primary" :loading="uploading" @click="fileInput?.click()">上传材料</el-button></header>
-    <input ref="fileInput" class="visually-hidden" type="file" aria-label="上传个人材料" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="upload" />
+    <input ref="fileInput" class="visually-hidden" type="file" aria-label="上传个人材料" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md" @change="upload" />
     <form class="file-filters" @submit.prevent="search">
       <label>搜索文件名称<input v-model="keyword" type="search" maxlength="200" placeholder="输入文件名" /></label>
       <label>文件来源<select :value="source" @change="filter"><option value="all">全部文件</option><option value="material">个人材料</option><option value="attachment">会话附件</option><option value="artifact">生成成果</option></select></label>

@@ -278,6 +278,35 @@ describe('Runtime Manifest compiler', () => {
     assert.match(rendered, /不得猜测文件名/)
   })
 
+  it('materializes image attachments into the workspace and names them in the prompt', async () => {
+    const adapter = await createAdapter()
+    const input = manifest('run-image-attachment', 'attempt-1')
+    const bytes = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(48, 7)])
+    input.input.file_mounts = [fileMount('/workspace/input/01-record.txt', '日期\t内容\n2026-10-01\t更换轴承')]
+    input.input.attachments = [{
+      file_id: 'file-inventory',
+      name: 'image-1.png',
+      mount_path: '/workspace/input/attachments/image-1.png',
+      media_type: 'image/png',
+      content_sha256: createHash('sha256').update(bytes).digest('hex'),
+      content_base64: bytes.toString('base64'),
+      source: 'S1 第 4 行',
+    }]
+    const handle = await adapter.execute(input)
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+
+    const attachmentPath = join(result.attemptDirectory, 'workspace/input/attachments/image-1.png')
+    assert.deepEqual(await readFile(attachmentPath), bytes)
+    assert.equal((await stat(attachmentPath)).mode & 0o777, 0o400)
+    const stored = JSON.parse(await readFile(join(result.attemptDirectory, 'manifest.json'), 'utf8')) as RuntimeManifest
+    const systemPrompt = renderSystemPrompt(stored)
+    assert.match(systemPrompt, /# 当前 Run 输入附件（图片）/)
+    assert.match(systemPrompt, /读取路径：input\/attachments\/image-1\.png/)
+    assert.match(systemPrompt, /如果当前模型不支持读图/)
+    assert.match(systemPrompt, /S1 第 4 行/)
+  })
+
   it('tells the Agent that writing a revised artifact under its original name records the next version', () => {
     const input = manifest('run-artifact-revision', 'attempt-1')
     input.input.file_mounts = [{

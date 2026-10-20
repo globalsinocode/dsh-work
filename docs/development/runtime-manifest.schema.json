@@ -469,6 +469,14 @@
             "$ref": "#/$defs/fileMount"
           }
         },
+        "attachments": {
+          "type": "array",
+          "maxItems": 12,
+          "description": "解析文本承载不了的二进制内容（目前为工作簿内嵌图片），挂到 /workspace/input/attachments/，不占文本挂载的 5 个名额。",
+          "items": {
+            "$ref": "#/$defs/fileAttachment"
+          }
+        },
         "conversation_history": {
           "type": "array",
           "maxItems": 12,
@@ -902,6 +910,47 @@
               "minimum": 1
             }
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "fileAttachment": {
+      "type": "object",
+      "required": [
+        "file_id",
+        "name",
+        "mount_path",
+        "media_type",
+        "content_sha256",
+        "content_base64"
+      ],
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "mount_path": {
+          "type": "string",
+          "pattern": "^/workspace/input/attachments/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^image/"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "content_base64": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 200
         }
       },
       "additionalProperties": false

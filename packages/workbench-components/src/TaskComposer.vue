@@ -271,11 +271,11 @@ function openFilePicker() {
 
 function acceptFiles(fileList: FileList | File[]) {
   const incoming = Array.from(fileList)
-  const allowedExtensions = ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md']
+  const allowedExtensions = ['pdf', 'docx', 'xlsx', 'xls', 'csv', 'txt', 'md']
   for (const file of incoming) {
     const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
     if (!allowedExtensions.includes(extension)) {
-      ElMessage.warning(`${file.name} 暂不支持，当前版本支持 PDF、DOCX、XLSX、CSV、TXT 和 Markdown`)
+      ElMessage.warning(`${file.name} 暂不支持，当前版本支持 PDF、DOCX、XLSX、XLS、CSV、TXT 和 Markdown`)
       continue
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -496,7 +496,7 @@ function performPrimaryAction() {
             class="composer__file-input"
             type="file"
             multiple
-            accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+            accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md"
             @change="onFileChange"
           />
           <el-dropdown trigger="click" placement="top-start" @command="onAddCommand">

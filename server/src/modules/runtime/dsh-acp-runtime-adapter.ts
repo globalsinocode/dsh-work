@@ -221,6 +221,21 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       await writeFile(target, mount.content, { flag: 'wx', mode: 0o400 })
       await chmod(target, 0o400)
     }
+    for (const attachment of compiled.manifest.input.attachments ?? []) {
+      const relativePath = attachment.mount_path.slice('/workspace/'.length)
+      const target = resolve(workspaceDirectory, relativePath)
+      if (!isResolvedPathInsideDirectory(workspaceDirectory, target)) {
+        throw new Error(`Unsafe attachment path: ${attachment.mount_path}`)
+      }
+      const bytes = Buffer.from(attachment.content_base64, 'base64')
+      // 编译器已校验过摘要；落盘前再算一次，避免 manifest 在传输中被改写。
+      if (createHash('sha256').update(bytes).digest('hex') !== attachment.content_sha256) {
+        throw new Error(`Attachment checksum mismatch: ${attachment.name}`)
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, bytes, { flag: 'wx', mode: 0o400 })
+      await chmod(target, 0o400)
+    }
     const materializedSkills = new Map<string, { instructions: string; files: Array<{ path: string; content: string; sha256: string; size: number }> }>()
     for (const skill of compiled.manifest.agent_configuration.skill_instructions) {
       const materialized = skill.artifact_ref
@@ -1148,6 +1163,18 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
         ? `来源 Attempt 已生成但尚未提交的部分回答，仅作续办上下文，不代表任务完成：\n${manifest.resume.checkpoint_context.assistant_output}`
         : '来源 Attempt 没有未提交的部分回答。',
       '继续任务时如动作、参数、资源或数据版本变化，必须重新请求审批。',
+    ].join('\n'))
+  }
+  const attachments = manifest.input.attachments ?? []
+  if (attachments.length > 0) {
+    sections.push([
+      '# 当前 Run 输入附件（图片）',
+      '这些是原文件里的内嵌图片（照片、截图），已按只读方式放到工作目录，表格文字里看不到它们的内容。需要看图时用 read_image 读取下面给出的路径，不要猜测文件名。',
+      '如果当前模型不支持读图，工具会明确报错：这时只能说明「原文件里有这些图片、但当前模型看不到」，不要凭文件名或上下文猜测图片内容。',
+      ...attachments.map((attachment, index) => [
+        `${index + 1}. ${attachment.name}${attachment.source ? `（原表格位置：${attachment.source}）` : ''}`,
+        `   - 读取路径：${attachment.mount_path.slice('/workspace/'.length)}`,
+      ].join('\n')),
     ].join('\n'))
   }
   if (manifest.input.file_mounts.length > 0) {

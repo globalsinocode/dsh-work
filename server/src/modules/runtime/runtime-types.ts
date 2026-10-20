@@ -120,6 +120,8 @@ export interface RuntimeManifest {
     message: string
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
     file_mounts: FileMount[]
+    /** 解析文本承载不了的二进制内容（工作簿内嵌图片），挂到 /workspace/input/attachments/。 */
+    attachments?: FileAttachment[]
   }
   /** PF-04 immutable proof used to reconstruct work in a new Attempt. */
   resume?: {
@@ -251,6 +253,21 @@ export interface RuntimeKnowledgeDocument {
 export interface CapabilityReference {
   id: string
   version: string
+}
+
+/**
+ * 附件与文本挂载分开：图片是二进制，体积另算，也不参与「最多 5 个文件」的文本挂载配额。
+ * content 是 base64，编译器按解码后的字节校验摘要与上限。
+ */
+export interface FileAttachment {
+  file_id: string
+  name: string
+  mount_path: string
+  media_type: string
+  content_sha256: string
+  content_base64: string
+  /** 图片在原表格中的位置，用于系统提示里的说明。 */
+  source?: string
 }
 
 export interface FileMount {

@@ -1199,7 +1199,7 @@ watch(
             >
               上传文件
             </el-button>
-            <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="onUploadSelected" />
+            <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md" @change="onUploadSelected" />
             <!-- 执行轨：上传新版本入口只在「团队 + 活跃 + 非只读成员」时存在。 -->
             <input
               v-if="canUploadFileVersions"
@@ -1207,7 +1207,7 @@ watch(
               data-testid="workspace-file-upload-input"
               class="visually-hidden"
               type="file"
-              accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+              accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md"
               @change="onVersionUploadSelected"
             />
           </header>

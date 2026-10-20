@@ -218,7 +218,7 @@ onMounted(() => void load())
     </el-dialog>
 
     <el-dialog v-model="modelDialogOpen" :title="`为 ${selectedProvider?.name ?? ''} 添加模型`" width="600px" destroy-on-close>
-      <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item><el-form-item label="模型标识" required><el-input v-model="modelForm.modelKey" placeholder="例如：deepseek-v4-pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /></el-select></el-form-item></el-form>
+      <el-form label-position="top" :model="modelForm"><div class="form-grid"><el-form-item label="模型名称" required><el-input v-model="modelForm.displayName" placeholder="例如：DeepSeek V4 Pro" /></el-form-item><el-form-item label="模型标识" required><el-input v-model="modelForm.modelKey" placeholder="例如：deepseek-v4-pro" /></el-form-item></div><el-form-item label="能力"><el-select v-model="modelForm.capabilities" multiple allow-create filterable><el-option label="文本" value="text" /><el-option label="深度思考" value="thinking" /><el-option label="工具调用" value="tool-calling" /><el-option label="图片输入" value="image" /></el-select></el-form-item></el-form>
       <template #footer><el-button @click="modelDialogOpen = false">取消</el-button><el-button type="primary" @click="createModel">添加模型</el-button></template>
     </el-dialog>
 

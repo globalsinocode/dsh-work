@@ -125,6 +125,8 @@ export class AttemptDispatcher {
           userId: input.userId,
         })
       : [])
+    // 工作簿内嵌图片：贴在文本挂载之外，单独计量、单独给出读取路径。
+    const attachments = preparedFiles.flatMap(file => file.attachments)
     const attemptId = input.attemptId ?? `attempt-${randomUUID()}`
     const limits = {
       timeout_seconds: Math.min(agent.timeoutSeconds, runtimePolicy?.timeoutSeconds ?? agent.timeoutSeconds, input.limits?.timeoutSeconds ?? Number.POSITIVE_INFINITY),
@@ -210,6 +212,7 @@ export class AttemptDispatcher {
       input: {
         message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.map(file => file.mount),
+        ...(attachments.length ? { attachments } : {}),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
       },
       budget: await this.budget.manifest(run, limits),
