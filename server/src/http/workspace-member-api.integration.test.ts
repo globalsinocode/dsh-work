@@ -113,7 +113,7 @@ test('负责人可以分页搜索业务员工目录候选人，仅返回最小�
   assert.ok(!ids.includes(ownerId))
 })
 
-test('候选人搜索支持按姓名过滤，离职/停用/非业务/无应用访问账户不可选', async () => {
+test('候选人搜索支持按姓名过滤，本地与 AI Hub 业务员工同等可选，停用/非业务/无应用访问账户不可选', async () => {
   const workspaceId = 'ws-1a-cand-filter'
   const ownerId = 'user-1a-cand-filter-owner'
   await createDirectoryUser(ownerId, '候选人过滤负责人')
@@ -124,16 +124,16 @@ test('候选人搜索支持按姓名过滤，离职/停用/非业务/无应用�
   await createDirectoryUser('user-1a-filter-disabled', '员工停用张伟', { status: 'disabled' })
   await createDirectoryUser('user-1a-filter-nonbusiness', '员工平台张伟', { business: false })
   await createDirectoryUser('user-1a-filter-no-access', '员工无权张伟', { grantWorkbench: false })
-  await createDirectoryUser('user-1a-filter-local', '员工本地方伟', { provider: 'local' })
+  await createDirectoryUser('user-1a-filter-local', '员工张伟本地', { provider: 'local' })
 
   const search = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/member-candidates?query=${encodeURIComponent('张伟')}`, { as: ownerId })
   assert.equal(search.status, 200)
   const ids = (search.body.data as { items: Array<{ id: string }> }).items.map(item => item.id)
-  assert.deepEqual(ids, ['user-1a-filter-match-a', 'user-1a-filter-match-b'])
+  // 2026-10-19 企业员工已迁为本地账号：身份来源不参与过滤，本地业务员工同样可选。
+  assert.deepEqual(ids, ['user-1a-filter-match-a', 'user-1a-filter-match-b', 'user-1a-filter-local'])
   assert.ok(!ids.includes('user-1a-filter-disabled'))
   assert.ok(!ids.includes('user-1a-filter-nonbusiness'))
   assert.ok(!ids.includes('user-1a-filter-no-access'))
-  assert.ok(!ids.includes('user-1a-filter-local'))
   assert.ok(!ids.includes('user-1a-filter-other'))
 })
 
@@ -348,7 +348,6 @@ test('停用、非业务员工、无应用访问资格与未知员工均不能�
   await createDirectoryUser('user-1a-add-inv-disabled', '停用员工', { status: 'disabled' })
   await createDirectoryUser('user-1a-add-inv-nonbusiness', '平台员工', { business: false })
   await createDirectoryUser('user-1a-add-inv-noaccess', '无权员工', { grantWorkbench: false })
-  await createDirectoryUser('user-1a-add-inv-local', '本地员工', { provider: 'local' })
 
   const disabled = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
     as: ownerId,
@@ -371,19 +370,27 @@ test('停用、非业务员工、无应用访问资格与未知员工均不能�
   assert.equal(noAccess.status, 409)
   assert.match(errorMessage(noAccess), /工作台使用权限/)
 
-  const local = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
-    as: ownerId,
-    body: { userId: 'user-1a-add-inv-local', role: 'member' },
-  })
-  assert.equal(local.status, 409)
-  assert.match(errorMessage(local), /业务员工目录/)
-
   const missing = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
     as: ownerId,
     body: { userId: 'user-1a-add-inv-missing', role: 'member' },
   })
   assert.equal(missing.status, 404)
   assert.match(errorMessage(missing), /目标员工不存在/)
+})
+
+test('本地账号（AI Hub 迁移后的业务员工）与 AI Hub 账号同等可添加', async () => {
+  const workspaceId = 'ws-1a-add-local'
+  const ownerId = 'user-1a-add-local-owner'
+  await createDirectoryUser(ownerId, '本地添加负责人')
+  await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
+  await createDirectoryUser('user-1a-add-local-target', '本地目标员工', { provider: 'local' })
+
+  const result = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/members`, {
+    as: ownerId,
+    body: { userId: 'user-1a-add-local-target', role: 'member' },
+  })
+  assert.equal(result.status, 201)
+  assert.equal((result.body.data as { userId: string }).userId, 'user-1a-add-local-target')
 })
 
 test('无效角色被拒绝；负责人不能直接添加负责人', async () => {
