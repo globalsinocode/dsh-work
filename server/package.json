@@ -1,7 +1,7 @@
 {
   "name": "@dsh-work/server",
   "version": "0.1.1",
-  "releaseVersion": "2026.10.20-01",
+  "releaseVersion": "2026.10.20-02",
   "private": true,
   "type": "module",
   "scripts": {
@@ -92,6 +92,7 @@
     "cron-parser": "5.10.1",
     "fflate": "^0.8.3",
     "postgres": "^3.4.9",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.9.0"
   }
 }
