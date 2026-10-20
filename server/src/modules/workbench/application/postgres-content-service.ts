@@ -8,7 +8,8 @@ import type { Artifact, Workspace, WorkspaceFile } from '../../../domain/types.t
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
-import type { FileMount } from '../../runtime/runtime-types.ts'
+import { dependencyUnavailable } from '../../../domain/request-errors.ts'
+import type { FileAttachment, FileMount } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
@@ -130,6 +131,15 @@ export interface PersonalFileQuery {
   limit?: number
 }
 
+interface StoredExtractionAttachment {
+  name: string
+  media_type: string
+  storage_key: string
+  sha256: string
+  size: number
+  source: string
+}
+
 interface RuntimeFileRow {
   workspaceId: string
   fileId: string
@@ -138,6 +148,7 @@ interface RuntimeFileRow {
   mimeType: string
   textStorageKey: string
   textSha256: string
+  attachments: StoredExtractionAttachment[]
   /** Set when the file is a run artifact version: the mount tells the Agent which artifact it revises. */
   artifactId: string | null
   artifactVersion: number | null
@@ -147,6 +158,8 @@ export interface PreparedRuntimeFile {
   fileId: string
   extractionId: string
   mount: FileMount
+  /** 解析文本承载不了的图片，按只读附件挂进 /workspace/input/attachments/。 */
+  attachments: FileAttachment[]
 }
 
 interface PreparedRuntimeArtifact {
@@ -1461,7 +1474,8 @@ export class PostgresContentService {
     const [row] = await this.database<RuntimeFileRow[]>`
       select f.workspace_id as "workspaceId", f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
              f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
-             fe.text_sha256 as "textSha256", art.id as "artifactId", art.version_no as "artifactVersion"
+             fe.text_sha256 as "textSha256", fe.attachments as "attachments",
+             art.id as "artifactId", art.version_no as "artifactVersion"
         from file_objects f
         join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
         join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
@@ -1563,12 +1577,35 @@ export class PostgresContentService {
     if (fileIds.length > 5) throw invalidRequest('每次 Run 最多分析 5 个文件')
     const prepared: PreparedRuntimeFile[] = []
     let totalBytes = 0
+    let attachmentCount = 0
+    let attachmentBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
       const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
       totalBytes += Buffer.byteLength(content)
       if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
       const safeName = safeMountName(row.originalName, index)
+      const attachments: FileAttachment[] = []
+      for (const attachment of row.attachments ?? []) {
+        // 单个 Run 的图片总量与文件数另设上限：文本配额只管文字。
+        if (attachmentCount >= 12) throw invalidRequest('本次 Run 的内嵌图片超过 12 张，请减少文件或拆分后再上传')
+        const bytes = await this.storage.get(attachment.storage_key)
+        if (createHash('sha256').update(bytes).digest('hex') !== attachment.sha256) {
+          throw dependencyUnavailable(`文件附件校验失败：${row.originalName} 的 ${attachment.name}`)
+        }
+        attachmentBytes += bytes.length
+        if (attachmentBytes > 16 * 1024 * 1024) throw invalidRequest('本次 Run 的内嵌图片合计超过 16 MB，请减少文件或拆分后再上传')
+        attachmentCount += 1
+        attachments.push({
+          file_id: row.fileId,
+          name: attachment.name,
+          mount_path: `/workspace/input/attachments/${attachment.name}`,
+          media_type: attachment.media_type,
+          content_sha256: attachment.sha256,
+          content_base64: bytes.toString('base64'),
+          source: attachment.source,
+        })
+      }
       prepared.push({
         fileId: row.fileId,
         extractionId: row.extractionId,
@@ -1584,6 +1621,7 @@ export class PostgresContentService {
             ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
             : {}),
         },
+        attachments,
       })
     }
     return prepared
@@ -1979,14 +2017,27 @@ export class PostgresContentService {
       const textSha256 = createHash('sha256').update(textBytes).digest('hex')
       const textStorageKey = joinObjectKey('extractions', fileId, 'm4-basic-v1.txt')
       await this.storage.putIfAbsent(textStorageKey, textBytes)
+      const attachments: StoredExtractionAttachment[] = []
+      for (const attachment of extraction.attachments ?? []) {
+        const storageKey = joinObjectKey('extractions', fileId, 'attachments', attachment.name)
+        await this.storage.putIfAbsent(storageKey, attachment.bytes)
+        attachments.push({
+          name: attachment.name,
+          media_type: attachment.mediaType,
+          storage_key: storageKey,
+          sha256: createHash('sha256').update(attachment.bytes).digest('hex'),
+          size: attachment.bytes.length,
+          source: attachment.source,
+        })
+      }
       await this.database`
         insert into file_extractions (
           id, tenant_id, file_id, extractor_version, detected_type, status,
-          text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count
+          text_storage_key, text_sha256, character_count, page_count, sheet_count, row_count, attachments
         ) values (
           ${extractionId}, ${tenantId}, ${fileId}, 'm4-basic-v1', ${extraction.detectedType}, 'succeeded',
           ${textStorageKey}, ${textSha256}, ${extraction.text.length}, ${extraction.pageCount},
-          ${extraction.sheetCount}, ${extraction.rowCount}
+          ${extraction.sheetCount}, ${extraction.rowCount}, ${this.database.json(attachments as unknown as Parameters<DatabaseClient['json']>[0])}
         )
       `
       return 'succeeded' as const

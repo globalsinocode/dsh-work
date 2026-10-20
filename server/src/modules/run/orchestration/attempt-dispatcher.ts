@@ -210,6 +210,10 @@ export class AttemptDispatcher {
       input: {
         message: (input.message ?? input.prompt).trim(),
         file_mounts: preparedFiles.map(file => file.mount),
+        ...(() => {
+          const attachments = preparedFiles.flatMap(file => file.attachments)
+          return attachments.length ? { attachments } : {}
+        })(),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
       },
       budget: await this.budget.manifest(run, limits),

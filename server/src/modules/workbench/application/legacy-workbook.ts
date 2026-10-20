@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module'
 import type { CellObject, Range, WorkBook, WorkSheet } from 'xlsx'
 
+import { extractWorkbookImages } from './workbook-images.ts'
+
 // SheetJS costs ~50 ms and ~70 MB at import time, so it is loaded on the first legacy
 // workbook instead of on server start.
 const nodeRequire = createRequire(import.meta.url)
@@ -16,10 +18,18 @@ const fullTableRowLimit = 200
 const headRows = 20
 const tailRows = 5
 
+export interface LegacyWorkbookAttachment {
+  name: string
+  mediaType: string
+  bytes: Buffer
+  source: string
+}
+
 export interface LegacyWorkbookExtraction {
   text: string
   sheetCount: number
   rowCount: number
+  attachments: LegacyWorkbookAttachment[]
 }
 
 /** OLE2 / Compound File Binary signature: shared by legacy .xls and legacy .doc. */
@@ -67,12 +77,26 @@ export function extractLegacyWorkbook(bytes: Buffer): LegacyWorkbookExtraction {
   }
   if (!sections.length) throw extractionError('XLS_STRUCTURE_INVALID', 'Excel 文件中没有可读取的工作表')
 
+  const pictures = extractWorkbookImages(bytes)
   const header = [
     '# Excel 工作簿',
     `工作表：${sections.length}${workbook.SheetNames.length > sections.length ? `（仅解析前 ${sections.length} 个）` : ''}`,
-    '说明：本次只提供表格文字，工作簿内嵌的图片不会随文本提供；图片列为空不代表原文件没有图片。',
-  ].join('\n') + '\n\n'
-  return { text: `${header}${sections.join('\n\n')}`, sheetCount: sections.length, rowCount }
+    pictures.images.length
+      ? `说明：工作簿内嵌图片 ${pictures.images.length} 张，已另存为附件（attachments/image-1.png 等），可用图片工具查看；表格里的照片列是空的，不代表原文件没有照片。`
+      : '说明：工作簿内没有可读取的内嵌图片；表格里的照片列是空的，不代表原文件没有照片。',
+    pictures.skipped ? `另有 ${pictures.skipped} 张图片格式不受支持（EMF/WMF/DIB 等），未提供。` : '',
+  ].filter(Boolean).join('\n') + '\n\n'
+  const pictureSection = pictures.images.length
+    ? `\n\n### 内嵌图片（${pictures.images.length} 张）\n${pictures.images
+        .map((image) => `- attachments/${image.name}：${image.source}`)
+        .join('\n')}`
+    : ''
+  return {
+    text: `${header}${sections.join('\n\n')}${pictureSection}`,
+    sheetCount: sections.length,
+    rowCount,
+    attachments: pictures.images,
+  }
 }
 
 interface RenderedSheet {

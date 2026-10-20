@@ -1,6 +1,8 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
+import { createHash } from 'node:crypto'
+
 import { canonicalJson, sha256 } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import {
@@ -190,6 +192,26 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     mountedBytes += Buffer.byteLength(mount.content)
   }
   if (mountedBytes > 1024 * 1024) throw new RangeError('mounted extracted text must not exceed 1 MB')
+
+  // 附件（工作簿内嵌图片）单独计量：数量、单个体积、总体积都与文本挂载解耦。
+  const attachments = input.input.attachments ?? []
+  if (attachments.length > 12) throw new RangeError('input.attachments must contain at most 12 files')
+  let attachmentBytes = 0
+  for (const attachment of attachments) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(attachment.name)) throw new TypeError(`invalid attachment name: ${attachment.name}`)
+    if (attachment.mount_path !== `/workspace/input/attachments/${attachment.name}`) {
+      throw new TypeError(`attachment mount path must be /workspace/input/attachments/: ${attachment.mount_path}`)
+    }
+    if (mountedPaths.has(attachment.mount_path)) throw new TypeError(`duplicate file mount path: ${attachment.mount_path}`)
+    mountedPaths.add(attachment.mount_path)
+    if (!attachment.media_type.startsWith('image/')) throw new TypeError(`attachment media type must be an image: ${attachment.media_type}`)
+    const bytes = Buffer.from(attachment.content_base64, 'base64')
+    if (!bytes.length) throw new TypeError(`attachment content is empty: ${attachment.name}`)
+    if (bytes.length > 6 * 1024 * 1024) throw new RangeError(`attachment exceeds 6 MB: ${attachment.name}`)
+    if (createHash('sha256').update(bytes).digest('hex') !== attachment.content_sha256) throw new TypeError(`attachment checksum mismatch: ${attachment.name}`)
+    attachmentBytes += bytes.length
+  }
+  if (attachmentBytes > 16 * 1024 * 1024) throw new RangeError('mounted attachments must not exceed 16 MB')
 
   if (input.knowledge_context.length > 3) throw new RangeError('knowledge_context must contain at most 3 documents')
   for (const document of input.knowledge_context) {

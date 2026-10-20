@@ -275,6 +275,40 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assertBothReject(withRevision({ artifact_id: '../escape', version: 1 }), /artifact revision is invalid/, 'malformed artifact id')
   })
 
+  it('accepts image attachments and rejects malformed or mismatched ones', () => {
+    const bytes = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(32, 1)])
+    const withAttachment = (mutate: (attachment: Record<string, unknown>) => void = () => {}) => {
+      const manifest = baseManifest()
+      const attachment: Record<string, unknown> = {
+        file_id: 'file-image-1',
+        name: 'image-1.png',
+        mount_path: '/workspace/input/attachments/image-1.png',
+        media_type: 'image/png',
+        content_sha256: createHash('sha256').update(bytes).digest('hex'),
+        content_base64: bytes.toString('base64'),
+        source: 'S1 第 4 行',
+      }
+      mutate(attachment)
+      manifest.input.attachments = [attachment as unknown as NonNullable<RuntimeManifest['input']['attachments']>[number]]
+      return manifest
+    }
+    assertBothAccept(withAttachment(), 'image attachment')
+    // 摘要与内容的关系只有编译器能核；Schema 只能约束形状。
+    assert.throws(() => compileRuntimeManifest(withAttachment(a => { a.content_sha256 = '0'.repeat(64) })), /attachment checksum mismatch/, 'checksum drift')
+    assertBothReject(withAttachment(a => { a.mount_path = '/workspace/input/image-1.png' }), /attachment mount path/, 'path outside attachments')
+    assertBothReject(withAttachment(a => { a.media_type = 'text/plain' }), /media type/, 'non-image media type')
+    const many = baseManifest()
+    many.input.attachments = Array.from({ length: 13 }, (_, index) => ({
+      file_id: 'file-image-1',
+      name: `image-${index + 1}.png`,
+      mount_path: `/workspace/input/attachments/image-${index + 1}.png`,
+      media_type: 'image/png',
+      content_sha256: createHash('sha256').update(bytes).digest('hex'),
+      content_base64: bytes.toString('base64'),
+    }))
+    assertBothReject(many, /at most 12/, 'attachment count cap')
+  })
+
   it('rejects structural ambiguities at both boundaries', () => {
     const cases: Array<[string, (skill: SkillInstruction) => void, RegExp]> = [
       ['externalized Skill carrying inline instructions', skill => Object.assign(skill, externalizedSkill()), /内联 instructions/],

@@ -2,6 +2,7 @@ import { inflateRawSync, inflateSync } from 'node:zlib'
 import { extname } from 'node:path'
 
 import { extractLegacyWorkbook, isCompoundFile, isLegacyWordDocument } from './legacy-workbook.ts'
+import { extractWorkbookImages } from './workbook-images.ts'
 
 const maxExtractedCharacters = 512_000
 const maxSpreadsheetCells = 20_000
@@ -12,12 +13,22 @@ const maxZipEntries = 2_048
 const maxZipEntryBytes = 32 * 1024 * 1024
 const maxZipTotalBytes = 64 * 1024 * 1024
 
+/** 无法写进文本的二进制内容（目前只有工作簿内嵌图片），随解析结果一起落库并挂载。 */
+export interface ExtractionAttachment {
+  name: string
+  mediaType: string
+  bytes: Buffer
+  /** 图片在表格中的位置，用于文本里的说明。 */
+  source: string
+}
+
 export interface DocumentExtractionResult {
   detectedType: 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text'
   text: string
   pageCount: number | null
   sheetCount: number | null
   rowCount: number | null
+  attachments?: ExtractionAttachment[]
 }
 
 export function extractDocument(name: string, bytes: Buffer): DocumentExtractionResult {
@@ -30,7 +41,14 @@ export function extractDocument(name: string, bytes: Buffer): DocumentExtraction
       throw extractionError('FILE_TYPE_UNSUPPORTED', '这是 Word 97-2003（.doc）文件，请用 Word 打开后另存为 .docx 再上传')
     }
     const legacy = extractLegacyWorkbook(bytes)
-    result = { detectedType: 'xlsx', text: legacy.text, pageCount: null, sheetCount: legacy.sheetCount, rowCount: legacy.rowCount }
+    result = {
+      detectedType: 'xlsx',
+      text: legacy.text,
+      pageCount: null,
+      sheetCount: legacy.sheetCount,
+      rowCount: legacy.rowCount,
+      attachments: legacy.attachments,
+    }
   } else if (extension === '.xls') {
     throw extractionError('FILE_TYPE_UNSUPPORTED', '这个 .xls 不是标准 Excel 文件，请用 Excel 打开后另存为 .xlsx 再上传')
   } else if (extension === '.pdf') result = extractPdf(bytes)
@@ -99,8 +117,28 @@ function extractXlsx(bytes: Buffer): DocumentExtractionResult {
     }
     sections.push(`## ${path.split('/').at(-1)?.replace('.xml', '') ?? '工作表'}\n${rows.map(row => row.join('\t')).join('\n')}`)
   }
-  const text = `# XLSX 文件摘要\n工作表：${sheets.length}；数据行：${totalRows}；单元格：${totalCells}\n\n${sections.join('\n\n')}`
-  return { detectedType: 'xlsx', text, pageCount: null, sheetCount: sheets.length, rowCount: totalRows }
+  const pictures = extractWorkbookImages(bytes)
+  const summary = [
+    `# XLSX 文件摘要`,
+    `工作表：${sheets.length}；数据行：${totalRows}；单元格：${totalCells}`,
+    pictures.images.length
+      ? `内嵌图片：${pictures.images.length} 张，已另存为附件（attachments/image-1.png 等），可用图片工具查看。`
+      : '',
+  ].filter(Boolean).join('\n')
+  const pictureSection = pictures.images.length
+    ? `\n\n### 内嵌图片（${pictures.images.length} 张）\n${pictures.images
+        .map((image) => `- attachments/${image.name}：${image.source}`)
+        .join('\n')}`
+    : ''
+  const text = `${summary}\n\n${sections.join('\n\n')}${pictureSection}`
+  return {
+    detectedType: 'xlsx',
+    text,
+    pageCount: null,
+    sheetCount: sheets.length,
+    rowCount: totalRows,
+    attachments: pictures.images,
+  }
 }
 
 function extractPdf(bytes: Buffer): DocumentExtractionResult {
