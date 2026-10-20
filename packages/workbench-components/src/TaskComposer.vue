@@ -21,7 +21,8 @@ import {
   getRecentWorkspaceAgentMemberId,
   recordRecentWorkspaceAgentMember,
 } from './workspace-agent-recency'
-import { createActionGate } from './action-guard.ts'
+import { createActionGate } from './action-guard'
+import type { ComposerDraft } from './composer-draft'
 
 const props = withDefaults(
   defineProps<{
@@ -438,6 +439,25 @@ function performPrimaryAction() {
   }
   submit()
 }
+
+function getDraft(): ComposerDraft {
+  return {
+    prompt: prompt.value,
+    files: [...files.value],
+    mentions: appliedMentions.value.map(item => ({ ...item })),
+  }
+}
+
+function setDraft(draft: ComposerDraft) {
+  prompt.value = draft.prompt
+  files.value = [...draft.files]
+  appliedMentions.value = draft.mentions.map(item => ({ ...item }))
+  mentionQuery.value = null
+  mentionStart.value = -1
+  mentionIndex.value = 0
+}
+
+defineExpose({ getDraft, setDraft })
 </script>
 
 <template>

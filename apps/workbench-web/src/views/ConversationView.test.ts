@@ -913,10 +913,19 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
   it('falls back to the workspace page when going back without history', async () => {
     route.name = 'workspace-conversation'
     route.params = { id: 'ws-team', conversationId: 'session-001' }
+    route.query = { view: 'history' }
     api.getSessionThread.mockResolvedValue(sessionThread())
     const { wrapper } = await mountView({ item: null })
     await wrapper.get('.conversation-header__back').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team')
+    expect(router.push).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { view: 'history' } })
+  })
+
+  it('does not render its own composer when embedded in a workspace', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.findComponent(TaskComposer).exists()).toBe(false)
   })
 
   it('re-roots to the owning workspace when the embedded target belongs elsewhere', async () => {

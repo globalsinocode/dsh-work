@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -38,7 +38,13 @@ import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceSessionHistory from '@/components/WorkspaceSessionHistory.vue'
 import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
 import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
-import { WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
+import { type ComposerDraft, WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
+import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
+import {
+  createEmptyTeamComposerBridge,
+  teamComposerBridgeKey,
+  type TeamComposerSubmitPayload,
+} from '@/components/team-space-composer/team-composer-bridge'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
@@ -67,13 +73,18 @@ let artifactLiveRefreshTimer: ReturnType<typeof setTimeout> | undefined
 type WorkspaceComposerHandle = {
   useWorkspaceFile: (file: WorkspaceFile) => void
   focusComposer: () => void
+  submitWorkspaceTask?: (payload: TeamComposerSubmitPayload) => void | Promise<void>
 }
 const starterRef = ref<WorkspaceComposerHandle>()
-const historyComposerRef = ref<WorkspaceComposerHandle>()
 
 function activeWorkspaceComposer() {
-  return conversationView.value === 'history' ? historyComposerRef.value : starterRef.value
+  return starterRef.value
 }
+
+const teamComposerDrafts = reactive<Record<string, ComposerDraft>>({})
+const teamComposerBridge = ref(createEmptyTeamComposerBridge())
+provide(teamComposerBridgeKey, teamComposerBridge)
+
 const conversationViewButtonRefs = ref<HTMLButtonElement[]>([])
 const tabButtonRefs = ref<HTMLButtonElement[]>([])
 const panelCollapsed = ref(false)
@@ -279,6 +290,67 @@ const canWriteTeamContent = computed(() =>
   && !isArchived.value
   && currentUserRole.value !== null
   && currentUserRole.value !== 'viewer')
+
+const showTeamComposerDock = computed(() =>
+  isTeam.value
+  && !isArchived.value
+  && canWriteTeamContent.value
+  && (conversationView.value === 'history' || isConversationThreadRoute.value),
+)
+
+const dockContextKey = computed(() => {
+  if (isConversationThreadRoute.value) {
+    const sessionId = teamComposerBridge.value.sessionId
+    const target = String(route.params.conversationId ?? '')
+    return sessionId ? `session:${sessionId}` : `session:pending:${target}`
+  }
+  return 'history'
+})
+
+function onTeamDraftChange(fromKey: string, draft: ComposerDraft) {
+  teamComposerDrafts[fromKey] = {
+    prompt: draft.prompt,
+    files: [...draft.files],
+    mentions: draft.mentions.map(item => ({ ...item })),
+  }
+}
+
+function onTeamDockSubmit(payload: TeamComposerSubmitPayload & { contextKey: string }) {
+  const { contextKey, ...rest } = payload
+  if (contextKey === 'history') {
+    void starterRef.value?.submitWorkspaceTask?.(rest)
+    return
+  }
+  const bridge = teamComposerBridge.value
+  if (bridge.viewingRun && bridge.submitFollowUp) {
+    bridge.submitFollowUp(rest)
+    return
+  }
+  if (bridge.submitSession) {
+    bridge.submitSession(rest)
+    return
+  }
+  rest.release?.()
+}
+
+function onTeamDockStop() {
+  teamComposerBridge.value.stop?.()
+}
+
+watch(
+  () => teamComposerBridge.value.sessionId,
+  (sessionId) => {
+    if (!sessionId || !isConversationThreadRoute.value) return
+    const target = String(route.params.conversationId ?? '')
+    const pendingKey = `session:pending:${target}`
+    const sessionKey = `session:${sessionId}`
+    if (teamComposerDrafts[pendingKey] && !teamComposerDrafts[sessionKey]) {
+      teamComposerDrafts[sessionKey] = teamComposerDrafts[pendingKey]
+      delete teamComposerDrafts[pendingKey]
+    }
+  },
+)
+
 /**
  * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
  * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
@@ -1136,18 +1208,6 @@ watch(
                   :archived="false"
                   @start-new="setConversationView('new')"
                 />
-                <ConversationStarter
-                  ref="historyComposerRef"
-                  composer-only
-                  embedded
-                  :workspace-id="workspace.id"
-                  :workspace-name="workspace.name"
-                  workspace-locked
-                  :startable-agent-member-ids="startableAgentMemberIds"
-                  requires-agent-member
-                  :can-discuss="canWriteTeamContent"
-                  :mention-options="startableMentionOptions"
-                />
               </div>
 
               <WorkspaceSessionHistory
@@ -1171,9 +1231,28 @@ watch(
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
                 :mention-options="isTeam ? startableMentionOptions : []"
+                :team-composer-drafts="teamComposerDrafts"
+                @team-draft-change="onTeamDraftChange"
               />
             </template>
           </div>
+
+          <TeamSpaceComposer
+            v-if="showTeamComposerDock && workspace"
+            :key="`dock-${workspace.id}`"
+            placement="dock"
+            :context-key="dockContextKey"
+            :workspace-id="workspace.id"
+            :workspace-name="workspace.name"
+            :mention-options="startableMentionOptions"
+            :drafts="teamComposerDrafts"
+            :running="teamComposerBridge.running"
+            :stopping="teamComposerBridge.stopping"
+            :files-require-mention="true"
+            @draft-change="onTeamDraftChange"
+            @submit="onTeamDockSubmit"
+            @stop="onTeamDockStop"
+          />
         </section>
 
         <section

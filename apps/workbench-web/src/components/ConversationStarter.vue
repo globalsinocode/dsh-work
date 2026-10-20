@@ -10,13 +10,14 @@ import {
   Reading,
 } from '@element-plus/icons-vue'
 
-import { TaskComposer } from '@dsh-work/workbench-components'
+import { TaskComposer, type ComposerDraft } from '@dsh-work/workbench-components'
+
+import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
-import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
 
 const props = withDefaults(
   defineProps<{
@@ -47,22 +48,28 @@ const props = withDefaults(
      * startable 过滤口径一致；非团队锁定场景传空。
      */
     mentionOptions?: Array<{ id: string; name: string }>
-    /** 团队「历史对话」底部输入条：只渲染输入区，用于浏览列表时继续发起讨论。 */
-    composerOnly?: boolean
+    /** 团队空间中部输入：由空间页传入的按上下文分键草稿表。 */
+    teamComposerDrafts?: Record<string, ComposerDraft>
   }>(),
   {
     workspaceId: '',
     workspaceName: '',
     workspaceLocked: false,
     embedded: false,
-    composerOnly: false,
     title: 'dsh-work，我帮你',
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
     canDiscuss: true,
     mentionOptions: () => [],
+    teamComposerDrafts: () => ({}),
   },
 )
+
+const emit = defineEmits<{
+  teamDraftChange: [fromKey: string, draft: ComposerDraft]
+}>()
+
+const useTeamSpaceComposer = computed(() => props.workspaceLocked && props.requiresAgentMember)
 
 /**
  * TW-10：团队共享讨论里普通成员可直接发言（不产生 Run）或在文本里 @ Agent
@@ -84,6 +91,7 @@ const route = useRoute()
 const taskStore = useTaskStore()
 const contentStore = useContentStore()
 const rootRef = ref<HTMLElement>()
+const teamComposerRef = ref<{ focusComposer: () => void }>()
 
 
 const selectedTask = ref('')
@@ -138,7 +146,13 @@ const commonTasks = [
 ]
 
 function focusComposer() {
-  void nextTick(() => rootRef.value?.querySelector<HTMLTextAreaElement>('.composer__input')?.focus())
+  void nextTick(() => {
+    if (useTeamSpaceComposer.value) {
+      teamComposerRef.value?.focusComposer()
+      return
+    }
+    rootRef.value?.querySelector<HTMLTextAreaElement>('.composer__input')?.focus()
+  })
 }
 
 function selectTask(item: (typeof commonTasks)[number]) {
@@ -316,7 +330,20 @@ watch(() => props.workspaceId, () => {
 })
 onBeforeUnmount(() => { referenceSequence++ })
 
-defineExpose({ useWorkspaceFile, focusComposer })
+function onTeamStageSubmit(payload: {
+  prompt: string
+  files: File[]
+  workspaceId: string
+  mentions: string[]
+  contextKey: string
+  confirm?: () => void
+  release?: () => void
+}) {
+  const { contextKey: _ignored, ...rest } = payload
+  void submitTask(rest)
+}
+
+defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask })
 </script>
 
 <template>
@@ -325,44 +352,9 @@ defineExpose({ useWorkspaceFile, focusComposer })
     class="conversation-starter"
     :class="{
       'conversation-starter--embedded': embedded,
-      'conversation-starter--composer-only': composerOnly,
     }"
   >
-    <section
-      v-if="composerOnly"
-      class="workspace-composer-strip"
-      aria-label="发起新讨论"
-      data-testid="workspace-composer-strip"
-    >
-      <TaskComposer
-        v-if="composerReady"
-        :key="composerKey"
-        class="workbench-composer"
-        compact
-        :initial-prompt="presetPrompt"
-        :initial-workspace-id="composerWorkspaceId"
-        :initial-workspace-name="composerWorkspaceName"
-        :workspaces="[]"
-        :workspace-locked="workspaceLocked"
-        :show-workspace-context="workspaceLocked"
-        :selected-skill-name="selectedSkill?.name"
-        :selected-agent-name="selectedAgent?.name"
-        :blocked-reason="blockedReason"
-        :mention-options="workspaceLocked ? mentionOptions : []"
-        :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
-        @submit="submitTask"
-        @clear-skill="clearSelectedSkill"
-        @clear-agent="clearSelectedAgent"
-        @open-files="router.push('/files')"
-      />
-      <el-skeleton v-else class="workbench-composer" :rows="2" animated />
-      <footer class="workbench-trust workbench-trust--compact">
-        <span v-if="workspaceLocked && requiresAgentMember && mentionOptions.length">{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
-        <span v-else>Enter 发送 · Shift + Enter 换行</span>
-      </footer>
-    </section>
-
-    <main v-else class="workbench-stage">
+    <main class="workbench-stage">
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">
         <div class="workbench-welcome__copy">
           <h1 id="conversation-starter-title">{{ title }}</h1>
@@ -398,8 +390,25 @@ defineExpose({ useWorkspaceFile, focusComposer })
         </div>-->
         <p v-if="referenceName">已引用：{{ referenceName }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <p v-if="referenceError" role="alert">{{ referenceError }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
+        <TeamSpaceComposer
+          v-if="composerReady && useTeamSpaceComposer"
+          ref="teamComposerRef"
+          :key="composerKey"
+          class="workbench-composer"
+          placement="stage"
+          context-key="stage"
+          :workspace-id="composerWorkspaceId"
+          :workspace-name="composerWorkspaceName"
+          :mention-options="mentionOptions"
+          :drafts="teamComposerDrafts"
+          :blocked-reason="blockedReason"
+          :initial-prompt="presetPrompt"
+          :files-require-mention="effectivePresetAgentMember?.status !== 'available'"
+          @draft-change="(fromKey, draft) => emit('teamDraftChange', fromKey, draft)"
+          @submit="onTeamStageSubmit"
+        />
         <TaskComposer
-          v-if="composerReady"
+          v-else-if="composerReady"
           :key="composerKey"
           class="workbench-composer"
           :initial-prompt="presetPrompt"
@@ -420,10 +429,9 @@ defineExpose({ useWorkspaceFile, focusComposer })
         />
         <el-skeleton v-else class="workbench-composer" :rows="3" animated />
 
-        <footer class="workbench-trust">
+        <footer v-if="!useTeamSpaceComposer" class="workbench-trust">
           <span>支持 PDF、DOCX、XLSX、XLS、CSV，单文件不超过 20 MB</span>
-          <span v-if="workspaceLocked && requiresAgentMember && mentionOptions.length">{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
-          <span v-else-if="!workspaceLocked || !requiresAgentMember">Enter 发送 · Shift + Enter 换行</span>
+          <span v-if="!workspaceLocked || !requiresAgentMember">Enter 发送 · Shift + Enter 换行</span>
         </footer>
       </section>
     </main>

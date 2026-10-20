@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -29,6 +29,10 @@ import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
 import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
+import {
+  createEmptyTeamComposerBridge,
+  teamComposerBridgeKey,
+} from '@/components/team-space-composer/team-composer-bridge'
 
 const route = useRoute()
 const router = useRouter()
@@ -160,7 +164,7 @@ function isOwnMessage(message: { role: string; senderId?: string | null }) {
   return task.value?.requestedBy === authStore.user.id
 }
 
-/** 当前空间可 @ 的 Agent 成员（仅团队会话加载；只读成员的名册可读但无发起权）。 */
+/** 当前空间可 @ 的 Agent 成员（独立对话页加载；空间内嵌由底栏使用空间页名册）。 */
 const agentMembers = ref<WorkspaceAgentMember[]>([])
 const mentionOptions = computed(() =>
   agentMembers.value
@@ -169,7 +173,10 @@ const mentionOptions = computed(() =>
 )
 const showTeamComposerShortcutHint = computed(() => isTeamSession.value && mentionOptions.value.length > 0)
 
+const teamComposerBridge = inject(teamComposerBridgeKey, null)
+
 async function loadAgentMembers(workspaceId: string | undefined) {
+  if (isEmbeddedInWorkspace.value) return
   if (!workspaceId || !isTeamSession.value) {
     agentMembers.value = []
     return
@@ -179,6 +186,22 @@ async function loadAgentMembers(workspaceId: string | undefined) {
   } catch {
     agentMembers.value = []
   }
+}
+
+function syncTeamComposerBridge() {
+  if (!isEmbeddedInWorkspace.value || !teamComposerBridge) return
+  const bridge = teamComposerBridge.value
+  bridge.sessionId = sessionThread.value?.sessionId ?? task.value?.sessionId ?? ''
+  bridge.viewingRun = Boolean(task.value)
+  bridge.running = canStop.value
+  bridge.stopping = stopping.value
+  bridge.stop = canStop.value ? () => { void stopCurrentRun() } : null
+  bridge.submitSession = sessionThread.value && canWriteSession.value
+    ? payload => { void submitSessionMessage(payload) }
+    : null
+  bridge.submitFollowUp = task.value && canFollowUp.value
+    ? payload => { void submitFollowUp(payload) }
+    : null
 }
 const currentStep = computed(() =>
   task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
@@ -328,7 +351,11 @@ function goBack() {
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
-    void router.push(`/workspaces/${embeddedWorkspaceId.value}`)
+    const view = String(route.query.view ?? '')
+    void router.push({
+      path: `/workspaces/${embeddedWorkspaceId.value}`,
+      ...(view === 'history' ? { query: { view: 'history' } } : {}),
+    })
     return
   }
   if (window.history.length > 1) router.back()
@@ -564,8 +591,11 @@ async function loadEarlierMessages() {
 async function initializeConversation() {
   await taskStore.load()
   const thread = await loadConversationTarget(routeTargetId.value)
+  if (!isEmbeddedInWorkspace.value) {
+    await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  }
   await reconcileConversationRoute()
-  await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  syncTeamComposerBridge()
   void prefetchSessionRunArtifacts()
   await nextTick()
   scrollToBottom('auto')
@@ -671,10 +701,27 @@ watch(
     sessionThread.value = null
     threadMissing.value = false
     const thread = await loadConversationTarget(String(id))
+    if (!isEmbeddedInWorkspace.value) {
+      await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    }
     await reconcileConversationRoute()
-    await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    syncTeamComposerBridge()
     void prefetchSessionRunArtifacts()
   },
+)
+
+watch(
+  [
+    () => sessionThread.value?.sessionId,
+    () => task.value?.id,
+    () => task.value?.status,
+    canStop,
+    stopping,
+    canWriteSession,
+    canFollowUp,
+  ],
+  () => syncTeamComposerBridge(),
+  { immediate: true },
 )
 
 // 必须是多源写法（数组里放多个 getter），Vue 才会逐个元素比较；写成
@@ -761,6 +808,7 @@ watch(streamWorkspaceId, (workspaceId, previous) => {
 onBeforeUnmount(() => {
   if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
   if (streamWorkspaceId.value) taskStore.unsubscribeWorkspaceSessions(streamWorkspaceId.value)
+  if (teamComposerBridge) teamComposerBridge.value = createEmptyTeamComposerBridge()
 })
 
 watch(
@@ -866,7 +914,7 @@ watch(
       <div class="conversation-composer-dock">
         <div class="conversation-composer-dock__inner">
           <TaskComposer
-            v-if="canWriteSession"
+            v-if="canWriteSession && !isEmbeddedInWorkspace"
             compact
             :initial-workspace-id="streamWorkspaceId"
             :mention-options="isTeamSession ? mentionOptions : []"
@@ -1181,7 +1229,7 @@ watch(
             </el-tag>
           </div>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
-            v-if="canFollowUp"
+            v-if="canFollowUp && !isEmbeddedInWorkspace"
             compact
             :initial-workspace-id="streamWorkspaceId"
             :running="canStop"
