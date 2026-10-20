@@ -8,37 +8,44 @@
 
 ## 分支与合入约定
 
-**基本方向**：所有改动先落 `dev`，`main` 只接收验证过的改动；`main` 始终处于可发布状态。
+**方向**：所有代码修改只在 `dev` 上进行；`main` 只承载已发布/待发布的稳定状态，**只在发版时更新**。
 
-1. **提交前一定先拉取**（不允许在落后状态直接提交）：
+1. **提交前先拉取 `dev` 最新代码**（不允许在落后状态直接提交）：
 
    ```bash
    git switch dev
-   git pull --ff-only origin dev     # 有本地未推提交时改用 git pull --rebase origin dev
-   git fetch origin main
+   git pull --ff-only origin dev
    ```
 
-   非快进（提示分叉）说明远端已有新提交：先按第 2 步同步，再继续开发或提交。
+   非快进（提示分叉）时先把冲突在本地解决完，再提交；不提交带冲突标记的文件。
 
-2. **同步 `main` → `dev`**：`main` 上有 `dev` 没有的提交时，先判断规模再决定方式：
+2. **`main` 领先 `dev` 时，先把 `main` 合并进 `dev`**：
 
    ```bash
-   git cherry -v dev origin/main     # 行首 `+` 才是 dev 真正缺的；`-` 表示内容已在 dev
+   git fetch origin main
+   git merge origin/main
    ```
 
-   - 零星小改动（通常 1–3 个提交）：把 `+` 的提交 `git cherry-pick <sha>` 到 `dev`；
-   - 批量或较大改动：`git merge origin/main` 合并进 `dev`，冲突在本地逐个解决并提交；
-   - 已被 `git cherry` 标成 `-` 的提交不要重复 cherry-pick：内容等价，只会产生空提交或冲突。
+   冲突本地解决 → 跑类型检查与相关单测 → 再继续开发或提交。来自 `main` 的改动先落到 `dev`，不在 `main` 上直接改。
 
-3. **冲突本地解决**：不提交带冲突标记的文件；解决后先跑类型检查与相关单测，确认再提交。
+3. **发版部署时才把 `dev` 合并进 `main`**（不再逐个 cherry-pick）：
 
-4. **回填 `main`**：
-   - 零星小改动：`git switch main && git pull --ff-only origin main && git cherry-pick <dev 上的提交>`；
-   - 批量或较大改动：`git switch main && git merge --no-ff dev`，合并前跑完类型检查、单测与必要的 E2E。
+   ```bash
+   git switch main
+   git pull --ff-only origin main
+   git merge --no-ff dev
+   ```
 
-5. **发布**以 `main` 上的提交打 tag。cherry-pick 会在两侧产生内容相同、SHA 不同的提交，这是预期结果，不要为此改写已推送的历史。
+   合并前在 `dev` 上跑完类型检查、相关单测与必要的 E2E；发布以 `main` 上的提交打 tag。用一次 `--no-ff` 合并提交标出发版边界，便于回滚定位。
 
-6. **紧急修复**同样先落 `dev` 再回填 `main`；只有 `dev` 不可用时才直接在 `main` 修复，并事后立即同步回 `dev`。
+4. **保持 git 视图清晰**：
+
+   - 一次提交只做一件事，提交信息写清「为什么」，不混入无关改动；
+   - 发版提交单独一条：`chore(release): 将 releaseVersion 升到 YYYY.MM.DD-NN`；
+   - 同一改动不要做成两份等价提交（cherry-pick 只用于修复历史遗留分叉，不作为常规流程）；
+   - 合并完成后删除临时分支，长期只保留 `dev` 与 `main`。
+
+5. **紧急修复**同样先落 `dev` 再合并进 `main`；只有 `dev` 不可用时才直接在 `main` 修复，并在事后立即把 `main` 合并回 `dev`。
 
 ## 本轮安全修复边界
 
