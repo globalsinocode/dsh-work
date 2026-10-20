@@ -1370,7 +1370,14 @@ watch(
           回到最新消息
           <el-icon><ArrowDown /></el-icon>
         </button>
-        <div class="conversation-composer-dock__inner">
+        <div v-if="isTaskThreadRoute" class="conversation-composer-dock__inner" data-testid="run-view-task-return">
+          <p class="conversation-task-thread-notice">
+            这里是单次执行的详情。补充要求或评论请回到任务对话发言。
+            <el-button link type="primary" data-testid="run-view-back-to-task" @click="goBack">返回任务对话</el-button>
+          </p>
+          <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
+        </div>
+        <div v-else class="conversation-composer-dock__inner">
           <div
             v-if="canFollowUp && referencedArtifacts.length"
             class="referenced-artifacts"
