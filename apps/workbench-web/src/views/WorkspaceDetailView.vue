@@ -41,6 +41,7 @@ import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
 import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
 import { type ComposerDraft, WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
 import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
+import WorkspaceContextSkeleton from '@/components/workspace-context-skeleton/workspace-context-skeleton.vue'
 import {
   createEmptyTeamComposerBridge,
   teamComposerBridgeKey,
@@ -1081,9 +1082,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="contentStore.loading && !workspace" class="workspace-context-state">
-    <el-skeleton :rows="8" animated />
-  </div>
+  <WorkspaceContextSkeleton v-if="contentStore.loading && !workspace" />
 
   <el-result
     v-else-if="!workspace"
@@ -1675,12 +1674,6 @@ watch(
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
-}
-
-.workspace-context-state {
-  min-height: 100vh;
-  padding: 80px 10%;
-  background: #fff;
 }
 
 .workspace-context-page {
