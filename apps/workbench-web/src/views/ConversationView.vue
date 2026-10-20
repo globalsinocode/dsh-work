@@ -66,10 +66,19 @@ const targetLoading = ref(false)
  * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
  */
 const isEmbeddedInWorkspace = computed(() => route.name === 'workspace-conversation')
+const isActiveConversationRoute = computed(() =>
+  route.name === 'workspace-conversation' || route.name === 'conversation')
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
-const routeTargetId = computed(() =>
-  isEmbeddedInWorkspace.value ? String(route.params.conversationId) : String(route.params.id))
+const routeTargetId = computed(() => {
+  if (route.name === 'workspace-conversation') {
+    return String(route.params.conversationId ?? '')
+  }
+  if (route.name === 'conversation') {
+    return String(route.params.id ?? '')
+  }
+  return ''
+})
 
 function conversationPath(target: string) {
   return isEmbeddedInWorkspace.value
@@ -150,6 +159,13 @@ const canWriteSession = computed(() => {
 /** 只读成员查看共享会话时的提示（归档优先）。 */
 const sessionReadOnly = computed(() =>
   Boolean(sessionThread.value) && !sessionArchived.value && !canWriteSession.value)
+/** 空间页外挂底栏时隐藏本页浮动 composer 区；只读/归档仍在本页展示提示。 */
+const showSessionComposerDock = computed(() =>
+  !isEmbeddedInWorkspace.value || sessionArchived.value || sessionReadOnly.value,
+)
+const showRunComposerDock = computed(() =>
+  !isEmbeddedInWorkspace.value || workspaceArchived.value || isRunViewer.value,
+)
 
 /**
  * 对话列表左右分栏（TW-10）：本人发送的 user 消息在右侧，其他成员与
@@ -202,6 +218,8 @@ function syncTeamComposerBridge() {
   bridge.submitFollowUp = task.value && canFollowUp.value
     ? payload => { void submitFollowUp(payload) }
     : null
+  bridge.showJumpToLatest = showJumpToLatest.value
+  bridge.scrollToLatest = () => scrollToBottom()
 }
 const currentStep = computed(() =>
   task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
@@ -351,10 +369,16 @@ function goBack() {
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
+    const workspaceId = String(route.params.id ?? embeddedWorkspaceId.value)
+    if (!workspaceId) {
+      void router.push({ name: 'workspaces' })
+      return
+    }
     const view = String(route.query.view ?? '')
     void router.push({
-      path: `/workspaces/${embeddedWorkspaceId.value}`,
-      ...(view === 'history' ? { query: { view: 'history' } } : {}),
+      name: 'workspace-detail',
+      params: { id: workspaceId },
+      query: view === 'history' ? { view: 'history' } : {},
     })
     return
   }
@@ -373,6 +397,7 @@ function onConversationScroll() {
   const target = conversationScroll.value
   if (!target) return
   showJumpToLatest.value = target.scrollHeight - target.scrollTop - target.clientHeight > 180
+  syncTeamComposerBridge()
 }
 
 async function stopCurrentRun() {
@@ -589,11 +614,13 @@ async function loadEarlierMessages() {
 }
 
 async function initializeConversation() {
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   await taskStore.load()
   const thread = await loadConversationTarget(routeTargetId.value)
   if (!isEmbeddedInWorkspace.value) {
     await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
   }
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   await reconcileConversationRoute()
   syncTeamComposerBridge()
   void prefetchSessionRunArtifacts()
@@ -610,6 +637,7 @@ async function initializeConversation() {
  * - 个人空间会话不做跳转。
  */
 async function reconcileConversationRoute() {
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
   if (isEmbeddedInWorkspace.value) {
     if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
@@ -696,11 +724,13 @@ onMounted(initializeConversation)
 watch(
   () => routeTargetId.value,
   async id => {
+    if (!isActiveConversationRoute.value || !id) return
     prefetchRunArtifactsEpoch++
     prefetchedRunArtifacts.clear()
     sessionThread.value = null
     threadMissing.value = false
     const thread = await loadConversationTarget(String(id))
+    if (!isActiveConversationRoute.value || !routeTargetId.value) return
     if (!isEmbeddedInWorkspace.value) {
       await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
     }
@@ -911,7 +941,7 @@ watch(
         </div>
       </main>
 
-      <div class="conversation-composer-dock">
+      <div v-if="showSessionComposerDock" class="conversation-composer-dock">
         <div class="conversation-composer-dock__inner">
           <TaskComposer
             v-if="canWriteSession && !isEmbeddedInWorkspace"
@@ -1201,7 +1231,7 @@ watch(
         </div>
       </main>
 
-      <div class="conversation-composer-dock">
+      <div v-if="showRunComposerDock" class="conversation-composer-dock">
         <button
           v-if="showJumpToLatest"
           class="jump-latest"
@@ -1470,17 +1500,35 @@ watch(
   margin: 0 auto;
 }
 
-/* TW-10 空间内嵌套：高度收敛到空间页对话面板，不再占满视口。 */
+/* TW-10 空间内嵌套：高度收敛到空间页对话面板，底栏由空间页承载。 */
 .conversation-page--embedded {
+  display: flex;
   height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-page--embedded .conversation-header {
+  position: static;
+  flex: 0 0 auto;
 }
 
 .conversation-page--embedded .conversation-scroll {
-  height: 100%;
+  min-height: 0;
+  flex: 1;
+  height: auto;
+  padding: 12px 20px 10px;
 }
 
 .conversation-page--embedded .conversation-thread {
-  min-height: calc(100% - 330px);
+  min-height: 0;
+}
+
+.conversation-page--embedded .conversation-composer-dock {
+  position: static;
+  flex: 0 0 auto;
+  padding: 8px 20px 12px;
+  background: #fff;
 }
 
 .conversation-message {

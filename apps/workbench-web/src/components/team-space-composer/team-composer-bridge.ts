@@ -17,6 +17,9 @@ export interface TeamComposerBridge {
   viewingRun: boolean
   running: boolean
   stopping: boolean
+  /** 内嵌会话未滚到底时，由空间页底栏展示「回到最新消息」。 */
+  showJumpToLatest: boolean
+  scrollToLatest: (() => void) | null
   stop: (() => void) | null
   submitSession: ((payload: TeamComposerSubmitPayload) => void) | null
   submitFollowUp: ((payload: TeamComposerSubmitPayload) => void) | null
@@ -28,6 +31,8 @@ export function createEmptyTeamComposerBridge(): TeamComposerBridge {
     viewingRun: false,
     running: false,
     stopping: false,
+    showJumpToLatest: false,
+    scrollToLatest: null,
     stop: null,
     submitSession: null,
     submitFollowUp: null,

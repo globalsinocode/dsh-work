@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref,
 import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowDown,
   ArrowRight,
   ChatDotRound,
   Close,
@@ -295,7 +296,7 @@ const showTeamComposerDock = computed(() =>
   isTeam.value
   && !isArchived.value
   && canWriteTeamContent.value
-  && (conversationView.value === 'history' || isConversationThreadRoute.value),
+  && isConversationThreadRoute.value,
 )
 
 const dockContextKey = computed(() => {
@@ -305,6 +306,18 @@ const dockContextKey = computed(() => {
     return sessionId ? `session:${sessionId}` : `session:pending:${target}`
   }
   return 'history'
+})
+
+/**
+ * 改前历史底栏是 history-layout 里的 ConversationStarter（composer-only + strip）；
+ * 会话内嵌则是 ConversationView 内的 conversation-composer-dock 渐变浮层。
+ * 共用 TeamSpaceComposer 时按路由切换两种呈现，避免一套 absolute 渐变硬套两种场景。
+ */
+const teamComposerMainClass = computed(() => {
+  if (!showTeamComposerDock.value) return null
+  return isConversationThreadRoute.value
+    ? 'workspace-conversation-pane__main--team-dock-thread'
+    : 'workspace-conversation-pane__main--team-dock-history'
 })
 
 function onTeamDraftChange(fromKey: string, draft: ComposerDraft) {
@@ -1194,6 +1207,10 @@ watch(
           </div>
 
           <div class="workspace-conversation-pane__body">
+            <div
+              class="workspace-conversation-pane__main"
+              :class="teamComposerMainClass"
+            >
             <RouterView v-if="isConversationThreadRoute" />
             <template v-else>
               <div
@@ -1235,24 +1252,45 @@ watch(
                 @team-draft-change="onTeamDraftChange"
               />
             </template>
-          </div>
 
-          <TeamSpaceComposer
-            v-if="showTeamComposerDock && workspace"
-            :key="`dock-${workspace.id}`"
-            placement="dock"
-            :context-key="dockContextKey"
-            :workspace-id="workspace.id"
-            :workspace-name="workspace.name"
-            :mention-options="startableMentionOptions"
-            :drafts="teamComposerDrafts"
-            :running="teamComposerBridge.running"
-            :stopping="teamComposerBridge.stopping"
-            :files-require-mention="true"
-            @draft-change="onTeamDraftChange"
-            @submit="onTeamDockSubmit"
-            @stop="onTeamDockStop"
-          />
+            <section
+              v-if="showTeamComposerDock && workspace"
+              :key="`dock-${workspace.id}`"
+              class="workspace-composer-strip"
+              :class="isConversationThreadRoute
+                ? 'workspace-composer-strip--overlay'
+                : 'workspace-composer-strip--stacked'"
+              data-testid="team-space-composer-dock"
+            >
+              <div class="workspace-composer-strip__inner">
+                <button
+                  v-if="isConversationThreadRoute && teamComposerBridge.showJumpToLatest"
+                  type="button"
+                  class="workspace-composer-strip__jump"
+                  data-testid="team-composer-jump-latest"
+                  @click="teamComposerBridge.scrollToLatest?.()"
+                >
+                  回到最新消息
+                  <el-icon><ArrowDown /></el-icon>
+                </button>
+                <TeamSpaceComposer
+                  placement="dock"
+                  :context-key="dockContextKey"
+                  :workspace-id="workspace.id"
+                  :workspace-name="workspace.name"
+                  :mention-options="startableMentionOptions"
+                  :drafts="teamComposerDrafts"
+                  :running="teamComposerBridge.running"
+                  :stopping="teamComposerBridge.stopping"
+                  :files-require-mention="true"
+                  @draft-change="onTeamDraftChange"
+                  @submit="onTeamDockSubmit"
+                  @stop="onTeamDockStop"
+                />
+              </div>
+            </section>
+            </div>
+          </div>
         </section>
 
         <section
@@ -1665,6 +1703,101 @@ watch(
   overflow: hidden;
 }
 
+.workspace-conversation-pane__main {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workspace-conversation-pane__main--team-dock-history {
+  min-height: 0;
+}
+
+.workspace-conversation-pane__main--team-dock-history .workspace-conversation-pane__history-layout {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.workspace-conversation-pane__main--team-dock-history .workspace-conversation-pane__history-layout :deep(.session-history) {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* 历史对话：与改前 ConversationStarter composer-only 同款底栏（非渐变浮层）。 */
+.workspace-composer-strip--stacked {
+  flex: 0 0 auto;
+  padding: 12px 20px 14px;
+  border-top: 1px solid #e8ebe8;
+  background: #fff;
+}
+
+.workspace-composer-strip--stacked .workspace-composer-strip__inner {
+  width: 100%;
+  max-width: none;
+}
+
+/* 会话详情：与改前 ConversationView conversation-composer-dock 同款渐变浮层。 */
+.workspace-conversation-pane__main--team-dock-thread {
+  position: relative;
+  min-height: 0;
+}
+
+.workspace-composer-strip--overlay {
+  position: absolute;
+  z-index: 11;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 48px 28px 13px;
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0%), #fff 31%, #fff 100%);
+  pointer-events: none;
+}
+
+.workspace-composer-strip__inner {
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.workspace-composer-strip--overlay .workspace-composer-strip__inner {
+  width: min(100%, 920px);
+}
+
+.workspace-composer-strip__jump {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  min-height: 29px;
+  gap: 5px;
+  margin: 0 auto 9px;
+  padding: 0 10px;
+  border: 1px solid #dedfdd;
+  border-radius: 999px;
+  color: #626762;
+  background: #fff;
+  box-shadow: 0 5px 16px rgb(25 30 26 / 7%);
+  cursor: pointer;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.workspace-composer-strip--overlay :deep(.composer__surface) {
+  border-color: #dedfdd;
+  border-radius: 15px;
+  box-shadow: 0 9px 28px rgb(28 31 28 / 7%);
+}
+
+.workspace-composer-strip--overlay :deep(.composer__input) {
+  min-height: 76px;
+  font-size: var(--dsh-font-size-body);
+}
+
+.workspace-conversation-pane__main--team-dock-thread :deep(.conversation-page--embedded .conversation-scroll) {
+  padding: 12px 20px 200px;
+}
+
 .workspace-context-page__header {
   position: relative;
   z-index: 6;
@@ -1874,15 +2007,22 @@ watch(
 
 .workspace-conversation-pane__body {
   position: relative;
+  display: flex;
   min-height: 0;
   flex: 1;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.workspace-conversation-pane__main > :deep(.conversation-page) {
+  min-height: 0;
+  flex: 1;
 }
 
 .workspace-conversation-pane__history-layout {
   display: flex;
   min-height: 0;
-  height: 100%;
+  flex: 1;
   flex-direction: column;
 }
 

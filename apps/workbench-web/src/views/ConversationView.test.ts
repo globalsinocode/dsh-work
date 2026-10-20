@@ -156,6 +156,9 @@ async function mountView(options: {
   workspace?: Workspace
   getRun?: () => Promise<TaskRun>
 } = {}) {
+  if (route.name !== 'workspace-conversation') {
+    route.name = 'conversation'
+  }
   const pinia = createPinia()
   setActivePinia(pinia)
   api.getSession.mockResolvedValue({
@@ -917,7 +920,43 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     api.getSessionThread.mockResolvedValue(sessionThread())
     const { wrapper } = await mountView({ item: null })
     await wrapper.get('.conversation-header__back').trigger('click')
-    expect(router.push).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { view: 'history' } })
+    expect(router.push).toHaveBeenCalledWith({
+      name: 'workspace-detail',
+      params: { id: 'ws-team' },
+      query: { view: 'history' },
+    })
+  })
+
+  it('does not rewrite the URL with an empty conversation segment after leaving the embedded route', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getRun.mockRejectedValue(new Error('not a run'))
+    let resolveThread!: (value: SessionThread) => void
+    api.getSessionThread.mockImplementation(() => new Promise(resolve => {
+      resolveThread = resolve
+    }))
+    await mountView({ item: null })
+    route.name = 'workspace-detail'
+    route.params = { id: 'ws-team' }
+    resolveThread(sessionThread())
+    await flushPromises()
+    for (const call of router.replace.mock.calls) {
+      const target = String(call[0])
+      expect(target).not.toMatch(/\/conversations\/?$/)
+      expect(target).not.toContain('/conversations/undefined')
+    }
+  })
+
+  it('does not treat the workspace id as a session id when the embedded route is gone', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    await mountView({ item: null })
+    api.getSessionThread.mockClear()
+    route.name = 'workspace-detail'
+    route.params = { id: 'ws-team' }
+    await flushPromises()
+    expect(api.getSessionThread).not.toHaveBeenCalledWith('ws-team')
   })
 
   it('does not render its own composer when embedded in a workspace', async () => {

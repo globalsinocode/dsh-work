@@ -1,3 +1,30 @@
+<template>
+  <TaskComposer
+    ref="composerRef"
+    class="workbench-composer"
+    :data-testid="placement === 'stage' ? 'team-space-composer-stage' : undefined"
+    :compact="placement === 'dock'"
+    :initial-prompt="initialPrompt"
+    :initial-workspace-id="workspaceId"
+    :initial-workspace-name="workspaceName"
+    :workspaces="[]"
+    workspace-locked
+    show-workspace-context
+    :blocked-reason="blockedReason"
+    :mention-options="mentionOptions"
+    :files-require-mention="filesRequireMention"
+    :running="running"
+    :stopping="stopping"
+    @submit="onSubmit"
+    @stop="emit('stop')"
+    @open-files="router.push('/files')"
+  />
+  
+  <footer class="workbench-trust workbench-trust--compact">
+    <span>{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
+  </footer>
+</template>
+
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -95,52 +122,29 @@ function onSubmit(payload: {
 }
 </script>
 
-<template>
-  <section
-    class="team-space-composer"
-    :class="{
-      'team-space-composer--dock': placement === 'dock',
-      'team-space-composer--stage': placement === 'stage',
-    }"
-    :data-testid="placement === 'dock' ? 'team-space-composer-dock' : 'team-space-composer-stage'"
-  >
-    <TaskComposer
-      ref="composerRef"
-      class="team-space-composer__input"
-      :compact="placement === 'dock'"
-      :initial-prompt="initialPrompt"
-      :initial-workspace-id="workspaceId"
-      :initial-workspace-name="workspaceName"
-      :workspaces="[]"
-      workspace-locked
-      show-workspace-context
-      :blocked-reason="blockedReason"
-      :mention-options="mentionOptions"
-      :files-require-mention="filesRequireMention"
-      :running="running"
-      :stopping="stopping"
-      @submit="onSubmit"
-      @stop="emit('stop')"
-      @open-files="router.push('/files')"
-    />
-    <footer class="team-space-composer__hint">
-      <span>{{ TEAM_COMPOSER_SHORTCUT_HINT }}</span>
-    </footer>
-  </section>
-</template>
-
 <style scoped>
-.team-space-composer--dock {
-  padding: 12px 20px 14px;
-  border-top: 1px solid #e8ebe8;
-  background: #fff;
+.workbench-composer {
+  width: 100%;
 }
 
-.team-space-composer__hint {
+.workbench-trust {
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 10px;
+  color: #999d99;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.workbench-trust span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workbench-trust--compact {
+  justify-content: center;
   margin-top: 6px;
-  color: #6b7280;
-  font-size: var(--dsh-font-size-caption, 12px);
 }
 </style>

@@ -64,7 +64,7 @@ describe('team-space-composer', () => {
   it('keeps shortcut hint when mentionOptions arrive later', async () => {
     const wrapper = mountTeamComposer({ mentionOptions: [] })
     const textarea = wrapper.get('textarea')
-    const hintBefore = wrapper.get('.team-space-composer__hint').text()
+    const hintBefore = wrapper.get('.workbench-trust--compact').text()
 
     await wrapper.setProps({
       mentionOptions: [{ id: 'm1', name: '智能助手' }],
@@ -72,7 +72,7 @@ describe('team-space-composer', () => {
     await nextTick()
 
     expect(wrapper.get('textarea').element).toBe(textarea.element)
-    expect(wrapper.get('.team-space-composer__hint').text()).toBe(hintBefore)
+    expect(wrapper.get('.workbench-trust--compact').text()).toBe(hintBefore)
     expect(hintBefore).toContain('Tab')
   })
 

@@ -312,10 +312,36 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(router.replace).toHaveBeenCalledWith({ query: { view: 'history' } })
     expect(wrapper.find('[data-testid="workspace-conversation-history-layout"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="workspace-session-history"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="team-space-composer-dock"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="team-space-composer-dock"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="workspace-composer-strip"]').exists()).toBe(false)
     // 1B 历史视图默认按本人范围拉取。
     expect(workbenchApi.listWorkspaceSessions).toHaveBeenCalledWith('ws-team', { limit: 20 })
+  })
+
+  it('shows the team composer dock only inside an embedded conversation, not on the history list', async () => {
+    vi.mocked(workbenchApi.listWorkspaceMembers).mockResolvedValue({
+      items: [{ userId: 'u-current', displayName: '周航', role: 'member', joinedAt: '2026-09-01T00:00:00.000Z' }],
+      currentUserRole: 'member',
+    })
+    vi.mocked(workbenchApi.listWorkspaceAgentMembers).mockResolvedValue([{
+      id: 'wam-1',
+      agentId: 'agent-1',
+      name: '订单分析助手',
+      description: '分析订单数据',
+      status: 'available',
+      version: '1.0.0',
+      addedBy: 'user-a',
+      createdAt: '2026-09-09T10:00:00.000Z',
+      allowedActions: ['start_conversation'],
+    }])
+    route.query = { view: 'history' }
+    const historyWrapper = (await mountView(workspace())).wrapper
+    expect(historyWrapper.find('[data-testid="team-space-composer-dock"]').exists()).toBe(false)
+
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    const threadWrapper = (await mountView(workspace())).wrapper
+    expect(threadWrapper.find('[data-testid="team-space-composer-dock"]').exists()).toBe(true)
   })
 
   it('exits the embedded conversation route when switching workspace tabs (TW-10)', async () => {

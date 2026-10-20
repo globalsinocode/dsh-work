@@ -394,7 +394,6 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           v-if="composerReady && useTeamSpaceComposer"
           ref="teamComposerRef"
           :key="composerKey"
-          class="workbench-composer"
           placement="stage"
           context-key="stage"
           :workspace-id="composerWorkspaceId"
