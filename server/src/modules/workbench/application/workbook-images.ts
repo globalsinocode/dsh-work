@@ -13,6 +13,7 @@ const maxImages = 12
 const maxImageBytes = 6 * 1024 * 1024
 const maxTotalImageBytes = 16 * 1024 * 1024
 const maxStreamBytes = 64 * 1024 * 1024
+const maxZipTotalBytes = 64 * 1024 * 1024
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const jpegSignature = Buffer.from([0xff, 0xd8, 0xff])
@@ -500,8 +501,10 @@ function readZipEntries(bytes: Buffer): Map<string, Buffer> | null {
     }
   }
   if (eocd < 0) return null
-  const entryCount = bytes.readUInt16LE(eocd + 10)
+  const entryCount = Math.min(bytes.readUInt16LE(eocd + 10), 4_096)
   let offset = bytes.readUInt32LE(eocd + 16)
+  // 与 document-extractor 的 readZip 同一量级的总量约束：图片读取不能变成解压炸弹。
+  let inflatedBytes = 0
   for (let index = 0; index < entryCount; index += 1) {
     if (offset + 46 > bytes.length || bytes.readUInt32LE(offset) !== 0x02014b50) return null
     const method = bytes.readUInt16LE(offset + 10)
@@ -523,11 +526,16 @@ function readZipEntries(bytes: Buffer): Map<string, Buffer> | null {
     if (dataStart + compressedSize > bytes.length) continue
     const raw = bytes.subarray(dataStart, dataStart + compressedSize)
     if (method === 0) {
+      inflatedBytes += raw.length
+      if (inflatedBytes > maxZipTotalBytes) return entries.size ? entries : null
       entries.set(name, raw)
       continue
     }
     try {
-      entries.set(name, inflateRawSync(raw, { maxOutputLength: limit }))
+      const inflated = inflateRawSync(raw, { maxOutputLength: limit })
+      inflatedBytes += inflated.length
+      if (inflatedBytes > maxZipTotalBytes) return entries.size ? entries : null
+      entries.set(name, inflated)
     } catch {
       continue
     }
