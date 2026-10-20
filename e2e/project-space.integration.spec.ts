@@ -62,7 +62,7 @@ test.describe('PS-E2E-03 Agent 任务执行、线程续接与成果', () => {
     expect(startedTask?.sessionId).toBeTruthy()
 
     // 续接：回复默认交给承接 Agent，产生同一线程的第二次运行。
-    await page.getByLabel('对话输入').fill('继续整理进展')
+    await page.getByPlaceholder('继续交代，交给 项目空间助手 处理…').fill('继续整理进展')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
     await expect(page.getByText('继续整理进展')).toBeVisible()
     await expect.poll(async () => {
