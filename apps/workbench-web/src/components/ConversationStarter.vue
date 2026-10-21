@@ -43,6 +43,8 @@ const props = withDefaults(
      * 个人空间不受影响（AC-23）。
      */
     canDiscuss?: boolean
+    /** 团队名册在途：角色未知，勿展示「只读/无写权限」类终态文案。 */
+    teamRolePending?: boolean
     /**
      * 输入框可 @ 的 Agent 成员（TW-10）：id + 展示名，与工作空间详情页的
      * startable 过滤口径一致；非团队锁定场景传空。
@@ -60,6 +62,7 @@ const props = withDefaults(
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
     canDiscuss: true,
+    teamRolePending: false,
     mentionOptions: () => [],
     teamComposerDrafts: () => ({}),
   },
@@ -83,8 +86,11 @@ const blockedReason = computed(() => {
   if (referenceLoading.value) return '正在检查引用文件权限'
   if (referenceError.value) return referenceError.value
   if (!props.requiresAgentMember) return ''
+  if (props.teamRolePending) return ''
   return props.canDiscuss ? '' : '当前角色为只读成员或尚无写权限，不能发言或发起执行；请联系负责人。'
 })
+/** 名册未返回前禁止提交，但不展示误报的 blocked 横幅。 */
+const composerPermissionPending = computed(() => props.teamRolePending)
 
 const router = useRouter()
 const route = useRoute()
@@ -204,8 +210,8 @@ async function submitTask(payload: {
   confirm?: () => void
   release?: () => void
 }) {
-  if (blockedReason.value) {
-    ElMessage.warning(blockedReason.value)
+  if (composerPermissionPending.value || blockedReason.value) {
+    if (blockedReason.value) ElMessage.warning(blockedReason.value)
     payload.release?.()
     return
   }
@@ -417,6 +423,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           :mention-options="mentionOptions"
           :drafts="teamComposerDrafts"
           :blocked-reason="blockedReason"
+          :submitting="composerPermissionPending"
           :initial-prompt="presetPrompt"
           :files-require-mention="effectivePresetAgentMember?.status !== 'available'"
           @draft-change="(fromKey, draft) => emit('teamDraftChange', fromKey, draft)"
@@ -435,6 +442,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           :selected-skill-name="selectedSkill?.name"
           :selected-agent-name="selectedAgent?.name"
           :blocked-reason="blockedReason"
+          :submitting="composerPermissionPending"
           :mention-options="workspaceLocked ? mentionOptions : []"
           :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"

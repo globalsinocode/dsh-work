@@ -121,6 +121,8 @@ const agentMembers = ref<WorkspaceAgentMember[]>([])
 const workspaceMembers = ref<WorkspaceMember[]>([])
 /** 服务端返回的调用者角色（负责人转交后不再等于创建者，不能靠姓名推断）。 */
 const serverUserRole = ref<TeamMemberRole | null>(null)
+/** 员工名册请求在途；与 `serverUserRole === null` 区分「加载中」与「加载失败」。 */
+const workspaceMembersLoading = ref(false)
 /** 当前操作人可发起对话的 Agent 成员：与服务端 allowedActions 一致（只读成员为空）。 */
 const startableAgentMemberIds = computed(() => agentMembers.value
   .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
@@ -292,6 +294,14 @@ const canWriteTeamContent = computed(() =>
   && !isArchived.value
   && currentUserRole.value !== null
   && currentUserRole.value !== 'viewer')
+/**
+ * 团队角色尚未从名册解析完成。此间 `currentUserRole === null` 不能当作只读，
+ * 否则会闪出「无写权限」提示（名册晚于空间列表返回）。
+ */
+const teamRolePending = computed(() =>
+  isTeam.value
+  && props.currentUserRole === undefined
+  && workspaceMembersLoading.value)
 
 const showTeamComposerDock = computed(() =>
   isTeam.value
@@ -689,6 +699,7 @@ async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
 async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
   if (!workspaceId || !isTeam.value) return
   const seq = ++memberRequestSeq
+  workspaceMembersLoading.value = true
   try {
     const directory = await workbenchApi.listWorkspaceMembers(workspaceId)
     if (!isCurrentMemberRequest(seq, workspaceId)) return
@@ -699,6 +710,8 @@ async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
     workspaceMembers.value = []
     serverUserRole.value = null
     notifyActionFailure('加载员工成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
+  } finally {
+    if (isCurrentMemberRequest(seq, workspaceId)) workspaceMembersLoading.value = false
   }
 }
 
@@ -1026,6 +1039,7 @@ watch(workspace, (value) => {
   agentMembers.value = []
   workspaceMembers.value = []
   serverUserRole.value = null
+  workspaceMembersLoading.value = value?.type === 'team'
   activitySummary.value = []
   activityLoading.value = false
   activityError.value = false
@@ -1246,6 +1260,7 @@ watch(
                 :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
+                :team-role-pending="teamRolePending"
                 :mention-options="isTeam ? startableMentionOptions : []"
                 :team-composer-drafts="teamComposerDrafts"
                 @team-draft-change="onTeamDraftChange"

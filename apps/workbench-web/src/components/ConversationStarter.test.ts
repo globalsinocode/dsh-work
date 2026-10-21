@@ -361,6 +361,27 @@ describe('ConversationStarter', () => {
     )
   })
 
+  it('名册加载中不展示只读误报（角色未知 ≠ viewer）', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链空间',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        canDiscuss: false,
+        teamRolePending: true,
+        startableAgentMemberIds: ['wam-1'],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="composer-blocked"]').exists()).toBe(false)
+    expect(wrapper.find('.composer__send').attributes('disabled')).toBeDefined()
+  })
+
   it('只读成员在团队空间不能发言或发起执行（TW-10 只读口径）', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

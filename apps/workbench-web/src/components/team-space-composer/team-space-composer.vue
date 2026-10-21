@@ -11,6 +11,7 @@
     workspace-locked
     show-workspace-context
     :blocked-reason="blockedReason"
+    :submitting="submitting"
     :mention-options="mentionOptions"
     :files-require-mention="filesRequireMention"
     :running="running"
@@ -42,6 +43,7 @@ const props = withDefaults(
     mentionOptions: Array<{ id: string; name: string }>
     drafts: Record<string, ComposerDraft>
     blockedReason?: string
+    submitting?: boolean
     running?: boolean
     stopping?: boolean
     filesRequireMention?: boolean
@@ -49,6 +51,7 @@ const props = withDefaults(
   }>(),
   {
     blockedReason: '',
+    submitting: false,
     running: false,
     stopping: false,
     filesRequireMention: true,
