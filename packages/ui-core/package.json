@@ -5,11 +5,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./base.css": "./src/styles/base.css"
+    "./base.css": "./src/styles/base.css",
+    "./markdown-content.css": "./src/markdown/markdown-content.css"
   },
   "peerDependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.10.7",
     "vue": "^3.5.22"
+  },
+  "dependencies": {
+    "katex": "^0.19.0"
   }
 }

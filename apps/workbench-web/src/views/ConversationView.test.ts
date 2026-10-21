@@ -14,6 +14,7 @@ const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(
 const route = vi.hoisted(() => ({
   name: undefined as string | undefined,
   params: {} as Record<string, string>,
+  query: {} as Record<string, string | string[]>,
 }))
 const api = vi.hoisted(() => ({
   getTasks: vi.fn(),
@@ -156,6 +157,9 @@ async function mountView(options: {
   workspace?: Workspace
   getRun?: () => Promise<TaskRun>
 } = {}) {
+  if (route.name !== 'workspace-conversation') {
+    route.name = 'conversation'
+  }
   const pinia = createPinia()
   setActivePinia(pinia)
   api.getSession.mockResolvedValue({
@@ -319,6 +323,35 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
     expect(wrapper.find('[data-testid="conversation-archived-notice"]').exists()).toBe(false)
   })
 
+  it('shows run input file names on the triggering user message', async () => {
+    const { wrapper } = await mountView({
+      item: task({
+        attachments: ['库存计划.xlsx', '供应商清单.pdf'],
+        messages: [
+          {
+            id: 'message-user',
+            role: 'user',
+            content: '请分析附件',
+            createdAt: '2026-09-10 10:00',
+            runId: 'run-001',
+          },
+          {
+            id: 'message-assistant',
+            role: 'assistant',
+            content: '已收到材料。',
+            createdAt: '2026-09-10 10:01',
+            runId: 'run-001',
+          },
+        ],
+      }),
+    })
+
+    const attachments = wrapper.get('[data-testid="user-message-attachments"]')
+    expect(attachments.text()).toContain('库存计划.xlsx')
+    expect(attachments.text()).toContain('供应商清单.pdf')
+    expect(wrapper.get('.user-message p').text()).toBe('请分析附件')
+  })
+
   it('renders assistant Markdown as structured content and keeps user input plain', async () => {
     const { wrapper } = await mountView({
       item: task({
@@ -336,7 +369,9 @@ describe('ConversationView 归档只读态（design §2.7 / AC-23）', () => {
 
     expect(wrapper.get('.user-message p').text()).toBe('**不要加粗**')
     expect(wrapper.find('.user-message strong').exists()).toBe(false)
-    expect(wrapper.get('.assistant-answer h4').text()).toBe('无法安装的原因')
+    // renderMarkdownPreview 按原文层级输出标题（## → h2）；此处只验证结构化渲染，
+    // 不再假设旧渲染器「降两级」的行为。
+    expect(wrapper.get('.assistant-answer h2').text()).toBe('无法安装的原因')
     expect(wrapper.get('.assistant-answer strong').text()).toBe('运行时未授权工具')
     expect(wrapper.get('.assistant-answer pre code').text()).toBe('Error: tool is not authorized')
     expect(wrapper.get('.assistant-answer').text()).not.toContain('```')
@@ -862,6 +897,7 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
     vi.clearAllMocks()
     route.name = undefined
     route.params = { id: 'run-001' }
+    route.query = {}
     api.listWorkspaceAgentMembers.mockResolvedValue([])
     api.getRun.mockRejectedValue(new Error('not a run'))
     api.getSessionThread.mockRejectedValue(new Error('not found'))
@@ -911,10 +947,55 @@ describe('ConversationView 空间内嵌套视图（TW-10 导航）', () => {
   it('falls back to the workspace page when going back without history', async () => {
     route.name = 'workspace-conversation'
     route.params = { id: 'ws-team', conversationId: 'session-001' }
+    route.query = { view: 'history' }
     api.getSessionThread.mockResolvedValue(sessionThread())
     const { wrapper } = await mountView({ item: null })
     await wrapper.get('.conversation-header__back').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team')
+    expect(router.push).toHaveBeenCalledWith({
+      name: 'workspace-detail',
+      params: { id: 'ws-team' },
+      query: { view: 'history' },
+    })
+  })
+
+  it('does not rewrite the URL with an empty conversation segment after leaving the embedded route', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getRun.mockRejectedValue(new Error('not a run'))
+    let resolveThread!: (value: SessionThread) => void
+    api.getSessionThread.mockImplementation(() => new Promise(resolve => {
+      resolveThread = resolve
+    }))
+    await mountView({ item: null })
+    route.name = 'workspace-detail'
+    route.params = { id: 'ws-team' }
+    resolveThread(sessionThread())
+    await flushPromises()
+    for (const call of router.replace.mock.calls) {
+      const target = String(call[0])
+      expect(target).not.toMatch(/\/conversations\/?$/)
+      expect(target).not.toContain('/conversations/undefined')
+    }
+  })
+
+  it('does not treat the workspace id as a session id when the embedded route is gone', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    await mountView({ item: null })
+    api.getSessionThread.mockClear()
+    route.name = 'workspace-detail'
+    route.params = { id: 'ws-team' }
+    await flushPromises()
+    expect(api.getSessionThread).not.toHaveBeenCalledWith('ws-team')
+  })
+
+  it('does not render its own composer when embedded in a workspace', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'session-001' }
+    api.getSessionThread.mockResolvedValue(sessionThread())
+    const { wrapper } = await mountView({ item: null })
+    expect(wrapper.findComponent(TaskComposer).exists()).toBe(false)
   })
 
   it('re-roots to the owning workspace when the embedded target belongs elsewhere', async () => {

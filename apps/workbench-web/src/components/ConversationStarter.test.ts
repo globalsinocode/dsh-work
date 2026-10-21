@@ -42,6 +42,69 @@ function wsFixture(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 describe('ConversationStarter', () => {
+  it('keeps uploaded attachments when selecting a common task preset in team workspace', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {
+        workspaceId: 'ws-team',
+        workspaceName: '供应链团队',
+        workspaceLocked: true,
+        requiresAgentMember: true,
+        startableAgentMemberIds: ['wam-1'],
+        mentionOptions: [{ id: 'wam-1', name: '订单分析助手' }],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await flushPromises()
+
+    const composer = wrapper.find('[data-testid="team-space-composer-stage"]')
+    const fileInput = composer.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['材料'], '团队材料.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+    expect(composer.text()).toContain('团队材料.pdf')
+
+    const organizeTask = wrapper.findAll<HTMLButtonElement>('.capability-chip')
+      .find(button => button.text().includes('整理文档'))
+    await organizeTask?.trigger('click')
+    await flushPromises()
+
+    expect(composer.text()).toContain('团队材料.pdf')
+    expect(composer.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value)
+      .toContain('请整理我接下来提供的业务材料')
+  })
+
+  it('keeps uploaded attachments when selecting a common task preset', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(ConversationStarter, {
+      props: {},
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    const contentStore = useContentStore(pinia)
+    vi.spyOn(contentStore, 'load').mockResolvedValue(undefined)
+    vi.spyOn(contentStore, 'refreshSkills').mockResolvedValue([])
+    contentStore.initialized = true
+    await flushPromises()
+
+    const composer = wrapper.findComponent(TaskComposer)
+    const fileInput = composer.get<HTMLInputElement>('input[type="file"]')
+    const file = new File(['材料'], '业务材料.pdf', { type: 'application/pdf' })
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+    expect(composer.text()).toContain('业务材料.pdf')
+
+    const organizeTask = wrapper.findAll<HTMLButtonElement>('.capability-chip')
+      .find(button => button.text().includes('整理文档'))
+    await organizeTask?.trigger('click')
+    await flushPromises()
+
+    expect(composer.text()).toContain('业务材料.pdf')
+    expect(composer.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value)
+      .toContain('请整理我接下来提供的业务材料')
+  })
+
   it('does not submit a previously referenced workspace file after switching tasks', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

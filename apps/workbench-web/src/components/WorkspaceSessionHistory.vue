@@ -186,7 +186,10 @@ function openSession(item: WorkspaceSessionSummary) {
   // 服务端兼容 Run ID 链接并解析回 Session；没有 Run 的会话退回 Session 身份。
   // TW-10 空间内对话视图：历史会话在空间外壳内打开，停留在 /workspaces/:id 上下文。
   const target = item.latestRun?.id ?? item.sessionId
-  void router.push(`/workspaces/${props.workspaceId}/conversations/${target}`)
+  void router.push({
+    path: `/workspaces/${props.workspaceId}/conversations/${target}`,
+    query: { view: 'history' },
+  })
 }
 
 function dotStatus(item: WorkspaceSessionSummary) {
@@ -357,6 +360,7 @@ onBeforeUnmount(() => {
         <span v-else class="session-history__pager-end" data-testid="session-history-end">已加载全部</span>
       </div>
     </div>
+
   </div>
 </template>
 

@@ -21,7 +21,8 @@ import {
   getRecentWorkspaceAgentMemberId,
   recordRecentWorkspaceAgentMember,
 } from './workspace-agent-recency'
-import { createActionGate } from './action-guard.ts'
+import { createActionGate } from './action-guard'
+import type { ComposerDraft } from './composer-draft'
 
 const props = withDefaults(
   defineProps<{
@@ -162,10 +163,10 @@ function quickMentionOptions() {
 }
 
 function applyRecentAgentMention() {
-  const workspace = activeWorkspaceId()
   const options = quickMentionOptions()
-  if (!workspace || !options.length) return
-  const recentId = getRecentWorkspaceAgentMemberId(workspace)
+  if (!options.length) return
+  const workspace = activeWorkspaceId()
+  const recentId = workspace ? getRecentWorkspaceAgentMemberId(workspace) : undefined
   const option = (recentId ? options.find(item => item.id === recentId) : undefined) ?? options[0]
   applyMention(option)
 }
@@ -263,6 +264,14 @@ watch(
   () => props.initialWorkspaceId,
   (next, previous) => {
     if (!workspaceId.value || workspaceId.value === previous) workspaceId.value = next
+  },
+)
+
+/** 父级切换预设文案（常用任务、Skill、路由引用）时同步输入，但不重挂载以保留附件。 */
+watch(
+  () => props.initialPrompt,
+  (next) => {
+    if (next !== prompt.value) prompt.value = next
   },
 )
 function openFilePicker() {
@@ -438,6 +447,25 @@ function performPrimaryAction() {
   }
   submit()
 }
+
+function getDraft(): ComposerDraft {
+  return {
+    prompt: prompt.value,
+    files: [...files.value],
+    mentions: appliedMentions.value.map(item => ({ ...item })),
+  }
+}
+
+function setDraft(draft: ComposerDraft) {
+  prompt.value = draft.prompt
+  files.value = [...draft.files]
+  appliedMentions.value = draft.mentions.map(item => ({ ...item }))
+  mentionQuery.value = null
+  mentionStart.value = -1
+  mentionIndex.value = 0
+}
+
+defineExpose({ getDraft, setDraft })
 </script>
 
 <template>

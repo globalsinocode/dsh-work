@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -28,6 +28,11 @@ import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
+import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
+import {
+  createEmptyTeamComposerBridge,
+  teamComposerBridgeKey,
+} from '@/components/team-space-composer/team-composer-bridge'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,10 +66,19 @@ const targetLoading = ref(false)
  * （reconcileConversationRoute），保证团队对话始终停留在空间上下文。
  */
 const isEmbeddedInWorkspace = computed(() => route.name === 'workspace-conversation')
+const isActiveConversationRoute = computed(() =>
+  route.name === 'workspace-conversation' || route.name === 'conversation')
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
-const routeTargetId = computed(() =>
-  isEmbeddedInWorkspace.value ? String(route.params.conversationId) : String(route.params.id))
+const routeTargetId = computed(() => {
+  if (route.name === 'workspace-conversation') {
+    return String(route.params.conversationId ?? '')
+  }
+  if (route.name === 'conversation') {
+    return String(route.params.id ?? '')
+  }
+  return ''
+})
 
 function conversationPath(target: string) {
   return isEmbeddedInWorkspace.value
@@ -145,6 +159,13 @@ const canWriteSession = computed(() => {
 /** 只读成员查看共享会话时的提示（归档优先）。 */
 const sessionReadOnly = computed(() =>
   Boolean(sessionThread.value) && !sessionArchived.value && !canWriteSession.value)
+/** 空间页外挂底栏时隐藏本页浮动 composer 区；只读/归档仍在本页展示提示。 */
+const showSessionComposerDock = computed(() =>
+  !isEmbeddedInWorkspace.value || sessionArchived.value || sessionReadOnly.value,
+)
+const showRunComposerDock = computed(() =>
+  !isEmbeddedInWorkspace.value || workspaceArchived.value || isRunViewer.value,
+)
 
 /**
  * 对话列表左右分栏（TW-10）：本人发送的 user 消息在右侧，其他成员与
@@ -159,15 +180,19 @@ function isOwnMessage(message: { role: string; senderId?: string | null }) {
   return task.value?.requestedBy === authStore.user.id
 }
 
-/** 当前空间可 @ 的 Agent 成员（仅团队会话加载；只读成员的名册可读但无发起权）。 */
+/** 当前空间可 @ 的 Agent 成员（独立对话页加载；空间内嵌由底栏使用空间页名册）。 */
 const agentMembers = ref<WorkspaceAgentMember[]>([])
 const mentionOptions = computed(() =>
   agentMembers.value
     .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
     .map(member => ({ id: member.id, name: member.name })),
 )
+const showTeamComposerShortcutHint = computed(() => isTeamSession.value && mentionOptions.value.length > 0)
+
+const teamComposerBridge = inject(teamComposerBridgeKey, null)
 
 async function loadAgentMembers(workspaceId: string | undefined) {
+  if (isEmbeddedInWorkspace.value) return
   if (!workspaceId || !isTeamSession.value) {
     agentMembers.value = []
     return
@@ -177,6 +202,24 @@ async function loadAgentMembers(workspaceId: string | undefined) {
   } catch {
     agentMembers.value = []
   }
+}
+
+function syncTeamComposerBridge() {
+  if (!isEmbeddedInWorkspace.value || !teamComposerBridge) return
+  const bridge = teamComposerBridge.value
+  bridge.sessionId = sessionThread.value?.sessionId ?? task.value?.sessionId ?? ''
+  bridge.viewingRun = Boolean(task.value)
+  bridge.running = canStop.value
+  bridge.stopping = stopping.value
+  bridge.stop = canStop.value ? () => { void stopCurrentRun() } : null
+  bridge.submitSession = sessionThread.value && canWriteSession.value
+    ? payload => { void submitSessionMessage(payload) }
+    : null
+  bridge.submitFollowUp = task.value && canFollowUp.value
+    ? payload => { void submitFollowUp(payload) }
+    : null
+  bridge.showJumpToLatest = showJumpToLatest.value
+  bridge.scrollToLatest = () => scrollToBottom()
 }
 const currentStep = computed(() =>
   task.value?.steps.find((step) => ['running', 'awaiting_approval'].includes(step.status)),
@@ -255,6 +298,77 @@ function messageArtifacts(message: ChatMessage): Artifact[] {
   return runArtifactsById.value.get(message.runId) ?? []
 }
 
+type ThreadMessageLike = Pick<ChatMessage, 'id' | 'role' | 'runId'>
+
+function firstUserMessageIdByRunIn(messages: ThreadMessageLike[]) {
+  const map = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role === 'user' && message.runId && !map.has(message.runId)) {
+      map.set(message.runId, message.id)
+    }
+  }
+  return map
+}
+
+const firstUserMessageIdByRun = computed(() => firstUserMessageIdByRunIn(conversationMessages.value))
+
+const firstUserMessageIdByRunInThread = computed(() =>
+  firstUserMessageIdByRunIn(sessionThread.value?.messages ?? []),
+)
+
+/** 各 Run 首轮用户消息附带的输入文件（文件名来自 Run 详情 attachments）。 */
+const runAttachmentsById = computed(() => {
+  const map = new Map<string, string[]>()
+  const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
+  if (!sessionId) {
+    if (task.value?.attachments.length) map.set(task.value.id, task.value.attachments)
+    return map
+  }
+  for (const item of taskStore.tasks) {
+    if (item.sessionId === sessionId && item.attachments.length) {
+      map.set(item.id, item.attachments)
+    }
+  }
+  if (task.value?.attachments.length) map.set(task.value.id, task.value.attachments)
+  return map
+})
+
+function messageInputAttachments(
+  message: ThreadMessageLike,
+  firstByRun: Map<string, string>,
+) {
+  if (message.role !== 'user') return []
+
+  const runId = message.runId ?? (task.value?.attachments.length ? task.value.id : null)
+  if (!runId) return []
+
+  const firstUserId = firstByRun.get(runId)
+    ?? conversationMessages.value.find(item => item.role === 'user' && item.runId === runId)?.id
+
+  if (firstUserId !== message.id) {
+    // 旧夹具/投影未带 runId：本轮仅一条用户消息时仍展示 Run 级 attachments。
+    const loneUser = conversationMessages.value.filter(item => item.role === 'user')
+    if (loneUser.length !== 1 || loneUser[0]!.id !== message.id || task.value?.id !== runId) return []
+  }
+
+  return runAttachmentsById.value.get(runId) ?? (task.value?.id === runId ? task.value.attachments : [])
+}
+
+function inputAttachmentSubtitle(fileName: string) {
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? ''
+  const labels: Record<string, string> = {
+    pdf: 'PDF',
+    docx: 'Word',
+    xlsx: 'Excel',
+    xls: 'Excel',
+    csv: 'CSV',
+    txt: '文本',
+    md: 'Markdown',
+  }
+  const kind = labels[extension] ?? (extension ? extension.toUpperCase() : '文件')
+  return `${kind} · 已上传`
+}
+
 let prefetchRunArtifactsEpoch = 0
 /**
  * 已确认无需再拉取详情的 Run。预拉取本身会写 store，若重复触发就会形成
@@ -284,7 +398,7 @@ async function prefetchSessionRunArtifacts() {
   const epoch = ++prefetchRunArtifactsEpoch
   const runIds = new Set(
     conversationMessages.value
-      .filter(message => message.role === 'assistant' && message.runId)
+      .filter(message => message.runId)
       .map(message => message.runId as string),
   )
   for (const runId of runIds) {
@@ -326,7 +440,17 @@ function goBack() {
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
-    void router.push(`/workspaces/${embeddedWorkspaceId.value}`)
+    const workspaceId = String(route.params.id ?? embeddedWorkspaceId.value)
+    if (!workspaceId) {
+      void router.push({ name: 'workspaces' })
+      return
+    }
+    const view = String(route.query.view ?? '')
+    void router.push({
+      name: 'workspace-detail',
+      params: { id: workspaceId },
+      query: view === 'history' ? { view: 'history' } : {},
+    })
     return
   }
   if (window.history.length > 1) router.back()
@@ -344,6 +468,7 @@ function onConversationScroll() {
   const target = conversationScroll.value
   if (!target) return
   showJumpToLatest.value = target.scrollHeight - target.scrollTop - target.clientHeight > 180
+  syncTeamComposerBridge()
 }
 
 async function stopCurrentRun() {
@@ -560,10 +685,15 @@ async function loadEarlierMessages() {
 }
 
 async function initializeConversation() {
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   await taskStore.load()
   const thread = await loadConversationTarget(routeTargetId.value)
+  if (!isEmbeddedInWorkspace.value) {
+    await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  }
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   await reconcileConversationRoute()
-  await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+  syncTeamComposerBridge()
   void prefetchSessionRunArtifacts()
   await nextTick()
   scrollToBottom('auto')
@@ -578,6 +708,7 @@ async function initializeConversation() {
  * - 个人空间会话不做跳转。
  */
 async function reconcileConversationRoute() {
+  if (!isActiveConversationRoute.value || !routeTargetId.value) return
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
   if (isEmbeddedInWorkspace.value) {
     if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
@@ -664,15 +795,34 @@ onMounted(initializeConversation)
 watch(
   () => routeTargetId.value,
   async id => {
+    if (!isActiveConversationRoute.value || !id) return
     prefetchRunArtifactsEpoch++
     prefetchedRunArtifacts.clear()
     sessionThread.value = null
     threadMissing.value = false
     const thread = await loadConversationTarget(String(id))
+    if (!isActiveConversationRoute.value || !routeTargetId.value) return
+    if (!isEmbeddedInWorkspace.value) {
+      await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    }
     await reconcileConversationRoute()
-    await loadAgentMembers(task.value?.workspaceId ?? thread?.workspaceId)
+    syncTeamComposerBridge()
     void prefetchSessionRunArtifacts()
   },
+)
+
+watch(
+  [
+    () => sessionThread.value?.sessionId,
+    () => task.value?.id,
+    () => task.value?.status,
+    canStop,
+    stopping,
+    canWriteSession,
+    canFollowUp,
+  ],
+  () => syncTeamComposerBridge(),
+  { immediate: true },
 )
 
 // 必须是多源写法（数组里放多个 getter），Vue 才会逐个元素比较；写成
@@ -759,6 +909,7 @@ watch(streamWorkspaceId, (workspaceId, previous) => {
 onBeforeUnmount(() => {
   if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
   if (streamWorkspaceId.value) taskStore.unsubscribeWorkspaceSessions(streamWorkspaceId.value)
+  if (teamComposerBridge) teamComposerBridge.value = createEmptyTeamComposerBridge()
 })
 
 watch(
@@ -820,6 +971,26 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
+                <div
+                  v-if="messageInputAttachments(message, firstUserMessageIdByRunInThread).length"
+                  class="user-message-attachments answer-artifacts"
+                  data-testid="user-message-attachments"
+                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRunInThread).length} 个`"
+                >
+                  <div
+                    v-for="name in messageInputAttachments(message, firstUserMessageIdByRunInThread)"
+                    :key="name"
+                    class="answer-artifact"
+                  >
+                    <div class="answer-artifact__card">
+                      <span><el-icon><Document /></el-icon></span>
+                      <span>
+                        <strong>{{ name }}</strong>
+                        <small>{{ inputAttachmentSubtitle(name) }}</small>
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 <p>{{ message.content }}</p>
               </div>
             </template>
@@ -861,11 +1032,12 @@ watch(
         </div>
       </main>
 
-      <div class="conversation-composer-dock">
+      <div v-if="showSessionComposerDock" class="conversation-composer-dock">
         <div class="conversation-composer-dock__inner">
           <TaskComposer
-            v-if="canWriteSession"
+            v-if="canWriteSession && !isEmbeddedInWorkspace"
             compact
+            :initial-workspace-id="streamWorkspaceId"
             :mention-options="isTeamSession ? mentionOptions : []"
             :files-require-mention="isTeamSession"
             @submit="submitSessionMessage"
@@ -875,6 +1047,13 @@ watch(
           </p>
           <p v-else-if="sessionReadOnly" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
             当前角色为只读成员，仅可查看讨论内容。
+          </p>
+          <p
+            v-if="showTeamComposerShortcutHint && canWriteSession"
+            class="conversation-composer-hint"
+            data-testid="team-composer-shortcut-hint"
+          >
+            {{ TEAM_COMPOSER_SHORTCUT_HINT }}
           </p>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
@@ -966,6 +1145,26 @@ watch(
                 </div>
               </div>
               <div class="assistant-answer user-message">
+                <div
+                  v-if="messageInputAttachments(message, firstUserMessageIdByRun).length"
+                  class="user-message-attachments answer-artifacts"
+                  data-testid="user-message-attachments"
+                  :aria-label="`附件 ${messageInputAttachments(message, firstUserMessageIdByRun).length} 个`"
+                >
+                  <div
+                    v-for="name in messageInputAttachments(message, firstUserMessageIdByRun)"
+                    :key="name"
+                    class="answer-artifact"
+                  >
+                    <div class="answer-artifact__card">
+                      <span><el-icon><Document /></el-icon></span>
+                      <span>
+                        <strong>{{ name }}</strong>
+                        <small>{{ inputAttachmentSubtitle(name) }}</small>
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 <p>{{ message.content }}</p>
               </div>
             </template>
@@ -1143,7 +1342,7 @@ watch(
         </div>
       </main>
 
-      <div class="conversation-composer-dock">
+      <div v-if="showRunComposerDock" class="conversation-composer-dock">
         <button
           v-if="showJumpToLatest"
           class="jump-latest"
@@ -1171,8 +1370,9 @@ watch(
             </el-tag>
           </div>
           <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
-            v-if="canFollowUp"
+            v-if="canFollowUp && !isEmbeddedInWorkspace"
             compact
+            :initial-workspace-id="streamWorkspaceId"
             :running="canStop"
             :stopping="stopping"
             :mention-options="isTeamSession ? mentionOptions : []"
@@ -1185,6 +1385,13 @@ watch(
           </p>
           <p v-else-if="isRunViewer" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
             当前角色为只读成员，仅可查看讨论内容。
+          </p>
+          <p
+            v-if="showTeamComposerShortcutHint && canFollowUp"
+            class="conversation-composer-hint"
+            data-testid="team-composer-shortcut-hint"
+          >
+            {{ TEAM_COMPOSER_SHORTCUT_HINT }}
           </p>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
@@ -1404,17 +1611,35 @@ watch(
   margin: 0 auto;
 }
 
-/* TW-10 空间内嵌套：高度收敛到空间页对话面板，不再占满视口。 */
+/* TW-10 空间内嵌套：高度收敛到空间页对话面板，底栏由空间页承载。 */
 .conversation-page--embedded {
+  display: flex;
   height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.conversation-page--embedded .conversation-header {
+  position: static;
+  flex: 0 0 auto;
 }
 
 .conversation-page--embedded .conversation-scroll {
-  height: 100%;
+  min-height: 0;
+  flex: 1;
+  height: auto;
+  padding: 12px 20px 10px;
 }
 
 .conversation-page--embedded .conversation-thread {
-  min-height: calc(100% - 330px);
+  min-height: 0;
+}
+
+.conversation-page--embedded .conversation-composer-dock {
+  position: static;
+  flex: 0 0 auto;
+  padding: 8px 20px 12px;
+  background: #fff;
 }
 
 .conversation-message {
@@ -1435,6 +1660,57 @@ watch(
 
 .user-message {
   padding-bottom: 16px;
+}
+
+/* 用户附件挂在气泡顶部，视觉与 Agent 成果卡片一致，但不提供操作按钮。 */
+.user-message .user-message-attachments.answer-artifacts {
+  justify-content: flex-start;
+  margin-top: 0;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef0ee;
+}
+
+.user-message .answer-artifact {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.user-message .answer-artifact__card {
+  display: grid;
+  width: fit-content;
+  max-width: min(100%, 22rem);
+  grid-template-columns: 30px minmax(0, auto);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e2e4e1;
+  border-radius: 10px;
+  color: #4c514c;
+  background: #fafbfa;
+}
+
+.user-message .answer-artifact__card > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: #356858;
+  background: #eaf4f0;
+}
+
+.user-message .answer-artifact__card > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.user-message .answer-artifact__card strong {
+  overflow: hidden;
+  max-width: 16rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-message p {
@@ -1953,6 +2229,14 @@ watch(
   pointer-events: auto;
 }
 
+.conversation-composer-hint {
+  margin: 0;
+  color: #8b918c;
+  font-size: var(--dsh-font-size-micro);
+  line-height: 1.5;
+  text-align: center;
+}
+
 .conversation-composer-dock__inner > p {
   margin: 7px 0 0;
   color: #aaada9;
@@ -2212,7 +2496,7 @@ watch(
   }
 
 
-  .answer-artifact {
+  .assistant-answer:not(.user-message) .answer-artifact {
     width: 100%;
   }
 

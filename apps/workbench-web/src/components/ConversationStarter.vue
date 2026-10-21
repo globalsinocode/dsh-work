@@ -10,7 +10,9 @@ import {
   Reading,
 } from '@element-plus/icons-vue'
 
-import { TaskComposer } from '@dsh-work/workbench-components'
+import { emptyComposerDraft, TaskComposer, type ComposerDraft } from '@dsh-work/workbench-components'
+
+import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
@@ -46,6 +48,8 @@ const props = withDefaults(
      * startable 过滤口径一致；非团队锁定场景传空。
      */
     mentionOptions?: Array<{ id: string; name: string }>
+    /** 团队空间中部输入：由空间页传入的按上下文分键草稿表。 */
+    teamComposerDrafts?: Record<string, ComposerDraft>
   }>(),
   {
     workspaceId: '',
@@ -57,8 +61,15 @@ const props = withDefaults(
     requiresAgentMember: false,
     canDiscuss: true,
     mentionOptions: () => [],
+    teamComposerDrafts: () => ({}),
   },
 )
+
+const emit = defineEmits<{
+  teamDraftChange: [fromKey: string, draft: ComposerDraft]
+}>()
+
+const useTeamSpaceComposer = computed(() => props.workspaceLocked && props.requiresAgentMember)
 
 /**
  * TW-10：团队共享讨论里普通成员可直接发言（不产生 Run）或在文本里 @ Agent
@@ -81,10 +92,16 @@ const taskStore = useTaskStore()
 const contentStore = useContentStore()
 const rootRef = ref<HTMLElement>()
 
+type ComposerHandle = {
+  focusComposer: () => void
+  setDraft: (draft: ComposerDraft) => void
+}
+
+const teamComposerRef = ref<ComposerHandle>()
+const personalComposerRef = ref<ComposerHandle>()
 
 const selectedTask = ref('')
 const presetPrompt = ref('')
-const composerKey = ref(0)
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
 const selectedSkillId = ref('')
@@ -134,7 +151,21 @@ const commonTasks = [
 ]
 
 function focusComposer() {
-  void nextTick(() => rootRef.value?.querySelector<HTMLTextAreaElement>('.composer__input')?.focus())
+  void nextTick(() => {
+    if (useTeamSpaceComposer.value) {
+      teamComposerRef.value?.focusComposer()
+      return
+    }
+    rootRef.value?.querySelector<HTMLTextAreaElement>('.composer__input')?.focus()
+  })
+}
+
+function resetComposerDraft() {
+  void nextTick(() => {
+    const empty = emptyComposerDraft()
+    teamComposerRef.value?.setDraft(empty)
+    personalComposerRef.value?.setDraft(empty)
+  })
 }
 
 function selectTask(item: (typeof commonTasks)[number]) {
@@ -145,7 +176,6 @@ function selectTask(item: (typeof commonTasks)[number]) {
   selectedTask.value = item.label
   referencedWorkspaceFileIds.value = []
   presetPrompt.value = item.prompt
-  composerKey.value += 1
   focusComposer()
 }
 
@@ -153,7 +183,6 @@ function useWorkspaceFile(file: WorkspaceFile) {
   selectedTask.value = '分析文件'
   referencedWorkspaceFileIds.value = [file.id]
   presetPrompt.value = `请分析工作空间文件“${file.name}”，概括关键信息、异常项和需要跟进的问题。 @工作空间文件`
-  composerKey.value += 1
   focusComposer()
 }
 
@@ -230,7 +259,6 @@ function syncSkillFromRoute() {
   if (skill) {
     selectedTask.value = ''
     presetPrompt.value = skill.testPrompt
-    composerKey.value += 1
     focusComposer()
   }
 }
@@ -246,7 +274,6 @@ function syncAgentFromRoute() {
   if (agent) {
     selectedTask.value = ''
     presetPrompt.value = agent.examplePrompts[0] ?? ''
-    composerKey.value += 1
     focusComposer()
   }
 }
@@ -301,25 +328,48 @@ async function syncPersonalReference() {
     if (sequence !== referenceSequence) return
     if (!file.canReference) throw new Error('该文件当前不可引用，请查看文件的解析和安全状态')
     referencedWorkspaceFileIds.value = [file.id]; referenceName.value = file.name
-    presetPrompt.value = `请分析文件“${file.name}”。`; composerKey.value++
+    presetPrompt.value = `请分析文件“${file.name}”。`
   } catch(cause) {
     if (sequence === referenceSequence) referenceError.value = cause instanceof Error ? cause.message : '无法引用文件'
   } finally { if (sequence === referenceSequence) referenceLoading.value = false }
 }
 watch(() => route.query.file, () => { void syncPersonalReference() }, { immediate: true })
 watch(() => props.workspaceId, () => {
-  clearPersonalReference(); presetPrompt.value = ''; composerKey.value++
+  clearPersonalReference()
+  presetPrompt.value = ''
+  resetComposerDraft()
 })
 onBeforeUnmount(() => { referenceSequence++ })
 
-defineExpose({ useWorkspaceFile })
+function onTeamStageSubmit(payload: {
+  prompt: string
+  files: File[]
+  workspaceId: string
+  mentions: string[]
+  contextKey: string
+  confirm?: () => void
+  release?: () => void
+}) {
+  void submitTask({
+    prompt: payload.prompt,
+    files: payload.files,
+    workspaceId: payload.workspaceId,
+    mentions: payload.mentions,
+    confirm: payload.confirm,
+    release: payload.release,
+  })
+}
+
+defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask })
 </script>
 
 <template>
   <div
     ref="rootRef"
     class="conversation-starter"
-    :class="{ 'conversation-starter--embedded': embedded }"
+    :class="{
+      'conversation-starter--embedded': embedded,
+    }"
   >
     <main class="workbench-stage">
       <section class="workbench-welcome" aria-labelledby="conversation-starter-title">
@@ -357,9 +407,24 @@ defineExpose({ useWorkspaceFile })
         </div>-->
         <p v-if="referenceName">已引用：{{ referenceName }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <p v-if="referenceError" role="alert">{{ referenceError }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
+        <TeamSpaceComposer
+          v-if="composerReady && useTeamSpaceComposer"
+          ref="teamComposerRef"
+          placement="stage"
+          context-key="stage"
+          :workspace-id="composerWorkspaceId"
+          :workspace-name="composerWorkspaceName"
+          :mention-options="mentionOptions"
+          :drafts="teamComposerDrafts"
+          :blocked-reason="blockedReason"
+          :initial-prompt="presetPrompt"
+          :files-require-mention="effectivePresetAgentMember?.status !== 'available'"
+          @draft-change="(fromKey, draft) => emit('teamDraftChange', fromKey, draft)"
+          @submit="onTeamStageSubmit"
+        />
         <TaskComposer
-          v-if="composerReady"
-          :key="composerKey"
+          v-else-if="composerReady"
+          ref="personalComposerRef"
           class="workbench-composer"
           :initial-prompt="presetPrompt"
           :initial-workspace-id="composerWorkspaceId"
@@ -379,10 +444,9 @@ defineExpose({ useWorkspaceFile })
         />
         <el-skeleton v-else class="workbench-composer" :rows="3" animated />
 
-        <footer class="workbench-trust">
+        <footer v-if="!useTeamSpaceComposer" class="workbench-trust">
           <span>支持 PDF、DOCX、XLSX、XLS、CSV，单文件不超过 20 MB</span>
-          <span v-if="workspaceLocked && mentionOptions.length">Tab 最近/首位 Agent · Tab+1~9 快速选择 · Enter 发送 · Shift + Enter 换行</span>
-          <span v-else>Enter 发送 · Shift + Enter 换行</span>
+          <span v-if="!workspaceLocked || !requiresAgentMember">Enter 发送 · Shift + Enter 换行</span>
         </footer>
       </section>
     </main>
@@ -524,6 +588,29 @@ defineExpose({ useWorkspaceFile })
 .conversation-starter--embedded {
   min-height: 100%;
   height: 100%;
+}
+
+.conversation-starter--composer-only {
+  min-height: 0;
+  height: auto;
+  flex: 0 0 auto;
+  background: #fff;
+}
+
+.conversation-starter--composer-only.conversation-starter--embedded {
+  min-height: 0;
+  height: auto;
+}
+
+.workspace-composer-strip {
+  padding: 12px 20px 14px;
+  border-top: 1px solid #e8ebe8;
+  background: #fff;
+}
+
+.workbench-trust--compact {
+  justify-content: flex-start;
+  margin-top: 6px;
 }
 
 .conversation-starter--embedded .workbench-welcome {

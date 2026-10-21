@@ -107,6 +107,7 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     // 最新运行状态用 StatusTag 呈现。
     expect(rows[0]?.find('.status-tag').text()).toBe('执行中')
+
     expect(rows[1]?.find('.status-tag').text()).toBe('已完成')
   })
 
@@ -117,7 +118,10 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     await wrapper.find('[data-testid="session-history-row"]').trigger('click')
     // 服务端兼容 Run ID 链接并解析回 Session。
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/run/9')
+    expect(router.push).toHaveBeenCalledWith({
+      path: '/workspaces/ws-team/conversations/run/9',
+      query: { view: 'history' },
+    })
   })
 
   it('falls back to the Session identity when a session has no Run yet', async () => {
@@ -127,7 +131,10 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
 
     expect(wrapper.find('[data-testid="session-history-row"] .status-tag').text()).toBe('暂无运行')
     await wrapper.find('[data-testid="session-history-row"]').trigger('click')
-    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/conversations/session-empty')
+    expect(router.push).toHaveBeenCalledWith({
+      path: '/workspaces/ws-team/conversations/session-empty',
+      query: { view: 'history' },
+    })
   })
 
   it('appends the next cursor page and shows the end marker once exhausted', async () => {

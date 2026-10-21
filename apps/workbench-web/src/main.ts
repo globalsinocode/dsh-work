@@ -7,5 +7,6 @@ import router from './router'
 import { pinia } from './stores'
 import '@dsh-work/design-tokens/tokens.css'
 import '@dsh-work/ui-core/base.css'
+import 'katex/dist/katex.min.css'
 
 createApp(App).use(pinia).use(router).use(ElementPlus).mount('#app')
