@@ -8,44 +8,45 @@
 
 ## 分支与合入约定
 
-**方向**：所有代码修改只在 `dev` 上进行；`main` 只承载已发布/待发布的稳定状态，**只在发版时更新**。
+**方向**：所有代码修改只在 `dev` 上进行。`main` 只指向 `dev` 历史上已经可以上线的那个提交，发版时快进过去，不另建 release 分支。
 
-1. **提交前先拉取 `dev` 最新代码**（不允许在落后状态直接提交）：
+1. **提交前先对齐 `dev`**（不允许在落后状态直接提交）：
 
    ```bash
    git switch dev
-   git pull --ff-only origin dev
+   git fetch origin
+   git merge --ff-only origin/dev
    ```
 
-   非快进（提示分叉）时先把冲突在本地解决完，再提交；不提交带冲突标记的文件。
+   不能快进说明本地与远端分叉：改为 `git merge origin/dev`，冲突在本地解决完再提交。不提交带冲突标记的文件。
 
-2. **`main` 领先 `dev` 时，先把 `main` 合并进 `dev`**：
+2. **只有 `main` 含有 `dev` 没有的提交时，才把 `main` 合并进 `dev` 一次**：
 
    ```bash
-   git fetch origin main
-   git merge origin/main
+   git fetch origin
+   git merge-base --is-ancestor origin/main HEAD || git merge origin/main
    ```
 
-   冲突本地解决 → 跑类型检查与相关单测 → 再继续开发或提交。来自 `main` 的改动先落到 `dev`，不在 `main` 上直接改。
+   正常快进发版之后，`main` 一直是 `dev` 的祖先，这条检查应当直接通过，不必每次提交都合并 `main`。真的要合并时，冲突在本地解决，跑类型检查与相关单测后再继续。不在 `main` 上直接改功能。
 
-3. **发版部署时才把 `dev` 合并进 `main`**（不再逐个 cherry-pick）：
+3. **发版时把 `main` 快进到 `dev`**：
 
    ```bash
    git switch main
-   git pull --ff-only origin main
-   git merge --no-ff dev
+   git merge --ff-only origin/main
+   git merge --ff-only dev
    ```
 
-   合并前在 `dev` 上跑完类型检查、相关单测与必要的 E2E；发布以 `main` 上的提交打 tag。用一次 `--no-ff` 合并提交标出发版边界，便于回滚定位。
+   快进前在 `dev` 上跑完类型检查、相关单测与必要的 E2E。发布以 `main` 上的提交打 tag。快进不产生新提交，发版后不用把 `main` 再合回 `dev`。`dev` 顶端就是要上线的内容；未完成的改动不要留在顶端。
 
 4. **保持 git 视图清晰**：
 
    - 一次提交只做一件事，提交信息写清「为什么」，不混入无关改动；
-   - 发版提交单独一条：`chore(release): 将 releaseVersion 升到 YYYY.MM.DD-NN`；
+   - 发版提交单独一条：`chore(release): 将 releaseVersion 升到 YYYY.MM.DD-NN`，先落在 `dev`，再随快进进入 `main`；
    - 同一改动不要做成两份等价提交（cherry-pick 只用于修复历史遗留分叉，不作为常规流程）；
-   - 合并完成后删除临时分支，长期只保留 `dev` 与 `main`。
+   - 临时分支合并进 `dev` 后删除，长期只保留 `dev` 与 `main`。共享的 `dev` / `main` 不要 rebase、不要 force push。
 
-5. **紧急修复**同样先落 `dev` 再合并进 `main`；只有 `dev` 不可用时才直接在 `main` 修复，并在事后立即把 `main` 合并回 `dev`。
+5. **紧急修复**：`dev` 顶端可以上线时，修复直接落在 `dev`，再快进 `main`。已上线版本要修、而 `dev` 上已有不能上线的提交时，从当前 `main` 拉一个短修复分支，修完后快进 `main` 并打 tag，再合并回 `dev` 一次，然后删除该分支。
 
 ## 本轮安全修复边界
 
