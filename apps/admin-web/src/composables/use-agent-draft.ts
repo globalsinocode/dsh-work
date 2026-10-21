@@ -74,7 +74,7 @@ export function draftFormFromAgent(agent: AgentDefinition, versionTool: (referen
     tools: agent.tools.map(versionTool),
     mcpScope: agent.mcpScope?.mode === 'selected'
       ? { mode: 'selected', connectorIds: [...agent.mcpScope.connectorIds] }
-      : { mode: agent.mcpScope?.mode ?? 'all', connectorIds: [] },
+      : { mode: 'none', connectorIds: [] },
     timeoutSeconds: agent.timeoutSeconds,
     maxToolCalls: agent.maxToolCalls,
     maxOutputBytes: agent.maxOutputBytes,

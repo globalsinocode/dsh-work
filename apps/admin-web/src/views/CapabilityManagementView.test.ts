@@ -99,6 +99,7 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
       serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
       capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
       capabilities: [{ name: 'query', description: '查询', inputSchema: { type: 'object' } }],
+      pendingCapabilities: [],
       discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
     },
   }
@@ -302,7 +303,7 @@ describe('Skill installation sibling tab', () => {
     await wrapper.get('[data-action="view-connector"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('适用 Agent')
-    expect(wrapper.text()).toContain('全部 Agent')
+    expect(wrapper.text()).toContain('在 Agent 能力配置中选择')
     await wrapper.get('[data-action="view-mcp-tools"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('query')

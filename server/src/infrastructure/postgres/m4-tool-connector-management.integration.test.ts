@@ -97,13 +97,8 @@ test('Tool and Connector management gates immutable Agent and Skill references',
     'x-dsh-work-output-validation': 'unavailable',
   })
 
-  const [connector] = await tools.getConnectors()
-  assert.equal(connector?.id, 'connector-dsh-workspace')
-  assert.equal(connector?.name, 'DSH Runtime 内置工具连接器')
-  assert.equal(connector?.protocol, 'runtime')
-  assert.equal(connector?.toolCount, 4)
-  assert.deepEqual(await tools.getMcpConnectors(), [])
   const runtimeConnector = await tools.getDshRuntimeToolConnectorStatus()
+  assert.equal(runtimeConnector.name, 'DSH Runtime 内置工具连接器')
   assert.equal(runtimeConnector.runtimeId, 'runtime-local-01')
   assert.equal(runtimeConnector.connectorId, 'connector-dsh-workspace')
   assert.equal(runtimeConnector.toolCount, 4)
@@ -306,11 +301,11 @@ test('Tool and Connector management gates immutable Agent and Skill references',
   await assert.rejects(tools.assertAvailableReferences(['todo_write@1.0.0']), /不可用/)
 
   runtimeStatus = 'degraded'
-  const degraded = await tools.checkConnector({ connectorId: 'connector-dsh-workspace', actor: 'U00008' })
+  const degraded = await tools.checkDshRuntimeToolConnector({ actor: 'U00008' })
   assert.equal(degraded.status, 'degraded')
   await assert.rejects(tools.assertAvailableReferences(['read@1.0.0']), /不可用/)
   runtimeStatus = 'healthy'
-  const healthy = await tools.checkConnector({ connectorId: 'connector-dsh-workspace', actor: 'U00008' })
+  const healthy = await tools.checkDshRuntimeToolConnector({ actor: 'U00008' })
   assert.equal(healthy.status, 'healthy')
   await tools.assertAvailableReferences(['read@1.0.0'])
 

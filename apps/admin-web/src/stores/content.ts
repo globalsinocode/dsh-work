@@ -344,6 +344,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return connector
   }
 
+  async function approveMcpCapabilities(connectorId: string, capabilityDigest: string) {
+    const connector = await adminApi.approveMcpCapabilities({ connectorId, capabilityDigest })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
   async function setMcpConnectorStatus(connectorId: string, status: 'enabled' | 'disabled') {
     const connector = await adminApi.setMcpConnectorStatus({ connectorId, status })
     replaceById(connectors.value, connector)
@@ -418,6 +424,7 @@ export const useContentStore = defineStore('admin-content', () => {
     deleteMcpConnector,
     rotateMcpCredential,
     setMcpConnectorStatus,
+    approveMcpCapabilities,
     getMcpInvocationAudits,
     checkRuntime,
     checkDshRuntimeToolConnector,

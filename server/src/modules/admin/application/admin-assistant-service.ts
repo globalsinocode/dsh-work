@@ -514,7 +514,7 @@ export class AdminAssistantService {
       examplePrompts: readChangedStringArray(changes, 'examplePrompts', agent.examplePrompts, 20),
       systemPrompt: readChangedString(changes, 'systemPrompt', agent.systemPrompt, 20, 20000),
       workInstructions: agent.workInstructions ?? '',
-      mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
+      mcpScope: agent.mcpScope ?? { mode: 'none', connectorIds: [] },
       maxOutputBytes: changes['maxOutputBytes'] === undefined ? agent.maxOutputBytes : readInteger(changes, 'maxOutputBytes', 1, 10_000_000),
       maxToolCalls: changes['maxToolCalls'] === undefined ? agent.maxToolCalls : readInteger(changes, 'maxToolCalls', 1, 10_000),
       timeoutSeconds: changes['timeoutSeconds'] === undefined ? agent.timeoutSeconds : readInteger(changes, 'timeoutSeconds', 1, 3600),
@@ -820,7 +820,7 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
     workInstructions: agent.workInstructions ?? '',
-    mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
+    mcpScope: agent.mcpScope ?? { mode: 'none', connectorIds: [] },
     maxOutputBytes: agent.maxOutputBytes,
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
@@ -843,7 +843,7 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && canonicalJson(agent.examplePrompts) === canonicalJson(after.examplePrompts)
     && agent.systemPrompt === after.systemPrompt
     && (agent.workInstructions ?? '') === (after.workInstructions ?? '')
-    && canonicalJson(agent.mcpScope ?? { mode: 'all', connectorIds: [] }) === canonicalJson(after.mcpScope ?? { mode: 'all', connectorIds: [] })
+    && canonicalJson(agent.mcpScope ?? { mode: 'none', connectorIds: [] }) === canonicalJson(after.mcpScope ?? { mode: 'none', connectorIds: [] })
     && agent.maxOutputBytes === after.maxOutputBytes
     && agent.maxToolCalls === after.maxToolCalls
     && agent.timeoutSeconds === after.timeoutSeconds

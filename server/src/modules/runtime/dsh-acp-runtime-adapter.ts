@@ -29,7 +29,7 @@ import {
   type PlatformToolRegistration,
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
-import { canonicalJson } from './canonical-json.ts'
+import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
@@ -1892,9 +1892,13 @@ export async function prepareMcpProcess(
   })
   await writeFile(patchPath, `${rows.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
   environment['DSH_ALLOWED_MCP_SERVERS_JSON'] = JSON.stringify(connections.map(connection => connection.snapshot.server_name))
+  // 生效清单逐工具下发：策略只放行清单内、且当前加载的输入 Schema 摘要一致的 Tool。
   environment['DSH_APPROVED_MCP_CAPABILITIES_JSON'] = JSON.stringify(connections.flatMap(connection => connection.capabilities ? [{
     serverName: connection.snapshot.server_name,
-    digest: connection.snapshot.capability_digest,
+    tools: connection.capabilities.map(capability => ({
+      name: capability.name,
+      schemaDigest: mcpToolSchemaDigest(capability.inputSchema),
+    })),
   }] : []))
   return { ...base, args: [...base.args, '--patch', patchPath], env: environment }
 }

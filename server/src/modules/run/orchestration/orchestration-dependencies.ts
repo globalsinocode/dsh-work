@@ -6,6 +6,7 @@ import type { PostgresContentService } from '../../workbench/application/postgre
 import type { RunOperationsPort } from '../run-operations-port.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
 import type { PostgresToolConnectorService } from '../../tool/postgres-tool-connector-service.ts'
+import type { McpScopePort } from '../../tool/postgres-mcp-connector-service.ts'
 import type { PostgresKnowledgeService } from '../../knowledge/postgres-knowledge-service.ts'
 import type { PostgresControlledMemoryService } from '../../memory/postgres-controlled-memory-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
@@ -20,7 +21,9 @@ export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
 
 export type PersistentWaitPort = Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>
-export type ToolBindingCheckPort = Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
+/** 执行期复核 Attempt 固定的工具绑定与 MCP 连接；MCP 部分缺失时，带 MCP 的 Attempt 按不可用拒绝。 */
+export type ToolBindingCheckPort = Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+  & Partial<Pick<McpScopePort, 'assertPinnedConnections'>>
 
 /**
  * Collaborators shared by the orchestration components. Optional members are absent in

@@ -15,6 +15,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
 import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
@@ -22,7 +23,7 @@ import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from '../tool/agent-mcp-scope.ts'
-import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -181,17 +182,20 @@ export class PostgresAgentService {
   private readonly operations?: AuditTrail
   private readonly skillService?: PostgresSkillService
   private readonly toolService?: PostgresToolConnectorService
+  private readonly mcp?: McpScopePort
 
   constructor(
     database: DatabaseClient,
     operations?: AuditTrail,
     skillService?: PostgresSkillService,
     toolService?: PostgresToolConnectorService,
+    mcp?: McpScopePort,
   ) {
     this.database = database
     this.operations = operations
     this.skillService = skillService
     this.toolService = toolService
+    this.mcp = mcp
   }
 
   async getAgents(): Promise<AgentDefinition[]> {
@@ -807,9 +811,7 @@ export class PostgresAgentService {
       && bindingBasisKey(toolBindings.map(toManifestToolBinding)) !== bindingBasisKey(row.bindingRefs)) {
       throw authorizationDenied('Agent 版本固定的工具绑定已失效，请重新验证并发布新版本')
     }
-    const mcpConnections = this.toolService
-      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
-      : []
+    const mcpConnections = await this.resolveMcpConnections(row.mcpScope)
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
@@ -914,14 +916,14 @@ export class PostgresAgentService {
   private async assertMcpConnectorSelection(scope: AgentMcpScope | undefined): Promise<void> {
     const normalized = normalizeAgentMcpScope(scope)
     if (normalized.mode !== 'selected') return
-    const rows = await this.database<{ id: string }[]>`
-      select id from connectors
-       where tenant_id = ${tenantId} and protocol = 'mcp' and deleted_at is null
-         and id = any(${normalized.connectorIds})
-    `
-    if (rows.length !== normalized.connectorIds.length) {
-      throw new RequestError(422, 'validation_failed', '选定的 MCP Connector 不存在、已删除或不属于当前租户')
-    }
+    if (!this.mcp) throw dependencyUnavailable('MCP Connector 服务未接入')
+    await this.mcp.validateSelection(normalized.connectorIds)
+  }
+
+  private async resolveMcpConnections(scope: AgentMcpScope | undefined): Promise<McpConnectionSnapshot[]> {
+    if (normalizeAgentMcpScope(scope).mode === 'none') return []
+    if (!this.mcp) throw dependencyUnavailable('MCP Connector 服务未接入')
+    return this.mcp.resolveConnections(scope)
   }
 
   private async requireAgentResult(agentId: string, versionId: string) {

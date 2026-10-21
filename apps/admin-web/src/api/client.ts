@@ -334,6 +334,8 @@ export const adminApi = {
     request<ConnectorDefinition>('/connectors/mcp/credential', { method: 'PATCH', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>
     request<ConnectorDefinition>('/connectors/check', { method: 'POST', body: JSON.stringify(input) }),
+  approveMcpCapabilities: (input: { connectorId: string; capabilityDigest: string }) =>
+    request<ConnectorDefinition>('/connectors/mcp/capabilities/approve', { method: 'POST', body: JSON.stringify(input) }),
   setMcpConnectorStatus: (input: { connectorId: string; status: 'enabled' | 'disabled' }) =>
     request<ConnectorDefinition>('/connectors/mcp/status', { method: 'PATCH', body: JSON.stringify(input) }),
   updateToolPermissions: (input: {

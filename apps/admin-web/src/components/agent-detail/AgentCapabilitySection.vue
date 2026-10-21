@@ -55,11 +55,10 @@ function showMcpTools(connector: ConnectorDefinition) {
 
       <div class="subsection-heading"><strong>MCP 外部连接</strong><span>按整个 Connector 选择，不逐工具配置</span></div>
       <el-radio-group :model-value="form.mcpScope.mode" :disabled="readonly" aria-label="MCP 使用范围" @update:model-value="(value: string | number | boolean | undefined) => setMcpMode(value as AgentMcpScope['mode'])">
-        <el-radio value="all">全部可用 MCP</el-radio>
         <el-radio value="selected">仅使用选定 MCP</el-radio>
         <el-radio value="none">不使用 MCP（默认）</el-radio>
       </el-radio-group>
-      <p class="field-help">MCP 可访问的数据由连接器的上游凭据和服务端决定；平台数据范围不会过滤 MCP 返回的数据。全部模式在每次新运行时使用当前可用连接。</p>
+      <p class="field-help">MCP 可访问的数据由连接器的上游凭据和服务端决定；平台数据范围不会过滤 MCP 返回的数据。只有在此选定的连接器会在该 Agent 运行时加载。</p>
       <div v-if="form.mcpScope.mode === 'selected'" class="mcp-selection">
         <el-form-item label="选择 MCP Connector" :error="editor.errors.mcpScope">
           <el-select :model-value="form.mcpScope.connectorIds" multiple filterable :disabled="readonly" placeholder="至少选择一个 Connector" aria-label="选择 MCP Connector" @update:model-value="setSelectedMcpIds">

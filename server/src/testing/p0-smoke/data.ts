@@ -1143,6 +1143,7 @@ export const mockConnectors: ConnectorDefinition[] = [
         description: '搜索当前身份可访问的企业知识。',
         inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
       }],
+      pendingCapabilities: [],
       discoveredAt: '2026-09-22T00:00:00.000Z',
       reviewedAt: '2026-09-22T00:05:00.000Z',
       reviewedBy: '陈默',

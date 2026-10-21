@@ -70,7 +70,7 @@ MCP、持久化等待、受控记忆和无 Session 入口是 Agent 的扩展轨�
 
 “需要查询外部系统”本身不是 MCP 触发条件。已有受控 Tool 或固定 API 适配器能够满足时继续使用现有路径。
 
-选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及自动生效摘要、Agent Version 的 `all`/`selected`/`none` 范围、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。连接器健康时默认对全部 Agent 开放，但 Agent 创建者可以按整个 Connector 收窄；不提供逐 Tool Grant，也不生成平台 Tool Version/Binding。Agent 发布只固定使用范围，不携带或改变 Connector 地址与凭据。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。
+选择 MCP 后必须补：服务身份、Streamable HTTP 传输与网络范围、凭据引用、完整 Tool 清单及生效清单摘要（新增或 Schema 变化须确认）、Agent Version 的 `selected`/`none` 范围、命名空间冲突处理、超时取消、实际 Tool 调用审计、漂移同步以及错误服务/凭据、停用和删除测试。Agent 创建者按整个 Connector 显式选择，新 Agent 默认不使用 MCP；不提供逐 Tool Grant，也不生成平台 Tool Version/Binding。Agent 发布只固定使用范围，不携带或改变 Connector 地址与凭据。MCP Resources、Prompts、stdio 和包内任意服务进程当前不支持。
 
 ### 4.2 持久化等待与长流程
 

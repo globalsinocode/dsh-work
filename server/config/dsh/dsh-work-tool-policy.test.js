@@ -303,33 +303,52 @@ function capturePolicy(schemas = []) {
   return { guard, preExecute, registered, toolsChanged, sessionStarted, schemaScopes }
 }
 
-test('MCP permission requires the exact reviewed server capability digest', () => {
-  const capability = { name: 'query_inventory', description: 'Query inventory.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
+function approvedTools(serverName, capabilities) {
+  return JSON.stringify([{
+    serverName,
+    tools: capabilities.map(capability => ({
+      name: capability.name,
+      schemaDigest: createHash('sha256').update(stableJson(capability.inputSchema)).digest('hex'),
+    })),
+  }])
+}
+
+test('MCP permission is checked per approved Tool against the currently loaded input Schema', () => {
+  const capability = { name: 'query_inventory', description: 'Query inventory.', inputSchema: { type: 'object', properties: { sku: { type: 'string' } } } }
   process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp_read"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp_read', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('erp_read', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
-  const schemas = [{ name: 'mcp__erp_read__query_inventory', description: capability.description, parameters: capability.inputSchema }]
-  const { guard, toolsChanged } = capturePolicy(schemas)
+  // 键顺序不同不影响摘要；描述变化不影响放行。
+  const schemas = [{ name: 'mcp__erp_read__query_inventory', description: 'Changed wording.', parameters: { properties: { sku: { type: 'string' } }, type: 'object' } }]
+  const { guard } = capturePolicy(schemas)
 
   assert.equal(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), undefined)
   assert.match(guard({ name: 'mcp__erp_write__update_inventory', arguments: {} }), /未授权工具/)
   assert.match(guard({ name: 'mcp__erp_read_extra__query_inventory', arguments: {} }), /未授权工具/)
+  // 远端新增的未确认 Tool 被拒绝，但不影响已生效的 Tool。
   schemas.push({ name: 'mcp__erp_read__export_inventory', description: 'Export inventory.', parameters: { type: 'object' } })
-  toolsChanged()
-  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
-  schemas.pop()
+  assert.match(guard({ name: 'mcp__erp_read__export_inventory', arguments: {} }), /尚未确认生效/)
+  assert.equal(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), undefined)
+  // 输入 Schema 变化后暂停，直到管理员确认。
   schemas[0].parameters = { type: 'object', required: ['warehouse'] }
-  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
+  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /输入 Schema 已变化/)
+})
+
+test('MCP permission fails closed on the legacy whole-server digest format', () => {
+  process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'crm', digest: 'a'.repeat(64) }])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  const { guard } = capturePolicy([{ name: 'mcp__crm__customer_get', description: 'Read.', parameters: { type: 'object' } }])
+  assert.match(guard({ name: 'mcp__crm__customer_get', arguments: {} }), /尚未确认生效/)
 })
 
 test('MCP permission resolves tool names from configured server namespaces', () => {
   const capability = { name: 'customer__get', description: 'Read one customer.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
   process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'crm', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('crm', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
   const schemas = [{ name: 'mcp__crm__customer__get', description: capability.description, parameters: capability.inputSchema }]
   const { guard } = capturePolicy(schemas)
@@ -379,10 +398,9 @@ test('current authorization is checked on every built-in tool call and does not 
 
 test('release trial returns trial_only for reviewed MCP calls without reaching the server', async () => {
   const capability = { name: 'create_po', description: 'Create a purchase order.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
   process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('erp', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
   process.env.DSH_TOOL_APPROVAL_MODE = 'never'
   const schemas = [{ name: 'mcp__erp__create_po', description: capability.description, parameters: capability.inputSchema }]

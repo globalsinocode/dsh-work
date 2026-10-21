@@ -3,6 +3,7 @@ import { authorizationDenied, isAuthorizationDenial } from '../../domain/authori
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
 export class AuthorizationCheckUnavailableError extends Error {
@@ -29,8 +30,8 @@ type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
   & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun'>>
 
-type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
-  'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
+type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService, 'assertActiveToolBindings'>
+  & Pick<McpScopePort, 'assertPinnedConnections'>>
 
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
 export async function assertCurrentExecutionAuthorization(
@@ -50,8 +51,8 @@ export async function assertCurrentExecutionAuthorization(
       await bindings.assertActiveToolBindings(manifest.tool_bindings)
     }
     if (manifest.mcp_connections?.length) {
-      if (!bindings?.assertActiveMcpConnections || !manifest.agent_version_id) throw new ToolBindingCheckUnavailableError()
-      await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+      if (!bindings?.assertPinnedConnections) throw new ToolBindingCheckUnavailableError()
+      await bindings.assertPinnedConnections(manifest.mcp_connections)
     }
     if (manifest.agent_version_id) await authorization.requireActiveAgentPrincipal(manifest.agent_version_id)
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-

@@ -255,10 +255,10 @@ async function inspectConnector(connector: ConnectorDefinition) {
     { label: '当前延迟', value: connector.latency },
     ...(connector.mcp ? [
       { label: 'MCP 命名空间', value: connector.mcp.serverName },
-      { label: '能力状态', value: connector.mcp.capabilityDigest === connector.mcp.approvedDigest ? '已同步生效' : '待重新检查' },
+      { label: '能力状态', value: connector.mcp.pendingCapabilities.length ? `${connector.mcp.capabilityCount} 个 Tool 生效，${connector.mcp.pendingCapabilities.length} 个待确认` : '已同步生效' },
       { label: '能力摘要', value: connector.mcp.capabilityDigest ?? '尚未发现' },
       { label: 'Tool 描述与输入 Schema', value: formatMcpCapabilities(connector) },
-      { label: '适用 Agent', value: '全部 Agent' },
+      { label: '适用 Agent', value: '在 Agent 能力配置中选择' },
       { label: '最近调用', value: invocationSummary },
     ] : []),
   ], 'connector', connector.id)
@@ -528,6 +528,7 @@ async function checkConnector(connector: ConnectorDefinition) {
       duration: 8000,
     })
     else if (updated.status === 'disabled') ElMessage.info(`${connector.name}检查完成，仍保持人工停用；需要恢复时请显式启用`)
+    else if (updated.status === 'healthy' && updated.mcp?.pendingCapabilities.length) ElMessage.warning(`${connector.name}检查通过，${updated.mcp.capabilityCount} 个 Tool 生效，${updated.mcp.pendingCapabilities.length} 个新增或变更的 Tool 待确认`)
     else if (updated.status === 'healthy') ElMessage.success(`${connector.name}检查通过，${updated.mcp?.capabilityCount ?? 0} 个 Tool 已同步生效`)
     else ElNotification.error({
       title: `连接器异常：${connector.name}`,
@@ -541,6 +542,29 @@ async function checkConnector(connector: ConnectorDefinition) {
       message: `原因：${failure.message ?? '健康检查未完成'}。下一步：${failure.suggestion ?? '检查连接器配置和系统健康后重试。'}${failure.traceId && failure.traceId !== '—' ? ` 链路编号：${failure.traceId}` : ''}`,
       duration: 8000,
     })
+  } finally {
+    actionLoading.value = ''
+  }
+}
+
+async function approveMcpCapabilities(connector: ConnectorDefinition) {
+  const pending = connector.mcp?.pendingCapabilities ?? []
+  if (!connector.mcp?.capabilityDigest || !pending.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确认后以下 Tool 立即对选择了该连接器的 Agent 生效：${pending.map(item => item.name).join('、')}。正在运行的任务不受影响。`,
+      `确认“${connector.name}”的能力变更？`,
+      { confirmButtonText: '确认生效', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  actionLoading.value = `mcp-approve:${connector.id}`
+  try {
+    const updated = await contentStore.approveMcpCapabilities(connector.id, connector.mcp.capabilityDigest)
+    ElMessage.success(`已确认，${updated.mcp?.capabilityCount ?? 0} 个 Tool 生效`)
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : '确认失败，请重新检查后再试')
   } finally {
     actionLoading.value = ''
   }
@@ -882,7 +906,7 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column label="名称" min-width="180"><template #default="scope"><strong class="mcp-name">{{ scope.row.name }}</strong></template></el-table-column>
         <el-table-column label="Endpoint" min-width="280"><template #default="scope"><code class="mcp-endpoint">{{ scope.row.endpoint }}</code></template></el-table-column>
         <el-table-column label="认证方式" width="120"><template #default="scope">{{ scope.row.authType === 'bearer' ? 'Bearer Token' : '无认证' }}</template></el-table-column>
-        <el-table-column label="工具数量" width="130" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button></template></el-table-column>
+        <el-table-column label="工具数量" width="130" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button><el-tag v-if="scope.row.mcp?.pendingCapabilities.length" size="small" type="warning" class="mcp-pending-tag">{{ scope.row.mcp.pendingCapabilities.length }} 待确认</el-tag></template></el-table-column>
         <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" :label="connectorStatusLabel(scope.row)" dot /></template></el-table-column>
         <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatConnectorDateTime(scope.row.updatedAt) }}</template></el-table-column>
         <el-table-column label="添加时间" width="175"><template #default="scope">{{ formatConnectorDateTime(scope.row.createdAt) }}</template></el-table-column>
@@ -918,9 +942,21 @@ onUnmounted(() => clearSkillTestPoll())
           <strong>输入 Schema</strong>
           <pre>{{ formatMcpInputSchema(capability.inputSchema) }}</pre>
         </article>
-        <el-empty v-if="!(selectedMcpToolsConnector?.mcp?.capabilities.length)" description="当前未发现工具" :image-size="64" />
+        <el-empty v-if="!(selectedMcpToolsConnector?.mcp?.capabilities.length)" description="当前没有生效的工具" :image-size="64" />
+        <template v-if="selectedMcpToolsConnector?.mcp?.pendingCapabilities.length">
+          <el-alert type="warning" :closable="false" show-icon title="以下 Tool 为新增或输入 Schema 已变化，确认前 Agent 不能调用" />
+          <article v-for="capability in selectedMcpToolsConnector.mcp.pendingCapabilities" :key="`pending-${capability.name}`" class="mcp-tool-item mcp-tool-item--pending">
+            <code>{{ capability.name }}</code>
+            <p>{{ capability.description || '无描述' }}</p>
+            <strong>输入 Schema</strong>
+            <pre>{{ formatMcpInputSchema(capability.inputSchema) }}</pre>
+          </article>
+        </template>
       </div>
-      <template #footer><el-button type="primary" @click="mcpToolsDialogOpen = false">关闭</el-button></template>
+      <template #footer>
+        <el-button v-if="authStore.canManage && selectedMcpToolsConnector?.mcp?.pendingCapabilities.length" type="warning" :loading="actionLoading === `mcp-approve:${selectedMcpToolsConnector.id}`" data-action="approve-mcp-capabilities" @click="approveMcpCapabilities(selectedMcpToolsConnector)">确认生效</el-button>
+        <el-button type="primary" @click="mcpToolsDialogOpen = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="mcpCreateDialogOpen" title="新增 MCP Connector" width="min(640px, calc(100vw - 32px))" destroy-on-close @closed="resetMcpCreateForm">
@@ -933,7 +969,7 @@ onUnmounted(() => clearSkillTestPoll())
       </el-form>
       <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />
       <el-alert v-else-if="mcpTestError" type="error" :closable="false" show-icon :title="mcpTestError.title" :description="mcpTestError.description" />
-      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；登记复核成功后连接器与 Tool 清单立即生效，并对全部 Agent 开放。" />
+      <el-alert v-else type="info" :closable="false" show-icon title="先通过 DSH 测试 Streamable HTTP 连通性并发现 Tool；登记复核成功后连接器与 Tool 清单立即生效，可在 Agent 中选择使用；之后远端新增或变更的 Tool 需在工具清单中确认后才生效。" />
       <template #footer><el-button @click="mcpCreateDialogOpen = false">取消</el-button><el-button :loading="mcpTesting" :disabled="!mcpConnectionInputReady || mcpCreating" data-action="test-mcp-connection" @click="testMcpConnection">测试连接</el-button><el-button type="primary" :loading="mcpCreating" :disabled="!mcpCanRegister || mcpTesting" data-action="confirm-add-mcp-connector" @click="registerMcpConnector">添加 MCP</el-button></template>
     </el-dialog>
 
@@ -1144,6 +1180,8 @@ onUnmounted(() => clearSkillTestPoll())
 .mcp-tool-item p { margin: 8px 0 12px; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.55; }
 .mcp-tool-item strong { color: var(--color-text-secondary); font-size: var(--font-size-micro); }
 .mcp-tool-item pre { max-height: 220px; margin: 6px 0 0; padding: 10px; overflow: auto; border-radius: var(--radius-button); color: var(--color-text-primary); background: var(--color-bg-base); font-size: var(--font-size-micro); line-height: 1.5; white-space: pre-wrap; }
+.mcp-tool-item--pending { border-color: var(--color-warning); }
+.mcp-pending-tag { margin-left: 6px; }
 .mcp-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .capability-detail__notice { display: flex; align-items: flex-start; gap: 9px; padding: 13px; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
 .capability-detail__notice p { margin: 0; font-size: var(--font-size-badge); line-height: 1.6; }

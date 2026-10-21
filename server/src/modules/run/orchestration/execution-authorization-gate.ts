@@ -114,9 +114,9 @@ export class ExecutionAuthorizationGate {
       }
     }
     if (manifest.mcp_connections?.length) {
-      if (!this.deps.toolBindings || !manifest.agent_version_id) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
+      if (!this.deps.toolBindings?.assertPinnedConnections) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
       try {
-        await this.deps.toolBindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+        await this.deps.toolBindings.assertPinnedConnections(manifest.mcp_connections)
       } catch (error) {
         if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
           return { denied: true, reason: error instanceof Error ? error.message : String(error) }

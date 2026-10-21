@@ -6,7 +6,7 @@ async function data<T>(response: APIResponse): Promise<T> {
   return (await response.json()).data as T
 }
 
-test('PF-MCP-01: Connector registration and capability changes take effect automatically', async ({ page }) => {
+test('PF-MCP-01: Connector registration is effective at once and later capability changes need confirmation', async ({ page }) => {
   const suffix = randomUUID().slice(0, 8)
   const connectorName = `P1 CRM MCP ${suffix}`
   const initialToken = `p1-initial-${suffix}`
@@ -68,7 +68,7 @@ test('PF-MCP-01: Connector registration and capability changes take effect autom
   await expect(detail).toContainText('输入 Schema')
   await expect(detail).toContainText('"id"')
   await expect(detail).toContainText('适用 Agent')
-  await expect(detail).toContainText('全部 Agent')
+  await expect(detail).toContainText('在 Agent 能力配置中选择')
   await page.keyboard.press('Escape')
   await row.getByRole('button', { name: '更多', exact: true }).click()
   await expect(page.getByRole('menuitem', { name: 'Agent 权限', exact: true })).toHaveCount(0)
@@ -79,11 +79,23 @@ test('PF-MCP-01: Connector registration and capability changes take effect autom
   )
   expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
 
+  // 远端新增 Tool：检查后进入待确认，确认前不生效。
   await data(await page.request.post('/api/admin/v1/test/mcp/capabilities', { data: { changed: true } }))
   await row.getByRole('button', { name: '检查', exact: true }).click()
-  await expect(page.getByText(`${connectorName}检查通过，3 个 Tool 已同步生效`, { exact: true })).toBeVisible()
+  await expect(page.getByText(`${connectorName}检查通过，2 个 Tool 生效，1 个新增或变更的 Tool 待确认`, { exact: true })).toBeVisible()
   await expect(row).toContainText('已生效')
-  await expect(row).toContainText('3')
+  await expect(row).toContainText('1 待确认')
+  await row.getByRole('button', { name: '2 个', exact: true }).click()
+  const pendingDialog = page.getByRole('dialog', { name: `工具清单 · ${connectorName}` })
+  await expect(pendingDialog).toContainText('确认前 Agent 不能调用')
+  await expect(pendingDialog).toContainText('customer_export')
+  await pendingDialog.getByRole('button', { name: '确认生效', exact: true }).click()
+  await page.getByRole('dialog', { name: `确认“${connectorName}”的能力变更？` })
+    .getByRole('button', { name: '确认生效', exact: true }).click()
+  await expect(page.getByText('已确认，3 个 Tool 生效', { exact: true })).toBeVisible()
+  await pendingDialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(row.getByRole('button', { name: '3 个', exact: true })).toBeVisible()
+  await expect(row).not.toContainText('待确认')
   evidence = await data(await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))

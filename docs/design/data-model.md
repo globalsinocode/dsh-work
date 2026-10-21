@@ -132,7 +132,7 @@ flowchart LR
 | `tools`、`tool_versions` | 工具与版本 | 平台内置工具的审批策略由平台固定 |
 | `tool_binding_revisions` | 工具绑定修订（执行器、端点、凭据、授权与审批策略） | 每次变更新增修订；Agent 版本与 Attempt 固定引用修订，撤销或漂移后执行前复核会拒绝 |
 | `connectors`、`connector_health_checks` | 连接器与健康检查 | 健康状态与配置分离 |
-| `mcp_connector_profiles` | MCP 连接器的发现结果与审核状态 | 只支持 Streamable HTTP；能力摘要变化需重新审核 |
+| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单 |
 | `credential_refs`、`credential_secrets` | 凭据引用与加密密文 | 密文为 AES-256-GCM；接口不回显、不导出密钥正文 |
 
 ## 8. 模型与 Runtime

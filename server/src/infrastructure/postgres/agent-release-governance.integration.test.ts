@@ -10,6 +10,7 @@ import type { AgentMcpScope } from '../../domain/types.ts'
 import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { PostgresMcpConnectorService } from '../../modules/tool/postgres-mcp-connector-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
@@ -42,6 +43,7 @@ let validation: PostgresAgentValidationService
 let orchestration: RunOrchestrationService
 let trialRuntime: TrialStubRuntime
 let tools: PostgresToolConnectorService
+let mcp: PostgresMcpConnectorService
 let access: PostgresAgentAccessService
 
 before(async () => {
@@ -50,8 +52,9 @@ before(async () => {
   await database`update runtimes set capacity = 4, scheduling_status = 'accepting'`
   trialRuntime = new TrialStubRuntime()
   tools = new PostgresToolConnectorService(database, trialRuntime)
+  mcp = new PostgresMcpConnectorService(database, trialRuntime)
   const skills = new PostgresSkillService(database, undefined, tools)
-  agents = new PostgresAgentService(database, undefined, skills, tools)
+  agents = new PostgresAgentService(database, undefined, skills, tools, mcp)
   orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
     new PostgresConversationRepository(database),
@@ -63,9 +66,9 @@ before(async () => {
     undefined,
     // 验证案例在执行时复核平台管理权限与 Agent 身份快照，测试环境接真实授权服务。
     new PostgresAuthorizationService(database),
-    { toolBindings: tools },
+    { toolBindings: { assertActiveToolBindings: (pins, db) => tools.assertActiveToolBindings(pins, db), assertPinnedConnections: pins => mcp.assertPinnedConnections(pins) } },
   )
-  validation = new PostgresAgentValidationService(database, agents, skills, tools, orchestration)
+  validation = new PostgresAgentValidationService(database, agents, skills, tools, orchestration, mcp)
   access = new PostgresAgentAccessService(database, tools)
   await createAdminUser(ADMIN)
 })
@@ -567,29 +570,28 @@ test('S3 验证案例车道最多并行两路，并为交互执行保留一个�
 
 test('S3 验证案例按版本的 MCP 范围装配连接器', async () => {
   const suffix = randomUUID().slice(0, 8)
-  const first = await tools.registerMcpConnector({
+  const first = await mcp.registerMcpConnector({
     name: `验证数据源甲 ${suffix}`, endpoint: `https://source-a-${suffix}.example.test/mcp`,
     authType: 'none', scopeDescription: '仅用于隔离验证的合成数据', actor: ADMIN,
   })
-  const second = await tools.registerMcpConnector({
+  const second = await mcp.registerMcpConnector({
     name: `验证数据源乙 ${suffix}`, endpoint: `https://source-b-${suffix}.example.test/mcp`,
     authType: 'none', scopeDescription: '仅用于隔离验证的合成数据', actor: ADMIN,
   })
-  const scopes: Array<{ mode: 'all' | 'selected' | 'none'; scope: AgentMcpScope; expected: string[] }> = [
-    { mode: 'all', scope: { mode: 'all', connectorIds: [] }, expected: [first.id, second.id] },
+  const scopes: Array<{ mode: 'selected' | 'none'; scope: AgentMcpScope; expected: string[] }> = [
     { mode: 'selected', scope: { mode: 'selected', connectorIds: [first.id] }, expected: [first.id] },
+    { mode: 'selected', scope: { mode: 'selected', connectorIds: [first.id, second.id] }, expected: [first.id, second.id] },
     { mode: 'none', scope: { mode: 'none', connectorIds: [] }, expected: [] },
   ]
   for (const { mode, scope, expected } of scopes) {
-    const agentId = `agent-validate-mcp-${mode}-${suffix}`
+    const agentId = `agent-validate-mcp-${mode}-${expected.length}-${suffix}`
     await createDraftAgent(agentId, { skills: [], tools: [], mcpScope: scope })
     const overview = await validation.getOverview(agentId)
     assert.equal(overview.usesMcp, mode !== 'none')
     const done = await runValidation(agentId)
     const manifest = trialRuntime.manifest(done.cases[0]!.runId!)!
     const connectors = (manifest.mcp_connections ?? []).map(item => item.connector_id)
-    for (const id of expected) assert.ok(connectors.includes(id), `${mode} 应装配 ${id}`)
-    if (mode !== 'all') assert.deepEqual(connectors.sort(), [...expected].sort())
+    assert.deepEqual(connectors.sort(), [...expected].sort())
     assert.equal(manifest.permission_policy.network_policy, connectors.length ? 'allowlist' : 'deny')
   }
 })

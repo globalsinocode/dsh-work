@@ -69,6 +69,7 @@ import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { SkillArtifactStore } from './modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
+import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
@@ -177,7 +178,7 @@ async function start() {
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
-  const toolServiceRef: { current?: PostgresToolConnectorService } = {}
+  const mcpServiceRef: { current?: PostgresMcpConnectorService } = {}
   const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
@@ -194,16 +195,16 @@ async function start() {
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
     resolveMcpConnections: async manifest => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
-      return toolServiceRef.current.resolveMcpRuntimeConnections(manifest)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
+      return mcpServiceRef.current.resolveRuntimeConnections(manifest)
     },
     recordMcpInvocation: async (manifest, invocation) => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
-      await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+      await mcpServiceRef.current.recordMcpInvocation(manifest, invocation)
     },
     finalizeMcpInvocationAudit: async manifest => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
-      await toolServiceRef.current.finalizeMcpInvocationAudit(manifest)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+      await mcpServiceRef.current.finalizeMcpInvocationAudit(manifest)
     },
     permissionDecision: async (_request, manifest, context) => {
       if (!persistentWaitRef.current) return 'reject_once'
@@ -269,8 +270,9 @@ async function start() {
         keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
       })
     : undefined
-  const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets)
-  toolServiceRef.current = toolService
+  const toolService = new PostgresToolConnectorService(database, runtime, operations)
+  const mcpService = new PostgresMcpConnectorService(database, runtime, operations, credentialSecrets)
+  mcpServiceRef.current = mcpService
   // Management-plane inventory refresh is best effort: execution capability
   // failures must not prevent the core API from starting. Administrators can
   // retry the same full reconciliation from the Tool management page.
@@ -290,7 +292,7 @@ async function start() {
     }
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
-  const agents = new PostgresAgentService(database, operations, skills, toolService)
+  const agents = new PostgresAgentService(database, operations, skills, toolService, mcpService)
   const knowledge = new PostgresKnowledgeService(database)
   const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
   controlledMemoryRef.current = controlledMemory
@@ -321,7 +323,10 @@ async function start() {
       agentMembers: workspaceAgentMembers,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
       // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
-      toolBindings: toolService,
+      toolBindings: {
+        assertActiveToolBindings: (pins, db) => toolService.assertActiveToolBindings(pins, db),
+        assertPinnedConnections: pins => mcpService.assertPinnedConnections(pins),
+      },
       tasks,
       memory: controlledMemory,
       projectTasks: projects,
@@ -411,14 +416,14 @@ async function start() {
   registerProjectRoutes(router, projects, authorization, projectArchive)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
   registerAgentRoutes(router, agents, new PostgresAgentAccessService(database, toolService))
-  const agentValidation = new PostgresAgentValidationService(database, agents, skills, toolService, orchestration)
+  const agentValidation = new PostgresAgentValidationService(database, agents, skills, toolService, orchestration, mcpService)
   // 启动收敛：重启前尚未取得 Run 的验证案例标为“服务重启中断”，可单独重跑；
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
   registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills)
-  registerToolRoutes(router, toolService)
+  registerToolRoutes(router, toolService, mcpService)
   registerWorkbenchAgentRoutes(router, agents, authorization)
   registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))
 

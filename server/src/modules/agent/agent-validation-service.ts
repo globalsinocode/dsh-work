@@ -5,6 +5,7 @@ import { requirePlatformAdminActor } from '../authorization/platform-admin-actor
 import { resolveAudienceCeiling } from '../authorization/agent-audience-ceiling.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
 import type { PostgresAgentService } from './postgres-agent-service.ts'
 import type { ReleaseTrialResult, ReleaseTrialRunner } from './release-trial-runner.ts'
 import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
@@ -177,6 +178,7 @@ export class PostgresAgentValidationService {
   private readonly skills?: PostgresSkillService
   private readonly tools?: PostgresToolConnectorService
   private readonly runner?: ReleaseTrialRunner
+  private readonly mcp?: McpScopePort
 
   constructor(
     database: DatabaseClient,
@@ -184,12 +186,14 @@ export class PostgresAgentValidationService {
     skills?: PostgresSkillService,
     tools?: PostgresToolConnectorService,
     runner?: ReleaseTrialRunner,
+    mcp?: McpScopePort,
   ) {
     this.database = database
     this.agents = agents
     this.skills = skills
     this.tools = tools
     this.runner = runner
+    this.mcp = mcp
   }
 
   /* ---------- Reading ---------- */
@@ -651,8 +655,8 @@ export class PostgresAgentValidationService {
     let mcpError: string | undefined
     if (version.mcpScope?.mode === 'selected') {
       try {
-        if (!this.tools) throw new Error('MCP Connector 服务未接入')
-        await this.tools.resolveMcpConnectionsForAgentVersion(version.id)
+        if (!this.mcp) throw new Error('MCP Connector 服务未接入')
+        await this.mcp.resolveConnections(version.mcpScope)
       } catch (error) {
         mcpError = error instanceof Error ? error.message : String(error)
       }
@@ -733,8 +737,8 @@ export class PostgresAgentValidationService {
       }
     }
     if (candidate.mcpScope?.mode === 'selected') {
-      if (!this.tools) throw new Error('MCP Connector 服务未接入')
-      await this.tools.resolveMcpConnectionsForAgentVersion(candidate.id)
+      if (!this.mcp) throw new Error('MCP Connector 服务未接入')
+      await this.mcp.resolveConnections(candidate.mcpScope)
     }
   }
 

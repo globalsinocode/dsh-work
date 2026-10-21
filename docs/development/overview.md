@@ -43,7 +43,7 @@ MVP 明确不包含：
 - Skill 的 `SKILL.md`、参考文件和脚本保存在 `DSH_WORK_DATA_ROOT/skills` 的内容寻址文件夹中；PostgreSQL 只保存相对引用和校验索引，数据库与该数据目录必须成组备份和恢复；
 - 企业身份由服务端建立，浏览器传入的用户、角色或操作人字段不能作为授权事实；
 - DSH 只能通过受控适配器和平台能力调用模型、Tool 与成果存储；
-- MCP 复用 Connector 控制面，健康且能力快照已同步的 MCP Server 默认对全部 Agent 可用；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
+- MCP 复用 Connector 控制面，Agent Version 按整个 Connector 显式选择（`selected`，默认 `none`）；新增或输入 Schema 变化的 MCP Tool 须管理员确认后才生效；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
 - 使用 AI Hub 账号时，上游不可用不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
 
 ## 3. 架构原则
@@ -86,7 +86,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 ### 3.6 工具分类与管理边界
 
-运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 普通内置工具从当前 Profile 批量同步进入平台目录：普通业务工具都有 Tool/Tool Version 记录，但只有完成平台安全准入的工具才获得 `connector-dsh-workspace` 活动 Binding，并可由 Agent Version 精确引用；尚未准入或已从当前 Profile 消失的普通工具记录保留可见、保持停用且不能授权。文件工具 `read_image`、`str_replace_editor` 和网络工具 `web_search` 在平台路径/查询参数约束下自动准入；`web_fetch` 在 DSH 实现连接层私网地址与重定向防护前保持不可准入且禁止执行。DSH Agent 协作与 Runtime 控制工具不进入普通工具列表，分别通过 Skill、工作流等平台流程治理，Agent 间协作暂不开放。dsh-work 内置执行工具由 Agent/Skill Manifest 声明；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
+运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 普通内置工具从当前 Profile 批量同步进入平台目录：普通业务工具都有 Tool/Tool Version 记录，但只有完成平台安全准入的工具才获得 `connector-dsh-workspace` 活动 Binding，并可由 Agent Version 精确引用；尚未准入或已从当前 Profile 消失的普通工具记录保留可见、保持停用且不能授权。文件工具 `read_image`、`str_replace_editor` 和网络工具 `web_search` 在平台路径/查询参数约束下自动准入；`web_fetch` 在 DSH 实现连接层私网地址与重定向防护前保持不可准入且禁止执行。DSH Agent 协作与 Runtime 控制工具不进入普通工具列表，分别通过 Skill、工作流等平台流程治理，Agent 间协作暂不开放。dsh-work 内置执行工具由 Agent/Skill Manifest 声明；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不获得平台 Tool Version/Binding，平台内置工具也不能借 Connector 或普通 Tool 配置扩大用途。
 

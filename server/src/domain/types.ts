@@ -6,7 +6,6 @@ export type UserRole = 'employee' | 'department_manager' | 'business_admin' | 'p
 
 /** Versioned Agent policy; Connector administration and credentials stay tenant-owned. */
 export type AgentMcpScope =
-  | { mode: 'all'; connectorIds: [] }
   | { mode: 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
 
@@ -532,7 +531,10 @@ export interface ConnectorDefinition {
     capabilityDigest: string | null
     approvedDigest: string | null
     capabilityCount: number
+    /** 生效清单：Agent 运行时只能调用这些 Tool。 */
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    /** 已发现但未生效的 Tool（新增或输入 Schema 变化），须管理员确认。 */
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null

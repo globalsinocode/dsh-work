@@ -45,17 +45,9 @@ export function apply(ctx) {
 
   const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
   let calls = 0
-  let verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
-  const refreshMcpCapabilityDigests = () => {
-    verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
-  }
-  ctx.on('tools/change', refreshMcpCapabilityDigests)
-  const denialReason = execution => {
-    // Recompute here as a fail-closed fallback in case a third-party plugin
-    // mutates its catalog without emitting tools/change.
-    refreshMcpCapabilityDigests()
-    return validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot)
-  }
+  // MCP 逐工具校验每次都读取 DSH 当前加载的 Schema，远端在运行中改变工具清单时同样生效。
+  const denialReason = execution =>
+    validateExecution(execution, allowedTools, allowedMcpServers, approvedMcpCapabilities, () => ctx.tools.schemas(), workspaceRoot)
 
   ctx.on('tools/pre-execute', async (execution, next) => {
     const denial = denialReason(execution)
@@ -176,6 +168,7 @@ function parseAllowedMcpServers(value) {
   }
 }
 
+/** 生效清单：serverName → (Tool 名称 → 输入 Schema 摘要)。格式错误时整体为空（fail closed）。 */
 function parseApprovedMcpCapabilities(value) {
   const approved = new Map()
   if (!value) return approved
@@ -186,9 +179,14 @@ function parseApprovedMcpCapabilities(value) {
       if (!isRecord(item)
         || typeof item.serverName !== 'string'
         || !/^[A-Za-z0-9_-]{1,32}$/.test(item.serverName)
-        || typeof item.digest !== 'string'
-        || !/^[a-f0-9]{64}$/.test(item.digest)) return new Map()
-      approved.set(item.serverName, { digest: item.digest })
+        || !Array.isArray(item.tools)) return new Map()
+      const tools = new Map()
+      for (const tool of item.tools) {
+        if (!isRecord(tool) || typeof tool.name !== 'string' || !tool.name
+          || typeof tool.schemaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(tool.schemaDigest)) return new Map()
+        tools.set(tool.name, tool.schemaDigest)
+      }
+      approved.set(item.serverName, tools)
     }
     return approved
   } catch {
@@ -235,6 +233,7 @@ function recordApprovalRequest(path, execution) {
   }
 }
 
+/** 与平台 server/src/modules/runtime/canonical-json.ts 对 JSON 值的结果一致（对象键排序）。 */
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
@@ -257,14 +256,12 @@ function approvalDataVersion(parameters) {
   return 'unspecified'
 }
 
-function validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot) {
+function validateExecution(execution, allowedTools, allowedMcpServers, approvedMcpCapabilities, loadSchemas, workspaceRoot) {
   const mcpServer = matchConfiguredMcpServer(execution.name, allowedMcpServers)
   if (!allowedTools.has(execution.name) && !(mcpServer && allowedMcpServers.has(mcpServer))) {
     return `dsh-work Runtime Manifest 未授权工具：${execution.name}`
   }
-  if (mcpServer && !verifiedMcpServers.has(mcpServer)) {
-    return `dsh-work MCP 能力清单与已审核摘要不一致：${mcpServer}`
-  }
+  if (mcpServer) return validateMcpExecution(execution.name, mcpServer, approvedMcpCapabilities, loadSchemas())
 
   const webDenial = validateWebExecution(execution)
   if (webDenial !== undefined) return webDenial
@@ -339,27 +336,17 @@ function matchConfiguredMcpServer(toolName, serverNames) {
     .find(serverName => toolName.startsWith(`mcp__${serverName}__`))
 }
 
-function verifyMcpCapabilityDigests(allowedServers, approved, schemas) {
-  const verified = new Set()
-  for (const serverName of allowedServers) {
-    const expected = approved.get(serverName)
-    if (!expected) continue
-    const prefix = `mcp__${serverName}__`
-    const capabilities = schemas.flatMap(schema => {
-      if (!isRecord(schema) || typeof schema.name !== 'string' || !schema.name.startsWith(prefix)
-        || typeof schema.description !== 'string' || !isRecord(schema.parameters)) return []
-      return [{
-        name: schema.name.slice(prefix.length),
-        description: schema.description.trim().slice(0, 2000),
-        inputSchema: JSON.parse(JSON.stringify(schema.parameters)),
-      }]
-    }).sort((left, right) => left.name.localeCompare(right.name))
-    if (capabilities.length
-      && createHash('sha256').update(JSON.stringify(capabilities)).digest('hex') === expected.digest) {
-      verified.add(serverName)
-    }
+/** 只放行生效清单中的 Tool，且 DSH 当前加载的输入 Schema 摘要与确认时一致。 */
+function validateMcpExecution(toolName, serverName, approvedMcpCapabilities, schemas) {
+  const capabilityName = toolName.slice(`mcp__${serverName}__`.length)
+  const expected = approvedMcpCapabilities.get(serverName)?.get(capabilityName)
+  if (!expected) return `dsh-work MCP Tool 尚未确认生效：${toolName}`
+  const schema = schemas.find(candidate => isRecord(candidate) && candidate.name === toolName)
+  if (!schema || !isRecord(schema.parameters)
+    || createHash('sha256').update(canonicalJson(schema.parameters)).digest('hex') !== expected) {
+    return `dsh-work MCP Tool 输入 Schema 已变化，待管理员确认：${toolName}`
   }
-  return verified
+  return undefined
 }
 
 function realpathWithMissingTail(candidate) {

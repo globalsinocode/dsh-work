@@ -17,10 +17,10 @@ test('MCP scope rejects ambiguous or invalid selections', () => {
   for (const scope of [
     { mode: 'selected', connectorIds: [] },
     { mode: 'none', connectorIds: ['mcp-a'] },
-    { mode: 'all', connectorIds: ['mcp-a'] },
+    { mode: 'all', connectorIds: [] },
     { mode: 'selected', connectorIds: [''] },
     { mode: 'selected', connectorIds: Array.from({ length: 21 }, (_, index) => `mcp-${index}`) },
-    { mode: 'all', connectorIds: [], unexpected: true },
+    { mode: 'none', connectorIds: [], unexpected: true },
   ]) {
     assert.throws(() => normalizeAgentMcpScope(scope), { status: 422, code: 'validation_failed' })
   }

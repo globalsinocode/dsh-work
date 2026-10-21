@@ -115,14 +115,13 @@ test('PF-03: pinned MCP Connectors require current connector availability before
   )
   let checked = 0
   await assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertActiveMcpConnections(pins, agentVersionId) {
+    async assertPinnedConnections(pins) {
       checked += 1
       assert.deepEqual(pins, [pin])
-      assert.equal(agentVersionId, 'agent-v1')
     },
   })
   assert.equal(checked, 1)
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
+    async assertPinnedConnections() { throw authorizationDenied('MCP connector unavailable') },
   }), { code: 'permission_denied' })
 })

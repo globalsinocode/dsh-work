@@ -255,7 +255,7 @@ export type PublishStatus = 'draft' | 'published' | 'disabled'
 export type AgentVersionStatus = PublishStatus | 'candidate'
 
 export type AgentMcpScope =
-  | { mode: 'all' | 'none'; connectorIds: [] }
+  | { mode: 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
 
 export interface AgentDefinition {
@@ -656,7 +656,10 @@ export interface ConnectorDefinition {
     capabilityDigest: string | null
     approvedDigest: string | null
     capabilityCount: number
+    /** 生效清单：Agent 运行时只能调用这些 Tool。 */
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    /** 已发现但未生效的 Tool（新增或输入 Schema 变化），须管理员确认。 */
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null

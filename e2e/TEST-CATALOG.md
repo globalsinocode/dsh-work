@@ -190,7 +190,7 @@
 1. 通过界面配置分别创建有、无 `AGENTS.md` 的 Agent；工作规程只来自配置，不读取宿主目录或输入附件中的同名文件。
 2. 无需手选 DSH 文件工具即可试运行；配置创建选择依赖文件工具的 Skill 时，平台自动解析并固定依赖，移除该 Skill 后隐式工具不残留，原先直接声明的工具保留；检查实际 Attempt 的精确工具与绑定快照、成果和授权范围。未授权文件和未批准集合不能因默认装配而被访问。
 3. 修改 Soul、`AGENTS.md`、默认工具依据或 MCP 模式后会生成新草稿版本，旧验证结果不能发布新内容；历史 Attempt 仍保留原依据。
-4. 验证 `all` 在新的 Attempt 中获得当前可用连接器、`selected` 只获得所选连接器、`none` 不获得 MCP；空选择或跨租户 ID 拒绝，已选连接器失效时拒绝验证和新执行，不回退到 `all`。
+4. 验证 `selected` 只获得所选连接器、`none` 不获得 MCP，新登记的连接器不会进入任何 Agent；提交 `all`、空选择或跨租户 ID 拒绝，已选连接器失效时拒绝验证和新执行，不回退、不跳过。
 5. 在受控 Runtime 中尝试调用未选 MCP，以及停用或改变已固定连接器后继续调用；调用被阻止且留有可回查的失败与审计依据。
 6. 编辑草稿并重新打开，确认未展示的身份授权、数据需求和预算未被清空；对话、验证运行与主动任务沿同一能力装配规则运行。
 
@@ -204,7 +204,7 @@
 
 1. 管理员通过真实 OIDC 创建包含 Soul、可选工作规程、默认 DSH 工具和选定 MCP 的 Agent，查看五类试运行的完整实际输出并逐项审核后发布；回答后段的错误声明也必须可见，不能仅凭前 240 字判断。
 2. 员工从真实会话运行它，核对 Agent Principal、版本、Attempt Manifest、MCP 精确范围、文件成果、回执与逐调用审计。
-3. 以第二账号及撤权、停用、能力变化场景核对新 Attempt 和活动调用均被正确限制；核对 `all`/`selected`/`none` 的真实使用结果。
+3. 以第二账号及撤权、停用、能力变化场景核对新 Attempt 和活动调用均被正确限制；核对 `selected`/`none` 的真实使用结果（2026-10-21 起废弃 `all`）。
 4. 在可丢弃 MCP 上制造“写入已发生、回执未确认”的在途撤权，核对未知效果提示、先查权威回执的要求和通用重试禁用；Worker 审计未完成时也不能重试原 Attempt。
 
 **初始探针证据（2026-09-27）：** DSH 0.1.2-rc.1 握手与文件读写探针通过；一次性 PostgreSQL + 合成身份 + 两个同租户本地 Bearer MCP 的真实 Run/Attempt 探针通过。`all` 完成写入与回执查询；`selected` 的 Run `run-06f46c24-04c0-4244-bbe1-11908578e905`、Attempt `attempt-adcba313-2821-4c25-b994-e48810b7042e` 含工作规程、`glob/grep/read/write` 默认工具精确引用和所选连接器，排除另一健康连接器，并实际完成写入与回执查询；`none` 的 Run `run-1933f836-274a-4008-9970-469182bcc1d5`、Attempt `attempt-a31bdcc6-279e-4966-8ca5-c1d50608449f` 无 MCP 连接或调用审计，使用默认文件工具生成并核对了 `artifact-version-011d7471ac2f08d4fa3713939975f30a`。删除选定连接器后拒绝后续解析。一次性数据库已清理。该阶段尚未覆盖真实 OIDC、多账号收权和完整发布试运行，因此初始探针本身不足以判定 AG-CAP-P2 完成；后续补充证据见下文。
@@ -932,7 +932,7 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 ## PF-03 MCP Connector 治理
 
-### PF-MCP-01 Connector 自动生效与全 Agent 可用
+### PF-MCP-01 Connector 登记生效、能力变更确认与按 Agent 选择
 
 **优先级：** P0（治理边界）
 
@@ -942,19 +942,19 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 
 **前置数据：** 隔离一次性 PostgreSQL、受控管理员、可改变 Tool 清单的合成 MCP 发现 Runtime、一个已发布 Agent；不得连接开发业务库或生产服务
 
-**spec：** `e2e/admin-mcp-connector.integration.spec.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`server/src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts`
+**spec：** `e2e/admin-mcp-connector.integration.spec.ts`、`e2e/agent-capabilities.integration.spec.ts`、`server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`、`server/src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts`
 
-1. 在“MCP 连接器”页面填写名称与 Streamable HTTP 地址，登记“上游权限说明”（说明凭据和上游服务的访问边界，不执行数据过滤）；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，连接器与当前 Tool 清单立即生效。
-2. 列表保持与 Skill 管理一致的工具栏、表格和分页结构，不增加统计卡片；列按“名称、Endpoint、认证方式、工具数量、状态、更新时间、添加时间、添加人员、操作”排列。“工具数量”可打开 Tool 名称、描述和输入 Schema 清单；操作列直接提供查看、检查，其余凭据轮换、停用或启用、删除收进“更多”；页面不出现 Agent 权限或整体审核入口。
-3. 登记成功后无需授权操作，已发布 Agent 的新 Attempt 自动解析该 Connector；确认数据库没有 Agent→Connector Grant 表，也没有在平台 Tool 列表生成 MCP Tool。详情明确显示“适用 Agent：全部 Agent”。
-4. 合成发现 Runtime 新增一个 Tool 后重新检查；确认新清单与摘要自动生效，连接器保持健康，全部 Agent 的新 Attempt 使用最新摘要，详情显示每个 Tool 的名称、描述和输入 Schema。
+1. 在“MCP 连接器”页面填写名称与 Streamable HTTP 地址，登记“上游权限说明”（说明凭据和上游服务的访问边界，不执行数据过滤）；受保护端点选择“无认证”时，“测试连接”显示该服务要求 Bearer Token，不将上游 401/403 折叠为通用 `Internal error`。填写 Bearer Token 后，“添加 MCP”保持禁用，直到执行不落库的“测试连接”并成功发现 Tool；修改名称、地址、认证方式或 Token 会使测试结果失效。添加接口再次通过 DSH 复核，复核失败不写入 Connector 或凭据；成功后平台生成 Connector 标识与 MCP 命名空间，Token 加密入库且不回显，登记时发现的 Tool 清单立即生效。
+2. 列表保持与 Skill 管理一致的工具栏、表格和分页结构，不增加统计卡片；列按“名称、Endpoint、认证方式、工具数量、状态、更新时间、添加时间、添加人员、操作”排列。“工具数量”显示生效 Tool 数，有待确认项时附“N 待确认”标记，并可打开 Tool 名称、描述和输入 Schema 清单；操作列直接提供查看、检查，其余凭据轮换、停用或启用、删除收进“更多”；页面不出现 Agent 权限入口。
+3. 登记成功后连接器不会自动进入任何 Agent；只有在 Agent 能力配置中选定该连接器的版本，其新 Attempt 才解析到它。确认数据库没有 Agent→Connector Grant 表，也没有在平台 Tool 列表生成 MCP Tool。详情显示“适用 Agent：在 Agent 能力配置中选择”。
+4. 合成发现 Runtime 新增一个 Tool 后重新检查；提示“N 个 Tool 生效，M 个新增或变更的 Tool 待确认”，新 Tool 不生效，已固定的 Attempt 不受影响。在工具清单中“确认生效”并二次确认后，新 Tool 进入生效清单，已固定原清单的 Attempt 停止，新 Attempt 使用新清单。远端删除的 Tool 在检查后立即下线；只改描述自动生效；输入 Schema 变化的 Tool 在确认前暂停。确认时清单已再次变化则返回冲突并要求刷新。
 5. 从列表轮换 Bearer Token，确认旧值不回显；新 Token 检查成功后自动恢复生效，检查失败时保持异常且不进入任何 Agent 的新 Attempt。人工停用状态不会被检查自动解除。
-6. 人工停用 Connector 后再次执行检查，状态保持“已停用”；清单可以同步，但所有 Agent 的新运行和在途调用均被拒绝。只有显式启用操作才能恢复健康状态和默认可用性。
-7. 从列表删除 Connector 并二次确认；列表立即移除该项，所有 Agent 后续运行不再解析该连接，独占 Bearer 凭据销毁；Connector 行、能力快照、健康检查和调用审计继续保留用于追溯。
-8. 从旧版“等待审核/需要重新审核”状态升级时，分别构造“当前 Bearer 凭据晚于最近检查”和“当前凭据已有后续检查”两种记录；前者保持 `degraded` 且对所有 Agent 不可用，后者才允许自动生效。对已经被旧迁移错误恢复的记录，纠正迁移应重新要求检查且不得伪造健康检查证据。
-9. 将租户健康 MCP Connector 填充至 19 个后并发登记两个连接器；仅一个成功。达到 20 个后，新增、重新启用和离线连接器检查恢复均返回容量冲突，原状态不变，任一 Agent 新 Attempt 仍最多得到 20 个连接器。
+6. 人工停用 Connector 后再次执行检查，状态保持“已停用”；清单可以同步，但选定该连接器的 Agent 的新运行和在途调用均被拒绝。只有显式启用操作才能恢复。
+7. 从列表删除 Connector 并二次确认；列表立即移除该项，选定该连接器的 Agent 后续运行被拒绝，独占 Bearer 凭据销毁；Connector 行、能力快照、健康检查和调用审计继续保留用于追溯。
+8. 从旧版“等待审核/需要重新审核”状态升级时，分别构造“当前 Bearer 凭据晚于最近检查”和“当前凭据已有后续检查”两种记录；前者保持 `degraded`，后者才允许恢复。对已经被旧迁移错误恢复的记录，纠正迁移应重新要求检查且不得伪造健康检查证据。
+9. 租户登记超过 20 个健康 MCP Connector 不受限制；单个 Agent Version 选择超过 20 个时拒绝。
 
-**验收：** MCP 复用现有 Connector 管理。管理员无需填写内部标识、命名空间或所属系统；Bearer Token 只在新增或轮换时输入，查询与详情不回显。连通测试不持久化 Connector 或 Token，测试成功后才能添加，添加时仍由服务端重新测试，不能只依赖页面状态。成功发现的 Tool 名称、描述、输入 Schema 与摘要自动成为当前生效快照，并默认对全部 Agent 可用；系统不提供 Agent 或逐 Tool 权限管理。健康检查和凭据轮换不能覆盖人工停用；只有健康且能力快照已同步的 Connector 才会进入 Agent Attempt。升级迁移只能使用晚于当前凭据的检查证据，无法确定检查与凭据版本顺序时保持 `degraded`。停用和删除会移除运行可用性，删除同时销毁独占密钥但保留治理证据。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；加密密文、运行时解密、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
+**验收：** MCP 复用现有 Connector 管理。管理员无需填写内部标识、命名空间或所属系统；Bearer Token 只在新增或轮换时输入，查询与详情不回显。连通测试不持久化 Connector 或 Token，测试成功后才能添加，添加时仍由服务端重新测试，不能只依赖页面状态。登记时的清单即生效；之后新增或输入 Schema 变化的 Tool 须管理员确认，远端删除的 Tool 立即下线；运行时策略逐 Tool 核对生效清单与当前加载的输入 Schema。Agent Version 按整个 Connector 选择，不提供逐 Tool 权限管理。健康检查和凭据轮换不能覆盖人工停用；只有被选定、健康且生效清单非空的 Connector 才会进入 Agent Attempt。停用和删除会移除运行可用性，删除同时销毁独占密钥但保留治理证据。P1 浏览器证明真实 PostgreSQL 管理状态和页面边界；加密密文、运行时解密、DSH 调用与逐调用审计由 Runtime/服务集成测试覆盖，真实外部服务证据留 PF-MCP-P2。
 
 ### PF-MCP-P2 真实 MCP 与 DSH 发布前验收
 

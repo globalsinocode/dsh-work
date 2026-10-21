@@ -1155,7 +1155,7 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显；租户最多启用 20 个",
+        "summary": "重新执行连通与 Tool 发现后登记 Streamable HTTP MCP Server，登记时发现的 Tool 即为生效清单；Bearer Token 加密入库且不回显",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" },
@@ -1211,7 +1211,7 @@
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要；恢复健康时校验 20 个容量上限",
+        "summary": "检查外部 MCP Connector，通过 DSH 重新发现 Tool：名称与输入 Schema 未变的 Tool 继续生效（描述随之更新），远端删除的 Tool 下线，新增或 Schema 变化的 Tool 进入待确认",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1220,10 +1220,35 @@
         }
       }
     },
+    "/connectors/mcp/capabilities/approve": {
+      "post": {
+        "operationId": "approveMcpCapabilities",
+        "summary": "把当前发现清单整体确认为 MCP Connector 的生效清单；capabilityDigest 须等于当前发现摘要，否则返回 409 要求刷新",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["connectorId", "capabilityDigest"],
+                "properties": {
+                  "connectorId": { "type": "string" },
+                  "capabilityDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/connectors/mcp/status": {
       "patch": {
         "operationId": "setMcpConnectorStatus",
-        "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步且未超过 20 个容量上限",
+        "summary": "启用或停用 MCP Connector；Bearer 连接器重新启用前须已完成加密凭据录入",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" }
@@ -2822,7 +2847,7 @@
             "required": ["mode", "connectorIds"],
             "additionalProperties": false,
             "properties": {
-              "mode": { "type": "string", "enum": ["all", "selected", "none"] },
+              "mode": { "type": "string", "enum": ["selected", "none"] },
               "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
             }
           },
