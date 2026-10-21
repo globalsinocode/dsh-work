@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { request } from 'node:http'
 import { test } from 'node:test'
 
+import { stateConflict } from '../../domain/request-errors.ts'
 import { platformToolOperationKey, taskOperationParameterDigest } from '../task/postgres-task-repository.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { compileToolContract, toolPreconditionFailed, type PlatformToolContract } from './platform-tool-contract.ts'
@@ -322,6 +323,52 @@ test('platform bridge preserves caller-correctable write preconditions', async (
       retryable: false,
       effect_state: 'not_started',
     })
+  } finally { await bridge.close() }
+})
+
+test('timeout waits until an aborting handler finishes cleanup', async () => {
+  let cleaned = false
+  const bridge = await createPlatformToolBridge({
+    read: {
+      contract: { ...baseContract, timeoutMs: 20 },
+      handler: async (_input, signal) => {
+        await new Promise<void>(resolve => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        await new Promise(resolve => setTimeout(resolve, 50))
+        cleaned = true
+        throw new DOMException('Aborted', 'AbortError')
+      },
+    },
+  }, 1)
+  try {
+    const timedOut = requireError((await call(bridge.socket, 'read', { value: 'x' })).body)
+    assert.equal(cleaned, true)
+    assert.equal(timedOut.code, 'TOOL_TIMEOUT')
+    assert.equal(timedOut.effect_state, 'not_started')
+  } finally { await bridge.close() }
+})
+
+test('timeout reports sandbox cleanup failure instead of a generic timeout', async () => {
+  const bridge = await createPlatformToolBridge({
+    write: {
+      contract: { ...baseContract, effect: 'write', retryPolicy: 'never', timeoutMs: 20 },
+      handler: async (_input, signal) => {
+        await new Promise<void>(resolve => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        throw stateConflict('Python 沙箱容器清理失败，容器可能仍在运行：dsh-py-test')
+      },
+    },
+  }, 1)
+  try {
+    const failed = requireError((await call(bridge.socket, 'write', { value: 'x' })).body)
+    assert.equal(failed.code, 'state_conflict')
+    assert.match(failed.message, /清理失败/)
+    assert.equal(failed.effect_state, 'unknown')
+    assert.equal(failed.retryable, false)
   } finally { await bridge.close() }
 })
 

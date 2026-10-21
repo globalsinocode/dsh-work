@@ -152,7 +152,9 @@ async function start() {
   dshInstallation = dsh.value
   dshCapability = dsh.state
   const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
-    const runner = new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE!)
+    const runner = new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE!, {
+      user: process.env.DSH_WORK_PYTHON_USER,
+    })
     await runner.preflight()
     return runner
   } : null)

@@ -94,7 +94,10 @@ export const platformToolContracts = {
       },
       required: ['exitCode', 'stdout', 'stderr', 'artifacts'],
     },
-    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 300_000,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized',
+    // Script budget. At this deadline the bridge aborts the sandbox and waits
+    // until the named container is stopped and removed (or cleanup fails loudly).
+    timeoutMs: 300_000,
     maxOutputBytes: PYTHON_OUTPUT_MAX_BYTES,
   }),
   propose_memory: contract({
