@@ -6,7 +6,7 @@ import {
   nextSlotUtc,
   normalizeSchedule,
   slotsBetween,
-} from './automation-calendar.ts'
+} from './execution-schedule.ts'
 
 const SHANGHAI = 'Asia/Shanghai' // UTC+8，无 DST
 const NEW_YORK = 'America/New_York' // 有 DST

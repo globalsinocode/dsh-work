@@ -1,7 +1,7 @@
 import type { ReservedSql } from 'postgres'
 
+import { slotsBetween } from '../../domain/execution-schedule.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import { slotsBetween } from './automation-calendar.ts'
 import type { PostgresAutomationRepository } from './postgres-automation-repository.ts'
 import type { AutomationService } from './automation-service.ts'
 import type { AutomationModuleConfig, AutomationRecord } from './automation-types.ts'

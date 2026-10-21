@@ -1,23 +1,38 @@
 import { CronExpressionParser } from 'cron-parser'
 
-import type { AutomationSchedule } from './automation-types.ts'
-import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { invalidRequest, stateConflict } from './request-errors.ts'
 
 /**
- * AG-03 日历封装：内部用 cron-parser 求值，对外契约只暴露
- * daily/weekly/manual 的结构化规则。
+ * 结构化调度规则。自动任务、主动任务与项目任务共用同一日历语义：
+ * 只暴露 daily / weekly / manual，不开放完整 cron。
  *
- * DST 语义（契约测试固化，库行为不等于本模块承诺）：
+ * 放在领域层，是为了项目任务不必反向依赖 automation 模块
+ * （automation 已依赖 run，run 已依赖 workbench，反向依赖会成环）。
+ *
+ * DST 语义（契约测试固化，库行为不等于本契约承诺）：
  * - 缺失槽（春季拨快，本地时间不存在）：cron-parser 会把触发点前移到
  *   合法时刻；本封装按「墙钟必须等于配置的 timeOfDay」判定其为缺失槽
  *   并跳过，绝不把前移结果当有效槽位；
  * - 重复槽（秋季拨回，本地时间出现两次）：取第一次出现。
  */
+export interface ExecutionSchedule {
+  kind: 'manual' | 'daily' | 'weekly'
+  /** IANA 时区标识，如 Asia/Shanghai、America/New_York。 */
+  timezone: string
+  /** 'HH:mm'（24h）；daily/weekly 必填，manual 忽略。 */
+  timeOfDay?: string
+  /** weekly 的星期集合，0=Sunday … 6=Saturday。 */
+  weekdays?: number[]
+}
 
 const WALL_CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/
 /** 枚举上限：每天至多一个槽，连续跳过缺失槽最多每自然年一次。 */
 const MAX_ENUMERATED_SLOTS = 400
 
+/**
+ * 调度规则的时区校验。不复用 execution-time.isValidTimezone：
+ * 那边还有 64 字符上限，套用会改变已有规则的接受范围。
+ */
 export function isValidTimezone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone })
@@ -28,7 +43,7 @@ export function isValidTimezone(timezone: string): boolean {
 }
 
 /** 校验并规范化调度规则；非法输入抛错（路由层转 400）。 */
-export function normalizeSchedule(input: AutomationSchedule): AutomationSchedule {
+export function normalizeSchedule(input: ExecutionSchedule): ExecutionSchedule {
   if (!input || typeof input !== 'object') throw stateConflict('调度规则不能为空')
   if (!['manual', 'daily', 'weekly'].includes(input.kind)) {
     throw invalidRequest('调度类型必须是 manual、daily 或 weekly')
@@ -54,7 +69,7 @@ export function normalizeSchedule(input: AutomationSchedule): AutomationSchedule
   return { kind: 'weekly', timezone: input.timezone, timeOfDay, weekdays }
 }
 
-function cronExpression(schedule: AutomationSchedule): string | null {
+function cronExpression(schedule: ExecutionSchedule): string | null {
   if (schedule.kind === 'manual' || !schedule.timeOfDay) return null
   const [hour, minute] = schedule.timeOfDay.split(':').map(Number)
   if (schedule.kind === 'daily') return `${minute} ${hour} * * *`
@@ -85,7 +100,7 @@ function wallClockOf(instant: Date, timezone: string): string {
  * DST 缺失槽被跳过且不计入返回；manual 或无有效配置返回空数组。
  */
 export function slotsBetween(
-  schedule: AutomationSchedule,
+  schedule: ExecutionSchedule,
   afterUtc: Date,
   untilUtc: Date,
   cap = MAX_ENUMERATED_SLOTS,
@@ -108,7 +123,7 @@ export function slotsBetween(
 }
 
 /** 严格晚于 afterUtc 的下一个有效槽位；manual 返回 null。 */
-export function nextSlotUtc(schedule: AutomationSchedule, afterUtc: Date): Date | null {
+export function nextSlotUtc(schedule: ExecutionSchedule, afterUtc: Date): Date | null {
   const [slot] = slotsBetween(schedule, afterUtc, new Date('2100-01-01T00:00:00Z'), 1)
   return slot ?? null
 }

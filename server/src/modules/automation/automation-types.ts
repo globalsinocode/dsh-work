@@ -1,4 +1,5 @@
 import type { RuntimeScopeCeiling } from '../authorization/postgres-authorization-service.ts'
+import type { ExecutionSchedule } from '../../domain/execution-schedule.ts'
 import type { JsonObject } from '../../domain/run-state.ts'
 import type { TaskResultOutcome } from '../../domain/task-result.ts'
 
@@ -11,16 +12,8 @@ import type { TaskResultOutcome } from '../../domain/task-result.ts'
  * - 执行状态不冗余存储，经 run_id 读 Run；执行记录只承载受理结果。
  */
 
-/** 结构化调度规则；外层只暴露 daily/weekly/manual，不开放完整 cron 语法。 */
-export interface AutomationSchedule {
-  kind: 'manual' | 'daily' | 'weekly'
-  /** IANA 时区标识，如 Asia/Shanghai、America/New_York。 */
-  timezone: string
-  /** 'HH:mm'（24h）；daily/weekly 必填，manual 忽略。 */
-  timeOfDay?: string
-  /** weekly 的星期集合，0=Sunday … 6=Saturday。 */
-  weekdays?: number[]
-}
+/** 结构化调度规则。定义在领域层，自动任务与项目任务共用。 */
+export type AutomationSchedule = ExecutionSchedule
 
 export type AutomationStatus = 'draft' | 'enabled' | 'paused' | 'disabled'
 

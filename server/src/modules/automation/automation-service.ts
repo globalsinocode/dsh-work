@@ -17,8 +17,8 @@ import type { RunOrchestrationService } from '../run/run-orchestration-service.t
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
+import { nextSlotUtc, normalizeSchedule } from '../../domain/execution-schedule.ts'
 import type { RunRecord } from '../run/run-types.ts'
-import { nextSlotUtc, normalizeSchedule } from './automation-calendar.ts'
 import type { PostgresAutomationRepository } from './postgres-automation-repository.ts'
 import {
   AutomationReasonCodes,

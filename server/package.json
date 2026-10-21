@@ -22,7 +22,7 @@
     "test:pf04:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf04-persistent-wait.integration.test.ts",
     "test:pf05:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf05-controlled-memory.integration.test.ts",
     "test:tool-binding:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/tool-binding.integration.test.ts src/infrastructure/postgres/team-agent-binding-upgrade.integration.test.ts",
-    "test:automation:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/automation.integration.test.ts src/modules/automation/automation-calendar.test.ts",
+    "test:automation:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/automation.integration.test.ts src/domain/execution-schedule.test.ts",
     "test:m4:knowledge:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-enterprise-knowledge.integration.test.ts",
     "test:m4:file": "node --env-file-if-exists=../.env --experimental-strip-types --test src/modules/workbench/application/document-extractor.test.ts",
     "test:m4:file:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-file-analysis.integration.test.ts",

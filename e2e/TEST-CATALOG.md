@@ -559,7 +559,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **证据：**
 
-- `automation-calendar.test.ts` 8/8（上海时区、纽约 DST 春缺跳过/秋重取首、manual、weekly、非法时区）；`automation.integration.test.ts` 9/9（创建启用、幂等 run-now、重叠跳过、周期扫描游标、撤权跳过、中断恢复、暂停与越权、暂停收敛排队执行、weekly 规则语义比较）。
+- `execution-schedule.test.ts` 8/8（上海时区、纽约 DST 春缺跳过/秋重取首、manual、weekly、非法时区）；`automation.integration.test.ts` 9/9（创建启用、幂等 run-now、重叠跳过、周期扫描游标、撤权跳过、中断恢复、暂停与越权、暂停收敛排队执行、weekly 规则语义比较）。
 - 真实 HTTP 旅程（OIDC 服务）：创建解析 Agent 为固定已发布版本 → 启用生成 next slot 与 scope ceiling → run-now 建 Session/Run → 同幂等键重放返回同一 execution → Run 实际进入 DSH running；第二实例无法取得 advisory lock。
 - `e2e/automation-smoke.spec.ts` 2/2（P0）；`pnpm verify`、`pnpm check:architecture`、全仓 typecheck、`validate:ui` 通过。
 
@@ -765,7 +765,7 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 依据：[功能规则：自动任务](../docs/development/feature-rules.md#7-自动任务ag-03)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
 
-当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠、中断收敛、授权基础设施故障、取消/领取竞态与锁释放由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（13 例）及 `automation-calendar.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 的 P1 第一批 5 例已实现并通过；`e2e/automation.acceptance.spec.ts` 仍为 P2 计划路径，不表示真实验收已完成。
+当前覆盖状态：AG-AUTO-00 已由 `e2e/automation-smoke.spec.ts` 固化（P0，Prototype）；AC-20~24 的事务去重、扫描游标、撤权跳过、重叠、中断收敛、授权基础设施故障、取消/领取竞态与锁释放由服务端 `server/src/infrastructure/postgres/automation.integration.test.ts`（13 例）及 `execution-schedule.test.ts`（8 例，含 DST）覆盖。`e2e/automation.integration.spec.ts` 的 P1 第一批 5 例已实现并通过；`e2e/automation.acceptance.spec.ts` 仍为 P2 计划路径，不表示真实验收已完成。
 
 P1 每例准备独立任务、Session、测试用户与数据，结束后清理；多角色使用独立 browser context/storageState。使用专用可丢弃 PostgreSQL 和受控 Runtime，禁止连接开发业务库或生产库。时钟、故障和执行阻塞由测试环境受控依赖提供，不增加生产测试开关。事务/重启故障同时由服务端集成测试验证，浏览器验证其用户可见结果。
 

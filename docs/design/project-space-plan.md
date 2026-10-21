@@ -232,7 +232,7 @@
 
 ### 11.2 执行规则
 
-- **字段：** 频率 `manual | daily | weekly`（“工作日”存为 weekly 一至五，界面单列一项）、执行时间 `HH:mm`、时区。时区取平台默认时区 `DSH_WORK_TIMEZONE`，写入规则；该任务所有执行的 Manifest `timezone` 用规则时区（与主动任务一致）。复用 `automation-calendar` 的规范化与下一时间点计算，不开放 cron。
+- **字段：** 频率 `manual | daily | weekly`（“工作日”存为 weekly 一至五，界面单列一项）、执行时间 `HH:mm`、时区。时区取平台默认时区 `DSH_WORK_TIMEZONE`，写入规则；该任务所有执行的 Manifest `timezone` 用规则时区（与主动任务一致）。规范化与下一时间点计算共用领域层 [`execution-schedule`](../../server/src/domain/execution-schedule.ts)（与自动任务同一实现），不开放 cron，项目服务不依赖 automation 模块。
 - **触发来源：** 定时、手动（立即执行 / 交给 Agent）、错过。每次受理写一条执行记录（新表 `project_task_executions`，参照 `agent_routine_executions`）：来源、计划时间点、受理结果（受理 / 跳过 / 中断）与原因、`run_id`。执行状态不冗余存储，经 `run_id` 读 Run。
 - **同一时间只有一个执行：** 到点时若上一执行未结束，本次记为“跳过”，不排队；手动执行仍按现有 409。
 - **迟到与停机：** 沿用自动任务的调度：单一调度所有者（advisory lock）、10 分钟迟到容差；超出容差的停机缺口合并为一条“错过”记录，不补跑。

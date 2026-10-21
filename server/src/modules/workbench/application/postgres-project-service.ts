@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
 import { authorizationDenied, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
+import { resolvePlatformTimezone } from '../../../domain/execution-time.ts'
+import { nextSlotUtc, normalizeSchedule, slotsBetween, type ExecutionSchedule } from '../../../domain/execution-schedule.ts'
 import {
   projectGovernanceRoles as governanceRoles,
   projectWriterRoles as writerRoles,
@@ -12,9 +14,6 @@ import { sha256 } from '../../runtime/canonical-json.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import type { SessionAuthorizationContext } from '../../authorization/postgres-authorization-service.ts'
 import type { PostgresProjectArchiveService } from './postgres-project-archive-service.ts'
-import { nextSlotUtc, normalizeSchedule, slotsBetween } from '../../automation/automation-calendar.ts'
-import type { AutomationSchedule } from '../../automation/automation-types.ts'
-import { resolvePlatformTimezone } from '../../../domain/execution-time.ts'
 import { activityTransitionToken, recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 
@@ -37,7 +36,7 @@ export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done'
 export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete' | 'resume'
 
 /** S4：Agent 任务的执行规则（与自动任务同一日历语义；“工作日”存为每周一至五）。 */
-export type ProjectTaskSchedule = AutomationSchedule
+export type ProjectTaskSchedule = ExecutionSchedule
 export type ProjectTaskScheduleState = 'active' | 'paused' | 'stopped'
 
 /** 定时执行的固定提示；任务说明、评论与历史结论经对话历史与摘要带入。 */
@@ -1370,7 +1369,7 @@ function parseSchedule(value: unknown): ProjectTaskSchedule {
   const { kind, timeOfDay, weekdays } = value as { kind?: unknown; timeOfDay?: unknown; weekdays?: unknown }
   if (weekdays !== undefined && !Array.isArray(weekdays)) throw requestInvalid('执行星期必须是数组')
   try {
-    return normalizeSchedule({ kind, timezone: platformTimezone, timeOfDay, weekdays } as AutomationSchedule)
+    return normalizeSchedule({ kind, timezone: platformTimezone, timeOfDay, weekdays } as ExecutionSchedule)
   } catch (error) {
     if (error instanceof RequestError) throw requestInvalid(error.message)
     throw error
