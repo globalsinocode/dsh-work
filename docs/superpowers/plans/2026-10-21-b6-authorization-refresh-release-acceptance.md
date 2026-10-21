@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Finding: F-21, plus cross-batch release evidence orchestration only.
-- Branch: `codex/hardening-b6-auth-acceptance`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 6 as a continuous, self-contained commit range after its Green gate passes.
 - No database migration.
 - Do not implement fixes owned by Batches 1–5; matrix cells stay `not-run` until their owning release provides evidence.
 

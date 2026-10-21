@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Findings: F-11 automation portion, F-15, F-16, F-18 automation portion.
-- Branch: `codex/hardening-b4-automations`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 4 as a continuous, self-contained commit range after its Green gate passes.
 - Reserved migration: `server/migrations/0087_automation_archive_metadata.sql`; renumber if occupied.
 - Do not modify conversation Task Store, notifications, files, catalog selection, exports or auth refresh.
 

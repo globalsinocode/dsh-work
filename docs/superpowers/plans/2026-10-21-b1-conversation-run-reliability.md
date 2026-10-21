@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Findings: F-06, F-11 message/Run portion, F-12, F-14, F-19, F-18 Run/recent-task portion.
-- Branch: `codex/hardening-b1-conversation-reliability` from `8277d76b0f470585421fb328ab45a6e53e26c2f0` or the then-current `main`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 1 as a continuous, self-contained commit range after its Green gate passes.
 - Reserved migration: `server/migrations/0084_session_drafts.sql`; if `0084` is occupied, rename to the next free number without changing SQL semantics.
 - Do not edit automation lifecycle, file projection, notification schema, catalog version selection, exports, or admin authorization refresh.
 

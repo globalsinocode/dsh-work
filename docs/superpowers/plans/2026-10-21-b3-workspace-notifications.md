@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Findings: F-01, F-07, F-09.
-- Branch: `codex/hardening-b3-notifications`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 3 as a continuous, self-contained commit range after its Green gate passes.
 - Reserved migration: `server/migrations/0086_workspace_notifications.sql`; renumber if occupied.
 - Default recipients: discussion/reply → existing Session participants except actor; explicit member mention → mentioned member; Run terminal → requester; existing file/member events → authorized workspace members. No message/answer body is stored in notification metadata.
 - Do not modify DSH execution, files, automation lifecycle, catalog versions, exports or auth refresh.

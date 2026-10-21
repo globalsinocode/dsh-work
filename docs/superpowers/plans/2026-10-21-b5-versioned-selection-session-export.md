@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Findings: F-17, F-20.
-- Branch: `codex/hardening-b5-version-export`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 5 as a continuous, self-contained commit range after its Green gate passes.
 - No database migration is expected; existing immutable Agent/Skill version and Session binding columns remain authoritative.
 - Do not change Agent execution, notification schema, files, automation lifecycle or auth refresh.
 

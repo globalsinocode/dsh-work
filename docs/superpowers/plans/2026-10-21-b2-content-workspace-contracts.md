@@ -13,7 +13,7 @@
 ## Scope and ownership
 
 - Findings: F-02, F-03, F-04, F-05, F-08, F-10, F-13.
-- Branch: `codex/hardening-b2-content-contracts`.
+- Integration branch: `dev`; start from the latest `dev` and land Batch 2 as a continuous, self-contained commit range after its Green gate passes.
 - Reserved migration: `server/migrations/0085_workspace_object_gc.sql`; renumber only if occupied.
 - Do not change notifications, Session/Run execution, automation lifecycle, version selection, exports, or auth refresh.
 
