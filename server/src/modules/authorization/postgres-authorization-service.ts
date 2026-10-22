@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
-import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import { unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import { redactSensitiveText } from '../../security/safe-observability.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from './platform-admin-actor.ts'
 import { resolveAudienceCeiling, type AudienceCeiling } from './agent-audience-ceiling.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
-import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
 import { invalidRequest, notFound } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -22,8 +21,7 @@ interface AgentAuthorizationRow {
   agentId: string
   versionId: string
   skillReferences: string[]
-  toolReferences: string[]
-  bindingRefs: Array<{ tool: string }>
+  webSearchEnabled: boolean
   visibleRoleIds: string[]
 }
 
@@ -215,7 +213,6 @@ export class PostgresAuthorizationService {
       throw authorizationDenied('结果接收人的当前数据范围不足')
     }
     const permissions = await this.permissionsForRoles(roleIds)
-    const toolVersions = await this.resolveAndAuthorizeTools(agent.toolReferences, roleIds, dataScopes)
     if (workspaceType === 'team') {
       const [member] = await this.database<{ status: string }[]>`
         select status from workspace_agent_members
@@ -227,7 +224,6 @@ export class PostgresAuthorizationService {
         reference: input.agentVersionId, versionId: input.agentVersionId,
       }])
       await this.requireWorkspaceCapabilities(input.workspaceId, 'skill', skillVersions)
-      await this.requireWorkspaceCapabilities(input.workspaceId, 'tool', toolVersions)
     }
     return {
       userId: input.recipientUserId,
@@ -340,20 +336,14 @@ export class PostgresAuthorizationService {
       // 因此此前经 HTTP 暴露会落 500 operation_failed——那是误分类。现改为类型化 403。
       throw authorizationDenied('当前用户角色不可使用所选 Agent')
     }
-    // Individual tools and data collections enforce the scopes they actually require.
-
-    const toolVersions = await this.resolveAndAuthorizeTools(
-      agent.toolReferences,
-      roleIds,
-      dataScopes,
-    )
+    // Data collections enforce the scopes they actually require; built-in tools only touch
+    // the Run workspace and are not role-gated.
     if (workspaceId && context.workspaceType === 'team') {
       await this.requireWorkspaceCapabilities(workspaceId, 'agent', [{
         reference: input.agentVersionId,
         versionId: input.agentVersionId,
       }])
       await this.requireWorkspaceCapabilities(workspaceId, 'skill', skillVersions)
-      await this.requireWorkspaceCapabilities(workspaceId, 'tool', toolVersions)
     }
 
     return {
@@ -622,10 +612,8 @@ export class PostgresAuthorizationService {
   /**
    * Structural dependency validation shared by runtime authorization and the
    * team agent-member join/upgrade/enable flows (1A-T4): the agent version
-   * must be published and must explicitly authorize every external tool its
-   * selected skills require — skills cannot widen the agent's tool allowlist.
-   * Runtime-owned activate/python dispatch is already bounded by the immutable
-   * Attempt manifest and does not require a duplicate Agent tool row. Returns
+   * must be published and must be able to provide every built-in tool its
+   * selected skills require (web search must be enabled on the version). Returns
    * the loaded agent version and the resolved skill versions so callers can
    * build capability grant sources without duplicating the resolution logic.
    */
@@ -637,11 +625,9 @@ export class PostgresAuthorizationService {
     const skillVersions = await this.resolveSkillVersions(
       mergeSkillReferences(agent.skillReferences, additionalSkillReferences),
     )
-    const authorizedToolReferences = new Set(unique(agent.toolReferences))
-    const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
-      .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference) && !authorizedToolReferences.has(reference))
+    const missingSkillTools = unavailableSkillTools(skillVersions.flatMap(skill => skill.toolReferences ?? []), agent)
     if (missingSkillTools.length) {
-      throw authorizationDenied(`Agent 必须显式授权所选 Skill 依赖的工具：${missingSkillTools.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
+      throw authorizationDenied(`所选 Skill 需要的工具不可用：${missingSkillTools.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
     }
     return { agent, skillVersions }
   }
@@ -664,20 +650,17 @@ export class PostgresAuthorizationService {
       || dataScopes.some(scope => !principal.dataScopes.includes(scope))) {
       throw authorizationDenied('Agent 身份的角色或数据授权已撤销')
     }
-    const [version] = await this.database<{ tools: string[]; skills: string[] }[]>`
-      select tool_refs as tools, skill_refs as skills
+    const [version] = await this.database<{ webSearchEnabled: boolean; skills: string[] }[]>`
+      select web_search_enabled as "webSearchEnabled", skill_refs as skills
         from agent_versions
        where tenant_id = ${tenantId} and id = ${agentVersionId}
     `
     if (!version) throw authorizationDenied('试运行的 Agent Version 不存在')
     const skillVersions = await this.resolveSkillVersions(version.skills)
-    const allowedTools = new Set(version.tools)
-    const missingSkillTools = unique(skillVersions.flatMap(skill => skill.toolReferences ?? []))
-      .filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference) && !allowedTools.has(reference))
+    const missingSkillTools = unavailableSkillTools(skillVersions.flatMap(skill => skill.toolReferences ?? []), version)
     if (missingSkillTools.length) {
-      throw authorizationDenied(`Agent 未授权 Skill 依赖的工具：${missingSkillTools.join('、')}`)
+      throw authorizationDenied(`所选 Skill 需要的工具不可用：${missingSkillTools.join('、')}`)
     }
-    await this.resolveAndAuthorizeTools(version.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference)), roleIds, dataScopes)
   }
 
   /**
@@ -735,18 +718,6 @@ export class PostgresAuthorizationService {
     `
     if (!row) throw authorizationDenied('Agent 执行身份不存在或已停用')
     return row
-  }
-
-  /**
-   * Resolves tool references to published tool version IDs with the same
-   * availability checks as runtime authorization but without role or data
-   * scope checks: used by the team agent-member join flow (1A-T4) to build
-   * grant sources. Runtime calls keep the full role/scope checks via
-   * resolveAndAuthorizeTools.
-   */
-  async resolveToolVersions(references: string[]): Promise<CapabilityVersion[]> {
-    const rows = await this.resolveToolVersionRows(references)
-    return rows.map(row => ({ reference: row.reference, versionId: row.versionId }))
   }
 
   /**
@@ -1045,7 +1016,7 @@ export class PostgresAuthorizationService {
   private async requireAgentVersion(versionId: string): Promise<AgentAuthorizationRow> {
     const [row] = await this.database<AgentAuthorizationRow[]>`
       select av.agent_id as "agentId", av.id as "versionId", av.skill_refs as "skillReferences",
-             av.tool_refs as "toolReferences", av.binding_refs as "bindingRefs",
+             av.web_search_enabled as "webSearchEnabled",
              a.visible_role_ids as "visibleRoleIds"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
@@ -1055,9 +1026,7 @@ export class PostgresAuthorizationService {
          and av.status = 'published' and a.status = 'published'
     `
     if (!row) throw authorizationDenied('Agent Version 不存在、未发布或 Agent 执行身份已停用')
-    return { ...row, toolReferences: unique([
-      ...row.toolReferences, ...(row.bindingRefs ?? []).map(binding => binding.tool),
-    ]) }
+    return row
   }
 
   private async resolveSkillVersions(references: string[]): Promise<CapabilityVersion[]> {
@@ -1076,61 +1045,9 @@ export class PostgresAuthorizationService {
     return resolved
   }
 
-  private async resolveAndAuthorizeTools(
-    references: string[],
-    roleIds: string[],
-    dataScopes: string[],
-  ): Promise<CapabilityVersion[]> {
-    const resolved = await this.resolveToolVersionRows(references)
-    for (const tool of resolved) {
-      if (isDefaultRunLocalAgentTool({ ...tool, dataScopes: tool.requiredDataScopes })) continue
-      if (!intersects(roleIds, tool.allowedRoleIds)) throw authorizationDenied(`当前用户角色不可调用工具：${tool.reference}`)
-      requireScopes(dataScopes, tool.requiredDataScopes, `工具 ${tool.reference}`)
-    }
-    return resolved.map(tool => ({ reference: tool.reference, versionId: tool.versionId }))
-  }
-
-  private async resolveToolVersionRows(
-    references: string[],
-  ): Promise<Array<CapabilityVersion & {
-    connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; requiredDataScopes: string[]
-  }>> {
-    const resolved: Array<CapabilityVersion & {
-      connectorId: string; dshToolName: string | null; allowedRoleIds: string[]; requiredDataScopes: string[]
-    }> = []
-    for (const reference of unique(references)) {
-      const { id, version } = parseReference(reference, '工具')
-      const [row] = await this.database<{
-        versionId: string
-        connectorId: string
-        dshToolName: string | null
-        allowedRoleIds: string[]
-        requiredDataScopes: string[]
-      }[]>`
-        select tv.id as "versionId", t.connector_id as "connectorId", t.dsh_tool_name as "dshToolName",
-               t.allowed_role_ids as "allowedRoleIds",
-               t.data_scopes as "requiredDataScopes"
-          from tools t
-          join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
-          join connectors c on c.tenant_id = t.tenant_id and c.id = t.connector_id
-         where t.tenant_id = ${tenantId} and t.id = ${id} and tv.version = ${version}
-           and t.status = 'available'
-           and t.admission_status = 'approved'
-           and (t.mode = 'read' or (t.mode = 'write' and t.connector_id = 'connector-dsh-workspace'
-                and t.dsh_tool_name in ('write', 'edit', 'str_replace_editor', 'todo_write', 'create_goal', 'update_goal')))
-           and tv.status = 'published' and c.status = 'healthy'
-      `
-      if (!row) throw authorizationDenied(`工具不存在、未发布、不可用或不符合受控运行策略：${reference}`)
-      resolved.push({ reference, versionId: row.versionId, connectorId: row.connectorId,
-        dshToolName: row.dshToolName, allowedRoleIds: row.allowedRoleIds,
-        requiredDataScopes: row.requiredDataScopes })
-    }
-    return resolved
-  }
-
   private async requireWorkspaceCapabilities(
     workspaceId: string,
-    capabilityType: 'agent' | 'skill' | 'tool',
+    capabilityType: 'agent' | 'skill',
     capabilities: CapabilityVersion[],
   ) {
     if (capabilities.length === 0) return
@@ -1188,11 +1105,6 @@ function parseReference(reference: string, label: string) {
   return { id: reference.slice(0, separator), version: reference.slice(separator + 1) }
 }
 
-function requireScopes(available: string[], required: string[], label: string) {
-  const availableSet = new Set(available)
-  const missing = unique(required).filter(scope => !availableSet.has(scope))
-  if (missing.length) throw authorizationDenied(`${label}要求未授权的数据范围：${missing.join('、')}`)
-}
 
 function intersects(left: string[], right: string[]) {
   const rightSet = new Set(right)
@@ -1213,8 +1125,6 @@ function mergeSkillReferences(base: string[], additional: string[]) {
   return [...references.values()]
 }
 
-function capabilityLabel(type: 'agent' | 'skill' | 'tool') {
-  if (type === 'agent') return 'Agent'
-  if (type === 'skill') return 'Skill'
-  return '工具'
+function capabilityLabel(type: 'agent' | 'skill') {
+  return type === 'agent' ? 'Agent' : 'Skill'
 }

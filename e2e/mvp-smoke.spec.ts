@@ -107,31 +107,17 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(page.getByText('企业知识 MCP', { exact: true })).toBeVisible()
   await expect(page.getByText('DSH Runtime 内置工具连接器', { exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'DSH 工具管理', exact: true }).click()
-  await expect(page).toHaveURL(/\/tools$/)
-  await page.getByRole('button', { name: '同步 DSH 工具', exact: true }).click()
-  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
-  await expect(page.getByText('任务进度清单', { exact: true })).toBeVisible()
-  await expect(page.getByText('在 Agent 版本中配置', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('不代表任何 Agent 已经获得使用权', { exact: false })).toBeVisible()
-
-  const admissionFilter = page.getByTestId('tool-admission-filter')
-  const runtimeStatusFilter = page.getByTestId('tool-runtime-status-filter')
-  await admissionFilter.click()
-  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '可授权', exact: true }).click()
-  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
-
-  await runtimeStatusFilter.click()
-  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '已停用', exact: true }).click()
-  await expect(page.getByText('暂无匹配的 DSH 内置工具', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'DSH 工具管理', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '工具权限', exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Runtimes', exact: true }).click()
   await expect(page).toHaveURL(/\/runtimes$/)
   await expect(page.getByText('Runtimes', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: '查看' }).first().click()
-  const dshConnector = page.getByRole('region', { name: 'DSH Runtime 内置工具连接' })
-  await expect(dshConnector.getByText('connector-dsh-workspace', { exact: true })).toBeVisible()
-  await expect(dshConnector.getByRole('button', { name: '检查工具连接' })).toBeVisible()
+  const builtinTools = page.getByRole('region', { name: '内置工具' })
+  await expect(builtinTools.getByText('任务进度清单', { exact: true })).toBeVisible()
+  await expect(builtinTools.getByText('联网搜索', { exact: true })).toBeVisible()
+  await expect(builtinTools.getByText('随平台代码发布', { exact: false })).toBeVisible()
 })
 
 test('platform administrator can inspect and resolve an action-bound approval', async ({ page }) => {

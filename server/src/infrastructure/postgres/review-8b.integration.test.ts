@@ -18,7 +18,6 @@ import { PostgresSkillService, type RuntimeSkillConfiguration } from '../../modu
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { parseSkillPackage } from '../../modules/skill/skill-package.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
-import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
@@ -31,7 +30,7 @@ before(async () => {
   store = new SkillArtifactStore(new LocalObjectStorage(directory, { fileMode: 0o400 }))
   runs = new PostgresRunRepository(db.client)
   service = new AdminSkillInstallationService(db.client, {} as RunOrchestrationService,
-    new PostgresAuthorizationService(db.client), {} as PostgresToolConnectorService)
+    new PostgresAuthorizationService(db.client))
 })
 after(async () => { await db?.dispose(); if (directory) await rm(directory, { recursive: true, force: true }) })
 
@@ -63,7 +62,7 @@ async function fixture() {
   const root = await seedSkill(`root-${name}`, false, [child.reference])
   // The callback below creates explicit SYNTHETIC evidence to test persistence and
   // publication. It never claims to run a real DSH model or Python container.
-  const skills = new PostgresSkillService(db.client, undefined, undefined, store)
+  const skills = new PostgresSkillService(db.client, undefined, store)
   let reply = '{"total":12}', wrongEntry = false
   skills.setPackageTestLifecycle({
     start: async (_user, skill, prompt) => seedTrial(skill, prompt, reply, wrongEntry),
@@ -142,7 +141,7 @@ test('the latest failed evaluation of a scenario cannot borrow an earlier pass',
 test('evidence from a changed dependency graph cannot authorize publishing current drafts', async () => {
   const item = await fixture()
   assert.equal((await item.trial('numbers', true)).status, 'passed')
-  await db.client`update skill_versions set tool_refs = '["different@1.0.0"]'::jsonb where id = ${item.child.versionId}`
+  await db.client`update skill_versions set tool_refs = '["grep@1.0.0"]'::jsonb where id = ${item.child.versionId}`
   await assert.rejects(item.publish(), /覆盖不完整|配置.*变化/)
 })
 test('executing another declared Python script does not satisfy the selected entry', async () => {

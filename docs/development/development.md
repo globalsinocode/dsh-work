@@ -107,7 +107,7 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 [mvp-fixtures.json](fixtures/mvp-fixtures.json) 保存合成角色、空间、业务记录、知识和文件元数据，不能视为真实企业接口。服务端种子与前端原型 ID 以各自代码为准，不假定 fixture 已自动导入所有环境。
 
 - 个人空间与团队空间的会话、文件和成果访问；非成员、跨用户及跨数据范围访问拒绝。
-- Agent、Skill 测试后发布、版本锁定与回滚；平台默认 DSH 工具采用显式允许清单和精确绑定，Skill 不能间接扩大工具授权。
+- Agent、Skill 测试后发布、版本锁定与回滚；内置工具采用代码注册表的显式清单，Skill 只能引用 Agent 可装配的工具，不能间接扩大工具范围；Runtime 紧急停用即时生效。
 - 文件上传、解析、Run 关联、来源与成果版本、下载鉴权；路径穿越、伪造签名和超限文件拒绝。
 - 取消、超时、Worker 崩溃、模型/Tool/网络故障；幂等请求不重复执行，只有失败 Run 可重试并生成新 Attempt。
 - 服务重启后活动 Attempt 失败收敛、排队任务恢复；SSE 使用 `Last-Event-ID` 重放，旧 Attempt 事件不能覆盖当前重试状态。

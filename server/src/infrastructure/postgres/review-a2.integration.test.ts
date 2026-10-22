@@ -16,7 +16,6 @@ import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-
 import type { AgentRuntimePort, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { PostgresContentService } from '../../modules/workbench/application/postgres-content-service.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { DshAcpRuntimeAdapter } from '../../modules/runtime/dsh-acp-runtime-adapter.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
@@ -33,7 +32,8 @@ class ClaimBoundaryRepository extends PostgresRunRepository {
   }
 }
 interface BoundaryContext {
-  tools: PostgresToolConnectorService
+  /** Runtime 当前停用的内置工具；测试在领取边界修改。 */
+  disabledTools: string[]
   fileId?: string
 }
 
@@ -56,12 +56,12 @@ async function runRevokedCase(
   }
   const auth = new PostgresAuthorizationService(db.client)
   const content = new PostgresContentService(db.client, new LocalObjectStorage(root), auth)
-  const tools = new PostgresToolConnectorService(db.client)
-  const agents = new PostgresAgentService(db.client, undefined, undefined, tools)
+  const agents = new PostgresAgentService(db.client, undefined, undefined)
   const orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
-    content, undefined, agents, undefined, auth, { toolBindings: tools })
-  const context: BoundaryContext = { tools }
+    content, undefined, agents, undefined, auth,
+    { toolChecks: { disabledBuiltinTools: async () => context.disabledTools } })
+  const context: BoundaryContext = { disabledTools: [] }
   try {
     const session = await orchestration.createSession({ userId: 'U00001', title: '个人执行前复核' })
     if (withInputFile) {
@@ -123,10 +123,10 @@ test('personal input file removed after claim never reaches Runtime', async () =
     true,
   )
 })
-test('pinned platform tool binding revoked after claim never reaches Runtime', async () => {
+test('pinned built-in tool disabled after claim never reaches Runtime', async () => {
   await runRevokedCase(
-    async ({ tools }) => { await tools.setToolStatus({ toolId: 'read', status: 'disabled', actor: 'U00008' }) },
-    async ({ tools }) => { await tools.setToolStatus({ toolId: 'read', status: 'available', actor: 'U00008' }) },
+    async context => { context.disabledTools = ['read'] },
+    async context => { context.disabledTools = [] },
   )
 })
 test('authorization infrastructure failures are not reported as revocation', async () => {
@@ -139,8 +139,7 @@ test('input file removed while the DSH Worker is active stops execution without 
   const conversations = new PostgresConversationRepository(db.client)
   const auth = new PostgresAuthorizationService(db.client)
   const content = new PostgresContentService(db.client, new LocalObjectStorage(join(root, 'storage')), auth)
-  const tools = new PostgresToolConnectorService(db.client)
-  const agents = new PostgresAgentService(db.client, undefined, undefined, tools)
+  const agents = new PostgresAgentService(db.client, undefined, undefined)
   const context: { orchestration?: RunOrchestrationService } = {}
   const runtime = new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
@@ -166,7 +165,6 @@ test('input file removed while the DSH Worker is active stops execution without 
     agents,
     undefined,
     auth,
-    { toolBindings: tools },
   )
   context.orchestration = orchestration
   let fileId: string | undefined

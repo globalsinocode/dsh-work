@@ -18,7 +18,6 @@ import type {
   RuntimeManifest,
 } from '../../modules/runtime/runtime-types.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
@@ -42,9 +41,8 @@ before(async () => {
   runtime = new OperationalRuntime()
   const authorization = new PostgresAuthorizationService(database)
   operations = new PostgresOperationsService(database, runtime, authorization)
-  const tools = new PostgresToolConnectorService(database, runtime, operations)
-  const skills = new PostgresSkillService(database, operations, tools)
-  const agents = new PostgresAgentService(database, operations, skills, tools)
+  const skills = new PostgresSkillService(database, operations)
+  const agents = new PostgresAgentService(database, operations, skills)
   conversations = new PostgresConversationRepository(database)
   runs = new PostgresRunRepository(database)
   orchestration = new RunOrchestrationService(
@@ -58,7 +56,6 @@ before(async () => {
     undefined,
     authorization,
     // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
-    { toolBindings: tools },
   )
 })
 

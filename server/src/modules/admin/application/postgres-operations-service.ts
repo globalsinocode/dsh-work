@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { normalizeDisabledTools } from '../../runtime/builtin-tools.ts'
 import type {
   AuditEvent,
   AuditEventListQuery,
@@ -33,6 +34,7 @@ export interface RuntimeMutationSnapshot {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  disabledTools: string[]
   revision: number
 }
 
@@ -65,7 +67,7 @@ export class PostgresOperationsService {
     const rows = await this.database<{
       id: string; nodeName: string; runtimeVersion: string; healthStatus: RuntimeDefinition['status'];
       schedulingStatus: RuntimeDefinition['schedulingStatus']; capacity: number; lastHeartbeatAt: Date | null;
-      activeWorkers: number; queuedRuns: number; timeoutSeconds: number
+      activeWorkers: number; queuedRuns: number; timeoutSeconds: number; disabledTools: string[]
     }[]>`
       select r.id, r.node_name as "nodeName", r.runtime_version as "runtimeVersion",
              r.health_status as "healthStatus", r.scheduling_status as "schedulingStatus",
@@ -74,7 +76,10 @@ export class PostgresOperationsService {
              count(a.id) filter (where a.status = 'queued')::integer as "queuedRuns",
              coalesce((select timeout_seconds from runtime_configurations c
                         where c.tenant_id = r.tenant_id and c.runtime_id = r.id
-                        order by revision desc limit 1), 300)::integer as "timeoutSeconds"
+                        order by revision desc limit 1), 300)::integer as "timeoutSeconds",
+             coalesce((select disabled_tools from runtime_configurations c
+                        where c.tenant_id = r.tenant_id and c.runtime_id = r.id
+                        order by revision desc limit 1), '[]'::jsonb) as "disabledTools"
         from runtimes r
         left join run_attempts a on a.tenant_id = r.tenant_id and a.runtime_id = r.id
        where r.tenant_id = ${tenantId}
@@ -96,6 +101,7 @@ export class PostgresOperationsService {
       activeWorkers: row.activeWorkers,
       queuedRuns: row.queuedRuns,
       attemptTimeoutMinutes: Math.ceil(row.timeoutSeconds / 60),
+      disabledTools: row.disabledTools,
       lastHeartbeat: row.lastHeartbeatAt ? formatDateTime(row.lastHeartbeatAt) : '—',
       checkedAt: '刚刚',
       healthMessage: liveHealth?.runtimeId === row.id
@@ -137,6 +143,9 @@ export class PostgresOperationsService {
   async updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput, expected?: RuntimeMutationSnapshot) {
     const actor = await this.requirePlatformAdmin(input.actor)
     assertRuntimeConfiguration(input)
+    let disabledTools: string[] | undefined
+    try { disabledTools = input.disabledTools === undefined ? undefined : normalizeDisabledTools(input.disabledTools) }
+    catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用工具清单无效') }
     let runtimeConfigurationStarted = false
     try {
       await this.database.begin(async (transaction) => {
@@ -163,10 +172,11 @@ export class PostgresOperationsService {
 
         await transaction`
           insert into runtime_configurations (
-            tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, updated_by
+            tenant_id, runtime_id, revision, concurrency_limit, timeout_seconds, sandbox_policy, disabled_tools, updated_by
           ) select ${tenantId}, ${input.runtimeId}, coalesce(max(revision), 0) + 1,
                    ${input.maxConcurrentWorkers}, ${input.attemptTimeoutMinutes * 60},
-                   '{"network":"deny","write":"workspace_only","approval":"risk_based"}', ${actor.id}
+                   '{"network":"deny","write":"workspace_only","approval":"risk_based"}',
+                   ${transaction.json(disabledTools ?? runtime.disabledTools)}, ${actor.id}
             from runtime_configurations
            where tenant_id = ${tenantId} and runtime_id = ${input.runtimeId}
         `
@@ -190,7 +200,7 @@ export class PostgresOperationsService {
       }
       throw error
     }
-    await this.appendAudit(actor.id, 'runtime.configuration.update', input.runtimeId, 'success', `trace-runtime-${input.runtimeId}`, `${input.schedulingStatus} · 并发 ${input.maxConcurrentWorkers} · 超时 ${input.attemptTimeoutMinutes} 分钟`)
+    await this.appendAudit(actor.id, 'runtime.configuration.update', input.runtimeId, 'success', `trace-runtime-${input.runtimeId}`, `${input.schedulingStatus} · 并发 ${input.maxConcurrentWorkers} · 超时 ${input.attemptTimeoutMinutes} 分钟 · 停用工具 ${(disabledTools ?? []).join('、') || '无'}`)
     return (await this.getRuntimes()).find((runtime) => runtime.id === input.runtimeId)
   }
 
@@ -201,9 +211,11 @@ export class PostgresOperationsService {
       concurrencyLimit: number
       timeoutSeconds: number
       sandboxPolicy: Record<string, unknown>
+      disabledTools: string[]
     }[]>`
       select revision, concurrency_limit as "concurrencyLimit",
-             timeout_seconds as "timeoutSeconds", sandbox_policy as "sandboxPolicy"
+             timeout_seconds as "timeoutSeconds", sandbox_policy as "sandboxPolicy",
+             disabled_tools as "disabledTools"
         from runtime_configurations
        where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
        order by revision desc limit 1
@@ -215,6 +227,7 @@ export class PostgresOperationsService {
       timeoutSeconds: configuration?.timeoutSeconds ?? 300,
       revision: configuration?.revision ?? 0,
       sandboxPolicy: configuration?.sandboxPolicy ?? {},
+      disabledTools: configuration?.disabledTools ?? [],
     }
   }
 
@@ -228,15 +241,17 @@ export class PostgresOperationsService {
       maxConcurrentWorkers: number
       attemptTimeoutMinutes: number
       schedulingStatus: RuntimeDefinition['schedulingStatus']
+      disabledTools: string[]
       revision: number
     }[]>`
       select r.id as "runtimeId", r.capacity as "maxConcurrentWorkers",
              r.scheduling_status as "schedulingStatus",
              ceil(coalesce(configuration.timeout_seconds, 300) / 60.0)::integer as "attemptTimeoutMinutes",
+             coalesce(configuration.disabled_tools, '[]'::jsonb) as "disabledTools",
              coalesce(configuration.revision, 0)::integer as revision
         from runtimes r
         left join lateral (
-          select revision, timeout_seconds
+          select revision, timeout_seconds, disabled_tools
             from runtime_configurations
            where tenant_id = r.tenant_id and runtime_id = r.id
            order by revision desc limit 1
@@ -775,62 +790,18 @@ export class PostgresOperationsService {
        where tenant_id = ${tenantId} and id = ${input.runId}
     `
     if (!run) throw notFound(`Run 不存在：${input.runId}`)
-    const toolVersionId = await this.resolveToolVersionId(input.runId, input.attemptId, input.metadata)
+    const toolName = typeof input.metadata['tool_name'] === 'string' ? input.metadata['tool_name'].trim() : ''
+    if (!toolName) throw invalidRequest('工具审计缺少 tool_name')
     await this.database`
       insert into tool_audit_logs (
-        id, tenant_id, run_id, attempt_id, tool_version_id, actor_user_id,
+        id, tenant_id, run_id, attempt_id, tool_name, actor_user_id,
         parameter_summary, result, trace_id, occurred_at
       ) values (
         ${`tool-audit-${randomUUID()}`}, ${tenantId}, ${input.runId}, ${input.attemptId},
-        ${toolVersionId}, ${run.requestedBy}, ${this.database.json(sanitizeSafeMetadata(input.metadata))},
+        ${toolName}, ${run.requestedBy}, ${this.database.json(sanitizeSafeMetadata(input.metadata))},
         ${input.result ?? 'success'}, ${input.traceId}, now()
       )
     `
-  }
-
-  private async resolveToolVersionId(
-    runId: string,
-    attemptId: string,
-    metadata: Record<string, unknown>,
-  ) {
-    const toolName = typeof metadata['tool_name'] === 'string' ? metadata['tool_name'].trim() : ''
-    if (!toolName) throw invalidRequest('工具审计缺少 tool_name，无法关联 Tool Version')
-
-    const [attempt] = await this.database<{ manifest: unknown }[]>`
-      select manifest from run_attempts
-       where tenant_id = ${tenantId} and run_id = ${runId} and id = ${attemptId}
-    `
-    if (!attempt) throw notFound(`Attempt 不存在：${attemptId}`)
-    const manifestTools = readManifestToolReferences(attempt.manifest)
-    const normalizedName = toolName.toLowerCase()
-    const manifestTool = manifestTools.find(reference =>
-      reference.id.toLowerCase() === normalizedName
-      || `${reference.id}@${reference.version}`.toLowerCase() === normalizedName,
-    )
-    if (manifestTool) {
-      const [lockedVersion] = await this.database<{ id: string }[]>`
-        select id from tool_versions
-         where tenant_id = ${tenantId} and tool_id = ${manifestTool.id}
-           and version = ${manifestTool.version}
-      `
-      if (lockedVersion) return lockedVersion.id
-    }
-
-    const catalogName = toolName.includes('@') ? toolName.slice(0, toolName.lastIndexOf('@')) : toolName
-    const [catalogVersion] = await this.database<{ id: string }[]>`
-      select tv.id from tools t
-      join tool_versions tv on tv.tenant_id = t.tenant_id and tv.tool_id = t.id
-       where t.tenant_id = ${tenantId} and tv.status = 'published'
-         and (
-           lower(t.id) = lower(${catalogName})
-           or lower(coalesce(t.dsh_tool_name, '')) = lower(${catalogName})
-           or lower(t.name) = lower(${catalogName})
-         )
-       order by tv.created_at desc
-       limit 1
-    `
-    if (!catalogVersion) throw new Error(`工具审计无法解析 Tool Version：${toolName}`)
-    return catalogVersion.id
   }
 
   appendAudit(
@@ -902,6 +873,7 @@ function sameRuntimeMutationSnapshot(left: RuntimeMutationSnapshot, right: Runti
     && left.maxConcurrentWorkers === right.maxConcurrentWorkers
     && left.attemptTimeoutMinutes === right.attemptTimeoutMinutes
     && left.schedulingStatus === right.schedulingStatus
+    && [...left.disabledTools].sort().join(',') === [...right.disabledTools].sort().join(',')
     && left.revision === right.revision
 }
 
@@ -918,18 +890,6 @@ function assertRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
 }
 
 function estimateTokens(value: string) { return Math.ceil([...value].length / 2) }
-function readManifestToolReferences(manifest: unknown) {
-  if (!isRecord(manifest) || !Array.isArray(manifest['tools'])) return []
-  return manifest['tools'].flatMap((candidate) => {
-    if (!isRecord(candidate)) return []
-    const id = candidate['id']
-    const version = candidate['version']
-    return typeof id === 'string' && typeof version === 'string' ? [{ id, version }] : []
-  })
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 const sessionStatusFilters = new Set(['queued', 'running', 'awaiting_approval', 'succeeded', 'failed', 'cancelled'])
 const auditStatusFilters = new Set(['success', 'failed', 'blocked'])
 const auditCategoryFilters = new Set(['management', 'security', 'run', 'model', 'tool', 'artifact'])

@@ -41,7 +41,7 @@ import {
   tenantId,
   type OrchestrationDependencies,
   type PersistentWaitPort,
-  type ToolBindingCheckPort,
+  type ExecutionToolCheckPort,
 } from './orchestration/orchestration-dependencies.ts'
 import { ReleaseTrialEntry } from './orchestration/release-trial-entry.ts'
 import { TASK_THREAD_BUSY } from '../workbench/application/postgres-project-service.ts'
@@ -86,7 +86,7 @@ export class RunOrchestrationService {
        */
       automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
       /** B-03/I-04：Attempt 固定绑定修订的执行期复核端口；未接线且 Manifest 带 pin 时 fail-closed。 */
-      toolBindings?: ToolBindingCheckPort
+      toolChecks?: ExecutionToolCheckPort
       /** PF-01 stable Task ownership for non-conversation execution. */
       tasks?: TaskRepository
       memory?: PostgresControlledMemoryService
@@ -104,7 +104,7 @@ export class RunOrchestrationService {
       automationMaxConcurrent: options?.automationMaxConcurrent ?? 2,
       timezone: options?.timezone ?? DEFAULT_PLATFORM_TIMEZONE,
       automationStatusLookup: options?.automationStatusLookup,
-      toolBindings: options?.toolBindings,
+      toolChecks: options?.toolChecks,
       tasks: options?.tasks,
       memory: options?.memory,
       projectTasks: options?.projectTasks,
@@ -166,7 +166,7 @@ export class RunOrchestrationService {
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) { return this.cancellation.systemCancelRun(runId, cause, reason) }
 
   // Execution-time authorization shared with the Runtime, tool bridge and approvals.
-  assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false) { return this.gate.assertCurrentRunAuthorization(manifest, toolBindingsChecked) }
+  assertCurrentRunAuthorization(manifest: RuntimeManifest, toolsChecked = false) { return this.gate.assertCurrentRunAuthorization(manifest, toolsChecked) }
   assertWaitingRunAuthorization(manifest: RuntimeManifest) { return this.gate.assertWaitingRunAuthorization(manifest) }
 
   close() { return this.scheduler.close() }

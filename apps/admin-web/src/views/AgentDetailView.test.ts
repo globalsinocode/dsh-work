@@ -19,14 +19,14 @@ const agent: AgentDefinition = {
   status: 'draft', version: '0.2.0', activeVersion: '0.1.0',
   welcomeMessage: '', examplePrompts: ['请介绍你能提供哪些帮助'], systemPrompt: '你是测试 Agent，只处理当前输入并说明依据。',
   workInstructions: '', maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-  skills: [], tools: [], mcpScope: { mode: 'none', connectorIds: [] }, updatedAt: '2026-10-16 08:00', revision: 'rev-1',
+  skills: [], webSearchEnabled: false, mcpScope: { mode: 'none', connectorIds: [] }, updatedAt: '2026-10-16 08:00', revision: 'rev-1',
 }
 
 function versionRecord(version: string, status: AgentVersionRecord['status']): AgentVersionRecord {
   return {
     id: `agent-version-${version}`, agentId: agent.id, version, status, createdAt: '2026-10-16 08:00', createdBy: '陈默',
     summary: '', welcomeMessage: '', examplePrompts: [], systemPrompt: agent.systemPrompt,
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], tools: [],
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], webSearchEnabled: false,
   }
 }
 

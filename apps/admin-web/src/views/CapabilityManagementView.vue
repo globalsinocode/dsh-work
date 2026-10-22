@@ -9,19 +9,16 @@ import SkillInstallationPanel from '@/components/SkillInstallationPanel.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import { useToolGovernanceStore } from '@/stores/toolGovernance'
-import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord, ToolDefinition } from '@/types/domain'
+import type { ConnectorDefinition, McpConnectionTestResult, SkillDefinition, SkillReleaseRecord, SkillTestRunProgress, SkillVersionRecord } from '@/types/domain'
 
-type CapabilityTab = 'skills' | 'install' | 'tools' | 'connectors'
+type CapabilityTab = 'skills' | 'install' | 'connectors'
 
 const authStore = useAuthStore()
 const contentStore = useContentStore()
-const toolStore = useToolGovernanceStore()
 const router = useRouter()
 const route = useRoute()
 const activeTab = computed<CapabilityTab>(() => {
   if (route.path === '/skills/install') return authStore.canManage ? 'install' : 'skills'
-  if (route.path === '/tools') return 'tools'
   if (route.path === '/connectors') return 'connectors'
   return 'skills'
 })
@@ -32,12 +29,10 @@ const tabs = computed<Array<{ id: CapabilityTab; label: string; count?: number }
 ])
 const skillSection = computed(() => activeTab.value === 'skills' || activeTab.value === 'install')
 const query = ref('')
-const toolRuntimeStatusFilter = ref<'all' | ToolDefinition['status']>('all')
-const toolAdmissionFilter = ref<'all' | NonNullable<ToolDefinition['admissionStatus']>>('all')
 const detailOpen = ref(false)
 const detailTitle = ref('')
 const detailRows = ref<Array<{ label: string; value: string }>>([])
-const detailType = ref<'skill' | 'tool' | 'connector'>('skill')
+const detailType = ref<'skill' | 'connector'>('skill')
 const detailTargetId = ref('')
 const skillDetailTab = ref<'config' | 'versions' | 'releases'>('config')
 const actionLoading = ref('')
@@ -81,7 +76,6 @@ watch(mcpConnectionSignature, (signature) => {
     testedMcpSignature.value = ''
   }
 })
-const toolCatalogSyncing = ref(false)
 const skillActionFeedback = ref<{
   type: 'info' | 'success' | 'warning' | 'error'
   title: string
@@ -119,27 +113,6 @@ const filteredSkills = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   return managedSkills.value.filter((item) => !keyword || `${item.name} ${item.description} ${item.owner} ${item.id} ${(item.dependencies ?? []).map(dependency => `${dependency.name} ${dependency.id}`).join(' ')}`.toLowerCase().includes(keyword))
 })
-const filteredTools = computed(() => {
-  const keyword = query.value.trim().toLowerCase()
-  return contentStore.tools
-    .filter((item) => !keyword || `${item.name} ${item.id} ${item.system} ${item.description}`.toLowerCase().includes(keyword))
-    .filter(item => toolRuntimeStatusFilter.value === 'all' || item.status === toolRuntimeStatusFilter.value)
-    .filter((item) => {
-      if (toolAdmissionFilter.value === 'all') return true
-      const admissionStatus = item.admissionStatus ?? 'approved'
-      return admissionStatus === toolAdmissionFilter.value
-    })
-})
-const detailToolGovernance = computed(() =>
-  detailType.value === 'tool'
-    ? toolStore.governanceOf(detailTargetId.value)
-    : undefined,
-)
-const toolReferences = computed(() =>
-  detailType.value === 'tool'
-    ? toolStore.referencesOf(detailTargetId.value, contentStore.agents, contentStore.agentVersions)
-    : [],
-)
 const filteredConnectors = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   return contentStore.connectors
@@ -150,22 +123,17 @@ const selectedMcpToolsConnector = computed(() => contentStore.connectors.find(it
 const selectedMcpCredentialConnector = computed(() => contentStore.connectors.find(item => item.id === selectedMcpCredentialConnectorId.value))
 const { currentPage: skillPage, pagedItems: pagedSkills } =
   useListPagination(filteredSkills, { resetOn: query })
-const { currentPage: toolPage, pagedItems: pagedTools } =
-  useListPagination(filteredTools, { resetOn: [query, toolRuntimeStatusFilter, toolAdmissionFilter] })
 const { currentPage: connectorPage, pagedItems: pagedConnectors } =
   useListPagination(filteredConnectors, { resetOn: query })
 const { currentPage: skillVersionPage, pagedItems: pagedSkillVersions } =
   useListPagination(selectedSkillVersions, { resetOn: detailTargetId })
 const { currentPage: skillReleasePage, pagedItems: pagedSkillReleases } =
   useListPagination(selectedSkillReleases, { resetOn: detailTargetId })
-const { currentPage: toolReferencePage, pagedItems: pagedToolReferences } =
-  useListPagination(toolReferences, { resetOn: detailTargetId })
 function switchTab(tab: CapabilityTab) {
   query.value = ''
   const paths: Record<CapabilityTab, string> = {
     skills: '/skills',
     install: '/skills/install',
-    tools: '/tools',
     connectors: '/connectors',
   }
   void router.push(paths[tab])
@@ -209,30 +177,6 @@ function inspectSkillDependency(skillId: string) {
   if (dependency) inspectSkill(dependency)
 }
 
-function inspectTool(tool: ToolDefinition) {
-  const connector = contentStore.connectors.find((item) => item.id === tool.connectorId)
-  showDetail(tool.name, [
-    { label: '工具标识', value: tool.id },
-    { label: '工具说明', value: tool.description },
-    { label: '所属系统', value: tool.system },
-    { label: '绑定连接器', value: connector?.name ?? '平台内置能力' },
-    { label: '操作模式', value: tool.mode === 'read' ? '只读' : '写入' },
-    { label: '风险等级', value: riskLabel(tool.risk) },
-    { label: '平台准入', value: tool.admissionStatus === 'unavailable' ? '尚未准入' : '可授权' },
-    { label: '准入说明', value: tool.admissionMessage ?? '已完成平台安全准入' },
-    { label: '授权角色', value: tool.allowedRoles.join('、') },
-    { label: '数据范围', value: tool.dataScopes.join('、') },
-    { label: '审批策略', value: approvalLabel(tool.approvalPolicy) },
-    { label: '调用超时', value: `${tool.timeoutSeconds} 秒` },
-    { label: '结果校验', value: tool.outputValidation === 'unavailable' ? '平台不可验证' : tool.outputValidation === 'platform' ? '平台校验' : 'Runtime 校验' },
-    { label: '重试策略', value: tool.retryPolicy === 'safe' ? '可安全重试' : tool.retryPolicy === 'verify-first' ? '核对结果后重试' : '不可自动重试' },
-    { label: '并发策略', value: tool.concurrencyPolicy === 'concurrent' ? '允许并发' : '串行执行' },
-    { label: '完成语义', value: tool.completionSemantics === 'completed' ? '同步完成' : '仅表示已受理' },
-    { label: '输入 Schema', value: tool.inputSchema },
-    { label: '输出 Schema', value: tool.outputSchema },
-  ], 'tool', tool.id)
-}
-
 async function inspectConnector(connector: ConnectorDefinition) {
   let invocationSummary = ''
   if (connector.mcp) {
@@ -264,7 +208,7 @@ async function inspectConnector(connector: ConnectorDefinition) {
   ], 'connector', connector.id)
 }
 
-function showDetail(title: string, rows: Array<{ label: string; value: string }>, type: 'skill' | 'tool' | 'connector', targetId: string) {
+function showDetail(title: string, rows: Array<{ label: string; value: string }>, type: 'skill' | 'connector', targetId: string) {
   detailTitle.value = title
   detailRows.value = rows
   detailType.value = type
@@ -278,20 +222,6 @@ async function copySkillIdentifier(value: string) {
     ElMessage.success('Skill 标识已复制')
   } catch {
     ElMessage.error('复制失败，请手动选择标识')
-  }
-}
-
-async function syncDshTools() {
-  if (toolCatalogSyncing.value) return
-  toolCatalogSyncing.value = true
-  try {
-    const result = await contentStore.syncDshTools()
-    await toolStore.loadBindings()
-    ElMessage.success(`已同步 ${result.discoveredCount} 个 DSH 工具，其中 ${result.admittedCount} 个可授权给 Agent`)
-  } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : 'DSH 工具目录同步失败')
-  } finally {
-    toolCatalogSyncing.value = false
   }
 }
 
@@ -338,7 +268,7 @@ async function changeSkillStatus(skill: SkillDefinition) {
       skillActionFeedback.value = {
         type: 'error',
         title: `“${skill.name}”${action}失败`,
-        description: `${cause.message} 请检查 Runtime、工具授权和 Skill 配置后重试。`,
+        description: `${cause.message} 请检查 Runtime 和 Skill 配置后重试。`,
       }
       ElMessage.error(cause.message)
     }
@@ -496,26 +426,6 @@ function releaseActionLabel(record: SkillReleaseRecord) {
     disabled: '停用 Skill',
     rollback: '版本回滚',
   }[record.action]
-}
-
-async function changeToolStatus(tool: ToolDefinition) {
-  const disabling = tool.status !== 'disabled'
-  const nextStatus = disabling ? 'disabled' : 'available'
-  const action = disabling ? '停用' : '启用'
-  try {
-    await ElMessageBox.confirm(
-      disabling ? '停用后，Agent 运行将不能再调用此工具；已有审计记录保留。' : '启用前请确认连接器、Schema 和权限配置仍然有效。',
-      `${action}“${tool.name}”？`,
-      { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: 'warning' },
-    )
-    actionLoading.value = `tool:${tool.id}`
-    await contentStore.setToolStatus(tool.id, nextStatus)
-    ElMessage.success(`工具已${action}`)
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    actionLoading.value = ''
-  }
 }
 
 async function checkConnector(connector: ConnectorDefinition) {
@@ -753,20 +663,13 @@ async function refreshHealth() {
   }
 }
 
+/** Skill 声明的内置工具引用（name@version）只展示名称；无声明时说明平台默认装配。 */
 function toolNames(references: string[]) {
+  if (!references.length) return '无（使用平台默认装配的内置工具）'
   return references.map((reference) => {
     const separator = reference.lastIndexOf('@')
-    const id = separator > 0 ? reference.slice(0, separator) : reference
-    return contentStore.tools.find((tool) => tool.id === id)?.name ?? reference
+    return separator > 0 ? reference.slice(0, separator) : reference
   }).join('、')
-}
-
-function riskLabel(risk: ToolDefinition['risk']) {
-  return { low: '低风险', medium: '中风险', high: '高风险' }[risk]
-}
-
-function approvalLabel(policy: ToolDefinition['approvalPolicy']) {
-  return { none: '无需审批', sensitive: '敏感范围审批', always: '每次审批' }[policy]
 }
 
 function protocolLabel(protocol: ConnectorDefinition['protocol']) {
@@ -783,8 +686,6 @@ function connectorNeedsRecovery(connector: ConnectorDefinition) {
 
 onMounted(() => {
   void contentStore.load()
-  // B-03/I-04：工具绑定修订为服务端真实记录（/tools/bindings）。
-  void toolStore.loadBindings()
 })
 onUnmounted(() => clearSkillTestPoll())
 </script>
@@ -792,8 +693,7 @@ onUnmounted(() => clearSkillTestPoll())
 <template>
   <div class="ops-page capabilities-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-    <el-alert v-if="toolStore.bindingsError" :title="`平台绑定修订加载失败：${toolStore.bindingsError}`" type="warning" show-icon @close="toolStore.bindingsError = ''" />
-    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Skill、工具与连接器配置。" />
+    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Skill 与连接器配置。" />
     <el-alert
       v-if="skillActionFeedback && activeTab === 'skills'"
       class="skill-action-feedback"
@@ -811,40 +711,21 @@ onUnmounted(() => clearSkillTestPoll())
         <button v-for="tab in tabs" :id="`capability-tab-${tab.id}`" :key="tab.id" class="status-tab" :class="{ active: activeTab === tab.id }" type="button" role="tab" :aria-selected="activeTab === tab.id" :aria-controls="`capability-panel-${tab.id}`" :tabindex="activeTab === tab.id ? 0 : -1" @click="switchTab(tab.id)">{{ tab.label }} <span v-if="tab.count !== undefined" class="tab-count">{{ tab.count }}</span></button>
       </div>
       <div v-if="activeTab !== 'install'" class="filter-bar capability-toolbar">
-        <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : activeTab === 'tools' ? '搜索 DSH 内置工具名称、标识或说明' : '搜索 MCP 名称、标识或 serverName'" />
-        <div v-if="activeTab === 'tools'" class="tool-filter-controls" aria-label="工具筛选">
-          <el-select v-model="toolRuntimeStatusFilter" aria-label="运行状态" data-testid="tool-runtime-status-filter">
-            <el-option label="全部运行状态" value="all" />
-            <el-option label="可用" value="available" />
-            <el-option label="性能下降" value="degraded" />
-            <el-option label="已停用" value="disabled" />
-          </el-select>
-          <el-select v-model="toolAdmissionFilter" aria-label="平台准入" data-testid="tool-admission-filter">
-            <el-option label="全部准入状态" value="all" />
-            <el-option label="可授权" value="approved" />
-            <el-option label="尚未准入" value="unavailable" />
-          </el-select>
-        </div>
+        <el-input v-model="query" :prefix-icon="Search" clearable :placeholder="activeTab === 'skills' ? '搜索 Skill 名称、说明或负责人' : '搜索 MCP 名称、标识或 serverName'" />
         <div v-if="activeTab === 'skills'" class="capability-toolbar__legend"><span>版本发布后不可变</span></div>
         <el-button v-if="activeTab === 'skills'" @click="router.push('/assistant?context=skills')">交给管理助手</el-button>
-        <div v-if="authStore.canManage && activeTab === 'tools'" class="capability-toolbar__actions">
-          <el-button type="primary" :icon="Refresh" :loading="toolCatalogSyncing" data-action="sync-dsh-tools" @click="syncDshTools">同步 DSH 工具</el-button>
-        </div>
         <div v-if="authStore.canManage && activeTab === 'connectors'" class="capability-toolbar__actions">
           <el-button type="primary" :icon="Plus" data-action="add-mcp-connector" @click="mcpCreateDialogOpen = true">新增 MCP</el-button>
           <el-button :icon="Refresh" :loading="healthRefreshing" data-action="refresh-connectors" @click="refreshHealth">全部检查</el-button>
         </div>
       </div>
-      <p v-if="activeTab === 'tools'" class="tool-admission-help" data-testid="tool-admission-help">
-        平台准入表示工具已完成平台安全策略、执行约束和结果证据接入，可以授权给 Agent；不代表任何 Agent 已经获得使用权。
-      </p>
     </section>
 
     <div v-if="authStore.canManage" v-show="activeTab === 'install'" id="capability-panel-install" role="tabpanel" aria-labelledby="capability-tab-install">
       <SkillInstallationPanel @back="switchTab('skills')" @assistant="router.push('/assistant?context=skills')" @installed="refreshInstalledSkills" />
     </div>
 
-    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'tools' ? 'DSH 内置工具列表' : activeTab === 'connectors' ? 'MCP 连接器列表' : undefined">
+    <section v-if="activeTab !== 'install'" :id="`capability-panel-${activeTab}`" class="content-panel content-panel--flush capability-panel" role="tabpanel" :aria-labelledby="skillSection ? `capability-tab-${activeTab}` : undefined" :aria-label="activeTab === 'connectors' ? 'MCP 连接器列表' : undefined">
       <template v-if="activeTab === 'skills'">
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedSkills" empty-text="暂无匹配的 Skill">
         <el-table-column label="Skill" min-width="360">
@@ -883,22 +764,6 @@ onUnmounted(() => clearSkillTestPoll())
         <el-table-column label="操作" width="210" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-skill" @click="inspectSkill(scope.row)">查看</el-button><el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `skill:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-skill' : 'publish-skill'" @click="changeSkillStatus(scope.row)">{{ scope.row.status === 'published' ? '停用' : scope.row.status === 'draft' ? (scope.row.packageSha256 ? '试运行并发布' : '校验并发布') : '启用' }}</el-button></template></el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="skillPage" background layout="prev, pager, next" :total="filteredSkills.length" :page-size="10" /></div>
-      </template>
-
-      <template v-else-if="activeTab === 'tools'">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedTools" empty-text="暂无匹配的 DSH 内置工具">
-        <el-table-column label="工具" min-width="290"><template #default="scope"><div class="primary-cell"><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small><code>{{ scope.row.id }}</code></div></template></el-table-column>
-        <el-table-column prop="system" label="所属系统" min-width="130" />
-        <el-table-column label="模式" width="90"><template #default="scope"><span class="mode-label" :class="`mode-label--${scope.row.mode}`">{{ scope.row.mode === 'read' ? '只读' : '写入' }}</span></template></el-table-column>
-        <el-table-column label="风险" width="100"><template #default="scope"><StatusTag :status="scope.row.risk" /></template></el-table-column>
-        <el-table-column label="平台准入" width="120"><template #default="scope"><StatusTag :status="scope.row.admissionStatus === 'unavailable' ? 'blocked' : 'available'" :label="scope.row.admissionStatus === 'unavailable' ? '尚未准入' : '可授权'" dot /></template></el-table-column>
-        <el-table-column label="运行状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" dot /></template></el-table-column>
-        <el-table-column label="使用授权" min-width="170"><template #default="scope"><span class="role-text">{{ scope.row.admissionStatus === 'unavailable' ? '不可授权' : '在 Agent 版本中配置' }}</span></template></el-table-column>
-        <el-table-column label="绑定修订" min-width="190"><template #default="scope"><span class="mono">{{ scope.row.admissionStatus === 'unavailable' ? '—' : toolStore.governanceOf(scope.row.id).bindingRevision.id }}</span></template></el-table-column>
-        <el-table-column prop="lastCheckedAt" label="检查时间" width="110" />
-        <el-table-column label="操作" width="150" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" data-action="view-tool" @click="inspectTool(scope.row)">查看</el-button><el-button v-if="authStore.canManage && scope.row.admissionStatus !== 'unavailable'" link type="primary" :loading="actionLoading === `tool:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-tool' : 'disable-tool'" @click="changeToolStatus(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button></template></el-table-column>
-      </el-table>
-      <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="toolPage" background layout="prev, pager, next" :total="filteredTools.length" :page-size="10" /></div>
       </template>
 
       <template v-else>
@@ -1074,31 +939,6 @@ onUnmounted(() => clearSkillTestPoll())
           <el-pagination v-model:current-page="skillReleasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedSkillReleases.length" :page-size="10" />
         </template>
       </section>
-      <template v-if="detailType === 'tool'">
-        <template v-if="detailToolGovernance">
-          <section class="tool-gov-section">
-            <h3>绑定修订</h3>
-            <dl class="capability-detail__rows capability-detail__rows--compact">
-              <div><dt>修订</dt><dd class="mono">{{ detailToolGovernance.bindingRevision.id }}</dd></div>
-              <div><dt>端点</dt><dd class="mono">{{ detailToolGovernance.bindingRevision.endpoint }}</dd></div>
-              <div><dt>执行器</dt><dd class="mono">{{ detailToolGovernance.bindingRevision.executor }}</dd></div>
-              <div><dt>凭据槽位</dt><dd class="mono">{{ detailToolGovernance.bindingRevision.credentialSlot }}</dd></div>
-              <div><dt>过滤策略</dt><dd>{{ detailToolGovernance.bindingRevision.filterPolicy }}</dd></div>
-              <div><dt>封存时间</dt><dd>{{ detailToolGovernance.bindingRevision.sealedAt }}</dd></div>
-            </dl>
-            <p class="tool-gov-note">包数据不能改写端点、凭据槽位、执行器与权限范围。</p>
-          </section>
-        </template>
-        <section class="tool-gov-section">
-          <h3>引用方</h3>
-          <el-table v-if="toolReferences.length" class="data-table" :data="pagedToolReferences" size="small">
-            <el-table-column prop="agentName" label="Agent" min-width="160" />
-            <el-table-column label="版本" min-width="150"><template #default="scope"><span class="mono">{{ scope.row.versions.map((v: string) => `v${v}`).join('、') }}</span></template></el-table-column>
-          </el-table>
-          <el-pagination v-if="toolReferences.length" v-model:current-page="toolReferencePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="toolReferences.length" :page-size="10" />
-          <p v-else class="tool-gov-note">暂无 Agent 引用</p>
-        </section>
-      </template>
       <div v-if="authStore.canManage && detailType === 'skill'" class="capability-detail__actions"><template v-if="selectedSkill"><el-button :type="selectedSkill.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `skill:${selectedSkill.id}`" @click="changeSkillStatus(selectedSkill)">{{ selectedSkill.status === 'published' ? '停用 Skill' : selectedSkill.status === 'draft' ? (selectedSkill.packageSha256 ? '试运行并发布' : '校验并发布') : '启用 Skill' }}</el-button></template></div>
     </el-drawer>
 
@@ -1145,9 +985,6 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-toolbar__legend { margin-left: auto; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .capability-toolbar__actions { display: flex; gap: 8px; align-items: center; }
 .capability-toolbar__legend span { display: inline-flex; align-items: center; gap: 6px; }
-.tool-filter-controls { display: flex; min-width: 340px; flex: 1; gap: 8px; }
-.tool-filter-controls :deep(.el-select) { width: 166px; }
-.tool-admission-help { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.55; }
 .capability-panel :deep(.el-table__header .cell) { white-space: nowrap; }
 .primary-cell { display: flex; min-width: 0; flex-direction: column; }
 .primary-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
@@ -1164,8 +1001,6 @@ onUnmounted(() => clearSkillTestPoll())
 .skill-dependency-chip code { margin: 0; color: inherit; font-size: var(--font-size-micro); }
 .skill-dependency-chip :deep(.status-tag) { font-size: var(--font-size-micro); }
 .active-version-hint { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-micro); }
-.mode-label { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); font-weight: var(--font-weight-badge); }
-.mode-label--write { color: var(--color-warning-strong); background: var(--color-warning-light); }
 .role-text { color: var(--color-text-secondary); font-size: var(--font-size-badge); }
 .mcp-name { color: var(--color-text-heading); font-size: var(--font-size-caption); }
 .mcp-endpoint { display: block; overflow: hidden; color: var(--color-text-primary); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
@@ -1194,10 +1029,6 @@ onUnmounted(() => clearSkillTestPoll())
 .capability-detail__identifier code { color: var(--color-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .capability-detail__code { padding: 9px; border-radius: var(--radius-button); background: var(--color-bg-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge) !important; }
 .capability-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-.tool-gov-section { margin-top: 22px; }
-.tool-gov-section h3 { margin: 0 0 10px; color: var(--color-text-heading); font-size: var(--font-size-body); }
-.capability-detail__rows--compact { margin-top: 0; }
-.tool-gov-note { margin: 8px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-size-badge); }
 .cell-sub { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .muted { color: var(--color-text-muted); }
@@ -1207,5 +1038,5 @@ onUnmounted(() => clearSkillTestPoll())
 .version-summary small,
 .release-record small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
 .release-record p { margin: 6px 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
-@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .tool-filter-controls { min-width: 0; } .tool-filter-controls :deep(.el-select) { width: 50%; } .mcp-form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .capability-toolbar { align-items: stretch; flex-direction: column; } .capability-toolbar .el-input { width: 100%; } .capability-toolbar__legend { margin-left: 0; } .mcp-form-grid { grid-template-columns: 1fr; } }
 </style>

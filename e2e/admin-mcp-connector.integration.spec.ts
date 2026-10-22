@@ -74,10 +74,10 @@ test('PF-MCP-01: Connector registration is effective at once and later capabilit
   await expect(page.getByRole('menuitem', { name: 'Agent 权限', exact: true })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  let evidence = await data<{ platformToolCount: number; resolvedConnectionCount: number }>(
+  let evidence = await data<{ resolvedConnectionCount: number }>(
     await page.request.get(`/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`),
   )
-  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
+  expect(evidence).toEqual({ resolvedConnectionCount: 1 })
 
   // 远端新增 Tool：检查后进入待确认，确认前不生效。
   await data(await page.request.post('/api/admin/v1/test/mcp/capabilities', { data: { changed: true } }))
@@ -99,7 +99,7 @@ test('PF-MCP-01: Connector registration is effective at once and later capabilit
   evidence = await data(await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
-  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
+  expect(evidence).toEqual({ resolvedConnectionCount: 1 })
 
   await chooseMoreAction('停用')
   await page.getByRole('dialog', { name: `停用“${connectorName}”？` })
@@ -115,7 +115,7 @@ test('PF-MCP-01: Connector registration is effective at once and later capabilit
   evidence = await data(await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
-  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 0 })
+  expect(evidence).toEqual({ resolvedConnectionCount: 0 })
 
   await chooseMoreAction('启用')
   await page.getByRole('dialog', { name: `启用“${connectorName}”？` })
@@ -124,7 +124,7 @@ test('PF-MCP-01: Connector registration is effective at once and later capabilit
   evidence = await data(await page.request.get(
     `/api/admin/v1/test/mcp/evidence?connector_id=${encodeURIComponent(connectorId!)}`,
   ))
-  expect(evidence).toEqual({ platformToolCount: 0, resolvedConnectionCount: 1 })
+  expect(evidence).toEqual({ resolvedConnectionCount: 1 })
 
   await chooseMoreAction('删除')
   const deleteDialog = page.getByRole('dialog', { name: `删除“${connectorName}”？` })

@@ -10,7 +10,6 @@ import {
   mockRuntimes,
   mockSkills,
   mockTasks,
-  mockTools,
   mockUsage,
   mockWorkspaces,
   prototypeUsers,
@@ -21,7 +20,6 @@ import type {
   ConnectorDefinition,
   RuntimeDefinition,
   SkillDefinition,
-  ToolDefinition,
 } from '../../domain/types.ts'
 import { notFound, stateConflict } from '../../domain/request-errors.ts'
 
@@ -116,26 +114,6 @@ export class SmokeRepository {
     return copy(skill)
   }
 
-  async updateTool(
-    toolId: string,
-    patch: Partial<Omit<ToolDefinition, 'id'>>,
-  ): Promise<ToolDefinition> {
-    await simulateIo()
-    const tool = this.data.tools.find((item) => item.id === toolId)
-    if (!tool) throw notFound(`工具不存在：${toolId}`)
-    Object.assign(tool, copy(patch))
-    return copy(tool)
-  }
-
-  async createTool(tool: ToolDefinition): Promise<ToolDefinition> {
-    await simulateIo()
-    if (this.data.tools.some((item) => item.id === tool.id)) {
-      throw stateConflict(`工具已存在：${tool.name}`)
-    }
-    this.data.tools.unshift(copy(tool))
-    return copy(tool)
-  }
-
   async updateConnector(
     connectorId: string,
     patch: Partial<Omit<ConnectorDefinition, 'id'>>,
@@ -145,17 +123,6 @@ export class SmokeRepository {
     if (!connector) throw notFound(`连接器不存在：${connectorId}`)
     Object.assign(connector, copy(patch))
     return copy(connector)
-  }
-
-  async updateToolPermissions(
-    toolId: string,
-    patch: Pick<ToolDefinition, 'allowedRoleIds' | 'allowedRoles' | 'dataScopes' | 'approvalPolicy'>,
-  ): Promise<ToolDefinition> {
-    await simulateIo()
-    const tool = this.data.tools.find((item) => item.id === toolId)
-    if (!tool) throw notFound(`工具不存在：${toolId}`)
-    Object.assign(tool, copy(patch))
-    return copy(tool)
   }
 
   async updateRuntime(
@@ -177,7 +144,6 @@ const prototypeData = {
   agents: mockAgents,
   agentVersions: mockAgentVersions,
   skills: mockSkills,
-  tools: mockTools,
   connectors: mockConnectors,
   runtimes: mockRuntimes,
   auditEvents: mockAuditEvents,

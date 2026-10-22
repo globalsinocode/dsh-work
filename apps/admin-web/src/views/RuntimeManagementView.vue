@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Connection, Cpu, Refresh, Search, Setting, View } from '@element-plus/icons-vue'
+import { Cpu, Refresh, Search, Setting, View } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { useListPagination } from '@/composables/use-list-pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { RuntimeDefinition } from '@/types/domain'
+import type { BuiltinTool, RuntimeDefinition } from '@/types/domain'
 
 interface RuntimeConfigurationForm {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  disabledTools: string[]
 }
 
 const authStore = useAuthStore()
@@ -27,12 +28,12 @@ const drawerOpen = ref(false)
 const configurationDialogOpen = ref(false)
 const configurationFormRef = ref<FormInstance>()
 const checkingId = ref('')
-const checkingToolConnector = ref(false)
 const savingConfiguration = ref(false)
 const configurationForm = reactive<RuntimeConfigurationForm>({
   maxConcurrentWorkers: 1,
   attemptTimeoutMinutes: 30,
   schedulingStatus: 'accepting',
+  disabledTools: [],
 })
 const configurationRules: FormRules<RuntimeConfigurationForm> = {
   maxConcurrentWorkers: [
@@ -65,12 +66,24 @@ const healthyCount = computed(() => contentStore.runtimes.filter((runtime) => ru
 const totalCapacity = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.maxConcurrentWorkers, 0))
 const activeWorkers = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.activeWorkers, 0))
 const queuedRuns = computed(() => contentStore.runtimes.reduce((sum, runtime) => sum + runtime.queuedRuns, 0))
-const selectedRuntimeToolConnector = computed(() => {
-  const connector = contentStore.dshRuntimeToolConnector
-  if (!connector || !selectedRuntime.value) return null
-  if (connector.runtimeId && connector.runtimeId !== selectedRuntime.value.id) return null
-  return connector
+const builtinTools = computed(() => contentStore.builtinTools?.tools ?? [])
+/** 只有 DSH 原生工具可以紧急停用；平台工具由各自流程控制。 */
+const disableableTools = computed(() => builtinTools.value.filter(tool => tool.source === 'dsh'))
+const catalogAlert = computed(() => {
+  const catalog = contentStore.builtinTools?.catalog
+  if (!catalog) return null
+  if ('error' in catalog) return { type: 'warning' as const, title: `启动时未能读取 DSH 工具目录：${catalog.error}` }
+  if (catalog.missingTools.length) return { type: 'warning' as const, title: `DSH 未提供以下内置工具，相关运行会失败：${catalog.missingTools.join('、')}` }
+  return { type: 'success' as const, title: '启动时已核对 DSH 工具目录，内置工具齐全' }
 })
+
+function assemblyLabel(tool: BuiltinTool) {
+  return { always: '默认装配', 'agent-opt-in': 'Agent 开启后装配', runtime: '按运行内容装配', purpose: '管理运行专用' }[tool.assembly]
+}
+
+function toolDisabled(tool: BuiltinTool, runtime: RuntimeDefinition) {
+  return runtime.disabledTools.includes(tool.name)
+}
 
 function schedulingLabel(status: RuntimeDefinition['schedulingStatus']) {
   return {
@@ -98,6 +111,7 @@ function openConfiguration(runtime: RuntimeDefinition) {
   configurationForm.maxConcurrentWorkers = runtime.maxConcurrentWorkers
   configurationForm.attemptTimeoutMinutes = runtime.attemptTimeoutMinutes
   configurationForm.schedulingStatus = runtime.schedulingStatus
+  configurationForm.disabledTools = [...runtime.disabledTools]
   configurationDialogOpen.value = true
 }
 
@@ -113,19 +127,6 @@ async function check(runtime: RuntimeDefinition) {
     ElMessage.error(cause instanceof Error ? cause.message : 'Runtime 检查失败')
   } finally {
     checkingId.value = ''
-  }
-}
-
-async function checkToolConnector() {
-  checkingToolConnector.value = true
-  try {
-    const connector = await contentStore.checkDshRuntimeToolConnector()
-    if (connector.status === 'offline') ElMessage.warning(connector.lastHealthMessage)
-    else ElMessage.success('DSH 内置工具连接检查完成')
-  } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : 'DSH 内置工具连接检查失败')
-  } finally {
-    checkingToolConnector.value = false
   }
 }
 
@@ -151,6 +152,18 @@ async function saveConfiguration() {
       return
     }
   }
+  const newlyDisabled = configurationForm.disabledTools.filter(name => !configuringRuntime.value?.disabledTools.includes(name))
+  if (newlyDisabled.length) {
+    try {
+      await ElMessageBox.confirm(
+        `新运行将不再装配 ${newlyDisabled.join('、')}；正在执行或等待恢复的运行再次使用这些工具时会被拒绝。确认继续吗？`,
+        '确认停用内置工具',
+        { confirmButtonText: '确认停用', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
 
   savingConfiguration.value = true
   try {
@@ -159,6 +172,7 @@ async function saveConfiguration() {
       maxConcurrentWorkers: configurationForm.maxConcurrentWorkers,
       attemptTimeoutMinutes: configurationForm.attemptTimeoutMinutes,
       schedulingStatus: configurationForm.schedulingStatus,
+      disabledTools: [...configurationForm.disabledTools],
     })
     configuringRuntime.value = result
     if (selectedRuntime.value?.id === result.id) selectedRuntime.value = result
@@ -254,25 +268,17 @@ onMounted(() => contentStore.load())
           <div><dt>检查时间</dt><dd>{{ selectedRuntime.checkedAt }}</dd></div>
         </dl>
         <section class="runtime-detail__section"><h3>运行能力</h3><div class="runtime-chip-list"><span v-for="capability in selectedRuntime.capabilities" :key="capability">{{ capability }}</span></div></section>
-        <section v-if="selectedRuntimeToolConnector" class="runtime-detail__section runtime-tool-connector" aria-label="DSH Runtime 内置工具连接">
-          <div class="runtime-tool-connector__header">
-            <div><span><el-icon><Connection /></el-icon></span><div><h3>{{ selectedRuntimeToolConnector.name }}</h3><p>平台级内置连接，由 Runtime 和 Tool Binding 共同治理。</p></div></div>
-            <StatusTag :status="selectedRuntimeToolConnector.status" dot />
-          </div>
-          <el-alert :type="selectedRuntimeToolConnector.status === 'offline' ? 'warning' : 'info'" :closable="false" show-icon :title="selectedRuntimeToolConnector.lastHealthMessage" />
-          <dl class="runtime-tool-connector__rows">
-            <div><dt>连接器标识</dt><dd class="mono">{{ selectedRuntimeToolConnector.connectorId }}</dd></div>
-            <div><dt>连接地址</dt><dd class="mono">{{ selectedRuntimeToolConnector.endpoint }}</dd></div>
-            <div><dt>内置工具</dt><dd>{{ selectedRuntimeToolConnector.toolCount }} 个</dd></div>
-            <div><dt>活动 Binding</dt><dd>{{ selectedRuntimeToolConnector.activeBindingCount }} 个<span v-if="selectedRuntimeToolConnector.latestBindingRevision !== null"> · 最高 rev{{ selectedRuntimeToolConnector.latestBindingRevision }}</span></dd></div>
-            <div><dt>目录摘要</dt><dd class="mono" :title="selectedRuntimeToolConnector.catalogDigest">{{ selectedRuntimeToolConnector.catalogDigest.slice(0, 12) }}</dd></div>
-            <div><dt>最近检查</dt><dd>{{ selectedRuntimeToolConnector.lastCheckedAt }}</dd></div>
-          </dl>
-          <div v-if="authStore.canManage" class="runtime-tool-connector__actions">
-            <el-button :loading="checkingToolConnector" data-action="check-dsh-tool-connector" @click="checkToolConnector">检查工具连接</el-button>
-          </div>
+        <section class="runtime-detail__section runtime-builtin-tools" aria-label="内置工具">
+          <h3>内置工具</h3>
+          <p class="field-help">内置工具随平台代码发布，管理员不能新增或修改；需要时可在“配置 Runtime”中紧急停用 DSH 工具。</p>
+          <el-alert v-if="catalogAlert" class="runtime-builtin-tools__catalog" :type="catalogAlert.type" :closable="false" show-icon :title="catalogAlert.title" />
+          <el-table class="data-table" :data="builtinTools" size="small" empty-text="内置工具清单加载失败">
+            <el-table-column label="工具" min-width="170"><template #default="scope"><div class="builtin-tool-cell"><strong>{{ scope.row.label }}</strong><code>{{ scope.row.name }}</code></div></template></el-table-column>
+            <el-table-column label="来源" width="72"><template #default="scope">{{ scope.row.source === 'dsh' ? 'DSH' : '平台' }}</template></el-table-column>
+            <el-table-column label="装配" min-width="128"><template #default="scope">{{ assemblyLabel(scope.row) }}</template></el-table-column>
+            <el-table-column label="状态" width="92"><template #default="scope"><StatusTag :status="toolDisabled(scope.row, selectedRuntime) ? 'disabled' : 'available'" :label="toolDisabled(scope.row, selectedRuntime) ? '已停用' : '可用'" dot /></template></el-table-column>
+          </el-table>
         </section>
-        <el-alert v-else-if="selectedRuntime.mode === 'dsh-worker'" type="info" :closable="false" show-icon title="当前 Runtime 未绑定平台的 DSH 内置工具连接。" />
         <div class="runtime-detail__actions">
           <el-button v-if="authStore.canManage" :icon="Setting" data-action="configure-runtime-detail" @click="openConfiguration(selectedRuntime)">配置 Runtime</el-button>
           <el-button v-if="authStore.canManage" type="primary" :loading="checkingId === selectedRuntime.id" data-action="check-runtime" @click="check(selectedRuntime)">执行健康检查</el-button>
@@ -281,7 +287,7 @@ onMounted(() => contentStore.load())
     </el-drawer>
 
     <el-dialog v-model="configurationDialogOpen" :title="`配置 Runtime：${configuringRuntime?.name ?? ''}`" width="620px" destroy-on-close>
-      <el-alert type="info" :closable="false" show-icon title="这里只配置 Runtime 的执行资源和调度行为；Agent、Skill、工具及数据权限仍在各自模块中管理。" />
+      <el-alert type="info" :closable="false" show-icon title="这里配置 Runtime 的执行资源、调度行为和内置工具紧急停用；Agent、Skill 与数据权限仍在各自模块中管理。" />
       <el-form ref="configurationFormRef" class="runtime-configuration-form" :model="configurationForm" :rules="configurationRules" label-position="top">
         <el-form-item label="最大并发 Worker 数" prop="maxConcurrentWorkers">
           <el-input-number v-model="configurationForm.maxConcurrentWorkers" class="configuration-number" :min="1" :max="128" :step="1" controls-position="right" aria-label="最大并发 Worker 数" />
@@ -303,6 +309,12 @@ onMounted(() => contentStore.load())
             <span v-else-if="configurationForm.schedulingStatus === 'draining'">不再接收新任务，等待当前 Worker 自然结束后下线。</span>
             <span v-else>不接收新任务，但不会强制终止当前 Worker。</span>
           </div>
+        </el-form-item>
+        <el-form-item label="紧急停用内置工具">
+          <el-select v-model="configurationForm.disabledTools" multiple clearable placeholder="不停用任何工具" aria-label="紧急停用内置工具" data-testid="disabled-tools-select">
+            <el-option v-for="tool in disableableTools" :key="tool.name" :label="`${tool.label}（${tool.name}）`" :value="tool.name" />
+          </el-select>
+          <p class="field-help">用于 DSH 工具出现问题时临时止损：新运行不装配，在途运行下一次调用被拒绝。依赖被停用工具的 Agent 运行可能失败。</p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -333,22 +345,17 @@ onMounted(() => contentStore.load())
 .runtime-detail__section h3 { margin: 0 0 9px; color: var(--color-text-heading); font-size: var(--font-size-body); }
 .runtime-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .runtime-chip-list span { padding: 4px 7px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); }
-.runtime-tool-connector { margin-top: 20px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
-.runtime-tool-connector__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.runtime-tool-connector__header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.runtime-tool-connector__header > div > span { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-button); color: var(--color-primary); background: var(--color-primary-light); }
-.runtime-tool-connector__header h3 { margin: 0; }
-.runtime-tool-connector__header p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); }
-.runtime-tool-connector__rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 12px 0 0; }
-.runtime-tool-connector__rows div { min-width: 0; padding: 9px 0; border-bottom: 1px solid var(--color-border); }
-.runtime-tool-connector__rows dt { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.runtime-tool-connector__rows dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-size: var(--font-size-caption); }
-.runtime-tool-connector__actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.runtime-builtin-tools { margin-top: 20px; }
+.runtime-builtin-tools__catalog { margin: 10px 0; }
+.builtin-tool-cell { display: flex; flex-direction: column; }
+.builtin-tool-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
+.builtin-tool-cell code { margin-top: 2px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
+.runtime-configuration-form .el-select { width: 100%; }
 .runtime-detail__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .runtime-configuration-form { margin-top: 20px; }
 .configuration-number { width: 100%; }
 .field-help { width: 100%; margin: 6px 0 0; color: var(--color-text-muted); font-size: var(--font-size-badge); line-height: 1.5; }
 .scheduling-help { display: flex; width: 100%; gap: 6px; margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-button); color: var(--color-text-secondary); background: var(--color-bg-subtle); font-size: var(--font-size-badge); }
 .scheduling-help strong { color: var(--color-text-heading); }
-@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .runtime-tool-connector__rows { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } }
 </style>

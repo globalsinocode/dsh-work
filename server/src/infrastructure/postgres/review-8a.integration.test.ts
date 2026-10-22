@@ -7,7 +7,6 @@ import { PostgresRunRepository } from '../../modules/run/postgres-run-repository
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import type { RuntimeSkillConfiguration } from '../../modules/skill/postgres-skill-service.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
-import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 let db: ThrowawayDatabase, service: AdminSkillInstallationService, runs: PostgresRunRepository
@@ -16,7 +15,7 @@ before(async () => {
   runs = new PostgresRunRepository(db.client)
   // This fixture exercises persisted evidence reads, not DSH execution.
   service = new AdminSkillInstallationService(db.client, {} as RunOrchestrationService,
-    new PostgresAuthorizationService(db.client), {} as PostgresToolConnectorService)
+    new PostgresAuthorizationService(db.client))
 })
 after(async () => { await db?.dispose() })
 

@@ -83,7 +83,7 @@
 1. 打开 Agent 管理，点击「创建 Agent」；创建窗口只要求名称、说明和 `SOUL.md`，不出现员工可见角色、平台数据范围、Skill 或 MCP 选择。
 2. 创建后直接进入该 Agent 的草稿编辑流程第 1 步「职责与人格」（`/agents/:agentId/draft?step=profile`），页头显示“编辑草稿”与“草稿与服务端一致”，左侧步骤为职责与人格、能力、角色与权限、验证与发布；进入「能力」步骤后 Skill 为空、MCP 为默认“不使用 MCP”，不展示逐 Agent 的 DSH 基础工具列表。
 
-**验收：** 页面能在不手选 DSH 工具的情况下创建基础 Agent，Soul 有清晰的名称和边界提示；只证明页面交互，不证明 PostgreSQL、发布或真实 DSH。
+**验收：** 页面能在不选择任何工具的情况下创建基础 Agent，Soul 有清晰的名称和边界提示；只证明页面交互，不证明 PostgreSQL、发布或真实 DSH。
 
 ### AG-CAP-P0 Agent 定义与 MCP 范围配置（草稿编辑流程自动保存）
 
@@ -467,41 +467,36 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 ## 管理端受控工具与操作计划旅程
 
-### ADMIN-E2E-01 DSH 工具目录遵守审批能力边界
+### ADMIN-E2E-01 内置工具随代码发布，按 Agent 开关装配并可紧急停用
 
 **优先级：** P1
 **角色：** 平台管理员
-**运行层级：** 专用可丢弃 PostgreSQL、受控 Runtime 工具目录
-**前置数据：** 健康的 DSH Runtime 内置工具连接器；Runtime 同时报告安全文件工具、网络工具、`bash`、未知工具、Agent 协作工具与 Runtime 控制工具；数据库另有非 DSH Connector 的工具记录
-**spec：** `server/src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`e2e/admin-agent-capabilities.spec.ts`（详情页“能力”不展示逐 Agent 的 DSH 工具）、`e2e/mvp-smoke.spec.ts`（P0 页面旅程）
+**运行层级：** 专用可丢弃 PostgreSQL、受控 Runtime（验证运行使用测试替身）
+**前置数据：** 已发布 Skill `skill-document`（依赖 `read`）；一个声明 `web_search` 的已发布 Skill；默认 Runtime `runtime-local-01`
+**spec：** `server/src/infrastructure/postgres/builtin-tools.integration.test.ts`、`server/src/infrastructure/postgres/agent-release-governance.integration.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/skill/skill-package.test.ts`
 
-1. 进入 DSH 工具管理并执行“同步 DSH 工具”，一次读取并登记当前 Profile 的全部普通内置工具。
-2. 检查受 output 目录约束的 `edit` 自动进入目录、生成 Tool Version 和活动 Binding，并显示为“可授权”。
-3. 检查 `read_image`、`str_replace_editor`、`web_search` 自动显示为“可授权”，并验证文件路径、编辑命令和查询数量约束；`web_fetch` 因缺少连接层私网地址防护保持“尚未准入”，即使历史状态可用，再次同步也应停用并撤销 Binding。
-4. 检查 DSH Agent 协作工具与 Runtime 控制工具不出现在列表和 Agent 工具选项；历史记录保持停用并撤销 Binding。
-5. 检查 `bash` 与未知普通工具同样进入目录，但显示“尚未准入”、保持停用且不生成活动 Binding。
-6. 分别使用“运行状态”和“平台准入”筛选工具，确认两个条件可独立使用或组合使用；页面说明“可授权”不等于任何 Agent 已获权。
-7. 在 Agent 草稿中确认只能选择已准入工具；尝试通过 API 引用、启用或修改未准入工具权限均被拒绝。
-8. 让 Runtime 后续不再报告一个已同步工具，再次同步并确认该工具保留目录记录、转为不可用且撤销活动 Binding。
-9. 查询普通工具列表与绑定列表，检查非 DSH 工具未混入；进入 MCP 连接器查看外部 MCP 能力。
+1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search`；运行审批模式为无需审批。
+2. 在 Agent 能力中开启“允许联网搜索”，验证运行的 Manifest 含 `web_search`；编辑时不改开关则保留原设置。
+3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供的工具（如 `bash`）时说明“平台不提供该工具”。
+4. SKILL.md 的 `allowed-tools` 按名称匹配内置工具（`Read`、`WebSearch`、`str_replace_editor`），未知工具标为不支持。
+5. 在 Runtime 配置中紧急停用 `web_search`：只接受 DSH 内置工具，平台工具（如 `python_execute`、`activate_skill`）被拒绝；新 Attempt 不再装配被停用工具，已固定该工具的执行中 Attempt 在执行复核时被拒绝；清空停用清单后恢复。
 
-**验收：** 管理员不再逐个添加工具；同步后普通业务工具进入平台目录，Agent 协作与 Runtime 控制工具保持隐藏。列表可按运行状态和平台准入组合筛选，并明确准入只是“可授权”；文件和网络工具在平台约束下自动准入，`edit` 自动成为可授权工具并锁定版本；`bash` 与未知工具明确显示平台准入原因且不能被 Agent 选择或执行；客户端输入不能覆盖平台审批策略；被拒或从 DSH 消失的工具不能进入 Agent Runtime 授权闭包；`DSH 工具管理` 仅显示 `connector-dsh-workspace` 下的 DSH 普通业务工具，MCP 外部工具只在 MCP 连接器详情中出现。
+**验收：** 管理员不能新增、同步或逐个授权内置工具；工具集由平台代码决定，Agent 只决定是否允许联网搜索；工作空间授权只包含 Agent 与 Skill；停用清单是运维止损开关，不是授权，在派发、领取复核、恢复与逐次调用时生效。
 
-### ADMIN-E2E-03 DSH 内置连接与 MCP 管理入口分离
+### ADMIN-E2E-03 Runtime 详情只读展示内置工具，MCP 管理入口独立
 
 **优先级：** P0
 **角色：** 平台管理员
-**运行层级：** Prototype 浏览器与管理端组件测试；PostgreSQL 服务测试补充接口边界
-**前置数据：** 一个 DSH Runtime、稳定内置连接 `connector-dsh-workspace`、至少一个 MCP Connector
-**spec：** `e2e/mvp-smoke.spec.ts`、`apps/admin-web/src/views/RuntimeManagementView.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`server/src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts`
+**运行层级：** Prototype 浏览器与管理端组件测试；接口契约测试补充边界
+**前置数据：** 一个 DSH Runtime、至少一个 MCP Connector
+**spec：** `e2e/mvp-smoke.spec.ts`、`apps/admin-web/src/views/RuntimeManagementView.test.ts`、`apps/admin-web/src/views/CapabilityManagementView.test.ts`、`server/src/http/api-contract.test.ts`
 
-1. 进入“Agent 治理 → MCP 连接器”，检查列表只包含外部 MCP Connector，不出现 `connector-dsh-workspace` 或其他平台内部连接。
-2. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情。
-3. 查看“DSH Runtime 内置工具连接”区域中的连接标识、状态、工具数量、目录摘要、活动 Binding、最近检查及故障信息。
-4. 从 Runtime 详情执行内置工具连接检查；该操作不出现 MCP 的新增、Token、整体审核或删除能力。
-5. 在系统健康页确认只保留 Runtime/连接依赖的汇总告警，不增加第二套连接配置入口。
+1. 管理端导航中不再出现“DSH 工具管理”与“工具权限”；旧地址 `/tools`、`/permissions` 跳转到 Runtimes。
+2. 进入“Agent 治理 → MCP 连接器”，列表只包含外部 MCP Connector。
+3. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情，“内置工具”区域列出全部内置工具的名称、来源（DSH/平台）、装配方式与停用状态，并显示服务启动时与 DSH 工具目录的核对结果。
+4. 在“配置 Runtime”中选择要紧急停用的 DSH 工具，保存前确认影响；平台工具不出现在可选项中。
 
-**验收：** MCP 页面与接口只返回外部 MCP Connector；DSH 内置连接仍保留 Tool Version、Connector Binding 和审计事实，但只在 Runtime 运维详情中展示与检查。两个入口不重复提供编辑动作，页面位置不改变底层执行与授权模型。
+**验收：** 内置工具只读展示，唯一可操作的是 Runtime 级紧急停用；`/api/admin/v1/tools` 等工具治理接口不存在；MCP 页面与接口只返回外部 MCP Connector。
 
 ### ADMIN-E2E-02 管理操作在并发和重启后确定性收敛
 
@@ -725,14 +720,14 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 1. 点击「创建 Agent」，填写名称、说明与 `SOUL.md`，无需选择可见角色、岗位角色或数据范围。平台自动创建独立执行身份且不继承创建者授权，随后进入草稿编辑流程，依次完成职责与人格、能力、角色与权限（可见角色、岗位角色必填）并验证。不提供 ZIP 上传/导入入口。
 1.1. 「验证与发布」步骤顶部的岗位权限摘要显示可见角色、岗位角色和数据范围数量，「调整」在当前页打开岗位权限抽屉；未设置可见角色时提示先设置。岗位权限属于 Agent，修改立即生效、不需要重新验证，发布时按最新权限复核。
-1.2. 路径必填、经策略逐次限制在当前隔离 Run 工作区的默认 DSH 文件工具（例如 `read`）可供独立 Agent 身份在无业务角色和平台数据范围时使用；路径可省略的 `glob`/`grep` 不在此例外内。把同一工具改成非默认角色或数据范围策略后，验证前检查必须报告缺口。
-1.3. 工具授权检查按稳定角色 ID 与 Agent 执行身份比较；角色改名不影响已授予的 `role-employee`。撤销对应角色后验证前检查显示缺口并阻止开始验证；验证后再收窄授权，发布被拒绝并说明不再获准的工具。
-2. 「验证前检查」列出可见角色、岗位角色（至少一个有效岗位角色，发布复核同样要求）、执行身份、能力依赖、工具授权、MCP 范围、案例与工具绑定各项结果；任一未通过时「开始验证」不可用，服务端同样拒绝。
+1.2. 内置工具由平台统一装配，不按角色或数据范围授权；Agent 只设置是否允许联网搜索，所选 Skill 需要联网搜索时须先开启。
+1.3. 岗位权限按稳定角色 ID 与 Agent 执行身份比较；角色改名不影响已授予的 `role-employee`。验证后撤掉全部岗位角色，发布被拒绝。
+2. 「验证前检查」列出可见角色、岗位角色（至少一个有效岗位角色，发布复核同样要求）、执行身份、能力依赖（含 Skill 所需内置工具）、MCP 范围与案例各项结果；任一未通过时「开始验证」不可用，服务端同样拒绝。
 2.1. 「验证案例」列出本次将运行的案例（示例问题、启用中的主动任务、自定义问题）。自定义测试问题属于 Agent、跨版本复用（最多 20 条，每条 1～2000 字），有未保存修改时不能开始验证。
-2.2. 「开始验证」把工作草稿原地冻结为待发布版本并在后台并行运行全部案例，页面轮询进度；离开页面不影响运行。再次开始验证会取代旧验证并取消其未完成案例。冻结后若工具绑定变化，再次验证会把同一内容冻结为新版本。
+2.2. 「开始验证」把工作草稿原地冻结为待发布版本并在后台并行运行全部案例，页面轮询进度；离开页面不影响运行。再次开始验证会取代旧验证并取消其未完成案例。
 2.3. 每个案例显示来源、状态、三项机器检查（留下运行记录、执行成功、回答非空）、回答或失败原因，Run/Attempt 收在「运行详情」中。机器检查未全部通过时只能判为不通过或「重跑本项」；判为不通过必须填写原因，原因随案例显示。判定可修改；重跑清除该案例原判定，已重跑的案例拒绝过期判定。
 2.4. 服务重启时运行中或排队的案例标记为「服务重启中断」，可单独重跑，不需要重新开始整轮验证。
-3. 全部案例判定通过后「确认发布」可用，可填写发布说明（选填）。服务端在 Agent 与执行身份锁内复核可见角色、执行身份、工具授权、固定绑定与 MCP 范围，失败不产生部分发布；成功后移动当前版本指针并写审计。发布不隐式启用已停用 Agent。
+3. 全部案例判定通过后「确认发布」可用，可填写发布说明（选填）。服务端在 Agent 与执行身份锁内复核可见角色、执行身份、能力依赖与 MCP 范围，失败不产生部分发布；成功后移动当前版本指针并写审计。发布不隐式启用已停用 Agent。
 4. 验证开始后回到「职责与人格」或「能力」步骤修改并自动保存，会生成新的草稿版本；回到「验证与发布」提示结果属于旧版本，需要「验证修改后的草稿」才能发布新内容。发布成功后回到详情页「版本历史」。
 5. 验证运行与员工执行使用同一权限策略、工具集和超时；外部效果隔离：需审批的动作直接拒绝（trial_only），MCP 调用不连接外部系统，数据写入与记忆提案均不产生效果。
 
@@ -744,22 +739,13 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 已实现的为停用（排空，保留进行中 Attempt，与待发布草稿互不阻挡）、启用（含带草稿重新启用）、回滚（仅切换当前版本指针，不需要重新验证；停用中的 Agent 回滚后仍停用，进行中的草稿保留，过期或并发回滚被拒绝）与版本历史（发布时间、发布人）展示。启停、发布与回滚写入审计记录。原型中的紧急撤销、卸载归档与单版本撤销暂无服务端语义，已从界面移除；需要时另行设计真实语义后恢复。
 
-### AG-PROTO-03 工具候选治理（AG-02，管理端）
-
-**角色：** 平台管理员 · **入口：** `/tools` → 「候选」视图与详情抽屉
-
-1. 登记独立候选（名称/标识/执行器/Schema 摘要）与随包候选同一流程。
-2. 签发测试准入 → DSH 验证 → 发布；发布后并入已发布列表。
-3. 详情抽屉查看绑定修订（端点/执行器/凭据槽位/过滤策略/封存时间）、证据与 Agent 引用方。
-4. 已发布工具支持停用/启用与紧急撤销；存在阻塞原因（如首版仅只读）的候选不可签发准入。
-
 ### AG-REL-02 配置依赖失效阻塞（AG-01）
 
 **优先级：** P1 · **角色：** 平台管理员 · **运行层级：** 隔离 PostgreSQL + 受控 Runtime · **入口：** `/agents/:agentId/release` · **spec：** `server/src/infrastructure/postgres/agent-release-governance.integration.test.ts`
 
 1. 界面配置只能选已发布 Skill 与已登记 MCP；保存时依赖已解析。随后停用已选能力或收窄授权，验证前检查显示具体阻塞项，不能开始验证，也不生成 Run/Attempt。
-2. 验证完成后工具绑定失效或授权收窄时，发布被拒绝并说明原因；恢复后重新验证，绑定变化时冻结为新版本再运行。
-3. 运行时快照对待发布与已发布版本一致地使用固定绑定并做漂移检查，绑定失效的版本不能继续执行。
+2. 验证完成后撤掉全部岗位角色或停用所选能力时，发布被拒绝并说明原因；恢复后可发布。
+3. 管理员在 Runtime 紧急停用内置工具后，新运行不装配该工具，已固定该工具的运行在执行复核时被拒绝。
 
 ## AG-03 轻量自动任务（首版已实现，P0 冒烟通过；P1/P2 待补）
 

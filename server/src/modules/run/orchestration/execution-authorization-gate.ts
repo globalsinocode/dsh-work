@@ -1,6 +1,6 @@
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
-import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
+import { assertBuiltinToolsEnabled, assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import { authorizationDenied, isAuthorizationDenial, RequestValidationError } from '../../../domain/authorization-errors.ts'
 import type { RunRecord } from '../run-types.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
@@ -17,8 +17,8 @@ export class ExecutionAuthorizationGate {
   }
 
   /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
-  async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false): Promise<void> {
-    return this.assertRunAuthorizationInState(manifest, ['running'], toolBindingsChecked)
+  async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolsChecked = false): Promise<void> {
+    return this.assertRunAuthorizationInState(manifest, ['running'], toolsChecked)
   }
 
   async assertWaitingRunAuthorization(manifest: RuntimeManifest): Promise<void> {
@@ -28,7 +28,7 @@ export class ExecutionAuthorizationGate {
   private async assertRunAuthorizationInState(
     manifest: RuntimeManifest,
     allowedStates: Array<RunRecord['status']>,
-    toolBindingsChecked: boolean,
+    toolsChecked: boolean,
   ): Promise<void> {
     if (!this.deps.authorization) throw new AuthorizationCheckUnavailableError()
     try {
@@ -78,7 +78,7 @@ export class ExecutionAuthorizationGate {
           throw authorizationDenied('Task 归属或固定工作空间已变化')
         }
       }
-      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolBindings, toolBindingsChecked)
+      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolChecks, toolsChecked)
     } catch (error) {
       if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
       throw new AuthorizationCheckUnavailableError(error)
@@ -100,23 +100,18 @@ export class ExecutionAuthorizationGate {
     run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
-    // B-03/I-04：Attempt 固定的工具绑定修订对所有 purpose 生效——排队期间绑定
-    // 被撤销、取代或语义漂移时，领取后在进入 Runtime 前收敛为授权失败。
-    if (manifest.tool_bindings?.length) {
-      if (!this.deps.toolBindings) return { denied: true, reason: '工具绑定复核服务不可用' }
-      try {
-        await this.deps.toolBindings.assertActiveToolBindings(manifest.tool_bindings)
-      } catch (error) {
-        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
-          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
-        }
-        throw error
-      }
+    // 工具复核对所有 purpose 生效：排队期间内置工具被停用时，领取后在进入 Runtime
+    // 前收敛为授权失败。
+    try {
+      await assertBuiltinToolsEnabled(manifest, this.deps.toolChecks)
+    } catch (error) {
+      if (isAuthorizationDenial(error)) return { denied: true, reason: error instanceof Error ? error.message : String(error) }
+      throw error
     }
     if (manifest.mcp_connections?.length) {
-      if (!this.deps.toolBindings?.assertPinnedConnections) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
+      if (!this.deps.toolChecks?.assertPinnedConnections) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
       try {
-        await this.deps.toolBindings.assertPinnedConnections(manifest.mcp_connections)
+        await this.deps.toolChecks.assertPinnedConnections(manifest.mcp_connections)
       } catch (error) {
         if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
           return { denied: true, reason: error instanceof Error ? error.message : String(error) }

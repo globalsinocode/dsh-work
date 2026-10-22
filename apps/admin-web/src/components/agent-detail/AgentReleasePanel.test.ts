@@ -25,7 +25,7 @@ const agent: AgentDefinition = {
   allowWorkspaceJoin: false, status: 'draft', version: '0.1.0',
   welcomeMessage: '', examplePrompts: ['示例：总结周报'], systemPrompt: '你是测试 Agent。',
   maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-  skills: [], tools: [], updatedAt: '2026-10-16T00:00:00.000Z',
+  skills: [], webSearchEnabled: false, updatedAt: '2026-10-16T00:00:00.000Z',
 }
 
 function validationCase(overrides: Partial<ValidationCase>): ValidationCase {
@@ -74,7 +74,7 @@ async function mountView() {
     agentId, revision: 1, principalId: `principal-agent-${agentId}`, principalStatus: 'active',
     visibleRoleIds: ['role-employee'], roleIds: [], dataScopes: [],
     roleOptions: [{ id: 'role-employee', name: '员工', status: 'active' }], scopeOptions: [],
-    capabilities: [], routines: [],
+    routines: [],
   }
   vi.spyOn(adminApi, 'getAgentAccess').mockResolvedValue(access)
   const pinia = createPinia()

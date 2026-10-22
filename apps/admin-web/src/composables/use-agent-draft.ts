@@ -24,7 +24,7 @@ export interface AgentDraftForm {
   systemPrompt: string
   workInstructions: string
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   mcpScope: AgentMcpScope
   timeoutSeconds: number
   maxToolCalls: number
@@ -56,13 +56,13 @@ const editorKey: InjectionKey<AgentDraftEditor> = Symbol('agent-draft-editor')
 export function emptyAgentDraftForm(): AgentDraftForm {
   return {
     name: '', description: '', welcomeMessage: '', examplePrompts: ['请介绍你能提供哪些帮助'],
-    systemPrompt: '', workInstructions: '', skills: [], tools: [],
+    systemPrompt: '', workInstructions: '', skills: [], webSearchEnabled: false,
     mcpScope: { mode: 'none', connectorIds: [] },
     timeoutSeconds: 300, maxToolCalls: 20, maxOutputBytes: 65536,
   }
 }
 
-export function draftFormFromAgent(agent: AgentDefinition, versionTool: (reference: string) => string = reference => reference): AgentDraftForm {
+export function draftFormFromAgent(agent: AgentDefinition): AgentDraftForm {
   return {
     name: agent.name,
     description: agent.description,
@@ -71,7 +71,7 @@ export function draftFormFromAgent(agent: AgentDefinition, versionTool: (referen
     systemPrompt: agent.systemPrompt,
     workInstructions: agent.workInstructions ?? '',
     skills: [...agent.skills],
-    tools: agent.tools.map(versionTool),
+    webSearchEnabled: agent.webSearchEnabled,
     mcpScope: agent.mcpScope?.mode === 'selected'
       ? { mode: 'selected', connectorIds: [...agent.mcpScope.connectorIds] }
       : { mode: 'none', connectorIds: [] },
@@ -140,16 +140,10 @@ export function provideAgentDraftEditor(agent: Ref<AgentDefinition | undefined>,
   const hasUnsavedChanges = computed(() => state.value === 'pending' || state.value === 'saving'
     || state.value === 'invalid' || state.value === 'error')
 
-  function versionTool(reference: string) {
-    if (reference.lastIndexOf('@') > 0) return reference
-    const tool = contentStore.tools.find(item => item.id === reference)
-    return `${reference}@${tool?.version ?? '1.0.0'}`
-  }
-
   function load(source: AgentDefinition) {
     if (timer) clearTimeout(timer)
     timer = undefined
-    Object.assign(form, draftFormFromAgent(source, versionTool))
+    Object.assign(form, draftFormFromAgent(source))
     for (const key of Object.keys(errors) as AgentDraftField[]) delete errors[key]
     snapshot = serialize(form)
     revision = source.revision
@@ -201,7 +195,7 @@ export function provideAgentDraftEditor(agent: Ref<AgentDefinition | undefined>,
           systemPrompt: value.systemPrompt,
           workInstructions: value.workInstructions,
           skills: value.skills,
-          tools: value.tools,
+          webSearchEnabled: value.webSearchEnabled,
           mcpScope: value.mcpScope.mode === 'selected' ? value.mcpScope : { mode: value.mcpScope.mode, connectorIds: [] },
           timeoutSeconds: value.timeoutSeconds,
           maxToolCalls: value.maxToolCalls,

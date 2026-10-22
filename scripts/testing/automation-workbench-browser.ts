@@ -119,10 +119,10 @@ fixture.router.post('/api/workbench/v1/test/automations/:automationId/publish-ag
   await fixture.db.client`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, system_prompt,
-      skill_refs, tool_refs, status, created_by
+      skill_refs, web_search_enabled, status, created_by
     )
     select ${versionId}, tenant_id, agent_id, '2.0.0', name, description, system_prompt,
-           skill_refs, tool_refs, 'published', ${ownerUserId}
+           skill_refs, web_search_enabled, 'published', ${ownerUserId}
       from agent_versions
      where tenant_id = ${testTenant} and id = ${task.agentVersionId}
   `

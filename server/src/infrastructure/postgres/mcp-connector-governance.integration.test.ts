@@ -394,10 +394,6 @@ test('PF-03 resolves only the Connectors an Agent Version selected and confirms 
   assert.equal(registered.mcp?.approvalStatus, 'approved')
   assert.equal(registered.mcp?.capabilityCount, 2)
   assert.deepEqual(registered.mcp?.pendingCapabilities, [])
-  const [platformTools] = await database<{ count: number }[]>`
-    select count(*)::int as count from tools where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId}
-  `
-  assert.equal(platformTools?.count, 0, 'MCP capabilities must not create platform Tool rows')
   const [schemaEvidence] = await database<{ grantTable: string | null }[]>`
     select to_regclass('public.agent_mcp_grants')::text as "grantTable"
   `

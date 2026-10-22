@@ -4,12 +4,10 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { resolveAudienceCeiling } from '../authorization/agent-audience-ceiling.ts'
 import type { PostgresSkillService } from '../skill/postgres-skill-service.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
 import type { PostgresAgentService } from './postgres-agent-service.ts'
 import type { ReleaseTrialResult, ReleaseTrialRunner } from './release-trial-runner.ts'
-import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding } from '../../domain/tool-binding.ts'
-import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import { unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
 import { RequestError, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
@@ -18,7 +16,6 @@ const MAX_TEST_CASES = 20
 const MAX_TEST_CASE_CHARS = 2000
 /** Answers are kept in full for review up to this size. */
 const MAX_OUTPUT_CHARS = 64 * 1024
-const SKILL_EXECUTION_TOOLS = new Set(['activate_skill@1.0.0', 'python_execute@1.0.0'])
 
 export type ValidationCaseSource = 'example' | 'routine' | 'custom'
 export type ValidationCaseStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled'
@@ -118,10 +115,9 @@ interface VersionShape {
   version: string
   status: 'draft' | 'candidate' | 'published' | 'disabled'
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   examplePrompts: string[]
   mcpScope: AgentMcpScope | null
-  bindingRefs: ManifestToolBinding[]
 }
 
 interface CaseRow {
@@ -176,7 +172,6 @@ export class PostgresAgentValidationService {
   private readonly database: DatabaseClient
   private readonly agents: PostgresAgentService
   private readonly skills?: PostgresSkillService
-  private readonly tools?: PostgresToolConnectorService
   private readonly runner?: ReleaseTrialRunner
   private readonly mcp?: McpScopePort
 
@@ -184,14 +179,12 @@ export class PostgresAgentValidationService {
     database: DatabaseClient,
     agents: PostgresAgentService,
     skills?: PostgresSkillService,
-    tools?: PostgresToolConnectorService,
     runner?: ReleaseTrialRunner,
     mcp?: McpScopePort,
   ) {
     this.database = database
     this.agents = agents
     this.skills = skills
-    this.tools = tools
     this.runner = runner
     this.mcp = mcp
   }
@@ -312,11 +305,6 @@ export class PostgresAgentValidationService {
     const failed = checks.filter(check => !check.passed)
     if (failed.length) throw validationBlocked(`验证前检查未通过：${failed.map(check => `${check.label}（${check.detail}）`).join('；')}`)
     const cases = await this.plannedCases(agentId, working)
-    // Pins are resolved before the lock: binding resolution may materialize revisions.
-    const pins = await this.resolvePins(agentId, working, actor.id)
-    // A frozen candidate whose tool bindings changed since freezing can never be published;
-    // validating again freezes a fresh copy of the same content as a new version.
-    const refreeze = working.status === 'candidate' && bindingBasisKey(pins) !== bindingBasisKey(working.bindingRefs)
 
     const supersededRuns: string[] = []
     const { validationId, versionId, version } = await this.database.begin(async tx => {
@@ -325,12 +313,10 @@ export class PostgresAgentValidationService {
          where tenant_id = ${tenantId} and id = ${agentId} for update
       `
       if (locked?.draftVersionId !== working.id) throw stateConflict('草稿已变化，请刷新后重新验证')
-      let target = { id: working.id, version: working.version }
-      if (refreeze) {
-        target = await this.cloneAsCandidate(tx, agentId, working, pins, actor.id)
-      } else if (working.status === 'draft') {
+      const target = { id: working.id, version: working.version }
+      if (working.status === 'draft') {
         const frozen = await tx`
-          update agent_versions set status = 'candidate', binding_refs = ${tx.json(pins as never)}
+          update agent_versions set status = 'candidate'
            where tenant_id = ${tenantId} and id = ${working.id} and status = 'draft'
           returning id
         `
@@ -374,7 +360,7 @@ export class PostgresAgentValidationService {
       await this.runner?.systemCancelRun(runId, 'system_revoke', '已开始新的验证，取消旧验证中未完成的案例').catch(() => undefined)
     }
     await this.audit(actor.id, 'agent.validation.start', agentId,
-      `验证 v${version}（${versionId}），${cases.length} 个案例${refreeze ? '；工具绑定已变化，重新冻结为新版本' : ''}`)
+      `验证 v${version}（${versionId}），${cases.length} 个案例`)
     const rows = await this.caseRows(validationId)
     for (const row of rows) await this.startCase(validationId, row, actor.id)
     return this.getOverview(agentId)
@@ -622,9 +608,6 @@ export class PostgresAgentValidationService {
     for (const reference of version.skills) {
       try { await this.skills?.assertPublishedReferences([reference]) } catch { missing.push(reference) }
     }
-    for (const reference of version.tools) {
-      try { await this.tools?.assertAvailableReferences([reference]) } catch { missing.push(reference) }
-    }
     let authorizationError: string | undefined
     // Validation runs under the audience ceiling, so what the declared capabilities need
     // must be reachable by the visible roles too, not only granted to the Agent.
@@ -636,18 +619,10 @@ export class PostgresAgentValidationService {
        order by name
     ` : []
     try {
-      await this.tools?.assertAuthorizationCompatibility(version.tools, principal.roleIds, principal.dataScopes)
-      try {
-        await this.tools?.assertAuthorizationCompatibility(version.tools, ceiling.roleIds, ceiling.dataScopes)
-      } catch (error) {
-        throw new Error(`可见角色的员工无法让 Agent 使用这些能力：${error instanceof Error ? error.message : String(error)}`)
-      }
       if (this.skills && !missing.length) {
         const runtimeSkills = await this.skills.resolveRuntimeSkills(version.skills)
-        const declared = new Set(version.tools)
-        const absent = [...new Set(runtimeSkills.flatMap(skill => skill.tools))]
-          .filter(reference => !SKILL_EXECUTION_TOOLS.has(reference) && !declared.has(reference))
-        if (absent.length) authorizationError = `所选 Skill 依赖的工具未声明：${absent.join('、')}`
+        const problems = unavailableSkillTools(runtimeSkills.flatMap(skill => skill.tools), version)
+        if (problems.length) authorizationError = `所选 Skill 需要的工具不可用：${problems.join('、')}`
       }
     } catch (error) {
       authorizationError = error instanceof Error ? error.message : String(error)
@@ -677,13 +652,13 @@ export class PostgresAgentValidationService {
       },
       {
         id: 'dependencies', label: '能力依赖', passed: !missing.length,
-        detail: missing.length ? `不可用：${missing.join('、')}` : '所有 Skill 与工具均为可用的已发布版本',
+        detail: missing.length ? `不可用：${missing.join('、')}` : '所有 Skill 均为可用的已发布版本',
       },
       {
         id: 'authorization', label: '能力所需授权', passed: !authorizationError,
         detail: authorizationError ?? `已声明的能力都已获授权；验证按可见角色可及的权限执行（${ceiling.roleIds.length} 个角色、${ceiling.dataScopes.length} 个数据范围）`,
         ...(unverifiedRoles.length ? {
-          warning: `岗位角色“${unverifiedRoles.map(role => role.name).join('、')}”不在可见角色内，验证不会覆盖这些角色；平台默认工具只固定可见角色可及的部分。`,
+          warning: `岗位角色“${unverifiedRoles.map(role => role.name).join('、')}”不在可见角色内，验证不会覆盖这些角色。`,
         } : {}),
       },
       {
@@ -697,7 +672,7 @@ export class PostgresAgentValidationService {
     ]
   }
 
-  /** Publication gate inside the locked transaction: current access and frozen bindings. */
+  /** Publication gate inside the locked transaction: current access and capability dependencies. */
   private async assertPublishable(tx: DatabaseTransaction, agentId: string, candidate: VersionShape) {
     const [agent] = await tx<{ visibleRoleIds: string[] }[]>`
       select visible_role_ids as "visibleRoleIds" from agents where tenant_id = ${tenantId} and id = ${agentId}
@@ -712,83 +687,14 @@ export class PostgresAgentValidationService {
     if (principal.status !== 'active') throw validationBlocked('Agent 执行身份已停用')
     // 与验证前检查一致：岗位角色必填，验证后撤掉全部岗位角色时不能发布。
     if (!principal.roleIds.length) throw validationBlocked('发布前必须在岗位权限中授予至少一个有效的岗位角色')
-    await this.tools?.assertAuthorizationCompatibility(candidate.tools, principal.roleIds, principal.dataScopes)
-    // Widening grants keeps the candidate's frozen default tools; narrowing that withdraws a
-    // frozen tool, or a binding that drifted since freezing, fails closed.
-    const declared = candidate.tools.filter(reference => !DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
-    // 冻结时默认工具按当时的可见角色上限固定；发布时用同一口径复核，避免可见角色
-    // 收窄后仍把已不可交付的默认工具带进发布版本。
-    const ceiling = await resolveAudienceCeiling(tx, agentId, principal)
-    const defaults = this.tools
-      ? await this.tools.resolvePlatformDefaultToolReferences(ceiling.roleIds, ceiling.dataScopes)
-      : []
-    const allowed = new Set([...declared, ...defaults])
-    const withdrawn = candidate.bindingRefs.filter(pin => !allowed.has(pin.tool)).map(pin => pin.tool)
-    if (withdrawn.length) throw validationBlocked(`可见角色或岗位权限收窄后不再获准的工具：${withdrawn.join('、')}，请重新验证`)
-    if (declared.some(reference => !candidate.bindingRefs.some(pin => pin.tool === reference))) {
-      throw validationBlocked('待发布版本缺少工具的固定绑定，请重新验证')
-    }
-    if (candidate.bindingRefs.length) {
-      if (!this.tools) throw new Error('工具绑定复核服务未接入')
-      try {
-        await this.tools.assertActiveToolBindings(candidate.bindingRefs, tx)
-      } catch (error) {
-        throw validationBlocked(`固定的工具绑定已失效，请重新验证：${error instanceof Error ? error.message : String(error)}`)
-      }
+    if (this.skills) {
+      const runtimeSkills = await this.skills.resolveRuntimeSkills(candidate.skills)
+      const problems = unavailableSkillTools(runtimeSkills.flatMap(skill => skill.tools), candidate)
+      if (problems.length) throw validationBlocked(`所选 Skill 需要的工具不可用：${problems.join('、')}`)
     }
     if (candidate.mcpScope?.mode === 'selected') {
       if (!this.mcp) throw new Error('MCP Connector 服务未接入')
       await this.mcp.resolveConnections(candidate.mcpScope)
-    }
-  }
-
-  /** Copies a candidate's content into a new frozen version with current bindings. */
-  private async cloneAsCandidate(
-    tx: DatabaseTransaction, agentId: string, source: VersionShape, pins: ManifestToolBinding[], actorId: string,
-  ): Promise<{ id: string; version: string }> {
-    const [latest] = await tx<{ version: string }[]>`
-      select version from agent_versions
-       where tenant_id = ${tenantId} and agent_id = ${agentId}
-       order by split_part(version, '.', 1)::integer desc,
-                split_part(version, '.', 2)::integer desc,
-                split_part(version, '.', 3)::integer desc
-       limit 1
-    `
-    const [major = 0, minor = 0] = (latest?.version ?? source.version).split('.').map(Number)
-    const version = `${major}.${minor + 1}.0`
-    const id = `agent-version-${randomUUID()}`
-    await tx`
-      insert into agent_versions
-      select (jsonb_populate_record(null::agent_versions, to_jsonb(av) || jsonb_build_object(
-        'id', ${id}::text, 'version', ${version}::text, 'status', 'candidate',
-        'binding_refs', ${tx.json(pins as never)}::jsonb, 'source_version', av.version,
-        'created_by', ${actorId}::text, 'created_at', now(), 'published_at', null, 'published_by', null,
-        'change_summary', '工具绑定变化后重新冻结',
-        'agent_spec', case when av.agent_spec is null then null
-          else jsonb_set(av.agent_spec, '{metadata,version}', to_jsonb(${version}::text)) end
-      ))).*
-        from agent_versions av
-       where av.tenant_id = ${tenantId} and av.id = ${source.id}
-    `
-    await tx`
-      update agents set draft_version_id = ${id}, updated_at = now()
-       where tenant_id = ${tenantId} and id = ${agentId}
-    `
-    return { id, version }
-  }
-
-  private async resolvePins(agentId: string, version: VersionShape, actorId: string): Promise<ManifestToolBinding[]> {
-    if (!this.tools) return []
-    const principal = await this.agents.getAgentExecutionPrincipal(agentId)
-    // S3：验证以可见角色可及的权限为上限。自动解析的平台默认工具同样只固定可见角色
-    // 可及的部分，避免验证（以及按冻结绑定执行的发布版本）执行员工够不到的能力。
-    const ceiling = await resolveAudienceCeiling(this.database, agentId, principal)
-    try {
-      const defaults = await this.tools.resolvePlatformDefaultToolReferences(ceiling.roleIds, ceiling.dataScopes)
-      const bindings = await this.tools.resolveToolBindings([...new Set([...version.tools, ...defaults])], actorId)
-      return bindings.map(toManifestToolBinding)
-    } catch (error) {
-      throw validationBlocked(`工具绑定解析失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -820,9 +726,9 @@ export class PostgresAgentValidationService {
 
   private async loadVersion(versionId: string): Promise<VersionShape | undefined> {
     const [row] = await this.database<VersionShape[]>`
-      select id, agent_id as "agentId", version, status, skill_refs as skills, tool_refs as tools,
-             example_prompts as "examplePrompts", mcp_scope as "mcpScope",
-             coalesce(binding_refs, '[]'::jsonb) as "bindingRefs"
+      select id, agent_id as "agentId", version, status, skill_refs as skills,
+             web_search_enabled as "webSearchEnabled",
+             example_prompts as "examplePrompts", mcp_scope as "mcpScope"
         from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `
     return row

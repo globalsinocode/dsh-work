@@ -45,7 +45,7 @@ describe('admin authentication routes', () => {
 
     expect(route.meta.title).toBe('经验迭代')
     expect(route.meta.subtitle).toContain('按稳定 Agent 归属')
-    expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill、Tool 或权限')
+    expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill 或权限')
   })
 
   it('keeps Agent detail read-only and sends editing addresses into the draft flow', async () => {

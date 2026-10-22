@@ -5,7 +5,7 @@ import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
-export type WorkspaceCapabilityType = 'agent' | 'skill' | 'tool'
+export type WorkspaceCapabilityType = 'agent' | 'skill'
 export type GrantSourceType = 'agent_member' | 'manual' | 'legacy_unresolved'
 
 export interface GrantSourceInput {

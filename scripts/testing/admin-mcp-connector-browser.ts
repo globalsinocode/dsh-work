@@ -15,7 +15,7 @@ import { PostgresAgentService } from '../../server/src/modules/agent/postgres-ag
 import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { builtinTools } from '../../server/src/modules/runtime/builtin-tools.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
@@ -73,9 +73,8 @@ const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, 
   masterKeyBase64: Buffer.alloc(32, 9).toString('base64'),
   keyId: 'p1-browser-v1',
 })
-const connectorService = new PostgresToolConnectorService(database.client, runtime)
 const mcpService = new PostgresMcpConnectorService(database.client, runtime, undefined, credentialSecrets)
-const agents = new PostgresAgentService(database.client, undefined, undefined, connectorService, mcpService)
+const agents = new PostgresAgentService(database.client, undefined, undefined, mcpService)
 const router = new Router({ authenticateApi: testApiAuthenticator })
 const base = '/api/admin/v1'
 
@@ -91,7 +90,7 @@ router.get(`${base}/session`, (_request, context) => {
 router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
-registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client, connectorService))
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
@@ -100,7 +99,7 @@ const routineOrchestration = new RunOrchestrationService(routineRuns, routineCon
   { tasks: new PostgresTaskRepository(database.client) })
 // 验证服务第五个参数是验证案例的运行编排。
 registerAgentValidationRoutes(router, agents, new PostgresAgentValidationService(database.client, agents, undefined,
-  connectorService, routineOrchestration, mcpService), new PostgresAgentRunHistory(database.client))
+  routineOrchestration, mcpService), new PostgresAgentRunHistory(database.client))
 registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
   routineRuns, routineOrchestration, routineConversations))
 router.get(`${base}/test/agent-routine/fixture`, async () => {
@@ -124,7 +123,7 @@ router.get(`${base}/platform-status`, () => envelope('admin', {
   mode: 'test', identity: 'prototype', persistence: 'postgres', runtime: 'synthetic',
 }, 'postgres'))
 router.get(`${base}/assistant/sessions`, () => envelope('admin', [], 'postgres'))
-registerToolRoutes(router, connectorService, mcpService)
+registerToolRoutes(router, mcpService, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
 
 router.get(`${base}/test/agent-principal/evidence`, async (_request, context) => {
   const agentVersionId = context.url.searchParams.get('agent_version_id') ?? ''
@@ -160,14 +159,7 @@ router.post(`${base}/test/mcp/capabilities`, async (request) => {
 router.get(`${base}/test/mcp/evidence`, async (_request, context) => {
   const connectorId = context.url.searchParams.get('connector_id') ?? ''
   const connections = await selectedConnections(connectorId)
-  const [counts] = await database.client<{ platformToolCount: number }[]>`
-    select count(*)::int as "platformToolCount"
-      from tools
-     where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId}
-  `
-  assert.ok(counts)
   return envelope('admin', {
-    ...counts,
     resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
   }, 'postgres')
 })
@@ -177,7 +169,6 @@ router.get(`${base}/test/agent-capabilities/evidence`, async (_request, context)
   return envelope('admin', {
     systemPrompt: snapshot.systemPrompt,
     runtimeTools: snapshot.runtimeTools,
-    toolBindings: snapshot.toolBindings,
     mcpConnectorIds: snapshot.mcpConnections.map(connection => connection.connector_id),
   }, 'postgres')
 })

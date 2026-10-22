@@ -19,14 +19,14 @@ const draftAgent: AgentDefinition = {
   status: 'draft', version: '0.1.0', activeVersion: null,
   welcomeMessage: '', examplePrompts: ['请介绍你能提供哪些帮助'], systemPrompt: '你是测试 Agent，只处理当前输入并说明依据。',
   workInstructions: '', maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-  skills: [], tools: [], mcpScope: { mode: 'none', connectorIds: [] }, updatedAt: '2026-10-16 08:00', revision: 'rev-1',
+  skills: [], webSearchEnabled: false, mcpScope: { mode: 'none', connectorIds: [] }, updatedAt: '2026-10-16 08:00', revision: 'rev-1',
 }
 
 function versionRecord(agent: AgentDefinition, version: string, status: AgentVersionRecord['status']): AgentVersionRecord {
   return {
     id: `agent-version-${version}`, agentId: agent.id, version, status, createdAt: '2026-10-16 08:00', createdBy: '陈默',
     summary: '', welcomeMessage: '', examplePrompts: [], systemPrompt: agent.systemPrompt,
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], tools: [],
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [], webSearchEnabled: false,
   }
 }
 
@@ -62,7 +62,7 @@ function accessFixture(overrides: Partial<AgentAccess> = {}): AgentAccess {
     agentId: draftAgent.id, revision: 2, principalId: `principal-agent-${draftAgent.id}`, principalStatus: 'active',
     visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: [],
     roleOptions: [{ id: 'role-employee', name: '普通员工', status: 'active' }], scopeOptions: [],
-    capabilities: [], routines: [],
+    routines: [],
     ...overrides,
   }
 }

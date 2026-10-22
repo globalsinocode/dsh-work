@@ -9,7 +9,6 @@ import { startPf07McpFixture } from './pf07-mcp-fixture.mjs'
 import { PostgresOperationsService } from '../../server/src/modules/admin/application/postgres-operations-service.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
 import type { AgentMcpScope } from '../../server/src/domain/types.ts'
-import { toManifestToolBinding } from '../../server/src/domain/tool-binding.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { createThrowawayDatabase, requireMaintenanceUrl } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { ModelGovernanceService } from '../../server/src/modules/model/model-governance-service.ts'
@@ -19,7 +18,6 @@ import { RunOrchestrationService } from '../../server/src/modules/run/run-orches
 import { DshAcpRuntimeAdapter } from '../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from '../../server/src/modules/runtime/dsh-runtime-installation.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
 import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
 import { LocalObjectStorage } from '../../server/src/infrastructure/storage/local-object-storage.ts'
@@ -46,7 +44,6 @@ const directory = await mkdtemp(join(tmpdir(), 'pf07-mcp-platform-'))
 let disposable: Awaited<ReturnType<typeof createThrowawayDatabase>> | undefined
 let runtime: DshAcpRuntimeAdapter | undefined
 let orchestration: RunOrchestrationService | undefined
-let toolService: PostgresToolConnectorService | undefined
 let mcpService: PostgresMcpConnectorService | undefined
 let cleanedUp = false
 
@@ -100,16 +97,15 @@ try {
   const secrets = new PostgresEncryptedCredentialStore(database, {
     masterKeyBase64: randomBytes(32).toString('base64'), keyId: 'pf07-disposable',
   })
-  toolService = new PostgresToolConnectorService(database, runtime, operations)
   mcpService = new PostgresMcpConnectorService(database, runtime, operations, secrets)
   const mcp = mcpService
-  const agents = new PostgresAgentService(database, operations, undefined, toolService, mcp)
+  const agents = new PostgresAgentService(database, operations, undefined, mcp)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   orchestration = new RunOrchestrationService(
     runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)),
     runtime, content, operations, agents, undefined, authorization,
-    { agentMembers, toolBindings: {
-      assertActiveToolBindings: (pins, db) => toolService!.assertActiveToolBindings(pins, db),
+    { agentMembers, toolChecks: {
+      disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools,
       assertPinnedConnections: pins => mcp.assertPinnedConnections(pins),
     } },
   )
@@ -134,8 +130,6 @@ try {
   // validate each MCP scope. Release approval itself is covered by the
   // release-governance integration suite.
   const workInstructions = '先核对本次连接器的范围与操作键，再执行获准调用；结束前查询回执，无法核对时明确标记未知结果。'
-  const defaultRefs = await toolService.resolvePlatformDefaultToolReferences(['role-employee'], ['workspace:authorized'])
-  const sealedBindings = (await toolService.resolveToolBindings(defaultRefs)).map(toManifestToolBinding)
   async function createPublishedProbeAgent(suffix: string, mcpScope: AgentMcpScope) {
     const id = `agent-pf07-${suffix}-${nonce}`
     const created = await agents.createAgent({
@@ -146,13 +140,12 @@ try {
       executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
       welcomeMessage: '', examplePrompts: ['检查本次任务结果'],
       systemPrompt: '你是一次性 MCP 范围验收助手。只执行本次明确要求的任务，并核对结果。',
-      workInstructions, skills: [], tools: [], mcpScope,
+      workInstructions, skills: [], mcpScope,
       maxOutputBytes: 65536, maxToolCalls: 12, timeoutSeconds: 180,
       changeSummary: '一次性真实 DSH 验证 MCP 使用范围', actor: 'U00008',
     })
     await database`
-      update agent_versions set status = 'published', published_at = now(), published_by = 'U00008',
-         binding_refs = ${database.json(sealedBindings as never)}
+      update agent_versions set status = 'published', published_at = now(), published_by = 'U00008'
        where tenant_id = ${tenantId} and id = ${created.version.id} and status = 'draft'
     `
     await database`
@@ -331,7 +324,7 @@ try {
     identity: 'synthetic', runtimeVersion: installation.version, runtimeCommit: installation.commit,
     connectorId: connector.id, runId: started.id, attemptId: attempt.id, receiptId: receipt.id,
     selectedScope: { agentVersionId: selectedAgent.version.id, runId: selectedRun.id, attemptId: selectedAttempt.id,
-      connectorId: connector.id, excludedConnectorId: otherConnector.id, defaultToolRefs: defaultRefs },
+      connectorId: connector.id, excludedConnectorId: otherConnector.id },
     noneScope: { agentVersionId: noneAgent.version.id, runId: noneRun.id, attemptId: noneAttempt.id,
       artifactVersionId: noneArtifact.id },
     audits, boundaries: ['encrypted-credential', 'no-secret-in-manifest', 'invalid-credential-rejected', 'catalog-change-requires-confirmation', 'disabled-rejected', 'deleted-rejected'],

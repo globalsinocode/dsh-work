@@ -48,10 +48,8 @@ requireFragments('../../packages/admin-components/src/AdminShell.vue', [
   '管理助手',
   'Agent 治理',
   'Skill 管理',
-  'DSH 工具管理',
   'MCP 连接器',
   '组织与权限',
-  '工具权限',
   '模型用量',
   '模型治理',
   '运行治理',
@@ -87,14 +85,12 @@ requireFragments('src/router/index.ts', [
   "path: '/agents/:agentId'",
   "path: '/agents/:agentId/release/:step(definition|checks|trial|review)?'",
   "meta: { title: 'Skill 管理'",
-  "meta: { title: 'DSH 工具管理'",
   "meta: { title: 'MCP 连接器'",
   "meta: { title: '模型用量'",
   "meta: { title: '模型治理'",
   "meta: { title: 'Runtimes'",
   "meta: { title: 'Session 列表'",
   "meta: { title: '工作空间'",
-  "meta: { title: '工具权限'",
   "meta: { title: '审计记录'",
   "meta: { title: '系统健康'",
   "meta: { title: '接入规范'",
@@ -107,7 +103,6 @@ const businessViews = [
   'AgentDetailView.vue',
   'AgentDraftView.vue',
   'CapabilityManagementView.vue',
-  'PermissionManagementView.vue',
   'AuditView.vue',
   'SystemHealthView.vue',
   'RuntimeManagementView.vue',
@@ -117,7 +112,6 @@ const businessViews = [
 const listViews = [
   'AgentManagementView.vue',
   'CapabilityManagementView.vue',
-  'PermissionManagementView.vue',
   'AuditView.vue',
   'RuntimeManagementView.vue',
   'WorkspaceManagementView.vue',
@@ -190,13 +184,13 @@ requireFragments('src/components/agent-detail/AgentExperiencePanel.vue', ['批�
 forbidFragments('src/components/agent-detail/AgentReleasePanel.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准', 'data-action="rollback-agent"'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
-  'data-action="view-tool"',
   'data-action="view-connector"',
-  '工具列表',
   'MCP 连接器列表',
   '新增 Skill',
 ])
+forbidFragments('../../packages/admin-components/src/AdminShell.vue', ['DSH 工具管理', '工具权限'])
 forbidFragments('src/views/CapabilityManagementView.vue', [
+  'data-action="sync-dsh-tools"',
   'data-action="edit-tool"',
   'data-action="edit-connector"',
   'data-action="create-tools"',
@@ -220,7 +214,6 @@ requireFragments('src/views/ModelGovernanceView.vue', [
   '密钥正文未进入 dsh-work',
   'Agent 不单独配置模型',
 ])
-requireFragments('src/views/PermissionManagementView.vue', ['data-action="configure-tool-permission"'])
 requireFragments('src/views/AuditView.vue', ['data-action="view-audit"'])
 requireFragments('src/views/SystemHealthView.vue', ['data-action="refresh-health"'])
 forbidFragments('src/views/SystemHealthView.vue', [
@@ -234,6 +227,8 @@ requireFragments('src/views/RuntimeManagementView.vue', [
   'data-action="check-runtime"',
   'data-action="configure-runtime"',
   'data-action="save-runtime-configuration"',
+  '内置工具',
+  '紧急停用内置工具',
   '最大并发 Worker 数',
   '单次执行超时时间',
   '调度状态',

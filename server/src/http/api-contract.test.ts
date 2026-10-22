@@ -130,8 +130,9 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
   assert.ok(admin.paths['/connectors/mcp/status']?.patch?.responses?.['409'])
   assert.equal(admin.paths['/connectors/mcp/agent-access'], undefined)
   assert.equal(admin.paths['/connectors/mcp/invocations']?.get?.operationId, 'listMcpInvocationAudits')
-  assert.equal(admin.paths['/runtimes/dsh-tool-connector']?.get?.operationId, 'getDshRuntimeToolConnector')
-  assert.equal(admin.paths['/runtimes/dsh-tool-connector/check']?.post?.operationId, 'checkDshRuntimeToolConnector')
+  assert.equal(admin.paths['/runtimes/builtin-tools']?.get?.operationId, 'getBuiltinTools')
+  assert.equal(admin.paths['/runtimes/dsh-tool-connector'], undefined)
+  assert.equal(admin.paths['/tools'], undefined)
   assert.equal(admin.paths['/approvals']?.get?.operationId, 'listPersistentApprovals')
   assert.equal(admin.paths['/approvals/{approvalId}']?.get?.operationId, 'getPersistentApproval')
   assert.equal(admin.paths['/approvals/{approvalId}/resolve']?.post?.operationId, 'resolvePersistentApproval')
@@ -262,9 +263,6 @@ test('prototype admin exposes the operations summary required by the global stor
 })
 
 test('prototype admin exposes the asynchronous Skill test progress contract', async () => {
-  const tools = await getJson<{ data: Array<{ id: string; status: string }> }>('/api/admin/v1/tools')
-  const tool = tools.body.data.find(item => item.status !== 'disabled')
-  assert.ok(tool)
   const createResponse = await fetch(`${baseUrl}/api/admin/v1/skills`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -273,7 +271,7 @@ test('prototype admin exposes the asynchronous Skill test progress contract', as
       category: '测试',
       description: '用于验证异步 Skill 试运行进度接口。',
       instructions: '读取测试输入，执行确定性配置校验，并返回简明结果。',
-      toolIds: [tool.id],
+      toolIds: ['read@1.0.0'],
       testPrompt: '验证试运行进度',
     }),
   })
@@ -296,32 +294,22 @@ test('prototype admin exposes the asynchronous Skill test progress contract', as
   assert.equal(progress.body.data.status, 'passed')
 })
 
-test('prototype admin synchronizes the complete DSH tool inventory in one operation', async () => {
-  const response = await fetch(`${baseUrl}/api/admin/v1/tools/sync`, { method: 'POST' })
-  const body = await response.json() as {
-    data: { tools: Array<{ id: string; admissionStatus?: string }>; discoveredCount: number; admittedCount: number; unavailableCount: number }
-  }
-  assert.equal(response.status, 200)
-  assert.equal(body.data.discoveredCount, body.data.tools.length)
-  assert.equal(body.data.admittedCount + body.data.unavailableCount, body.data.discoveredCount)
-  assert.ok(body.data.tools.every(tool => tool.admissionStatus === 'approved' || tool.admissionStatus === 'unavailable'))
-})
-
-test('prototype admin separates MCP management from the DSH Runtime tool connector', async () => {
+test('prototype admin lists only MCP connectors and shows built-in tools read-only', async () => {
   const connectors = await getJson<{ data: Array<{ id: string; protocol: string }> }>('/api/admin/v1/connectors')
   assert.equal(connectors.response.status, 200)
   assert.ok(connectors.body.data.length > 0)
   assert.ok(connectors.body.data.every(connector => connector.protocol === 'mcp'))
   assert.equal(connectors.body.data.some(connector => connector.id === 'connector-dsh-workspace'), false)
 
-  const runtimeConnector = await getJson<{
-    data: { runtimeId: string | null; connectorId: string; catalogDigest: string; toolCount: number }
-  }>('/api/admin/v1/runtimes/dsh-tool-connector')
-  assert.equal(runtimeConnector.response.status, 200)
-  assert.equal(runtimeConnector.body.data.connectorId, 'connector-dsh-workspace')
-  assert.ok(runtimeConnector.body.data.runtimeId)
-  assert.ok(runtimeConnector.body.data.toolCount > 0)
-  assert.match(runtimeConnector.body.data.catalogDigest, /^[a-f0-9]{64}$/)
+  const builtin = await getJson<{
+    data: { tools: Array<{ name: string; source: string; assembly: string }>; disabledTools: string[] }
+  }>('/api/admin/v1/runtimes/builtin-tools')
+  assert.equal(builtin.response.status, 200)
+  assert.ok(builtin.body.data.tools.some(tool => tool.name === 'read' && tool.source === 'dsh' && tool.assembly === 'always'))
+  assert.ok(builtin.body.data.tools.some(tool => tool.name === 'web_search' && tool.assembly === 'agent-opt-in'))
+  assert.deepEqual(builtin.body.data.disabledTools, [])
+  const removed = await fetch(`${baseUrl}/api/admin/v1/tools`)
+  assert.equal(removed.status, 404)
 })
 
 test('unavailable conversation commands return an actionable 503 instead of a route 404', async () => {

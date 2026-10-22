@@ -274,11 +274,10 @@ export class PostgresWorkspaceAgentMemberService {
     await this.assertTeamWorkspace(workspaceId)
     await this.requireActorRole(workspaceId, actorUserId, ['owner'])
     const active = await this.requireActivePublishedVersion(agentId, true)
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
     // P2-1：候选列表按 visible_role_ids 过滤只是展示；直接提交 ID 也必须按添加人
     // 当前有效角色复核允许范围，不能依赖候选查询承担鉴权。
     await this.authorization.assertAgentVersionVisibleToRoles(active.versionId, actorRoleIds, '所选 Agent')
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
 
     let memberId = ''
     await this.database.begin(async transaction => {
@@ -316,7 +315,6 @@ export class PostgresWorkspaceAgentMemberService {
       await this.grantSources.addGrantSources(transaction, [
         { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
         ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
       ], workspaceId)
       // addGrantSources bumps the workspace auth revision; the post-bump value
       // separates a later re-add of the same (row-reusing) membership from this
@@ -493,8 +491,7 @@ export class PostgresWorkspaceAgentMemberService {
     if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重新启用，请重新添加')
     if (member.status === 'available') throw workspaceStateConflict('Agent 成员当前已是可用状态，不能重复启用')
 
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(member.agentVersionId)
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(member.agentVersionId)
 
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
@@ -518,7 +515,6 @@ export class PostgresWorkspaceAgentMemberService {
       await this.grantSources.addGrantSources(transaction, [
         { capabilityType: 'agent', capabilityVersionId: member.agentVersionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
         ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
       ], workspaceId)
     })
     return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
@@ -543,8 +539,7 @@ export class PostgresWorkspaceAgentMemberService {
     if (active.versionId === member.agentVersionId) {
       return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
     }
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
 
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
@@ -568,7 +563,6 @@ export class PostgresWorkspaceAgentMemberService {
       await this.grantSources.addGrantSources(transaction, [
         { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
         ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
       ], workspaceId)
     })
     return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)

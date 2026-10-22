@@ -136,34 +136,11 @@ export function registerAdminRoutes(router: Router, service: AdminQueryService) 
     if (!skill) throw new Error(`未找到指定 Skill Version：${input.skillId}@${input.version}`)
     return envelope('admin', { skill, release: prototypeSkillRelease(skill, requireRequestIdentity(context, 'admin').userId, 'rollback') })
   })
-  router.get(`${basePath}/tools`, async () => envelope('admin', await service.getTools()))
-  router.get(`${basePath}/tools/catalog`, async () => envelope('admin', await service.getToolCatalog()))
-  router.post(`${basePath}/tools/sync`, async (_request, context) => envelope('admin', await service.syncToolCatalog({
-    actor: requireRequestIdentity(context, 'admin').userId,
-  })))
-  router.post(`${basePath}/tools`, async (request, context) => {
-    const input = await readJsonBody<Omit<Parameters<AdminQueryService['addTool']>[0], 'actor'>>(request)
-    return envelope('admin', await service.addTool({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
-  })
-  router.patch(`${basePath}/tools/status`, async (request, context) => {
-    const input = await readJsonBody<{ toolId: string; status: 'available' | 'disabled' }>(request)
-    return envelope('admin', await service.setToolStatus({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
-  })
   router.get(`${basePath}/connectors`, async () => envelope('admin', await service.getMcpConnectors()))
-  router.get(`${basePath}/runtimes/dsh-tool-connector`, async () =>
-    envelope('admin', await service.getDshRuntimeToolConnectorStatus()))
-  router.post(`${basePath}/runtimes/dsh-tool-connector/check`, async (_request, context) =>
-    envelope('admin', await service.checkDshRuntimeToolConnector({
-      actor: requireRequestIdentity(context, 'admin').userId,
-    })))
+  router.get(`${basePath}/runtimes/builtin-tools`, async () => envelope('admin', await service.getBuiltinToolStatus()))
   router.post(`${basePath}/connectors/check`, async (request, context) => {
     const input = await readJsonBody<{ connectorId: string }>(request)
     return envelope('admin', await service.checkMcpConnector({ ...input, actor: requireRequestIdentity(context, 'admin').userId }))
-  })
-  router.patch(`${basePath}/tools/permissions`, async (request, context) => {
-    const input = await readJsonBody<Parameters<AdminQueryService['updateToolPermissions']>[0]>(request)
-    requireRequestIdentity(context, 'admin')
-    return envelope('admin', await service.updateToolPermissions(input))
   })
   router.get(`${basePath}/audit-events`, async (_request, context) => envelope('admin', await service.getAuditEvents({
     query: context.url.searchParams.get('query') ?? undefined,

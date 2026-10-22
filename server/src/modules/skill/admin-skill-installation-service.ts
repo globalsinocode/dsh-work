@@ -10,7 +10,7 @@ import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/p
 import type { AdminRunLauncher } from './admin-run-launcher.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import { parseSkillBundle, type SkillPackage, type SkillPackageArtifact } from './skill-package.ts'
 import { buildSkillInstallationPlan, externalizeSkillInstallationPlan, installationPlanDigest, type SkillInstallationPlan } from './skill-installation-plan.ts'
 import { acquireSkillSource, continueSkillSource, parseSkillSource, parseSkillLink, type SkillSource } from './skill-source.ts'
@@ -54,14 +54,13 @@ export class AdminSkillInstallationService {
   private readonly db: DatabaseClient
   private readonly orchestration: AdminRunLauncher
   private readonly authorization: PostgresAuthorizationService
-  private readonly tools: PostgresToolConnectorService
   private readonly acquire: typeof acquireSkillSource
   private readonly pythonSandboxAvailable: boolean
   private readonly pythonPackages: string[]
   private readonly artifactStore?: SkillArtifactStore
   private readonly checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>
-  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, tools: PostgresToolConnectorService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
-    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.tools = tools; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
+  constructor(db: DatabaseClient, orchestration: AdminRunLauncher, authorization: PostgresAuthorizationService, acquire = acquireSkillSource, pythonSandboxAvailable = false, pythonPackages: string[] = [], artifactStore?: SkillArtifactStore, checkRuntime?: (references: string[], requiredPackages: string[]) => Promise<void>) {
+    this.db = db; this.orchestration = orchestration; this.authorization = authorization; this.acquire = acquire; this.pythonSandboxAvailable = pythonSandboxAvailable; this.pythonPackages = pythonPackages; this.artifactStore = artifactStore; this.checkRuntime = checkRuntime
   }
 
   async testPackage(userId: string, skill: RuntimeSkillConfiguration, prompt: string) {
@@ -449,15 +448,8 @@ export class AdminSkillInstallationService {
 
   private async prepareBundle(bytes: Uint8Array, selected?: string, directory?: string, deferRuntimeRequirements = false) {
     const bundle = parseSkillBundle(bytes, selected, directory)
-    const unavailableTools: string[] = []
-    for (const reference of [...new Set(bundle.packages.flatMap(pkg => pkg.toolIds))]) {
-      if (reference === 'python_execute@1.0.0') continue
-      try {
-        if (deferRuntimeRequirements) await this.tools.assertDraftReferences([reference])
-        else await this.tools.assertAvailableReferences([reference])
-      }
-      catch { unavailableTools.push(reference.split('@')[0]!) }
-    }
+    const unavailableTools = invalidSkillToolReferences(bundle.packages.flatMap(pkg => pkg.toolIds))
+      .map(reference => reference.split('@')[0]!)
     const preparedPlan = buildSkillInstallationPlan(bundle, { pythonSandboxAvailable: this.pythonSandboxAvailable, pythonPackages: this.pythonPackages, unavailableTools, deferRuntimeRequirements })
     const artifacts: SkillPackageArtifact[] = []
     for (const packageToStore of preparedPlan.packages) artifacts.push(await this.requireArtifactStore().put(packageToStore))
@@ -473,8 +465,8 @@ export class AdminSkillInstallationService {
 
   private async installPlan(tx: DatabaseTransaction, row: { id: string; channel?: string; plan: SkillInstallationPlan }, userId: string, traceId: string, changeSummary: string) {
     if (row.plan.compatibility.status === 'incompatible') throw invalidRequest(`安装计划不兼容：${row.plan.compatibility.issues.map(issue => issue.message).join('；')}`)
-    if (row.channel === 'link') await this.tools.assertDraftReferences(row.plan.summary.toolIds, tx)
-    else await this.tools.assertAvailableReferences(row.plan.summary.toolIds)
+    const invalidTools = invalidSkillToolReferences(row.plan.summary.toolIds)
+    if (invalidTools.length) throw invalidRequest(`Skill 引用了平台不提供的工具：${invalidTools.join('、')}`)
     for (const artifact of row.plan.packages) await this.requireArtifactStore().read(artifact)
     const packageKeys = [...new Set(row.plan.packages.map(pkg => installationKey(pkg.name)))].sort()
     for (const key of packageKeys) await tx`select pg_advisory_xact_lock(hashtextextended(${`${tenant}:skill-install:${key}`}, 0))`
@@ -617,8 +609,9 @@ export class AdminSkillInstallationService {
     if (row.plan?.packages.some(pkg => pkg.requirements.some(r => r.type === 'external' && r.status !== 'resolved'))) {
       blockers.push({ code: 'DEPENDENCIES_UNVERIFIED', message: '运行依赖未验证，须配置受控执行环境并重新试运行' })
     }
-    try { await this.tools.assertAvailableReferences(row.plan?.summary.toolIds ?? []) }
-    catch { blockers.push({ code: 'TOOLS_UNAVAILABLE', message: '所需平台工具暂不可执行，不能发布' }) }
+    if (invalidSkillToolReferences(row.plan?.summary.toolIds ?? []).length) {
+      blockers.push({ code: 'TOOLS_UNAVAILABLE', message: '所需平台工具暂不可执行，不能发布' })
+    }
     blockers.push({ code: 'TRIAL_REQUIRED', message: row.resultType === 'duplicate'
       ? '本次未创建版本或执行发布；已有版本状态请在 Skill 中心查看'
       : '导入只保存草稿；发布前须在 Skill 中心完成当前版本的真实试运行及发布检查' })
