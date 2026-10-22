@@ -38,7 +38,7 @@ async function createAutomation(request: APIRequestContext, name: string, prompt
 }
 
 function taskCard(page: Page, name: string) {
-  return page.getByRole('region', { name: `自动任务：${name}`, exact: true })
+  return page.getByRole('region', { name: `定时任务：${name}`, exact: true })
 }
 
 async function enableFromPage(page: Page, name: string) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -20,6 +20,8 @@ import {
 } from '@element-plus/icons-vue'
 
 import { AppLogo } from '@dsh-work/ui-core'
+import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
+import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
@@ -42,7 +44,7 @@ const navigation = [
   { label: 'Skill 广场', path: '/skills', icon: Grid },
   { label: 'AI 同事', path: '/agents', icon: UserFilled },
   { label: '项目空间', path: '/workspaces', icon: Collection },
-  { label: '自动任务', path: '/automations', icon: AlarmClock },
+  { label: '定时任务', path: '/automations', icon: AlarmClock },
 ]
 
 function isActive(path: string) {
@@ -149,12 +151,7 @@ watch(
   },
 )
 
-watch(() => authStore.user.id, (id, previous) => {
-  if (previous && id !== previous) { taskStore.reset(); contentStore.reset() }
-  if (id === '—') return
-  void Promise.all([taskStore.load(), contentStore.load()]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
-}, { immediate: true })
-onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加载身份', '当前账号', cause)) })
+useWorkbenchBootstrap()
 </script>
 
 <template>
@@ -169,7 +166,9 @@ onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加�
 
     <aside class="employee-sidebar" :class="{ 'employee-sidebar--mobile-open': mobileOpen }">
       <div class="employee-sidebar__logo">
-        <AppLogo dark />
+        <ModeSwitchMenu>
+          <AppLogo dark />
+        </ModeSwitchMenu>
       </div>
 
       <button class="new-conversation-button" type="button" @click="navigate('/workbench')">

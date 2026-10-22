@@ -78,6 +78,7 @@
     "test:m5:shared-files:integration": "pnpm --filter @dsh-work/server test:m5:shared-files:integration",
     "test:m5:file-versions:integration": "pnpm --filter @dsh-work/server test:m5:file-versions:integration",
     "test:m5:lifecycle:integration": "pnpm --filter @dsh-work/server test:m5:lifecycle:integration",
+    "test:s5:preferences:integration": "pnpm --filter @dsh-work/server test:s5:preferences:integration",
     "test:m5:activity:integration": "pnpm --filter @dsh-work/server test:m5:activity:integration",
     "test:m5:usage:integration": "pnpm --filter @dsh-work/server test:m5:usage:integration",
     "report:run-timings": "node --experimental-strip-types --env-file-if-exists=.env scripts/runtime/run-timings.ts",

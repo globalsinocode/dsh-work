@@ -40,6 +40,85 @@
         }
       }
     },
+    "/me/preferences": {
+      "get": {
+        "operationId": "getMyPreferences",
+        "summary": "读取本人的员工端偏好",
+        "description": "界面模式按账号保存（员工端双模式 S5a，D19）。从未保存过时返回缺省值：uiMode = work，updatedAt = null。只读取当前登录账号本人的记录。",
+        "responses": {
+          "200": {
+            "description": "本人偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateMyPreferences",
+        "summary": "保存本人的员工端偏好",
+        "description": "切换 A 工作模式 / B 协作模式。只改界面，不改数据、规则与权限，不中断进行中的执行。重复保存同一值幂等；未知字段与非法值返回 422，原偏好不变。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPreferencesUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的本人偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agents": {
       "get": {
         "operationId": "listAvailableAgents",
@@ -3467,6 +3546,47 @@
             "items": {
               "$ref": "#/components/schemas/WorkspaceUsageDailyPoint"
             }
+          }
+        }
+      },
+      "UserPreferences": {
+        "type": "object",
+        "required": [
+          "uiMode",
+          "updatedAt"
+        ],
+        "properties": {
+          "uiMode": {
+            "type": "string",
+            "enum": [
+              "work",
+              "collab"
+            ],
+            "description": "work = A 工作模式（缺省），collab = B 协作模式。"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "最近一次保存时间；从未保存过为 null。"
+          }
+        }
+      },
+      "UserPreferencesUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uiMode"
+        ],
+        "properties": {
+          "uiMode": {
+            "type": "string",
+            "enum": [
+              "work",
+              "collab"
+            ]
           }
         }
       },

@@ -773,6 +773,14 @@ export interface MemberDisclosureImpact {
   lostDataScopes: string[]
 }
 
+/** 员工端界面模式（S5，D19）：work = A 工作模式（缺省），collab = B 协作模式。 */
+export type UiMode = 'work' | 'collab'
+
+export interface UserPreferences {
+  uiMode: UiMode
+  updatedAt: string | null
+}
+
 export interface WorkbenchSession {
   user: UserProfile
   identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'

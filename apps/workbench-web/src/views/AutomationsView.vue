@@ -68,8 +68,8 @@ const reasonLabels: Record<string, string> = {
   overlap: '上一次执行未结束，本次跳过',
   subject_invalid: '账号状态不可用',
   authorization_denied: '当前权限已不满足执行条件',
-  user_pending_limit: '你的排队自动任务过多',
-  global_pending_limit: '平台自动任务容量已满',
+  user_pending_limit: '你的排队定时任务过多',
+  global_pending_limit: '平台定时任务容量已满',
   slot_expired: '计划槽位已过期',
   task_paused: '任务已暂停',
   task_disabled: '任务已停用',
@@ -120,7 +120,7 @@ async function load() {
   try {
     automations.value = await workbenchApi.getAutomations()
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : '自动任务加载失败'
+    loadError.value = error instanceof Error ? error.message : '定时任务加载失败'
   } finally {
     loading.value = false
   }
@@ -218,15 +218,15 @@ async function save() {
     }
     if (form.id) {
       await workbenchApi.updateAutomation(form.id, payload)
-      ElMessage.success('自动任务已更新')
+      ElMessage.success('定时任务已更新')
     } else {
       await workbenchApi.createAutomation(payload)
-      ElMessage.success('自动任务已创建，启用后开始按规则执行')
+      ElMessage.success('定时任务已创建，启用后开始按规则执行')
     }
     dialogVisible.value = false
     await load()
   } catch (error) {
-    notifyActionFailure(form.id ? '更新自动任务' : '创建自动任务', form.name, error)
+    notifyActionFailure(form.id ? '更新定时任务' : '创建定时任务', form.name, error)
   } finally {
     saving.value = false
   }
@@ -278,7 +278,7 @@ async function enable(item: Automation) {
   try {
     await ElMessageBox.confirm(
       '启用后任务将按规则自动执行：服务停机期间错过的槽位只记录不补跑，执行失败不会自动重试。执行权限以启用时的授权范围为上限。',
-      `启用自动任务“${item.name}”？`,
+      `启用定时任务“${item.name}”？`,
       {
         confirmButtonText: '启用',
         cancelButtonText: '取消',
@@ -301,7 +301,7 @@ async function disable(item: Automation) {
   try {
     await ElMessageBox.confirm(
       '停用后任务不再出现在列表中（历史执行记录也随之不再展示），且不再产生新的执行。已开始的执行不受影响。',
-      `停用自动任务“${item.name}”？`,
+      `停用定时任务“${item.name}”？`,
       {
         confirmButtonText: '停用',
         cancelButtonText: '取消',
@@ -379,20 +379,20 @@ async function loadAgentResults() {
   <div class="page-container automations-page">
     <header class="page-header">
       <div>
-        <h1 class="page-title">我的自动任务</h1>
+        <h1 class="page-title">我的定时任务</h1>
         <p class="page-description">
           让 Agent 按固定版本与固定输入定期自动执行，结果以独立会话落到所选工作空间。
           任务钉住创建时的已发布版本，不会跟随 Agent 后续升级。
         </p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建自动任务</el-button>
+      <el-button type="primary" :icon="Plus" @click="openCreate">新建定时任务</el-button>
     </header>
 
     <el-alert
       v-if="loadError"
       class="automations-error"
       type="error"
-      :title="`自动任务加载失败：${loadError}`"
+      :title="`定时任务加载失败：${loadError}`"
       show-icon
       :closable="false"
     >
@@ -405,8 +405,8 @@ async function loadAgentResults() {
       </div>
     </div>
 
-    <el-empty v-else-if="!automations.length && !loadError" description="还没有自动任务">
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建自动任务</el-button>
+    <el-empty v-else-if="!automations.length && !loadError" description="还没有定时任务">
+      <el-button type="primary" :icon="Plus" @click="openCreate">新建定时任务</el-button>
     </el-empty>
 
     <div v-else class="automation-list">
@@ -414,7 +414,7 @@ async function loadAgentResults() {
         v-for="item in automations"
         :key="item.id"
         class="automation-card panel"
-        :aria-label="`自动任务：${item.name}`"
+        :aria-label="`定时任务：${item.name}`"
       >
         <div class="automation-card__main">
           <div class="automation-card__title">
@@ -492,7 +492,7 @@ async function loadAgentResults() {
 
     <el-dialog
       v-model="dialogVisible"
-      :title="form.id ? '编辑自动任务' : '新建自动任务'"
+      :title="form.id ? '编辑定时任务' : '新建定时任务'"
       width="560px"
       :close-on-click-modal="false"
     >

@@ -156,7 +156,7 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 
 ### 4.1 体验层
 
-- `apps/workbench-web`：主导航提供新对话、Skill 广场、AI 同事、项目空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)；
+- `apps/workbench-web`：A 工作模式主导航提供新对话、Skill 广场、AI 同事、项目空间和定时任务，B 协作模式主导航提供对话、AI 同事、群组和定时任务（模式为用户偏好，见[项目空间方案第 12 节](../design/project-space-plan.md)）；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)；
 - `apps/admin-web`：运营、Agent、Skill/Tool、Runtime、Session、权限、模型用量、审计和健康；
 - 两个应用拥有独立路由、Pinia、API 客户端、DTO 和构建产物；
 - `packages/` 只共享 Design Token 和无业务状态组件，不共享认证状态或业务 Store。

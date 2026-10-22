@@ -16,6 +16,8 @@ import type {
   TaskResult,
   TaskRun,
   TeamMemberRole,
+  UiMode,
+  UserPreferences,
   WorkbenchAgent,
   WorkbenchSession,
   WorkbenchSkill,
@@ -151,6 +153,9 @@ export const workbenchApi = {
   getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}/summary`),
 
   getSession: () => request<WorkbenchSession>('/session'),
+  getPreferences: () => request<UserPreferences>('/me/preferences'),
+  updatePreferences: (input: { uiMode: UiMode }) =>
+    request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
   getSkills: () => request<WorkbenchSkill[]>('/skills'),

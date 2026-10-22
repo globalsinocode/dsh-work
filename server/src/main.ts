@@ -21,6 +21,7 @@ import { registerWorkspaceMemberRoutes } from './http/workbench/workspace-member
 import { registerWorkspaceAgentMemberRoutes } from './http/workbench/workspace-agent-member-routes.ts'
 import { registerProjectRoutes } from './http/workbench/project-routes.ts'
 import { registerWorkbenchAgentRoutes } from './http/workbench/agent-routes.ts'
+import { registerUserPreferenceRoutes } from './http/workbench/preference-routes.ts'
 import { registerOidcRoutes } from './http/auth-routes.ts'
 import { registerLocalAuthRoutes } from './http/local-auth-routes.ts'
 import { registerAuthConfigurationRoutes, registerSessionRoutes } from './http/session-routes.ts'
@@ -55,6 +56,7 @@ import { PostgresWorkspaceAgentMemberService } from './modules/workbench/applica
 import { PostgresProjectArchiveService } from './modules/workbench/application/postgres-project-archive-service.ts'
 import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
 import { PostgresWorkspaceActivityService } from './modules/workbench/application/postgres-workspace-activity-service.ts'
+import { PostgresUserPreferenceService } from './modules/workbench/application/postgres-user-preference-service.ts'
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
@@ -406,6 +408,7 @@ async function start() {
   registerWorkspaceMemberRoutes(router, workspaceMembers, authorization)
   registerWorkspaceLifecycleRoutes(router, workspaceLifecycle, authorization)
   registerWorkspaceActivityRoutes(router, workspaceActivity, authorization)
+  registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(database))
   registerWorkspaceUsageRoutes(router, workspaceUsage, authorization)
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)
