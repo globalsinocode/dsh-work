@@ -314,7 +314,7 @@ onMounted(() => contentStore.load())
           <el-select v-model="configurationForm.disabledTools" multiple clearable placeholder="不停用任何工具" aria-label="紧急停用内置工具" data-testid="disabled-tools-select">
             <el-option v-for="tool in disableableTools" :key="tool.name" :label="`${tool.label}（${tool.name}）`" :value="tool.name" />
           </el-select>
-          <p class="field-help">用于 DSH 工具出现问题时临时止损：新运行不装配，在途运行下一次调用被拒绝。依赖被停用工具的 Agent 运行可能失败。</p>
+          <p class="field-help">用于 DSH 工具出现问题时临时止损：新运行不装配；执行中的运行再调用该工具时会被拒绝，Agent 会被告知该工具已停用并基于已有结果继续作答。</p>
         </el-form-item>
       </el-form>
       <template #footer>

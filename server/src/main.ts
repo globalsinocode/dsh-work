@@ -194,6 +194,7 @@ async function start() {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
+    disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools ?? [],
     resolveMcpConnections: async manifest => {
       if (!mcpServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
       return mcpServiceRef.current.resolveRuntimeConnections(manifest)
@@ -330,9 +331,8 @@ async function start() {
     {
       agentMembers: workspaceAgentMembers,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
-      // 领取后、恢复前与每次工具调用时复核：内置工具未被 Runtime 停用、MCP 连接仍有效。
+      // 领取后、恢复前与每次工具调用时复核 MCP 连接仍有效。
       toolChecks: {
-        disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools,
         assertPinnedConnections: pins => mcpService.assertPinnedConnections(pins),
       },
       tasks,

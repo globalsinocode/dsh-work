@@ -52,6 +52,8 @@ export async function createPlatformToolBridge(
   limit: number,
   authorize?: () => Promise<void>,
   operations?: PlatformToolOperationLifecycle,
+  /** Runtime 紧急停用的内置工具：只拒绝这一次调用，不终止 Attempt。 */
+  toolDisabled?: (toolName: string) => Promise<boolean>,
 ) {
   const prepared = Object.fromEntries(Object.entries(tools).map(([name, registration]) => [
     name,
@@ -75,6 +77,19 @@ export async function createPlatformToolBridge(
         }
         try {
           await authorize()
+          const toolHeader = request.headers['x-dsh-tool-name']
+          const toolName = (Array.isArray(toolHeader) ? toolHeader[0] : toolHeader)?.trim()
+          if (toolName && toolDisabled) {
+            let disabled: boolean
+            try { disabled = await toolDisabled(toolName) } catch {
+              response.writeHead(503).end(JSON.stringify({ error: '内置工具停用状态暂不可读，本次调用未执行' }))
+              return
+            }
+            if (disabled) {
+              response.end(JSON.stringify({ authorized: true, toolDisabled: true }))
+              return
+            }
+          }
           response.end(JSON.stringify({ authorized: true }))
         } catch (error) {
           const revoked = isAuthorizationDenied(error)

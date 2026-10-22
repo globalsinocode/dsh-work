@@ -50,6 +50,7 @@ import type {
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { isDshBuiltinTool } from './builtin-tools.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
@@ -121,6 +122,11 @@ export interface DshAcpRuntimeAdapterConfiguration {
   setupTimeoutMs?: number
   /** Supplied by the production composition root; isolated adapter tests may omit it. */
   authorizeExecution?: (manifest: RuntimeManifest) => Promise<void>
+  /**
+   * Runtime 配置当前紧急停用的内置工具。随执行授权探测逐次调用读取：被停用的工具
+   * 只拒绝本次调用并告知模型原因，不终止 Attempt。未配置时视为没有停用。
+   */
+  disabledBuiltinTools?: () => Promise<readonly string[]>
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
@@ -542,7 +548,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
           this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
-          this.configuration.operationLifecycle?.(record.manifest))
+          this.configuration.operationLifecycle?.(record.manifest),
+          this.configuration.disabledBuiltinTools ? async (toolName) => {
+            const disabled = await this.configuration.disabledBuiltinTools!()
+            return isDshBuiltinTool(toolName) && disabled.includes(toolName)
+          } : undefined)
       }
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)

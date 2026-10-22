@@ -166,7 +166,7 @@ export class RunOrchestrationService {
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) { return this.cancellation.systemCancelRun(runId, cause, reason) }
 
   // Execution-time authorization shared with the Runtime, tool bridge and approvals.
-  assertCurrentRunAuthorization(manifest: RuntimeManifest, toolsChecked = false) { return this.gate.assertCurrentRunAuthorization(manifest, toolsChecked) }
+  assertCurrentRunAuthorization(manifest: RuntimeManifest) { return this.gate.assertCurrentRunAuthorization(manifest) }
   assertWaitingRunAuthorization(manifest: RuntimeManifest) { return this.gate.assertWaitingRunAuthorization(manifest) }
 
   close() { return this.scheduler.close() }

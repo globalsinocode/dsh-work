@@ -32,8 +32,6 @@ class ClaimBoundaryRepository extends PostgresRunRepository {
   }
 }
 interface BoundaryContext {
-  /** Runtime 当前停用的内置工具；测试在领取边界修改。 */
-  disabledTools: string[]
   fileId?: string
 }
 
@@ -59,9 +57,8 @@ async function runRevokedCase(
   const agents = new PostgresAgentService(db.client, undefined, undefined)
   const orchestration = new RunOrchestrationService(runs, conversations,
     new ModelGovernanceService(new PostgresModelGovernanceRepository(db.client)), runtime,
-    content, undefined, agents, undefined, auth,
-    { toolChecks: { disabledBuiltinTools: async () => context.disabledTools } })
-  const context: BoundaryContext = { disabledTools: [] }
+    content, undefined, agents, undefined, auth)
+  const context: BoundaryContext = {}
   try {
     const session = await orchestration.createSession({ userId: 'U00001', title: '个人执行前复核' })
     if (withInputFile) {
@@ -121,12 +118,6 @@ test('personal input file removed after claim never reaches Runtime', async () =
     async ({ fileId }) => { await db.client`update file_objects set removed_at = null where id = ${fileId!}` },
     false,
     true,
-  )
-})
-test('pinned built-in tool disabled after claim never reaches Runtime', async () => {
-  await runRevokedCase(
-    async context => { context.disabledTools = ['read'] },
-    async context => { context.disabledTools = [] },
   )
 })
 test('authorization infrastructure failures are not reported as revocation', async () => {

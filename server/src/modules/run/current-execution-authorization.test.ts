@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
-import { assertBuiltinToolsEnabled, assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
+import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from './current-execution-authorization.ts'
 
 type Port = Parameters<typeof assertCurrentExecutionAuthorization>[0]
 const manifest = { workspace_id: 'ws-personal-u1', agent_version_id: 'agent-v1',
@@ -82,23 +82,6 @@ test('automation purpose is workspace-bound: never reaches the admin branch', as
     async requirePlatformAdmin() { throw new Error('automation is not an admin purpose') },
   }), undefined, automation)
   assert.equal(runtimeCalls, 1)
-})
-
-test('disabled built-in tools are rechecked before any purpose branch; no port means no kill switch', async () => {
-  const tools = [{ id: 'read', version: '1.0.0' }, { id: 'web_search', version: '1.0.0' }, { id: 'activate_skill', version: '1.0.0' }]
-  const pinned = { ...manifest, tools } as unknown as RuntimeManifest
-  // 未接线停用清单：这是运维开关，不是授权，不阻断。
-  await assertCurrentExecutionAuthorization(ports(), undefined, pinned)
-  await assertCurrentExecutionAuthorization(ports(), undefined, pinned, { async disabledBuiltinTools() { return ['write'] } })
-  const disabled = { async disabledBuiltinTools() { return ['web_search', 'activate_skill'] } }
-  await assert.rejects(assertBuiltinToolsEnabled(pinned, disabled), /内置工具已被管理员停用：web_search$/)
-  // 管理目的同样先复核：停用在 requirePlatformAdmin 之前拒绝。
-  const trial = { ...pinned, purpose: 'agent-release-trial', workspace_id: '', agent_version_id: 'draft-v1' } as RuntimeManifest
-  await assert.rejects(assertCurrentExecutionAuthorization(ports({
-    async requirePlatformAdmin() { throw new Error('must not reach the purpose branch') },
-  }), undefined, trial, disabled), { code: 'permission_denied' })
-  // 队列认领点已复核时跳过。
-  await assertCurrentExecutionAuthorization(ports(), undefined, pinned, disabled, true)
 })
 
 test('PF-03: pinned MCP Connectors require current connector availability before every purpose branch', async () => {

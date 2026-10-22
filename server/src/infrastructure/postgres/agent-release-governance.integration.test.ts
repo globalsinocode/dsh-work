@@ -67,7 +67,6 @@ before(async () => {
     new PostgresAuthorizationService(database),
     {
       toolChecks: {
-        disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools,
         assertPinnedConnections: pins => mcp.assertPinnedConnections(pins),
       },
     },
@@ -566,7 +565,7 @@ test('联网搜索按 Agent 版本开关装配；Skill 需要联网搜索时须�
   assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_search'))
 })
 
-test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt 在复核时被拒绝', async () => {
+test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt 不因停用而失败', async () => {
   const runtime = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
   const configure = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
     runtimeId: runtime.id, maxConcurrentWorkers: 4, attemptTimeoutMinutes: runtime.attemptTimeoutMinutes,
@@ -586,7 +585,8 @@ test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt �
     const updated = await configure(['web_search'])
     assert.deepEqual(updated?.disabledTools, ['web_search'])
     assert.deepEqual((await operations.getRuntimePolicy(runtime.id)).disabledTools, ['web_search'])
-    await assert.rejects(orchestration.assertCurrentRunAuthorization(pinned), /授权已撤销/)
+    // 停用不是撤权：执行中的 Attempt 继续运行，被停用工具的下一次调用由 DSH 策略单独拒绝。
+    await orchestration.assertCurrentRunAuthorization(pinned)
     trialRuntime.releaseAll()
     await waitFor(agentId, started.validation!.id, completed, '验证未完成')
     // 新 Attempt 不再装配被停用的工具。

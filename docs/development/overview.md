@@ -88,7 +88,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 由 Agent 版本开关决定；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具，新运行不再装配、在途运行下一次调用被拒绝。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 由 Agent 版本开关决定；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
 - **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。

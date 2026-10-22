@@ -134,9 +134,10 @@ B1 先行，B2、B3 依赖 B1，B4 最后。
 | 工具引用格式（3.2、3.5） | Manifest 与 `skill_versions.tool_refs` 改存工具名称 | 保留 `name@1.0.0`，版本固定为 `BUILTIN_TOOL_VERSION` | Manifest Schema、DSH 工具策略与 Skill 包格式已使用该格式，改名不带来收益；`parseBuiltinToolReference` 统一解析 |
 | 装配方式（3.1） | `skill` 装配 `activate_skill`、`python_execute` | `runtime`：按运行内容装配，包含 `propose_memory`；`risk` 只有 `low`/`medium` | 三者都由运行内容触发，规则一致 |
 | 目录摘要（3.2） | Manifest 记 `builtin_catalog_digest` | 未加 | 注册表随代码发布，Attempt 已固定工具清单，摘要没有消费者 |
-| 紧急停用范围（3.4） | 只对之后新建或恢复的 Attempt 生效 | 还在领取复核和逐次工具调用的执行门禁中拒绝，在途 Attempt 下一次调用即被拒绝 | 止损需要立即生效；复用现有执行门禁，无额外机制 |
+| 紧急停用范围（3.4） | 只对之后新建或恢复的 Attempt 生效 | 新 Attempt 不装配；执行中的 Attempt 再调用被停用工具时只拒绝这一次调用并告知模型，Attempt 继续 | 止损需要立即生效，但停用不是撤权：P2 验收发现按授权门禁处理会让整个运行失败、丢失已有结果 |
 | 目录比对（3.2） | 缺失工具在 Runtime 健康中报为降级 | 在 `GET /runtimes/builtin-tools` 的 `catalog` 中报告，不改变健康状态 | 缺少某个工具只影响用到它的运行，不应让 Runtime 整体降级 |
 | 审批模式 | 未提及 | Agent 运行快照的 `approvalMode` 固定为 `never` | 原本由工具审批策略推导，内置工具均无需逐次审批 |
 | 工具审计 | 未提及 | `tool_audit_logs.tool_version_id` 改名为 `tool_name` | 原外键指向已删除的 `tool_versions` |
+| 模型可见工具 | 未提及 | DSH 工具策略用 agent 作用域 `tools.restrict` 隐藏未放行的工具 | P2 验收发现模型仍能看到并尝试调用未放行或被停用的工具 |
 
 验证：服务端单元测试、集成测试（含新增 `builtin-tools.integration.test.ts` 与发布治理中的联网开关、紧急停用用例）、OpenAPI 覆盖测试；管理端类型检查。管理端 vitest 与 Playwright 在本地环境执行。

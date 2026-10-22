@@ -2,7 +2,6 @@ import type { PostgresAuthorizationService } from '../authorization/postgres-aut
 import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
 import type { McpConnectionSnapshot, RuntimeManifest } from '../runtime/runtime-types.ts'
-import { isDshBuiltinTool } from '../runtime/builtin-tools.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
 export class AuthorizationCheckUnavailableError extends Error {
@@ -25,21 +24,9 @@ export class ToolCheckUnavailableError extends AuthorizationCheckUnavailableErro
   }
 }
 
-/** 执行期的工具复核：Runtime 紧急停用的内置工具，以及 Attempt 固定的 MCP 连接。 */
+/** 执行期的工具复核：Attempt 固定的 MCP 连接。内置工具的紧急停用逐次调用判断，见 Runtime Adapter。 */
 export interface ExecutionToolCheckPort {
-  /** Runtime 配置当前停用的内置工具。未接线时视为没有停用：这是运维开关，不是授权。 */
-  disabledBuiltinTools?(): Promise<readonly string[]>
   assertPinnedConnections?(pins: readonly McpConnectionSnapshot[]): Promise<void>
-}
-
-/** Attempt 固定的内置工具中有被 Runtime 停用的，则拒绝启动、恢复或继续调用。 */
-export async function assertBuiltinToolsEnabled(manifest: RuntimeManifest, checks?: ExecutionToolCheckPort): Promise<void> {
-  if (!checks?.disabledBuiltinTools) return
-  const builtin = manifest.tools.filter(tool => isDshBuiltinTool(tool.id))
-  if (!builtin.length) return
-  const disabled = new Set(await checks.disabledBuiltinTools())
-  const blocked = builtin.filter(tool => disabled.has(tool.id)).map(tool => tool.id)
-  if (blocked.length) throw authorizationDenied(`内置工具已被管理员停用：${blocked.join('、')}`)
 }
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
@@ -52,12 +39,9 @@ export async function assertCurrentExecutionAuthorization(
   content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
   manifest: RuntimeManifest,
   tools?: ExecutionToolCheckPort,
-  toolsChecked = false,
 ): Promise<void> {
   try {
-    // 工具复核在 purpose 分流前统一进行，试运行与管理运行同样适用。
-    // 队列认领点已做同一检查时可跳过，避免每次认领重复查询。
-    if (!toolsChecked) await assertBuiltinToolsEnabled(manifest, tools)
+    // MCP 复核在 purpose 分流前统一进行，试运行与管理运行同样适用。
     if (manifest.mcp_connections?.length) {
       if (!tools?.assertPinnedConnections) throw new ToolCheckUnavailableError()
       await tools.assertPinnedConnections(manifest.mcp_connections)

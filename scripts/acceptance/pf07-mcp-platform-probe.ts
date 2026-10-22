@@ -105,7 +105,6 @@ try {
     runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)),
     runtime, content, operations, agents, undefined, authorization,
     { agentMembers, toolChecks: {
-      disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools,
       assertPinnedConnections: pins => mcp.assertPinnedConnections(pins),
     } },
   )

@@ -1,6 +1,6 @@
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
-import { assertBuiltinToolsEnabled, assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
+import { assertCurrentExecutionAuthorization, AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import { authorizationDenied, isAuthorizationDenial, RequestValidationError } from '../../../domain/authorization-errors.ts'
 import type { RunRecord } from '../run-types.ts'
 import { tenantId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
@@ -17,18 +17,17 @@ export class ExecutionAuthorizationGate {
   }
 
   /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
-  async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolsChecked = false): Promise<void> {
-    return this.assertRunAuthorizationInState(manifest, ['running'], toolsChecked)
+  async assertCurrentRunAuthorization(manifest: RuntimeManifest): Promise<void> {
+    return this.assertRunAuthorizationInState(manifest, ['running'])
   }
 
   async assertWaitingRunAuthorization(manifest: RuntimeManifest): Promise<void> {
-    return this.assertRunAuthorizationInState(manifest, ['waiting'], false)
+    return this.assertRunAuthorizationInState(manifest, ['waiting'])
   }
 
   private async assertRunAuthorizationInState(
     manifest: RuntimeManifest,
     allowedStates: Array<RunRecord['status']>,
-    toolsChecked: boolean,
   ): Promise<void> {
     if (!this.deps.authorization) throw new AuthorizationCheckUnavailableError()
     try {
@@ -78,7 +77,7 @@ export class ExecutionAuthorizationGate {
           throw authorizationDenied('Task 归属或固定工作空间已变化')
         }
       }
-      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolChecks, toolsChecked)
+      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolChecks)
     } catch (error) {
       if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
       throw new AuthorizationCheckUnavailableError(error)
@@ -100,14 +99,6 @@ export class ExecutionAuthorizationGate {
     run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
-    // 工具复核对所有 purpose 生效：排队期间内置工具被停用时，领取后在进入 Runtime
-    // 前收敛为授权失败。
-    try {
-      await assertBuiltinToolsEnabled(manifest, this.deps.toolChecks)
-    } catch (error) {
-      if (isAuthorizationDenial(error)) return { denied: true, reason: error instanceof Error ? error.message : String(error) }
-      throw error
-    }
     if (manifest.mcp_connections?.length) {
       if (!this.deps.toolChecks?.assertPinnedConnections) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
       try {
@@ -231,8 +222,7 @@ export class ExecutionAuthorizationGate {
     // AC-23 约束的是个人空间的产品形态，不是豁免共同执行授权检查。
     if (workspaceType === null) return { denied: true, reason: '工作空间不存在或已归档' }
     try {
-      // 绑定 pin 已在本函数顶部复核：此处跳过共享闸门的重复检查。
-      await this.assertCurrentRunAuthorization(manifest, true)
+      await this.assertCurrentRunAuthorization(manifest)
       return { denied: false }
     } catch (error) {
       if (!isAuthorizationDenial(error)) throw error

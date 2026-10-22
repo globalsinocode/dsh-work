@@ -48,6 +48,10 @@ export function apply(ctx) {
   // MCP 逐工具校验每次都读取 DSH 当前加载的 Schema，远端在运行中改变工具清单时同样生效。
   const denialReason = execution =>
     validateExecution(execution, allowedTools, allowedMcpServers, approvedMcpCapabilities, () => ctx.tools.schemas(), workspaceRoot)
+  // 模型只看到本次 Manifest 放行的工具；目录探测需要完整目录，不做裁剪。
+  if (!process.env.DSH_WORK_TOOL_CATALOG_MODE) {
+    restrictModelVisibleTools(ctx, name => isToolNameAllowed(name, allowedTools, allowedMcpServers, approvedMcpCapabilities))
+  }
 
   ctx.on('tools/pre-execute', async (execution, next) => {
     const denial = denialReason(execution)
@@ -57,14 +61,18 @@ export function apply(ctx) {
     }
 
     if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
-    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
-      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
+    const currentAuthorizationDenial = async () => {
+      if (!requireCurrentAuthorization) return undefined
+      const result = await authorizeCurrentExecution(authorizationSocket, execution.signal, execution.name)
+      if (result === 'disabled') return disabledToolReason(execution.name)
+      return result === 'authorized' ? undefined : '当前执行授权不可用或已撤销'
     }
+    const before = await currentAuthorizationDenial()
+    if (before !== undefined) return { kind: 'deny', reason: before }
     const downstream = await next()
     if (downstream.kind === 'deny') return downstream
-    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
-      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
-    }
+    const after = await currentAuthorizationDenial()
+    if (after !== undefined) return { kind: 'deny', reason: after }
     const requiresApproval = downstream.kind === 'ask' || approvalMode !== 'never'
     if (!requiresApproval) return downstream
     if (!recordApprovalRequest(approvalLog, execution)) {
@@ -329,6 +337,45 @@ function validateWebExecution(execution) {
   return undefined
 }
 
+/** 名称级放行：Manifest 中的工具，或已选 MCP Server 生效清单中的 Tool。参数与 Schema 仍在调用时校验。 */
+export function isToolNameAllowed(name, allowedTools, allowedMcpServers, approvedMcpCapabilities) {
+  if (allowedTools.has(name)) return true
+  const server = matchConfiguredMcpServer(name, allowedMcpServers)
+  return server !== undefined && approvedMcpCapabilities.get(server)?.has(name.slice(`mcp__${server}__`.length)) === true
+}
+
+/**
+ * 把未放行的工具从模型可见列表中移除（DSH agent 作用域的 tools.restrict）。只影响模型看到什么；
+ * 调用仍由 pre-execute 与 guard 拦截，裁剪失败时不影响安全边界。工具清单变化（如 MCP 连接完成）
+ * 后对新出现的工具再次裁剪。
+ */
+export function restrictModelVisibleTools(ctx, isAllowed) {
+  const agents = new Set()
+  const hidden = new WeakMap()
+  const restrict = (agent) => {
+    let names
+    try { names = ctx.tools.schemas(agent).map(schema => schema.name) } catch { return }
+    const done = hidden.get(agent) ?? new Set()
+    hidden.set(agent, done)
+    const deny = names.filter(name => typeof name === 'string' && name !== 'run_code' && !done.has(name) && !isAllowed(name))
+    if (!deny.length || typeof agent?.ctx?.tools?.restrict !== 'function') return
+    try {
+      agent.ctx.tools.restrict({ deny })
+      deny.forEach(name => done.add(name))
+    } catch {
+      // 某些名称不能裁剪（例如 agent 自身作用域注册的工具）时逐个尝试，其余保持可见但仍不可调用。
+      for (const name of deny) {
+        try { agent.ctx.tools.restrict({ deny: [name] }); done.add(name) } catch { /* 调用仍被拦截 */ }
+      }
+    }
+  }
+  ctx.on('agent/session-start', ({ agent }) => {
+    agents.add(agent)
+    restrict(agent)
+  }, { global: true })
+  ctx.on('tools/change', () => { for (const agent of agents) restrict(agent) }, { global: true })
+}
+
 function matchConfiguredMcpServer(toolName, serverNames) {
   if (typeof toolName !== 'string') return undefined
   return [...serverNames]
@@ -525,11 +572,20 @@ function platformToolFailure(error) {
 }
 
 /** A product-owned Unix-socket check, not a model tool or external network request. */
-function authorizeCurrentExecution(socketPath, signal) {
-  if (!socketPath) return Promise.resolve(false)
+export function disabledToolReason(toolName) {
+  return `管理员已临时停用内置工具 ${toolName}，本次调用未执行。不要再调用该工具；依赖它的部分请说明暂时无法完成，并基于已有结果继续作答。`
+}
+
+/**
+ * 执行授权探测。返回 'authorized'、'disabled'（Runtime 紧急停用了该内置工具，只拒绝本次调用）
+ * 或 'denied'（授权已撤销或不可用）。
+ */
+function authorizeCurrentExecution(socketPath, signal, toolName) {
+  if (!socketPath) return Promise.resolve('denied')
   return new Promise(resolve => {
     const timeout = globalThis.AbortSignal.timeout(6000)
     const req = request({ socketPath, path: '/authorize-execution', method: 'POST',
+      headers: typeof toolName === 'string' && /^[A-Za-z0-9_.-]{1,200}$/.test(toolName) ? { 'x-dsh-tool-name': toolName } : {},
       signal: signal ? globalThis.AbortSignal.any([signal, timeout]) : timeout }, response => {
       let body = ''
       response.setEncoding('utf8')
@@ -537,13 +593,16 @@ function authorizeCurrentExecution(socketPath, signal) {
         body += chunk
         if (body.length > 1024) req.destroy()
       })
-      response.on('error', () => resolve(false))
+      response.on('error', () => resolve('denied'))
       response.on('end', () => {
-        try { resolve(response.statusCode === 200 && JSON.parse(body).authorized === true) }
-        catch { resolve(false) }
+        try {
+          const parsed = JSON.parse(body)
+          if (response.statusCode !== 200 || parsed.authorized !== true) resolve('denied')
+          else resolve(parsed.toolDisabled === true ? 'disabled' : 'authorized')
+        } catch { resolve('denied') }
       })
     })
-    req.on('error', () => resolve(false))
+    req.on('error', () => resolve('denied'))
     req.end()
   })
 }

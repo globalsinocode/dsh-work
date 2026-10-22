@@ -34,7 +34,9 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 内置工具不是可管理的数据：不存在工具目录同步、逐工具授权或绑定修订。每次 Attempt 由 `agentBuiltinToolNames` 按 Agent 版本的 `web_search_enabled` 生成 DSH 工具清单，加上按运行内容需要的平台工具，再去掉 Runtime 配置 `disabled_tools` 中的工具，写入 Manifest `tools`（`name@1.0.0`）；DSH 工具策略只放行该清单。Skill 的 `allowed-tools` 按名称匹配注册表（忽略大小写与下划线，`WebSearch` → `web_search`），声明联网搜索的 Skill 只能被开启联网搜索的 Agent 引用；注册表以外的工具（如 `bash`、`web_fetch`）一律不可用。
 
-紧急停用清单是运维止损开关而不是授权：派发新 Attempt 时排除被停用工具；领取复核、恢复前复核和逐次工具调用的执行门禁发现 Manifest 固定了被停用工具时拒绝执行（`assertBuiltinToolsEnabled`）。未接线停用端口时视为没有停用。
+紧急停用清单是运维止损开关而不是授权：派发新 Attempt 时排除被停用工具；执行中的 Attempt 不因停用而失败，DSH 工具策略在每次调用的执行授权探测中携带工具名，Platform Tool Bridge 读取当前停用清单（Runtime Adapter 的 `disabledBuiltinTools`），被停用工具只拒绝本次调用，并以固定文案告知模型该工具已被管理员临时停用，由模型基于已有结果继续作答。未接线时视为没有停用。
+
+DSH 工具策略在会话开始和工具清单变化时，用 DSH 的 agent 作用域 `tools.restrict({ deny })` 把 Manifest 未放行的工具（包括注册表以外的 DSH 工具和未生效的 MCP Tool）从模型可见列表中移除；这只影响模型看到什么，调用仍由 `tools/pre-execute` 与 guard 拦截。目录探测模式不做裁剪。
 
 服务启动时通过 `AgentRuntimePort.listTools()` 读取一次 DSH 当前工具目录并与注册表比对，缺失的 DSH 工具在 `GET /runtimes/builtin-tools` 中报告（`catalog.missingTools`），读取失败时报告错误；比对结果不改变执行行为。目录探测启动一个短生命周期、无平台工具桥、无 MCP、空工具授权的隔离 ACP 会话；dsh-work 的受信 Tool Policy 仅在显式目录探测模式下，于 DSH `agent/session-start` 后调用该 Agent 作用域的 `ctx.tools.schemas(agent)`。Adapter 只接受与本次 Session ID 匹配且摘要正确的 v3 目录，读取后关闭 Worker 并删除临时目录。普通 Attempt 会移除目录发布环境变量。
 
