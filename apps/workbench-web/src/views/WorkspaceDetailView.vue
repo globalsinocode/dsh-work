@@ -16,6 +16,7 @@ import {
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { useNotificationStore } from '@/stores/notifications'
 import { useTaskStore } from '@/stores/tasks'
 import { workbenchApi } from '@/api/client'
 import type {
@@ -69,6 +70,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
 const taskStore = useTaskStore()
+const notificationStore = useNotificationStore()
 /** 团队空间会话活动 SSE 的 since 水位线（与 ConversationView / SessionHistory 同口径）。 */
 const workspaceSyncedAt = ref(new Date().toISOString())
 let artifactLiveRefreshTimer: ReturnType<typeof setTimeout> | undefined
@@ -121,6 +123,8 @@ const agentMembers = ref<WorkspaceAgentMember[]>([])
 const workspaceMembers = ref<WorkspaceMember[]>([])
 /** 服务端返回的调用者角色（负责人转交后不再等于创建者，不能靠姓名推断）。 */
 const serverUserRole = ref<TeamMemberRole | null>(null)
+/** 员工名册请求在途；与 `serverUserRole === null` 区分「加载中」与「加载失败」。 */
+const workspaceMembersLoading = ref(false)
 /** 当前操作人可发起对话的 Agent 成员：与服务端 allowedActions 一致（只读成员为空）。 */
 const startableAgentMemberIds = computed(() => agentMembers.value
   .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
@@ -234,6 +238,10 @@ const workspaceId = computed(() => String(route.params.id ?? ''))
 const workspace = computed(() =>
   contentStore.workspaces.find((item) => item.id === workspaceId.value),
 )
+const teamFilePage = computed(() => contentStore.workspaceFiles(workspaceId.value))
+const workspaceFiles = computed(() => (
+  isTeam.value ? teamFilePage.value.items : (workspace.value?.files ?? [])
+))
 const isPersonal = computed(() => workspace.value?.type === 'personal')
 const isTeam = computed(() => workspace.value?.type === 'team')
 /**
@@ -270,14 +278,14 @@ const isOwner = computed(() => currentUserRole.value === 'owner')
  * 与 `WorkspaceInfoPanel` 对 `currentUserRole=null` 的既有口径一致。服务端 403 仍是
  * 最终兜底（评审 P2 修复后注释与实现对齐）。
  */
-const canUploadFileVersions = computed(() =>
-  isTeam.value
-  && !isArchived.value
-  // 角色未解析出来（名册请求失败）时**不给**入口：与「宁可漏开不可误开」及
-  // WorkspaceInfoPanel 对 currentUserRole=null 的既有口径一致，避免给只读成员
-  // 一个注定 403 的假入口（评审 P2）。
-  && currentUserRole.value !== null
-  && currentUserRole.value !== 'viewer')
+const canUploadWorkspaceFiles = computed(() => {
+  if (isArchived.value) return false
+  if (isPersonal.value) return true
+  return currentUserRole.value !== null
+    && currentUserRole.value !== 'viewer'
+    && ['owner', 'admin', 'member'].includes(currentUserRole.value)
+})
+const canUploadFileVersions = computed(() => canUploadWorkspaceFiles.value && isTeam.value)
 /**
  * 「引用此版本」与「引用到对话」同口径：归档空间无法发起新对话，因此不渲染引用
  * 入口（版本列表与下载仍保留）。
@@ -292,6 +300,14 @@ const canWriteTeamContent = computed(() =>
   && !isArchived.value
   && currentUserRole.value !== null
   && currentUserRole.value !== 'viewer')
+/**
+ * 团队角色尚未从名册解析完成。此间 `currentUserRole === null` 不能当作只读，
+ * 否则会闪出「无写权限」提示（名册晚于空间列表返回）。
+ */
+const teamRolePending = computed(() =>
+  isTeam.value
+  && props.currentUserRole === undefined
+  && workspaceMembersLoading.value)
 
 const showTeamComposerDock = computed(() =>
   isTeam.value
@@ -382,7 +398,7 @@ const usageServerRole = computed<TeamMemberRole | null>(() =>
 const canViewUsage = computed(() =>
   isTeam.value && (usageServerRole.value === 'owner' || usageServerRole.value === 'admin'))
 /** 动态文件名的解析来源：已加载的空间文件列表（面板与抽屉共用）。 */
-const activityFiles = computed(() => workspace.value?.files ?? [])
+const activityFiles = computed(() => workspaceFiles.value)
 const activitySummaryItems = computed(() => buildActivityDisplayItems(activitySummary.value, activityFiles.value))
 /** 未读计数；静音时按服务端口径视为 0（面板侧再兜一层）。 */
 const activityUnread = computed(() => (notificationState.value?.muted ? 0 : notificationState.value?.unreadCount ?? 0))
@@ -410,7 +426,9 @@ const workspaceTabs = computed(() => [
   {
     id: 'files' as const,
     label: isPersonal.value ? '文件' : '共享文件',
-    count: workspace.value?.files.length ?? 0,
+    count: isTeam.value
+      ? (workspace.value?.fileCount ?? workspaceFiles.value.length)
+      : (workspace.value?.files.length ?? 0),
     icon: Files,
   },
   {
@@ -639,7 +657,7 @@ async function onVersionUploadSelected(event: Event) {
   ElMessage.success(`已上传“${selected.name}”的 V${uploaded.versionNo} 版本`)
   try {
     // 上传已成功，刷新失败不能反过来把这次上传说成失败。
-    await contentStore.refresh()
+    await contentStore.loadWorkspaceFiles(current.id)
   } catch (error) {
     notifyActionFailure('刷新文件列表', `工作空间“${current.name}”`, error, '刷新页面查看最新版本。')
   }
@@ -689,6 +707,7 @@ async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
 async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
   if (!workspaceId || !isTeam.value) return
   const seq = ++memberRequestSeq
+  workspaceMembersLoading.value = true
   try {
     const directory = await workbenchApi.listWorkspaceMembers(workspaceId)
     if (!isCurrentMemberRequest(seq, workspaceId)) return
@@ -699,6 +718,8 @@ async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
     workspaceMembers.value = []
     serverUserRole.value = null
     notifyActionFailure('加载员工成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
+  } finally {
+    if (isCurrentMemberRequest(seq, workspaceId)) workspaceMembersLoading.value = false
   }
 }
 
@@ -978,6 +999,15 @@ watch(
 )
 
 watch(
+  () => notificationStore.unreadByWorkspace[workspaceId.value] ?? 0,
+  () => {
+    if (!isTeam.value) return
+    void loadNotificationState()
+    void loadActivitySummary()
+  },
+)
+
+watch(
   () => (workspace.value?.type === 'team' ? workspaceId.value : ''),
   (id, previous) => {
     if (previous) taskStore.unsubscribeWorkspaceSessions(previous)
@@ -991,6 +1021,7 @@ watch(
 
 watch(activeTab, (tab, previous) => {
   if (tab === 'artifacts' && tab !== previous) void refreshWorkspaceArtifactsLive()
+  if (tab === 'files' && isTeam.value && workspaceId.value) void contentStore.loadWorkspaceFiles(workspaceId.value)
 })
 
 onBeforeUnmount(() => {
@@ -1026,6 +1057,7 @@ watch(workspace, (value) => {
   agentMembers.value = []
   workspaceMembers.value = []
   serverUserRole.value = null
+  workspaceMembersLoading.value = value?.type === 'team'
   activitySummary.value = []
   activityLoading.value = false
   activityError.value = false
@@ -1051,6 +1083,7 @@ watch(workspace, (value) => {
   if (value?.type === 'team') {
     void loadAgentMembers(value.id)
     void loadWorkspaceMembers(value.id)
+    void contentStore.loadWorkspaceFiles(value.id)
     // 团队动态与通知只在团队分支加载；个人空间零请求（AC-23）。
     void loadActivitySummary(value.id)
     void loadNotificationState(value.id)
@@ -1246,6 +1279,7 @@ watch(
                 :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
+                :team-role-pending="teamRolePending"
                 :mention-options="isTeam ? startableMentionOptions : []"
                 :team-composer-drafts="teamComposerDrafts"
                 @team-draft-change="onTeamDraftChange"
@@ -1306,7 +1340,7 @@ watch(
               <p>{{ isPersonal ? '管理仅你可访问的资料，并将指定文件直接引用到新对话。' : '查看团队在当前工作空间共享的资料，并将指定文件直接引用到新对话。' }}</p>
             </div>
             <el-button
-              v-if="!isArchived"
+              v-if="canUploadWorkspaceFiles"
               data-testid="workspace-upload"
               type="primary"
               :icon="Plus"
@@ -1328,8 +1362,9 @@ watch(
             />
           </header>
 
-          <div v-if="workspace.files.length" class="workspace-file-list panel">
-            <article v-for="file in workspace.files" :key="file.id" class="workspace-file-row">
+          <p v-if="isTeam && teamFilePage.error" class="workspace-inline-error" role="alert">{{ teamFilePage.error }}</p>
+          <div v-if="workspaceFiles.length" class="workspace-file-list panel">
+            <article v-for="file in workspaceFiles" :key="file.id" class="workspace-file-row">
               <span class="workspace-file-row__icon"><el-icon><Files /></el-icon></span>
               <div class="workspace-file-row__copy">
                 <strong class="workspace-file-row__name">
@@ -1393,11 +1428,20 @@ watch(
                 >引用到对话</el-button>
               </div>
             </article>
+            <div v-if="isTeam && teamFilePage.hasMore" class="workspace-file-load-more">
+              <el-button
+                :loading="teamFilePage.loading"
+                aria-label="加载更多"
+                @click="contentStore.loadWorkspaceFiles(workspaceId, teamFilePage.nextCursor ?? undefined)"
+              >
+                加载更多
+              </el-button>
+            </div>
           </div>
 
           <el-empty v-else :description="isPersonal ? '我的空间暂无文件' : '当前工作空间暂无共享文件'">
             <el-button
-              v-if="!isArchived"
+              v-if="canUploadWorkspaceFiles"
               data-testid="workspace-upload-empty"
               type="primary"
               :icon="Plus"

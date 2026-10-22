@@ -24,7 +24,7 @@ const visibleSkills = computed(() => contentStore.skills.filter((skill) =>
 ))
 
 function useSkill(skill: WorkbenchSkill) {
-  void router.push({ path: '/workbench', query: { skill: skill.id } })
+  void router.push({ path: '/workbench', query: { skill: skill.id, skillVersion: skill.versionId } })
 }
 
 function showDetails(skill: WorkbenchSkill) {

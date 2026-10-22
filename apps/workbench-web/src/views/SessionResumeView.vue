@@ -3,51 +3,61 @@ import { ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { TaskComposer } from '@dsh-work/workbench-components'
 import { workbenchApi } from '@/api/client'
+import { useTaskStore } from '@/stores/tasks'
 import type { UserSessionSummary } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+
 const route = useRoute()
 const router = useRouter()
+const taskStore = useTaskStore()
 const session = ref<UserSessionSummary>()
 const loading = ref(false)
 const error = ref('')
 let generation = 0
+
 watch(() => route.params.id, async value => {
   const current = ++generation
-  loading.value = true; session.value = undefined; error.value = ''
+  loading.value = true
+  session.value = undefined
+  error.value = ''
   try {
     const loaded = await workbenchApi.getConversationSession(String(value))
     if (current !== generation) return
     session.value = loaded
     if (loaded.latestRun) await router.replace(`/conversations/${loaded.latestRun.id}`)
-  } catch(cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : '无法读取对话' }
-  finally { if (current === generation) loading.value = false }
+  } catch (cause) {
+    if (current === generation) error.value = cause instanceof Error ? cause.message : '无法读取对话'
+  } finally {
+    if (current === generation) loading.value = false
+  }
 }, { immediate: true })
+
 onBeforeUnmount(() => { generation++ })
+
 async function submit(payload: {
   prompt: string
   files: File[]
+  mentions?: string[]
   confirm?: () => void
   release?: () => void
 }) {
-  const target = session.value, current = generation
+  const target = session.value
+  const current = generation
   if (!target?.canContinue) {
     payload.release?.()
     return
   }
   try {
-    const fileIds: string[] = []
-    for (const file of payload.files) {
-      if (current !== generation) {
-        payload.release?.()
-        return
-      }
-      fileIds.push((await workbenchApi.uploadSessionFile(target.sessionId, file)).id)
-    }
-    if (current !== generation) {
-      payload.release?.()
+    if (target.workspaceType === 'team' && !payload.mentions?.length) {
+      await taskStore.postSessionMessage(target.sessionId, payload.prompt)
+      if (current === generation) payload.confirm?.()
       return
     }
-    const task = await workbenchApi.startRun(target.sessionId, { prompt: payload.prompt, fileIds, idempotencyKey: crypto.randomUUID() })
+    const task = await taskStore.startRunWithSessionFiles(target.sessionId, {
+      prompt: payload.prompt,
+      attachments: payload.files,
+      workspaceAgentMemberId: payload.mentions?.[0],
+    })
     if (current === generation) {
       await router.replace(`/conversations/${task.id}`)
       payload.confirm?.()
@@ -67,9 +77,18 @@ async function submit(payload: {
     <el-skeleton v-if="loading" :rows="5" animated />
     <p v-else-if="error" role="alert">{{ error }} <el-button @click="router.push('/history')">返回历史对话</el-button></p>
     <template v-else-if="session">
-      <h1>{{ session.title }}</h1><p v-if="session.workspaceType === 'team'">团队：{{ session.workspaceName }}</p>
+      <h1>{{ session.title }}</h1>
+      <p v-if="session.workspaceType === 'team'">团队：{{ session.workspaceName }}</p>
       <p>这段对话尚未开始任务。继续发送会沿用原对话，不创建另一个会话。</p>
-      <TaskComposer v-if="session.canContinue" :key="session.sessionId" :initial-workspace-id="session.workspaceId" :initial-workspace-name="session.workspaceName" :show-workspace-context="session.workspaceType === 'team'" workspace-locked @submit="submit" />
+      <TaskComposer
+        v-if="session.canContinue"
+        :key="session.sessionId"
+        :initial-workspace-id="session.workspaceId"
+        :initial-workspace-name="session.workspaceName"
+        :show-workspace-context="session.workspaceType === 'team'"
+        workspace-locked
+        @submit="submit"
+      />
       <p v-else>当前对话只读。</p>
     </template>
   </section>

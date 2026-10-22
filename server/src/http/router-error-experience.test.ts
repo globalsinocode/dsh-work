@@ -47,7 +47,7 @@ test('status never comes from message wording: an untyped error is always a 500'
 test('each request error category keeps its status, code, message and next step', () => {
   const cases = [
     [invalidRequest('文件大小超过 20 MB 限制'), 422, 'invalid_request', /调整输入内容或文件/],
-    [accessDenied('管理对话不存在或不可访问'), 403, 'permission_denied', /成员关系|授权/],
+    [accessDenied('管理对话不存在或不可访问'), 403, 'authorization_denied', /成员关系|授权/],
     [notFound('Agent 不存在'), 404, 'resource_not_found', /列表/],
     [stateConflict('当前状态不能取消'), 409, 'state_conflict', /刷新对象状态/],
     [dependencyUnavailable('Runtime 当前离线'), 503, 'dependency_unavailable', /运行时或连接器/],
@@ -67,7 +67,7 @@ test('permission and validation failures preserve safe causes and actionable gui
     '/api/workbench/workspaces/ws-private',
   )
   assert.equal(forbidden.status, 403)
-  assert.equal(forbidden.error.code, 'permission_denied')
+  assert.equal(forbidden.error.code, 'authorization_denied')
   assert.equal(forbidden.error.object, '工作空间 ws-private')
   assert.match(forbidden.error.suggestion, /成员关系|授权/)
 
@@ -136,6 +136,19 @@ test('JSON bodies keep UTF-8 text split across chunks and the limit counts bytes
   // 400k three-byte characters stay under 1M UTF-16 units but exceed 1 MB of bytes.
   const oversized = (async function* () { yield Buffer.from(JSON.stringify({ text: '中'.repeat(400_000) })) })()
   await assert.rejects(readJsonBody(oversized as unknown as Parameters<typeof readJsonBody>[0]), /1 MB/)
+})
+
+test('authorization revocation codes stay in the closed client-facing set', async () => {
+  const { authorizationDenied, publicAuthorizationResponseCode, isAuthorizationChangeResponseCode } = await import('../domain/authorization-errors.ts')
+  for (const code of ['authorization_denied', 'permission_revoked', 'role_disabled', 'data_scope_revoked'] as const) {
+    const result = classifyHttpError(authorizationDenied('授权已变化', { status: 403, code }), '/api/workbench/workspaces/ws-1')
+    assert.equal(result.status, 403)
+    assert.equal(result.error.code, code)
+    assert.ok(isAuthorizationChangeResponseCode(result.error.code))
+    assert.equal(publicAuthorizationResponseCode('permission_denied'), 'authorization_denied')
+    assert.doesNotMatch(result.error.message, /U000|role-platform-admin/)
+    assert.doesNotMatch(result.error.suggestion ?? '', /U000|SELECT/)
+  }
 })
 
 test('an authorization denial may keep a non-403 answer for the editing request and still revoke runs', async () => {

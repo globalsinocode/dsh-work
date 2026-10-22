@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
+import { requestInvalid } from '../../../domain/authorization-errors.ts'
+import type { WorkspaceNotificationRecipientService } from './workspace-notification-recipient-service.ts'
 
 const tenantId = 'tenant-dsh-work'
 
+const FORBIDDEN_METADATA_KEYS = new Set(['content', 'prompt', 'answer', 'filename', 'reasonText'])
+
 /**
  * Team workspace activity kinds (batch 3 / 3-T7 / TW-08). The list is closed on
- * purpose and mirrors the migration 0026 CHECK constraint: messages, unshared
- * conversation activity and Run execution details are not representable.
+ * purpose and mirrors the migration CHECK constraint: message bodies and Run
+ * execution details are not representable in safe_metadata.
  */
 export type WorkspaceActivityKind =
   | 'member_added'
@@ -22,76 +26,205 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'discussion_posted'
+  | 'member_mentioned'
+  | 'run_completed'
+  | 'run_failed'
 
-export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace'
+export type WorkspaceActivityObjectType =
+  | 'member'
+  | 'agent_member'
+  | 'file'
+  | 'workspace'
+  | 'session'
+  | 'run'
 
 export type WorkspaceActivityMetadataValue = string | number | boolean | null
 export type WorkspaceActivityMetadata = Record<string, WorkspaceActivityMetadataValue>
 
 export interface WorkspaceActivityInput {
   workspaceId: string
-  kind: WorkspaceActivityKind
+  kind: Exclude<WorkspaceActivityKind, 'discussion_posted' | 'member_mentioned' | 'run_completed' | 'run_failed'>
   actorUserId: string
-  objectType: WorkspaceActivityObjectType
+  objectType: Exclude<WorkspaceActivityObjectType, 'session' | 'run'>
   /** Safe object reference: an id only. Names/bodies must never be passed here. */
   objectId: string
   /** Business occurrence identity; the unique key makes a duplicate a no-op. */
   dedupeKey: string
-  /**
-   * Minimal member-visible extras. Callers must keep this to ids, roles and
-   * version numbers — never private conversation text or attachment names.
-   */
   metadata?: WorkspaceActivityMetadata
 }
 
+export type WorkspaceNotifiableEvent =
+  | { kind: 'discussion_posted'; workspaceId: string; sessionId: string; messageId: string; actorUserId: string }
+  | {
+    kind: 'member_mentioned'
+    workspaceId: string
+    sessionId: string
+    messageId: string
+    actorUserId: string
+    mentionedUserId: string
+  }
+  | {
+    kind: 'run_completed' | 'run_failed'
+    workspaceId: string
+    sessionId: string
+    runId: string
+    requestedBy: string
+    actorUserId: 'system'
+    /** Terminal run event id — idempotency source for the activity row. */
+    dedupeKey: string
+    agentDisplayName?: string
+  }
+
+let recipientService: WorkspaceNotificationRecipientService | null = null
+
+export function bindWorkspaceNotificationRecipients(service: WorkspaceNotificationRecipientService) {
+  recipientService = service
+}
+
+function assertSafeMetadata(metadata: WorkspaceActivityMetadata | undefined) {
+  if (!metadata) return
+  for (const key of Object.keys(metadata)) {
+    if (FORBIDDEN_METADATA_KEYS.has(key)) {
+      throw requestInvalid(`通知元数据不允许包含字段 ${key}`)
+    }
+  }
+}
+
+async function insertDeliveries(
+  transaction: DatabaseTransaction,
+  input: { activityId: string; workspaceId: string; sequence: number; recipientUserIds: string[] },
+) {
+  for (const recipientUserId of input.recipientUserIds) {
+    await transaction`
+      insert into workspace_notification_deliveries (
+        tenant_id, activity_id, recipient_user_id, workspace_id, sequence
+      ) values (
+        ${tenantId}, ${input.activityId}, ${recipientUserId}, ${input.workspaceId}, ${input.sequence}
+      )
+      on conflict (tenant_id, activity_id, recipient_user_id) do nothing
+    `
+  }
+}
+
+async function insertActivity(
+  transaction: DatabaseTransaction,
+  row: {
+    workspaceId: string
+    kind: WorkspaceActivityKind
+    actorUserId: string
+    objectType: WorkspaceActivityObjectType
+    objectId: string
+    dedupeKey: string
+    metadata?: WorkspaceActivityMetadata
+  },
+): Promise<{ activityId: string; sequence: number } | null> {
+  assertSafeMetadata(row.metadata)
+  const activityId = `wact-${randomUUID()}`
+  const [inserted] = await transaction<{ id: string; sequence: string }[]>`
+    insert into workspace_activity_events (
+      id, tenant_id, workspace_id, kind, actor_user_id, object_type, object_id,
+      safe_metadata, dedupe_key
+    ) values (
+      ${activityId}, ${tenantId}, ${row.workspaceId}, ${row.kind}, ${row.actorUserId},
+      ${row.objectType}, ${row.objectId}, ${transaction.json(row.metadata ?? {})}, ${row.dedupeKey}
+    )
+    on conflict (tenant_id, workspace_id, dedupe_key) do nothing
+    returning id, sequence::text
+  `
+  if (!inserted) return null
+  return { activityId: inserted.id, sequence: Number(inserted.sequence) }
+}
+
 /**
- * Appends one activity fact inside the caller's business transaction.
- *
- * Same-transaction is the whole contract (TW-08「业务成功后通过持久化事件生成
- * 通知」): the activity row commits exactly when the business change commits, so
- *
- *   * a successful business change always has its activity row, and
- *   * a rolled-back change leaves no activity behind, and
- *   * there is no window in which a committed change is later reported as a
- *     failure because the projection write failed — the two are atomic, so a
- *     projection failure aborts the change instead of faking a failure for an
- *     already-committed one.
- *
- * `on conflict do nothing` plus the `(tenant_id, workspace_id, dedupe_key)`
- * unique key makes a duplicate write a silent no-op, never an error: a retried
- * or racing occurrence cannot add a second row (AC-15), and it cannot abort the
- * business transaction either.
+ * Appends one management activity fact and fan-out deliveries inside the caller transaction.
  */
 export async function recordWorkspaceActivity(
   transaction: DatabaseTransaction,
   input: WorkspaceActivityInput,
 ): Promise<void> {
-  await transaction`
-    insert into workspace_activity_events (
-      id, tenant_id, workspace_id, kind, actor_user_id, object_type, object_id,
-      safe_metadata, dedupe_key
-    ) values (
-      ${`wact-${randomUUID()}`}, ${tenantId}, ${input.workspaceId}, ${input.kind},
-      ${input.actorUserId}, ${input.objectType}, ${input.objectId},
-      ${transaction.json(input.metadata ?? {})}, ${input.dedupeKey}
-    )
-    on conflict (tenant_id, workspace_id, dedupe_key) do nothing
-  `
+  const created = await insertActivity(transaction, input)
+  if (!created || !recipientService) return
+  const recipients = await recipientService.resolve({
+    kind: 'workspace_broadcast',
+    workspaceId: input.workspaceId,
+    actorUserId: input.actorUserId,
+  }, transaction)
+  await insertDeliveries(transaction, { ...created, workspaceId: input.workspaceId, recipientUserIds: recipients })
 }
 
-/**
- * Transition token for occurrences whose RESULTING state can repeat without any
- * other observable difference: member role A->B->A->B, a workspace
- * archive->restore->archive, an agent re-added after removal.
- *
- * A purely state-derived dedupe key would collapse the later occurrences (the
- * unique key would silently drop a real change), while the ordinary retry case
- * is already excluded by the per-kind "did this write actually change anything"
- * guard every caller performs. `pg_current_xact_id()` gives a token that is
- * unique across business transactions (xid8, no practical wraparound) and
- * identical for every statement inside one, so each committed real change gets
- * its own key and a duplicate insert inside one transaction still collides.
- */
+/** Discussion, mention and Run terminal events — closed input with delivery fan-out. */
+export async function writeNotifiableEvent(
+  event: WorkspaceNotifiableEvent,
+  transaction: DatabaseTransaction,
+): Promise<{ activityId: string; sequence: number } | null> {
+  if (!recipientService) throw new Error('通知收件人服务未绑定')
+  if (event.kind === 'discussion_posted') {
+    const created = await insertActivity(transaction, {
+      workspaceId: event.workspaceId,
+      kind: event.kind,
+      actorUserId: event.actorUserId,
+      objectType: 'session',
+      objectId: event.messageId,
+      dedupeKey: `discussion:${event.messageId}`,
+      metadata: { sessionId: event.sessionId, messageId: event.messageId },
+    })
+    if (!created) return null
+    const recipients = await recipientService.resolve({
+      kind: 'discussion_posted',
+      actorUserId: event.actorUserId,
+      sessionId: event.sessionId,
+    }, transaction)
+    await insertDeliveries(transaction, { ...created, workspaceId: event.workspaceId, recipientUserIds: recipients })
+    return created
+  }
+  if (event.kind === 'member_mentioned') {
+    const created = await insertActivity(transaction, {
+      workspaceId: event.workspaceId,
+      kind: event.kind,
+      actorUserId: event.actorUserId,
+      objectType: 'session',
+      objectId: event.messageId,
+      dedupeKey: `mention:${event.messageId}:${event.mentionedUserId}`,
+      metadata: {
+        sessionId: event.sessionId,
+        messageId: event.messageId,
+        mentionedUserId: event.mentionedUserId,
+      },
+    })
+    if (!created) return null
+    const recipients = await recipientService.resolve({
+      kind: 'member_mentioned',
+      actorUserId: event.actorUserId,
+      mentionedUserId: event.mentionedUserId,
+      workspaceId: event.workspaceId,
+    }, transaction)
+    await insertDeliveries(transaction, { ...created, workspaceId: event.workspaceId, recipientUserIds: recipients })
+    return created
+  }
+  const created = await insertActivity(transaction, {
+    workspaceId: event.workspaceId,
+    kind: event.kind,
+    actorUserId: event.actorUserId,
+    objectType: 'run',
+    objectId: event.runId,
+    dedupeKey: event.dedupeKey,
+    metadata: {
+      sessionId: event.sessionId,
+      runId: event.runId,
+      ...(event.agentDisplayName ? { agentDisplayName: event.agentDisplayName } : {}),
+    },
+  })
+  if (!created) return null
+  const recipients = await recipientService.resolve({
+    kind: event.kind,
+    actorUserId: 'system',
+    requestedBy: event.requestedBy,
+  }, transaction)
+  await insertDeliveries(transaction, { ...created, workspaceId: event.workspaceId, recipientUserIds: recipients })
+  return created
+}
+
 export async function activityTransitionToken(transaction: DatabaseTransaction): Promise<string> {
   const [row] = await transaction<{ token: string }[]>`
     select pg_current_xact_id()::text as token
@@ -100,11 +233,6 @@ export async function activityTransitionToken(transaction: DatabaseTransaction):
   return row.token
 }
 
-/**
- * Current `workspaces.team_auth_revision`, read inside the transaction that just
- * bumped it. Membership/agent mutations bump it exactly once per real change, so
- * it is a semantic, per-workspace monotonic transition token for those kinds.
- */
 export async function currentTeamAuthRevision(
   transaction: DatabaseTransaction,
   workspaceId: string,

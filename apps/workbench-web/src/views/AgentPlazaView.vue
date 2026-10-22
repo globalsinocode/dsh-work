@@ -14,7 +14,7 @@ const detailAgent = ref<WorkbenchAgent>()
 const detailOpen = ref(false)
 
 function startConversation(agent: WorkbenchAgent) {
-  void router.push({ path: '/workbench', query: { agent: agent.id } })
+  void router.push({ path: '/workbench', query: { agent: agent.id, agentVersion: agent.versionId } })
 }
 
 function showDetails(agent: WorkbenchAgent) {

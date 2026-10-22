@@ -1,4 +1,5 @@
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 import { skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
@@ -132,8 +133,11 @@ export interface RuntimeSkillConfiguration {
 
 export interface WorkbenchSkillDefinition {
   id: string
-  name: string
+  versionId: string
+  versionReference: string
   version: string
+  publishedAt: string
+  name: string
   category: string
   description: string
   owner: string
@@ -177,10 +181,10 @@ export class PostgresSkillService {
   }
 
   async listWorkbenchSkills(): Promise<WorkbenchSkillDefinition[]> {
-    const rows = await this.database<WorkbenchSkillRow[]>`
-      select s.id, sv.name, sv.version, sv.category, sv.description,
+    const rows = await this.database<(WorkbenchSkillRow & { versionId: string; publishedAt: Date | null })[]>`
+      select s.id, sv.id as "versionId", sv.name, sv.version, sv.category, sv.description,
              owner.display_name as owner, sv.test_prompt as "testPrompt",
-             s.updated_at as "updatedAt"
+             s.updated_at as "updatedAt", sv.published_at as "publishedAt"
         from skills s
         join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.active_version_id
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
@@ -195,7 +199,44 @@ export class PostgresSkillService {
          )
        order by s.updated_at desc, sv.name asc
     `
-    return rows.map(row => ({ ...row, updatedAt: formatDateTime(row.updatedAt) }))
+    return rows.map(row => ({
+      ...row,
+      versionReference: `${row.id}@${row.version}`,
+      publishedAt: row.publishedAt?.toISOString() ?? '',
+      updatedAt: formatDateTime(row.updatedAt),
+    }))
+  }
+
+  async lookupVersionReference(versionId: string): Promise<string | null> {
+    const [row] = await this.database<{ skillId: string; version: string }[]>`
+      select skill_id as "skillId", version
+        from skill_versions
+       where tenant_id = ${tenantId} and id = ${versionId}
+    `
+    return row ? `${row.skillId}@${row.version}` : null
+  }
+
+  async resolveWorkbenchSkillVersionById(input: { skillId: string; versionId: string }) {
+    assertSkillId(input.skillId)
+    const [row] = await this.database<{ id: string; skillId: string; version: string }[]>`
+      select sv.id, sv.skill_id as "skillId", sv.version
+        from skills s
+        join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = ${input.versionId}
+       where s.tenant_id = ${tenantId} and s.id = ${input.skillId}
+         and s.status = 'published' and sv.status = 'published'
+         and (
+           not (sv.manifest ? 'installationId')
+           or exists (
+             select 1 from skill_installations installation
+              where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
+                and installation.status = 'installed'
+           )
+         )
+    `
+    if (!row) {
+      throw new RequestError(409, 'selected_version_unavailable', '所选版本已不可用，请重新选择')
+    }
+    return { id: row.id, reference: `${row.skillId}@${row.version}` }
   }
 
   async resolveWorkbenchSkillVersion(skillId: string) {

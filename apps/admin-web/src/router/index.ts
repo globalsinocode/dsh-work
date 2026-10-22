@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized, type RouteLocationRaw } from 'vue-router'
 
 import { pinia } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
@@ -214,11 +214,35 @@ const router = createRouter({
   ],
 })
 
+export interface AdminRouteAuthSnapshot {
+  canAccessAdmin: boolean
+  canReadAdmin: boolean
+  canReadAudit: boolean
+  identityAdministrationAvailable: boolean
+}
+
+export function resolveAdminProtectedRouteTarget(
+  to: Pick<RouteLocationNormalized, 'meta'>,
+  auth: AdminRouteAuthSnapshot,
+): RouteLocationRaw | true {
+  if (to.meta.requiresManagedIdentity && !auth.identityAdministrationAvailable) {
+    return { name: 'overview' }
+  }
+  if (to.meta.requiresAdmin && !auth.canAccessAdmin) return { name: 'forbidden' }
+  if (to.meta.requiredPermission === 'adminRead' && !auth.canReadAdmin) {
+    return auth.canReadAudit ? { name: 'audit' } : { name: 'forbidden' }
+  }
+  if (to.meta.requiredPermission === 'auditRead' && !auth.canReadAudit) {
+    return auth.canReadAdmin ? { name: 'overview' } : { name: 'forbidden' }
+  }
+  return true
+}
+
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
   const authStore = useAuthStore(pinia)
   try {
-    await authStore.load()
+    await authStore.refresh()
   } catch (cause) {
     if (cause instanceof Error && 'code' in cause && cause.code === 'password_change_required') {
       return { name: 'change-password', query: { return_to: to.fullPath } }
@@ -231,17 +255,8 @@ router.beforeEach(async (to) => {
     if (status === 403) return { name: 'forbidden' }
     return { name: 'auth-error', query: { code: 'session_unavailable' } }
   }
-  if (to.meta.requiresManagedIdentity && !authStore.identityAdministrationAvailable) {
-    return { name: 'overview' }
-  }
-  if (to.meta.requiresAdmin && !authStore.canAccessAdmin) return { name: 'forbidden' }
-  if (to.meta.requiredPermission === 'adminRead' && !authStore.canReadAdmin) {
-    return authStore.canReadAudit ? { name: 'audit' } : { name: 'forbidden' }
-  }
-  if (to.meta.requiredPermission === 'auditRead' && !authStore.canReadAudit) {
-    return authStore.canReadAdmin ? { name: 'overview' } : { name: 'forbidden' }
-  }
-  return true
+  const redirect = resolveAdminProtectedRouteTarget(to, authStore)
+  return redirect === true ? true : redirect
 })
 
 router.afterEach((to) => {

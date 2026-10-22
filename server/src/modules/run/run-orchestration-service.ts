@@ -154,6 +154,7 @@ export class RunOrchestrationService {
     agentVersionId?: string | null
     selectedSkillVersionId?: string
     selectedSkillReference?: string
+    clientIntentId?: string
     authorizationContext?: SessionAuthorizationContext
   }) {
     const title = assertPrompt(input.title)
@@ -179,6 +180,7 @@ export class RunOrchestrationService {
       workspaceId,
       agentVersionId: input.agentVersionId,
       selectedSkillVersionId: input.selectedSkillVersionId,
+      clientIntentId: input.clientIntentId,
     })
   }
 
@@ -236,6 +238,7 @@ export class RunOrchestrationService {
     content: unknown
     /** Client-supplied dedupe key; absent keys fall back to a fresh message id. */
     idempotencyKey?: string | null
+    mentionedUserIds?: string[]
   }) {
     if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
     const content = input.content.trim()
@@ -255,12 +258,15 @@ export class RunOrchestrationService {
       .update(JSON.stringify([tenantId, session.id, input.userId, key]))
       .digest('hex').slice(0, 32)
     const messageId = `message-discussion-${session.id}-${keyHash}`
+    const mentionedUserIds = normalizeMentionedUserIds(input.mentionedUserIds)
     const committed = await this.deps.conversations.appendDiscussionMessage({
       sessionId: session.id,
       userId: input.userId,
       content,
       messageId,
+      mentionedUserIds,
     })
+    if (committed.created) await this.deps.conversations.activateSession(session.id)
     return { messageId: committed.messageId, sessionId: session.id, created: committed.created }
   }
 
@@ -332,6 +338,7 @@ export class RunOrchestrationService {
       idempotencyKey: input.idempotencyKey,
       taskBudget: input.cumulativeBudget,
     })
+    await this.deps.conversations.activateSession(session.id)
     if (run.currentAttemptId || run.status !== 'queued') return run
     await this.deps.conversations.appendMessage({
       sessionId: session.id,
@@ -688,4 +695,20 @@ export class RunOrchestrationService {
     }
     return run
   }
+}
+
+function normalizeMentionedUserIds(raw: string[] | undefined): string[] {
+  if (!raw) return []
+  if (!Array.isArray(raw) || raw.some(id => typeof id !== 'string')) {
+    throw requestInvalid('mentionedUserIds 必须是字符串数组')
+  }
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const id of raw) {
+    const trimmed = id.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+  }
+  return result
 }

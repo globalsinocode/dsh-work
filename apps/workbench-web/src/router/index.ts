@@ -106,7 +106,7 @@ router.beforeEach(async (to) => {
   if (to.meta.public) return true
   const authStore = useAuthStore(pinia)
   try {
-    await authStore.load()
+    await authStore.refresh()
   } catch (cause) {
     if (cause instanceof Error && 'code' in cause && cause.code === 'password_change_required') {
       return { name: 'change-password', query: { return_to: to.fullPath } }

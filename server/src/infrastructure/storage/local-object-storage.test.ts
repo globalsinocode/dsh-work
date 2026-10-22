@@ -28,6 +28,14 @@ test('concurrent writers of one key leave exactly one complete object', async t 
   assert.match((await store.get('a/b')).toString(), /^(v\d){1000}$/)
 })
 
+test('deleteIfExists removes only the exact validated object key', async t => {
+  const { store } = await storage(t)
+  await store.putIfAbsent('workspace-files/a/object.bin', Buffer.from('x'))
+  assert.equal(await store.deleteIfExists('workspace-files/a/object.bin'), true)
+  assert.equal(await store.deleteIfExists('workspace-files/a/object.bin'), false)
+  await assert.rejects(store.deleteIfExists('../outside'), /非法存储键/)
+})
+
 test('missing objects, unsafe keys and symlinks are rejected', async t => {
   const { root, store } = await storage(t)
   await assert.rejects(store.get('missing/key'), ObjectNotFoundError)

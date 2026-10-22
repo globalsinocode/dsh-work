@@ -102,6 +102,50 @@
 
 ## P1 集成与 P2 待验收旅程
 
+### main-flow-hardening B1 会话与 Run 可靠性（CR-01–CR-06）
+
+| ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CR-01 | P1 | employee | 服务端已提交但响应丢失后重试讨论 | 同一 Session、同一意图键 | 发送讨论；代理丢弃首次响应；点击重试 | 线程只有一条消息，响应返回同一 messageId | `e2e/conversation-reliability.integration.spec.ts` |
+| CR-02 | P1 | employee | 服务端已提交但响应丢失后重试 Run | 可用 Agent 与受控 Runtime | 启动 Run；丢弃响应；点击重试 | 只有一个 Run/Attempt，未重复扣费或执行 | `e2e/conversation-reliability.integration.spec.ts` |
+| CR-03 | P1 | employee | 新会话首步失败不污染历史 | 附件上传或 Run 受理失败 | 新建任务并触发失败；返回历史 | 草稿不出现在历史；重试沿用同一 Session | `e2e/conversation-reliability.integration.spec.ts` |
+| CR-04 | P1 | team member | 团队纯讨论恢复 | 无 Run 的团队 Session | 从历史打开；发普通讨论；再选择 @Agent | 讨论不产生 Run；@Agent 只产生一个 Run | `e2e/conversation-reliability.integration.spec.ts` |
+| CR-05 | P1 | employee | 部分附件失败补偿 | 两个附件，第二个失败 | 从恢复页提交 | 第一个附件被安全移除，输入仍可重试 | `e2e/conversation-reliability.integration.spec.ts` |
+| CR-06 | P1 | employee | 终态快照瞬时失败恢复 | SSE 已终态，首次 GET Run 失败 | 等待自动恢复 | 最终回答、成果、token 与终态一致 | `e2e/conversation-reliability.integration.spec.ts` |
+
+### main-flow-hardening B2 内容与工作空间契约（CW-01–CW-07）
+
+| ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CW-01 | P1 | team member | 无效 logicalFileId 上传新版本 | 可丢弃存储与数据库 | 上传到不存在文件 | 请求失败；对象被记录为候选且最终无孤儿 | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-02 | P1 | team member | 团队文件真实引用 | 当前空间有可引用文件 | 输入框选择文件并发送 | 请求携带 logicalFileId，刷新前后行为一致 | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-03 | P1 | team member | 解析失败仍显示文件事实 | 合成解析失败文件 | 首次上传 | 列表出现 failed 行和安全错误；不生成重复 logical file | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-04 | P1 | viewer | 上传能力门控 | viewer 身份 | 打开空间 Files | 不显示上传入口；伪造请求仍 403 | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-05 | P1 | employee | 局部读取失败 | /artifacts 返回 503，/workspaces 成功 | 进入团队空间 | 空间仍显示，成果模块独立报错 | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-06 | P1 | team member | 成功上传即时引用 | 可解析文件 | 上传后不刷新 | 立即出现引用按钮并可选择 | `e2e/content-workspace-contracts.integration.spec.ts` |
+| CW-07 | P1 | employee | 大文件列表分页 | 单空间超过一页文件 | 滚动/加载更多 | 空间首页响应不携带全量文件，详情不重不漏 | `e2e/content-workspace-contracts.integration.spec.ts` |
+
+### main-flow-hardening B3 工作空间通知（NT-01–NT-06）
+
+| ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| NT-01 | P1 | two team members | 新讨论通知参与者 | 已有共享 Session | A 发讨论 | B 收到一条通知，A 不收到自己通知，正文不进入 metadata | `e2e/workspace-notifications.integration.spec.ts` |
+| NT-02 | P1 | mentioned member | 明确 @成员 | 团队 Session | A @B | 只有 B 收到 mention 通知 | `e2e/workspace-notifications.integration.spec.ts` |
+| NT-03 | P1 | Run requester | Agent Run 终态 | 受控 Runtime | 启动并完成/失败 Run | 请求者收到对应终态通知 | `e2e/workspace-notifications.integration.spec.ts` |
+| NT-04 | P1 | employee | 跨空间发现 | 两个空间 | 停留空间 A，空间 B 产生事件 | 全局入口和 B 卡片未读数更新 | `e2e/workspace-notifications.integration.spec.ts` |
+| NT-05 | P1 | employee | 游标已读并发 | 已加载 sequence N | 标记到 N，同时提交 N+1 | N 已读，N+1 仍未读 | `e2e/workspace-notifications.integration.spec.ts` |
+| NT-06 | P1 | revoked member | 撤权后隐私 | 已有旧通知 | 撤销空间成员后打开通知 | 不泄露对象标题/摘要，入口不可访问 | `e2e/workspace-notifications.integration.spec.ts` |
+
+### main-flow-hardening B6 撤权后客户端收敛（AR-01–AR-05）
+
+| ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AR-01 | P1 | admin | 管理角色被撤销 | 页面已打开 | 另一管理员撤权；回到窗口 | 导航/按钮收敛到当前权限，不重放失败写请求 | `e2e/authorization-refresh.integration.spec.ts` |
+| AR-02 | P1 | admin | 完全失去后台访问权 | 已在管理路由 | 停用角色；进入下一路由 | 进入无权限页，不循环登录 | `e2e/authorization-refresh.integration.spec.ts` |
+| AR-03 | P1 | employee | 数据范围被收回 | 工作台已打开 | 管理员收回 scope；窗口恢复可见 | 身份摘要和相关入口更新，服务端继续 403 | `e2e/authorization-refresh.integration.spec.ts` |
+| AR-04 | P1 | admin | 并发 403 合并刷新 | 三个请求同时 403 | 等待页面处理 | 只发一次 /session 刷新，三个原请求都不自动重放 | `apps/admin-web/src/utils/authorization-change.test.ts` |
+| AR-05 | release | operator | 六批次证据隔离 | 任一批单独发布 | 填写矩阵 | 只更新该批状态，未运行批次保持 not-run | `docs/release/main-flow-hardening-release-matrix.md` |
+
 ### LOCAL-AUTH-P1 独立账号登录与管理
 
 **优先级：** P1 · **角色：** 平台管理员、普通员工 · **运行层级：** P1 集成用户旅程<br>
@@ -563,6 +607,16 @@ Agent 发布主线已由服务端接口持久化（`agent_release_submissions` /
 2. 服务端自动重检并显示具体阻塞项；失效的精确依赖不生成试运行与 Runtime Attempt。管理员返回配置页更换能力或恢复授权后重试。
 3. 若配置或案例在检查与封存之间变化，旧修订不得继续试运行；重试时重新检查并固定新修订。
 
+### Batch 4 自动任务生命周期（AU-01～AU-05）
+
+| ID | 优先级 | 角色 | 旅程 | 前置 | 操作 | 可观察结果 | spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AU-01 | P1 | employee | 归档和恢复自动任务 | 已启用任务及历史 | 归档；切到归档筛选；恢复 | 默认列表隐藏、历史可读、恢复后为 paused | `e2e/automation.integration.spec.ts`（计划） |
+| AU-02 | P1 | employee | 超过 50 条历史分页 | 75 条执行 | 连续加载更多 | 75 条不重不漏且 hasMore 最终 false | `e2e/automation.integration.spec.ts`（计划） |
+| AU-03 | P1 | employee | 执行抽屉自动收敛 | running execution | 保持抽屉打开 | 状态变终态，取消按钮消失，轮询停止 | `apps/workbench-web/src/views/AutomationsView.test.ts` |
+| AU-04 | P1 | employee | 手工触发响应丢失重试 | 服务端受理后丢弃响应 | 点击重试同一意图 | 只产生一个 execution/Run | `apps/workbench-web/src/stores/automation-intents.test.ts` |
+| AU-05 | P1 | employee | 恢复时重新授权 | 归档后撤销 workspace/Agent 权限 | 点击恢复 | 明确拒绝，任务保持 archived | `server/src/infrastructure/postgres/automation.integration.test.ts` |
+
 ## AG-03 轻量自动任务（首版已实现，P0 冒烟通过；P1/P2 待补）
 
 依据：[AG-03 轻量实施方案](../docs/design/automation-implementation-plan.md)。首版不补跑停机遗漏、不自动重试、不续办准备、不新增独立投递系统；任务试运行可选，当前授权和原子去重仍必需。
@@ -943,4 +997,16 @@ P1 每例准备独立任务、Session、测试用户与数据，结束后清理�
 4. 另一员工不能把他人成果挂进自己的会话；团队会话中未 @Agent 的讨论消息不能携带引用成果。
 
 **验收：** 两轮后同一成果有 V1、V2，两版下载内容分别为原文与修改后内容；附带的新文件是独立成果；跨用户引用被拒绝。P2 另需在目标环境用真实 DSH 完成“第一轮生成 Markdown/CSV、第二轮修改指定部分”，下载两版核对差异，并留证 Run/Attempt 与 DSH 版本。
+
+## B5 不可变版本选择与 Session 导出（VE）
+
+| ID | 优先级 | 角色 | 前置 | 操作 | 验收 |
+| --- | --- | --- | --- | --- | --- |
+| VE-01 | P1 | employee | Agent 选择后发布新版本；广场显示 v1 | 选择 v1；管理员发布 v2；提交 | Session 仍绑定 v1 |
+| VE-02 | P1 | employee | Skill 选择后发布新版本；广场显示 Skill v1 | 选择 v1；发布 v2；提交 | Session 仍绑定 Skill v1 |
+| VE-03 | P1 | employee | 所选版本失效 | 选择后版本被停用；提交新对话 | 返回明确冲突并要求重新选择，不静默换版 |
+| VE-04 | P1 | team member | 导出完整团队 Session；纯讨论 + 两个 Run | 选择导出完整会话 | 文件包含三段内容和 scope=session 元数据 |
+| VE-05 | P1 | employee | 导出单 Run；多轮 Session | 选择导出本次 Run | 只包含该 Run，文件名/元数据明确 scope=run |
+
+**spec（计划）：** `e2e/version-selection-export.integration.spec.ts`（P1，待 Green gate 固化）
 

@@ -9,6 +9,7 @@ import type {
   Automation,
   AgentRoutineResult,
   AutomationExecution,
+  AutomationExecutionPage,
   AutomationInputTemplate,
   AutomationSchedule,
   MemberCandidatePage,
@@ -24,10 +25,14 @@ import type {
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
   WorkspaceFile,
+  WorkspaceFilePage,
   WorkspaceFileVersionPage,
   WorkspaceLifecycleResult,
   WorkspaceMember,
   WorkspaceMemberDirectory,
+  AccountNotificationCounts,
+  AccountNotificationPage,
+  AccountNotificationQuery,
   WorkspaceNotificationState,
   WorkspaceNotificationView,
   WorkspaceSessionPage,
@@ -38,6 +43,7 @@ import type {
   WorkspaceUsageQuery,
   UploadedWorkspaceFileVersion,
 } from '../types/domain'
+import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
 
 interface ApiEnvelope<T> {
   data: T
@@ -90,6 +96,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const error = await parseApiError(response, `员工工作台接口请求失败（${response.status}）`)
     if (response.status === 401 && path !== '/session') redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
 
@@ -97,17 +106,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data
 }
 
+function filenameFromContentDisposition(header: string | null) {
+  if (!header) return undefined
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1])
+    } catch {
+      return utf8[1]
+    }
+  }
+  const plain = header.match(/filename="([^"]+)"/i)
+  return plain?.[1]
+}
+
 async function requestBlob(path: string) {
   const response = await fetch(`${baseUrl}${path}`, {
     credentials: 'include',
-    headers: { Accept: 'application/octet-stream' },
+    headers: { Accept: 'application/octet-stream, text/plain' },
   })
   if (!response.ok) {
     const error = await parseApiError(response, `文件下载失败（${response.status}）`)
     if (response.status === 401) redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
   return response.blob()
+}
+
+async function requestBlobDownload(path: string) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/octet-stream, text/plain' },
+  })
+  if (!response.ok) {
+    const error = await parseApiError(response, `文件下载失败（${response.status}）`)
+    if (response.status === 401) redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
+    throw error
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+  }
 }
 
 function redirectToLogin() {
@@ -149,11 +194,40 @@ export const workbenchApi = {
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
   /** I-06：Run 的版本化任务结果投影（task-result/v1），与 Run 详情同一授权边界。 */
   getRunResult: (runId: string) => request<TaskResult>(`/runs/${encodeURIComponent(runId)}/result`),
-  createSession: (input: { title: string; workspaceId?: string; agentId?: string; skillId?: string; workspaceAgentMemberId?: string }) =>
+  createSession: (input: {
+    title: string
+    workspaceId?: string
+    agentId?: string
+    agentVersionId?: string
+    skillId?: string
+    skillVersionId?: string
+    workspaceAgentMemberId?: string
+    clientIntentId?: string
+  }) =>
     // TW-10：团队讨论会话可为 null（首次 @Agent 前不绑定 Agent）。
-    request<{ id: string; workspaceId: string; agentVersionId: string | null; title: string; createdAt: string }>('/sessions', {
+    request<{
+      id: string
+      workspaceId: string
+      agentVersionId: string | null
+      agentVersionReference?: string | null
+      skillVersionId?: string | null
+      skillVersionReference?: string | null
+      title: string
+      createdAt: string
+      status?: 'draft' | 'active' | 'archived'
+      replayed?: boolean
+    }>('/sessions', {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+  downloadSessionExport: (sessionId: string) =>
+    requestBlobDownload(`/sessions/${encodeURIComponent(sessionId)}/export`),
+  downloadRunExport: (runId: string) =>
+    requestBlobDownload(`/runs/${encodeURIComponent(runId)}/export`),
+  discardDraftSession: (sessionId: string, clientIntentId: string) =>
+    request<{ discarded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/discard-draft`, {
+      method: 'POST',
+      body: JSON.stringify({ clientIntentId }),
     }),
   deleteSession: (sessionId: string) => request<{ sessionId: string; title: string; archived: true }>(
     `/sessions/${encodeURIComponent(sessionId)}`,
@@ -215,7 +289,15 @@ export const workbenchApi = {
     request<WorkspaceLifecycleResult>(`/workspaces/${encodeURIComponent(workspaceId)}/restore`, {
       method: 'POST',
     }),
-  uploadWorkspaceFile: async (workspaceId: string, file: File) => request<Workspace['files'][number]>(
+  listWorkspaceFiles: (workspaceId: string, options: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    if (options.query?.trim()) params.set('query', options.query.trim())
+    if (options.cursor) params.set('cursor', options.cursor)
+    if (options.limit) params.set('limit', String(options.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    return request<WorkspaceFilePage>(`/workspaces/${encodeURIComponent(workspaceId)}/files${suffix}`, { method: 'GET' })
+  },
+  uploadWorkspaceFile: async (workspaceId: string, file: File) => request<WorkspaceFile>(
     `/workspaces/${encodeURIComponent(workspaceId)}/files`,
     {
       method: 'POST',
@@ -423,6 +505,23 @@ export const workbenchApi = {
       `/workspaces/${encodeURIComponent(workspaceId)}/notifications/unmute`,
       { method: 'POST' },
     ),
+  listNotifications: (input: AccountNotificationQuery = {}) => {
+    const search = new URLSearchParams()
+    if (input.cursor) search.set('cursor', input.cursor)
+    if (input.limit !== undefined) search.set('limit', String(input.limit))
+    if (input.unread) search.set('unread', 'true')
+    if (input.workspaceId) search.set('workspaceId', input.workspaceId)
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return request<AccountNotificationPage>(`/notifications${suffix}`)
+  },
+  getNotificationCounts: () => request<AccountNotificationCounts>('/notifications/counts'),
+  markNotificationsRead: (input: { throughSequence: number; workspaceId?: string }) =>
+    request<{ lastReadSequence: number }>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  notificationEventsUrl: (since?: number) =>
+    `${baseUrl}/notifications/events${since !== undefined ? `?since=${encodeURIComponent(String(since))}` : ''}`,
   /**
    * 空间用量（TW-09 / 4-T2，读取轨）。只展示 token 与调用次数，服务端不返回金额
    * （口径 §1）。仅负责人／管理员可读：普通成员与只读成员服务端返回 403，个人空间
@@ -438,7 +537,12 @@ export const workbenchApi = {
     )
   },
   // ---- AG-03 自动任务 ----
-  getAutomations: () => request<Automation[]>('/automations'),
+  getAutomations: (input?: { status?: 'active' | 'archived' }) => {
+    const params = new URLSearchParams()
+    if (input?.status) params.set('status', input.status)
+    const suffix = params.size > 0 ? `?${params.toString()}` : ''
+    return request<Automation[]>(`/automations${suffix}`)
+  },
   getAgentRoutineResults: () => request<AgentRoutineResult[]>('/agent-routine-results'),
   createAutomation: (input: {
     name: string
@@ -462,6 +566,10 @@ export const workbenchApi = {
     request<Automation>(`/automations/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
   pauseAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
+  archiveAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  restoreAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
   disableAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   trialRunAutomation: (id: string, idempotencyKey: string) =>
@@ -474,8 +582,18 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify({ idempotencyKey }),
     }),
-  listAutomationExecutions: (id: string) =>
-    request<AutomationExecution[]>(`/automations/${encodeURIComponent(id)}/executions`),
+  listAutomationExecutions: (
+    id: string,
+    input?: { limit?: number; cursor?: string | null },
+  ) => {
+    const params = new URLSearchParams()
+    if (input?.limit !== undefined) params.set('limit', String(input.limit))
+    if (input?.cursor) params.set('cursor', input.cursor)
+    const suffix = params.size > 0 ? `?${params.toString()}` : ''
+    return request<AutomationExecutionPage>(
+      `/automations/${encodeURIComponent(id)}/executions${suffix}`,
+    )
+  },
 }
 
 /**

@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 
 import { AdminShell } from '@dsh-work/admin-components'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useAdminAssistantStore } from '@/stores/admin-assistant'
+import {
+  createAuthorizationChangeHandler,
+  setAuthorizationChangeHandler,
+  setAuthorizationChangeListener,
+} from '@/utils/authorization-change'
+import { registerVisibilityAuthRefresh } from '@/utils/visibility-auth-refresh'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,6 +50,30 @@ function siblingApplicationUrl(configured: string | undefined, port: string) {
 function logout() {
   authStore.logout()
 }
+
+const authorizationHandler = createAuthorizationChangeHandler(() => authStore.refresh())
+let removeVisibilityListener: (() => void) | undefined
+let authorizationNoticeShown = false
+
+onMounted(() => {
+  setAuthorizationChangeHandler(authorizationHandler)
+  setAuthorizationChangeListener(() => {
+    if (authorizationNoticeShown) return
+    authorizationNoticeShown = true
+    ElMessage.info('权限已更新')
+    queueMicrotask(() => { authorizationNoticeShown = false })
+  })
+  removeVisibilityListener = registerVisibilityAuthRefresh(() => {
+    if (!authStore.initialized) return Promise.resolve()
+    return authStore.refresh()
+  })
+})
+
+onBeforeUnmount(() => {
+  setAuthorizationChangeHandler(null)
+  setAuthorizationChangeListener(null)
+  removeVisibilityListener?.()
+})
 </script>
 
 <template>

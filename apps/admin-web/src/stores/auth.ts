@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 
-import { adminApi } from '../api/client'
+import { AdminApiError, adminApi } from '../api/client'
 import type { AdminRole, AdminSession, AdminUserProfile } from '../types/domain'
 
 export const roleLabels: Record<AdminRole, string> = {
@@ -52,30 +52,54 @@ export const useAuthStore = defineStore('admin-auth', () => {
   const isAuditor = computed(() => canReadAudit.value && !canManage.value)
   let pendingLoad: Promise<void> | undefined
 
-  async function load() {
-    if (initialized.value) return
-    if (pendingLoad) return pendingLoad
-    pendingLoad = (async () => {
-      loading.value = true
-      error.value = ''
-      try {
-        const session = await adminApi.getSession()
-        sessionUser.value = session.user
-        identityProvider.value = session.identityProvider
-        permissions.value = [...session.permissions]
-        initialized.value = true
-      } catch (cause) {
+  function clearAuthorizationState() {
+    permissions.value = []
+  }
+
+  async function fetchAndApplySession() {
+    loading.value = true
+    error.value = ''
+    try {
+      const session = await adminApi.getSession()
+      sessionUser.value = session.user
+      identityProvider.value = session.identityProvider
+      permissions.value = [...session.permissions]
+      initialized.value = true
+    } catch (cause) {
+      if (cause instanceof AdminApiError && cause.status === 401) {
         sessionUser.value = null
         identityProvider.value = null
         permissions.value = []
+        initialized.value = false
+      } else if (cause instanceof AdminApiError && cause.status === 403) {
+        clearAuthorizationState()
+        initialized.value = true
+      } else {
+        sessionUser.value = null
+        identityProvider.value = null
+        permissions.value = []
+        initialized.value = false
         error.value = cause instanceof Error ? cause.message : '登录会话加载失败'
-        throw cause
-      } finally {
-        loading.value = false
-        pendingLoad = undefined
       }
-    })()
-    return pendingLoad
+      throw cause
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    if (pendingLoad) return pendingLoad
+    pendingLoad = fetchAndApplySession()
+    try {
+      await pendingLoad
+    } finally {
+      pendingLoad = undefined
+    }
+  }
+
+  async function load() {
+    if (initialized.value) return
+    await refresh()
   }
 
   function login(returnTo = currentReturnTo()) {
@@ -119,6 +143,7 @@ export const useAuthStore = defineStore('admin-auth', () => {
     identityProvider,
     permissions,
     load,
+    refresh,
     login,
     logout,
     switchAccount,

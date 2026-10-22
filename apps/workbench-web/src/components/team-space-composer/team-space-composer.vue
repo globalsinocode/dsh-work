@@ -11,13 +11,20 @@
     workspace-locked
     show-workspace-context
     :blocked-reason="blockedReason"
+    :submitting="submitting"
     :mention-options="mentionOptions"
     :files-require-mention="filesRequireMention"
     :running="running"
     :stopping="stopping"
     @submit="onSubmit"
     @stop="emit('stop')"
-    @open-files="router.push('/files')"
+    @open-workspace-files="workspaceFilePickerOpen = true"
+  />
+
+  <WorkspaceFilePickerDialog
+    v-model="workspaceFilePickerOpen"
+    :workspace-id="workspaceId"
+    @select="onWorkspaceFileSelected"
   />
   
   <footer class="workbench-trust workbench-trust--compact">
@@ -27,11 +34,12 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 
 import { emptyComposerDraft, TaskComposer, type ComposerDraft } from '@dsh-work/workbench-components'
 
+import WorkspaceFilePickerDialog from '@/components/WorkspaceFilePickerDialog.vue'
 import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
+import type { WorkspaceFileProjection } from '@/types/domain'
 
 const props = withDefaults(
   defineProps<{
@@ -42,6 +50,7 @@ const props = withDefaults(
     mentionOptions: Array<{ id: string; name: string }>
     drafts: Record<string, ComposerDraft>
     blockedReason?: string
+    submitting?: boolean
     running?: boolean
     stopping?: boolean
     filesRequireMention?: boolean
@@ -49,6 +58,7 @@ const props = withDefaults(
   }>(),
   {
     blockedReason: '',
+    submitting: false,
     running: false,
     stopping: false,
     filesRequireMention: true,
@@ -68,6 +78,7 @@ const emit = defineEmits<{
   }]
   stop: []
   'draft-change': [fromKey: string, draft: ComposerDraft]
+  'workspace-file-selected': [file: WorkspaceFileProjection]
 }>()
 
 type TaskComposerHandle = {
@@ -75,8 +86,8 @@ type TaskComposerHandle = {
   setDraft: (draft: ComposerDraft) => void
 }
 
-const router = useRouter()
 const composerRef = ref<TaskComposerHandle>()
+const workspaceFilePickerOpen = ref(false)
 const appliedContextKey = ref(props.contextKey)
 
 onMounted(() => {
@@ -124,6 +135,10 @@ function setDraft(draft: ComposerDraft) {
 }
 
 defineExpose({ focusComposer, setDraft })
+
+function onWorkspaceFileSelected(file: WorkspaceFileProjection) {
+  emit('workspace-file-selected', file)
+}
 
 function onSubmit(payload: {
   prompt: string

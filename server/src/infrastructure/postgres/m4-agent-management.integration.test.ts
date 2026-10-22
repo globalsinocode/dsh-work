@@ -67,7 +67,10 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
   assert.equal((await agents.getAgents()).find(agent => agent.id === agentId)?.status, 'published')
 
   const employeeAgents = await agents.listWorkbenchAgents('U00001')
-  assert.ok(employeeAgents.some(agent => agent.id === agentId && agent.version === '0.1.0'))
+  const listedAgent = employeeAgents.find(agent => agent.id === agentId && agent.version === '0.1.0')
+  assert.ok(listedAgent)
+  assert.equal(typeof listedAgent!.versionId, 'string')
+  assert.equal(listedAgent!.versionReference, `${listedAgent!.id}@${listedAgent!.version}`)
   const activeVersionId = await agents.resolveWorkbenchAgentVersion(agentId, 'U00001')
   const snapshot = await agents.getRuntimeSnapshot(activeVersionId)
   assert.match(snapshot.systemPrompt, /集成测试助手/)

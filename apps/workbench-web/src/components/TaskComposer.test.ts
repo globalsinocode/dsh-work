@@ -373,6 +373,18 @@ describe('TaskComposer', () => {
     expect(input.element.value).toBe('@订单助手 ')
   })
 
+  it('emits open-workspace-files instead of inserting marker text', async () => {
+    const wrapper = mountComposer({
+      initialWorkspaceId: 'ws-team',
+      workspaceLocked: true,
+      showWorkspaceContext: true,
+    })
+    await wrapper.get('[aria-label="添加内容"]').trigger('click')
+    await wrapper.find('.el-dropdown-menu').getByText('引用团队文件').trigger('click')
+    expect(wrapper.emitted('open-workspace-files')).toHaveLength(1)
+    expect(wrapper.get<HTMLTextAreaElement>('[aria-label="对话输入"]').element.value).not.toContain('@工作空间文件')
+  })
+
   it('defaults to the personal workspace and never offers an unassigned conversation', () => {
     const wrapper = mountComposer({
       initialWorkspaceId: 'ws-personal-U00001',

@@ -1,3 +1,4 @@
+import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
 import type { AdminConversation, SkillInstallation } from '../types/assistant'
 import type {
   AdminSession,
@@ -110,6 +111,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
     const error = new AdminApiError(payload?.error ?? {}, response.status, fallback)
     if (response.status === 401 && path !== '/session') redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
 

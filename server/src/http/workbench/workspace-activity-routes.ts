@@ -1,8 +1,12 @@
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import type { PostgresWorkspaceActivityService } from '../../modules/workbench/application/postgres-workspace-activity-service.ts'
+import type { ServerResponse } from 'node:http'
+
 import {
   envelope,
+  readJsonBody,
   requireRequestIdentity,
+  routeValidationFailed,
   sessionAuthorizationContext,
   type Router,
 } from '../router.ts'
@@ -119,6 +123,99 @@ export function registerWorkspaceActivityRoutes(
       'postgres',
     )
   })
+
+  router.get(`${basePath}/notifications`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const unreadOnly = context.url.searchParams.get('unread') === 'true'
+    const workspaceId = context.url.searchParams.get('workspaceId') ?? undefined
+    return envelope(
+      'workbench',
+      await activity.listAccountNotifications({
+        userId: identity.userId,
+        workspaceId,
+        unreadOnly,
+        cursor: context.url.searchParams.get('cursor') ?? undefined,
+        limit: parseLimit(context.url.searchParams.get('limit')),
+      }),
+      'postgres',
+    )
+  })
+
+  router.get(`${basePath}/notifications/counts`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    return envelope('workbench', await activity.countAccountUnread(identity.userId), 'postgres')
+  })
+
+  router.post(`${basePath}/notifications/read`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const body = await readJsonBody<{ throughSequence?: unknown; workspaceId?: unknown } | null>(request)
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      throw routeValidationFailed('请求体必须是 JSON 对象')
+    }
+    if (typeof body.throughSequence !== 'number' || !Number.isFinite(body.throughSequence)) {
+      throw routeValidationFailed('throughSequence 必须是数字')
+    }
+    if (body.workspaceId !== undefined && typeof body.workspaceId !== 'string') {
+      throw routeValidationFailed('workspaceId 必须是字符串')
+    }
+    return envelope(
+      'workbench',
+      await activity.markAccountNotificationsRead({
+        userId: identity.userId,
+        throughSequence: body.throughSequence,
+        workspaceId: typeof body.workspaceId === 'string' ? body.workspaceId : undefined,
+      }),
+      'postgres',
+    )
+  })
+
+  router.get(`${basePath}/notifications/events`, async (request, context, response) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const sinceRaw = context.url.searchParams.get('since')
+      ?? (Array.isArray(request.headers['last-event-id']) ? request.headers['last-event-id'][0] : request.headers['last-event-id'])
+    const since = sinceRaw ? Number(sinceRaw) : 0
+    await streamAccountNotificationEvents(response, activity, identity.userId, Number.isFinite(since) ? since : 0)
+  })
+}
+
+export async function streamAccountNotificationEvents(
+  response: ServerResponse,
+  activity: PostgresWorkspaceActivityService,
+  userId: string,
+  since: number,
+  pollIntervalMs = 500,
+  heartbeatIntervalMs = 15_000,
+) {
+  response.writeHead(200, {
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'X-Accel-Buffering': 'no',
+  })
+  response.flushHeaders?.()
+  let cursor = since
+  let closed = false
+  response.on('close', () => { closed = true })
+  let heartbeatAt = Date.now()
+  while (!closed) {
+    const maxSequence = await activity.maxDeliverySequenceForUser(userId, cursor)
+    if (maxSequence > cursor) {
+      cursor = maxSequence
+      response.write(`id: ${cursor}\n`)
+      response.write('event: notification.changed\n')
+      response.write(`data: ${JSON.stringify({ sequence: cursor })}\n\n`)
+    }
+    if (Date.now() - heartbeatAt >= heartbeatIntervalMs) {
+      response.write(`: heartbeat ${Date.now()}\n\n`)
+      heartbeatAt = Date.now()
+    }
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs))
+  }
+  if (!closed) response.end()
 }
 
 function parseLimit(raw: string | null): number | undefined {

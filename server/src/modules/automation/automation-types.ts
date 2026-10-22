@@ -60,8 +60,17 @@ export interface AutomationRecord {
   confirmedConfigRevision: string
   revision: number
   status: AutomationStatus
+  /** 归档时间；status=disabled 且曾显式归档时有值。 */
+  archivedAt: string | null
+  archivedBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface AutomationExecutionPage {
+  items: AutomationExecutionRecord[]
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 export type AutomationExecutionKind = 'scheduled' | 'manual' | 'missed'

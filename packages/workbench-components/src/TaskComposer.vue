@@ -92,6 +92,7 @@ const emit = defineEmits<{
   'clear-skill': []
   'clear-agent': []
   'open-files': []
+  'open-workspace-files': []
 }>()
 
 const prompt = ref(props.initialPrompt)
@@ -324,7 +325,7 @@ function onAddCommand(command: string | number | object) {
   const value = String(command)
   if (value === 'upload') openFilePicker()
   if (value === 'workspace-file') {
-    if (props.showWorkspaceContext) insertReference('@工作空间文件')
+    if (props.showWorkspaceContext) emit('open-workspace-files')
     else emit('open-files')
   }
   if (value === 'enterprise-data') insertReference('@企业数据')

@@ -25,6 +25,11 @@ import { PostgresWorkspaceService } from '../modules/workbench/application/postg
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceActivityRoutes } from './workbench/workspace-activity-routes.ts'
+import { bindWorkspaceNotificationRecipients } from '../modules/workbench/application/workspace-activity-writer.ts'
+import {
+  WorkspaceNotificationRecipientService,
+  createPostgresNotificationRecipientPorts,
+} from '../modules/workbench/application/workspace-notification-recipient-service.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
 import { registerWorkspaceLifecycleRoutes } from './workbench/workspace-lifecycle-routes.ts'
 import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
@@ -64,6 +69,12 @@ before(async () => {
   storageRoot = await mkdtemp(join(tmpdir(), 'dsh-work-activity-'))
   authorization = new PostgresAuthorizationService(database)
   workspaces = new PostgresWorkspaceService(database)
+  const recipientPorts = createPostgresNotificationRecipientPorts(database)
+  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+    database,
+    recipientPorts.participants,
+    recipientPorts.members,
+  ))
   activity = new PostgresWorkspaceActivityService(database, workspaces)
   const content = new PostgresContentService(database, new LocalObjectStorage(storageRoot), authorization)
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
@@ -97,9 +108,10 @@ after(async () => {
 
 test('迁移 0026：建立动态事实与通知状态表，可重复执行且不回填历史（AC-17）', async () => {
   const eventColumns = await tableColumns('workspace_activity_events')
+  assert.ok(eventColumns.includes('sequence'), '0086 必须为动态事实分配 sequence')
   assert.deepEqual(eventColumns, [
     'id', 'tenant_id', 'workspace_id', 'kind', 'actor_user_id', 'object_type',
-    'object_id', 'safe_metadata', 'dedupe_key', 'occurred_at',
+    'object_id', 'safe_metadata', 'dedupe_key', 'occurred_at', 'sequence',
   ])
   const stateColumns = await tableColumns('workspace_notification_states')
   assert.deepEqual(stateColumns, ['tenant_id', 'workspace_id', 'user_id', 'last_read_at', 'muted_at'])

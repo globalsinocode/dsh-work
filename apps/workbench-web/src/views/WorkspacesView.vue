@@ -7,9 +7,11 @@ import { ArrowRight, Plus, Search, UserFilled } from '@element-plus/icons-vue'
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
+import { useNotificationStore } from '@/stores/notifications'
 import type { Workspace, WorkspaceStatusFilter } from '@/types/domain'
 
 const contentStore = useContentStore()
+const notificationStore = useNotificationStore()
 const route = useRoute()
 const router = useRouter()
 const query = ref('')
@@ -175,7 +177,10 @@ async function createWorkspace() {
   }
 }
 
-onMounted(() => contentStore.refresh())
+onMounted(() => {
+  void contentStore.refresh()
+  void notificationStore.refreshCounts()
+})
 </script>
 
 <template>
@@ -230,6 +235,11 @@ onMounted(() => contentStore.refresh())
             <el-icon><UserFilled /></el-icon>
           </span>
           <span class="workspace-card__tags">
+            <el-badge
+              v-if="(notificationStore.unreadByWorkspace[workspace.id] ?? 0) > 0"
+              :value="notificationStore.unreadByWorkspace[workspace.id]"
+              :max="99"
+            />
             <StatusTag status="neutral" :label="workspace.type === 'personal' ? '个人工作空间' : '团队工作空间'" />
             <StatusTag
               v-if="workspace.type === 'team' && workspace.status === 'archived'"
@@ -243,7 +253,7 @@ onMounted(() => contentStore.refresh())
         <p>{{ workspace.description }}</p>
         <div class="workspace-card__metrics">
           <div><strong>{{ workspace.sessionCount }}</strong><span>对话</span></div>
-          <div><strong>{{ workspace.files.length }}</strong><span>文件</span></div>
+          <div><strong>{{ workspace.type === 'team' ? (workspace.fileCount ?? 0) : workspace.files.length }}</strong><span>文件</span></div>
           <div><strong>{{ workspace.artifactCount }}</strong><span>成果</span></div>
           <div><strong>{{ workspace.memberCount }}</strong><span>{{ workspace.type === 'personal' ? '访问者' : '成员' }}</span></div>
         </div>

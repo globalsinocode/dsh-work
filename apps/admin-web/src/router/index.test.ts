@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import router from './index'
+import router, { resolveAdminProtectedRouteTarget } from './index'
 
 describe('admin authentication routes', () => {
   it('registers one protected management assistant page', () => {
@@ -38,6 +38,33 @@ describe('admin authentication routes', () => {
     expect(route.meta.title).toBe('关于 dsh-work')
     expect(route.meta.requiresAdmin).toBe(true)
     expect(route.meta.requiredPermission).toBeUndefined()
+  })
+
+  it('refreshes before protected navigation and redirects to the first allowed page', async () => {
+    const auth = {
+      refresh: vi.fn().mockResolvedValue(undefined),
+      canManage: false,
+      canReadAudit: true,
+      canReadAdmin: false,
+      canAccessAdmin: true,
+      identityAdministrationAvailable: true,
+    }
+    const result = resolveAdminProtectedRouteTarget(
+      { meta: { requiresAdmin: true, requiredPermission: 'adminRead' } },
+      auth,
+    )
+    expect(result).toEqual({ name: 'audit' })
+  })
+
+  it('uses the existing forbidden route when no admin permission remains', async () => {
+    const protectedRoute = { meta: { requiresAdmin: true, requiredPermission: 'adminRead' } }
+    const result = resolveAdminProtectedRouteTarget(protectedRoute, {
+      canAccessAdmin: false,
+      canReadAdmin: false,
+      canReadAudit: false,
+      identityAdministrationAvailable: false,
+    })
+    expect(result).toEqual({ name: 'forbidden' })
   })
 
   it('publishes the experience iteration context as a topbar subtitle', () => {

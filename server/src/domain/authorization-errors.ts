@@ -19,7 +19,7 @@ export class AuthorizationDeniedError extends RequestError {
    * whatever the HTTP answer. A few configuration checks deny execution but answer
    * the editing request as invalid input or a missing object; they pass `http`.
    */
-  constructor(message: string, http: { status: number; code: string; suggestion?: string } = { status: 403, code: 'permission_denied' }) {
+  constructor(message: string, http: { status: number; code: string; suggestion?: string } = { status: 403, code: 'authorization_denied' }) {
     super(http.status, http.code, message, http.suggestion)
     this.name = 'AuthorizationDeniedError'
   }
@@ -27,6 +27,27 @@ export class AuthorizationDeniedError extends RequestError {
 
 export function authorizationDenied(message: string, http?: { status: number; code: string; suggestion?: string }): AuthorizationDeniedError {
   return new AuthorizationDeniedError(message, http)
+}
+
+/** Stable 403 codes the admin/workbench clients use to refresh identity without replaying requests. */
+export const AUTHORIZATION_CHANGE_RESPONSE_CODES = [
+  'authorization_denied',
+  'permission_revoked',
+  'role_disabled',
+  'data_scope_revoked',
+] as const
+
+export type AuthorizationChangeResponseCode = typeof AUTHORIZATION_CHANGE_RESPONSE_CODES[number]
+
+export function isAuthorizationChangeResponseCode(code: string): code is AuthorizationChangeResponseCode {
+  return (AUTHORIZATION_CHANGE_RESPONSE_CODES as readonly string[]).includes(code)
+}
+
+/** Maps internal denial codes to the closed client-facing revocation set (403 only). */
+export function publicAuthorizationResponseCode(code: string): AuthorizationChangeResponseCode {
+  if (isAuthorizationChangeResponseCode(code)) return code
+  if (code === 'permission_denied') return 'authorization_denied'
+  return 'authorization_denied'
 }
 
 /** True only for an explicit authorization denial, recognised by type, never by wording. */

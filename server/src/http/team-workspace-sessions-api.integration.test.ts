@@ -396,6 +396,39 @@ function testApiAuthenticator(request: import('node:http').IncomingMessage): Pro
   })
 }
 
+test('draft Session is hidden from history until activation', async () => {
+  const userId = 'U00001'
+  const intentId = `intent-session-${Date.now()}`
+  const created = await conversations.createSession({
+    userId,
+    title: '网络恢复测试',
+    clientIntentId: intentId,
+  })
+  assert.equal(created.status, 'draft')
+  const hidden = await conversations.listSessionsForUser({ actorUserId: userId, scope: 'all', limit: 100 })
+  assert.equal(hidden.items.some(item => item.sessionId === created.id), false)
+  await conversations.activateSession(created.id)
+  const visible = await conversations.listSessionsForUser({ actorUserId: userId, scope: 'all', limit: 100 })
+  assert.equal(visible.items.some(item => item.sessionId === created.id), true)
+})
+
+test('createSession with the same clientIntentId returns the existing Session (CR-03)', async () => {
+  const userId = 'U00001'
+  const intentId = `intent-dedupe-${Date.now()}`
+  const first = await conversations.createSession({
+    userId,
+    title: '首步失败草稿',
+    clientIntentId: intentId,
+  })
+  const second = await conversations.createSession({
+    userId,
+    title: '重试不应新建',
+    clientIntentId: intentId,
+  })
+  assert.equal(second.id, first.id)
+  assert.equal(second.status, 'draft')
+})
+
 async function seedUser(id: string, displayName: string) {
   await database`
     insert into users (

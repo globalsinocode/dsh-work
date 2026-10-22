@@ -883,7 +883,7 @@ export class PostgresAuthorizationService {
          where u.tenant_id = ${tenantId} and u.id = ${userId} and u.status = 'active'
            and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
       `
-      if (!user) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
+      if (!user) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用', { status: 403, code: 'role_disabled' })
       const requestedRoleIds = unique(sessionRoleIds)
       if (requestedRoleIds.length === 0) return { id: user.id, roleIds: [], permissions: [] }
       const rows = await this.database<{ id: string; permissions: string[] }[]>`
@@ -919,7 +919,7 @@ export class PostgresAuthorizationService {
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
        group by u.id
     `
-    if (!row) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用')
+    if (!row) throw authorizationDenied('当前用户不存在、已停用或所属企业不可用', { status: 403, code: 'role_disabled' })
     return row
   }
 
@@ -967,7 +967,9 @@ export class PostgresAuthorizationService {
            )
          )
     `
-    if (!row) throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员')
+    if (!row) {
+      throw authorizationDenied('工作空间不存在、已归档或当前用户不是成员', { status: 403, code: 'permission_revoked' })
+    }
     return row.type
   }
 

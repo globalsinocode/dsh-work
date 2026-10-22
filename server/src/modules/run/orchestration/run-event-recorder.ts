@@ -128,6 +128,15 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.failed', run.id, 'failed', event.trace_id, code)
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务失败，终止所有活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      if (run.sessionId) {
+        await this.deps.conversations.writeRunTerminalNotificationIfTeam({
+          sessionId: run.sessionId,
+          runId: run.id,
+          requestedBy: run.requestedBy,
+          kind: 'run_failed',
+          dedupeKey: `run-terminal:${event.event_id}`,
+        })
+      }
     } else if (event.event_type === 'run.completed') {
       const attempt = await this.deps.runs.getAttempt(tenantId, event.attempt_id)
       const assistantOutput = this.assistantOutputs.get(event.attempt_id) ?? ''
@@ -150,6 +159,15 @@ export class RunEventRecorder {
       await this.deps.operations?.appendAudit('system', 'run.completed', run.id, 'success', event.trace_id, 'DSH Runtime 执行完成')
       await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已结束，终止未收敛的活动子任务')
       await this.deps.delegation?.observeChildTerminal(run.id)
+      if (run.sessionId) {
+        await this.deps.conversations.writeRunTerminalNotificationIfTeam({
+          sessionId: run.sessionId,
+          runId: run.id,
+          requestedBy: run.requestedBy,
+          kind: 'run_completed',
+          dedupeKey: `run-terminal:${event.event_id}`,
+        })
+      }
       this.assistantOutputs.delete(event.attempt_id)
     } else if (event.event_type === 'approval.resolved') {
       if (event.safe_metadata['tool_name'] === 'prepare_skill_installation') {

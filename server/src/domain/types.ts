@@ -210,6 +210,23 @@ export interface ManagedWorkspaceDefinition {
   updatedAt: string
 }
 
+/** Canonical team workspace file projection (Batch 2). */
+export interface WorkspaceFileProjection {
+  id: string
+  logicalFileId: string
+  name: string
+  source: 'workspace'
+  sizeLabel: string
+  versionNo: number
+  versionCount: number
+  parseStatus: 'pending' | 'succeeded' | 'failed'
+  parseErrorCode: string | null
+  canReference: boolean
+  canDownload: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface WorkspaceFile {
   id: string
   name: string
@@ -243,6 +260,8 @@ export interface Workspace {
   memberCount: number
   sessionCount: number
   artifactCount: number
+  /** Active logical team files in the space (list endpoint; files tab uses paginated API). */
+  fileCount?: number
   updatedAt: string
   owner: string
   members: string[]

@@ -253,13 +253,34 @@ export interface TaskRun {
 }
 
 
+export interface WorkspaceFileProjection {
+  id: string
+  logicalFileId: string
+  name: string
+  source: 'workspace'
+  sizeLabel: string
+  versionNo: number
+  versionCount: number
+  parseStatus: 'pending' | 'succeeded' | 'failed'
+  parseErrorCode: string | null
+  canReference: boolean
+  canDownload: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface WorkspaceFile {
   id: string
   name: string
   type: string
   size: string
+  sizeLabel?: string
   uploadedBy: string
   uploadedAt: string
+  createdAt?: string
+  updatedAt?: string
+  source?: 'workspace'
+  parseErrorCode?: string | null
   extractionStatus?: 'succeeded' | 'failed'
   /**
    * 逻辑文件 id（TW-07 起团队共享文件按逻辑文件聚合返回）。团队动态的
@@ -316,17 +337,12 @@ export interface WorkspaceFileVersionPage {
   items: WorkspaceFileVersion[]
 }
 
-/** `POST …/files/:logicalFileId/versions` 的 201 返回：新版本的最小摘要。 */
-export interface UploadedWorkspaceFileVersion {
-  id: string
-  logicalFileId: string
-  versionNo: number
-  name: string
-  type: string
-  size: string
-  uploadedBy: string
-  uploadedAt: string
-  extractionStatus: 'succeeded'
+/** `POST …/files` / `POST …/versions` 201：与列表共享的 canonical 投影。 */
+export type UploadedWorkspaceFileVersion = WorkspaceFileProjection
+
+export interface WorkspaceFilePage {
+  items: WorkspaceFile[]
+  nextCursor: string | null
 }
 
 export interface Workspace {
@@ -337,6 +353,7 @@ export interface Workspace {
   memberCount: number
   sessionCount: number
   artifactCount: number
+  fileCount?: number
   updatedAt: string
   owner: string
   members: string[]
@@ -386,8 +403,18 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'discussion_posted'
+  | 'member_mentioned'
+  | 'run_completed'
+  | 'run_failed'
 
-export type WorkspaceActivityObjectType = 'member' | 'agent_member' | 'file' | 'workspace'
+export type WorkspaceActivityObjectType =
+  | 'member'
+  | 'agent_member'
+  | 'file'
+  | 'workspace'
+  | 'session'
+  | 'run'
 
 /**
  * 一条团队动态。`objectId` 只是安全对象引用（成员／Agent／逻辑文件／空间 id），
@@ -437,6 +464,37 @@ export interface WorkspaceNotificationView extends WorkspaceActivityPage {
   mutedAt: string | null
   lastReadAt: string | null
   unreadCount: number
+}
+
+export interface AccountNotificationItem {
+  id: string
+  workspaceId: string
+  sequence: number
+  kind: WorkspaceActivityKind
+  actorUserId: string
+  actorDisplayName: string
+  objectType: WorkspaceActivityObjectType
+  objectId: string
+  safeMetadata: Record<string, unknown>
+  occurredAt: string
+}
+
+export interface AccountNotificationPage {
+  items: AccountNotificationItem[]
+  nextCursor: string | null
+}
+
+export interface AccountNotificationCounts {
+  total: number
+  byWorkspace: Record<string, number>
+  lastReadSequence: number
+}
+
+export interface AccountNotificationQuery {
+  cursor?: string
+  limit?: number
+  unread?: boolean
+  workspaceId?: string
 }
 
 /**
@@ -610,17 +668,23 @@ export interface WorkbenchSession {
 
 export interface WorkbenchAgent {
   id: string
+  versionId: string
+  versionReference: string
+  version: string
+  publishedAt: string
   name: string
   description: string
   welcomeMessage: string
-  version: string
   examplePrompts: string[]
 }
 
 export interface WorkbenchSkill {
   id: string
-  name: string
+  versionId: string
+  versionReference: string
   version: string
+  publishedAt: string
+  name: string
   category: string
   description: string
   owner: string
@@ -680,8 +744,16 @@ export interface Automation {
   confirmedConfigRevision: string
   revision: number
   status: AutomationStatus
+  archivedAt: string | null
+  archivedBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface AutomationExecutionPage {
+  items: AutomationExecution[]
+  nextCursor: string | null
+  hasMore: boolean
 }
 
 export type AutomationExecutionKind = 'scheduled' | 'manual' | 'missed'

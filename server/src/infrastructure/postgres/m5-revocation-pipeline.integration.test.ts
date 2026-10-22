@@ -938,6 +938,36 @@ test('REST 读取：被移出的成员不得读取团队运行详情，列表也
   assert.equal(cancelBody.includes('团队运行正文'), false, '取消响应不得包含正文')
 })
 
+test('HTTP 403：团队收权返回 permission_revoked 且不泄露成员或空间标识', async () => {
+  const ws = uniqueWorkspace('http-revocation-code')
+  const ownerId = `${ws}-owner`
+  const userId = `${ws}-user`
+  const versionId = `${ws}-version`
+  await seedUser(ownerId, '收权码负责人')
+  await seedUser(userId, '收权码成员')
+  await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId, role: 'member' }])
+  await seedAgent(ws, versionId)
+  await grantAgentVersion(ws, versionId)
+  const sessionId = `${ws}-session`
+  await createSession(sessionId, ws, userId, versionId)
+  const runId = `${ws}-run`
+  await createRunWithAttempt({ id: runId, sessionId, requestedBy: userId, status: 'running', agentVersionId: versionId, workspaceId: ws })
+  await members.removeMember(ws, userId, ownerId)
+  const response = await fetch(`${baseUrl}/api/workbench/v1/runs/${runId}/cancel`, {
+    method: 'POST',
+    headers: { 'x-test-user-id': userId },
+  })
+  await assertStableRevocationCode(response, 'permission_revoked')
+})
+
+test('HTTP 403：停用用户返回 role_disabled 且不泄露用户标识', async () => {
+  const userId = `${uniqueWorkspace('disabled-user')}-user`
+  await seedUser(userId, '停用用户')
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${userId}`
+  const response = await fetch(`${baseUrl}/api/workbench/v1/tasks`, { headers: { 'x-test-user-id': userId } })
+  await assertStableRevocationCode(response, 'role_disabled')
+})
+
 test('REST 读取：归档后现任成员仍可读详情与列表，被移出成员仍拒绝（3-T1 双轨）', async () => {
   const ws = uniqueWorkspace('rest-archived-read')
   const ownerId = `${ws}-owner`
@@ -1293,6 +1323,14 @@ test('收权清扫：复核抛出基础设施故障时不得取消运行', async
 // ---------------------------------------------------------------------------
 // 测试辅助
 // ---------------------------------------------------------------------------
+
+async function assertStableRevocationCode(response: Response, expectedCode: string) {
+  assert.equal(response.status, 403)
+  const body = await response.json() as { error: { code: string; message: string; suggestion: string } }
+  assert.equal(body.error.code, expectedCode)
+  assert.doesNotMatch(body.error.message, /U000|user-|ws-|role-/)
+  assert.doesNotMatch(body.error.suggestion, /U000|user-|ws-|role-/)
+}
 
 function testApiAuthenticator(request: import('node:http').IncomingMessage): Promise<RequestIdentity> {
   const header = request.headers['x-test-user-id']

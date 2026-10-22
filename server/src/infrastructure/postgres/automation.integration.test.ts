@@ -274,7 +274,7 @@ test('runNow 原子受理：Session/Run/执行记录齐备；同幂等键重放�
   assert.equal(replay.id, first.id)
   assert.equal(replay.runId, first.runId)
 
-  const executions = await service.listExecutions(userId, created.id)
+  const executions = (await service.listExecutions(userId, created.id)).items
   assert.equal(executions.length, 1)
   // I-06：受理≠执行完成≠业务达成。dispatch 在后台并发推进，读取时 Run
   // 可以仍在 queued，也可以已经 running；两种状态的核验结果都必须是 pending。
@@ -303,7 +303,7 @@ test('重叠触发被跳过并记录 overlap 原因', async () => {
   assert.equal(second.runId, null)
 
   // I-06：未受理（无关联 Run）的执行没有结果核验状态。
-  const listed = await service.listExecutions(userId, created.id)
+  const listed = (await service.listExecutions(userId, created.id)).items
   assert.equal(listed.find(execution => execution.id === second.id)?.resultOutcome, null)
 })
 
@@ -330,7 +330,7 @@ test('触发扫描受理到期槽位且推进游标；二次扫描不重复', as
   `
 
   await sweep.tick()
-  const executions = await service.listExecutions(userId, created.id)
+  const executions = (await service.listExecutions(userId, created.id)).items
   assert.equal(executions.length, 1)
   assert.equal(executions[0]!.kind, 'scheduled')
   assert.equal(executions[0]!.admissionStatus, 'accepted')
@@ -340,7 +340,7 @@ test('触发扫描受理到期槽位且推进游标；二次扫描不重复', as
   assert.ok(refreshed.nextSlotUtc! > new Date().toISOString())
 
   await sweep.tick()
-  assert.equal((await service.listExecutions(userId, created.id)).length, 1)
+  assert.equal((await service.listExecutions(userId, created.id)).items.length, 1)
 })
 
 test('账号停用后触发被跳过且记录授权原因', async () => {
@@ -457,7 +457,7 @@ test('受理已提交但 Attempt 未建的执行在启动恢复时收敛为 inte
 
   const recovered = await service.recoverInterruptedPreparations()
   assert.ok(recovered >= 1)
-  const executions = await service.listExecutions(userId, created.id)
+  const executions = (await service.listExecutions(userId, created.id)).items
   const target = executions.find(item => item.runId === run.id)
   assert.equal(target?.admissionStatus, 'interrupted')
   assert.equal(target?.reasonCode, 'dispatch_interrupted')
@@ -537,7 +537,7 @@ test('暂停收敛已受理但未开始的执行：queued Run/Attempt 一并取�
     select status from run_attempts where tenant_id = ${tenantId} and id = ${attempt.id}
   `
   assert.equal(attemptRow?.status, 'cancelled')
-  const target = (await service.listExecutions(userId, created.id))
+  const target = (await service.listExecutions(userId, created.id)).items
     .find(item => item.runId === run.id)
   assert.equal(target?.admissionStatus, 'interrupted')
   assert.equal(target?.reasonCode, 'task_paused')
@@ -611,7 +611,7 @@ test('授权基础设施错误不落 skipped：异常抛出、游标不动、恢
   // 游标未推进、也没有落 skipped 记录——槽位保留给下个 tick 重试。
   const after = await service.getMine(userId, created.id)
   assert.equal(after.nextSlotUtc, enabled.nextSlotUtc)
-  assert.equal((await service.listExecutions(userId, created.id)).length, 0)
+  assert.equal((await service.listExecutions(userId, created.id)).items.length, 0)
 
   // 恢复后同一槽位可正常受理。
   const retried = await service.processScheduledSlot(created.id, slot, enabled.nextSlotUtc!, next)
@@ -651,6 +651,109 @@ test('cancelQueuedRun 与领取竞态：Attempt 被先锁走时不取消', async
     select status from runs where tenant_id = ${tenantId} and id = ${run.id}
   `
   assert.equal(runRow?.status, 'running')
+})
+
+test('archived automation remains queryable with history', async () => {
+  const { userId, workspaceId, agentId } = await seedOwner('archive-history')
+  const created = await service.create(userId, {
+    name: '归档历史',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await service.enable(userId, created.id)
+  await service.runNow(userId, created.id, randomUUID())
+  const archived = await service.archive(userId, created.id)
+  assert.equal(archived.status, 'disabled')
+  assert.ok(archived.archivedAt)
+  assert.equal((await service.listMine(userId, { status: 'archived' })).length, 1)
+  assert.equal((await service.listExecutions(userId, created.id, { limit: 20 })).items.length, 1)
+})
+
+test('restore archived automation to paused with authorization revalidation', async () => {
+  const { userId, workspaceId, agentId } = await seedOwner('restore-ok')
+  const created = await service.create(userId, {
+    name: '可恢复',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await service.enable(userId, created.id)
+  await service.archive(userId, created.id)
+  const restored = await service.restore(userId, created.id, ['role-employee'])
+  assert.equal(restored.status, 'paused')
+  assert.equal(restored.archivedAt, null)
+})
+
+test('restore rejects non-archived automation', async () => {
+  const { userId, workspaceId, agentId } = await seedOwner('restore-conflict')
+  const created = await service.create(userId, {
+    name: '未归档',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await assert.rejects(
+    () => service.restore(userId, created.id, ['role-employee']),
+    /只有已归档/,
+  )
+})
+
+test('restore rejects when authorization revoked and keeps archived state', async () => {
+  const { userId, workspaceId, agentId } = await seedOwner('restore-denied')
+  const created = await service.create(userId, {
+    name: '撤权恢复',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  await service.enable(userId, created.id)
+  await service.archive(userId, created.id)
+  await database`delete from user_roles where tenant_id = ${tenantId} and user_id = ${userId}`
+  await assert.rejects(
+    () => service.restore(userId, created.id, ['role-employee']),
+    /授权|权限|拒绝|不满足/,
+  )
+  const still = await automations.getByIdForOwner(created.id, userId)
+  assert.equal(still?.status, 'disabled')
+})
+
+test('execution history paginates with stable cursor', async () => {
+  const { userId, workspaceId, agentId } = await seedOwner('exec-page')
+  const created = await service.create(userId, {
+    name: '分页历史',
+    agentId,
+    workspaceId,
+    schedule: { kind: 'manual', timezone: 'UTC' },
+    inputTemplate: { prompt: '执行' },
+  })
+  for (let index = 0; index < 75; index += 1) {
+    const at = new Date(Date.UTC(2026, 0, 1, 0, 0, index))
+    await database`
+      insert into automation_executions (
+        id, tenant_id, automation_id, trigger_id, kind, planned_slot_utc,
+        task_revision, schedule_revision, admission_status, created_at, updated_at
+      ) values (
+        ${`autexec-page-${index}`}, ${tenantId}, ${created.id}, ${`trigger-page-${index}`},
+        'manual', ${at}, 1, 1, 'skipped', ${at}, ${at}
+      )
+    `
+  }
+  const first = await service.listExecutions(userId, created.id, { limit: 50 })
+  assert.equal(first.items.length, 50)
+  assert.equal(first.hasMore, true)
+  assert.ok(first.nextCursor)
+  const second = await service.listExecutions(userId, created.id, { limit: 50, cursor: first.nextCursor })
+  assert.equal(second.items.length, 25)
+  assert.equal(
+    new Set([...first.items, ...second.items].map(item => item.id)).size,
+    75,
+  )
+  assert.equal(second.hasMore, false)
 })
 
 test('sweep close 完整释放 advisory lock（无重入计数残留）', async () => {

@@ -18,6 +18,8 @@ export interface ObjectStorage {
   putIfAbsent(key: string, bytes: Uint8Array): Promise<void>
   /** Reads an object; throws ObjectNotFoundError when the key has no object. */
   get(key: string): Promise<Buffer>
+  /** Deletes an object when present; returns whether a file was removed. */
+  deleteIfExists(key: string): Promise<boolean>
 }
 
 export class ObjectNotFoundError extends Error {

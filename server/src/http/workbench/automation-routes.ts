@@ -48,9 +48,12 @@ async function readObjectBody<T extends object>(request: IncomingMessage): Promi
  * 试运行与执行记录各自独立端点。
  */
 export function registerAutomationRoutes(router: Router, service: AutomationService) {
-  router.get(`${basePath}/automations`, async (_request, context) => {
+  router.get(`${basePath}/automations`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    return envelope('workbench', await service.listMine(identity.userId), 'postgres')
+    const statusParam = new URL(request.url ?? '', 'http://localhost').searchParams.get('status')
+    const status = statusParam === 'archived' ? 'archived' : statusParam === 'active' || statusParam === null ? 'active' : null
+    if (status === null) throw routeValidationFailed('status 只能是 active 或 archived')
+    return envelope('workbench', await service.listMine(identity.userId, { status }), 'postgres')
   })
 
   router.post(`${basePath}/automations`, async (request, context) => {
@@ -102,13 +105,47 @@ export function registerAutomationRoutes(router: Router, service: AutomationServ
     return envelope('workbench', await service.runNow(identity.userId, context.params['automationId'] ?? '', body.idempotencyKey ?? ''), 'postgres')
   })
 
-  router.get(`${basePath}/automations/:automationId/executions`, async (_request, context) => {
+  router.get(`${basePath}/automations/:automationId/executions`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    return envelope('workbench', await service.listExecutions(identity.userId, context.params['automationId'] ?? ''), 'postgres')
+    const url = new URL(request.url ?? '', 'http://localhost')
+    const limitRaw = url.searchParams.get('limit')
+    const limit = limitRaw === null ? undefined : Number(limitRaw)
+    if (limitRaw !== null && (!Number.isInteger(limit) || limit! < 1 || limit! > 100)) {
+      throw routeValidationFailed('limit 必须是 1～100 的整数')
+    }
+    const cursor = url.searchParams.get('cursor')
+    return envelope(
+      'workbench',
+      await service.listExecutions(identity.userId, context.params['automationId'] ?? '', {
+        limit,
+        cursor,
+      }),
+      'postgres',
+    )
   })
 
-  router.delete(`${basePath}/automations/:automationId`, async (_request, context) => {
+  router.post(`${basePath}/automations/:automationId/archive`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
-    return envelope('workbench', await service.disable(identity.userId, context.params['automationId'] ?? ''), 'postgres')
+    return envelope('workbench', await service.archive(identity.userId, context.params['automationId'] ?? ''), 'postgres')
+  })
+
+  router.post(`${basePath}/automations/:automationId/restore`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    return envelope(
+      'workbench',
+      await service.restore(
+        identity.userId,
+        context.params['automationId'] ?? '',
+        sessionAuthorizationContext(identity).roleIds,
+      ),
+      'postgres',
+    )
+  })
+
+  router.delete(`${basePath}/automations/:automationId`, async (_request, context, response) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    response.setHeader('Deprecation', 'true')
+    response.setHeader('Link', '</api/workbench/v1/automations/{automationId}/archive>; rel="successor-version"')
+    return envelope('workbench', await service.archive(identity.userId, context.params['automationId'] ?? ''), 'postgres')
   })
 }

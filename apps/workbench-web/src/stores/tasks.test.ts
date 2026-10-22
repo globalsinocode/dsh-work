@@ -115,10 +115,11 @@ describe('task store', () => {
 
     const created = await store.createTask('分析库存', [], 'ws-supply')
 
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析库存',
       workspaceId: 'ws-supply',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({
       prompt: '分析库存',
       fileIds: [],
@@ -232,10 +233,11 @@ describe('task store', () => {
     )
 
     // TW-10：会话保持未绑定的共享讨论形态，成员关联随首条触发消息进入 startRun。
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析订单波动',
       workspaceId: 'ws-team',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-agent-001', expect.objectContaining({
       workspaceAgentMemberId: 'wam-001',
     }))
@@ -249,7 +251,10 @@ describe('task store', () => {
 
     await store.createTask('整理个人材料', [], undefined, undefined, undefined, [], undefined, undefined)
 
-    expect(api.createSession).toHaveBeenCalledWith({ title: '整理个人材料' })
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '整理个人材料',
+      clientIntentId: expect.any(String),
+    }))
   })
 
   it('binds the selected Skill to the new Session while keeping the DSH run API unchanged', async () => {
@@ -260,10 +265,11 @@ describe('task store', () => {
 
     await store.createTask('分析本月订单交付风险', [], undefined, undefined, undefined, [], 'order-analysis')
 
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析本月订单交付风险',
       skillId: 'order-analysis',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-skill-001', expect.objectContaining({
       prompt: '分析本月订单交付风险',
       fileIds: [],
@@ -283,7 +289,10 @@ describe('task store', () => {
 
     await store.createTask('整理个人材料', [])
 
-    expect(api.createSession).toHaveBeenCalledWith({ title: '整理个人材料' })
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '整理个人材料',
+      clientIntentId: expect.any(String),
+    }))
   })
 
   it('projects durable permission requests as administrator approval without employee actions', async () => {

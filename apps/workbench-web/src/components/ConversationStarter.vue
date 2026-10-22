@@ -16,7 +16,7 @@ import TeamSpaceComposer from '@/components/team-space-composer/team-space-compo
 import { workbenchApi } from '@/api/client'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile } from '@/types/domain'
+import type { WorkbenchAgent, WorkbenchSkill, WorkspaceFile, WorkspaceFileProjection } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
 
 const props = withDefaults(
@@ -43,6 +43,8 @@ const props = withDefaults(
      * 个人空间不受影响（AC-23）。
      */
     canDiscuss?: boolean
+    /** 团队名册在途：角色未知，勿展示「只读/无写权限」类终态文案。 */
+    teamRolePending?: boolean
     /**
      * 输入框可 @ 的 Agent 成员（TW-10）：id + 展示名，与工作空间详情页的
      * startable 过滤口径一致；非团队锁定场景传空。
@@ -60,6 +62,7 @@ const props = withDefaults(
     startableAgentMemberIds: () => [],
     requiresAgentMember: false,
     canDiscuss: true,
+    teamRolePending: false,
     mentionOptions: () => [],
     teamComposerDrafts: () => ({}),
   },
@@ -83,8 +86,11 @@ const blockedReason = computed(() => {
   if (referenceLoading.value) return '正在检查引用文件权限'
   if (referenceError.value) return referenceError.value
   if (!props.requiresAgentMember) return ''
+  if (props.teamRolePending) return ''
   return props.canDiscuss ? '' : '当前角色为只读成员或尚无写权限，不能发言或发起执行；请联系负责人。'
 })
+/** 名册未返回前禁止提交，但不展示误报的 blocked 横幅。 */
+const composerPermissionPending = computed(() => props.teamRolePending)
 
 const router = useRouter()
 const route = useRoute()
@@ -104,7 +110,9 @@ const selectedTask = ref('')
 const presetPrompt = ref('')
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
+const selectedAgentVersionId = ref('')
 const selectedSkillId = ref('')
+const selectedSkillVersionId = ref('')
 
 // Global tasks are implicit personal tasks. Only an explicit locked origin
 // carries a workspace; never infer it from the order of a cached space list.
@@ -112,10 +120,14 @@ const composerWorkspaceId = computed(() => props.workspaceLocked ? props.workspa
 const composerWorkspaceName = computed(() => props.workspaceLocked ? props.workspaceName : '')
 const composerReady = computed(() => true)
 const selectedSkill = computed<WorkbenchSkill | undefined>(() =>
-  contentStore.skills.find(skill => skill.id === selectedSkillId.value),
+  contentStore.skills.find(skill =>
+    skill.id === selectedSkillId.value && skill.versionId === selectedSkillVersionId.value,
+  ),
 )
 const selectedAgent = computed<WorkbenchAgent | undefined>(() =>
-  contentStore.agents.find(agent => agent.id === selectedAgentId.value),
+  contentStore.agents.find(agent =>
+    agent.id === selectedAgentId.value && agent.versionId === selectedAgentVersionId.value,
+  ),
 )
 /**
  * 唯一可发起 Agent 的自动预选（TW-02「只有一个可用 Agent 时可默认选中」）：
@@ -182,7 +194,16 @@ function selectTask(item: (typeof commonTasks)[number]) {
 function useWorkspaceFile(file: WorkspaceFile) {
   selectedTask.value = '分析文件'
   referencedWorkspaceFileIds.value = [file.id]
-  presetPrompt.value = `请分析工作空间文件“${file.name}”，概括关键信息、异常项和需要跟进的问题。 @工作空间文件`
+  referenceName.value = file.name
+  presetPrompt.value = `请分析团队文件“${file.name}”，概括关键信息、异常项和需要跟进的问题。`
+  focusComposer()
+}
+
+function onWorkspaceFileSelected(file: WorkspaceFileProjection) {
+  selectedTask.value = '分析文件'
+  referencedWorkspaceFileIds.value = [file.id]
+  referenceName.value = file.name
+  presetPrompt.value = `请分析团队文件“${file.name}”，概括关键信息、异常项和需要跟进的问题。`
   focusComposer()
 }
 
@@ -204,8 +225,8 @@ async function submitTask(payload: {
   confirm?: () => void
   release?: () => void
 }) {
-  if (blockedReason.value) {
-    ElMessage.warning(blockedReason.value)
+  if (composerPermissionPending.value || blockedReason.value) {
+    if (blockedReason.value) ElMessage.warning(blockedReason.value)
     payload.release?.()
     return
   }
@@ -223,11 +244,7 @@ async function submitTask(payload: {
         payload.release?.()
         return
       }
-      const session = await workbenchApi.createSession({
-        title: payload.prompt,
-        workspaceId: payload.workspaceId,
-      })
-      await taskStore.postSessionMessage(session.id, payload.prompt)
+      const session = await taskStore.startTeamDiscussion(payload.workspaceId, payload.prompt)
       await router.push(conversationPath(payload.workspaceId, session.id))
       payload.confirm?.()
       referencedWorkspaceFileIds.value = []
@@ -242,19 +259,50 @@ async function submitTask(payload: {
       referencedWorkspaceFileIds.value,
       selectedSkillId.value || undefined,
       workspaceAgentMemberId,
+      selectedAgentVersionId.value || undefined,
+      selectedSkillVersionId.value || undefined,
     )
     await router.push(conversationPath(payload.workspaceId, task.id))
     payload.confirm?.()
     referencedWorkspaceFileIds.value = []
   } catch (error) {
     payload.release?.()
+    if (await handleSelectedVersionConflict(error)) return
     notifyActionFailure('创建对话', props.workspaceLocked ? `工作空间“${props.workspaceName}”` : '新对话', error, '检查 Agent、工作空间、附件和输入内容后重新提交。')
   }
 }
 
+async function handleSelectedVersionConflict(error: unknown) {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined
+  if (code !== 'selected_version_unavailable') return false
+  ElMessage.warning('所选版本已不可用，请重新选择')
+  selectedAgentId.value = ''
+  selectedAgentVersionId.value = ''
+  selectedSkillId.value = ''
+  selectedSkillVersionId.value = ''
+  const query = { ...route.query }
+  delete query.agent
+  delete query.agentVersion
+  delete query.skill
+  delete query.skillVersion
+  void router.replace({ query })
+  try {
+    await Promise.all([
+      props.workspaceLocked ? Promise.resolve() : contentStore.refreshAgents(),
+      contentStore.refreshSkills(),
+    ])
+  } catch {
+    // 保留提示；用户仍可手动刷新页面。
+  }
+  return true
+}
+
 function syncSkillFromRoute() {
   const skillId = typeof route.query.skill === 'string' ? route.query.skill : ''
-  selectedSkillId.value = contentStore.skills.some(skill => skill.id === skillId) ? skillId : ''
+  const skillVersionId = typeof route.query.skillVersion === 'string' ? route.query.skillVersion : ''
+  const matched = contentStore.skills.find(skill => skill.id === skillId && skill.versionId === skillVersionId)
+  selectedSkillId.value = matched ? skillId : ''
+  selectedSkillVersionId.value = matched ? skillVersionId : ''
   const skill = selectedSkill.value
   if (skill) {
     selectedTask.value = ''
@@ -269,7 +317,10 @@ function syncAgentFromRoute() {
     return
   }
   const agentId = typeof route.query.agent === 'string' ? route.query.agent : ''
-  selectedAgentId.value = contentStore.agents.some(agent => agent.id === agentId) ? agentId : ''
+  const agentVersionId = typeof route.query.agentVersion === 'string' ? route.query.agentVersion : ''
+  const matched = contentStore.agents.find(agent => agent.id === agentId && agent.versionId === agentVersionId)
+  selectedAgentId.value = matched ? agentId : ''
+  selectedAgentVersionId.value = matched ? agentVersionId : ''
   const agent = selectedAgent.value
   if (agent) {
     selectedTask.value = ''
@@ -280,15 +331,19 @@ function syncAgentFromRoute() {
 
 function clearSelectedAgent() {
   selectedAgentId.value = ''
+  selectedAgentVersionId.value = ''
   const query = { ...route.query }
   delete query.agent
+  delete query.agentVersion
   void router.replace({ query })
 }
 
 function clearSelectedSkill() {
   selectedSkillId.value = ''
+  selectedSkillVersionId.value = ''
   const query = { ...route.query }
   delete query.skill
+  delete query.skillVersion
   void router.replace({ query })
 }
 
@@ -306,7 +361,9 @@ onMounted(async () => {
 })
 
 watch(() => route.query.skill, syncSkillFromRoute)
+watch(() => route.query.skillVersion, syncSkillFromRoute)
 watch(() => route.query.agent, syncAgentFromRoute)
+watch(() => route.query.agentVersion, syncAgentFromRoute)
 
 let referenceSequence = 0
 function clearPersonalReference() {
@@ -417,9 +474,11 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           :mention-options="mentionOptions"
           :drafts="teamComposerDrafts"
           :blocked-reason="blockedReason"
+          :submitting="composerPermissionPending"
           :initial-prompt="presetPrompt"
           :files-require-mention="effectivePresetAgentMember?.status !== 'available'"
           @draft-change="(fromKey, draft) => emit('teamDraftChange', fromKey, draft)"
+          @workspace-file-selected="onWorkspaceFileSelected"
           @submit="onTeamStageSubmit"
         />
         <TaskComposer
@@ -435,6 +494,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
           :selected-skill-name="selectedSkill?.name"
           :selected-agent-name="selectedAgent?.name"
           :blocked-reason="blockedReason"
+          :submitting="composerPermissionPending"
           :mention-options="workspaceLocked ? mentionOptions : []"
           :files-require-mention="workspaceLocked && requiresAgentMember && effectivePresetAgentMember?.status !== 'available'"
           @submit="submitTask"

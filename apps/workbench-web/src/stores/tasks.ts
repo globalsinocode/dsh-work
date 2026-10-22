@@ -3,7 +3,10 @@ import { defineStore } from 'pinia'
 
 import { workbenchApi } from '../api/client'
 import type { RunStatus, TaskRun } from '../types/domain'
+import { createIntentRegistry, isUncertainRequestFailure } from '../utils/idempotent-intent'
 import { isNotFoundError } from '../utils/request-error'
+
+const intentRegistry = createIntentRegistry()
 
 interface RuntimeEvent {
   event_id: string
@@ -117,17 +120,39 @@ export const useTaskStore = defineStore('tasks', () => {
     referencedFileIds: string[] = [],
     skillId?: string,
     workspaceAgentMemberId?: string,
+    agentVersionId?: string,
+    skillVersionId?: string,
   ) {
     void _workspaceName
     const current = generation
     // TW-10：团队会话保持未绑定的共享讨论形态（agentVersionId 为 null），
     // Agent 成员关联随首条触发消息进入 startRun，而不是固定到会话上。
-    const session = await workbenchApi.createSession({
-      title: prompt,
-      ...(workspaceId ? { workspaceId } : {}),
-      ...(agentId ? { agentId } : {}),
-      ...(skillId ? { skillId } : {}),
+    const sessionFingerprint = JSON.stringify({
+      prompt: prompt.trim(),
+      workspaceId: workspaceId ?? '',
+      agentId: agentId ?? '',
+      agentVersionId: agentVersionId ?? '',
+      skillId: skillId ?? '',
+      skillVersionId: skillVersionId ?? '',
+      workspaceAgentMemberId: workspaceAgentMemberId ?? '',
+      referencedFileIds: [...referencedFileIds].sort(),
     })
+    const sessionIntent = intentRegistry.begin('session:new', sessionFingerprint)
+    let session
+    try {
+      session = await workbenchApi.createSession({
+        title: prompt,
+        clientIntentId: sessionIntent.key,
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(agentVersionId ? { agentVersionId } : {}),
+        ...(skillId ? { skillId } : {}),
+        ...(skillVersionId ? { skillVersionId } : {}),
+      })
+    } catch (error) {
+      if (isUncertainRequestFailure(error)) intentRegistry.markUncertain('session:new', sessionIntent.key)
+      throw error
+    }
     requireGeneration(current)
     const task = await startRunWithSessionFiles(session.id, {
       prompt,
@@ -136,6 +161,7 @@ export const useTaskStore = defineStore('tasks', () => {
       workspaceAgentMemberId,
     })
     requireGeneration(current)
+    intentRegistry.complete('session:new', sessionIntent.key)
     subscribe(task.id)
     return task
   }
@@ -166,9 +192,38 @@ export const useTaskStore = defineStore('tasks', () => {
    */
   async function postSessionMessage(sessionId: string, content: string) {
     const current = generation
-    const result = await workbenchApi.postSessionMessage(sessionId, content, crypto.randomUUID())
-    requireGeneration(current)
-    return result
+    const fingerprint = content.trim()
+    const handle = intentRegistry.begin(`message:${sessionId}`, fingerprint)
+    try {
+      const result = await workbenchApi.postSessionMessage(sessionId, content, handle.key)
+      requireGeneration(current)
+      intentRegistry.complete(`message:${sessionId}`, handle.key)
+      return result
+    } catch (error) {
+      if (isUncertainRequestFailure(error)) intentRegistry.markUncertain(`message:${sessionId}`, handle.key)
+      throw error
+    }
+  }
+
+  async function startTeamDiscussion(workspaceId: string, prompt: string) {
+    const current = generation
+    const sessionFingerprint = JSON.stringify({ workspaceId, prompt: prompt.trim() })
+    const sessionIntent = intentRegistry.begin(`discussion:${workspaceId}`, sessionFingerprint)
+    try {
+      const session = await workbenchApi.createSession({
+        title: prompt,
+        workspaceId,
+        clientIntentId: sessionIntent.key,
+      })
+      requireGeneration(current)
+      await postSessionMessage(session.id, prompt)
+      intentRegistry.complete(`discussion:${workspaceId}`, sessionIntent.key)
+      requireGeneration(current)
+      return session
+    } catch (error) {
+      if (isUncertainRequestFailure(error)) intentRegistry.markUncertain(`discussion:${workspaceId}`, sessionIntent.key)
+      throw error
+    }
   }
 
   /** TW-10：按会话加载共享线程（成员可读他人发起的团队会话）。 */
@@ -216,21 +271,30 @@ export const useTaskStore = defineStore('tasks', () => {
     workspaceAgentMemberId?: string
   }) {
     const current = generation
+    const runFingerprint = JSON.stringify({
+      prompt: input.prompt.trim(),
+      fileIds: [...(input.referencedFileIds ?? [])].sort(),
+      member: input.workspaceAgentMemberId ?? '',
+      attachmentNames: input.attachments.map(file => `${file.name}:${file.size}`).sort(),
+    })
+    const runIntent = intentRegistry.begin(`run:${sessionId}`, runFingerprint)
     let uploadedFileIds: string[] = []
     try {
       uploadedFileIds = await uploadSessionFiles(sessionId, input.attachments)
       requireGeneration(current)
       const task = await workbenchApi.startRun(sessionId, {
         prompt: input.prompt,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: runIntent.key,
         fileIds: [...new Set([...(input.referencedFileIds ?? []), ...uploadedFileIds])],
         ...(input.workspaceAgentMemberId ? { workspaceAgentMemberId: input.workspaceAgentMemberId } : {}),
       })
       if (!task) throw new Error('Run 创建失败')
       requireGeneration(current)
+      intentRegistry.complete(`run:${sessionId}`, runIntent.key)
       upsert(task)
       return task
     } catch (error) {
+      if (isUncertainRequestFailure(error)) intentRegistry.markUncertain(`run:${sessionId}`, runIntent.key)
       const partialUploadIds = error instanceof Error && 'uploadedFileIds' in error
         ? (error as Error & { uploadedFileIds?: string[] }).uploadedFileIds ?? []
         : []
@@ -475,6 +539,22 @@ export const useTaskStore = defineStore('tasks', () => {
     return loadTask(runId)
   }
 
+  async function refresh() {
+    const current = generation
+    try {
+      const loaded = await workbenchApi.getTasks()
+      if (current !== generation) return
+      const loadedIds = new Set(loaded.map(task => task.id))
+      for (const task of loaded) {
+        upsert(task)
+        if (!isTerminal(task.status)) subscribe(task.id)
+      }
+      tasks.value = tasks.value.filter(task => loadedIds.has(task.id) || !isTerminal(task.status))
+    } catch {
+      // 保留既有投影，刷新失败不清空列表。
+    }
+  }
+
   /** 终态 SSE 之后拉取 Run 快照；服务端投影略滞后时重试，避免把 status 打回 running。 */
   async function settleRunSnapshot(runId: string) {
     const localBefore = getTask(runId)
@@ -488,8 +568,10 @@ export const useTaskStore = defineStore('tasks', () => {
         const updated = getTask(runId)
         if (!expectTerminal || isTerminal(updated?.status)) return updated ?? task
       } catch (error) {
-        if (expectTerminal) return localBefore
-        throw error
+        if (!isUncertainRequestFailure(error)) {
+          if (expectTerminal) return localBefore
+          throw error
+        }
       }
       await wait(120 * (attempt + 1))
     }
@@ -525,8 +607,8 @@ export const useTaskStore = defineStore('tasks', () => {
 
   return {
     tasks, loading, initialized, activeTasks, recentTasks, sessionActivity, reset, load, getTask, loadTask,
-    createTask, sendMessage, postSessionMessage, loadSessionThread, loadEarlierThreadMessages, uploadSessionFiles,
-    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun,
+    createTask, sendMessage, postSessionMessage, startTeamDiscussion, loadSessionThread, loadEarlierThreadMessages, uploadSessionFiles,
+    startRunWithSessionFiles, cancelTask, retryTask, deleteConversation, refreshRun, refresh,
     upsert, subscribe, subscribeWorkspaceSessions, unsubscribeWorkspaceSessions,
   }
 })

@@ -51,6 +51,11 @@ import { PostgresWorkspaceMemberService } from './modules/workbench/application/
 import { PostgresWorkspaceLifecycleService } from './modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { PostgresWorkspaceAgentMemberService } from './modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import { PostgresWorkspaceActivityService } from './modules/workbench/application/postgres-workspace-activity-service.ts'
+import { bindWorkspaceNotificationRecipients } from './modules/workbench/application/workspace-activity-writer.ts'
+import {
+  WorkspaceNotificationRecipientService,
+  createPostgresNotificationRecipientPorts,
+} from './modules/workbench/application/workspace-notification-recipient-service.ts'
 import { PostgresWorkspaceUsageService } from './modules/workbench/application/postgres-workspace-usage-service.ts'
 import { PostgresWorkspaceService } from './modules/workbench/application/postgres-workspace-service.ts'
 import { PostgresAgentService } from './modules/agent/postgres-agent-service.ts'
@@ -88,6 +93,7 @@ import { IdentityAdministrationService } from './modules/identity/administration
 import { IdentityDirectorySyncService } from './modules/identity/directory-sync-service.ts'
 import { RequestError, invalidRequest } from './domain/request-errors.ts'
 import { LocalObjectStorage } from './infrastructure/storage/local-object-storage.ts'
+import { WorkspaceObjectGcService } from './modules/workbench/application/workspace-object-gc-service.ts'
 
 const port = Number(process.env.DSH_WORK_SERVER_PORT ?? 4190)
 // server/package.json sits one level above both src/main.ts and dist/main.js.
@@ -134,6 +140,7 @@ async function start() {
   let persistentWait: PostgresPersistentWaitService | null = null
   let memoryProposalSweep: NodeJS.Timeout | null = null
   let agentDataSweep: NodeJS.Timeout | null = null
+  let workspaceObjectGcSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
@@ -169,7 +176,9 @@ async function start() {
         }
       : null,
   })
-  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization)
+  const objectStorage = new LocalObjectStorage(resolve(dataRoot, 'storage'))
+  const workspaceObjectGc = new WorkspaceObjectGcService(database, objectStorage)
+  const content = new PostgresContentService(database, objectStorage, authorization, undefined, undefined, workspaceObjectGc)
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
@@ -256,6 +265,12 @@ async function start() {
   executionRuntime = runtime
   const workspaceMembers = new PostgresWorkspaceMemberService(database, authorization)
   const workspaceLifecycle = new PostgresWorkspaceLifecycleService(database)
+  const notificationRecipientPorts = createPostgresNotificationRecipientPorts(database)
+  bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+    database,
+    notificationRecipientPorts.participants,
+    notificationRecipientPorts.members,
+  ))
   const workspaceActivity = new PostgresWorkspaceActivityService(database, new PostgresWorkspaceService(database))
   const workspaceUsage = new PostgresWorkspaceUsageService(database, new PostgresWorkspaceService(database), authorization)
   const operations = new PostgresOperationsService(
@@ -323,6 +338,15 @@ async function start() {
     })
   }, 6 * 60 * 60 * 1000)
   memoryProposalSweep.unref()
+  void workspaceObjectGc.sweep(100).catch(error => {
+    console.warn('workspace_object_gc_sweep_failed count=1', error)
+  })
+  workspaceObjectGcSweep = setInterval(() => {
+    void workspaceObjectGc.sweep(100).catch(error => {
+      console.warn('workspace_object_gc_sweep_failed count=1', error)
+    })
+  }, 60 * 1000)
+  workspaceObjectGcSweep.unref()
   const workspaceAgentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
   const automationRepository = new PostgresAutomationRepository(database)
@@ -478,6 +502,7 @@ async function start() {
         if (directorySyncTimer) clearInterval(directorySyncTimer)
         if (memoryProposalSweep) clearInterval(memoryProposalSweep)
         if (agentDataSweep) clearInterval(agentDataSweep)
+        if (workspaceObjectGcSweep) clearInterval(workspaceObjectGcSweep)
         if (automationSweep) await automationSweep.close()
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()

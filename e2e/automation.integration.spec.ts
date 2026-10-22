@@ -64,6 +64,21 @@ async function openExecutions(page: Page, name: string) {
   return page.getByRole('dialog', { name: `执行记录 · ${name}` })
 }
 
+test('AU-01 archive hides task from active list but keeps history readable', async ({ page }) => {
+  const name = `P1-归档-${randomUUID().slice(0, 8)}`
+  const task = await createAutomation(page.request, name, 'P1-普通完成')
+  await enableFromPage(page, name)
+  await page.getByRole('region', { name: `自动任务：${name}`, exact: true }).getByRole('button', { name: '归档', exact: true }).click()
+  await page.getByRole('button', { name: '归档', exact: true }).last().click()
+  await expect(taskCard(page, name)).toHaveCount(0)
+  await page.getByRole('combobox', { name: '任务状态筛选' }).click()
+  await page.getByRole('option', { name: '已归档' }).click()
+  const archivedCard = taskCard(page, name)
+  await expect(archivedCard).toBeVisible()
+  await archivedCard.getByRole('button', { name: '执行记录', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: `执行记录 · ${name}` })).toBeVisible()
+})
+
 test('AG-AUTO-20: duplicate trigger has one Run and interrupted preparation is visible', async ({ page }) => {
   const name = `P1-原子受理-${randomUUID().slice(0, 8)}`
   const task = await createAutomation(page.request, name, 'P1-普通完成')

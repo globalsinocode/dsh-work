@@ -38,10 +38,13 @@ export class WorkbenchQueryService {
       .filter(agent => agent.status === 'published')
       .map(agent => ({
         id: agent.id,
+        versionId: `agent-version-${agent.id}-${agent.version.replace(/\./g, '')}`,
+        versionReference: `${agent.id}@${agent.version}`,
+        version: agent.version,
+        publishedAt: agent.updatedAt,
         name: agent.name,
         description: agent.description,
         welcomeMessage: agent.welcomeMessage,
-        version: agent.version,
         examplePrompts: [...agent.examplePrompts],
       }))
   }
@@ -52,8 +55,11 @@ export class WorkbenchQueryService {
       .filter(skill => skill.status === 'published')
       .map(skill => ({
         id: skill.id,
-        name: skill.name,
+        versionId: `skill-version-${skill.id}-${skill.version.replace(/\./g, '')}`,
+        versionReference: `${skill.id}@${skill.version}`,
         version: skill.version,
+        publishedAt: skill.updatedAt,
+        name: skill.name,
         category: skill.category,
         description: skill.description,
         owner: skill.owner,

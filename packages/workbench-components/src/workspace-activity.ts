@@ -22,6 +22,10 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'discussion_posted'
+  | 'member_mentioned'
+  | 'run_completed'
+  | 'run_failed'
 
 export interface WorkspaceActivityDescriptor {
   kind: WorkspaceActivityKind
@@ -114,6 +118,18 @@ export function describeWorkspaceActivity(input: WorkspaceActivityDescriptor): s
       return `${actor} 归档了空间`
     case 'workspace_restored':
       return `${actor} 恢复了空间`
+    case 'discussion_posted':
+      return `${actor} 在讨论中发言`
+    case 'member_mentioned':
+      return `${actor} 在讨论中提及了你`
+    case 'run_completed':
+      return typeof metadata['agentDisplayName'] === 'string' && metadata['agentDisplayName'].trim()
+        ? `Agent「${metadata['agentDisplayName'].trim()}」执行完成`
+        : 'Agent 执行完成'
+    case 'run_failed':
+      return typeof metadata['agentDisplayName'] === 'string' && metadata['agentDisplayName'].trim()
+        ? `Agent「${metadata['agentDisplayName'].trim()}」执行失败`
+        : 'Agent 执行失败'
     default:
       // 服务端 kind 是闭合集合，但响应值仍可能越界（版本错配/被篡改）。渲染一句中性
       // 文案而不是空白行，也绝不回退去展示 objectId。

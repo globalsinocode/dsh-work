@@ -1851,6 +1851,70 @@
         }
       }
     },
+    "/notifications": {
+      "get": {
+        "operationId": "listAccountNotifications",
+        "summary": "账号级通知收件箱（sequence 游标）",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
+          },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "unread", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "workspaceId", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "通知分页", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
+        }
+      }
+    },
+    "/notifications/counts": {
+      "get": {
+        "operationId": "getAccountNotificationCounts",
+        "summary": "账号级未读计数（按空间拆分）",
+        "responses": {
+          "200": { "description": "未读计数", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
+        }
+      }
+    },
+    "/notifications/read": {
+      "post": {
+        "operationId": "markAccountNotificationsRead",
+        "summary": "按 sequence 标记已读",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["throughSequence"],
+                "properties": {
+                  "throughSequence": { "type": "integer", "minimum": 0 },
+                  "workspaceId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "已读水位", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Envelope" } } } }
+        }
+      }
+    },
+    "/notifications/events": {
+      "get": {
+        "operationId": "streamAccountNotificationEvents",
+        "summary": "账号级通知 SSE（仅推送 sequence 失效信号）",
+        "parameters": [
+          { "name": "since", "in": "query", "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "text/event-stream" }
+        }
+      }
+    },
     "/workspaces/{workspaceId}/usage": {
       "parameters": [
         {
@@ -1912,7 +1976,21 @@
     "/automations": {
       "get": {
         "operationId": "listAutomations",
-        "summary": "列出当前员工的自动任务（不含已停用）",
+        "summary": "列出当前员工的自动任务；默认 active 不含已归档，status=archived 仅返回 disabled",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2053,12 +2131,65 @@
       },
       "delete": {
         "operationId": "disableAutomation",
-        "summary": "停用自动任务（软删除；新触发停止，活动执行可单独取消）",
+        "summary": "已弃用：等同归档；响应带 Deprecation，请改用 POST …/archive",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
           },
           "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/archive": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "archiveAutomation",
+        "summary": "归档自动任务：status 置 disabled 并写入 archivedAt/archivedBy，停止未来调度",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/automations/{automationId}/restore": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AutomationId"
+        }
+      ],
+      "post": {
+        "operationId": "restoreAutomation",
+        "summary": "恢复已归档任务为 paused；复用 enable 同等授权校验，不自动启用调度",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
             "$ref": "#/components/responses/Error"
           },
           "404": {
@@ -2229,7 +2360,27 @@
       ],
       "get": {
         "operationId": "listAutomationExecutions",
-        "summary": "执行记录：含 skipped/missed/interrupted、关联 Run 状态与结果核验状态",
+        "summary": "执行记录分页：items + nextCursor + hasMore；含 skipped/missed/interrupted 与 Run/结果投影",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"

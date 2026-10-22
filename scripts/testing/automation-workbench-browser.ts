@@ -138,7 +138,7 @@ fixture.router.post('/api/workbench/v1/test/automations/:automationId/publish-ag
 
 fixture.router.get('/api/workbench/v1/test/automations/:automationId/evidence', async (_request, context) => {
   const task = await fixture.automationService.getMine(ownerUserId, context.params['automationId'] ?? '')
-  const executions = await fixture.automationService.listExecutions(ownerUserId, task.id)
+  const executions = (await fixture.automationService.listExecutions(ownerUserId, task.id)).items
   const [agent] = task.agentId
     ? await fixture.db.client<{ activeVersionId: string | null }[]>`
         select active_version_id as "activeVersionId" from agents
