@@ -274,7 +274,7 @@ onMounted(() => contentStore.load())
           <el-alert v-if="catalogAlert" class="runtime-builtin-tools__catalog" :type="catalogAlert.type" :closable="false" show-icon :title="catalogAlert.title" />
           <el-table class="data-table" :data="builtinTools" size="small" empty-text="内置工具清单加载失败">
             <el-table-column label="工具" min-width="170"><template #default="scope"><div class="builtin-tool-cell"><strong>{{ scope.row.label }}</strong><code>{{ scope.row.name }}</code></div></template></el-table-column>
-            <el-table-column label="来源" width="72"><template #default="scope">{{ scope.row.source === 'dsh' ? 'DSH' : '平台' }}</template></el-table-column>
+            <el-table-column label="来源" width="88"><template #default="scope">{{ scope.row.source === 'dsh' ? 'DSH' : '平台' }}</template></el-table-column>
             <el-table-column label="装配" min-width="128"><template #default="scope">{{ assemblyLabel(scope.row) }}</template></el-table-column>
             <el-table-column label="状态" width="92"><template #default="scope"><StatusTag :status="toolDisabled(scope.row, selectedRuntime) ? 'disabled' : 'available'" :label="toolDisabled(scope.row, selectedRuntime) ? '已停用' : '可用'" dot /></template></el-table-column>
           </el-table>

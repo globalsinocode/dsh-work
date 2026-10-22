@@ -41,15 +41,18 @@ const editor = provideAgentDraftEditor(agent, { canEdit: canManage })
 const profileFields: AgentDraftField[] = ['name', 'description', 'welcomeMessage', 'systemPrompt', 'workInstructions', 'examplePrompts']
 const capabilityFields: AgentDraftField[] = ['skills', 'mcpScope', 'timeoutSeconds', 'maxToolCalls', 'maxOutputBytes']
 const draftErrors = computed(() => validateAgentDraft(editor.form))
+/** 最近一次离开时保存失败的编辑步骤（例如服务端拒绝所选 Skill）；保存成功后清除。 */
+const saveFailedStep = ref<AgentDraftStep>()
+watch(() => editor.state.value, state => { if (state === 'saved') saveFailedStep.value = undefined })
 const accessComplete = computed(() => Boolean(accessSnapshot.value?.visibleRoleIds.length && accessSnapshot.value.roleIds.length))
 
 /** 「角色与权限」只在从未发布时作为一步出现；已发布 Agent 在详情页岗位权限中修改。 */
 const steps = computed(() => {
   const list: Array<{ id: AgentDraftStep; label: string; hint: string; state: 'done' | 'todo' | 'error' | 'none' }> = [
     { id: 'profile', label: '职责与人格', hint: '名称、说明、SOUL.md 与示例问题',
-      state: profileFields.some(field => draftErrors.value[field]) ? 'error' : 'done' },
+      state: profileFields.some(field => draftErrors.value[field]) || saveFailedStep.value === 'profile' ? 'error' : 'done' },
     { id: 'capabilities', label: '能力', hint: 'Skill、MCP 与运行限制',
-      state: capabilityFields.some(field => draftErrors.value[field]) ? 'error' : 'done' },
+      state: capabilityFields.some(field => draftErrors.value[field]) || saveFailedStep.value === 'capabilities' ? 'error' : 'done' },
   ]
   if (!activeVersion.value) {
     list.push({ id: 'audience', label: '角色与权限', hint: '谁能使用它、它持有的岗位角色', state: accessComplete.value ? 'done' : 'todo' })
@@ -126,6 +129,15 @@ async function goToStep(step: AgentDraftStep) {
   const ids = steps.value.map(item => item.id)
   const forward = ids.indexOf(step) > ids.indexOf(currentStep.value)
   if (!await saveAudience(forward)) return
+  // 编辑步骤先保存；服务端拒绝或内容不合法时停在本步，不把它标为已完成。
+  if (forward && (currentStep.value === 'profile' || currentStep.value === 'capabilities')) {
+    await editor.flush()
+    if (['error', 'invalid', 'conflict'].includes(editor.state.value)) {
+      saveFailedStep.value = currentStep.value
+      ElMessage.error(editor.message.value || '当前步骤未能保存，请修正后再继续')
+      return
+    }
+  }
   // 从未发布的 Agent 必须先完成角色与权限，才能进入验证与发布。
   if (step === 'release' && currentStep.value !== 'audience' && canManage.value && !activeVersion.value) {
     const loaded = await loadAccessSnapshot()

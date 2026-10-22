@@ -222,3 +222,21 @@ it('从未发布的 Agent 未选岗位角色时不能直接进入验证与发布
     wrapper.unmount()
   }
 })
+
+it('能力保存被服务端拒绝时停在本步，并把“能力”标为需修正', async () => {
+  const { wrapper, router } = await mountDraft({ step: 'capabilities' })
+  try {
+    const content = useContentStore()
+    vi.spyOn(content, 'updateAgentDraft').mockRejectedValue(new Error('所选 Skill 需要的工具不可用：web_search@1.0.0（Agent 未开启联网搜索）'))
+    const editor = (wrapper.vm.$ as unknown as { setupState: { editor: { form: { skills: string[] } } } }).setupState.editor
+    editor.form.skills = ['skill-web@0.1.0']
+    await flushPromises()
+    await wrapper.get('[data-action="next-step"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.step).toBe('capabilities')
+    expect(wrapper.get('[aria-label^="2. 能力"]').attributes('aria-label')).toBe('2. 能力，需修正')
+    expect(wrapper.text()).toContain('未开启联网搜索')
+  } finally {
+    wrapper.unmount()
+  }
+})
