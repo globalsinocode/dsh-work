@@ -14,8 +14,10 @@ async function chooseMode(page: Page, label: '工作模式' | '协作模式') {
   await page.getByRole('menuitem', { name: new RegExp(label) }).click()
 }
 
-async function switchToCollab(page: Page) {
+async function switchToCollab(page: Page, options: { narrow?: boolean } = {}) {
   await page.goto('/workbench')
+  // 窄屏下工作模式的侧栏（含 logo）收起在“打开导航”之后，这是 A 的现有交互。
+  if (options.narrow) await page.getByRole('button', { name: '打开导航' }).click()
   await chooseMode(page, '协作模式')
   await expect(page).toHaveURL(/\/c\/chats$/)
 }
@@ -30,7 +32,8 @@ test('MODE-E2E-01: never-switched employees land in work mode and see the logo m
   await expect(page.getByRole('menuitem', { name: /协作模式/ })).not.toContainText('当前模式')
   await expect(page.getByText('按账号记住选择；两种模式数据相同')).toBeVisible()
 
-  await page.keyboard.press('Escape')
+  // 点击菜单外关闭（键盘打开时焦点在菜单内，Esc 同样关闭）。
+  await page.getByRole('heading', { level: 1 }).first().click()
   await expect(page.getByRole('menuitem', { name: /协作模式/ })).toBeHidden()
   await expect(page).toHaveURL(/\/workbench$/)
 })
@@ -109,7 +112,7 @@ test('MODE-E2E-03: collaboration shell has four entries and an avatar menu for s
 
 test('MODE-E2E-03: collaboration shell uses a bottom tab bar on narrow screens', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 760 })
-  await switchToCollab(page)
+  await switchToCollab(page, { narrow: true })
   const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
   await expect(navigation.getByRole('button')).toHaveText(['对话', 'AI 同事', '群组', '定时任务'])
   const box = await navigation.boundingBox()
