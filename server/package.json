@@ -54,6 +54,7 @@
     "test:m5:file-versions:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/team-workspace-file-versions-api.integration.test.ts",
     "test:m5:lifecycle:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/team-workspace-lifecycle-api.integration.test.ts",
     "test:s5:conversation-targets:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/conversation-targets-api.integration.test.ts",
+    "test:s5:timeline:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/workspace-timeline-api.integration.test.ts",
     "test:s5:preferences:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/user-preferences-api.integration.test.ts",
     "test:m5:activity:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/team-workspace-activity-api.integration.test.ts",
     "test:m5:usage:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/http/team-workspace-usage-api.integration.test.ts",

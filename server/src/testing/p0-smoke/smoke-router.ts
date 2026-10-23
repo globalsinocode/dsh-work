@@ -8,6 +8,7 @@ import { registerModelGovernanceRoutes } from '../../http/admin/model-routes.ts'
 import { registerSkillInstallationRoutes } from '../../http/admin/skill-installation-routes.ts'
 import { registerUserPreferenceRoutes } from '../../http/workbench/preference-routes.ts'
 import { registerConversationTargetRoutes } from '../../http/workbench/conversation-target-routes.ts'
+import { registerWorkspaceTimelineRoutes } from '../../http/workbench/workspace-timeline-routes.ts'
 import { Router, envelope } from '../../http/router.ts'
 import { MemoryModelGovernanceRepository } from '../../modules/model/memory-model-governance-repository.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -15,6 +16,7 @@ import { testApiAuthenticator } from '../test-identity.ts'
 import { AdminQueryService } from './admin-query-service.ts'
 import { MemoryUserPreferenceStore } from './memory-user-preferences.ts'
 import { MemoryConversationTargetStore } from './memory-conversation-targets.ts'
+import { MemoryWorkspaceTimeline } from './memory-workspace-timeline.ts'
 import { registerAdminRoutes } from './admin-routes.ts'
 import { registerSmokeProjectRoutes } from './project-routes.ts'
 import { SmokeRepository } from './smoke-repository.ts'
@@ -39,6 +41,8 @@ export function createSmokeRouter() {
   registerSmokeProjectRoutes(router)
   registerUserPreferenceRoutes(router, new MemoryUserPreferenceStore(), 'prototype-memory')
   registerConversationTargetRoutes(router, new MemoryConversationTargetStore(repository), undefined, 'prototype-memory')
+  // 冒烟只有一个测试身份：授权直接通过，成员与归档口径由 PostgreSQL 集成测试覆盖。
+  registerWorkspaceTimelineRoutes(router, new MemoryWorkspaceTimeline(repository), { authorizeWorkbench: async () => undefined as never }, 'prototype-memory')
   registerAdminRoutes(router, new AdminQueryService(repository))
   registerModelGovernanceRoutes(router, new ModelGovernanceService(new MemoryModelGovernanceRepository()))
   router.get('/health/live', () => ({ status: 'ok', service: 'dsh-work-p0-smoke' }))

@@ -306,6 +306,71 @@
         }
       }
     },
+    "/workspaces/{workspaceId}/timeline": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "get": {
+        "operationId": "getWorkspaceTimeline",
+        "summary": "群聊时间线（协作模式）",
+        "description": "员工端双模式 S5d（项目空间方案 12.6，D26～D28）：按时间倒序合并本空间的讨论话题消息（不属于任何任务的团队会话，只取 user / assistant）、讨论中 @Agent 的执行记录、任务卡片（任务创建、Agent 任务每次执行结束——定时执行“无变化”标为 quiet、任务标记完成）与系统记录（群组创建，成员 / Agent 成员 / 负责人 / 归档相关动态）。任务卡片取自任务、执行与任务事件，不写入消息表；任务对话不进入时间线。读取轨：归档空间现任成员可读；非成员与被移出的成员拒绝；个人空间 422。",
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "时间线分页（新到旧）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/WorkspaceTimelinePage"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agents": {
       "get": {
         "operationId": "listAvailableAgents",
@@ -3992,6 +4057,316 @@
               },
               "sessionId": {
                 "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "WorkspaceTimelinePage": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTimelineItem"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkspaceTimelineItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "sessionId",
+              "sessionTitle",
+              "role",
+              "content"
+            ],
+            "properties": {
+              "kind": {
+                "const": "message"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionTitle": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string"
+              },
+              "senderId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "senderName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "agentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runRequesterName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "sessionId",
+              "sessionTitle",
+              "runId",
+              "status",
+              "requesterName"
+            ],
+            "properties": {
+              "kind": {
+                "const": "run"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionTitle": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "requesterName": {
+                "type": "string"
+              },
+              "agentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stoppedByName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "event",
+              "task"
+            ],
+            "properties": {
+              "kind": {
+                "const": "task"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "created",
+                  "run_finished",
+                  "completed"
+                ]
+              },
+              "actorName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "title",
+                  "status",
+                  "assigneeType",
+                  "assigneeName",
+                  "removed"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "todo",
+                      "in_progress",
+                      "done"
+                    ]
+                  },
+                  "assigneeType": {
+                    "type": "string",
+                    "enum": [
+                      "employee",
+                      "agent"
+                    ]
+                  },
+                  "assigneeName": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "removed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "run": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "status",
+                      "scheduled",
+                      "quiet"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "scheduled": {
+                        "type": "boolean"
+                      },
+                      "quiet": {
+                        "type": "boolean",
+                        "description": "定时执行且回复以“无变化”开头：界面折叠。"
+                      },
+                      "summary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "maxLength": 120
+                      }
+                    }
+                  }
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "activityKind",
+              "actorName",
+              "safeMetadata"
+            ],
+            "properties": {
+              "kind": {
+                "const": "system"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "activityKind": {
+                "type": "string",
+                "description": "workspace_created 或空间动态类型（member_added、agent_member_added、workspace_archived 等）。"
+              },
+              "actorName": {
+                "type": "string"
+              },
+              "safeMetadata": {
+                "type": "object"
               }
             }
           }
