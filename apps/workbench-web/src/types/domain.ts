@@ -781,6 +781,43 @@ export interface UserPreferences {
   updatedAt: string | null
 }
 
+/** 协作模式对话列表的一行（S5c）：与某个 AI 同事的单聊或一个群组，而不是单个 Session。 */
+export interface ConversationTarget {
+  type: 'agent' | 'group'
+  /** 单聊为 Agent ID，群组为项目空间 ID。 */
+  id: string
+  name: string
+  description: string
+  avatarNames: string[]
+  lastMessage: { role: 'user' | 'assistant'; authorName: string; text: string; sentAt: string } | null
+  lastActiveAt: string
+  /** 单聊：AI 同事当前是否可用；群组恒为 true。 */
+  available: boolean
+}
+
+export interface AgentConversationSegment {
+  sessionId: string
+  title: string
+  createdAt: string
+  lastActiveAt: string
+  agentVersion: string
+  runCount: number
+  latestRun: { id: string; status: string } | null
+}
+
+/** 与某个 AI 同事的单聊：会话分段（新到旧）与发送时续写的会话。 */
+export interface AgentConversation {
+  agent: { id: string; name: string; description: string; version: string; available: boolean }
+  items: AgentConversationSegment[]
+  nextCursor: string | null
+  /** null：发送时开启新会话（首次对话或 Agent 版本已变化）。 */
+  continueSessionId: string | null
+}
+
+export type ConversationLocation =
+  | { type: 'agent'; agentId: string; sessionId: string }
+  | { type: 'group'; workspaceId: string; sessionId: string }
+
 export interface WorkbenchSession {
   user: UserProfile
   identityProvider: 'prototype-sso' | 'ai-hub-oidc' | 'local-password'

@@ -89,8 +89,12 @@ function toWork(route: ModeRoute): RouteLocationRaw {
       if (conversation) return { name: 'conversation', params: { id: conversation } }
       return { name: 'workbench', query: omit(query, ['conversation']) }
     }
-    case 'collab-agent-chat':
+    case 'collab-agent-chat': {
+      // 单聊中定位的会话回到 A 的对话详情；未定位时回到预选该 AI 同事的新对话。
+      const session = first(query.session)
+      if (session) return { name: 'conversation', params: { id: session } }
       return { name: 'workbench', query: { agent: first(params.agentId) } }
+    }
     case 'collab-group-chat': {
       const id = first(params.workspaceId)
       const task = first(query.task)

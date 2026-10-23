@@ -6,6 +6,7 @@ import { useUiModeStore } from '@/stores/ui-mode'
 import { locationForMode } from './mode-routes'
 
 const collabPlaceholder = () => import('@/views/collab/CollabPlaceholderView.vue')
+const collabChats = () => import('@/views/collab/CollabChatsView.vue')
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -89,11 +90,11 @@ const router = createRouter({
         },
       ],
     },
-    // B 协作模式专属路由（项目空间方案 12.5）。S5a 先放占位页，对话、AI 同事、群组页在后续切片实现。
+    // B 协作模式专属路由（项目空间方案 12.5）。对话页（单聊）自 S5c 起；群聊、AI 同事与群组页在 S5d 实现前为占位页。
     { path: '/c', redirect: { name: 'collab-chats' } },
-    { path: '/c/chats', name: 'collab-chats', component: collabPlaceholder, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
-    { path: '/c/chats/agent/:agentId', name: 'collab-agent-chat', component: collabPlaceholder, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
-    { path: '/c/chats/group/:workspaceId', name: 'collab-group-chat', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
+    { path: '/c/chats', name: 'collab-chats', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
+    { path: '/c/chats/agent/:agentId', name: 'collab-agent-chat', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
+    { path: '/c/chats/group/:workspaceId', name: 'collab-group-chat', component: collabChats, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
     { path: '/c/groups', name: 'collab-groups', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
     { path: '/c/groups/:workspaceId', name: 'collab-group', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
     { path: '/c/agents', name: 'collab-agents', component: collabPlaceholder, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },

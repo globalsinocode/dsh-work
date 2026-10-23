@@ -18,6 +18,10 @@ import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities
 import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import type { AgentRuntimePort } from '../../modules/runtime/runtime-types.ts'
 import { registerWorkbenchAgentRoutes } from '../../http/workbench/agent-routes.ts'
+import { registerConversationTargetRoutes } from '../../http/workbench/conversation-target-routes.ts'
+import { registerUserPreferenceRoutes } from '../../http/workbench/preference-routes.ts'
+import { PostgresConversationTargetService } from '../../modules/workbench/application/postgres-conversation-target-service.ts'
+import { PostgresUserPreferenceService } from '../../modules/workbench/application/postgres-user-preference-service.ts'
 import { Router, envelope, requireRequestIdentity } from '../../http/router.ts'
 import { registerConversationRoutes } from '../../http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
@@ -123,6 +127,9 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
     registerAutomationRoutes(router, automationService)
+    // 员工端双模式（S5）：浏览器旅程需要与生产同一组偏好与对话对象接口。
+    registerUserPreferenceRoutes(router, new PostgresUserPreferenceService(db.client))
+    registerConversationTargetRoutes(router, new PostgresConversationTargetService(db.client, agents), auth)
     router.get('/api/workbench/v1/session', (_request, context) => {
       const identity = requireRequestIdentity(context, 'workbench')
       return envelope('workbench', { user: identity.profile, identityProvider: 'prototype-sso', apiAudience: 'workbench' })

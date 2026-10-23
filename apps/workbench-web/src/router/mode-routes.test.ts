@@ -37,6 +37,7 @@ describe('employee mode route mapping (project space plan 12.5)', () => {
     expect(mapped('/c/chats?skill=skill-a', 'work')).toBe('/workbench?skill=skill-a')
     expect(mapped('/c/chats?conversation=run-1', 'work')).toBe('/conversations/run-1')
     expect(mapped('/c/chats/agent/agent-ops', 'work')).toBe('/workbench?agent=agent-ops')
+    expect(mapped('/c/chats/agent/agent-ops?session=session-1', 'work')).toBe('/conversations/session-1')
     expect(mapped('/c/chats/group/ws-supply', 'work')).toBe('/workspaces/ws-supply')
     expect(mapped('/c/chats/group/ws-supply?tab=chat', 'work')).toBe('/workspaces/ws-supply?tab=conversation')
     expect(mapped('/c/chats/group/ws-supply?tab=archive&info=1', 'work')).toBe('/workspaces/ws-supply?tab=archive')

@@ -119,6 +119,193 @@
         }
       }
     },
+    "/me/conversation-targets": {
+      "get": {
+        "operationId": "listConversationTargets",
+        "summary": "协作模式对话列表（本人）",
+        "description": "员工端双模式 S5c（项目空间方案 12.6，D24）：本人的个人会话按 AI 同事聚合为一行，加上本人当前所在的活动项目空间（群组）；按最近活动排序、服务端分页。预览只取 user / assistant 消息；被移出项目空间后不再返回。只读接口，发送消息仍走 POST /sessions 与 POST /sessions/{sessionId}/runs。",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "按 AI 同事或群组名称过滤。"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对话对象分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationTargetPage"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets/agent/{agentId}/sessions": {
+      "parameters": [
+        {
+          "name": "agentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getAgentConversation",
+        "summary": "与某个 AI 同事的单聊：会话分段（本人）",
+        "description": "返回本人与该 AI 同事的个人会话（新到旧分页，D26 连续分段显示）与 continueSessionId：只有最近一段会话且其 Agent 版本等于当前版本、AI 同事当前可用时给出；为 null 时发送消息由前端经 POST /sessions 开启新会话。各段内容经既有 GET /runs/{runId} 读取。与该 AI 同事没有会话且其不可用时返回 404。",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "单聊分段",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AgentConversation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets/resolve": {
+      "get": {
+        "operationId": "resolveConversationTarget",
+        "summary": "把对话链接解析为对话对象",
+        "description": "站内通知、复制的链接与旧书签中的 /conversations/{id} 在协作模式中经此定位：Run ID 或 Session ID 均可；本人的个人会话解析为所属 AI 同事，本人所在项目空间的会话解析为群组；不存在或无权访问返回 404。",
+        "parameters": [
+          {
+            "name": "conversation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对话所属对象",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationLocation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agents": {
       "get": {
         "operationId": "listAvailableAgents",
@@ -3548,6 +3735,267 @@
             }
           }
         }
+      },
+      "ConversationTargetPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationTarget"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConversationTarget": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "name",
+          "description",
+          "avatarNames",
+          "lastMessage",
+          "lastActiveAt",
+          "available"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "group"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "单聊为 Agent ID，群组为项目空间 ID。"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "avatarNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "description": "头像拼图用名称：群组为最多 4 位员工，单聊为 AI 同事名称。"
+          },
+          "lastMessage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationMessagePreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastActiveAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "单聊：AI 同事当前是否可用（不可用时历史仍可读）；群组恒为 true。"
+          }
+        }
+      },
+      "ConversationMessagePreview": {
+        "type": "object",
+        "required": [
+          "role",
+          "authorName",
+          "text",
+          "sentAt"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentConversation": {
+        "type": "object",
+        "required": [
+          "agent",
+          "items",
+          "nextCursor",
+          "continueSessionId"
+        ],
+        "properties": {
+          "agent": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "description",
+              "version",
+              "available"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "available": {
+                "type": "boolean"
+              }
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sessionId",
+                "title",
+                "createdAt",
+                "lastActiveAt",
+                "agentVersion",
+                "runCount",
+                "latestRun"
+              ],
+              "properties": {
+                "sessionId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "lastActiveAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "agentVersion": {
+                  "type": "string",
+                  "description": "会话固定的 Agent 版本号。"
+                },
+                "runCount": {
+                  "type": "integer"
+                },
+                "latestRun": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "continueSessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "发送消息时续写的会话；null 表示由平台开启新会话（AI 同事不可用时不能发送）。"
+          }
+        }
+      },
+      "ConversationLocation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "agentId",
+              "sessionId"
+            ],
+            "properties": {
+              "type": {
+                "const": "agent"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "workspaceId",
+              "sessionId"
+            ],
+            "properties": {
+              "type": {
+                "const": "group"
+              },
+              "workspaceId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       },
       "UserPreferences": {
         "type": "object",

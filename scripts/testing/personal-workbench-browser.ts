@@ -32,6 +32,31 @@ await fixture.db.client`insert into artifact_versions(id,tenant_id,artifact_id,v
  values(${randomUUID()},${testTenant},${artifact},1,${generated.id},${runId})`
 await fixture.db.client`update runs set created_at = '2026-08-01T00:00:00Z' where session_id = ${old.id}`
 fixture.router.get('/api/workbench/v1/test/fixtures', () => envelope('workbench', { oldSessionId: old.id, emptySessionId: empty.id, personalId: old.workspaceId, teamId: team, attachmentId: attachment.id, artifactFileId: generated.id, synthetic: true }))
+// S5c 测试钩子（仅本可丢弃夹具）：把本人与某 AI 同事最近的一段个人会话改为固定在该 AI 同事的
+// 一个旧版本上，模拟“会话固定的 Agent 版本已不是当前版本”，验证协作模式发送时自动开启新会话。
+fixture.router.post('/api/workbench/v1/test/collab/agents/:agentId/stale-latest-session', async (_request, context) => {
+  const agentId = context.params['agentId'] ?? ''
+  const [latest] = await fixture.db.client<{ sessionId: string; versionId: string }[]>`
+    select s.id as "sessionId", s.agent_version_id as "versionId"
+      from sessions s join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+      join agent_versions av on av.tenant_id = s.tenant_id and av.id = s.agent_version_id
+     where s.tenant_id = ${testTenant} and s.created_by = 'U00001' and s.status = 'active'
+       and w.workspace_type = 'personal' and av.agent_id = ${agentId}
+     order by s.last_active_at desc, s.id desc limit 1`
+  if (!latest) return envelope('workbench', { sessionId: null })
+  const staleVersionId = `${latest.versionId}-p1-stale`
+  const [current] = await fixture.db.client<Record<string, unknown>[]>`select * from agent_versions where tenant_id = ${testTenant} and id = ${latest.versionId}`
+  const columns = Object.keys(current!).filter(column => column !== 'id' && column !== 'version')
+    .map(column => `"${column.replaceAll('"', '""')}"`).join(', ')
+  await fixture.db.client.unsafe(
+    `insert into agent_versions (id, version, ${columns})
+     select $1, $2, ${columns} from agent_versions where tenant_id = $3 and id = $4
+     on conflict (id) do nothing`,
+    [staleVersionId, `0.0.${Date.now()}`, testTenant, latest.versionId],
+  )
+  await fixture.db.client`update sessions set agent_version_id = ${staleVersionId} where tenant_id = ${testTenant} and id = ${latest.sessionId}`
+  return envelope('workbench', { sessionId: latest.sessionId })
+})
 console.log('P1 personal workbench ready; throwaway PostgreSQL, synthetic Runtime, no OIDC/model.')
 let closing = false
 async function close() { if (closing) return; closing = true; await fixture.close(); process.exit(0) }

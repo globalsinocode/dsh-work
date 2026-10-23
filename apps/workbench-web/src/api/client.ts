@@ -17,6 +17,9 @@ import type {
   TaskRun,
   TeamMemberRole,
   UiMode,
+  AgentConversation,
+  ConversationLocation,
+  ConversationTarget,
   UserPreferences,
   WorkbenchAgent,
   WorkbenchSession,
@@ -156,6 +159,17 @@ export const workbenchApi = {
   getPreferences: () => request<UserPreferences>('/me/preferences'),
   updatePreferences: (input: { uiMode: UiMode }) =>
     request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
+  listConversationTargets: (query: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: ConversationTarget[]; nextCursor: string | null }>(`/me/conversation-targets?${params}`)
+  },
+  getAgentConversation: (agentId: string, cursor?: string) =>
+    request<AgentConversation>(
+      `/me/conversation-targets/agent/${encodeURIComponent(agentId)}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  resolveConversation: (conversationId: string) =>
+    request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
   getSkills: () => request<WorkbenchSkill[]>('/skills'),

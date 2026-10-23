@@ -1,6 +1,7 @@
 import { onMounted, watch } from 'vue'
 
 import { useAuthStore } from '@/stores/auth'
+import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import { notifyActionFailure } from '@/utils/feedback'
@@ -13,9 +14,10 @@ export function useWorkbenchBootstrap() {
   const authStore = useAuthStore()
   const taskStore = useTaskStore()
   const contentStore = useContentStore()
+  const collabConversations = useCollabConversationStore()
 
   watch(() => authStore.user.id, (id, previous) => {
-    if (previous && id !== previous) { taskStore.reset(); contentStore.reset() }
+    if (previous && id !== previous) { taskStore.reset(); contentStore.reset(); collabConversations.reset() }
     if (id === '—') return
     void Promise.all([taskStore.load(), contentStore.load()]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
   }, { immediate: true })

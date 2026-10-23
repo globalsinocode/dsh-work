@@ -408,4 +408,6 @@
 
 **进度：** S5b 已实现（2026-10-23）：`ConversationView` 的消息、执行结果卡片、执行状态与输入区拆为 `components/conversation/`（`ConversationMessageItem`、`RunMessageList`、`SessionDiscussionList`、`RunComposer`），停止 / 重试 / 引用成果抽为 `useRunActions`，执行进度抽为 `useRunProgress`，消息样式移入共享的 `styles/conversation-thread.css`；`WorkspaceDetailView` 的空间加载、成员与角色、可 @ 的 Agent、文件、成果与写入口判断抽为 `useProjectSpace`。A 的界面与行为不变（MODE-E2E-05）。页签内容拆为独立组件随 S5d 进行。
 
+**进度：** S5c 已实现（2026-10-23）：`GET /me/conversation-targets`（本人个人会话按 AI 同事聚合 + 本人所在的活动项目空间，服务端分页与名称搜索，预览只取 user / assistant 消息）、`GET /me/conversation-targets/agent/:agentId/sessions`（会话分段与服务端给出的续写会话 `continueSessionId`）、`GET /me/conversation-targets/resolve`（对话链接定位）；迁移 0095 为按会话取最新消息加索引。协作模式对话页：统一列表（搜索、“＋”发起对话）、单聊连续分段（段首“话题 · 时间”、加载更早、链接定位到段）、续写最近一段或在首次对话 / Agent 版本变化时经 `createSession` 开启新会话；窄屏两级。群聊、新建群组、未读在 S5d / S5e。
+
 每个切片按浏览器 E2E 工作流执行：Spec 阶段在 `e2e/TEST-CATALOG.md` 登记 B 模式旅程（模式切换与记忆、默认进入 A、链接在两种模式间映射、单聊续写与话题分隔、群聊 @Agent、任务卡片进入任务详情并续接、群组中上传文件与新版本、档案编辑与回退、只读成员与归档群组无输入区），A 模式现有旅程全部保持通过；公共壳层变化后运行全部 `pnpm test:e2e`。`AGENTS.md` 中“员工端主导航固定五个入口”的约定改为“A 模式五个入口、B 模式四个入口”，同步更新 `e2e/personal-workbench.spec.ts`。

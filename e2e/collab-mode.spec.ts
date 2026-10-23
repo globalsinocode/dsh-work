@@ -134,7 +134,9 @@ test('MODE-E2E-04: work-mode links, bookmarks and notifications land on the coll
     ['/workspaces/ws-supply', /\/c\/chats\/group\/ws-supply$/],
     ['/workspaces/ws-supply?tab=files', /\/c\/chats\/group\/ws-supply\?tab=files$/],
     ['/workspaces/ws-supply/tasks/ptask-1', /\/c\/chats\/group\/ws-supply\?tab=tasks&task=ptask-1$/],
-    ['/conversations/run-1', /\/c\/chats\?conversation=run-1$/],
+    // 个人对话落到所属 AI 同事的单聊并定位到该段（S5c）；项目空间对话落到群组。
+    ['/conversations/run-260827-002', /\/c\/chats\/agent\/dsh-work-assistant\?session=session-0991$/],
+    ['/conversations/run-260828-001', /\/c\/chats\/group\/ws-supply\?conversation=session-1001$/],
     ['/workbench?agent=agent-ops', /\/c\/chats\/agent\/agent-ops$/],
     ['/automations', /\/automations$/],
     ['/settings', /\/settings$/],
@@ -164,4 +166,70 @@ test('MODE-E2E-04: collaboration links map back in work mode and switching keeps
   await chooseMode(page, '工作模式')
   await expect(page).toHaveURL(/\/workspaces\/ws-supply\?tab=files$/)
   await expect(page.getByRole('tab', { name: /共享文件/ })).toHaveAttribute('aria-selected', 'true')
+})
+
+test('MODE-E2E-06: the chat list groups personal conversations by AI colleague and lists groups', async ({ page }) => {
+  await switchToCollab(page)
+  const list = page.getByRole('list', { name: '对话' })
+  const rows = list.getByRole('button')
+  await expect(rows).toHaveCount(3)
+  // 同一 AI 同事的多次对话聚合为一行；群组各一行，按最近活动排序。
+  await expect(list.getByRole('button', { name: /^dsh-work Assistant/ })).toHaveCount(1)
+  await expect(rows.first()).toContainText('供应链经营分析')
+  await expect(list.getByRole('button', { name: /^dsh-work Assistant/ })).toContainText('委外加工发料')
+
+  await page.getByLabel('搜索对话').fill('月度')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('月度经营复盘')
+  await page.getByLabel('搜索对话').fill('不存在的名称')
+  await expect(page.getByText('没有匹配的对话')).toBeVisible()
+  await page.getByLabel('搜索对话').fill('')
+  await expect(rows).toHaveCount(3)
+
+  await page.getByRole('button', { name: '发起对话或新建群组' }).click()
+  await expect(page.getByRole('menuitem', { name: /新建群组/ })).toHaveAttribute('aria-disabled', 'true')
+  await page.getByRole('menuitem', { name: /发起对话/ }).click()
+  await page.getByRole('dialog', { name: '发起对话' }).getByRole('button', { name: '与 dsh-work Assistant 对话' }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant$/)
+  await expect(page.getByRole('heading', { name: 'dsh-work Assistant', level: 1 })).toBeVisible()
+})
+
+test('MODE-E2E-07: a 1:1 chat shows its sessions with topic dividers and offers to start a new one after a version change', async ({ page }) => {
+  await switchToCollab(page)
+  await page.getByRole('list', { name: '对话' }).getByRole('button', { name: /^dsh-work Assistant/ }).click()
+  const chat = page.getByRole('region', { name: '与 dsh-work Assistant 的对话' })
+  await expect(chat.getByText(/^查询委外加工发料制度 · /)).toBeVisible()
+  await expect(chat.getByText('公司的委外加工业务应该如何处理发料和库存扣减？')).toBeVisible()
+  await expect(chat.getByRole('button', { name: '复制回答' })).toBeVisible()
+  // 夹具中这段对话固定在旧版本：发送时会开始新的对话（P1 覆盖真实续写与新会话）。
+  await expect(page.getByTestId('new-session-notice')).toBeVisible()
+  await expect(page.getByLabel('对话输入')).toBeVisible()
+})
+
+test('MODE-E2E-06/07: narrow screens go from the list to a chat and back', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await switchToCollab(page, { narrow: true })
+  await page.getByRole('list', { name: '对话' }).getByRole('button', { name: /^dsh-work Assistant/ }).click()
+  await expect(page.getByRole('list', { name: '对话' })).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'dsh-work Assistant', level: 1 })).toBeVisible()
+  await page.getByRole('button', { name: '返回对话列表' }).click()
+  await expect(page).toHaveURL(/\/c\/chats$/)
+  await expect(page.getByRole('list', { name: '对话' })).toBeVisible()
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+  expect(overflow).toBeLessThanOrEqual(0)
+})
+
+test('MODE-E2E-08: conversation links land on the owning chat, missing ones explain why', async ({ page }) => {
+  await switchToCollab(page)
+  await page.goto('/conversations/run-260827-002')
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant\?session=session-0991$/)
+  await expect(page.getByRole('region', { name: '查询委外加工发料制度 · ', exact: false })).toBeVisible()
+
+  await chooseMode(page, '工作模式')
+  await expect(page).toHaveURL(/\/conversations\/session-0991$/)
+
+  await chooseMode(page, '协作模式')
+  await page.goto('/conversations/run-does-not-exist')
+  await expect(page).toHaveURL(/\/c\/chats$/)
+  await expect(page.getByText('对话不存在或你没有访问权限')).toBeVisible()
 })
