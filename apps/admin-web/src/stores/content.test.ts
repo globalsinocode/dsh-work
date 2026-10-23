@@ -273,6 +273,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     timeoutSeconds: 300,
     skills: [],
     webSearchEnabled: false,
+    projectTasksEnabled: false,
     updatedAt: '2026-09-10 10:00',
     ...overrides,
   }

@@ -58,6 +58,11 @@ function showMcpTools(connector: ConnectorDefinition) {
         <p class="field-help">开启后 Agent 可使用 web_search 检索公开网页，查询内容会发送到外部搜索服务。读取与生成工作区文件等基础工具始终由平台提供；需要联网搜索的 Skill 只能在开启后引用。</p>
       </el-form-item>
 
+      <el-form-item label="项目任务管理">
+        <el-switch v-model="form.projectTasksEnabled" :disabled="readonly" active-text="允许查看与维护项目任务" aria-label="允许查看与维护项目任务" data-testid="agent-project-tasks-switch" />
+        <p class="field-help">开启后，该 Agent 在其所在的项目空间（群组）中可由成员发起运行时查看与维护项目任务；写入按发起人权限执行，Agent 新建的 Agent 任务执行规则为手动。个人对话与系统运行不装配这些工具。</p>
+      </el-form-item>
+
       <div class="subsection-heading"><strong>MCP 外部连接</strong><span>按整个 Connector 选择，不逐工具配置</span></div>
       <el-radio-group :model-value="form.mcpScope.mode" :disabled="readonly" aria-label="MCP 使用范围" @update:model-value="(value: string | number | boolean | undefined) => setMcpMode(value as AgentMcpScope['mode'])">
         <el-radio value="selected">仅使用选定 MCP</el-radio>

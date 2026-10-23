@@ -211,6 +211,7 @@ export class AdminQueryService {
       workInstructions: input.workInstructions?.trim() ?? '',
       mcpScope: normalizeAgentMcpScope(input.mcpScope),
       webSearchEnabled: input.webSearchEnabled === true,
+      projectTasksEnabled: input.projectTasksEnabled === true,
     }
     assertDraftConfiguration(normalizedInput)
 
@@ -222,6 +223,7 @@ export class AdminQueryService {
     const agent: AgentDefinition = {
       ...configuration,
       webSearchEnabled: configuration.webSearchEnabled === true,
+      projectTasksEnabled: configuration.projectTasksEnabled === true,
       roleIds: visibleRoleIds ?? [],
       visibility: visibleRoleIds?.length ? `指定 ${visibleRoleIds.length} 个角色` : '未设置',
       status: 'draft',
@@ -329,6 +331,7 @@ export class AdminQueryService {
       timeoutSeconds: target.timeoutSeconds,
       skills: target.skills,
       webSearchEnabled: target.webSearchEnabled,
+      projectTasksEnabled: target.projectTasksEnabled,
       updatedAt: timestamp,
     })
     await this.repository.updateAgentVersion(input.agentId, target.version, { status: 'published' })
@@ -656,6 +659,7 @@ function assertAgentReady(agent: AgentDefinition) {
     timeoutSeconds: agent.timeoutSeconds,
     skills: agent.skills,
     webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
     changeSummary: '发布校验',
   })
   if (!agent.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
@@ -711,5 +715,6 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
     webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
   }
 }

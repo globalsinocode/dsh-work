@@ -106,7 +106,8 @@ async function setAccess(agentId: string, change: { visibleRoleIds?: string[]; r
 }
 
 async function createDraftAgent(id: string, options: {
-  skills?: string[]; webSearchEnabled?: boolean; dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
+  skills?: string[]; webSearchEnabled?: boolean; projectTasksEnabled?: boolean
+  dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
   mcpScope?: AgentMcpScope; examplePrompts?: string[]
 } = {}) {
   return agents.createAgent({
@@ -125,6 +126,7 @@ async function createDraftAgent(id: string, options: {
     timeoutSeconds: 300,
     skills: options.skills ?? ['skill-document@1.0.0'],
     webSearchEnabled: options.webSearchEnabled,
+    projectTasksEnabled: options.projectTasksEnabled,
     mcpScope: options.mcpScope,
     changeSummary: '创建初始草稿版本',
     actor: ADMIN,
@@ -565,6 +567,26 @@ test('联网搜索按 Agent 版本开关装配；Skill 需要联网搜索时须�
   assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_search'))
 })
 
+test('项目任务管理开关随草稿保存与省略保留；不进入默认 runtimeTools', async () => {
+  const agentId = `agent-project-tasks-${randomUUID().slice(0, 8)}`
+  const created = await createDraftAgent(agentId, { skills: [] })
+  assert.equal(created.agent.projectTasksEnabled, false)
+  const enabled = await agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, projectTasksEnabled: true, changeSummary: '开启项目任务管理',
+  })
+  assert.equal(enabled.agent.projectTasksEnabled, true)
+  assert.equal(enabled.version.projectTasksEnabled, true)
+  const [stored] = await database<{ spec: AgentSpec }[]>`
+    select agent_spec as spec from agent_versions where tenant_id = ${tenantId} and id = ${enabled.version.id}
+  `
+  assert.equal(stored?.spec.capabilities.projectTasks, true)
+  assert.ok(!(await agents.getRuntimeSnapshot(enabled.version.id)).runtimeTools.includes('project_tasks_list'))
+  const kept = await agents.updateAgent({
+    ...enabled.agent, agentId, actor: ADMIN, projectTasksEnabled: undefined, changeSummary: '只改说明',
+  })
+  assert.equal(kept.agent.projectTasksEnabled, true)
+})
+
 test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt 不因停用而失败', async () => {
   const runtime = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
   const configure = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
@@ -613,7 +635,7 @@ test('无 Skill/Tool 的 Soul Agent 可配置创建并验证，默认工具随�
   `
   assert.equal(stored?.spec.apiVersion, 'dsh-work.ai/v2')
   assert.deepEqual(stored?.spec.instructions, { path: 'SOUL.md', body: PROMPT })
-  assert.deepEqual(stored?.spec.capabilities, { skills: [], webSearch: false })
+  assert.deepEqual(stored?.spec.capabilities, { skills: [], webSearch: false, projectTasks: false })
   const draftSnapshot = await agents.getRuntimeSnapshot(created.version.id)
   assert.ok(draftSnapshot.runtimeTools.includes('read'))
   assert.ok(draftSnapshot.runtimeTools.includes('write'))

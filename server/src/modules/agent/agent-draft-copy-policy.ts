@@ -6,7 +6,8 @@ import { canonicalJson } from '../runtime/canonical-json.ts'
 export const DRAFT_COPY_FIELDS = ['name', 'description', 'welcomeMessage', 'examplePrompts'] as const
 export const DRAFT_COPY_POLICY = 'draft-copy-v1' as const
 const protectedFields = ['owner', 'department', 'systemPrompt',
-  'workInstructions', 'mcpScope', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled'] as const
+  'workInstructions', 'mcpScope', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills',
+  'webSearchEnabled', 'projectTasksEnabled'] as const
 
 type CopyBefore = Pick<AgentDefinition, 'id' | 'status' | typeof DRAFT_COPY_FIELDS[number] | typeof protectedFields[number]>
 type CopyAfter = Omit<UpdateAgentDraftInput, 'actor'>

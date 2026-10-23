@@ -63,13 +63,20 @@ begin
        set active_version_id = 'agent-version-dsh-work-assistant-project-tasks-1', updated_at = now()
      where tenant_id = 'tenant-dsh-work' and id = 'agent-dsh-work-assistant';
 
-    insert into agent_release_records (
-      id, tenant_id, agent_id, agent_version_id, action, actor_id, note
+    -- 0085 起发布记录写入 audit_events（agent_release_records 已删除）。
+    insert into audit_events (
+      id, tenant_id, actor_type, actor_id, action, object_type, object_id,
+      result, trace_id, safe_context, occurred_at
     ) values (
-      'agent-release-dsh-work-assistant-project-tasks-1', 'tenant-dsh-work',
-      'agent-dsh-work-assistant', 'agent-version-dsh-work-assistant-project-tasks-1',
-      'published', coalesce(source_version.published_by, source_version.created_by),
-      '开启项目任务管理：在项目空间中查看与维护任务。'
+      'audit-agent-release-dsh-work-assistant-project-tasks-1', 'tenant-dsh-work',
+      'user', coalesce(source_version.published_by, source_version.created_by),
+      'agent.release.publish', 'agent', 'agent-dsh-work-assistant', 'success',
+      'trace-agent-release-dsh-work-assistant-project-tasks-1',
+      jsonb_build_object(
+        'agentVersionId', 'agent-version-dsh-work-assistant-project-tasks-1',
+        'note', '开启项目任务管理：在项目空间中查看与维护任务。'
+      ),
+      now()
     ) on conflict (id) do nothing;
   end if;
 end;

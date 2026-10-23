@@ -57,6 +57,7 @@ import { PostgresWorkspaceLifecycleService } from './modules/workbench/applicati
 import { PostgresWorkspaceAgentMemberService } from './modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import { PostgresProjectArchiveService } from './modules/workbench/application/postgres-project-archive-service.ts'
 import { PostgresProjectService } from './modules/workbench/application/postgres-project-service.ts'
+import { mapProjectTaskToolError, ProjectTaskTools } from './modules/workbench/application/project-task-tools.ts'
 import { PostgresWorkspaceActivityService } from './modules/workbench/application/postgres-workspace-activity-service.ts'
 import { PostgresUserPreferenceService } from './modules/workbench/application/postgres-user-preference-service.ts'
 import { PostgresConversationTargetService } from './modules/workbench/application/postgres-conversation-target-service.ts'
@@ -187,6 +188,7 @@ async function start() {
   const mcpServiceRef: { current?: PostgresMcpConnectorService } = {}
   const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
+  const projectTaskToolsRef: { current?: ProjectTaskTools } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
     runtimeId: 'runtime-local-01',
     runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
@@ -220,6 +222,18 @@ async function start() {
     proposeMemory: (input, manifest, signal) => {
       if (!controlledMemoryRef.current) throw new Error('经验迭代服务尚未就绪')
       return controlledMemoryRef.current.proposeFromAttempt(input as { kind: 'preference' | 'experience'; title: string; content: string }, manifest, signal)
+    },
+    projectTaskTool: async (name, input, manifest, signal) => {
+      if (!projectTaskToolsRef.current) throw new Error('项目任务工具尚未就绪')
+      try {
+        const tools = projectTaskToolsRef.current
+        if (name === 'project_tasks_list') return await tools.list(input, manifest, signal)
+        if (name === 'project_task_get') return await tools.get(input, manifest, signal)
+        if (name === 'project_task_create') return await tools.create(input, manifest, signal)
+        return await tools.update(input, manifest, signal)
+      } catch (error) {
+        mapProjectTaskToolError(error)
+      }
     },
     prepareSkillInstallation: (manifest, signal) => installationService.prepare(manifest, signal),
     inspectAdminState: (input, manifest, signal) => assistantService.inspectState(input, manifest, signal),
@@ -321,6 +335,7 @@ async function start() {
   // 项目空间 S1：任务线程端口供编排使用，编排构造后再接回启动执行能力。
   const projectArchive = new PostgresProjectArchiveService(database)
   const projects = new PostgresProjectService(database, workspaceAgentMembers, projectArchive)
+  projectTaskToolsRef.current = new ProjectTaskTools(projects, database)
   // AG-03：仓库先建，orchestration 的执行前复核用它反查任务状态（暂停/停用兜底）。
   const automationRepository = new PostgresAutomationRepository(database)
   orchestration = new RunOrchestrationService(

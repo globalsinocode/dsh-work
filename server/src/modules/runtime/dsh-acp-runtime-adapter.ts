@@ -142,6 +142,13 @@ export interface DshAcpRuntimeAdapterConfiguration {
   recordSkillActivation?: (manifest: RuntimeManifest, skill: RuntimeManifest['agent_configuration']['skill_instructions'][number], contentSha256: string) => Promise<void>
   executePython?: (input: Record<string, unknown>, manifest: RuntimeManifest, workspaceDirectory: string, signal: AbortSignal) => Promise<unknown>
   proposeMemory?: (input: Record<string, unknown>, manifest: RuntimeManifest, signal: AbortSignal) => Promise<unknown>
+  /** 项目空间 S6：Agent 查看与维护项目任务。 */
+  projectTaskTool?: (
+    name: 'project_tasks_list' | 'project_task_get' | 'project_task_create' | 'project_task_update',
+    input: Record<string, unknown>,
+    manifest: RuntimeManifest,
+    signal: AbortSignal,
+  ) => Promise<unknown>
   recordPythonExecution?: (manifest: RuntimeManifest, skillId: string, entry: string, succeeded: boolean) => Promise<void>
   collectArtifacts?: (
     manifest: RuntimeManifest,
@@ -544,6 +551,13 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         const propose = this.configuration.proposeMemory
         if (!propose) throw dependencyUnavailable('Agent 经验迭代申请不可用：未配置经验迭代服务')
         registerPlatformTool('propose_memory', (input, signal) => propose(input, record.manifest, signal))
+      }
+      const projectTaskNames = ['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'] as const
+      for (const name of projectTaskNames) {
+        if (!record.manifest.tools.some(tool => tool.id === name)) continue
+        const handle = this.configuration.projectTaskTool
+        if (!handle) throw dependencyUnavailable('项目任务工具不可用：未配置项目任务服务')
+        registerPlatformTool(name, async (input, signal) => handle(name, input, record.manifest, signal))
       }
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,

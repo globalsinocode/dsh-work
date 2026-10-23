@@ -105,6 +105,28 @@ test('时间线按时间倒序合并讨论、执行记录、任务卡片与系�
   assert.equal(items.at(-1)!.activityKind, 'workspace_created')
 })
 
+test('S6：群聊只显示经 Agent 的编辑、改派与状态推进；人直接修改与执行自动推进不进入群聊', async () => {
+  const via = { agentMemberId: 'wam-s6-timeline', agentName: '库存助手', runId: 's5d-run-d1' }
+  await database`
+    insert into project_task_events (id, tenant_id, task_id, kind, actor_user_id, metadata, created_at) values
+      ('s6-event-human-edit', ${tenantId}, 's5d-task-employee', 'edited', ${owner}, ${database.json({ title: '人直接改名' })}, '2026-10-09T00:00:00Z'),
+      ('s6-event-auto-status', ${tenantId}, 's5d-task-employee', 'status_changed', ${owner}, ${database.json({ from: 'todo', to: 'in_progress', auto: true })}, '2026-10-09T00:01:00Z'),
+      ('s6-event-agent-edit', ${tenantId}, 's5d-task-employee', 'edited', ${owner}, ${database.json({ dueDate: '2026-10-20', via })}, '2026-10-09T00:02:00Z')
+  `
+  try {
+    const result = await get(member, `/workspaces/${workspaceId}/timeline`)
+    const ids = (result.body.data.items as Array<{ id: string }>).map(item => item.id)
+    assert.ok(ids.includes('td:s6-event-agent-edit'))
+    assert.ok(!ids.includes('td:s6-event-human-edit'))
+    assert.ok(!ids.includes('td:s6-event-auto-status'))
+    const card = (result.body.data.items as Array<Record<string, any>>).find(item => item.id === 'td:s6-event-agent-edit')!
+    assert.equal(card.event, 'edited')
+    assert.equal(card.viaAgentName, '库存助手')
+  } finally {
+    await database`delete from project_task_events where tenant_id = ${tenantId} and id like 's6-event-%'`
+  }
+})
+
 test('分页游标不重复不遗漏；参数校验', async () => {
   const first = await get(member, `/workspaces/${workspaceId}/timeline?limit=5`)
   assert.equal(first.body.data.items.length, 5)

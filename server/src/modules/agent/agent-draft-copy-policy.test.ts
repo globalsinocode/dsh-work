@@ -6,19 +6,19 @@ const before = { id: 'a', status: 'draft', name: 'n', description: 'd', welcomeM
   owner: 'u', department: 'd', systemPrompt: 'system',
   workInstructions: '核对输入并确认结果后回复用户。', mcpScope: { mode: 'selected', connectorIds: ['connector-a'] },
   maxOutputBytes: 4096, maxToolCalls: 20,
-  timeoutSeconds: 60, skills: ['s@1'], webSearchEnabled: false } as unknown as AgentDefinition
+  timeoutSeconds: 60, skills: ['s@1'], webSearchEnabled: false, projectTasksEnabled: false } as unknown as AgentDefinition
 const after = { ...before, agentId: 'a', name: 'new', changeSummary: 'copy' } as unknown as Omit<UpdateAgentDraftInput, 'actor'>
 test('risk policy has a closed display-only field list', () => {
   assert.deepEqual(DRAFT_COPY_FIELDS, ['name', 'description', 'welcomeMessage', 'examplePrompts'])
   for (const field of DRAFT_COPY_FIELDS) assert.doesNotThrow(() => assertDraftCopyFields({ [field]: 'x' }))
-  for (const field of ['systemPrompt', 'workInstructions', 'mcpScope', 'instructions', 'webSearchEnabled', 'tools', 'skills', 'roleIds', 'dataScopes', 'status', 'owner', 'visibility', '__proto__', 'confirmationMode']) {
+  for (const field of ['systemPrompt', 'workInstructions', 'mcpScope', 'instructions', 'webSearchEnabled', 'projectTasksEnabled', 'tools', 'skills', 'roleIds', 'dataScopes', 'status', 'owner', 'visibility', '__proto__', 'confirmationMode']) {
     assert.throws(() => assertDraftCopyFields(Object.fromEntries([['name', 'x'], [field, 'x']])))
   }
   assert.throws(() => assertDraftCopyFields({}))
 })
 test('complete normalized diff cannot smuggle a protected field or change object identity', () => {
   assert.doesNotThrow(() => assertDraftCopyPlan(before, after))
-  for (const field of ['systemPrompt', 'workInstructions', 'mcpScope', 'webSearchEnabled', 'skills', 'maxOutputBytes', 'owner', 'department']) {
+  for (const field of ['systemPrompt', 'workInstructions', 'mcpScope', 'webSearchEnabled', 'projectTasksEnabled', 'skills', 'maxOutputBytes', 'owner', 'department']) {
     assert.throws(() => assertDraftCopyPlan(before, { ...after, [field]: 'injected' }))
   }
   assert.throws(() => assertDraftCopyPlan(before, { ...after, agentId: 'different' }))

@@ -255,6 +255,12 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   const chat = page.getByRole('region', { name: '群聊' })
   await expect(chat.getByText(/^分析华东区本月订单交付风险 · /)).toBeVisible()
   await expect(chat.getByTestId('group-system-record').first()).toContainText('创建了群组')
+  // PS-S6-01 P0：经 Agent 新建的任务卡片文案（冒烟夹具，不模拟工具调用）。
+  const viaCreated = chat.getByTestId('group-task-card').filter({ hasText: '经助手分配的周报' }).filter({ hasText: '创建了任务' })
+  await expect(viaCreated).toContainText('经 dsh-work Assistant')
+  const viaReassigned = chat.getByTestId('group-task-card').filter({ hasText: '改派了任务' })
+  await expect(viaReassigned).toContainText('负责人 周衡 → 林岚')
+  await expect(viaReassigned).not.toContainText('完成说明')
   // 冒烟夹具的空间没有 Agent 成员：按 12.8 提示先添加 Agent。
   await expect(page.getByTestId('group-no-agent-notice')).toBeVisible()
 

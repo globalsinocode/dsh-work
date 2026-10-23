@@ -88,7 +88,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 由 Agent 版本开关决定；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
 - **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。
@@ -292,7 +292,7 @@ flowchart LR
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
-- **项目空间：** S0（团队交付边界）、S1（改名、简报、项目任务）与 S2（项目档案与档案员）已实现；项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。P1 浏览器旅程与真实 DSH 验收未完成，见 [项目空间方案](../design/project-space-plan.md)。
+- **项目空间：** S0～S4 与 S5（员工端双模式）已实现；S6（Agent 项目任务工具：版本开关、装配、via 归因与时间线卡片）服务端与员工端已接通，集成测试见 `project-task-tools.integration.test.ts`；真实 DSH 中 Agent 选择并调用工具属 P2，见 [项目空间方案](../design/project-space-plan.md) 第 13 节。项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。

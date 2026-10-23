@@ -25,6 +25,7 @@ export interface AgentDraftForm {
   workInstructions: string
   skills: string[]
   webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope: AgentMcpScope
   timeoutSeconds: number
   maxToolCalls: number
@@ -56,7 +57,7 @@ const editorKey: InjectionKey<AgentDraftEditor> = Symbol('agent-draft-editor')
 export function emptyAgentDraftForm(): AgentDraftForm {
   return {
     name: '', description: '', welcomeMessage: '', examplePrompts: ['请介绍你能提供哪些帮助'],
-    systemPrompt: '', workInstructions: '', skills: [], webSearchEnabled: false,
+    systemPrompt: '', workInstructions: '', skills: [], webSearchEnabled: false, projectTasksEnabled: false,
     mcpScope: { mode: 'none', connectorIds: [] },
     timeoutSeconds: 300, maxToolCalls: 20, maxOutputBytes: 65536,
   }
@@ -72,6 +73,7 @@ export function draftFormFromAgent(agent: AgentDefinition): AgentDraftForm {
     workInstructions: agent.workInstructions ?? '',
     skills: [...agent.skills],
     webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
     mcpScope: agent.mcpScope?.mode === 'selected'
       ? { mode: 'selected', connectorIds: [...agent.mcpScope.connectorIds] }
       : { mode: 'none', connectorIds: [] },
@@ -196,6 +198,7 @@ export function provideAgentDraftEditor(agent: Ref<AgentDefinition | undefined>,
           workInstructions: value.workInstructions,
           skills: value.skills,
           webSearchEnabled: value.webSearchEnabled,
+          projectTasksEnabled: value.projectTasksEnabled,
           mcpScope: value.mcpScope.mode === 'selected' ? value.mcpScope : { mode: value.mcpScope.mode, connectorIds: [] },
           timeoutSeconds: value.timeoutSeconds,
           maxToolCalls: value.maxToolCalls,

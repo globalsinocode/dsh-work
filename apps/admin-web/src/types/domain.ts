@@ -291,6 +291,8 @@ export interface AgentDefinition {
   skills: string[]
   /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
   webSearchEnabled: boolean
+  /** 是否允许项目任务管理（project_task_*）。 */
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
@@ -420,6 +422,8 @@ export interface AgentDraftConfiguration {
   skills: string[]
   /** 编辑时省略则保留当前设置，新建时默认关闭。 */
   webSearchEnabled?: boolean
+  /** 编辑时省略则保留当前设置，新建时默认关闭。 */
+  projectTasksEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -455,6 +459,7 @@ export interface AgentVersionRecord {
   timeoutSeconds: number
   skills: string[]
   webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
 }
 

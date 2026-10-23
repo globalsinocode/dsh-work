@@ -421,8 +421,13 @@ function runRecordTone(run: SessionRunRecord) {
   return 'muted'
 }
 
+function viaSuffix(event: ProjectTaskEvent) {
+  const name = event.metadata.via?.agentName
+  return name ? ` · 经 ${name}` : ''
+}
+
 function eventText(event: ProjectTaskEvent) {
-  if (event.kind === 'completed') return `${event.actor.displayName} 标记完成`
+  if (event.kind === 'completed') return `${event.actor.displayName} 标记完成${viaSuffix(event)}`
   // S4：执行规则与定时执行的系统记录；定时类记录的 actor 只是归因人，不展示。
   if (event.kind === 'schedule_changed') return `${event.actor.displayName} 将执行规则改为${scheduleLabel(event.metadata.schedule ?? null)}`
   if (event.kind === 'schedule_resumed') return `${event.actor.displayName} 恢复了定时执行`
@@ -432,11 +437,14 @@ function eventText(event: ProjectTaskEvent) {
     return event.metadata.reason === 'busy' ? '定时执行跳过：上一次执行尚未结束' : '定时执行跳过：未能受理，下次到点再试'
   }
   if (event.kind === 'execution_missed') return `错过 ${event.metadata.count ?? 1} 次定时执行（服务未运行），不补跑`
-  if (event.kind === 'reassigned') return `${event.actor.displayName} 将负责人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}`
+  if (event.kind === 'edited') return `${event.actor.displayName} 修改了任务${viaSuffix(event)}`
+  if (event.kind === 'reassigned') {
+    return `${event.actor.displayName} 将负责人从 ${event.metadata.from || '—'} 改为 ${event.metadata.to || '—'}${viaSuffix(event)}`
+  }
   const to = taskStatusLabels[event.metadata.to ?? ''] ?? event.metadata.to ?? ''
   return event.metadata.auto
-    ? `${event.actor.displayName} 更新了进度，任务进入${to}`
-    : `${event.actor.displayName} 将状态改为${to}`
+    ? `${event.actor.displayName} 更新了进度，任务进入${to}${viaSuffix(event)}`
+    : `${event.actor.displayName} 将状态改为${to}${viaSuffix(event)}`
 }
 
 function formatTimelineTime(value: string) {

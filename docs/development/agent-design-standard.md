@@ -181,7 +181,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 | 分类 | 提供与执行 | 治理路径 | 管理入口 |
 | --- | --- | --- | --- |
-| 内置工具（DSH 原生工具与 dsh-work 平台工具） | DSH Runtime；平台工具经 Platform Tool Bridge 由 DSH 在 Attempt 内调用 | [代码注册表](../../server/src/modules/runtime/builtin-tools.ts)决定准入、约束与装配：默认工具每次装配，`web_search` 由 Agent 版本开关决定，激活 Skill/Python 执行/经验申请按运行内容装配，管理工具按 Run purpose 注入；不按角色授权，不提供逐工具选配；Runtime 可紧急停用 DSH 工具 | `安全与运维 → Runtimes`（只读展示与紧急停用） |
+| 内置工具（DSH 原生工具与 dsh-work 平台工具） | DSH Runtime；平台工具经 Platform Tool Bridge 由 DSH 在 Attempt 内调用 | [代码注册表](../../server/src/modules/runtime/builtin-tools.ts)决定准入、约束与装配：默认工具每次装配，`web_search` 与项目任务工具由 Agent 版本开关决定（后者另受团队空间 / 定时场景约束），激活 Skill/Python 执行/经验申请按运行内容装配，管理工具按 Run purpose 注入；不按角色授权，不提供逐工具选配；Runtime 可紧急停用 DSH 工具 | `安全与运维 → Runtimes`（只读展示与紧急停用） |
 | MCP 外部工具 | 外部 MCP Server，DSH MCP Client 调用 | Connector 整体发现、能力变更确认、Agent Version 显式选定及状态/摘要持续复核；新 Agent 默认不接入 | `MCP 连接器` |
 
 开放新的内置工具必须同时修改注册表与 [DSH 工具策略](../../server/config/dsh/dsh-work-tool-policy.js) 中的约束并随代码发布；不得通过数据配置放行注册表以外的 DSH 工具。
@@ -319,7 +319,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 | 能力 | 自动装配依据 | 执行范围 |
 | --- | --- | --- |
 | 文件读取、查找、内容搜索、图片读取、成果生成与编辑 | 注册表中的默认工具，未被 Runtime 紧急停用 | 当前已授权文件和隔离工作区；输入只读、成果路径受控 |
-| 联网搜索、受控代码执行 | 联网搜索由 Agent 版本开关决定；代码执行需 Skill 自带脚本与可用的 Python 沙箱 | 沿现有网络或沙箱策略执行；不因默认提供就开放任意 Shell |
+| 联网搜索、项目任务管理、受控代码执行 | 联网搜索与项目任务管理由 Agent 版本开关决定（后者仅团队空间人发起运行装配，定时只读）；代码执行需 Skill 自带脚本与可用的 Python 沙箱 | 沿现有网络、任务权限或沙箱策略执行；不因默认提供就开放任意 Shell |
 | 经验申请 | 当前入口、来源与经验治理条件 | 申请经成功 Attempt 和管理端审核后才形成可用经验 |
 | 管理操作 | 管理端运行用途与管理员权限 | 管理助手专用能力不因默认策略进入普通员工 Agent |
 
@@ -327,7 +327,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 内部保留 DSH 原生工具、dsh-work 平台工具和 MCP 外部工具三类实现，前两类同属内置工具注册表。第三方新增外部业务工具统一以 MCP 作为接入方式；平台和 DSH 原有基础工具继续复用当前实现，无需全部包装成 MCP。
 
-Agent 版本不保存工具引用，只保存联网搜索开关（`web_search_enabled`）。每次 Attempt 由平台按注册表、开关与所选 Skill 生成工具清单并写入 Manifest（`name@1.0.0`），扣除 Runtime 紧急停用的工具；Skill 依赖的工具在保存、验证和发布前检查，依赖联网搜索而 Agent 未开启、或依赖注册表以外的工具时明确报错。注册表变化随代码发布生效，不需要逐 Agent 重新固定；紧急停用即时生效。
+Agent 版本不保存工具引用，只保存联网搜索开关（`web_search_enabled`）与项目任务管理开关（`project_tasks_enabled`）。每次 Attempt 由平台按注册表、开关、运行场景（团队空间 / 定时 / purpose）与所选 Skill 生成工具清单并写入 Manifest（`name@1.0.0`），扣除 Runtime 紧急停用的工具；Skill 依赖的工具在保存、验证和发布前检查，依赖联网搜索而 Agent 未开启、声明项目任务工具、或依赖注册表以外的工具时明确报错。注册表变化随代码发布生效，不需要逐 Agent 重新固定；紧急停用即时生效。
 
 ### 6.4 MCP 使用范围
 

@@ -92,12 +92,35 @@ function systemText(item: Extract<WorkspaceTimelineItem, { kind: 'system' }>) {
 
 const taskStatusLabels: Record<string, string> = { todo: '待办', in_progress: '进行中', done: '已完成' }
 
+/**
+ * 任务卡片的标题行（与原型一致）：动作人是发起成员，“经 某 Agent”另以标签显示（S6）。
+ */
 function taskEventLabel(item: Extract<WorkspaceTimelineItem, { kind: 'task' }>) {
-  if (item.event === 'created') return `${item.actorName ?? '成员'} 创建了任务`
-  if (item.event === 'completed') return `${item.actorName ?? '成员'} 标记任务完成`
+  const actor = item.actorName ?? '成员'
+  if (item.event === 'created') return `${actor} 创建了任务`
+  if (item.event === 'completed') return `${actor} 标记任务完成`
+  if (item.event === 'edited') return `${actor} 修改了任务`
+  if (item.event === 'reassigned') return `${actor} 改派了任务`
+  if (item.event === 'status_changed') return `${actor} 修改了任务状态`
   const trigger = item.run?.scheduled ? '定时执行' : '执行'
   const outcome = item.run?.status === 'succeeded' ? '完成' : item.run?.status === 'cancelled' ? '已停止' : '失败'
   return `${item.task.assigneeName} ${trigger}${outcome}`
+}
+
+/** 经 Agent 修改的内容（S6）：改派与状态为“原 → 新”，编辑列出改动的字段。 */
+function taskChangeText(item: Extract<WorkspaceTimelineItem, { kind: 'task' }>) {
+  const changes = item.changes
+  if (!changes) return ''
+  if (item.event === 'reassigned') return `负责人 ${changes.from || '—'} → ${changes.to || '—'}`
+  if (item.event === 'status_changed') {
+    return `状态 ${taskStatusLabels[changes.from ?? ''] ?? changes.from ?? '—'} → ${taskStatusLabels[changes.to ?? ''] ?? changes.to ?? '—'}`
+  }
+  if (item.event !== 'edited') return ''
+  const parts: string[] = []
+  if (changes.title !== undefined) parts.push(`标题 ${changes.previous?.title ?? '—'} → ${changes.title}`)
+  if (changes.dueDate !== undefined) parts.push(`截止 ${changes.previous?.dueDate ?? '未设置'} → ${changes.dueDate ?? '未设置'}`)
+  if (changes.description !== undefined) parts.push('说明已更新')
+  return parts.join(' · ')
 }
 
 function isOwnMessage(item: Extract<WorkspaceTimelineItem, { kind: 'message' }>) {
@@ -322,6 +345,7 @@ onBeforeUnmount(() => {
                 <header class="collab-task-card__head">
                   <span class="collab-task-card__icon" aria-hidden="true"><el-icon><Document /></el-icon></span>
                   <span class="collab-task-card__event">{{ taskEventLabel(item) }}</span>
+                  <span v-if="item.viaAgentName" class="collab-task-card__via">经 {{ item.viaAgentName }}</span>
                   <span class="collab-task-card__time">{{ formatTime(item.at) }}</span>
                 </header>
                 <button type="button" class="collab-task-card__body" :aria-label="`打开任务：${item.task.title}`" @click="openTask(item)">
@@ -334,7 +358,8 @@ onBeforeUnmount(() => {
                     <span v-if="item.task.assigneeType === 'agent'">执行规则 · {{ scheduleLabel(item.task.schedule) }}</span>
                   </span>
                   <span v-if="item.run?.summary" class="collab-task-card__summary">{{ item.run.summary }}</span>
-                  <span v-else-if="item.note" class="collab-task-card__summary">完成说明：{{ item.note }}</span>
+                  <span v-else-if="item.event === 'completed' && item.note" class="collab-task-card__summary">完成说明：{{ item.note }}</span>
+                  <span v-else-if="taskChangeText(item)" class="collab-task-card__summary">{{ taskChangeText(item) }}</span>
                 </button>
               </template>
             </article>
@@ -479,6 +504,10 @@ onBeforeUnmount(() => {
 }
 
 .collab-task-card__icon { display: inline-flex; color: var(--el-color-primary); }
+.collab-task-card__via {
+  padding: 1px 6px; border-radius: 4px; color: var(--collab-nav-text, var(--dsh-color-text));
+  background: var(--collab-row-hover, var(--dsh-color-canvas)); font-size: var(--dsh-font-size-micro);
+}
 .collab-task-card__event { flex: 1; }
 
 .collab-task-card__body {

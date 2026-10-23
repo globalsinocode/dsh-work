@@ -77,6 +77,7 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
   }
   const created = await agents.createAgent({ ...base, id: `agent-builtin-${randomUUID().slice(0, 8)}` })
   assert.equal(created.agent.webSearchEnabled, false)
+  assert.equal(created.agent.projectTasksEnabled, false)
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
   assert.deepEqual(snapshot.runtimeTools, builtinTools.filter(tool => tool.assembly === 'always').map(tool => tool.name))
   assert.equal(snapshot.approvalMode, 'never')
@@ -88,6 +89,16 @@ test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill
   `
   assert.equal(stored?.webSearchEnabled, true)
   assert.ok((await agents.getRuntimeSnapshot(withSearch.version.id)).runtimeTools.includes('web_search'))
+
+  const withTasks = await agents.createAgent({ ...base, id: `agent-builtin-tasks-${randomUUID().slice(0, 8)}`, projectTasksEnabled: true })
+  const [taskFlag] = await database<{ projectTasksEnabled: boolean }[]>`
+    select project_tasks_enabled as "projectTasksEnabled" from agent_versions
+     where tenant_id = ${tenantId} and id = ${withTasks.version.id}
+  `
+  assert.equal(taskFlag?.projectTasksEnabled, true)
+  assert.equal(withTasks.agent.projectTasksEnabled, true)
+  // 项目任务工具按运行时 workspace 装配，不进入 Agent 快照的默认 runtimeTools。
+  assert.ok(!(await agents.getRuntimeSnapshot(withTasks.version.id)).runtimeTools.includes('project_tasks_list'))
 
   const skillId = `skill-shell-${randomUUID().slice(0, 8)}`
   await database.begin(async transaction => {

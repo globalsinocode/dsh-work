@@ -62,6 +62,7 @@ interface AgentRow {
   timeoutSeconds: number
   skills: string[]
   webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope: AgentMcpScope
   updatedAt: Date
 }
@@ -75,6 +76,7 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'examplePrompts'
   | 'skills'
   | 'webSearchEnabled'
+  | 'projectTasksEnabled'
   | 'mcpScope'
   | 'maxOutputBytes'
   | 'maxToolCalls'
@@ -103,6 +105,7 @@ interface VersionRow {
   timeoutSeconds: number
   skills: string[]
   webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope: AgentMcpScope
 }
 
@@ -148,6 +151,8 @@ export interface RuntimeAgentSnapshot {
   skillInstructions: RuntimeSkillConfiguration[]
   /** 本 Agent 装配的内置工具名称（注册表默认工具、开启的联网搜索、Skill 需要的 Python 执行）。 */
   runtimeTools: string[]
+  /** Agent 版本是否开启项目任务管理；实际工具由派发时按运行场景装配。 */
+  projectTasksEnabled: boolean
   /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
@@ -235,6 +240,7 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled",
              av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec"
         from agent_versions av
@@ -284,13 +290,15 @@ export class PostgresAgentService {
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
           example_prompts, system_prompt, max_output_bytes,
-          max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, mcp_scope, agent_spec, status, created_by, change_summary
+          max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, project_tasks_enabled,
+          mcp_scope, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
           ${configuration.systemPrompt}, ${configuration.maxOutputBytes},
           ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-          ${configuration.webSearchEnabled}, ${transaction.json(asJson(configuration.mcpScope))},
+          ${configuration.webSearchEnabled}, ${configuration.projectTasksEnabled},
+          ${transaction.json(asJson(configuration.mcpScope))},
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
@@ -338,7 +346,13 @@ export class PostgresAgentService {
     if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     // Access (audience, roles, data scopes) is not draft content; it changes only through updateAccess.
     const configuration = normalizeConfiguration(
-      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope, webSearchEnabled: input.webSearchEnabled ?? current.webSearchEnabled },
+      {
+        ...input,
+        id: input.agentId,
+        mcpScope: input.mcpScope ?? current.mcpScope,
+        webSearchEnabled: input.webSearchEnabled ?? current.webSearchEnabled,
+        projectTasksEnabled: input.projectTasksEnabled ?? current.projectTasksEnabled,
+      },
       current.owner,
       current.department,
     )
@@ -367,7 +381,9 @@ export class PostgresAgentService {
                  system_prompt = ${configuration.systemPrompt},
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
-                 skill_refs = ${transaction.json(configuration.skills)}, web_search_enabled = ${configuration.webSearchEnabled},
+                 skill_refs = ${transaction.json(configuration.skills)},
+                 web_search_enabled = ${configuration.webSearchEnabled},
+                 project_tasks_enabled = ${configuration.projectTasksEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
                  change_summary = ${configuration.changeSummary}
@@ -389,13 +405,15 @@ export class PostgresAgentService {
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, max_output_bytes,
-            max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, mcp_scope, agent_spec, status, created_by, source_version, change_summary
+            max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, project_tasks_enabled,
+            mcp_scope, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
             ${transaction.json(configuration.skills)}, ${configuration.webSearchEnabled},
+            ${configuration.projectTasksEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
@@ -493,7 +511,8 @@ export class PostgresAgentService {
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills,
-             av.web_search_enabled as "webSearchEnabled"
+             av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -660,9 +679,11 @@ export class PostgresAgentService {
         activeVersionId: string
         skills: string[]
         webSearchEnabled: boolean
+        projectTasksEnabled: boolean
       }[]>`
         select a.active_version_id as "activeVersionId", av.skill_refs as skills,
-               av.web_search_enabled as "webSearchEnabled"
+               av.web_search_enabled as "webSearchEnabled",
+               av.project_tasks_enabled as "projectTasksEnabled"
           from agents a
           join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
          where a.tenant_id = ${tenantId} and a.id = ${candidate.id}
@@ -746,7 +767,9 @@ export class PostgresAgentService {
              av.name, av.description, av.welcome_message as "welcomeMessage",
              av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
-             av.web_search_enabled as "webSearchEnabled", a.visible_role_ids as "roleIds",
+             av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled",
+             a.visible_role_ids as "roleIds",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.agent_spec as "agentSpec",
@@ -810,7 +833,8 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled", av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -834,7 +858,8 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled", av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
+             av.project_tasks_enabled as "projectTasksEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -883,7 +908,7 @@ function normalizeConfiguration(
   input: AgentDraftConfiguration,
   owner: string,
   department: string,
-): AgentDraftConfiguration & { webSearchEnabled: boolean } {
+): AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean } {
   const welcomeMessage = input.welcomeMessage.trim()
     || `你好，我是${input.name.trim() || '企业 Agent'}。${input.description.trim() || '我会协助你完成工作。'}`.slice(0, 120)
   return {
@@ -898,12 +923,13 @@ function normalizeConfiguration(
     ...(input.workInstructions !== undefined ? { workInstructions: input.workInstructions?.trim() ?? '' } : {}),
     skills: unique(input.skills),
     webSearchEnabled: input.webSearchEnabled === true,
+    projectTasksEnabled: input.projectTasksEnabled === true,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
   }
 }
 
-function assertConfiguration(input: AgentDraftConfiguration & { webSearchEnabled: boolean }) {
+function assertConfiguration(input: AgentDraftConfiguration & { webSearchEnabled: boolean; projectTasksEnabled: boolean }) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw invalidRequest('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
@@ -937,6 +963,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     webSearchEnabled: row.webSearchEnabled,
+    projectTasksEnabled: row.projectTasksEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     updatedAt: formatDateTime(row.updatedAt),
     revision: agentMutationRevision(row),
@@ -968,6 +995,7 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     webSearchEnabled: row.webSearchEnabled,
+    projectTasksEnabled: row.projectTasksEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
   }
 }
@@ -985,6 +1013,7 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
     webSearchEnabled: row.webSearchEnabled,
+    projectTasksEnabled: row.projectTasksEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,

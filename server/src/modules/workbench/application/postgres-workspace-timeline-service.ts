@@ -11,8 +11,9 @@ const tenantId = 'tenant-dsh-work'
  *
  * - 讨论：不属于任何任务的团队会话（任务对话不进群聊，D27）；只取 user / assistant 消息。
  * - 执行记录：讨论中 @Agent 触发的 Run。
- * - 任务卡片：任务创建、Agent 任务每次执行结束（定时执行“无变化”标为 quiet）、任务标记完成。
- *   卡片取自 project_tasks / runs / project_task_events，不写入消息表，不进 Agent 对话历史。
+ * - 任务卡片：任务创建、Agent 任务每次执行结束（定时执行“无变化”标为 quiet）、任务标记完成，
+ *   以及经 Agent 的编辑 / 改派 / 状态推进（S6）。卡片取自 project_tasks / runs /
+ *   project_task_events，不写入消息表，不进 Agent 对话历史。
  * - 系统记录：群组创建，以及成员、Agent 成员、负责人、归档与恢复相关的空间动态。
  */
 export type WorkspaceTimelineItem =
@@ -46,8 +47,10 @@ export type WorkspaceTimelineItem =
       kind: 'task'
       id: string
       at: string
-      event: 'created' | 'run_finished' | 'completed'
+      event: 'created' | 'run_finished' | 'completed' | 'edited' | 'reassigned' | 'status_changed'
       actorName: string | null
+      /** 经 Agent 写入时标注“经 某 Agent”（S6）。 */
+      viaAgentName: string | null
       task: {
         id: string
         title: string
@@ -58,7 +61,13 @@ export type WorkspaceTimelineItem =
         removed: boolean
       }
       run: { id: string; status: string; scheduled: boolean; quiet: boolean; summary: string | null } | null
+      /** 完成说明（completed）。 */
       note: string | null
+      /**
+       * 经 Agent 的修改内容（S6，edited / reassigned / status_changed）：事件 metadata 去掉 via，
+       * edited 含新值与 previous（原值），reassigned / status_changed 含 from / to。
+       */
+      changes?: Record<string, unknown> | null
     }
   | {
       kind: 'system'
@@ -169,13 +178,15 @@ export class PostgresWorkspaceTimelineService {
          where r.tenant_id = ${tenantId}
         union all
         select 'task', 'tc:' || t.id, t.created_at,
-               jsonb_build_object('event', 'created', 'actorName', cu.display_name, 'task', ${taskJson(sql)},
-                 'run', null, 'note', null)
+               jsonb_build_object('event', 'created', 'actorName', cu.display_name,
+                 'viaAgentName', t.created_via ->> 'agentName',
+                 'task', ${taskJson(sql)}, 'run', null, 'note', null)
           from tasks t
           left join users cu on cu.tenant_id = t.tenant_id and cu.id = t.created_by
         union all
         select 'task', 'tr:' || r.id, r.updated_at,
-               jsonb_build_object('event', 'run_finished', 'actorName', ru.display_name, 'task', ${taskJson(sql)},
+               jsonb_build_object('event', 'run_finished', 'actorName', ru.display_name,
+                 'viaAgentName', null, 'task', ${taskJson(sql)},
                  'run', jsonb_build_object('id', r.id, 'status', r.status,
                    'scheduled', scheduled.id is not null,
                    'quiet', scheduled.id is not null and coalesce(btrim(reply.content), '') like '无变化%',
@@ -199,12 +210,19 @@ export class PostgresWorkspaceTimelineService {
          where r.tenant_id = ${tenantId} and r.status in ('succeeded', 'failed', 'cancelled')
         union all
         select 'task', 'td:' || e.id, e.created_at,
-               jsonb_build_object('event', 'completed', 'actorName', eu.display_name, 'task', ${taskJson(sql)},
-                 'run', null, 'note', e.metadata ->> 'note')
+               jsonb_build_object('event', e.kind, 'actorName', eu.display_name,
+                 'viaAgentName', e.metadata #>> '{via,agentName}',
+                 'task', ${taskJson(sql)}, 'run', null,
+                 'note', case when e.kind = 'completed' then e.metadata ->> 'note' end,
+                 'changes', case when e.kind = 'completed' then null else e.metadata - 'via' end)
           from project_task_events e
           join tasks t on t.id = e.task_id
           left join users eu on eu.tenant_id = e.tenant_id and eu.id = e.actor_user_id
-         where e.tenant_id = ${tenantId} and e.kind = 'completed'
+         where e.tenant_id = ${tenantId}
+           -- 群聊只显示任务完成，以及经 Agent 的编辑 / 改派 / 状态推进（S6 结果卡片）；人直接的
+           -- 编辑、改派与执行自动推进的状态只在任务对话中显示。
+           and (e.kind = 'completed'
+             or (e.kind in ('edited', 'reassigned', 'status_changed') and e.metadata ? 'via'))
         union all
         select 'system', 'a:' || ae.id, ae.occurred_at,
                jsonb_build_object('activityKind', ae.kind, 'actorName', coalesce(au.display_name, '成员'),

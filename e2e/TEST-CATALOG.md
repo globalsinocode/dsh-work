@@ -712,7 +712,7 @@ S5b 把消息列表、执行结果卡片、执行状态与输入区从 `Conversa
 
 **优先级：** P1（工具与权限）+ P0（结果卡片展示）
 **角色：** 群组成员 roy（非只读）、只读成员、开启“项目任务管理”的 Agent 成员（dsh-work 助手）
-**运行层级：** 服务端集成测试 `server/src/http/project-task-tools.integration.test.ts`（工具处理器、复核、权限、归因，专用可丢弃 PostgreSQL）；P0 冒烟（`e2e/collab-mode.spec.ts`，结果卡片展示）。合成 Runtime 不能驱动真实工具调用，真实 DSH 中 Agent 选择并调用工具属于 P2，单独留证。
+**运行层级：** 服务端集成测试 `pnpm test:s6:project-task-tools:integration`（`project-task-tools.integration.test.ts`：工具处理器、复核、权限、归因，专用可丢弃 PostgreSQL）；P0 冒烟（`e2e/collab-mode.spec.ts` MODE-E2E-09，结果卡片展示「经 dsh-work Assistant」）。合成 Runtime 不能驱动真实工具调用，真实 DSH 中 Agent 选择并调用工具属于 P2，单独留证。
 **前置数据：** 一个活动群组，含员工成员、只读成员与开启开关的 Agent 成员；若干项目任务
 
 1. 群聊中 @Agent 查询任务：Agent 用 `project_tasks_list` / `project_task_get` 读到本群任务（标题、负责人、状态、截止、最近执行）与可指派成员，不读任务对话内容。

@@ -2759,6 +2759,10 @@
             "type": "boolean",
             "description": "是否允许联网搜索（web_search）；其他内置工具由平台统一装配。编辑时省略则保留当前设置，新建时默认 false。"
           },
+          "projectTasksEnabled": {
+            "type": "boolean",
+            "description": "是否允许项目任务管理（project_task_*）；仅团队空间由人发起的运行装配。编辑时省略则保留当前设置，新建时默认 false。"
+          },
           "maxOutputBytes": {
             "type": "integer",
             "minimum": 1024,

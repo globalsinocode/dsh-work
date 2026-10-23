@@ -116,6 +116,7 @@ interface VersionShape {
   status: 'draft' | 'candidate' | 'published' | 'disabled'
   skills: string[]
   webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   examplePrompts: string[]
   mcpScope: AgentMcpScope | null
 }
@@ -728,6 +729,7 @@ export class PostgresAgentValidationService {
     const [row] = await this.database<VersionShape[]>`
       select id, agent_id as "agentId", version, status, skill_refs as skills,
              web_search_enabled as "webSearchEnabled",
+             project_tasks_enabled as "projectTasksEnabled",
              example_prompts as "examplePrompts", mcp_scope as "mcpScope"
         from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
     `

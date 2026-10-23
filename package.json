@@ -79,6 +79,7 @@
     "test:m5:lifecycle:integration": "pnpm --filter @dsh-work/server test:m5:lifecycle:integration",
     "test:s5:conversation-targets:integration": "pnpm --filter @dsh-work/server test:s5:conversation-targets:integration",
     "test:s5:timeline:integration": "pnpm --filter @dsh-work/server test:s5:timeline:integration",
+    "test:s6:project-task-tools:integration": "pnpm --filter @dsh-work/server test:s6:project-task-tools:integration",
     "test:s5:preferences:integration": "pnpm --filter @dsh-work/server test:s5:preferences:integration",
     "test:m5:activity:integration": "pnpm --filter @dsh-work/server test:m5:activity:integration",
     "test:m5:usage:integration": "pnpm --filter @dsh-work/server test:m5:usage:integration",

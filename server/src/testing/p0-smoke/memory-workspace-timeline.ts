@@ -36,6 +36,46 @@ export class MemoryWorkspaceTimeline {
         agentName: 'dsh-work Assistant', stoppedByName: null,
       })
     })
+    // S6 P0：经 Agent 新建的任务卡片（冒烟夹具，不模拟工具调用本身）。
+    items.push({
+      kind: 'task',
+      id: `tc:via-${workspace.id}`,
+      at: new Date(Date.UTC(2026, 7, 27, 12, 0, 0)).toISOString(),
+      event: 'created',
+      actorName: workspace.owner,
+      viaAgentName: 'dsh-work Assistant',
+      task: {
+        id: `ptask-via-${workspace.id}`,
+        title: '经助手分配的周报',
+        status: 'todo',
+        assigneeType: 'employee',
+        assigneeName: '周衡',
+        schedule: null,
+        removed: false,
+      },
+      run: null,
+      note: null,
+    })
+    items.push({
+      kind: 'task',
+      id: `td:via-reassigned-${workspace.id}`,
+      at: new Date(Date.UTC(2026, 7, 27, 12, 5, 0)).toISOString(),
+      event: 'reassigned',
+      actorName: workspace.owner,
+      viaAgentName: 'dsh-work Assistant',
+      task: {
+        id: `ptask-via-${workspace.id}`,
+        title: '经助手分配的周报',
+        status: 'todo',
+        assigneeType: 'employee',
+        assigneeName: '林岚',
+        schedule: null,
+        removed: false,
+      },
+      run: null,
+      note: null,
+      changes: { from: '周衡', to: '林岚' },
+    })
     items.push({
       kind: 'system', id: `w:${workspace.id}`, at: new Date(Date.UTC(2026, 7, 1)).toISOString(),
       activityKind: 'workspace_created', actorName: workspace.owner, safeMetadata: {},

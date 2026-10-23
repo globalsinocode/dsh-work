@@ -263,6 +263,7 @@ test('guarded Runtime and Agent mutations reject a stale plan revision inside th
     timeoutSeconds: agentBefore.agent.timeoutSeconds,
     skills: agentBefore.agent.skills,
     webSearchEnabled: agentBefore.agent.webSearchEnabled,
+    projectTasksEnabled: agentBefore.agent.projectTasksEnabled,
     changeSummary: '并发更新测试',
     actor,
   }

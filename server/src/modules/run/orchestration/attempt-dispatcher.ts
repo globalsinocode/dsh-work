@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { assertRuntimeModelRequirements } from '../../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
-import { builtinToolReference } from '../../runtime/builtin-tools.ts'
+import { builtinToolReference, projectTaskToolNames } from '../../runtime/builtin-tools.ts'
 import type { PreparedRuntimeFile } from '../../workbench/application/postgres-content-service.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
@@ -64,6 +64,12 @@ export class AttemptDispatcher {
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
     /** IANA timezone for the run's "now" (routine/automation schedule); defaults to the platform's. */
     timezone?: string
+    /**
+     * 项目空间 S6：本运行是否装配项目任务工具。
+     * `read-write` = 团队空间由人发起；`read` = 定时执行（无人在场）；缺省或 `none` = 不装配。
+     * 仍须 Agent 版本开启 projectTasksEnabled；有 purpose 的系统/管理运行不得装配。
+     */
+    projectTaskToolMode?: 'none' | 'read' | 'read-write'
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const disabledTools = new Set(runtimePolicy?.disabledTools ?? [])
@@ -76,6 +82,7 @@ export class AttemptDispatcher {
           skills: [],
           skillInstructions: [],
           runtimeTools: [],
+          projectTasksEnabled: false,
           mcpConnections: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
@@ -168,11 +175,18 @@ export class AttemptDispatcher {
       },
       skills: agent.skills.map(toCapabilityReference),
       // 内置工具按注册表装配，去掉 Runtime 配置紧急停用的工具。
+      // 项目任务工具按运行场景装配（S6），不进入 Agent 快照的默认 runtimeTools。
       tools: [
-        ...agent.runtimeTools.filter(name => !disabledTools.has(name)),
+        ...agent.runtimeTools,
         ...(agent.skillInstructions.length ? ['activate_skill'] : []),
         ...(this.deps.memory && input.purpose !== 'agent-routine' ? ['propose_memory'] : []),
-      ].map(name => toCapabilityReference(builtinToolReference(name))),
+        ...(!input.purpose
+          ? projectTaskToolNames({
+              enabled: agent.projectTasksEnabled,
+              mode: input.projectTaskToolMode ?? 'none',
+            })
+          : []),
+      ].filter(name => !disabledTools.has(name)).map(name => toCapabilityReference(builtinToolReference(name))),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: effectiveDataScopes,
       knowledge_context: knowledgeContext.map(document => ({

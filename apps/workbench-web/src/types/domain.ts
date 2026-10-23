@@ -501,12 +501,13 @@ export interface ProjectTask {
 /** 项目任务分页：`nextCursor` 非空时可用它加载下一页；`total` 是当前空间的全部未移除任务数。 */
 /**
  * 任务事件，在任务对话中作为系统记录展示：状态推进、完成、改派（S3），
- * 以及执行规则变更、暂停 / 恢复 / 停止与定时执行的受理、跳过、错过（S4）。
+ * 执行规则变更、暂停 / 恢复 / 停止与定时执行的受理、跳过、错过（S4），
+ * 以及经 Agent 的标题 / 说明 / 截止日期修改（S6 edited）。
  */
 export interface ProjectTaskEvent {
   id: string
   kind:
-    | 'status_changed' | 'completed' | 'reassigned'
+    | 'status_changed' | 'completed' | 'reassigned' | 'edited'
     | 'schedule_changed' | 'schedule_paused' | 'schedule_resumed' | 'schedule_stopped'
     | 'scheduled_run' | 'execution_skipped' | 'execution_missed'
   sessionId: string | null
@@ -522,6 +523,11 @@ export interface ProjectTaskEvent {
     reason?: string
     runId?: string | null
     slot?: string
+    title?: string
+    description?: string
+    dueDate?: string | null
+    /** 经 Agent 写入时的归因（S6）。 */
+    via?: { agentMemberId: string; agentName: string; runId: string }
     count?: number
     failures?: number
   }
@@ -837,15 +843,30 @@ export type WorkspaceTimelineItem =
       status: string; requesterName: string; agentName: string | null; stoppedByName: string | null
     }
   | {
-      kind: 'task'; id: string; at: string; event: 'created' | 'run_finished' | 'completed'; actorName: string | null
+      kind: 'task'; id: string; at: string
+      event: 'created' | 'run_finished' | 'completed' | 'edited' | 'reassigned' | 'status_changed'
+      actorName: string | null
+      viaAgentName: string | null
       task: {
         id: string; title: string; status: 'todo' | 'in_progress' | 'done'; assigneeType: 'employee' | 'agent'
         assigneeName: string; schedule: ProjectTaskSchedule | null; removed: boolean
       }
       run: { id: string; status: string; scheduled: boolean; quiet: boolean; summary: string | null } | null
+      /** 完成说明（completed）。 */
       note: string | null
+      /** 经 Agent 的修改内容（S6）：edited 为新值与 previous，reassigned / status_changed 为 from / to。 */
+      changes?: TimelineTaskChanges | null
     }
   | { kind: 'system'; id: string; at: string; activityKind: string; actorName: string; safeMetadata: Record<string, unknown> }
+
+export interface TimelineTaskChanges {
+  title?: string
+  description?: string
+  dueDate?: string | null
+  previous?: { title?: string; dueDate?: string | null }
+  from?: string
+  to?: string
+}
 
 export type ConversationLocation =
   | { type: 'agent'; agentId: string; sessionId: string }

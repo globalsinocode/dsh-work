@@ -92,6 +92,7 @@ type AgentSnapshot = Pick<AgentDefinition,
   'id' | 'name' | 'description' | 'owner' | 'department'
   | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
   | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'webSearchEnabled'
+  | 'projectTasksEnabled'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -504,7 +505,7 @@ export class AdminAssistantService {
     }
 
     // Access (audience, roles, data scopes) is not draft content and is not changed through draft plans.
-    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'changeSummary']
+    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -523,6 +524,7 @@ export class AdminAssistantService {
       timeoutSeconds: changes['timeoutSeconds'] === undefined ? agent.timeoutSeconds : readInteger(changes, 'timeoutSeconds', 1, 3600),
       skills: readChangedStringArray(changes, 'skills', agent.skills, 100),
       webSearchEnabled: readChangedBoolean(changes, 'webSearchEnabled', agent.webSearchEnabled),
+      projectTasksEnabled: readChangedBoolean(changes, 'projectTasksEnabled', agent.projectTasksEnabled),
       changeSummary: readChangedString(changes, 'changeSummary', summary, 1, 1000),
     }
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
@@ -830,6 +832,7 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
     webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
     status: agent.status,
     version: agent.version,
     revision,
@@ -853,6 +856,7 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.timeoutSeconds === after.timeoutSeconds
     && canonicalJson(agent.skills) === canonicalJson(after.skills)
     && agent.webSearchEnabled === after.webSearchEnabled
+    && agent.projectTasksEnabled === after.projectTasksEnabled
 }
 
 function actionResultSummary(plan: StoredActionPlan) {

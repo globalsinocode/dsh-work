@@ -28,8 +28,9 @@ class FakeEventSource {
 enableAutoUnmount(afterEach)
 
 const items: WorkspaceTimelineItem[] = [
-  { kind: 'task', id: 'tc:t1', at: '2026-10-08T00:00:00Z', event: 'created', actorName: '林岚', task: { id: 't1', title: '库存周报', status: 'in_progress', assigneeType: 'agent', assigneeName: '库存助手', schedule: { kind: 'manual', timezone: 'Asia/Shanghai' } as never, removed: false }, run: null, note: null },
-  { kind: 'task', id: 'tr:r9', at: '2026-10-07T00:00:00Z', event: 'run_finished', actorName: '林岚', task: { id: 't1', title: '库存周报', status: 'in_progress', assigneeType: 'agent', assigneeName: '库存助手', schedule: null, removed: false }, run: { id: 'r9', status: 'succeeded', scheduled: true, quiet: true, summary: '无变化' }, note: null },
+  { kind: 'task', id: 'tc:t1', at: '2026-10-08T00:00:00Z', event: 'created', actorName: '林岚', viaAgentName: null, task: { id: 't1', title: '库存周报', status: 'in_progress', assigneeType: 'agent', assigneeName: '库存助手', schedule: { kind: 'manual', timezone: 'Asia/Shanghai' } as never, removed: false }, run: null, note: null },
+  { kind: 'task', id: 'tc:via', at: '2026-10-07T12:00:00Z', event: 'created', actorName: '林岚', viaAgentName: 'dsh-work Assistant', task: { id: 't-via', title: '经助手分配的周报', status: 'todo', assigneeType: 'employee', assigneeName: '周衡', schedule: null, removed: false }, run: null, note: null },
+  { kind: 'task', id: 'tr:r9', at: '2026-10-07T00:00:00Z', event: 'run_finished', actorName: '林岚', viaAgentName: null, task: { id: 't1', title: '库存周报', status: 'in_progress', assigneeType: 'agent', assigneeName: '库存助手', schedule: null, removed: false }, run: { id: 'r9', status: 'succeeded', scheduled: true, quiet: true, summary: '无变化' }, note: null },
   { kind: 'message', id: 'm:2', at: '2026-10-06T00:00:00Z', sessionId: 's-new', sessionTitle: '第二段', role: 'user', content: '新话题', senderId: 'U1', senderName: '林岚', agentName: null, runId: null, runRequesterName: null },
   { kind: 'run', id: 'r:r1', at: '2026-10-05T00:01:00Z', sessionId: 's-old', sessionTitle: '第一段', runId: 'r1', status: 'succeeded', requesterName: '周航', agentName: '库存助手', stoppedByName: null },
   { kind: 'message', id: 'm:1', at: '2026-10-05T00:00:00Z', sessionId: 's-old', sessionTitle: '第一段', role: 'user', content: '大家看看', senderId: 'U2', senderName: '周航', agentName: null, runId: null, runRequesterName: null },
@@ -80,10 +81,33 @@ describe('CollabGroupTimeline (S5d 群聊)', () => {
     expect(wrapper.get('[data-testid="group-system-record"]').text()).toContain('林岚 创建了群组')
     expect(wrapper.get('[data-testid="group-run-record"]').text()).toContain('周航 让 库存助手 执行')
     const cards = wrapper.findAll('[data-testid="group-task-card"]')
-    expect(cards).toHaveLength(2)
+    expect(cards).toHaveLength(3)
     expect(cards[0]!.text()).toContain('定时执行无变化（展开）')
     expect(cards[1]!.text()).toContain('林岚 创建了任务')
-    expect(cards[1]!.text()).toContain('执行规则 · 手动')
+    expect(cards[1]!.get('.collab-task-card__via').text()).toBe('经 dsh-work Assistant')
+    expect(cards[1]!.text()).toContain('经助手分配的周报')
+    expect(cards[2]!.text()).toContain('林岚 创建了任务')
+    expect(cards[2]!.text()).toContain('执行规则 · 手动')
+  })
+
+  it('S6：经 Agent 的改派与编辑卡片列出改动，不显示为完成说明', async () => {
+    const via = 'dsh-work Assistant'
+    const task = { id: 't-via', title: '核对供应商交期', status: 'in_progress' as const, assigneeType: 'employee' as const, assigneeName: 'roy', schedule: null, removed: false }
+    api.getWorkspaceTimeline.mockResolvedValue({
+      workspaceId: 'ws-1',
+      items: [
+        { kind: 'task', id: 'td:e2', at: '2026-10-09T00:01:00Z', event: 'edited', actorName: 'roy', viaAgentName: via, task, run: null, note: null, changes: { dueDate: '2026-10-24', previous: { dueDate: '2026-10-25' } } },
+        { kind: 'task', id: 'td:e1', at: '2026-10-09T00:00:00Z', event: 'reassigned', actorName: 'roy', viaAgentName: via, task, run: null, note: null, changes: { from: '周衡', to: 'roy' } },
+      ],
+      nextCursor: null,
+    })
+    const wrapper = await mountTimeline()
+    const cards = wrapper.findAll('[data-testid="group-task-card"]')
+    expect(cards.map(card => card.text()).join('|')).not.toContain('完成说明')
+    const reassigned = cards.find(card => card.text().includes('改派了任务'))!
+    expect(reassigned.text()).toContain('负责人 周衡 → roy')
+    expect(reassigned.get('.collab-task-card__via').text()).toBe(`经 ${via}`)
+    expect(cards.find(card => card.text().includes('修改了任务'))!.text()).toContain('截止 2026-10-25 → 2026-10-24')
   })
 
   it('opens the task detail and run detail inside the group', async () => {

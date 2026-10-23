@@ -306,6 +306,11 @@ export class RunOrchestrationService {
      * 执行的 Agent 版本；个人/独立会话忽略此字段，沿用会话绑定版本。
      */
     workspaceAgentMemberId?: string
+    /**
+     * 项目空间 S6：定时触发的执行（无人在场）只装配项目任务读工具；
+     * 缺省表示由人发起，团队空间可读可写。
+     */
+    scheduled?: boolean
     cumulativeBudget?: TaskBudgetInput
     authorizationContext?: SessionAuthorizationContext
   }) {
@@ -405,6 +410,9 @@ export class RunOrchestrationService {
         history: context.history,
         conversationSummary: context.summary,
         limits: attemptLimitsForBudget(normalizedBudget),
+        projectTaskToolMode: session.workspaceType === 'team'
+          ? (input.scheduled ? 'read' : 'read-write')
+          : 'none',
       })
     })
     await this.deps.operations?.appendAudit(input.userId, 'run.create', run.id, 'success', `trace-${run.id}`, '员工创建真实 Run')
@@ -642,6 +650,8 @@ export class RunOrchestrationService {
           additionalSkillReferences,
           history: context.history,
           conversationSummary: context.summary,
+          // 重试由人发起：团队空间与原运行一样装配项目任务工具（S6）。
+          projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
         })
       })
       await this.deps.operations?.appendAudit(userId, 'run.retry', retried.id, 'success', `trace-${retried.id}`, `员工重新发起共享运行（来源 ${run.id}）`)
@@ -668,6 +678,7 @@ export class RunOrchestrationService {
       limits: lastAttempt?.manifest
         ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
         : undefined,
+      projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
     })
     await this.deps.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.deps.runs.getRun(tenantId, run.id)
