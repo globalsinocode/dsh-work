@@ -255,6 +255,86 @@
         }
       }
     },
+    "/me/conversation-targets/{type}/{id}/read": {
+      "post": {
+        "operationId": "markConversationTargetRead",
+        "summary": "标记对话对象已读",
+        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "group"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "upTo": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "已读到的消息时间，通常为列表中最后一条消息的 sentAt。"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "新的已读位置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationReadState"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/me/conversation-targets/resolve": {
       "get": {
         "operationId": "resolveConversationTarget",
@@ -3833,6 +3913,30 @@
           }
         }
       },
+      "ConversationReadState": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "lastReadAt"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "group"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "lastReadAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "ConversationTarget": {
         "type": "object",
         "required": [
@@ -3843,7 +3947,9 @@
           "avatarNames",
           "lastMessage",
           "lastActiveAt",
-          "available"
+          "available",
+          "unreadCount",
+          "muted"
         ],
         "properties": {
           "type": {
@@ -3888,6 +3994,16 @@
           "available": {
             "type": "boolean",
             "description": "单聊：AI 同事当前是否可用（不可用时历史仍可读）；群组恒为 true。"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "已读位置之后他人发送的 user 消息与 assistant 回复数（本人发送的不计；群组不早于本人加入时间），最多计到 100。"
+          },
+          "muted": {
+            "type": "boolean",
+            "description": "群组已按空间静音（3.7）：未读照常计数，列表弱化显示；单聊恒为 false。"
           }
         }
       },

@@ -7,9 +7,12 @@ import {
   type AgentConversation,
   type ConversationLocation,
   type ConversationMessagePreview,
+  type ConversationReadState,
   type ConversationTarget,
   type ConversationTargetPage,
   type ConversationTargetStore,
+  type ConversationTargetType,
+  unreadCountCap,
 } from './conversation-targets.ts'
 import { readableWorkspacePredicate } from './postgres-workspace-service.ts'
 
@@ -32,6 +35,8 @@ interface TargetRow {
   previewAuthor: string | null
   previewContent: string | null
   previewAt: Date | null
+  unreadCount: number
+  muted: boolean
 }
 
 interface SegmentRow {
@@ -111,7 +116,8 @@ export class PostgresConversationTargetService implements ConversationTargetStor
                         limit 4) member
              ) else array[t.name] end as "avatarNames",
              preview.role as "previewRole", preview.author as "previewAuthor",
-             preview.content as "previewContent", preview.created_at as "previewAt"
+             preview.content as "previewContent", preview.created_at as "previewAt",
+             unread.count as "unreadCount", ns.muted_at is not null as muted
         from targets t
         left join lateral (
           select m.role, m.content, m.created_at,
@@ -125,18 +131,30 @@ export class PostgresConversationTargetService implements ConversationTargetStor
               and mav.id = coalesce(ra.manifest ->> 'agent_version_id', ms.agent_version_id)
             left join agents mag on mag.tenant_id = mav.tenant_id and mag.id = mav.agent_id
             left join users su on su.tenant_id = m.tenant_id and su.id = coalesce(m.sender_user_id, r.requested_by, ms.created_by)
-           where m.tenant_id = ${tenantId} and m.role in ('user', 'assistant')
-             and ms.audience = 'workbench' and ms.status = 'active'
-             and (
-               (t.type = 'agent' and ms.created_by = ${input.userId}
-                 and mw.workspace_type = 'personal' and mw.created_by = ${input.userId}
-                 and exists (select 1 from agent_versions sav where sav.tenant_id = ms.tenant_id
-                   and sav.id = ms.agent_version_id and sav.agent_id = t.id))
-               or (t.type = 'group' and ms.workspace_id = t.id)
-             )
+           where ${targetMessageScope(sql, input.userId)}
            order by m.created_at desc, m.id desc
            limit 1
         ) preview on true
+        left join conversation_read_states rs on rs.tenant_id = ${tenantId} and rs.user_id = ${input.userId}
+          and rs.target_type = t.type and rs.target_id = t.id
+        left join workspace_members jm on t.type = 'group' and jm.tenant_id = ${tenantId}
+          and jm.workspace_id = t.id and jm.user_id = ${input.userId}
+        left join workspace_notification_states ns on t.type = 'group' and ns.tenant_id = ${tenantId}
+          and ns.workspace_id = t.id and ns.user_id = ${input.userId}
+        left join lateral (
+          -- 未读：已读位置（群组不早于本人加入时间）之后、他人发送的消息；本人发送的不计。
+          select count(*)::integer as count from (
+            select 1
+              from messages m
+              join sessions ms on ms.tenant_id = m.tenant_id and ms.id = m.session_id
+              join workspaces mw on mw.tenant_id = ms.tenant_id and mw.id = ms.workspace_id
+              left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id
+             where ${targetMessageScope(sql, input.userId)}
+               and m.created_at > greatest(coalesce(rs.last_read_at, '-infinity'::timestamptz), coalesce(jm.joined_at, '-infinity'::timestamptz))
+               and (m.role = 'assistant' or coalesce(m.sender_user_id, r.requested_by, ms.created_by) is distinct from ${input.userId})
+             limit ${unreadCountCap}
+          ) unread_messages
+        ) unread on true
        where ${pattern === null ? sql`true` : sql`t.name ilike ${pattern} escape '\\'`}
          and ${cursor === null ? sql`true` : sql`(
            t.last_active_at < ${cursor.lastActiveAt}::text::timestamptz
@@ -155,6 +173,8 @@ export class PostgresConversationTargetService implements ConversationTargetStor
       lastMessage: toPreview(row),
       lastActiveAt: row.lastActiveAt.toISOString(),
       available: row.type === 'group' || available.has(row.id),
+      unreadCount: Number(row.unreadCount),
+      muted: row.type === 'group' && row.muted,
     }))
     const last = rows[items.length - 1]
     return {
@@ -255,6 +275,40 @@ export class PostgresConversationTargetService implements ConversationTargetStor
     if (!row.agentId) throw notFound('对话不存在或无权访问')
     return { type: 'agent', agentId: row.agentId, sessionId: row.sessionId }
   }
+
+  async markRead(input: { userId: string; type: ConversationTargetType; id: string; upTo?: Date }): Promise<ConversationReadState> {
+    const sql = this.database
+    // 不泄露无权群组或不存在的 AI 同事：两者都按 404 处理。单聊不要求 AI 同事当前可用（历史仍可读）。
+    const [target] = input.type === 'group'
+      ? await sql<Array<{ id: string }>>`
+          select w.id from workspaces w
+           where w.tenant_id = ${tenantId} and w.id = ${input.id} and w.workspace_type = 'team'
+             and (${readableWorkspacePredicate(sql, input.userId)})`
+      : await sql<Array<{ id: string }>>`select ag.id from agents ag where ag.tenant_id = ${tenantId} and ag.id = ${input.id}`
+    if (!target) throw notFound(input.type === 'group' ? '群组不存在或无权访问' : 'AI 同事不存在')
+    const [row] = await sql<Array<{ lastReadAt: Date }>>`
+      insert into conversation_read_states as rs (tenant_id, user_id, target_type, target_id, last_read_at)
+      values (${tenantId}, ${input.userId}, ${input.type}, ${input.id}, least(coalesce(${input.upTo ?? null}::timestamptz, now()), now()))
+      on conflict (tenant_id, user_id, target_type, target_id) do update
+        set last_read_at = greatest(rs.last_read_at, excluded.last_read_at),
+            updated_at = case when excluded.last_read_at > rs.last_read_at then now() else rs.updated_at end
+      returning last_read_at as "lastReadAt"
+    `
+    return { type: input.type, id: input.id, lastReadAt: row!.lastReadAt.toISOString() }
+  }
+}
+
+/** 一个对话对象的消息范围（与预览、未读同一口径），需要 `t`（对话对象）、`m`、`ms`、`mw` 别名。 */
+function targetMessageScope(sql: DatabaseClient, userId: string) {
+  return sql`m.tenant_id = ${tenantId} and m.role in ('user', 'assistant')
+    and ms.audience = 'workbench' and ms.status = 'active'
+    and (
+      (t.type = 'agent' and ms.created_by = ${userId}
+        and mw.workspace_type = 'personal' and mw.created_by = ${userId}
+        and exists (select 1 from agent_versions sav where sav.tenant_id = ms.tenant_id
+          and sav.id = ms.agent_version_id and sav.agent_id = t.id))
+      or (t.type = 'group' and ms.workspace_id = t.id)
+    )`
 }
 
 function toPreview(row: TargetRow): ConversationMessagePreview | null {

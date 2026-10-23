@@ -7,6 +7,8 @@ import { workbenchApi } from '@/api/client'
 import type { ConversationTarget } from '@/types/domain'
 import CollabTargetList from './CollabTargetList.vue'
 
+const router = vi.hoisted(() => ({ push: vi.fn() }))
+vi.mock('vue-router', () => ({ useRouter: () => router }))
 vi.mock('@/api/client', () => ({
   workbenchApi: {
     listConversationTargets: vi.fn(),
@@ -18,14 +20,17 @@ const NOW = new Date().toISOString()
 const targets: ConversationTarget[] = [
   {
     type: 'agent', id: 'a1', name: '库存助手', description: '盘点库存', avatarNames: ['库'], available: true, lastActiveAt: NOW,
+    unreadCount: 0, muted: false,
     lastMessage: { role: 'user', authorName: '我', text: '查一下', sentAt: NOW },
   },
   {
     type: 'agent', id: 'a2', name: '报表助手', description: '生成报表', avatarNames: ['报'], available: false, lastActiveAt: NOW,
+    unreadCount: 3, muted: false,
     lastMessage: { role: 'assistant', authorName: '报表助手', text: '已完成', sentAt: NOW },
   },
   {
     type: 'group', id: 'g1', name: '采购群', description: '', avatarNames: ['甲', '乙', '丙'], available: true, lastActiveAt: NOW,
+    unreadCount: 120, muted: true,
     lastMessage: { role: 'assistant', authorName: '林岚', text: '收到', sentAt: NOW },
   },
 ]
@@ -41,10 +46,11 @@ function mountList(props: Record<string, unknown> = {}) {
     global: {
       plugins: [ElementPlus],
       stubs: {
-        ElDropdown: { template: '<div><slot /><div class="menu"><slot name="dropdown" /></div></div>' },
+        ElDropdown: { name: 'ElDropdown', emits: ['command'], template: '<div><slot /><div class="menu"><slot name="dropdown" /></div></div>' },
         ElDropdownMenu: { template: '<ul><slot /></ul>' },
         ElDropdownItem: { template: '<li><slot /></li>' },
         ElDialog: true,
+        CreateProjectSpaceDialog: { name: 'CreateProjectSpaceDialog', props: ['modelValue', 'mode'], emits: ['created'], template: '<div class="create-dialog" :data-open="String(modelValue)" :data-mode="mode" />' },
       },
     },
   })
@@ -130,11 +136,45 @@ describe('CollabTargetList', () => {
     wrapper.unmount()
   })
 
-  it('offers disabled group creation in the menu', async () => {
+  it('shows unread counts with an accessible label, capped at 99+ and muted groups dimmed', async () => {
+    const wrapper = mountList()
+    await flushPromises()
+    const buttons = wrapper.findAll('ul[aria-label="对话"] button')
+    expect(buttons[0].find('[data-testid="conversation-unread"]').exists()).toBe(false)
+    const agent = buttons[1].get('[data-testid="conversation-unread"]')
+    expect(agent.text()).toContain('3')
+    expect(agent.text()).toContain('3 条未读')
+    expect(agent.classes()).not.toContain('collab-target__unread--muted')
+    const group = buttons[2].get('[data-testid="conversation-unread"]')
+    expect(group.get('[aria-hidden="true"]').text()).toBe('99+')
+    expect(group.text()).toContain('99 条以上未读（已静音）')
+    expect(group.classes()).toContain('collab-target__unread--muted')
+    wrapper.unmount()
+  })
+
+  it('refreshes the first page when mounted again', async () => {
+    const first = mountList()
+    await flushPromises()
+    first.unmount()
+    const second = mount(CollabTargetList, { global: { plugins: [ElementPlus], stubs: { ElDialog: true, CreateProjectSpaceDialog: true } } })
+    await flushPromises()
+    expect(workbenchApi.listConversationTargets).toHaveBeenCalledTimes(2)
+    second.unmount()
+  })
+
+  it('creates a group from the menu and opens it with the invite prompt', async () => {
     const wrapper = mountList()
     await flushPromises()
     expect(wrapper.get('.menu').text()).toContain('发起对话')
-    expect(wrapper.get('.menu').text()).toContain('即将上线')
+    expect(wrapper.get('.menu').text()).not.toContain('即将上线')
+    expect(wrapper.get('.create-dialog').attributes('data-open')).toBe('false')
+    wrapper.findComponent({ name: 'ElDropdown' }).vm.$emit('command', 'group')
+    await flushPromises()
+    expect(wrapper.get('.create-dialog').attributes('data-open')).toBe('true')
+    expect(wrapper.get('.create-dialog').attributes('data-mode')).toBe('collab')
+    wrapper.findComponent({ name: 'CreateProjectSpaceDialog' }).vm.$emit('created', { id: 'ws-new' })
+    await flushPromises()
+    expect(router.push).toHaveBeenCalledWith({ name: 'collab-group-chat', params: { id: 'ws-new' }, query: { info: '1', invite: '1' } })
     wrapper.unmount()
   })
 })

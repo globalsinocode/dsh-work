@@ -180,6 +180,71 @@ test('解析对话链接：Run ID 与 Session ID；个人会话到 AI 同事，�
 // Fixture
 // ---------------------------------------------------------------------------
 
+test('未读与已读（S5e）：只计他人消息、已读位置只进不退、静音照常计数、无权为 404、最多计到 100', async () => {
+  const unread = async (userId: string) => Object.fromEntries(
+    ((await get(userId, '/me/conversation-targets')).body.data.items as Array<{ type: string; id: string; unreadCount: number; muted: boolean }>)
+      .map(item => [`${item.type}:${item.id}`, { unread: item.unreadCount, muted: item.muted }]))
+
+  // A：单聊中 AI 同事的回复与群里 B 的发言计入；本人发送的不计。B：群里的发言是本人的。
+  assert.deepEqual(await unread(employeeA), {
+    'group:s5c-team-active': { unread: 1, muted: false },
+    'agent:s5c-agent-x': { unread: 1, muted: false },
+    'agent:s5c-agent-y': { unread: 0, muted: false },
+  })
+  assert.deepEqual((await unread(employeeB))['group:s5c-team-active'], { unread: 0, muted: false })
+  assert.deepEqual((await unread(employeeB))['agent:s5c-agent-x'], { unread: 0, muted: false })
+
+  // 已读到某一时刻：之后的消息仍未读；晚于当前时间按当前时间；只进不退。
+  const partial = await post(employeeA, '/me/conversation-targets/agent/s5c-agent-x/read', { upTo: '2026-10-20T09:00:30Z' })
+  assert.equal(partial.status, 200)
+  assert.deepEqual(partial.body.data, { type: 'agent', id: 's5c-agent-x', lastReadAt: '2026-10-20T09:00:30.000Z' })
+  assert.equal((await unread(employeeA))['agent:s5c-agent-x']!.unread, 1)
+  const future = await post(employeeA, '/me/conversation-targets/agent/s5c-agent-x/read', { upTo: '2999-01-01T00:00:00Z' })
+  assert.ok(Date.parse(future.body.data.lastReadAt) <= Date.now())
+  assert.equal((await unread(employeeA))['agent:s5c-agent-x']!.unread, 0)
+  const back = await post(employeeA, '/me/conversation-targets/agent/s5c-agent-x/read', { upTo: '2026-01-01T00:00:00Z' })
+  assert.equal(back.body.data.lastReadAt, future.body.data.lastReadAt)
+
+  const group = await post(employeeA, '/me/conversation-targets/group/s5c-team-active/read', {})
+  assert.equal(group.status, 200)
+  assert.equal((await unread(employeeA))['group:s5c-team-active']!.unread, 0)
+  // A 的已读位置不影响 B。
+  const [bState] = await database`select 1 from conversation_read_states where tenant_id = ${tenantId} and user_id = ${employeeB}`
+  assert.equal(bState, undefined)
+
+  // 已读之后 B 的新发言计为未读，A 自己的新发言不计。
+  const later = (offset: number) => new Date(Date.now() + offset).toISOString()
+  await seedMessage('s5e-m1', 's5c-team-session', 'user', '新的进展', later(1_000), employeeB)
+  await seedMessage('s5e-m2', 's5c-team-session', 'user', '我来补充', later(2_000), employeeA)
+  assert.equal((await unread(employeeA))['group:s5c-team-active']!.unread, 1)
+
+  // 按空间静音：未读照常返回，标记 muted。
+  await database`
+    insert into workspace_notification_states (tenant_id, workspace_id, user_id, muted_at)
+    values (${tenantId}, 's5c-team-active', ${employeeA}, now())
+  `
+  assert.deepEqual((await unread(employeeA))['group:s5c-team-active'], { unread: 1, muted: true })
+
+  // 无权群组、不存在的 AI 同事为 404；已归档但仍是成员的群组可以标记；参数错误为 422。
+  assert.equal((await post(employeeA, '/me/conversation-targets/group/s5c-team-outsider/read', {})).status, 404)
+  assert.equal((await post(employeeA, '/me/conversation-targets/agent/s5c-no-such-agent/read', {})).status, 404)
+  assert.equal((await post(employeeA, '/me/conversation-targets/group/s5c-team-archived/read', {})).status, 200)
+  assert.equal((await post(employeeA, '/me/conversation-targets/session/s5c-team-active/read', {})).status, 422)
+  assert.equal((await post(employeeA, '/me/conversation-targets/group/s5c-team-active/read', { upTo: 'yesterday' })).status, 422)
+  assert.equal((await post(undefined, '/me/conversation-targets/group/s5c-team-active/read', {})).status, 401)
+
+  // 群组从本人加入时间起计：B 看到 A 的新发言；把 B 的加入时间推到其后即不再计入。
+  assert.equal((await unread(employeeB))['group:s5c-team-active']!.unread, 1)
+  await database`update workspace_members set joined_at = ${later(2_500)} where tenant_id = ${tenantId} and workspace_id = 's5c-team-active' and user_id = ${employeeB}`
+  assert.equal((await unread(employeeB))['group:s5c-team-active']!.unread, 0)
+
+  // 最多计到 100。
+  for (let index = 0; index < 105; index += 1) {
+    await seedMessage(`s5e-bulk-${index}`, 's5c-team-session', 'user', `第 ${index} 条`, later(3_000 + index), employeeB)
+  }
+  assert.equal((await unread(employeeA))['group:s5c-team-active']!.unread, 100)
+})
+
 async function seedUser(userId: string, name: string) {
   await database`
     insert into users (id, tenant_id, external_subject, display_name, status, identity_provider, business_user)
@@ -284,6 +349,15 @@ async function seedFixture() {
 async function get(userId: string | undefined, path: string): Promise<{ status: number; body: any }> {
   const response = await fetch(`${baseUrl}/api/workbench/v1${path}`, {
     headers: userId ? { 'x-test-user-id': userId } : {},
+  })
+  return { status: response.status, body: await response.json() }
+}
+
+async function post(userId: string | undefined, path: string, body: unknown): Promise<{ status: number; body: any }> {
+  const response = await fetch(`${baseUrl}/api/workbench/v1${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(userId ? { 'x-test-user-id': userId } : {}) },
+    body: JSON.stringify(body),
   })
   return { status: response.status, body: await response.json() }
 }

@@ -228,11 +228,15 @@ async function submit(payload: { prompt: string; files: File[]; workspaceId: str
   }
 }
 
-// 实时更新：订阅空间会话活动流（与 A 的共享讨论同一条 SSE），任一讨论或执行变化时刷新最新一页。
+// 实时更新：订阅空间会话活动流（与 A 的共享讨论同一条 SSE），任一讨论或执行变化时刷新最新一页，
+// 并刷新对话列表的预览与未读（打开中的群组随即由对话页标记已读，S5e）。
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 watch(() => taskStore.sessionActivity, () => {
   if (refreshTimer) clearTimeout(refreshTimer)
-  refreshTimer = setTimeout(() => { void reloadNewest().catch(() => undefined) }, 300)
+  refreshTimer = setTimeout(() => {
+    void reloadNewest().catch(() => undefined)
+    void conversations.refresh()
+  }, 300)
 }, { deep: true })
 
 watch(() => props.workspaceId, (workspaceId, previous) => {

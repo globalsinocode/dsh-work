@@ -30,6 +30,18 @@ export interface ConversationTarget {
   lastActiveAt: string
   /** 单聊：AI 同事当前是否可用（不可用时历史仍可读）；群组恒为 true。 */
   available: boolean
+  /** 已读位置之后他人发送的消息数（本人发送的不计），最多计到 `unreadCountCap`（S5e）。 */
+  unreadCount: number
+  /** 群组已按空间静音（3.7）：未读照常计数，列表以弱化样式显示；单聊恒为 false。 */
+  muted: boolean
+}
+
+export const unreadCountCap = 100
+
+export interface ConversationReadState {
+  type: ConversationTargetType
+  id: string
+  lastReadAt: string
 }
 
 export interface ConversationTargetPage {
@@ -74,6 +86,8 @@ export interface ConversationTargetStore {
   listTargets(input: { userId: string; roleIds: string[]; query?: string; cursor?: string; limit?: number }): Promise<ConversationTargetPage>
   getAgentConversation(input: { userId: string; roleIds: string[]; agentId: string; cursor?: string; limit?: number }): Promise<AgentConversation>
   resolveConversation(input: { userId: string; conversationId: string }): Promise<ConversationLocation>
+  /** 把本人在该对话对象的已读位置前进到 `upTo`（缺省或晚于当前时间按当前时间），只进不退。 */
+  markRead(input: { userId: string; type: ConversationTargetType; id: string; upTo?: Date }): Promise<ConversationReadState>
 }
 
 export const previewLength = 120

@@ -380,3 +380,60 @@ test.describe('MODE-E2E-09 协作模式归档群组（S5d）', () => {
     await expect(page.getByLabel('对话输入')).toHaveCount(0)
   })
 })
+
+test.describe('MODE-E2E-13 协作模式未读（S5e）', () => {
+  // 只读成员 U00003 是读者，成员 U00002 在另一个独立的 browser context 中发言。
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00003' } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'collab' } })
+  })
+  test.afterEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'work' } })
+  })
+
+  test('他人在群里发言后出现未读，打开群组即已读并保存在服务端', async ({ page, browser, baseURL }) => {
+    const seed = await loadSeed(page)
+    const read = await page.request.post(`/api/workbench/v1/me/conversation-targets/group/${seed.workspaceId}/read`, { data: {} })
+    expect(read.ok()).toBeTruthy()
+    await page.goto('/c/chats')
+    const row = () => page.getByRole('list', { name: '对话' }).getByRole('button', { name: /P1 项目空间/ })
+    await expect(row()).toBeVisible()
+    await expect(row().getByTestId('conversation-unread')).toHaveCount(0)
+
+    const member = await browser.newContext({ baseURL, extraHTTPHeaders: { 'x-test-user-id': 'U00002' } })
+    try {
+      const memberPage = await member.newPage()
+      await memberPage.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'collab' } })
+      await memberPage.goto(`/c/chats/group/${seed.workspaceId}`)
+      const message = uniqueTitle('MODE-13 新进展')
+      // 等输入区就绪后再取消单 Agent 预选：这条应是讨论，不触发执行。
+      // 夹具群组只有一个 Agent：预选条与“交给 @”二者必出现其一。
+      const preset = memberPage.getByRole('button', { name: '改为讨论' })
+      const handOver = memberPage.getByRole('button', { name: /^交给 @/ })
+      await expect(preset.or(handOver)).toBeVisible()
+      if (await preset.isVisible()) await preset.click()
+      await expect(handOver).toBeVisible()
+      await memberPage.getByLabel('对话输入').fill(message)
+      await memberPage.getByRole('button', { name: '发送消息', exact: true }).click()
+      await expect(memberPage.getByRole('region', { name: '群聊' }).locator('.user-message', { hasText: message })).toBeVisible()
+      // 发言者本人：正打开该群组，自己的发言不产生未读。
+      await expect(memberPage.getByRole('list', { name: '对话' }).getByRole('button', { name: /P1 项目空间/ }).getByTestId('conversation-unread')).toHaveCount(0)
+      await memberPage.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'work' } })
+    } finally {
+      await member.close()
+    }
+
+    // 读者回到对话页（重新加载列表）后出现未读；预览为他人的新发言。
+    await page.reload()
+    await expect(row()).toContainText('周衡：MODE-13 新进展')
+    await expect(row()).toHaveAccessibleName(/ 1 条未读$/)
+
+    await row().click()
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}$`))
+    await expect(row().getByTestId('conversation-unread')).toHaveCount(0)
+    await page.reload()
+    await expect(row()).toBeVisible()
+    await expect(row().getByTestId('conversation-unread')).toHaveCount(0)
+  })
+})

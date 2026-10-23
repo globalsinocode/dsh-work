@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 
 import { useCollabConversationStore } from '@/stores/collab-conversations'
-import type { ConversationTarget } from '@/types/domain'
+import type { ConversationTarget, Workspace } from '@/types/domain'
 import { formatActivityTimeShort } from '@/utils/activity-time'
+import CreateProjectSpaceDialog from '../CreateProjectSpaceDialog.vue'
 import CollabAgentPickerDialog from './CollabAgentPickerDialog.vue'
 
-/** 协作模式对话页列表栏（D24）：单聊（按 AI 同事聚合）与群组按最近活动排序，支持搜索与分页。 */
+/**
+ * 协作模式对话页列表栏（D24）：单聊（按 AI 同事聚合）与群组按最近活动排序，支持搜索与分页；
+ * 每行显示未读数（S5e，静音群组弱化显示）。“＋”发起单聊或新建群组（与群组页同一创建弹窗）。
+ */
 const props = defineProps<{
   activeKey?: string
   pendingAgent?: { id: string; name: string; description: string } | null
@@ -18,12 +23,15 @@ const emit = defineEmits<{
 }>()
 
 const store = useCollabConversationStore()
+const router = useRouter()
 const keyword = ref(store.query)
 const pickerOpen = ref(false)
+const createOpen = ref(false)
 let timer: ReturnType<typeof setTimeout> | undefined
 
+// 回到对话页时重新取第一页：离开期间他人的发言要体现在预览与未读中。
 onMounted(() => {
-  if (!store.loaded) void store.load()
+  void (store.loaded ? store.refresh() : store.load())
 })
 onBeforeUnmount(() => clearTimeout(timer))
 
@@ -50,8 +58,18 @@ function preview(target: ConversationTarget) {
   return last.role === 'user' ? `我：${last.text}` : last.text
 }
 
+function unreadLabel(count: number) {
+  return count > 99 ? '99+' : String(count)
+}
+
 function onMenu(command: string | number | object) {
   if (command === 'agent') pickerOpen.value = true
+  if (command === 'group') createOpen.value = true
+}
+
+function onGroupCreated(workspace: Workspace) {
+  void store.refresh()
+  void router.push({ name: 'collab-group-chat', params: { id: workspace.id }, query: { info: '1', invite: '1' } })
 }
 
 function onPick(agentId: string) {
@@ -75,10 +93,10 @@ function onPick(agentId: string) {
                 <small>选择一位 AI 同事单聊</small>
               </span>
             </el-dropdown-item>
-            <el-dropdown-item command="group" disabled>
+            <el-dropdown-item command="group">
               <span class="collab-target-list__menu-copy">
-                <strong>新建群组 <em>即将上线</em></strong>
-                <small>至少选择一个 Agent，可邀请同事</small>
+                <strong>新建群组</strong>
+                <small>至少选择一个 AI 同事，创建后可邀请同事</small>
               </span>
             </el-dropdown-item>
           </el-dropdown-menu>
@@ -123,7 +141,18 @@ function onPick(agentId: string) {
                 </span>
                 <span class="collab-target__preview">{{ preview(target) }}</span>
               </span>
-              <time class="collab-target__time" :datetime="target.lastActiveAt">{{ formatActivityTimeShort(target.lastActiveAt) }}</time>
+              <span class="collab-target__side">
+                <time class="collab-target__time" :datetime="target.lastActiveAt">{{ formatActivityTimeShort(target.lastActiveAt) }}</time>
+                <span
+                  v-if="target.unreadCount > 0"
+                  class="collab-target__unread"
+                  :class="{ 'collab-target__unread--muted': target.muted }"
+                  data-testid="conversation-unread"
+                >
+                  <span aria-hidden="true">{{ unreadLabel(target.unreadCount) }}</span>
+                  <span class="collab-target-list__sr">{{ target.unreadCount > 99 ? '99 条以上未读' : `${target.unreadCount} 条未读` }}{{ target.muted ? '（已静音）' : '' }}</span>
+                </span>
+              </span>
             </button>
           </li>
         </ul>
@@ -137,6 +166,7 @@ function onPick(agentId: string) {
     </div>
 
     <CollabAgentPickerDialog v-model="pickerOpen" @pick="onPick" />
+    <CreateProjectSpaceDialog v-model="createOpen" mode="collab" @created="onGroupCreated" />
   </section>
 </template>
 
@@ -177,5 +207,12 @@ function onPick(agentId: string) {
 .collab-target__name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .collab-target__tag { flex: 0 0 auto; padding: 0 6px; border-radius: 4px; color: var(--dsh-color-warning); background: var(--dsh-color-warning-soft); font-size: var(--dsh-font-size-micro); font-weight: 500; }
 .collab-target__preview { overflow: hidden; color: var(--dsh-color-muted); font-size: var(--dsh-font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
-.collab-target__time { flex: 0 0 auto; align-self: flex-start; padding-top: 2px; color: var(--dsh-color-subtle); font-size: var(--dsh-font-size-micro); }
+.collab-target__side { display: flex; flex: 0 0 auto; align-self: stretch; flex-direction: column; align-items: flex-end; gap: 6px; padding-top: 2px; }
+.collab-target__time { color: var(--dsh-color-subtle); font-size: var(--dsh-font-size-micro); }
+.collab-target__unread {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; color: #fff; background: var(--dsh-color-danger);
+  font-size: var(--dsh-font-size-micro); font-weight: 600; line-height: 18px; text-align: center;
+}
+.collab-target__unread--muted { color: var(--dsh-color-muted); background: var(--dsh-color-border); }
+.collab-target-list__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>

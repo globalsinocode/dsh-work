@@ -793,6 +793,10 @@ export interface ConversationTarget {
   lastActiveAt: string
   /** 单聊：AI 同事当前是否可用；群组恒为 true。 */
   available: boolean
+  /** 已读位置之后他人发送的消息数，最多 100（S5e）。 */
+  unreadCount: number
+  /** 群组已按空间静音：未读以弱化样式显示。 */
+  muted: boolean
 }
 
 export interface AgentConversationSegment {

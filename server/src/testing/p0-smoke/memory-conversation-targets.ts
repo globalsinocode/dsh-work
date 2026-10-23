@@ -5,9 +5,11 @@ import {
   previewText,
   type AgentConversation,
   type ConversationLocation,
+  type ConversationReadState,
   type ConversationTarget,
   type ConversationTargetPage,
   type ConversationTargetStore,
+  type ConversationTargetType,
 } from '../../modules/workbench/application/conversation-targets.ts'
 import type { SmokeRepository } from './smoke-repository.ts'
 
@@ -18,9 +20,24 @@ import type { SmokeRepository } from './smoke-repository.ts'
  */
 export class MemoryConversationTargetStore implements ConversationTargetStore {
   private readonly repository: SmokeRepository
+  /** 已读的对话对象（进程内，S5e）：未读数为夹具中该对象的 Agent 回复数，标记已读后为 0。 */
+  private readonly readTargets = new Set<string>()
 
   constructor(repository: SmokeRepository) {
     this.repository = repository
+  }
+
+  async markRead(input: { type: ConversationTargetType; id: string; upTo?: Date }): Promise<ConversationReadState> {
+    const workspaces = await this.repository.read('workspaces')
+    const agents = await this.repository.read('agents')
+    const exists = input.type === 'group'
+      ? workspaces.some(item => item.id === input.id && item.type === 'team')
+      : agents.some(item => item.id === input.id) || (await this.allTargets()).some(item => item.type === 'agent' && item.id === input.id)
+    if (!exists) throw notFound(input.type === 'group' ? '群组不存在或无权访问' : 'AI 同事不存在')
+    this.readTargets.add(`${input.type}:${input.id}`)
+    const now = new Date()
+    const at = input.upTo && input.upTo < now ? input.upTo : now
+    return { type: input.type, id: input.id, lastReadAt: at.toISOString() }
   }
 
   async listTargets(input: { query?: string; cursor?: string; limit?: number }): Promise<ConversationTargetPage> {
@@ -98,6 +115,14 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
     const workspaces = await this.repository.read('workspaces')
     const agents = await this.repository.read('agents')
     const targets = new Map<string, ConversationTarget & { order: number }>()
+    const replies = new Map<string, number>()
+    for (const task of tasks) {
+      const workspace = workspaces.find(item => item.id === task.workspaceId)
+      if (!workspace) continue
+      const key = workspace.type === 'team' ? `group:${workspace.id}` : `agent:${agentIdOf(task.agentVersion)}`
+      replies.set(key, (replies.get(key) ?? 0) + task.messages.filter(message => message.role !== 'user').length)
+    }
+    const unread = (key: string) => this.readTargets.has(key) ? 0 : replies.get(key) ?? 0
     for (const [index, task] of tasks.entries()) {
       const workspace = workspaces.find(item => item.id === task.workspaceId)
       if (!workspace) continue
@@ -122,6 +147,8 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
         } : null,
         lastActiveAt: syntheticTime(index),
         available: isGroup || agent?.status === 'published',
+        unreadCount: unread(key),
+        muted: false,
         order: index,
       })
     }
@@ -130,7 +157,8 @@ export class MemoryConversationTargetStore implements ConversationTargetStore {
       targets.set(`group:${workspace.id}`, {
         type: 'group', id: workspace.id, name: workspace.name, description: workspace.description,
         avatarNames: workspace.members.slice(0, 4), lastMessage: null,
-        lastActiveAt: syntheticTime(tasks.length + targets.size), available: true, order: tasks.length + targets.size,
+        lastActiveAt: syntheticTime(tasks.length + targets.size), available: true, unreadCount: 0, muted: false,
+        order: tasks.length + targets.size,
       })
     }
     return [...targets.values()].sort((a, b) => a.order - b.order).map(({ order: _order, ...item }) => item)

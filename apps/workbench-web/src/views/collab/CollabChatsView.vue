@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import CollabAgentChat from '@/components/collab/CollabAgentChat.vue'
@@ -10,8 +10,9 @@ import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useContentStore } from '@/stores/content'
 
 /**
- * 协作模式对话页（S5c，D24～D26）：左栏统一对话列表，右栏为选中的对话对象。单聊在本切片
- * 实现；群聊（S5d）先显示占位。窄屏为“列表 → 聊天”两级。
+ * 协作模式对话页（S5c～S5e，D24～D29）：左栏统一对话列表，右栏为选中的单聊或群组。窄屏为
+ * “列表 → 聊天”两级。打开中的对话对象在页面可见时标记已读；列表在页面重新可见时及每分钟
+ * 刷新一次预览与未读（不新增推送通道，12.6）。
  */
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +69,35 @@ watch(() => route.name === 'collab-chats' ? route.query.conversation : undefined
     resolving.value = false
   }
 }, { immediate: true })
+
+/** 打开中的对话对象有未读、且页面可见时标记已读（窄屏只显示列表时没有打开的对象）。 */
+const pageVisible = ref(typeof document === 'undefined' || document.visibilityState !== 'hidden')
+const activeUnread = computed(() => {
+  const key = activeKey.value
+  return key ? conversations.targets.find(item => `${item.type}:${item.id}` === key)?.unreadCount ?? 0 : 0
+})
+watch([activeKey, activeUnread, pageVisible], ([key, unread, visible]) => {
+  if (!key || unread <= 0 || !visible) return
+  const [type, ...rest] = key.split(':')
+  void conversations.markRead(type as 'agent' | 'group', rest.join(':'))
+}, { immediate: true })
+
+const listRefreshMs = 60_000
+let listTimer: ReturnType<typeof setInterval> | undefined
+function onVisibilityChange() {
+  pageVisible.value = document.visibilityState !== 'hidden'
+  if (pageVisible.value && conversations.loaded) void conversations.refresh()
+}
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  listTimer = setInterval(() => {
+    if (pageVisible.value && conversations.loaded) void conversations.refresh()
+  }, listRefreshMs)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  clearInterval(listTimer)
+})
 
 if (!contentStore.agents.length) void contentStore.refreshAgents().catch(() => undefined)
 </script>

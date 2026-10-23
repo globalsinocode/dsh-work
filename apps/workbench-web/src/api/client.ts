@@ -173,6 +173,12 @@ export const workbenchApi = {
     request<{ workspaceId: string; items: WorkspaceTimelineItem[]; nextCursor: string | null }>(
       `/workspaces/${encodeURIComponent(workspaceId)}/timeline${before ? `?before=${encodeURIComponent(before)}` : ''}`,
     ),
+  /** S5e：本人在对话对象上的已读位置前进到 upTo（缺省为当前时间），只进不退。 */
+  markConversationTargetRead: (type: 'agent' | 'group', id: string, upTo?: string) =>
+    request<{ type: 'agent' | 'group'; id: string; lastReadAt: string }>(
+      `/me/conversation-targets/${type}/${encodeURIComponent(id)}/read`,
+      { method: 'POST', body: JSON.stringify(upTo ? { upTo } : {}) },
+    ),
   resolveConversation: (conversationId: string) =>
     request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),

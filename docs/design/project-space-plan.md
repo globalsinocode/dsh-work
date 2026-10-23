@@ -360,7 +360,7 @@
 - **续写与自动开启会话：** 发送消息续写最近一段会话；没有可续写的会话或 Agent 版本已变化时，平台经现有 `createSession`（单聊，固定 Agent 当前版本）或团队会话创建（群聊）开启新会话。不提供手动“新话题”，不新增执行入口。
 - **已读位置（新增）：** `conversation_read_states`（`user_id`、`target_type agent|group`、`target_id`、`last_read_at`）与 `POST /me/conversation-targets/:type/:id/read`。与按空间的通知已读与静音（`workspace_notification_states`）分开。
 - **建群必选 Agent：** 创建团队空间时须至少带一个可用 Agent 成员（B 入口校验；A 的创建入口是否同步要求，见 12.8）。
-- 列表预览、未读与时间线随现有 `session-events` 推送更新，不新增推送通道。同步 OpenAPI。
+- 列表预览、未读与时间线随现有 `session-events` 推送更新，不新增推送通道。同步 OpenAPI。S5e 实施为：打开中的群组随其 `session-events` 刷新时间线与列表；其余对话对象在回到对话页、页面重新可见时及每分钟刷新列表（逐个订阅所有群组的推送会超出浏览器连接数）。
 
 ### 12.7 工作量估算
 
@@ -411,5 +411,7 @@
 **进度：** S5c 已实现（2026-10-23）：`GET /me/conversation-targets`（本人个人会话按 AI 同事聚合 + 本人所在的活动项目空间，服务端分页与名称搜索，预览只取 user / assistant 消息）、`GET /me/conversation-targets/agent/:agentId/sessions`（会话分段与服务端给出的续写会话 `continueSessionId`）、`GET /me/conversation-targets/resolve`（对话链接定位）；迁移 0095 为按会话取最新消息加索引。协作模式对话页：统一列表（搜索、“＋”发起对话）、单聊连续分段（段首“话题 · 时间”、加载更早、链接定位到段）、续写最近一段或在首次对话 / Agent 版本变化时经 `createSession` 开启新会话；窄屏两级。群聊、新建群组、未读在 S5d / S5e。
 
 **进度：** S5d 已实现（2026-10-23）：`GET /workspaces/:id/timeline`（讨论、执行记录、任务卡片与系统记录合并，读取轨）；群组页 = A 的 `WorkspaceDetailView`（`layout="collab"`）+ B 头部（成员、“＋”添加成员、页签、群信息）+ 群聊时间线（话题分隔、@Agent 与单 Agent 预选、任务卡片进入任务详情、执行记录进入群组内执行详情、只读 / 归档 / 无 Agent 提示）；项目空间页面地址经 `space-routes` 解耦，群组子路由与 A 同构（12.5）；AI 同事页与群组页共用两栏目录布局，AI 同事详情与 A 共用 `AgentProfileDetail`；A 与 B 共用 `CreateProjectSpaceDialog`，新建须选 AI 同事，服务端同一事务创建并拒绝移出最后一个 Agent（功能规则 3.3）。
+
+**进度：** S5e 已实现（2026-10-23）：迁移 0096 `conversation_read_states`（上线前已有的对话对象记为已读）；`GET /me/conversation-targets` 每项增加 `unreadCount`（已读位置之后他人发送的消息，群组不早于本人加入时间，最多 100）与 `muted`（按空间静音，未读照常计数）；`POST /me/conversation-targets/:type/:id/read`（只进不退，`upTo` 晚于当前时间按当前时间）。对话列表显示未读数（“99+”，静音弱化，可访问名称含“N 条未读”），打开中的对话在页面可见时标记已读；列表“＋”的“新建群组”改为可用，复用 `CreateProjectSpaceDialog`。旅程见 MODE-E2E-13、MODE-API-03（功能规则 2.2b）。
 
 每个切片按浏览器 E2E 工作流执行：Spec 阶段在 `e2e/TEST-CATALOG.md` 登记 B 模式旅程（模式切换与记忆、默认进入 A、链接在两种模式间映射、单聊续写与话题分隔、群聊 @Agent、任务卡片进入任务详情并续接、群组中上传文件与新版本、档案编辑与回退、只读成员与归档群组无输入区），A 模式现有旅程全部保持通过；公共壳层变化后运行全部 `pnpm test:e2e`。`AGENTS.md` 中“员工端主导航固定五个入口”的约定改为“A 模式五个入口、B 模式四个入口”，同步更新 `e2e/personal-workbench.spec.ts`。

@@ -187,7 +187,7 @@ test('MODE-E2E-06: the chat list groups personal conversations by AI colleague a
   await expect(rows).toHaveCount(3)
 
   await page.getByRole('button', { name: '发起对话或新建群组' }).click()
-  await expect(page.getByRole('menuitem', { name: /新建群组/ })).toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('menuitem', { name: /新建群组/ })).not.toHaveAttribute('aria-disabled', 'true')
   await page.getByRole('menuitem', { name: /发起对话/ }).click()
   await page.getByRole('dialog', { name: '发起对话' }).getByRole('button', { name: '与 dsh-work Assistant 对话' }).click()
   await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant$/)
@@ -324,4 +324,24 @@ test('MODE-E2E-12: creating a group or project space requires choosing an AI col
   await page.getByRole('button', { name: '创建项目空间' }).click()
   const workDialog = page.getByRole('dialog', { name: '创建项目空间' })
   await expect(workDialog.getByRole('group', { name: '选择 AI 同事' })).toBeVisible()
+})
+
+test('MODE-E2E-13: unread counts show in the chat list and clear when the conversation is opened', async ({ page }) => {
+  await switchToCollab(page)
+  const list = page.getByRole('list', { name: '对话' })
+  const group = list.getByRole('button', { name: /供应链经营分析/ }).first()
+  const agent = list.getByRole('button', { name: /^dsh-work Assistant/ })
+  // 冒烟夹具：未读数为该对话对象中 AI 同事回复的条数，可访问名称含“N 条未读”。
+  await expect(group).toHaveAccessibleName(/\d+ 条未读/)
+  await expect(agent).toHaveAccessibleName(/\d+ 条未读/)
+
+  await group.click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await expect(group.getByTestId('conversation-unread')).toHaveCount(0)
+  await expect(agent.getByTestId('conversation-unread')).toHaveCount(1)
+
+  // 已读保存在服务端：重新加载后仍为已读，未打开的对话仍有未读。
+  await page.reload()
+  await expect(list.getByRole('button', { name: /^dsh-work Assistant/ })).toHaveAccessibleName(/\d+ 条未读/)
+  await expect(list.getByRole('button', { name: /供应链经营分析/ }).first().getByTestId('conversation-unread')).toHaveCount(0)
 })
