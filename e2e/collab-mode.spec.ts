@@ -295,7 +295,12 @@ test('MODE-E2E-11: AI colleague and group directories open the matching chats', 
   await expect(page.getByRole('heading', { name: '群组', level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /供应链经营分析/ }).first().click()
   await expect(page).toHaveURL(/\/c\/groups\/ws-supply$/)
-  await expect(page.getByText('简报摘要')).toBeVisible()
+  // 原型的居中详情：名称、状态与任务信息卡片、成员。
+  const detail = page.getByRole('region', { name: '详情' })
+  await expect(detail.getByRole('heading', { name: '供应链经营分析', level: 2 })).toBeVisible()
+  await expect(detail.getByText('状态', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('region', { name: '成员' })).toBeVisible()
+  await expect(page.getByRole('group', { name: '群组筛选' }).getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('button', { name: '管理群组' }).click()
   await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?info=1$/)
 })

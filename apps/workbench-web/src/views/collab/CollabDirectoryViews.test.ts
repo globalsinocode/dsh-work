@@ -90,6 +90,10 @@ describe('CollabAgentsView', () => {
     await flushPromises()
     expect(push).toHaveBeenCalledWith({ name: 'collab-agent', params: { agentId: 'a1' } })
     expect(router.currentRoute.value.name).toBe('collab-agent')
+    // 原型的居中详情：名称、说明与信息卡片（版本、可用状态、开场提示、可以这样问）。
+    expect(wrapper.get('.collab-profile h2').text()).toBe('库存助手')
+    expect(wrapper.get('.collab-profile dl').text()).toMatch(/版本\s*v2/)
+    expect(wrapper.get('.collab-profile dl').text()).toMatch(/可以这样问\s*查库存/)
     const send = wrapper.findAll('button').find(b => b.text() === '发消息')!
     await send.trigger('click')
     expect(push).toHaveBeenLastCalledWith({ name: 'collab-agent-chat', params: { agentId: 'a1' } })
@@ -97,25 +101,39 @@ describe('CollabAgentsView', () => {
 })
 
 describe('CollabGroupsView', () => {
-  it('只列团队群组，切到已归档重新加载，详情显示任务数且管理群组打开群信息', async () => {
+  it('默认列出全部团队群组，筛选重新加载，详情按原型显示状态、任务、成员，管理群组打开群信息', async () => {
+    vi.mocked(workbenchApi.listWorkspaceMembers).mockResolvedValue({
+      items: [{ userId: 'u1', displayName: '林岚', role: 'owner' }, { userId: 'u2', displayName: '赵六', role: 'viewer' }],
+      currentUserRole: 'owner',
+    } as never)
     const { wrapper, push } = await mountView(CollabGroupsView, '/c/groups/g1')
+    expect(workbenchApi.getWorkspaces).toHaveBeenCalledWith('all')
     expect(wrapper.findAll('ul[aria-label="群组"] button')).toHaveLength(2)
-    expect(wrapper.text()).toContain('本季度采购目标')
-    expect(wrapper.text()).toContain('进行中任务')
-    expect(wrapper.get('.group-detail').text()).toMatch(/进行中任务\s*2/)
+    const detail = wrapper.get('.group-detail')
+    expect(detail.get('h2').text()).toBe('采购群')
+    expect(detail.text()).toContain('2 位员工 · 1 个 Agent')
+    expect(detail.text()).toContain('本季度采购目标')
+    expect(detail.get('dl').text()).toMatch(/状态\s*活动/)
+    expect(detail.get('dl').text()).toMatch(/任务\s*2 个进行中 · 1 个待办/)
+    expect(detail.get('dl').text()).toMatch(/最近活动\s*暂无活动/)
+    const chips = detail.findAll('[aria-label="成员"] li').map(chip => chip.text())
+    expect(chips).toEqual(['林岚（负责人）', '赵六（只读）', '库存助手'])
+    expect(detail.findAll('[aria-label="成员"] li')[2]!.classes()).toContain('is-agent')
     expect(wrapper.text()).toContain('新建群组')
 
     await wrapper.findAll('button').find(b => b.text() === '管理群组')!.trigger('click')
     expect(push).toHaveBeenLastCalledWith({ name: 'collab-group-chat', params: { id: 'g1' }, query: { info: '1' } })
 
-    const archived = wrapper.findAll('label').find(l => l.text() === '已归档')!
-    await archived.get('input').setValue(true)
+    const archived = wrapper.get('[aria-label="群组筛选"]').findAll('button').find(b => b.text() === '已归档')!
+    await archived.trigger('click')
     await flushPromises()
+    expect(archived.attributes('aria-pressed')).toBe('true')
     expect(workbenchApi.getWorkspaces).toHaveBeenLastCalledWith('archived')
     const rows = wrapper.findAll('ul[aria-label="群组"] button')
     expect(rows).toHaveLength(1)
     expect(rows[0]!.text()).toContain('旧项目')
-    expect(wrapper.text()).not.toContain('新建群组')
+    expect(rows[0]!.text()).toContain('已归档')
+    expect(wrapper.text()).toContain('新建群组')
   })
 
   it('选中项切换后忽略迟到的详情响应', async () => {
@@ -128,9 +146,9 @@ describe('CollabGroupsView', () => {
     await router.push('/c/groups/g2')
     await flushPromises()
     expect(wrapper.get('.group-detail').text()).toMatch(/财务群/)
-    expect(wrapper.get('.group-detail').text()).toMatch(/进行中任务\s*1/)
+    expect(wrapper.get('.group-detail dl').text()).toMatch(/任务\s*1 个进行中/)
     releaseSlow({ items: [{ status: 'in_progress' }, { status: 'in_progress' }, { status: 'in_progress' }], nextCursor: null, total: 3 })
     await flushPromises()
-    expect(wrapper.get('.group-detail').text()).toMatch(/进行中任务\s*1/)
+    expect(wrapper.get('.group-detail dl').text()).toMatch(/任务\s*1 个进行中/)
   })
 })

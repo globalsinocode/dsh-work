@@ -1,14 +1,37 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { UserFilled } from '@element-plus/icons-vue'
 
 import type { WorkbenchAgent } from '@/types/domain'
+import CollabAvatar from './collab/CollabAvatar.vue'
+import CollabProfile from './collab/CollabProfile.vue'
 
-/** AI 同事详情内容（A 的 AI 同事广场抽屉与 B 的 AI 同事页共用）。 */
-defineProps<{ agent: WorkbenchAgent }>()
+/**
+ * AI 同事详情内容（A 的 AI 同事广场抽屉与 B 的 AI 同事页共用同一份数据与文案）。
+ * `variant="profile"` 为 B 原型的居中详情：大头像、名称、说明、操作与信息卡片。
+ */
+const props = withDefaults(defineProps<{ agent: WorkbenchAgent; variant?: 'drawer' | 'profile' }>(), { variant: 'drawer' })
+
+const facts = computed(() => [
+  { label: '版本', value: `v${props.agent.version}` },
+  { label: '可用状态', value: '可用' },
+  ...(props.agent.welcomeMessage ? [{ label: '开场提示', value: props.agent.welcomeMessage }] : []),
+  ...(props.agent.examplePrompts.length ? [{ label: '可以这样问', value: props.agent.examplePrompts.join('；') }] : []),
+])
 </script>
 
 <template>
-  <div class="agent-detail">
+  <CollabProfile
+    v-if="variant === 'profile'"
+    :name="agent.name"
+    sub="AI 同事 · 已发布"
+    :description="agent.description"
+    :facts="facts"
+  >
+    <template #avatar><CollabAvatar kind="agent" :size="88" /></template>
+    <template v-if="$slots.actions" #actions><slot name="actions" /></template>
+  </CollabProfile>
+  <div v-else class="agent-detail">
     <div class="agent-detail__header">
       <span class="agent-detail__icon"><el-icon><UserFilled /></el-icon></span>
       <div>

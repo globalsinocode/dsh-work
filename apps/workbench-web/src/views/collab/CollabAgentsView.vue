@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ChatLineRound } from '@element-plus/icons-vue'
 
 import AgentProfileDetail from '@/components/AgentProfileDetail.vue'
+import CollabAvatar from '@/components/collab/CollabAvatar.vue'
 import CollabDirectoryLayout from '@/components/collab/CollabDirectoryLayout.vue'
 import { useContentStore } from '@/stores/content'
 
-/** 协作模式「AI 同事」页（D25）：左目录 + 右详情，详情内容与 A 的 AI 同事广场共用。 */
+/** 协作模式「AI 同事」页（D25）：左目录 + 右详情（B 原型的居中详情），详情内容与 A 的 AI 同事广场共用。 */
 const route = useRoute()
 const router = useRouter()
 const contentStore = useContentStore()
@@ -76,7 +78,7 @@ onMounted(load)
           :aria-current="agent.id === selectedId ? 'page' : undefined"
           @click="select(agent.id)"
         >
-          <span class="dir-row__avatar" aria-hidden="true">{{ agent.name.slice(0, 1) }}</span>
+          <CollabAvatar kind="agent" />
           <span class="dir-row__main">
             <span class="dir-row__name">{{ agent.name }}</span>
             <span class="dir-row__sub">{{ agent.description }}</span>
@@ -85,9 +87,9 @@ onMounted(load)
       </li>
     </template>
 
-    <AgentProfileDetail v-if="selectedAgent" :agent="selectedAgent">
+    <AgentProfileDetail v-if="selectedAgent" :agent="selectedAgent" variant="profile">
       <template #actions>
-        <el-button type="primary" @click="chat(selectedAgent.id)">发消息</el-button>
+        <el-button type="primary" :icon="ChatLineRound" @click="chat(selectedAgent.id)">发消息</el-button>
       </template>
     </AgentProfileDetail>
   </CollabDirectoryLayout>
