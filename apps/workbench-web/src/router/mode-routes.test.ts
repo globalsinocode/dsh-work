@@ -25,11 +25,11 @@ describe('employee mode route mapping (project space plan 12.5)', () => {
     expect(mapped('/workspaces/ws-supply?tab=files', 'collab')).toBe('/c/chats/group/ws-supply?tab=files')
     expect(mapped('/workspaces/ws-supply?tab=conversation', 'collab')).toBe('/c/chats/group/ws-supply?tab=chat')
     expect(mapped('/workspaces/ws-supply?tab=unknown', 'collab')).toBe('/c/chats/group/ws-supply')
-    expect(mapped('/workspaces/ws-supply/tasks/task-7', 'collab')).toBe('/c/chats/group/ws-supply?tab=tasks&task=task-7')
+    expect(mapped('/workspaces/ws-supply/tasks/task-7', 'collab')).toBe('/c/chats/group/ws-supply/tasks/task-7')
     expect(mapped('/workspaces/ws-supply/tasks/task-7/thread/run-9', 'collab'))
-      .toBe('/c/chats/group/ws-supply?tab=tasks&task=task-7')
+      .toBe('/c/chats/group/ws-supply/tasks/task-7/thread/run-9')
     expect(mapped('/workspaces/ws-supply/conversations/run-3', 'collab'))
-      .toBe('/c/chats/group/ws-supply?conversation=run-3')
+      .toBe('/c/chats/group/ws-supply/conversations/run-3')
   })
 
   it('maps collaboration links back to work mode', () => {
@@ -42,7 +42,11 @@ describe('employee mode route mapping (project space plan 12.5)', () => {
     expect(mapped('/c/chats/group/ws-supply?tab=chat', 'work')).toBe('/workspaces/ws-supply?tab=conversation')
     expect(mapped('/c/chats/group/ws-supply?tab=archive&info=1', 'work')).toBe('/workspaces/ws-supply?tab=archive')
     expect(mapped('/c/chats/group/ws-supply?tab=tasks&task=task-7', 'work')).toBe('/workspaces/ws-supply/tasks/task-7')
+    expect(mapped('/c/chats/group/ws-supply/tasks/task-7', 'work')).toBe('/workspaces/ws-supply/tasks/task-7')
+    expect(mapped('/c/chats/group/ws-supply/tasks/task-7/thread/run-9', 'work')).toBe('/workspaces/ws-supply/tasks/task-7/thread/run-9')
+    expect(mapped('/c/chats/group/ws-supply/conversations/run-3', 'work')).toBe('/workspaces/ws-supply/conversations/run-3')
     expect(mapped('/c/chats/group/ws-supply?conversation=run-3', 'work')).toBe('/workspaces/ws-supply/conversations/run-3')
+    expect(mapped('/c/chats/group/ws-supply?session=s-3', 'work')).toBe('/workspaces/ws-supply/conversations/s-3')
     expect(mapped('/c/groups', 'work')).toBe('/workspaces')
     expect(mapped('/c/groups/ws-supply', 'work')).toBe('/workspaces/ws-supply')
     expect(mapped('/c/agents', 'work')).toBe('/agents')
@@ -78,6 +82,6 @@ describe('employee mode route mapping (project space plan 12.5)', () => {
   })
 
   it('escapes identifiers instead of building paths from raw text', () => {
-    expect(mapped('/workspaces/ws%2Fx/tasks/t%201', 'collab')).toBe('/c/chats/group/ws%2Fx?tab=tasks&task=t+1')
+    expect(mapped('/workspaces/ws%2Fx/tasks/t%201', 'collab')).toBe('/c/chats/group/ws%2Fx/tasks/t%201')
   })
 })

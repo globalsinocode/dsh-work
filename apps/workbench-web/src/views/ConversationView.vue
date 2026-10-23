@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectTaskDetailKey } from '@/composables/project-task-detail'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
@@ -61,9 +62,10 @@ const targetLoading = ref(false)
  * 任务信息、返回与任务标识由外层任务详情提供，线程内导航（续接产生新 Run、查看执行记录）
  * 停留在任务详情下。
  */
-const isTaskThreadRoute = computed(() => route.name === 'workspace-task-thread')
+const spaceRoutes = useSpaceRoutes()
+const isTaskThreadRoute = computed(() => spaceView(route) === 'task-thread')
 const isEmbeddedInWorkspace = computed(() =>
-  route.name === 'workspace-conversation' || isTaskThreadRoute.value)
+  spaceView(route) === 'conversation' || isTaskThreadRoute.value)
 const embeddedWorkspaceId = computed(() =>
   isEmbeddedInWorkspace.value ? String(route.params.id) : '')
 const routeTargetId = computed(() =>
@@ -71,10 +73,10 @@ const routeTargetId = computed(() =>
 
 function conversationPath(target: string) {
   if (isTaskThreadRoute.value) {
-    return `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}/thread/${target}`
+    return spaceRoutes.taskThread(embeddedWorkspaceId.value, String(route.params.taskId), target)
   }
   return isEmbeddedInWorkspace.value
-    ? `/workspaces/${embeddedWorkspaceId.value}/conversations/${target}`
+    ? spaceRoutes.conversation(embeddedWorkspaceId.value, target)
     : `/conversations/${target}`
 }
 
@@ -197,8 +199,8 @@ async function loadProjectTask(workspaceId: string | undefined) {
     if (currentSessionId.value !== sessionId) return
     projectTask.value = page.items.find(item => item.sessionId === sessionId) ?? null
     // 任务线程统一在所属任务的详情里打开（“任务”页签）：从历史、侧栏等入口进入“对话”页签时归位。
-    if (projectTask.value && route.name === 'workspace-conversation') {
-      await router.replace(`/workspaces/${workspaceId}/tasks/${projectTask.value.id}/thread/${routeTargetId.value}`)
+    if (projectTask.value && spaceView(route) === 'conversation') {
+      await router.replace(spaceRoutes.taskThread(workspaceId, projectTask.value.id, routeTargetId.value))
     }
   } catch (error) {
     // 旧会话的失败不能写到新会话上；新会话的加载状态也不能被旧请求提前结束。
@@ -227,7 +229,7 @@ async function markAsTask() {
     ElMessage.success('已设为任务')
     // 任务线程在所属任务的详情里继续（“任务”页签），与任务信息和操作放在一起。
     if (!isTaskThreadRoute.value) {
-      await router.replace(`/workspaces/${workspaceId}/tasks/${marked.id}/thread/${routeTargetId.value}`)
+      await router.replace(spaceRoutes.taskThread(workspaceId, marked.id, routeTargetId.value))
     }
   } catch (error) {
     notifyActionFailure('设为任务', '当前线程', error, '确认该线程已由 Agent 执行过且尚未设为任务后重试。')
@@ -261,13 +263,13 @@ function goBack() {
   // 任务详情内的执行详情：返回任务对话（会话视图）。
   if (isTaskThreadRoute.value) {
     const sessionId = task.value?.sessionId ?? sessionThread.value?.sessionId
-    void router.push(sessionId ? conversationPath(sessionId) : `/workspaces/${embeddedWorkspaceId.value}/tasks/${String(route.params.taskId)}`)
+    void router.push(sessionId ? conversationPath(sessionId) : spaceRoutes.task(embeddedWorkspaceId.value, String(route.params.taskId)))
     return
   }
   // 嵌入态的返回固定归位到所属空间页（线程返回控件回到列表）：外部旧链接
   // 经 replace 归位后，router.back() 会跳出空间上下文，不能依赖历史栈。
   if (isEmbeddedInWorkspace.value) {
-    void router.push(`/workspaces/${embeddedWorkspaceId.value}`)
+    void router.push(spaceRoutes.home(embeddedWorkspaceId.value))
     return
   }
   if (window.history.length > 1) router.back()
@@ -692,13 +694,13 @@ async function reconcileConversationRoute() {
   const workspaceId = task.value?.workspaceId ?? sessionThread.value?.workspaceId
   if (isEmbeddedInWorkspace.value) {
     if (workspaceId && workspaceId !== embeddedWorkspaceId.value) {
-      await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+      await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
     }
     return
   }
   const workspaceType = task.value?.workspaceType ?? sessionThread.value?.workspaceType
   if (workspaceType !== 'team' || !workspaceId) return
-  await router.replace(`/workspaces/${workspaceId}/conversations/${routeTargetId.value}`)
+  await router.replace(spaceRoutes.conversation(workspaceId, routeTargetId.value))
 }
 
 /**
@@ -1013,7 +1015,7 @@ watch(
       <template #extra>
         <el-button
           type="primary"
-          @click="isEmbeddedInWorkspace ? router.push(`/workspaces/${embeddedWorkspaceId}`) : router.push('/workbench')"
+          @click="isEmbeddedInWorkspace ? router.push(spaceRoutes.home(embeddedWorkspaceId)) : router.push('/workbench')"
         >
           {{ isEmbeddedInWorkspace ? '返回工作空间' : '返回工作台' }}
         </el-button>

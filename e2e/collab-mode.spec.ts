@@ -133,10 +133,10 @@ test('MODE-E2E-04: work-mode links, bookmarks and notifications land on the coll
     ['/agents', /\/c\/agents$/],
     ['/workspaces/ws-supply', /\/c\/chats\/group\/ws-supply$/],
     ['/workspaces/ws-supply?tab=files', /\/c\/chats\/group\/ws-supply\?tab=files$/],
-    ['/workspaces/ws-supply/tasks/ptask-1', /\/c\/chats\/group\/ws-supply\?tab=tasks&task=ptask-1$/],
+    ['/workspaces/ws-supply/tasks/ptask-1', /\/c\/chats\/group\/ws-supply\/tasks\/ptask-1$/],
     // 个人对话落到所属 AI 同事的单聊并定位到该段（S5c）；项目空间对话落到群组。
     ['/conversations/run-260827-002', /\/c\/chats\/agent\/dsh-work-assistant\?session=session-0991$/],
-    ['/conversations/run-260828-001', /\/c\/chats\/group\/ws-supply\?conversation=session-1001$/],
+    ['/conversations/run-260828-001', /\/c\/chats\/group\/ws-supply\?session=session-1001$/],
     ['/workbench?agent=agent-ops', /\/c\/chats\/agent\/agent-ops$/],
     ['/automations', /\/automations$/],
     ['/settings', /\/settings$/],

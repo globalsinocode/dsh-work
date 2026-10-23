@@ -5,6 +5,7 @@ import { Search } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
+import { useSpaceRoutes } from '@/composables/space-routes'
 import { useTaskStore } from '@/stores/tasks'
 import type { WorkspaceSessionSummary } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
@@ -53,6 +54,7 @@ const runStatusLabels: Record<string, string> = {
 }
 
 const router = useRouter()
+const spaceRoutes = useSpaceRoutes()
 const taskStore = useTaskStore()
 
 const items = ref<WorkspaceSessionSummary[]>([])
@@ -188,10 +190,10 @@ function openSession(item: WorkspaceSessionSummary) {
   const target = item.latestRun?.id ?? item.sessionId
   // 任务线程在所属任务的详情里打开（“任务”页签），与任务信息和操作放在一起。
   if (item.projectTaskId) {
-    void router.push(`/workspaces/${props.workspaceId}/tasks/${item.projectTaskId}/thread/${target}`)
+    void router.push(spaceRoutes.taskThread(props.workspaceId, item.projectTaskId, target))
     return
   }
-  void router.push(`/workspaces/${props.workspaceId}/conversations/${target}`)
+  void router.push(spaceRoutes.conversation(props.workspaceId, target))
 }
 
 function dotStatus(item: WorkspaceSessionSummary) {

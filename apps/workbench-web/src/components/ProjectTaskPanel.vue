@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Cpu, DataLine, Plus } from '@element-plus/icons-vue'
 
@@ -142,15 +143,16 @@ const detailError = ref('')
 const stopping = ref(false)
 let detailSeq = 0
 
-const listPath = computed(() => `/workspaces/${props.workspaceId}`)
+const spaceRoutes = useSpaceRoutes()
+const listPath = computed(() => spaceRoutes.tasks(props.workspaceId))
 
 function taskPath(taskId: string) {
-  return `/workspaces/${props.workspaceId}/tasks/${taskId}`
+  return spaceRoutes.task(props.workspaceId, taskId)
 }
 
 /** 任务对话（会话视图：全部发言、执行记录与系统记录）；没有任务对话的旧任务为 null。 */
 function threadPath(task: ProjectTask) {
-  return task.sessionId ? `${taskPath(task.id)}/thread/${task.sessionId}` : null
+  return task.sessionId ? spaceRoutes.taskThread(props.workspaceId, task.id, task.sessionId) : null
 }
 
 /**
@@ -174,7 +176,7 @@ async function loadDetail() {
     detailEvents.value = events
     emit('detail-title', task.title)
     const path = threadPath(task)
-    if (path && route.name === 'workspace-task' && props.detailTaskId === task.id) await router.replace(path)
+    if (path && spaceView(route) === 'task' && props.detailTaskId === task.id) await router.replace(path)
   } catch (error) {
     if (seq !== detailSeq) return
     detailTask.value = null
@@ -210,7 +212,7 @@ const detailRunning = computed(() =>
 function openRunDetail() {
   const task = detailTask.value
   if (!task?.latestRunId) return
-  void router.push(`${taskPath(task.id)}/thread/${task.latestRunId}`)
+  void router.push(spaceRoutes.taskThread(props.workspaceId, task.id, task.latestRunId))
 }
 
 async function stopRun() {
@@ -762,7 +764,7 @@ defineExpose({ reload: load })
         </Teleport>
 
         <div class="project-task-detail__thread">
-          <RouterView v-if="route.name === 'workspace-task-thread'" />
+          <RouterView v-if="spaceView(route) === 'task-thread'" />
           <p v-else-if="!detailTask.sessionId" class="project-task-detail__placeholder project-tasks__muted">
             这个任务还没有任务对话。
           </p>

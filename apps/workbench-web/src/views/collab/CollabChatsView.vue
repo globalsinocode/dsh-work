@@ -21,7 +21,7 @@ const contentStore = useContentStore()
 const uiMode = useUiModeStore()
 
 const agentId = computed(() => route.name === 'collab-agent-chat' ? String(route.params.agentId ?? '') : '')
-const groupId = computed(() => route.name === 'collab-group-chat' ? String(route.params.workspaceId ?? '') : '')
+const groupId = computed(() => ['collab-group-chat', 'collab-group-conversation', 'collab-group-task', 'collab-group-task-thread'].includes(String(route.name)) ? String(route.params.id ?? '') : '')
 const activeKey = computed(() => agentId.value ? `agent:${agentId.value}` : groupId.value ? `group:${groupId.value}` : undefined)
 const focusSessionId = computed(() => {
   const value = route.query.session
@@ -41,7 +41,7 @@ const resolveError = ref('')
 function openTarget(target: { type: 'agent' | 'group'; id: string }) {
   resolveError.value = ''
   if (target.type === 'agent') void router.push({ name: 'collab-agent-chat', params: { agentId: target.id } })
-  else void router.push({ name: 'collab-group-chat', params: { workspaceId: target.id } })
+  else void router.push({ name: 'collab-group-chat', params: { id: target.id } })
 }
 
 function startAgent(id: string) {
@@ -59,7 +59,7 @@ watch(() => route.name === 'collab-chats' ? route.query.conversation : undefined
     if (location.type === 'agent') {
       await router.replace({ name: 'collab-agent-chat', params: { agentId: location.agentId }, query: { session: location.sessionId } })
     } else {
-      await router.replace({ name: 'collab-group-chat', params: { workspaceId: location.workspaceId }, query: { conversation: location.sessionId } })
+      await router.replace({ name: 'collab-group-chat', params: { id: location.workspaceId }, query: { session: location.sessionId } })
     }
   } catch (cause) {
     resolveError.value = cause instanceof Error && 'status' in cause && cause.status === 404

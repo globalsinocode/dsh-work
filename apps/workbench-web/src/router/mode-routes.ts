@@ -60,20 +60,17 @@ function toCollab(route: ModeRoute): RouteLocationRaw {
       return { name: 'collab-agents' }
     case 'workspace-detail': {
       const tab = groupTabsFromWork[first(query.tab) ?? '']
-      return { name: 'collab-group-chat', params: { workspaceId: first(params.id) }, query: tab ? { tab } : {} }
+      return { name: 'collab-group-chat', params: { id: first(params.id) }, query: tab ? { tab } : {} }
     }
+    // 群组子路由与 A 同构（S5d）：执行详情、任务详情与任务对话按同名参数一一对应。
     case 'workspace-conversation':
-      return {
-        name: 'collab-group-chat',
-        params: { workspaceId: first(params.id) },
-        query: { conversation: first(params.conversationId) },
-      }
+      return { name: 'collab-group-conversation', params: { id: first(params.id), conversationId: first(params.conversationId) } }
     case 'workspace-task':
+      return { name: 'collab-group-task', params: { id: first(params.id), taskId: first(params.taskId) } }
     case 'workspace-task-thread':
       return {
-        name: 'collab-group-chat',
-        params: { workspaceId: first(params.id) },
-        query: { tab: 'tasks', task: first(params.taskId) },
+        name: 'collab-group-task-thread',
+        params: { id: first(params.id), taskId: first(params.taskId), conversationId: first(params.conversationId) },
       }
     default:
       return { name: 'collab-chats' }
@@ -96,18 +93,29 @@ function toWork(route: ModeRoute): RouteLocationRaw {
       return { name: 'workbench', query: { agent: first(params.agentId) } }
     }
     case 'collab-group-chat': {
-      const id = first(params.workspaceId)
+      const id = first(params.id)
+      // 旧格式 ?tab=tasks&task= 仍能映射回任务详情。
       const task = first(query.task)
       if (task) return { name: 'workspace-task', params: { id, taskId: task } }
-      const conversation = first(query.conversation)
+      // 群聊中定位的讨论（?session=，旧格式 ?conversation=）回到 A 的空间内对话。
+      const conversation = first(query.session) ?? first(query.conversation)
       if (conversation) return { name: 'workspace-conversation', params: { id, conversationId: conversation } }
       const tab = workTabsFromGroup[first(query.tab) ?? '']
       return { name: 'workspace-detail', params: { id }, query: tab ? { tab } : {} }
     }
+    case 'collab-group-conversation':
+      return { name: 'workspace-conversation', params: { id: first(params.id), conversationId: first(params.conversationId) } }
+    case 'collab-group-task':
+      return { name: 'workspace-task', params: { id: first(params.id), taskId: first(params.taskId) } }
+    case 'collab-group-task-thread':
+      return {
+        name: 'workspace-task-thread',
+        params: { id: first(params.id), taskId: first(params.taskId), conversationId: first(params.conversationId) },
+      }
     case 'collab-groups':
       return { name: 'workspaces' }
     case 'collab-group':
-      return { name: 'workspace-detail', params: { id: first(params.workspaceId) } }
+      return { name: 'workspace-detail', params: { id: first(params.id) } }
     case 'collab-agents':
     case 'collab-agent':
       return { name: 'agents' }

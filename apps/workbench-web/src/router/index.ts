@@ -71,20 +71,20 @@ const router = createRouter({
           path: 'conversations/:conversationId',
           name: 'workspace-conversation',
           component: () => import('@/views/ConversationView.vue'),
-          meta: { title: '对话', section: '员工工作台' },
+          meta: { title: '对话', section: '员工工作台', spaceView: 'conversation' },
         },
         {
           // 项目任务详情：在“任务”页签内展示任务信息与操作，由任务面板自行渲染（本记录不挂组件）；
           // Agent 任务的任务线程作为子路由嵌在详情下方，:conversationId 同样兼容 Run ID 与 Session ID。
           path: 'tasks/:taskId',
           name: 'workspace-task',
-          meta: { title: '任务', section: '员工工作台' },
+          meta: { title: '任务', section: '员工工作台', spaceView: 'task' },
           children: [
             {
               path: 'thread/:conversationId',
               name: 'workspace-task-thread',
               component: () => import('@/views/ConversationView.vue'),
-              meta: { title: '任务', section: '员工工作台' },
+              meta: { title: '任务', section: '员工工作台', spaceView: 'task-thread' },
             },
           ],
         },
@@ -94,9 +94,37 @@ const router = createRouter({
     { path: '/c', redirect: { name: 'collab-chats' } },
     { path: '/c/chats', name: 'collab-chats', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
     { path: '/c/chats/agent/:agentId', name: 'collab-agent-chat', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
-    { path: '/c/chats/group/:workspaceId', name: 'collab-group-chat', component: collabChats, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
+    {
+      // 群组即项目空间（D20）：子路由与 A 的 /workspaces/:id 同构，任务详情、任务对话与执行详情
+      // 复用同一组件（经 space-routes 取地址），参数名保持 :id / :taskId / :conversationId。
+      path: '/c/chats/group/:id',
+      name: 'collab-group-chat',
+      component: collabChats,
+      meta: { title: '群组', section: '协作模式', mode: 'collab' },
+      children: [
+        {
+          path: 'conversations/:conversationId',
+          name: 'collab-group-conversation',
+          component: () => import('@/views/ConversationView.vue'),
+          meta: { title: '执行详情', section: '协作模式', mode: 'collab', spaceView: 'conversation' },
+        },
+        {
+          path: 'tasks/:taskId',
+          name: 'collab-group-task',
+          meta: { title: '任务', section: '协作模式', mode: 'collab', spaceView: 'task' },
+          children: [
+            {
+              path: 'thread/:conversationId',
+              name: 'collab-group-task-thread',
+              component: () => import('@/views/ConversationView.vue'),
+              meta: { title: '任务', section: '协作模式', mode: 'collab', spaceView: 'task-thread' },
+            },
+          ],
+        },
+      ],
+    },
     { path: '/c/groups', name: 'collab-groups', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
-    { path: '/c/groups/:workspaceId', name: 'collab-group', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
+    { path: '/c/groups/:id', name: 'collab-group', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
     { path: '/c/agents', name: 'collab-agents', component: collabPlaceholder, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
     { path: '/c/agents/:agentId', name: 'collab-agent', component: collabPlaceholder, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
     { path: '/files', name: 'my-files', component: () => import('@/views/MyFilesView.vue'), meta: { title: '我的文件', section: '员工工作台' } },
