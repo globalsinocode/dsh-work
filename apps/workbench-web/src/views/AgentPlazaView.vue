@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Refresh, UserFilled } from '@element-plus/icons-vue'
 
+import AgentProfileDetail from '@/components/AgentProfileDetail.vue'
 import { useContentStore } from '@/stores/content'
 import type { WorkbenchAgent } from '@/types/domain'
 
@@ -95,29 +96,11 @@ onMounted(loadAgents)
     </div>
 
     <el-drawer v-model="detailOpen" title="AI 同事详情" size="min(440px, 92vw)">
-      <template v-if="detailAgent">
-        <div class="agent-detail">
-          <div class="agent-detail__header">
-            <span class="agent-card__icon"><el-icon><UserFilled /></el-icon></span>
-            <div>
-              <h2>{{ detailAgent.name }}</h2>
-              <p>已发布 · v{{ detailAgent.version }}</p>
-            </div>
-          </div>
-          <p class="agent-detail__description">{{ detailAgent.description }}</p>
-          <div class="agent-detail__welcome">
-            <span>开场提示</span>
-            <p>{{ detailAgent.welcomeMessage }}</p>
-          </div>
-          <div v-if="detailAgent.examplePrompts.length" class="agent-detail__examples">
-            <span>你可以这样问</span>
-            <ul>
-              <li v-for="prompt in detailAgent.examplePrompts" :key="prompt">{{ prompt }}</li>
-            </ul>
-          </div>
-          <el-button type="primary" class="agent-detail__use" @click="startConversation(detailAgent)">开始对话</el-button>
-        </div>
-      </template>
+      <AgentProfileDetail v-if="detailAgent" :agent="detailAgent">
+        <template #actions>
+          <el-button type="primary" @click="startConversation(detailAgent)">开始对话</el-button>
+        </template>
+      </AgentProfileDetail>
     </el-drawer>
   </div>
 </template>
@@ -170,8 +153,7 @@ onMounted(loadAgents)
 
 .agent-card:hover { border-color: #c7e0d4; box-shadow: 0 12px 28px rgb(35 80 60 / 9%); transform: translateY(-2px); }
 .agent-card--skeleton { min-height: 172px; }
-.agent-card__heading,
-.agent-detail__header { display: flex; align-items: center; gap: 10px; }
+.agent-card__heading { display: flex; align-items: center; gap: 10px; }
 .agent-card__icon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #245e4d; background: #dff3e9; font-size: var(--dsh-font-size-section); }
 .agent-card__icon--1 { color: #385fa3; background: #e4ecfb; }
 .agent-card__icon--2 { color: #9b5d1c; background: #faead8; }
@@ -188,17 +170,6 @@ onMounted(loadAgents)
 .agent-card__detail { padding: 0; border: 0; color: #6a746d; background: transparent; cursor: pointer; font-size: var(--dsh-font-size-caption); }
 .agent-card__detail:hover { color: #17674f; }
 .agent-state { min-height: 360px; }
-.agent-detail { display: flex; flex-direction: column; gap: 18px; }
-.agent-detail__header h2 { margin: 0; color: #222522; font-size: var(--dsh-font-size-section); }
-.agent-detail__header p { margin: 5px 0 0; color: #899089; font-size: var(--dsh-font-size-caption); }
-.agent-detail__description { margin: 0; color: #555d57; font-size: var(--dsh-font-size-body); line-height: 1.7; }
-.agent-detail__welcome { padding: 14px; border-radius: 10px; background: #f4f8f5; }
-.agent-detail__welcome span,
-.agent-detail__examples > span { color: #6c8578; font-size: var(--dsh-font-size-micro); }
-.agent-detail__welcome p { margin: 7px 0 0; color: #345d4c; line-height: 1.6; }
-.agent-detail__examples { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.agent-detail__examples ul { margin: 0; padding-left: 18px; color: #4b655a; line-height: 1.7; }
-.agent-detail__use { align-self: flex-start; }
 
 @media (max-width: 1080px) { .agent-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 820px) { .agent-plaza-page { padding-top: 64px; } }

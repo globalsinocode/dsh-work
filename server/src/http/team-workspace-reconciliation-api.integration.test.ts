@@ -160,6 +160,7 @@ test('admin Agent 详情返回只读的「已加入空间」清单，已移出�
   assert.equal(items[0]?.version, '1.0.0')
   assert.equal(items[0]?.workspaceType, 'team')
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const afterRemoval = await api('GET', `/api/admin/v1/agents/${agent.id}/workspaces`, { as: adminUserId })
@@ -362,6 +363,7 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   assert.match(errorMessage(blockedDisable), /待对账的历史授权来源/)
   assert.match(errorMessage(blockedDisable), /完成对账前不能停用 Agent 成员/)
 
+  await keepAnotherAgentMember(workspaceId)
   const blockedRemove = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(blockedRemove.status, 409)
   assert.match(errorMessage(blockedRemove), /完成对账前不能移除 Agent 成员/)
@@ -386,6 +388,7 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   })
   assert.equal(reconciled.status, 200)
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const [afterMember] = await database<AgentMemberRow[]>`
@@ -442,6 +445,7 @@ test('并发「对账 + 移出 Agent 成员」按同一锁序串行化，不死�
   //   - 移出 200：对账先完成，门禁已解除；
   //   - 移出 409：移出先持锁、被门禁拒绝；等对账完成后重试，最终状态一致。
   // 无论哪种顺序，都不得出现 deadlock。
+  await keepAnotherAgentMember(workspaceId)
   const [reconciled, firstRemoval] = await Promise.all([
     api('POST', '/api/admin/v1/grant-sources/reconcile', {
       as: adminUserId,
@@ -472,6 +476,29 @@ test('并发「对账 + 移出 Agent 成员」按同一锁序串行化，不死�
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * 方案 12.8 / 功能规则 3.3：项目空间不能移出最后一个 Agent 成员。测试“移出”行为的用例先放入一个
+ * 停用的锚点 Agent 成员（直接写行，不带授权来源，不影响授权与会话断言），被测 Agent 才能移出。
+ */
+let anchorAgentReady: Promise<{ id: string; versionId: string }> | undefined
+async function keepAnotherAgentMember(workspaceId: string) {
+  const [owner] = await database<{ userId: string }[]>`
+    select user_id as "userId" from workspace_members
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and member_role = 'owner'`
+  anchorAgentReady ??= (async () => {
+    await createPublishedAgent({ id: 'agent-s5d-anchor', name: 'S5d 锚点 Agent', ownerId: owner!.userId })
+    const [row] = await database<{ versionId: string }[]>`
+      select active_version_id as "versionId" from agents where tenant_id = ${tenantId} and id = 'agent-s5d-anchor'`
+    return { id: 'agent-s5d-anchor', versionId: row!.versionId }
+  })()
+  const anchor = await anchorAgentReady
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values (${`wam-anchor-${workspaceId}`}, ${tenantId}, ${workspaceId}, ${anchor.id}, ${anchor.versionId}, 'disabled', ${owner!.userId})
+    on conflict (tenant_id, workspace_id, agent_id) do nothing
+  `
+}
 function testApiAuthenticator(request: IncomingMessage, audience: ApiAudience): Promise<RequestIdentity> {
   const header = request.headers['x-test-user-id']
   const userId = Array.isArray(header) ? header[0] : header

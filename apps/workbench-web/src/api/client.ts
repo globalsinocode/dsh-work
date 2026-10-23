@@ -20,6 +20,7 @@ import type {
   AgentConversation,
   ConversationLocation,
   ConversationTarget,
+  WorkspaceTimelineItem,
   UserPreferences,
   WorkbenchAgent,
   WorkbenchSession,
@@ -168,6 +169,10 @@ export const workbenchApi = {
     request<AgentConversation>(
       `/me/conversation-targets/agent/${encodeURIComponent(agentId)}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
     ),
+  getWorkspaceTimeline: (workspaceId: string, before?: string) =>
+    request<{ workspaceId: string; items: WorkspaceTimelineItem[]; nextCursor: string | null }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/timeline${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    ),
   resolveConversation: (conversationId: string) =>
     request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
@@ -222,7 +227,8 @@ export const workbenchApi = {
     status === 'all' ? '/workspaces' : `/workspaces?status=${status}`,
     { method: 'GET' },
   ),
-  createWorkspace: (input: { name: string; description: string }) => request<Workspace>('/workspaces', {
+  /** 新建项目空间（群组）：agentIds 为创建时加入的 Agent 成员，至少一个（功能规则 3.3、方案 12.8）。 */
+  createWorkspace: (input: { name: string; description: string; agentIds: string[] }) => request<Workspace>('/workspaces', {
     method: 'POST',
     body: JSON.stringify(input),
   }),

@@ -5,7 +5,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useUiModeStore } from '@/stores/ui-mode'
 import { locationForMode } from './mode-routes'
 
-const collabPlaceholder = () => import('@/views/collab/CollabPlaceholderView.vue')
+const collabAgents = () => import('@/views/collab/CollabAgentsView.vue')
+const collabGroups = () => import('@/views/collab/CollabGroupsView.vue')
 const collabChats = () => import('@/views/collab/CollabChatsView.vue')
 
 const router = createRouter({
@@ -90,7 +91,7 @@ const router = createRouter({
         },
       ],
     },
-    // B 协作模式专属路由（项目空间方案 12.5）。对话页（单聊）自 S5c 起；群聊、AI 同事与群组页在 S5d 实现前为占位页。
+    // B 协作模式专属路由（项目空间方案 12.5）：对话页（单聊 S5c、群聊 S5d）、AI 同事与群组目录（S5d）。
     { path: '/c', redirect: { name: 'collab-chats' } },
     { path: '/c/chats', name: 'collab-chats', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
     { path: '/c/chats/agent/:agentId', name: 'collab-agent-chat', component: collabChats, meta: { title: '对话', section: '协作模式', mode: 'collab' } },
@@ -123,10 +124,10 @@ const router = createRouter({
         },
       ],
     },
-    { path: '/c/groups', name: 'collab-groups', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
-    { path: '/c/groups/:id', name: 'collab-group', component: collabPlaceholder, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
-    { path: '/c/agents', name: 'collab-agents', component: collabPlaceholder, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
-    { path: '/c/agents/:agentId', name: 'collab-agent', component: collabPlaceholder, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
+    { path: '/c/groups', name: 'collab-groups', component: collabGroups, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
+    { path: '/c/groups/:id', name: 'collab-group', component: collabGroups, meta: { title: '群组', section: '协作模式', mode: 'collab' } },
+    { path: '/c/agents', name: 'collab-agents', component: collabAgents, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
+    { path: '/c/agents/:agentId', name: 'collab-agent', component: collabAgents, meta: { title: 'AI 同事', section: '协作模式', mode: 'collab' } },
     { path: '/files', name: 'my-files', component: () => import('@/views/MyFilesView.vue'), meta: { title: '我的文件', section: '员工工作台' } },
     { path: '/history', name: 'history', component: () => import('@/views/HistoryView.vue'), meta: { title: '历史对话', section: '员工工作台' } },
     { path: '/sessions/:id', name: 'session-detail', component: () => import('@/views/SessionResumeView.vue'), meta: { title: '对话', section: '员工工作台' } },

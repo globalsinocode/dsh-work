@@ -340,7 +340,7 @@
 | 用户中心、执行详情、Skill 广场、我的文件、历史对话 | 直接复用（头像菜单进入） |
 | 对话页 | 新布局（统一列表、对话对象头部、连续分段显示、群组页签与信息栏）；消息渲染、成果卡片、执行状态、停止与重试复用 `ConversationView` 的子组件与逻辑（需先把消息列表与输入区从 `ConversationView` 中拆为可复用组件） |
 | 任务页签与任务详情 | 直接复用 A 的任务表格与任务详情组件 |
-| 文件、成果、档案页签与信息栏 | 直接复用 A 中“共享文件 / 成果 / 档案”页签的组件（`ProjectArchivePanel`、`WorkspaceFileVersionsDialog` 等）与右栏（`ProjectBriefCard`、成员与 Agent 弹窗、`WorkspaceSettingsDialog`、`WorkspaceUsageDialog`、`WorkspaceInfoPanel`）；需要把这些页签内容从 `WorkspaceDetailView` 中拆为独立组件 |
+| 文件、成果、档案页签与信息栏 | 直接复用 A 中“共享文件 / 成果 / 档案”页签的组件（`ProjectArchivePanel`、`WorkspaceFileVersionsDialog` 等）与右栏（`ProjectBriefCard`、成员与 Agent 弹窗、`WorkspaceSettingsDialog`、`WorkspaceUsageDialog`、`WorkspaceInfoPanel`）。S5d 实施为：B 的群组页直接渲染 `WorkspaceDetailView`（`layout="collab"`），头部与“对话”页签经插槽由 B 提供，页签内容、任务详情、执行详情、信息栏与各弹窗仍是同一组件，不另拆副本 |
 | 群组页 | 新的两栏布局（与 AI 同事页共用同一目录布局组件），数据复用现有空间列表、简报与成员接口，以及创建空间弹窗（增加“至少选择一个 Agent”） |
 | 项目空间的页面逻辑 | 从 `WorkspaceDetailView.vue` 抽出共享 composable（空间加载、成员与角色、可 @ 的 Agent、文件、成果、归档只读判断），A 与 B 同时改用；A 的界面与行为不变 |
 
@@ -406,8 +406,10 @@
 
 **进度：** S5a 已实现（2026-10-22）：`user_preferences` 与 `GET/PUT /me/preferences`；模式状态（服务端为准、按账号本地缓存首屏）、logo 模式菜单、`CollabShell`（四个入口 + 头像菜单，窄屏底部标签栏）、按模式选择壳层与 12.5 的双向路由映射；B 的对话、AI 同事、群组页为占位页，定时任务直接复用 `AutomationsView`；“自动任务”统一改称“定时任务”。旅程见 `e2e/TEST-CATALOG.md` MODE-E2E-01～04、MODE-API-01。
 
-**进度：** S5b 已实现（2026-10-23）：`ConversationView` 的消息、执行结果卡片、执行状态与输入区拆为 `components/conversation/`（`ConversationMessageItem`、`RunMessageList`、`SessionDiscussionList`、`RunComposer`），停止 / 重试 / 引用成果抽为 `useRunActions`，执行进度抽为 `useRunProgress`，消息样式移入共享的 `styles/conversation-thread.css`；`WorkspaceDetailView` 的空间加载、成员与角色、可 @ 的 Agent、文件、成果与写入口判断抽为 `useProjectSpace`。A 的界面与行为不变（MODE-E2E-05）。页签内容拆为独立组件随 S5d 进行。
+**进度：** S5b 已实现（2026-10-23）：`ConversationView` 的消息、执行结果卡片、执行状态与输入区拆为 `components/conversation/`（`ConversationMessageItem`、`RunMessageList`、`SessionDiscussionList`、`RunComposer`），停止 / 重试 / 引用成果抽为 `useRunActions`，执行进度抽为 `useRunProgress`，消息样式移入共享的 `styles/conversation-thread.css`；`WorkspaceDetailView` 的空间加载、成员与角色、可 @ 的 Agent、文件、成果与写入口判断抽为 `useProjectSpace`。A 的界面与行为不变（MODE-E2E-05）。页签内容的复用方式见 S5d。
 
 **进度：** S5c 已实现（2026-10-23）：`GET /me/conversation-targets`（本人个人会话按 AI 同事聚合 + 本人所在的活动项目空间，服务端分页与名称搜索，预览只取 user / assistant 消息）、`GET /me/conversation-targets/agent/:agentId/sessions`（会话分段与服务端给出的续写会话 `continueSessionId`）、`GET /me/conversation-targets/resolve`（对话链接定位）；迁移 0095 为按会话取最新消息加索引。协作模式对话页：统一列表（搜索、“＋”发起对话）、单聊连续分段（段首“话题 · 时间”、加载更早、链接定位到段）、续写最近一段或在首次对话 / Agent 版本变化时经 `createSession` 开启新会话；窄屏两级。群聊、新建群组、未读在 S5d / S5e。
+
+**进度：** S5d 已实现（2026-10-23）：`GET /workspaces/:id/timeline`（讨论、执行记录、任务卡片与系统记录合并，读取轨）；群组页 = A 的 `WorkspaceDetailView`（`layout="collab"`）+ B 头部（成员、“＋”添加成员、页签、群信息）+ 群聊时间线（话题分隔、@Agent 与单 Agent 预选、任务卡片进入任务详情、执行记录进入群组内执行详情、只读 / 归档 / 无 Agent 提示）；项目空间页面地址经 `space-routes` 解耦，群组子路由与 A 同构（12.5）；AI 同事页与群组页共用两栏目录布局，AI 同事详情与 A 共用 `AgentProfileDetail`；A 与 B 共用 `CreateProjectSpaceDialog`，新建须选 AI 同事，服务端同一事务创建并拒绝移出最后一个 Agent（功能规则 3.3）。
 
 每个切片按浏览器 E2E 工作流执行：Spec 阶段在 `e2e/TEST-CATALOG.md` 登记 B 模式旅程（模式切换与记忆、默认进入 A、链接在两种模式间映射、单聊续写与话题分隔、群聊 @Agent、任务卡片进入任务详情并续接、群组中上传文件与新版本、档案编辑与回退、只读成员与归档群组无输入区），A 模式现有旅程全部保持通过；公共壳层变化后运行全部 `pnpm test:e2e`。`AGENTS.md` 中“员工端主导航固定五个入口”的约定改为“A 模式五个入口、B 模式四个入口”，同步更新 `e2e/personal-workbench.spec.ts`。

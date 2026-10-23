@@ -57,14 +57,17 @@ export const useContentStore = defineStore('workbench-content', () => {
     return current === generation ? loaded : []
   }
 
+  /** 新建项目空间（群组）：必须带至少一个 Agent 成员，创建与 Agent 加入在服务端同一事务中完成。 */
   async function createTeamWorkspace(input: {
     name: string
     description: string
+    agentIds: string[]
   }) {
     const current = generation
     const workspace = await workbenchApi.createWorkspace({
       name: input.name,
       description: input.description || '团队共享的对话、文件与成果协作空间。',
+      agentIds: input.agentIds,
     })
     if (current !== generation) throw new Error('账号已切换，请重新操作')
     workspaces.value.unshift(workspace)

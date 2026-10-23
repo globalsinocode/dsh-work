@@ -814,6 +814,28 @@ export interface AgentConversation {
   continueSessionId: string | null
 }
 
+/** 群聊时间线的一项（S5d，GET /workspaces/:id/timeline）。 */
+export type WorkspaceTimelineItem =
+  | {
+      kind: 'message'; id: string; at: string; sessionId: string; sessionTitle: string
+      role: 'user' | 'assistant'; content: string; senderId: string | null; senderName: string | null
+      agentName: string | null; runId: string | null; runRequesterName: string | null
+    }
+  | {
+      kind: 'run'; id: string; at: string; sessionId: string; sessionTitle: string; runId: string
+      status: string; requesterName: string; agentName: string | null; stoppedByName: string | null
+    }
+  | {
+      kind: 'task'; id: string; at: string; event: 'created' | 'run_finished' | 'completed'; actorName: string | null
+      task: {
+        id: string; title: string; status: 'todo' | 'in_progress' | 'done'; assigneeType: 'employee' | 'agent'
+        assigneeName: string; schedule: ProjectTaskSchedule | null; removed: boolean
+      }
+      run: { id: string; status: string; scheduled: boolean; quiet: boolean; summary: string | null } | null
+      note: string | null
+    }
+  | { kind: 'system'; id: string; at: string; activityKind: string; actorName: string; safeMetadata: Record<string, unknown> }
+
 export type ConversationLocation =
   | { type: 'agent'; agentId: string; sessionId: string }
   | { type: 'group'; workspaceId: string; sessionId: string }

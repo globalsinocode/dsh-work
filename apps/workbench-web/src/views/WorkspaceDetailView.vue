@@ -45,6 +45,7 @@ import { WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workben
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
 import { useProjectSpace } from '@/composables/useProjectSpace'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
 type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts' | 'archive'
@@ -59,9 +60,28 @@ type ConversationView = 'new' | 'history'
  * 缺省时按 utils/member-roles 的保守口径从空间负责人推导。
  */
 const props = withDefaults(
-  defineProps<{ currentUserRole?: TeamMemberRole | null }>(),
-  { currentUserRole: undefined },
+  defineProps<{
+    currentUserRole?: TeamMemberRole | null
+    /**
+     * 布局（员工端双模式 S5d，D30）：page 为 A 的项目空间页；collab 为 B 群组页内嵌——
+     * 头部（成员、页签、群信息）与“对话”页签内容由宿主经 header / chat 插槽提供，任务、文件、
+     * 成果、档案页签、信息栏与各弹窗仍是本组件同一实现。
+     */
+    layout?: 'page' | 'collab'
+    /** collab：信息栏是否展开（宿主的“群信息”按钮控制）。 */
+    infoOpen?: boolean
+    /** collab：每次递增打开“管理成员”（宿主头部的“＋”）。 */
+    memberDialogRequest?: number
+  }>(),
+  { currentUserRole: undefined, layout: 'page', infoOpen: false, memberDialogRequest: 0 },
 )
+const emit = defineEmits<{
+  'update:infoOpen': [value: boolean]
+  /** collab：文件页签“引用到对话”交给宿主的群聊输入区。 */
+  'use-file': [file: WorkspaceFile]
+}>()
+const collab = computed(() => props.layout === 'collab')
+const spaceRoutes = useSpaceRoutes()
 
 const route = useRoute()
 const router = useRouter()
@@ -71,7 +91,7 @@ const starterRef = ref<{
   useWorkspaceFile: (file: WorkspaceFile) => void
 }>()
 const tabButtonRefs = ref<HTMLButtonElement[]>([])
-const panelCollapsed = ref(false)
+const panelCollapsed = ref(props.layout === 'collab' && !props.infoOpen)
 /** 右栏只在宽屏显示（≤1180px 时改为信息抽屉）：任务信息卡片据此决定传送到右栏还是就地显示。 */
 const wideQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
   ? window.matchMedia('(min-width: 1181px)')
@@ -178,7 +198,7 @@ function invalidateActivityRequests() {
  * 项目空间 S1：项目空间默认进入“任务”页签，个人空间仍默认“对话”。空间类型在
  * 加载后才确定，因此未指定 `?tab=` 时由下方 watch 按类型落到默认页签。
  */
-const requestedTab = String(route.query.tab ?? '')
+const requestedTab = fromQueryTab(route.query.tab)
 const activeTab = ref<WorkspaceTab>(
   WORKSPACE_TABS.includes(requestedTab as WorkspaceTab) && !TEAM_ONLY_TABS.includes(requestedTab as WorkspaceTab)
     ? (requestedTab as WorkspaceTab)
@@ -199,10 +219,10 @@ const conversationViews: Array<{ id: ConversationView; label: string }> = [
  * 对话面板正文切换为内嵌线程（router-view），「新对话/历史对话」切换条隐藏，
  * 由线程自身的返回控件回到列表。
  */
-const isConversationThreadRoute = computed(() => route.name === 'workspace-conversation')
+const isConversationThreadRoute = computed(() => spaceView(route) === 'conversation')
 /** 项目任务详情（含其任务线程子路由）：始终停留在“任务”页签。 */
 const taskDetailId = computed(() =>
-  route.name === 'workspace-task' || route.name === 'workspace-task-thread' ? String(route.params.taskId ?? '') : null)
+  spaceView(route) === 'task' || spaceView(route) === 'task-thread' ? String(route.params.taskId ?? '') : null)
 /** 任务信息卡片的传送目标：任务详情且右栏可见时为右栏顶部的占位元素。 */
 const taskInfoTarget = computed(() =>
   taskDetailId.value && !panelCollapsed.value && wideLayout.value ? '#workspace-task-info' : null)
@@ -231,7 +251,14 @@ const {
   refreshTeamMembers,
   resetMembers,
 } = useProjectSpace({ workspaceId, roleOverride: () => props.currentUserRole })
-const defaultTab = computed<WorkspaceTab>(() => (isTeam.value ? 'tasks' : 'conversation'))
+// B 群组默认“对话”页签（D30）；A 的项目空间默认“任务”。
+const defaultTab = computed<WorkspaceTab>(() => (isTeam.value && !collab.value ? 'tasks' : 'conversation'))
+
+/** B 的查询参数把“对话”页签写作 chat（12.5），其余页签同名。 */
+function fromQueryTab(raw: unknown): string {
+  const value = String(raw ?? '')
+  return props.layout === 'collab' && value === 'chat' ? 'conversation' : value
+}
 /**
  * 归档执行轨（design §2.7）：归档隐藏新对话、上传等写入口，但历史、文件与成果
  * 内容保持可读。新对话入口只在活动空间渲染；归档时对话页签固定展示历史。
@@ -297,7 +324,7 @@ const workspaceTabs = computed(() => [
  */
 function workspaceBaseLocation(query: LocationQuery) {
   return isConversationThreadRoute.value || taskDetailId.value
-    ? { path: `/workspaces/${workspaceId.value}`, query }
+    ? { path: spaceRoutes.home(workspaceId.value), query }
     : { query }
 }
 
@@ -362,6 +389,10 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
 async function useWorkspaceFile(file: WorkspaceFile) {
   // 评审低1：团队文件引用资格由服务端显式判定，缺省/否决一律不放行。
   if (isTeam.value && file.canReference !== true) return
+  if (collab.value) {
+    emit('use-file', file)
+    return
+  }
   // 处于空间内对话子路由时，selectTab/setConversationView 会触发路径归位，
   // ConversationStarter 在导航确认后才挂载——必须等导航与渲染完成再取
   // starterRef，否则引用被静默丢弃（评审修复）。
@@ -527,7 +558,7 @@ function openArtifactPreview(item: Artifact) {
 }
 
 watch(
-  () => [route.query.tab, isTeam.value, isConversationThreadRoute.value, taskDetailId.value] as const,
+  () => [fromQueryTab(route.query.tab), isTeam.value, isConversationThreadRoute.value, taskDetailId.value] as const,
   ([tab, , isThread]) => {
     // 项目任务线程以子路由打开（openThread 只写路径，不带 ?tab=），必须切到对话页签；
     // 线程内再次导航（如发送后续消息）也要保持，不能被默认页签覆盖。
@@ -884,6 +915,40 @@ watch(
   },
   { immediate: true },
 )
+
+// collab：信息栏由宿主的“群信息”按钮控制；宽屏为右栏，窄屏为抽屉。收起后回传给宿主。
+watch(() => props.infoOpen, (open) => {
+  if (!collab.value) return
+  if (wideLayout.value) panelCollapsed.value = !open
+  else mobileInfoOpen.value = open
+})
+watch([panelCollapsed, mobileInfoOpen], ([collapsed, mobileOpen]) => {
+  if (!collab.value) return
+  const open = wideLayout.value ? !collapsed : mobileOpen
+  if (open !== props.infoOpen) emit('update:infoOpen', open)
+})
+watch(() => props.memberDialogRequest, (request, previous) => {
+  if (collab.value && request > (previous ?? 0)) memberDialogOpen.value = true
+})
+/** collab 头部插槽：成员、页签与计数来自本组件同一份状态。 */
+const headerScope = computed(() => ({
+  workspace: workspace.value,
+  // B 的页签顺序为“对话 / 任务 / 文件 / 成果 / 档案”（D30），对话在前。
+  tabs: [...workspaceTabs.value]
+    .sort((a, b) => Number(b.id === 'conversation') - Number(a.id === 'conversation'))
+    .map(tab => ({ id: tab.id === 'conversation' ? 'chat' : tab.id, label: tab.id === 'files' ? '文件' : tab.label, count: tab.count })),
+  activeTab: activeTab.value === 'conversation' ? 'chat' : activeTab.value,
+  canManageMembers: isTeam.value && !isArchived.value && (currentUserRole.value === 'owner' || currentUserRole.value === 'admin'),
+}))
+/** collab 对话插槽：群聊输入区的写权限与可 @ 的 Agent 与 A 的讨论同一口径。 */
+const chatScope = computed(() => ({
+  workspace: workspace.value,
+  canWrite: canWriteTeamContent.value,
+  archived: isArchived.value,
+  roleKnown: currentUserRole.value !== null,
+  mentionOptions: startableMentionOptions.value,
+  hasAgentMembers: agentMembers.value.length > 0,
+}))
 </script>
 
 <template>
@@ -905,24 +970,28 @@ watch(
   <div
     v-else
     class="workspace-context-page"
-    :class="{ 'workspace-context-page--collapsed': panelCollapsed }"
+    :class="{ 'workspace-context-page--collapsed': panelCollapsed, 'workspace-context-page--embedded': collab }"
   >
     <main class="workspace-context-page__main">
-      <div class="workspace-context-page__topbar">
+      <slot v-if="collab" name="header" v-bind="headerScope" />
+      <!-- B 群组页只在任务详情时显示面包屑（返回任务列表），群组名称与页签由宿主头部给出。 -->
+      <div v-if="!collab || taskDetailId" class="workspace-context-page__topbar">
         <nav class="workspace-context-crumbs" aria-label="当前位置">
-          <el-icon class="workspace-context-crumbs__icon" aria-hidden="true"><FolderOpened /></el-icon>
-          <RouterLink class="workspace-context-crumbs__link" to="/workspaces">{{ isPersonal ? '空间' : '项目' }}</RouterLink>
-          <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
-          <template v-if="taskDetailId">
-            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-name" :to="`/workspaces/${workspace.id}`">{{ workspace.name }}</RouterLink>
+          <template v-if="!collab">
+            <el-icon class="workspace-context-crumbs__icon" aria-hidden="true"><FolderOpened /></el-icon>
+            <RouterLink class="workspace-context-crumbs__link" to="/workspaces">{{ isPersonal ? '空间' : '项目' }}</RouterLink>
             <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
-            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-tasks" :to="`/workspaces/${workspace.id}`">任务</RouterLink>
+          </template>
+          <template v-if="taskDetailId">
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-name" :to="spaceRoutes.home(workspace.id)">{{ workspace.name }}</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-tasks" :to="spaceRoutes.tasks(workspace.id)">任务</RouterLink>
             <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
             <strong class="workspace-context-crumbs__current" data-testid="workspace-crumb-task" aria-current="page">{{ taskDetailTitle || '任务详情' }}</strong>
           </template>
           <strong v-else class="workspace-context-crumbs__current" data-testid="workspace-crumb-name" aria-current="page">{{ workspace.name }}</strong>
         </nav>
-        <div class="workspace-context-page__header-actions">
+        <div v-if="!collab" class="workspace-context-page__header-actions">
           <button
             v-if="panelCollapsed"
             class="workspace-context-page__panel-open"
@@ -948,7 +1017,7 @@ watch(
       </div>
 
       <!-- 任务详情（S3）隐藏页签行，经面包屑返回任务表格。 -->
-      <header v-if="!taskDetailId" class="workspace-context-page__header">
+      <header v-if="!taskDetailId && !collab" class="workspace-context-page__header">
         <nav class="workspace-context-tabs" role="tablist" aria-label="工作空间内容">
           <button
             v-for="(tab, index) in workspaceTabs"
@@ -1027,7 +1096,7 @@ watch(
           aria-labelledby="workspace-tab-conversation"
         >
           <div
-            v-if="showConversationViewSwitch && !isConversationThreadRoute"
+            v-if="!collab && showConversationViewSwitch && !isConversationThreadRoute"
             class="panel workspace-conversation-pane__viewbar"
             data-testid="conversation-view-switch"
             role="tablist"
@@ -1049,6 +1118,7 @@ watch(
 
           <div class="workspace-conversation-pane__body">
             <RouterView v-if="isConversationThreadRoute" />
+            <slot v-else-if="collab" name="chat" v-bind="chatScope" />
             <template v-else>
               <ConversationStarter
                 v-if="showConversationStarter"
@@ -1233,7 +1303,7 @@ watch(
         :usage-loading="usageLoading"
         :usage-error="usageError"
         :compact="Boolean(taskDetailId)"
-        :title="taskDetailId ? '任务信息' : '工作空间信息'"
+        :title="taskDetailId ? '任务信息' : collab ? '群信息' : '工作空间信息'"
         collapsible
         @collapse="panelCollapsed = true"
         @manage-members="memberDialogOpen = true"
@@ -1497,6 +1567,13 @@ watch(
 
 .workspace-context-page--collapsed {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* B 群组页内嵌（S5d）：高度跟随宿主内容区，不再占满视口。 */
+.workspace-context-page--embedded,
+.workspace-context-page--embedded .workspace-context-page__main,
+.workspace-context-page--embedded .workspace-context-page__aside {
+  height: 100%;
 }
 
 .workspace-context-page__main {

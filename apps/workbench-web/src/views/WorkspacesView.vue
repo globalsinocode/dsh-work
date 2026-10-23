@@ -6,6 +6,7 @@ import { ArrowRight, Plus, Search, UserFilled } from '@element-plus/icons-vue'
 
 import { StatusTag } from '@dsh-work/ui-core'
 import { workbenchApi } from '@/api/client'
+import CreateProjectSpaceDialog from '@/components/CreateProjectSpaceDialog.vue'
 import { useContentStore } from '@/stores/content'
 import type { Workspace, WorkspaceStatusFilter } from '@/types/domain'
 
@@ -14,9 +15,6 @@ const route = useRoute()
 const router = useRouter()
 const query = ref('')
 const createDialogOpen = ref(false)
-const newWorkspaceName = ref('')
-const newWorkspaceDescription = ref('')
-const creating = ref(false)
 
 /**
  * 归档筛选（design §2.1 / §6）：全部 / 活动 / 已归档，默认全部；状态写入路由
@@ -60,8 +58,6 @@ const filteredWorkspaces = computed(() => {
 const emptyDescription = computed(() =>
   statusFilter.value === 'archived' && !query.value.trim() ? '暂无已归档的项目空间' : '没有匹配的工作空间',
 )
-
-const canCreate = computed(() => Boolean(newWorkspaceName.value.trim()))
 
 /**
  * tablist 键盘操作（design §4「支持键盘」/ AC-16）。roving tabindex 只解决
@@ -155,24 +151,8 @@ function openWorkspace(workspace: Workspace) {
   void router.push(`/workspaces/${workspace.id}`)
 }
 
-async function createWorkspace() {
-  if (!canCreate.value) return
-  creating.value = true
-  try {
-    const workspace = await contentStore.createTeamWorkspace({
-      name: newWorkspaceName.value.trim(),
-      description: newWorkspaceDescription.value.trim(),
-    })
-    ElMessage.success(`已创建项目空间“${newWorkspaceName.value.trim()}”`)
-    newWorkspaceName.value = ''
-    newWorkspaceDescription.value = ''
-    createDialogOpen.value = false
-    await router.push(`/workspaces/${workspace.id}`)
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '创建工作空间失败')
-  } finally {
-    creating.value = false
-  }
+function onCreated(workspace: Workspace) {
+  void router.push(`/workspaces/${workspace.id}`)
 }
 
 onMounted(() => contentStore.refresh())
@@ -267,27 +247,7 @@ onMounted(() => contentStore.refresh())
       <el-button @click="query = ''">清除筛选</el-button>
     </el-empty>
 
-    <el-dialog v-model="createDialogOpen" title="创建项目空间" width="min(520px, calc(100vw - 32px))">
-      <el-form label-position="top">
-        <el-form-item label="工作空间名称" required>
-          <el-input v-model="newWorkspaceName" maxlength="40" show-word-limit placeholder="例如：九月交付风险分析" />
-        </el-form-item>
-        <el-form-item label="说明">
-          <el-input
-            v-model="newWorkspaceDescription"
-            type="textarea"
-            :rows="3"
-            maxlength="120"
-            show-word-limit
-            placeholder="说明这个项目的目标与范围"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createDialogOpen = false">取消</el-button>
-        <el-button type="primary" :disabled="!canCreate" :loading="creating" @click="createWorkspace">创建工作空间</el-button>
-      </template>
-    </el-dialog>
+    <CreateProjectSpaceDialog v-model="createDialogOpen" mode="work" @created="onCreated" />
   </div>
 </template>
 

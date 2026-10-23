@@ -349,6 +349,7 @@ test('非移除状态的重复加入返回明确冲突，移出后重新加入�
   assert.equal(duplicate.status, 409)
   assert.match(errorMessage(duplicate), /已是空间成员/)
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${firstId}`, { as: ownerId })
   assert.equal(removed.status, 200)
 
@@ -446,10 +447,12 @@ test('成员列表仅返回非移除成员，并按当前角色给出允许动�
   assert.deepEqual((memberAfterDisable.body.data as Array<Record<string, unknown>>)[0]?.allowedActions, [])
 
   // 移出后不再出现在列表。
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const afterRemove = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId })
-  assert.equal((afterRemove.body.data as unknown[]).length, 0)
+  // 只剩为满足“至少一个 Agent 成员”而放入的锚点 Agent。
+  assert.deepEqual((afterRemove.body.data as Array<{ agentId: string }>).map(item => item.agentId), ['agent-s5d-anchor'])
 })
 
 test('项目空间 S0：名册返回可交付数据范围，添加成员前可预览收紧影响', async () => {
@@ -740,6 +743,7 @@ test('重新启用恢复授权来源与有效授权，会话启动恢复；无�
   assert.equal(enableAgain.status, 409)
   assert.match(errorMessage(enableAgain), /已是可用/)
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const enableRemoved = await api('PATCH', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId, body: { action: 'enable' } })
@@ -1029,6 +1033,7 @@ test('移出撤销授权来源并写入 agent_removed 事件，新会话被阻�
   assert.equal(joined.status, 201)
   const wamId = (joined.body.data as { id: string }).id
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   assert.deepEqual(removed.body.data, { id: wamId, removed: true })
@@ -1303,7 +1308,7 @@ test('创建团队空间自动加入默认 Agent 成员并派生 agent_member �
   assert.ok(sources.some(source => source.capabilityType === 'agent' && source.capabilityVersionId === members[0]?.agentVersionId))
 })
 
-test('默认 Agent 不可加入时空间照常创建且无 Agent 成员', async () => {
+test('默认 Agent 不可加入时不创建空间（方案 12.8：新建的项目空间至少有一个 Agent 成员）', async () => {
   const ownerId = 'user-auto-default-fallback-owner'
   await createDirectoryUser(ownerId, '降级负责人')
   await database`
@@ -1315,16 +1320,11 @@ test('默认 Agent 不可加入时空间照常创建且无 Agent 成员', async 
       as: ownerId,
       body: { name: '降级空间', description: '' },
     })
-    assert.equal(created.status, 201)
-    const workspace = created.body.data as { id: string }
-
-    const members = await database<AgentMemberRow[]>`
-      select id, agent_id as "agentId", agent_version_id as "agentVersionId",
-             status, added_by as "addedBy"
-        from workspace_agent_members
-       where tenant_id = ${tenantId} and workspace_id = ${workspace.id}
+    assert.equal(created.status, 409)
+    const [count] = await database<{ total: number }[]>`
+      select count(*)::int as total from workspaces where tenant_id = ${tenantId} and created_by = ${ownerId} and workspace_type = 'team'
     `
-    assert.equal(members.length, 0)
+    assert.equal(count?.total, 0, '创建与 Agent 加入在同一事务中：失败时不留下没有 Agent 的空间')
   } finally {
     await database`
       update agents set allow_workspace_join = true
@@ -1333,9 +1333,60 @@ test('默认 Agent 不可加入时空间照常创建且无 Agent 成员', async 
   }
 })
 
+test('新建项目空间加入所选 Agent；未选择或不可加入的 Agent 拒绝创建；不能移出最后一个 Agent', async () => {
+  const ownerId = 'user-s5d-create-owner'
+  await createDirectoryUser(ownerId, '新建负责人')
+  const agent = await createPublishedAgent({ id: 'agent-s5d-create', name: 'S5d 新建 Agent' })
+
+  const empty = await api('POST', '/api/workbench/v1/workspaces', { as: ownerId, body: { name: '没有 Agent', agentIds: [] } })
+  assert.equal(empty.status, 422)
+  const invalid = await api('POST', '/api/workbench/v1/workspaces', { as: ownerId, body: { name: '格式错误', agentIds: 'agent' } })
+  assert.equal(invalid.status, 422)
+  const missing = await api('POST', '/api/workbench/v1/workspaces', { as: ownerId, body: { name: '不存在的 Agent', agentIds: [agent.id, 'agent-missing'] } })
+  assert.ok(missing.status >= 400 && missing.status < 500)
+  const [none] = await database<{ total: number }[]>`
+    select count(*)::int as total from workspaces where tenant_id = ${tenantId} and created_by = ${ownerId} and workspace_type = 'team'
+  `
+  assert.equal(none?.total, 0)
+
+  const created = await api('POST', '/api/workbench/v1/workspaces', { as: ownerId, body: { name: '新品上市', description: '', agentIds: [agent.id] } })
+  assert.equal(created.status, 201)
+  const workspace = created.body.data as { id: string; name: string }
+  assert.equal(workspace.name, '新品上市')
+  const rows = await agentMemberRows(workspace.id)
+  assert.deepEqual(rows.map(row => [row.agentId, row.status, row.addedBy]), [[agent.id, 'available', ownerId]])
+
+  const last = await api('DELETE', `/api/workbench/v1/workspaces/${workspace.id}/agent-members/${rows[0]!.id}`, { as: ownerId })
+  assert.equal(last.status, 409)
+  assert.match(errorMessage(last), /至少需要保留一个 Agent 成员/)
+})
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * 方案 12.8 / 功能规则 3.3：项目空间不能移出最后一个 Agent 成员。测试“移出”行为的用例先放入一个
+ * 停用的锚点 Agent 成员（直接写行，不带授权来源，不影响授权与会话断言），被测 Agent 才能移出。
+ */
+let anchorAgentReady: Promise<{ id: string; versionId: string }> | undefined
+async function keepAnotherAgentMember(workspaceId: string) {
+  anchorAgentReady ??= (async () => {
+    const agent = await createPublishedAgent({ id: 'agent-s5d-anchor', name: 'S5d 锚点 Agent' })
+    const [row] = await database<{ versionId: string }[]>`
+      select active_version_id as "versionId" from agents where tenant_id = ${tenantId} and id = ${agent.id}`
+    return { id: agent.id, versionId: row!.versionId }
+  })()
+  const anchor = await anchorAgentReady
+  const [owner] = await database<{ userId: string }[]>`
+    select user_id as "userId" from workspace_members
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and member_role = 'owner'`
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values (${`wam-anchor-${workspaceId}`}, ${tenantId}, ${workspaceId}, ${anchor.id}, ${anchor.versionId}, 'disabled', ${owner!.userId})
+    on conflict (tenant_id, workspace_id, agent_id) do nothing
+  `
+}
 
 function testApiAuthenticator(request: import('node:http').IncomingMessage): Promise<RequestIdentity> {
   const header = request.headers['x-test-user-id']
@@ -1580,7 +1631,7 @@ async function agentMemberRows(workspaceId: string): Promise<AgentMemberRow[]> {
     select id, agent_id as "agentId", agent_version_id as "agentVersionId",
            status, added_by as "addedBy"
       from workspace_agent_members
-     where tenant_id = ${tenantId} and workspace_id = ${workspaceId}
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and agent_id <> 'agent-s5d-anchor'
      order by created_at asc, id asc
   `
   return rows.map(row => ({ ...row }))

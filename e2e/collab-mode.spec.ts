@@ -233,3 +233,95 @@ test('MODE-E2E-08: conversation links land on the owning chat, missing ones expl
   await expect(page).toHaveURL(/\/c\/chats$/)
   await expect(page.getByText('对话不存在或你没有访问权限')).toBeVisible()
 })
+
+test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the group info', async ({ page }) => {
+  await switchToCollab(page)
+  await page.getByRole('list', { name: '对话' }).getByRole('button', { name: /^周林赵王供应链经营分析|供应链经营分析/ }).first().click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply$/)
+  await expect(page.getByRole('heading', { name: '供应链经营分析', level: 1 })).toBeVisible()
+  await expect(page.getByRole('tab')).toHaveText([/^对话/, /^任务/, /^文件/, /^成果/, /^档案/])
+  await expect(page.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true')
+  const chat = page.getByRole('region', { name: '群聊' })
+  await expect(chat.getByText(/^分析华东区本月订单交付风险 · /)).toBeVisible()
+  await expect(chat.getByTestId('group-system-record').first()).toContainText('创建了群组')
+  // 冒烟夹具的空间没有 Agent 成员：按 12.8 提示先添加 Agent。
+  await expect(page.getByTestId('group-no-agent-notice')).toBeVisible()
+
+  await chat.getByTestId('group-run-record').first().click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\/conversations\/run-/)
+
+  await page.getByRole('tab', { name: /^文件/ }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?tab=files$/)
+  // 文件页签就是工作模式的“共享文件”页签内容（同一组件）。
+  await expect(page.locator('#workspace-panel-files').getByText('八月生产计划_v3.xlsx', { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: '群信息', exact: true }).click()
+  await expect(page).toHaveURL(/info=1/)
+  await expect(page.getByText('群信息', { exact: true }).last()).toBeVisible()
+  await expect(page.getByText('项目简报').first()).toBeVisible()
+
+  // 切回工作模式：所在页签映射回项目空间的同一页签。
+  await chooseMode(page, '工作模式')
+  await expect(page).toHaveURL(/\/workspaces\/ws-supply\?tab=files$/)
+})
+
+test('MODE-E2E-10: task details open inside the group and map to work mode', async ({ page }) => {
+  const created = await page.request.post('/api/workbench/v1/workspaces/ws-supply/project-tasks', {
+    data: { title: 'MODE-10 冒烟任务', assignee: { type: 'employee', id: 'U00001' } },
+  })
+  expect(created.ok()).toBeTruthy()
+  const taskId = (await created.json()).data.id as string
+  await switchToCollab(page)
+  await page.goto('/c/chats/group/ws-supply?tab=tasks')
+  await page.getByTestId('project-task-open').filter({ hasText: 'MODE-10 冒烟任务' }).click()
+  await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
+  await expect(page.getByTestId('workspace-crumb-task')).toHaveText('MODE-10 冒烟任务')
+  await page.getByTestId('workspace-crumb-tasks').click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?tab=tasks$/)
+  await page.goto(`/workspaces/ws-supply/tasks/${taskId}`)
+  await expect(page).toHaveURL(new RegExp(`/c/chats/group/ws-supply/tasks/${taskId}$`))
+})
+
+test('MODE-E2E-11: AI colleague and group directories open the matching chats', async ({ page }) => {
+  await switchToCollab(page)
+  await page.getByRole('navigation', { name: '协作模式主导航' }).getByRole('button', { name: 'AI 同事' }).click()
+  await expect(page.getByRole('heading', { name: 'AI 同事', level: 1 })).toBeVisible()
+  await page.getByRole('button', { name: /dsh-work Assistant/ }).first().click()
+  await expect(page).toHaveURL(/\/c\/agents\/dsh-work-assistant$/)
+  await page.getByRole('button', { name: '发消息' }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/agent\/dsh-work-assistant$/)
+
+  await page.getByRole('navigation', { name: '协作模式主导航' }).getByRole('button', { name: '群组' }).click()
+  await expect(page.getByRole('heading', { name: '群组', level: 1 })).toBeVisible()
+  await page.getByRole('button', { name: /供应链经营分析/ }).first().click()
+  await expect(page).toHaveURL(/\/c\/groups\/ws-supply$/)
+  await expect(page.getByText('简报摘要')).toBeVisible()
+  await page.getByRole('button', { name: '管理群组' }).click()
+  await expect(page).toHaveURL(/\/c\/chats\/group\/ws-supply\?info=1$/)
+})
+
+test('MODE-E2E-12: creating a group or project space requires choosing an AI colleague', async ({ page }) => {
+  await switchToCollab(page)
+  await page.goto('/c/groups')
+  await page.getByRole('button', { name: '新建群组' }).click()
+  const dialog = page.getByRole('dialog', { name: '新建群组' })
+  await dialog.getByLabel('群组名称').fill('MODE-12 新群组')
+  const submit = dialog.getByRole('button', { name: '创建群组' })
+  // 只有一位 AI 同事时默认选中；取消选择后不能提交。
+  await expect(submit).toBeEnabled()
+  const agent = dialog.getByRole('checkbox', { name: /dsh-work Assistant/ })
+  await expect(agent).toBeChecked()
+  // Element Plus 复选框的原生 input 不可见，点击其可见标签切换。
+  await dialog.getByText('dsh-work Assistant', { exact: true }).click()
+  await expect(agent).not.toBeChecked()
+  await expect(dialog.getByText('至少选择一位 AI 同事')).toBeVisible()
+  await expect(submit).toBeDisabled()
+  await dialog.getByRole('button', { name: '取消' }).click()
+  await expect(dialog).toBeHidden()
+
+  await chooseMode(page, '工作模式')
+  await page.goto('/workspaces')
+  await page.getByRole('button', { name: '创建项目空间' }).click()
+  const workDialog = page.getByRole('dialog', { name: '创建项目空间' })
+  await expect(workDialog.getByRole('group', { name: '选择 AI 同事' })).toBeVisible()
+})

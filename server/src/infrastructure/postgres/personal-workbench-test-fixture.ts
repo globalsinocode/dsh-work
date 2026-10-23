@@ -19,6 +19,8 @@ import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import type { AgentRuntimePort } from '../../modules/runtime/runtime-types.ts'
 import { registerWorkbenchAgentRoutes } from '../../http/workbench/agent-routes.ts'
 import { registerConversationTargetRoutes } from '../../http/workbench/conversation-target-routes.ts'
+import { registerWorkspaceTimelineRoutes } from '../../http/workbench/workspace-timeline-routes.ts'
+import { PostgresWorkspaceTimelineService } from '../../modules/workbench/application/postgres-workspace-timeline-service.ts'
 import { registerUserPreferenceRoutes } from '../../http/workbench/preference-routes.ts'
 import { PostgresConversationTargetService } from '../../modules/workbench/application/postgres-conversation-target-service.ts'
 import { PostgresUserPreferenceService } from '../../modules/workbench/application/postgres-user-preference-service.ts'
@@ -122,6 +124,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     registerWorkspaceLifecycleRoutes(router, lifecycle, auth)
     registerWorkspaceActivityRoutes(router, activity, auth)
     registerWorkspaceUsageRoutes(router, usage, auth)
+    registerWorkspaceTimelineRoutes(router, new PostgresWorkspaceTimelineService(db.client, workspaceService), auth)
     projectResources = { projectArchive, workspaceAgentMembers, projects, workspaceMembers, lifecycle, activity, usage }
   }
   if (options.browser) {

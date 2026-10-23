@@ -298,3 +298,85 @@ test.describe('PS-E2E-08 执行规则（项目空间 S4）', () => {
   })
 
 })
+
+test.describe('MODE-E2E-09/10 协作模式群聊（S5d）', () => {
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00002' } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'collab' } })
+  })
+  test.afterEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'work' } })
+  })
+
+  test('群聊中讨论不触发执行，@Agent 才执行；任务卡片进入群组内的任务详情', async ({ page }) => {
+    const seed = await loadSeed(page)
+    await page.goto(`/c/chats/group/${seed.workspaceId}`)
+    const chat = page.getByRole('region', { name: '群聊' })
+    await expect(page.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true')
+
+    // 只有一个可发起的 Agent 时预选它；改为讨论后发送不产生执行。
+    const discussion = uniqueTitle('MODE-09 讨论')
+    const preset = page.getByRole('button', { name: '改为讨论' })
+    if (await preset.isVisible()) await preset.click()
+    await page.getByLabel('对话输入').fill(discussion)
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(chat.locator('.user-message', { hasText: discussion })).toBeVisible()
+    await expect(chat.getByTestId('group-run-record').filter({ hasText: discussion })).toHaveCount(0)
+
+    // @Agent：出现执行记录，Agent 回复进入时间线；续写最近一段讨论（不新增话题）。
+    const dividers = await chat.locator('.collab-group-timeline__divider').count()
+    const ask = uniqueTitle('MODE-09 执行')
+    await page.getByRole('button', { name: /^交给 @/ }).click()
+    await page.getByLabel('对话输入').fill(ask)
+    await page.getByRole('button', { name: '发送消息', exact: true }).click()
+    await expect(chat.getByTestId('group-run-record').last()).toBeVisible()
+    await expect(chat.getByText(/受控测试运行已完成/).last()).toBeVisible({ timeout: 20_000 })
+    expect(await chat.locator('.collab-group-timeline__divider').count()).toBe(dividers)
+
+    // 执行记录进入群组内的执行详情（与工作模式同一页面）。
+    await chat.getByTestId('group-run-record').last().click()
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/conversations/run-`))
+    await page.getByRole('tab', { name: '对话' }).click()
+
+    // 在“任务”页签新建任务（与工作模式同一组件），回到对话出现任务卡片，点卡片进入任务详情。
+    const title = uniqueTitle('MODE-10 任务')
+    await page.getByRole('tab', { name: /^任务/ }).click()
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}\\?tab=tasks`))
+    await page.getByRole('button', { name: '新建任务' }).click()
+    const dialog = page.getByRole('dialog', { name: '新建任务' })
+    await dialog.getByLabel('任务标题').fill(title)
+    await dialog.getByTestId('project-task-assignee').click()
+    await page.getByRole('option', { name: /项目空间助手/ }).click()
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    await page.getByRole('tab', { name: '对话' }).click()
+    await page.getByRole('button', { name: `打开任务：${title}` }).click()
+    await expect(page).toHaveURL(new RegExp(`/c/chats/group/${seed.workspaceId}/tasks/[^/]+`))
+    await expect(page.getByTestId('workspace-crumb-task')).toHaveText(title)
+    await expect(page.getByTestId('project-task-detail')).toContainText(title)
+
+    // 群信息展开 A 的右栏（简报、成员与 Agent）。
+    await page.getByRole('button', { name: '群信息', exact: true }).click()
+    await expect(page).toHaveURL(/info=1/)
+    await expect(page.getByText('群信息', { exact: true }).or(page.getByText('任务信息', { exact: true })).first()).toBeVisible()
+  })
+})
+
+test.describe('MODE-E2E-09 协作模式归档群组（S5d）', () => {
+  // 归档夹具空间的成员是负责人 U00001（与 PS-E2E-04 归档用例同一身份）。
+  test.use({ extraHTTPHeaders: { 'x-test-user-id': 'U00001' } })
+
+  test.afterEach(async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'work' } })
+  })
+
+  test('归档群组可读但不显示输入区', async ({ page }) => {
+    await page.request.put('/api/workbench/v1/me/preferences', { data: { uiMode: 'collab' } })
+    const seed = await loadSeed(page)
+    await page.goto(`/c/chats/group/${seed.archivedWorkspaceId}`)
+    await expect(page.getByRole('region', { name: '群聊' })).toBeVisible()
+    await expect(page.getByTestId('group-archived-notice')).toBeVisible()
+    await expect(page.getByLabel('对话输入')).toHaveCount(0)
+  })
+})

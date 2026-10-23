@@ -8,6 +8,7 @@ import type {
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import {
   currentTeamAuthRevision,
@@ -273,66 +274,109 @@ export class PostgresWorkspaceAgentMemberService {
   ): Promise<AgentMemberRecord> {
     await this.assertTeamWorkspace(workspaceId)
     await this.requireActorRole(workspaceId, actorUserId, ['owner'])
+    const prepared = await this.prepareAgentJoin(agentId, actorRoleIds)
+
+    let memberId = ''
+    await this.database.begin(async transaction => {
+      await lockWorkspaceRow(transaction, workspaceId)
+      memberId = await this.joinPreparedAgent(transaction, workspaceId, prepared, actorUserId)
+    })
+    return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
+  }
+
+  /**
+   * 新建项目空间（群组）并在同一事务中加入 Agent 成员（功能规则 3.3、方案 12.8：新建的空间至少
+   * 有一个 Agent 成员）。所有 Agent 先按添加人当前角色校验版本、依赖闭包与可见范围；任一不能加入
+   * 则整个创建失败，不留下没有 Agent 的空间。创建人成为负责人。返回新空间 ID。
+   */
+  async createTeamWorkspace(
+    input: { name: string; description: string },
+    agentIds: string[],
+    actorUserId: string,
+    actorRoleIds: string[] = [],
+  ): Promise<string> {
+    const unique = [...new Set(agentIds.map(id => id.trim()).filter(Boolean))]
+    if (!unique.length) throw invalidRequest('新建项目空间至少需要选择一个 AI 同事')
+    if (unique.length > 10) throw invalidRequest('新建项目空间时最多选择 10 个 AI 同事')
+    const prepared: Array<Awaited<ReturnType<PostgresWorkspaceAgentMemberService['prepareAgentJoin']>>> = []
+    for (const agentId of unique) prepared.push(await this.prepareAgentJoin(agentId, actorRoleIds))
+    const workspaceId = `ws-${randomUUID()}`
+    await this.database.begin(async transaction => {
+      await insertTeamWorkspaceRows(transaction, workspaceId, input, actorUserId)
+      await lockWorkspaceRow(transaction, workspaceId)
+      for (const agent of prepared) await this.joinPreparedAgent(transaction, workspaceId, agent, actorUserId)
+    })
+    return workspaceId
+  }
+
+  /** 加入前的校验（事务外，只读）：启用版本、依赖闭包、添加人当前角色可见与 Tool 版本。 */
+  private async prepareAgentJoin(agentId: string, actorRoleIds: string[]) {
     const active = await this.requireActivePublishedVersion(agentId, true)
     const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
     // P2-1：候选列表按 visible_role_ids 过滤只是展示；直接提交 ID 也必须按添加人
     // 当前有效角色复核允许范围，不能依赖候选查询承担鉴权。
     await this.authorization.assertAgentVersionVisibleToRoles(active.versionId, actorRoleIds, '所选 Agent')
     const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    return { agentId, active, skillVersions, toolVersions }
+  }
 
-    let memberId = ''
-    await this.database.begin(async transaction => {
-      await lockWorkspaceRow(transaction, workspaceId)
-      // P1-4：角色前置检查在事务外，拿到空间锁后必须复核当前角色——
-      // 负责人转交若发生在前置检查与加锁之间，旧负责人不得再改成员与授权。
-      await this.requireActorRole(workspaceId, actorUserId, ['owner'], transaction)
-      const [existing] = await transaction<MemberStateRow[]>`
-        select id, agent_id as "agentId", agent_version_id as "agentVersionId", status
-          from workspace_agent_members
-         where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and agent_id = ${agentId}
-         for update
+  /** 在已锁定空间行的事务中加入一个已校验的 Agent：成员行、授权来源与动态。返回成员 ID。 */
+  private async joinPreparedAgent(
+    transaction: DatabaseTransaction,
+    workspaceId: string,
+    prepared: Awaited<ReturnType<PostgresWorkspaceAgentMemberService['prepareAgentJoin']>>,
+    actorUserId: string,
+  ): Promise<string> {
+    const { agentId, active, skillVersions, toolVersions } = prepared
+    // P1-4：角色前置检查在事务外，拿到空间锁后必须复核当前角色——
+    // 负责人转交若发生在前置检查与加锁之间，旧负责人不得再改成员与授权。
+    await this.requireActorRole(workspaceId, actorUserId, ['owner'], transaction)
+    const [existing] = await transaction<MemberStateRow[]>`
+      select id, agent_id as "agentId", agent_version_id as "agentVersionId", status
+        from workspace_agent_members
+       where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and agent_id = ${agentId}
+       for update
+    `
+    if (existing && existing.status !== 'removed') {
+      throw workspaceStateConflict('该 Agent 已是空间成员，不能重复加入')
+    }
+    const memberId = existing?.id ?? `wam-${randomUUID()}`
+    if (existing) {
+      await transaction`
+        update workspace_agent_members
+           set agent_version_id = ${active.versionId}, status = 'available',
+               added_by = ${actorUserId}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${existing.id}
       `
-      if (existing && existing.status !== 'removed') {
-        throw workspaceStateConflict('该 Agent 已是空间成员，不能重复加入')
-      }
-      memberId = existing?.id ?? `wam-${randomUUID()}`
-      if (existing) {
-        await transaction`
-          update workspace_agent_members
-             set agent_version_id = ${active.versionId}, status = 'available',
-                 added_by = ${actorUserId}, updated_at = now()
-           where tenant_id = ${tenantId} and id = ${existing.id}
-        `
-      } else {
-        await transaction`
-          insert into workspace_agent_members (
-            id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by
-          ) values (
-            ${memberId}, ${tenantId}, ${workspaceId}, ${agentId}, ${active.versionId},
-            'available', ${actorUserId}
-          )
-        `
-      }
-      await this.grantSources.addGrantSources(transaction, [
-        { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
-        ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-      ], workspaceId)
-      // addGrantSources bumps the workspace auth revision; the post-bump value
-      // separates a later re-add of the same (row-reusing) membership from this
-      // join, while a racing duplicate join already throws above.
-      const revision = await currentTeamAuthRevision(transaction, workspaceId)
-      await recordWorkspaceActivity(transaction, {
-        workspaceId,
-        kind: 'agent_member_added',
-        actorUserId,
-        objectType: 'agent_member',
-        objectId: memberId,
-        dedupeKey: `agent_member_added:${memberId}:${revision}`,
-        metadata: { agentMemberId: memberId, agentId },
-      })
+    } else {
+      await transaction`
+        insert into workspace_agent_members (
+          id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by
+        ) values (
+          ${memberId}, ${tenantId}, ${workspaceId}, ${agentId}, ${active.versionId},
+          'available', ${actorUserId}
+        )
+      `
+    }
+    await this.grantSources.addGrantSources(transaction, [
+      { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
+      ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
+      ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
+    ], workspaceId)
+    // addGrantSources bumps the workspace auth revision; the post-bump value
+    // separates a later re-add of the same (row-reusing) membership from this
+    // join, while a racing duplicate join already throws above.
+    const revision = await currentTeamAuthRevision(transaction, workspaceId)
+    await recordWorkspaceActivity(transaction, {
+      workspaceId,
+      kind: 'agent_member_added',
+      actorUserId,
+      objectType: 'agent_member',
+      objectId: memberId,
+      dedupeKey: `agent_member_added:${memberId}:${revision}`,
+      metadata: { agentMemberId: memberId, agentId },
     })
-    return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
+    return memberId
   }
 
   async updateAgentMember(
@@ -378,6 +422,12 @@ export class PostgresWorkspaceAgentMemberService {
       `
       if (!locked) throw agentMemberNotFound('Agent 成员不存在')
       if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重复移除')
+      // 方案 12.8 / 功能规则 3.3：项目空间至少保留一个 Agent 成员（停用的也算），不能移出最后一个。
+      const [others] = await transaction<{ total: number }[]>`
+        select count(*)::int as total from workspace_agent_members
+         where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id <> ${memberId} and status <> 'removed'
+      `
+      if (!others?.total) throw workspaceStateConflict('项目空间至少需要保留一个 Agent 成员；请先添加其他 Agent 再移出')
       await transaction`
         update workspace_agent_members
            set status = 'removed', updated_at = now()

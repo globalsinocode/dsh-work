@@ -3,12 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import CollabAgentChat from '@/components/collab/CollabAgentChat.vue'
+import CollabGroupPage from '@/components/collab/CollabGroupPage.vue'
 import CollabTargetList from '@/components/collab/CollabTargetList.vue'
 import { workbenchApi } from '@/api/client'
 import { useCollabConversationStore } from '@/stores/collab-conversations'
 import { useContentStore } from '@/stores/content'
-import { useUiModeStore } from '@/stores/ui-mode'
-import { notifyActionFailure } from '@/utils/feedback'
 
 /**
  * 协作模式对话页（S5c，D24～D26）：左栏统一对话列表，右栏为选中的对话对象。单聊在本切片
@@ -18,7 +17,6 @@ const route = useRoute()
 const router = useRouter()
 const conversations = useCollabConversationStore()
 const contentStore = useContentStore()
-const uiMode = useUiModeStore()
 
 const agentId = computed(() => route.name === 'collab-agent-chat' ? String(route.params.agentId ?? '') : '')
 const groupId = computed(() => ['collab-group-chat', 'collab-group-conversation', 'collab-group-task', 'collab-group-task-thread'].includes(String(route.name)) ? String(route.params.id ?? '') : '')
@@ -72,14 +70,6 @@ watch(() => route.name === 'collab-chats' ? route.query.conversation : undefined
 }, { immediate: true })
 
 if (!contentStore.agents.length) void contentStore.refreshAgents().catch(() => undefined)
-
-async function switchToWork() {
-  try {
-    await uiMode.setMode('work')
-  } catch (cause) {
-    notifyActionFailure('切换模式', '工作模式', cause)
-  }
-}
 </script>
 
 <template>
@@ -99,11 +89,11 @@ async function switchToWork() {
         :focus-session-id="focusSessionId"
         @back="router.push({ name: 'collab-chats' })"
       />
-      <div v-else-if="groupId" class="collab-chats__empty">
-        <el-empty description="群聊页即将上线，可先在工作模式的项目空间中查看。">
-          <el-button type="primary" :loading="uiMode.switching" @click="switchToWork">切换到工作模式</el-button>
-        </el-empty>
-      </div>
+      <CollabGroupPage
+        v-else-if="groupId"
+        :workspace-id="groupId"
+        @back="router.push({ name: 'collab-chats' })"
+      />
       <div v-else class="collab-chats__empty">
         <el-skeleton v-if="resolving" :rows="4" animated />
         <el-alert v-else-if="resolveError" type="warning" :closable="false" :title="resolveError" show-icon />

@@ -8,6 +8,7 @@ import type { PostgresAuthorizationService } from '../../authorization/postgres-
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
 import type { FileMount } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
+import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
@@ -449,14 +450,7 @@ export class PostgresContentService {
   async createWorkspace(input: { name: string; description: string }, actorUserId: string) {
     const id = `ws-${randomUUID()}`
     await this.database.begin(async (transaction) => {
-      await transaction`
-        insert into workspaces (id, tenant_id, name, description, created_by, status)
-        values (${id}, ${tenantId}, ${input.name.trim()}, ${input.description.trim()}, ${actorUserId}, 'active')
-      `
-      await transaction`
-        insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
-        values (${tenantId}, ${id}, ${actorUserId}, 'owner', ${actorUserId})
-      `
+      await insertTeamWorkspaceRows(transaction, id, input, actorUserId)
     })
     // 新空间恒为 active，这里显式限定以免受列表默认值变化影响。
     return (await this.listWorkspaces(actorUserId, { status: 'active' })).find((workspace) => workspace.id === id)

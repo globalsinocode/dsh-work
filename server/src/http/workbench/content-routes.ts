@@ -81,27 +81,22 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const access = await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
-    const body = await readJsonBody<{ name: string; description?: string }>(request)
-    if (body.name.trim().length < 2) throw invalidRequest('工作空间名称至少需要 2 个字符')
-    const workspace = await content.createWorkspace({
-      name: body.name,
-      description: body.description ?? '',
-    }, userId)
-    // 新团队空间自动加入平台默认 Agent（复用 addAgentMember 的版本固定与
-    // 授权派生事务）。默认 Agent 对该创建者不可用（未发布/未开放加入/
-    // 可见角色不含创建者/依赖闭包失效）时降级为「无 Agent」空态，
-    // 空间照常创建，由负责人后续手动添加。
-    if (workspace && agentMembers) {
-      try {
-        await agentMembers.addAgentMember(
-          workspace.id,
-          DEFAULT_WORKBENCH_AGENT_ID,
-          userId,
-          access?.roleIds ?? identity.roleIds,
-        )
-      } catch (error) {
-        console.warn('auto-join default agent failed', { workspaceId: workspace.id, error })
-      }
+    const body = await readJsonBody<{ name: string; description?: string; agentIds?: unknown }>(request)
+    if (typeof body.name !== 'string' || body.name.trim().length < 2) throw invalidRequest('工作空间名称至少需要 2 个字符')
+    if (body.agentIds !== undefined && (!Array.isArray(body.agentIds) || body.agentIds.some(id => typeof id !== 'string'))) {
+      throw invalidRequest('agentIds 必须是 Agent 标识数组')
+    }
+    const input = { name: body.name, description: body.description ?? '' }
+    // 方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员，创建与 Agent 加入在同一事务中
+    // 完成；任一 Agent 不能加入则整个创建失败，不再降级为“无 Agent”空间。未指定 agentIds 的旧调用
+    // 按平台默认 Agent 加入，同样失败即不创建。
+    let workspace
+    if (agentMembers) {
+      const agentIds = (body.agentIds as string[] | undefined) ?? [DEFAULT_WORKBENCH_AGENT_ID]
+      const workspaceId = await agentMembers.createTeamWorkspace(input, agentIds, userId, access?.roleIds ?? identity.roleIds)
+      workspace = (await content.listWorkspaces(userId, { status: 'active' })).find(item => item.id === workspaceId)
+    } else {
+      workspace = await content.createWorkspace(input, userId)
     }
     return httpResult(201, envelope('workbench', workspace, 'postgres'))
   })

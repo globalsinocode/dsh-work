@@ -426,7 +426,8 @@
       },
       "post": {
         "operationId": "createTeamWorkspace",
-        "summary": "创建团队工作空间；创建者成为负责人，平台默认 Agent 可用时自动加入",
+        "summary": "创建团队工作空间（项目空间 / 群组）；创建者成为负责人，所选 Agent 在同一事务中加入",
+        "description": "方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员。agentIds 为创建时加入的 Agent（1～10 个，去重）；任一 Agent 不能加入（未发布、未开放加入、对创建者不可见、依赖失效）则整个创建失败，不留下没有 Agent 的空间。省略 agentIds 的旧调用按平台默认 Agent 加入，同样失败即不创建。",
         "requestBody": {
           "required": true,
           "content": {
@@ -441,6 +442,13 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "agentIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "description": "创建时加入的 Agent ID；省略时为平台默认 Agent。"
                   }
                 },
                 "required": [
@@ -455,6 +463,9 @@
             "$ref": "#/components/responses/Ok"
           },
           "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
             "$ref": "#/components/responses/Error"
           },
           "422": {
