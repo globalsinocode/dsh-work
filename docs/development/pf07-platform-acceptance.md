@@ -6,7 +6,7 @@
 
 1. **P0 契约：** 在代码版本固定后运行 `pnpm test:pf07:matrix`、`pnpm test:m1` 和 `pnpm test:review:unit`。矩阵检查确保能力有 P0/P1 命令和 P2 场景；它不运行能力测试。
 2. **P1 服务：** 只用专用可丢弃 PostgreSQL 运行 `pnpm test:pf07:p1`。MCP 管理的 P1 浏览器旅程另运行 `pnpm test:e2e:mcp-admin`；个人任务、审批与记忆的前端旅程按 [TEST-CATALOG](../../e2e/TEST-CATALOG.md) 选用现有 P0/P1 套件。记录每条命令、提交、运行环境、退出结果和失败日志引用。CI 执行 PF-01～PF-05 的服务集成套件；浏览器套件按对应配置单独执行。
-3. **P2 真实链路：** 先固定目标部署、OIDC 身份、DSH Lock、Adapter、模型和批准连接。按矩阵逐场景执行真实 Run/Attempt，记录操作回执、审计/成果引用以及故障和撤权后的拒绝结果。MCP、等待及记忆的具体动作见 [TEST-CATALOG](../../e2e/TEST-CATALOG.md) 的 `PF-MCP-P2`、`PF-WAIT-P2`、`PF-MEMORY-P2`。无 Session、外部动作和预算按矩阵场景逐项执行。
+3. **P2 真实链路：** 先固定目标部署、OIDC 身份、DSH Lock、Adapter、模型和批准连接。按矩阵逐场景执行真实 Run/Attempt，记录操作回执、审计/成果引用以及故障和撤权后的拒绝结果。MCP、等待及记忆的具体动作见验收目录的 `PF-MCP-P2`、`PF-WAIT-P2`（[管理端与平台](../../e2e/catalog/admin-platform.md)）与 `PF-MEMORY-P2`（[Agent](../../e2e/catalog/agents.md)）。无 Session、外部动作和预算按矩阵场景逐项执行。
 
 ## P2 记录与发布门禁
 

@@ -171,7 +171,7 @@ EX-00、EX-01 已交付部分与 EX-02 可以并行；EX-04 在 EX-00 给出结�
 | 文档与契约 | `pnpm verify`；涉及 Schema 时含 contracts 与 runtime 检查；架构改动执行 `pnpm check:architecture` |
 | Runtime 与取消 | `pnpm test:m1`、`pnpm test:m5:faults`，按改动扩展真实 DSH 探针 |
 | 故障收敛与容量 | `pnpm test:m5:faults:integration`、`pnpm test:m5:capacity:integration` |
-| 用户可见的执行步骤 | 先在 `e2e/TEST-CATALOG.md` 登记旅程，再按 Spec → Code → Verify → Test → Green |
+| 用户可见的执行步骤 | 先在验收目录对应分册（索引 `e2e/TEST-CATALOG.md`）登记旅程，再按 Spec → Code → Verify → Test → Green |
 | 真实执行 | 同一 Run/Attempt/DSH 链路与对应 Runtime Lock；留存 Run/Attempt 与 DSH 版本 |
 
 数据库测试使用专用可丢弃 PostgreSQL。每阶段记录：任务编号、适用版本、实现与契约变更、验证层级、证据、失败与限制、回滚方式；状态区分“待实施、开发中、代码已交付、真实环境已验收”。
