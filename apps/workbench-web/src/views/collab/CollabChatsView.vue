@@ -137,7 +137,7 @@ if (!contentStore.agents.length) void contentStore.refreshAgents().catch(() => u
 .collab-chats {
   display: grid;
   height: 100vh;
-  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   background: #fff;
 }
 

@@ -494,7 +494,7 @@ watch(() => [latestTask.value?.messages.length, latestTask.value?.status] as con
   padding: 12px 14px;
   border-radius: var(--dsh-radius-md);
   color: var(--dsh-color-text);
-  background: var(--dsh-color-canvas);
+  background: var(--collab-canvas, var(--dsh-color-canvas));
 }
 
 .collab-agent-chat__disclaimer {

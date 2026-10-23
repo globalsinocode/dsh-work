@@ -190,12 +190,12 @@ function onPick(agentId: string) {
   display: flex; width: 100%; min-height: 64px; align-items: center; gap: 12px; padding: 10px;
   border: 0; border-radius: 10px; color: inherit; background: transparent; cursor: pointer; text-align: left;
 }
-.collab-target:hover { background: var(--dsh-color-canvas); }
+.collab-target:hover { background: var(--collab-row-hover); }
 .collab-target:focus-visible { outline: 2px solid var(--dsh-color-brand); outline-offset: -2px; }
-.collab-target--active, .collab-target--pending, .collab-target[aria-current='page'] { background: var(--dsh-color-brand-soft); }
+.collab-target--active, .collab-target--pending, .collab-target[aria-current='page'] { background: var(--collab-row-active); }
 .collab-target__avatar {
   display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 50%;
-  color: #fff; background: var(--dsh-color-brand); font-size: var(--dsh-font-size-subheading); font-weight: 700;
+  color: var(--dsh-color-brand-dark); background: var(--dsh-color-brand-soft); font-size: var(--dsh-font-size-subheading); font-weight: 700;
 }
 .collab-target__avatar--group {
   grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 2px; padding: 4px;

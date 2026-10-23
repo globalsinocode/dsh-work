@@ -59,6 +59,8 @@ describe('CollabShell', () => {
     const nav = wrapper.findAll('nav[aria-label="协作模式主导航"]')
     expect(nav).toHaveLength(1)
     expect(nav[0].findAll('button').map(b => b.text())).toEqual(['对话', 'AI 同事', '群组', '定时任务'])
+    // 宽屏只显示图标：名称由可访问名称（与悬停提示）提供。
+    expect(nav[0].findAll('button').map(b => b.attributes('aria-label'))).toEqual(['对话', 'AI 同事', '群组', '定时任务'])
     wrapper.unmount()
   })
 

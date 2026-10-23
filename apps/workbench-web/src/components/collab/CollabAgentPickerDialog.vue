@@ -77,7 +77,7 @@ function pick(agentId: string) {
   display: flex; width: 100%; align-items: center; gap: 12px; padding: 10px 8px;
   border: 0; border-radius: 10px; color: inherit; background: transparent; cursor: pointer; text-align: left;
 }
-.collab-agent-picker__item:hover, .collab-agent-picker__item:focus-visible { background: var(--dsh-color-brand-soft); }
+.collab-agent-picker__item:hover, .collab-agent-picker__item:focus-visible { background: var(--collab-row-hover, var(--dsh-color-canvas)); }
 .collab-agent-picker__avatar {
   display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 50%;
   color: #fff; background: var(--dsh-color-brand); font-size: var(--dsh-font-size-title); font-weight: 700;

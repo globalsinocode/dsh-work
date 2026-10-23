@@ -452,7 +452,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--dsh-color-border);
   border-radius: 999px;
   color: var(--dsh-color-text);
-  background: var(--dsh-color-canvas);
+  background: var(--collab-canvas, var(--dsh-color-canvas));
   cursor: pointer;
   font-size: var(--dsh-font-size-caption);
 }
@@ -549,7 +549,7 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
   border-radius: var(--dsh-radius-md);
   color: var(--dsh-color-text);
-  background: var(--dsh-color-canvas);
+  background: var(--collab-canvas, var(--dsh-color-canvas));
 }
 
 .collab-group-timeline__preset-toggle {

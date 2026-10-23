@@ -257,7 +257,7 @@ onMounted(loadGroups)
 .group-detail__muted { margin: 0; color: var(--dsh-color-subtle); font-size: var(--dsh-font-size-caption); }
 .group-detail__chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .group-detail__chips li {
-  padding: 4px 12px; border-radius: 14px; color: var(--dsh-color-text); background: var(--dsh-color-canvas);
+  padding: 4px 12px; border-radius: 14px; color: var(--dsh-color-text); background: var(--collab-canvas, var(--dsh-color-canvas));
   font-size: var(--dsh-font-size-caption);
 }
 .group-detail__chips li.is-agent { color: var(--dsh-color-brand-dark); background: var(--dsh-color-brand-soft); }

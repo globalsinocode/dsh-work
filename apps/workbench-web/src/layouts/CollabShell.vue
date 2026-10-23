@@ -18,7 +18,7 @@ import ModeSwitchMenu from '@/components/ModeSwitchMenu.vue'
 import { useWorkbenchBootstrap } from '@/composables/useWorkbenchBootstrap'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 
-/** 协作模式壳层（项目空间方案 12.3）：窄图标栏 + 主内容；窄屏改为底部标签栏。 */
+/** 协作模式壳层（项目空间方案 12.3）：窄图标栏（只显示图标）+ 主内容；窄屏改为底部标签栏。 */
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -70,18 +70,20 @@ useWorkbenchBootstrap()
       </div>
 
       <nav class="collab-rail__nav" aria-label="协作模式主导航">
-        <button
-          v-for="item in navigation"
-          :key="item.path"
-          class="collab-nav-item"
-          :class="{ 'collab-nav-item--active': isActive(item.path) }"
-          type="button"
-          :aria-current="isActive(item.path) ? 'page' : undefined"
-          @click="navigate(item.path)"
-        >
-          <el-icon aria-hidden="true"><component :is="item.icon" /></el-icon>
-          <span class="collab-nav-item__label">{{ item.label }}</span>
-        </button>
+        <el-tooltip v-for="item in navigation" :key="item.path" :content="item.label" placement="right" :show-after="300">
+          <button
+            class="collab-nav-item"
+            :class="{ 'collab-nav-item--active': isActive(item.path) }"
+            type="button"
+            :aria-label="item.label"
+            :aria-current="isActive(item.path) ? 'page' : undefined"
+            @click="navigate(item.path)"
+          >
+            <el-icon aria-hidden="true"><component :is="item.icon" /></el-icon>
+            <!-- 宽屏只显示图标（名称在悬停提示与可访问名称中）；窄屏底部标签栏显示名称。 -->
+            <span class="collab-nav-item__label" aria-hidden="true">{{ item.label }}</span>
+          </button>
+        </el-tooltip>
       </nav>
 
       <div class="collab-rail__account">
@@ -132,8 +134,22 @@ useWorkbenchBootstrap()
 
 <style scoped>
 .collab-shell {
-  --collab-rail-width: 76px;
+  --collab-rail-width: 56px;
   --collab-tabbar-height: 60px;
+  /* 与工作模式侧栏（EmployeeShell）同一组中性色；协作模式各页面的选中、悬停与筛选也取这里。 */
+  --collab-nav-bg: #f4f4f2;
+  --collab-nav-border: #e7e7e5;
+  --collab-nav-text: #464744;
+  --collab-nav-hover: #e9e9e6;
+  --collab-nav-active: #dededb;
+  --collab-nav-active-text: #171817;
+  --collab-row-hover: #f4f4f2;
+  --collab-row-active: #ededeb;
+  --collab-divider: #e7e7e5;
+  --collab-canvas: #f7f7f5;
+  --collab-chip-active-text: #1f5a49;
+  --collab-chip-active-bg: #eaf4f0;
+  --collab-chip-active-border: #cfe3db;
   min-height: 100vh;
   background: #fff;
 }
@@ -147,8 +163,9 @@ useWorkbenchBootstrap()
   flex-direction: column;
   align-items: center;
   padding: 14px 0;
-  color: #fff;
-  background: var(--dsh-color-sidebar);
+  color: var(--collab-nav-text);
+  border-right: 1px solid var(--collab-nav-border);
+  background: var(--collab-nav-bg);
 }
 
 .collab-rail__logo { display: flex; justify-content: center; min-height: 44px; }
@@ -166,28 +183,30 @@ useWorkbenchBootstrap()
 
 .collab-nav-item {
   display: flex;
-  width: 100%;
+  width: 40px;
+  height: 40px;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  padding: 9px 0 7px;
+  padding: 0;
   border: 0;
   border-radius: var(--dsh-radius-md);
-  color: rgb(255 255 255 / 68%);
+  color: var(--collab-nav-text);
   background: transparent;
   cursor: pointer;
 }
 
-.collab-nav-item:hover { color: #fff; background: var(--dsh-color-sidebar-soft); }
-.collab-nav-item--active { color: #fff; background: var(--dsh-color-brand); }
-.collab-nav-item--active:hover { background: var(--dsh-color-brand); }
+.collab-nav-item:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-hover); }
+.collab-nav-item--active,
+.collab-nav-item--active:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-active); }
 .collab-nav-item .el-icon { font-size: var(--dsh-font-size-section); }
-.collab-nav-item__label { font-size: var(--dsh-font-size-badge); line-height: 1.2; }
+.collab-nav-item__label { display: none; font-size: var(--dsh-font-size-badge); line-height: 1.2; }
 
 .collab-avatar {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   place-items: center;
   border: 0;
@@ -240,12 +259,14 @@ useWorkbenchBootstrap()
     gap: 0;
     margin: 0;
     padding: 0 8px;
-    background: var(--dsh-color-sidebar);
+    border-top: 1px solid var(--collab-nav-border);
+    background: var(--collab-nav-bg);
   }
 
-  .collab-nav-item { flex: 1; width: auto; padding: 8px 0 6px; border-radius: var(--dsh-radius-sm); }
-  .collab-nav-item--active { background: var(--dsh-color-sidebar-soft); color: #fff; box-shadow: inset 0 2px 0 var(--dsh-color-brand); }
-  .collab-nav-item--active:hover { background: var(--dsh-color-sidebar-soft); }
+  .collab-nav-item { flex: 1; width: auto; height: auto; padding: 8px 0 6px; border-radius: var(--dsh-radius-sm); }
+  .collab-nav-item__label { display: block; }
+  .collab-nav-item--active,
+  .collab-nav-item--active:hover { color: var(--collab-nav-active-text); background: var(--collab-nav-active); }
 
   .collab-main {
     margin-left: 0;
