@@ -48,7 +48,7 @@ const style = computed(() => ({ width: `${props.size}px`, height: `${props.size}
 .collab-avatar--large { gap: 4px; padding: 10px; }
 .collab-avatar__piece {
   display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; align-items: center; justify-content: center;
-  border-radius: 50%; color: #fff; font-size: 10px; font-weight: 600; line-height: 1;
+  border-radius: 50%; color: #fff; font-size: var(--dsh-font-size-micro); font-weight: 600; line-height: 1;
 }
 .collab-avatar--large .collab-avatar__piece { font-size: var(--dsh-font-size-title); }
 </style>
