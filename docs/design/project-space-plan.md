@@ -406,4 +406,6 @@
 
 **进度：** S5a 已实现（2026-10-22）：`user_preferences` 与 `GET/PUT /me/preferences`；模式状态（服务端为准、按账号本地缓存首屏）、logo 模式菜单、`CollabShell`（四个入口 + 头像菜单，窄屏底部标签栏）、按模式选择壳层与 12.5 的双向路由映射；B 的对话、AI 同事、群组页为占位页，定时任务直接复用 `AutomationsView`；“自动任务”统一改称“定时任务”。旅程见 `e2e/TEST-CATALOG.md` MODE-E2E-01～04、MODE-API-01。
 
+**进度：** S5b 已实现（2026-10-23）：`ConversationView` 的消息、执行结果卡片、执行状态与输入区拆为 `components/conversation/`（`ConversationMessageItem`、`RunMessageList`、`SessionDiscussionList`、`RunComposer`），停止 / 重试 / 引用成果抽为 `useRunActions`，执行进度抽为 `useRunProgress`，消息样式移入共享的 `styles/conversation-thread.css`；`WorkspaceDetailView` 的空间加载、成员与角色、可 @ 的 Agent、文件、成果与写入口判断抽为 `useProjectSpace`。A 的界面与行为不变（MODE-E2E-05）。页签内容拆为独立组件随 S5d 进行。
+
 每个切片按浏览器 E2E 工作流执行：Spec 阶段在 `e2e/TEST-CATALOG.md` 登记 B 模式旅程（模式切换与记忆、默认进入 A、链接在两种模式间映射、单聊续写与话题分隔、群聊 @Agent、任务卡片进入任务详情并续接、群组中上传文件与新版本、档案编辑与回退、只读成员与归档群组无输入区），A 模式现有旅程全部保持通过；公共壳层变化后运行全部 `pnpm test:e2e`。`AGENTS.md` 中“员工端主导航固定五个入口”的约定改为“A 模式五个入口、B 模式四个入口”，同步更新 `e2e/personal-workbench.spec.ts`。

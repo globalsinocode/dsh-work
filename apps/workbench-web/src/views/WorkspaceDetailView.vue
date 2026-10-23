@@ -24,10 +24,8 @@ import type {
   TeamMemberRole,
   Workspace,
   WorkspaceActivityItem,
-  WorkspaceAgentMember,
   WorkspaceFile,
   WorkspaceFileVersion,
-  WorkspaceMember,
   WorkspaceNotificationState,
   WorkspaceUsageRange,
   WorkspaceUsageTotals,
@@ -46,6 +44,7 @@ import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
 import { WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
+import { useProjectSpace } from '@/composables/useProjectSpace'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
 type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts' | 'archive'
@@ -112,21 +111,6 @@ const settingsDialogOpen = ref(false)
 /** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
 const previewOpen = ref(false)
 const previewArtifact = ref<Artifact | null>(null)
-const agentMembers = ref<WorkspaceAgentMember[]>([])
-const workspaceMembers = ref<WorkspaceMember[]>([])
-/** 服务端返回的调用者角色（负责人转交后不再等于创建者，不能靠姓名推断）。 */
-const serverUserRole = ref<TeamMemberRole | null>(null)
-/** 当前操作人可发起对话的 Agent 成员：与服务端 allowedActions 一致（只读成员为空）。 */
-const startableAgentMemberIds = computed(() => agentMembers.value
-  .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-  .map(member => member.id))
-/**
- * TW-10：输入框可 @ 的 Agent 成员（id + 名称），与 startableAgentMemberIds
- * 同一过滤口径（可用 + allowedActions 含 start_conversation）。
- */
-const startableMentionOptions = computed(() => agentMembers.value
-  .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-  .map(member => ({ id: member.id, name: member.name })))
 
 /** 摘要固定取最新 3 条；抽屉分页 20 条（design §2.9 / TW-08）。 */
 const ACTIVITY_SUMMARY_LIMIT = 3
@@ -173,22 +157,6 @@ let drawerRequestSeq = 0
  * 发起时的空间 id，切换空间或连续重试时晚到的旧响应不得写进当前视图。
  */
 let usageRequestSeq = 0
-/**
- * 员工名册与 Agent 成员加载的世代号：与动态请求同一模式。切换空间后晚到的旧
- * 响应不得覆盖新空间的名册与角色（评审 M7）——角色来源被污染会错误渲染/隐藏
- * 负责人入口。
- */
-let memberRequestSeq = 0
-let agentMemberRequestSeq = 0
-
-function isCurrentMemberRequest(seq: number, workspaceId: string) {
-  return seq === memberRequestSeq && workspaceId === (workspace.value?.id ?? '')
-}
-
-function isCurrentAgentMemberRequest(seq: number, workspaceId: string) {
-  return seq === agentMemberRequestSeq && workspaceId === (workspace.value?.id ?? '')
-}
-
 type ActivityStream = 'summary' | 'notification' | 'drawer'
 
 function currentRequestSeq(stream: ActivityStream) {
@@ -240,16 +208,29 @@ const taskInfoTarget = computed(() =>
   taskDetailId.value && !panelCollapsed.value && wideLayout.value ? '#workspace-task-info' : null)
 
 const workspaceId = computed(() => String(route.params.id ?? ''))
-const workspace = computed(() =>
-  contentStore.workspaces.find((item) => item.id === workspaceId.value),
-)
-const isPersonal = computed(() => workspace.value?.type === 'personal')
-const isTeam = computed(() => workspace.value?.type === 'team')
-/**
- * 归档只读态：仅团队空间在服务端 `status === 'archived'` 时进入（个人空间恒为
- * active，即使夹具强行带上归档状态也不渲染归档提示，AC-23）。
- */
-const isArchived = computed(() => isTeam.value && workspace.value?.status === 'archived')
+const {
+  workspace,
+  isPersonal,
+  isTeam,
+  isArchived,
+  agentMembers,
+  workspaceMembers,
+  currentUserRole,
+  isOwner,
+  startableAgentMemberIds,
+  startableMentionOptions,
+  workspaceFiles: activityFiles,
+  workspaceArtifacts,
+  canWriteTeamContent,
+  canUploadFileVersions,
+  canReferenceFileVersion,
+  canEditBrief,
+  canViewUsage,
+  loadAgentMembers,
+  loadWorkspaceMembers,
+  refreshTeamMembers,
+  resetMembers,
+} = useProjectSpace({ workspaceId, roleOverride: () => props.currentUserRole })
 const defaultTab = computed<WorkspaceTab>(() => (isTeam.value ? 'tasks' : 'conversation'))
 /**
  * 归档执行轨（design §2.7）：归档隐藏新对话、上传等写入口，但历史、文件与成果
@@ -258,71 +239,6 @@ const defaultTab = computed<WorkspaceTab>(() => (isTeam.value ? 'tasks' : 'conve
 const showConversationStarter = computed(() => !isArchived.value)
 const showConversationViewSwitch = computed(() => isTeam.value && !isArchived.value)
 const showSessionHistory = computed(() => isTeam.value && (conversationView.value === 'history' || isArchived.value))
-/**
- * 当前操作人的团队角色。只采用服务端给出的角色——父组件显式传入的
- * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`。名册未就绪或加载失败时一律 null：展示名不唯一，
- * 「负责人姓名 == 当前用户姓名 ⇒ owner」的推断会把同名成员误判为负责人
- * （评审 M7）；角色未知时团队写入口不渲染，宁可漏开不可误开。
- */
-const currentUserRole = computed<TeamMemberRole | null>(() => {
-  if (props.currentUserRole !== undefined) return props.currentUserRole
-  return serverUserRole.value
-})
-const workspaceArtifacts = computed(() =>
-  contentStore.artifacts.filter((artifact) => artifact.workspaceId === workspaceId.value),
-)
-/** 负责人判定来自服务端角色，不在前端按创建者猜测（负责人-only 动作的唯一依据）。 */
-const isOwner = computed(() => currentUserRole.value === 'owner')
-/**
- * 上传新版本（执行轨）：归档空间隐藏入口；只读成员（viewer）不给入口；角色**未知**
- * （名册请求失败，`currentUserRole === null`）时也不给入口——宁可漏开不可误开，
- * 与 `WorkspaceInfoPanel` 对 `currentUserRole=null` 的既有口径一致。服务端 403 仍是
- * 最终兜底（评审 P2 修复后注释与实现对齐）。
- */
-const canUploadFileVersions = computed(() =>
-  isTeam.value
-  && !isArchived.value
-  // 角色未解析出来（名册请求失败）时**不给**入口：与「宁可漏开不可误开」及
-  // WorkspaceInfoPanel 对 currentUserRole=null 的既有口径一致，避免给只读成员
-  // 一个注定 403 的假入口（评审 P2）。
-  && currentUserRole.value !== null
-  && currentUserRole.value !== 'viewer')
-/**
- * 「引用此版本」与「引用到对话」同口径：归档空间无法发起新对话，因此不渲染引用
- * 入口（版本列表与下载仍保留）。
- */
-const canReferenceFileVersion = computed(() => isTeam.value && !isArchived.value)
-/**
- * TW-10 共享讨论的写入口径：团队空间中非只读成员且空间未归档才可发言/触发
- * 执行；角色未知（名册请求失败）时宁可漏开不可误开，与上传入口一致。
- */
-const canWriteTeamContent = computed(() =>
-  isTeam.value
-  && !isArchived.value
-  && currentUserRole.value !== null
-  && currentUserRole.value !== 'viewer')
-/** 项目简报只由负责人与管理员在活动空间编辑（项目空间 S1）。 */
-const canEditBrief = computed(() =>
-  isTeam.value && !isArchived.value && (currentUserRole.value === 'owner' || currentUserRole.value === 'admin'))
-/**
- * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
- * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`。姓名推断回退已在评审 M7 中移除——`currentUserRole`
- * computed 与这里现在是同一来源；用量是消耗/费用类数据，只有服务端确认的
- * 负责人/管理员才该看到；名册失败时宁可漏开。
- */
-const usageServerRole = computed<TeamMemberRole | null>(() =>
-  props.currentUserRole !== undefined ? props.currentUserRole : serverUserRole.value)
-/**
- * 空间用量的可见门禁：仅团队空间中**服务端确认**的负责人／管理员。角色未知
- * （名册请求失败）时不渲染也不请求——宁可漏开不可误开（AC-30）。归档空间属读取轨，
- * 负责人/管理员仍可查看（口径 §1）。
- */
-const canViewUsage = computed(() =>
-  isTeam.value && (usageServerRole.value === 'owner' || usageServerRole.value === 'admin'))
-/** 动态文件名的解析来源：已加载的空间文件列表（面板与抽屉共用）。 */
-const activityFiles = computed(() => workspace.value?.files ?? [])
 const activitySummaryItems = computed(() => buildActivityDisplayItems(activitySummary.value, activityFiles.value))
 /** 未读计数；静音时按服务端口径视为 0（面板侧再兜一层）。 */
 const activityUnread = computed(() => (notificationState.value?.muted ? 0 : notificationState.value?.unreadCount ?? 0))
@@ -635,44 +551,6 @@ watch(
 )
 
 /**
- * Agent 成员列表只按既有 T4 接口加载，且严格限定团队空间：个人空间既不发
- * 请求也不渲染（AC-23）。
- */
-async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
-  if (!workspaceId || !isTeam.value) return
-  const seq = ++agentMemberRequestSeq
-  try {
-    const items = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
-    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
-    agentMembers.value = items
-  } catch (error) {
-    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
-    agentMembers.value = []
-    notifyActionFailure('加载 Agent 成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
-  }
-}
-
-/**
- * 加载员工名册与服务端判定的调用者角色。团队成员均可读取；个人空间不请求
- * （AC-23）。名册同时用于成员弹窗与设置弹窗的转交候选项。
- */
-async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
-  if (!workspaceId || !isTeam.value) return
-  const seq = ++memberRequestSeq
-  try {
-    const directory = await workbenchApi.listWorkspaceMembers(workspaceId)
-    if (!isCurrentMemberRequest(seq, workspaceId)) return
-    workspaceMembers.value = directory.items
-    serverUserRole.value = directory.currentUserRole
-  } catch (error) {
-    if (!isCurrentMemberRequest(seq, workspaceId)) return
-    workspaceMembers.value = []
-    serverUserRole.value = null
-    notifyActionFailure('加载员工成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
-  }
-}
-
-/**
  * 最近动态摘要（服务端 limit=3）。只在团队分支调用，个人空间不产生任何动态
  * 请求（AC-23）。失败时就地显示错误与「重试」，不清空右栏其它区块。
  */
@@ -876,11 +754,6 @@ async function loadMoreActivity() {
   }
 }
 
-function refreshTeamMembers() {
-  void loadAgentMembers()
-  void loadWorkspaceMembers()
-}
-
 /**
  * 恢复空间（design §2.7，负责人-only）：恢复不重新添加已移除成员、不扩大授权，
  * 仅把空间置回 active，写入口随后按当前权限重新出现。确认前置，失败沿用
@@ -954,14 +827,10 @@ watch(workspace, (value) => {
   invalidateActivityRequests()
   invalidateUsageRequests()
   // 名册/Agent 成员同样作废（评审 M7）：旧空间的迟到响应不得覆盖新空间状态。
-  memberRequestSeq += 1
-  agentMemberRequestSeq += 1
+  resetMembers()
   memberDialogOpen.value = false
   agentDialogOpen.value = false
   settingsDialogOpen.value = false
-  agentMembers.value = []
-  workspaceMembers.value = []
-  serverUserRole.value = null
   activitySummary.value = []
   activityLoading.value = false
   activityError.value = false

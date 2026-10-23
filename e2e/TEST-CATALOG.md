@@ -544,6 +544,22 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 偏好按账号保存在服务端；缺省为工作模式；接口与 OpenAPI 一致。
 
+### MODE-E2E-05 组件拆分后工作模式不变（S5b）
+
+**优先级：** P0（回归）+ P1
+**角色：** 员工、项目空间负责人 / 成员 / 只读成员（各层级既有测试身份）
+**运行层级：** P0 冒烟服务（逐像素对比）、P1 专用可丢弃 PostgreSQL + 合成 Runtime
+**前置数据：** P0 冒烟夹具（执行中、成功含成果、等待审批、失败四类执行，`ws-supply` 项目空间）；P1 `project-space`、`personal` 夹具
+**spec：** 既有 `e2e/*.spec.ts`（P0）、`e2e/project-space.integration.spec.ts` 与 `e2e/personal-integration/*.spec.ts`（P1）；组件与组合式函数单测在 `apps/workbench-web/src/components/conversation/` 与 `src/composables/`
+
+S5b 把消息列表、执行结果卡片、执行状态与输入区从 `ConversationView` 拆为 `components/conversation/*`，把停止 / 重试 / 引用成果抽为 `useRunActions`，把空间加载、成员与角色、可 @ 的 Agent、文件、成果与写入口判断从 `WorkspaceDetailView` 抽为 `useProjectSpace`，供 B 的对话页与群组页复用。
+
+1. 依次打开四类执行的对话详情与 `ws-supply` 的任务、对话、共享文件、成果、档案页签（桌面与 390px 宽）：与拆分前逐像素一致（反锯齿差异除外）。
+2. 对话详情中下载成果、继续修改、复制、停止、重新执行与续写；共享讨论中发言与 @ Agent 执行；任务对话中评论、交给 Agent、标记完成：行为与拆分前一致。
+3. 只读成员与归档空间：讨论与任务对话不显示输入区，执行详情不显示继续修改与重新执行。
+
+**验收：** 工作模式界面与交互不变；既有单测、P0 冒烟与 P1 旅程全部保持通过（环境性既有失败另行记录）。
+
 ## 管理端受控工具与操作计划旅程
 
 ### ADMIN-E2E-01 DSH 工具目录遵守审批能力边界

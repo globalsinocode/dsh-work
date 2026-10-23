@@ -6,15 +6,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
   ArrowLeft,
-  Close,
-  CopyDocument,
   DataLine,
   Document,
-  EditPen,
-  Lock,
   RefreshRight,
-  Share,
-  Warning,
 } from '@element-plus/icons-vue'
 
 import { AssistantMessageContent, RunTimeline, StatusTag } from '@dsh-work/ui-core'
@@ -22,12 +16,18 @@ import { workbenchApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
-import type { Artifact, ChatMessage, ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskResultOutcome, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
+import type { ProjectTask, ProjectTaskEvent, SessionThread, SessionThreadMessage, TaskSource, TeamMemberRole, WorkspaceAgentMember } from '@/types/domain'
 import { TaskComposer } from '@dsh-work/workbench-components'
-import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
-import { runQuietLabel, runQuietMs } from '@/utils/run-quiet'
+import { notifyActionFailure } from '@/utils/feedback'
 import { continueChoice, type ContinueChoice } from '@/utils/continue-intent'
 import { scheduleLabel, scheduleReasonLabel } from '@/utils/project-task-schedule'
+import ConversationMessageItem from '@/components/conversation/ConversationMessageItem.vue'
+import RunComposer from '@/components/conversation/RunComposer.vue'
+import RunMessageList from '@/components/conversation/RunMessageList.vue'
+import SessionDiscussionList from '@/components/conversation/SessionDiscussionList.vue'
+import { useRunActions } from '@/composables/useRunActions'
+import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
+import '@/styles/conversation-thread.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,7 +38,6 @@ const contentStore = useContentStore()
 const detailsOpen = ref(false)
 const conversationScroll = ref<HTMLElement>()
 const showJumpToLatest = ref(false)
-const stopping = ref(false)
 
 /**
  * TW-10 会话模式：路由 id 不是任何 Run 时，按 Session 直接加载共享线程；
@@ -248,27 +247,7 @@ async function loadAgentMembers(workspaceId: string | undefined) {
     agentMembers.value = []
   }
 }
-// 最近一个进行中的步骤（EX-01 实时工具调用会排在“开始执行”之后）。
-const currentStep = computed(() =>
-  [...(task.value?.steps ?? [])].reverse().find((step) => ['running', 'awaiting_approval'].includes(step.status)),
-)
-const currentStepLabel = computed(() => {
-  const step = currentStep.value
-  if (!step) return '正在准备回答'
-  return step.tool && step.status === 'running' ? `正在调用 ${step.tool}` : step.title
-})
-// EX-01：执行中长时间没有新事件时提示仍在运行。时钟每 5 秒走一次，只驱动这条提示。
-const clock = ref(Date.now())
-const clockTimer = setInterval(() => { clock.value = Date.now() }, 5000)
-const quietLabel = computed(() => runQuietLabel(runQuietMs(task.value, clock.value)))
-const lastAssistantMessageId = computed(() =>
-  [...(task.value?.messages ?? [])]
-    .reverse()
-    .find(message => message.role === 'assistant' && message.runId === task.value?.id)?.id,
-)
-function belongsToCurrentRun(message: ChatMessage) {
-  return message.runId === task.value?.id
-}
+const { quietLabel } = useRunProgress(task)
 
 const sourceTypeLabels: Record<TaskSource['type'], string> = {
   knowledge: '企业知识',
@@ -277,18 +256,6 @@ const sourceTypeLabels: Record<TaskSource['type'], string> = {
   file: '上传文件',
 }
 
-/**
- * I-06 结果外层展示：业务结论只看 result.outcome，不由 status === 'succeeded'
- * 推断达成；执行状态仍由 task.status 与步骤时间线表达。
- */
-const resultOutcomeLabels: Record<TaskResultOutcome, string> = {
-  pending: '结果生成中',
-  achieved: '目标已达成',
-  unverified: '结果待核验',
-  not_achieved: '目标未达成',
-}
-const isTerminalRun = computed(() =>
-  Boolean(task.value && ['succeeded', 'failed', 'cancelled'].includes(task.value.status)))
 
 function goBack() {
   // 任务详情内的执行详情：返回任务对话（会话视图）。
@@ -320,80 +287,19 @@ function onConversationScroll() {
   showJumpToLatest.value = target.scrollHeight - target.scrollTop - target.clientHeight > 180
 }
 
-async function stopCurrentRun() {
-  if (!task.value || stopping.value || !canOperateRun.value) return
-  try {
-    await ElMessageBox.confirm(
-      '停止后会终止本轮运行尝试，已有对话和执行记录仍会保留。',
-      '停止本轮执行？',
-      {
-        confirmButtonText: '停止本轮执行',
-        cancelButtonText: '继续等待',
-        type: 'warning',
-      },
-    )
-    stopping.value = true
-    await taskStore.cancelTask(task.value.id)
-    ElMessage.success('本轮执行已停止，对话记录已保留')
-  } catch {
-    // User cancelled the confirmation.
-  } finally {
-    stopping.value = false
-  }
-}
-
-async function retryRun(): Promise<boolean> {
-  if (!task.value || !canOperateRun.value) return false
-  try {
-    const next = await taskStore.retryTask(task.value.id)
-    ElMessage.success('已创建新的运行尝试')
-    if (next && next.id !== task.value.id) await router.replace(conversationPath(next.id))
-    return true
-  } catch (error) {
-    notifyActionFailure('重新执行', `运行 ${task.value.id}`, error, '刷新对话状态；确认本轮仍为失败或已停止后再重试。')
-    return false
-  }
-}
-
-function copyAnswer(content: string) {
-  void navigator.clipboard.writeText(content)
-  ElMessage.success('回答已复制')
-}
-
-function copyConversationLink() {
-  void navigator.clipboard.writeText(window.location.href)
-  ElMessage.success('对话链接已复制')
-}
-
-function download(item: Artifact) {
-  void downloadArtifactFile(item)
-}
-
-/**
- * EX-02「继续修改」：把本轮成果作为只读输入带进下一条消息。服务端按会话与空间权限
- * 重新校验；Agent 输出同名文件时登记为该成果的下一版本，旧版本保持可下载。
- */
-const referencedArtifacts = ref<Array<{ fileId: string; name: string; version: number }>>([])
-const maxReferencedFiles = 5
-
-function continueEditing(artifact: Artifact) {
-  if (!artifact.fileId || !artifact.canReference) return
-  if (referencedArtifacts.value.some(item => item.fileId === artifact.fileId)) return
-  if (referencedArtifacts.value.length >= maxReferencedFiles) {
-    ElMessage.warning(`每条消息最多引用 ${maxReferencedFiles} 个文件`)
-    return
-  }
-  referencedArtifacts.value.push({ fileId: artifact.fileId, name: artifact.name, version: artifact.version })
-  ElMessage.success(`已引用 ${artifact.name}，在下方说明要怎么修改`)
-}
-
-function removeReferencedArtifact(fileId: string) {
-  referencedArtifacts.value = referencedArtifacts.value.filter(item => item.fileId !== fileId)
-}
-
-// 引用只在当前会话内有效：切到其他会话时清空，避免把成果带进无关对话。
-watch(() => task.value?.sessionId, (sessionId, previous) => {
-  if (sessionId !== previous) referencedArtifacts.value = []
+const {
+  stopping,
+  stopRun: stopCurrentRun,
+  retryRun,
+  copyAnswer,
+  copyConversationLink,
+  download,
+  referencedArtifacts,
+  continueEditing,
+  removeReferencedArtifact,
+} = useRunActions(task, {
+  canOperate: canOperateRun,
+  onRetried: async next => { await router.replace(conversationPath(next.id)) },
 })
 
 function openSessionRun(runId: string) {
@@ -604,11 +510,6 @@ async function submitTaskConversation(
   }
 }
 
-
-function formatSessionRunTime(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
 
 /**
  * EX-02「继续」的语义：只发一句“继续”时先问清楚是重新执行上一轮、继续修改成果，
@@ -914,7 +815,6 @@ watch(streamWorkspaceId, (workspaceId, previous) => {
 })
 
 onBeforeUnmount(() => {
-  clearInterval(clockTimer)
   if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer)
   if (streamWorkspaceId.value) taskStore.unsubscribeWorkspaceSessions(streamWorkspaceId.value)
 })
@@ -981,29 +881,14 @@ watch(
                   <AssistantMessageContent :text="item.message.content" />
                 </div>
               </details>
-              <article
+              <ConversationMessageItem
                 v-else-if="item.kind === 'message'"
-                class="conversation-message"
                 data-testid="task-conversation-message"
-                :class="[`conversation-message--${item.message.role}`, { 'conversation-message--own': isOwnMessage(item.message) }]"
-              >
-                <div class="assistant-identity">
-                  <span class="assistant-avatar" :class="{ 'assistant-avatar--user': item.message.role === 'user' }">
-                    {{ (item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work').slice(0, 1) }}
-                  </span>
-                  <div>
-                    <strong>{{ item.message.role === 'user' ? item.message.senderName ?? '我' : item.message.agentName ?? 'dsh-work' }}</strong>
-                    <span>{{ item.message.createdAt }}</span>
-                  </div>
-                  <span v-if="messageTag(item.message)" class="task-conversation-tag" data-testid="task-conversation-tag">{{ messageTag(item.message) }}</span>
-                </div>
-                <div v-if="item.message.role === 'user'" class="assistant-answer user-message">
-                  <p>{{ item.message.content }}</p>
-                </div>
-                <div v-else class="assistant-answer">
-                  <AssistantMessageContent :text="item.message.content" />
-                </div>
-              </article>
+                :message="item.message"
+                :own="isOwnMessage(item.message)"
+                :tag="messageTag(item.message)"
+                :show-requester="false"
+              />
               <button
                 v-else-if="item.kind === 'run'"
                 type="button"
@@ -1041,63 +926,7 @@ watch(
             </div>
           </template>
           <template v-else>
-          <p v-if="!sessionThread.messages.length" class="thread-empty">
-            还没有讨论内容。直接发送即发表全员可见的讨论消息；@ Agent 成员则发起一次执行。
-          </p>
-          <article
-            v-for="message in sessionThread.messages"
-            :key="message.id"
-            class="conversation-message"
-            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"
-          >
-            <template v-if="message.role === 'user'">
-              <div class="assistant-identity">
-                <span class="assistant-avatar assistant-avatar--user">{{ (message.senderName ?? '我').slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ message.senderName ?? '我' }}</strong>
-                  <span>{{ message.createdAt }}</span>
-                </div>
-              </div>
-              <div class="assistant-answer user-message">
-                <p>{{ message.content }}</p>
-              </div>
-            </template>
-            <template v-else>
-              <div class="assistant-identity">
-                <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ message.agentName ?? 'dsh-work' }}</strong>
-                  <span>
-                    {{ message.createdAt }}
-                    <template v-if="message.runRequesterName"> · 由 {{ message.runRequesterName }} 发起</template>
-                  </span>
-                </div>
-              </div>
-              <div class="assistant-answer">
-                <AssistantMessageContent :text="message.content" />
-              </div>
-            </template>
-          </article>
-          <section
-            v-if="sessionThread.runs.length"
-            class="session-run-list"
-            aria-label="本讨论的执行记录"
-          >
-            <button
-              v-for="run in sessionThread.runs"
-              :key="run.runId"
-              type="button"
-              class="session-run"
-              data-testid="session-run"
-              @click="openSessionRun(run.runId)"
-            >
-              <StatusTag :status="run.status" dot />
-              <span class="session-run__requester">
-                {{ run.requesterName }} 发起<template v-if="run.stoppedByName"> · {{ run.stoppedByName }} 停止</template>
-              </span>
-              <time>{{ formatSessionRunTime(run.createdAt) }}</time>
-            </button>
-          </section>
+          <SessionDiscussionList :thread="sessionThread" :is-own="isOwnMessage" @open-run="openSessionRun" />
           </template>
           <div class="conversation-end" aria-hidden="true"></div>
         </div>
@@ -1229,173 +1058,19 @@ watch(
         @scroll.passive="onConversationScroll"
       >
         <div class="conversation-thread">
-          <article
-            v-for="message in task.messages"
-            :key="message.id"
-            class="conversation-message"
-            :class="[`conversation-message--${message.role}`, { 'conversation-message--own': isOwnMessage(message) }]"
-          >
-            <template v-if="message.role === 'user'">
-              <div class="assistant-identity">
-                <span class="assistant-avatar assistant-avatar--user">{{ (message.senderName ?? '我').slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ message.senderName ?? '我' }}</strong>
-                  <span>{{ message.createdAt }}</span>
-                </div>
-              </div>
-              <div class="assistant-answer user-message">
-                <p>{{ message.content }}</p>
-              </div>
-            </template>
-
-            <template v-else>
-              <div class="assistant-identity">
-                <span class="assistant-avatar">{{ (message.agentName ?? 'dsh-work').slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ message.agentName ?? 'dsh-work' }}</strong>
-                  <span v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && isTerminalRun">
-                    {{ resultOutcomeLabels[task.result.outcome] }}{{ task.duration ? ` · ${task.duration}` : '' }}
-                  </span>
-                  <span v-else>
-                    {{ message.createdAt }}
-                    <template v-if="message.runRequesterName"> · 由 {{ message.runRequesterName }} 发起</template>
-                  </span>
-                </div>
-              </div>
-
-              <div class="assistant-answer">
-                <AssistantMessageContent :text="message.content" />
-
-                <div
-                  v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
-                  class="answer-artifacts"
-                >
-                  <div
-                    v-for="artifact in task.result.artifacts"
-                    :key="artifact.id"
-                    class="answer-artifact"
-                  >
-                    <button
-                      type="button"
-                      class="answer-artifact__download"
-                      @click="download(artifact)"
-                    >
-                      <span><el-icon><Document /></el-icon></span>
-                      <span>
-                        <strong>{{ artifact.name }}</strong>
-                        <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-                      </span>
-                      <el-icon><ArrowDown /></el-icon>
-                    </button>
-                    <button
-                      v-if="canFollowUp && artifact.canReference && artifact.fileId"
-                      type="button"
-                      class="answer-artifact__revise"
-                      :data-testid="`continue-editing-${artifact.id}`"
-                      :disabled="referencedArtifacts.some(item => item.fileId === artifact.fileId)"
-                      @click="continueEditing(artifact)"
-                    >
-                      <el-icon><EditPen /></el-icon>
-                      {{ referencedArtifacts.some(item => item.fileId === artifact.fileId) ? '已引用' : '继续修改' }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="assistant-actions">
-                  <button type="button" aria-label="复制回答" @click="copyAnswer(message.content)">
-                    <el-icon><CopyDocument /></el-icon>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="复制对话链接"
-                    @click="copyConversationLink"
-                  >
-                    <el-icon><Share /></el-icon>
-                  </button>
-                  <span v-if="belongsToCurrentRun(message)" class="assistant-run-meta">
-                    {{ task.tokenUsage ? `${task.tokenUsage.toLocaleString()} Token` : '自动' }}
-                    · {{ task.agentVersion.split('@')[0] }}
-                  </span>
-                </div>
-              </div>
-            </template>
-          </article>
-
-          <article
-            v-if="['queued', 'running'].includes(task.status)"
-            class="conversation-message conversation-message--assistant conversation-message--working"
-          >
-            <div class="assistant-identity">
-              <span class="assistant-avatar">d</span>
-              <div>
-                <strong>dsh-work</strong>
-                <span>正在处理</span>
-              </div>
-            </div>
-            <div class="working-answer">
-              <span class="working-dots"><i></i><i></i><i></i></span>
-              <span data-testid="current-step">{{ currentStepLabel }}</span>
-              <button type="button" @click="detailsOpen = true">查看执行过程</button>
-            </div>
-            <p v-if="quietLabel" class="working-quiet" role="status" data-testid="run-quiet-hint">
-              已 {{ quietLabel }}没有新的输出，任务仍在运行。Agent 可能在等待模型或工具返回，无需重复提交。
-            </p>
-          </article>
-
-          <section v-if="task.status === 'awaiting_approval'" class="conversation-notice approval-notice">
-            <span class="conversation-notice__icon"><el-icon><Lock /></el-icon></span>
-            <div>
-              <strong>等待本轮工具权限确认</strong>
-              <p>{{ task.approval?.reason ?? '服务端已暂停当前执行并保留审批所需的动作边界。' }}</p>
-              <dl>
-                <div><dt>对象</dt><dd class="mono">{{ task.approval?.object ?? '受控工具' }}</dd></div>
-                <div><dt>范围</dt><dd>{{ task.approval?.dataScope ?? '当前用户授权范围' }}</dd></div>
-              </dl>
-              <p>{{ task.approval?.nextStep ?? '审批完成后会从新的 Attempt 继续执行，无需重复提交。' }}</p>
-            </div>
-            <StatusTag status="awaiting_approval" label="等待确认" />
-          </section>
-
-          <section v-if="task.result.error" class="conversation-notice error-notice">
-            <span class="conversation-notice__icon"><el-icon><Close /></el-icon></span>
-            <div>
-              <strong>{{ task.result.error.message }}</strong>
-              <dl>
-                <div><dt>对象</dt><dd>{{ task.result.error.object }}</dd></div>
-                <div><dt>原因</dt><dd>{{ task.result.error.reason }}</dd></div>
-              </dl>
-              <p><strong>下一步：</strong>{{ task.result.error.suggestion }}</p>
-              <ul v-if="task.result.pendingItems.some(item => item.kind === 'external_effect_unknown')" class="result-pending">
-                <li v-for="item in task.result.pendingItems.filter(item => item.kind === 'external_effect_unknown')" :key="item.message">{{ item.message }}</li>
-              </ul>
-              <code>{{ task.result.error.code }}</code>
-            </div>
-            <el-button
-              v-if="canRetry"
-              type="primary"
-              plain
-              :icon="RefreshRight"
-              @click="retryRun"
-            >
-              重新执行本轮
-            </el-button>
-          </section>
-
-          <section
-            v-if="isTerminalRun && task.result.outcome === 'not_achieved' && !task.result.error"
-            class="conversation-notice verify-notice verify-notice--neutral"
-            data-testid="run-result-not-achieved"
-          >
-            <span class="conversation-notice__icon"><el-icon><Warning /></el-icon></span>
-            <div>
-              <strong>{{ task.result.summary }}</strong>
-            </div>
-            <StatusTag :status="task.result.outcome" :label="resultOutcomeLabels[task.result.outcome]" />
-          </section>
-
-          <p v-if="task.status === 'cancelled' && task.stoppedBy" class="conversation-stopped-by" data-testid="run-stopped-by">
-            本轮执行已由 {{ task.stoppedBy }} 停止
-          </p>
+          <RunMessageList
+            :task="task"
+            :is-own="isOwnMessage"
+            :can-follow-up="canFollowUp"
+            :can-retry="canRetry"
+            :referenced-file-ids="referencedArtifacts.map(item => item.fileId)"
+            @download="download"
+            @continue-editing="continueEditing"
+            @copy-answer="copyAnswer"
+            @copy-link="copyConversationLink()"
+            @open-details="detailsOpen = true"
+            @retry="retryRun"
+          />
 
           <div class="conversation-end" aria-hidden="true"></div>
         </div>
@@ -1419,45 +1094,41 @@ watch(
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
         <div v-else class="conversation-composer-dock__inner">
-          <div
-            v-if="canFollowUp && referencedArtifacts.length"
-            class="referenced-artifacts"
-            data-testid="referenced-artifacts"
-          >
-            <span>引用成果</span>
-            <el-tag
-              v-for="item in referencedArtifacts"
-              :key="item.fileId"
-              closable
-              effect="plain"
-              @close="removeReferencedArtifact(item.fileId)"
-            >
-              {{ item.name }} · V{{ item.version }}
-            </el-tag>
-          </div>
-          <p v-if="canFollowUp && taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
-            回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
-          </p>
-          <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
-            任务信息读取失败：{{ projectTaskError }}
-            <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
-          </p>
-          <TaskComposer :show-workspace-context="currentWorkspace?.type === 'team'" @open-files="router.push('/files')"
+          <RunComposer
             v-if="canFollowUp"
-            compact
+            :referenced-artifacts="referencedArtifacts"
+            :show-workspace-context="currentWorkspace?.type === 'team'"
             :running="canStop"
             :stopping="stopping"
             :mention-options="isTeamSession ? mentionOptions : []"
             :files-require-mention="isTeamSession && !taskThreadAgentId"
+            @open-files="router.push('/files')"
+            @remove-reference="removeReferencedArtifact"
             @submit="submitFollowUp"
             @stop="stopCurrentRun"
-          />
-          <p v-else-if="workspaceArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
-            该空间已归档，仅保留有权限的只读查看与下载；无法续写或重试。
-          </p>
-          <p v-else-if="isRunViewer" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
-            当前角色为只读成员，仅可查看讨论内容。
-          </p>
+          >
+            <template #notices>
+              <p v-if="taskThreadAgentName" data-testid="task-thread-notice" class="conversation-task-thread-notice">
+                回复会直接交给“{{ taskThreadAgentName }}”继续处理，无需 @；Agent 执行期间请等待完成或先停止。
+              </p>
+              <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
+                任务信息读取失败：{{ projectTaskError }}
+                <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
+              </p>
+            </template>
+          </RunComposer>
+          <template v-else>
+            <p v-if="projectTaskError" class="conversation-task-thread-notice" role="alert" data-testid="task-thread-error">
+              任务信息读取失败：{{ projectTaskError }}
+              <el-button link type="primary" @click="reloadProjectTask">重试</el-button>
+            </p>
+            <p v-if="workspaceArchived" data-testid="conversation-archived-notice" class="conversation-archived-notice">
+              该空间已归档，仅保留有权限的只读查看与下载；无法续写或重试。
+            </p>
+            <p v-else-if="isRunViewer" data-testid="conversation-readonly-notice" class="conversation-archived-notice">
+              当前角色为只读成员，仅可查看讨论内容。
+            </p>
+          </template>
           <p>AI 生成内容可能存在误差，重要业务结论请结合来源与企业制度确认。</p>
         </div>
       </div>
@@ -1683,15 +1354,6 @@ watch(
   width: min(100%, 760px);
 }
 
-.task-conversation-tag {
-  padding: 0 6px;
-  border-radius: 5px;
-  color: #6b6f6c;
-  background: #f1f2f3;
-  font-size: var(--dsh-font-size-micro);
-  line-height: 18px;
-}
-
 /* S4：定时执行“无变化”的回复默认折叠为一行。 */
 .task-conversation-quiet > summary {
   cursor: pointer;
@@ -1848,501 +1510,6 @@ watch(
 
 .task-conversation-modes__complete {
   margin-left: auto;
-}
-
-.conversation-message {
-  width: 100%;
-}
-
-.conversation-message + .conversation-message {
-  margin-top: 30px;
-}
-
-/*
- * 人员消息与 Agent 回复共用「身份行 + 卡片」样式；本人消息镜像到右侧
- * （头像在右、卡片右对齐缩进），其他成员/Agent 保持在左。
- */
-.assistant-avatar--user {
-  background: #6b736d;
-}
-
-.user-message {
-  padding-bottom: 16px;
-}
-
-.user-message p {
-  margin: 0;
-  font-size: var(--dsh-font-size-body);
-  line-height: 1.65;
-  white-space: pre-wrap;
-}
-
-.conversation-message--own .assistant-identity {
-  flex-direction: row-reverse;
-}
-
-.conversation-message--own .assistant-identity > div {
-  align-items: flex-end;
-}
-
-.conversation-message--own .assistant-answer {
-  margin-right: 34px;
-  margin-left: 20%;
-}
-
-.thread-empty {
-  margin: 48px 0;
-  color: #8a8f8a;
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.8;
-  text-align: center;
-}
-
-.thread-earlier {
-  display: block;
-  margin: 0 auto 18px;
-  padding: 5px 14px;
-  border: 1px solid #dfe4df;
-  border-radius: 999px;
-  color: #4f5751;
-  background: #f6f8f6;
-  font-size: var(--dsh-font-size-micro);
-  cursor: pointer;
-}
-
-.thread-earlier:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.session-run-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 30px;
-}
-
-.session-run {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid #e2e8e4;
-  border-radius: 10px;
-  color: #59615b;
-  background: #fbfdfc;
-  font-size: var(--dsh-font-size-micro);
-  cursor: pointer;
-}
-
-.session-run:hover {
-  border-color: #b8dccd;
-  background: #f2faf6;
-}
-
-.session-run__requester {
-  font-weight: 600;
-}
-
-.assistant-identity {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.assistant-avatar {
-  display: grid;
-  width: 25px;
-  height: 25px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 8px;
-  color: #fff;
-  background: #3e5f55;
-  font-size: var(--dsh-font-size-body);
-  font-weight: 750;
-}
-
-.assistant-identity > div {
-  display: flex;
-  flex-direction: column;
-}
-
-.assistant-identity strong {
-  color: #292c29;
-  font-size: var(--dsh-font-size-caption);
-  font-weight: 650;
-}
-
-.assistant-identity span:not(.assistant-avatar) {
-  margin-top: 2px;
-  color: #9a9e9a;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.working-answer {
-  margin: 13px 0 0 34px;
-}
-
-.assistant-answer {
-  margin: 12px 0 0 34px;
-  padding: 16px 18px 12px;
-  border: 1px solid #e8ebe8;
-  border-radius: 14px;
-  background: #fcfdfc;
-}
-
-.assistant-answer :deep(.assistant-message-content) {
-  color: #303430;
-}
-
-.assistant-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 31px;
-  margin-top: 15px;
-  padding-top: 8px;
-  border-top: 1px solid #edf0ed;
-  color: #888d88;
-}
-
-.assistant-actions button {
-  display: grid;
-  width: 27px;
-  height: 27px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: 7px;
-  color: #7e837e;
-  background: transparent;
-  cursor: pointer;
-}
-
-.assistant-actions button:hover {
-  color: #175e4d;
-  background: #eff6f3;
-}
-
-.assistant-run-meta {
-  margin-left: 7px;
-  color: #949994;
-  font-size: var(--dsh-font-size-micro);
-}
-
-
-.answer-artifacts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.answer-artifact {
-  display: flex;
-  align-items: stretch;
-  gap: 6px;
-}
-
-.answer-artifact__revise {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
-  color: #356858;
-  background: #fafbfa;
-  cursor: pointer;
-  font-size: var(--dsh-font-size-badge);
-  white-space: nowrap;
-}
-
-.answer-artifact__revise:hover:not(:disabled) {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
-}
-
-.answer-artifact__revise:disabled {
-  color: #8a908a;
-  cursor: default;
-}
-
-.referenced-artifacts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  color: #6b716b;
-  font-size: var(--dsh-font-size-badge);
-}
-
-.answer-artifact__download {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 16px;
-  align-items: center;
-  min-width: 230px;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid #e2e4e1;
-  border-radius: 10px;
-  color: #4c514c;
-  background: #fafbfa;
-  cursor: pointer;
-  text-align: left;
-}
-
-.answer-artifact__download:hover {
-  border-color: #bdcbc5;
-  background: #f5f8f6;
-}
-
-.answer-artifact__download > span:first-child {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  color: #356858;
-  background: #eaf4f0;
-}
-
-.answer-artifact__download > span:nth-child(2) {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.answer-artifacts strong {
-  overflow: hidden;
-  font-size: var(--dsh-font-size-badge);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.answer-artifacts small {
-  margin-top: 3px;
-  color: #939793;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.working-answer {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  gap: 10px;
-  color: var(--dsh-color-muted);
-  font-size: var(--dsh-font-size-caption);
-}
-
-.working-quiet {
-  margin: 4px 0 0 34px;
-  color: var(--dsh-color-warning);
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.6;
-}
-
-.working-quiet--drawer {
-  margin: 0 0 10px;
-}
-
-.working-answer > button {
-  margin-left: auto;
-  padding: 0;
-  border: 0;
-  color: #34705f;
-  background: transparent;
-  cursor: pointer;
-  font-size: var(--dsh-font-size-badge);
-}
-
-.working-dots {
-  display: flex;
-  gap: 3px;
-}
-
-.working-dots i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #67a997;
-  animation: working-pulse 1s ease-in-out infinite;
-}
-
-.working-dots i:nth-child(2) {
-  animation-delay: 120ms;
-}
-
-.working-dots i:nth-child(3) {
-  animation-delay: 240ms;
-}
-
-@keyframes working-pulse {
-  0%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-
-  50% {
-    transform: translateY(-3px);
-    opacity: 1;
-  }
-}
-
-.conversation-stopped-by {
-  margin: 24px 0 0 34px;
-  color: var(--dsh-color-muted);
-  font-size: var(--dsh-font-size-caption);
-}
-
-.conversation-notice {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-  margin: 36px 0 0 34px;
-  padding: 14px;
-  border: 1px solid #efd7b1;
-  border-radius: 12px;
-  background: #fff9ef;
-}
-
-.conversation-notice__icon {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 9px;
-  color: #9e5b12;
-  background: #ffedcf;
-}
-
-.conversation-notice strong {
-  font-size: var(--dsh-font-size-caption);
-}
-
-.conversation-notice p {
-  margin: 5px 0 0;
-  color: #767069;
-  font-size: var(--dsh-font-size-badge);
-  line-height: 1.6;
-}
-
-.conversation-notice dl {
-  display: flex;
-  gap: 20px;
-  margin: 9px 0 0;
-}
-
-.conversation-notice dl div {
-  display: flex;
-  gap: 6px;
-}
-
-.conversation-notice dt,
-.conversation-notice dd {
-  margin: 0;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.conversation-notice dt {
-  color: #9b8a74;
-}
-
-.conversation-notice__actions {
-  display: flex;
-  gap: 7px;
-}
-
-.error-notice {
-  border-color: #efc8cc;
-  background: #fff5f6;
-}
-
-.error-notice .conversation-notice__icon {
-  color: #a92e3c;
-  background: #ffe2e5;
-}
-
-.error-notice code {
-  display: inline-block;
-  margin-top: 7px;
-  color: #9b3c47;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.verify-notice {
-  border-color: #f0d9b5;
-  background: #fffaf1;
-}
-
-.verify-notice .conversation-notice__icon {
-  color: #a14506;
-  background: #ffe9c7;
-}
-
-.verify-notice--neutral {
-  border-color: #e3e7ed;
-  background: #f7f8fa;
-}
-
-.verify-notice--neutral .conversation-notice__icon {
-  color: #667085;
-  background: #eceef1;
-}
-
-.result-verification > p {
-  margin: 6px 0 0;
-  color: #55504a;
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.6;
-}
-
-.result-verification__head {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.result-pending {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: #a14506;
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.6;
-}
-
-.result-receipts {
-  margin: 10px 0 0;
-  border-top: 1px dashed #e8e2d9;
-  padding-top: 10px;
-}
-
-.result-receipts div {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  margin-top: 6px;
-}
-
-.result-receipts dt,
-.result-receipts dd {
-  margin: 0;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.result-receipts dd {
-  color: #55504a;
-}
-
-.result-receipts code {
-  display: block;
-  color: #9b8a74;
 }
 
 .conversation-end {
@@ -2568,60 +1735,12 @@ watch(
     padding: 78px 14px 218px;
   }
 
-  .conversation-message--own .assistant-answer {
-    margin-right: 0;
-    margin-left: 12%;
-  }
-
-  .assistant-answer,
-  .working-answer {
-    margin-left: 0;
-  }
-
-  .assistant-answer {
-    padding: 14px 14px 10px;
-  }
-
-  .assistant-answer :deep(.assistant-message-content) {
-    font-size: var(--dsh-font-size-caption);
-  }
-
-  .conversation-notice {
-    grid-template-columns: 30px minmax(0, 1fr);
-    margin-left: 0;
-  }
-
-  .conversation-notice__actions,
-  .conversation-notice > .el-button {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-
-  .conversation-notice dl {
-    flex-direction: column;
-    gap: 5px;
-  }
-
   .conversation-composer-dock {
     padding: 40px 10px 9px;
   }
 
   .conversation-composer-dock :deep(.composer__input) {
     min-height: 70px;
-  }
-
-  .assistant-run-meta {
-    display: none;
-  }
-
-
-  .answer-artifact {
-    width: 100%;
-  }
-
-  .answer-artifact__download {
-    flex: 1;
-    min-width: 0;
   }
 }
 </style>
