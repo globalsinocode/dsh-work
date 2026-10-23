@@ -19,6 +19,8 @@ export type BuiltinToolAssembly =
   | 'runtime'
   /** 按管理运行用途注入。 */
   | 'purpose'
+  /** 项目空间运行：Agent 版本开启“项目任务管理”且由团队空间的人发起时装配（S6）。 */
+  | 'workspace'
 
 export interface BuiltinTool {
   name: string
@@ -32,6 +34,8 @@ export interface BuiltinTool {
 
 const workspace = '只访问当前 Run 工作区'
 const outputOnly = '创建和修改限于 output 目录中的 Markdown、TXT 与 CSV 成果'
+const projectOnly = '只访问本次运行所在项目空间的任务'
+const actorLimited = '按发起成员的任务权限执行，定时执行不装配'
 
 export const builtinTools: readonly BuiltinTool[] = [
   { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [workspace] },
@@ -46,6 +50,10 @@ export const builtinTools: readonly BuiltinTool[] = [
   { name: 'activate_skill', label: '激活 Skill', source: 'platform', effect: 'read', risk: 'low', assembly: 'runtime', constraints: ['只读取本次固定版本的 Skill 资源'] },
   { name: 'python_execute', label: 'Python 执行', source: 'platform', effect: 'write', risk: 'medium', assembly: 'runtime', constraints: ['仅在平台沙箱中执行 Skill 自带脚本', '无网络、限时、限额'] },
   { name: 'propose_memory', label: '提出经验申请', source: 'platform', effect: 'write', risk: 'low', assembly: 'runtime', constraints: ['只生成待管理员审核的申请'] },
+  { name: 'project_tasks_list', label: '查看项目任务', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
+  { name: 'project_task_get', label: '查看任务详情', source: 'platform', effect: 'read', risk: 'low', assembly: 'workspace', constraints: [projectOnly, '不返回任务对话内容'] },
+  { name: 'project_task_create', label: '新建项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, 'Agent 任务执行规则为手动，不自动执行'] },
+  { name: 'project_task_update', label: '修改项目任务', source: 'platform', effect: 'write', risk: 'medium', assembly: 'workspace', constraints: [projectOnly, actorLimited, '不能移除任务'] },
   { name: 'prepare_skill_installation', label: '准备 Skill 安装', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理端安装助手'] },
   { name: 'inspect_admin_state', label: '查看平台状态', source: 'platform', effect: 'read', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手'] },
   { name: 'propose_admin_task', label: '提出管理任务', source: 'platform', effect: 'write', risk: 'low', assembly: 'purpose', constraints: ['仅管理助手', '只生成待确认任务'] },
@@ -73,6 +81,19 @@ export function parseBuiltinToolReference(reference: string): BuiltinTool | unde
   const name = separator > 0 ? reference.slice(0, separator) : reference
   const version = separator > 0 ? reference.slice(separator + 1) : BUILTIN_TOOL_VERSION
   return version === BUILTIN_TOOL_VERSION ? byName.get(name) : undefined
+}
+
+/** 项目任务工具（S6）：读取与写入分开，定时执行只装配读取。 */
+export const projectTaskReadTools = ['project_tasks_list', 'project_task_get'] as const
+export const projectTaskWriteTools = ['project_task_create', 'project_task_update'] as const
+
+/**
+ * 本次运行装配的项目任务工具：Agent 版本未开启、不在团队空间或不是人发起的运行时为空；
+ * 定时执行（无人在场）只装配读取工具。
+ */
+export function projectTaskToolNames(input: { enabled: boolean; mode: 'none' | 'read' | 'read-write' }): string[] {
+  if (!input.enabled || input.mode === 'none') return []
+  return input.mode === 'read' ? [...projectTaskReadTools] : [...projectTaskReadTools, ...projectTaskWriteTools]
 }
 
 /** Agent 运行装配的 DSH 工具名称：默认工具，加上 Agent 开启的联网搜索；去掉 Runtime 停用的工具。 */
@@ -105,7 +126,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
   const problems: string[] = []
   for (const reference of new Set(references)) {
     const tool = parseBuiltinToolReference(reference)
-    if (!tool || tool.assembly === 'purpose') problems.push(`${reference}（平台不提供该工具）`)
+    if (!tool || tool.assembly === 'purpose' || tool.assembly === 'workspace') problems.push(`${reference}（平台不提供该工具）`)
     else if (tool.assembly === 'agent-opt-in' && !agent.webSearchEnabled) problems.push(`${reference}（Agent 未开启联网搜索）`)
   }
   return problems
@@ -115,7 +136,7 @@ export function unavailableSkillTools(references: readonly string[], agent: { we
 export function invalidSkillToolReferences(references: readonly string[]): string[] {
   return [...new Set(references)].filter(reference => {
     const tool = parseBuiltinToolReference(reference)
-    return !tool || tool.assembly === 'purpose' || tool.name === 'propose_memory'
+    return !tool || tool.assembly === 'purpose' || tool.assembly === 'workspace' || tool.name === 'propose_memory'
   })
 }
 

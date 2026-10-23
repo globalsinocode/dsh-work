@@ -126,7 +126,7 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get'])
 const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
@@ -489,6 +489,71 @@ function registerPlatformTools(ctx) {
         content: { type: 'string', minLength: 20, maxLength: 4000 },
       },
       required: ['kind', 'title', 'content'],
+    },
+  })
+  const assignee = {
+    type: 'object',
+    description: 'Task owner: an employee member (type "employee", the userId) or an Agent member (type "agent", the agentMemberId). Get ids from project_tasks_list.members.',
+    properties: { type: { type: 'string', enum: ['employee', 'agent'] }, id: { type: 'string', minLength: 1, maxLength: 160 } },
+    required: ['type', 'id'],
+    additionalProperties: false,
+  }
+  registerPlatformTool(ctx, socketPath, {
+    name: 'project_tasks_list',
+    description: 'List project tasks of the project space this run belongs to, plus the members a task can be assigned to. Returns title, owner, status, due date and latest execution; never task conversation content. Use it before creating or changing a task to get task ids and member ids.',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['open', 'todo', 'in_progress', 'done', 'all'], description: 'open (default) = todo and in_progress.' },
+        assigneeId: { type: 'string', minLength: 1, maxLength: 160, description: 'Only tasks owned by this userId or agentMemberId.' },
+        query: { type: 'string', minLength: 1, maxLength: 120, description: 'Literal text contained in the title.' },
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
+      },
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'project_task_get',
+    description: 'Read one project task of this project space: description, owner, status, due date, schedule and latest execution. Never returns task conversation content.',
+    parameters: {
+      type: 'object',
+      properties: { taskId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['taskId'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'project_task_create',
+    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee,
+        dueDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      required: ['title', 'assignee'],
+      additionalProperties: false,
+    },
+  })
+  registerPlatformTool(ctx, socketPath, {
+    name: 'project_task_update',
+    description: 'Change one project task in this project space on behalf of the member who asked you, within that member\'s permissions: title, description, due date (null clears it), owner, or status (todo, in_progress, done; completionNote only with done). Changes are written immediately and shown in the group chat. Tasks cannot be removed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', minLength: 1, maxLength: 160 },
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee,
+        dueDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+        completionNote: { type: 'string', maxLength: 4000 },
+      },
+      required: ['taskId'],
+      minProperties: 2,
+      additionalProperties: false,
     },
   })
   registerPlatformTool(ctx, socketPath, {

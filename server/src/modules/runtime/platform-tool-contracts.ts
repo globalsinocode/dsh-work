@@ -4,6 +4,14 @@ import type { AdminRunPurpose, RuntimeManifest } from './runtime-types.ts'
 const objectOutput = { type: 'object' } as const
 const boundedString = { type: 'string', maxLength: 1_048_576 } as const
 const PYTHON_OUTPUT_MAX_BYTES = 16 * 1024 * 1024
+const projectTaskAssigneeSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    type: { type: 'string', enum: ['employee', 'agent'] },
+    id: { type: 'string', minLength: 1, maxLength: 160 },
+  },
+  required: ['type', 'id'],
+} as const
 
 export const platformToolContracts = {
   prepare_skill_installation: contract({
@@ -99,6 +107,60 @@ export const platformToolContracts = {
     timeoutMs: 300_000,
     maxOutputBytes: PYTHON_OUTPUT_MAX_BYTES,
   }),
+  // 项目空间 S6：Agent 查看与维护项目任务。读取安全可重试；写入不重试，重放由操作登记去重。
+  project_tasks_list: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        status: { type: 'string', enum: ['open', 'todo', 'in_progress', 'done', 'all'] },
+        assigneeId: { type: 'string', minLength: 1, maxLength: 160 },
+        query: { type: 'string', minLength: 1, maxLength: 120 },
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
+      },
+    },
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  project_task_get: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { taskId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['taskId'],
+    },
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  project_task_create: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee: projectTaskAssigneeSchema,
+        dueDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      required: ['title', 'assignee'],
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  project_task_update: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        taskId: { type: 'string', minLength: 1, maxLength: 160 },
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee: projectTaskAssigneeSchema,
+        dueDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+        completionNote: { type: 'string', maxLength: 4000 },
+      },
+      required: ['taskId'], minProperties: 2,
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
   propose_memory: contract({
     inputSchema: {
       type: 'object', additionalProperties: false,
@@ -138,8 +200,14 @@ export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManife
     .map(([id]) => ({ id, version: '1.0.0' }))
 }
 
+/** 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，不进入任何管理或系统运行。 */
+const projectTaskTools = new Set<string>(['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'])
+
 export function assertPlatformToolPurpose(manifest: Pick<RuntimeManifest, 'purpose' | 'tools'>): void {
   for (const tool of manifest.tools) {
+    if (projectTaskTools.has(tool.id) && manifest.purpose) {
+      throw new Error(`dsh-work 内置平台工具 ${tool.id} 不允许用于当前运行用途：${manifest.purpose}`)
+    }
     const purposes = platformToolPurposes[tool.id as PlatformToolName]
     if (!purposes) continue
     if (!manifest.purpose || !purposes.includes(manifest.purpose as AdminRunPurpose)) {
