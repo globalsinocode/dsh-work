@@ -352,6 +352,14 @@ test('Agent 加入与移出各写入一条动态', async () => {
   assert.equal(added.status, 201)
   const memberId = (added.body.data as { id: string }).id
 
+  // 项目空间至少保留一个 Agent 成员（S5d）：直接放入一个停用的锚点 Agent，不产生动态。
+  const anchorId = `${agentId}-anchor`
+  const anchorVersionId = await createPublishedAgent(anchorId)
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values (${`wam-anchor-${ws}`}, ${tenantId}, ${ws}, ${anchorId}, ${anchorVersionId}, 'disabled', ${owner})
+  `
+
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${ws}/agent-members/${memberId}`, { as: owner })
   assert.equal(removed.status, 200)
 
