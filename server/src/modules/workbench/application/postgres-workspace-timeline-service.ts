@@ -149,7 +149,8 @@ export class PostgresWorkspaceTimelineService {
           left join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
          where m.tenant_id = ${tenantId} and m.role in ('user', 'assistant')
         union all
-        select 'run', 'r:' || r.id, r.created_at,
+        -- Run 在触发它的那条发言之前几毫秒创建；执行记录按“不早于触发发言”排序，始终显示在发言之后。
+        select 'run', 'r:' || r.id, greatest(r.created_at, coalesce(trigger_message.created_at, r.created_at)),
                jsonb_build_object(
                  'sessionId', d.id, 'sessionTitle', d.title, 'runId', r.id, 'status', r.status,
                  'requesterName', ru.display_name, 'agentName', rag.name,
@@ -161,6 +162,10 @@ export class PostgresWorkspaceTimelineService {
           left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
           left join agent_versions rav on rav.tenant_id = r.tenant_id and rav.id = ra.manifest ->> 'agent_version_id'
           left join agents rag on rag.tenant_id = rav.tenant_id and rag.id = rav.agent_id
+          left join lateral (
+            select min(tm.created_at) as created_at from messages tm
+             where tm.tenant_id = r.tenant_id and tm.run_id = r.id and tm.role = 'user'
+          ) trigger_message on true
          where r.tenant_id = ${tenantId}
         union all
         select 'task', 'tc:' || t.id, t.created_at,

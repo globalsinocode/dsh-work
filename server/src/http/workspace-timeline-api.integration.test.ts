@@ -61,8 +61,9 @@ test('时间线按时间倒序合并讨论、执行记录、任务卡片与系�
     'tc:s5d-task-employee',
     'tc:s5d-task-agent',
     'm:s5d-m-reply',
-    'm:s5d-m-ask',
+    // Run 比触发它的发言早创建：执行记录取发言时间，同一时间按 ID 倒序（r: 在 m: 前），即显示在发言之后。
     'r:s5d-run-d1',
+    'm:s5d-m-ask',
     'm:s5d-m-d1',
     'a:s5d-activity-member',
     'w:s5d-team',
@@ -80,6 +81,7 @@ test('时间线按时间倒序合并讨论、执行记录、任务卡片与系�
   const run = items.find(item => item.id === 'r:s5d-run-d1')!
   assert.equal(run.status, 'succeeded')
   assert.equal(run.requesterName, '林岚')
+  assert.equal(run.at, ask.at, '执行记录的时间取触发它的发言时间')
 
   const created = items.find(item => item.id === 'tc:s5d-task-agent')!
   assert.equal(created.event, 'created')
