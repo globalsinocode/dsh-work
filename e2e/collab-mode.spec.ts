@@ -80,7 +80,15 @@ test('MODE-E2E-02: a failed save keeps the current mode', async ({ page }) => {
 test('MODE-E2E-03: collaboration shell has four entries and an avatar menu for shared pages', async ({ page }) => {
   await switchToCollab(page)
   const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
-  await expect(navigation.getByRole('button')).toHaveText(['对话', 'AI 同事', '群组', '定时任务'])
+  // 宽屏图标栏只显示图标：入口名称在可访问名称与悬停提示中。
+  const entries = navigation.getByRole('button')
+  await expect(entries).toHaveCount(4)
+  for (const [index, label] of ['对话', 'AI 同事', '群组', '定时任务'].entries()) {
+    await expect(entries.nth(index)).toHaveAccessibleName(label)
+  }
+  await expect(navigation.getByText('对话', { exact: true })).toBeHidden()
+  await entries.nth(1).hover()
+  await expect(page.getByRole('tooltip', { name: 'AI 同事' })).toBeVisible()
   await expect(navigation.getByRole('button', { name: '对话' })).toHaveAttribute('aria-current', 'page')
 
   await navigation.getByRole('button', { name: 'AI 同事' }).click()
@@ -114,6 +122,7 @@ test('MODE-E2E-03: collaboration shell uses a bottom tab bar on narrow screens',
   await page.setViewportSize({ width: 375, height: 760 })
   await switchToCollab(page, { narrow: true })
   const navigation = page.getByRole('navigation', { name: '协作模式主导航' })
+  // 窄屏底部标签栏显示入口名称。
   await expect(navigation.getByRole('button')).toHaveText(['对话', 'AI 同事', '群组', '定时任务'])
   const box = await navigation.boundingBox()
   expect(box?.y ?? 0).toBeGreaterThan(600)
@@ -265,6 +274,31 @@ test('MODE-E2E-09/10: a group shows its chat timeline, the shared tabs and the g
   // 切回工作模式：所在页签映射回项目空间的同一页签。
   await chooseMode(page, '工作模式')
   await expect(page).toHaveURL(/\/workspaces\/ws-supply\?tab=files$/)
+})
+
+test('MODE-E2E-15: the group header adds members with the same picker as creating a group', async ({ page }) => {
+  await switchToCollab(page)
+  await page.goto('/c/chats/group/ws-supply')
+  await expect(page.getByRole('heading', { name: '供应链经营分析', level: 1 })).toBeVisible()
+  await expect(page.getByText('8 位成员', { exact: true })).toBeVisible()
+  // 头部不显示成员头像；“＋”在群组名称之后，“⋯”为群信息。
+  await expect(page.getByRole('button', { name: '群信息', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '添加成员', exact: true }).click()
+
+  const dialog = page.getByRole('dialog', { name: '添加成员' })
+  const people = dialog.getByRole('region', { name: '同事' })
+  const selected = dialog.getByRole('complementary', { name: '已选成员' })
+  await expect(dialog.getByRole('region', { name: 'AI 同事' }).getByText('dsh-work Assistant', { exact: true })).toBeVisible()
+  // 已在群里的同事（林岚、周衡）不在候选中。
+  await expect(people.getByText('赵宁', { exact: true })).toBeVisible()
+  await expect(people.getByText('周衡', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '添加' })).toBeDisabled()
+
+  await people.getByText('赵宁', { exact: true }).click()
+  await expect(selected.getByRole('heading', { name: '已选 1' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '添加 1 位' })).toBeEnabled()
+  await dialog.getByRole('button', { name: '取消' }).click()
+  await expect(dialog).toBeHidden()
 })
 
 test('MODE-E2E-10: task details open inside the group and map to work mode', async ({ page }) => {

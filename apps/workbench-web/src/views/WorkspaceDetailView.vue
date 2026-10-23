@@ -38,6 +38,7 @@ import ProjectTaskPanel from '@/components/ProjectTaskPanel.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
 import WorkspaceAgentMemberDialog from '@/components/WorkspaceAgentMemberDialog.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
+import AddGroupMembersDialog from '@/components/AddGroupMembersDialog.vue'
 import WorkspaceSessionHistory from '@/components/WorkspaceSessionHistory.vue'
 import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
 import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
@@ -71,9 +72,10 @@ const props = withDefaults(
     /** collab：信息栏是否展开（宿主的“群信息”按钮控制）。 */
     infoOpen?: boolean
     /** collab：每次递增打开“管理成员”（宿主头部的“＋”）。 */
-    memberDialogRequest?: number
+    /** collab：群组头部“＋”每次加一，打开“添加成员”（与新建群组同一个成员选择器）。 */
+    addMembersRequest?: number
   }>(),
-  { currentUserRole: undefined, layout: 'page', infoOpen: false, memberDialogRequest: 0 },
+  { currentUserRole: undefined, layout: 'page', infoOpen: false, addMembersRequest: 0 },
 )
 const emit = defineEmits<{
   'update:infoOpen': [value: boolean]
@@ -127,6 +129,7 @@ const versionUploadError = ref<{ logicalFileId: string; message: string } | null
 
 const memberDialogOpen = ref(false)
 const agentDialogOpen = ref(false)
+const addMembersDialogOpen = ref(false)
 const settingsDialogOpen = ref(false)
 /** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
 const previewOpen = ref(false)
@@ -927,8 +930,8 @@ watch([panelCollapsed, mobileInfoOpen], ([collapsed, mobileOpen]) => {
   const open = wideLayout.value ? !collapsed : mobileOpen
   if (open !== props.infoOpen) emit('update:infoOpen', open)
 })
-watch(() => props.memberDialogRequest, (request, previous) => {
-  if (collab.value && request > (previous ?? 0)) memberDialogOpen.value = true
+watch(() => props.addMembersRequest, (request, previous) => {
+  if (collab.value && request > (previous ?? 0)) addMembersDialogOpen.value = true
 })
 /** collab 头部插槽：成员、页签与计数来自本组件同一份状态。 */
 const headerScope = computed(() => ({
@@ -1478,6 +1481,14 @@ const chatScope = computed(() => ({
         :members="workspaceMembers"
         :archived="isArchived"
         @refresh="refreshTeamMembers"
+      />
+
+      <AddGroupMembersDialog
+        v-model:open="addMembersDialogOpen"
+        :workspace-id="workspace.id"
+        :workspace-name="workspace.name"
+        :can-add-agents="currentUserRole === 'owner'"
+        @added="refreshTeamMembers"
       />
 
       <!-- 管理 Agent 独立入口（TW-10）：右栏 Agent 区块触发，负责人-only 操作。 -->

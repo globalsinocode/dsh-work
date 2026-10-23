@@ -46,6 +46,10 @@ function checkbox(wrapper: ReturnType<typeof mountDialog>, text: string) {
   if (!label) throw new Error(`没有找到勾选框：${text}`)
   return label.get('input[type="checkbox"]')
 }
+const afterSearch = async () => {
+  await new Promise(resolve => setTimeout(resolve, 300))
+  await flushPromises()
+}
 const isChecked = (wrapper: ReturnType<typeof mountDialog>, text: string) =>
   (checkbox(wrapper, text).element as HTMLInputElement).checked
 
@@ -105,9 +109,13 @@ describe('CreateProjectSpaceDialog', () => {
     expect(isChecked(wrapper, '赵宁')).toBe(true)
     expect(isChecked(wrapper, '库存助手')).toBe(false)
 
+    // 搜索经防抖后重新加载两栏，等过滤结果出现再全选。
     await wrapper.get('input[aria-label="搜索 AI 同事或同事"]').setValue('报表')
+    await afterSearch()
+    expect(wrapper.text()).not.toContain('库存助手')
     await checkbox(wrapper, '全选 AI 同事').setValue(true)
     await wrapper.get('input[aria-label="搜索 AI 同事或同事"]').setValue('')
+    await afterSearch()
     expect(isChecked(wrapper, '报表助手')).toBe(true)
     expect(isChecked(wrapper, '库存助手')).toBe(false)
   })

@@ -130,6 +130,23 @@ export function registerSmokeProjectRoutes(router: Router) {
     requireRequestIdentity(context, 'workbench')
     return requireSmokeSpace(context.params['workspaceId']) ?? envelope('workbench', [])
   })
+  // 群组“添加成员”的候选（只读展示，MODE-E2E-15）：未加入的同事与可加入的 AI 同事。冒烟服务不实现加入。
+  router.get(`${basePath}/workspaces/:workspaceId/member-candidates`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    const memberIds = new Set(members.map(member => member.userId))
+    const items = newSpaceCandidates.filter(item => !memberIds.has(item.id))
+    return requireSmokeSpace(context.params['workspaceId']) ?? envelope('workbench', { items, nextCursor: null })
+  })
+  router.get(`${basePath}/workspaces/:workspaceId/agent-candidates`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    return requireSmokeSpace(context.params['workspaceId']) ?? envelope('workbench', {
+      items: [{
+        agentId: 'dsh-work-assistant', name: 'dsh-work Assistant', description: '员工统一 AI 对话入口',
+        activeVersionId: 'dsh-work-assistant-v1', activeVersion: '1.0.0', status: 'published',
+      }],
+      nextCursor: null,
+    })
+  })
 
   // 负责人视角的右栏还会读取动态、提醒与用量；冒烟数据给出空集合，页面呈现空态而不是报错。
   router.get(`${basePath}/workspaces/:workspaceId/activity`, (_request, context) => {

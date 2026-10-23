@@ -170,7 +170,7 @@ async function mountView(
  * 简报与任务编辑弹窗由各自组件单测覆盖，这里排除，避免位置断言随页签内容漂移。
  */
 function managementDialogStates(wrapper: { findAllComponents: (component: typeof ElDialog) => Array<{ props: (name: string) => unknown }> }) {
-  const projectDialogTitles = /项目简报|新建任务|编辑任务|完成任务/
+  const projectDialogTitles = /项目简报|新建任务|编辑任务|完成任务|^添加成员$/
   return wrapper.findAllComponents(ElDialog)
     .filter(dialog => !projectDialogTitles.test(String(dialog.props('title') ?? '')))
     .map(dialog => dialog.props('modelValue'))

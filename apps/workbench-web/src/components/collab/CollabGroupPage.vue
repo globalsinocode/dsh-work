@@ -22,7 +22,7 @@ const router = useRouter()
 provideSpaceRoutes(collabSpaceRoutes)
 
 const infoOpen = computed(() => route.query.info === '1')
-const memberDialogRequest = ref(0)
+const addMembersRequest = ref(0)
 const pendingFile = ref<WorkspaceFile | null>(null)
 const focusSessionId = computed(() => typeof route.query.session === 'string' ? route.query.session : undefined)
 
@@ -61,7 +61,7 @@ function useFile(file: WorkspaceFile) {
       :key="workspaceId"
       layout="collab"
       :info-open="infoOpen"
-      :member-dialog-request="memberDialogRequest"
+      :add-members-request="addMembersRequest"
       @update:info-open="setInfoOpen"
       @use-file="useFile"
     >
@@ -70,7 +70,7 @@ function useFile(file: WorkspaceFile) {
           v-bind="scope"
           :info-open="infoOpen"
           @select-tab="selectTab"
-          @add-member="memberDialogRequest += 1"
+          @add-member="addMembersRequest += 1"
           @toggle-info="setInfoOpen(!infoOpen)"
           @back="emit('back')"
         />
