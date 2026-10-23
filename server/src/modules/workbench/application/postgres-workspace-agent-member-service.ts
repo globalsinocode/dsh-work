@@ -8,7 +8,8 @@ import type {
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
-import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
+import { insertNewSpaceEmployeeMembers, insertTeamWorkspaceRows } from './team-workspace-rows.ts'
+import { assertAddableEmployees } from './postgres-workspace-member-service.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import {
   currentTeamAuthRevision,
@@ -235,6 +236,39 @@ export class PostgresWorkspaceAgentMemberService {
     })
   }
 
+  /**
+   * 新建空间前预览：与 `previewMemberDisclosureImpact` 同一口径，比较只有创建人时与加上所选同事后
+   * 各 Agent 可交付的数据范围，返回会失去部分范围的 Agent。只读，不改变任何状态。
+   */
+  async previewNewSpaceDisclosureImpact(
+    agentIds: string[],
+    memberUserIds: string[],
+    actorUserId: string,
+    actorRoleIds: string[] = [],
+  ): Promise<Array<{ agentId: string; name: string; lostDataScopes: string[] }>> {
+    const agents = normalizeIds(agentIds)
+    const members = normalizeNewSpaceMembers(memberUserIds, actorUserId)
+    if (!agents.length || !members.length) return []
+    if (agents.length > 10 || members.length > maxNewSpaceMembers) throw invalidRequest('所选 AI 同事或同事数量超出上限')
+    // 只对创建人能加入的 Agent 给出预览（与创建同一校验），不借预览探查其他 Agent 的授权。
+    for (const agentId of agents) await this.prepareAgentJoin(agentId, actorRoleIds)
+    const rows = await this.database<{ id: string; name: string }[]>`
+      select id, name from agents where tenant_id = ${tenantId} and id in ${this.database(agents)}
+    `
+    const names = new Map(rows.map(row => [row.id, row.name]))
+    const before = await this.deliverableScopesWithin(
+      new Set(await this.authorization.resolveCommonDataScopesForUsers([actorUserId])), agents)
+    const after = await this.deliverableScopesWithin(
+      new Set(await this.authorization.resolveCommonDataScopesForUsers([actorUserId, ...members])), agents)
+    return agents.flatMap(agentId => {
+      const remaining = new Set(after.get(agentId) ?? [])
+      const lostDataScopes = (before.get(agentId) ?? []).filter(scope => !remaining.has(scope))
+      return lostDataScopes.length && names.has(agentId)
+        ? [{ agentId, name: names.get(agentId)!, lostDataScopes }]
+        : []
+    })
+  }
+
   private async deliverableDataScopesByAgent(
     workspaceId: string,
     agentIds: string[],
@@ -242,6 +276,12 @@ export class PostgresWorkspaceAgentMemberService {
   ): Promise<Map<string, string[]>> {
     if (!agentIds.length) return new Map()
     const common = new Set(await this.authorization.resolveTeamCommonDataScopes(workspaceId, { includeUserId }))
+    return this.deliverableScopesWithin(common, agentIds)
+  }
+
+  /** Agent 自身授权中落在成员共同数据范围内的部分（即可交付范围）。 */
+  private async deliverableScopesWithin(common: Set<string>, agentIds: string[]): Promise<Map<string, string[]>> {
+    if (!agentIds.length) return new Map()
     const rows = await this.database<{ agentId: string; scopeValue: string }[]>`
       select ep.agent_id as "agentId", g.scope_value as "scopeValue"
         from execution_principals ep
@@ -294,10 +334,14 @@ export class PostgresWorkspaceAgentMemberService {
     agentIds: string[],
     actorUserId: string,
     actorRoleIds: string[] = [],
+    memberUserIds: string[] = [],
   ): Promise<string> {
-    const unique = [...new Set(agentIds.map(id => id.trim()).filter(Boolean))]
+    const unique = normalizeIds(agentIds)
     if (!unique.length) throw invalidRequest('新建项目空间至少需要选择一个 AI 同事')
     if (unique.length > 10) throw invalidRequest('新建项目空间时最多选择 10 个 AI 同事')
+    const members = normalizeNewSpaceMembers(memberUserIds, actorUserId)
+    if (members.length < normalizeIds(memberUserIds).length) throw invalidRequest('创建人会自动成为负责人，无需选择自己')
+    if (members.length > maxNewSpaceMembers) throw invalidRequest(`新建项目空间时最多选择 ${maxNewSpaceMembers} 位同事`)
     const prepared: Array<Awaited<ReturnType<PostgresWorkspaceAgentMemberService['prepareAgentJoin']>>> = []
     for (const agentId of unique) prepared.push(await this.prepareAgentJoin(agentId, actorRoleIds))
     const workspaceId = `ws-${randomUUID()}`
@@ -305,6 +349,9 @@ export class PostgresWorkspaceAgentMemberService {
       await insertTeamWorkspaceRows(transaction, workspaceId, input, actorUserId)
       await lockWorkspaceRow(transaction, workspaceId)
       for (const agent of prepared) await this.joinPreparedAgent(transaction, workspaceId, agent, actorUserId)
+      // 同事与 Agent 同一事务（功能规则 3.3）：任一同事不可加入则整个创建回滚。
+      await assertAddableEmployees(transaction, members)
+      await insertNewSpaceEmployeeMembers(transaction, workspaceId, members, actorUserId)
     })
     return workspaceId
   }
@@ -856,4 +903,16 @@ function decodeCursorIndex(candidates: WorkspaceAgentCandidate[], cursor: string
   const index = candidates.findIndex(candidate => candidate.id === parsed.i)
   if (index < 0) throw invalidRequest('分页游标无效')
   return index + 1
+}
+
+/** 新建空间时一次最多一并加入的同事数。 */
+const maxNewSpaceMembers = 50
+
+function normalizeIds(ids: string[]) {
+  return [...new Set(ids.map(id => id.trim()).filter(Boolean))]
+}
+
+/** 去重并去掉创建人本人（创建人已是负责人）。 */
+function normalizeNewSpaceMembers(ids: string[], actorUserId: string) {
+  return normalizeIds(ids).filter(id => id !== actorUserId)
 }

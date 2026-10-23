@@ -982,6 +982,38 @@ export class PostgresAuthorizationService {
    * 读取任何内容，不计入。成员变动推进 team_auth_revision，执行前复核据此收紧在途任务。
    * `includeUserId` 用于添加成员前预览：把候选人视为成员计算。
    */
+  /**
+   * 尚未创建的团队空间的成员共同数据范围（新建空间时预览数据范围影响）：与
+   * `resolveTeamCommonDataScopes` 同一口径，只是成员为给定员工且还没有空间级授权。
+   */
+  async resolveCommonDataScopesForUsers(userIds: string[]): Promise<string[]> {
+    const unique = [...new Set(userIds)]
+    if (!unique.length) return []
+    const rows = await this.database<{ scopeValue: string }[]>`
+      with members as (
+        select u.id as user_id from users u
+         where u.tenant_id = ${tenantId} and u.status = 'active' and u.id in ${this.database(unique)}
+      ),
+      member_scopes as (
+        select m.user_id, g.scope_value from members m
+          join data_scope_grants g on g.tenant_id = ${tenantId}
+           and g.subject_type = 'user' and g.subject_id = m.user_id
+        union
+        select m.user_id, g.scope_value from members m
+          join user_roles ur on ur.tenant_id = ${tenantId} and ur.user_id = m.user_id
+           and ur.source_key = 'local' and (ur.valid_until is null or ur.valid_until > now())
+          join roles r on r.tenant_id = ur.tenant_id and r.id = ur.role_id and r.status = 'active'
+          join data_scope_grants g on g.tenant_id = ${tenantId}
+           and g.subject_type = 'role' and g.subject_id = ur.role_id
+      )
+      select scope_value as "scopeValue" from member_scopes
+       group by scope_value
+      having count(distinct user_id) = (select count(*) from members)
+       order by scope_value
+    `
+    return rows.map(row => row.scopeValue)
+  }
+
   async resolveTeamCommonDataScopes(workspaceId: string, options: { includeUserId?: string } = {}): Promise<string[]> {
     const includeUserId = options.includeUserId ?? ''
     const rows = await this.database<{ scopeValue: string }[]>`

@@ -767,6 +767,13 @@ export interface WorkspaceAgentMember {
 }
 
 /** 项目空间 S0：添加某位员工后会失去部分可交付数据范围的 Agent 成员。 */
+/** 新建项目空间前的数据范围影响预览（按所选 Agent）。 */
+export interface NewSpaceDisclosureImpact {
+  agentId: string
+  name: string
+  lostDataScopes: string[]
+}
+
 export interface MemberDisclosureImpact {
   agentMemberId: string
   name: string

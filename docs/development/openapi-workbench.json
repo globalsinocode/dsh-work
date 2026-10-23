@@ -506,8 +506,8 @@
       },
       "post": {
         "operationId": "createTeamWorkspace",
-        "summary": "创建团队工作空间（项目空间 / 群组）；创建者成为负责人，所选 Agent 在同一事务中加入",
-        "description": "方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员。agentIds 为创建时加入的 Agent（1～10 个，去重）；任一 Agent 不能加入（未发布、未开放加入、对创建者不可见、依赖失效）则整个创建失败，不留下没有 Agent 的空间。省略 agentIds 的旧调用按平台默认 Agent 加入，同样失败即不创建。",
+        "summary": "创建团队工作空间（项目空间 / 群组）；创建者成为负责人，所选 Agent 与同事在同一事务中加入",
+        "description": "方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员。agentIds 为创建时加入的 Agent（1～10 个，去重）；任一 Agent 不能加入（未发布、未开放加入、对创建者不可见、依赖失效）则整个创建失败，不留下没有 Agent 的空间。省略 agentIds 的旧调用按平台默认 Agent 加入，同样失败即不创建。memberUserIds 为一并加入的同事（角色为成员，最多 50 位，去重，不能包含创建者本人），口径与添加成员相同（在职、业务员工、有员工工作台权限），任一不可加入则整个创建失败；客户端应先调用 POST /workspaces/disclosure-impact 预览数据范围影响。",
         "requestBody": {
           "required": true,
           "content": {
@@ -529,6 +529,12 @@
                     "minItems": 1,
                     "maxItems": 10,
                     "description": "创建时加入的 Agent ID；省略时为平台默认 Agent。"
+                  },
+                  "memberUserIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 50,
+                    "description": "创建时一并加入的同事（用户 ID），角色为成员；省略时只有创建者。"
                   }
                 },
                 "required": [
@@ -552,6 +558,42 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/workspaces/disclosure-impact": {
+      "post": {
+        "operationId": "previewNewSpaceDisclosureImpact",
+        "summary": "新建项目空间前预览：加入所选同事后，所选 Agent 会失去哪些可交付数据范围（只读）",
+        "description": "与 GET /workspaces/{workspaceId}/agent-members/disclosure-impact 同一口径：比较只有创建者时与加上所选同事后各 Agent 可交付的数据范围（成员共同数据范围 ∩ Agent 授权）。只对创建者能加入的 Agent 给出预览，不能加入的 Agent 按创建时的错误返回。不改变任何状态。envelope.data 为 [{ agentId, name, lostDataScopes }]，没有影响时为空数组。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "agentIds": { "type": "array", "items": { "type": "string" }, "maxItems": 10 },
+                  "memberUserIds": { "type": "array", "items": { "type": "string" }, "maxItems": 50 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/member-candidates": {
+      "get": {
+        "operationId": "listNewSpaceMemberCandidates",
+        "summary": "搜索新建项目空间（群组）时可一并加入的企业业务员工",
+        "description": "与 GET /workspaces/{workspaceId}/member-candidates 同一口径（在职、业务员工、有员工工作台权限，仅返回姓名与部门），不含调用者本人。任何员工工作台用户都可新建空间，因此只要求工作台身份。envelope.data 为 MemberCandidatePage。",
+        "parameters": [
+          { "name": "query", "in": "query", "schema": { "type": "string" }, "description": "按姓名模糊搜索；省略时按目录顺序返回。" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "上一页返回的 nextCursor 游标。" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/workspaces/{workspaceId}/files": {

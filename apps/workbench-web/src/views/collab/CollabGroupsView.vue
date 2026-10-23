@@ -74,7 +74,7 @@ function openChat(id: string, info = false) {
   void router.push({ name: 'collab-group-chat', params: { id }, query: info ? { info: '1' } : {} })
 }
 function onCreated(workspace: Workspace) {
-  void router.push({ name: 'collab-group-chat', params: { id: workspace.id }, query: { info: '1', invite: '1' } })
+  void router.push({ name: 'collab-group-chat', params: { id: workspace.id }, query: { info: '1' } })
 }
 
 /** 详情：每个分项独立加载，失败只影响自己；选中项切换后丢弃迟到的响应。 */

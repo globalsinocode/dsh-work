@@ -317,7 +317,7 @@ test('MODE-E2E-12: creating a group or project space requires choosing an AI col
   const agent = dialog.getByRole('checkbox', { name: /dsh-work Assistant/ })
   await expect(agent).toBeChecked()
   // Element Plus 复选框的原生 input 不可见，点击其可见标签切换。
-  await dialog.getByText('dsh-work Assistant', { exact: true }).click()
+  await dialog.getByRole('region', { name: 'AI 同事' }).getByText('dsh-work Assistant', { exact: true }).click()
   await expect(agent).not.toBeChecked()
   await expect(dialog.getByText('至少选择一位 AI 同事')).toBeVisible()
   await expect(submit).toBeDisabled()
@@ -328,7 +328,41 @@ test('MODE-E2E-12: creating a group or project space requires choosing an AI col
   await page.goto('/workspaces')
   await page.getByRole('button', { name: '创建项目空间' }).click()
   const workDialog = page.getByRole('dialog', { name: '创建项目空间' })
-  await expect(workDialog.getByRole('group', { name: '选择 AI 同事' })).toBeVisible()
+  await expect(workDialog.getByRole('region', { name: 'AI 同事' })).toBeVisible()
+})
+
+test('MODE-E2E-14: the new-group picker selects AI colleagues and colleagues together', async ({ page }) => {
+  await switchToCollab(page)
+  await page.goto('/c/groups')
+  await page.getByRole('button', { name: '新建群组' }).click()
+  const dialog = page.getByRole('dialog', { name: '新建群组' })
+  const agents = dialog.getByRole('region', { name: 'AI 同事' })
+  const people = dialog.getByRole('region', { name: '同事' })
+  const selected = dialog.getByRole('complementary', { name: '已选成员' })
+  await expect(agents.getByRole('checkbox', { name: /dsh-work Assistant/ })).toBeChecked()
+  // 同事候选不含本人（冒烟身份林岚）。
+  await expect(people.getByText('周衡', { exact: true })).toBeVisible()
+  await expect(people.getByText('林岚', { exact: true })).toHaveCount(0)
+  await expect(selected.getByRole('heading', { name: '已选 1' })).toBeVisible()
+
+  // 栏标题全选当前显示的同事；“已选”逐个移除。
+  // Element Plus 复选框的原生 input 不可见，点击其可见标签切换。
+  await people.getByLabel('全选同事', { exact: true }).click()
+  await expect(selected.getByRole('heading', { name: '已选 4' })).toBeVisible()
+  await selected.getByRole('button', { name: '移除 赵宁' }).click()
+  await expect(people.getByRole('checkbox', { name: /赵宁/ })).not.toBeChecked()
+  await expect(selected.getByRole('heading', { name: '已选 3' })).toBeVisible()
+
+  // 搜索同时过滤两栏，已选不受影响。
+  await dialog.getByRole('textbox', { name: '搜索 AI 同事或同事' }).fill('王')
+  await expect(agents.getByText('没有匹配的 AI 同事')).toBeVisible()
+  await expect(people.getByText('周衡', { exact: true })).toHaveCount(0)
+  await expect(people.getByText('王呈', { exact: true })).toBeVisible()
+  await expect(people.getByRole('checkbox', { name: /王呈/ })).toBeChecked()
+  await expect(selected.getByText('dsh-work Assistant')).toBeVisible()
+
+  await dialog.getByLabel('群组名称').fill('MODE-14 新群组')
+  await expect(dialog.getByRole('button', { name: '创建群组' })).toBeEnabled()
 })
 
 test('MODE-E2E-13: unread counts show in the chat list and clear when the conversation is opened', async ({ page }) => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import CollabGroupHeader from './CollabGroupHeader.vue'
@@ -53,13 +53,6 @@ function useFile(file: WorkspaceFile) {
   pendingFile.value = file
   selectTab('chat')
 }
-
-// 新建群组后直接邀请同事（复用管理成员与数据范围影响预览）。
-onMounted(() => {
-  if (route.query.invite !== '1') return
-  memberDialogRequest.value += 1
-  void router.replace({ query: withQuery({ invite: undefined }) })
-})
 </script>
 
 <template>

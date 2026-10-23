@@ -26,6 +26,8 @@ import { createThrowawayDatabase, type ThrowawayDatabase } from '../infrastructu
 import { Router } from './router.ts'
 import { registerContentRoutes } from './workbench/content-routes.ts'
 import { registerWorkspaceAgentMemberRoutes } from './workbench/workspace-agent-member-routes.ts'
+import { registerWorkspaceMemberRoutes } from './workbench/workspace-member-routes.ts'
+import { PostgresWorkspaceMemberService } from '../modules/workbench/application/postgres-workspace-member-service.ts'
 import { registerConversationRoutes } from './workbench/conversation-routes.ts'
 import { LocalObjectStorage } from '../infrastructure/storage/local-object-storage.ts'
 
@@ -97,6 +99,7 @@ before(async () => {
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerContentRoutes(router, content, authorization, agentMembers)
   registerWorkspaceAgentMemberRoutes(router, agentMembers, authorization)
+  registerWorkspaceMemberRoutes(router, new PostgresWorkspaceMemberService(database, authorization), authorization)
   registerConversationRoutes(router, conversations, orchestration, new PostgresRunRepository(database), agents, authorization, undefined, undefined, agentMembers)
   server = createServer((request, response) => void router.handle(request, response))
   await new Promise<void>((resolve, reject) => {
@@ -1359,6 +1362,99 @@ test('新建项目空间加入所选 Agent；未选择或不可加入的 Agent �
   const last = await api('DELETE', `/api/workbench/v1/workspaces/${workspace.id}/agent-members/${rows[0]!.id}`, { as: ownerId })
   assert.equal(last.status, 409)
   assert.match(errorMessage(last), /至少需要保留一个 Agent 成员/)
+})
+
+test('新建项目空间时一并加入同事：候选不含本人、创建前预览数据范围影响、同事与 Agent 同一事务', async () => {
+  const ownerId = 'user-create-people-owner'
+  const wideId = 'user-create-people-wide'
+  const narrowId = 'user-create-people-narrow'
+  const disabledId = 'user-create-people-disabled'
+  const scopeA = 'scope-create-people-a'
+  const scopeB = 'scope-create-people-b'
+  await createDirectoryUser(ownerId, '建群人员负责人')
+  await createDirectoryUser(wideId, '建群人员宽范围')
+  await createDirectoryUser(narrowId, '建群人员窄范围')
+  await createDirectoryUser(disabledId, '建群人员已停用')
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${disabledId}`
+  for (const [userId, scopes] of [[ownerId, [scopeA, scopeB]], [wideId, [scopeA, scopeB]], [narrowId, [scopeA]]] as const) {
+    for (const scope of scopes) {
+      await database`
+        insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+        values (${`grant-${userId}-${scope}`}, ${tenantId}, 'user', ${userId}, 'capability', ${scope})
+      `
+    }
+  }
+  const agent = await createPublishedAgent({ id: 'agent-create-people', name: '建群范围Agent' })
+  for (const scope of [scopeA, scopeB]) {
+    await database`
+      insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+      values (${tenantId}, ${`principal-agent-${agent.id}`}, ${scope})
+    `
+  }
+
+  // 候选：工作台级，不含本人与停用员工。
+  const candidates = await api('GET', '/api/workbench/v1/member-candidates?query=建群人员', { as: ownerId })
+  assert.equal(candidates.status, 200)
+  assert.deepEqual(
+    (candidates.body.data as { items: Array<{ id: string }> }).items.map(item => item.id).sort(),
+    [narrowId, wideId].sort(),
+  )
+
+  // 预览：窄范围同事会让 Agent 失去 scopeB；宽范围同事没有影响；不改变状态。
+  const impact = await api('POST', '/api/workbench/v1/workspaces/disclosure-impact', {
+    as: ownerId, body: { agentIds: [agent.id], memberUserIds: [wideId, narrowId] },
+  })
+  assert.equal(impact.status, 200)
+  assert.deepEqual(impact.body.data, [{ agentId: agent.id, name: '建群范围Agent', lostDataScopes: [scopeB] }])
+  const noImpact = await api('POST', '/api/workbench/v1/workspaces/disclosure-impact', {
+    as: ownerId, body: { agentIds: [agent.id], memberUserIds: [wideId] },
+  })
+  assert.deepEqual(noImpact.body.data, [])
+  const hiddenAgent = await api('POST', '/api/workbench/v1/workspaces/disclosure-impact', {
+    as: ownerId, body: { agentIds: ['agent-missing'], memberUserIds: [narrowId] },
+  })
+  assert.ok(hiddenAgent.status >= 400 && hiddenAgent.status < 500, '不能加入的 Agent 不给出预览')
+
+  // 任一同事不可加入（停用 / 本人）则整个创建失败，不留下空间。
+  const withDisabled = await api('POST', '/api/workbench/v1/workspaces', {
+    as: ownerId, body: { name: '含停用同事', agentIds: [agent.id], memberUserIds: [wideId, disabledId] },
+  })
+  assert.equal(withDisabled.status, 409)
+  assert.match(errorMessage(withDisabled), /建群人员已停用/)
+  const withSelf = await api('POST', '/api/workbench/v1/workspaces', {
+    as: ownerId, body: { name: '含本人', agentIds: [agent.id], memberUserIds: [ownerId] },
+  })
+  assert.equal(withSelf.status, 422)
+  const invalid = await api('POST', '/api/workbench/v1/workspaces', {
+    as: ownerId, body: { name: '格式错误', agentIds: [agent.id], memberUserIds: 'user' },
+  })
+  assert.equal(invalid.status, 422)
+  const [none] = await database<{ total: number }[]>`
+    select count(*)::int as total from workspaces where tenant_id = ${tenantId} and created_by = ${ownerId} and workspace_type = 'team'
+  `
+  assert.equal(none?.total, 0)
+
+  const created = await api('POST', '/api/workbench/v1/workspaces', {
+    as: ownerId, body: { name: '建群带同事', agentIds: [agent.id], memberUserIds: [wideId, narrowId, wideId] },
+  })
+  assert.equal(created.status, 201)
+  const workspaceId = (created.body.data as { id: string }).id
+  const members = await database<{ userId: string; role: string; addedBy: string }[]>`
+    select user_id as "userId", member_role as role, added_by as "addedBy" from workspace_members
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} order by user_id`
+  assert.deepEqual([...members], [
+    { userId: ownerId, role: 'owner', addedBy: ownerId },
+    { userId: narrowId, role: 'member', addedBy: ownerId },
+    { userId: wideId, role: 'member', addedBy: ownerId },
+  ].sort((a, b) => a.userId.localeCompare(b.userId)))
+  assert.deepEqual((await agentMemberRows(workspaceId)).map(row => row.agentId), [agent.id])
+  const activity = await database<{ objectId: string }[]>`
+    select object_id as "objectId" from workspace_activity_events
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and kind = 'member_added' order by object_id`
+  assert.deepEqual(activity.map(row => row.objectId), [narrowId, wideId].sort())
+  // 加入的同事可以读取该空间。
+  const roster = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/members`, { as: narrowId })
+  assert.equal(roster.status, 200)
 })
 
 // ---------------------------------------------------------------------------

@@ -162,7 +162,7 @@ describe('CollabTargetList', () => {
     second.unmount()
   })
 
-  it('creates a group from the menu and opens it with the invite prompt', async () => {
+  it('creates a group from the menu and opens it with the group info', async () => {
     const wrapper = mountList()
     await flushPromises()
     expect(wrapper.get('.menu').text()).toContain('发起对话')
@@ -174,7 +174,7 @@ describe('CollabTargetList', () => {
     expect(wrapper.get('.create-dialog').attributes('data-mode')).toBe('collab')
     wrapper.findComponent({ name: 'CreateProjectSpaceDialog' }).vm.$emit('created', { id: 'ws-new' })
     await flushPromises()
-    expect(router.push).toHaveBeenCalledWith({ name: 'collab-group-chat', params: { id: 'ws-new' }, query: { info: '1', invite: '1' } })
+    expect(router.push).toHaveBeenCalledWith({ name: 'collab-group-chat', params: { id: 'ws-new' }, query: { info: '1' } })
     wrapper.unmount()
   })
 })

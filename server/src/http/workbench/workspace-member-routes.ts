@@ -34,6 +34,17 @@ export function registerWorkspaceMemberRoutes(
   members: PostgresWorkspaceMemberService,
   authorization: PostgresAuthorizationService,
 ) {
+  // 新建项目空间（群组）时可一并加入的同事（不含本人）。任何员工工作台用户都可建空间，因此
+  // 只要求工作台身份；口径与空间内候选一致。
+  router.get(`${basePath}/member-candidates`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const query = (context.url.searchParams.get('query') ?? '').trim()
+    const limit = parseLimit(context.url.searchParams.get('limit'))
+    const cursor = context.url.searchParams.get('cursor') ?? undefined
+    return envelope('workbench', await members.listNewSpaceMemberCandidates(identity.userId, { query, cursor, limit }), 'postgres')
+  })
+
   router.get(`${basePath}/workspaces/:workspaceId/member-candidates`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''

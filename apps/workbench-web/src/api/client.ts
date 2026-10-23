@@ -1,4 +1,5 @@
 import type {
+  NewSpaceDisclosureImpact,
   PersonalFile,
   PersonalFileQuery,
   UserSessionSummary,
@@ -234,10 +235,25 @@ export const workbenchApi = {
     { method: 'GET' },
   ),
   /** 新建项目空间（群组）：agentIds 为创建时加入的 Agent 成员，至少一个（功能规则 3.3、方案 12.8）。 */
-  createWorkspace: (input: { name: string; description: string; agentIds: string[] }) => request<Workspace>('/workspaces', {
+  createWorkspace: (input: { name: string; description: string; agentIds: string[]; memberUserIds?: string[] }) => request<Workspace>('/workspaces', {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  /** 新建项目空间（群组）前预览：加入所选同事后，所选 Agent 会失去哪些可交付数据范围（只读）。 */
+  previewNewSpaceDisclosureImpact: (input: { agentIds: string[]; memberUserIds: string[] }) =>
+    request<NewSpaceDisclosureImpact[]>('/workspaces/disclosure-impact', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** 新建项目空间（群组）时可一并加入的同事（不含本人）。 */
+  listNewSpaceMemberCandidates: (input: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (input.query) search.set('query', input.query)
+    if (input.cursor) search.set('cursor', input.cursor)
+    if (input.limit !== undefined) search.set('limit', String(input.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return request<MemberCandidatePage>(`/member-candidates${suffix}`, { method: 'GET' })
+  },
   /** 团队空间名称/说明保存（仅负责人；说明传 `null` 显式清空）。 */
   updateWorkspace: (workspaceId: string, input: WorkspaceUpdateInput) =>
     request<Workspace>(`/workspaces/${encodeURIComponent(workspaceId)}`, {

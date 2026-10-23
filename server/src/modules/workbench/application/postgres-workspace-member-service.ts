@@ -83,6 +83,24 @@ export class PostgresWorkspaceMemberService {
     input: { query?: string; cursor?: string; limit?: number },
   ): Promise<MemberCandidatePage> {
     await this.assertTeamWorkspace(workspaceId)
+    return this.queryMemberCandidates({ workspaceId }, input)
+  }
+
+  /**
+   * 新建项目空间（群组）时可一并加入的同事：与空间内候选同一口径（在职、业务员工、有员工工作台
+   * 权限），排除创建人本人（创建人自动成为负责人）。
+   */
+  async listNewSpaceMemberCandidates(
+    actorUserId: string,
+    input: { query?: string; cursor?: string; limit?: number },
+  ): Promise<MemberCandidatePage> {
+    return this.queryMemberCandidates({ excludeUserId: actorUserId }, input)
+  }
+
+  private async queryMemberCandidates(
+    scope: { workspaceId?: string; excludeUserId?: string },
+    input: { query?: string; cursor?: string; limit?: number },
+  ): Promise<MemberCandidatePage> {
     const limit = Math.min(Math.max(input.limit ?? 20, 1), 100)
     const cursor = input.cursor ? decodeCandidateCursor(input.cursor) : null
     const pattern = input.query?.trim()
@@ -102,12 +120,17 @@ export class PostgresWorkspaceMemberService {
          and u.business_user = true
          and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
          and exists (${this.database.unsafe(workbenchAccessPredicate)})
-         and not exists (
+         and ${scope.workspaceId === undefined
+           ? this.database`true`
+           : this.database`not exists (
            select 1 from workspace_members wm
             where wm.tenant_id = u.tenant_id
-              and wm.workspace_id = ${workspaceId}
+              and wm.workspace_id = ${scope.workspaceId}
               and wm.user_id = u.id
-         )
+         )`}
+         and ${scope.excludeUserId === undefined
+           ? this.database`true`
+           : this.database`u.id <> ${scope.excludeUserId}`}
          and ${pattern === null
            ? this.database`true`
            : this.database`u.display_name ilike ${pattern} escape '\\'`}
@@ -583,21 +606,7 @@ export class PostgresWorkspaceMemberService {
    * employees are equally addable.
    */
   private async assertAddableEmployee(userId: string) {
-    const [row] = await this.database<{ reason: string | null }[]>`
-      select case
-        when u.status <> 'active' then 'disabled'
-        when not u.business_user then 'directory'
-        when not exists (${this.database.unsafe(workbenchAccessPredicate)}) then 'no_access'
-        else null
-      end as reason
-        from users u
-       where u.tenant_id = ${tenantId} and u.id = ${userId}
-         and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
-    `
-    if (!row) throw memberTargetNotFound('目标员工不存在')
-    if (row.reason === 'disabled') throw workspaceStateConflict('该员工已停用，不能添加为成员')
-    if (row.reason === 'directory') throw workspaceStateConflict('该员工不属于业务员工目录，不能添加为成员')
-    if (row.reason === 'no_access') throw workspaceStateConflict('该员工不具备员工工作台使用权限，不能添加为成员')
+    await assertAddableEmployees(this.database, [userId])
   }
 
   private async memberRoleOf(
@@ -730,6 +739,38 @@ const workbenchAccessPredicate = /* sql */ `
      and r.status = 'active'
      and r.permissions ? 'workbench:use'
 `
+
+/**
+ * 员工能否被加入团队空间：在职、属于业务员工目录、具备员工工作台权限。添加成员与新建空间时一并
+ * 加入同事共用；任一不满足即抛出，调用方据此整体失败。
+ */
+export async function assertAddableEmployees(
+  executor: DatabaseClient | DatabaseTransaction,
+  userIds: string[],
+) {
+  if (!userIds.length) return
+  const rows = await executor<{ id: string; displayName: string; reason: string | null }[]>`
+    select u.id, u.display_name as "displayName", case
+      when u.status <> 'active' then 'disabled'
+      when not u.business_user then 'directory'
+      when not exists (${executor.unsafe(workbenchAccessPredicate)}) then 'no_access'
+      else null
+    end as reason
+      from users u
+     where u.tenant_id = ${tenantId} and u.id in ${executor(userIds)}
+       and exists (select 1 from tenants t where t.id = u.tenant_id and t.status = 'active')
+  `
+  const found = new Map(rows.map(row => [row.id, row]))
+  for (const userId of userIds) {
+    const row = found.get(userId)
+    // 单个添加保持原有文案；批量时带上员工姓名，便于用户定位是哪一位。
+    const who = userIds.length > 1 && row ? `员工“${row.displayName}”` : '该员工'
+    if (!row) throw memberTargetNotFound('目标员工不存在')
+    if (row.reason === 'disabled') throw workspaceStateConflict(`${who}已停用，不能添加为成员`)
+    if (row.reason === 'directory') throw workspaceStateConflict(`${who}不属于业务员工目录，不能添加为成员`)
+    if (row.reason === 'no_access') throw workspaceStateConflict(`${who}不具备员工工作台使用权限，不能添加为成员`)
+  }
+}
 
 export function isMemberRole(value: unknown): value is MemberRole {
   return typeof value === 'string' && memberRoles.includes(value as MemberRole)

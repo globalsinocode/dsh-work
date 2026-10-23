@@ -107,6 +107,20 @@ export function registerSmokeProjectRoutes(router: Router) {
     allowedActions: ['edit', 'remove', 'set_status', 'complete'],
   })
 
+  // 新建群组 / 项目空间的同事候选（不含本人 U00001）：只用于验证成员选择器展示与搜索，
+  // 冒烟服务不实现创建（MODE-E2E-14 的创建与事务由服务端集成测试覆盖）。
+  const newSpaceCandidates = [
+    { id: 'U00002', displayName: '周衡', department: '计划部' },
+    { id: 'U00003', displayName: '赵宁', department: '采购部' },
+    { id: 'U00004', displayName: '王呈', department: '仓储物流部' },
+  ]
+  router.get(`${basePath}/member-candidates`, (_request, context) => {
+    requireRequestIdentity(context, 'workbench')
+    const query = (context.url.searchParams.get('query') ?? '').trim()
+    const items = newSpaceCandidates.filter(item => !query || item.displayName.includes(query))
+    return envelope('workbench', { items, nextCursor: null })
+  })
+
   router.get(`${basePath}/workspaces/:workspaceId/members`, (_request, context) => {
     requireRequestIdentity(context, 'workbench')
     return requireSmokeSpace(context.params['workspaceId'])

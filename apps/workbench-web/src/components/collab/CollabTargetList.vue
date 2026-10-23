@@ -69,7 +69,7 @@ function onMenu(command: string | number | object) {
 
 function onGroupCreated(workspace: Workspace) {
   void store.refresh()
-  void router.push({ name: 'collab-group-chat', params: { id: workspace.id }, query: { info: '1', invite: '1' } })
+  void router.push({ name: 'collab-group-chat', params: { id: workspace.id }, query: { info: '1' } })
 }
 
 function onPick(agentId: string) {

@@ -62,12 +62,14 @@ export const useContentStore = defineStore('workbench-content', () => {
     name: string
     description: string
     agentIds: string[]
+    memberUserIds?: string[]
   }) {
     const current = generation
     const workspace = await workbenchApi.createWorkspace({
       name: input.name,
       description: input.description || '团队共享的对话、文件与成果协作空间。',
       agentIds: input.agentIds,
+      ...(input.memberUserIds?.length ? { memberUserIds: input.memberUserIds } : {}),
     })
     if (current !== generation) throw new Error('账号已切换，请重新操作')
     workspaces.value.unshift(workspace)
