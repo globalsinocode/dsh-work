@@ -19,7 +19,6 @@ import {
   PieChart,
   SwitchButton,
   Tickets,
-  Tools,
   UserFilled,
 } from '@element-plus/icons-vue'
 
@@ -70,7 +69,6 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     items: [
       { label: 'Agent 管理', path: '/agents', icon: Grid, permission: 'admin' },
       { label: 'Skill 管理', path: '/skills', icon: Collection, permission: 'admin' },
-      { label: 'DSH 工具管理', path: '/tools', icon: Tools, permission: 'admin' },
       { label: 'MCP 连接器', path: '/connectors', icon: Connection, permission: 'admin' },
       { label: '经验迭代', path: '/experience-iterations', icon: Notebook, permission: 'admin' },
     ],
@@ -94,7 +92,6 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
         requiresIdentityAdministration: true,
       },
       { label: '工作空间', path: '/workspaces', icon: FolderOpened, permission: 'admin' },
-      { label: '工具权限', path: '/permissions', icon: Key, permission: 'admin' },
     ],
   },
   {

@@ -1062,85 +1062,6 @@
         }
       }
     },
-    "/tools": {
-      "get": {
-        "operationId": "listTools",
-        "summary": "查询已同步的平台工具及其平台准入状态",
-        "responses": {
-          "200": {
-            "description": "工具列表。授权判断使用 allowedRoleIds，allowedRoles 仅为展示名称。",
-            "content": { "application/json": { "schema": {
-              "type": "object", "required": ["data"], "properties": {
-                "data": { "type": "array", "items": { "$ref": "#/components/schemas/ToolDefinition" } }
-              }
-            } } }
-          }
-        }
-      },
-      "post": {
-        "operationId": "addTool",
-        "summary": "从当前 DSH Profile 的已加载工具中添加平台支持项并配置初始权限",
-        "deprecated": true,
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/tools/catalog": {
-      "get": {
-        "operationId": "listToolCatalog",
-        "summary": "查询当前 DSH Profile 已加载工具及其平台安装和兼容状态",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      }
-    },
-    "/tools/sync": {
-      "post": {
-        "operationId": "syncDshTools",
-        "summary": "发现当前 DSH Profile 的全部普通内置工具并同步到平台目录；未准入工具保持不可执行",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "503": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/tools/status": {
-      "patch": {
-        "operationId": "setToolStatus",
-        "summary": "启用或停用平台预置 Tool；连接器异常时禁止启用",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
-    "/tools/permissions": {
-      "patch": {
-        "operationId": "updateToolPermissions",
-        "summary": "更新 Tool 授权角色、数据范围和审批策略",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          }
-        }
-      }
-    },
     "/connectors": {
       "get": {
         "operationId": "listMcpConnectors",
@@ -1155,7 +1076,7 @@
     "/connectors/mcp": {
       "post": {
         "operationId": "registerMcpConnector",
-        "summary": "重新执行连通与 Tool 发现后登记并自动生效 Streamable HTTP MCP Server；Bearer Token 加密入库且不回显；租户最多启用 20 个",
+        "summary": "重新执行连通与 Tool 发现后登记 Streamable HTTP MCP Server，登记时发现的 Tool 即为生效清单；Bearer Token 加密入库且不回显",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" },
@@ -1211,7 +1132,7 @@
     "/connectors/check": {
       "post": {
         "operationId": "checkConnector",
-        "summary": "检查外部 MCP Connector，通过 DSH 发现 Tool 并自动生效当前能力摘要；恢复健康时校验 20 个容量上限",
+        "summary": "检查外部 MCP Connector，通过 DSH 重新发现 Tool：名称与输入 Schema 未变的 Tool 继续生效（描述随之更新），远端删除的 Tool 下线，新增或 Schema 变化的 Tool 进入待确认",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1220,10 +1141,35 @@
         }
       }
     },
+    "/connectors/mcp/capabilities/approve": {
+      "post": {
+        "operationId": "approveMcpCapabilities",
+        "summary": "把当前发现清单整体确认为 MCP Connector 的生效清单；capabilityDigest 须等于当前发现摘要，否则返回 409 要求刷新",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["connectorId", "capabilityDigest"],
+                "properties": {
+                  "connectorId": { "type": "string" },
+                  "capabilityDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/connectors/mcp/status": {
       "patch": {
         "operationId": "setMcpConnectorStatus",
-        "summary": "启用或停用 MCP Connector；重新启用要求能力摘要已成功同步且未超过 20 个容量上限",
+        "summary": "启用或停用 MCP Connector；Bearer 连接器重新启用前须已完成加密凭据录入",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
           "409": { "$ref": "#/components/responses/Error" }
@@ -1241,25 +1187,6 @@
         }
       }
     },
-    "/runtimes/dsh-tool-connector": {
-      "get": {
-        "operationId": "getDshRuntimeToolConnector",
-        "summary": "查询 DSH Runtime 内置工具连接、目录摘要和 Binding 状态",
-        "responses": {
-          "200": { "$ref": "#/components/responses/Ok" }
-        }
-      }
-    },
-    "/runtimes/dsh-tool-connector/check": {
-      "post": {
-        "operationId": "checkDshRuntimeToolConnector",
-        "summary": "从 Runtime 运维入口检查 DSH 内置工具连接并刷新目录状态",
-        "responses": {
-          "200": { "$ref": "#/components/responses/Ok" },
-          "403": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
     "/runtimes/check": {
       "post": {
         "operationId": "checkRuntime",
@@ -1271,6 +1198,15 @@
           "403": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/runtimes/builtin-tools": {
+      "get": {
+        "operationId": "getBuiltinTools",
+        "summary": "只读查看内置工具注册表、Runtime 当前停用清单与启动时的 DSH 工具目录比对结果；内置工具由代码管理，没有写接口",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
         }
       }
     },
@@ -1286,7 +1222,7 @@
       },
       "patch": {
         "operationId": "updateRuntimeConfiguration",
-        "summary": "更新并发、Attempt 超时与接收任务/排空/停用状态",
+        "summary": "更新并发、Attempt 超时、接收任务/排空/停用状态与内置工具紧急停用清单（disabledTools，省略时保留当前清单）",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -2443,20 +2379,6 @@
         }
       }
     },
-    "/tools/bindings": {
-      "get": {
-        "operationId": "listToolBindings",
-        "summary": "查询平台工具绑定修订；Agent 版本与 Attempt 固定引用这些修订",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Ok"
-          },
-          "403": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/tasks": {
       "get": {
         "operationId": "listTaskSummaries",
@@ -2774,7 +2696,6 @@
           "maxToolCalls",
           "timeoutSeconds",
           "skills",
-          "tools",
           "changeSummary"
         ],
         "properties": {
@@ -2818,11 +2739,11 @@
           },
           "mcpScope": {
             "type": "object",
-            "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 all。",
+            "description": "Agent Version 的 MCP 使用范围；端点与凭据由 Connector 管理。省略时默认为 none。",
             "required": ["mode", "connectorIds"],
             "additionalProperties": false,
             "properties": {
-              "mode": { "type": "string", "enum": ["all", "selected", "none"] },
+              "mode": { "type": "string", "enum": ["selected", "none"] },
               "connectorIds": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
             }
           },
@@ -2834,13 +2755,9 @@
             },
             "uniqueItems": true
           },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "description": "工具标识@版本"
-            },
-            "uniqueItems": true
+          "webSearchEnabled": {
+            "type": "boolean",
+            "description": "是否允许联网搜索（web_search）；其他内置工具由平台统一装配。编辑时省略则保留当前设置，新建时默认 false。"
           },
           "maxOutputBytes": {
             "type": "integer",

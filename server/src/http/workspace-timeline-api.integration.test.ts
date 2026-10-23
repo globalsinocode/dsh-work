@@ -163,8 +163,8 @@ async function seed() {
     values ('s5d-agent', ${tenantId}, '库存助手', '', '', ${owner}, ${owner}, 'published', null)
   `
   await database`
-    insert into agent_versions (id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, tool_refs, status, created_by)
-    values ('s5d-agent-v1', ${tenantId}, 's5d-agent', '1.0.0', '库存助手', '', '测试', '[]', '[]', 'published', ${owner})
+    insert into agent_versions (id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, status, created_by)
+    values ('s5d-agent-v1', ${tenantId}, 's5d-agent', '1.0.0', '库存助手', '', '测试', '[]', 'published', ${owner})
   `
   await database`update agents set active_version_id = 's5d-agent-v1' where tenant_id = ${tenantId} and id = 's5d-agent'`
   await database`

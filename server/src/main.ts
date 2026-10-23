@@ -74,7 +74,8 @@ import { acquireSkillSource } from './modules/skill/skill-source.ts'
 import { PostgresSkillService } from './modules/skill/postgres-skill-service.ts'
 import { SkillArtifactStore } from './modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
-import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
+import { builtinTools, missingDshBuiltinTools, type BuiltinToolStatus } from './modules/runtime/builtin-tools.ts'
+import { PostgresMcpConnectorService } from './modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
@@ -183,7 +184,7 @@ async function start() {
   const runs = new PostgresRunRepository(database)
   const tasks = new PostgresTaskRepository(database)
   const taskQueries = new PostgresTaskQueryService(database, tasks, runs)
-  const toolServiceRef: { current?: PostgresToolConnectorService } = {}
+  const mcpServiceRef: { current?: PostgresMcpConnectorService } = {}
   const persistentWaitRef: { current?: PostgresPersistentWaitService } = {}
   const controlledMemoryRef: { current?: PostgresControlledMemoryService } = {}
   const dshAdapter: AgentRuntimePort = dshInstallation ? new DshAcpRuntimeAdapter({
@@ -199,17 +200,18 @@ async function start() {
       if (!orchestration) throw new Error('运行授权服务尚未就绪')
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
+    disabledBuiltinTools: async () => (await operations.getRuntimePolicy('runtime-local-01')).disabledTools ?? [],
     resolveMcpConnections: async manifest => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
-      return toolServiceRef.current.resolveMcpRuntimeConnections(manifest)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 服务尚未就绪')
+      return mcpServiceRef.current.resolveRuntimeConnections(manifest)
     },
     recordMcpInvocation: async (manifest, invocation) => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
-      await toolServiceRef.current.recordMcpInvocation(manifest, invocation)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+      await mcpServiceRef.current.recordMcpInvocation(manifest, invocation)
     },
     finalizeMcpInvocationAudit: async manifest => {
-      if (!toolServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
-      await toolServiceRef.current.finalizeMcpInvocationAudit(manifest)
+      if (!mcpServiceRef.current) throw new Error('MCP Connector 审计服务尚未就绪')
+      await mcpServiceRef.current.finalizeMcpInvocationAudit(manifest)
     },
     permissionDecision: async (_request, manifest, context) => {
       if (!persistentWaitRef.current) return 'reject_once'
@@ -275,15 +277,24 @@ async function start() {
         keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
       })
     : undefined
-  const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets)
-  toolServiceRef.current = toolService
-  // Management-plane inventory refresh is best effort: execution capability
-  // failures must not prevent the core API from starting. Administrators can
-  // retry the same full reconciliation from the Tool management page.
-  void toolService.syncToolCatalog({ actor: 'U00008' }).catch(error => {
-    console.warn('DSH tool catalog startup sync skipped:', error)
+  const mcpService = new PostgresMcpConnectorService(database, runtime, operations, credentialSecrets)
+  mcpServiceRef.current = mcpService
+  // 内置工具由代码注册表管理；启动时尽力比对 DSH 当前工具目录，结果只用于 Runtime 详情展示，
+  // 执行能力不可用不阻止核心 API 启动。
+  let builtinCatalog: BuiltinToolStatus['catalog'] = null
+  void runtime.listTools?.().then(tools => {
+    builtinCatalog = { checkedAt: new Date().toISOString(), missingTools: missingDshBuiltinTools(tools.map(tool => tool.id)) }
+    if (builtinCatalog.missingTools.length) console.warn('DSH profile is missing built-in tools:', builtinCatalog.missingTools)
+  }).catch(error => {
+    builtinCatalog = { checkedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }
+    console.warn('DSH built-in tool catalog check skipped:', error)
   })
-  const skills = new PostgresSkillService(database, operations, toolService, skillArtifacts)
+  const builtinToolStatus = async (): Promise<BuiltinToolStatus> => ({
+    tools: builtinTools,
+    disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
+    catalog: builtinCatalog,
+  })
+  const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
   const checkInstallationRuntime = async (references: string[], requiredPackages: string[]) => {
     await runtime.assertAvailable()
@@ -296,7 +307,7 @@ async function start() {
     }
   }
   skills.setPublicationAvailabilityChecker(checkInstallationRuntime)
-  const agents = new PostgresAgentService(database, operations, skills, toolService)
+  const agents = new PostgresAgentService(database, operations, skills, mcpService)
   const knowledge = new PostgresKnowledgeService(database)
   const controlledMemory = new PostgresControlledMemoryService(database, authorization, operations)
   controlledMemoryRef.current = controlledMemory
@@ -326,8 +337,10 @@ async function start() {
     {
       agentMembers: workspaceAgentMembers,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
-      // B-03/I-04：Attempt 固定绑定修订在领取后/桥接调用时复核当前有效性与语义摘要。
-      toolBindings: toolService,
+      // 领取后、恢复前与每次工具调用时复核 MCP 连接仍有效。
+      toolChecks: {
+        assertPinnedConnections: pins => mcpService.assertPinnedConnections(pins),
+      },
       tasks,
       memory: controlledMemory,
       projectTasks: projects,
@@ -344,7 +357,7 @@ async function start() {
   orchestration.setPersistentWaitService(persistentWait)
   persistentWait.start()
   const pythonPackages = (process.env.DSH_WORK_PYTHON_PACKAGES ?? '').split(',').map(value => value.trim()).filter(Boolean)
-  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, toolService, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
+  const installationService: AdminSkillInstallationService = new AdminSkillInstallationService(database, orchestration, authorization, acquireSkillSource, Boolean(pythonRunner), pythonPackages, skillArtifacts, checkInstallationRuntime)
   const assistantService = new AdminAssistantService(database, orchestration, authorization, installationService, skills, agents, operations)
   skills.setPackageTester((userId, skill, prompt) => installationService.testPackage(userId, skill, prompt))
   skills.setPackageTestLifecycle({
@@ -419,15 +432,15 @@ async function start() {
   registerWorkspaceAgentMemberRoutes(router, workspaceAgentMembers, authorization)
   registerProjectRoutes(router, projects, authorization, projectArchive)
   registerOperationsRoutes(router, operations, new PostgresGrantReconciliationService(database, operations))
-  registerAgentRoutes(router, agents, new PostgresAgentAccessService(database, toolService))
-  const agentValidation = new PostgresAgentValidationService(database, agents, skills, toolService, orchestration)
+  registerAgentRoutes(router, agents, new PostgresAgentAccessService(database))
+  const agentValidation = new PostgresAgentValidationService(database, agents, skills, orchestration, mcpService)
   // 启动收敛：重启前尚未取得 Run 的验证案例标为“服务重启中断”，可单独重跑；
   // 已在运行的案例 Run 由重启恢复收敛，读取验证时折叠为同一状态。
   const validationRecovery = await agentValidation.recoverInterruptedValidations()
   if (validationRecovery.interrupted > 0) console.warn('agent validation recovery completed', validationRecovery)
   registerAgentValidationRoutes(router, agents, agentValidation, new PostgresAgentRunHistory(database))
   registerSkillRoutes(router, skills)
-  registerToolRoutes(router, toolService)
+  registerToolRoutes(router, mcpService, builtinToolStatus)
   registerWorkbenchAgentRoutes(router, agents, authorization)
   registerModelGovernanceRoutes(router, new ModelGovernanceService(modelRepository))
 

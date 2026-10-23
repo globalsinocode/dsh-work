@@ -229,6 +229,8 @@ test('MODE-E2E-08: conversation links land on the owning chat, missing ones expl
   await expect(page).toHaveURL(/\/conversations\/session-0991$/)
 
   await chooseMode(page, '协作模式')
+  // 等切换完成再跳转，否则链接仍按工作模式解析。
+  await expect(page).toHaveURL(/\/c\//)
   await page.goto('/conversations/run-does-not-exist')
   await expect(page).toHaveURL(/\/c\/chats$/)
   await expect(page.getByText('对话不存在或你没有访问权限')).toBeVisible()
@@ -325,6 +327,8 @@ test('MODE-E2E-12: creating a group or project space requires choosing an AI col
   await expect(dialog).toBeHidden()
 
   await chooseMode(page, '工作模式')
+  // 偏好保存成功后才切换并离开协作模式地址；先等切换完成，否则随后的跳转仍按协作模式重定向。
+  await expect(page).not.toHaveURL(/\/c\//)
   await page.goto('/workspaces')
   await page.getByRole('button', { name: '创建项目空间' }).click()
   const workDialog = page.getByRole('dialog', { name: '创建项目空间' })

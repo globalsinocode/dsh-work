@@ -53,13 +53,17 @@ function showMcpTools(connector: ConnectorDefinition) {
         <p class="field-help">精确引用已发布版本；Skill 依赖的工具由平台自动装配。</p>
       </el-form-item>
 
+      <el-form-item label="联网搜索">
+        <el-switch v-model="form.webSearchEnabled" :disabled="readonly" active-text="允许联网搜索" aria-label="允许联网搜索" data-testid="agent-web-search-switch" />
+        <p class="field-help">开启后 Agent 可使用 web_search 检索公开网页，查询内容会发送到外部搜索服务。读取与生成工作区文件等基础工具始终由平台提供；需要联网搜索的 Skill 只能在开启后引用。</p>
+      </el-form-item>
+
       <div class="subsection-heading"><strong>MCP 外部连接</strong><span>按整个 Connector 选择，不逐工具配置</span></div>
       <el-radio-group :model-value="form.mcpScope.mode" :disabled="readonly" aria-label="MCP 使用范围" @update:model-value="(value: string | number | boolean | undefined) => setMcpMode(value as AgentMcpScope['mode'])">
-        <el-radio value="all">全部可用 MCP</el-radio>
         <el-radio value="selected">仅使用选定 MCP</el-radio>
         <el-radio value="none">不使用 MCP（默认）</el-radio>
       </el-radio-group>
-      <p class="field-help">MCP 可访问的数据由连接器的上游凭据和服务端决定；平台数据范围不会过滤 MCP 返回的数据。全部模式在每次新运行时使用当前可用连接。</p>
+      <p class="field-help">MCP 可访问的数据由连接器的上游凭据和服务端决定；平台数据范围不会过滤 MCP 返回的数据。只有在此选定的连接器会在该 Agent 运行时加载。</p>
       <div v-if="form.mcpScope.mode === 'selected'" class="mcp-selection">
         <el-form-item label="选择 MCP Connector" :error="editor.errors.mcpScope">
           <el-select :model-value="form.mcpScope.connectorIds" multiple filterable :disabled="readonly" placeholder="至少选择一个 Connector" aria-label="选择 MCP Connector" @update:model-value="setSelectedMcpIds">
@@ -75,7 +79,7 @@ function showMcpTools(connector: ConnectorDefinition) {
         <el-alert v-if="selectedMcpConnectors.some(connector => !connector || connector.status !== 'healthy')" type="warning" :closable="false" title="所选连接器不可用；验证和新任务将被拒绝，请修正选择或恢复连接。" />
       </div>
 
-      <p class="field-help approval-note">需要人工批准的敏感操作由工具策略决定（“工具权限”页），不按 Agent 单独设置；运行中命中时等待管理员在“动作审批”中处理。</p>
+      <p class="field-help approval-note">内置工具不需要逐次审批；工具出现问题时，管理员可在 Runtime 配置中紧急停用。</p>
 
       <details class="limits" :open="limitsOpen || undefined" @toggle="limitsOpen = ($event.target as HTMLDetailsElement).open">
         <summary>运行限制 <small>{{ limitsSummary }}</small></summary>

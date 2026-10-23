@@ -268,9 +268,9 @@ async function seedAgent(agentId: string, versions: Array<{ id: string; version:
   `
   for (const item of versions) {
     await database`
-      insert into agent_versions (id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, tool_refs, status, created_by)
+      insert into agent_versions (id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, status, created_by)
       values (${item.id}, ${tenantId}, ${agentId}, ${item.version}, ${agentId === 's5c-agent-x' ? '库存助手' : '排产助手'},
-              ${item.description}, '测试', '[]', '[]', 'published', ${employeeA})
+              ${item.description}, '测试', '[]', 'published', ${employeeA})
     `
   }
   await database`

@@ -1015,10 +1015,10 @@ async function joinAgent(ws: { id: string; owner: string }, label: string): Prom
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message, example_prompts, system_prompt,
-      max_output_bytes, max_tool_calls, timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      max_output_bytes, max_tool_calls, timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '项目助手', '测试。', '', ${database.json(['测试'] as string[])},
-      '你是项目空间集成测试 Agent，负责按任务说明给出简洁的分析结论。', 65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      '你是项目空间集成测试 Agent，负责按任务说明给出简洁的分析结论。', 65536, 20, 300, ${database.json([] as string[])},
       'published', 'U00008', '测试版本'
     )
   `

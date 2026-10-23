@@ -29,7 +29,7 @@ import {
   type PlatformToolRegistration,
 } from './platform-tool-contract.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
-import { canonicalJson } from './canonical-json.ts'
+import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import { ExecutionCapabilityUnavailableError } from './execution-capabilities.ts'
 import { redactSensitiveText, sanitizeSafeMetadata } from '../../security/safe-observability.ts'
@@ -50,6 +50,7 @@ import type {
 } from './runtime-types.ts'
 import { isAdminRunPurpose } from './runtime-types.ts'
 import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest, stateConflict } from '../../domain/request-errors.ts'
+import { isDshBuiltinTool } from './builtin-tools.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
@@ -121,6 +122,11 @@ export interface DshAcpRuntimeAdapterConfiguration {
   setupTimeoutMs?: number
   /** Supplied by the production composition root; isolated adapter tests may omit it. */
   authorizeExecution?: (manifest: RuntimeManifest) => Promise<void>
+  /**
+   * Runtime 配置当前紧急停用的内置工具。随执行授权探测逐次调用读取：被停用的工具
+   * 只拒绝本次调用并告知模型原因，不终止 Attempt。未配置时视为没有停用。
+   */
+  disabledBuiltinTools?: () => Promise<readonly string[]>
   permissionDecision?: (
     request: AcpPermissionRequest,
     manifest: RuntimeManifest,
@@ -542,7 +548,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
           this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
-          this.configuration.operationLifecycle?.(record.manifest))
+          this.configuration.operationLifecycle?.(record.manifest),
+          this.configuration.disabledBuiltinTools ? async (toolName) => {
+            const disabled = await this.configuration.disabledBuiltinTools!()
+            return isDshBuiltinTool(toolName) && disabled.includes(toolName)
+          } : undefined)
       }
       if (record.cancelCause !== undefined) {
         this.finishFromCancellationCause(record)
@@ -1892,9 +1902,13 @@ export async function prepareMcpProcess(
   })
   await writeFile(patchPath, `${rows.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
   environment['DSH_ALLOWED_MCP_SERVERS_JSON'] = JSON.stringify(connections.map(connection => connection.snapshot.server_name))
+  // 生效清单逐工具下发：策略只放行清单内、且当前加载的输入 Schema 摘要一致的 Tool。
   environment['DSH_APPROVED_MCP_CAPABILITIES_JSON'] = JSON.stringify(connections.flatMap(connection => connection.capabilities ? [{
     serverName: connection.snapshot.server_name,
-    digest: connection.snapshot.capability_digest,
+    tools: connection.capabilities.map(capability => ({
+      name: capability.name,
+      schemaDigest: mcpToolSchemaDigest(capability.inputSchema),
+    })),
   }] : []))
   return { ...base, args: [...base.args, '--patch', patchPath], env: environment }
 }

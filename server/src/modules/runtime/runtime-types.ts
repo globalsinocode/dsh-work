@@ -1,5 +1,4 @@
 import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
-import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
 
 export type RuntimeRunStatus =
   | 'queued'
@@ -95,11 +94,6 @@ export interface RuntimeManifest {
   }
   skills: CapabilityReference[]
   tools: CapabilityReference[]
-  /**
-   * B-03/I-04：本 Attempt 固定的平台工具绑定修订（tool = id@version 平台引用）。
-   * 执行边界复核据此验证绑定仍 active 且语义未漂移；无平台工具的清单省略该字段。
-   */
-  tool_bindings?: ManifestToolBinding[]
   /** PF-03 Attempt snapshot. Grants remain live and are rechecked before and during execution. */
   mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]

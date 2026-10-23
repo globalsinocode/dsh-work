@@ -142,12 +142,12 @@ test('run drill-down is scoped to one run and exposes traceable safe metadata', 
   assert.ok(events.every((event) => event.runId === runId))
   assert.ok(events.some((event) => event.attemptId === attemptId && event.category === 'model'))
   assert.ok(events.some((event) => event.status === 'blocked' && event.category === 'tool'))
-  const [toolAudit] = await database<{ toolVersionId: string }[]>`
-    select tool_version_id as "toolVersionId" from tool_audit_logs
+  const [toolAudit] = await database<{ toolName: string }[]>`
+    select tool_name as "toolName" from tool_audit_logs
      where tenant_id = 'tenant-dsh-work' and run_id = ${runId} and attempt_id = ${attemptId}
      order by occurred_at desc limit 1
   `
-  assert.equal(toolAudit?.toolVersionId, 'tool-version-read-1')
+  assert.equal(toolAudit?.toolName, 'read')
   await assert.rejects(operations.getRunOperations('run-does-not-exist'), /Run 不存在/)
 })
 

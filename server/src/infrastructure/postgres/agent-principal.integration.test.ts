@@ -65,7 +65,6 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: [],
-    tools: [],
     changeSummary: '创建独立身份测试草稿',
     actor,
   })

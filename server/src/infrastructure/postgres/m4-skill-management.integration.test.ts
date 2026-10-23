@@ -7,7 +7,6 @@ import { after, before, test } from 'node:test'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { publishDraftWithSealedTrial } from './test-release-fixture.ts'
@@ -26,10 +25,9 @@ before(async () => {
   // 一次性库：避免共享 dev 库的历史数据累积影响断言。
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_skill_test', maxConnections: 3 })
   database = throwaway.client
-  const tools = new PostgresToolConnectorService(database)
   artifactRoot = await mkdtemp(join(tmpdir(), 'dsh-skill-lifecycle-test-'))
-  skills = new PostgresSkillService(database, undefined, tools, new SkillArtifactStore(new LocalObjectStorage(artifactRoot, { fileMode: 0o400 })))
-  agents = new PostgresAgentService(database, undefined, skills, tools)
+  skills = new PostgresSkillService(database, undefined, new SkillArtifactStore(new LocalObjectStorage(artifactRoot, { fileMode: 0o400 })))
+  agents = new PostgresAgentService(database, undefined, skills)
 })
 
 after(async () => {
@@ -97,7 +95,6 @@ test('Skill lifecycle auto-generates identity, gates publishing, versions and pr
     maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: [`${skillId}@0.1.0`],
-    tools: ['read@1.0.0'],
     changeSummary: '验证 Skill Version 引用',
     actor: 'U00008',
   })

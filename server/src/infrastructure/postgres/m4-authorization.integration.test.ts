@@ -19,7 +19,6 @@ import type {
   RuntimeManifest,
 } from '../../modules/runtime/runtime-types.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
 import type { DatabaseClient } from './database.ts'
@@ -41,9 +40,8 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_auth_test', maxConnections: 5 })
   database = throwaway.client
   authorization = new PostgresAuthorizationService(database)
-  const tools = new PostgresToolConnectorService(database)
-  const skills = new PostgresSkillService(database, undefined, tools)
-  agents = new PostgresAgentService(database, undefined, skills, tools)
+  const skills = new PostgresSkillService(database)
+  agents = new PostgresAgentService(database, undefined, skills)
   conversations = new PostgresConversationRepository(database)
   runtime = new CapturingAuthorizationRuntime()
   orchestration = new RunOrchestrationService(
@@ -60,7 +58,6 @@ before(async () => {
     {
       agentMembers: new PostgresWorkspaceAgentMemberService(database, authorization, agents),
       // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
-      toolBindings: tools,
     },
   )
 })
@@ -157,16 +154,11 @@ test('authorization is fail-closed and compiles the effective identity into Runt
       welcomeMessage: '', examplePrompts: ['测试权限'],
       systemPrompt: '这是一个不会被创建的越权测试 Agent 配置。',
       maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-      skills: [], tools: [], changeSummary: '越权测试', actor: '林岚',
+      skills: [], changeSummary: '越权测试', actor: '林岚',
     }),
     /不是平台管理员/,
   )
 
-  const [readToolBefore] = await database<{ dataScopes: string[] }[]>`
-    select data_scopes as "dataScopes" from tools
-     where tenant_id = 'tenant-dsh-work' and id = 'read'
-  `
-  assert.ok(readToolBefore)
   await database`
     delete from data_scope_grants
      where tenant_id = 'tenant-dsh-work' and id = 'grant-role-employee-workspace'
@@ -176,24 +168,8 @@ test('authorization is fail-closed and compiles the effective identity into Runt
       userId: 'U00001',
       agentVersionId: 'agent-version-dsh-work-assistant-1',
     })
-    assert.ok(!narrowed.dataScopes.includes('workspace:authorized'), '基础文件工具不会补回已撤销的数据范围')
-    // 默认文件工具可在隔离工作区运行；管理员收紧策略后必须复核实际所需范围。
-    await database`
-      update tools set data_scopes = '["workspace:authorized", "enterprise:authorized"]'::jsonb
-       where tenant_id = 'tenant-dsh-work' and id = 'read'
-    `
-    await assert.rejects(
-      authorization.authorizeRuntime({
-        userId: 'U00001',
-        agentVersionId: 'agent-version-dsh-work-assistant-1',
-      }),
-      /工具 read@1\.0\.0要求未授权的数据范围：workspace:authorized/,
-    )
+    assert.ok(!narrowed.dataScopes.includes('workspace:authorized'), '内置工具不会补回已撤销的数据范围')
   } finally {
-    await database`
-      update tools set data_scopes = ${database.json(readToolBefore.dataScopes)}
-       where tenant_id = 'tenant-dsh-work' and id = 'read'
-    `
     await database`
       insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
       values ('grant-role-employee-workspace', 'tenant-dsh-work', 'role', 'role-employee', 'capability', 'workspace:authorized')
@@ -233,10 +209,11 @@ test('authorization is fail-closed and compiles the effective identity into Runt
   })
   assert.ok(!manifest?.data_scopes.includes('domain:supply-chain'))
   assert.deepEqual(manifest?.skills, [{ id: 'skill-document', version: '1.0.0' }])
-  assert.deepEqual(manifest?.tools, [
-    { id: 'read', version: '1.0.0' },
-    { id: 'activate_skill', version: '1.0.0' },
+  // 内置工具由平台统一装配：默认工具 + 激活 Skill；联网搜索默认关闭。
+  assert.deepEqual(manifest?.tools.map(tool => tool.id), [
+    'read', 'glob', 'grep', 'read_image', 'write', 'edit', 'str_replace_editor', 'todo_write', 'activate_skill',
   ])
+  assert.ok(manifest?.tools.every(tool => tool.version === '1.0.0'))
 
   const [audit] = await database<{ blocked: number; success: number }[]>`
     select count(*) filter (where result = 'blocked')::integer as blocked,
@@ -252,13 +229,15 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
   const suffix = randomUUID().slice(0, 8)
   const agentId = `agent-incompatible-default-${suffix}`
   const agentVersionId = `agent-version-incompatible-default-${suffix}`
+  const webSkillId = `skill-web-${suffix}`
+  const webSkillVersionId = `skill-version-web-${suffix}`
   await database.begin(async transaction => {
     await transaction`
       insert into agents (
         id, tenant_id, name, description, welcome_message, owner_user_id, created_by,
         status, active_version_id, updated_at
       ) values (
-        ${agentId}, 'tenant-dsh-work', '无读取能力的候选 Agent', '验证 Skill 与 Agent 的工具兼容选择。', '',
+        ${agentId}, 'tenant-dsh-work', '未开启联网搜索的候选 Agent', '验证 Skill 与 Agent 的工具兼容选择。', '',
         'U00008', 'U00008', 'published', null, now() + interval '1 hour'
       )
     `
@@ -266,15 +245,30 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
         example_prompts, system_prompt, max_output_bytes, max_tool_calls,
-        timeout_seconds, skill_refs, tool_refs, status, created_by, published_at
+        timeout_seconds, skill_refs, status, created_by, published_at
       ) values (
-        ${agentVersionId}, 'tenant-dsh-work', ${agentId}, '1.0.0', '无读取能力的候选 Agent',
-        '验证 Skill 与 Agent 的工具兼容选择。', '', '[]', '只处理不需要工具的文本任务。', 65536, 20, 300, '[]', '[]',
+        ${agentVersionId}, 'tenant-dsh-work', ${agentId}, '1.0.0', '未开启联网搜索的候选 Agent',
+        '验证 Skill 与 Agent 的工具兼容选择。', '', '[]', '只处理不需要工具的文本任务。', 65536, 20, 300, '[]',
         'published', 'U00008', now()
       )
     `
     await transaction`update agents set visible_role_ids = '["role-employee"]' where tenant_id = 'tenant-dsh-work' and id = ${agentId}`
     await transaction`update agents set active_version_id = ${agentVersionId} where id = ${agentId}`
+    await transaction`
+      insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
+      values (${webSkillId}, 'tenant-dsh-work', ${webSkillId}, '联网检索', '研究', '检索公开资料。', 'U00008', 'U00008', 'published')
+    `
+    await transaction`
+      insert into skill_versions (
+        id, tenant_id, skill_id, version, name, category, description, instructions,
+        manifest, tool_refs, test_prompt, status, created_by, published_by, published_at, change_summary
+      ) values (
+        ${webSkillVersionId}, 'tenant-dsh-work', ${webSkillId}, '1.0.0', '联网检索', '研究', '检索公开资料。',
+        '检索公开资料，逐条列出每条结论的来源链接，并整理成要点。', '{}', '["web_search@1.0.0"]', '检索测试',
+        'published', 'U00008', 'U00008', now(), '测试 Skill'
+      )
+    `
+    await transaction`update skills set active_version_id = ${webSkillVersionId} where id = ${webSkillId}`
   })
 
   const listed = await agents.listWorkbenchAgents('U00001')
@@ -284,8 +278,12 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
     'agent-version-dsh-work-assistant-output-1',
   )
   await assert.rejects(
-    agents.resolveWorkbenchAgentVersion(agentId, 'U00001', undefined, ['skill-document@1.0.0']),
-    /必须显式授权所选 Skill 依赖的工具：read@1.0.0/,
+    agents.resolveWorkbenchAgentVersion(agentId, 'U00001', undefined, [`${webSkillId}@1.0.0`]),
+    /未开启联网搜索/,
+  )
+  await assert.rejects(
+    agents.resolveWorkbenchAgentVersion(undefined, 'U00001', undefined, [`${webSkillId}@1.0.0`]),
+    /没有 Agent 可以提供/,
   )
 
   const title = `不兼容 Skill 会话-${suffix}`
@@ -294,10 +292,10 @@ test('personal Skill sessions use a compatible stable default Agent and reject a
       userId: 'U00001',
       title,
       agentVersionId,
-      selectedSkillVersionId: 'skill-version-document-1',
-      selectedSkillReference: 'skill-document@1.0.0',
+      selectedSkillVersionId: webSkillVersionId,
+      selectedSkillReference: `${webSkillId}@1.0.0`,
     }),
-    /必须显式授权所选 Skill 依赖的工具：read@1.0.0/,
+    /未开启联网搜索/,
   )
   const [persisted] = await database<{ count: number }[]>`
     select count(*)::integer as count from sessions
@@ -352,7 +350,7 @@ test('5-T4 管理操作人与会话拒绝类型化：HTTP 仍是 403 permission_
     welcomeMessage: '', examplePrompts: ['测试权限'],
     systemPrompt: '这是一个不会被创建的越权测试 Agent 配置。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-    skills: [], tools: [], changeSummary: '越权测试', actor: '林岚',
+    skills: [], changeSummary: '越权测试', actor: '林岚',
   }).then(() => null, (error: unknown) => error)
   assert.ok(actorDenial instanceof AuthorizationDeniedError, `必须是类型化授权拒绝，实际：${String(actorDenial)}`)
   assert.equal(actorDenial.status, 403)

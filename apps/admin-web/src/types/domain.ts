@@ -193,20 +193,26 @@ export interface RuntimeDefinition {
   checkedAt: string
   healthMessage: string
   capabilities: string[]
+  /** 管理员紧急停用的 DSH 内置工具；新运行不再装配，在途运行下一次调用被拒绝。 */
+  disabledTools: string[]
 }
 
-export interface DshRuntimeToolConnectorStatus {
-  runtimeId: string | null
-  connectorId: string
+/** 内置工具注册表条目：随代码发布，只读展示。 */
+export interface BuiltinTool {
   name: string
-  status: 'healthy' | 'degraded' | 'offline' | 'disabled'
-  endpoint: string
-  toolCount: number
-  activeBindingCount: number
-  latestBindingRevision: number | null
-  catalogDigest: string
-  lastCheckedAt: string
-  lastHealthMessage: string
+  label: string
+  source: 'dsh' | 'platform'
+  effect: 'read' | 'write'
+  risk: 'low' | 'medium'
+  assembly: 'always' | 'agent-opt-in' | 'runtime' | 'purpose'
+  constraints: string[]
+}
+
+export interface BuiltinToolStatus {
+  tools: BuiltinTool[]
+  disabledTools: string[]
+  /** 服务启动时与 DSH 工具目录的比对结果；未比对时为 null。 */
+  catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
 }
 
 export interface UpdateRuntimeConfigurationInput {
@@ -214,6 +220,8 @@ export interface UpdateRuntimeConfigurationInput {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  /** 省略时保留当前停用清单。 */
+  disabledTools?: string[]
 }
 
 export interface SessionDefinition {
@@ -255,7 +263,7 @@ export type PublishStatus = 'draft' | 'published' | 'disabled'
 export type AgentVersionStatus = PublishStatus | 'candidate'
 
 export type AgentMcpScope =
-  | { mode: 'all' | 'none'; connectorIds: [] }
+  | { mode: 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
 
 export interface AgentDefinition {
@@ -281,7 +289,8 @@ export interface AgentDefinition {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
+  webSearchEnabled: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
@@ -311,23 +320,10 @@ export interface AgentAccess {
   dataScopes: string[]
   roleOptions: AgentAccessRoleOption[]
   scopeOptions: string[]
-  /** 当前草稿（无草稿时为当前版本）各项能力所需的角色与数据范围。 */
-  capabilities: AgentCapabilityRequirement[]
   routines: Array<{
     id: string; name: string; status: string; schedule: Partial<AgentRoutineSchedule>
     recipientUserId: string; recipientName: string
   }>
-}
-
-export interface AgentCapabilityRequirement {
-  reference: string
-  name: string
-  source: 'declared' | 'default'
-  /** 任选其一即可。 */
-  requiredRoleIds: string[]
-  requiredScopes: string[]
-  missingRole: boolean
-  missingScopes: string[]
 }
 
 export interface UpdateAgentAccessInput {
@@ -422,7 +418,8 @@ export interface AgentDraftConfiguration {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 编辑时省略则保留当前设置，新建时默认关闭。 */
+  webSearchEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -438,37 +435,11 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   expectedRevision?: string
 }
 
-/** B-03/I-04：发布时固定的平台工具绑定修订引用。 */
-export interface AgentBindingRef {
-  tool: string
-  binding_id: string
-  revision: number
-  digest: string
-}
-
-/** /tools/bindings 返回的绑定修订（不含密钥值）。 */
-export interface ToolBindingRecord {
-  tool: string
-  bindingId: string
-  revision: number
-  digest: string
-  connectorId: string
-  executor: string
-  endpoint: string
-  credentialRef: string | null
-  identityPolicy: string
-  environment: string
-  approvalPolicy: string
-  status: 'active' | 'superseded' | 'revoked'
-  sealedAt: string
-}
-
 export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
   status: AgentVersionStatus
-  bindingRefs?: AgentBindingRef[]
   createdAt: string
   createdBy: string
   publishedAt?: string
@@ -483,7 +454,7 @@ export interface AgentVersionRecord {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   mcpScope?: AgentMcpScope
 }
 
@@ -574,64 +545,6 @@ export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
   skillId: string
 }
 
-export interface ToolDefinition {
-  id: string
-  version?: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: 'low' | 'medium' | 'high'
-  mode: 'read' | 'write'
-  status: 'available' | 'degraded' | 'disabled'
-  admissionStatus?: 'approved' | 'unavailable'
-  admissionMessage?: string
-  inputSchema: string
-  outputSchema: string
-  outputValidation: 'runtime' | 'platform' | 'unavailable'
-  retryPolicy: 'safe' | 'never' | 'verify-first'
-  concurrencyPolicy: 'concurrent' | 'serialized'
-  completionSemantics: 'completed' | 'accepted'
-  timeoutSeconds: number
-  /** Stable authorization identifiers; allowedRoles contains display names only. */
-  allowedRoleIds: string[]
-  allowedRoles: string[]
-  dataScopes: string[]
-  agentRunLocalDefault?: boolean
-  approvalPolicy: 'none' | 'sensitive' | 'always'
-  lastCheckedAt: string
-}
-
-export interface ToolCatalogSyncResult {
-  tools: ToolDefinition[]
-  discoveredCount: number
-  admittedCount: number
-  unavailableCount: number
-  synchronizedAt: string
-}
-
-export interface ToolCatalogCandidate {
-  id: string
-  version: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: ToolDefinition['risk']
-  mode: ToolDefinition['mode']
-  timeoutSeconds: number
-  defaultAllowedRoles: string[]
-  defaultDataScopes: string[]
-  defaultApprovalPolicy: ToolDefinition['approvalPolicy']
-  requirements: string[]
-  outputValidation: ToolDefinition['outputValidation']
-  retryPolicy: ToolDefinition['retryPolicy']
-  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
-  completionSemantics: ToolDefinition['completionSemantics']
-  status: 'ready' | 'installed' | 'unavailable'
-  availabilityMessage: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string
@@ -656,7 +569,10 @@ export interface ConnectorDefinition {
     capabilityDigest: string | null
     approvedDigest: string | null
     capabilityCount: number
+    /** 生效清单：Agent 运行时只能调用这些 Tool。 */
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    /** 已发现但未生效的 Tool（新增或输入 Schema 变化），须管理员确认。 */
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null

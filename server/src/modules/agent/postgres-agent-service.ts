@@ -14,15 +14,14 @@ import type {
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
 import type { PostgresSkillService, RuntimeSkillConfiguration } from '../skill/postgres-skill-service.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
-import { bindingBasisKey, toManifestToolBinding, type ManifestToolBinding, type ResolvedToolBinding } from '../../domain/tool-binding.ts'
-import { DSH_WORK_EXECUTION_TOOL_REFS } from '../../domain/tool-category.ts'
+import type { McpScopePort } from '../tool/postgres-mcp-connector-service.ts'
+import { agentBuiltinToolNames, parseBuiltinToolReference, unavailableSkillTools } from '../runtime/builtin-tools.ts'
 import type { McpConnectionSnapshot } from '../runtime/runtime-types.ts'
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { agentSpecFromConfiguration, assembleAgentInstructions, assertAgentSpecContent, type AgentSpec } from './agent-spec.ts'
 import { normalizeAgentMcpScope } from '../tool/agent-mcp-scope.ts'
-import { RequestError, accessDenied, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
 
@@ -62,7 +61,7 @@ interface AgentRow {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   mcpScope: AgentMcpScope
   updatedAt: Date
 }
@@ -75,7 +74,7 @@ export type AgentFingerprintSource = Omit<Pick<AgentRow,
   | 'systemPrompt'
   | 'examplePrompts'
   | 'skills'
-  | 'tools'
+  | 'webSearchEnabled'
   | 'mcpScope'
   | 'maxOutputBytes'
   | 'maxToolCalls'
@@ -87,7 +86,6 @@ interface VersionRow {
   agentId: string
   agentSpec: AgentSpec | null
   version: string
-  bindingRefs?: ManifestToolBinding[]
   name: string
   description: string
   status: AgentVersionStatus
@@ -104,7 +102,7 @@ interface VersionRow {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   mcpScope: AgentMcpScope
 }
 
@@ -148,10 +146,8 @@ export interface RuntimeAgentSnapshot {
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
-  tools: string[]
+  /** 本 Agent 装配的内置工具名称（注册表默认工具、开启的联网搜索、Skill 需要的 Python 执行）。 */
   runtimeTools: string[]
-  /** B-03/I-04：发布版本固定绑定 + 当前语义解析出的 active 工具绑定修订。 */
-  toolBindings: ResolvedToolBinding[]
   /** PF-03 currently usable tenant MCP Connectors, fixed in the Attempt snapshot. */
   mcpConnections: McpConnectionSnapshot[]
   approvalMode: 'always' | 'risk_based' | 'never'
@@ -180,18 +176,18 @@ export class PostgresAgentService {
   private readonly database: DatabaseClient
   private readonly operations?: AuditTrail
   private readonly skillService?: PostgresSkillService
-  private readonly toolService?: PostgresToolConnectorService
+  private readonly mcp?: McpScopePort
 
   constructor(
     database: DatabaseClient,
     operations?: AuditTrail,
     skillService?: PostgresSkillService,
-    toolService?: PostgresToolConnectorService,
+    mcp?: McpScopePort,
   ) {
     this.database = database
     this.operations = operations
     this.skillService = skillService
-    this.toolService = toolService
+    this.mcp = mcp
   }
 
   async getAgents(): Promise<AgentDefinition[]> {
@@ -238,8 +234,7 @@ export class PostgresAgentService {
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
-             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
-             av.binding_refs as "bindingRefs",
+             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled",
              av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec"
         from agent_versions av
@@ -268,7 +263,7 @@ export class PostgresAgentService {
     const executionRoleIds = unique(input.executionRoleIds ?? [])
     const executionDataScopes = unique(input.executionDataScopes ?? [])
     await this.assertInitialAgentGrants(unique([...visibleRoleIds, ...executionRoleIds]))
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
+    await this.assertCapabilityReferences(configuration.skills, configuration.webSearchEnabled)
     await this.assertMcpConnectorSelection(configuration.mcpScope)
     const versionId = `agent-version-${randomUUID()}`
     const version = '0.1.0'
@@ -289,13 +284,13 @@ export class PostgresAgentService {
         insert into agent_versions (
           id, tenant_id, agent_id, version, name, description, welcome_message,
           example_prompts, system_prompt, max_output_bytes,
-          max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, change_summary
+          max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, mcp_scope, agent_spec, status, created_by, change_summary
         ) values (
           ${versionId}, ${tenantId}, ${configuration.id}, ${version}, ${configuration.name},
           ${configuration.description}, ${configuration.welcomeMessage}, ${transaction.json(configuration.examplePrompts)},
           ${configuration.systemPrompt}, ${configuration.maxOutputBytes},
           ${configuration.maxToolCalls}, ${configuration.timeoutSeconds}, ${transaction.json(configuration.skills)},
-          ${transaction.json(effectiveTools)}, ${transaction.json(asJson(configuration.mcpScope))},
+          ${configuration.webSearchEnabled}, ${transaction.json(asJson(configuration.mcpScope))},
           ${transaction.json(asJson(spec))}, 'draft', ${actor.id}, ${configuration.changeSummary}
         )
       `
@@ -343,12 +338,12 @@ export class PostgresAgentService {
     if (!current) throw notFound(`Agent 不存在：${input.agentId}`)
     // Access (audience, roles, data scopes) is not draft content; it changes only through updateAccess.
     const configuration = normalizeConfiguration(
-      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope },
+      { ...input, id: input.agentId, mcpScope: input.mcpScope ?? current.mcpScope, webSearchEnabled: input.webSearchEnabled ?? current.webSearchEnabled },
       current.owner,
       current.department,
     )
     assertConfiguration(configuration)
-    const effectiveTools = await this.resolveConfiguredToolReferences(configuration.skills, configuration.tools)
+    await this.assertCapabilityReferences(configuration.skills, configuration.webSearchEnabled)
     await this.assertMcpConnectorSelection(configuration.mcpScope)
 
     let draftVersionId = current.draftVersionId
@@ -372,7 +367,7 @@ export class PostgresAgentService {
                  system_prompt = ${configuration.systemPrompt},
                  max_output_bytes = ${configuration.maxOutputBytes}, max_tool_calls = ${configuration.maxToolCalls},
                  timeout_seconds = ${configuration.timeoutSeconds},
-                 skill_refs = ${transaction.json(configuration.skills)}, tool_refs = ${transaction.json(effectiveTools)},
+                 skill_refs = ${transaction.json(configuration.skills)}, web_search_enabled = ${configuration.webSearchEnabled},
                  mcp_scope = ${transaction.json(asJson(configuration.mcpScope))},
                  agent_spec = ${transaction.json(asJson(agentSpecFromConfiguration(configuration, locked.version, locked.agentSpec)))},
                  change_summary = ${configuration.changeSummary}
@@ -394,13 +389,13 @@ export class PostgresAgentService {
           insert into agent_versions (
             id, tenant_id, agent_id, version, name, description, welcome_message,
             example_prompts, system_prompt, max_output_bytes,
-            max_tool_calls, timeout_seconds, skill_refs, tool_refs, mcp_scope, agent_spec, status, created_by, source_version, change_summary
+            max_tool_calls, timeout_seconds, skill_refs, web_search_enabled, mcp_scope, agent_spec, status, created_by, source_version, change_summary
           ) values (
             ${draftVersionId}, ${tenantId}, ${input.agentId}, ${newVersion},
             ${configuration.name}, ${configuration.description}, ${configuration.welcomeMessage},
             ${transaction.json(configuration.examplePrompts)}, ${configuration.systemPrompt},
             ${configuration.maxOutputBytes}, ${configuration.maxToolCalls}, ${configuration.timeoutSeconds},
-            ${transaction.json(configuration.skills)}, ${transaction.json(effectiveTools)},
+            ${transaction.json(configuration.skills)}, ${configuration.webSearchEnabled},
             ${transaction.json(asJson(configuration.mcpScope))},
             ${transaction.json(asJson(agentSpecFromConfiguration(configuration, newVersion, locked.agentSpec)))},
             'draft', ${actor.id}, ${locked.version}, ${configuration.changeSummary}
@@ -497,8 +492,8 @@ export class PostgresAgentService {
              av.welcome_message as "welcomeMessage", av.example_prompts as "examplePrompts",
              av.system_prompt as "systemPrompt", av.max_output_bytes as "maxOutputBytes",
              av.max_tool_calls as "maxToolCalls",
-             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills, av.tool_refs as tools,
-             av.binding_refs as "bindingRefs"
+             av.timeout_seconds as "timeoutSeconds", av.skill_refs as skills,
+             av.web_search_enabled as "webSearchEnabled"
         from agent_versions av
         join users creator on creator.tenant_id = av.tenant_id and creator.id = av.created_by
         left join users publisher on publisher.tenant_id = av.tenant_id and publisher.id = av.published_by
@@ -506,8 +501,7 @@ export class PostgresAgentService {
          and av.version = ${input.version} and av.status = 'published'
     `
     if (!target) throw notFound(`已发布 Agent Version 不存在：${input.agentId}@${input.version}`)
-    const principal = await this.getAgentExecutionPrincipal(input.agentId)
-    await this.assertCapabilityReferences(target.skills, target.tools, principal.roleIds, principal.dataScopes)
+    await this.assertCapabilityReferences(target.skills, target.webSearchEnabled)
 
     if (!current.activeVersionId) throw stateConflict('尚未发布的 Agent 不能回滚')
     if (current.activeVersionId === target.id) throw stateConflict(`v${target.version} 已是当前活动版本，无需回滚`)
@@ -665,10 +659,10 @@ export class PostgresAgentService {
       const [row] = await this.database<{
         activeVersionId: string
         skills: string[]
-        tools: string[]
+        webSearchEnabled: boolean
       }[]>`
         select a.active_version_id as "activeVersionId", av.skill_refs as skills,
-               av.tool_refs as tools
+               av.web_search_enabled as "webSearchEnabled"
           from agents a
           join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
          where a.tenant_id = ${tenantId} and a.id = ${candidate.id}
@@ -676,19 +670,16 @@ export class PostgresAgentService {
       if (!row?.activeVersionId) continue
       if (!additionalSkillReferences.length) return row.activeVersionId
       try {
-        const principal = await this.getAgentExecutionPrincipal(candidate.id)
         await this.assertCapabilityReferences(
           mergeSkillReferences(row.skills, additionalSkillReferences),
-          row.tools,
-          principal.roleIds,
-          principal.dataScopes,
+          row.webSearchEnabled,
         )
         return row.activeVersionId
       } catch (error) {
         if (agentId) throw error
       }
     }
-    throw invalidRequest('所选 Skill 必须由已配置所需工具的 Agent 运行；当前没有兼容 Agent，请联系管理员配置')
+    throw invalidRequest('所选 Skill 需要的工具当前没有 Agent 可以提供（例如未开启联网搜索），请联系管理员配置')
   }
 
   async listWorkspaceAgentCandidates(
@@ -748,18 +739,18 @@ export class PostgresAgentService {
     additionalSkillReferences: string[] = [],
   ): Promise<RuntimeAgentSnapshot> {
     const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & AgentFingerprintSource & {
-      agentId: string; agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: AgentVersionStatus
+      agentId: string; agentSpec: AgentSpec | null; versionStatus: AgentVersionStatus
     })[]>`
       select av.id as "versionId", av.agent_id as "agentId", ep.id as "principalId",
              ep.authorization_version as "principalAuthorizationVersion",
              av.name, av.description, av.welcome_message as "welcomeMessage",
              av.example_prompts as "examplePrompts", av.mcp_scope as "mcpScope",
              av.system_prompt as "systemPrompt", av.skill_refs as skills,
-             av.tool_refs as tools, a.visible_role_ids as "roleIds",
+             av.web_search_enabled as "webSearchEnabled", a.visible_role_ids as "roleIds",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
              av.agent_spec as "agentSpec",
-             av.binding_refs as "bindingRefs", av.status as "versionStatus",
+             av.status as "versionStatus",
              coalesce(av.agent_spec #> '{model,requirements}', '[]'::jsonb) as "modelRequirements"
         from agent_versions av
         join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
@@ -771,86 +762,36 @@ export class PostgresAgentService {
     const skills = mergeSkillReferences(row.skills, additionalSkillReferences)
     const principal = await this.getAgentExecutionPrincipal(row.agentId)
     if (principal.status !== 'active') throw authorizationDenied('Agent 执行身份已停用')
-    const executionScopes = principal.dataScopes
-    await this.assertCapabilityReferences(skills, row.tools, principal.roleIds, executionScopes)
+    await this.assertCapabilityReferences(skills, row.webSearchEnabled)
     const skillInstructions = this.skillService
       ? await this.skillService.resolveRuntimeSkills(skills)
       : []
-    const executionTools = skillInstructions.flatMap(skill => skill.tools)
-      .filter(reference => DSH_WORK_EXECUTION_TOOL_REFS.has(reference))
-    // A draft resolves platform defaults from current grants; a frozen candidate and a
-    // published version use the tools pinned when the candidate was frozen (S3).
-    const platformTools = row.versionStatus === 'draft'
-      ? (this.toolService
-        ? await this.toolService.resolvePlatformDefaultToolReferences(principal.roleIds, executionScopes)
-        : [])
-      : row.bindingRefs?.length
-        ? row.bindingRefs.map(pin => pin.tool)
-        : []
-    const tools = unique([...row.tools, ...executionTools, ...platformTools])
-    const runtimeToolNames = this.toolService
-      ? await this.toolService.resolveRuntimeToolNames(tools)
-      : tools.map(reference => parseReference(reference).id)
-    const runtimeTools = tools.map((reference, index) => {
-      const { version } = parseReference(reference)
-      return `${runtimeToolNames[index]}@${version}`
-    })
-    const approvalMode = this.toolService
-      ? await this.toolService.resolveRuntimeApprovalMode(tools)
-      : 'risk_based'
-    // B-03/I-04：按当前真实配置解析每个平台工具的 active 绑定修订（首次解析
-    // 或语义漂移时物化新修订）；内置运行时工具不在绑定表内。
-    const toolBindings = this.toolService
-      ? await this.toolService.resolveToolBindings(tools)
-      : []
-    if ((row.versionStatus === 'published' || row.versionStatus === 'candidate') && row.bindingRefs?.length
-      && bindingBasisKey(toolBindings.map(toManifestToolBinding)) !== bindingBasisKey(row.bindingRefs)) {
-      throw authorizationDenied('Agent 版本固定的工具绑定已失效，请重新验证并发布新版本')
-    }
-    const mcpConnections = this.toolService
-      ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId)
-      : []
+    // 内置工具按注册表装配：默认工具、Agent 开启的联网搜索、Skill 需要的 Python 执行。
+    // Runtime 停用清单在创建 Attempt 时扣除。
+    const skillExecutionTools = skillInstructions.flatMap(skill => skill.tools)
+      .flatMap(reference => parseBuiltinToolReference(reference)?.name === 'python_execute' ? ['python_execute'] : [])
+    const runtimeTools = unique([...agentBuiltinToolNames({ webSearchEnabled: row.webSearchEnabled }), ...skillExecutionTools])
+    const approvalMode = 'never' as const
+    const mcpConnections = await this.resolveMcpConnections(row.mcpScope)
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills
     const systemPrompt = row.agentSpec
       ? assembleAgentInstructions(row.agentSpec)
       : row.systemPrompt
-    const { agentId: _agentId, agentSpec: _agentSpec, bindingRefs: _bindingRefs, versionStatus: _versionStatus, ...snapshot } = row
-    return { ...snapshot, systemPrompt, skills: runtimeSkills, tools, skillInstructions, runtimeTools, toolBindings, mcpConnections, approvalMode }
+    const { agentId: _agentId, agentSpec: _agentSpec, versionStatus: _versionStatus, ...snapshot } = row
+    return { ...snapshot, systemPrompt, skills: runtimeSkills, skillInstructions, runtimeTools, mcpConnections, approvalMode }
   }
 
-  private async assertCapabilityReferences(
-    skills: string[],
-    tools: string[],
-    roleIds?: string[],
-    dataScopes?: string[],
-  ) {
-    await this.skillService?.assertPublishedReferences(skills)
-    await this.toolService?.assertAvailableReferences(tools)
-    if (roleIds && dataScopes) {
-      await this.toolService?.assertAuthorizationCompatibility(tools, roleIds, dataScopes)
-    }
+  /** Skill 必须已发布；Skill 需要的内置工具必须能由该 Agent 提供（联网搜索须开启）。 */
+  private async assertCapabilityReferences(skills: string[], webSearchEnabled: boolean) {
     if (!this.skillService) return
+    await this.skillService.assertPublishedReferences(skills)
     const runtimeSkills = await this.skillService.resolveRuntimeSkills(skills)
-    const selectedTools = new Set(unique(tools))
-    const missingTools = unique(runtimeSkills.flatMap(skill => skill.tools))
-      .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference) && !selectedTools.has(reference))
-    if (missingTools.length) {
-      throw authorizationDenied(`Agent 必须显式授权所选 Skill 依赖的工具：${missingTools.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
+    const problems = unavailableSkillTools(runtimeSkills.flatMap(skill => skill.tools), { webSearchEnabled })
+    if (problems.length) {
+      throw authorizationDenied(`所选 Skill 需要的工具不可用：${problems.join('、')}`, { status: 422, code: 'invalid_request', suggestion: '按提示调整输入内容或文件后重新提交。' })
     }
-  }
-
-  /** Persist effective Skill dependencies separately from author-declared AgentSpec tools. */
-  private async resolveConfiguredToolReferences(
-    skills: string[], declaredTools: string[],
-  ): Promise<string[]> {
-    const runtimeSkills = this.skillService ? await this.skillService.resolveRuntimeSkills(skills) : []
-    const dependencies = runtimeSkills.flatMap(skill => skill.tools)
-      .filter(reference => !['activate_skill@1.0.0', 'python_execute@1.0.0'].includes(reference))
-    const effectiveTools = unique([...declaredTools, ...dependencies])
-    await this.assertCapabilityReferences(skills, effectiveTools)
-    return effectiveTools
   }
 
   private async requireActor(userId: string, sql: DatabaseClient | DatabaseTransaction = this.database) {
@@ -869,7 +810,7 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -893,7 +834,7 @@ export class PostgresAgentService {
              a.allow_workspace_join as "allowWorkspaceJoin",
              av.max_output_bytes as "maxOutputBytes", av.max_tool_calls as "maxToolCalls",
              av.timeout_seconds as "timeoutSeconds",
-             av.skill_refs as skills, av.tool_refs as tools, av.mcp_scope as "mcpScope",
+             av.skill_refs as skills, av.web_search_enabled as "webSearchEnabled", av.mcp_scope as "mcpScope",
              av.agent_spec as "agentSpec", a.updated_at as "updatedAt"
         from agents a
         join users owner on owner.tenant_id = a.tenant_id and owner.id = a.owner_user_id
@@ -914,14 +855,14 @@ export class PostgresAgentService {
   private async assertMcpConnectorSelection(scope: AgentMcpScope | undefined): Promise<void> {
     const normalized = normalizeAgentMcpScope(scope)
     if (normalized.mode !== 'selected') return
-    const rows = await this.database<{ id: string }[]>`
-      select id from connectors
-       where tenant_id = ${tenantId} and protocol = 'mcp' and deleted_at is null
-         and id = any(${normalized.connectorIds})
-    `
-    if (rows.length !== normalized.connectorIds.length) {
-      throw new RequestError(422, 'validation_failed', '选定的 MCP Connector 不存在、已删除或不属于当前租户')
-    }
+    if (!this.mcp) throw dependencyUnavailable('MCP Connector 服务未接入')
+    await this.mcp.validateSelection(normalized.connectorIds)
+  }
+
+  private async resolveMcpConnections(scope: AgentMcpScope | undefined): Promise<McpConnectionSnapshot[]> {
+    if (normalizeAgentMcpScope(scope).mode === 'none') return []
+    if (!this.mcp) throw dependencyUnavailable('MCP Connector 服务未接入')
+    return this.mcp.resolveConnections(scope)
   }
 
   private async requireAgentResult(agentId: string, versionId: string) {
@@ -942,7 +883,7 @@ function normalizeConfiguration(
   input: AgentDraftConfiguration,
   owner: string,
   department: string,
-): AgentDraftConfiguration {
+): AgentDraftConfiguration & { webSearchEnabled: boolean } {
   const welcomeMessage = input.welcomeMessage.trim()
     || `你好，我是${input.name.trim() || '企业 Agent'}。${input.description.trim() || '我会协助你完成工作。'}`.slice(0, 120)
   return {
@@ -956,13 +897,13 @@ function normalizeConfiguration(
     systemPrompt: input.systemPrompt.trim(),
     ...(input.workInstructions !== undefined ? { workInstructions: input.workInstructions?.trim() ?? '' } : {}),
     skills: unique(input.skills),
-    tools: unique(input.tools),
+    webSearchEnabled: input.webSearchEnabled === true,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
   }
 }
 
-function assertConfiguration(input: AgentDraftConfiguration) {
+function assertConfiguration(input: AgentDraftConfiguration & { webSearchEnabled: boolean }) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw invalidRequest('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
@@ -995,7 +936,7 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
-    tools: row.agentSpec?.capabilities.tools ?? row.tools,
+    webSearchEnabled: row.webSearchEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     updatedAt: formatDateTime(row.updatedAt),
     revision: agentMutationRevision(row),
@@ -1026,9 +967,8 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     maxToolCalls: row.maxToolCalls,
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
-    tools: row.tools,
+    webSearchEnabled: row.webSearchEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
-    ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),
   }
 }
 
@@ -1044,7 +984,7 @@ export function configurationFingerprint(row: AgentFingerprintSource) {
     // 调整可见范围不作废试运行证据，由发布事务复核角色有效性并单独审计。平台数据范围上限仍计入。
     examplePrompts: [...row.examplePrompts],
     skills: [...row.skills].sort(),
-    tools: [...row.tools].sort(),
+    webSearchEnabled: row.webSearchEnabled,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     maxOutputBytes: row.maxOutputBytes,
     maxToolCalls: row.maxToolCalls,

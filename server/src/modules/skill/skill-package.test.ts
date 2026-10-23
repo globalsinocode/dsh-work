@@ -20,6 +20,12 @@ test('parses an existing Skill and preserves immutable UTF-8 resources', () => {
   assert.deepEqual(parseSkillPackage(strToU8(sampleSkill.replace('Read references/example.txt and report the exact value without inventing data.', 'Summarize the supplied user text faithfully without inventing any facts.'))).toolIds, [])
   assert.equal(pkg.sha256, parseSkillPackage(bytes).sha256)
 })
+test('maps allowed-tools to built-in tool references and keeps unknown tools unsupported', () => {
+  const skill = sampleSkill.replace('description:', 'allowed-tools: [Read, WebSearch, str_replace_editor, Bash]\ndescription:')
+  const pkg = parseSkillPackage(zipSync({ 'SKILL.md': strToU8(skill), 'references/example.txt': strToU8('marker') }))
+  assert.deepEqual(pkg.toolIds, ['read@1.0.0', 'web_search@1.0.0', 'str_replace_editor@1.0.0'])
+  assert.deepEqual(pkg.requirements.filter(item => item.type === 'tool').map(item => [item.name, item.status]), [['Bash', 'unsupported']])
+})
 test('persists Skill bodies as an immutable folder and keeps only an index descriptor', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-skill-store-'))
   try {

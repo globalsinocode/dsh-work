@@ -20,7 +20,7 @@ import {
 import { createManagedDshAcpProcessConfiguration } from './dsh-acp-process-configuration.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
-import { canonicalJson } from './canonical-json.ts'
+import { canonicalJson, mcpToolSchemaDigest } from './canonical-json.ts'
 import type { RuntimeEvent, RuntimeManifest } from './runtime-types.ts'
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
@@ -94,7 +94,7 @@ describe('PF-03 DSH MCP process patch', () => {
       assert.equal(prepared.env?.['DSH_MCP_VALUE_0_0'], 'Bearer top-secret')
       assert.equal(prepared.env?.['DSH_ALLOWED_MCP_SERVERS_JSON'], '["crm"]')
       assert.equal(prepared.env?.['DSH_APPROVED_MCP_CAPABILITIES_JSON'], JSON.stringify([{
-        serverName: 'crm', digest: 'a'.repeat(64),
+        serverName: 'crm', tools: [{ name: 'customer_get', schemaDigest: mcpToolSchemaDigest({ type: 'object' }) }],
       }]))
       assert.deepEqual(prepared.args.slice(-2), ['--patch', patchPath])
     } finally {

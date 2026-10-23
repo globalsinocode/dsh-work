@@ -13,8 +13,6 @@ import {
 } from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
-const BINDING_FIELDS = new Set(['tool', 'binding_id', 'revision', 'digest'])
 const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest'])
 const RESUME_FIELDS = new Set(['strategy', 'checkpoint_id', 'checkpoint_digest', 'source_attempt_id', 'approval_id', 'action_name', 'parameter_digest', 'resource_ref', 'data_version', 'approved_by', 'approved_at', 'checkpoint_context_sha256', 'checkpoint_context'])
 // 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 SkillArtifactStore
@@ -271,23 +269,6 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
         || normalized.items.some((item, index) => item !== archive.items[index])) throw new TypeError('project archive items are invalid')
       if (archive.items_sha256 !== archiveDigest(archive.items)) throw new TypeError('project archive items_sha256 does not match items')
     }
-  }
-
-  // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。
-  const pinnedTools = new Set<string>()
-  for (const binding of input.tool_bindings ?? []) {
-    for (const key of Object.keys(binding)) {
-      if (!BINDING_FIELDS.has(key)) throw new TypeError(`tool_bindings 存在未声明字段：${key}`)
-    }
-    if (!CAPABILITY_REF_PATTERN.test(binding.tool ?? '')) throw new TypeError('tool_bindings[].tool 必须是 id@version 平台引用')
-    // tools[] 使用 DSH 运行时名（dsh_tool_name@version），tool_bindings 使用平台
-    // 引用（tool_id@version）——两者命名空间不同，无法也不应做成员一致性比较；
-    // 「pin 对应的是清单声明的工具」由 getRuntimeSnapshot 的解析路径保证。
-    if (pinnedTools.has(binding.tool)) throw new TypeError(`tool_bindings 重复固定了 ${binding.tool}`)
-    pinnedTools.add(binding.tool)
-    if (!binding.binding_id?.trim()) throw new TypeError('tool_bindings[].binding_id 不允许为空')
-    if (!Number.isInteger(binding.revision) || binding.revision < 1) throw new TypeError('tool_bindings[].revision 必须是正整数')
-    if (!/^[a-f0-9]{64}$/.test(binding.digest ?? '')) throw new TypeError('tool_bindings[].digest 必须是 sha256 摘要')
   }
 
   if ((input.mcp_connections?.length ?? 0) > MAX_MCP_CONNECTIONS_PER_ATTEMPT) {

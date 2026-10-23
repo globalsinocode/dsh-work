@@ -126,13 +126,12 @@ test('负责人分页搜索可加入的 Agent 候选，仅返回最小字段并�
   const ownerId = 'user-1a-ag-cand-owner'
   await createDirectoryUser(ownerId, 'Agent候选负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-cand' })
   const created = [
-    await createPublishedAgent({ id: 'agent-1a-cand-a', name: 'T4候选甲', updatedAtSecondsAgo: 1, toolRefs: ['tool-1a-cand@1.0.0'] }),
-    await createPublishedAgent({ id: 'agent-1a-cand-b', name: 'T4候选乙', updatedAtSecondsAgo: 2, toolRefs: ['tool-1a-cand@1.0.0'] }),
-    await createPublishedAgent({ id: 'agent-1a-cand-c', name: 'T4候选丙', updatedAtSecondsAgo: 3, toolRefs: ['tool-1a-cand@1.0.0'] }),
+    await createPublishedAgent({ id: 'agent-1a-cand-a', name: 'T4候选甲', updatedAtSecondsAgo: 1 }),
+    await createPublishedAgent({ id: 'agent-1a-cand-b', name: 'T4候选乙', updatedAtSecondsAgo: 2 }),
+    await createPublishedAgent({ id: 'agent-1a-cand-c', name: 'T4候选丙', updatedAtSecondsAgo: 3 }),
   ]
-  await createPublishedAgent({ id: 'agent-1a-cand-other', name: '其他Agent', toolRefs: ['tool-1a-cand@1.0.0'] })
+  await createPublishedAgent({ id: 'agent-1a-cand-other', name: '其他Agent' })
 
   const query = encodeURIComponent('T4候选')
   const first = await api('GET', `/api/workbench/v1/workspaces/${workspaceId}/agent-candidates?query=${query}&limit=2`, { as: ownerId })
@@ -196,18 +195,16 @@ test('Agent 候选搜索拒绝无效分页游标与越界 limit，成员不可�
 // 加入 Agent 成员
 // ---------------------------------------------------------------------------
 
-test('负责人加入 Agent 后写入成员关系、Agent/Skill/Tool 授权来源与有效授权并提升修订号', async () => {
+test('负责人加入 Agent 后写入成员关系、Agent/Skill 授权来源与有效授权并提升修订号', async () => {
   const workspaceId = 'ws-1a-ag-join'
   const ownerId = 'user-1a-ag-join-owner'
   await createDirectoryUser(ownerId, 'Agent加入负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-join' })
-  await createSkill({ id: 'skill-1a-join', toolRefs: ['tool-1a-join@1.0.0'] })
+  await createSkill({ id: 'skill-1a-join' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-join',
     name: '加入测试Agent',
     skillRefs: ['skill-1a-join@1.0.0'],
-    toolRefs: ['tool-1a-join@1.0.0'],
   })
 
   const result = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
@@ -234,7 +231,7 @@ test('负责人加入 Agent 后写入成员关系、Agent/Skill/Tool 授权来�
   assert.equal(wam.addedBy, ownerId)
 
   const sources = await listSources(workspaceId)
-  assert.equal(sources.length, 3)
+  assert.equal(sources.length, 2)
   for (const source of sources) {
     assert.equal(source.sourceRefId, wam.id)
     assert.equal(source.status, 'active')
@@ -244,13 +241,11 @@ test('负责人加入 Agent 后写入成员关系、Agent/Skill/Tool 授权来�
     [
       `agent|${agent.versionId}`,
       `skill|skill-version-skill-1a-join-1`,
-      `tool|tool-version-tool-1a-join-1`,
     ].sort(),
   )
   assert.deepEqual(await listGrants(workspaceId), [
     { capabilityType: 'agent', capabilityVersionId: agent.versionId },
     { capabilityType: 'skill', capabilityVersionId: 'skill-version-skill-1a-join-1' },
-    { capabilityType: 'tool', capabilityVersionId: 'tool-version-tool-1a-join-1' },
   ])
   assert.equal(await revision(workspaceId), 1)
 })
@@ -260,14 +255,12 @@ test('依赖校验失败时加入整体回滚：无成员行、无授权来源�
   const ownerId = 'user-1a-ag-deps-owner'
   await createDirectoryUser(ownerId, '依赖校验负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-deps' })
-  await createSkill({ id: 'skill-1a-deps', toolRefs: ['tool-1a-deps@1.0.0'] })
-  // Agent 未显式授权 Skill 依赖的工具。
+  await createSkill({ id: 'skill-1a-deps', toolRefs: ['web_search@1.0.0'] })
+  // Skill 需要联网搜索，Agent 未开启。
   await createPublishedAgent({
     id: 'agent-1a-deps',
     name: '依赖缺失Agent',
     skillRefs: ['skill-1a-deps@1.0.0'],
-    toolRefs: [],
   })
 
   const result = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
@@ -275,7 +268,7 @@ test('依赖校验失败时加入整体回滚：无成员行、无授权来源�
     body: { agentId: 'agent-1a-deps' },
   })
   assert.equal(result.status, 422)
-  assert.match(errorMessage(result), /显式授权/)
+  assert.match(errorMessage(result), /未开启联网搜索/)
 
   assert.equal((await agentMemberRows(workspaceId)).length, 0)
   assert.equal((await listSources(workspaceId)).length, 0)
@@ -288,10 +281,9 @@ test('未发布、不允许加入或无活动版本的 Agent 被明确拒绝', a
   const ownerId = 'user-1a-ag-inv-owner'
   await createDirectoryUser(ownerId, '无效Agent负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-inv' })
-  await createPublishedAgent({ id: 'agent-1a-inv-disabled', name: '停用Agent', status: 'disabled', toolRefs: ['tool-1a-inv@1.0.0'] })
-  await createPublishedAgent({ id: 'agent-1a-inv-notallowed', name: '不允许加入Agent', allowJoin: false, toolRefs: ['tool-1a-inv@1.0.0'] })
-  await createPublishedAgent({ id: 'agent-1a-inv-draft', name: '草稿Agent', toolRefs: ['tool-1a-inv@1.0.0'], versionStatus: 'draft' })
+  await createPublishedAgent({ id: 'agent-1a-inv-disabled', name: '停用Agent', status: 'disabled' })
+  await createPublishedAgent({ id: 'agent-1a-inv-notallowed', name: '不允许加入Agent', allowJoin: false })
+  await createPublishedAgent({ id: 'agent-1a-inv-draft', name: '草稿Agent', versionStatus: 'draft' })
 
   const disabled = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
     as: ownerId,
@@ -329,13 +321,11 @@ test('非移除状态的重复加入返回明确冲突，移出后重新加入�
   const ownerId = 'user-1a-ag-readd-owner'
   await createDirectoryUser(ownerId, '重复加入负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-readd' })
-  await createSkill({ id: 'skill-1a-readd', toolRefs: ['tool-1a-readd@1.0.0'] })
+  await createSkill({ id: 'skill-1a-readd' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-readd',
     name: '重加Agent',
     skillRefs: ['skill-1a-readd@1.0.0'],
-    toolRefs: ['tool-1a-readd@1.0.0'],
   })
 
   const first = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
@@ -372,7 +362,7 @@ test('非移除状态的重复加入返回明确冲突，移出后重新加入�
     assert.equal(source.sourceRefId, firstId)
     assert.equal(source.status, 'active')
   }
-  assert.equal((await listGrants(workspaceId)).length, 3)
+  assert.equal((await listGrants(workspaceId)).length, 2)
   assert.equal(await revision(workspaceId), 3)
 })
 
@@ -396,14 +386,12 @@ test('成员列表仅返回非移除成员，并按当前角色给出允许动�
     { userId: memberId, role: 'member' },
     { userId: viewerId, role: 'viewer' },
   ])
-  await createTool({ id: 'tool-1a-list' })
-  await createSkill({ id: 'skill-1a-list', toolRefs: ['tool-1a-list@1.0.0'] })
+  await createSkill({ id: 'skill-1a-list' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-list',
     name: '列表Agent',
     description: '用于验证成员列表与允许动作。',
     skillRefs: ['skill-1a-list@1.0.0'],
-    toolRefs: ['tool-1a-list@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
     as: ownerId,
@@ -523,13 +511,11 @@ test('Agent 成员不可用原因按「版本失效 → 平台未授权 → Runt
     { userId: ownerId, role: 'owner' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-reason' })
-  await createSkill({ id: 'skill-1a-reason', toolRefs: ['tool-1a-reason@1.0.0'] })
+  await createSkill({ id: 'skill-1a-reason' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-reason',
     name: '不可用原因Agent',
     skillRefs: ['skill-1a-reason@1.0.0'],
-    toolRefs: ['tool-1a-reason@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
     as: ownerId,
@@ -542,7 +528,6 @@ test('Agent 成员不可用原因按「版本失效 → 平台未授权 → Runt
     agentId: agent.id,
     version: '2.0.0',
     skillRefs: ['skill-1a-reason@1.0.0'],
-    toolRefs: ['tool-1a-reason@1.0.0'],
     roleIds: ['role-employee'],
     activate: false,
     versionStatus: 'draft',
@@ -624,20 +609,17 @@ test('停用撤销本成员授权来源并写入事件，共享工具授权由�
     { userId: ownerId, role: 'owner' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-shared' })
-  await createSkill({ id: 'skill-1a-dis-a', toolRefs: ['tool-1a-shared@1.0.0'] })
-  await createSkill({ id: 'skill-1a-dis-b', toolRefs: ['tool-1a-shared@1.0.0'] })
+  await createSkill({ id: 'skill-1a-dis-a' })
+  await createSkill({ id: 'skill-1a-dis-b' })
   const agentA = await createPublishedAgent({
     id: 'agent-1a-dis-a',
     name: '共享工具Agent甲',
     skillRefs: ['skill-1a-dis-a@1.0.0'],
-    toolRefs: ['tool-1a-shared@1.0.0'],
   })
   const agentB = await createPublishedAgent({
     id: 'agent-1a-dis-b',
     name: '共享工具Agent乙',
     skillRefs: ['skill-1a-dis-b@1.0.0'],
-    toolRefs: ['tool-1a-shared@1.0.0'],
   })
   const joinA = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agentA.id } })
   assert.equal(joinA.status, 201)
@@ -658,20 +640,15 @@ test('停用撤销本成员授权来源并写入事件，共享工具授权由�
   assert.equal(wam?.id, wamA)
   assert.equal(wam?.status, 'disabled')
 
-  // A 的 Agent 与 Skill 来源被撤销；共享工具授权仍有 B 的来源。
+  // A 的 Agent 与 Skill 来源被撤销；B 的来源保持有效。
   const sources = await listSources(workspaceId)
-  const sharedToolSources = sources.filter(source => source.capabilityType === 'tool')
-  assert.equal(sharedToolSources.length, 2)
-  assert.equal(sharedToolSources.filter(source => source.status === 'active').length, 1)
-  assert.equal(sharedToolSources.find(source => source.status === 'active')?.sourceRefId, wamB)
   const revokedRefs = sources.filter(source => source.status === 'revoked').map(source => source.sourceRefId)
   assert.deepEqual([...new Set(revokedRefs)], [wamA])
 
-  // 共享工具授权保留（AC-26），A 的 Agent/Skill 授权被清理。
+  // A 的 Agent/Skill 授权被清理，B 的授权保留。
   assert.deepEqual(await listGrants(workspaceId), [
     { capabilityType: 'agent', capabilityVersionId: agentB.versionId },
     { capabilityType: 'skill', capabilityVersionId: 'skill-version-skill-1a-dis-b-1' },
-    { capabilityType: 'tool', capabilityVersionId: 'tool-version-tool-1a-shared-1' },
   ])
   assert.equal(await revision(workspaceId), 3)
 
@@ -711,13 +688,11 @@ test('重新启用恢复授权来源与有效授权，会话启动恢复；无�
     { userId: ownerId, role: 'owner' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-en' })
-  await createSkill({ id: 'skill-1a-en', toolRefs: ['tool-1a-en@1.0.0'] })
+  await createSkill({ id: 'skill-1a-en' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-en',
     name: '启用Agent',
     skillRefs: ['skill-1a-en@1.0.0'],
-    toolRefs: ['tool-1a-en@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
   assert.equal(joined.status, 201)
@@ -731,8 +706,8 @@ test('重新启用恢复授权来源与有效授权，会话启动恢复；无�
   const enabled = await api('PATCH', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${wamId}`, { as: ownerId, body: { action: 'enable' } })
   assert.equal(enabled.status, 200)
   assert.equal((enabled.body.data as { status: string }).status, 'available')
-  assert.equal((await listSources(workspaceId)).filter(source => source.status === 'active').length, 3)
-  assert.equal((await listGrants(workspaceId)).length, 3)
+  assert.equal((await listSources(workspaceId)).filter(source => source.status === 'active').length, 2)
+  assert.equal((await listGrants(workspaceId)).length, 2)
 
   const start = await api('POST', '/api/workbench/v1/sessions', {
     as: memberId,
@@ -763,13 +738,11 @@ test('停用→启用→停用只产生一行 agent_disabled 事件（去重由�
   const ownerId = 'user-1a-ag-dd-owner'
   await createDirectoryUser(ownerId, '去重负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-dd' })
-  await createSkill({ id: 'skill-1a-dd', toolRefs: ['tool-1a-dd@1.0.0'] })
+  await createSkill({ id: 'skill-1a-dd' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-dd',
     name: '去重Agent',
     skillRefs: ['skill-1a-dd@1.0.0'],
-    toolRefs: ['tool-1a-dd@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
   assert.equal(joined.status, 201)
@@ -806,13 +779,11 @@ test('加入 Agent 时若负责人转交发生在前置检查与加锁之间，�
     { userId: oldOwnerId, role: 'owner' },
     { userId: newOwnerId, role: 'admin' },
   ])
-  await createTool({ id: 'tool-1a-lockrole' })
-  await createSkill({ id: 'skill-1a-lockrole', toolRefs: ['tool-1a-lockrole@1.0.0'] })
+  await createSkill({ id: 'skill-1a-lockrole' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-lockrole',
     name: 'TOCTOU Agent',
     skillRefs: ['skill-1a-lockrole@1.0.0'],
-    toolRefs: ['tool-1a-lockrole@1.0.0'],
   })
 
   // 旧负责人的前置角色检查已通过；在其事务拿到空间锁之后、事务内角色复核之前
@@ -871,14 +842,12 @@ test('HTTP：提交负责人不可见的 Agent 返回 403 而不是 500', async 
   const ownerId = 'user-1a-ag-role-scope-http-owner'
   await createDirectoryUser(ownerId, '可见范围 HTTP 负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-role-scope-http' })
-  await createSkill({ id: 'skill-1a-role-scope-http', toolRefs: ['tool-1a-role-scope-http@1.0.0'] })
+  await createSkill({ id: 'skill-1a-role-scope-http' })
   const hidden = await createPublishedAgent({
     id: 'agent-1a-role-scope-http',
     name: '不可见 HTTP Agent',
     roleIds: ['role-platform-admin'],
     skillRefs: ['skill-1a-role-scope-http@1.0.0'],
-    toolRefs: ['tool-1a-role-scope-http@1.0.0'],
   })
 
   const result = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
@@ -895,15 +864,13 @@ test('加入 Agent 时复核角色可见范围：提交负责人不可见的 Age
   const ownerId = 'user-1a-ag-role-scope-owner'
   await createDirectoryUser(ownerId, '可见范围负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-role-scope' })
-  await createSkill({ id: 'skill-1a-role-scope', toolRefs: ['tool-1a-role-scope@1.0.0'] })
+  await createSkill({ id: 'skill-1a-role-scope' })
   // 该 Agent 只对平台管理员角色可见，而负责人的会话角色是 role-employee。
   const hidden = await createPublishedAgent({
     id: 'agent-1a-role-scope',
     name: '不可见 Agent',
     roleIds: ['role-platform-admin'],
     skillRefs: ['skill-1a-role-scope@1.0.0'],
-    toolRefs: ['tool-1a-role-scope@1.0.0'],
   })
 
   await assert.rejects(
@@ -937,13 +904,11 @@ test('升级固定新版本并保留旧版本来源，新会话使用新版本�
     { userId: ownerId, role: 'owner' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-up' })
-  await createSkill({ id: 'skill-1a-up', toolRefs: ['tool-1a-up@1.0.0'] })
+  await createSkill({ id: 'skill-1a-up' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-up',
     name: '升级Agent',
     skillRefs: ['skill-1a-up@1.0.0'],
-    toolRefs: ['tool-1a-up@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
   assert.equal(joined.status, 201)
@@ -961,7 +926,6 @@ test('升级固定新版本并保留旧版本来源，新会话使用新版本�
     agentId: agent.id,
     version: '2.0.0',
     skillRefs: ['skill-1a-up@1.0.0'],
-    toolRefs: ['tool-1a-up@1.0.0'],
     roleIds: ['role-employee'],
   })
 
@@ -975,7 +939,7 @@ test('升级固定新版本并保留旧版本来源，新会话使用新版本�
   const [wam] = await agentMemberRows(workspaceId)
   assert.equal(wam?.agentVersionId, v2Id)
 
-  // 新旧两个 Agent 版本来源均有效；Skill/Tool 来源复用同一行保持有效。
+  // 新旧两个 Agent 版本来源均有效；Skill 来源复用同一行保持有效。
   const agentSources = (await listSources(workspaceId)).filter(source => source.capabilityType === 'agent')
   assert.deepEqual(
     agentSources.map(source => `${source.capabilityVersionId}:${source.status}`).sort(),
@@ -986,7 +950,6 @@ test('升级固定新版本并保留旧版本来源，新会话使用新版本�
     `agent|${agent.versionId}`,
     `agent|${v2Id}`,
     `skill|skill-version-skill-1a-up-1`,
-    `tool|tool-version-tool-1a-up-1`,
   ].sort())
   assert.equal(await revision(workspaceId), 2)
   assert.equal((await revocationEvents(workspaceId)).length, 0)
@@ -1007,7 +970,7 @@ test('升级固定新版本并保留旧版本来源，新会话使用新版本�
   assert.equal(noop.status, 200)
   assert.equal((noop.body.data as { version: string }).version, '2.0.0')
   assert.equal(await revision(workspaceId), 2)
-  assert.equal((await listSources(workspaceId)).length, 4)
+  assert.equal((await listSources(workspaceId)).length, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -1024,13 +987,11 @@ test('移出撤销授权来源并写入 agent_removed 事件，新会话被阻�
     { userId: ownerId, role: 'owner' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-rm' })
-  await createSkill({ id: 'skill-1a-rm', toolRefs: ['tool-1a-rm@1.0.0'] })
+  await createSkill({ id: 'skill-1a-rm' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-rm',
     name: '移出Agent',
     skillRefs: ['skill-1a-rm@1.0.0'],
-    toolRefs: ['tool-1a-rm@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
   assert.equal(joined.status, 201)
@@ -1086,13 +1047,11 @@ test('管理员与成员不能加入或管理 Agent，非成员不可访问；�
     { userId: adminId, role: 'admin' },
     { userId: memberId, role: 'member' },
   ])
-  await createTool({ id: 'tool-1a-perm' })
-  await createSkill({ id: 'skill-1a-perm', toolRefs: ['tool-1a-perm@1.0.0'] })
+  await createSkill({ id: 'skill-1a-perm' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-perm',
     name: '权限Agent',
     skillRefs: ['skill-1a-perm@1.0.0'],
-    toolRefs: ['tool-1a-perm@1.0.0'],
   })
 
   const adminJoin = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: adminId, body: { agentId: agent.id } })
@@ -1141,13 +1100,11 @@ test('成员变更操作在服务层重新校验负责人角色（TOCTOU）', as
     { userId: ownerId, role: 'owner' },
     { userId: demotedAdminId, role: 'admin' },
   ])
-  await createTool({ id: 'tool-1a-toc' })
-  await createSkill({ id: 'skill-1a-toc', toolRefs: ['tool-1a-toc@1.0.0'] })
+  await createSkill({ id: 'skill-1a-toc' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-toc',
     name: 'TOCTOU Agent',
     skillRefs: ['skill-1a-toc@1.0.0'],
-    toolRefs: ['tool-1a-toc@1.0.0'],
   })
 
   // 守卫通过后被降级为成员：服务层必须重新校验并拒绝。
@@ -1181,13 +1138,11 @@ test('团队空间会话：缺关联创建共享讨论（TW-10），跨空间关
     { userId: memberId, role: 'member' },
   ])
   await createTeamWorkspace(otherWorkspaceId, [{ userId: ownerId, role: 'owner' }])
-  await createTool({ id: 'tool-1a-ses' })
-  await createSkill({ id: 'skill-1a-ses', toolRefs: ['tool-1a-ses@1.0.0'] })
+  await createSkill({ id: 'skill-1a-ses' })
   const agent = await createPublishedAgent({
     id: 'agent-1a-ses',
     name: '会话Agent',
     skillRefs: ['skill-1a-ses@1.0.0'],
-    toolRefs: ['tool-1a-ses@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, { as: ownerId, body: { agentId: agent.id } })
   assert.equal(joined.status, 201)
@@ -1198,7 +1153,6 @@ test('团队空间会话：缺关联创建共享讨论（TW-10），跨空间关
     agentId: agent.id,
     version: '2.0.0',
     skillRefs: ['skill-1a-ses@1.0.0'],
-    toolRefs: ['tool-1a-ses@1.0.0'],
     roleIds: ['role-employee'],
   })
 
@@ -1554,7 +1508,6 @@ async function createPublishedAgent(input: {
   allowJoin?: boolean
   roleIds?: string[]
   skillRefs?: string[]
-  toolRefs?: string[]
   versionStatus?: 'published' | 'draft'
   updatedAtSecondsAgo?: number
 }) {
@@ -1574,7 +1527,6 @@ async function createPublishedAgent(input: {
         agentId: input.id,
         version: '1.0.0',
         skillRefs: input.skillRefs ?? [],
-        toolRefs: input.toolRefs ?? [],
         roleIds,
         activate: false,
       })
@@ -1582,7 +1534,6 @@ async function createPublishedAgent(input: {
         agentId: input.id,
         version: '1.0.0',
         skillRefs: input.skillRefs ?? [],
-        toolRefs: input.toolRefs ?? [],
         roleIds,
         versionStatus: input.versionStatus,
       })
@@ -1609,7 +1560,6 @@ async function createAgentVersion(input: {
   agentId: string
   version: string
   skillRefs: string[]
-  toolRefs: string[]
   roleIds: string[]
   activate?: boolean
   versionStatus?: 'published' | 'draft'
@@ -1619,11 +1569,11 @@ async function createAgentVersion(input: {
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
       example_prompts, system_prompt, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.agentId}, ${input.version}, 'T4 测试 Agent', 'T4 Agent 成员集成测试。',
       '', ${database.json(['测试'] as string[])}, '你是 T4 集成测试 Agent。',
-      65536, 20, 300, ${database.json(input.skillRefs)}, ${database.json(input.toolRefs)},
+      65536, 20, 300, ${database.json(input.skillRefs)},
       ${input.versionStatus ?? 'published'}, 'U00008', 'T4 测试版本'
     )
   `
@@ -1664,29 +1614,6 @@ async function createSkill(input: { id: string; toolRefs?: string[] }) {
     await transaction`
       update skills set active_version_id = ${versionId}
        where tenant_id = ${tenantId} and id = ${input.id}
-    `
-  })
-  return { id: input.id, versionId }
-}
-
-async function createTool(input: { id: string }) {
-  const versionId = `tool-version-${input.id}-1`
-  await database.begin(async transaction => {
-    await transaction`
-      insert into tools (
-        id, tenant_id, key, name, source, status, connector_id, system, description,
-        dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
-        approval_policy, last_checked_at
-      ) values (
-        ${input.id}, ${tenantId}, ${`dsh-${input.id}`}, 'T4 测试工具', 'platform', 'available',
-        'connector-dsh-workspace', 'DSH Runtime', 'T4 Agent 成员集成测试工具。',
-        ${input.id}, 'read', 30, ${transaction.json(['role-employee'] as string[])},
-        ${transaction.json(['enterprise:authorized'] as string[])}, 'none', now()
-      )
-    `
-    await transaction`
-      insert into tool_versions (id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status)
-      values (${versionId}, ${tenantId}, ${input.id}, '1.0.0', '{}', '{}', 'low', 'published')
     `
   })
   return { id: input.id, versionId }

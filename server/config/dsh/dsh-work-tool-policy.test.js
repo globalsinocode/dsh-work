@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, test } from 'node:test'
 
-import { apply, TRIAL_ONLY_MCP_REASON } from './dsh-work-tool-policy.js'
+import { apply, disabledToolReason, TRIAL_ONLY_MCP_REASON } from './dsh-work-tool-policy.js'
 
 const originalEnvironment = {
   currentAuthorization: process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION,
@@ -268,22 +268,22 @@ test('DSH does not publish a tool catalog for ordinary Attempts', async () => {
   process.env.DSH_TOOL_CATALOG_PATH = path
   const policy = capturePolicy([{ name: 'read', description: 'Read a file.', parameters: { type: 'object' } }])
 
-  assert.equal(policy.sessionStarted, undefined)
+  policy.sessionStarted?.({ agent: { id: 'ordinary-session', ctx: { tools: { restrict: () => () => undefined } } } })
   await assert.rejects(readFile(path, 'utf8'), error => error.code === 'ENOENT')
 })
 
 function capturePolicy(schemas = []) {
   let guard
   let preExecute
-  let toolsChanged
-  let sessionStarted
+  const changeListeners = []
+  const sessionListeners = []
   const schemaScopes = []
   const registered = []
   apply({
     on: (event, candidate) => {
       if (event === 'tools/pre-execute') preExecute = candidate
-      if (event === 'tools/change') toolsChanged = candidate
-      if (event === 'agent/session-start') sessionStarted = candidate
+      if (event === 'tools/change') changeListeners.push(candidate)
+      if (event === 'agent/session-start') sessionListeners.push(candidate)
       return () => undefined
     },
     tools: {
@@ -300,36 +300,56 @@ function capturePolicy(schemas = []) {
   })
   assert.ok(guard)
   assert.ok(preExecute)
-  return { guard, preExecute, registered, toolsChanged, sessionStarted, schemaScopes }
+  const fanOut = listeners => listeners.length ? (...args) => listeners.forEach(listener => listener(...args)) : undefined
+  return { guard, preExecute, registered, toolsChanged: fanOut(changeListeners), sessionStarted: fanOut(sessionListeners), schemaScopes }
 }
 
-test('MCP permission requires the exact reviewed server capability digest', () => {
-  const capability = { name: 'query_inventory', description: 'Query inventory.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
+function approvedTools(serverName, capabilities) {
+  return JSON.stringify([{
+    serverName,
+    tools: capabilities.map(capability => ({
+      name: capability.name,
+      schemaDigest: createHash('sha256').update(stableJson(capability.inputSchema)).digest('hex'),
+    })),
+  }])
+}
+
+test('MCP permission is checked per approved Tool against the currently loaded input Schema', () => {
+  const capability = { name: 'query_inventory', description: 'Query inventory.', inputSchema: { type: 'object', properties: { sku: { type: 'string' } } } }
   process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp_read"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp_read', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('erp_read', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
-  const schemas = [{ name: 'mcp__erp_read__query_inventory', description: capability.description, parameters: capability.inputSchema }]
-  const { guard, toolsChanged } = capturePolicy(schemas)
+  // 键顺序不同不影响摘要；描述变化不影响放行。
+  const schemas = [{ name: 'mcp__erp_read__query_inventory', description: 'Changed wording.', parameters: { properties: { sku: { type: 'string' } }, type: 'object' } }]
+  const { guard } = capturePolicy(schemas)
 
   assert.equal(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), undefined)
   assert.match(guard({ name: 'mcp__erp_write__update_inventory', arguments: {} }), /未授权工具/)
   assert.match(guard({ name: 'mcp__erp_read_extra__query_inventory', arguments: {} }), /未授权工具/)
+  // 远端新增的未确认 Tool 被拒绝，但不影响已生效的 Tool。
   schemas.push({ name: 'mcp__erp_read__export_inventory', description: 'Export inventory.', parameters: { type: 'object' } })
-  toolsChanged()
-  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
-  schemas.pop()
+  assert.match(guard({ name: 'mcp__erp_read__export_inventory', arguments: {} }), /尚未确认生效/)
+  assert.equal(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), undefined)
+  // 输入 Schema 变化后暂停，直到管理员确认。
   schemas[0].parameters = { type: 'object', required: ['warehouse'] }
-  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /能力清单与已审核摘要不一致/)
+  assert.match(guard({ name: 'mcp__erp_read__query_inventory', arguments: {} }), /输入 Schema 已变化/)
+})
+
+test('MCP permission fails closed on the legacy whole-server digest format', () => {
+  process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'crm', digest: 'a'.repeat(64) }])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  const { guard } = capturePolicy([{ name: 'mcp__crm__customer_get', description: 'Read.', parameters: { type: 'object' } }])
+  assert.match(guard({ name: 'mcp__crm__customer_get', arguments: {} }), /尚未确认生效/)
 })
 
 test('MCP permission resolves tool names from configured server namespaces', () => {
   const capability = { name: 'customer__get', description: 'Read one customer.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
   process.env.DSH_ALLOWED_TOOLS_JSON = '[]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'crm', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('crm', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
   const schemas = [{ name: 'mcp__crm__customer__get', description: capability.description, parameters: capability.inputSchema }]
   const { guard } = capturePolicy(schemas)
@@ -379,10 +399,9 @@ test('current authorization is checked on every built-in tool call and does not 
 
 test('release trial returns trial_only for reviewed MCP calls without reaching the server', async () => {
   const capability = { name: 'create_po', description: 'Create a purchase order.', inputSchema: { type: 'object' } }
-  const digest = createHash('sha256').update(JSON.stringify([capability])).digest('hex')
   process.env.DSH_ALLOWED_TOOLS_JSON = '["read"]'
   process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["erp"]'
-  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = JSON.stringify([{ serverName: 'erp', digest }])
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('erp', [capability])
   process.env.DSH_WORKSPACE_ROOT = process.cwd()
   process.env.DSH_TOOL_APPROVAL_MODE = 'never'
   const schemas = [{ name: 'mcp__erp__create_po', description: capability.description, parameters: capability.inputSchema }]
@@ -402,4 +421,49 @@ test('release trial returns trial_only for reviewed MCP calls without reaching t
   delete process.env.DSH_WORK_TRIAL_EXTERNAL_EFFECTS
   const production = capturePolicy(schemas)
   assert.equal((await production.preExecute({ callId: 'call-prod', name: 'mcp__erp__create_po', arguments: {} }, next)).kind, 'allow')
+})
+
+test('the model only sees tools the Runtime Manifest allows; hidden tools stay blocked', () => {
+  const capability = { name: 'query', description: 'Query.', inputSchema: { type: 'object' } }
+  process.env.DSH_ALLOWED_TOOLS_JSON = '["read","web_search"]'
+  process.env.DSH_ALLOWED_MCP_SERVERS_JSON = '["crm"]'
+  process.env.DSH_APPROVED_MCP_CAPABILITIES_JSON = approvedTools('crm', [capability])
+  process.env.DSH_WORKSPACE_ROOT = process.cwd()
+  delete process.env.DSH_WORK_TOOL_CATALOG_MODE
+  const schemas = ['read', 'web_search', 'web_fetch', 'bash', 'run_code', 'mcp__crm__query', 'mcp__crm__export']
+    .map(name => ({ name, description: name, parameters: { type: 'object' } }))
+  const policy = capturePolicy(schemas)
+  const restrictions = []
+  const agent = { id: 'session-1', ctx: { tools: { restrict: filter => { restrictions.push(filter.deny); return () => undefined } } } }
+  policy.sessionStarted({ agent })
+  assert.deepEqual(restrictions, [['web_fetch', 'bash', 'mcp__crm__export']])
+  // 工具清单变化后只裁剪新出现的工具，不重复裁剪。
+  schemas.push({ name: 'job_list', description: 'jobs', parameters: { type: 'object' } })
+  policy.toolsChanged()
+  assert.deepEqual(restrictions.at(-1), ['job_list'])
+  assert.equal(restrictions.length, 2)
+  // 裁剪只影响可见性，调用仍被拦截。
+  assert.match(policy.guard({ name: 'bash', arguments: {} }), /未授权工具/)
+})
+
+test('a tool disabled by the Runtime denies only that call with a readable reason', async () => {
+  let disabled = false, revoked = false
+  const bridge = await createPlatformToolBridge({}, 0, async () => { if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
+    undefined, async name => disabled && name === 'web_search')
+  try {
+    process.env.DSH_PLATFORM_TOOL_SOCKET = bridge.socket
+    process.env.DSH_REQUIRE_CURRENT_AUTHORIZATION = 'true'
+    process.env.DSH_ALLOWED_TOOLS_JSON = '["web_search","todo_write"]'
+    process.env.DSH_TOOL_APPROVAL_MODE = 'never'
+    const { preExecute } = capturePolicy()
+    const next = async () => ({ kind: 'allow' })
+    const search = { name: 'web_search', arguments: { queries: ['dsh'] } }
+    assert.equal((await preExecute(search, next)).kind, 'allow')
+    disabled = true
+    assert.deepEqual(await preExecute(search, next), { kind: 'deny', reason: disabledToolReason('web_search') })
+    // 其他工具不受影响。
+    assert.equal((await preExecute({ name: 'todo_write', arguments: {} }, next)).kind, 'allow')
+    revoked = true
+    assert.deepEqual(await preExecute({ name: 'todo_write', arguments: {} }, next), { kind: 'deny', reason: '当前执行授权不可用或已撤销' })
+  } finally { await bridge.close() }
 })

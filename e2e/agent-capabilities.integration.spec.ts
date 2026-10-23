@@ -20,7 +20,7 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   await page.getByRole('button', { name: '创建 Agent' }).click()
   const create = page.getByRole('dialog', { name: '创建 Agent' })
   await create.getByRole('textbox', { name: 'Agent 名称' }).fill(name)
-  await create.getByRole('textbox', { name: 'Agent 说明' }).fill('验证工作规程、默认 DSH 工具与 MCP Connector 选择随 Agent 草稿保存。')
+  await create.getByRole('textbox', { name: 'Agent 说明' }).fill('验证工作规程、内置工具装配与 MCP Connector 选择随 Agent 草稿保存。')
   await create.getByRole('textbox', { name: /SOUL\.md/ }).fill('你是独立的 AI 员工，只能处理获准的业务数据，并为每个结论留下可核对的依据。')
   await create.getByRole('button', { name: '创建并继续配置' }).click()
 
@@ -59,22 +59,23 @@ test('P1 Agent work procedures, default tools, and MCP scopes use the same persi
   )
   expect(await evidence()).toMatchObject({ mcpConnectorIds: [connector.id] })
   expect((await evidence()).systemPrompt).toContain(procedures)
-  expect((await evidence()).runtimeTools).toEqual(expect.arrayContaining(['read@1.0.0', 'write@1.0.0']))
+  expect((await evidence()).runtimeTools).toEqual(expect.arrayContaining(['read', 'write']))
+  expect((await evidence()).runtimeTools).not.toContain('web_search')
 
   const another = await data<{ id: string }>(await page.request.post('/api/admin/v1/connectors/mcp', {
     data: { name: `P1 新增连接 ${suffix}`, endpoint: 'https://new-capability.example.test/mcp',
-      authType: 'none', scopeDescription: '验证 all 动态集合与 selected 固定集合' },
+      authType: 'none', scopeDescription: '新登记的连接器不会自动进入任何 Agent' },
   }))
   expect((await evidence()).mcpConnectorIds).toEqual([connector.id])
-  const allEvidence = await data<{ mcpConnectorIds: string[] }>(await page.request.get(
+  const unselectedEvidence = await data<{ mcpConnectorIds: string[] }>(await page.request.get(
     '/api/admin/v1/test/agent-capabilities/evidence?version_id=agent-version-dsh-work-assistant-1',
   ))
-  expect(allEvidence.mcpConnectorIds).toEqual(expect.arrayContaining([connector.id, another.id]))
+  expect(unselectedEvidence.mcpConnectorIds).not.toContain(another.id)
 
   await data(await page.request.patch('/api/admin/v1/connectors/mcp/status', {
     data: { connectorId: connector.id, status: 'disabled' },
   }))
   const blocked = await page.request.get(`/api/admin/v1/test/agent-capabilities/evidence?version_id=${version!.id}`)
   expect(blocked.ok()).toBe(false)
-  expect(await blocked.text()).toContain('已选 MCP Connector 不可用或已变化')
+  expect(await blocked.text()).toContain('已选 MCP Connector 不可用')
 })

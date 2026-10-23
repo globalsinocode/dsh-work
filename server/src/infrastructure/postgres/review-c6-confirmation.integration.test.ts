@@ -11,7 +11,6 @@ import { PostgresAuthorizationService } from '../../modules/authorization/postgr
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
-import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
@@ -34,7 +33,7 @@ before(async () => {
     return { id: manifest.run_id }
   } } as unknown as RunOrchestrationService
   const operations = new PostgresOperationsService(db.client, new UnavailableRuntime('runtime-local-01'), auth)
-  const installation = new AdminSkillInstallationService(db.client, orchestration, auth, {} as PostgresToolConnectorService)
+  const installation = new AdminSkillInstallationService(db.client, orchestration, auth)
   service = new AdminAssistantService(db.client, orchestration, auth, installation, new PostgresSkillService(db.client), agents, operations)
 })
 after(async () => { await db?.dispose() })
@@ -44,7 +43,7 @@ async function draft() {
     visibleRoleIds: ['role-employee'], 
     welcomeMessage: '欢迎使用', examplePrompts: ['介绍自己的能力'],
     systemPrompt: '你是合成测试助手，仅用于校验管理操作事务，不执行实际模型调用。',
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], tools: ['tool-runtime-file-read@1.0.0'], changeSummary: '合成测试初稿', actor,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], changeSummary: '合成测试初稿', actor,
   })).agent
 }
 async function seedRun(purpose: NonNullable<RuntimeManifest['purpose']>, sessionId = `admin-session-${randomUUID()}`) {

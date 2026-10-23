@@ -95,7 +95,7 @@ DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:543
 
 `pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
 
-PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现与自动生效、全部 Agent 默认可用、已准备 Attempt 的能力摘要漂移、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
+PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现、按 Agent 选定解析、能力变更待确认与确认后摘要变化、取消租户容量上限、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
 
 PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-05 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
@@ -107,12 +107,12 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 [mvp-fixtures.json](fixtures/mvp-fixtures.json) 保存合成角色、空间、业务记录、知识和文件元数据，不能视为真实企业接口。服务端种子与前端原型 ID 以各自代码为准，不假定 fixture 已自动导入所有环境。
 
 - 个人空间与团队空间的会话、文件和成果访问；非成员、跨用户及跨数据范围访问拒绝。
-- Agent、Skill 测试后发布、版本锁定与回滚；平台默认 DSH 工具采用显式允许清单和精确绑定，Skill 不能间接扩大工具授权。
+- Agent、Skill 测试后发布、版本锁定与回滚；内置工具采用代码注册表的显式清单，Skill 只能引用 Agent 可装配的工具，不能间接扩大工具范围；Runtime 紧急停用即时生效。
 - 文件上传、解析、Run 关联、来源与成果版本、下载鉴权；路径穿越、伪造签名和超限文件拒绝。
 - 取消、超时、Worker 崩溃、模型/Tool/网络故障；幂等请求不重复执行，只有失败 Run 可重试并生成新 Attempt。
 - 服务重启后活动 Attempt 失败收敛、排队任务恢复；SSE 使用 `Last-Event-ID` 重放，旧 Attempt 事件不能覆盖当前重试状态。
 - 审计脱敏、凭据隔离、DSH 子进程环境白名单、权限变化即时生效。
-- MCP Connector 成功检查后按 Agent Version 的 `all`（默认）、`selected` 或 `none` 范围装配；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
+- MCP Connector 按 Agent Version 的 `selected` 或 `none`（默认）范围装配；新增或 Schema 变化的 Tool 确认前不可调用；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
 - 容量测试覆盖 1/3/5 并发与 50 Run 排队，记录受理/完成延迟、CPU、RSS、磁盘和失败率。模拟 Runtime 跑分不能推导真实模型吞吐或生产并发。
 - 运行耗时基线：`pnpm report:run-timings`（读取 `DSH_WORK_DATABASE_URL`，只读）按阶段输出样本量、缺失数、p50/p95/最大值与失败率；`--since/--until` 限定时间，`--purpose` 选择员工运行、自动任务、摘要运行或全部，`--json` 输出原始汇总。
 

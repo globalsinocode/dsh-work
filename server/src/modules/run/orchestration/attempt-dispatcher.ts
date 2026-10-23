@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { assertRuntimeModelRequirements } from '../../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { compileRuntimeManifest } from '../../runtime/manifest-compiler.ts'
-import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
+import { builtinToolReference } from '../../runtime/builtin-tools.ts'
 import type { PreparedRuntimeFile } from '../../workbench/application/postgres-content-service.ts'
 import type { RuntimeAuthorizationDecision } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied } from '../../../domain/authorization-errors.ts'
@@ -66,6 +66,7 @@ export class AttemptDispatcher {
     timezone?: string
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
+    const disabledTools = new Set(runtimePolicy?.disabledTools ?? [])
     const agent = this.deps.agents
       ? await this.deps.agents.getRuntimeSnapshot(input.agentVersionId, input.additionalSkillReferences)
       : {
@@ -74,9 +75,7 @@ export class AttemptDispatcher {
           systemPrompt: '你是 dsh-work 企业员工助手。请给出准确、简洁、可执行的中文回答。',
           skills: [],
           skillInstructions: [],
-          tools: [],
           runtimeTools: [],
-          toolBindings: [],
           mcpConnections: [],
           approvalMode: 'risk_based' as const,
           roleIds: ['role-employee'],
@@ -168,14 +167,12 @@ export class AttemptDispatcher {
         write_policy: 'workspace_only',
       },
       skills: agent.skills.map(toCapabilityReference),
+      // 内置工具按注册表装配，去掉 Runtime 配置紧急停用的工具。
       tools: [
-        ...agent.runtimeTools.map(toCapabilityReference),
-        ...(agent.skillInstructions.length ? [{ id: 'activate_skill', version: '1.0.0' }] : []),
-        ...(this.deps.memory && input.purpose !== 'agent-routine'
-          ? [{ id: 'propose_memory', version: '1.0.0' }] : []),
-      ],
-      // B-03/I-04：Attempt 固定本次解析的平台绑定修订；执行复核据此验证当前授权。
-      ...(agent.toolBindings.length ? { tool_bindings: agent.toolBindings.map(toManifestToolBinding) } : {}),
+        ...agent.runtimeTools.filter(name => !disabledTools.has(name)),
+        ...(agent.skillInstructions.length ? ['activate_skill'] : []),
+        ...(this.deps.memory && input.purpose !== 'agent-routine' ? ['propose_memory'] : []),
+      ].map(name => toCapabilityReference(builtinToolReference(name))),
       ...(agent.mcpConnections?.length ? { mcp_connections: agent.mcpConnections } : {}),
       data_scopes: effectiveDataScopes,
       knowledge_context: knowledgeContext.map(document => ({

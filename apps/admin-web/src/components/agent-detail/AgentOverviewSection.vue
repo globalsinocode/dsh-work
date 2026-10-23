@@ -57,7 +57,6 @@ function skillLabel(reference: string) {
 
 const mcpLabel = computed(() => {
   const scope = source.value.mcpScope
-  if (scope.mode === 'all') return '全部可用 MCP'
   if (scope.mode === 'none') return '不使用 MCP'
   return scope.connectorIds.map(id => contentStore.connectors.find(item => item.id === id)?.name ?? id).join('、') || '仅选定（未选择）'
 })

@@ -27,8 +27,8 @@ export interface AgentSpec {
   instructions: { path: string; body: string }
   /** 可选的包根目录工作规程；由平台显式装配，不扫描宿主目录。 */
   workProcedures?: { path: 'AGENTS.md'; body: string } | null
-  /** 能力依赖：规范化 `id@x.y.z` 精确引用（含包内候选），不做版本解析或 latest 语义。 */
-  capabilities: { skills: string[]; tools: string[] }
+  /** 能力依赖：Skill 为规范化 `id@x.y.z` 精确引用；内置工具由平台装配，只有联网搜索需显式开启。 */
+  capabilities: { skills: string[]; webSearch: boolean }
   input: { type: 'text' }
   output: { type: 'text' }
   context: { conversationHistory: 'recent' }
@@ -126,7 +126,7 @@ export interface AgentSpecConfiguration {
   welcomeMessage: string
   examplePrompts: string[]
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
   timeoutSeconds: number
   maxToolCalls: number
   maxOutputBytes: number
@@ -142,7 +142,7 @@ export function agentSpecFromConfiguration(input: AgentSpecConfiguration, versio
       ? { path: AGENT_SPEC_WORK_PROCEDURES_PATH,
         body: (input.workInstructions === undefined ? existing?.workProcedures?.body : input.workInstructions)!.trim() }
       : null,
-    capabilities: { skills: [...input.skills], tools: [...input.tools] },
+    capabilities: { skills: [...input.skills], webSearch: input.webSearchEnabled },
     input: existing ? { ...existing.input } : { type: 'text' },
     output: existing ? { ...existing.output } : { type: 'text' },
     context: existing ? { ...existing.context } : { conversationHistory: 'recent' },

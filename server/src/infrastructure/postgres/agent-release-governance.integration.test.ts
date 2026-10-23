@@ -7,9 +7,9 @@ import { PostgresAgentAccessService } from '../../modules/agent/agent-access-ser
 import { PostgresAgentValidationService, type AgentValidation } from '../../modules/agent/agent-validation-service.ts'
 import type { AgentSpec } from '../../modules/agent/agent-spec.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
-import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
+import { PostgresMcpConnectorService } from '../../modules/tool/postgres-mcp-connector-service.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
@@ -41,7 +41,8 @@ let agents: PostgresAgentService
 let validation: PostgresAgentValidationService
 let orchestration: RunOrchestrationService
 let trialRuntime: TrialStubRuntime
-let tools: PostgresToolConnectorService
+let operations: PostgresOperationsService
+let mcp: PostgresMcpConnectorService
 let access: PostgresAgentAccessService
 
 before(async () => {
@@ -49,24 +50,29 @@ before(async () => {
   database = throwaway.client
   await database`update runtimes set capacity = 4, scheduling_status = 'accepting'`
   trialRuntime = new TrialStubRuntime()
-  tools = new PostgresToolConnectorService(database, trialRuntime)
-  const skills = new PostgresSkillService(database, undefined, tools)
-  agents = new PostgresAgentService(database, undefined, skills, tools)
+  mcp = new PostgresMcpConnectorService(database, trialRuntime)
+  operations = new PostgresOperationsService(database, trialRuntime)
+  const skills = new PostgresSkillService(database)
+  agents = new PostgresAgentService(database, undefined, skills, mcp)
   orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
     new PostgresConversationRepository(database),
     new ModelGovernanceService(new PostgresModelGovernanceRepository(database)),
     trialRuntime,
     undefined,
-    undefined,
+    operations,
     agents,
     undefined,
     // 验证案例在执行时复核平台管理权限与 Agent 身份快照，测试环境接真实授权服务。
     new PostgresAuthorizationService(database),
-    { toolBindings: tools },
+    {
+      toolChecks: {
+        assertPinnedConnections: pins => mcp.assertPinnedConnections(pins),
+      },
+    },
   )
-  validation = new PostgresAgentValidationService(database, agents, skills, tools, orchestration)
-  access = new PostgresAgentAccessService(database, tools)
+  validation = new PostgresAgentValidationService(database, agents, skills, orchestration, mcp)
+  access = new PostgresAgentAccessService(database)
   await createAdminUser(ADMIN)
 })
 
@@ -100,7 +106,7 @@ async function setAccess(agentId: string, change: { visibleRoleIds?: string[]; r
 }
 
 async function createDraftAgent(id: string, options: {
-  skills?: string[]; tools?: string[]; dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
+  skills?: string[]; webSearchEnabled?: boolean; dataScopes?: string[]; visibleRoleIds?: string[]; roleIds?: string[]
   mcpScope?: AgentMcpScope; examplePrompts?: string[]
 } = {}) {
   return agents.createAgent({
@@ -118,11 +124,33 @@ async function createDraftAgent(id: string, options: {
     maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: options.skills ?? ['skill-document@1.0.0'],
-    tools: options.tools ?? ['read@1.0.0'],
+    webSearchEnabled: options.webSearchEnabled,
     mcpScope: options.mcpScope,
     changeSummary: '创建初始草稿版本',
     actor: ADMIN,
   })
+}
+
+async function createPublishedSkill(id: string, toolRefs: string[]) {
+  const versionId = `skill-version-${id}-1`
+  await database.begin(async transaction => {
+    await transaction`
+      insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
+      values (${id}, ${tenantId}, ${id}, '联网检索', '研究', '检索公开资料并整理要点。', ${ADMIN}, ${ADMIN}, 'published')
+    `
+    await transaction`
+      insert into skill_versions (
+        id, tenant_id, skill_id, version, name, category, description, instructions,
+        manifest, tool_refs, test_prompt, status, created_by, published_by, published_at, change_summary
+      ) values (
+        ${versionId}, ${tenantId}, ${id}, '1.0.0', '联网检索', '研究', '检索公开资料并整理要点。',
+        '检索公开资料，逐条列出每条结论的来源链接，并整理成要点。', '{}', ${transaction.json(toolRefs)}, '检索测试',
+        'published', ${ADMIN}, ${ADMIN}, now(), '测试 Skill'
+      )
+    `
+    await transaction`update skills set active_version_id = ${versionId} where tenant_id = ${tenantId} and id = ${id}`
+  })
+  return id
 }
 
 async function waitFor(agentId: string, validationId: string, predicate: (value: AgentValidation) => boolean, label: string) {
@@ -167,8 +195,8 @@ async function attemptCount(versionId: string) {
 }
 
 async function versionRow(versionId: string) {
-  const [row] = await database<{ status: string; version: string; bindingRefs: ManifestToolBinding[]; publishedBy: string | null }[]>`
-    select status, version, binding_refs as "bindingRefs", published_by as "publishedBy"
+  const [row] = await database<{ status: string; version: string; publishedBy: string | null }[]>`
+    select status, version, published_by as "publishedBy"
       from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
   `
   return row
@@ -194,7 +222,6 @@ test('S3 验证冻结草稿、后台运行案例并在全部判定通过后发�
   assert.equal(started.validation?.agentVersionId, created.version.id)
   const frozen = await versionRow(created.version.id)
   assert.equal(frozen?.status, 'candidate')
-  assert.ok(frozen?.bindingRefs.some(pin => pin.tool === 'read@1.0.0'), '冻结时固定工具绑定')
   await assert.rejects(database`
     update agent_versions set system_prompt = 'changed after freeze' where tenant_id = ${tenantId} and id = ${created.version.id}
   `, /candidate versions are immutable/)
@@ -208,7 +235,7 @@ test('S3 验证冻结草稿、后台运行案例并在全部判定通过后发�
   const manifest = trialRuntime.manifest(first!.runId!)
   assert.equal(manifest?.purpose, 'agent-release-trial')
   assert.equal(manifest?.workspace_id, '')
-  assert.deepEqual(manifest?.tool_bindings, frozen?.bindingRefs)
+  assert.ok(manifest?.tools.some(tool => tool.id === 'read'), '试运行装配平台内置工具')
   await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /全部案例判定通过后才能发布/)
 
   const approved = await validation.setVerdict(agentId, done.id, first!.id, ADMIN, { verdict: 'passed' })
@@ -270,7 +297,7 @@ test('S3 案例由示例问题、主动任务提示词与自定义测试问题�
 
 test('S3 冻结后编辑草稿生成新版本，待发布版本不变且仍可发布', async () => {
   const agentId = `agent-freeze-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [] })
+  const created = await createDraftAgent(agentId, { skills: [] })
   const done = await approveAll(agentId, await runValidation(agentId))
   const edited = await agents.updateAgent({
     ...created.agent, agentId, actor: ADMIN, systemPrompt: `${PROMPT}请补充处理建议。`, changeSummary: '验证中修改草稿',
@@ -294,7 +321,7 @@ test('S3 冻结后编辑草稿生成新版本，待发布版本不变且仍可�
 
 test('S3 机器检查失败的案例不能判为通过，不通过须写原因，重跑后重新判定', async () => {
   const agentId = `agent-checks-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [], examplePrompts: ['这条会失败'] })
+  await createDraftAgent(agentId, { skills: [], examplePrompts: ['这条会失败'] })
   trialRuntime.failOnMessage = '这条会失败'
   let done: AgentValidation
   try {
@@ -324,7 +351,7 @@ test('S3 机器检查失败的案例不能判为通过，不通过须写原因�
 
 test('S3 验证前检查未通过时不冻结、不创建 Attempt；补齐岗位权限后可验证', async () => {
   const agentId = `agent-precheck-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [], visibleRoleIds: [] })
+  const created = await createDraftAgent(agentId, { skills: [], visibleRoleIds: [] })
   const overview = await validation.getOverview(agentId)
   assert.equal(overview.checks.find(check => check.id === 'audience')?.passed, false)
   await assert.rejects(validation.startValidation(agentId, ADMIN), /验证前检查未通过：可见角色/)
@@ -337,7 +364,7 @@ test('S3 验证前检查未通过时不冻结、不创建 Attempt；补齐岗位
 
 test('S3 岗位角色必填：未授予时验证前检查不通过，撤掉全部岗位角色后不能发布', async () => {
   const agentId = `agent-roles-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [], roleIds: [], dataScopes: [] })
+  const created = await createDraftAgent(agentId, { skills: [], roleIds: [], dataScopes: [] })
   const overview = await validation.getOverview(agentId)
   assert.equal(overview.checks.find(check => check.id === 'roles')?.passed, false)
   await assert.rejects(validation.startValidation(agentId, ADMIN), /验证前检查未通过：岗位角色/)
@@ -350,31 +377,9 @@ test('S3 岗位角色必填：未授予时验证前检查不通过，撤掉全�
   await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /岗位角色/)
 })
 
-test('S3 已声明能力缺少授权时阻止验证，不产生 Runtime Attempt', async () => {
-  await tools.updateToolPermissions({
-    toolId: 'grep', allowedRoles: ['role-employee'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none', actor: ADMIN,
-  })
-  try {
-    const agentId = `agent-auth-${randomUUID().slice(0, 8)}`
-    const created = await createDraftAgent(agentId, { skills: [], tools: ['grep@1.0.0'], dataScopes: ['enterprise:authorized'] })
-    const overview = await validation.getOverview(agentId)
-    assert.equal(overview.checks.find(check => check.id === 'authorization')?.passed, false)
-    await assert.rejects(validation.startValidation(agentId, ADMIN), /能力所需授权/)
-    assert.equal(await attemptCount(created.version.id), 0)
-    await setAccess(agentId, { dataScopes: ['enterprise:authorized', 'workspace:authorized'] })
-    assert.equal((await validation.getOverview(agentId)).checks.find(check => check.id === 'authorization')?.passed, true)
-  } finally {
-    await tools.updateToolPermissions({
-      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
-      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
-    })
-  }
-})
-
 test('验证以可见角色可及的权限为上限：Agent 多出的角色与数据范围不进入试运行', async () => {
   const agentId = `agent-ceiling-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [] })
+  await createDraftAgent(agentId, { skills: [] })
   // domain:operations 只授予工作空间，可见角色的员工都拿不到；role-platform-admin 不是可见角色。
   await setAccess(agentId, {
     visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'],
@@ -391,73 +396,21 @@ test('验证以可见角色可及的权限为上限：Agent 多出的角色与�
   assert.deepEqual(manifest?.data_scopes, ['workspace:authorized'])
 })
 
-test('能力所需授权只有可见角色之外的角色才有时，验证前检查不通过', async () => {
-  await tools.updateToolPermissions({
-    toolId: 'grep', allowedRoles: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none', actor: ADMIN,
-  })
-  try {
-    const agentId = `agent-ceiling-tool-${randomUUID().slice(0, 8)}`
-    const created = await createDraftAgent(agentId, { skills: [], tools: ['grep@1.0.0'] })
-    await setAccess(agentId, { visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'] })
-    const check = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
-    assert.equal(check?.passed, false)
-    assert.match(check?.detail ?? '', /可见角色的员工无法让 Agent 使用这些能力/)
-    await assert.rejects(validation.startValidation(agentId, ADMIN), /能力所需授权/)
-    assert.equal(await attemptCount(created.version.id), 0)
-    await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'] })
-    const covered = (await validation.getOverview(agentId)).checks.find(item => item.id === 'authorization')
-    assert.equal(covered?.passed, true)
-    assert.equal(covered?.warning, undefined, '岗位角色都在可见角色内时不提示')
-  } finally {
-    await tools.updateToolPermissions({
-      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
-      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
-    })
-  }
-})
-
-test('S3 默认工具按可见角色上限固定：岗位角色独有的默认工具不进入验证', async () => {
-  // grep 是平台默认工具候选；只由可见角色之外的岗位角色授予时，员工侧够不到它。
-  await tools.updateToolPermissions({
-    toolId: 'grep', allowedRoles: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none', actor: ADMIN,
-  })
-  try {
-    const agentId = `agent-default-ceiling-${randomUUID().slice(0, 8)}`
-    await createDraftAgent(agentId, { skills: [], tools: [] })
-    await setAccess(agentId, { visibleRoleIds: ['role-employee'], roleIds: ['role-employee', 'role-platform-admin'] })
-    const done = await approveAll(agentId, await runValidation(agentId))
-    const pins = (await versionRow(done.agentVersionId))?.bindingRefs ?? []
-    assert.ok(pins.some(pin => pin.tool === 'read@1.0.0'), '基础默认工具仍固定')
-    assert.ok(!pins.some(pin => pin.tool === 'grep@1.0.0'), '可见角色够不到的默认工具不固定')
-    assert.ok(!(trialRuntime.manifest(done.cases[0]!.runId!)?.tool_bindings ?? []).some(pin => pin.tool === 'grep@1.0.0'))
-  } finally {
-    await tools.updateToolPermissions({
-      toolId: 'grep', allowedRoles: ['role-employee', 'role-platform-admin'],
-      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', actor: ADMIN,
-    })
-  }
-})
-
-test('S3 放宽岗位权限不作废验证；收窄到撤掉冻结的工具时发布被拒绝', async () => {
+test('S3 调整岗位权限不作废验证，发布时复核当前授权', async () => {
   const agentId = `agent-widen-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [] })
+  await createDraftAgent(agentId, { skills: [] })
   const done = await approveAll(agentId, await runValidation(agentId))
-  const pins = (await versionRow(done.agentVersionId))?.bindingRefs ?? []
-  assert.ok(pins.some(pin => pin.tool === 'read@1.0.0'), '平台默认工具在冻结时固定')
   await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'], dataScopes: ['workspace:authorized', 'enterprise:authorized'] })
   assert.equal((await validation.getValidation(agentId, done.id)).publishable, true)
-  // 保留岗位角色（必填），只收窄数据范围，撤掉冻结时固定的默认工具。
-  await setAccess(agentId, { dataScopes: [] })
-  await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /收窄后不再获准的工具/)
+  await setAccess(agentId, { roleIds: [] })
+  await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /岗位角色/)
   await setAccess(agentId, { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
   assert.equal((await validation.publish(agentId, ADMIN, { validationId: done.id })).activeVersion?.version, '0.1.0')
 })
 
 test('S3 新验证取代旧验证：旧验证的未完成案例被取消，不能再判定或发布', async () => {
   const agentId = `agent-supersede-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [], examplePrompts: ['暂停的案例'] })
+  await createDraftAgent(agentId, { skills: [], examplePrompts: ['暂停的案例'] })
   trialRuntime.hold('暂停的案例')
   const first = await validation.startValidation(agentId, ADMIN)
   await waitFor(agentId, first.validation!.id, value => value.cases[0]?.status === 'running', '案例未开始运行')
@@ -476,7 +429,7 @@ test('S3 新验证取代旧验证：旧验证的未完成案例被取消，不�
 
 test('S3 服务重启：未取得 Run 的案例与被重启终止的案例都标为“服务重启中断”，可单独重跑', async () => {
   const agentId = `agent-restart-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [], examplePrompts: ['运行中被重启', '尚未开始'] })
+  await createDraftAgent(agentId, { skills: [], examplePrompts: ['运行中被重启', '尚未开始'] })
   trialRuntime.hold('运行中被重启')
   const started = await validation.startValidation(agentId, ADMIN)
   const running = await waitFor(agentId, started.validation!.id,
@@ -533,7 +486,7 @@ test('S3 服务重启：未取得 Run 的案例与被重启终止的案例都标
 
 test('S3 验证案例车道最多并行两路，并为交互执行保留一个执行位', async () => {
   const agentId = `agent-lane-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [], examplePrompts: ['车道一', '车道二', '车道三'] })
+  await createDraftAgent(agentId, { skills: [], examplePrompts: ['车道一', '车道二', '车道三'] })
   trialRuntime.hold('车道一', '车道二', '车道三')
   await database`update runtimes set capacity = 4 where tenant_id = ${tenantId}`
   try {
@@ -567,69 +520,84 @@ test('S3 验证案例车道最多并行两路，并为交互执行保留一个�
 
 test('S3 验证案例按版本的 MCP 范围装配连接器', async () => {
   const suffix = randomUUID().slice(0, 8)
-  const first = await tools.registerMcpConnector({
+  const first = await mcp.registerMcpConnector({
     name: `验证数据源甲 ${suffix}`, endpoint: `https://source-a-${suffix}.example.test/mcp`,
     authType: 'none', scopeDescription: '仅用于隔离验证的合成数据', actor: ADMIN,
   })
-  const second = await tools.registerMcpConnector({
+  const second = await mcp.registerMcpConnector({
     name: `验证数据源乙 ${suffix}`, endpoint: `https://source-b-${suffix}.example.test/mcp`,
     authType: 'none', scopeDescription: '仅用于隔离验证的合成数据', actor: ADMIN,
   })
-  const scopes: Array<{ mode: 'all' | 'selected' | 'none'; scope: AgentMcpScope; expected: string[] }> = [
-    { mode: 'all', scope: { mode: 'all', connectorIds: [] }, expected: [first.id, second.id] },
+  const scopes: Array<{ mode: 'selected' | 'none'; scope: AgentMcpScope; expected: string[] }> = [
     { mode: 'selected', scope: { mode: 'selected', connectorIds: [first.id] }, expected: [first.id] },
+    { mode: 'selected', scope: { mode: 'selected', connectorIds: [first.id, second.id] }, expected: [first.id, second.id] },
     { mode: 'none', scope: { mode: 'none', connectorIds: [] }, expected: [] },
   ]
   for (const { mode, scope, expected } of scopes) {
-    const agentId = `agent-validate-mcp-${mode}-${suffix}`
-    await createDraftAgent(agentId, { skills: [], tools: [], mcpScope: scope })
+    const agentId = `agent-validate-mcp-${mode}-${expected.length}-${suffix}`
+    await createDraftAgent(agentId, { skills: [], mcpScope: scope })
     const overview = await validation.getOverview(agentId)
     assert.equal(overview.usesMcp, mode !== 'none')
     const done = await runValidation(agentId)
     const manifest = trialRuntime.manifest(done.cases[0]!.runId!)!
     const connectors = (manifest.mcp_connections ?? []).map(item => item.connector_id)
-    for (const id of expected) assert.ok(connectors.includes(id), `${mode} 应装配 ${id}`)
-    if (mode !== 'all') assert.deepEqual(connectors.sort(), [...expected].sort())
+    assert.deepEqual(connectors.sort(), [...expected].sort())
     assert.equal(manifest.permission_policy.network_policy, connectors.length ? 'allowlist' : 'deny')
   }
 })
 
-test('S3 工具绑定在冻结后变化时发布被拒绝；再次验证冻结为新版本', async () => {
-  const agentId = `agent-binding-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId)
-  const done = await approveAll(agentId, await runValidation(agentId))
-  const pins = (await versionRow(done.agentVersionId))?.bindingRefs ?? []
-  assert.ok(pins.length > 1, '平台默认工具也固定精确绑定')
-  const readPin = pins.find(pin => pin.tool === 'read@1.0.0')
-  assert.match(readPin?.binding_id ?? '', /^tool-binding-/)
-  assert.match(readPin?.digest ?? '', /^[a-f0-9]{64}$/)
-  assert.deepEqual(trialRuntime.manifest(done.cases[0]!.runId!)?.tool_bindings, pins)
-  // 冻结后工具策略收窄再恢复：绑定修订两次轮换，冻结的绑定依据已失效。
-  await tools.updateToolPermissions({
-    toolId: 'read', allowedRoles: ['role-platform-admin'], dataScopes: ['workspace:authorized'],
-    approvalPolicy: 'none', actor: ADMIN,
+test('联网搜索按 Agent 版本开关装配；Skill 需要联网搜索时须先开启', async () => {
+  const skillId = await createPublishedSkill(`skill-web-${randomUUID().slice(0, 8)}`, ['web_search@1.0.0'])
+  const agentId = `agent-web-${randomUUID().slice(0, 8)}`
+  await assert.rejects(createDraftAgent(agentId, { skills: [`${skillId}@1.0.0`] }), /未开启联网搜索/)
+  const created = await createDraftAgent(agentId, { skills: [] })
+  assert.equal(created.agent.webSearchEnabled, false)
+  assert.ok(!(await agents.getRuntimeSnapshot(created.version.id)).runtimeTools.includes('web_search'))
+  const enabled = await agents.updateAgent({
+    ...created.agent, agentId, actor: ADMIN, skills: [`${skillId}@1.0.0`], webSearchEnabled: true, changeSummary: '开启联网搜索',
   })
+  assert.equal(enabled.agent.webSearchEnabled, true)
+  assert.ok((await agents.getRuntimeSnapshot(enabled.version.id)).runtimeTools.includes('web_search'))
+  // 编辑时省略开关保留当前设置。
+  const kept = await agents.updateAgent({ ...enabled.agent, agentId, actor: ADMIN, webSearchEnabled: undefined, changeSummary: '只改说明' })
+  assert.equal(kept.agent.webSearchEnabled, true)
+  const done = await runValidation(agentId)
+  assert.ok(trialRuntime.manifest(done.cases[0]!.runId!)?.tools.some(tool => tool.id === 'web_search'))
+})
+
+test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt 不因停用而失败', async () => {
+  const runtime = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const configure = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtime.id, maxConcurrentWorkers: 4, attemptTimeoutMinutes: runtime.attemptTimeoutMinutes,
+    schedulingStatus: 'accepting', disabledTools, actor: ADMIN,
+  })
+  await assert.rejects(configure(['activate_skill']), /只能停用 DSH 内置工具/)
+  await assert.rejects(configure(['bash']), /只能停用 DSH 内置工具/)
+  const agentId = `agent-kill-${randomUUID().slice(0, 8)}`
+  await createDraftAgent(agentId, { skills: [], webSearchEnabled: true, examplePrompts: ['执行中停用'] })
+  trialRuntime.hold('执行中停用')
   try {
-    await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /能力所需授权/)
-    await tools.updateToolPermissions({
-      toolId: 'read', allowedRoles: ['role-employee', 'role-platform-admin'], dataScopes: ['workspace:authorized'],
-      approvalPolicy: 'none', actor: ADMIN,
-    })
-    await assert.rejects(validation.publish(agentId, ADMIN, { validationId: done.id }), /工具绑定已失效/)
-    const again = await validation.startValidation(agentId, ADMIN)
-    assert.notEqual(again.validation?.agentVersionId, done.agentVersionId, '绑定变化后冻结为新版本')
-    assert.equal(again.candidate?.version, '0.2.0')
-    const rerun = await approveAll(agentId, await waitFor(agentId, again.validation!.id, completed, '验证未完成'))
-    const repins = (await versionRow(rerun.agentVersionId))?.bindingRefs ?? []
-    assert.notEqual(repins.find(pin => pin.tool === 'read@1.0.0')?.revision, readPin?.revision)
-    assert.equal((await validation.publish(agentId, ADMIN, { validationId: rerun.id })).activeVersion?.version, '0.2.0')
-    const record = (await agents.getAgentVersions()).find(item => item.agentId === agentId && item.version === '0.2.0')
-    assert.deepEqual(record?.bindingRefs, repins)
+    const started = await validation.startValidation(agentId, ADMIN)
+    const running = await waitFor(agentId, started.validation!.id, value => value.cases[0]?.status === 'running', '案例未开始运行')
+    const pinned = trialRuntime.manifest(running.cases[0]!.runId!)!
+    assert.ok(pinned.tools.some(tool => tool.id === 'web_search'))
+    await orchestration.assertCurrentRunAuthorization(pinned)
+    const updated = await configure(['web_search'])
+    assert.deepEqual(updated?.disabledTools, ['web_search'])
+    assert.deepEqual((await operations.getRuntimePolicy(runtime.id)).disabledTools, ['web_search'])
+    // 停用不是撤权：执行中的 Attempt 继续运行，被停用工具的下一次调用由 DSH 策略单独拒绝。
+    await orchestration.assertCurrentRunAuthorization(pinned)
+    trialRuntime.releaseAll()
+    await waitFor(agentId, started.validation!.id, completed, '验证未完成')
+    // 新 Attempt 不再装配被停用的工具。
+    const rerun = await validation.startValidation(agentId, ADMIN)
+    const done = await waitFor(agentId, rerun.validation!.id, completed, '新验证未完成')
+    const manifest = trialRuntime.manifest(done.cases[0]!.runId!)!
+    assert.ok(!manifest.tools.some(tool => tool.id === 'web_search'))
+    assert.ok(manifest.tools.some(tool => tool.id === 'read'))
   } finally {
-    await tools.updateToolPermissions({
-      toolId: 'read', allowedRoles: ['role-employee', 'role-platform-admin'], dataScopes: ['workspace:authorized'],
-      approvalPolicy: 'none', actor: ADMIN,
-    })
+    trialRuntime.releaseAll()
+    await configure([])
   }
 })
 
@@ -639,23 +607,22 @@ test('S3 工具绑定在冻结后变化时发布被拒绝；再次验证冻结�
 
 test('无 Skill/Tool 的 Soul Agent 可配置创建并验证，默认工具随冻结固定', async () => {
   const agentId = `agent-soul-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [] })
+  const created = await createDraftAgent(agentId, { skills: [] })
   const [stored] = await database<{ spec: AgentSpec }[]>`
     select agent_spec as spec from agent_versions where tenant_id = ${tenantId} and id = ${created.version.id}
   `
   assert.equal(stored?.spec.apiVersion, 'dsh-work.ai/v2')
   assert.deepEqual(stored?.spec.instructions, { path: 'SOUL.md', body: PROMPT })
-  assert.deepEqual(stored?.spec.capabilities, { skills: [], tools: [] })
+  assert.deepEqual(stored?.spec.capabilities, { skills: [], webSearch: false })
   const draftSnapshot = await agents.getRuntimeSnapshot(created.version.id)
-  assert.ok(draftSnapshot.runtimeTools.includes('read@1.0.0'))
-  assert.ok(draftSnapshot.runtimeTools.includes('write@1.0.0'))
-  assert.ok(!draftSnapshot.runtimeTools.some(reference => reference.startsWith('bash@')))
+  assert.ok(draftSnapshot.runtimeTools.includes('read'))
+  assert.ok(draftSnapshot.runtimeTools.includes('write'))
+  assert.ok(!draftSnapshot.runtimeTools.includes('bash'))
+  assert.ok(!draftSnapshot.runtimeTools.includes('web_search'), '联网搜索默认关闭')
   const done = await runValidation(agentId)
-  const pins = (await versionRow(created.version.id))?.bindingRefs ?? []
-  assert.ok(pins.some(pin => pin.tool === 'read@1.0.0'))
-  assert.ok(pins.some(pin => pin.tool === 'write@1.0.0'))
   const manifest = trialRuntime.manifest(done.cases[0]!.runId!)
-  assert.deepEqual(manifest?.tool_bindings, pins)
+  assert.deepEqual(manifest?.tools.filter(tool => tool.id === 'read' || tool.id === 'write').map(tool => `${tool.id}@${tool.version}`),
+    ['read@1.0.0', 'write@1.0.0'])
   // 与员工执行同一权限策略，外部效果由 purpose 隔离。
   const snapshot = await agents.getRuntimeSnapshot(created.version.id)
   assert.equal(manifest?.permission_policy.approval_mode, snapshot.approvalMode)
@@ -663,7 +630,7 @@ test('无 Skill/Tool 的 Soul Agent 可配置创建并验证，默认工具随�
   assert.equal(manifest?.limits.timeout_seconds, snapshot.timeoutSeconds)
   // 试运行与员工执行共用同一 Manifest 构造：工具集、执行身份与输入形状一致，
   // 只是没有工作空间（无文件、无工作空间经验）。
-  assert.deepEqual(manifest?.tools.map(tool => `${tool.id}@${tool.version}`).filter(ref => snapshot.runtimeTools.includes(ref)),
+  assert.deepEqual(manifest?.tools.map(tool => tool.id).filter(id => snapshot.runtimeTools.includes(id)),
     snapshot.runtimeTools)
   assert.equal(manifest?.principal_context?.executed_as, snapshot.principalId)
   assert.equal(manifest?.principal_context?.executor_authorization_version, snapshot.principalAuthorizationVersion)
@@ -680,7 +647,7 @@ test('基础 Agent 不继承创建者权限；岗位角色必填，授予后无�
     welcomeMessage: '', examplePrompts: ['请整理这段文字'],
     systemPrompt: '你是独立的文本整理 AI 员工。只处理用户本次提供的文字，不读取企业业务数据。',
     maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
-    skills: [], tools: [], changeSummary: '创建基础草稿', actor: ADMIN,
+    skills: [], changeSummary: '创建基础草稿', actor: ADMIN,
   })
   await assert.rejects(validation.startValidation(agentId, ADMIN), /验证前检查未通过：岗位角色/)
   await setAccess(agentId, { roleIds: ['role-employee'] })
@@ -692,25 +659,23 @@ test('基础 Agent 不继承创建者权限；岗位角色必填，授予后无�
   assert.equal((await validation.publish(agentId, ADMIN, { validationId: done.id })).activeVersion?.version, '0.1.0')
 })
 
-test('配置创建自动装配 Skill 工具依赖，移除 Skill 后不保留隐式工具', async () => {
+test('Skill 的工具依赖由平台装配，Agent 版本不保存工具引用', async () => {
   const agentId = `agent-skill-tools-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: ['skill-document@1.0.0'], tools: [] })
-  assert.deepEqual(created.agent.tools, [], '编辑契约只回显作者直接声明的工具')
-  const [initial] = await database<{ tools: string[] }[]>`
-    select tool_refs as tools from agent_versions where tenant_id = ${tenantId} and id = ${created.version.id}
-  `
-  assert.deepEqual(initial?.tools, ['read@1.0.0'])
+  const created = await createDraftAgent(agentId, { skills: ['skill-document@1.0.0'] })
   assert.ok((await validation.getOverview(agentId)).checks.every(check => check.passed))
-  await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, skills: [], tools: created.agent.tools, changeSummary: '移除文档 Skill' })
-  const [updated] = await database<{ tools: string[] }[]>`
-    select tool_refs as tools from agent_versions where tenant_id = ${tenantId} and id = ${created.version.id}
+  const snapshot = await agents.getRuntimeSnapshot(created.version.id)
+  assert.deepEqual(snapshot.skillInstructions[0]?.tools, ['read@1.0.0'])
+  assert.ok(snapshot.runtimeTools.includes('read'))
+  const [columns] = await database<{ count: number }[]>`
+    select count(*)::integer as count from information_schema.columns
+     where table_name = 'agent_versions' and column_name in ('tool_refs', 'binding_refs')
   `
-  assert.deepEqual(updated?.tools, [], '已移除 Skill 的隐式工具不能残留在 Agent 定义')
+  assert.equal(columns?.count, 0)
 })
 
 test('回滚只移动当前版本指针，停用状态与进行中的草稿保持不变，并拒绝过期回滚', async () => {
   const agentId = `agent-rollback-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [] })
+  const created = await createDraftAgent(agentId, { skills: [] })
   await validateAndPublish(agentId)
   await agents.updateAgent({ ...created.agent, agentId, actor: ADMIN, name: '退款预测助手二版', changeSummary: '二版' })
   await validateAndPublish(agentId)
@@ -740,7 +705,7 @@ test('回滚只移动当前版本指针，停用状态与进行中的草稿保�
 
 test('编辑器保存不改岗位权限，过期修订被拒绝', async () => {
   const agentId = `agent-editor-${randomUUID().slice(0, 8)}`
-  const created = await createDraftAgent(agentId, { skills: [], tools: [] })
+  const created = await createDraftAgent(agentId, { skills: [] })
   const opened = await agents.getMutationSnapshot(agentId)
   await setAccess(agentId, { visibleRoleIds: ['role-employee', 'role-platform-admin'] })
   assert.equal((await agents.getAgents()).find(item => item.id === agentId)?.revision, opened.revision)
@@ -753,7 +718,7 @@ test('编辑器保存不改岗位权限，过期修订被拒绝', async () => {
 
 test('已停用的管理员角色不能操作验证与发布', async () => {
   const agentId = `agent-admin-${randomUUID().slice(0, 8)}`
-  await createDraftAgent(agentId, { skills: [], tools: [] })
+  await createDraftAgent(agentId, { skills: [] })
   const revoked = `user-release-revoked-${randomUUID().slice(0, 8)}`
   await createAdminUser(revoked)
   await database`delete from user_roles where tenant_id = ${tenantId} and user_id = ${revoked}`
@@ -787,7 +752,7 @@ class TrialStubRuntime implements AgentRuntimePort {
     this.waiting.splice(0).forEach(resume => resume())
   }
 
-  /** 已派发 Attempt 的固化 Manifest：用于断言 tool_bindings 等执行期固定引用。 */
+  /** 已派发 Attempt 的固化 Manifest：用于断言工具集等执行期固定内容。 */
   manifest(runId: string) {
     return this.executions.get(runId)?.manifest
   }

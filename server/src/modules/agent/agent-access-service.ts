@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import { requirePlatformAdminActor } from '../authorization/platform-admin-actor.ts'
 import { RequestError, invalidRequest, notFound } from '../../domain/request-errors.ts'
 
@@ -14,18 +13,6 @@ export interface AgentAccessRoleOption {
   status: 'active' | 'disabled'
   /** 角色带有管理端或审计权限（admin:*、audit:*）；授予 Agent 时页面提示风险。 */
   privileged: boolean
-}
-
-/** One capability of the Agent and what its execution identity needs to use it. */
-export interface AgentCapabilityRequirement {
-  reference: string
-  name: string
-  source: 'declared' | 'default'
-  /** Any one of these roles is enough. */
-  requiredRoleIds: string[]
-  requiredScopes: string[]
-  missingRole: boolean
-  missingScopes: string[]
 }
 
 /**
@@ -43,8 +30,6 @@ export interface AgentAccess {
   dataScopes: string[]
   roleOptions: AgentAccessRoleOption[]
   scopeOptions: string[]
-  /** Capabilities of the draft (or the current version when no draft exists). */
-  capabilities: AgentCapabilityRequirement[]
   routines: Array<{
     id: string; name: string; status: string; schedule: Record<string, unknown>
     recipientUserId: string; recipientName: string
@@ -63,29 +48,24 @@ export interface UpdateAgentAccessInput {
 
 export class PostgresAgentAccessService {
   private readonly database: DatabaseClient
-  private readonly tools?: PostgresToolConnectorService
 
-  constructor(database: DatabaseClient, tools?: PostgresToolConnectorService) {
+  constructor(database: DatabaseClient) {
     this.database = database
-    this.tools = tools
   }
 
   async getAccess(agentId: string): Promise<AgentAccess> {
     const [row] = await this.database<{
       agentId: string; visibleRoleIds: string[]; principalId: string; principalStatus: 'active' | 'disabled'
-      revision: number; roleIds: string[]; dataScopes: string[]; tools: string[] | null
+      revision: number; roleIds: string[]; dataScopes: string[]
     }[]>`
       select a.id as "agentId", a.visible_role_ids as "visibleRoleIds",
              ep.id as "principalId", ep.status as "principalStatus", a.access_revision as revision,
              coalesce((select jsonb_agg(g.role_id order by g.role_id) from agent_principal_role_grants g
                        where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "roleIds",
              coalesce((select jsonb_agg(g.scope_value order by g.scope_value) from agent_principal_scope_grants g
-                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "dataScopes",
-             av.tool_refs as tools
+                       where g.tenant_id = ep.tenant_id and g.principal_id = ep.id), '[]'::jsonb) as "dataScopes"
         from agents a
         join execution_principals ep on ep.tenant_id = a.tenant_id and ep.kind = 'agent' and ep.agent_id = a.id
-        left join agent_versions av on av.tenant_id = a.tenant_id
-         and av.id = coalesce(a.draft_version_id, a.active_version_id)
        where a.tenant_id = ${tenantId} and a.id = ${agentId}
     `
     if (!row) throw notFound(`Agent 不存在：${agentId}`)
@@ -97,15 +77,6 @@ export class PostgresAgentAccessService {
              ) as privileged
         from roles where tenant_id = ${tenantId} order by name, id
     `
-    const activeRoles = new Set(roleOptions.filter(role => role.status === 'active').map(role => role.id))
-    const grantedRoles = row.roleIds.filter(role => activeRoles.has(role))
-    const grantedScopes = new Set(row.dataScopes)
-    const requirements = this.tools ? await this.tools.describeAuthorizationRequirements(row.tools ?? []) : []
-    const capabilities = requirements.map(item => ({
-      ...item,
-      missingRole: item.requiredRoleIds.length > 0 && !item.requiredRoleIds.some(role => grantedRoles.includes(role)),
-      missingScopes: item.requiredScopes.filter(scope => !grantedScopes.has(scope)),
-    }))
     const routines = await this.database<AgentAccess['routines']>`
       select r.id, r.name, r.status, r.schedule, r.recipient_user_id as "recipientUserId",
              u.display_name as "recipientName"
@@ -116,12 +87,9 @@ export class PostgresAgentAccessService {
     `
     const knownScopes = await this.database<{ scope: string }[]>`
       select distinct scope_value as scope from data_scope_grants where tenant_id = ${tenantId}
-      union
-      select distinct jsonb_array_elements_text(data_scopes) as scope from tools where tenant_id = ${tenantId}
     `
     const scopeOptions = [...new Set([
       ...knownScopes.map(item => item.scope), ...row.dataScopes,
-      ...capabilities.flatMap(item => item.requiredScopes),
     ])].filter(Boolean).sort()
     return {
       agentId: row.agentId,
@@ -133,7 +101,6 @@ export class PostgresAgentAccessService {
       dataScopes: row.dataScopes,
       roleOptions,
       scopeOptions,
-      capabilities,
       routines,
     }
   }

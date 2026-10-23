@@ -5,7 +5,7 @@ import type { PostgresConversationRepository } from '../../workbench/application
 import type { PostgresContentService } from '../../workbench/application/postgres-content-service.ts'
 import type { RunOperationsPort } from '../run-operations-port.ts'
 import type { PostgresAgentService } from '../../agent/postgres-agent-service.ts'
-import type { PostgresToolConnectorService } from '../../tool/postgres-tool-connector-service.ts'
+import type { ExecutionToolCheckPort } from '../current-execution-authorization.ts'
 import type { PostgresKnowledgeService } from '../../knowledge/postgres-knowledge-service.ts'
 import type { PostgresControlledMemoryService } from '../../memory/postgres-controlled-memory-service.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
@@ -20,7 +20,7 @@ export const tenantId = 'tenant-dsh-work'
 export const runtimeId = 'runtime-local-01'
 
 export type PersistentWaitPort = Pick<PostgresPersistentWaitService, 'cancelRun' | 'activateWaiting' | 'cancelPreparingForAttempt'>
-export type ToolBindingCheckPort = Pick<PostgresToolConnectorService, 'assertActiveToolBindings' | 'assertActiveMcpConnections'>
+export type { ExecutionToolCheckPort }
 
 /**
  * Collaborators shared by the orchestration components. Optional members are absent in
@@ -44,7 +44,7 @@ export interface OrchestrationDependencies {
   readonly projectTasks?: ProjectTaskThreadPort & { assertTaskThreadIdle(sessionId: string): Promise<void> }
   /** 项目空间 S2：项目档案与档案员整理批次。 */
   readonly projectArchive?: ProjectArchivePort
-  readonly toolBindings?: ToolBindingCheckPort
+  readonly toolChecks?: ExecutionToolCheckPort
   readonly tasks?: TaskRepository
   readonly automationMaxConcurrent: number
   /** Platform default IANA timezone for a run's current time (DSH_WORK_TIMEZONE). */

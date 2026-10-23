@@ -47,7 +47,6 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
     maxOutputBytes: 65536, maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: ['skill-document@1.0.0'],
-    tools: ['tool-runtime-file-read@1.0.0'],
     changeSummary: '创建集成测试 Agent',
     actor: 'U00008',
   })
@@ -82,7 +81,6 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
     maxOutputBytes: 131072, maxToolCalls: 20,
     timeoutSeconds: 240,
     skills: ['skill-document@1.0.0'],
-    tools: ['tool-runtime-file-read@1.0.0'],
     changeSummary: '创建二版配置',
     actor: 'U00008',
   })
@@ -113,7 +111,6 @@ test('Agent lifecycle publishes, versions, rolls back and controls employee visi
     maxOutputBytes: 131072, maxToolCalls: 20,
     timeoutSeconds: 240,
     skills: ['skill-document@1.0.0'],
-    tools: ['tool-runtime-file-read@1.0.0'],
     changeSummary: '验证回滚后的版本单调递增',
     actor: 'U00008',
   })

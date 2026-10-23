@@ -9,7 +9,6 @@ import { startPf07McpFixture } from './pf07-mcp-fixture.mjs'
 import { PostgresOperationsService } from '../../server/src/modules/admin/application/postgres-operations-service.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
 import type { AgentMcpScope } from '../../server/src/domain/types.ts'
-import { toManifestToolBinding } from '../../server/src/domain/tool-binding.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { createThrowawayDatabase, requireMaintenanceUrl } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { ModelGovernanceService } from '../../server/src/modules/model/model-governance-service.ts'
@@ -19,7 +18,7 @@ import { RunOrchestrationService } from '../../server/src/modules/run/run-orches
 import { DshAcpRuntimeAdapter } from '../../server/src/modules/runtime/dsh-acp-runtime-adapter.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation } from '../../server/src/modules/runtime/dsh-runtime-installation.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
 import { LocalObjectStorage } from '../../server/src/infrastructure/storage/local-object-storage.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
@@ -45,7 +44,7 @@ const directory = await mkdtemp(join(tmpdir(), 'pf07-mcp-platform-'))
 let disposable: Awaited<ReturnType<typeof createThrowawayDatabase>> | undefined
 let runtime: DshAcpRuntimeAdapter | undefined
 let orchestration: RunOrchestrationService | undefined
-let toolService: PostgresToolConnectorService | undefined
+let mcpService: PostgresMcpConnectorService | undefined
 let cleanedUp = false
 
 async function cleanup() {
@@ -84,12 +83,12 @@ try {
       await orchestration.assertCurrentRunAuthorization(manifest)
     },
     resolveMcpConnections: async manifest => {
-      if (!toolService) throw new Error('connector service is unavailable')
-      return toolService.resolveMcpRuntimeConnections(manifest)
+      if (!mcpService) throw new Error('connector service is unavailable')
+      return mcpService.resolveRuntimeConnections(manifest)
     },
     recordMcpInvocation: async (manifest, invocation) => {
-      if (!toolService) throw new Error('connector service is unavailable')
-      await toolService.recordMcpInvocation(manifest, invocation)
+      if (!mcpService) throw new Error('connector service is unavailable')
+      await mcpService.recordMcpInvocation(manifest, invocation)
     },
     permissionDecision: async () => 'allow_once',
     collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
@@ -98,13 +97,16 @@ try {
   const secrets = new PostgresEncryptedCredentialStore(database, {
     masterKeyBase64: randomBytes(32).toString('base64'), keyId: 'pf07-disposable',
   })
-  toolService = new PostgresToolConnectorService(database, runtime, operations, secrets)
-  const agents = new PostgresAgentService(database, operations, undefined, toolService)
+  mcpService = new PostgresMcpConnectorService(database, runtime, operations, secrets)
+  const mcp = mcpService
+  const agents = new PostgresAgentService(database, operations, undefined, mcp)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
   orchestration = new RunOrchestrationService(
     runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)),
     runtime, content, operations, agents, undefined, authorization,
-    { agentMembers, toolBindings: toolService },
+    { agentMembers, toolChecks: {
+      assertPinnedConnections: pins => mcp.assertPinnedConnections(pins),
+    } },
   )
 
   await database`
@@ -123,17 +125,44 @@ try {
     insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
     values (${tenantId}, ${workspaceId}, ${actorId}, 'owner', ${actorId})
   `
-  const connector = await toolService.registerMcpConnector({
+  // Probe Agents are published directly so the real Run/Attempt chain can
+  // validate each MCP scope. Release approval itself is covered by the
+  // release-governance integration suite.
+  const workInstructions = '先核对本次连接器的范围与操作键，再执行获准调用；结束前查询回执，无法核对时明确标记未知结果。'
+  async function createPublishedProbeAgent(suffix: string, mcpScope: AgentMcpScope) {
+    const id = `agent-pf07-${suffix}-${nonce}`
+    const created = await agents.createAgent({
+      id, name: `一次性 ${suffix} 范围验证`,
+      description: '仅在可丢弃本地服务中核对 Agent 的 MCP 使用范围。',
+      owner: actorId, department: '验收', 
+      visibleRoleIds: ['role-employee'], 
+      executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
+      welcomeMessage: '', examplePrompts: ['检查本次任务结果'],
+      systemPrompt: '你是一次性 MCP 范围验收助手。只执行本次明确要求的任务，并核对结果。',
+      workInstructions, skills: [], mcpScope,
+      maxOutputBytes: 65536, maxToolCalls: 12, timeoutSeconds: 180,
+      changeSummary: '一次性真实 DSH 验证 MCP 使用范围', actor: 'U00008',
+    })
+    await database`
+      update agent_versions set status = 'published', published_at = now(), published_by = 'U00008'
+       where tenant_id = ${tenantId} and id = ${created.version.id} and status = 'draft'
+    `
+    await database`
+      update agents set status = 'published', active_version_id = ${created.version.id}, draft_version_id = null
+       where tenant_id = ${tenantId} and id = ${id}
+    `
+    return created
+  }
+
+  const connector = await mcp.registerMcpConnector({
     name: `PF-07 disposable ${nonce}`, endpoint: fixture.url, authType: 'bearer', bearerToken: token,
     scopeDescription: '仅本机一次性验收回执，不含业务数据', actor: 'U00008',
   })
   assert.equal(connector.status, 'healthy')
-  const agentMember = await agentMembers.addAgentMember(workspaceId, 'agent-dsh-work-assistant', actorId, ['role-employee'])
-  const [agent] = await database<{ activeVersionId: string | null }[]>`
-    select active_version_id as "activeVersionId" from agents
-     where tenant_id = ${tenantId} and id = 'agent-dsh-work-assistant'
-  `
-  assert.ok(agent?.activeVersionId)
+  const selectedScope: AgentMcpScope = { mode: 'selected', connectorIds: [connector.id] }
+  const primaryAgent = await createPublishedProbeAgent('primary', selectedScope)
+  const agentMember = await agentMembers.addAgentMember(workspaceId, primaryAgent.agent.id, actorId, ['role-employee'])
+  const agent = { activeVersionId: primaryAgent.version.id }
   const session = await orchestration.createSession({
     userId: actorId, workspaceId, title: 'PF-07 MCP disposable write', agentVersionId: agent.activeVersionId,
   })
@@ -165,7 +194,7 @@ try {
   `
   assert.ok(audits.some(row => row.capabilityName === 'put_receipt' && row.result === 'success'))
   assert.ok(audits.some(row => row.capabilityName === 'get_receipt' && row.result === 'success'))
-  const pinned = await toolService.resolveMcpConnectionsForAgentVersion(agent.activeVersionId)
+  const pinned = await mcp.resolveConnections(selectedScope)
   assert.equal(pinned.length, 1)
   const [manifestRow] = await database<{ manifest: unknown }[]>`
     select manifest from run_attempts where tenant_id = ${tenantId} and id = ${attempt.id}
@@ -180,44 +209,13 @@ try {
   assert.ok(!Buffer.from(secretRow.ciphertext).toString('utf8').includes(token), 'Credential must be encrypted')
 
   secondaryFixture = await startPf07McpFixture({ token })
-  const otherConnector = await toolService.registerMcpConnector({
+  const otherConnector = await mcp.registerMcpConnector({
     name: `PF-07 unselected ${nonce}`, endpoint: secondaryFixture.url, authType: 'bearer', bearerToken: token,
     scopeDescription: '同租户但不属于选定 Agent 使用范围的一次性连接器', actor: 'U00008',
   })
   assert.equal(otherConnector.status, 'healthy')
 
-  // This disposable fixture publishes a second version directly so the real
-  // Run/Attempt chain can validate the new selected-Connector policy. Release
-  // approval itself is covered by the release-governance integration suite.
-  const workInstructions = '先核对本次连接器的范围与操作键，再执行获准调用；结束前查询回执，无法核对时明确标记未知结果。'
-  const defaultRefs = await toolService.resolvePlatformDefaultToolReferences(['role-employee'], ['workspace:authorized'])
-  const sealedBindings = (await toolService.resolveToolBindings(defaultRefs)).map(toManifestToolBinding)
-  async function createPublishedProbeAgent(suffix: string, mcpScope: AgentMcpScope) {
-    const id = `agent-pf07-${suffix}-${nonce}`
-    const created = await agents.createAgent({
-      id, name: `一次性 ${suffix} 范围验证`,
-      description: '仅在可丢弃本地服务中核对 Agent 的 MCP 使用范围。',
-      owner: actorId, department: '验收', 
-      visibleRoleIds: ['role-employee'], 
-      executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
-      welcomeMessage: '', examplePrompts: ['检查本次任务结果'],
-      systemPrompt: '你是一次性 MCP 范围验收助手。只执行本次明确要求的任务，并核对结果。',
-      workInstructions, skills: [], tools: [], mcpScope,
-      maxOutputBytes: 65536, maxToolCalls: 12, timeoutSeconds: 180,
-      changeSummary: '一次性真实 DSH 验证 MCP 使用范围', actor: 'U00008',
-    })
-    await database`
-      update agent_versions set status = 'published', published_at = now(), published_by = 'U00008',
-         binding_refs = ${database.json(sealedBindings as never)}
-       where tenant_id = ${tenantId} and id = ${created.version.id} and status = 'draft'
-    `
-    await database`
-      update agents set status = 'published', active_version_id = ${created.version.id}, draft_version_id = null
-       where tenant_id = ${tenantId} and id = ${id}
-    `
-    return created
-  }
-  const selectedAgent = await createPublishedProbeAgent('selected', { mode: 'selected', connectorIds: [connector.id] })
+  const selectedAgent = await createPublishedProbeAgent('selected', selectedScope)
   const selectedAgentId = selectedAgent.agent.id
   const selectedMember = await agentMembers.addAgentMember(workspaceId, selectedAgentId, actorId, ['role-employee'])
   const selectedSession = await orchestration.createSession({
@@ -299,31 +297,36 @@ try {
   `
   assert.equal(noneAudit?.count ?? 0, 0)
 
-  await toolService.rotateMcpCredential({ connectorId: connector.id, bearerToken: `${token}-invalid`, actor: 'U00008' })
-  assert.equal((await toolService.checkConnector({ connectorId: connector.id, actor: 'U00008' })).status, 'offline')
-  await assert.rejects(toolService.assertActiveMcpConnections(pinned, agent.activeVersionId))
-  await toolService.rotateMcpCredential({ connectorId: connector.id, bearerToken: token, actor: 'U00008' })
-  assert.equal((await toolService.checkConnector({ connectorId: connector.id, actor: 'U00008' })).status, 'healthy')
+  await mcp.rotateMcpCredential({ connectorId: connector.id, bearerToken: `${token}-invalid`, actor: 'U00008' })
+  assert.equal((await mcp.checkMcpConnector({ connectorId: connector.id, actor: 'U00008' })).status, 'offline')
+  await assert.rejects(mcp.assertPinnedConnections(pinned))
+  await mcp.rotateMcpCredential({ connectorId: connector.id, bearerToken: token, actor: 'U00008' })
+  assert.equal((await mcp.checkMcpConnector({ connectorId: connector.id, actor: 'U00008' })).status, 'healthy')
 
+  // 远端新增 Tool：进入待确认，不生效，已固定的 Attempt 不受影响；确认后才进入新 Attempt。
   fixture.setCatalogVersion(2)
-  assert.equal((await toolService.checkConnector({ connectorId: connector.id, actor: 'U00008' })).status, 'healthy')
-  await assert.rejects(toolService.assertActiveMcpConnections(pinned, agent.activeVersionId))
-  const changedPins = await toolService.resolveMcpConnectionsForAgentVersion(agent.activeVersionId)
+  const pending = await mcp.checkMcpConnector({ connectorId: connector.id, actor: 'U00008' })
+  assert.equal(pending.status, 'healthy')
+  assert.deepEqual(pending.mcp?.pendingCapabilities.map(item => item.name), ['catalog_probe_v2'])
+  await mcp.assertPinnedConnections(pinned)
+  await mcp.approveMcpCapabilities({ connectorId: connector.id, capabilityDigest: pending.mcp!.capabilityDigest!, actor: 'U00008' })
+  await assert.rejects(mcp.assertPinnedConnections(pinned))
+  const changedPins = await mcp.resolveConnections(selectedScope)
   assert.notEqual(changedPins[0]?.capability_digest, pinned[0]?.capability_digest)
-  await toolService.setMcpConnectorStatus({ connectorId: connector.id, status: 'disabled', actor: 'U00008' })
-  await assert.rejects(toolService.assertActiveMcpConnections(changedPins, agent.activeVersionId))
-  await toolService.deleteMcpConnector({ connectorId: connector.id, actor: 'U00008' })
-  assert.deepEqual((await toolService.resolveMcpConnectionsForAgentVersion(agent.activeVersionId)).map(item => item.connector_id), [otherConnector.id])
-  await assert.rejects(toolService.resolveMcpConnectionsForAgentVersion(selectedAgent.version.id))
+  await mcp.setMcpConnectorStatus({ connectorId: connector.id, status: 'disabled', actor: 'U00008' })
+  await assert.rejects(mcp.assertPinnedConnections(changedPins))
+  await mcp.deleteMcpConnector({ connectorId: connector.id, actor: 'U00008' })
+  await assert.rejects(mcp.resolveConnections(selectedScope))
+  assert.deepEqual((await mcp.resolveConnections({ mode: 'selected', connectorIds: [otherConnector.id] })).map(item => item.connector_id), [otherConnector.id])
   console.log(JSON.stringify({
     status: 'passed', scope: 'disposable-postgres-real-dsh-mcp-run',
     identity: 'synthetic', runtimeVersion: installation.version, runtimeCommit: installation.commit,
     connectorId: connector.id, runId: started.id, attemptId: attempt.id, receiptId: receipt.id,
     selectedScope: { agentVersionId: selectedAgent.version.id, runId: selectedRun.id, attemptId: selectedAttempt.id,
-      connectorId: connector.id, excludedConnectorId: otherConnector.id, defaultToolRefs: defaultRefs },
+      connectorId: connector.id, excludedConnectorId: otherConnector.id },
     noneScope: { agentVersionId: noneAgent.version.id, runId: noneRun.id, attemptId: noneAttempt.id,
       artifactVersionId: noneArtifact.id },
-    audits, boundaries: ['encrypted-credential', 'no-secret-in-manifest', 'invalid-credential-rejected', 'catalog-drift-rejected', 'disabled-rejected', 'deleted-rejected'],
+    audits, boundaries: ['encrypted-credential', 'no-secret-in-manifest', 'invalid-credential-rejected', 'catalog-change-requires-confirmation', 'disabled-rejected', 'deleted-rejected'],
   }))
 } finally {
   await cleanup()

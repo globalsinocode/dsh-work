@@ -145,10 +145,10 @@ async function seedOwner(prefix: string, provider: 'ai-hub' | 'local' = 'ai-hub'
   `
   await database`
     insert into agent_versions (
-      id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, tool_refs, status, created_by
+      id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, status, created_by
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '自动任务测试 Agent', '', '你是自动任务集成测试 Agent，请准确完成任务输入。',
-      '[]', '[]', 'published', ${userId}
+      '[]', 'published', ${userId}
     )
   `
   await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${agentId}`

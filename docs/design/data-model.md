@@ -109,18 +109,18 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `agents`、`agent_versions` | Agent 与其版本 | 版本状态为草稿、待发布（`candidate`，验证时原地冻结）、已发布；待发布与已发布版本内容不可修改（触发器，待发布只能改为已发布）；版本记录精确的 Skill、Tool 引用，不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
+| `agents`、`agent_versions` | Agent 与其版本 | 版本状态为草稿、待发布（`candidate`，验证时原地冻结）、已发布；待发布与已发布版本内容不可修改（触发器，待发布只能改为已发布）；版本记录精确的 Skill 引用与联网搜索开关 `web_search_enabled`（内置工具随代码发布，不在版本中保存），不含可见角色或数据范围；可见角色 `visible_role_ids` 属于 Agent，岗位角色与数据范围授予执行身份，都立即生效；新建 Agent 自动生成执行身份与数据平面安装记录 |
 | `agent_test_cases` | Agent 的自定义测试问题 | 属于 Agent 而非版本，跨版本复用；每个 Agent 最多 20 条，按位置唯一 |
 | `agent_validations` | 一次验证 | 绑定一个冻结的待发布版本（`candidate`）；每个 Agent 只有一个有效验证（`running`/`completed`），开始新验证时旧验证标为 `superseded`；发布后标为 `published` |
 | `agent_validation_cases` | 验证案例及结果 | 开始验证时快照示例问题、主动任务输入与自定义问题；记录 Run/Attempt、运行次数、三项机器检查与判定；判为不通过必须有原因；服务重启时未完成的案例标为中断 |
-| `agent_version_skills`、`agent_version_tools` | 早期的版本—能力关联表 | 当前引用保存在 `agent_versions` 上，这两张表未被读写 |
+| `agent_version_skills` | 早期的版本—Skill 关联表 | 当前引用保存在 `agent_versions` 上，该表未被读写 |
 
 ## 6. Skill
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `skills`、`skill_versions` | Skill 与其版本 | 已发布版本不可修改（触发器）；文件夹正文经存储端口按内容寻址保存，数据库只存引用与文件索引 |
-| `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；依赖不能扩大 Tool Allowlist |
+| `skill_version_dependencies` | Skill 依赖 | 依赖精确版本，不能依赖自身；Skill 声明的内置工具（`tool_refs`）须在注册表中且引用它的 Agent 可装配 |
 | `skill_installations` | 管理端安装计划 | 每次安装 Run 一条；完成时必须指向已保存的版本 |
 | `skill_test_bindings` | 严格试运行与精确 Attempt 的绑定 | 不可修改（触发器）；绑定配置与 Runtime 指纹 |
 | `skill_runtime_activations`、`skill_python_executions` | Attempt 内的 Skill 激活与 Python 执行记录 | 作为试运行证据，按 Attempt 隔离 |
@@ -131,10 +131,10 @@ flowchart LR
 
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
-| `tools`、`tool_versions` | 工具与版本 | 平台内置工具的审批策略由平台固定 |
-| `tool_binding_revisions` | 工具绑定修订（执行器、端点、凭据、授权与审批策略） | 每次变更新增修订；Agent 版本与 Attempt 固定引用修订，撤销或漂移后执行前复核会拒绝 |
+| （无表） | 内置工具 | 随代码发布，见 [内置工具注册表](../../server/src/modules/runtime/builtin-tools.ts)；迁移 `0096` 删除了原工具治理表 |
+| `tool_audit_logs` | 内置与平台工具调用审计 | 直接记录工具名称（`tool_name`） |
 | `connectors`、`connector_health_checks` | 连接器与健康检查 | 健康状态与配置分离 |
-| `mcp_connector_profiles` | MCP 连接器的发现结果与审核状态 | 只支持 Streamable HTTP；能力摘要变化需重新审核 |
+| `mcp_connector_profiles` | MCP 连接器的发现清单与生效清单 | 只支持 Streamable HTTP；新增或输入 Schema 变化的 Tool 须确认后进入生效清单 |
 | `credential_refs`、`credential_secrets` | 凭据引用与加密密文 | 密文为 AES-256-GCM；接口不回显、不导出密钥正文 |
 
 ## 8. 模型与 Runtime
@@ -142,7 +142,7 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `model_providers`、`provider_models`、`model_routes` | Provider、模型与平台路由 | 只存凭据引用；路由只写入 Attempt 快照，实际模型由 DSH Profile 固定（仅记录）；没有可用路由时新运行被拒绝 |
-| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本；Runtime 不等于每次执行的 Worker |
+| `runtimes`、`runtime_configurations` | Runtime 与其配置 | 健康与调度状态分离；配置追加版本，包含内置工具紧急停用清单 `disabled_tools`（只接受 DSH 工具）；Runtime 不等于每次执行的 Worker |
 
 ## 9. 文件与成果
 

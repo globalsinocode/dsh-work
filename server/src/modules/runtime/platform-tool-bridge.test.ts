@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { builtinTools } from './builtin-tools.ts'
 import { request } from 'node:http'
 import { test } from 'node:test'
 
@@ -8,7 +9,6 @@ import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { compileToolContract, toolPreconditionFailed, type PlatformToolContract } from './platform-tool-contract.ts'
 import {
   assertPlatformToolPurpose,
-  dshWorkBuiltInToolDefinitions,
   platformToolContracts,
   platformToolsForPurpose,
 } from './platform-tool-contracts.ts'
@@ -70,12 +70,13 @@ test('EX-01 the bridge records each tool request outcome with its typed error co
   }
 })
 
-test('dsh-work built-in tools use one explicit category and governance registry', () => {
+test('platform tools are registered once and injected only for their run purpose', () => {
   assert.deepEqual(
-    Object.entries(dshWorkBuiltInToolDefinitions)
-      .filter(([, definition]) => definition.category === 'dsh_work_execution')
-      .map(([name]) => name)
-      .sort(),
+    builtinTools.filter(tool => tool.source === 'platform').map(tool => tool.name).sort(),
+    Object.keys(platformToolContracts).sort(),
+  )
+  assert.deepEqual(
+    builtinTools.filter(tool => tool.source === 'platform' && tool.assembly === 'runtime').map(tool => tool.name).sort(),
     ['activate_skill', 'propose_memory', 'python_execute'],
   )
   assert.deepEqual(

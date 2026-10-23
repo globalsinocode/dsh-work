@@ -16,7 +16,8 @@ import { PostgresAgentService } from '../../server/src/modules/agent/postgres-ag
 import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
 import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
 import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { builtinTools } from '../../server/src/modules/runtime/builtin-tools.ts'
+import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresSkillService } from '../../server/src/modules/skill/postgres-skill-service.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
@@ -143,17 +144,17 @@ class SyntheticTrialRuntime implements AgentRuntimePort {
 
 const runtime = new SyntheticTrialRuntime()
 const authorization = new PostgresAuthorizationService(database.client)
-const tools = new PostgresToolConnectorService(database.client, runtime)
-const skills = new PostgresSkillService(database.client, undefined, tools)
-const agents = new PostgresAgentService(database.client, undefined, skills, tools)
+const mcp = new PostgresMcpConnectorService(database.client, runtime)
+const skills = new PostgresSkillService(database.client)
+const agents = new PostgresAgentService(database.client, undefined, skills, mcp)
 const orchestration = new RunOrchestrationService(
   new PostgresRunRepository(database.client),
   new PostgresConversationRepository(database.client),
   new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)),
   runtime, undefined, undefined, agents, undefined, authorization,
-  { toolBindings: tools },
+  { toolChecks: { assertPinnedConnections: pins => mcp.assertPinnedConnections(pins) } },
 )
-const validation = new PostgresAgentValidationService(database.client, agents, skills, tools, orchestration)
+const validation = new PostgresAgentValidationService(database.client, agents, skills, orchestration, mcp)
 await validation.recoverInterruptedValidations()
 
 const router = new Router({ authenticateApi: testApiAuthenticator })
@@ -176,9 +177,9 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
     from roles where tenant_id = 'tenant-dsh-work' order by name
 `, 'postgres'))
-registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client, tools))
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
-registerToolRoutes(router, tools)
+registerToolRoutes(router, mcp, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
 
 const server = createServer((request, response) => void router.handle(request, response))

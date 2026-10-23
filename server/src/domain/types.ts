@@ -1,12 +1,10 @@
 /** Prototype server domain model. Frontend applications own their API DTOs independently. */
-import type { ManifestToolBinding } from './tool-binding.ts'
 import type { TaskResult } from './task-result.ts'
 
 export type UserRole = 'employee' | 'department_manager' | 'business_admin' | 'platform_admin' | 'auditor'
 
 /** Versioned Agent policy; Connector administration and credentials stay tenant-owned. */
 export type AgentMcpScope =
-  | { mode: 'all'; connectorIds: [] }
   | { mode: 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
 
@@ -164,24 +162,12 @@ export interface RuntimeDefinition {
   activeWorkers: number
   queuedRuns: number
   attemptTimeoutMinutes: number
+  /** Runtime 配置紧急停用的内置工具。 */
+  disabledTools: string[]
   lastHeartbeat: string
   checkedAt: string
   healthMessage: string
   capabilities: string[]
-}
-
-export interface DshRuntimeToolConnectorStatus {
-  runtimeId: string | null
-  connectorId: string
-  name: string
-  status: 'healthy' | 'degraded' | 'offline' | 'disabled'
-  endpoint: string
-  toolCount: number
-  activeBindingCount: number
-  latestBindingRevision: number | null
-  catalogDigest: string
-  lastCheckedAt: string
-  lastHealthMessage: string
 }
 
 export interface UpdateRuntimeConfigurationInput {
@@ -189,6 +175,8 @@ export interface UpdateRuntimeConfigurationInput {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  /** 省略时保留当前停用清单。 */
+  disabledTools?: string[]
   actor: string
 }
 
@@ -293,7 +281,8 @@ export interface AgentDefinition {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
+  webSearchEnabled: boolean
   mcpScope?: AgentMcpScope
   updatedAt: string
   /** 草稿编辑的乐观并发修订：保存时原样回传为 expectedRevision（F-05）。原型模式不提供。 */
@@ -314,7 +303,8 @@ export interface AgentDraftConfiguration {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 是否允许联网搜索（web_search）；编辑时省略则保留当前设置，新建时默认关闭。 */
+  webSearchEnabled?: boolean
   mcpScope?: AgentMcpScope
   changeSummary: string
 }
@@ -334,16 +324,11 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   expectedRevision?: string
 }
 
-/** B-03/I-04：发布时固定的平台工具绑定修订引用——与 Manifest pin 同一契约（tool/binding_id/revision/digest）。 */
-export type AgentVersionBindingRef = ManifestToolBinding
-
 export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
   status: AgentVersionStatus
-  /** 发布时封存的平台绑定依据；旧版本可能为空（不回填）。 */
-  bindingRefs?: AgentVersionBindingRef[]
   createdAt: string
   createdBy: string
   publishedAt?: string
@@ -358,7 +343,8 @@ export interface AgentVersionRecord {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
+  webSearchEnabled: boolean
   mcpScope?: AgentMcpScope
 }
 
@@ -436,78 +422,6 @@ export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
   actor: string
 }
 
-export interface ToolDefinition {
-  id: string
-  version?: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: 'low' | 'medium' | 'high'
-  mode: 'read' | 'write'
-  status: 'available' | 'degraded' | 'disabled'
-  /**
-   * Runtime discovery and platform execution admission are deliberately
-   * separate. Legacy/non-DSH tools omit these fields and remain approved by
-   * their existing connector-specific governance.
-   */
-  admissionStatus?: 'approved' | 'unavailable'
-  admissionMessage?: string
-  inputSchema: string
-  outputSchema: string
-  outputValidation: 'runtime' | 'platform' | 'unavailable'
-  retryPolicy: 'safe' | 'never' | 'verify-first'
-  concurrencyPolicy: 'concurrent' | 'serialized'
-  completionSemantics: 'completed' | 'accepted'
-  timeoutSeconds: number
-  /** Stable authorization identifiers; allowedRoles contains display names only. */
-  allowedRoleIds: string[]
-  allowedRoles: string[]
-  dataScopes: string[]
-  /** Default DSH tool confined to the current Run; Agent business grants are not required. */
-  agentRunLocalDefault?: boolean
-  approvalPolicy: 'none' | 'sensitive' | 'always'
-  lastCheckedAt: string
-}
-
-export interface ToolCatalogSyncResult {
-  tools: ToolDefinition[]
-  discoveredCount: number
-  admittedCount: number
-  unavailableCount: number
-  synchronizedAt: string
-}
-
-export interface ToolCatalogCandidate {
-  id: string
-  version: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: ToolDefinition['risk']
-  mode: ToolDefinition['mode']
-  timeoutSeconds: number
-  defaultAllowedRoles: string[]
-  defaultDataScopes: string[]
-  defaultApprovalPolicy: ToolDefinition['approvalPolicy']
-  requirements: string[]
-  outputValidation: ToolDefinition['outputValidation']
-  retryPolicy: ToolDefinition['retryPolicy']
-  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
-  completionSemantics: ToolDefinition['completionSemantics']
-  status: 'ready' | 'installed' | 'unavailable'
-  availabilityMessage: string
-}
-
-export interface AddToolInput {
-  catalogId: string
-  allowedRoles: string[]
-  dataScopes: string[]
-  approvalPolicy: ToolDefinition['approvalPolicy']
-  actor: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string
@@ -532,7 +446,10 @@ export interface ConnectorDefinition {
     capabilityDigest: string | null
     approvedDigest: string | null
     capabilityCount: number
+    /** 生效清单：Agent 运行时只能调用这些 Tool。 */
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    /** 已发现但未生效的 Tool（新增或输入 Schema 变化），须管理员确认。 */
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null

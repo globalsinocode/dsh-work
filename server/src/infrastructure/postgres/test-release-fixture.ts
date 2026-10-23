@@ -16,8 +16,8 @@ export async function publishDraftWithSealedTrial(
   agentId: string,
   actorId: string,
 ) {
-  const [draft] = await database<{ id: string; skills: string[]; tools: string[] }[]>`
-    select id, skill_refs as skills, tool_refs as tools
+  const [draft] = await database<{ id: string }[]>`
+    select id
       from agent_versions
      where tenant_id = ${tenantId} and agent_id = ${agentId} and status in ('draft', 'candidate')
      order by created_at desc limit 1
