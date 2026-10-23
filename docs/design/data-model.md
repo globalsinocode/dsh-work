@@ -46,6 +46,7 @@ flowchart LR
 | `identity_directory_sync_state` | AI Hub 员工目录同步游标 | 持久化 opaque cursor；员工停用即撤销其 Session，保留本地角色历史 |
 | `roles`、`user_roles`、`data_scope_grants` | 本地角色、用户角色、数据范围授权 | 独立于 AI Hub；过期角色不生效；任何变更由触发器递增本地授权版本，请求按当前版本重新计算 |
 | `system_settings` | 早期的租户级设置 | 当前代码未读写 |
+| `user_preferences` | 员工端界面偏好（迁移 0094） | 每个账号一行；`ui_mode` 为 `work` 或 `collab`，无记录时为工作模式；只影响界面，不改变权限 |
 
 ## 2. 执行身份
 
@@ -76,6 +77,7 @@ Task 创建时由触发器写入发起 Principal：员工请求为本人，系�
 | `workspace_revocation_events` | 成员移除、角色变化、Agent 停用等收权事件 | 去重后持久排队，由撤权扫描取消已失权的运行，可重放 |
 | `workspace_activity_events` | 团队动态（成员、Agent、文件、归档） | 按去重键幂等；元数据不含文件正文；会话附件不进入动态 |
 | `workspace_notification_states` | 每位成员的已读位置与静音 | 已读时间只前进不回拨 |
+| `conversation_read_states` | 协作模式对话列表按对话对象（单聊的 AI 同事 / 群组）的已读位置（迁移 0096） | 按账号 + 对话对象唯一；已读时间只前进不回拨；与 `workspace_notification_states` 分开保存；迁移时已有对话对象记为已读 |
 
 ## 4. 会话、Task 与运行
 
