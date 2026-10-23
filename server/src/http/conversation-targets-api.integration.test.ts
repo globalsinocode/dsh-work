@@ -218,6 +218,17 @@ test('未读与已读（S5e）：只计他人消息、已读位置只进不退�
   await seedMessage('s5e-m2', 's5c-team-session', 'user', '我来补充', later(2_000), employeeA)
   assert.equal((await unread(employeeA))['group:s5c-team-active']!.unread, 1)
 
+  // 消息时间是微秒、列表 sentAt 只到毫秒：按列表最后一条消息的 sentAt 标记已读后必须清零。
+  // （清掉 A 在该单聊的已读位置，用一条过去时间的回复复现；已读位置不会超过当前时间。）
+  await database`delete from conversation_read_states where tenant_id = ${tenantId} and user_id = ${employeeA} and target_id = 's5c-agent-x'`
+  await seedMessage('s5e-micro', 's5c-a-x-new', 'assistant', '微秒精度的回复', '2026-10-20T09:03:00.123735Z', null)
+  const xItem = ((await get(employeeA, '/me/conversation-targets')).body.data.items as Array<{ type: string; id: string; unreadCount: number; lastMessage: { sentAt: string } | null }>)
+    .find(item => item.type === 'agent' && item.id === 's5c-agent-x')!
+  assert.equal(xItem.unreadCount, 2)
+  assert.equal(xItem.lastMessage!.sentAt, '2026-10-20T09:03:00.123Z')
+  await post(employeeA, '/me/conversation-targets/agent/s5c-agent-x/read', { upTo: xItem.lastMessage!.sentAt })
+  assert.equal((await unread(employeeA))['agent:s5c-agent-x']!.unread, 0)
+
   // 按空间静音：未读照常返回，标记 muted。
   await database`
     insert into workspace_notification_states (tenant_id, workspace_id, user_id, muted_at)

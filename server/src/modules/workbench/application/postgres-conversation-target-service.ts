@@ -286,9 +286,12 @@ export class PostgresConversationTargetService implements ConversationTargetStor
              and (${readableWorkspacePredicate(sql, input.userId)})`
       : await sql<Array<{ id: string }>>`select ag.id from agents ag where ag.tenant_id = ${tenantId} and ag.id = ${input.id}`
     if (!target) throw notFound(input.type === 'group' ? '群组不存在或无权访问' : 'AI 同事不存在')
+    // upTo 来自列表里最后一条消息的 sentAt，只有毫秒精度；消息时间是微秒。按“读到这一毫秒内的
+    // 消息为止”解释（取这一毫秒的末尾），否则同一毫秒内稍晚的那条消息永远算未读。
     const [row] = await sql<Array<{ lastReadAt: Date }>>`
       insert into conversation_read_states as rs (tenant_id, user_id, target_type, target_id, last_read_at)
-      values (${tenantId}, ${input.userId}, ${input.type}, ${input.id}, least(coalesce(${input.upTo ?? null}::timestamptz, now()), now()))
+      values (${tenantId}, ${input.userId}, ${input.type}, ${input.id},
+              least(coalesce(date_trunc('milliseconds', ${input.upTo ?? null}::timestamptz) + interval '999 microseconds', now()), now()))
       on conflict (tenant_id, user_id, target_type, target_id) do update
         set last_read_at = greatest(rs.last_read_at, excluded.last_read_at),
             updated_at = case when excluded.last_read_at > rs.last_read_at then now() else rs.updated_at end
