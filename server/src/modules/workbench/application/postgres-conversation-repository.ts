@@ -1316,6 +1316,25 @@ export class PostgresConversationRepository {
       : []
     const prompt = runMessages.find((message) => message.role === 'user')?.content ?? row.title
     const result = deriveTaskResult(evidence)
+    // 顶层 artifacts 是「展示视图」：该 Run 全部 Attempt 产出的成果、每成果取最新
+    // 版本——对话页芯片/详情抽屉消费。与 result.artifacts 的核验口径（仅当前
+    // Attempt，I-06）刻意分离：重试后旧 Attempt 的交付仍应在对话里可见。
+    const runArtifacts = await this.database<ArtifactRow[]>`
+      select distinct on (a.id)
+             a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
+             f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             f.id as "fileId",
+             (f.scan_status = 'clean' and f.removed_at is null and exists (
+               select 1 from file_extractions fe
+                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+             )) as "canReference"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+       where av.tenant_id = ${tenantId} and av.source_run_id = ${row.id}
+       order by a.id, av.version_no desc
+    `
     return {
       id: row.id,
       attemptId: row.currentAttemptId,
@@ -1335,7 +1354,7 @@ export class PostgresConversationRepository {
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, evidence.events, row.status),
       result,
-      artifacts: result.artifacts,
+      artifacts: runArtifacts.map(artifact => mapArtifactRow(artifact, row.id)),
       attachments: attachments.map(attachment => attachment.name),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }

@@ -117,8 +117,9 @@ export interface TaskRun {
   steps: RunStep[]
   attachments: string[]
   /**
-   * 当前 Attempt 登记的成果（顶层便捷投影，26-10-24 起随 run 详情返回）：
-   * 移动端/PC 对话页成果芯片与详情抽屉直接消费；完整核验视图仍见 result。
+   * 展示视图：该 Run 全部 Attempt 产出的成果、每成果最新版本（26-10-24 起随
+   * run 详情返回），供对话页芯片/详情抽屉消费。result.artifacts 保持核验口径
+   * （仅当前 Attempt 的交付，I-06），两者刻意分离。
    */
   artifacts?: Artifact[]
   skill?: {
