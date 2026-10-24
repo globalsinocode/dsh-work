@@ -185,6 +185,87 @@ lines.on('line', (line) => {
       finishPrompt(pending, 'end_turn', false)
       return
     }
+    if (text.includes('[reasoning]')) {
+      for (const thought of ['先分析库存数据。', '再对比上月。']) {
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_thought_chunk',
+              content: { type: 'text', text: thought },
+            },
+          },
+        })
+      }
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '分析完成，结论如下。' },
+          },
+        },
+      })
+      finishPrompt(pending, 'end_turn', false)
+      return
+    }
+    if (text.includes('[tool-lifecycle]')) {
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-tool-1',
+            title: 'fs_write',
+            kind: 'other',
+            status: 'in_progress',
+            rawInput: { path: 'output/report.md' },
+          },
+        },
+      })
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'call-tool-1',
+            status: 'completed',
+            content: [],
+          },
+        },
+      })
+      finishPrompt(pending, 'end_turn')
+      return
+    }
+    if (text.includes('[tool-dup-start]')) {
+      for (let index = 0; index < 2; index += 1) {
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'call-dup-1',
+              title: 'fs_write',
+              kind: 'other',
+              status: 'in_progress',
+              rawInput: {},
+            },
+          },
+        })
+      }
+      finishPrompt(pending, 'end_turn')
+      return
+    }
     if (text.includes('[hang]')) return
     if (text.includes('[unexpected-cancel]')) {
       finishPrompt(pending, 'cancelled', false)

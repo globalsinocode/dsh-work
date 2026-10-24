@@ -49,6 +49,9 @@ import { RequestError, dependencyTimeout, dependencyUnavailable, invalidRequest,
 
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
 
+/** 26-10-24 二期：思考过程转发上限（字符），防止失控流占用事件通道 */
+const MAX_REASONING_CHARS = 65536
+
 interface ExecutionRecord {
   manifest: RuntimeManifest
   snapshot: RuntimeExecutionSnapshot
@@ -74,6 +77,14 @@ interface ExecutionRecord {
   bridge?: Awaited<ReturnType<typeof createPlatformToolBridge>>
   durableWait?: DurableWaitDecision
   toolCallsReported?: boolean
+  /** 26-10-24 二期：思考过程累积文本与截断标记（不落库，仅流式展示） */
+  reasoningText: string
+  reasoningTruncated: boolean
+  /** 已实时转发过 tool.started 的 call_id 及其工具名 */
+  liveToolCallIds: Set<string>
+  liveToolNames: Map<string, string>
+  /** 已实时转发过 tool.completed 的 call_id，终态批量上报时跳过 */
+  reportedToolCallIds: Set<string>
 }
 
 export interface DurablePermissionContext {
@@ -291,6 +302,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       activatedSkills: new Set(),
       auditedMcpCallIds: new Set(),
       materializedSkills,
+      reasoningText: '',
+      reasoningTruncated: false,
+      liveToolCallIds: new Set(),
+      liveToolNames: new Map(),
+      reportedToolCallIds: new Set(),
     }
     this.executions.set(manifest.run_id, record)
     this.emit(record, 'run.queued', '任务已进入 Runtime 队列', { manifest_sha256: compiled.sha256 })
@@ -738,6 +754,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.toolCallsReported || record.terminal) return { failed: 0, omitted: 0 }
     record.toolCallsReported = true
     const summaries = summarizeToolCalls(evidence?.toolCalls, record.bridge?.outcomes() ?? [])
+      .filter(summary => !record.reportedToolCallIds.has(summary.call_id))
     for (const summary of summaries.slice(0, MAX_TOOL_CALL_EVENTS)) {
       this.emit(record, 'tool.completed', toolCallDisplayMessage(summary), {
         ...summary,
@@ -830,6 +847,18 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.terminal || notification.sessionId !== record.acpSessionId) return
     const updateType = notification.update['sessionUpdate']
     const content = notification.update['content']
+    if (updateType === 'agent_thought_chunk') {
+      this.onThoughtChunk(record, content)
+      return
+    }
+    if (updateType === 'tool_call') {
+      this.onToolCallStarted(record, notification.update)
+      return
+    }
+    if (updateType === 'tool_call_update') {
+      this.onToolCallUpdated(record, notification.update)
+      return
+    }
     if (updateType !== 'agent_message_chunk' || !isRecord(content) || content['type'] !== 'text') return
     const text = content['text']
     if (typeof text !== 'string' || text.length === 0) return
@@ -846,6 +875,55 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (bounded.length < text.length) record.outputTruncated = true
     record.assistantText += bounded
     if (bounded.length > 0) this.emit(record, 'assistant.delta', bounded, { committed_block: true })
+  }
+
+  /** 26-10-24 二期：思考块转发为 assistant.reasoning 增量事件（有界，不落库正文） */
+  private onThoughtChunk(record: ExecutionRecord, content: unknown): void {
+    if (!isRecord(content) || content['type'] !== 'text') return
+    const text = content['text']
+    if (typeof text !== 'string' || text.length === 0) return
+    const remaining = MAX_REASONING_CHARS - record.reasoningText.length
+    if (remaining <= 0) {
+      record.reasoningTruncated = true
+      return
+    }
+    const bounded = text.slice(0, remaining)
+    if (bounded.length < text.length) record.reasoningTruncated = true
+    record.reasoningText += bounded
+    this.emit(record, 'assistant.reasoning', bounded, { committed_block: true })
+  }
+
+  /** 26-10-24 二期：工具开始转发为 tool.started（同 call 去重） */
+  private onToolCallStarted(record: ExecutionRecord, update: Record<string, unknown>): void {
+    const toolCallId = update['toolCallId']
+    const title = update['title']
+    if (typeof toolCallId !== 'string' || toolCallId.length === 0) return
+    if (typeof title !== 'string' || title.length === 0) return
+    if (record.liveToolCallIds.has(toolCallId)) return
+    record.liveToolCallIds.add(toolCallId)
+    record.liveToolNames.set(toolCallId, title)
+    this.emit(record, 'tool.started', `${title}：开始执行`, {
+      call_id: toolCallId,
+      tool_name: title,
+      status: 'running',
+    })
+  }
+
+  /** 26-10-24 二期：工具结束实时转发 tool.completed；终态批量上报跳过已上报 call */
+  private onToolCallUpdated(record: ExecutionRecord, update: Record<string, unknown>): void {
+    const toolCallId = update['toolCallId']
+    const status = update['status']
+    if (typeof toolCallId !== 'string' || toolCallId.length === 0) return
+    if (status !== 'completed' && status !== 'failed') return
+    if (record.reportedToolCallIds.has(toolCallId)) return
+    const toolName = record.liveToolNames.get(toolCallId) ?? '未知工具'
+    const succeeded = status === 'completed'
+    record.reportedToolCallIds.add(toolCallId)
+    this.emit(record, 'tool.completed', succeeded ? `${toolName}：调用成功` : `${toolName}：调用失败`, {
+      call_id: toolCallId,
+      tool_name: toolName,
+      status: succeeded ? 'succeeded' : 'failed',
+    })
   }
 
   private async onPermissionRequest(
