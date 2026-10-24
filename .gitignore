@@ -32,3 +32,6 @@ deploy/certs/
 .idea/
 .vscode/
 tmp-agent-packages/
+
+
+.workbuddy/
