@@ -54,7 +54,7 @@ before(async () => {
 })
 
 after(async () => {
-  await throwaway.dispose()
+  await throwaway?.dispose()
   await Promise.all([
     rm(baselineDirectory, { recursive: true, force: true }),
     rm(activationDirectory, { recursive: true, force: true }),
