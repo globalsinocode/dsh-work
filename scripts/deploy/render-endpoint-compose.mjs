@@ -23,16 +23,21 @@ if (process.env.DSH_WORK_BIND_ADDRESSES && process.env.DSH_WORK_BIND_ADDRESS) {
 }
 
 const workbenchPort = port(process.env.DSH_WORK_WORKBENCH_PORT ?? '4174', 'DSH_WORK_WORKBENCH_PORT')
+// 与服务端 allowedWorkbenchOriginPorts 保持一致：入口端口集合是
+// {绑定端口, DSH_WORK_MOBILE_PORT}。生产把移动端端口设为 443 后，
+// 域名入口（地址栏不带端口，Origin 恒为 443）即可与内网 4174 并存。
+const mobilePort = port(process.env.DSH_WORK_MOBILE_PORT ?? '4175', 'DSH_WORK_MOBILE_PORT')
+const workbenchOriginPorts = new Set([workbenchPort, mobilePort])
 const adminPort = port(process.env.DSH_WORK_ADMIN_PORT ?? '4180', 'DSH_WORK_ADMIN_PORT')
 const workbenchOrigins = origins(
   process.env.DSH_WORK_WORKBENCH_ORIGINS ?? process.env.AI_HUB_WORKBENCH_PORTAL_URL,
   process.env.DSH_WORK_WORKBENCH_ORIGINS ? 'DSH_WORK_WORKBENCH_ORIGINS' : 'AI_HUB_WORKBENCH_PORTAL_URL',
-  workbenchPort,
+  workbenchOriginPorts,
 )
 const adminOrigins = origins(
   process.env.DSH_WORK_ADMIN_ORIGINS ?? process.env.AI_HUB_ADMIN_PORTAL_URL,
   process.env.DSH_WORK_ADMIN_ORIGINS ? 'DSH_WORK_ADMIN_ORIGINS' : 'AI_HUB_ADMIN_PORTAL_URL',
-  adminPort,
+  new Set([adminPort]),
 )
 
 for (const address of bindAddresses) {
@@ -90,7 +95,8 @@ function csv(value, name) {
   return items
 }
 
-function origins(value, name, expectedPort) {
+function origins(value, name, expectedPorts) {
+  const portList = [...expectedPorts].sort((left, right) => left - right).join('、')
   return csv(value, name).map((item) => {
     let url
     try {
@@ -107,8 +113,8 @@ function origins(value, name, expectedPort) {
     if (item !== item.toLowerCase() || !isAllowedHostname(url.hostname)) {
       throw new Error(`${name} 包含无效或非小写的主机名: ${item}`)
     }
-    if (url.pathname !== '/' || url.search || url.hash || effectivePort(url) !== expectedPort) {
-      throw new Error(`${name} 必须是不含路径的端口 ${expectedPort} Origin: ${item}`)
+    if (url.pathname !== '/' || url.search || url.hash || !expectedPorts.has(effectivePort(url))) {
+      throw new Error(`${name} 必须是不含路径的端口 ${portList} 之一 Origin: ${item}`)
     }
     return url
   })

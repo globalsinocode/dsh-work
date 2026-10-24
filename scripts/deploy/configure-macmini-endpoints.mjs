@@ -5,16 +5,20 @@ import { chmod, readFile, rename, rm, writeFile } from 'node:fs/promises'
 const options = parseArguments(process.argv.slice(2))
 const source = await readFile(options.envFile, 'utf8')
 const workbenchPort = readPort(source, 'DSH_WORK_WORKBENCH_PORT', 4174)
+// 与服务端 allowedWorkbenchOriginPorts 一致：入口端口集合是
+// {绑定端口, DSH_WORK_MOBILE_PORT}，生产用 443 承载不带端口的域名入口。
+const workbenchOriginPorts = new Set([workbenchPort, readPort(source, 'DSH_WORK_MOBILE_PORT', 4175)])
 const adminPort = readPort(source, 'DSH_WORK_ADMIN_PORT', 4180)
+const adminOriginPorts = new Set([adminPort])
 const bindAddresses = unique(options.bindAddresses, 'bind address')
 for (const address of bindAddresses) {
   if (!isPrivateIpv4(address)) throw new Error(`绑定地址必须是 RFC1918 IPv4: ${address}`)
 }
 const workbenchOrigins = unique(options.workbenchOrigins.map(
-  value => normalizeOrigin(value, workbenchPort, '员工端'),
+  value => normalizeOrigin(value, workbenchOriginPorts, '员工端'),
 ), '员工端 Origin')
 const adminOrigins = unique(options.adminOrigins.map(
-  value => normalizeOrigin(value, adminPort, '管理端'),
+  value => normalizeOrigin(value, adminOriginPorts, '管理端'),
 ), '管理端 Origin')
 for (const address of bindAddresses) {
   if (!workbenchOrigins.some(value => new URL(value).hostname === address)) {
@@ -25,9 +29,11 @@ for (const address of bindAddresses) {
   }
 }
 const workbenchDefault = normalizeOrigin(
-  options.workbenchDefault ?? workbenchOrigins[0], workbenchPort, '员工端默认',
+  options.workbenchDefault ?? workbenchOrigins[0], workbenchOriginPorts, '员工端默认',
 )
-const adminDefault = normalizeOrigin(options.adminDefault ?? adminOrigins[0], adminPort, '管理端默认')
+const adminDefault = normalizeOrigin(
+  options.adminDefault ?? adminOrigins[0], adminOriginPorts, '管理端默认',
+)
 if (!workbenchOrigins.includes(workbenchDefault) || !adminOrigins.includes(adminDefault)) {
   throw new Error('默认 Origin 必须包含在对应允许列表中')
 }
@@ -98,13 +104,14 @@ function readPort(source, key, fallback) {
   return value
 }
 
-function normalizeOrigin(value, expectedPort, label) {
+function normalizeOrigin(value, expectedPorts, label) {
+  const portList = [...expectedPorts].sort((left, right) => left - right).join('、')
   let url
   try { url = new URL(value) } catch { throw new Error(`${label} Origin 无效: ${value}`) }
   const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80))
   if (value !== value.toLowerCase() || url.protocol !== 'https:' || url.username || url.password
-    || url.pathname !== '/' || url.search || url.hash || port !== expectedPort) {
-    throw new Error(`${label} 必须是端口 ${expectedPort} 的小写 HTTPS Origin`)
+    || url.pathname !== '/' || url.search || url.hash || !expectedPorts.has(port)) {
+    throw new Error(`${label} 必须是端口 ${portList} 之一的小写 HTTPS Origin`)
   }
   if (!isAllowedHostname(url.hostname)) throw new Error(`${label} 主机名无效: ${url.hostname}`)
   return `https://${url.hostname}${port === 443 ? '' : `:${port}`}`
