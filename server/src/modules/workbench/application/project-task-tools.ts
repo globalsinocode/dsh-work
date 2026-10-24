@@ -7,6 +7,7 @@
 import type { DatabaseClient } from '../../../infrastructure/postgres/database.ts'
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
+import { resolvePlatformTimezone } from '../../../domain/execution-time.ts'
 import { PlatformToolError, toolPreconditionFailed } from '../../runtime/platform-tool-contract.ts'
 import type { PostgresProjectService, ProjectTask, ProjectTaskAssigneeInput, ProjectTaskVia } from './postgres-project-service.ts'
 
@@ -70,6 +71,7 @@ export class ProjectTaskTools {
     this.assertAlive(signal)
     const { workspaceId, actorUserId } = this.requireEmployeeContext(manifest)
     const via = await this.requireVia(manifest)
+    assertDueDateNotPast(input['dueDate'], manifest)
     // D34（Agent 任务固定手动、不立即执行）由任务服务按 via 执行，这里不另设规则。
     const task = await this.projects.createTask(workspaceId, actorUserId, {
       title: input['title'],
@@ -94,6 +96,7 @@ export class ProjectTaskTools {
     const hasFieldChange = Object.keys(fields).length > 0
     const hasStatusChange = input['status'] !== undefined
     if (!hasFieldChange && !hasStatusChange) throw toolPreconditionFailed('project_task_update 至少需要一项变更')
+    assertDueDateNotPast(input['dueDate'], manifest)
     if (input['completionNote'] !== undefined && input['status'] !== 'done') {
       throw toolPreconditionFailed('completionNote 只能在标记完成（status 为 done）时提供')
     }
@@ -208,6 +211,32 @@ function summarizeTaskDetail(task: ProjectTask) {
     nextRunAt: task.nextRunAt,
     completionNote: task.completionNote,
   }
+}
+
+/**
+ * Agent 写入的截止日期不能早于今天（按本次运行的时区，即模型看到的“当前时间”所用时区）。
+ * “本周五”这类相对日期在周末会落到已过去的日期；拒绝后 Agent 改用正确日期或先向成员确认。
+ * 人在界面上填写截止日期不受此限制。
+ */
+function assertDueDateNotPast(value: unknown, manifest: RuntimeManifest, now: Date = new Date()) {
+  if (typeof value !== 'string' || !value) return
+  const timezone = manifest.timezone?.trim() || resolvePlatformTimezone(process.env['DSH_WORK_TIMEZONE'])
+  const today = localDate(now, timezone)
+  if (value < today) {
+    throw new PlatformToolError({
+      status: 422,
+      code: 'DUE_DATE_IN_PAST',
+      message: `截止日期 ${value} 早于今天（${today}，${timezone}）。请改用不早于今天的日期，或先向成员确认要哪一天。`,
+      effectState: 'not_started',
+    })
+  }
+}
+
+function localDate(instant: Date, timezone: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(instant).map(part => [part.type, part.value]))
+  return `${parts['year']}-${parts['month']}-${parts['day']}`
 }
 
 function fieldLabel(key: string): string {

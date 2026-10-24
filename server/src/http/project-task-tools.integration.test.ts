@@ -115,7 +115,7 @@ test('create：发起人归因 + via；Agent 任务固定手动且不立即执�
     title: '经助手分配的周报',
     description: '周五前提交',
     assignee: { type: 'employee', id: space.member },
-    dueDate: '2026-12-31',
+    dueDate: '2099-12-31',
   }, manifest(space.owner), signal) as { task: { id: string; status: string } }
 
   const [row] = await database<{
@@ -301,6 +301,32 @@ test('装配：群聊 @Agent 与重试装配读写工具，定时执行只装配
   await database`update runs set status = 'failed' where tenant_id = ${tenantId} and id = ${run.id}`
   await assembling.retry(run.id, space.owner)
   assert.deepEqual(taskTools(await manifestFor(run.id, 2)), ['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'])
+})
+
+test('截止日期早于今天（按运行时区）时拒绝写入并报告未执行；今天可以', async () => {
+  const shanghai = { ...manifest(space.owner), timezone: 'Asia/Shanghai' }
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const yesterday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(Date.now() - 24 * 60 * 60 * 1000))
+  const isPastDate = (error: unknown) =>
+    error instanceof PlatformToolError && error.code === 'DUE_DATE_IN_PAST' && error.effectState === 'not_started'
+
+  await assert.rejects(() => tools.create({
+    title: '截止已过', assignee: { type: 'employee', id: space.member }, dueDate: yesterday,
+  }, shanghai, signal), isPastDate)
+  const [none] = await database<{ total: number }[]>`
+    select count(*)::int as total from project_tasks where tenant_id = ${tenantId} and title = '截止已过'`
+  assert.equal(none?.total, 0)
+
+  const created = await tools.create({
+    title: '今天截止', assignee: { type: 'employee', id: space.member }, dueDate: today,
+  }, shanghai, signal) as { task: { id: string; dueDate: string } }
+  assert.equal(created.task.dueDate, today)
+  await assert.rejects(() => tools.update({ taskId: created.task.id, dueDate: yesterday }, shanghai, signal), isPastDate)
+  assert.equal((await projects.getTask(space.id, created.task.id, space.owner)).dueDate, today)
+  // 清除截止日期不受限制。
+  await tools.update({ taskId: created.task.id, dueDate: null }, shanghai, signal)
+  assert.equal((await projects.getTask(space.id, created.task.id, space.owner)).dueDate, null)
 })
 
 test('系统运行 purpose 拒绝装配路径上的调用', async () => {

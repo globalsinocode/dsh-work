@@ -524,7 +524,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'project_task_create',
-    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone.',
+    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
     parameters: {
       type: 'object',
       properties: {
@@ -539,7 +539,7 @@ function registerPlatformTools(ctx) {
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'project_task_update',
-    description: 'Change one project task in this project space on behalf of the member who asked you, within that member\'s permissions: title, description, due date (null clears it), owner, or status (todo, in_progress, done; completionNote only with done). Changes are written immediately and shown in the group chat. Tasks cannot be removed.',
+    description: 'Change one project task in this project space on behalf of the member who asked you, within that member\'s permissions: title, description, due date (YYYY-MM-DD, not earlier than today; null clears it), owner, or status (todo, in_progress, done; completionNote only with done). Changes are written immediately and shown in the group chat. Tasks cannot be removed.',
     parameters: {
       type: 'object',
       properties: {
