@@ -795,6 +795,34 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(audited, [{ serverName: 'crm', capabilityName: 'customer__get' }])
   })
 
+  it('close waits for the post-run MCP audit wrap-up, not only for Attempts that are still running', async () => {
+    let finalized = false
+    const adapter = await createAdapter(500, undefined, undefined, {
+      process: {
+        command: process.execPath,
+        args: ['--experimental-strip-types', mockWorker, '--profile', 'test'],
+        cwd: process.cwd(),
+      },
+      resolveMcpConnections: async manifest => manifest.mcp_connections?.map(snapshot => ({ snapshot, headers: {} })) ?? [],
+      recordMcpInvocation: async () => undefined,
+      finalizeMcpInvocationAudit: async () => {
+        // 收尾晚于 done：调用方若在 done 后立刻清理目录，审计核对会读不到会话日志。
+        await new Promise(resolve => setTimeout(resolve, 100))
+        finalized = true
+      },
+    })
+    const input = manifest('run-mcp-close-wait', 'attempt-1', '[mcp-log-no-usage] finish normally')
+    input.mcp_connections = [{
+      connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc', auth_type: 'none', capability_digest: 'a'.repeat(64),
+    }]
+    input.permission_policy.network_policy = 'allowlist'
+    const handle = await adapter.execute(input)
+    assert.equal((await handle.done).status, 'completed')
+    await adapter.close()
+    assert.equal(finalized, true)
+  })
+
   it('EX-01 reports every tool call with a safe status before the Run completes', async () => {
     const adapter = await createAdapter()
     const input = manifest('run-tool-log', 'attempt-1', '[tool-log] use tools')

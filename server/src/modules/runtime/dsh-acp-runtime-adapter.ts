@@ -176,6 +176,11 @@ export interface McpInvocationEvidence {
 export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private readonly configuration: DshAcpRuntimeAdapterConfiguration
   private readonly executions = new Map<string, ExecutionRecord>()
+  /**
+   * 每个 Attempt 的完整执行（含结束后的收尾：关闭客户端、桥接与 MCP 调用审计核对）。
+   * `done` 在终态时即兑现，收尾仍在进行；关闭时须等这些收尾结束，否则调用方随即清理目录会让审计核对读不到会话日志。
+   */
+  private readonly runTasks = new Set<Promise<void>>()
   private acceptingRuns: boolean
   private closed = false
 
@@ -295,7 +300,9 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     }
     this.executions.set(manifest.run_id, record)
     this.emit(record, 'run.queued', '任务已进入 Runtime 队列', { manifest_sha256: compiled.sha256 })
-    void this.run(record, workspaceDirectory)
+    const task = this.run(record, workspaceDirectory)
+    this.runTasks.add(task)
+    void task.finally(() => this.runTasks.delete(task))
 
     return { runId: manifest.run_id, attemptId: manifest.attempt_id, acceptedAt, done }
   }
@@ -473,6 +480,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       }
     }
     await Promise.all(active.map(record => record.done))
+    await Promise.allSettled([...this.runTasks])
   }
 
   private async run(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
