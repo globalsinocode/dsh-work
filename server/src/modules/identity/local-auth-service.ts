@@ -96,11 +96,9 @@ export class LocalAuthService {
       const authorization = await this.repository.resolveAuthorization(credential.userId, transaction)
       assertAudienceAccess(audience, authorization.permissions, false)
       const expiresAt = new Date(Date.now() + this.configuration.sessionTtlSeconds * 1000)
-      await transaction`
-        update authentication_sessions set revoked_at = now()
-         where tenant_id = ${tenantId} and user_id = ${credential.userId}
-           and audience = ${audience} and revoked_at is null
-      `
+      // 允许同一账号在不同设备/入口（桌面工作台与移动端）并行登录：
+      // 会话按 session_hash 独立存储，登录不再吊销其他设备的活动会话。
+      // 需要踢掉全部会话时走管理端 revokeSessions；改密仍全量吊销。
       await transaction`
         insert into authentication_sessions (
           session_hash, tenant_id, audience, user_id, authentication_provider,
