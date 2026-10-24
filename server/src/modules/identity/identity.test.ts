@@ -27,11 +27,19 @@ test('OIDC configuration uses one AI Hub credential for both portals', () => {
   assert.equal(configuration.applicationId, 'dsh-work')
   assert.equal(configuration.environment, 'local')
   assert.equal(configuration.directorySyncIntervalSeconds, 900)
-  assert.deepEqual(configuration.audiences.workbench.allowedOrigins, ['http://localhost:4174'])
+  assert.deepEqual(configuration.audiences.workbench.allowedOrigins, [
+    'http://localhost:4174',
+    'http://localhost:4175',
+    'http://127.0.0.1:4175',
+  ])
   assert.equal(configuration.audiences.workbench.defaultOrigin, 'http://localhost:4174')
   assert.equal(
     configuration.audiences.workbench.redirectUriByOrigin['http://localhost:4174'],
     'http://localhost:4190/auth/workbench/callback',
+  )
+  assert.equal(
+    configuration.audiences.workbench.redirectUriByOrigin['http://localhost:4175'],
+    'http://localhost:4175/auth/workbench/callback',
   )
   assert.deepEqual(configuration.audiences.workbench.loginScopes, [
     'openid', 'profile', 'email', 'offline_access', 'ai_hub.identity', 'platform.me.read',
@@ -77,6 +85,20 @@ test('OIDC configuration supports multiple exact origins and derives matching ca
   )
 })
 
+test('OIDC configuration allows workbench mobile dev port in DSH_WORK_WORKBENCH_ORIGINS', () => {
+  const environment = baseEnvironment()
+  delete environment.AI_HUB_WORKBENCH_PORTAL_URL
+  delete environment.AI_HUB_WORKBENCH_REDIRECT_URI
+  environment.DSH_WORK_WORKBENCH_ORIGINS = 'http://localhost:4174,http://localhost:4175'
+
+  const configuration = loadIdentityConfiguration(environment)
+  assert.deepEqual(configuration.audiences.workbench.allowedOrigins, [
+    'http://localhost:4174',
+    'http://localhost:4175',
+    'http://127.0.0.1:4175',
+  ])
+})
+
 test('OIDC configuration rejects duplicate, wrong-port, and conflicting origins', () => {
   const duplicate = baseEnvironment()
   duplicate.DSH_WORK_WORKBENCH_ORIGINS = 'http://localhost:4174,http://localhost:4174'
@@ -86,7 +108,7 @@ test('OIDC configuration rejects duplicate, wrong-port, and conflicting origins'
   delete wrongPort.AI_HUB_WORKBENCH_PORTAL_URL
   delete wrongPort.AI_HUB_WORKBENCH_REDIRECT_URI
   wrongPort.DSH_WORK_WORKBENCH_ORIGINS = 'http://localhost:9999'
-  assert.throws(() => loadIdentityConfiguration(wrongPort), /必须使用端口 4174/)
+  assert.throws(() => loadIdentityConfiguration(wrongPort), /必须使用端口 .* 之一/)
 
   const conflictingLegacy = baseEnvironment()
   conflictingLegacy.DSH_WORK_WORKBENCH_ORIGINS = 'http://work.internal:4174'

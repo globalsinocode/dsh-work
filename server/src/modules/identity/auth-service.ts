@@ -547,12 +547,10 @@ export function resolveRequestOrigin(
 
 function resolveCallbackOrigin(request: IncomingMessage, settings: OidcAudienceConfiguration) {
   const origin = requestOrigin(request)
-  // Legacy single-portal configurations may send callbacks directly to the
-  // backend port. Only the explicitly configured callback origin is an alias;
-  // it never becomes an allowed login/API/logout origin.
-  if (settings.allowedOrigins.length === 1) {
-    const portalOrigin = settings.allowedOrigins[0]!
-    if (new URL(redirectUriForOrigin(settings, portalOrigin)).origin === origin) {
+  // Callbacks may hit a portal origin or a legacy backend listener; map back to the portal.
+  for (const portalOrigin of settings.allowedOrigins) {
+    const redirectUri = settings.redirectUriByOrigin[portalOrigin]
+    if (redirectUri && new URL(redirectUri).origin === origin) {
       return portalOrigin
     }
   }

@@ -166,7 +166,10 @@ function localAudienceConfiguration(
   production: boolean,
 ): LocalAudienceConfiguration {
   const prefix = audience === 'workbench' ? 'DSH_WORK_WORKBENCH' : 'DSH_WORK_ADMIN'
-  const allowedOrigins = originList(required(environment, `${prefix}_ORIGINS`), `${prefix}_ORIGINS`, production)
+  let allowedOrigins = originList(required(environment, `${prefix}_ORIGINS`), `${prefix}_ORIGINS`, production)
+  if (audience === 'workbench') {
+    allowedOrigins = mergeWorkbenchOrigins(environment, allowedOrigins, production)
+  }
   const defaultOrigin = environment[`${prefix}_DEFAULT_ORIGIN`]?.trim()
     ? normalizedOrigin(environment[`${prefix}_DEFAULT_ORIGIN`]!, `${prefix}_DEFAULT_ORIGIN`, production)
     : allowedOrigins[0]!
@@ -241,25 +244,42 @@ function audienceOrigins(
     const origin = normalizedOrigin(legacyPortal, `${prefix}_PORTAL_URL`, production)
     const redirectUri = normalizedUrl(legacyRedirect, `${prefix}_REDIRECT_URI`, production)
     assertRedirectUri(redirectUri, `${prefix}_REDIRECT_URI`)
+    let allowedOrigins = [origin]
+    if (audience === 'workbench') {
+      allowedOrigins = mergeWorkbenchOrigins(environment, allowedOrigins, production)
+    }
+    const redirectUriByOrigin: Record<string, string> = { [origin]: redirectUri }
+    for (const entry of allowedOrigins) {
+      if (!redirectUriByOrigin[entry]) {
+        redirectUriByOrigin[entry] = new URL(callbackPath, `${entry}/`).toString()
+      }
+    }
     return {
-      allowedOrigins: [origin],
+      allowedOrigins,
       defaultOrigin: origin,
-      redirectUriByOrigin: { [origin]: redirectUri },
+      redirectUriByOrigin,
     }
   }
 
-  const allowedOrigins = originList(configuredOrigins, originsName, production)
+  let allowedOrigins = originList(configuredOrigins, originsName, production)
+  if (audience === 'workbench') {
+    allowedOrigins = mergeWorkbenchOrigins(environment, allowedOrigins, production)
+  }
   const expectedPort = environment[
     audience === 'workbench' ? 'DSH_WORK_WORKBENCH_PORT' : 'DSH_WORK_ADMIN_PORT'
   ]?.trim() || (audience === 'workbench' ? '4174' : '4180')
   if (!/^\d+$/.test(expectedPort) || Number(expectedPort) < 1 || Number(expectedPort) > 65535) {
     throw invalidRequest(`${audience === 'workbench' ? 'DSH_WORK_WORKBENCH_PORT' : 'DSH_WORK_ADMIN_PORT'} 必须是有效端口`)
   }
+  const allowedPorts = audience === 'workbench'
+    ? allowedWorkbenchOriginPorts(environment, expectedPort)
+    : new Set([expectedPort])
   for (const origin of allowedOrigins) {
     const parsed = new URL(origin)
     const actualPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
-    if (actualPort !== expectedPort) {
-      throw invalidRequest(`${originsName} 中的 ${origin} 必须使用端口 ${expectedPort}`)
+    if (!allowedPorts.has(actualPort)) {
+      const portList = [...allowedPorts].sort((left, right) => Number(left) - Number(right)).join('、')
+      throw invalidRequest(`${originsName} 中的 ${origin} 必须使用端口 ${portList} 之一`)
     }
   }
 
@@ -294,6 +314,53 @@ function audienceOrigins(
   return { allowedOrigins, defaultOrigin, redirectUriByOrigin }
 }
 
+function workbenchDevMobilePort(environment: NodeJS.ProcessEnv) {
+  const value = environment.DSH_WORK_MOBILE_PORT?.trim() || '4175'
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535) {
+    throw invalidRequest('DSH_WORK_MOBILE_PORT 必须是有效端口')
+  }
+  return value
+}
+
+function allowedWorkbenchOriginPorts(environment: NodeJS.ProcessEnv, workbenchPort: string) {
+  return new Set([workbenchPort, workbenchDevMobilePort(environment)])
+}
+
+/** Non-production dsh-work-mobile dev server (Vite :4175). Set DSH_WORK_MOBILE_DEV_ORIGINS=false to disable. */
+function implicitWorkbenchMobileDevOrigins(environment: NodeJS.ProcessEnv, production: boolean) {
+  if (production || environment.DSH_WORK_MOBILE_DEV_ORIGINS === 'false') return []
+  const port = workbenchDevMobilePort(environment)
+  return [
+    normalizedOrigin(`http://localhost:${port}`, 'DSH_WORK_MOBILE_PORT', production),
+    normalizedOrigin(`http://127.0.0.1:${port}`, 'DSH_WORK_MOBILE_PORT', production),
+  ]
+}
+
+function mergeWorkbenchOrigins(
+  environment: NodeJS.ProcessEnv,
+  origins: string[],
+  production: boolean,
+) {
+  if (!shouldMergeWorkbenchMobileDevOrigins(environment, origins, production)) return origins
+  const merged = [...origins]
+  for (const origin of implicitWorkbenchMobileDevOrigins(environment, production)) {
+    if (!merged.includes(origin)) merged.push(origin)
+  }
+  return merged
+}
+
+function shouldMergeWorkbenchMobileDevOrigins(
+  environment: NodeJS.ProcessEnv,
+  origins: string[],
+  production: boolean,
+) {
+  if (production || environment.DSH_WORK_MOBILE_DEV_ORIGINS === 'false') return false
+  return origins.some((origin) => {
+    const hostname = new URL(origin).hostname
+    return hostname === 'localhost' || isLoopbackIpv4(hostname)
+  })
+}
+
 function originList(value: string, name: string, production: boolean) {
   if ([...value].some(character => {
     const code = character.charCodeAt(0)
@@ -321,6 +388,7 @@ function normalizedOrigin(value: string, name: string, production: boolean) {
 
 function assertOriginHostname(hostname: string, name: string, production: boolean) {
   if (/^\d+(?:\.\d+){3}$/.test(hostname)) {
+    if (!production && isLoopbackIpv4(hostname)) return
     if (!isPrivateIpv4(hostname)) throw invalidRequest(`${name} 中的 IP 必须是 RFC1918 私有地址`)
     return
   }
@@ -344,6 +412,14 @@ function isPrivateIpv4(value: string) {
   return first === 10
     || (first === 172 && second >= 16 && second <= 31)
     || (first === 192 && second === 168)
+}
+
+function isLoopbackIpv4(value: string) {
+  const parts = value.split('.')
+  if (parts.length !== 4 || parts.some(part => !/^\d+$/.test(part) || Number(part) > 255)) {
+    return false
+  }
+  return Number(parts[0]) === 127
 }
 
 function assertRedirectUri(value: string, name: string) {
