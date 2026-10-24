@@ -341,14 +341,37 @@ export const adminApi = {
   testMcpConnection: (input: {
     name: string
     endpoint: string
-    authType: 'none' | 'bearer'
+    authType: 'none' | 'bearer' | 'user_oauth'
     bearerToken?: string
+    authorizationEndpoint?: string
+    tokenEndpoint?: string
+    clientId?: string
+    clientSecret?: string
+    scopes?: string[]
+    resource?: string
   }) => request<McpConnectionTestResult>('/connectors/mcp/test', { method: 'POST', body: JSON.stringify(input) }),
+  beginMcpProbeAuthorization: (input: {
+    name: string
+    endpoint: string
+    authType: 'user_oauth'
+    authorizationEndpoint: string
+    tokenEndpoint: string
+    clientId: string
+    clientSecret?: string
+    scopes: string[]
+    resource?: string
+  }) => request<{ authorizationUrl: string }>('/connectors/mcp/probe-authorization', { method: 'POST', body: JSON.stringify(input) }),
   registerMcpConnector: (input: {
     name: string
     endpoint: string
-    authType: 'none' | 'bearer'
+    authType: 'none' | 'bearer' | 'user_oauth'
     bearerToken?: string
+    authorizationEndpoint?: string
+    tokenEndpoint?: string
+    clientId?: string
+    clientSecret?: string
+    scopes?: string[]
+    resource?: string
     scopeDescription: string
   }) => request<ConnectorDefinition>('/connectors/mcp', { method: 'POST', body: JSON.stringify(input) }),
   deleteMcpConnector: (connectorId: string) =>

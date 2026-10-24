@@ -372,7 +372,7 @@ DSH 的本次系统提示投影 Manifest 中实际装配的平台工具和 MCP S
 
 平台先解析使用范围，再将本次连接标识与能力摘要固定到 Manifest、DSH 配置和调用策略。未选命名空间的调用须被实际拒绝，即使该 MCP 对租户其他 Agent 可用。队列启动、恢复和活动调用继续复核健康、停用、删除及摘要漂移；已经开始的 Attempt 不自动扩入新增连接器。保留当前容量门禁和调用审计，不因新增范围选择就扩大 Runtime 上限。
 
-发布时固定的是模式和选定 ID 等使用策略，MCP 实际清单按每次 Attempt 留证。`all` 随新 Attempt 使用当前集合，是明确的动态环境语义；不能将它描述为所有 MCP 工具永久随 Agent Version 锁定。MCP 数据访问边界由上游凭据和服务端实现；Connector 的权限说明是登记信息，平台 Agent Version 的 `dataScopes` 仅约束 dsh-work 受控工具与数据集合，不过滤 MCP 返回的数据。共享 MCP 凭据不等于上游能够识别每个 Agent 或自动执行企业数据隔离。
+发布时固定的是模式和选定 ID 等使用策略，MCP 实际清单按每次 Attempt 留证。`all` 随新 Attempt 使用当前集合，是明确的动态环境语义；不能将它描述为所有 MCP 工具永久随 Agent Version 锁定。MCP 数据访问边界由上游凭据和服务端实现；Connector 的权限说明是登记信息，平台 Agent Version 的 `dataScopes` 仅约束 dsh-work 受控工具与数据集合，不过滤 MCP 返回的数据。`none` 与 `bearer` 仍是连接器级凭据，全体获准调用共用一个上游身份。`user_oauth` 的访问令牌按员工主体加密保存，Attempt 只注入本次人类主体的令牌；未授权不回退到连接器凭据。平台不按员工身份过滤 MCP 返回体。共享连接器级 Bearer 不等于上游能够识别每个 Agent 或自动执行企业数据隔离。
 
 ### 6.5 管理端 UI 与交互
 

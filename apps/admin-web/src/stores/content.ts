@@ -337,6 +337,9 @@ export const useContentStore = defineStore('admin-content', () => {
   function testMcpConnection(input: Parameters<typeof adminApi.testMcpConnection>[0]) {
     return adminApi.testMcpConnection(input)
   }
+  function beginMcpProbeAuthorization(input: Parameters<typeof adminApi.beginMcpProbeAuthorization>[0]) {
+    return adminApi.beginMcpProbeAuthorization(input)
+  }
 
   async function deleteMcpConnector(connectorId: string) {
     const result = await adminApi.deleteMcpConnector(connectorId)
@@ -422,6 +425,7 @@ export const useContentStore = defineStore('admin-content', () => {
     setToolStatus,
     checkConnector,
     testMcpConnection,
+    beginMcpProbeAuthorization,
     registerMcpConnector,
     deleteMcpConnector,
     rotateMcpCredential,

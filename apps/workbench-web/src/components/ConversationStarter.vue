@@ -85,6 +85,9 @@ const referenceName = ref('')
 const blockedReason = computed(() => {
   if (referenceLoading.value) return '正在检查引用文件权限'
   if (referenceError.value) return referenceError.value
+  if (mcpAccessBlocked.value.length) {
+    return `需要先完成外部连接授权：${mcpAccessBlocked.value.map(item => item.name).join('、')}`
+  }
   if (!props.requiresAgentMember) return ''
   if (props.teamRolePending) return ''
   return props.canDiscuss ? '' : '当前角色为只读成员或尚无写权限，不能发言或发起执行；请联系负责人。'
@@ -111,6 +114,8 @@ const presetPrompt = ref('')
 const referencedWorkspaceFileIds = ref<string[]>([])
 const selectedAgentId = ref('')
 const selectedSkillId = ref('')
+const mcpAccessBlocked = ref<Array<{ connectorId: string; name: string }>>([])
+const mcpAccessOmitted = ref<Array<{ connectorId: string; name: string }>>([])
 
 // Global tasks are implicit personal tasks. Only an explicit locked origin
 // carries a workspace; never infer it from the order of a cached space list.
@@ -269,13 +274,30 @@ function syncSkillFromRoute() {
   }
 }
 
+async function refreshMcpAccess(agentId: string) {
+  mcpAccessBlocked.value = []
+  mcpAccessOmitted.value = []
+  if (!agentId || props.workspaceLocked) return
+  try {
+    const access = await workbenchApi.getAgentMcpAccess(agentId)
+    mcpAccessBlocked.value = access.blocked
+    mcpAccessOmitted.value = access.omitted
+  } catch {
+    mcpAccessBlocked.value = []
+    mcpAccessOmitted.value = []
+  }
+}
+
 function syncAgentFromRoute() {
   if (props.workspaceLocked) {
     selectedAgentId.value = ''
+    mcpAccessBlocked.value = []
+    mcpAccessOmitted.value = []
     return
   }
   const agentId = typeof route.query.agent === 'string' ? route.query.agent : ''
   selectedAgentId.value = contentStore.agents.some(agent => agent.id === agentId) ? agentId : ''
+  void refreshMcpAccess(selectedAgentId.value)
   const agent = selectedAgent.value
   if (agent) {
     selectedTask.value = ''
@@ -313,6 +335,7 @@ onMounted(async () => {
 
 watch(() => route.query.skill, syncSkillFromRoute)
 watch(() => route.query.agent, syncAgentFromRoute)
+watch(selectedAgentId, agentId => { void refreshMcpAccess(agentId) })
 
 let referenceSequence = 0
 function clearPersonalReference() {
@@ -413,6 +436,7 @@ defineExpose({ useWorkspaceFile, focusComposer, submitWorkspaceTask: submitTask 
         </div>-->
         <p v-if="referenceName">已引用：{{ referenceName }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
         <p v-if="referenceError" role="alert">{{ referenceError }} <el-button link @click="clearPersonalReference">取消引用</el-button></p>
+        <p v-if="mcpAccessOmitted.length" class="mcp-access-omitted">本次不会使用：{{ mcpAccessOmitted.map(item => item.name).join('、') }}</p>
         <TeamSpaceComposer
           v-if="composerReady && useTeamSpaceComposer"
           ref="teamComposerRef"

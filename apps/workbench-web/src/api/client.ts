@@ -145,6 +145,15 @@ export const workbenchApi = {
   getSession: () => request<WorkbenchSession>('/session'),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
+  listMcpGrants: () => request<{ list: import('@/types/domain').McpUserGrantListItem[]; total: number; page: number; pageSize: number }>('/mcp-grants'),
+  beginMcpGrantAuthorization: (connectorId: string) =>
+    request<{ authorizationUrl: string }>(`/mcp-grants/${encodeURIComponent(connectorId)}/authorization`, { method: 'POST', body: '{}' }),
+  revokeMcpGrant: (connectorId: string) =>
+    request<{ id: string; deleted: boolean }>(`/mcp-grants/${encodeURIComponent(connectorId)}`, { method: 'DELETE' }),
+  getAgentMcpAccess: (agentId: string) =>
+    request<{ blocked: Array<{ connectorId: string; name: string }>; omitted: Array<{ connectorId: string; name: string }> }>(
+      `/agents/${encodeURIComponent(agentId)}/mcp-access`,
+    ),
   getSkills: () => request<WorkbenchSkill[]>('/skills'),
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
   /** I-06：Run 的版本化任务结果投影（task-result/v1），与 Run 详情同一授权边界。 */

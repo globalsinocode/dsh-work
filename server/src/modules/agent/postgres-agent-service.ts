@@ -896,10 +896,21 @@ export class PostgresAgentService {
     }))
   }
 
+  async resolveActiveVersionId(agentId: string): Promise<string> {
+    const [row] = await this.database<{ activeVersionId: string | null }[]>`
+      select active_version_id as "activeVersionId"
+        from agents
+       where tenant_id = ${tenantId} and id = ${agentId}
+    `
+    if (!row?.activeVersionId) throw notFound(`Agent 没有已发布版本：${agentId}`)
+    return row.activeVersionId
+  }
+
   async getRuntimeSnapshot(
     versionId: string,
     additionalSkillReferences: string[] = [],
     expectedDefinitionFingerprint?: string,
+    subjectUserId: string | null = null,
   ): Promise<RuntimeAgentSnapshot> {
     const [row] = await this.database<(Omit<RuntimeAgentSnapshot, 'skillInstructions' | 'runtimeTools' | 'approvalMode' | 'mcpConnections'> & AgentFingerprintSource & {
       agentId: string; agentSpec: AgentSpec | null; bindingRefs: ManifestToolBinding[]; versionStatus: PublishStatus
@@ -966,9 +977,13 @@ export class PostgresAgentService {
       && bindingBasisKey(toolBindings.map(toManifestToolBinding)) !== bindingBasisKey(row.bindingRefs)) {
       throw authorizationDenied('Agent 发布时固定的工具绑定已失效，请重新检查并发布新版本')
     }
-    const mcpConnections = this.toolService
+    const baseMcpConnections = this.toolService
       ? await this.toolService.resolveMcpConnectionsForAgentVersion(versionId, expectedDefinitionFingerprint ? row.mcpScope : undefined)
       : []
+    const mcpScope = normalizeAgentMcpScope(row.mcpScope)
+    const mcpConnections = this.toolService && baseMcpConnections.length
+      ? (await this.toolService.applyUserGrants(baseMcpConnections, mcpScope.mode, subjectUserId)).pins
+      : baseMcpConnections
     const runtimeSkills = this.skillService
       ? skillInstructions.map(skill => `${skill.id}@${skill.version}`)
       : skills

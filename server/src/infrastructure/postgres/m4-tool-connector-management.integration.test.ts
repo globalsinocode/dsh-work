@@ -415,7 +415,7 @@ test('运行时工具解析范围由显式配置决定，其余门禁一项不�
   await assert.rejects(tools.resolveToolBindings([reference]), /不符合受控运行策略/)
 
   // 2) 站点显式放行该业务连接器后，五个解析点全部按同一套门禁放行。
-  const scoped = new PostgresToolConnectorService(database, runtime, undefined, undefined, ['connector-scope-probe'])
+  const scoped = new PostgresToolConnectorService(database, runtime, undefined, undefined, undefined, ['connector-scope-probe'])
   await scoped.assertAvailableReferences([reference])
   await scoped.assertAuthorizationCompatibility([reference], ['role-platform-admin'], ['probe:read'])
   assert.deepEqual(await scoped.resolveRuntimeToolNames([reference]), ['probe_query'])

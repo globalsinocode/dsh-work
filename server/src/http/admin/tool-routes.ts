@@ -1,6 +1,15 @@
+import type { IncomingMessage } from 'node:http'
+
 import type { RegisterMcpConnectorInput, TestMcpConnectionInput, ToolDefinition } from '../../domain/types.ts'
+import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
+import { resolveRequestOrigin } from '../../modules/identity/auth-service.ts'
 import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { envelope, readJsonBody, requireRequestIdentity, type Router } from '../router.ts'
+
+function adminPortalOrigin(request: IncomingMessage) {
+  const configuration = loadStartupIdentityConfiguration()
+  return resolveRequestOrigin(request, configuration.audiences.admin)
+}
 
 const basePath = '/api/admin/v1'
 
@@ -63,6 +72,15 @@ export function registerToolRoutes(router: Router, service: PostgresToolConnecto
       ...input,
       actor: requireRequestIdentity(context, 'admin').userId,
     }), 'postgres')
+  })
+  router.post(`${basePath}/connectors/mcp/probe-authorization`, async (request, context) => {
+    const input = await readJsonBody<Omit<TestMcpConnectionInput, 'actor'>>(request)
+    const result = await service.beginMcpProbeAuthorization({
+      ...input,
+      actor: requireRequestIdentity(context, 'admin').userId,
+      portalOrigin: adminPortalOrigin(request),
+    })
+    return envelope('admin', result, 'postgres')
   })
   router.post(`${basePath}/connectors/mcp`, async (request, context) => {
     const input = await readJsonBody<Omit<RegisterMcpConnectorInput, 'actor'>>(request)

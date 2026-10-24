@@ -65,6 +65,9 @@ import { SkillArtifactStore } from './modules/skill/skill-artifact-store.ts'
 import { migrateSkillFilesToFileSystem } from './modules/skill/skill-file-storage-migration.ts'
 import { PostgresToolConnectorService } from './modules/tool/postgres-tool-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from './modules/tool/postgres-encrypted-credential-store.ts'
+import { McpUserCredentialStore } from './modules/tool/mcp-user-credential-store.ts'
+import { McpUserGrantService } from './modules/tool/mcp-user-grant-service.ts'
+import { registerMcpGrantRoutes } from './http/workbench/mcp-grant-routes.ts'
 import { PostgresKnowledgeService } from './modules/knowledge/postgres-knowledge-service.ts'
 import { PostgresAuthorizationService } from './modules/authorization/postgres-authorization-service.ts'
 import { PostgresAutomationRepository } from './modules/automation/postgres-automation-repository.ts'
@@ -272,7 +275,13 @@ async function start() {
         keyId: process.env.DSH_CREDENTIAL_MASTER_KEY_ID,
       })
     : undefined
-  const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets)
+  const userCredentialStore = process.env.DSH_CREDENTIAL_MASTER_KEY
+    ? new McpUserCredentialStore(process.env.DSH_CREDENTIAL_MASTER_KEY, process.env.DSH_CREDENTIAL_MASTER_KEY_ID ?? 'v1')
+    : undefined
+  const mcpUserGrantService = userCredentialStore
+    ? new McpUserGrantService(database, userCredentialStore, credentialSecrets)
+    : undefined
+  const toolService = new PostgresToolConnectorService(database, runtime, operations, credentialSecrets, mcpUserGrantService)
   toolServiceRef.current = toolService
   // Management-plane inventory refresh is best effort: execution capability
   // failures must not prevent the core API from starting. Administrators can
@@ -410,6 +419,9 @@ async function start() {
   )
   await automationSweep.start()
   registerAutomationRoutes(router, automationService)
+  if (mcpUserGrantService) {
+    registerMcpGrantRoutes(router, mcpUserGrantService, toolService, agents)
+  }
   registerAgentRoutineRoutes(router, agentRoutineService)
   registerAgentRoutineRecipientRoutes(router, agentRoutineService)
   registerTaskExecutionRoutes(router, taskQueries, orchestration, authorization)

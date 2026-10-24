@@ -264,7 +264,7 @@ flowchart LR
 - API 不信任浏览器提交的 `actor`、用户 ID、角色或数据范围；
 - Workspace、Agent、Skill、Tool、Connector、文件和 Artifact 都在服务端执行对象级授权；
 - DSH 子进程使用环境白名单，应用数据库变量和敏感覆盖项不传入；
-- 模型 Provider 凭据保存外部引用；MCP Bearer Token 由平台使用环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
+- 模型 Provider 凭据保存外部引用；`none` 与 `bearer` 仍是连接器级凭据，全体获准调用共用一个上游身份。`user_oauth` 的访问令牌按员工主体加密保存，Attempt 只注入本次人类主体的令牌；未授权不回退到连接器凭据。平台不按员工身份过滤 MCP 返回体。连接器级 Bearer 与员工令牌均由环境主密钥加密后保存 PostgreSQL 密文，明文只在服务端运行边界解析，不进入 Manifest、Patch、API 响应或日志；
 - 文件执行扩展名、MIME、大小、签名、路径和工作空间校验，正式环境仍需企业级恶意文件扫描；
 - Tool/Connector 默认只读、固定 Schema、超时、字段过滤并记录脱敏审计；
 - HTTP 状态码只来自类型化错误（`server/src/domain/request-errors.ts`、`AuthorizationDeniedError` 等），不按错误消息文字推断；未类型化的错误一律返回 500 和链路编号，授权拒绝只按类型识别；

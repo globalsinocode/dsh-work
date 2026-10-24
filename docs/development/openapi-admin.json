@@ -888,8 +888,18 @@
         "summary": "使用待登记配置通过 DSH 测试 MCP 连通性并发现 Tool；不持久化 Token 或 Connector",
         "responses": {
           "200": { "$ref": "#/components/responses/Ok" },
+          "409": { "$ref": "#/components/responses/Error" },
           "422": { "$ref": "#/components/responses/Error" },
           "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/connectors/mcp/probe-authorization": {
+      "post": {
+        "operationId": "beginMcpProbeAuthorization",
+        "summary": "登记前 OAuth 探活授权",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
         }
       }
     },

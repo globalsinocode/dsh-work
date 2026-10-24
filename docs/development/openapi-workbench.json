@@ -1909,6 +1909,41 @@
         }
       }
     },
+    "/mcp-grants": {
+      "get": {
+        "operationId": "listMcpUserGrants",
+        "summary": "列出当前员工的外部 MCP 授权状态",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/mcp-grants/{connectorId}/authorization": {
+      "post": {
+        "operationId": "beginMcpUserGrantAuthorization",
+        "summary": "开始员工 OAuth 授权",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/mcp-grants/callback": {
+      "get": {
+        "operationId": "completeMcpUserGrantAuthorization",
+        "summary": "OAuth 回调换票",
+        "responses": { "302": { "description": "Redirect to settings" } }
+      }
+    },
+    "/mcp-grants/{connectorId}": {
+      "delete": {
+        "operationId": "revokeMcpUserGrant",
+        "summary": "解除员工 MCP 授权",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/agents/{agentId}/mcp-access": {
+      "get": {
+        "operationId": "getAgentMcpAccess",
+        "summary": "发送前检查 MCP 授权缺口",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/automations": {
       "get": {
         "operationId": "listAutomations",

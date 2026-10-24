@@ -110,7 +110,11 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
     new URL('../../../docs/development/openapi-workbench.json', import.meta.url),
     'utf8',
   )) as {
-    paths: Record<string, { get?: { operationId?: string; summary?: string }; post?: { operationId?: string; description?: string } }>
+    paths: Record<string, {
+      get?: { operationId?: string; summary?: string }
+      post?: { operationId?: string; description?: string }
+      delete?: { operationId?: string }
+    }>
     components: { schemas: Record<string, { properties?: Record<string, unknown>; description?: string }> }
   }
   const admin = JSON.parse(await readFile(
@@ -128,6 +132,11 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
   assert.equal(workbench.paths['/task-executions/{taskId}/operations']?.get?.operationId, 'listTaskOperations')
   assert.equal(workbench.paths['/task-executions/{taskId}/cancel']?.post?.operationId, 'cancelTaskExecution')
   assert.equal(workbench.paths['/task-executions/{taskId}/retry']?.post?.operationId, 'retryTaskExecution')
+  assert.equal(workbench.paths['/mcp-grants']?.get?.operationId, 'listMcpUserGrants')
+  assert.equal(workbench.paths['/mcp-grants/{connectorId}/authorization']?.post?.operationId, 'beginMcpUserGrantAuthorization')
+  assert.equal(workbench.paths['/mcp-grants/callback']?.get?.operationId, 'completeMcpUserGrantAuthorization')
+  assert.equal(workbench.paths['/mcp-grants/{connectorId}']?.delete?.operationId, 'revokeMcpUserGrant')
+  assert.equal(workbench.paths['/agents/{agentId}/mcp-access']?.get?.operationId, 'getAgentMcpAccess')
   assert.match(workbench.paths['/task-executions']?.post?.description ?? '', /Token 与成本硬预算当前明确拒绝/)
   assert.match(workbench.paths['/task-executions/{taskId}']?.get?.summary ?? '', /累计预算/)
   assert.deepEqual(Object.keys(workbench.components.schemas['TaskCumulativeBudgetInput']?.properties ?? {}), [
@@ -139,6 +148,7 @@ test('OpenAPI publishes governed platform capabilities and omits employee memory
   assert.equal(admin.paths['/connectors/mcp']?.post?.operationId, 'registerMcpConnector')
   assert.ok(admin.paths['/connectors/mcp']?.post?.responses?.['409'])
   assert.equal(admin.paths['/connectors/mcp/test']?.post?.operationId, 'testMcpConnection')
+  assert.equal(admin.paths['/connectors/mcp/probe-authorization']?.post?.operationId, 'beginMcpProbeAuthorization')
   assert.equal(admin.paths['/connectors/mcp/{connectorId}']?.delete?.operationId, 'deleteMcpConnector')
   assert.equal(admin.paths['/connectors/mcp/credential']?.patch?.operationId, 'rotateMcpCredential')
   assert.equal(admin.paths['/connectors/check']?.post?.operationId, 'checkConnector')
