@@ -119,7 +119,13 @@ test('startup retains legacy backend callbacks without treating inferred local o
     assert.equal(config.audiences.workbench.redirectUriByOrigin['http://localhost:4174'], 'http://localhost:4190/auth/workbench/callback')
     assert.equal(config.audiences.admin.redirectUriByOrigin['http://localhost:4180'], 'http://localhost:4190/auth/admin/callback')
     const local = localIdentityConfiguration(config)
-    assert.deepEqual(local.audiences.workbench.allowedOrigins, ['http://localhost:4174'])
+    // 非生产环境会并入 dsh-work-mobile 的开发 origin（:4175），这一步只放宽密码登录入口，
+    // 真正的安全约束是下面的后端回调 origin（:4190）不得进入白名单。
+    assert.deepEqual(local.audiences.workbench.allowedOrigins, [
+      'http://localhost:4174',
+      'http://localhost:4175',
+      'http://127.0.0.1:4175',
+    ])
     assert.deepEqual(local.audiences.admin.allowedOrigins, ['http://localhost:4180'])
     assert.ok(!local.audiences.workbench.allowedOrigins.includes('http://localhost:4190'))
   }
