@@ -116,6 +116,11 @@ export interface TaskRun {
   messages: ChatMessage[]
   steps: RunStep[]
   attachments: string[]
+  /**
+   * 当前 Attempt 登记的成果（顶层便捷投影，26-10-24 起随 run 详情返回）：
+   * 移动端/PC 对话页成果芯片与详情抽屉直接消费；完整核验视图仍见 result。
+   */
+  artifacts?: Artifact[]
   skill?: {
     id: string
     name: string

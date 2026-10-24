@@ -1315,6 +1315,7 @@ export class PostgresConversationRepository {
         `
       : []
     const prompt = runMessages.find((message) => message.role === 'user')?.content ?? row.title
+    const result = deriveTaskResult(evidence)
     return {
       id: row.id,
       attemptId: row.currentAttemptId,
@@ -1333,7 +1334,8 @@ export class PostgresConversationRepository {
       requestedBy: row.requestedBy,
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, evidence.events, row.status),
-      result: deriveTaskResult(evidence),
+      result,
+      artifacts: result.artifacts,
       attachments: attachments.map(attachment => attachment.name),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
         ? { id: row.selectedSkillId, name: row.selectedSkillName, version: row.selectedSkillVersion }
