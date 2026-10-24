@@ -65,7 +65,7 @@
 
 ## 3. 团队工作空间
 
-界面名称为“项目空间”（代码、表与接口仍用 workspace / team）。定位与后续切片见[项目空间方案](../design/project-space-plan.md)。
+界面名称为“项目空间”（代码、表与接口仍用 workspace / team）。产品决策与切片背景见[项目空间方案](../design/project-space-plan.md)；本节为现行规则。
 
 ### 3.1 范围
 

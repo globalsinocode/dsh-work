@@ -331,7 +331,7 @@ Agent 版本不保存工具引用，只保存联网搜索开关（`web_search_en
 
 ### 6.4 MCP 使用范围
 
-**2026-10-21 调整：** 废弃 `all`，MCP 按 Agent 选择；能力变更须管理员确认；取消租户级 20 个连接器上限。方案见 [MCP 按 Agent 选择与能力变更确认方案](../design/mcp-agent-scope-plan.md)。
+**2026-10-21 调整：** 废弃 `all`，MCP 按 Agent 选择；能力变更须管理员确认；取消租户级 20 个连接器上限。现行规则以本节与[功能规则](feature-rules.md)为准。
 
 连接器继续在现有 MCP 管理模块登记、测试、发现、确认能力变更、启停及删除。不新增逐 Agent Grant 或逐 Tool Grant：Agent Version 按整个 Connector 选择。新 Agent 的使用范围默认 `none`，由作者明确选择 `selected` 后才接入外部数据。
 

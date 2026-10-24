@@ -15,7 +15,7 @@
 - 实现前先在对应分册登记关键用户旅程（AGENTS.md 的 Spec 步骤）；新领域没有合适分册时新建分册并在下表登记。
 - 每条至少写明优先级、用户角色、运行层级、前置数据、操作步骤、可观察结果及对应 spec 文件；验收标准用业务语言，不预设尚未成型的 DOM 选择器。
 - 条目 ID 全局唯一，标题行以 `### <ID> <名称>` 开头，便于按 ID 检索。
-- 每次实施的运行结果（跑了哪些测试、未覆盖什么）写进[验证记录](catalog/verification-log.md)，不写进旅程条目。
+- 每次实施的运行结果写进 PR/发布说明或仓库外受控证据，不写进旅程条目；[验证记录](catalog/verification-log.md)仅说明留证约定，不堆积长文。
 
 ## 分册
 
@@ -26,4 +26,4 @@
 | [员工端双模式（S5）](catalog/collab-mode.md) | A 工作模式与 B 协作模式：模式切换、协作壳层、对话列表、单聊、群聊、群组与成员选择。 | `MODE-E2E-01`、`MODE-E2E-02`、`MODE-E2E-03`、`MODE-E2E-04`、`MODE-API-01`、`MODE-E2E-05`、`MODE-E2E-06`、`MODE-E2E-07`、`MODE-E2E-08`、`MODE-API-02`、`MODE-E2E-09`、`MODE-E2E-10`、`MODE-E2E-11`、`MODE-E2E-12`、`MODE-E2E-14`、`MODE-E2E-15`、`MODE-E2E-13`、`MODE-API-03` |
 | [Agent](catalog/agents.md) | Agent 定义与能力、详情与发布、岗位权限、轻量自动任务、经验迭代与主动记忆。 | `AG-SOUL-P0`、`AG-CAP-P0`、`AG-DETAIL-01`、`AG-DETAIL-02`、`AG-CAP-P1`、`AG-CAP-P2`、`AE-02`、`AG-SOUL-01`、`AG-REL-01`、`AG-PROTO-02`、`AG-REL-02`、`AG-AUTO-00`、`AG-AUTO-20`、`AG-AUTO-21`、`AG-AUTO-22`、`AG-AUTO-23`、`AG-AUTO-24`、`AG-AUTO-P2`、`EXPERIENCE-ITERATION-01`、`MEMORY-EMPLOYEE-REMOVAL`、`PF-MEMORY-01`、`PF-MEMORY-P2`、`AE-MEMORY-01` |
 | [管理端与平台](catalog/admin-platform.md) | 冒烟环境、登录与身份、管理端、内置工具与操作计划、开发接入文档、MCP、持久化等待与审批。 | `E2E-ENV-01`、`TW-E2E-02`、`ADMIN-E2E-03`、`LOCAL-AUTH-P1`、`LOGIN-ENTRY-P1`、`LOGIN-OPTIONS-P1`、`ADMIN-E2E-01`、`ADMIN-E2E-05`、`ADMIN-E2E-02`、`ADMIN-E2E-04`、`C7`、`PF-MCP-01`、`PF-MCP-P2`、`PF-WAIT-01`、`PF-WAIT-P2` |
-| [验证记录](catalog/verification-log.md) | 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。 | 按日期记录 |
+| [验证记录](catalog/verification-log.md) | 留证约定（非验收标准）；不在工作树堆积某次跑测长文。 | — |

@@ -293,7 +293,7 @@ flowchart LR
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
 - **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分与 1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）已实现：执行容器模式（`DSH_WORK_EXECUTION_CONTAINER`，默认关闭）下 `glob`/`grep` 在每 Attempt 的执行容器内运行，Mac mini 未验收。DSH Worker 的文件工具仍是应用层边界；目标是文件与命令操作经平台中转落到执行容器，并放开 C 档（前台单次 `bash` 与 Office 工具链，后台任务暂缓），见[执行隔离方案](../design/execution-isolation-plan.md)。阶段 2 交付并验收前，3.6 中 `bash` 不放行的规则继续有效。
-- **项目空间：** S0～S4 与 S5（员工端双模式）已实现；S6（Agent 项目任务工具：版本开关、装配、via 归因与时间线卡片）服务端与员工端已接通，集成测试见 `project-task-tools.integration.test.ts`；真实 DSH 中 Agent 选择并调用工具属 P2，见 [项目空间方案](../design/project-space-plan.md) 第 13 节。项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。
+- **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。OIDC/生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
