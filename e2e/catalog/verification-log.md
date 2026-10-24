@@ -2,6 +2,78 @@
 
 历史验证记录：每次实施的阶段、已运行的测试与未覆盖项。只追加，新记录写在最前面；不是验收标准。证据层级与写法见[验收目录索引](../TEST-CATALOG.md)。
 
+### 2026-10-24：本地补硬 AUTO/MCP 缺口（正式发布门禁 + 收权/停用）
+
+**阶段：** 针对同日「剩余目录 P2」中标明的缺口补证据；仍为本地密码登录 + 真实 DSH `0.1.2-rc.1`，**非** OIDC/生产。
+**代码提交：** `f0cbe3b`　**证据：** `/tmp/p2-harden-evidence.json`、`/tmp/p2-auto-harden-followup.json`
+
+**PF-MCP 补硬（去掉 SQL 绑版本捷径）：**
+
+| 步 | 结果 | 证据 |
+| --- | --- | --- |
+| 登记 | 通过 | 靶场 `127.0.0.1:18765`；`connector-mcp-d3c5dd53…` 经管理端 DSH 发现登记 |
+| 草稿 | 通过 | `quality-analysis` PATCH draft → `1.1.0`，`mcp_scope.selected` 含该连接器；验证前检查 MCP「可用；验证中不执行 MCP 调用」 |
+| 验证 | 通过 | `agent-validation-f6f4e2a3…` 1 案例；`run-1faf9ffb…` / `attempt-c2c2ecda…` 机器检查三项通过；人工 verdict `passed` |
+| 发布 | 通过 | 发布后活动版本 `1.1.0`，`mcp_scope.selected` |
+| 员工调用 | 通过 | Ethan `run-16330a5a…` / `attempt-c34eba2c…` 成功 `put_receipt`+`get_receipt`；receipt `receipt-93508de2…`；审计 2 条 |
+| 在途停用 | 通过 | `unknown_after_commit` 进行中停用连接器 → `run-4095a737…` / `attempt-e382ef7a…` `failed`，`result.error.code=AUTHORIZATION_REVOKED`，pending `external_effect_unknown` |
+| 回滚清理 | 通过 | 回滚 `quality-analysis` → `1.0.0`/`mcp none`；连接器删除且 `credentialDestroyed=true` |
+
+**AG-AUTO 补硬：**
+
+| 项 | 结果 | 证据 |
+| --- | --- | --- |
+| 账号停用 | 通过（双路径） | SQL `users.status=disabled` 后：① HTTP run-now → `401 session_expired`；② 同库 `AutomationService.runNow` → `skipped`/`subject_invalid`（`autexec-6078cf6e…`）。本地密码登录下 HTTP 先拦会话，受理层跳过需服务路径留证 |
+| 角色收权 | 通过 | 撤销 `role-employee` 后服务受理 `skipped`/`authorization_denied`（`autexec-79ba22ae…`）；随后已恢复角色 |
+| 停用任务 | 通过（产品语义） | `DELETE /automations/:id` → `status=disabled`；再 run-now → `404`（`getMine` 对 disabled 不可见）。`task_disabled` reason 留给受理途中竞态，本环境用停用后不可见表达 |
+| 暂停拦截 | 通过 | 成功 Run `run-46c7e54e…`/`attempt-autexec-8852d1d6…` 后 pause；再 run-now → `409`「未启用，不能立即运行」 |
+| 重叠跳过 | 沿用 | 同日前序与本轮均观察到 `overlap` |
+
+**仍未覆盖：** 停机不补跑/准备中断的进程级演练、自动任务车道容量打满、OIDC 目录同步停用、企业 MCP。PF-07 仍不得标 `verified`。
+
+**结论：** 本地可将 **MCP 正式草稿→验证→发布→真实调用→在途撤权** 与 **AUTO 主体无效/授权拒绝/停用/暂停** 补硬到有 Run/Attempt 或受理记录的程度；不能替代 OIDC/生产门禁。
+
+### 2026-10-24：剩余目录 P2 局部执行（AG-AUTO / PF-MCP / 经验迭代 / PF-WAIT / PF-07）
+
+**阶段：** P2 局部真实验收（同日环境：`localhost:4174/4180/4190`，真实 DSH `0.1.2-rc.1`，本地账号密码登录；**非** AI Hub OIDC 多账号、**非**生产部署）。
+**代码提交：** `f0cbe3b`　**角色：** 管理员 `13500000000`；员工 Ethan `13100000000`、Nina `13400000000`。
+**证据文件：** `/tmp/p2-remaining-evidence.json`、`/tmp/p2-auto-memory-followup.json`、`/tmp/p2-auto-second.json`、`/tmp/pf07-evidence-filled.json`（`status=evidence_pending`，**未**标 `verified`）。
+
+| 条目 | 结果 | 关键证据 / 说明 |
+| --- | --- | --- |
+| PF-MCP-P2（本地可丢弃 MCP） | 局部通过 | 靶场 `127.0.0.1:18765`；管理端 DSH 发现登记 A/B；Ethan→`quality-analysis` `run-c9766cba…`/`attempt-382dff2e…` 与 Nina→`production-planning` `run-29f45865…`/`attempt-3b39dc96…` 均成功 `put_receipt`+`get_receipt`；错误凭据→offline；停用后新 Run `403`；删除销毁凭据；列表不回显 Token。另：`pnpm probe:pf07:mcp` 通过（`run-pf07-0408ca48`）。**缺口：** Agent `mcp_scope` 用 SQL 发布版本指针（跳过 AG-CAP 试运行门禁）；非企业 MCP / OIDC |
+| AG-AUTO-P2 | 局部通过 | 创建并启用 `automation-8d0d95f0…`（固定 `agent-version-dsh-work-assistant-project-tasks-1`）；连续两次 run-now：第一次 `run-b737f22b…`/`attempt-autexec-14bc3025…` 成功，第二次因 `overlap` 跳过；同幂等键重放同一 execution；间隔后再跑 `run-3ef436d0…`/`attempt-autexec-a50de32c…` 成功；Nina 读取 404。**缺口：** 目录停用/收权、停机不补跑、容量并发未演练 |
+| PF-MEMORY-P2 / 经验迭代 | 局部通过（现行入口） | 员工端受控记忆已退役；按 EXPERIENCE-ITERATION：`propose_memory`→`run-8f6dcb11…`/`attempt-6de227bc…`→提案 `memory-proposal-42196708…`；管理员批准发布 `memory-version-0ac0a400…`；后续 `run-938357a5…` 回答引用该经验。**缺口：** OIDC 身份/角色变化、等待中撤回、版本隔离未测；不能宣称经典 PF-MEMORY-P2 全量 |
+| PF-WAIT-P2 | 不适用 | 现行内置工具 `approval_mode=never`；bash/停止后台任务未准入；首个需审批工具准入后再补 |
+| PF-07 全量 | 未通过门禁 | 已填部分场景观察记录于 `/tmp/pf07-evidence-filled.json`；校验器要求全场景 `passed`+`status=verified`，本轮故意保持 `evidence_pending`，**不得**当作发布门禁通过 |
+
+**结论：** 在本地真实 DSH + 本地账号下，剩余目录 P2 中 **MCP 主路径、自动任务两次成功 Run、经验提出/审核/召回** 有 Run/Attempt 证据；**PF-WAIT N/A**；**PF-07 仍未核验**。不替代 OIDC/生产验收。
+
+### 2026-10-24：E2E P2 局部执行（PS-S6-P2 为主）
+
+**阶段：** P2 真实验收（本地 `localhost:4174/4180/4190`，真实 DSH `0.1.2-rc.1`，本地账号密码登录；非 AI Hub OIDC 多账号全量、非生产部署）。
+**代码提交：** `f0cbe3b`　**空间：** `ws-f73fb43e-1b51-47b6-8a1c-e460f29fe467`（风险分析）　**Agent 成员：** `wam-699630e2-f046-43d7-982a-34b23ab67987`（dsh-work 助手 v1.0.2，`project_tasks_enabled=true`）　**角色：** A `13500000000` 负责人、B `13100000000` Ethan Cole 成员、C `13300000000` Ruby Hayes 只读。
+
+**环境探针（不构成业务旅程通过）：** `pnpm test:pf07:matrix` 通过（声明「P2 尚未核验」）；`pnpm probe:handshake` / `pnpm probe:tool` 通过（真实模型只读工具）。
+
+**PS-S6-P2（经工作台 API → Run/Attempt → DSH，等同群聊 @Agent 入口；续跑含真实 09:00 定时）：**
+
+| 步 | 结果 | 关键证据 |
+| --- | --- | --- |
+| 1 查询 | 通过 | `run-82a457cf…` / `attempt-9722fbfe…` 调用 `project_tasks_list` 成功；Manifest 含四项项目任务工具 |
+| 2 新建员工任务 | 通过（截止日期待议） | `run-eec15ae0…` 调用 `project_task_create`；任务 `ptask-ce8ec0cc…` 创建人 B、`created_via` 指向该 Run；截止最初为 `2026-10-23`（「本周五」边界需人工复核） |
+| 3 新建 Agent 任务 | 通过 | `run-15fae587…` 创建 `ptask-29ad851a…`「每周整理库存周报」，`schedule.kind=manual`，未自动执行 |
+| 4 改截止+改派 | 通过 | `run-f3b5b4da…` `project_task_update`；截止 `2026-10-26`、负责人 → Ethan；事件含 `metadata.via` |
+| 5 只改标题 | 通过 | 人建每天任务 `ptask-91eb516e…`；`run-26ce4155…` 改名后 `schedule` 仍为每天 09:00 |
+| 6 标记完成 | 通过 | `run-14b2276c…`；`ptask-ce8ec0cc…` → `done`，说明「已提交」，事件含 `via` |
+| 7 只读拒绝 | 部分通过（路径不同） | C 创建会话 403、直接改状态 403；UI 无输入。未走「助手口头说明只读」，但无写入成立 |
+| 8 定时只读 | 通过 | 槽位 `2026-10-24T01:00:00Z`（上海 09:00）事件 `scheduled_run`；`run-f8ea8c6a…` / `attempt-6bf54ff3…` Manifest 含 `project_tasks_list`/`project_task_get`，**无** `create`/`update` |
+| 9 关闭开关 | 通过（回滚路径） | 管理员将活动版本**回滚**到已发布 `1.0.1`（`projectTasksEnabled=false`，非新建草稿再验证发布）；负责人升级成员到 `1.0.1`；B 的 `run-ab2afd99…` / `attempt-d85a8ce7…` Manifest **无**项目任务工具，助手说明无法创建，任务数未增加。验收后已恢复活动版本与成员到 `1.0.2` |
+
+**仍未覆盖（本条当时）：** 目录其他独立 P2 与 PF-07 全量；AI Hub OIDC 多账号与生产部署。同日后续局部补测见上方「剩余目录 P2」记录。历史脏数据 `ptask-e2e544cd…`（经 Agent 却带 `weekly`）仍在库中，本轮第 3 步新任务已为 `manual`。
+
+**结论：** 本地真实 DSH + 本地账号下 **PS-S6-P2 主路径 1–6、8–9 通过**，第 7 步为更强的入口拒绝（与目录「助手说明」表述不完全一致）。**不**等同 PF-07 / 其他条目 P2 或生产门禁。摘要：`/tmp/ps-s6-p2-step8-result.json`、`/tmp/ps-s6-p2-step9.json`。
+
 ### 2026-10-17：项目空间 S1 补齐成果来源与停止标注
 
 **背景：** 核对方案发现 S1 第 5、6 节两项未实现却被标为已实现：成果标注所属任务/承接 Agent/发起人，任务线程停止时标注停止人。本次补齐。
