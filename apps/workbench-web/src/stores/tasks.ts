@@ -453,7 +453,8 @@ export const useTaskStore = defineStore('tasks', () => {
       scheduleRunReconciliation(event.run_id)
     }
 
-    if (!['assistant.delta', 'assistant.completed'].includes(event.event_type)) {
+    // 26-10-24 二期：移动端富内容事件不进 PC 时间线（思考与工具开始由移动端专用 UI 承载）
+    if (!['assistant.delta', 'assistant.completed', 'assistant.reasoning', 'tool.started'].includes(event.event_type)) {
       const step = task.steps.find((item) => item.id === event.event_id)
       if (!step) task.steps.push(event.event_type === 'tool.completed' ? toolStep(event) : {
         id: event.event_id,
