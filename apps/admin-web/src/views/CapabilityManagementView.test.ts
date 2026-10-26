@@ -405,6 +405,22 @@ describe('Skill installation sibling tab', () => {
     expect(wrapper.get('[data-testid="skill-action-feedback"]').text()).toContain('请在试运行窗口确认结果后发布')
   })
 
+  it('shows user_oauth fields without bearer input and keeps bearer rotation only on bearer connectors', async () => {
+    const { wrapper, content } = await render(true, '/connectors')
+    content.connectors.push(offlinePendingMcp())
+    await flushPromises()
+    await wrapper.get('[data-action="add-mcp-connector"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[placeholder="例如：ERP 只读查询 MCP"]').setValue('OAuth MCP')
+    await wrapper.get('input[placeholder="https://erp.example.internal/mcp"]').setValue('https://erp.example.internal/mcp')
+    const userOAuthRadio = wrapper.findAll('.el-radio').find(radio => radio.text().includes('用户授权'))
+    await userOAuthRadio?.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('输入 MCP 服务签发的 Token')
+    expect(wrapper.get('[data-action="confirm-add-mcp-connector"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('轮换 Token')
+  })
+
   it('publishes only after the administrator confirms the completed result', async () => {
     const { wrapper, content } = await render()
     const skill = strictDraftSkill()

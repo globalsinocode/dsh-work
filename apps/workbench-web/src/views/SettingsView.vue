@@ -1,18 +1,64 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { workbenchApi } from '@/api/client'
 import { User } from '@element-plus/icons-vue'
 
+import ExternalConnections from '@/components/external-connections/external-connections.vue'
 import { roleLabels, useAuthStore } from '@/stores/auth'
+import type { McpUserGrantListItem } from '@/types/domain'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const policy = ref('')
 const policyError = ref('')
+const mcpGrants = ref<McpUserGrantListItem[]>([])
+const mcpGrantsLoading = ref(false)
+const mcpGrantBanner = ref('')
+
 async function loadPolicy() {
   try { policy.value = (await workbenchApi.getContentPolicy()).notice; policyError.value = '' }
   catch { policyError.value = '暂时无法加载内容保留规则，请重试。' }
 }
-onMounted(() => { void loadPolicy() })
+
+async function loadMcpGrants() {
+  mcpGrantsLoading.value = true
+  try {
+    const page = await workbenchApi.listMcpGrants()
+    mcpGrants.value = page.list
+  } finally {
+    mcpGrantsLoading.value = false
+  }
+}
+
+async function authorizeMcp(connectorId: string) {
+  const { authorizationUrl } = await workbenchApi.beginMcpGrantAuthorization(connectorId)
+  window.location.assign(authorizationUrl)
+}
+
+async function revokeMcp(connectorId: string) {
+  await workbenchApi.revokeMcpGrant(connectorId)
+  await loadMcpGrants()
+}
+
+onMounted(async () => {
+  void loadPolicy()
+  await loadMcpGrants()
+  const grant = typeof route.query.mcpGrant === 'string' ? route.query.mcpGrant : ''
+  if (grant === 'connected') {
+    mcpGrantBanner.value = ''
+    await loadMcpGrants()
+    const query = { ...route.query }
+    delete query.mcpGrant
+    void router.replace({ query })
+  } else if (grant === 'failed') {
+    mcpGrantBanner.value = '授权没有完成，请重试'
+    const query = { ...route.query }
+    delete query.mcpGrant
+    void router.replace({ query })
+  }
+})
 </script>
 
 <template>
@@ -39,6 +85,15 @@ onMounted(() => { void loadPolicy() })
           <div class="identity-grid__wide"><dt>数据范围</dt><dd>{{ authStore.user.dataScopes.join('、') }}</dd></div>
         </dl>
       </section>
+
+      <ExternalConnections
+        :items="mcpGrants"
+        :loading="mcpGrantsLoading"
+        :grant-error="mcpGrantBanner"
+        :authorize="authorizeMcp"
+        :revoke="revokeMcp"
+        :reload="loadMcpGrants"
+      />
 
       <section class="panel settings-section retention-notice">
         <h2>内容保留与账号停用</h2>

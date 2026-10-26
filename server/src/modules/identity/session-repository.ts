@@ -302,11 +302,7 @@ export class IdentitySessionRepository {
     expiresAt: Date
   }) {
     await this.database.begin(async (transaction) => {
-      await transaction`
-        update authentication_sessions set revoked_at = now()
-         where tenant_id = ${tenantId} and user_id = ${input.userId}
-           and audience = ${input.audience} and revoked_at is null
-      `
+      // 与本地密码登录一致：新登录不再吊销同账号其他设备的会话，支持多端并行。
       await transaction`
         insert into authentication_sessions (
           session_hash, tenant_id, audience, user_id, access_token_encrypted,

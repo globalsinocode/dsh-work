@@ -1,7 +1,7 @@
 {
   "name": "@dsh-work/server",
   "version": "0.1.1",
-  "releaseVersion": "2026.10.20-05",
+  "releaseVersion": "2026.10.24-02",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,7 +19,7 @@
     "test:agent-routines:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/agent-routines.integration.test.ts",
     "test:m4:skill:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-skill-management.integration.test.ts",
     "test:m4:tool:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/m4-tool-connector-management.integration.test.ts",
-    "test:mcp:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/mcp-connector-governance.integration.test.ts src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts",
+    "test:mcp:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/mcp-connector-governance.integration.test.ts src/infrastructure/postgres/mcp-auto-activation-upgrade.integration.test.ts src/infrastructure/postgres/mcp-user-grant.integration.test.ts",
     "test:pf04:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf04-persistent-wait.integration.test.ts",
     "test:pf05:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf05-controlled-memory.integration.test.ts",
     "test:pf06:integration": "node --env-file-if-exists=../.env --experimental-strip-types --test src/infrastructure/postgres/pf06-agent-delegation.integration.test.ts",

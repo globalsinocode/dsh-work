@@ -8,6 +8,16 @@
 | --- | --- | --- | --- |
 | P0 | 测试专用冒烟服务（测试身份、内存合成数据）、Playwright Chromium | 页面启动、路由、核心展示与基本交互 | PostgreSQL 持久化、真实 DSH、OIDC、多账号授权 |
 | P1 | 专用可丢弃 PostgreSQL、受控测试身份与 Runtime/Worker | 团队空间读写、版本、失败和权限契约 | 生产身份、企业连接器和生产容量 |
+
+### MCP-E2E-01 用户授权 MCP 分权
+
+**优先级：** P1 · **角色：** 员工与管理员 · **运行层级：** 可丢弃 PostgreSQL
+**前置数据：** 管理员登记 `user_oauth` 连接器；两名员工账号。
+**验收：** `server/src/infrastructure/postgres/mcp-user-grant.integration.test.ts` 与 `server/src/infrastructure/postgres/mcp-connector-governance.integration.test.ts`；P0 冒烟不能代替本条。
+
+1. 管理员登记用户授权连接器并完成探活；两名员工分别在用户中心授权。
+2. 使用 `selected` 范围的 Agent：未授权员工发送前被阻止并看到连接器名称；授权后可发送。
+3. 使用 `all` 范围的 Agent：未授权连接器不出现在本次工具装配，发送前说明被移出名称。
 | P2 | 真实 DSH Run/Attempt、Runtime Adapter、OIDC 与多账号 | 真实执行、收权和目标环境验收 | 未实际执行的环境或未覆盖的角色 |
 
 ## P0 浏览器旅程

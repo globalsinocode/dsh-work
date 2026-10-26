@@ -55,18 +55,30 @@ const selectedMcpCredentialConnectorId = ref('')
 const mcpCredentialToken = ref('')
 const mcpCredentialRotating = ref(false)
 const mcpCreateForm = reactive({
-  name: '', endpoint: '', authType: 'none' as 'none' | 'bearer', bearerToken: '', scopeDescription: '',
+  name: '', endpoint: '', authType: 'none' as 'none' | 'bearer' | 'user_oauth', bearerToken: '', scopeDescription: '',
+  authorizationEndpoint: '', tokenEndpoint: '', clientId: '', clientSecret: '', scopesText: '', resource: '',
 })
+const mcpOAuthScopes = computed(() => mcpCreateForm.scopesText.split(/[\s,]+/).map(value => value.trim()).filter(Boolean))
 const mcpConnectionSignature = computed(() => JSON.stringify({
   name: mcpCreateForm.name.trim(),
   endpoint: mcpCreateForm.endpoint.trim(),
   authType: mcpCreateForm.authType,
   bearerToken: mcpCreateForm.authType === 'bearer' ? mcpCreateForm.bearerToken : '',
+  authorizationEndpoint: mcpCreateForm.authType === 'user_oauth' ? mcpCreateForm.authorizationEndpoint.trim() : '',
+  tokenEndpoint: mcpCreateForm.authType === 'user_oauth' ? mcpCreateForm.tokenEndpoint.trim() : '',
+  clientId: mcpCreateForm.authType === 'user_oauth' ? mcpCreateForm.clientId.trim() : '',
+  clientSecret: mcpCreateForm.authType === 'user_oauth' ? mcpCreateForm.clientSecret : '',
+  scopes: mcpCreateForm.authType === 'user_oauth' ? mcpOAuthScopes.value : [],
+  resource: mcpCreateForm.authType === 'user_oauth' ? mcpCreateForm.resource.trim() : '',
 }))
 const mcpConnectionInputReady = computed(() => Boolean(
   mcpCreateForm.name.trim()
   && mcpCreateForm.endpoint.trim()
-  && (mcpCreateForm.authType !== 'bearer' || mcpCreateForm.bearerToken),
+  && (mcpCreateForm.authType === 'bearer' ? mcpCreateForm.bearerToken
+    : mcpCreateForm.authType === 'user_oauth'
+      ? mcpCreateForm.authorizationEndpoint.trim() && mcpCreateForm.tokenEndpoint.trim()
+        && mcpCreateForm.clientId.trim() && mcpOAuthScopes.value.length
+      : true),
 ))
 const mcpCanRegister = computed(() => Boolean(
   mcpConnectionInputReady.value
@@ -564,6 +576,14 @@ async function registerMcpConnector() {
       authType: mcpCreateForm.authType,
       scopeDescription: mcpCreateForm.scopeDescription.trim(),
       ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
+      ...(mcpCreateForm.authType === 'user_oauth' ? {
+        authorizationEndpoint: mcpCreateForm.authorizationEndpoint.trim(),
+        tokenEndpoint: mcpCreateForm.tokenEndpoint.trim(),
+        clientId: mcpCreateForm.clientId.trim(),
+        scopes: mcpOAuthScopes.value,
+        ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
+        ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
+      } : {}),
     })
     mcpCreateDialogOpen.value = false
     resetMcpCreateForm()
@@ -587,6 +607,14 @@ async function testMcpConnection() {
       endpoint: mcpCreateForm.endpoint.trim(),
       authType: mcpCreateForm.authType,
       ...(mcpCreateForm.authType === 'bearer' ? { bearerToken: mcpCreateForm.bearerToken } : {}),
+      ...(mcpCreateForm.authType === 'user_oauth' ? {
+        authorizationEndpoint: mcpCreateForm.authorizationEndpoint.trim(),
+        tokenEndpoint: mcpCreateForm.tokenEndpoint.trim(),
+        clientId: mcpCreateForm.clientId.trim(),
+        scopes: mcpOAuthScopes.value,
+        ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
+        ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
+      } : {}),
     })
     if (testedSignature !== mcpConnectionSignature.value) return
     mcpTestResult.value = result
@@ -594,7 +622,29 @@ async function testMcpConnection() {
     ElMessage.success(`连通测试成功，发现 ${result.capabilityCount} 个 Tool`)
   } catch (cause) {
     if (testedSignature !== mcpConnectionSignature.value) return
-    const code = cause instanceof Error && 'code' in cause ? String(cause.code) : ''
+    const code = cause instanceof Error && 'code' in cause ? String((cause as { code?: string }).code) : ''
+    if (mcpCreateForm.authType === 'user_oauth' && code === 'authorization_required') {
+      try {
+        const probe = await contentStore.beginMcpProbeAuthorization({
+          name: mcpCreateForm.name.trim(),
+          endpoint: mcpCreateForm.endpoint.trim(),
+          authType: 'user_oauth',
+          authorizationEndpoint: mcpCreateForm.authorizationEndpoint.trim(),
+          tokenEndpoint: mcpCreateForm.tokenEndpoint.trim(),
+          clientId: mcpCreateForm.clientId.trim(),
+          scopes: mcpOAuthScopes.value,
+          ...(mcpCreateForm.clientSecret ? { clientSecret: mcpCreateForm.clientSecret } : {}),
+          ...(mcpCreateForm.resource.trim() ? { resource: mcpCreateForm.resource.trim() } : {}),
+        })
+        window.location.assign(probe.authorizationUrl)
+      } catch (probeError) {
+        mcpTestError.value = {
+          title: '授权失败',
+          description: probeError instanceof Error ? probeError.message : '无法开始 OAuth 授权',
+        }
+      }
+      return
+    }
     mcpTestError.value = {
       title: code === 'MCP_AUTHENTICATION_REQUIRED' || code === 'MCP_AUTHENTICATION_FAILED' ? '认证失败' : '连通测试失败',
       description: cause instanceof Error ? cause.message : 'MCP 连通测试失败',
@@ -605,7 +655,10 @@ async function testMcpConnection() {
 }
 
 function resetMcpCreateForm() {
-  Object.assign(mcpCreateForm, { name: '', endpoint: '', authType: 'none', bearerToken: '', scopeDescription: '' })
+  Object.assign(mcpCreateForm, {
+    name: '', endpoint: '', authType: 'none', bearerToken: '', scopeDescription: '',
+    authorizationEndpoint: '', tokenEndpoint: '', clientId: '', clientSecret: '', scopesText: '', resource: '',
+  })
   mcpTestResult.value = null
   mcpTestError.value = null
   testedMcpSignature.value = ''
@@ -881,7 +934,7 @@ onUnmounted(() => clearSkillTestPoll())
       <el-table class="data-table" v-loading="contentStore.loading" :data="pagedConnectors" empty-text="暂无匹配的 MCP 连接器">
         <el-table-column label="名称" min-width="180"><template #default="scope"><strong class="mcp-name">{{ scope.row.name }}</strong></template></el-table-column>
         <el-table-column label="Endpoint" min-width="280"><template #default="scope"><code class="mcp-endpoint">{{ scope.row.endpoint }}</code></template></el-table-column>
-        <el-table-column label="认证方式" width="120"><template #default="scope">{{ scope.row.authType === 'bearer' ? 'Bearer Token' : '无认证' }}</template></el-table-column>
+        <el-table-column label="认证方式" width="120"><template #default="scope">{{ scope.row.authType === 'bearer' ? 'Bearer Token' : scope.row.authType === 'user_oauth' ? '用户授权' : '无认证' }}</template></el-table-column>
         <el-table-column label="工具数量" width="130" align="center" header-align="center"><template #default="scope"><el-button link type="primary" data-action="view-mcp-tools" @click="openMcpTools(scope.row)">{{ scope.row.mcp?.capabilityCount ?? 0 }} 个</el-button></template></el-table-column>
         <el-table-column label="状态" width="115"><template #default="scope"><StatusTag :status="scope.row.status" :label="connectorStatusLabel(scope.row)" dot /></template></el-table-column>
         <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatConnectorDateTime(scope.row.updatedAt) }}</template></el-table-column>
@@ -927,8 +980,16 @@ onUnmounted(() => clearSkillTestPoll())
       <el-form label-position="top" :model="mcpCreateForm">
         <el-form-item label="连接器名称" required><el-input v-model="mcpCreateForm.name" placeholder="例如：ERP 只读查询 MCP" /></el-form-item>
         <el-form-item label="Streamable HTTP 地址" required><el-input v-model="mcpCreateForm.endpoint" class="mono" placeholder="https://erp.example.internal/mcp" /></el-form-item>
-        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="认证方式" required><el-radio-group v-model="mcpCreateForm.authType" @change="clearMcpTokenForNoAuth"><el-radio value="none">无认证</el-radio><el-radio value="bearer">Bearer Token</el-radio><el-radio value="user_oauth">用户授权</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="mcpCreateForm.authType === 'bearer'" label="Bearer Token" required><el-input v-model="mcpCreateForm.bearerToken" type="password" autocomplete="new-password" placeholder="输入 MCP 服务签发的 Token" /><small>Token 使用 AES-256-GCM 加密后存入数据库，保存后不再回显。</small></el-form-item>
+        <template v-if="mcpCreateForm.authType === 'user_oauth'">
+          <el-form-item label="授权端点" required><el-input v-model="mcpCreateForm.authorizationEndpoint" class="mono" placeholder="https://idp.example/oauth/authorize" /></el-form-item>
+          <el-form-item label="令牌端点" required><el-input v-model="mcpCreateForm.tokenEndpoint" class="mono" placeholder="https://idp.example/oauth/token" /></el-form-item>
+          <el-form-item label="客户端标识" required><el-input v-model="mcpCreateForm.clientId" class="mono" /></el-form-item>
+          <el-form-item label="客户端密钥"><el-input v-model="mcpCreateForm.clientSecret" type="password" autocomplete="new-password" placeholder="可空，仅 PKCE 时可留空" /></el-form-item>
+          <el-form-item label="Scope" required><el-input v-model="mcpCreateForm.scopesText" placeholder="以空格或逗号分隔，至少一项" /></el-form-item>
+          <el-form-item label="受众 resource"><el-input v-model="mcpCreateForm.resource" class="mono" placeholder="默认同 MCP 地址" /></el-form-item>
+        </template>
         <el-form-item label="上游权限说明" required><el-input v-model="mcpCreateForm.scopeDescription" type="textarea" :rows="3" placeholder="说明 MCP 凭据和服务端允许访问的系统、数据及操作边界；此说明不执行过滤" /></el-form-item>
       </el-form>
       <el-alert v-if="mcpTestResult" type="success" :closable="false" show-icon :title="`连通测试成功：${mcpTestResult.latencyMs} ms，发现 ${mcpTestResult.capabilityCount} 个 Tool`" />

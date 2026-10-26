@@ -580,8 +580,14 @@ export interface ConnectorConfiguration {
 export interface RegisterMcpConnectorInput {
   name: string
   endpoint: string
-  authType: 'none' | 'bearer'
+  authType: 'none' | 'bearer' | 'user_oauth'
   bearerToken?: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  clientId?: string
+  clientSecret?: string
+  scopes?: string[]
+  resource?: string
   scopeDescription: string
   actor: string
 }
@@ -589,8 +595,14 @@ export interface RegisterMcpConnectorInput {
 export interface TestMcpConnectionInput {
   name: string
   endpoint: string
-  authType: 'none' | 'bearer'
+  authType: 'none' | 'bearer' | 'user_oauth'
   bearerToken?: string
+  authorizationEndpoint?: string
+  tokenEndpoint?: string
+  clientId?: string
+  clientSecret?: string
+  scopes?: string[]
+  resource?: string
   actor: string
 }
 

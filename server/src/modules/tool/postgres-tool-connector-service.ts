@@ -16,6 +16,8 @@ import { assertDshToolApprovalPolicy, dshBuiltInToolCatalog, defaultAgentDshTool
 import { isDefaultRunLocalAgentTool } from '../../domain/tool-category.ts'
 import { normalizeBearerToken, PostgresEncryptedCredentialStore } from './postgres-encrypted-credential-store.ts'
 import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
+import type { McpUserGrantService, McpOAuthProbeRegistrationInput } from './mcp-user-grant-service.ts'
+import { probeFingerprint } from './mcp-user-grant-service.ts'
 import { RequestError, accessDenied, dependencyUnavailable, invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -118,6 +120,7 @@ export class PostgresToolConnectorService {
   private readonly runtime?: AgentRuntimePort
   private readonly operations?: AuditTrail
   private readonly credentialSecrets?: PostgresEncryptedCredentialStore
+  private readonly grantService?: McpUserGrantService
   /** 运行时解析允许的连接器范围；管理面仍固定只认 DSH 运行时连接器。 */
   private readonly allowedToolConnectorIds: string[]
 
@@ -126,6 +129,7 @@ export class PostgresToolConnectorService {
     runtime?: AgentRuntimePort,
     operations?: AuditTrail,
     credentialSecrets?: PostgresEncryptedCredentialStore,
+    grantService?: McpUserGrantService,
     /**
      * 运行时普通工具解析允许的连接器范围。缺省读取部署配置
      * `DSH_WORK_ALLOWED_TOOL_CONNECTOR_IDS`（默认只含 DSH 运行时连接器）；
@@ -137,6 +141,7 @@ export class PostgresToolConnectorService {
     this.runtime = runtime
     this.operations = operations
     this.credentialSecrets = credentialSecrets
+    this.grantService = grantService
     this.allowedToolConnectorIds = [...new Set([DSH_RUNTIME_CONNECTOR_ID, ...allowedToolConnectorIds])]
   }
 
@@ -591,13 +596,15 @@ export class PostgresToolConnectorService {
     const actor = await this.requireActor(input.actor)
     const id = `connector-mcp-${randomUUID()}`
     if (!input.scopeDescription.trim()) throw stateConflict('整体权限范围不能为空')
-    const inspected = await this.inspectMcpRegistrationInput(input, id)
+    const inspected = await this.inspectMcpRegistrationInput({ ...input, actor: input.actor }, id)
     const digest = mcpCapabilityDigest(inspected.capabilities)
+    const oauthRegistration = input.authType === 'user_oauth' ? toProbeRegistration(input, inspected.endpoint) : null
 
     await this.database.begin(async transaction => {
       await this.lockMcpConnectorCapacity(transaction)
       await this.assertMcpConnectorCapacity(transaction)
       let credentialId: string | null = null
+      let clientSecretCredentialId: string | null = null
       if (input.authType === 'bearer') {
         credentialId = `credential-mcp-${randomUUID()}`
         await transaction`
@@ -608,6 +615,19 @@ export class PostgresToolConnectorService {
           tenantId,
           credentialRefId: credentialId,
           bearerToken: input.bearerToken!,
+          actorId: actor.id,
+        })
+      }
+      if (input.authType === 'user_oauth' && input.clientSecret?.trim()) {
+        clientSecretCredentialId = `credential-mcp-oauth-${randomUUID()}`
+        await transaction`
+          insert into credential_refs (id, tenant_id, backend, external_ref, status, last_verified_at, updated_by)
+          values (${clientSecretCredentialId}, ${tenantId}, 'postgres-encrypted', ${clientSecretCredentialId}, 'configured', now(), ${actor.id})
+        `
+        await this.credentialSecrets!.create(transaction, {
+          tenantId,
+          credentialRefId: clientSecretCredentialId,
+          bearerToken: input.clientSecret.trim(),
           actorId: actor.id,
         })
       }
@@ -633,6 +653,18 @@ export class PostgresToolConnectorService {
           ${actor.id}, now(), now(), now()
         )
       `
+      if (input.authType === 'user_oauth') {
+        const resource = input.resource?.trim() || inspected.endpoint
+        await transaction`
+          insert into mcp_connector_oauth (
+            tenant_id, connector_id, authorization_endpoint, token_endpoint,
+            client_id, client_secret_credential_ref_id, scopes, resource
+          ) values (
+            ${tenantId}, ${id}, ${input.authorizationEndpoint!.trim()}, ${input.tokenEndpoint!.trim()},
+            ${input.clientId!.trim()}, ${clientSecretCredentialId}, ${input.scopes!}, ${resource}
+          )
+        `
+      }
       await transaction`
         insert into connector_health_checks (
           id, tenant_id, connector_id, status, latency_ms, message, checked_by
@@ -642,8 +674,34 @@ export class PostgresToolConnectorService {
         )
       `
     })
+    if (input.authType === 'user_oauth' && oauthRegistration && this.grantService) {
+      await this.grantService.adoptProbeGrantOnRegister({
+        userId: actor.id,
+        connectorId: id,
+        registration: oauthRegistration,
+        clientSecret: input.clientSecret,
+      })
+      const fingerprint = probeFingerprint(oauthRegistration, input.clientSecret)
+      await this.grantService.invalidateProbe(actor.id, fingerprint)
+    }
     await this.audit(actor.id, 'connector.mcp.register', id, 'success', `连通复核通过并登记 MCP Connector；自动生效 ${inspected.capabilities.length} 个 Tool`)
     return this.requireConnector(id)
+  }
+
+  async beginMcpProbeAuthorization(input: TestMcpConnectionInput & { portalOrigin: string }) {
+    assertUserOAuthRegistrationFields(input)
+    if (!this.grantService) throw mcpCredentialStoreUnavailable()
+    let endpoint: string
+    try { endpoint = normalizeMcpEndpoint(input.endpoint) }
+    catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'MCP 服务地址无效') }
+    const registration = toProbeRegistration(input, endpoint)
+    await this.grantService.invalidateProbe(input.actor, probeFingerprint(registration, input.clientSecret))
+    return this.grantService.beginProbe({
+      registration,
+      userId: input.actor,
+      portalOrigin: input.portalOrigin,
+      clientSecret: input.clientSecret,
+    })
   }
 
   async deleteMcpConnector(input: { connectorId: string; actor: string }): Promise<McpConnectorDeletionResult> {
@@ -658,6 +716,11 @@ export class PostgresToolConnectorService {
          for update
       `
       if (!connector) throw notFound(`MCP Connector 不存在：${input.connectorId}`)
+      await transaction`delete from mcp_user_credential_secrets where tenant_id = ${tenantId} and credential_ref_id in (
+        select credential_ref_id from mcp_user_grants where tenant_id = ${tenantId} and connector_id = ${input.connectorId}
+      )`
+      await transaction`delete from mcp_user_grants where tenant_id = ${tenantId} and connector_id = ${input.connectorId}`
+      await transaction`delete from mcp_connector_oauth where tenant_id = ${tenantId} and connector_id = ${input.connectorId}`
       await transaction`
         update tool_binding_revisions
            set status = 'revoked'
@@ -1096,6 +1159,26 @@ export class PostgresToolConnectorService {
     })
   }
 
+  async readAgentMcpScope(versionId: string): Promise<AgentMcpScope> {
+    const [version] = await this.database<{ scope: AgentMcpScope }[]>`
+      select mcp_scope as scope from agent_versions where tenant_id = ${tenantId} and id = ${versionId}
+    `
+    if (!version) throw notFound(`Agent Version 不存在：${versionId}`)
+    return normalizeAgentMcpScope(version.scope)
+  }
+
+  async applyUserGrants(
+    pins: McpConnectionSnapshot[],
+    scopeMode: 'all' | 'selected' | 'none',
+    subjectUserId: string | null,
+    options: { preview?: boolean } = {},
+  ) {
+    if (!this.grantService) {
+      return { pins, omitted: [], blocked: [] }
+    }
+    return this.grantService.applyToPins(pins, scopeMode, subjectUserId, options)
+  }
+
   async assertActiveMcpConnections(pins: McpConnectionSnapshot[], agentVersionId: string): Promise<void> {
     const current = await this.resolveMcpConnectionsForAgentVersion(agentVersionId)
     const byId = new Map(current.map(connection => [connection.connector_id, connection]))
@@ -1103,6 +1186,9 @@ export class PostgresToolConnectorService {
       const connection = byId.get(pin.connector_id)
       if (!connection || !sameMcpConnectionSnapshot(connection, pin)) {
         throw authorizationDenied(`固定的 MCP Connector 已停用、删除或能力摘要已变化：${pin.connector_id}`)
+      }
+      if (pin.auth_type === 'user_oauth' && this.grantService) {
+        await this.grantService.assertGrantMatchesPin(pin)
       }
     }
   }
@@ -1124,10 +1210,14 @@ export class PostgresToolConnectorService {
   }): Promise<void> {
     const pin = manifest.mcp_connections?.find(connection => connection.server_name === input.serverName)
     if (!pin) throw authorizationDenied(`MCP 调用不属于当前 Attempt 固定清单：${input.serverName}`)
+    const grantSubjectId = pin.auth_type === 'user_oauth' ? pin.grant_subject_id ?? null : null
+    if (pin.auth_type === 'user_oauth' && !grantSubjectId) {
+      throw authorizationDenied(`MCP 用户授权主体缺失：${pin.connector_id}`)
+    }
     await this.database`
       insert into mcp_invocation_audits (
         id, tenant_id, run_id, attempt_id, connector_id, actor_user_id, executor_principal_id,
-        call_id, capability_name, parameter_digest, result
+        call_id, capability_name, parameter_digest, result, grant_subject_id
       ) values (
         ${`mcp-audit-${randomUUID()}`}, ${tenantId}, ${manifest.run_id}, ${manifest.attempt_id},
         ${pin.connector_id}, ${manifest.user_context.user_id},
@@ -1135,7 +1225,7 @@ export class PostgresToolConnectorService {
            on t.tenant_id = r.tenant_id and t.id = r.task_id
           where r.tenant_id = ${tenantId} and r.id = ${manifest.run_id}),
         ${input.callId}, ${input.capabilityName},
-        ${input.parameterDigest}, ${input.result}
+        ${input.parameterDigest}, ${input.result}, ${grantSubjectId}
       )
       on conflict (tenant_id, attempt_id, call_id) do update
         set result = excluded.result, occurred_at = now()
@@ -1171,7 +1261,7 @@ export class PostgresToolConnectorService {
   }
 
   private async inspectMcpRegistrationInput(
-    input: Pick<TestMcpConnectionInput, 'name' | 'endpoint' | 'authType' | 'bearerToken'>,
+    input: Pick<TestMcpConnectionInput, 'name' | 'endpoint' | 'authType' | 'bearerToken' | 'authorizationEndpoint' | 'tokenEndpoint' | 'clientId' | 'clientSecret' | 'scopes' | 'resource' | 'actor'>,
     connectorId = `connector-mcp-test-${randomUUID()}`,
   ): Promise<McpRegistrationInspection> {
     const name = input.name.trim()
@@ -1179,17 +1269,31 @@ export class PostgresToolConnectorService {
     let endpoint: string
     try { endpoint = normalizeMcpEndpoint(input.endpoint) }
     catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'MCP 服务地址无效') }
-    if (!['none', 'bearer'].includes(input.authType)) throw invalidMcpConnectionInput('MCP 仅支持 none 或 bearer 认证')
+    if (!['none', 'bearer', 'user_oauth'].includes(input.authType)) throw invalidMcpConnectionInput('MCP 认证方式无效')
     if (input.authType === 'bearer' && !input.bearerToken) throw invalidMcpConnectionInput('Bearer MCP 必须提供 Token')
+    if (input.authType === 'user_oauth' && input.bearerToken) throw invalidMcpConnectionInput('用户授权 MCP 不能提交 Bearer Token')
     if (input.authType === 'none' && input.bearerToken) throw invalidMcpConnectionInput('无认证 MCP 不能提交 Bearer Token')
     if (input.authType === 'bearer' && !this.credentialSecrets) throw mcpCredentialStoreUnavailable()
+    if (input.authType === 'user_oauth') {
+      assertUserOAuthRegistrationFields(input)
+    }
     if (!this.runtime?.inspectMcpConnection) {
       throw new RequestError(503, 'MCP_DISCOVERY_UNAVAILABLE', '当前 DSH Runtime 未接入 MCP 检查能力')
     }
     const serverName = createMcpServerName(name, connectorId)
     let bearerToken: string | undefined
-    try { bearerToken = input.authType === 'bearer' ? normalizeBearerToken(input.bearerToken!) : undefined }
-    catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'Bearer Token 无效') }
+    if (input.authType === 'user_oauth') {
+      if (!this.grantService) throw mcpCredentialStoreUnavailable()
+      const registration = toProbeRegistration(input, endpoint)
+      const probeToken = await this.grantService.readProbeAccessToken(input.actor ?? '', registration, input.clientSecret)
+      if (!probeToken) {
+        throw new RequestError(409, 'authorization_required', 'authorization_required')
+      }
+      bearerToken = probeToken
+    } else {
+      try { bearerToken = input.authType === 'bearer' ? normalizeBearerToken(input.bearerToken!) : undefined }
+      catch (cause) { throw invalidMcpConnectionInput(cause instanceof Error ? cause.message : 'Bearer Token 无效') }
+    }
     try {
       const inspected = await this.runtime.inspectMcpConnection({
         snapshot: {
@@ -1215,7 +1319,7 @@ export class PostgresToolConnectorService {
   private async resolveMcpRuntimeConnection(connectorId: string, expected?: McpConnectionSnapshot): Promise<McpRuntimeConnection> {
     const [row] = await this.database<{
       connectorId: string; serverName: string; transport: 'streamable-http'; endpoint: string;
-      authType: 'none' | 'bearer'; capabilityDigest: string | null; capabilitySnapshot: McpInspectionResult['capabilities']; approvalStatus: string;
+      authType: 'none' | 'bearer' | 'user_oauth'; capabilityDigest: string | null; capabilitySnapshot: McpInspectionResult['capabilities']; approvalStatus: string;
       connectorStatus: string; credentialRefId: string | null; credentialStatus: string | null; credentialBackend: string | null
     }[]>`
       select c.id as "connectorId", p.server_name as "serverName", p.transport, c.endpoint,
@@ -1244,7 +1348,13 @@ export class PostgresToolConnectorService {
       capability_digest: row.capabilityDigest ?? '0'.repeat(64),
     }
     const headers: Record<string, string> = {}
-    if (row.authType === 'bearer') {
+    if (row.authType === 'user_oauth') {
+      if (!expected?.grant_subject_id || !expected.credential_version) {
+        throw authorizationDenied(`MCP Connector 用户授权快照不完整：${connectorId}`)
+      }
+      if (!this.grantService) throw dependencyUnavailable('MCP 用户授权服务不可用')
+      headers['Authorization'] = `Bearer ${await this.grantService.resolveAccessTokenForPin(expected)}`
+    } else if (row.authType === 'bearer') {
       if (row.credentialStatus !== 'configured' || !row.credentialRefId) throw dependencyUnavailable('MCP Bearer 凭据不可用')
       if (row.credentialBackend !== 'postgres-encrypted') {
         throw stateConflict('旧版 MCP Bearer 凭据需要在管理端轮换 Token 以完成加密升级')
@@ -1834,6 +1944,28 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
+function assertUserOAuthRegistrationFields(input: Pick<TestMcpConnectionInput, 'authorizationEndpoint' | 'tokenEndpoint' | 'clientId' | 'scopes'>) {
+  if (!input.authorizationEndpoint?.trim() || !input.tokenEndpoint?.trim() || !input.clientId?.trim()) {
+    throw invalidMcpConnectionInput('用户授权 MCP 必须填写授权端点、令牌端点与客户端标识')
+  }
+  if (!input.scopes?.length) throw invalidMcpConnectionInput('用户授权 MCP 至少需要一个 scope')
+}
+
+function toProbeRegistration(
+  input: Pick<TestMcpConnectionInput, 'name' | 'authorizationEndpoint' | 'tokenEndpoint' | 'clientId' | 'scopes' | 'resource'>,
+  endpoint: string,
+): McpOAuthProbeRegistrationInput {
+  return {
+    name: input.name.trim(),
+    endpoint,
+    authorizationEndpoint: input.authorizationEndpoint!.trim(),
+    tokenEndpoint: input.tokenEndpoint!.trim(),
+    clientId: input.clientId!.trim(),
+    scopes: [...input.scopes!],
+    resource: input.resource?.trim(),
+  }
+}
+
 function sameMcpConnectionSnapshot(left: McpConnectionSnapshot, right: McpConnectionSnapshot) {
   return left.connector_id === right.connector_id
     && left.server_name === right.server_name
@@ -1841,6 +1973,8 @@ function sameMcpConnectionSnapshot(left: McpConnectionSnapshot, right: McpConnec
     && left.endpoint === right.endpoint
     && left.auth_type === right.auth_type
     && left.capability_digest === right.capability_digest
+    && left.grant_subject_id === right.grant_subject_id
+    && left.credential_version === right.credential_version
 }
 
 function parseReference(reference: string) {

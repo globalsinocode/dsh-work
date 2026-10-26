@@ -43,6 +43,7 @@ DSH_WORK_COOKIE_SECURE=false
 - 密码使用 Node.js 异步 scrypt、随机盐、固定 `N=131072, r=8, p=1` 和恒定时间比较。参数依据 [OWASP 密码存储指南](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)，实现使用 [Node.js crypto](https://nodejs.org/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback)。数据库和审计不保存明文密码。
 - 登录和改密按账号限流：持久化的 15 分钟窗口内同一账号最多 10 次尝试，超出返回 429 并等待窗口结束；登录或改密成功后清零该账号窗口，因此只有连续失败才会锁定。不按连接来源限流：反向代理后所有请求共享同一来源地址，按来源计数会变成全公司共用的额度。需要按真实客户端 IP 限流时，在受信反向代理（nginx）层配置。密码派生（scrypt，每次约 128 MiB 内存）在数据库事务外执行，不持有行锁；并发上限默认 min(4, CPU 核数) 且至少 2，可用 `DSH_WORK_PASSWORD_HASH_CONCURRENCY`（1–16）按内存调整；超出并发的请求在最多 64 个的有界队列中等待，队列满时返回 429 `login_busy`。
 - Cookie 为不透明随机值，数据库只存摘要；HttpOnly、SameSite=Lax，生产使用 Secure 与 `__Host-`。登录、改密、退出和管理写请求均校验同源。Session 默认 8 小时，可用 `DSH_WORK_SESSION_TTL_SECONDS` 调整。
+- 同一账号可在多个设备/入口并行登录（例如桌面工作台与移动端 H5）：会话按 `session_hash` 独立存储，新登录不再吊销其他设备的活动会话，退出只结束当前会话。需要一次结束该账号全部会话时，由管理端撤销会话、改密、重置密码或停用账号触发。
 - 首次登录（含管理员重置后）完成改密后，员工端和管理端均直接返回原访问页面，无需再次登录。改密与会话轮换在同一事务内完成：撤销所有旧会话，只为当前门户签发新会话；失败时不签发会话、不跳转。
 - 每次 API 请求重新读取当前账号状态及本地授权。停用、密码变更和会话撤销立即阻止旧 Session；撤权不等待会话自然到期。
 - 最后一位有效且已开通独立登录的平台管理员不能被停用或撤去平台管理员角色。种子账号和 AI Hub 管理员不计入独立账号的兜底管理员。

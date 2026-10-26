@@ -66,7 +66,7 @@ export class AttemptDispatcher {
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = this.deps.agents
-      ? await this.deps.agents.getRuntimeSnapshot(input.agentVersionId, input.additionalSkillReferences)
+      ? await this.deps.agents.getRuntimeSnapshot(input.agentVersionId, input.additionalSkillReferences, undefined, input.userId)
       : {
           versionId: input.agentVersionId,
           modelRequirements: [],

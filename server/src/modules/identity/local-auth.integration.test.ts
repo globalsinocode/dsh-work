@@ -88,6 +88,24 @@ test('local login creates only opaque provider-separated cookies and persists ha
   assert.equal((await call('/api/workbench/v1/session', { cookie: result.cookie })).response.status, 401)
 })
 
+test('logging in on another device keeps the existing session usable', async () => {
+  const userId = await employee('multi.device@example.invalid')
+  await database.client`update local_user_credentials set must_change_password = false where user_id = ${userId}`
+  const desktop = await login('multi.device@example.invalid', 'workbench')
+  const mobile = await login('multi.device@example.invalid', 'workbench')
+  assert.equal(desktop.response.status, 200)
+  assert.equal(mobile.response.status, 200)
+  assert.notEqual(desktop.cookie, mobile.cookie)
+  assert.equal((await call('/api/workbench/v1/session', { cookie: desktop.cookie })).body.data.userId, userId)
+  assert.equal((await call('/api/workbench/v1/session', { cookie: mobile.cookie })).body.data.userId, userId)
+  const [active] = await database.client`select count(*)::int as n from authentication_sessions where user_id = ${userId} and revoked_at is null`
+  assert.equal(active!.n, 2)
+  // 退出其中一个入口不影响另一个入口的会话
+  await call('/auth/workbench/logout', { cookie: mobile.cookie, body: {} })
+  assert.equal((await call('/api/workbench/v1/session', { cookie: desktop.cookie })).response.status, 200)
+  assert.equal((await call('/api/workbench/v1/session', { cookie: mobile.cookie })).response.status, 401)
+})
+
 test('bootstrap stays consumed after role removal and local prototype seeds cannot satisfy last-admin protection', async () => {
   await assert.rejects(auth.bootstrap({ username: 'second.admin@example.invalid', name: 'second', password }), /不能重复初始化/)
   await assert.rejects(auth.setStatus(adminId, 'disabled', adminId), /最后一个/)

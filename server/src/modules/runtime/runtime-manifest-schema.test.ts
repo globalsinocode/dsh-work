@@ -141,6 +141,39 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assertBothReject(unsupported, /仅支持 streamable-http/, 'unsupported MCP transport')
   })
 
+  it('accepts user_oauth MCP pins with grant metadata and rejects tokens or grant fields on bearer', () => {
+    const manifest = baseManifest()
+    manifest.permission_policy.network_policy = 'allowlist'
+    manifest.mcp_connections = [{
+      connector_id: 'connector-crm',
+      server_name: 'crm',
+      transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc',
+      auth_type: 'user_oauth',
+      capability_digest: 'a'.repeat(64),
+      grant_subject_id: 'usr-linlan',
+      credential_version: 1,
+    }]
+    assert.doesNotThrow(() => compileRuntimeManifest(manifest), '合法的 user_oauth pin 应通过编译器')
+
+    const withToken = structuredClone(manifest) as RuntimeManifest & { mcp_connections: Array<Record<string, unknown>> }
+    withToken.mcp_connections[0]!['access_token'] = 'must-not-enter-manifest'
+    assert.throws(() => compileRuntimeManifest(withToken), /未声明字段/, 'user_oauth pin 携带 access_token 应被拒绝')
+
+    const bearerWithGrant = baseManifest()
+    bearerWithGrant.permission_policy.network_policy = 'allowlist'
+    bearerWithGrant.mcp_connections = [{
+      connector_id: 'connector-crm',
+      server_name: 'crm',
+      transport: 'streamable-http',
+      endpoint: 'https://mcp.example.test/rpc',
+      auth_type: 'bearer',
+      capability_digest: 'a'.repeat(64),
+      grant_subject_id: 'usr-linlan',
+    }]
+    assert.throws(() => compileRuntimeManifest(bearerWithGrant), /none 与 bearer 不能携带用户授权字段/, 'bearer pin 携带 grant_subject_id 应被拒绝')
+  })
+
   it('accepts a Task manifest without a product Session and still requires task_id', () => {
     const manifest = baseManifest()
     manifest.session_id = null

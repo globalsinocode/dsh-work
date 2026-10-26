@@ -221,8 +221,12 @@ export interface McpConnectionSnapshot {
   server_name: string
   transport: 'streamable-http'
   endpoint: string
-  auth_type: 'none' | 'bearer'
+  auth_type: 'none' | 'bearer' | 'user_oauth'
   capability_digest: string
+  /** 仅 user_oauth。值为本次人类用户 id，不是 Agent principal。 */
+  grant_subject_id?: string
+  /** 仅 user_oauth。对应该主体密文版本。 */
+  credential_version?: number
 }
 
 /** Runtime Manifest 与租户当前可用 MCP Connector 共用的硬上限。 */

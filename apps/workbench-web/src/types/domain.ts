@@ -678,6 +678,14 @@ export interface WorkbenchAgent {
   examplePrompts: string[]
 }
 
+export interface McpUserGrantListItem {
+  connectorId: string
+  name: string
+  scopeDescription: string
+  toolCount: number
+  status: 'unauthorized' | 'active' | 'reauthorization_required' | 'disabled'
+}
+
 export interface WorkbenchSkill {
   id: string
   versionId: string

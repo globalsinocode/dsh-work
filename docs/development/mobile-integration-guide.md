@@ -21,8 +21,8 @@
 ### 部署清单
 
 1. nginx 为移动端 origin 新增 server block：`/` 指移动端静态产物；`location /api/`、`location /auth/` proxy_pass 到 dsh-work 服务端，并 `proxy_buffering off`（SSE 必需）。
-2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin（所有 origin 须同端口）。
-3. AI Hub 应用 `dsh-work` 的回调地址追加一行：`<移动端 origin>/auth/workbench/callback`（逐字匹配、无尾斜杠）。不新建 AI Hub 应用。
+2. 服务端 `DSH_WORK_WORKBENCH_ORIGINS` 追加移动端 origin。生产环境各入口通常同为 HTTPS 443；本地开发员工端 `4174` 与手机 H5 `4175` 可并存（`DSH_WORK_WORKBENCH_PORT` / `DSH_WORK_MOBILE_PORT`）。未显式配置时，非生产环境会自动并入 `http://localhost:4175` 与 `http://127.0.0.1:4175`（可用 `DSH_WORK_MOBILE_DEV_ORIGINS=false` 关闭）。
+3. AI Hub 应用 `dsh-work` 的回调地址追加一行：`<移动端 origin>/auth/workbench/callback`（逐字匹配、无尾斜杠）。本地联调至少登记 `http://localhost:4175/auth/workbench/callback` 与 `http://127.0.0.1:4175/auth/workbench/callback`。不新建 AI Hub 应用。
 
 ## 3. 认证与会话
 
