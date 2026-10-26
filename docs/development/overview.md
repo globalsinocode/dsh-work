@@ -22,7 +22,7 @@ MVP 聚焦三类业务场景：
 MVP 明确不包含：
 
 - 员工自建 Tool、Connector、插件或 MCP；
-- 任意 Shell、任意 SQL 或 DSH Web UI 直达；
+- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 Shell 已定为后续目标，见[执行隔离方案](../design/execution-isolation-plan.md)，实施并验收前不可用）；
 - 写入 ERP/MES 等高风险业务操作；
 - PPT 生成、开放式 Agent 市场和跨企业多租户 SaaS；
 - 为了形式上的“平台化”拆分业务微服务。
@@ -292,6 +292,7 @@ flowchart LR
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
+- **执行隔离与受控 Shell：** 尚未实施。DSH Worker 的文件工具仍是应用层边界；目标是文件与命令操作经平台中转落到执行容器，并放开 C 档（前台单次 `bash` 与 Office 工具链，后台任务暂缓），见[执行隔离方案](../design/execution-isolation-plan.md)。阶段 2 交付并验收前，3.6 中 `bash` 不放行的规则继续有效。
 - **项目空间：** S0～S4 与 S5（员工端双模式）已实现；S6（Agent 项目任务工具：版本开关、装配、via 归因与时间线卡片）服务端与员工端已接通，集成测试见 `project-task-tools.integration.test.ts`；真实 DSH 中 Agent 选择并调用工具属 P2，见 [项目空间方案](../design/project-space-plan.md) 第 13 节。项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
