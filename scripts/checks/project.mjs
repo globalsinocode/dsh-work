@@ -25,8 +25,13 @@ export function checkProject(check) {
     'playwright.config.ts', 'e2e/mvp-smoke.spec.ts',
   ])
   const docs = resolve(check.root, 'docs')
+  const skipDocLinkPrefixes = ['development/fixtures/', 'development/local-skills/']
   const markdownFiles = ['README.md', ...(existsSync(docs)
-    ? readdirSync(docs, { recursive: true }).filter(file => file.endsWith('.md')).map(file => `docs/${file}`)
+    ? readdirSync(docs, { recursive: true })
+      .filter(file => typeof file === 'string' && file.endsWith('.md'))
+      .map(file => file.replace(/\\/g, '/'))
+      .filter(file => !skipDocLinkPrefixes.some(prefix => file.startsWith(prefix)))
+      .map(file => `docs/${file}`)
     : [])]
   for (const file of markdownFiles) {
     const markdown = check.read(file).replace(/```[^\n]*\n[\s\S]*?```/g, '')

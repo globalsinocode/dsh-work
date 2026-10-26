@@ -8,7 +8,7 @@
  * 使用「一个文件」这类中性占位。
  */
 
-/** 与服务端 migration 0026 CHECK 约束一致的闭合集合。 */
+/** 与服务端 migration 0026／0088 CHECK 约束一致的闭合集合。 */
 export type WorkspaceActivityKind =
   | 'member_added'
   | 'member_removed'
@@ -22,6 +22,13 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'discussion_posted'
+  | 'member_mentioned'
+  | 'run_completed'
+  | 'run_failed'
+  | 'brief_updated'
+  | 'project_task_created'
+  | 'project_task_completed'
 
 export interface WorkspaceActivityDescriptor {
   kind: WorkspaceActivityKind
@@ -114,6 +121,22 @@ export function describeWorkspaceActivity(input: WorkspaceActivityDescriptor): s
       return `${actor} 归档了空间`
     case 'workspace_restored':
       return `${actor} 恢复了空间`
+    case 'discussion_posted':
+      return `${actor} 在讨论区发布了消息`
+    case 'member_mentioned':
+      return `${actor} 在讨论中提及了成员`
+    case 'run_completed':
+      return `${actor} 完成了一次协作运行`
+    case 'run_failed':
+      return `${actor} 的协作运行未成功结束`
+    case 'brief_updated': {
+      const version = versionLabel(metadata['versionNo'])
+      return version ? `${actor} 更新了项目简报（${version}）` : `${actor} 更新了项目简报`
+    }
+    case 'project_task_created':
+      return metadata['assigneeType'] === 'agent' ? `${actor} 创建了一项 Agent 任务` : `${actor} 创建了一项任务`
+    case 'project_task_completed':
+      return `${actor} 完成了一项任务`
     default:
       // 服务端 kind 是闭合集合，但响应值仍可能越界（版本错配/被篡改）。渲染一句中性
       // 文案而不是空白行，也绝不回退去展示 objectId。

@@ -410,6 +410,121 @@
         }
       }
     },
+    "/agents/{agentId}/versions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "operationId": "listAgentVersionHistory",
+        "summary": "查询单个 Agent 的版本历史（含待发布与已发布）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/test-cases": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "put": {
+        "operationId": "replaceAgentTestCases",
+        "summary": "替换 Agent 自定义测试问题（跨版本复用）",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "post": {
+        "operationId": "startAgentValidation",
+        "summary": "冻结当前草稿为待发布版本并启动验证",
+        "responses": {
+          "202": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/validations/{validationId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        },
+        {
+          "name": "validationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getAgentValidation",
+        "summary": "查询验证进度与案例结果",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/agents/{agentId}/publish": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "post": {
+        "operationId": "publishValidatedAgent",
+        "summary": "在验证通过后发布 Agent 版本",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agent-versions": {
       "get": {
         "operationId": "listAgentVersions",
@@ -966,6 +1081,15 @@
           "200": {
             "$ref": "#/components/responses/Ok"
           }
+        }
+      }
+    },
+    "/runtimes/builtin-tools": {
+      "get": {
+        "operationId": "getBuiltinTools",
+        "summary": "查询 DSH 内置工具注册表、当前停用清单与目录比对",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
         }
       }
     },

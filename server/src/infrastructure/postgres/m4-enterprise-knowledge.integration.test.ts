@@ -55,16 +55,16 @@ before(async () => {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes,
-      max_output_bytes, max_tool_calls, timeout_seconds, skill_refs, tool_refs,
+      example_prompts, system_prompt,
+      max_output_bytes, max_tool_calls, timeout_seconds, skill_refs,
       status, created_by, published_at
     ) values (
       ${knowledgeAgentVersionId}, 'tenant-dsh-work', ${knowledgeAgentId}, '1.0.0',
       '供应链知识测试 Agent', '隔离知识引用测试', '', '[]', '仅回答供应链知识问题。',
-      '["role-employee"]', '["enterprise:authorized", "workspace:authorized", "domain:supply-chain"]',
-      65536, 20, 300, '[]', '[]', 'published', 'U00008', now()
+      65536, 20, 300, '[]', 'published', 'U00008', now()
     )
   `
+  await database`update agents set visible_role_ids = '["role-employee"]' where tenant_id = 'tenant-dsh-work' and id = ${knowledgeAgentId}`
   await database`
     update agents set active_version_id = ${knowledgeAgentVersionId}
      where tenant_id = 'tenant-dsh-work' and id = ${knowledgeAgentId}

@@ -26,6 +26,7 @@ import { TaskComposer } from '@dsh-work/workbench-components'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import { runGuardedAction } from '@/utils/action-guard'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
+import { exportConversation } from '@/utils/conversation-export'
 import { isTransientRequestError } from '@/utils/request-error'
 import { runFailureDetailReason } from '@/utils/run-error-display'
 import { TEAM_COMPOSER_SHORTCUT_HINT } from '@/utils/team-composer-hints'
@@ -517,6 +518,23 @@ function copyAnswer(content: string) {
 function copyConversationLink() {
   void navigator.clipboard.writeText(window.location.href)
   ElMessage.success('对话链接已复制')
+}
+
+function exportSessionTranscript() {
+  const current = task.value
+  if (!current) return
+  void exportConversation({ scope: 'session', sessionId: current.sessionId, title: current.title })
+}
+
+function exportCurrentRunTranscript() {
+  const current = task.value
+  if (!current) return
+  void exportConversation({
+    scope: 'run',
+    sessionId: current.sessionId,
+    runId: current.id,
+    title: current.title,
+  })
 }
 
 function download(item: Artifact) {
@@ -1102,6 +1120,12 @@ watch(
           <StatusTag :status="task.status" dot />
           <el-button text :icon="DataLine" @click="detailsOpen = true">
             <span class="header-action-label">对话详情</span>
+          </el-button>
+          <el-button text data-testid="export-session" @click="exportSessionTranscript">
+            <span class="header-action-label">导出完整会话</span>
+          </el-button>
+          <el-button text data-testid="export-run" @click="exportCurrentRunTranscript">
+            <span class="header-action-label">导出本次 Run</span>
           </el-button>
           <el-button
             v-if="canRetry"

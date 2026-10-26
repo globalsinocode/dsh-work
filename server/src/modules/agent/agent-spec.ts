@@ -13,7 +13,7 @@ import { invalidRequest, stateConflict } from '../../domain/request-errors.ts'
 
 export const AGENT_SPEC_API_VERSION = 'dsh-work.ai/v2'
 
-/** AgentSpec 的版本化格式标识；包清单 kind 为 AgentPackage（交付物），此处为归一化定义。 */
+/** AgentSpec 的版本化格式标识；已删除的 Agent 包（AgentPackage）交付物不再使用该标识。 */
 export interface AgentSpecLimits {
   timeoutSeconds: number
   maxToolCalls: number
@@ -38,8 +38,8 @@ export interface AgentSpec {
   instructions: { path: string; body: string }
   /** 可选的包根目录工作规程；由平台显式装配，不扫描宿主目录。 */
   workProcedures?: { path: 'AGENTS.md'; body: string } | null
-  /** 能力依赖：规范化 `id@x.y.z` 精确引用（含包内候选），不做版本解析或 latest 语义。 */
-  capabilities: { skills: string[]; tools: string[] }
+  /** 能力依赖：Skill 为规范化 `id@x.y.z` 精确引用；平台工具绑定与内置能力开关一并固化。 */
+  capabilities: { skills: string[]; tools: string[]; webSearch: boolean; projectTasks: boolean }
   input: { type: 'text' }
   output: { type: 'text' }
   context: { conversationHistory: 'recent' }
@@ -167,10 +167,12 @@ export interface AgentSpecConfiguration {
   examplePrompts: string[]
   skills: string[]
   tools: string[]
+  webSearchEnabled?: boolean
+  projectTasksEnabled?: boolean
   timeoutSeconds: number
+  data?: { state: boolean; collections: Array<Omit<AgentDataCollectionRequirement, 'schema'>> }
   maxToolCalls: number
   maxOutputBytes: number
-  data?: { state: boolean; collections: Array<Omit<AgentDataCollectionRequirement, 'schema'>> }
 }
 
 /** 配置新建时展开默认值；编辑/分叉时保留表单未提供的定义，统一生成 SOUL.md。 */
@@ -185,7 +187,12 @@ export function agentSpecFromConfiguration(input: AgentSpecConfiguration, versio
       ? { path: AGENT_SPEC_WORK_PROCEDURES_PATH,
         body: (input.workInstructions === undefined ? existing?.workProcedures?.body : input.workInstructions)!.trim() }
       : null,
-    capabilities: { skills: [...input.skills], tools: [...input.tools] },
+    capabilities: {
+      skills: [...input.skills],
+      tools: [...input.tools],
+      webSearch: input.webSearchEnabled ?? existing?.capabilities.webSearch ?? false,
+      projectTasks: input.projectTasksEnabled ?? existing?.capabilities.projectTasks ?? false,
+    },
     input: existing ? { ...existing.input } : { type: 'text' },
     output: existing ? { ...existing.output } : { type: 'text' },
     context: existing ? { ...existing.context } : { conversationHistory: 'recent' },

@@ -219,19 +219,9 @@ test('a granted tool approval does not stand in for a missing deliverable', () =
   assert.equal(result.receipts.every(receipt => receipt.status !== 'completed'), true)
 })
 
-test('Agent data result exposes only immutable version references and does not count cursor writes as goal evidence', () => {
-  const cursor = deriveTaskResult(evidence({ events: [event('done', 'run.completed')],
-    toolAudits: [{ id: 'audit-state', toolName: 'state_put', decision: null, result: 'success', occurredAt }] }))
-  assert.equal(cursor.outcome, 'unverified')
-  const record = deriveTaskResult(evidence({ events: [event('done', 'run.completed')],
-    recordVersions: [{ id: 'agent-data-version-1' }],
-    toolAudits: [{ id: 'audit-data', toolName: 'data_create', decision: null, result: 'success', occurredAt }] }))
-  assert.equal(record.outcome, 'achieved')
-  assert.deepEqual(record.receipts.find(item => item.kind === 'record'), {
-    kind: 'record', status: 'completed', ref: 'agent-data-version-1', label: '结构化记录版本已登记',
-  })
+test('an unknown external effect keeps an otherwise successful run unverified', () => {
   const uncertainExternalWrite = deriveTaskResult(evidence({ events: [event('done', 'run.completed')],
-    recordVersions: [{ id: 'agent-data-version-2' }],
+    toolAudits: [{ id: 'audit-write', toolName: 'write', decision: null, result: 'success', occurredAt }],
     unknownOperations: [{ id: 'external-operation-1', actionRef: 'erp.update_order' }] }))
   assert.equal(uncertainExternalWrite.outcome, 'unverified')
   assert.equal(uncertainExternalWrite.pendingItems.some(item => item.kind === 'external_effect_unknown'), true)

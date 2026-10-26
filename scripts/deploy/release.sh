@@ -225,14 +225,33 @@ else
 fi
 
 node_bin=${DSH_WORK_NODE_BIN:?Set DSH_WORK_NODE_BIN in runtime.env}
+migration_log="${temporary_directory}/migrations.log"
 if ! (
   cd "${release_dir}"
   "${node_bin}" server/dist/infrastructure/postgres/migrate.js
-); then
+) | tee "${migration_log}"; then
   echo "database migration failed; the active release was not changed" >&2
   restart_old_release
   exit 1
 fi
+# A migration may drop tables or columns the previous release still reads, so once the
+# schema changed the old application must not be restarted on it.
+schema_changed=false
+grep -q '^applied ' "${migration_log}" && schema_changed=true
+
+fail_after_migration() {
+  if [[ "${schema_changed}" != true ]]; then
+    restart_old_release
+    return
+  fi
+  if launchctl print "${service_target}" >/dev/null 2>&1; then
+    launchctl bootout "${service_target}" || true
+  fi
+  run_compose "${compose_file}" stop web >/dev/null 2>&1 || true
+  ln -sfn "${release_dir}" "${deploy_root}/current"
+  echo "database migrations were applied, so the previous release was NOT restarted on the new schema; the service stays stopped" >&2
+  echo "fix forward with a corrected release, or restore the pre-release backup in ${deploy_root}/backups with restore.sh and then roll back the application (runbook section 12)" >&2
+}
 
 ln -sfn "${release_dir}" "${deploy_root}/current"
 if [[ -n "${old_release}" && -d "${old_release}" && "${old_release}" != "${release_dir}" ]]; then
@@ -240,11 +259,11 @@ if [[ -n "${old_release}" && -d "${old_release}" && "${old_release}" != "${relea
 fi
 
 if ! "${release_dir}/scripts/deploy/install-launchd.sh" "${deploy_root}"; then
-  restart_old_release
+  fail_after_migration
   exit 1
 fi
 if ! run_compose "${compose_file}" up -d --wait --force-recreate web; then
-  restart_old_release
+  fail_after_migration
   exit 1
 fi
 
@@ -261,7 +280,7 @@ for _attempt in {1..30}; do
 done
 if [[ "${healthy}" != true ]]; then
   echo "release health check failed: ${health_url}" >&2
-  restart_old_release
+  fail_after_migration
   exit 1
 fi
 

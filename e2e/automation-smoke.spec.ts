@@ -1,22 +1,27 @@
 import { expect, test } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 /**
- * AG-AUTO-00：自动任务入口与配置反馈（P0 浏览器冒烟）。
+ * AG-AUTO-00：定时任务入口与配置反馈（P0 浏览器冒烟）。
  * 只证明导航、页面渲染、可访问名称与空/错误反馈；不证明 PostgreSQL、
  * DSH 或真实权限——那些由 P1 集成与 P2 验收覆盖。
  */
 test('employee can open the automations page and inspect the empty state', async ({ page }) => {
   await page.goto('/workbench')
 
-  await page.getByRole('button', { name: '自动任务' }).click()
+  await page.getByRole('button', { name: '定时任务' }).click()
   await expect(page).toHaveURL(/\/automations$/)
-  await expect(page).toHaveTitle(/自动任务 · dsh-work/)
-  await expect(page.getByRole('heading', { name: '我的自动任务' })).toBeVisible()
+  await expect(page).toHaveTitle(/定时任务 · dsh-work/)
+  await expect(page.getByRole('heading', { name: '我的定时任务' })).toBeVisible()
 
-  // 原型模式：自动任务 API 读侧返回空集合 → 空态；写侧 503。
+  // 原型模式：定时任务 API 读侧返回空集合 → 空态；写侧 503。
   // postgres 开发库：可能已有任务或同样为空——两者都属合法首屏。
-  const emptyState = page.getByText('还没有自动任务', { exact: true })
-  const errorAlert = page.getByText(/自动任务加载失败/)
+  const emptyState = page.getByText('还没有定时任务', { exact: true })
+  const errorAlert = page.getByText(/定时任务加载失败/)
   const listRegion = page.locator('.automation-list')
   await expect(emptyState.or(errorAlert).or(listRegion)).toBeVisible()
 })
@@ -24,7 +29,7 @@ test('employee can open the automations page and inspect the empty state', async
 test('employee can open the create dialog and see required fields', async ({ page }) => {
   await page.goto('/automations')
 
-  await page.getByRole('button', { name: '新建自动任务' }).first().click()
+  await page.getByRole('button', { name: '新建定时任务' }).first().click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('任务名称')).toBeVisible()

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import router from './index'
+import router, { resolveAdminProtectedRouteTarget } from './index'
 
 describe('admin authentication routes', () => {
   it('registers one protected management assistant page', () => {
@@ -40,11 +40,51 @@ describe('admin authentication routes', () => {
     expect(route.meta.requiredPermission).toBeUndefined()
   })
 
+  it('refreshes before protected navigation and redirects to the first allowed page', async () => {
+    const auth = {
+      refresh: vi.fn().mockResolvedValue(undefined),
+      canManage: false,
+      canReadAudit: true,
+      canReadAdmin: false,
+      canAccessAdmin: true,
+      identityAdministrationAvailable: true,
+    }
+    const result = resolveAdminProtectedRouteTarget(
+      { meta: { requiresAdmin: true, requiredPermission: 'adminRead' } },
+      auth,
+    )
+    expect(result).toEqual({ name: 'audit' })
+  })
+
+  it('uses the existing forbidden route when no admin permission remains', async () => {
+    const protectedRoute = { meta: { requiresAdmin: true, requiredPermission: 'adminRead' } }
+    const result = resolveAdminProtectedRouteTarget(protectedRoute, {
+      canAccessAdmin: false,
+      canReadAdmin: false,
+      canReadAudit: false,
+      identityAdministrationAvailable: false,
+    })
+    expect(result).toEqual({ name: 'forbidden' })
+  })
+
   it('publishes the experience iteration context as a topbar subtitle', () => {
     const route = router.resolve('/experience-iterations')
 
     expect(route.meta.title).toBe('经验迭代')
     expect(route.meta.subtitle).toContain('按稳定 Agent 归属')
-    expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill、Tool 或权限')
+    expect(route.meta.subtitle).toContain('不会自动修改 Soul、Skill 或权限')
+  })
+
+  it('keeps Agent detail read-only and sends editing addresses into the draft flow', async () => {
+    expect(router.resolve('/agents/agent-a/draft').name).toBe('agent-draft')
+    const legacy = router.resolve('/agents/agent-a/release/trial')
+    const redirect = legacy.matched[0]!.redirect as (to: unknown) => unknown
+    expect(redirect(legacy)).toMatchObject({ name: 'agent-draft', params: { agentId: 'agent-a' }, query: { step: 'release' } })
+
+    const release = router.resolve('/agents/agent-a?section=release')
+    const guard = router.getRoutes().find(route => route.name === 'agent-detail')!.beforeEnter as (to: unknown) => unknown
+    expect(guard(release)).toMatchObject({ name: 'agent-draft', params: { agentId: 'agent-a' }, query: { step: 'release' } })
+    expect(guard(router.resolve('/agents/agent-a?section=profile'))).toMatchObject({ name: 'agent-detail', query: { section: 'overview' } })
+    expect(guard(router.resolve('/agents/agent-a?section=runs'))).toBe(true)
   })
 })

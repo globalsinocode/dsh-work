@@ -374,6 +374,34 @@ test('moving a team membership into a personal workspace hits the 0013 guard', a
   assert.equal(owners?.count, 1)
 })
 
+test('0086 adds sequenced notification deliveries and non-negative read watermarks', async () => {
+  const [sequenceColumn] = await database<{ isNullable: string }[]>`
+    select is_nullable as "isNullable"
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'workspace_activity_events'
+       and column_name = 'sequence'
+  `
+  assert.equal(sequenceColumn?.isNullable, 'NO')
+
+  const [deliveryFk] = await database<{ count: number }[]>`
+    select count(*)::integer as count
+      from information_schema.table_constraints
+     where table_schema = 'public'
+       and table_name = 'workspace_notification_deliveries'
+       and constraint_type = 'FOREIGN KEY'
+  `
+  assert.ok((deliveryFk?.count ?? 0) >= 1)
+
+  await assert.rejects(
+    database`
+      insert into workspace_notification_account_states (tenant_id, user_id, last_read_sequence)
+      values ('tenant-dsh-work', 'U00001', -1)
+    `,
+    /workspace_notification_account_states_last_read_sequence_check/,
+  )
+})
+
 test('记录决策：0013 守卫不校验 personal→team 移动后的旧个人空间（1A 不修）', async () => {
   // 交接文档 §5 遗留观察：protect_personal_workspace_membership 只看 NEW.workspace_id，
   // 因此把个人空间唯一 owner 的成员行移动到团队空间时，旧个人空间不会被校验，也不会被

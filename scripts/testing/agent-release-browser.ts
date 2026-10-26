@@ -1,9 +1,9 @@
 /**
- * Agent release workbench P1 browser harness.
+ * Agent validation & publish P1 browser harness.
  *
- * Creates a disposable PostgreSQL database and exposes the real Agent, release,
- * authorization and Run orchestration services behind the admin routes. Trial
- * cases still go through Run/Attempt → Runtime port; the Runtime is a
+ * Creates a disposable PostgreSQL database and exposes the real Agent, validation,
+ * authorization and Run orchestration services behind the admin routes. Validation
+ * cases still go through Run/Attempt → Runtime port (background lane); the Runtime is a
  * deterministic synthetic responder, so this harness proves page and governance
  * behaviour only. It does not contact OIDC, a model, MCP services or real DSH.
  */
@@ -13,8 +13,11 @@ import { createServer } from 'node:http'
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
-import { PostgresAgentReleaseService } from '../../server/src/modules/agent/postgres-agent-release-service.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
+import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
+import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
+import { builtinTools } from '../../server/src/modules/runtime/builtin-tools.ts'
+import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresSkillService } from '../../server/src/modules/skill/postgres-skill-service.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
@@ -23,7 +26,7 @@ import { ModelGovernanceService } from '../../server/src/modules/model/model-gov
 import { PostgresModelGovernanceRepository } from '../../server/src/modules/model/postgres-model-governance-repository.ts'
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
-import { registerAgentReleaseRoutes } from '../../server/src/http/admin/agent-release-routes.ts'
+import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { envelope, Router, requireRequestIdentity } from '../../server/src/http/router.ts'
 import type {
@@ -53,7 +56,7 @@ class SyntheticTrialRuntime implements AgentRuntimePort {
   private readonly executions = new Map<string, Execution>()
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
-    if (manifest.purpose !== 'agent-release-trial') throw new Error('发布工作台夹具只执行发布试运行案例')
+    if (manifest.purpose !== 'agent-release-trial') throw new Error('验证与发布夹具只执行验证案例')
     let resolve: (snapshot: RuntimeExecutionSnapshot) => void = () => undefined
     const done = new Promise<RuntimeExecutionSnapshot>(next => { resolve = next })
     const now = new Date().toISOString()
@@ -141,17 +144,18 @@ class SyntheticTrialRuntime implements AgentRuntimePort {
 
 const runtime = new SyntheticTrialRuntime()
 const authorization = new PostgresAuthorizationService(database.client)
-const tools = new PostgresToolConnectorService(database.client, runtime)
-const skills = new PostgresSkillService(database.client, undefined, tools)
-const agents = new PostgresAgentService(database.client, undefined, skills, tools)
+const mcp = new PostgresMcpConnectorService(database.client, runtime)
+const skills = new PostgresSkillService(database.client)
+const agents = new PostgresAgentService(database.client, undefined, skills, mcp)
 const orchestration = new RunOrchestrationService(
   new PostgresRunRepository(database.client),
   new PostgresConversationRepository(database.client),
   new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)),
   runtime, undefined, undefined, agents, undefined, authorization,
-  { toolBindings: tools },
+  { toolChecks: { assertPinnedConnections: pins => mcp.assertPinnedConnections(pins) } },
 )
-const release = new PostgresAgentReleaseService(database.client, agents, skills, tools, orchestration)
+const validation = new PostgresAgentValidationService(database.client, agents, skills, orchestration, mcp)
+await validation.recoverInterruptedValidations()
 
 const router = new Router({ authenticateApi: testApiAuthenticator })
 const base = '/api/admin/v1'
@@ -173,9 +177,9 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
     '[]'::jsonb as "dataScopes", 0 as "userCount", false as system, now() as "updatedAt"
     from roles where tenant_id = 'tenant-dsh-work' order by name
 `, 'postgres'))
-registerAgentRoutes(router, agents)
-registerAgentReleaseRoutes(router, release)
-registerToolRoutes(router, tools)
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
+registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
+registerToolRoutes(router, mcp, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
 
 const server = createServer((request, response) => void router.handle(request, response))
@@ -183,7 +187,7 @@ await new Promise<void>((resolve, reject) => {
   server.once('error', reject)
   server.listen(port, '127.0.0.1', resolve)
 })
-console.log(`Agent release browser harness ready on ${port}; throwaway PostgreSQL and synthetic trial Runtime, no OIDC/model/MCP/DSH.`)
+console.log(`Agent validation browser harness ready on ${port}; throwaway PostgreSQL and synthetic validation Runtime, no OIDC/model/MCP/DSH.`)
 
 let closing = false
 async function close() {

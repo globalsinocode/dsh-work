@@ -9,11 +9,10 @@ import type {
   AgentDraftConfiguration,
   CreateAgentDraftInput,
   AgentJoinedWorkspaceRecord,
-  AgentReleaseRecord,
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
-  DshRuntimeToolConnectorStatus,
+  BuiltinToolStatus,
   GrantSourceReconciliationView,
   HealthComponent,
   ManagedWorkspaceDefinition,
@@ -37,14 +36,13 @@ export const useContentStore = defineStore('admin-content', () => {
   const workspaces = ref<ManagedWorkspaceDefinition[]>([])
   const agents = ref<AgentDefinition[]>([])
   const agentVersions = ref<AgentVersionRecord[]>([])
-  const agentReleaseRecords = ref<AgentReleaseRecord[]>([])
   const skills = ref<SkillDefinition[]>([])
   const skillVersions = ref<SkillVersionRecord[]>([])
   const skillReleaseRecords = ref<SkillReleaseRecord[]>([])
   const tools = ref<ToolDefinition[]>([])
   const toolCatalog = ref<ToolCatalogCandidate[]>([])
   const connectors = ref<ConnectorDefinition[]>([])
-  const dshRuntimeToolConnector = ref<DshRuntimeToolConnectorStatus | null>(null)
+  const builtinTools = ref<BuiltinToolStatus | null>(null)
   const auditEvents = ref<AuditEvent[]>([])
   const operationsSummary = ref<OperationsSummary | null>(null)
   const health = ref<HealthComponent[]>([])
@@ -92,13 +90,12 @@ export const useContentStore = defineStore('admin-content', () => {
       workspaceData,
       agentData,
       agentVersionData,
-      agentReleaseData,
       skillData,
       skillVersionData,
       skillReleaseData,
       toolData,
       connectorData,
-      dshRuntimeToolConnectorData,
+      builtinToolData,
       healthData,
       usageData,
       statusData,
@@ -108,13 +105,12 @@ export const useContentStore = defineStore('admin-content', () => {
       adminApi.getWorkspaces(),
       adminApi.getAgents(),
       adminApi.getAgentVersions(),
-      adminApi.getAgentReleaseRecords(),
       adminApi.getSkills(),
       adminApi.getSkillVersions(),
       adminApi.getSkillReleaseRecords(),
       adminApi.getTools(),
       adminApi.getMcpConnectors(),
-      adminApi.getDshRuntimeToolConnector(),
+      adminApi.getBuiltinTools(),
       adminApi.getHealth(),
       adminApi.getUsage(),
       adminApi.getPlatformStatus(),
@@ -124,13 +120,12 @@ export const useContentStore = defineStore('admin-content', () => {
     workspaces.value = workspaceData
     agents.value = agentData
     agentVersions.value = agentVersionData
-    agentReleaseRecords.value = agentReleaseData
     skills.value = skillData
     skillVersions.value = skillVersionData
     skillReleaseRecords.value = skillReleaseData
     tools.value = toolData
     connectors.value = connectorData
-    dshRuntimeToolConnector.value = dshRuntimeToolConnectorData
+    builtinTools.value = builtinToolData
     health.value = healthData
     usage.value = usageData
     platformStatus.value = statusData
@@ -153,7 +148,6 @@ export const useContentStore = defineStore('admin-content', () => {
   ) {
     const result = await adminApi.setAgentStatus({ agentId, status })
     replaceById(agents.value, result.agent)
-    agentReleaseRecords.value.unshift(result.release)
     const version = agentVersions.value.find(
       (item) => item.agentId === agentId && item.version === result.agent.version,
     )
@@ -183,7 +177,6 @@ export const useContentStore = defineStore('admin-content', () => {
   async function rollbackAgent(agentId: string, version: string) {
     const result = await adminApi.rollbackAgent({ agentId, version })
     replaceById(agents.value, result.agent)
-    agentReleaseRecords.value.unshift(result.release)
     const target = agentVersions.value.find(
       (item) => item.agentId === agentId && item.version === version,
     )
@@ -256,6 +249,12 @@ export const useContentStore = defineStore('admin-content', () => {
     return result
   }
 
+  async function setToolStatus(toolId: string, status: 'available' | 'disabled') {
+    const tool = await adminApi.setToolStatus({ toolId, status })
+    replaceById(tools.value, tool)
+    return tool
+  }
+
   async function createSkill(input: Omit<SkillConfiguration, 'id'>) {
     const result = await adminApi.createSkill(input)
     skills.value.unshift(result.skill)
@@ -313,15 +312,6 @@ export const useContentStore = defineStore('admin-content', () => {
     return result.skill
   }
 
-  async function setToolStatus(
-    toolId: string,
-    status: 'available' | 'disabled',
-  ) {
-    const tool = await adminApi.setToolStatus({ toolId, status })
-    replaceById(tools.value, tool)
-    return tool
-  }
-
   async function checkConnector(connectorId: string) {
     const connector = await adminApi.checkConnector({ connectorId })
     replaceById(connectors.value, connector)
@@ -337,6 +327,7 @@ export const useContentStore = defineStore('admin-content', () => {
   function testMcpConnection(input: Parameters<typeof adminApi.testMcpConnection>[0]) {
     return adminApi.testMcpConnection(input)
   }
+
   function beginMcpProbeAuthorization(input: Parameters<typeof adminApi.beginMcpProbeAuthorization>[0]) {
     return adminApi.beginMcpProbeAuthorization(input)
   }
@@ -350,6 +341,12 @@ export const useContentStore = defineStore('admin-content', () => {
 
   async function rotateMcpCredential(connectorId: string, bearerToken: string) {
     const connector = await adminApi.rotateMcpCredential({ connectorId, bearerToken })
+    replaceById(connectors.value, connector)
+    return connector
+  }
+
+  async function approveMcpCapabilities(connectorId: string, capabilityDigest: string) {
+    const connector = await adminApi.approveMcpCapabilities({ connectorId, capabilityDigest })
     replaceById(connectors.value, connector)
     return connector
   }
@@ -370,15 +367,10 @@ export const useContentStore = defineStore('admin-content', () => {
     return runtime
   }
 
-  async function checkDshRuntimeToolConnector() {
-    const connector = await adminApi.checkDshRuntimeToolConnector()
-    dshRuntimeToolConnector.value = connector
-    return connector
-  }
-
   async function updateRuntimeConfiguration(input: UpdateRuntimeConfigurationInput) {
     const runtime = await adminApi.updateRuntimeConfiguration(input)
     replaceById(runtimes.value, runtime)
+    if (input.disabledTools) builtinTools.value = await adminApi.getBuiltinTools()
     return runtime
   }
 
@@ -388,14 +380,13 @@ export const useContentStore = defineStore('admin-content', () => {
     workspaces,
     agents,
     agentVersions,
-    agentReleaseRecords,
     skills,
     skillVersions,
     skillReleaseRecords,
     tools,
     toolCatalog,
     connectors,
-    dshRuntimeToolConnector,
+    builtinTools,
     auditEvents,
     operationsSummary,
     health,
@@ -423,6 +414,10 @@ export const useContentStore = defineStore('admin-content', () => {
     getSkillTestRun,
     rollbackSkill,
     setToolStatus,
+    syncDshTools,
+    updateToolPermissions,
+    addTool,
+    refreshToolCatalog,
     checkConnector,
     testMcpConnection,
     beginMcpProbeAuthorization,
@@ -430,14 +425,10 @@ export const useContentStore = defineStore('admin-content', () => {
     deleteMcpConnector,
     rotateMcpCredential,
     setMcpConnectorStatus,
+    approveMcpCapabilities,
     getMcpInvocationAudits,
     checkRuntime,
-    checkDshRuntimeToolConnector,
     updateRuntimeConfiguration,
-    updateToolPermissions,
-    addTool,
-    refreshToolCatalog,
-    syncDshTools,
   }
 })
 

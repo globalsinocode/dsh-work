@@ -4,13 +4,14 @@ import { extname, resolve } from 'node:path'
 
 import { isStrictResolvedPathInside } from '../../../domain/host-path.ts'
 
-import type { Artifact, Workspace, WorkspaceFile } from '../../../domain/types.ts'
+import type { Artifact, Workspace, WorkspaceFile, WorkspaceFileProjection } from '../../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { dependencyUnavailable } from '../../../domain/request-errors.ts'
 import type { FileAttachment, FileMount } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
+import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
@@ -18,6 +19,7 @@ import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
 import { joinObjectKey, type ObjectStorage } from '../../../domain/object-storage.ts'
+import { WorkspaceObjectGcService } from './workspace-object-gc-service.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.txt', '.md'])
@@ -33,26 +35,13 @@ interface FileRow {
   workspaceId: string
 }
 
-export interface WorkspaceFileSummary {
-  id: string
-  name: string
+export type WorkspaceFileSummary = WorkspaceFileProjection & {
   type: string
   size: string
   uploadedBy: string
   uploadedAt: string
   scanStatus: string
-  /** 展示版本的解析状态（评审低1）：scanStatus 仅指安全扫描。 */
-  parseStatus: string
   removable: boolean
-  canDownload: boolean
-  /** 可引用给 Agent = 扫描通过且展示版本解析成功。 */
-  canReference: boolean
-  /** 逻辑文件 ID（TW-07）：同一逻辑文件的所有版本共享它。 */
-  logicalFileId: string
-  /** 本行对应的版本号（列表返回最新有效版本）。 */
-  versionNo: number
-  /** 逻辑文件下的版本总数（含失败版本，用于追溯）。 */
-  versionCount: number
 }
 
 export interface WorkspaceFilePage {
@@ -93,17 +82,7 @@ export interface WorkspaceFileVersionPage {
   items: WorkspaceFileVersionSummary[]
 }
 
-export interface UploadedWorkspaceFileVersion {
-  id: string
-  logicalFileId: string
-  versionNo: number
-  name: string
-  type: string
-  size: string
-  uploadedBy: string
-  uploadedAt: string
-  extractionStatus: 'succeeded'
-}
+export type UploadedWorkspaceFileVersion = WorkspaceFileProjection
 
 export type PersonalFileSource = 'material' | 'attachment' | 'artifact'
 export interface PersonalFileSummary {
@@ -190,6 +169,7 @@ export class PostgresContentService {
   private readonly authorization: PostgresAuthorizationService
   private readonly scanner: FileSafetyScannerPort
   private readonly workspaces: PostgresWorkspaceService
+  private readonly objectGc: WorkspaceObjectGcService | null
 
   constructor(
     database: DatabaseClient,
@@ -197,12 +177,14 @@ export class PostgresContentService {
     authorization: PostgresAuthorizationService,
     scanner: FileSafetyScannerPort = new BaselineFileSafetyScanner(),
     workspaces = new PostgresWorkspaceService(database),
+    objectGc: WorkspaceObjectGcService | null = new WorkspaceObjectGcService(database, storage),
   ) {
     this.database = database
     this.storage = storage
     this.authorization = authorization
     this.scanner = scanner
     this.workspaces = workspaces
+    this.objectGc = objectGc
   }
 
   /**
@@ -294,8 +276,8 @@ export class PostgresContentService {
     }
     const teamIds = rows.filter(row => row.type === 'team').map(row => row.id)
     const personalIds = rows.filter(row => row.type === 'personal').map(row => row.id)
-    const [teamFiles, personalFiles] = await Promise.all([
-      teamIds.length ? this.listTeamWorkspaceFileSummaries(teamIds) : Promise.resolve(new Map<string, WorkspaceFile[]>()),
+    const [teamFileCounts, personalFiles] = await Promise.all([
+      teamIds.length ? this.countTeamWorkspaceFiles(teamIds) : Promise.resolve(new Map<string, number>()),
       personalIds.length ? this.listPersonalWorkspaceFileSummaries(personalIds) : Promise.resolve(new Map<string, WorkspaceFile[]>()),
     ])
     return rows.map((row) => ({
@@ -308,80 +290,24 @@ export class PostgresContentService {
       memberCount: row.memberCount,
       sessionCount: row.sessionCount,
       artifactCount: row.artifactCount,
+      fileCount: row.type === 'team' ? (teamFileCounts.get(row.id) ?? 0) : (personalFiles.get(row.id)?.length ?? 0),
       updatedAt: formatDateTime(row.updatedAt),
       owner: row.owner,
       members: memberNames.get(row.id) ?? [],
-      files: (row.type === 'team' ? teamFiles.get(row.id) : personalFiles.get(row.id)) ?? [],
+      files: row.type === 'team' ? [] : (personalFiles.get(row.id) ?? []),
     }))
   }
 
-  /**
-   * 团队空间卡片里的文件摘要按逻辑文件聚合（TW-07 / AC-29）：一个逻辑文件只出现
-   * 一次，取最新有效版本，避免上传新版本后同一文件被重复计数。批量版本（评审
-   * M8）：一条查询覆盖调用者可见的全部团队空间，按 workspace_id 分组返回。
-   */
-  private async listTeamWorkspaceFileSummaries(workspaceIds: string[]) {
-    const rows = await this.database<{
-      workspaceId: string
-      id: string
-      logicalFileId: string
-      logicalName: string
-      sizeBytes: string | number
-      createdAt: Date
-      uploadedBy: string
-      versionNo: number
-      versionCount: number
-      scanStatus: string
-      parseStatus: string
-    }[]>`
-      select wf.workspace_id as "workspaceId",
-             f.id, wf.id as "logicalFileId", wf.name as "logicalName",
-             f.size_bytes as "sizeBytes", f.created_at as "createdAt",
-             u.display_name as "uploadedBy", wfv.version_no as "versionNo",
-             f.scan_status as "scanStatus", wfv.parse_status as "parseStatus",
-             (select count(*)::integer from workspace_file_versions c
-               where c.tenant_id = wf.tenant_id and c.logical_file_id = wf.id) as "versionCount"
+  private async countTeamWorkspaceFiles(workspaceIds: string[]) {
+    const rows = await this.database<{ workspaceId: string; fileCount: number }[]>`
+      select wf.workspace_id as "workspaceId", count(*)::integer as "fileCount"
         from workspace_files wf
-        -- 同 listWorkspaceFiles：优先最高解析成功版本，无成功版本时退化为最高版本，
-        -- 避免失败文件从空间列表摘要里消失。
-        join lateral (
-          select v.version_no, v.file_object_id, v.parse_status
-            from workspace_file_versions v
-           where v.tenant_id = wf.tenant_id and v.logical_file_id = wf.id
-           order by (v.parse_status = 'succeeded') desc, v.version_no desc
-           limit 1
-        ) wfv on true
-        join file_objects f on f.tenant_id = wf.tenant_id and f.id = wfv.file_object_id
-        join users u on u.tenant_id = f.tenant_id and u.id = f.uploaded_by
-       where wf.tenant_id = ${tenantId} and wf.workspace_id = any(${workspaceIds})
+       where wf.tenant_id = ${tenantId}
+         and wf.workspace_id = any(${workspaceIds})
          and wf.status = 'active'
-         and f.scan_status <> 'blocked' and f.removed_at is null
-       order by f.created_at desc
+       group by wf.workspace_id
     `
-    const summaries = new Map<string, WorkspaceFile[]>()
-    for (const file of rows) {
-      const list = summaries.get(file.workspaceId) ?? []
-      // 评审低1：详情页 workspace.files 与专用文件列表同一投影——解析失败
-      // 的文件必须在摘要里显式标出，canReference 由服务端判定（扫描通过且
-      // 展示版本解析成功），前端不得缺省放行。
-      list.push({
-        id: file.id,
-        name: file.logicalName,
-        type: extname(file.logicalName).slice(1).toUpperCase() || 'FILE',
-        size: formatSize(Number(file.sizeBytes)),
-        uploadedBy: file.uploadedBy,
-        uploadedAt: formatDateTime(file.createdAt),
-        logicalFileId: file.logicalFileId,
-        versionNo: file.versionNo,
-        versionCount: file.versionCount,
-        scanStatus: file.scanStatus,
-        parseStatus: file.parseStatus,
-        canDownload: file.scanStatus === 'clean',
-        canReference: file.scanStatus === 'clean' && file.parseStatus === 'succeeded',
-      })
-      summaries.set(file.workspaceId, list)
-    }
-    return summaries
+    return new Map(rows.map(row => [row.workspaceId, row.fileCount]))
   }
 
   /** 个人空间保持既有路径（AC-23）：不读逻辑文件，行为与 TW-07 之前一致。批量版同上。 */
@@ -464,14 +390,7 @@ export class PostgresContentService {
   async createWorkspace(input: { name: string; description: string }, actorUserId: string) {
     const id = `ws-${randomUUID()}`
     await this.database.begin(async (transaction) => {
-      await transaction`
-        insert into workspaces (id, tenant_id, name, description, created_by, status)
-        values (${id}, ${tenantId}, ${input.name.trim()}, ${input.description.trim()}, ${actorUserId}, 'active')
-      `
-      await transaction`
-        insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
-        values (${tenantId}, ${id}, ${actorUserId}, 'owner', ${actorUserId})
-      `
+      await insertTeamWorkspaceRows(transaction, id, input, actorUserId)
     })
     // 新空间恒为 active，这里显式限定以免受列表默认值变化影响。
     return (await this.listWorkspaces(actorUserId, { status: 'active' })).find((workspace) => workspace.id === id)
@@ -489,16 +408,29 @@ export class PostgresContentService {
       workspaceId: string
       sourceSessionStatus: string
       workspaceType: string | null
+      taskId: string | null
+      taskTitle: string | null
+      agentName: string | null
+      agentVersion: string | null
+      initiatedBy: string | null
     }[]>`
       select a.id, a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt",
              av.source_run_id as "runId", a.workspace_id as "workspaceId",
-             w.workspace_type as "workspaceType", s.status as "sourceSessionStatus"
+             w.workspace_type as "workspaceType", s.status as "sourceSessionStatus",
+             pt.id as "taskId", pt.title as "taskTitle",
+             agv.name as "agentName", agv.version as "agentVersion", ru.display_name as "initiatedBy"
         from artifacts a
         join artifact_versions av on av.tenant_id = a.tenant_id and av.artifact_id = a.id
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
         join sessions s on s.tenant_id = a.tenant_id and s.id = a.session_id
         left join workspaces w on w.tenant_id = a.tenant_id and w.id = a.workspace_id
+        -- 项目空间：成果所属任务（任务线程即会话）、产生它的 Run 的承接 Agent 版本与发起人。
+        left join project_tasks pt on pt.tenant_id = a.tenant_id and pt.session_id = a.session_id and pt.removed_at is null
+        left join runs r on r.tenant_id = av.tenant_id and r.id = av.source_run_id
+        left join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join agent_versions agv on agv.tenant_id = ra.tenant_id and agv.id = ra.manifest->>'agent_version_id'
        where a.tenant_id = ${tenantId}
          -- TW-10：团队会话成果对空间成员可见（下方 canReadWorkspaceObject 复核
          -- 移出/归档口径）；个人会话仍限创建者。
@@ -544,6 +476,11 @@ export class PostgresContentService {
       runId: row.runId,
       workspaceId: row.workspaceId,
       summary: row.sourceSessionStatus === 'archived' ? '原对话已从历史中移除；成果独立保留，下载仍需当前授权。' : '由 DSH Runtime 本轮回答发布，保留来源 Run 与不可覆盖版本。',
+      origin: row.workspaceType === 'team' ? {
+        projectTask: row.taskId && row.taskTitle ? { id: row.taskId, title: row.taskTitle } : null,
+        agent: row.agentName && row.agentVersion ? { name: row.agentName, version: row.agentVersion } : null,
+        initiatedBy: row.initiatedBy,
+      } : null,
     }))
   }
 
@@ -660,18 +597,20 @@ export class PostgresContentService {
    * Personal spaces keep the pre-TW-07 path untouched (AC-23): no logical file,
    * no version rows, no change to how the personal file list is produced.
    */
-  async storeWorkspaceFile(workspaceId: string, name: string, mimeType: string, bytes: Buffer, actorUserId: string): Promise<{
-    id: string
-    name: string
-    size: string
-    type: string
-    uploadedBy: string
-    uploadedAt: string
-    extractionStatus: 'succeeded'
-    /** Null for personal spaces: they stay outside the logical-file model (AC-23). */
-    logicalFileId: string | null
-    versionNo: number | null
-  }> {
+  async storeWorkspaceFile(workspaceId: string, name: string, mimeType: string, bytes: Buffer, actorUserId: string): Promise<
+    | WorkspaceFileProjection
+    | {
+      id: string
+      name: string
+      size: string
+      type: string
+      uploadedBy: string
+      uploadedAt: string
+      extractionStatus: 'succeeded'
+      logicalFileId: string | null
+      versionNo: number | null
+    }
+  > {
     const access = await this.workspaces.resolveAccessibleWorkspace(workspaceId, actorUserId)
     if (access.type === 'personal') {
       // AC-23：个人空间保持既有路径——无逻辑文件、无版本行。
@@ -689,82 +628,60 @@ export class PostgresContentService {
       workspaceId, sessionId: null, name, mimeType, bytes, actorUserId,
     })
     const logicalFileId = `wfile-${randomUUID()}`
-    await this.database.begin(async (transaction) => {
-      // 与上传新版本/移除同口径：事务内先取空间行锁并复核「空间活跃 + 仍是成员 + 非只读」。
-      await this.lockActiveWorkspaceForFileWrite(transaction, workspaceId, actorUserId, {
-        denyViewer: true,
-        viewerAction: '上传共享文件',
-      })
-      await transaction`
-        insert into file_objects (
-          id, tenant_id, workspace_id, session_id, storage_key, original_name, mime_type,
-          size_bytes, sha256, scan_status, uploaded_by
-        ) values (
-          ${prepared.fileId}, ${tenantId}, ${workspaceId}, null, ${prepared.storageKey},
-          ${name}, ${mimeType || 'application/octet-stream'},
-          ${bytes.length}, ${prepared.sha256}, 'clean', ${actorUserId}
-        )
-      `
-      await transaction`
-        insert into workspace_files (
-          id, tenant_id, workspace_id, name, status, latest_version_no, created_by
-        ) values (
-          ${logicalFileId}, ${tenantId}, ${workspaceId}, ${name}, 'active', 0, ${actorUserId}
-        )
-      `
-      await transaction`
-        insert into workspace_file_versions (
-          id, tenant_id, logical_file_id, version_no, file_object_id, note, parse_status, created_by
-        ) values (
-          ${`wfv-${randomUUID()}`}, ${tenantId}, ${logicalFileId}, 1, ${prepared.fileId}, null, 'pending', ${actorUserId}
-        )
-      `
-      // 同事务写入动态：新增共享文件（v1）是一条团队动态。safe_metadata 只放
-      // 逻辑文件 id 与版本号——文件名不进入动态（会话附件名属私有，团队动态统一
-      // 不携带任何名称）。
-      await recordWorkspaceActivity(transaction, {
-        workspaceId,
-        kind: 'file_uploaded',
-        actorUserId,
-        objectType: 'file',
-        objectId: logicalFileId,
-        dedupeKey: `file_uploaded:${prepared.fileId}`,
-        metadata: { logicalFileId, versionNo: 1 },
-      })
-    })
-
     try {
-      const extraction = await this.extractInto(prepared.fileId, name, bytes, prepared.extension)
       await this.database.begin(async (transaction) => {
+        await this.lockActiveWorkspaceForFileWrite(transaction, workspaceId, actorUserId, {
+          denyViewer: true,
+          viewerAction: '上传共享文件',
+        })
         await transaction`
-          update workspace_file_versions set parse_status = 'succeeded'
-           where tenant_id = ${tenantId} and logical_file_id = ${logicalFileId} and version_no = 1
+          insert into file_objects (
+            id, tenant_id, workspace_id, session_id, storage_key, original_name, mime_type,
+            size_bytes, sha256, scan_status, uploaded_by
+          ) values (
+            ${prepared.fileId}, ${tenantId}, ${workspaceId}, null, ${prepared.storageKey},
+            ${name}, ${mimeType || 'application/octet-stream'},
+            ${bytes.length}, ${prepared.sha256}, 'clean', ${actorUserId}
+          )
         `
         await transaction`
-          update workspace_files
-             set latest_version_no = greatest(latest_version_no, 1), updated_at = now()
-           where tenant_id = ${tenantId} and id = ${logicalFileId} and status = 'active'
+          insert into workspace_files (
+            id, tenant_id, workspace_id, name, status, latest_version_no, created_by
+          ) values (
+            ${logicalFileId}, ${tenantId}, ${workspaceId}, ${name}, 'active', 0, ${actorUserId}
+          )
         `
+        await transaction`
+          insert into workspace_file_versions (
+            id, tenant_id, logical_file_id, version_no, file_object_id, note, parse_status, created_by
+          ) values (
+            ${`wfv-${randomUUID()}`}, ${tenantId}, ${logicalFileId}, 1, ${prepared.fileId}, null, 'pending', ${actorUserId}
+          )
+        `
+        await recordWorkspaceActivity(transaction, {
+          workspaceId,
+          kind: 'file_uploaded',
+          actorUserId,
+          objectType: 'file',
+          objectId: logicalFileId,
+          dedupeKey: `file_uploaded:${prepared.fileId}`,
+          metadata: { logicalFileId, versionNo: 1 },
+        })
       })
-      return {
-        id: prepared.fileId,
-        name,
-        size: formatSize(bytes.length),
-        type: prepared.extension.slice(1).toUpperCase(),
-        uploadedBy: await this.userDisplayName(actorUserId),
-        uploadedAt: '刚刚',
-        extractionStatus: extraction,
-        logicalFileId,
-        versionNo: 1,
-      }
     } catch (error) {
-      // 失败版本保留记录与对象（列表按 TW-05 展示失败状态），latest_version_no 不前移。
-      await this.database`
-        update workspace_file_versions set parse_status = 'failed'
-         where tenant_id = ${tenantId} and logical_file_id = ${logicalFileId} and version_no = 1
-      `
+      await this.journalGcCandidate(prepared, 'POST_WRITE_TX_FAILED')
       throw error
     }
+
+    await this.finalizeVersionExtraction({
+      logicalFileId,
+      versionNo: 1,
+      fileId: prepared.fileId,
+      name,
+      bytes,
+      extension: prepared.extension,
+    })
+    return this.projectWorkspaceFile(logicalFileId, actorUserId)
   }
 
   /**
@@ -853,31 +770,16 @@ export class PostgresContentService {
 
     const hasMore = rows.length > limit
     const page = rows.slice(0, limit)
-    const items = page.map(row => ({
-      id: row.id,
-      logicalFileId: row.logicalFileId,
-      versionNo: row.versionNo,
-      versionCount: row.versionCount,
-      name: row.logicalName,
-      type: extname(row.logicalName).slice(1).toUpperCase() || 'FILE',
-      size: formatSize(Number(row.sizeBytes)),
-      uploadedBy: row.uploadedBy,
-      uploadedAt: formatDateTime(row.createdAt),
-      scanStatus: row.scanStatus,
-      // 权限在服务端判定：负责人/管理员可移除任何文件，成员只能移除自己创建或
-      // 展示版本由自己上传的；**只读成员一律不能移除**（设计 §2.3「只读成员不渲染
-      // 移除入口」/ 方案 §5「只读成员仅查看和下载」）——注意历史上传人被降级为
-      // 只读后不再保留移除权，这与「上传」的判定一致（验证代理 D1）。
-      // 归档空间属执行轨（3-T1）：移除会被拒，因此不得回报 removable。
-      removable: writable && role !== 'viewer' && (
-        canManageAll || row.logicalCreatedBy === input.actorUserId || row.uploadedById === input.actorUserId
-      ),
-      canDownload: row.scanStatus === 'clean',
-      // 评审低1：「扫描通过」≠「可引用给 Agent」——引用要求展示版本解析成功；
-      // 失败版本（无成功版本时退化展示的最高版本）parseStatus='failed'，前端据此
-      // 区分「可下载但不可引用」而不是只看到一个干净的 scanStatus。
-      parseStatus: row.parseStatus,
-      canReference: row.scanStatus === 'clean' && row.parseStatus === 'succeeded',
+    const items = await Promise.all(page.map(async (row) => {
+      const projection = await this.projectWorkspaceFile(row.logicalFileId, input.actorUserId)
+      return this.decorateFileSummary(projection, {
+        type: extname(row.logicalName).slice(1).toUpperCase() || 'FILE',
+        uploadedBy: row.uploadedBy,
+        scanStatus: row.scanStatus,
+        removable: writable && role !== 'viewer' && (
+          canManageAll || row.logicalCreatedBy === input.actorUserId || row.uploadedById === input.actorUserId
+        ),
+      })
     }))
     // 游标必须用原始时间戳：uploadedAt 是展示格式，喂回 timestamptz 会解析失败；
     // toISOString 又只到毫秒——改用查询侧 to_char 产出的微秒文本（评审 M3）。
@@ -1003,8 +905,14 @@ export class PostgresContentService {
     // 不能只靠「空间可访问」（符合性评审 F1：viewer 此前可上传并拿到 201）。
     await this.assertCanWriteWorkspaceFiles(input.workspaceId, input.actorUserId, '上传文件版本')
 
-    // 先在事务外完成校验、安全扫描与落盘：版本行只引用不可变对象，对象写入失败
-    // 不会分配版本号。
+    const [logicalPre] = await this.database<{ status: string }[]>`
+      select status from workspace_files
+       where tenant_id = ${tenantId} and id = ${input.logicalFileId}
+         and workspace_id = ${input.workspaceId}
+    `
+    if (!logicalPre) throw authorizationDenied('文件不存在或不可访问')
+    if (logicalPre.status !== 'active') throw workspaceStateConflict('该文件已移除，不能上传新版本')
+
     const prepared = await this.prepareObjectWrite({
       workspaceId: input.workspaceId,
       sessionId: null,
@@ -1070,43 +978,20 @@ export class PostgresContentService {
         })
       })
     } catch (error) {
-      // 行锁存在时理论上不会撞唯一约束；这里兜底把竞态翻译成明确 409，绝不后写覆盖。
+      await this.journalGcCandidate(prepared, 'POST_WRITE_TX_FAILED')
       if (isUniqueViolation(error)) throw workspaceStateConflict('版本号分配冲突，请刷新后重试')
       throw error
     }
 
-    try {
-      const extraction = await this.extractInto(prepared.fileId, input.name, input.bytes, prepared.extension)
-      await this.database.begin(async (transaction) => {
-        await transaction`
-          update workspace_file_versions set parse_status = 'succeeded'
-           where tenant_id = ${tenantId} and logical_file_id = ${input.logicalFileId} and version_no = ${versionNo}
-        `
-        await transaction`
-          update workspace_files
-             set latest_version_no = greatest(latest_version_no, ${versionNo}), updated_at = now()
-           where tenant_id = ${tenantId} and id = ${input.logicalFileId} and status = 'active'
-        `
-      })
-      return {
-        id: prepared.fileId,
-        logicalFileId: input.logicalFileId,
-        versionNo,
-        name: input.name,
-        type: prepared.extension.slice(1).toUpperCase(),
-        size: formatSize(input.bytes.length),
-        uploadedBy: await this.userDisplayName(input.actorUserId),
-        uploadedAt: '刚刚',
-        extractionStatus: extraction,
-      }
-    } catch (error) {
-      // 失败版本保留记录与对象（可追溯），但绝不让 latest_version_no 前移。
-      await this.database`
-        update workspace_file_versions set parse_status = 'failed'
-         where tenant_id = ${tenantId} and logical_file_id = ${input.logicalFileId} and version_no = ${versionNo}
-      `
-      throw error
-    }
+    await this.finalizeVersionExtraction({
+      logicalFileId: input.logicalFileId,
+      versionNo,
+      fileId: prepared.fileId,
+      name: input.name,
+      bytes: input.bytes,
+      extension: prepared.extension,
+    })
+    return this.projectWorkspaceFile(input.logicalFileId, input.actorUserId)
   }
 
   /**
@@ -1972,6 +1857,139 @@ export class PostgresContentService {
        order by rif.created_at
     `
     return rows.map(row => row.fileId)
+  }
+
+  private async journalGcCandidate(
+    prepared: { storageKey: string; sha256: string },
+    reasonCode: string,
+  ): Promise<void> {
+    if (!this.objectGc) return
+    await this.objectGc.record({
+      storageKey: prepared.storageKey,
+      objectSha256: prepared.sha256,
+      reasonCode,
+    })
+  }
+
+  private decorateFileSummary(projection: WorkspaceFileProjection, extra: {
+    type: string
+    uploadedBy: string
+    scanStatus: string
+    removable: boolean
+  }): WorkspaceFileSummary {
+    return {
+      ...projection,
+      type: extra.type,
+      size: projection.sizeLabel,
+      uploadedBy: extra.uploadedBy,
+      uploadedAt: projection.createdAt,
+      scanStatus: extra.scanStatus,
+      removable: extra.removable,
+    }
+  }
+
+  private async parseErrorCodeForFile(fileObjectId: string, transaction?: DatabaseTransaction): Promise<string | null> {
+    const db = transaction ?? this.database
+    const [row] = await db<{ errorCode: string | null }[]>`
+      select error_code as "errorCode"
+        from file_extractions
+       where tenant_id = ${tenantId} and file_id = ${fileObjectId}
+       order by created_at desc
+       limit 1
+    `
+    return row?.errorCode ?? null
+  }
+
+  /**
+   * Single canonical projection for team workspace files (Batch 2): list, first
+   * upload, version upload and restore paths all call this method.
+   */
+  async projectWorkspaceFile(
+    logicalFileId: string,
+    actorUserId: string,
+    transaction?: DatabaseTransaction,
+  ): Promise<WorkspaceFileProjection> {
+    void actorUserId
+    const db = transaction ?? this.database
+    const [row] = await db<{
+      id: string
+      logicalName: string
+      versionNo: number
+      versionCount: number
+      sizeBytes: string | number
+      scanStatus: string
+      parseStatus: string
+      fileCreatedAt: Date
+      logicalUpdatedAt: Date
+    }[]>`
+      select f.id, wf.name as "logicalName", wfv.version_no as "versionNo",
+             (select count(*)::integer from workspace_file_versions c
+               where c.tenant_id = wf.tenant_id and c.logical_file_id = wf.id) as "versionCount",
+             f.size_bytes as "sizeBytes", f.scan_status as "scanStatus", wfv.parse_status as "parseStatus",
+             f.created_at as "fileCreatedAt", wf.updated_at as "logicalUpdatedAt"
+        from workspace_files wf
+        join lateral (
+          select v.version_no, v.file_object_id, v.parse_status
+            from workspace_file_versions v
+           where v.tenant_id = wf.tenant_id and v.logical_file_id = wf.id
+           order by (v.parse_status = 'succeeded') desc, v.version_no desc
+           limit 1
+        ) wfv on true
+        join file_objects f on f.tenant_id = wf.tenant_id and f.id = wfv.file_object_id
+       where wf.tenant_id = ${tenantId} and wf.id = ${logicalFileId} and wf.status = 'active'
+         and f.removed_at is null and f.scan_status <> 'blocked'
+    `
+    if (!row) throw authorizationDenied('文件不存在或不可访问')
+    const parseStatus = row.parseStatus as WorkspaceFileProjection['parseStatus']
+    const parseErrorCode = parseStatus === 'failed'
+      ? await this.parseErrorCodeForFile(row.id, transaction)
+      : null
+    return {
+      id: row.id,
+      logicalFileId,
+      name: row.logicalName,
+      source: 'workspace',
+      sizeLabel: formatSize(Number(row.sizeBytes)),
+      versionNo: row.versionNo,
+      versionCount: row.versionCount,
+      parseStatus,
+      parseErrorCode,
+      canDownload: row.scanStatus === 'clean',
+      canReference: row.scanStatus === 'clean' && parseStatus === 'succeeded',
+      createdAt: formatDateTime(row.fileCreatedAt),
+      updatedAt: formatDateTime(row.logicalUpdatedAt),
+    }
+  }
+
+  private async finalizeVersionExtraction(input: {
+    logicalFileId: string
+    versionNo: number
+    fileId: string
+    name: string
+    bytes: Buffer
+    extension: string
+  }): Promise<'succeeded' | 'failed'> {
+    try {
+      await this.extractInto(input.fileId, input.name, input.bytes, input.extension)
+      await this.database.begin(async (transaction) => {
+        await transaction`
+          update workspace_file_versions set parse_status = 'succeeded'
+           where tenant_id = ${tenantId} and logical_file_id = ${input.logicalFileId} and version_no = ${input.versionNo}
+        `
+        await transaction`
+          update workspace_files
+             set latest_version_no = greatest(latest_version_no, ${input.versionNo}), updated_at = now()
+           where tenant_id = ${tenantId} and id = ${input.logicalFileId} and status = 'active'
+        `
+      })
+      return 'succeeded'
+    } catch {
+      await this.database`
+        update workspace_file_versions set parse_status = 'failed'
+         where tenant_id = ${tenantId} and logical_file_id = ${input.logicalFileId} and version_no = ${input.versionNo}
+      `
+      return 'failed'
+    }
   }
 
   /**

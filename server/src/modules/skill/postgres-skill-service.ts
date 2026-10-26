@@ -1,4 +1,5 @@
 import { authorizationDenied } from '../../domain/authorization-errors.ts'
+import { RequestError } from '../../domain/request-errors.ts'
 import { skillNotFound, skillConflict, skillInvalid, skillUnavailable, skillInternalFailure } from './skill-errors.ts'
 import { ExecutionCapabilityUnavailableError } from '../runtime/execution-capabilities.ts'
 import type { RuntimeManifest } from '../runtime/runtime-types.ts'
@@ -18,7 +19,7 @@ import type {
 } from '../../domain/types.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import { invalidSkillToolReferences } from '../runtime/builtin-tools.ts'
 import type { SkillArtifactStore } from './skill-artifact-store.ts'
 
 const tenantId = 'tenant-dsh-work'
@@ -132,8 +133,11 @@ export interface RuntimeSkillConfiguration {
 
 export interface WorkbenchSkillDefinition {
   id: string
-  name: string
+  versionId: string
+  versionReference: string
   version: string
+  publishedAt: string
+  name: string
   category: string
   description: string
   owner: string
@@ -157,18 +161,15 @@ export class PostgresSkillService {
   setPackageTestLifecycle(lifecycle: NonNullable<PostgresSkillService['packageTestLifecycle']>) { this.packageTestLifecycle = lifecycle }
   private readonly database: DatabaseClient
   private readonly operations?: AuditTrail
-  private readonly toolService?: PostgresToolConnectorService
   private readonly artifactStore?: SkillArtifactStore
 
   constructor(
     database: DatabaseClient,
     operations?: AuditTrail,
-    toolService?: PostgresToolConnectorService,
     artifactStore?: SkillArtifactStore,
   ) {
     this.database = database
     this.operations = operations
-    this.toolService = toolService
     this.artifactStore = artifactStore
   }
 
@@ -177,10 +178,10 @@ export class PostgresSkillService {
   }
 
   async listWorkbenchSkills(): Promise<WorkbenchSkillDefinition[]> {
-    const rows = await this.database<WorkbenchSkillRow[]>`
-      select s.id, sv.name, sv.version, sv.category, sv.description,
+    const rows = await this.database<(WorkbenchSkillRow & { versionId: string; publishedAt: Date | null })[]>`
+      select s.id, sv.id as "versionId", sv.name, sv.version, sv.category, sv.description,
              owner.display_name as owner, sv.test_prompt as "testPrompt",
-             s.updated_at as "updatedAt"
+             s.updated_at as "updatedAt", sv.published_at as "publishedAt"
         from skills s
         join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = s.active_version_id
         join users owner on owner.tenant_id = s.tenant_id and owner.id = s.owner_user_id
@@ -195,7 +196,44 @@ export class PostgresSkillService {
          )
        order by s.updated_at desc, sv.name asc
     `
-    return rows.map(row => ({ ...row, updatedAt: formatDateTime(row.updatedAt) }))
+    return rows.map(row => ({
+      ...row,
+      versionReference: `${row.id}@${row.version}`,
+      publishedAt: row.publishedAt?.toISOString() ?? '',
+      updatedAt: formatDateTime(row.updatedAt),
+    }))
+  }
+
+  async lookupVersionReference(versionId: string): Promise<string | null> {
+    const [row] = await this.database<{ skillId: string; version: string }[]>`
+      select skill_id as "skillId", version
+        from skill_versions
+       where tenant_id = ${tenantId} and id = ${versionId}
+    `
+    return row ? `${row.skillId}@${row.version}` : null
+  }
+
+  async resolveWorkbenchSkillVersionById(input: { skillId: string; versionId: string }) {
+    assertSkillId(input.skillId)
+    const [row] = await this.database<{ id: string; skillId: string; version: string }[]>`
+      select sv.id, sv.skill_id as "skillId", sv.version
+        from skills s
+        join skill_versions sv on sv.tenant_id = s.tenant_id and sv.id = ${input.versionId}
+       where s.tenant_id = ${tenantId} and s.id = ${input.skillId}
+         and s.status = 'published' and sv.status = 'published'
+         and (
+           not (sv.manifest ? 'installationId')
+           or exists (
+             select 1 from skill_installations installation
+              where installation.tenant_id = s.tenant_id and installation.skill_id = s.id
+                and installation.status = 'installed'
+           )
+         )
+    `
+    if (!row) {
+      throw new RequestError(409, 'selected_version_unavailable', '所选版本已不可用，请重新选择')
+    }
+    return { id: row.id, reference: `${row.skillId}@${row.version}` }
   }
 
   async resolveWorkbenchSkillVersion(skillId: string) {
@@ -270,7 +308,7 @@ export class PostgresSkillService {
       testPrompt: input.testPrompt,
     })
     assertConfiguration(configuration)
-    await this.toolService?.assertAvailableReferences(configuration.toolIds)
+    assertSkillToolReferences(configuration.toolIds)
     const versionId = `skill-version-${randomUUID()}`
     const artifact = await this.requireArtifactStore().put(createSkillPackage({
       name: configuration.name,
@@ -321,7 +359,7 @@ export class PostgresSkillService {
     if (packaged) throw skillConflict('安装包版本不可通过文本编辑，请通过新包安装更新', 'skill_package_immutable')
     const configuration = normalizeConfiguration({ id: input.skillId, ...input })
     assertConfiguration(configuration)
-    await this.toolService?.assertAvailableReferences(configuration.toolIds)
+    assertSkillToolReferences(configuration.toolIds)
     let draftVersionId = current.draftVersionId
 
     await this.database.begin(async transaction => {
@@ -412,7 +450,7 @@ export class PostgresSkillService {
     if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
     if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
     if (input.scenario !== undefined && !skill.strictTest) throw skillInvalid('场景测试要求真实 DSH 试运行包', 'invalid_test_scenario')
-    await this.toolService?.assertAvailableReferences(skill.toolIds)
+    assertSkillToolReferences(skill.toolIds)
     const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
     const fingerprint = configurationFingerprint(skill)
     let testId = `skill-test-${randomUUID()}`
@@ -427,7 +465,7 @@ export class PostgresSkillService {
       if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
       const dependencySkills = await this.resolveTestRuntimeSkills(version!.manifest.dependencies ?? [])
-      await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
+      assertSkillToolReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
       const runtimeSkill: RuntimeSkillConfiguration = { id: skill.id, name: skill.name, description: skill.description,
         version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds,
         artifact: version.manifest.artifact, files: version.manifest.artifact.files,
@@ -577,7 +615,7 @@ export class PostgresSkillService {
     const [skill] = await this.readSkillRows(input.skillId)
     if (!skill) throw skillNotFound(`Skill 不存在：${input.skillId}`)
     if (!skill.draftVersionId) throw skillConflict('当前 Skill 没有待测试的草稿版本', 'skill_draft_required')
-    await this.toolService?.assertAvailableReferences(skill.toolIds)
+    assertSkillToolReferences(skill.toolIds)
     const prompt = normalizeTestPrompt(input.prompt, skill.testPrompt)
     const fingerprint = configurationFingerprint(skill)
     let runtimeSkill: RuntimeSkillConfiguration = {
@@ -593,7 +631,7 @@ export class PostgresSkillService {
       if (!version?.manifest.artifact) throw skillInternalFailure('Skill 文件夹索引缺失')
       const packageContent = await this.requireArtifactStore().read(version.manifest.artifact)
       const dependencySkills = await this.resolveTestRuntimeSkills(version.manifest.dependencies ?? [])
-      await this.toolService?.assertAvailableReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
+      assertSkillToolReferences([...skill.toolIds, ...dependencySkills.flatMap(item => [item, ...flattenRuntimeDependencies(item)]).flatMap(item => item.tools)])
       runtimeSkill = { id: skill.id, name: skill.name, description: skill.description, version: skill.version, instructions: packageContent.instructions, tools: skill.toolIds, artifact: version.manifest.artifact, files: version.manifest.artifact.files, disableModelInvocation: version.manifest.artifact.disableModelInvocation, dependencies: version.manifest.dependencies ?? [], dependencySkills }
     }
     return { actor, skill, prompt, fingerprint, runtimeSkill }
@@ -807,6 +845,7 @@ export class PostgresSkillService {
       const events = await transaction<{ attemptId: string; eventType: string; displayMessage: string | null }[]>`
         select attempt_id as "attemptId", event_type as "eventType", display_message as "displayMessage"
           from run_events where tenant_id = ${tenantId} and run_id = ${row.runId} and attempt_id = ${row.attemptId}
+           and safe_metadata->>'late' is distinct from 'true'
          order by stream_position, sequence
       `
       const result = evaluateAttemptEvidence({ ...row, activations, pythonExecutions, events })
@@ -825,7 +864,7 @@ export class PostgresSkillService {
 
   private async publishDraft(current: SkillRow, actorId: string) {
     const dependencyTools = current.draftVersionId ? await this.readDependencyToolReferences(current.draftVersionId) : []
-    await this.toolService?.assertAvailableReferences([...current.toolIds, ...dependencyTools])
+    assertSkillToolReferences([...current.toolIds, ...dependencyTools])
     const release = await this.database.begin(async transaction => {
       const [locked] = await transaction<LockedSkillDraft[]>`
         select s.id, sv.id as "versionId", sv.name, sv.category, sv.description,
@@ -1192,4 +1231,10 @@ function normalizeTestPrompt(value: unknown, fallback: string): string {
   if (typeof prompt !== 'string') throw skillInvalid('测试问题必须为字符串', 'skill_test_prompt_invalid')
   if (prompt.trim().length < 4) throw skillInvalid('测试问题至少需要 4 个字符', 'skill_test_prompt_invalid')
   return prompt.trim()
+}
+
+/** Skill 只能引用平台注册表中可供 Skill 使用的内置工具。 */
+function assertSkillToolReferences(references: readonly string[]) {
+  const invalid = invalidSkillToolReferences(references)
+  if (invalid.length) throw skillInvalid(`Skill 引用了平台不提供的工具：${invalid.join('、')}`)
 }

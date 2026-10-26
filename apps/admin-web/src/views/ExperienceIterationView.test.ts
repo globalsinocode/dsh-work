@@ -39,7 +39,7 @@ describe('experience iteration governance', () => {
     const wrapper = mount(ExperienceIterationView, {
       global: {
         plugins: [pinia, ElementPlus],
-        stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true },
+        stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true, RouterLink: { template: '<a><slot /></a>' } },
       },
     })
     await flushPromises()
@@ -76,7 +76,7 @@ describe('experience iteration governance', () => {
     const wrapper = mount(ExperienceIterationView, {
       global: {
         plugins: [createPinia(), ElementPlus],
-        stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true },
+        stubs: { teleport: true, ElSelect: { template: '<div><slot /></div>' }, ElOption: true, RouterLink: { template: '<a><slot /></a>' } },
       },
     })
     await flushPromises()

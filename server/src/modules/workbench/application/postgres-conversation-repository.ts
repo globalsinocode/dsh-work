@@ -9,6 +9,8 @@ import { PostgresWorkspaceService, readableWorkspacePredicate } from './postgres
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { stateConflict } from '../../../domain/request-errors.ts'
+import { writeNotifiableEvent } from './workspace-activity-writer.ts'
+import type { ContextMessage, MessagePosition, StoredConversationSummary } from '../../../domain/conversation-context.ts'
 
 const tenantId = 'tenant-dsh-work'
 const conversationHistoryMessageLimit = 12
@@ -181,6 +183,79 @@ export class PostgresConversationRepository {
     return (await this.workspaces.resolveAccessibleWorkspace(workspaceId, userId)).id
   }
 
+  async findSessionByClientIntent(userId: string, clientIntentId: string) {
+    const [row] = await this.database<{
+      id: string
+      workspaceId: string
+      agentVersionId: string | null
+      selectedSkillVersionId: string | null
+      title: string
+      status: 'draft' | 'active' | 'archived'
+      createdAt: Date
+    }[]>`
+      select id, workspace_id as "workspaceId", agent_version_id as "agentVersionId",
+             selected_skill_version_id as "selectedSkillVersionId", title, status,
+             created_at as "createdAt"
+        from sessions
+       where tenant_id = ${tenantId} and created_by = ${userId} and client_intent_id = ${clientIntentId}
+    `
+    if (!row) return null
+    return {
+      id: row.id,
+      workspaceId: row.workspaceId,
+      agentVersionId: row.agentVersionId,
+      selectedSkillVersionId: row.selectedSkillVersionId,
+      title: row.title,
+      status: row.status,
+      createdAt: row.createdAt.toISOString(),
+    }
+  }
+
+  async activateSession(sessionId: string, transaction?: DatabaseTransaction) {
+    const db = transaction ?? this.database
+    const [row] = await db<{ id: string }[]>`
+      update sessions
+         set status = 'active', last_active_at = now()
+       where tenant_id = ${tenantId} and id = ${sessionId} and status = 'draft'
+       returning id
+    `
+    return Boolean(row)
+  }
+
+  async discardEmptyDraftSession(input: {
+    sessionId: string
+    userId: string
+    clientIntentId: string
+  }) {
+    return this.database.begin(async transaction => {
+      const [session] = await transaction<{ id: string; status: string; clientIntentId: string | null }[]>`
+        select id, status, client_intent_id as "clientIntentId"
+          from sessions
+         where tenant_id = ${tenantId} and id = ${input.sessionId} and created_by = ${input.userId}
+         for update
+      `
+      if (!session || session.status !== 'draft' || session.clientIntentId !== input.clientIntentId) return false
+      const [hasMessage] = await transaction<{ exists: boolean }[]>`
+        select exists (
+          select 1 from messages m where m.tenant_id = ${tenantId} and m.session_id = ${input.sessionId}
+        ) as exists
+      `
+      const [hasRun] = await transaction<{ exists: boolean }[]>`
+        select exists (
+          select 1 from runs r where r.tenant_id = ${tenantId} and r.session_id = ${input.sessionId}
+        ) as exists
+      `
+      const [hasFile] = await transaction<{ exists: boolean }[]>`
+        select exists (
+          select 1 from file_objects fo where fo.tenant_id = ${tenantId} and fo.session_id = ${input.sessionId}
+        ) as exists
+      `
+      if (hasMessage?.exists || hasRun?.exists || hasFile?.exists) return false
+      await transaction`delete from sessions where tenant_id = ${tenantId} and id = ${input.sessionId} and status = 'draft'`
+      return true
+    })
+  }
+
   async createSession(input: {
     userId: string
     title: string
@@ -188,19 +263,28 @@ export class PostgresConversationRepository {
     /** TW-10：显式传 null 表示团队讨论会话不绑定 Agent；省略沿用默认助手。 */
     agentVersionId?: string | null
     selectedSkillVersionId?: string
+    clientIntentId?: string
+    initialStatus?: 'draft' | 'active'
   }, tx?: DatabaseTransaction) {
+    if (input.clientIntentId) {
+      const existing = await this.findSessionByClientIntent(input.userId, input.clientIntentId)
+      if (existing) {
+        return { ...existing, replayed: true as const }
+      }
+    }
     const id = `session-${randomUUID()}`
     const agentVersionId = input.agentVersionId === null
       ? null
       : input.agentVersionId ?? 'agent-version-dsh-work-assistant-1'
     const workspaceId = await this.resolveWorkspaceId(input.workspaceId, input.userId)
+    const status = input.clientIntentId ? (input.initialStatus ?? 'draft') : (input.initialStatus ?? 'active')
     const insertSession = async (db: DatabaseClient | DatabaseTransaction) => {
       const [row] = await db<SessionRow[]>`
         insert into sessions (
-          id, tenant_id, workspace_id, created_by, agent_version_id, selected_skill_version_id, title, status
+          id, tenant_id, workspace_id, created_by, agent_version_id, selected_skill_version_id, title, status, client_intent_id
         ) values (
           ${id}, ${tenantId}, ${workspaceId}, ${input.userId}, ${agentVersionId}, ${input.selectedSkillVersionId ?? null},
-          ${truncateTitle(input.title)}, 'active'
+          ${truncateTitle(input.title)}, ${status}, ${input.clientIntentId ?? null}
         )
         returning id, workspace_id as "workspaceId", agent_version_id as "agentVersionId",
                   selected_skill_version_id as "selectedSkillVersionId",
@@ -211,8 +295,11 @@ export class PostgresConversationRepository {
         id: row.id,
         workspaceId: row.workspaceId,
         agentVersionId: row.agentVersionId,
+        selectedSkillVersionId: row.selectedSkillVersionId,
         title: row.title,
+        status,
         createdAt: row.createdAt.toISOString(),
+        replayed: false as const,
       }
     }
     // 评审高2：团队会话的 INSERT 必须与「空间活跃 + 当前成员非 viewer」的复核
@@ -267,7 +354,7 @@ export class PostgresConversationRepository {
         left join skill_versions selected_skill
           on selected_skill.tenant_id = s.tenant_id and selected_skill.id = s.selected_skill_version_id
        where s.tenant_id = ${tenantId} and s.id = ${sessionId}
-         and s.status = 'active' and s.audience = ${audience}
+         and s.status in ('active', 'draft') and s.audience = ${audience}
     `
     return row ? { ...row, createdAt: row.createdAt.toISOString() } : null
   }
@@ -416,6 +503,7 @@ export class PostgresConversationRepository {
     userId: string
     content: string
     messageId: string
+    mentionedUserIds?: string[]
   }): Promise<{ messageId: string; created: boolean }> {
     return this.database.begin(async (transaction) => {
       const [locked] = await transaction<{
@@ -455,6 +543,35 @@ export class PostgresConversationRepository {
           update sessions set last_active_at = now()
            where tenant_id = ${tenantId} and id = ${input.sessionId}
         `
+        const mentionTargets = dedupeUserIds(input.mentionedUserIds ?? [])
+        for (const mentionedUserId of mentionTargets) {
+          const [member] = await transaction<{ exists: boolean }[]>`
+            select exists (
+              select 1 from workspace_members wm
+               where wm.tenant_id = ${tenantId}
+                 and wm.workspace_id = ${locked.workspaceId}
+                 and wm.user_id = ${mentionedUserId}
+            ) as exists
+          `
+          if (!member?.exists) throw requestInvalid('mentionedUserIds 包含非当前空间成员')
+        }
+        await writeNotifiableEvent({
+          kind: 'discussion_posted',
+          workspaceId: locked.workspaceId,
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          actorUserId: input.userId,
+        }, transaction)
+        for (const mentionedUserId of mentionTargets) {
+          await writeNotifiableEvent({
+            kind: 'member_mentioned',
+            workspaceId: locked.workspaceId,
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            actorUserId: input.userId,
+            mentionedUserId,
+          }, transaction)
+        }
         return { messageId: input.messageId, created: true }
       }
       // 键冲突即同一次逻辑请求的重放：必须核对确实是「同会话、同发送者、
@@ -478,6 +595,35 @@ export class PostgresConversationRepository {
         throw workspaceStateConflict('幂等键已被其他消息占用，请更换 idempotencyKey 后重试')
       }
       return { messageId: input.messageId, created: false }
+    })
+  }
+
+  async writeRunTerminalNotificationIfTeam(input: {
+    sessionId: string
+    runId: string
+    requestedBy: string
+    kind: 'run_completed' | 'run_failed'
+    dedupeKey: string
+    agentDisplayName?: string
+  }) {
+    const [context] = await this.database<{ workspaceId: string; workspaceType: string }[]>`
+      select s.workspace_id as "workspaceId", w.workspace_type as "workspaceType"
+        from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+       where s.tenant_id = ${tenantId} and s.id = ${input.sessionId}
+    `
+    if (!context || context.workspaceType !== 'team') return
+    await this.database.begin(async transaction => {
+      await writeNotifiableEvent({
+        kind: input.kind,
+        workspaceId: context.workspaceId,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        requestedBy: input.requestedBy,
+        actorUserId: 'system',
+        dedupeKey: input.dedupeKey,
+        agentDisplayName: input.agentDisplayName,
+      }, transaction)
     })
   }
 
@@ -549,6 +695,138 @@ export class PostgresConversationRepository {
       remaining -= content.length
       return { role: message.role, content }
     }).filter(message => message.content).reverse()
+  }
+
+  /**
+   * EX-02: messages of a workbench Session in chronological order, as input for
+   * buildConversationContext. With `beforeRunId` only messages that existed before
+   * that Run (excluding its own) are returned, like getConversationHistory; without
+   * it the whole Session is returned (used after a Run to decide on a summary).
+   */
+  async getConversationMessages(sessionId: string, beforeRunId: string | null): Promise<ContextMessage[]> {
+    const rows = await this.database<Array<ContextMessage & { senderName: string | null; team: boolean }>>`
+      with scoped as (
+        select m.id, m.role, m.content, m.created_at, su.display_name as "senderName",
+               (w.workspace_type = 'team') as team
+          from messages m
+          join sessions s on s.tenant_id = m.tenant_id and s.id = m.session_id
+          join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+          left join runs mr on mr.tenant_id = m.tenant_id and mr.id = m.run_id
+          left join users su
+            on su.tenant_id = m.tenant_id
+           and su.id = coalesce(m.sender_user_id, mr.requested_by, s.created_by)
+          left join runs current_run
+            on current_run.tenant_id = m.tenant_id and current_run.id = ${beforeRunId}
+         where m.tenant_id = ${tenantId}
+           and m.session_id = ${sessionId}
+           and s.audience = 'workbench'
+           and m.role in ('user', 'assistant')
+           and (${beforeRunId}::text is null or (
+             current_run.session_id = ${sessionId}
+             and m.run_id is distinct from current_run.id
+             and m.created_at < current_run.created_at))
+      ),
+      selected as (
+        (select * from scoped where role = 'user' order by created_at, id limit 1)
+        union
+        (select * from scoped order by created_at desc, id desc limit 500)
+      )
+      select id, role, content, "senderName", team,
+             to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
+        from selected
+       order by created_at, id
+    `
+    return rows.map(row => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      role: row.role,
+      content: row.team && row.role === 'user' && row.senderName ? `${row.senderName}：${row.content}` : row.content,
+    }))
+  }
+
+  /** EX-02: the latest succeeded summary of a Session. */
+  async getCurrentConversationSummary(sessionId: string): Promise<StoredConversationSummary | null> {
+    const [row] = await this.database<Array<{ content: string; messageId: string; createdAt: string; count: number }>>`
+      select content, covered_through_message_id as "messageId", covered_message_count as count,
+             to_char(covered_through_created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "createdAt"
+        from session_summaries
+       where tenant_id = ${tenantId} and session_id = ${sessionId} and status = 'succeeded'
+       order by covered_through_created_at desc, covered_through_message_id desc, completed_at desc
+       limit 1
+    `
+    return row ? { content: row.content, coveredThrough: { createdAt: row.createdAt, id: row.messageId }, coveredMessageCount: row.count } : null
+  }
+
+  async beginConversationSummary(input: {
+    sessionId: string
+    coverThrough: MessagePosition
+    coveredMessageCount: number
+  }): Promise<string | null> {
+    return this.database.begin(async transaction => {
+      await transaction`
+        update session_summaries
+           set status = 'failed', failure_reason = 'stale', completed_at = now()
+         where tenant_id = ${tenantId} and session_id = ${input.sessionId}
+           and status = 'pending' and created_at < now() - interval '15 minutes'
+      `
+      const id = `session-summary-${randomUUID()}`
+      const inserted = await transaction<{ id: string }[]>`
+        insert into session_summaries (
+          id, tenant_id, session_id, status, covered_through_message_id,
+          covered_through_created_at, covered_message_count
+        )
+        select ${id}, ${tenantId}, s.id, 'pending', ${input.coverThrough.id},
+               ${input.coverThrough.createdAt}::timestamptz, ${input.coveredMessageCount}
+          from sessions s
+         where s.tenant_id = ${tenantId} and s.id = ${input.sessionId}
+           and s.status = 'active' and s.audience = 'workbench'
+        on conflict (tenant_id, session_id) where status = 'pending' do nothing
+        returning id
+      `
+      return inserted[0]?.id ?? null
+    })
+  }
+
+  async attachConversationSummaryRun(summaryId: string, runId: string): Promise<void> {
+    await this.database`
+      update session_summaries set source_run_id = ${runId}
+       where tenant_id = ${tenantId} and id = ${summaryId} and status = 'pending'
+    `
+  }
+
+  async finishConversationSummary(runId: string, result: { content: string; sha256: string } | { failure: string }): Promise<boolean> {
+    const rows = 'content' in result
+      ? await this.database`
+          update session_summaries
+             set status = 'succeeded', content = ${result.content}, content_sha256 = ${result.sha256}, completed_at = now()
+           where tenant_id = ${tenantId} and source_run_id = ${runId} and status = 'pending'
+          returning id
+        `
+      : await this.database`
+          update session_summaries
+             set status = 'failed', failure_reason = ${result.failure.slice(0, 200)}, completed_at = now()
+           where tenant_id = ${tenantId} and source_run_id = ${runId} and status = 'pending'
+          returning id
+        `
+    return rows.length > 0
+  }
+
+  async abandonConversationSummary(summaryId: string, reason: string): Promise<void> {
+    await this.database`
+      update session_summaries set status = 'failed', failure_reason = ${reason.slice(0, 200)}, completed_at = now()
+       where tenant_id = ${tenantId} and id = ${summaryId} and status = 'pending'
+    `
+  }
+
+  async summarizableSessionWorkspace(sessionId: string): Promise<string | null> {
+    const [row] = await this.database<{ workspaceId: string }[]>`
+      select s.workspace_id as "workspaceId"
+        from sessions s
+        join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
+       where s.tenant_id = ${tenantId} and s.id = ${sessionId}
+         and s.status = 'active' and s.audience = 'workbench' and w.status = 'active'
+    `
+    return row?.workspaceId ?? null
   }
 
   /**
@@ -674,7 +952,10 @@ export class PostgresConversationRepository {
         join workspaces w on w.tenant_id = s.tenant_id and w.id = s.workspace_id
         left join lateral (select r.id, r.status from runs r where r.tenant_id = s.tenant_id and r.session_id = s.id
           order by r.created_at desc, r.id desc limit 1) latest on true
-       where s.tenant_id = ${tenantId} and s.audience = 'workbench' and s.status = 'active'
+       where s.tenant_id = ${tenantId} and s.audience = 'workbench'
+         and ${sessionId
+           ? this.database`(s.status = 'active' or (s.status = 'draft' and s.id = ${sessionId}))`
+           : this.database`s.status = 'active'`}
          and s.created_by = ${input.actorUserId}
          and (${readableWorkspacePredicate(this.database, input.actorUserId)})
          and ${scope === 'all' ? this.database`true` : this.database`w.workspace_type = ${scope}`}
@@ -941,6 +1222,67 @@ export class PostgresConversationRepository {
    * requester and the Agent recorded in the Run manifest (falling back to the
    * session-bound Agent for legacy rows).
    */
+  async listSessionMessagePage(input: {
+    sessionId: string
+    runId?: string
+    cursor?: string | null
+    limit?: number
+  }): Promise<{ items: ExportableSessionMessage[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 100)
+    let afterValid = false
+    if (input.cursor) {
+      const [boundary] = await this.database<{ id: string }[]>`
+        select id from messages
+         where tenant_id = ${tenantId} and session_id = ${input.sessionId}
+           and id = ${input.cursor}
+      `
+      if (!boundary) throw requestInvalid('无效的消息分页游标')
+      afterValid = true
+    }
+    const rows = await this.database<MessageRow[]>`
+      select m.id, m.role, m.content, m.created_at as "createdAt", m.run_id as "runId",
+             coalesce(m.sender_user_id, r.requested_by) as "senderId",
+             su.display_name as "senderName",
+             r.requested_by as "runRequesterId", ru.display_name as "runRequesterName",
+             ag.name as "agentName"
+        from messages m
+        left join runs r on r.tenant_id = m.tenant_id and r.id = m.run_id
+        left join users su on su.tenant_id = m.tenant_id
+          and su.id = coalesce(m.sender_user_id, r.requested_by)
+        left join users ru on ru.tenant_id = r.tenant_id and ru.id = r.requested_by
+        left join run_attempts ra on ra.tenant_id = r.tenant_id and ra.id = r.current_attempt_id
+        left join sessions ms on ms.tenant_id = m.tenant_id and ms.id = m.session_id
+        left join agent_versions av on av.tenant_id = m.tenant_id
+          and av.id = coalesce(ra.manifest ->> 'agent_version_id', ms.agent_version_id)
+        left join agents ag on ag.tenant_id = av.tenant_id and ag.id = av.agent_id
+       where m.tenant_id = ${tenantId} and m.session_id = ${input.sessionId}
+         and m.role in ('user', 'assistant')
+         and ${input.runId ? this.database`m.run_id = ${input.runId}` : this.database`true`}
+         and ${afterValid
+           ? this.database`(m.created_at, m.id) > (
+               select b.created_at, b.id from messages b
+                where b.tenant_id = ${tenantId} and b.session_id = ${input.sessionId}
+                  and b.id = ${input.cursor}
+             )`
+           : this.database`true`}
+       order by m.created_at asc, m.id asc
+       limit ${limit + 1}
+    `
+    const hasMore = rows.length > limit
+    const page = hasMore ? rows.slice(0, limit) : rows
+    return {
+      items: page.map(row => ({
+        id: row.id,
+        role: row.role,
+        content: row.content,
+        senderName: row.senderName ?? undefined,
+        runId: row.runId,
+        createdAt: row.createdAt,
+      })),
+      nextCursor: hasMore ? page[page.length - 1]!.id : null,
+    }
+  }
+
   private async loadSessionMessages(
     sessionId: string,
     options: { runId?: string; limit?: number; beforeMessageId?: string } = {},
@@ -1245,12 +1587,14 @@ export class PostgresConversationRepository {
         `
       : []
     const recordVersions = row.currentAttemptId
-      ? await this.database<Array<{ id: string; deleted: boolean }>>`
-          select id, false as deleted from agent_data_record_versions
+      ? await this.database<Array<{ id: string; attemptId: string; runId: string; deleted: boolean }>>`
+          select id, source_attempt_id as "attemptId", source_run_id as "runId", false as deleted
+            from agent_data_record_versions
            where tenant_id = ${tenantId} and source_run_id = ${row.id}
              and source_attempt_id = ${row.currentAttemptId}
           union all
-          select version_id as id, true as deleted from agent_data_record_deletions
+          select version_id as id, source_attempt_id as "attemptId", source_run_id as "runId", true as deleted
+            from agent_data_record_deletions
            where tenant_id = ${tenantId} and source_run_id = ${row.id}
              and source_attempt_id = ${row.currentAttemptId}
         `
@@ -1475,6 +1819,15 @@ export function toRunError(runId: string, errorCode: string | null | undefined):
   return { code, object: `运行 ${runId}`, ...detail }
 }
 
+export interface ExportableSessionMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  senderName?: string
+  runId: string | null
+  createdAt: Date
+}
+
 function mapMessage(row: MessageRow): ChatMessage {
   return {
     id: row.id,
@@ -1570,6 +1923,18 @@ function formatSize(bytes: number) {
 /** Cursor for the (last_active_at, id) keyset; base64url keeps it URL-safe. */
 function encodeSessionCursor(lastActiveAt: string, id: string) {
   return Buffer.from(JSON.stringify({ at: lastActiveAt, id })).toString('base64url')
+}
+
+function dedupeUserIds(raw: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const id of raw) {
+    const trimmed = id.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    result.push(trimmed)
+  }
+  return result
 }
 
 function decodeSessionCursor(cursor: string): { lastActiveAt: string; id: string } {

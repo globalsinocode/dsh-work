@@ -137,6 +137,21 @@ describe('WorkspaceSessionHistory 团队历史对话视图', () => {
     })
   })
 
+  it('marks task threads and opens them inside the task detail instead of the 对话 tab', async () => {
+    mockSessionPages(() => page([
+      session({ sessionId: 'session-task', projectTaskId: 'ptask-7', latestRun: { id: 'run-7', status: 'running' } }),
+      session({ sessionId: 'session-plain', projectTaskId: null }),
+    ]))
+    const wrapper = mountHistory()
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="session-history-row"]')
+    expect(rows[0]!.find('[data-testid="session-history-task-badge"]').text()).toBe('任务')
+    expect(rows[1]!.find('[data-testid="session-history-task-badge"]').exists()).toBe(false)
+    await rows[0]!.trigger('click')
+    expect(router.push).toHaveBeenCalledWith('/workspaces/ws-team/tasks/ptask-7/thread/run-7')
+  })
+
   it('appends the next cursor page and shows the end marker once exhausted', async () => {
     vi.mocked(workbenchApi.listWorkspaceSessions)
       .mockResolvedValueOnce(page([session({ sessionId: 's-1' })], 'cursor-1'))

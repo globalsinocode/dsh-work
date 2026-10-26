@@ -119,10 +119,10 @@ fixture.router.post('/api/workbench/v1/test/automations/:automationId/publish-ag
   await fixture.db.client`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, system_prompt,
-      visible_role_ids, data_scopes, skill_refs, tool_refs, status, created_by
+      skill_refs, web_search_enabled, project_tasks_enabled, status, created_by
     )
     select ${versionId}, tenant_id, agent_id, '2.0.0', name, description, system_prompt,
-           visible_role_ids, data_scopes, skill_refs, tool_refs, 'published', ${ownerUserId}
+           skill_refs, web_search_enabled, project_tasks_enabled, 'published', ${ownerUserId}
       from agent_versions
      where tenant_id = ${testTenant} and id = ${task.agentVersionId}
   `
@@ -138,7 +138,7 @@ fixture.router.post('/api/workbench/v1/test/automations/:automationId/publish-ag
 
 fixture.router.get('/api/workbench/v1/test/automations/:automationId/evidence', async (_request, context) => {
   const task = await fixture.automationService.getMine(ownerUserId, context.params['automationId'] ?? '')
-  const executions = await fixture.automationService.listExecutions(ownerUserId, task.id)
+  const executions = (await fixture.automationService.listExecutions(ownerUserId, task.id)).items
   const [agent] = task.agentId
     ? await fixture.db.client<{ activeVersionId: string | null }[]>`
         select active_version_id as "activeVersionId" from agents

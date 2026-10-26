@@ -12,13 +12,16 @@ import { createServer } from 'node:http'
 import { createThrowawayDatabase } from '../../server/src/infrastructure/postgres/test-database.ts'
 import { testApiAuthenticator } from '../../server/src/testing/test-identity.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
-import { PostgresAgentReleaseService } from '../../server/src/modules/agent/postgres-agent-release-service.ts'
-import { PostgresToolConnectorService } from '../../server/src/modules/tool/postgres-tool-connector-service.ts'
+import { PostgresAgentAccessService } from '../../server/src/modules/agent/agent-access-service.ts'
+import { PostgresAgentValidationService } from '../../server/src/modules/agent/agent-validation-service.ts'
+import { PostgresAgentRunHistory } from '../../server/src/modules/agent/agent-run-history.ts'
+import { builtinTools } from '../../server/src/modules/runtime/builtin-tools.ts'
+import { PostgresMcpConnectorService } from '../../server/src/modules/tool/postgres-mcp-connector-service.ts'
 import { PostgresEncryptedCredentialStore } from '../../server/src/modules/tool/postgres-encrypted-credential-store.ts'
 import type { AgentRuntimePort, McpInspectionResult } from '../../server/src/modules/runtime/runtime-types.ts'
 import { registerToolRoutes } from '../../server/src/http/admin/tool-routes.ts'
 import { registerAgentRoutes } from '../../server/src/http/admin/agent-routes.ts'
-import { registerAgentReleaseRoutes } from '../../server/src/http/admin/agent-release-routes.ts'
+import { registerAgentValidationRoutes } from '../../server/src/http/admin/agent-validation-routes.ts'
 import { registerAgentRoutineRoutes } from '../../server/src/http/admin/agent-routine-routes.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { AgentRoutineService } from '../../server/src/modules/automation/agent-routine-service.ts'
@@ -70,8 +73,8 @@ const credentialSecrets = new PostgresEncryptedCredentialStore(database.client, 
   masterKeyBase64: Buffer.alloc(32, 9).toString('base64'),
   keyId: 'p1-browser-v1',
 })
-const connectorService = new PostgresToolConnectorService(database.client, runtime, undefined, credentialSecrets)
-const agents = new PostgresAgentService(database.client, undefined, undefined, connectorService)
+const mcpService = new PostgresMcpConnectorService(database.client, runtime, undefined, credentialSecrets)
+const agents = new PostgresAgentService(database.client, undefined, undefined, mcpService)
 const router = new Router({ authenticateApi: testApiAuthenticator })
 const base = '/api/admin/v1'
 
@@ -87,16 +90,16 @@ router.get(`${base}/session`, (_request, context) => {
 router.get(`${base}/tasks`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/runtimes`, () => envelope('admin', [], 'postgres'))
 router.get(`${base}/workspaces`, () => envelope('admin', [], 'postgres'))
-registerAgentRoutes(router, agents)
+registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 const routineRuns = new PostgresRunRepository(database.client)
 const routineConversations = new PostgresConversationRepository(database.client)
 const routineOrchestration = new RunOrchestrationService(routineRuns, routineConversations,
   new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime,
   undefined, undefined, agents, undefined, authorization,
   { tasks: new PostgresTaskRepository(database.client) })
-// 发布服务第五个参数是试运行编排：此前误传临时目录字符串，导致该夹具中无法发起试运行。
-registerAgentReleaseRoutes(router, new PostgresAgentReleaseService(database.client, agents, undefined,
-  connectorService, routineOrchestration))
+// 验证服务第五个参数是验证案例的运行编排。
+registerAgentValidationRoutes(router, agents, new PostgresAgentValidationService(database.client, agents, undefined,
+  routineOrchestration, mcpService), new PostgresAgentRunHistory(database.client))
 registerAgentRoutineRoutes(router, new AgentRoutineService(database.client, authorization,
   routineRuns, routineOrchestration, routineConversations))
 router.get(`${base}/test/agent-routine/fixture`, async () => {
@@ -120,7 +123,7 @@ router.get(`${base}/platform-status`, () => envelope('admin', {
   mode: 'test', identity: 'prototype', persistence: 'postgres', runtime: 'synthetic',
 }, 'postgres'))
 router.get(`${base}/assistant/sessions`, () => envelope('admin', [], 'postgres'))
-registerToolRoutes(router, connectorService)
+registerToolRoutes(router, mcpService, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
 
 router.get(`${base}/test/agent-principal/evidence`, async (_request, context) => {
   const agentVersionId = context.url.searchParams.get('agent_version_id') ?? ''
@@ -135,6 +138,15 @@ router.get(`${base}/test/agent-principal/evidence`, async (_request, context) =>
   }
 })
 
+/** 选定该连接器的 Agent 在新 Attempt 中能解析到的连接；不可用时为空。 */
+async function selectedConnections(connectorId: string) {
+  try {
+    return await mcpService.resolveConnections({ mode: 'selected', connectorIds: [connectorId] })
+  } catch {
+    return []
+  }
+}
+
 router.post(`${base}/test/mcp/capabilities`, async (request) => {
   const input = await readJsonBody<{ changed?: boolean }>(request)
   capabilities = input.changed
@@ -146,15 +158,8 @@ router.post(`${base}/test/mcp/capabilities`, async (request) => {
 })
 router.get(`${base}/test/mcp/evidence`, async (_request, context) => {
   const connectorId = context.url.searchParams.get('connector_id') ?? ''
-  const connections = await connectorService.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
-  const [counts] = await database.client<{ platformToolCount: number }[]>`
-    select count(*)::int as "platformToolCount"
-      from tools
-     where tenant_id = 'tenant-dsh-work' and connector_id = ${connectorId}
-  `
-  assert.ok(counts)
+  const connections = await selectedConnections(connectorId)
   return envelope('admin', {
-    ...counts,
     resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,
   }, 'postgres')
 })
@@ -164,7 +169,6 @@ router.get(`${base}/test/agent-capabilities/evidence`, async (_request, context)
   return envelope('admin', {
     systemPrompt: snapshot.systemPrompt,
     runtimeTools: snapshot.runtimeTools,
-    toolBindings: snapshot.toolBindings,
     mcpConnectorIds: snapshot.mcpConnections.map(connection => connection.connector_id),
   }, 'postgres')
 })
@@ -181,7 +185,7 @@ router.get(`${base}/test/mcp/deletion-evidence`, async (_request, context) => {
      where c.tenant_id = 'tenant-dsh-work' and c.id = ${connectorId}
   `
   assert.ok(evidence)
-  const connections = await connectorService.resolveMcpConnectionsForAgentVersion('agent-version-dsh-work-assistant-1')
+  const connections = await selectedConnections(connectorId)
   return envelope('admin', {
     ...evidence,
     resolvedConnectionCount: connections.filter(connection => connection.connector_id === connectorId).length,

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(import.meta.dirname, '../..')
 const expectedIds = new Set([
   'session-neutral-task', 'external-action', 'cumulative-budget', 'mcp-connector',
-  'persistent-wait', 'controlled-memory', 'agent-delegation'
+  'persistent-wait', 'controlled-memory'
 ])
 const requiredEvidence = [
   'matrixVersion', 'codeRevision', 'deploymentVersion', 'environment', 'executedAt', 'actor',
@@ -20,7 +20,7 @@ export function validateMatrix(matrix, scripts) {
   for (const capability of matrix.capabilities) {
     if (!expectedIds.has(capability.id) || seen.has(capability.id)) errors.push(`能力 ID 无效或重复: ${capability.id}`)
     seen.add(capability.id)
-    if (!/^PF-0[1-6]$/.test(capability.package)) errors.push(`${capability.id}: 实施包无效`)
+    if (!/^PF-0[1-5]$/.test(capability.package)) errors.push(`${capability.id}: 实施包无效`)
     for (const level of ['p0', 'p1']) {
       if (!Array.isArray(capability[level]) || !capability[level].length) {
         errors.push(`${capability.id}: 缺少 ${level} 测试`)

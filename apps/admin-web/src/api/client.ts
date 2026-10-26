@@ -1,23 +1,23 @@
+import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
 import type { AdminConversation, SkillInstallation } from '../types/assistant'
 import type {
   AdminSession,
   AdminTaskSummary,
   AgentDefinition,
-  AgentEvalCase,
   AgentJoinedWorkspaceRecord,
-  AgentPrincipalGovernance,
+  AgentAccess,
   AgentRoutine,
   AgentRoutineExecution,
-  AgentReleaseState,
-  AgentSubmissionSummary,
-  AgentVersionEvidenceEntry,
   CreateAgentDraftInput,
   CreateSkillInput,
-  AgentReleaseRecord,
+  AgentReleaseOverview,
+  AgentValidation,
+  AgentVersionHistoryItem,
+  AgentRunSummary,
   AgentVersionRecord,
   AuditEvent,
   ConnectorDefinition,
-  DshRuntimeToolConnectorStatus,
+  BuiltinToolStatus,
   McpConnectionTestResult,
   McpConnectorDeletionResult,
   McpInvocationAudit,
@@ -26,7 +26,7 @@ import type {
   GrantSourceReconciliationView,
   HealthComponent,
   IdentityRoleSummary,
-  AgentPrincipalRoleOption,
+  UpdateAgentAccessInput,
   IdentityUserPage,
   IdentityUserSummary,
   ListPage,
@@ -39,6 +39,7 @@ import type {
   OperationsSummary,
   PlatformStatus,
   PersistentApproval,
+  AgentExperience,
   ExperienceIterationAgentSummary,
   ExperienceIterationApplication,
   RuntimeDefinition,
@@ -47,10 +48,11 @@ import type {
   SkillReleaseRecord,
   SkillTestRunProgress,
   SkillVersionRecord,
-  ToolBindingRecord,
-  ToolDefinition,
-  ToolCatalogSyncResult,
   ToolCatalogCandidate,
+  ToolCatalogSyncResult,
+  ToolDefinition,
+  ToolBindingRecord,
+  DshRuntimeToolConnectorStatus,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
@@ -110,6 +112,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
     const error = new AdminApiError(payload?.error ?? {}, response.status, fallback)
     if (response.status === 401 && path !== '/session') redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
 
@@ -146,6 +151,12 @@ export const adminApi = {
     request<ExperienceIterationApplication>(`/experience-iterations/applications/${encodeURIComponent(applicationId)}/review`, {
       method: 'POST', body: JSON.stringify(input),
     }),
+  getAgentExperiences: (agentId: string) =>
+    request<AgentExperience[]>(`/experience-iterations/agents/${encodeURIComponent(agentId)}/experiences`),
+  setAgentExperienceVersion: (agentId: string, entryId: string, input: { versionId: string | null; expectedVersionId: string | null; reason: string }) =>
+    request<AgentExperience>(`/experience-iterations/agents/${encodeURIComponent(agentId)}/experiences/${encodeURIComponent(entryId)}/current`, {
+      method: 'PUT', body: JSON.stringify(input),
+    }),
   getApprovals: (status?: PersistentApproval['status']) => request<PersistentApproval[]>(`/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   resolveApproval: (approvalId: string, input: { decision: 'approved' | 'rejected'; resolutionKey: string; comment?: string }) =>
     request<PersistentApproval>(`/approvals/${encodeURIComponent(approvalId)}/resolve`, { method: 'POST', body: JSON.stringify(input) }),
@@ -181,40 +192,36 @@ export const adminApi = {
   getWorkspaces: () => request<ManagedWorkspaceDefinition[]>('/workspaces'),
   getAgents: () => request<AgentDefinition[]>('/agents'),
   getAgentVersions: () => request<AgentVersionRecord[]>('/agent-versions'),
-  getAgentReleaseRecords: () => request<AgentReleaseRecord[]>('/agent-release-records'),
   createAgentDraft: (input: CreateAgentDraftInput) =>
     request<{ agent: AgentDefinition; version: AgentVersionRecord }>('/agents', {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  updateAgentDraft: (input: UpdateAgentDraftInput) =>
-    request<{ agent: AgentDefinition; version: AgentVersionRecord }>('/agents/draft', {
+  updateAgentDraft: ({ agentId, ...input }: UpdateAgentDraftInput) =>
+    request<{ agent: AgentDefinition; version: AgentVersionRecord }>(`/agents/${encodeURIComponent(agentId)}/draft`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),
   setAgentStatus: (input: { agentId: string; status: 'published' | 'disabled' }) =>
-    request<{ agent: AgentDefinition; release: AgentReleaseRecord }>('/agents/status', {
+    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/status`, {
       method: 'PATCH',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ status: input.status }),
     }),
   rollbackAgent: (input: { agentId: string; version: string }) =>
-    request<{ agent: AgentDefinition; release: AgentReleaseRecord }>('/agents/rollback', {
+    request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}/rollback`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ version: input.version }),
     }),
   setAgentWorkspaceJoin: (input: { agentId: string; allowWorkspaceJoin: boolean }) =>
     request<{ agent: AgentDefinition }>(`/agents/${encodeURIComponent(input.agentId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ allowWorkspaceJoin: input.allowWorkspaceJoin }),
     }),
-  getAgentPrincipal: (agentId: string) =>
-    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(agentId)}/principal`),
-  getAgentPrincipalRoleOptions: () => request<AgentPrincipalRoleOption[]>('/agents/principal-role-options'),
-  updateAgentPrincipal: (input: AgentPrincipalGovernance) =>
-    request<AgentPrincipalGovernance>(`/agents/${encodeURIComponent(input.agentId)}/principal`, {
-      method: 'PATCH',
-      body: JSON.stringify({ expectedAuthorizationVersion: input.authorizationVersion,
-        status: input.status, roleIds: input.roleIds, dataScopes: input.dataScopes }),
+  getAgentAccess: (agentId: string) =>
+    request<AgentAccess>(`/agents/${encodeURIComponent(agentId)}/access`),
+  updateAgentAccess: (agentId: string, input: UpdateAgentAccessInput) =>
+    request<AgentAccess>(`/agents/${encodeURIComponent(agentId)}/access`, {
+      method: 'PATCH', body: JSON.stringify(input),
     }),
   getAgentRoutines: (agentId: string) =>
     request<AgentRoutine[]>(`/agents/${encodeURIComponent(agentId)}/routines`),
@@ -246,55 +253,30 @@ export const adminApi = {
     }),
   getAgentRoutineExecutions: (agentId: string, routineId: string) =>
     request<AgentRoutineExecution[]>(`/agents/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/executions`),
-  getAgentReleaseSubmissions: () => request<{ items: AgentSubmissionSummary[] }>('/agent-release-submissions'),
-  getAgentVersionEvidence: () => request<{ items: AgentVersionEvidenceEntry[] }>('/agent-version-evidence'),
-  getAgentReleaseState: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release`),
-  ensureAgentReleaseCandidate: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/candidate`, { method: 'POST' }),
-  updateAgentPublicationScope: (agentId: string, input: { roleIds: string[]; dataScopes: string[] }) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publication-scope`, {
-      method: 'PATCH', body: JSON.stringify(input),
+  getAgentRelease: (agentId: string) =>
+    request<{ agent: AgentDefinition; release: AgentReleaseOverview }>(`/agents/${encodeURIComponent(agentId)}`),
+  getAgentRuns: (agentId: string, limit = 20) =>
+    request<{ items: AgentRunSummary[] }>(`/agents/${encodeURIComponent(agentId)}/runs?limit=${limit}`),
+  getAgentVersionHistory: (agentId: string) =>
+    request<{ items: AgentVersionHistoryItem[] }>(`/agents/${encodeURIComponent(agentId)}/versions`),
+  replaceAgentTestCases: (agentId: string, prompts: string[]) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/test-cases`, {
+      method: 'PUT', body: JSON.stringify({ prompts }),
     }),
-  updateAgentReleaseCases: (agentId: string, cases: AgentEvalCase[]) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/cases`, {
-      method: 'POST',
-      body: JSON.stringify({ cases }),
-    }),
-  startAgentReleaseTrial: (agentId: string, caseId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/case-trials`, { method: 'POST', body: JSON.stringify({ caseId }) }),
-  continueAgentReleaseTrialCase: (agentId: string, trialId: string, input: { caseId: string; input: string; rubric: string }) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cases`, {
+  startAgentValidation: (agentId: string) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/validations`, { method: 'POST' }),
+  getAgentValidation: (agentId: string, validationId: string) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}`),
+  rerunAgentValidationCase: (agentId: string, validationId: string, caseId: string) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}/cases/${encodeURIComponent(caseId)}/rerun`, { method: 'POST' }),
+  setAgentValidationVerdict: (agentId: string, validationId: string, caseId: string, input: { verdict: 'passed' | 'failed'; note?: string }) =>
+    request<AgentValidation>(`/agents/${encodeURIComponent(agentId)}/validations/${encodeURIComponent(validationId)}/cases/${encodeURIComponent(caseId)}/verdict`, {
       method: 'POST', body: JSON.stringify(input),
     }),
-  confirmAgentReleaseTrial: (agentId: string, trialId: string, verdicts: Array<{ caseId: string; verdict: 'passed' | 'failed'; note?: string }>) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/confirm`, { method: 'POST', body: JSON.stringify({ verdicts }) }),
-  cancelAgentReleaseTrial: (agentId: string, trialId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/trials/${encodeURIComponent(trialId)}/cancel`, { method: 'POST' }),
-  requestAgentReleaseChanges: (agentId: string, note: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/request-changes`, {
-      method: 'POST',
-      body: JSON.stringify({ note }),
+  publishAgent: (agentId: string, input: { validationId: string; note?: string }) =>
+    request<AgentReleaseOverview>(`/agents/${encodeURIComponent(agentId)}/publish`, {
+      method: 'POST', body: JSON.stringify(input),
     }),
-  withdrawAgentRelease: (agentId: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/withdraw`, { method: 'POST' }),
-  publishAgentRelease: (agentId: string, note: string) =>
-    request<AgentReleaseState>(`/agents/${encodeURIComponent(agentId)}/release/publish`, {
-      method: 'POST',
-      body: JSON.stringify({ note }),
-    }),
-  downloadAgentVersionPackage: async (agentId: string, versionId: string): Promise<Blob> => {
-    const response = await fetch(`${baseUrl}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/package`, {
-      credentials: 'include',
-      headers: { Accept: 'application/zip' },
-    })
-    if (!response.ok) {
-      const payload = await response.json().catch(() => undefined) as { error?: ApiErrorPayload } | undefined
-      if (response.status === 401) redirectToLogin()
-      throw new AdminApiError(payload?.error ?? {}, response.status, `Agent 包导出失败（${response.status}）`)
-    }
-    return response.blob()
-  },
   getAgentJoinedWorkspaces: (agentId: string) =>
     request<{ items: AgentJoinedWorkspaceRecord[] }>(`/agents/${encodeURIComponent(agentId)}/workspaces`),
   getGrantSourceReconciliation: () =>
@@ -333,9 +315,16 @@ export const adminApi = {
   }) => request<ToolDefinition>('/tools', { method: 'POST', body: JSON.stringify(input) }),
   setToolStatus: (input: { toolId: string; status: 'available' | 'disabled' }) =>
     request<ToolDefinition>('/tools/status', { method: 'PATCH', body: JSON.stringify(input) }),
+  updateToolPermissions: (input: {
+    toolId: string
+    allowedRoles: string[]
+    dataScopes: string[]
+    approvalPolicy: ToolDefinition['approvalPolicy']
+  }) => request<ToolDefinition>('/tools/permissions', { method: 'PATCH', body: JSON.stringify(input) }),
   getMcpConnectors: () => request<ConnectorDefinition[]>('/connectors'),
   getDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector'),
   checkDshRuntimeToolConnector: () => request<DshRuntimeToolConnectorStatus>('/runtimes/dsh-tool-connector/check', { method: 'POST' }),
+  getBuiltinTools: () => request<BuiltinToolStatus>('/runtimes/builtin-tools'),
   getMcpInvocationAudits: (connectorId: string) =>
     request<McpInvocationAudit[]>(`/connectors/mcp/invocations?connector_id=${encodeURIComponent(connectorId)}`),
   testMcpConnection: (input: {
@@ -380,14 +369,10 @@ export const adminApi = {
     request<ConnectorDefinition>('/connectors/mcp/credential', { method: 'PATCH', body: JSON.stringify(input) }),
   checkConnector: (input: { connectorId: string }) =>
     request<ConnectorDefinition>('/connectors/check', { method: 'POST', body: JSON.stringify(input) }),
+  approveMcpCapabilities: (input: { connectorId: string; capabilityDigest: string }) =>
+    request<ConnectorDefinition>('/connectors/mcp/capabilities/approve', { method: 'POST', body: JSON.stringify(input) }),
   setMcpConnectorStatus: (input: { connectorId: string; status: 'enabled' | 'disabled' }) =>
     request<ConnectorDefinition>('/connectors/mcp/status', { method: 'PATCH', body: JSON.stringify(input) }),
-  updateToolPermissions: (input: {
-    toolId: string
-    allowedRoles: string[]
-    dataScopes: string[]
-    approvalPolicy: ToolDefinition['approvalPolicy']
-  }) => request<ToolDefinition>('/tools/permissions', { method: 'PATCH', body: JSON.stringify(input) }),
   getAuditEvents: (input: { query?: string; status?: string; category?: string; page?: number; pageSize?: number } = {}) =>
     request<ListPage<AuditEvent>>(`/audit-events${listQuery(input)}`),
   getOperationsSummary: () => request<OperationsSummary>('/operations/summary'),

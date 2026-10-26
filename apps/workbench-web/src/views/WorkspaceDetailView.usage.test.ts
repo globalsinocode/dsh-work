@@ -25,7 +25,15 @@ const holders = vi.hoisted(() => ({
 vi.mock('vue-router', async () => {
   const { reactive } = await import('vue')
   holders.route = reactive({ query: {} as Record<string, unknown>, params: { id: 'ws-team-1' } })
-  return { useRouter: () => holders.router, useRoute: () => holders.route }
+  const { defineComponent, h } = await import('vue')
+  const RouterLink = defineComponent({
+    props: { to: { type: [String, Object], required: true } },
+    setup(props, { slots }) {
+      return () => h('a', { href: String(props.to) }, slots.default?.())
+    },
+  })
+  const RouterView = defineComponent({ setup: () => () => h('div') })
+  return { useRouter: () => holders.router, useRoute: () => holders.route, RouterLink, RouterView }
 })
 
 function ws(id: string, overrides: Partial<Workspace> = {}): Workspace {

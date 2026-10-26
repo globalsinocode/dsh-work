@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
+import { builtinTools } from './builtin-tools.ts'
 import { request } from 'node:http'
 import { test } from 'node:test'
 
+import { stateConflict } from '../../domain/request-errors.ts'
 import { platformToolOperationKey, taskOperationParameterDigest } from '../task/postgres-task-repository.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { compileToolContract, toolPreconditionFailed, type PlatformToolContract } from './platform-tool-contract.ts'
 import {
   assertPlatformToolPurpose,
-  dshWorkBuiltInToolDefinitions,
   platformToolContracts,
   platformToolsForPurpose,
 } from './platform-tool-contracts.ts'
@@ -37,8 +38,6 @@ test('memory proposal operation keys are scoped to an Attempt without changing o
 
 test('all governed platform tool contracts compile in strict JSON Schema mode', () => {
   for (const contract of Object.values(platformToolContracts)) assert.doesNotThrow(() => compileToolContract(contract))
-  assert.equal(platformToolContracts.delegate_agent.completionSemantics, 'accepted',
-    'parent Task must not treat transport-level delegation success as proof that the child goal was achieved')
   assert.equal(platformToolContracts.propose_memory.completionSemantics, 'completed',
     'only the application staging completes; review and publication are separate human actions')
 })
@@ -71,27 +70,14 @@ test('EX-01 the bridge records each tool request outcome with its typed error co
   }
 })
 
-test('Agent data outputs require durable record references and distinguish trial-only replies', () => {
-  const create = compileToolContract(platformToolContracts.data_create)
-  assert.equal(create.output({ recordId: 'r1', recordVersionId: 'v1', version: 1 }), true)
-  assert.equal(create.output({ status: 'trial_only' }), true)
-  assert.equal(create.output({ version: 1 }), false)
-  const query = compileToolContract(platformToolContracts.data_query)
-  assert.equal(query.output({ records: [], nextCursor: null, trialOnly: true }), true)
-  assert.equal(query.output({ records: [] }), false)
-  const propose = compileToolContract(platformToolContracts.data_propose)
-  assert.equal(propose.output({ proposalId: 'p1', status: 'pending_admin_review' }), true)
-  assert.equal(propose.output({ status: 'trial_only' }), true)
-})
-
-test('dsh-work built-in tools use one explicit category and governance registry', () => {
+test('platform tools are registered once and injected only for their run purpose', () => {
   assert.deepEqual(
-    Object.entries(dshWorkBuiltInToolDefinitions)
-      .filter(([, definition]) => definition.category === 'dsh_work_execution')
-      .map(([name]) => name)
-      .sort(),
-    ['activate_skill', 'data_create', 'data_propose', 'data_query', 'data_transition', 'data_update',
-      'delegate_agent', 'propose_memory', 'python_execute', 'state_get', 'state_put'],
+    builtinTools.filter(tool => tool.source === 'platform').map(tool => tool.name).sort(),
+    Object.keys(platformToolContracts).sort(),
+  )
+  assert.deepEqual(
+    builtinTools.filter(tool => tool.source === 'platform' && tool.assembly === 'runtime').map(tool => tool.name).sort(),
+    ['activate_skill', 'propose_memory', 'python_execute'],
   )
   assert.deepEqual(
     platformToolsForPurpose('admin-assistant').map(tool => tool.id).sort(),
@@ -338,6 +324,52 @@ test('platform bridge preserves caller-correctable write preconditions', async (
       retryable: false,
       effect_state: 'not_started',
     })
+  } finally { await bridge.close() }
+})
+
+test('timeout waits until an aborting handler finishes cleanup', async () => {
+  let cleaned = false
+  const bridge = await createPlatformToolBridge({
+    read: {
+      contract: { ...baseContract, timeoutMs: 20 },
+      handler: async (_input, signal) => {
+        await new Promise<void>(resolve => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        await new Promise(resolve => setTimeout(resolve, 50))
+        cleaned = true
+        throw new DOMException('Aborted', 'AbortError')
+      },
+    },
+  }, 1)
+  try {
+    const timedOut = requireError((await call(bridge.socket, 'read', { value: 'x' })).body)
+    assert.equal(cleaned, true)
+    assert.equal(timedOut.code, 'TOOL_TIMEOUT')
+    assert.equal(timedOut.effect_state, 'not_started')
+  } finally { await bridge.close() }
+})
+
+test('timeout reports sandbox cleanup failure instead of a generic timeout', async () => {
+  const bridge = await createPlatformToolBridge({
+    write: {
+      contract: { ...baseContract, effect: 'write', retryPolicy: 'never', timeoutMs: 20 },
+      handler: async (_input, signal) => {
+        await new Promise<void>(resolve => {
+          if (signal.aborted) resolve()
+          else signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        throw stateConflict('Python 沙箱容器清理失败，容器可能仍在运行：dsh-py-test')
+      },
+    },
+  }, 1)
+  try {
+    const failed = requireError((await call(bridge.socket, 'write', { value: 'x' })).body)
+    assert.equal(failed.code, 'state_conflict')
+    assert.match(failed.message, /清理失败/)
+    assert.equal(failed.effect_state, 'unknown')
+    assert.equal(failed.retryable, false)
   } finally { await bridge.close() }
 })
 

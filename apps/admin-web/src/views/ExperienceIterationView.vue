@@ -132,7 +132,7 @@ onMounted(refresh)
     <main class="content-panel content-panel--flush application-panel">
         <el-table class="data-table" v-loading="loadingApplications" :data="pagedItems" empty-text="暂无符合条件的经验迭代申请">
           <el-table-column label="Agent" min-width="190">
-            <template #default="{ row }"><div class="primary-cell"><strong>{{ row.agentName }}</strong><small class="mono">{{ row.agentId }}</small></div></template>
+            <template #default="{ row }"><div class="primary-cell"><router-link class="agent-link" :to="{ path: `/agents/${encodeURIComponent(row.agentId)}`, query: { section: 'experience' } }" :aria-label="`打开 ${row.agentName} 的经验分区`">{{ row.agentName }}</router-link><small class="mono">{{ row.agentId }}</small></div></template>
           </el-table-column>
           <el-table-column label="申请" min-width="280">
             <template #default="{ row }"><div class="primary-cell"><strong>{{ row.title }}</strong><small>{{ row.content }}</small></div></template>
@@ -184,6 +184,7 @@ onMounted(refresh)
 .filter-bar .el-select { width: 180px; }
 .application-panel { min-width: 0; }
 .primary-cell { display: flex; min-width: 0; flex-direction: column; }
+.agent-link { color: var(--color-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
 .primary-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
 .primary-cell small { max-width: 440px; margin-top: 4px; overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
 .experience-content { margin: 0; white-space: pre-wrap; line-height: 1.65; }

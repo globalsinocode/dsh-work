@@ -80,7 +80,7 @@ packages/                  # Design Token 与共享无状态组件
 server/                    # Node.js / TypeScript 模块化单体
 ├── migrations/            # PostgreSQL 显式迁移
 └── src/modules/           # 领域、应用与适配器模块
-docs/                      # index、development、release、design、history
+docs/                      # index、development、release、design
 scripts/                   # 功能分组校验、Runtime 探针、CI 与发布部署
 e2e/                       # Playwright 浏览器冒烟
 ```
@@ -114,6 +114,7 @@ pnpm dev:admin
 - [文档导航与维护规则](docs/index/README.md)
 - [产品与系统架构总览](docs/development/overview.md)
 - [Agent 设计规范](docs/development/agent-design-standard.md)
+- [功能规则](docs/development/feature-rules.md)
 - [开发与测试](docs/development/development.md)
 - [Mac mini 部署手册](docs/release/mac-mini-deployment-runbook.md)
 - [数据模型](docs/design/data-model.md)

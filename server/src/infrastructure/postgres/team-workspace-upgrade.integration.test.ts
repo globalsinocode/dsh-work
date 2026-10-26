@@ -75,7 +75,7 @@ test('已有数据升级：0022 回填 legacy 来源并保持个人空间业务�
            (select count(*)::integer from workspace_grant_sources
              where tenant_id = ${tenantId} and source_type = 'legacy_unresolved') as legacy
   `
-  assert.equal(counts?.grants, preUpgradeSnapshot.grantCount)
+  assert.equal(counts?.grants, preUpgradeSnapshot.grantCount, '升级后不再保留工具授权')
   assert.equal(counts?.sources, preUpgradeSnapshot.grantCount)
   assert.equal(counts?.legacy, preUpgradeSnapshot.grantCount)
 
@@ -149,6 +149,10 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
     drop table if exists workspace_files;
     drop table if exists workspace_revocation_events;
     drop table if exists workspace_grant_sources;
+    -- 0091 的项目任务约束依赖 workspace_agent_members，随 0022 一并回滚，重新升级时重建。
+    alter table project_tasks drop constraint if exists project_tasks_assignee_agent_member_fk;
+    alter table project_tasks drop constraint if exists project_tasks_completed_by_fk;
+    alter table project_tasks drop constraint if exists project_tasks_removed_by_fk;
     drop table if exists workspace_agent_members;
     alter table agents drop column if exists allow_workspace_join;
     alter table workspaces drop column if exists team_auth_revision;
@@ -157,7 +161,8 @@ test('回滚兼容：删除 0022 对象后旧结构与个人数据完整，重�
       '0023_revocation_event_dead_letter.sql',
       '0025_workspace_file_versions.sql',
       '0026_workspace_activity.sql',
-      '0028_runs_and_usage_indexes.sql'
+      '0028_runs_and_usage_indexes.sql',
+      '0091_project_task_references.sql'
     );
   `)
 
@@ -309,10 +314,11 @@ async function snapshot(): Promise<Snapshot> {
  * 只依赖 0022 之前就存在的表；回滚场景（0022 对象已删除）也能安全读取。
  */
 async function baseSnapshot(): Promise<Omit<Snapshot, 'sourceCount'>> {
+  // 工具授权在 0096 随内置工具代码化删除；升级前后只比较 Agent 与 Skill 授权。
   const [grants] = await database<{ count: number, agentCount: number }[]>`
     select count(*)::integer as count,
            count(*) filter (where capability_type = 'agent')::integer as "agentCount"
-      from workspace_capability_grants where tenant_id = ${tenantId}
+      from workspace_capability_grants where tenant_id = ${tenantId} and capability_type <> 'tool'
   `
   const [personal] = await database<{ sessions: number, files: number, artifacts: number }[]>`
     select (select count(*)::integer from sessions s

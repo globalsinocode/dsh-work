@@ -1,4 +1,5 @@
 import type { AgentDefinition, UpdateAgentDraftInput, UpdateRuntimeConfigurationInput } from '../../../domain/types.ts'
+import { normalizeDisabledTools } from '../../runtime/builtin-tools.ts'
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import { redactSensitiveText } from '../../../security/safe-observability.ts'
 import { assertDraftCopyFields, assertDraftCopyPlan, DRAFT_COPY_POLICY } from '../../agent/agent-draft-copy-policy.ts'
@@ -88,9 +89,10 @@ interface ActionRow {
 }
 
 type AgentSnapshot = Pick<AgentDefinition,
-  'id' | 'name' | 'description' | 'owner' | 'department' | 'visibility' | 'roleIds' | 'dataScopes'
+  'id' | 'name' | 'description' | 'owner' | 'department'
   | 'welcomeMessage' | 'examplePrompts' | 'systemPrompt' | 'workInstructions' | 'mcpScope'
-  | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'tools'
+  | 'maxOutputBytes' | 'maxToolCalls' | 'timeoutSeconds' | 'skills' | 'webSearchEnabled'
+  | 'projectTasksEnabled'
   | 'status' | 'version'
 > & { revision: string }
 
@@ -106,6 +108,7 @@ interface RuntimeSnapshot {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: 'accepting' | 'draining' | 'disabled'
+  disabledTools: string[]
   revision: number
 }
 
@@ -472,7 +475,7 @@ export class AdminAssistantService {
 
   private async buildActionPlan(actionType: AdminActionType, target: string, summary: string, changes: Record<string, unknown>): Promise<StoredActionPlan> {
     if (actionType === 'runtime-update-configuration') {
-      assertOnlyKeys(changes, ['maxConcurrentWorkers', 'attemptTimeoutMinutes', 'schedulingStatus'])
+      assertOnlyKeys(changes, ['maxConcurrentWorkers', 'attemptTimeoutMinutes', 'schedulingStatus', 'disabledTools'])
       const runtime = findUnique(await this.operations.getRuntimes(), target, 'Runtime')
       const before: RuntimeSnapshot = await this.operations.getRuntimeMutationSnapshot(runtime.id)
       const after = {
@@ -480,6 +483,7 @@ export class AdminAssistantService {
         ...(changes['maxConcurrentWorkers'] === undefined ? {} : { maxConcurrentWorkers: readInteger(changes, 'maxConcurrentWorkers', 1, 1000) }),
         ...(changes['attemptTimeoutMinutes'] === undefined ? {} : { attemptTimeoutMinutes: readInteger(changes, 'attemptTimeoutMinutes', 1, 60) }),
         ...(changes['schedulingStatus'] === undefined ? {} : { schedulingStatus: readEnum(changes, 'schedulingStatus', ['accepting', 'draining', 'disabled'] as const) }),
+        ...(changes['disabledTools'] === undefined ? {} : { disabledTools: readDisabledTools(changes['disabledTools']) }),
         revision: before.revision + 1,
       }
       if (canonicalJson(omitKeys(before, ['revision'])) === canonicalJson(omitKeys(after, ['revision']))) throw requestInvalid('Runtime 操作计划没有实际变更')
@@ -500,7 +504,8 @@ export class AdminAssistantService {
       }
     }
 
-    const allowed = ['name', 'description', 'visibility', 'roleIds', 'dataScopes', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'tools', 'changeSummary']
+    // Access (audience, roles, data scopes) is not draft content and is not changed through draft plans.
+    const allowed = ['name', 'description', 'welcomeMessage', 'examplePrompts', 'systemPrompt', 'maxOutputBytes', 'maxToolCalls', 'timeoutSeconds', 'skills', 'webSearchEnabled', 'projectTasksEnabled', 'changeSummary']
     assertOnlyKeys(changes, allowed)
     const before = agentSnapshot(agent, mutation.revision)
     const after: Omit<UpdateAgentDraftInput, 'actor'> = {
@@ -509,19 +514,17 @@ export class AdminAssistantService {
       description: readChangedString(changes, 'description', agent.description, 1, 1000),
       owner: agent.owner,
       department: agent.department,
-      visibility: readChangedString(changes, 'visibility', agent.visibility, 1, 120),
-      roleIds: readChangedStringArray(changes, 'roleIds', agent.roleIds, 100),
-      dataScopes: readChangedStringArray(changes, 'dataScopes', agent.dataScopes, 100),
       welcomeMessage: readChangedString(changes, 'welcomeMessage', agent.welcomeMessage, 1, 2000),
       examplePrompts: readChangedStringArray(changes, 'examplePrompts', agent.examplePrompts, 20),
       systemPrompt: readChangedString(changes, 'systemPrompt', agent.systemPrompt, 20, 20000),
       workInstructions: agent.workInstructions ?? '',
-      mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
+      mcpScope: agent.mcpScope ?? { mode: 'none', connectorIds: [] },
       maxOutputBytes: changes['maxOutputBytes'] === undefined ? agent.maxOutputBytes : readInteger(changes, 'maxOutputBytes', 1, 10_000_000),
       maxToolCalls: changes['maxToolCalls'] === undefined ? agent.maxToolCalls : readInteger(changes, 'maxToolCalls', 1, 10_000),
       timeoutSeconds: changes['timeoutSeconds'] === undefined ? agent.timeoutSeconds : readInteger(changes, 'timeoutSeconds', 1, 3600),
       skills: readChangedStringArray(changes, 'skills', agent.skills, 100),
-      tools: readChangedStringArray(changes, 'tools', agent.tools, 100),
+      webSearchEnabled: readChangedBoolean(changes, 'webSearchEnabled', agent.webSearchEnabled),
+      projectTasksEnabled: readChangedBoolean(changes, 'projectTasksEnabled', agent.projectTasksEnabled),
       changeSummary: readChangedString(changes, 'changeSummary', summary, 1, 1000),
     }
     const comparableAfter = { ...after, id: after.agentId, status: agent.status, version: agent.version }
@@ -551,6 +554,7 @@ export class AdminAssistantService {
         maxConcurrentWorkers: plan.after.maxConcurrentWorkers,
         attemptTimeoutMinutes: plan.after.attemptTimeoutMinutes,
         schedulingStatus: plan.after.schedulingStatus,
+        disabledTools: plan.after.disabledTools,
         actor: userId,
       }, plan.before)
       return actionResultSummary(plan)
@@ -818,19 +822,17 @@ function agentSnapshot(agent: AgentDefinition, revision: string): AgentSnapshot 
     description: agent.description,
     owner: agent.owner,
     department: agent.department,
-    visibility: agent.visibility,
-    roleIds: [...agent.roleIds],
-    dataScopes: [...agent.dataScopes],
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
     workInstructions: agent.workInstructions ?? '',
-    mcpScope: agent.mcpScope ?? { mode: 'all', connectorIds: [] },
+    mcpScope: agent.mcpScope ?? { mode: 'none', connectorIds: [] },
     maxOutputBytes: agent.maxOutputBytes,
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
-    tools: [...agent.tools],
+    webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
     status: agent.status,
     version: agent.version,
     revision,
@@ -844,24 +846,22 @@ function agentDraftMatchesPlan(agent: AgentDefinition, after: Extract<StoredActi
     && agent.description === after.description
     && agent.owner === after.owner
     && agent.department === after.department
-    && agent.visibility === after.visibility
-    && canonicalJson(agent.roleIds) === canonicalJson(after.roleIds)
-    && canonicalJson(agent.dataScopes) === canonicalJson(after.dataScopes)
     && agent.welcomeMessage === after.welcomeMessage
     && canonicalJson(agent.examplePrompts) === canonicalJson(after.examplePrompts)
     && agent.systemPrompt === after.systemPrompt
     && (agent.workInstructions ?? '') === (after.workInstructions ?? '')
-    && canonicalJson(agent.mcpScope ?? { mode: 'all', connectorIds: [] }) === canonicalJson(after.mcpScope ?? { mode: 'all', connectorIds: [] })
+    && canonicalJson(agent.mcpScope ?? { mode: 'none', connectorIds: [] }) === canonicalJson(after.mcpScope ?? { mode: 'none', connectorIds: [] })
     && agent.maxOutputBytes === after.maxOutputBytes
     && agent.maxToolCalls === after.maxToolCalls
     && agent.timeoutSeconds === after.timeoutSeconds
     && canonicalJson(agent.skills) === canonicalJson(after.skills)
-    && canonicalJson(agent.tools) === canonicalJson(after.tools)
+    && agent.webSearchEnabled === after.webSearchEnabled
+    && agent.projectTasksEnabled === after.projectTasksEnabled
 }
 
 function actionResultSummary(plan: StoredActionPlan) {
   if (plan.actionType === 'runtime-update-configuration') {
-    return `Runtime“${plan.after.runtimeId}”配置已更新为 ${plan.after.schedulingStatus}，最大并发 ${plan.after.maxConcurrentWorkers}，Attempt 超时 ${plan.after.attemptTimeoutMinutes} 分钟。`
+    return `Runtime“${plan.after.runtimeId}”配置已更新为 ${plan.after.schedulingStatus}，最大并发 ${plan.after.maxConcurrentWorkers}，Attempt 超时 ${plan.after.attemptTimeoutMinutes} 分钟，停用工具：${plan.after.disabledTools?.join('、') || '无'}。`
   }
   if (plan.actionType === 'agent-set-status') return `Agent“${plan.after.agentId}”状态已更新为 ${plan.after.status}。`
   return `Agent“${plan.after.agentId}”的待发布草稿已按确认计划更新。`
@@ -952,4 +952,15 @@ function omitKeys(input: object, keys: string[]): Record<string, unknown> {
 
 function actionConflict(message: string) {
   return new RequestError(409, 'state_conflict', message)
+}
+
+function readDisabledTools(value: unknown): string[] {
+  try { return normalizeDisabledTools(value) }
+  catch (error) { throw requestInvalid(error instanceof Error ? error.message : '停用工具清单无效') }
+}
+
+function readChangedBoolean(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  if (input[key] === undefined) return fallback
+  if (typeof input[key] !== 'boolean') throw requestInvalid(`${key} 必须是布尔值`)
+  return input[key]
 }

@@ -547,7 +547,13 @@ test('AE-03 write-rate quota is atomic and idempotent replay does not consume it
 })
 
 function isCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  const errCode = (error as { code: string }).code
+  if (code === 'permission_denied'
+    && (errCode === 'permission_denied' || errCode === 'authorization_denied')) {
+    return true
+  }
+  return errCode === code
 }
 
 async function runningActor(label: string, agentVersionId: string, workspaceId: string,

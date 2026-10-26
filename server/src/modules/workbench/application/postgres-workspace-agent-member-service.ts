@@ -8,6 +8,8 @@ import type {
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, requestInvalid } from '../../../domain/authorization-errors.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
+import { insertNewSpaceEmployeeMembers, insertTeamWorkspaceRows } from './team-workspace-rows.ts'
+import { assertAddableEmployees } from './postgres-workspace-member-service.ts'
 import { PostgresWorkspaceGrantSourceService } from '../../authorization/postgres-workspace-grant-source-service.ts'
 import {
   currentTeamAuthRevision,
@@ -78,6 +80,11 @@ export interface AgentMemberRecord {
    * （灰色「已停用」已足够）。
    */
   unavailableReason: string | null
+  /**
+   * 项目空间 S0：Agent 在本空间可交付的数据范围（Agent 授权 ∩ 全体现任成员共同范围）。
+   * 属于治理信息，只返回给负责人与管理员。
+   */
+  deliverableDataScopes?: string[]
   allowedActions: AgentMemberAction[]
 }
 
@@ -181,6 +188,10 @@ export class PostgresWorkspaceAgentMemberService {
          and wam.status <> 'removed'
        order by wam.created_at asc, wam.id asc
     `
+    const governance = actorRole === 'owner' || actorRole === 'admin'
+    const deliverable = governance
+      ? await this.deliverableDataScopesByAgent(workspaceId, rows.map(row => row.agentId))
+      : null
     return rows.map(row => ({
       id: row.id,
       agentId: row.agentId,
@@ -192,7 +203,99 @@ export class PostgresWorkspaceAgentMemberService {
       createdAt: row.createdAt.toISOString(),
       unavailableReason: row.unavailableReason,
       allowedActions: allowedActionsFor(actorRole, row.status, row.unavailableReason),
+      ...(deliverable ? { deliverableDataScopes: deliverable.get(row.agentId) ?? [] } : {}),
     }))
+  }
+
+  /**
+   * 项目空间 S0：添加成员前预览。返回加入该员工后会失去部分可交付数据范围的 Agent 成员；
+   * 不改变任何状态。负责人与管理员可用（与添加成员同权限）。
+   */
+  async previewMemberDisclosureImpact(
+    workspaceId: string,
+    candidateUserId: string,
+    actorUserId: string,
+  ): Promise<Array<{ agentMemberId: string; name: string; lostDataScopes: string[] }>> {
+    await this.assertTeamWorkspace(workspaceId)
+    await this.requireActorRole(workspaceId, actorUserId, ['owner', 'admin'])
+    const members = await this.database<{ id: string; agentId: string; name: string }[]>`
+      select wam.id, wam.agent_id as "agentId", a.name
+        from workspace_agent_members wam
+        join agents a on a.tenant_id = wam.tenant_id and a.id = wam.agent_id
+       where wam.tenant_id = ${tenantId} and wam.workspace_id = ${workspaceId} and wam.status <> 'removed'
+       order by wam.created_at asc, wam.id asc
+    `
+    if (!members.length) return []
+    const agentIds = members.map(member => member.agentId)
+    const before = await this.deliverableDataScopesByAgent(workspaceId, agentIds)
+    const after = await this.deliverableDataScopesByAgent(workspaceId, agentIds, candidateUserId)
+    return members.flatMap(member => {
+      const remaining = new Set(after.get(member.agentId) ?? [])
+      const lostDataScopes = (before.get(member.agentId) ?? []).filter(scope => !remaining.has(scope))
+      return lostDataScopes.length ? [{ agentMemberId: member.id, name: member.name, lostDataScopes }] : []
+    })
+  }
+
+  /**
+   * 新建空间前预览：与 `previewMemberDisclosureImpact` 同一口径，比较只有创建人时与加上所选同事后
+   * 各 Agent 可交付的数据范围，返回会失去部分范围的 Agent。只读，不改变任何状态。
+   */
+  async previewNewSpaceDisclosureImpact(
+    agentIds: string[],
+    memberUserIds: string[],
+    actorUserId: string,
+    actorRoleIds: string[] = [],
+  ): Promise<Array<{ agentId: string; name: string; lostDataScopes: string[] }>> {
+    const agents = normalizeIds(agentIds)
+    const members = normalizeNewSpaceMembers(memberUserIds, actorUserId)
+    if (!agents.length || !members.length) return []
+    if (agents.length > 10 || members.length > maxNewSpaceMembers) throw invalidRequest('所选 AI 同事或同事数量超出上限')
+    // 只对创建人能加入的 Agent 给出预览（与创建同一校验），不借预览探查其他 Agent 的授权。
+    for (const agentId of agents) await this.prepareAgentJoin(agentId, actorRoleIds)
+    const rows = await this.database<{ id: string; name: string }[]>`
+      select id, name from agents where tenant_id = ${tenantId} and id in ${this.database(agents)}
+    `
+    const names = new Map(rows.map(row => [row.id, row.name]))
+    const before = await this.deliverableScopesWithin(
+      new Set(await this.authorization.resolveCommonDataScopesForUsers([actorUserId])), agents)
+    const after = await this.deliverableScopesWithin(
+      new Set(await this.authorization.resolveCommonDataScopesForUsers([actorUserId, ...members])), agents)
+    return agents.flatMap(agentId => {
+      const remaining = new Set(after.get(agentId) ?? [])
+      const lostDataScopes = (before.get(agentId) ?? []).filter(scope => !remaining.has(scope))
+      return lostDataScopes.length && names.has(agentId)
+        ? [{ agentId, name: names.get(agentId)!, lostDataScopes }]
+        : []
+    })
+  }
+
+  private async deliverableDataScopesByAgent(
+    workspaceId: string,
+    agentIds: string[],
+    includeUserId?: string,
+  ): Promise<Map<string, string[]>> {
+    if (!agentIds.length) return new Map()
+    const common = new Set(await this.authorization.resolveTeamCommonDataScopes(workspaceId, { includeUserId }))
+    return this.deliverableScopesWithin(common, agentIds)
+  }
+
+  /** Agent 自身授权中落在成员共同数据范围内的部分（即可交付范围）。 */
+  private async deliverableScopesWithin(common: Set<string>, agentIds: string[]): Promise<Map<string, string[]>> {
+    if (!agentIds.length) return new Map()
+    const rows = await this.database<{ agentId: string; scopeValue: string }[]>`
+      select ep.agent_id as "agentId", g.scope_value as "scopeValue"
+        from execution_principals ep
+        join agent_principal_scope_grants g on g.tenant_id = ep.tenant_id and g.principal_id = ep.id
+       where ep.tenant_id = ${tenantId} and ep.kind = 'agent' and ep.status = 'active'
+         and ep.agent_id in ${this.database(agentIds)}
+       order by g.scope_value
+    `
+    const result = new Map<string, string[]>()
+    for (const row of rows) {
+      if (!common.has(row.scopeValue)) continue
+      result.set(row.agentId, [...(result.get(row.agentId) ?? []), row.scopeValue])
+    }
+    return result
   }
 
   /**
@@ -211,66 +314,114 @@ export class PostgresWorkspaceAgentMemberService {
   ): Promise<AgentMemberRecord> {
     await this.assertTeamWorkspace(workspaceId)
     await this.requireActorRole(workspaceId, actorUserId, ['owner'])
-    const active = await this.requireActivePublishedVersion(agentId, true)
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
-    // P2-1：候选列表按 visible_role_ids 过滤只是展示；直接提交 ID 也必须按添加人
-    // 当前有效角色复核允许范围，不能依赖候选查询承担鉴权。
-    await this.authorization.assertAgentVersionVisibleToRoles(active.versionId, actorRoleIds, '所选 Agent')
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    const prepared = await this.prepareAgentJoin(agentId, actorRoleIds)
 
     let memberId = ''
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
-      // P1-4：角色前置检查在事务外，拿到空间锁后必须复核当前角色——
-      // 负责人转交若发生在前置检查与加锁之间，旧负责人不得再改成员与授权。
-      await this.requireActorRole(workspaceId, actorUserId, ['owner'], transaction)
-      const [existing] = await transaction<MemberStateRow[]>`
-        select id, agent_id as "agentId", agent_version_id as "agentVersionId", status
-          from workspace_agent_members
-         where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and agent_id = ${agentId}
-         for update
-      `
-      if (existing && existing.status !== 'removed') {
-        throw workspaceStateConflict('该 Agent 已是空间成员，不能重复加入')
-      }
-      memberId = existing?.id ?? `wam-${randomUUID()}`
-      if (existing) {
-        await transaction`
-          update workspace_agent_members
-             set agent_version_id = ${active.versionId}, status = 'available',
-                 added_by = ${actorUserId}, updated_at = now()
-           where tenant_id = ${tenantId} and id = ${existing.id}
-        `
-      } else {
-        await transaction`
-          insert into workspace_agent_members (
-            id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by
-          ) values (
-            ${memberId}, ${tenantId}, ${workspaceId}, ${agentId}, ${active.versionId},
-            'available', ${actorUserId}
-          )
-        `
-      }
-      await this.grantSources.addGrantSources(transaction, [
-        { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
-        ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-      ], workspaceId)
-      // addGrantSources bumps the workspace auth revision; the post-bump value
-      // separates a later re-add of the same (row-reusing) membership from this
-      // join, while a racing duplicate join already throws above.
-      const revision = await currentTeamAuthRevision(transaction, workspaceId)
-      await recordWorkspaceActivity(transaction, {
-        workspaceId,
-        kind: 'agent_member_added',
-        actorUserId,
-        objectType: 'agent_member',
-        objectId: memberId,
-        dedupeKey: `agent_member_added:${memberId}:${revision}`,
-        metadata: { agentMemberId: memberId, agentId },
-      })
+      memberId = await this.joinPreparedAgent(transaction, workspaceId, prepared, actorUserId)
     })
     return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
+  }
+
+  /**
+   * 新建项目空间（群组）并在同一事务中加入 Agent 成员（功能规则 3.3、方案 12.8：新建的空间至少
+   * 有一个 Agent 成员）。所有 Agent 先按添加人当前角色校验版本、依赖闭包与可见范围；任一不能加入
+   * 则整个创建失败，不留下没有 Agent 的空间。创建人成为负责人。返回新空间 ID。
+   */
+  async createTeamWorkspace(
+    input: { name: string; description: string },
+    agentIds: string[],
+    actorUserId: string,
+    actorRoleIds: string[] = [],
+    memberUserIds: string[] = [],
+  ): Promise<string> {
+    const unique = normalizeIds(agentIds)
+    if (!unique.length) throw invalidRequest('新建项目空间至少需要选择一个 AI 同事')
+    if (unique.length > 10) throw invalidRequest('新建项目空间时最多选择 10 个 AI 同事')
+    const members = normalizeNewSpaceMembers(memberUserIds, actorUserId)
+    if (members.length < normalizeIds(memberUserIds).length) throw invalidRequest('创建人会自动成为负责人，无需选择自己')
+    if (members.length > maxNewSpaceMembers) throw invalidRequest(`新建项目空间时最多选择 ${maxNewSpaceMembers} 位同事`)
+    const prepared: Array<Awaited<ReturnType<PostgresWorkspaceAgentMemberService['prepareAgentJoin']>>> = []
+    for (const agentId of unique) prepared.push(await this.prepareAgentJoin(agentId, actorRoleIds))
+    const workspaceId = `ws-${randomUUID()}`
+    await this.database.begin(async transaction => {
+      await insertTeamWorkspaceRows(transaction, workspaceId, input, actorUserId)
+      await lockWorkspaceRow(transaction, workspaceId)
+      for (const agent of prepared) await this.joinPreparedAgent(transaction, workspaceId, agent, actorUserId)
+      // 同事与 Agent 同一事务（功能规则 3.3）：任一同事不可加入则整个创建回滚。
+      await assertAddableEmployees(transaction, members)
+      await insertNewSpaceEmployeeMembers(transaction, workspaceId, members, actorUserId)
+    })
+    return workspaceId
+  }
+
+  /** 加入前的校验（事务外，只读）：启用版本、依赖闭包与添加人当前角色可见。 */
+  private async prepareAgentJoin(agentId: string, actorRoleIds: string[]) {
+    const active = await this.requireActivePublishedVersion(agentId, true)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
+    // P2-1：候选列表按 visible_role_ids 过滤只是展示；直接提交 ID 也必须按添加人
+    // 当前有效角色复核允许范围，不能依赖候选查询承担鉴权。
+    await this.authorization.assertAgentVersionVisibleToRoles(active.versionId, actorRoleIds, '所选 Agent')
+    return { agentId, active, skillVersions }
+  }
+
+  /** 在已锁定空间行的事务中加入一个已校验的 Agent：成员行、授权来源与动态。返回成员 ID。 */
+  private async joinPreparedAgent(
+    transaction: DatabaseTransaction,
+    workspaceId: string,
+    prepared: Awaited<ReturnType<PostgresWorkspaceAgentMemberService['prepareAgentJoin']>>,
+    actorUserId: string,
+  ): Promise<string> {
+    const { agentId, active, skillVersions } = prepared
+    // P1-4：角色前置检查在事务外，拿到空间锁后必须复核当前角色——
+    // 负责人转交若发生在前置检查与加锁之间，旧负责人不得再改成员与授权。
+    await this.requireActorRole(workspaceId, actorUserId, ['owner'], transaction)
+    const [existing] = await transaction<MemberStateRow[]>`
+      select id, agent_id as "agentId", agent_version_id as "agentVersionId", status
+        from workspace_agent_members
+       where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and agent_id = ${agentId}
+       for update
+    `
+    if (existing && existing.status !== 'removed') {
+      throw workspaceStateConflict('该 Agent 已是空间成员，不能重复加入')
+    }
+    const memberId = existing?.id ?? `wam-${randomUUID()}`
+    if (existing) {
+      await transaction`
+        update workspace_agent_members
+           set agent_version_id = ${active.versionId}, status = 'available',
+               added_by = ${actorUserId}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${existing.id}
+      `
+    } else {
+      await transaction`
+        insert into workspace_agent_members (
+          id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by
+        ) values (
+          ${memberId}, ${tenantId}, ${workspaceId}, ${agentId}, ${active.versionId},
+          'available', ${actorUserId}
+        )
+      `
+    }
+    await this.grantSources.addGrantSources(transaction, [
+      { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
+      ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
+    ], workspaceId)
+    // addGrantSources bumps the workspace auth revision; the post-bump value
+    // separates a later re-add of the same (row-reusing) membership from this
+    // join, while a racing duplicate join already throws above.
+    const revision = await currentTeamAuthRevision(transaction, workspaceId)
+    await recordWorkspaceActivity(transaction, {
+      workspaceId,
+      kind: 'agent_member_added',
+      actorUserId,
+      objectType: 'agent_member',
+      objectId: memberId,
+      dedupeKey: `agent_member_added:${memberId}:${revision}`,
+      metadata: { agentMemberId: memberId, agentId },
+    })
+    return memberId
   }
 
   async updateAgentMember(
@@ -316,6 +467,12 @@ export class PostgresWorkspaceAgentMemberService {
       `
       if (!locked) throw agentMemberNotFound('Agent 成员不存在')
       if (locked.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重复移除')
+      // 方案 12.8 / 功能规则 3.3：项目空间至少保留一个 Agent 成员（停用的也算），不能移出最后一个。
+      const [others] = await transaction<{ total: number }[]>`
+        select count(*)::int as total from workspace_agent_members
+         where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and id <> ${memberId} and status <> 'removed'
+      `
+      if (!others?.total) throw workspaceStateConflict('项目空间至少需要保留一个 Agent 成员；请先添加其他 Agent 再移出')
       await transaction`
         update workspace_agent_members
            set status = 'removed', updated_at = now()
@@ -431,8 +588,7 @@ export class PostgresWorkspaceAgentMemberService {
     if (member.status === 'removed') throw workspaceStateConflict('Agent 成员已移出，不能重新启用，请重新添加')
     if (member.status === 'available') throw workspaceStateConflict('Agent 成员当前已是可用状态，不能重复启用')
 
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(member.agentVersionId)
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(member.agentVersionId)
 
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
@@ -456,7 +612,6 @@ export class PostgresWorkspaceAgentMemberService {
       await this.grantSources.addGrantSources(transaction, [
         { capabilityType: 'agent', capabilityVersionId: member.agentVersionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
         ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
       ], workspaceId)
     })
     return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
@@ -481,8 +636,7 @@ export class PostgresWorkspaceAgentMemberService {
     if (active.versionId === member.agentVersionId) {
       return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
     }
-    const { agent, skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
-    const toolVersions = await this.authorization.resolveToolVersions(agent.toolReferences)
+    const { skillVersions } = await this.authorization.assertAgentDependencyClosure(active.versionId)
 
     await this.database.begin(async transaction => {
       await lockWorkspaceRow(transaction, workspaceId)
@@ -506,7 +660,6 @@ export class PostgresWorkspaceAgentMemberService {
       await this.grantSources.addGrantSources(transaction, [
         { capabilityType: 'agent', capabilityVersionId: active.versionId, sourceType: 'agent_member', sourceRefId: memberId, createdBy: actorUserId },
         ...skillVersions.map(skill => ({ capabilityType: 'skill' as const, capabilityVersionId: skill.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
-        ...toolVersions.map(tool => ({ capabilityType: 'tool' as const, capabilityVersionId: tool.versionId, sourceType: 'agent_member' as const, sourceRefId: memberId, createdBy: actorUserId })),
       ], workspaceId)
     })
     return this.requireAgentMemberRecord(workspaceId, memberId, actorUserId)
@@ -744,4 +897,16 @@ function decodeCursorIndex(candidates: WorkspaceAgentCandidate[], cursor: string
   const index = candidates.findIndex(candidate => candidate.id === parsed.i)
   if (index < 0) throw invalidRequest('分页游标无效')
   return index + 1
+}
+
+/** 新建空间时一次最多一并加入的同事数。 */
+const maxNewSpaceMembers = 50
+
+function normalizeIds(ids: string[]) {
+  return [...new Set(ids.map(id => id.trim()).filter(Boolean))]
+}
+
+/** 去重并去掉创建人本人（创建人已是负责人）。 */
+function normalizeNewSpaceMembers(ids: string[], actorUserId: string) {
+  return normalizeIds(ids).filter(id => id !== actorUserId)
 }

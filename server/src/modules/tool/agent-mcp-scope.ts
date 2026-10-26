@@ -20,12 +20,16 @@ export function normalizeAgentMcpScope(value: unknown): AgentMcpScope {
     invalid('MCP 模式或连接器标识无效')
   }
   const ids = [...new Set(connectorIds as string[])].sort()
+  if (mode === 'all') {
+    if (ids.length) invalid('全部 MCP 范围不能同时指定连接器清单')
+    return { mode: 'all', connectorIds: [] }
+  }
   if (mode === 'selected') {
     if (!ids.length || ids.length > MAX_MCP_CONNECTIONS_PER_ATTEMPT) {
       invalid(`选定模式必须选择 1～${MAX_MCP_CONNECTIONS_PER_ATTEMPT} 个 MCP Connector`)
     }
     return { mode: 'selected', connectorIds: ids }
   }
-  if (ids.length) invalid('全部或不使用模式不能保留选定连接器')
-  return { mode: mode as 'all' | 'none', connectorIds: [] }
+  if (ids.length) invalid('不使用 MCP 时不能保留选定连接器')
+  return { mode: 'none', connectorIds: [] }
 }

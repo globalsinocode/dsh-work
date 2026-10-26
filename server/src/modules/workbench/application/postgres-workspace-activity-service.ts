@@ -3,6 +3,30 @@ import { authorizationDenied, requestInvalid } from '../../../domain/authorizati
 import type { PostgresWorkspaceService } from './postgres-workspace-service.ts'
 import type { WorkspaceActivityKind, WorkspaceActivityObjectType } from './workspace-activity-writer.ts'
 
+export interface AccountNotificationItem {
+  id: string
+  workspaceId: string
+  sequence: number
+  kind: WorkspaceActivityKind
+  actorUserId: string
+  actorDisplayName: string
+  objectType: WorkspaceActivityObjectType
+  objectId: string
+  safeMetadata: Record<string, unknown>
+  occurredAt: string
+}
+
+export interface NotificationPage {
+  items: AccountNotificationItem[]
+  nextCursor: string | null
+}
+
+export interface NotificationCounts {
+  total: number
+  byWorkspace: Record<string, number>
+  lastReadSequence: number
+}
+
 const tenantId = 'tenant-dsh-work'
 
 export interface WorkspaceActivityItem {
@@ -60,6 +84,19 @@ interface NotificationStateRow {
   lastReadAt: Date | null
   lastReadAtToken: string | null
   mutedAt: Date | null
+}
+
+interface DeliveryRow {
+  activityId: string
+  workspaceId: string
+  sequence: string
+  kind: WorkspaceActivityKind
+  actorUserId: string
+  actorDisplayName: string
+  objectType: WorkspaceActivityObjectType
+  objectId: string
+  metadata: Record<string, unknown> | null
+  occurredAt: Date
 }
 
 interface Cursor {
@@ -216,6 +253,115 @@ export class PostgresWorkspaceActivityService {
     }
   }
 
+  async listAccountNotifications(input: {
+    userId: string
+    workspaceId?: string
+    unreadOnly?: boolean
+    cursor?: string
+    limit?: number
+  }): Promise<NotificationPage> {
+    const limit = parseNotificationLimit(input.limit)
+    const cursor = input.cursor ? decodeSequenceCursor(input.cursor) : null
+    const lastRead = await this.readAccountLastReadSequence(input.userId)
+    const rows = await this.database<DeliveryRow[]>`
+      select d.activity_id as "activityId", d.workspace_id as "workspaceId", d.sequence::text as sequence,
+             e.kind, e.actor_user_id as "actorUserId", u.display_name as "actorDisplayName",
+             e.object_type as "objectType", e.object_id as "objectId",
+             e.safe_metadata as metadata, e.occurred_at as "occurredAt"
+        from workspace_notification_deliveries d
+        join workspace_activity_events e
+          on e.tenant_id = d.tenant_id and e.id = d.activity_id
+        join users u on u.tenant_id = e.tenant_id and u.id = e.actor_user_id
+       where d.tenant_id = ${tenantId} and d.recipient_user_id = ${input.userId}
+         and ${input.workspaceId ? this.database`d.workspace_id = ${input.workspaceId}` : this.database`true`}
+         and ${input.unreadOnly ? this.database`d.sequence > ${lastRead}` : this.database`true`}
+         and ${cursor ? this.database`(d.sequence, d.activity_id) < (${cursor.sequence}, ${cursor.id})` : this.database`true`}
+       order by d.sequence desc, d.activity_id desc
+       limit ${limit + 1}
+    `
+    const authorized: AccountNotificationItem[] = []
+    for (const row of rows.slice(0, limit)) {
+      const item = await this.projectDeliveryItem(row, input.userId)
+      if (item) authorized.push(item)
+    }
+    const hasMore = rows.length > limit
+    const last = authorized[authorized.length - 1]
+    return {
+      items: authorized,
+      nextCursor: hasMore && last ? encodeSequenceCursor(last.sequence, last.id) : null,
+    }
+  }
+
+  async markAccountNotificationsRead(input: {
+    userId: string
+    throughSequence: number
+    workspaceId?: string
+  }): Promise<{ lastReadSequence: number }> {
+    if (!Number.isFinite(input.throughSequence) || input.throughSequence < 0) {
+      throw requestInvalid('throughSequence 必须是非负整数')
+    }
+    if (input.workspaceId) {
+      const workspaceId = await this.assertReadableTeamWorkspace(input.workspaceId, input.userId)
+      const [row] = await this.database<{ lastReadSequence: string }[]>`
+        insert into workspace_notification_states (
+          tenant_id, workspace_id, user_id, last_read_sequence, last_read_at
+        ) values (
+          ${tenantId}, ${workspaceId}, ${input.userId}, ${input.throughSequence}, now()
+        )
+        on conflict (tenant_id, workspace_id, user_id)
+          do update set last_read_sequence = greatest(
+            workspace_notification_states.last_read_sequence,
+            ${input.throughSequence}
+          ),
+          last_read_at = greatest(coalesce(workspace_notification_states.last_read_at, now()), now())
+        returning last_read_sequence::text as "lastReadSequence"
+      `
+      return { lastReadSequence: Number(row?.lastReadSequence ?? input.throughSequence) }
+    }
+    const [row] = await this.database<{ lastReadSequence: string }[]>`
+      insert into workspace_notification_account_states (tenant_id, user_id, last_read_sequence)
+      values (${tenantId}, ${input.userId}, ${input.throughSequence})
+      on conflict (tenant_id, user_id)
+        do update set last_read_sequence = greatest(
+          workspace_notification_account_states.last_read_sequence,
+          ${input.throughSequence}
+        )
+      returning last_read_sequence::text as "lastReadSequence"
+    `
+    return { lastReadSequence: Number(row?.lastReadSequence ?? input.throughSequence) }
+  }
+
+  async countAccountUnread(userId: string): Promise<NotificationCounts> {
+    const lastRead = await this.readAccountLastReadSequence(userId)
+    const rows = await this.database<{ workspaceId: string; count: number }[]>`
+      select d.workspace_id as "workspaceId", count(*)::integer as count
+        from workspace_notification_deliveries d
+       where d.tenant_id = ${tenantId}
+         and d.recipient_user_id = ${userId}
+         and d.sequence > ${lastRead}
+       group by d.workspace_id
+    `
+    const byWorkspace: Record<string, number> = {}
+    let total = 0
+    for (const row of rows) {
+      if (!(await this.canReadWorkspaceNotifications(row.workspaceId, userId))) continue
+      if (await this.isWorkspaceMuted(row.workspaceId, userId)) continue
+      byWorkspace[row.workspaceId] = row.count
+      total += row.count
+    }
+    return { total, byWorkspace, lastReadSequence: lastRead }
+  }
+
+  async maxDeliverySequenceForUser(userId: string, since: number): Promise<number> {
+    const [row] = await this.database<{ max: string | null }[]>`
+      select max(sequence)::text as max
+        from workspace_notification_deliveries
+       where tenant_id = ${tenantId} and recipient_user_id = ${userId}
+         and sequence > ${since}
+    `
+    return row?.max ? Number(row.max) : since
+  }
+
   // -------------------------------------------------------------------------
   // Shared reads
   // -------------------------------------------------------------------------
@@ -301,6 +447,52 @@ export class PostgresWorkspaceActivityService {
     }
   }
 
+  private async readAccountLastReadSequence(userId: string): Promise<number> {
+    const [row] = await this.database<{ lastReadSequence: string }[]>`
+      select last_read_sequence::text as "lastReadSequence"
+        from workspace_notification_account_states
+       where tenant_id = ${tenantId} and user_id = ${userId}
+    `
+    return Number(row?.lastReadSequence ?? 0)
+  }
+
+  private async canReadWorkspaceNotifications(workspaceId: string, userId: string): Promise<boolean> {
+    try {
+      await this.assertReadableTeamWorkspace(workspaceId, userId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async isWorkspaceMuted(workspaceId: string, userId: string): Promise<boolean> {
+    const [row] = await this.database<{ mutedAt: Date | null }[]>`
+      select muted_at as "mutedAt"
+        from workspace_notification_states
+       where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${userId}
+    `
+    return row?.mutedAt != null
+  }
+
+  private async projectDeliveryItem(
+    row: DeliveryRow,
+    userId: string,
+  ): Promise<AccountNotificationItem | null> {
+    if (!(await this.canReadWorkspaceNotifications(row.workspaceId, userId))) return null
+    return {
+      id: row.activityId,
+      workspaceId: row.workspaceId,
+      sequence: Number(row.sequence),
+      kind: row.kind,
+      actorUserId: row.actorUserId,
+      actorDisplayName: row.actorDisplayName,
+      objectType: row.objectType,
+      objectId: row.objectId,
+      safeMetadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+      occurredAt: row.occurredAt.toISOString(),
+    }
+  }
+
   private async readNotificationState(
     workspaceId: string,
     actorUserId: string,
@@ -317,6 +509,30 @@ export class PostgresWorkspaceActivityService {
       lastReadAtToken: row?.lastReadAtToken ?? null,
       mutedAt: row?.mutedAt ?? null,
     }
+  }
+}
+
+function parseNotificationLimit(limit: number | undefined): number {
+  const value = limit ?? 20
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    throw requestInvalid('limit 必须为 1 到 100 之间的整数')
+  }
+  return value
+}
+
+function encodeSequenceCursor(sequence: number, id: string) {
+  return Buffer.from(JSON.stringify({ s: sequence, i: id }), 'utf8').toString('base64url')
+}
+
+function decodeSequenceCursor(cursor: string): { sequence: number; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { s?: unknown; i?: unknown }
+    if (typeof parsed.s !== 'number' || !Number.isFinite(parsed.s) || typeof parsed.i !== 'string' || !parsed.i.trim()) {
+      throw new Error('bad cursor')
+    }
+    return { sequence: parsed.s, id: parsed.i }
+  } catch {
+    throw requestInvalid('分页游标无效')
   }
 }
 

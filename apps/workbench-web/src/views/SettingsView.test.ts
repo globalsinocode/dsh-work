@@ -19,6 +19,7 @@ describe('SettingsView', () => {
       identityProvider: 'prototype-sso',
       apiAudience: 'workbench',
     })
+    vi.spyOn(workbenchApi, 'listMcpGrants').mockResolvedValue({ list: [], total: 0, page: 1, pageSize: 20 })
     const pinia = createPinia()
     setActivePinia(pinia)
     await useAuthStore().load()

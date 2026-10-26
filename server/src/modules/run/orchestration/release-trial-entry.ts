@@ -5,7 +5,7 @@ import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { toManifestToolBinding } from '../../../domain/tool-binding.ts'
 import { invalidRequest } from '../../../domain/request-errors.ts'
 import { extractRunFailureReason } from '../../../domain/run-failure-reason.ts'
-import type { ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
+import type { ReleaseTrialResult, ReleaseTrialRunner } from '../../agent/release-trial-runner.ts'
 import type { RunRecord } from '../run-types.ts'
 import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
@@ -35,6 +35,54 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
   /** ReleaseTrialRunner port: governance cancels a trial through the same system cancellation. */
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     return this.cancellation.systemCancelRun(runId, cause, reason)
+  }
+
+  async startReleaseTrialCase(input: {
+    userId: string
+    sessionId: string
+    agentVersionId: string
+    message: string
+    idempotencyKey: string
+    timezone?: string
+  }): Promise<{ runId: string }> {
+    if (!this.deps.agents) throw invalidRequest('验证执行链路未接入：缺少 Agent 运行时服务')
+    const run = await this.deps.runs.createRun({
+      tenantId, sessionId: input.sessionId, requestedBy: input.userId, idempotencyKey: input.idempotencyKey,
+    })
+    if (!run.currentAttemptId && run.status === 'queued') {
+      await this.dispatcher.failUndispatchedRun(run, async () => {
+        await this.deps.conversations!.appendMessage({
+          sessionId: run.sessionId!, runId: run.id, role: 'user', content: input.message, messageId: `message-user-${run.id}`,
+        })
+        await this.dispatcher.dispatch(run, {
+          prompt: input.message,
+          workspaceId: '',
+          agentVersionId: input.agentVersionId,
+          userId: input.userId,
+          fileIds: [],
+          preparedFiles: [],
+          purpose: 'agent-release-trial',
+          timezone: input.timezone,
+        })
+      })
+    }
+    return { runId: run.id }
+  }
+
+  async getReleaseTrialResult(runId: string): Promise<ReleaseTrialResult | null> {
+    const run = await this.deps.runs.getRun(tenantId, runId)
+    if (!run) return null
+    const attempt = run.currentAttemptId ? await this.deps.runs.getAttempt(tenantId, run.currentAttemptId) : null
+    const terminal = run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled'
+    const outputs = terminal && this.deps.conversations
+      ? await this.deps.conversations.getRunAssistantOutputs(run.id)
+      : []
+    return {
+      status: run.status,
+      attemptId: run.currentAttemptId ?? null,
+      errorCode: attempt?.errorCode ?? null,
+      output: outputs.map(output => output.content).join('\n'),
+    }
   }
 
   /**
@@ -108,9 +156,8 @@ export class ReleaseTrialEntry implements ReleaseTrialRunner {
   private async dispatchTrialAttempt(run: RunRecord, userId: string, draftVersionId: string, message: string, expectedDefinitionFingerprint?: string) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = await this.deps.agents!.getRuntimeSnapshot(draftVersionId, [], expectedDefinitionFingerprint, userId)
-    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(
-      draftVersionId, agent.roleIds, agent.dataScopes,
-    ) ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
+    const trialScope = await this.deps.authorization?.resolveAgentPrincipalTrialScope(draftVersionId)
+      ?? { roleIds: agent.roleIds, dataScopes: agent.dataScopes }
     await this.deps.authorization?.assertAgentPrincipalSnapshot(draftVersionId, trialScope.roleIds, trialScope.dataScopes)
     const route = await this.deps.models.resolveRoute('default', agent.modelRequirements)
     await assertRuntimeModelRequirements(this.deps.runtime, agent.modelRequirements, route)

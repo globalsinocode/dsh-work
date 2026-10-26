@@ -97,8 +97,10 @@ const baseTask: TaskRun = {
 }
 
 describe('task store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
+    const { resetTaskIntentRegistryForTests } = await import('./tasks')
+    resetTaskIntentRegistryForTests()
     setActivePinia(createPinia())
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
@@ -115,10 +117,11 @@ describe('task store', () => {
 
     const created = await store.createTask('分析库存', [], 'ws-supply')
 
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析库存',
       workspaceId: 'ws-supply',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-001', expect.objectContaining({
       prompt: '分析库存',
       fileIds: [],
@@ -232,10 +235,11 @@ describe('task store', () => {
     )
 
     // TW-10：会话保持未绑定的共享讨论形态，成员关联随首条触发消息进入 startRun。
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析订单波动',
       workspaceId: 'ws-team',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-agent-001', expect.objectContaining({
       workspaceAgentMemberId: 'wam-001',
     }))
@@ -249,7 +253,10 @@ describe('task store', () => {
 
     await store.createTask('整理个人材料', [], undefined, undefined, undefined, [], undefined, undefined)
 
-    expect(api.createSession).toHaveBeenCalledWith({ title: '整理个人材料' })
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '整理个人材料',
+      clientIntentId: expect.any(String),
+    }))
   })
 
   it('binds the selected Skill to the new Session while keeping the DSH run API unchanged', async () => {
@@ -260,10 +267,11 @@ describe('task store', () => {
 
     await store.createTask('分析本月订单交付风险', [], undefined, undefined, undefined, [], 'order-analysis')
 
-    expect(api.createSession).toHaveBeenCalledWith({
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
       title: '分析本月订单交付风险',
       skillId: 'order-analysis',
-    })
+      clientIntentId: expect.any(String),
+    }))
     expect(api.startRun).toHaveBeenCalledWith('session-skill-001', expect.objectContaining({
       prompt: '分析本月订单交付风险',
       fileIds: [],
@@ -283,7 +291,10 @@ describe('task store', () => {
 
     await store.createTask('整理个人材料', [])
 
-    expect(api.createSession).toHaveBeenCalledWith({ title: '整理个人材料' })
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      title: '整理个人材料',
+      clientIntentId: expect.any(String),
+    }))
   })
 
   it('projects durable permission requests as administrator approval without employee actions', async () => {
@@ -607,6 +618,98 @@ describe('task store', () => {
     expect(FakeEventSource.instances[1]?.closed).toBe(false)
     store.unsubscribeWorkspaceSessions('ws-team')
     expect(FakeEventSource.instances[1]?.closed).toBe(true)
+  })
+
+  it('stamps the last runtime event time for the quiet hint and keeps it across refreshes', async () => {
+    const { useTaskStore } = await import('./tasks')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'))
+      // 其他用例把共享的 baseTask 直接交给 store，可能已带上时刻；这里从一份干净的副本开始。
+      const fresh = (): TaskRun => ({ ...structuredClone(baseTask), lastActivityAt: undefined })
+      api.getTasks.mockResolvedValue([fresh()])
+      const store = useTaskStore()
+      await store.load()
+      expect(store.tasks[0]?.lastActivityAt).toBe(Date.parse('2026-10-17T12:00:00.000Z'))
+
+      vi.setSystemTime(new Date('2026-10-17T12:00:40.000Z'))
+      FakeEventSource.instances[0]?.emit('assistant.delta', {
+        event_id: 'event-delta-1', run_id: 'run-001', attempt_id: 'attempt-001', sequence: 3,
+        event_type: 'assistant.delta', occurred_at: new Date().toISOString(), display_message: '部分',
+        safe_metadata: {}, trace_id: 'trace-001',
+      })
+      // vi.waitFor 在假时钟下每次轮询都会推进时钟，因此只断言时刻已推进到事件之后。
+      await vi.waitFor(() => expect(store.tasks[0]?.lastActivityAt).toBeGreaterThanOrEqual(Date.parse('2026-10-17T12:00:40.000Z')))
+      const stamped = store.tasks[0]!.lastActivityAt!
+      expect(stamped).toBeLessThan(Date.parse('2026-10-17T12:00:41.000Z'))
+
+      vi.setSystemTime(new Date('2026-10-17T12:01:30.000Z'))
+      api.getRun.mockResolvedValue(fresh())
+      await store.refreshRun('run-001')
+      expect(store.tasks[0]?.lastActivityAt).toBe(stamped)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows a tool call live and updates the same row when its result arrives (EX-01)', async () => {
+    const { useTaskStore } = await import('./tasks')
+    // 事件流登记在模块级、跨用例保留，因此用独立的 Run，避免沿用其他用例未关闭的流。
+    api.getTasks.mockResolvedValue([{ ...structuredClone(baseTask), id: 'run-tool-live', status: 'running', attemptId: 'attempt-001', steps: [] }])
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances.find((item) => item.url === '/events/run-tool-live')
+    expect(stream).toBeDefined()
+    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>) =>
+      stream?.emit(eventType, {
+        event_id: eventId, run_id: 'run-tool-live', attempt_id: 'attempt-001', sequence: 1, event_type: eventType,
+        occurred_at: new Date().toISOString(), display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
+      })
+
+    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(1))
+    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '正在调用工具', status: 'running', tool: 'read' })
+
+    emit('tool.completed', 'event-done-read', 'read：调用失败，工具返回失败', { call_id: 'call-read', tool_name: 'read', status: 'failed', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps[0]?.status).toBe('failed'))
+    expect(store.tasks[0]?.steps).toHaveLength(1)
+    expect(store.tasks[0]?.steps[0]).toMatchObject({ id: 'tool-call-call-read', title: '工具调用失败', detail: 'read：调用失败，工具返回失败' })
+
+    // 结束时由会话日志补齐、从未实时开始的调用照常追加一行。
+    emit('tool.completed', 'event-done-fetch', 'web_fetch：未收到调用结果', { call_id: 'call-fetch', tool_name: 'web_fetch', status: 'unknown' })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps).toHaveLength(2))
+    expect(store.tasks[0]?.steps[1]).toMatchObject({ id: 'event-done-fetch', status: 'pending' })
+  })
+
+  it('merges live tool events into the snapshot row of the same call across a reconnect (EX-01)', async () => {
+    const { useTaskStore } = await import('./tasks')
+    // 快照中的步骤 id 是服务端事件 id，与实时行的 id 不同；合并只依据 callId。
+    api.getTasks.mockResolvedValue([{
+      ...structuredClone(baseTask), id: 'run-tool-snapshot', status: 'running', attemptId: 'attempt-001',
+      steps: [
+        { id: 'event-start-grep', title: '正在调用工具', detail: 'grep：正在调用', status: 'running', tool: 'grep', callId: 'call-grep' },
+        { id: 'event-done-read', title: '调用工具', detail: 'read：调用成功', status: 'succeeded', tool: 'read', callId: 'call-read' },
+      ],
+    }])
+    const store = useTaskStore()
+    await store.load()
+    const stream = FakeEventSource.instances.find((item) => item.url === '/events/run-tool-snapshot')
+    expect(stream).toBeDefined()
+    const emit = (eventType: string, eventId: string, display: string, metadata: Record<string, unknown>) =>
+      stream?.emit(eventType, {
+        event_id: eventId, run_id: 'run-tool-snapshot', attempt_id: 'attempt-001', sequence: 1, event_type: eventType,
+        occurred_at: new Date().toISOString(), display_message: display, safe_metadata: metadata, trace_id: 'trace-001',
+      })
+
+    // 重连后重放：已在快照中的调用不再追加。
+    emit('tool.started', 'event-start-read', 'read：正在调用', { call_id: 'call-read', tool_name: 'read', status: 'running', live: true })
+    emit('tool.completed', 'event-done-read', 'read：调用成功', { call_id: 'call-read', tool_name: 'read', status: 'succeeded', live: true })
+    // 快照之后才到达的结果原地替换“正在调用”。
+    emit('tool.completed', 'event-done-grep', 'grep：调用成功', { call_id: 'call-grep', tool_name: 'grep', status: 'succeeded', live: true })
+    await vi.waitFor(() => expect(store.tasks[0]?.steps[0]?.status).toBe('succeeded'))
+    expect(store.tasks[0]?.steps).toHaveLength(2)
+    expect(store.tasks[0]?.steps.map(step => step.callId)).toEqual(['call-grep', 'call-read'])
+    expect(store.tasks[0]?.steps.some(step => step.status === 'running')).toBe(false)
   })
 })
 

@@ -1,16 +1,17 @@
 import type { PlatformToolContract } from './platform-tool-contract.ts'
 import type { AdminRunPurpose, RuntimeManifest } from './runtime-types.ts'
-import type { ToolCategory, ToolGovernanceMode } from '../../domain/tool-category.ts'
 
 const objectOutput = { type: 'object' } as const
-const recordWriteOutput = { oneOf: [
-  { type: 'object', additionalProperties: false,
-    properties: { recordId: { type: 'string' }, recordVersionId: { type: 'string' }, version: { type: 'integer', minimum: 1 } },
-    required: ['recordId', 'recordVersionId', 'version'] },
-  { type: 'object', additionalProperties: false, properties: { status: { const: 'trial_only' } }, required: ['status'] },
-] } as const
 const boundedString = { type: 'string', maxLength: 1_048_576 } as const
 const PYTHON_OUTPUT_MAX_BYTES = 16 * 1024 * 1024
+const projectTaskAssigneeSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    type: { type: 'string', enum: ['employee', 'agent'] },
+    id: { type: 'string', minLength: 1, maxLength: 160 },
+  },
+  required: ['type', 'id'],
+} as const
 
 export const platformToolContracts = {
   prepare_skill_installation: contract({
@@ -101,49 +102,65 @@ export const platformToolContracts = {
       },
       required: ['exitCode', 'stdout', 'stderr', 'artifacts'],
     },
-    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 300_000,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized',
+    // Script budget. At this deadline the bridge aborts the sandbox and waits
+    // until the named container is stopped and removed (or cleanup fails loudly).
+    timeoutMs: 300_000,
     maxOutputBytes: PYTHON_OUTPUT_MAX_BYTES,
   }),
-  delegate_agent: contract({
+  // 项目空间 S6：Agent 查看与维护项目任务。读取安全可重试；写入不重试，重放由操作登记去重。
+  project_tasks_list: contract({
     inputSchema: {
-      type: 'object',
-      properties: {
-        targetAgentVersionId: { type: 'string', minLength: 1, maxLength: 128 },
-        task: { type: 'string', minLength: 1, maxLength: 12000 },
-        context: { type: 'string', maxLength: 4000 },
-      },
-      required: ['targetAgentVersionId', 'task'], additionalProperties: false,
-    },
-    outputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
-        contract: { const: 'task-result/v1' },
-        delegationId: { type: 'string' }, childTaskId: { type: 'string' }, childRunId: { type: 'string' },
-        targetAgentVersionId: { type: 'string' },
-        execution: { type: 'string', enum: ['succeeded', 'failed', 'cancelled'] },
-        outcome: { type: 'string', enum: ['achieved', 'unverified', 'not_achieved'] },
-        summary: { type: 'string' }, answer: { type: ['string', 'null'] },
-        receipts: {
-          type: 'array', maxItems: 100,
-          items: {
-            type: 'object', additionalProperties: false,
-            properties: {
-              kind: { type: 'string', enum: ['artifact', 'tool'] },
-              status: { type: 'string', enum: ['completed', 'accepted', 'failed', 'unknown'] },
-              ref: { type: 'string', minLength: 1, maxLength: 256 },
-            },
-            required: ['kind', 'status', 'ref'],
-          },
-        },
+        status: { type: 'string', enum: ['open', 'todo', 'in_progress', 'done', 'all'] },
+        assigneeId: { type: 'string', minLength: 1, maxLength: 160 },
+        query: { type: 'string', minLength: 1, maxLength: 120 },
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
       },
-      required: ['contract', 'delegationId', 'childTaskId', 'childRunId', 'targetAgentVersionId', 'execution', 'outcome', 'summary', 'answer', 'receipts'],
     },
-    // The child task carries the authoritative achieved/unverified/not_achieved result.
-    // Registering the parent-side delegation call as merely accepted prevents the
-    // parent Task projection from treating a successful tool transport as proof
-    // that the delegated business goal was achieved.
-    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'concurrent',
-    completionSemantics: 'accepted', timeoutMs: 300_000,
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  project_task_get: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { taskId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['taskId'],
+    },
+    outputSchema: objectOutput,
+    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
+  }),
+  project_task_create: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee: projectTaskAssigneeSchema,
+        dueDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      required: ['title', 'assignee'],
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
+  }),
+  project_task_update: contract({
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        taskId: { type: 'string', minLength: 1, maxLength: 160 },
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee: projectTaskAssigneeSchema,
+        dueDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+        completionNote: { type: 'string', maxLength: 4000 },
+      },
+      required: ['taskId'], minProperties: 2,
+    },
+    outputSchema: objectOutput,
+    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
   }),
   propose_memory: contract({
     inputSchema: {
@@ -163,152 +180,38 @@ export const platformToolContracts = {
     // Only the application staging is complete here; administrative review and publication are separate actions.
     effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
   }),
-  state_get: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['namespace', 'key'] },
-    outputSchema: { type: 'object', additionalProperties: false,
-      properties: { found: { type: 'boolean' }, value: {}, version: { type: 'integer', minimum: 0 }, trialOnly: { type: 'boolean' } },
-      required: ['found', 'value', 'version'] },
-    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
-  }),
-  state_put: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 },
-        value: {}, expectedVersion: { type: 'integer', minimum: 0 }, ttlSeconds: { type: 'integer', minimum: 60, maximum: 7776000 },
-      }, required: ['namespace', 'key', 'value', 'expectedVersion', 'ttlSeconds'] },
-    outputSchema: { type: 'object', additionalProperties: false,
-      properties: { version: { type: 'integer', minimum: 0 }, trialOnly: { type: 'boolean' } }, required: ['version'] },
-    effect: 'write', retryPolicy: 'never', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
-  }),
-  data_query: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
-        field: { type: 'string', maxLength: 64 }, equals: { type: 'string', maxLength: 500 },
-        limit: { type: 'integer', minimum: 1, maximum: 100 }, after: { type: 'string', maxLength: 160 },
-      }, required: ['collectionKey'] },
-    outputSchema: { type: 'object', additionalProperties: false,
-      properties: { records: { type: 'array', maxItems: 100,
-        items: { type: 'object', additionalProperties: false,
-          properties: { recordKey: { type: 'string' }, recordVersionId: { type: 'string' },
-            version: { type: 'integer', minimum: 1 }, schemaVersion: { type: 'integer', minimum: 1 },
-            data: { type: 'object' } },
-          required: ['recordKey', 'recordVersionId', 'version', 'schemaVersion', 'data'] } },
-        nextCursor: { type: ['string', 'null'] }, trialOnly: { type: 'boolean' } },
-      required: ['records', 'nextCursor'] },
-    effect: 'read', retryPolicy: 'safe', concurrencyPolicy: 'concurrent', timeoutMs: 30_000,
-    maxOutputBytes: 8 * 1024 * 1024,
-  }),
-  data_create: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
-        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
-        operationKey: { type: 'string', minLength: 1, maxLength: 160 },
-      }, required: ['collectionKey', 'recordKey', 'data', 'operationKey'] },
-    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
-  }),
-  data_update: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
-        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
-        expectedVersion: { type: 'integer', minimum: 1 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
-      }, required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
-    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
-  }),
-  data_propose: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
-        recordKey: { type: 'string', minLength: 1, maxLength: 160 }, data: { type: 'object' },
-        expectedVersion: { type: 'integer', minimum: 0 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
-      }, required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
-    outputSchema: { oneOf: [
-      { type: 'object', additionalProperties: false,
-        properties: { proposalId: { type: 'string' }, status: { const: 'pending_admin_review' } },
-        required: ['proposalId', 'status'] },
-      { type: 'object', additionalProperties: false, properties: { status: { const: 'trial_only' } }, required: ['status'] },
-    ] }, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized',
-    completionSemantics: 'accepted', timeoutMs: 30_000,
-  }),
-  data_transition: contract({
-    inputSchema: { type: 'object', additionalProperties: false,
-      properties: {
-        collectionKey: { type: 'string', minLength: 3, maxLength: 80 },
-        recordKey: { type: 'string', minLength: 1, maxLength: 160 },
-        expectedVersion: { type: 'integer', minimum: 1 }, expectedStatus: { type: 'string', minLength: 1, maxLength: 80 },
-        nextStatus: { type: 'string', minLength: 1, maxLength: 80 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 },
-      }, required: ['collectionKey', 'recordKey', 'expectedVersion', 'expectedStatus', 'nextStatus', 'operationKey'] },
-    outputSchema: recordWriteOutput, effect: 'write', retryPolicy: 'safe', concurrencyPolicy: 'serialized', timeoutMs: 30_000,
-  }),
 } satisfies Record<string, PlatformToolContract>
 
 export type PlatformToolName = keyof typeof platformToolContracts
 
-type DshWorkBuiltInToolDefinition =
-  | {
-      category: Extract<ToolCategory, 'dsh_work_execution'>
-      governanceMode: Extract<ToolGovernanceMode, 'manifest_intrinsic'>
-    }
-  | {
-      category: Extract<ToolCategory, 'dsh_work_platform'>
-      governanceMode: Extract<ToolGovernanceMode, 'purpose_scoped'>
-      allowedPurposes: readonly AdminRunPurpose[]
-    }
-
 /**
- * dsh-work 通过 Platform Tool Bridge 暴露的内置工具分类。
- * 执行工具由 Agent/Skill 的 Manifest 声明；平台工具只能由指定管理流程注入。
+ * 按管理运行用途注入的平台工具。其余平台工具（activate_skill、python_execute、
+ * propose_memory）由运行内容装配，见 builtin-tools.ts。
  */
-export const dshWorkBuiltInToolDefinitions = {
-  prepare_skill_installation: {
-    category: 'dsh_work_platform', governanceMode: 'purpose_scoped',
-    allowedPurposes: ['admin-skill-install'],
-  },
-  inspect_admin_state: {
-    category: 'dsh_work_platform', governanceMode: 'purpose_scoped',
-    allowedPurposes: ['admin-assistant', 'admin-agent-manage', 'admin-platform-operations'],
-  },
-  propose_admin_task: {
-    category: 'dsh_work_platform', governanceMode: 'purpose_scoped',
-    allowedPurposes: ['admin-assistant'],
-  },
-  prepare_admin_action: {
-    category: 'dsh_work_platform', governanceMode: 'purpose_scoped',
-    allowedPurposes: ['admin-assistant', 'admin-agent-manage', 'admin-platform-operations'],
-  },
-  activate_skill: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  python_execute: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  delegate_agent: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  propose_memory: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  state_get: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  state_put: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  data_query: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  data_create: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  data_update: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  data_propose: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-  data_transition: { category: 'dsh_work_execution', governanceMode: 'manifest_intrinsic' },
-} as const satisfies Record<PlatformToolName, DshWorkBuiltInToolDefinition>
+export const platformToolPurposes: Partial<Record<PlatformToolName, readonly AdminRunPurpose[]>> = {
+  prepare_skill_installation: ['admin-skill-install'],
+  inspect_admin_state: ['admin-assistant', 'admin-agent-manage', 'admin-platform-operations'],
+  propose_admin_task: ['admin-assistant'],
+  prepare_admin_action: ['admin-assistant', 'admin-agent-manage', 'admin-platform-operations'],
+}
 
 export function platformToolsForPurpose(purpose: AdminRunPurpose): RuntimeManifest['tools'] {
-  return Object.entries(dshWorkBuiltInToolDefinitions)
-    .filter(([, definition]) => {
-      if (definition.category !== 'dsh_work_platform') return false
-      return (definition.allowedPurposes as readonly AdminRunPurpose[]).includes(purpose)
-    })
+  return Object.entries(platformToolPurposes)
+    .filter(([, purposes]) => purposes?.includes(purpose))
     .map(([id]) => ({ id, version: '1.0.0' }))
 }
 
+/** 项目空间 S6 的任务工具只用于员工在团队空间发起的运行，不进入任何管理或系统运行。 */
+const projectTaskTools = new Set<string>(['project_tasks_list', 'project_task_get', 'project_task_create', 'project_task_update'])
+
 export function assertPlatformToolPurpose(manifest: Pick<RuntimeManifest, 'purpose' | 'tools'>): void {
   for (const tool of manifest.tools) {
-    if (!(tool.id in dshWorkBuiltInToolDefinitions)) continue
-    const definition = dshWorkBuiltInToolDefinitions[tool.id as PlatformToolName]
-    if (definition.category === 'dsh_work_execution') continue
-    const allowedPurposes = definition.allowedPurposes as readonly AdminRunPurpose[]
-    if (!manifest.purpose || !allowedPurposes.includes(manifest.purpose as AdminRunPurpose)) {
+    if (projectTaskTools.has(tool.id) && manifest.purpose) {
+      throw new Error(`dsh-work 内置平台工具 ${tool.id} 不允许用于当前运行用途：${manifest.purpose}`)
+    }
+    const purposes = platformToolPurposes[tool.id as PlatformToolName]
+    if (!purposes) continue
+    if (!manifest.purpose || !purposes.includes(manifest.purpose as AdminRunPurpose)) {
       throw new Error(`dsh-work 内置平台工具 ${tool.id} 不允许用于当前运行用途：${manifest.purpose ?? 'employee'}`)
     }
   }

@@ -85,7 +85,7 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 场景试运行契约
 
-管理端既有测试接口可选传入 `scenario`，平台验证后固定为 Manifest `test_scenario`；只允许 `admin-skill-test` 使用。默认调用不改变严格策略。场景级验证结果使用 `scenario-v1` 证据策略，发布需要当前配置下的完整能力覆盖；不得将部分场景证据标成完整严格测试。请求例子、断言支持范围和迁移说明见 [Skill 场景试运行](skill-scenario-trials.md)。
+管理端既有测试接口可选传入 `scenario`，平台验证后固定为 Manifest `test_scenario`；只允许 `admin-skill-test` 使用。默认调用不改变严格策略。场景级验证结果使用 `scenario-v1` 证据策略，发布需要当前配置下的完整能力覆盖；不得将部分场景证据标成完整严格测试。请求例子、断言支持范围和迁移说明见 [开发与测试](development.md) 中的 Skill 验证与发布门禁。
 
 ## 个人历史（B3）
 
@@ -97,11 +97,11 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 ## 内容生命周期（B5）
 
-`archiveSession` 保留旧方法和 `archived` 字段，但产品语义为从历史移除，不物理删除。公共读取策略及账号停用语义见 [个人内容生命周期](personal-content-lifecycle.md)；`/content-policy` 返回固定策略版本。团队归档只读与个人移除不混用。
+`archiveSession` 保留旧方法和 `archived` 字段，但产品语义为从历史移除，不物理删除。公共读取策略及账号停用语义见 [功能规则](feature-rules.md)；`/content-policy` 返回固定策略版本。团队归档只读与个人移除不混用。
 
 ## 管理助手低风险确认（C6）
 
-风险白名单、判定位置、旧计划兼容与证据见 [C6](../history/reviews/review-c6-evidence.md)。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
+风险白名单、判定位置与旧计划兼容见 C6 批次评审记录（仓库外留证）。仅现存 Agent 草稿的四个展示字段可由通用助手直接生成计划；systemPrompt、权限、发布、Runtime 仍走两次确认。`confirmationMode` 是服务端计划的只读投影，不接受调用方传入。
 
 ## 独立账号认证
 

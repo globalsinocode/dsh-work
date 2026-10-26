@@ -402,6 +402,8 @@ export function parseAgentPackage(bytes: Uint8Array): AgentPackageParseResult {
     capabilities: {
       skills: normalizeCapabilityRefs(document.spec.capabilities?.skills, 'skills'),
       tools: normalizeCapabilityRefs(document.spec.capabilities?.tools, 'tools'),
+      webSearch: document.spec.capabilities?.webSearch ?? false,
+      projectTasks: document.spec.capabilities?.projectTasks ?? false,
     },
     input: { type: (document.spec.input?.type ?? 'text') as AgentSpec['input']['type'] },
     output: { type: (document.spec.output?.type ?? 'text') as AgentSpec['output']['type'] },

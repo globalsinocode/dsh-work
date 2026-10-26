@@ -14,7 +14,12 @@ import { parseAgentPackage } from '../../modules/agent/agent-package.ts'
 import type { AgentMcpScope } from '../../domain/types.ts'
 import { PostgresAgentReleaseService, type TrialRunStep } from '../../modules/agent/postgres-agent-release-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
+import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
 import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
 import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
@@ -53,7 +58,8 @@ before(async () => {
   database = throwaway.client
   trialRuntime = new TrialStubRuntime()
   tools = new PostgresToolConnectorService(database, trialRuntime)
-  const skills = new PostgresSkillService(database, undefined, tools)
+  const artifactStore = new SkillArtifactStore(new LocalObjectStorage(mkdtempSync(join(tmpdir(), 'agent-release-artifacts-')), { fileMode: 0o400 }))
+  const skills = new PostgresSkillService(database, undefined, artifactStore)
   agents = new PostgresAgentService(database, undefined, skills, tools)
   orchestration = new RunOrchestrationService(
     new PostgresRunRepository(database),
@@ -501,7 +507,7 @@ test('试运行缩小 Agent 授权后拒绝不再获准的工具，不产生 Run
     await assert.rejects(assertCurrentExecutionAuthorization(new PostgresAuthorizationService(database), undefined, {
       purpose: 'agent-release-trial', agent_version_id: created.version.id, workspace_id: '',
       user_context: { user_id: ADMIN, tenant_id: tenantId, role_ids: ['role-employee'] },
-      data_scopes: ['enterprise:authorized'], input: { message: 'test', file_mounts: [] },
+      data_scopes: ['workspace:authorized', 'enterprise:authorized'], input: { message: 'test', file_mounts: [] },
     } as unknown as RuntimeManifest), /当前身份、固定能力或输入资源授权已撤销/)
     const firstCaseId = (await release.getReleaseState(agentId)).candidate!.cases[0]!.id
     await assert.rejects(release.startTrial(agentId, ADMIN, firstCaseId), /试运行被阻塞：独立执行身份、执行器与 Runtime 兼容/)
@@ -569,7 +575,7 @@ test('无 Skill/Tool 的 Soul Agent 可从界面配置创建并通过自动检�
   assert.ok(configSpec)
   assert.equal(configSpec.spec.apiVersion, 'dsh-work.ai/v2')
   assert.deepEqual(configSpec.spec.instructions, { path: 'SOUL.md', body: PROMPT })
-  assert.deepEqual(configSpec.spec.capabilities, { skills: [], tools: [] })
+  assert.deepEqual(configSpec.spec.capabilities, { skills: [], tools: [], webSearch: false, projectTasks: false })
   const exported = parseAgentPackage(await release.exportVersionPackage(configuredId, configured.version.id))
   assert.equal(exported.checksumsVerified, true)
   assert.deepEqual(exported.spec, configSpec.spec)

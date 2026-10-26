@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AlarmClock, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { workbenchApi } from '@/api/client'
+import { useAutomationIntentStore } from '@/stores/automation-intents'
+import type { AutomationIntentOperation } from '@/stores/automation-intents'
 import { useContentStore } from '@/stores/content'
 import type {
   Automation,
@@ -14,11 +16,15 @@ import type {
   TaskResultOutcome,
 } from '@/types/domain'
 import { notifyActionFailure } from '@/utils/feedback'
+import { isUncertainRequestFailure } from '@/utils/idempotent-intent'
 
 const router = useRouter()
 const contentStore = useContentStore()
+const intentStore = useAutomationIntentStore()
 
+const statusFilter = ref<'active' | 'archived'>('active')
 const automations = ref<Automation[]>([])
+const uncertainTrigger = ref<{ automationId: string; operation: AutomationIntentOperation } | null>(null)
 const agentResults = ref<AgentRoutineResult[]>([])
 const agentResultsError = ref('')
 const loading = ref(false)
@@ -118,7 +124,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    automations.value = await workbenchApi.getAutomations()
+    automations.value = await workbenchApi.getAutomations({ status: statusFilter.value })
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '自动任务加载失败'
   } finally {
@@ -251,29 +257,6 @@ async function runAction(action: () => Promise<unknown>, label: string, item: Au
   }
 }
 
-/** 受理结果反馈：skipped/interrupted 不是成功，按 reasonCode 提示真实结果。 */
-async function admitAction(action: () => Promise<AutomationExecution>, label: string, item: Automation) {
-  if (actingId.value) return
-  actingId.value = item.id
-  try {
-    const execution = await action()
-    if (execution.admissionStatus === 'accepted') {
-      ElMessage.success(`${label}成功，已受理`)
-    } else {
-      const reason = execution.reasonCode
-        ? (reasonLabels[execution.reasonCode] ?? execution.reasonCode)
-        : '未满足执行条件'
-      ElMessage.warning(`${label}未受理：${reason}`)
-    }
-    await load()
-    if (drawerAutomationId.value) await loadExecutions()
-  } catch (error) {
-    notifyActionFailure(label, item.name, error)
-  } finally {
-    actingId.value = undefined
-  }
-}
-
 async function enable(item: Automation) {
   try {
     await ElMessageBox.confirm(
@@ -292,18 +275,63 @@ async function enable(item: Automation) {
 }
 const pause = (item: Automation) =>
   runAction(() => workbenchApi.pauseAutomation(item.id), '暂停', item)
-const runNow = (item: Automation) =>
-  admitAction(() => workbenchApi.runAutomationNow(item.id, crypto.randomUUID()), '立即运行', item)
-const trialRun = (item: Automation) =>
-  admitAction(() => workbenchApi.trialRunAutomation(item.id, crypto.randomUUID()), '试运行', item)
 
-async function disable(item: Automation) {
+async function triggerAutomation(
+  item: Automation,
+  operation: AutomationIntentOperation,
+  label: string,
+  options?: { fresh?: boolean },
+) {
+  if (actingId.value) return
+  actingId.value = item.id
+  const key = intentStore.begin(item.id, operation, options)
+  try {
+    const execution = operation === 'run-now'
+      ? await workbenchApi.runAutomationNow(item.id, key)
+      : await workbenchApi.trialRunAutomation(item.id, key)
+    intentStore.complete(item.id, operation, key)
+    uncertainTrigger.value = null
+    if (execution.admissionStatus === 'accepted') {
+      ElMessage.success(`${label}成功，已受理`)
+    } else {
+      const reason = execution.reasonCode
+        ? (reasonLabels[execution.reasonCode] ?? execution.reasonCode)
+        : '未满足执行条件'
+      ElMessage.warning(`${label}未受理：${reason}`)
+    }
+    await load()
+    if (drawerAutomationId.value) await loadExecutions()
+  } catch (error) {
+    intentStore.settleFailure(item.id, operation, key, error)
+    if (isUncertainRequestFailure(error)) {
+      uncertainTrigger.value = { automationId: item.id, operation }
+      notifyActionFailure(`${label}（结果未知，可重试本次请求）`, item.name, error)
+    } else {
+      uncertainTrigger.value = null
+      notifyActionFailure(label, item.name, error)
+    }
+  } finally {
+    actingId.value = undefined
+  }
+}
+
+const runNow = (item: Automation, fresh = false) =>
+  triggerAutomation(item, 'run-now', '立即运行', fresh ? { fresh: true } : undefined)
+const trialRun = (item: Automation) => triggerAutomation(item, 'trial-run', '试运行')
+
+function retryUncertainTrigger(item: Automation) {
+  const pending = uncertainTrigger.value
+  if (!pending || pending.automationId !== item.id) return
+  void triggerAutomation(item, pending.operation, pending.operation === 'run-now' ? '立即运行' : '试运行')
+}
+
+async function archive(item: Automation) {
   try {
     await ElMessageBox.confirm(
-      '停用后任务不再出现在列表中（历史执行记录也随之不再展示），且不再产生新的执行。已开始的执行不受影响。',
-      `停用自动任务“${item.name}”？`,
+      '归档后任务从默认列表隐藏，可在「已归档」筛选中查看历史执行并恢复。恢复后任务为暂停状态，需再次启用才会按规则执行。已开始的执行不受影响。',
+      `归档自动任务“${item.name}”？`,
       {
-        confirmButtonText: '停用',
+        confirmButtonText: '归档',
         cancelButtonText: '取消',
         type: 'warning',
         confirmButtonClass: 'el-button--danger',
@@ -312,8 +340,11 @@ async function disable(item: Automation) {
   } catch {
     return
   }
-  await runAction(() => workbenchApi.disableAutomation(item.id), '停用', item)
+  await runAction(() => workbenchApi.archiveAutomation(item.id), '归档', item)
 }
+
+const restore = (item: Automation) =>
+  runAction(() => workbenchApi.restoreAutomation(item.id), '恢复', item)
 
 // ---- 执行记录抽屉 ----
 
@@ -322,11 +353,62 @@ const drawerAutomationId = ref('')
 const drawerTitle = ref('')
 const executions = ref<AutomationExecution[]>([])
 const executionsLoading = ref(false)
+const executionsLoadingMore = ref(false)
+const executionsNextCursor = ref<string | null>(null)
+const executionsHasMore = ref(false)
+let executionPollTimer: number | null = null
+const cancellableRunStatuses = new Set(['queued', 'running', 'waiting', 'cancel_requested'])
+
+function stopExecutionPolling() {
+  if (executionPollTimer !== null) {
+    clearInterval(executionPollTimer)
+    executionPollTimer = null
+  }
+}
+
+function shouldPollExecutions(): boolean {
+  if (!drawerVisible.value || document.hidden) return false
+  return executions.value.some(
+    (execution) => execution.admissionStatus === 'accepted'
+      && cancellableRunStatuses.has(execution.runStatus ?? ''),
+  )
+}
+
+function syncExecutionPolling() {
+  stopExecutionPolling()
+  if (!shouldPollExecutions()) return
+  executionPollTimer = window.setInterval(() => {
+    if (!shouldPollExecutions()) {
+      stopExecutionPolling()
+      return
+    }
+    void refreshExecutionsPage()
+  }, 5_000)
+}
+
+async function refreshExecutionsPage() {
+  if (!drawerAutomationId.value) return
+  try {
+    const page = await workbenchApi.listAutomationExecutions(drawerAutomationId.value, { limit: 50 })
+    const merged = new Map(executions.value.map(item => [item.id, item]))
+    for (const item of page.items) merged.set(item.id, item)
+    executions.value = [...merged.values()].sort(
+      (left, right) => right.createdAt.localeCompare(left.createdAt),
+    )
+    syncExecutionPolling()
+  } catch {
+    // 轮询失败静默；用户仍可手动刷新抽屉。
+  }
+}
 
 async function loadExecutions() {
   executionsLoading.value = true
   try {
-    executions.value = await workbenchApi.listAutomationExecutions(drawerAutomationId.value)
+    const page = await workbenchApi.listAutomationExecutions(drawerAutomationId.value, { limit: 50 })
+    executions.value = page.items
+    executionsNextCursor.value = page.nextCursor
+    executionsHasMore.value = page.hasMore
+    syncExecutionPolling()
   } catch (error) {
     notifyActionFailure('加载执行记录', drawerTitle.value, error)
   } finally {
@@ -334,10 +416,30 @@ async function loadExecutions() {
   }
 }
 
+async function loadMoreExecutions() {
+  if (!executionsNextCursor.value || executionsLoadingMore.value) return
+  executionsLoadingMore.value = true
+  try {
+    const page = await workbenchApi.listAutomationExecutions(drawerAutomationId.value, {
+      limit: 50,
+      cursor: executionsNextCursor.value,
+    })
+    executions.value = [...executions.value, ...page.items]
+    executionsNextCursor.value = page.nextCursor
+    executionsHasMore.value = page.hasMore
+  } catch (error) {
+    notifyActionFailure('加载更多执行记录', drawerTitle.value, error)
+  } finally {
+    executionsLoadingMore.value = false
+  }
+}
+
 function openExecutions(item: Automation) {
   drawerAutomationId.value = item.id
   drawerTitle.value = item.name
   executions.value = []
+  executionsNextCursor.value = null
+  executionsHasMore.value = false
   drawerVisible.value = true
   void loadExecutions()
 }
@@ -345,8 +447,6 @@ function openExecutions(item: Automation) {
 function openConversation(execution: AutomationExecution) {
   if (execution.runId) void router.push(`/conversations/${execution.runId}`)
 }
-
-const cancellableRunStatuses = new Set(['queued', 'running', 'waiting', 'cancel_requested'])
 
 async function cancelExecution(execution: AutomationExecution) {
   if (!execution.runId || actingId.value) return
@@ -362,10 +462,29 @@ async function cancelExecution(execution: AutomationExecution) {
   }
 }
 
+function onVisibilityChange() {
+  if (document.hidden) stopExecutionPolling()
+  else syncExecutionPolling()
+}
+
+watch(drawerVisible, (visible) => {
+  if (!visible) stopExecutionPolling()
+  else syncExecutionPolling()
+})
+
+watch(executions, () => syncExecutionPolling(), { deep: true })
+
 onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
   void contentStore.load()
   void load()
   void loadAgentResults()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopExecutionPolling()
+  intentStore.reset()
 })
 
 async function loadAgentResults() {
@@ -385,7 +504,18 @@ async function loadAgentResults() {
           任务钉住创建时的已发布版本，不会跟随 Agent 后续升级。
         </p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新建自动任务</el-button>
+      <div class="automations-header__actions">
+        <el-select
+          v-model="statusFilter"
+          aria-label="任务状态筛选"
+          class="automation-status-filter"
+          @change="load"
+        >
+          <el-option label="进行中" value="active" />
+          <el-option label="已归档" value="archived" />
+        </el-select>
+        <el-button type="primary" :icon="Plus" @click="openCreate">新建自动任务</el-button>
+      </div>
     </header>
 
     <el-alert
@@ -456,6 +586,21 @@ async function loadAgentResults() {
             @click="runNow(item)"
           >立即运行</el-button>
           <el-button
+            v-if="item.status === 'enabled' && uncertainTrigger?.automationId === item.id"
+            size="small"
+            type="warning"
+            plain
+            :disabled="actingId === item.id"
+            @click="retryUncertainTrigger(item)"
+          >重试本次请求</el-button>
+          <el-button
+            v-if="item.status === 'enabled'"
+            size="small"
+            text
+            :disabled="actingId === item.id"
+            @click="runNow(item, true)"
+          >再次运行</el-button>
+          <el-button
             v-if="item.status === 'draft' || item.status === 'paused'"
             size="small"
             :disabled="actingId === item.id"
@@ -469,12 +614,21 @@ async function loadAgentResults() {
           >试运行</el-button>
           <el-button size="small" text @click="openExecutions(item)">执行记录</el-button>
           <el-button
+            v-if="statusFilter === 'active'"
             size="small"
             text
             type="danger"
             :disabled="actingId === item.id"
-            @click="disable(item)"
-          >停用</el-button>
+            @click="archive(item)"
+          >归档</el-button>
+          <el-button
+            v-if="statusFilter === 'archived'"
+            size="small"
+            type="primary"
+            plain
+            :disabled="actingId === item.id"
+            @click="restore(item)"
+          >恢复</el-button>
         </div>
       </section>
     </div>
@@ -615,12 +769,29 @@ async function loadAgentResults() {
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="executionsHasMore" class="executions-load-more">
+        <el-button :loading="executionsLoadingMore" @click="loadMoreExecutions">加载更多</el-button>
+      </div>
     </el-drawer>
   </div>
 </template>
 
 <style scoped>
 .automations-error { margin-bottom: 14px; }
+
+.automations-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.automation-status-filter { width: 140px; }
+
+.executions-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
 
 .automation-list {
   display: flex;

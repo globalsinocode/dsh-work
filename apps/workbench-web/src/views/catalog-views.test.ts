@@ -14,8 +14,11 @@ vi.mock('vue-router', () => ({ useRouter: () => router }))
 const skills: WorkbenchSkill[] = [
   {
     id: 'skill-knowledge',
+    versionId: 'skill-version-knowledge-1',
+    versionReference: 'skill-knowledge@1.0.0',
     name: '企业知识问答',
     version: '1.0.0',
+    publishedAt: '2026-09-23T00:00:00.000Z',
     category: '知识',
     description: '查询当前有效制度并给出来源。',
     owner: '知识运营组',
@@ -24,8 +27,11 @@ const skills: WorkbenchSkill[] = [
   },
   {
     id: 'skill-sheet',
+    versionId: 'skill-version-sheet-11',
+    versionReference: 'skill-sheet@1.1.0',
     name: '表格分析',
     version: '1.1.0',
+    publishedAt: '2026-09-23T00:00:00.000Z',
     category: '文件',
     description: '分析表格并识别异常。',
     owner: 'AI 平台组',
@@ -36,10 +42,13 @@ const skills: WorkbenchSkill[] = [
 
 const agents: WorkbenchAgent[] = [{
   id: 'agent-assistant',
+  versionId: 'agent-version-assistant-120',
+  versionReference: 'agent-assistant@1.2.0',
   name: '经营分析同事',
   description: '帮助员工分析经营数据。',
   welcomeMessage: '告诉我分析主题和时间范围。',
   version: '1.2.0',
+  publishedAt: '2026-09-23T00:00:00.000Z',
   examplePrompts: ['分析本月订单交付情况'],
 }]
 
@@ -63,7 +72,10 @@ describe('员工能力目录', () => {
 
     await wrapper.get('button[aria-label="使用 Skill：表格分析"]').trigger('click')
     expect(wrapper.get('button[aria-label="使用 Skill：表格分析"]').text()).toContain('去对话')
-    expect(router.push).toHaveBeenCalledWith({ path: '/workbench', query: { skill: 'skill-sheet' } })
+    expect(router.push).toHaveBeenCalledWith({
+      path: '/workbench',
+      query: { skill: 'skill-sheet', skillVersion: 'skill-version-sheet-11' },
+    })
   })
 
   it('只展示员工接口返回的 AI 同事，并从加号预选 Agent', async () => {
@@ -74,6 +86,9 @@ describe('员工能力目录', () => {
     expect(wrapper.get('[aria-label="AI 同事列表"]').text()).toContain('经营分析同事')
     await wrapper.get('button[aria-label="与 AI 同事开始对话：经营分析同事"]').trigger('click')
     expect(wrapper.get('button[aria-label="与 AI 同事开始对话：经营分析同事"]').text()).toContain('去对话')
-    expect(router.push).toHaveBeenCalledWith({ path: '/workbench', query: { agent: 'agent-assistant' } })
+    expect(router.push).toHaveBeenCalledWith({
+      path: '/workbench',
+      query: { agent: 'agent-assistant', agentVersion: 'agent-version-assistant-120' },
+    })
   })
 })

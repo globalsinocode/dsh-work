@@ -1,4 +1,5 @@
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
+import type { BackgroundLanePurpose } from '../../domain/background-lanes.ts'
 import type {
   AttemptState,
   CreateAttemptInput,
@@ -16,7 +17,8 @@ export interface RestartRecoveryResult {
 }
 
 /** An active run in a team workspace with its session's pinned agent version (1A-T5 sweep). */
-export type WorkspaceActiveRun = RunRecord & { agentVersionId: string }
+/** `dataScopes`：当前 Attempt Manifest 固定的数据范围；尚无 Attempt 时为空。 */
+export type WorkspaceActiveRun = RunRecord & { agentVersionId: string; dataScopes: string[] }
 
 export interface AppendSystemEventInput {
   tenantId: string
@@ -48,7 +50,7 @@ export interface RunRepository {
     runtimeId: string,
     options?: { automationMaxConcurrent?: number },
   ): Promise<boolean>
-  /** Distinguish a reserved child slot from a fully occupied or paused Runtime after a failed ordinary claim. */
+  /** PF-06：存在同步委派预留席位时，普通排队 Attempt 不得抢占预留槽。 */
   isBlockedByDelegationReservation(tenantId: string, runtimeId: string): Promise<boolean>
   /**
    * AG-03 车道占用读数：自动任务有效并发上限（min(配置, capacity-1)，
@@ -57,11 +59,21 @@ export interface RunRepository {
    * 部署/运维状态——调用方应留队重排而非把排队 Run 收敛为容量失败；
    * 只有 `exists && accepting && allowed <= 0` 才是确定的容量收敛条件。
    */
+  /**
+   * EX-02, S3 and AG-03 background lanes: effective limit min(configured, capacity - 1) and current use.
+   * `backgroundFull`: all background purposes together already hold capacity - 1 Workers.
+   */
+  backgroundLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    purpose: 'automation' | BackgroundLanePurpose,
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }>
   automationLaneUsage(
     tenantId: string,
     runtimeId: string,
     configuredMax: number,
-  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }>
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }>
   /**
    * AG-03 条件收敛：仅当 Run 仍停在「无 Attempt 的 queued」时落终态。
    */
@@ -79,6 +91,8 @@ export interface RunRepository {
    */
   workspaceStatusForAttempt(tenantId: string, attemptId: string): Promise<'active' | 'archived' | null>
   transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord>
+  /** 记录第一个请求停止该 Run 的员工（线程中标注由谁停止）；已有记录时不覆盖。 */
+  recordCancelRequester(tenantId: string, runId: string, userId: string): Promise<void>
   transitionAttempt(
     tenantId: string,
     attemptId: string,
@@ -88,6 +102,8 @@ export interface RunRepository {
   appendEvent(event: StoredRunEvent): Promise<StoredRunEvent>
   /** Appends a server-authored event, computing the next per-attempt sequence transactionally. */
   appendSystemEvent(input: AppendSystemEventInput): Promise<StoredRunEvent>
+  /** Marks a stored Runtime event as late (safe_metadata.late): kept in the log, hidden from projections. */
+  markEventLate(tenantId: string, eventId: string): Promise<void>
   readEvents(tenantId: string, runId: string, afterSequence?: number): Promise<StoredRunEvent[]>
   readEventsAfterEvent(tenantId: string, runId: string, afterEventId?: string): Promise<StoredRunEvent[]>
   recoverAfterRestart(tenantId: string, runtimeId: string): Promise<RestartRecoveryResult>

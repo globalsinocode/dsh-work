@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path'
 
 import { PostgresConversationRepository } from '../../server/src/modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresContentService } from '../../server/src/modules/workbench/application/postgres-content-service.ts'
+import { LocalObjectStorage } from '../../server/src/infrastructure/storage/local-object-storage.ts'
 import { PostgresRunRepository } from '../../server/src/modules/run/postgres-run-repository.ts'
 import { PostgresAuthorizationService } from '../../server/src/modules/authorization/postgres-authorization-service.ts'
 import { PostgresAgentService } from '../../server/src/modules/agent/postgres-agent-service.ts'
@@ -118,7 +119,7 @@ try {
 
   const conversations = new PostgresConversationRepository(database)
   const authorization = new PostgresAuthorizationService(database)
-  const content = new PostgresContentService(database, resolve(dataRoot, 'storage'), authorization)
+  const content = new PostgresContentService(database, new LocalObjectStorage(resolve(dataRoot, 'storage')), authorization)
   const runs = new PostgresRunRepository(database)
   const agents = new PostgresAgentService(database)
   const agentMembers = new PostgresWorkspaceAgentMemberService(database, authorization, agents)
@@ -471,7 +472,6 @@ try {
     eventsReadable: (await runs.readEvents(tenantId, started.id)).length > 0,
     sessionsListable: (await conversations.listWorkspaceSessions({
       workspaceId,
-      actorUserId: memberId,
       limit: 5,
     })).items.length > 0,
     filesListable: (await content.listWorkspaceFiles({

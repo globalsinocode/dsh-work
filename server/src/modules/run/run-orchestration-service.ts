@@ -1,3 +1,4 @@
+import { DEFAULT_PLATFORM_TIMEZONE } from '../../domain/execution-time.ts'
 import { createHash } from 'node:crypto'
 
 import type { DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
@@ -30,6 +31,9 @@ import { AttemptDispatcher } from './orchestration/attempt-dispatcher.ts'
 import { AttemptScheduler } from './orchestration/attempt-scheduler.ts'
 import { BackgroundRunEntry } from './orchestration/background-run-entry.ts'
 import { withContinuationOutputs } from './orchestration/continuation.ts'
+import { buildConversationContext } from '../../domain/conversation-context.ts'
+import { SessionSummaryEntry } from './orchestration/session-summary-entry.ts'
+import { ProjectArchiveEntry } from './orchestration/project-archive-entry.ts'
 import { ExecutionAuthorizationGate } from './orchestration/execution-authorization-gate.ts'
 import { assertPrompt, attemptLimitsForBudget, manifestLimitsForRetry } from './orchestration/manifest-helpers.ts'
 import {
@@ -38,9 +42,11 @@ import {
   type DelegationPort,
   type OrchestrationDependencies,
   type PersistentWaitPort,
+  type ExecutionToolCheckPort,
   type ToolBindingCheckPort,
 } from './orchestration/orchestration-dependencies.ts'
 import { ReleaseTrialEntry } from './orchestration/release-trial-entry.ts'
+import { TASK_THREAD_BUSY } from '../workbench/application/postgres-project-service.ts'
 import { RunCancellation } from './orchestration/run-cancellation.ts'
 import { RunEventRecorder } from './orchestration/run-event-recorder.ts'
 
@@ -59,6 +65,7 @@ export class RunOrchestrationService {
   private readonly admin: AdminRunEntry
   private readonly trials: ReleaseTrialEntry
   private readonly background: BackgroundRunEntry
+  private readonly archivist: ProjectArchiveEntry
 
   constructor(
     runs: RunRepository,
@@ -81,20 +88,31 @@ export class RunOrchestrationService {
        */
       automationStatusLookup?: (runId: string) => Promise<{ status: string; trial: boolean } | null>
       /** B-03/I-04：Attempt 固定绑定修订的执行期复核端口；未接线且 Manifest 带 pin 时 fail-closed。 */
+      toolChecks?: ExecutionToolCheckPort
       toolBindings?: ToolBindingCheckPort
       /** PF-01 stable Task ownership for non-conversation execution. */
       tasks?: TaskRepository
       memory?: PostgresControlledMemoryService
+      /** 项目空间 S1：任务线程端口。 */
+      projectTasks?: OrchestrationDependencies['projectTasks']
+      /** 项目空间 S2：项目档案与档案员整理批次。 */
+      projectArchive?: OrchestrationDependencies['projectArchive']
+      /** Platform default IANA timezone for a run's current time; defaults to Asia/Shanghai. */
+      timezone?: string
     },
   ) {
     this.deps = {
       runs, conversations, models, runtime, content, operations, agents, knowledge, authorization,
       agentMembers: options?.agentMembers,
       automationMaxConcurrent: options?.automationMaxConcurrent ?? 2,
+      timezone: options?.timezone ?? DEFAULT_PLATFORM_TIMEZONE,
       automationStatusLookup: options?.automationStatusLookup,
+      toolChecks: options?.toolChecks,
       toolBindings: options?.toolBindings,
       tasks: options?.tasks,
       memory: options?.memory,
+      projectTasks: options?.projectTasks,
+      projectArchive: options?.projectArchive,
     }
     const budget = new AttemptBudget(this.deps)
     const events = new RunEventRecorder(this.deps, budget)
@@ -105,14 +123,29 @@ export class RunOrchestrationService {
     this.admin = new AdminRunEntry(this.deps, this.dispatcher, this.scheduler, budget, this.cancellation)
     this.trials = new ReleaseTrialEntry(this.deps, this.dispatcher, budget, this.cancellation)
     this.background = new BackgroundRunEntry(this.deps, this.dispatcher)
-  }
-
-  setPersistentWaitService(service: PersistentWaitPort): void {
-    this.deps.persistentWait = service
+    this.deps.sessionSummaries = new SessionSummaryEntry(this.deps, this.dispatcher, budget)
+    this.archivist = new ProjectArchiveEntry(this.deps, this.dispatcher, budget)
+    this.deps.projectArchivist = this.archivist
   }
 
   setDelegationService(service: DelegationPort): void {
     this.deps.delegation = service
+  }
+
+  /** 项目空间 S2：员工任务完成后触发档案员；不抛错。 */
+  scheduleProjectArchive(workspaceId: string, requestedBy: string) { return this.archivist.schedule(workspaceId, requestedBy) }
+
+  /** EX-02: first message, summary and recent messages carried by a workbench turn. */
+  private async conversationContext(sessionId: string, runId: string) {
+    const [messages, summary] = await Promise.all([
+      this.deps.conversations.getConversationMessages(sessionId, runId),
+      this.deps.conversations.getCurrentConversationSummary(sessionId),
+    ])
+    return buildConversationContext(messages, summary)
+  }
+
+  setPersistentWaitService(service: PersistentWaitPort): void {
+    this.deps.persistentWait = service
   }
 
   enqueueResumedAttempt(run: RunRecord, manifest: RuntimeManifest): void {
@@ -126,6 +159,8 @@ export class RunOrchestrationService {
 
   // Agent release trials.
   runReleaseTrialCase(input: Parameters<ReleaseTrialEntry['runReleaseTrialCase']>[0]) { return this.trials.runReleaseTrialCase(input) }
+  startReleaseTrialCase(input: Parameters<ReleaseTrialEntry['startReleaseTrialCase']>[0]) { return this.trials.startReleaseTrialCase(input) }
+  getReleaseTrialResult(runId: string) { return this.trials.getReleaseTrialResult(runId) }
 
   // Automation, Agent routines and delegated child tasks.
   dispatchAutomation(run: RunRecord, input: Parameters<BackgroundRunEntry['dispatchAutomation']>[1]) { return this.background.dispatchAutomation(run, input) }
@@ -141,7 +176,9 @@ export class RunOrchestrationService {
   systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) { return this.cancellation.systemCancelRun(runId, cause, reason) }
 
   // Execution-time authorization shared with the Runtime, tool bridge and approvals.
-  assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false) { return this.gate.assertCurrentRunAuthorization(manifest, toolBindingsChecked) }
+  assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false) {
+    return this.gate.assertCurrentRunAuthorization(manifest, toolBindingsChecked)
+  }
   assertWaitingRunAuthorization(manifest: RuntimeManifest) { return this.gate.assertWaitingRunAuthorization(manifest) }
 
   close() { return this.scheduler.close() }
@@ -154,6 +191,7 @@ export class RunOrchestrationService {
     agentVersionId?: string | null
     selectedSkillVersionId?: string
     selectedSkillReference?: string
+    clientIntentId?: string
     authorizationContext?: SessionAuthorizationContext
   }) {
     const title = assertPrompt(input.title)
@@ -179,6 +217,7 @@ export class RunOrchestrationService {
       workspaceId,
       agentVersionId: input.agentVersionId,
       selectedSkillVersionId: input.selectedSkillVersionId,
+      clientIntentId: input.clientIntentId,
     })
   }
 
@@ -236,6 +275,9 @@ export class RunOrchestrationService {
     content: unknown
     /** Client-supplied dedupe key; absent keys fall back to a fresh message id. */
     idempotencyKey?: string | null
+    mentionedUserIds?: string[]
+    /** 项目空间 S3：平台写入的任务说明（任务对话首条消息）不算成员发言，不推进任务状态。 */
+    skipProjectTaskSync?: boolean
   }) {
     if (typeof input.content !== 'string') throw requestInvalid('消息内容必须是字符串')
     const content = input.content.trim()
@@ -260,7 +302,12 @@ export class RunOrchestrationService {
       userId: input.userId,
       content,
       messageId,
+      mentionedUserIds: input.mentionedUserIds,
     })
+    // 项目空间 S3：任务对话中的发言可能推进员工任务状态（承接人首次发言）。
+    if (committed.created && !input.skipProjectTaskSync) {
+      await this.deps.projectTasks?.noteTaskConversationMessage(session.id, input.userId)
+    }
     return { messageId: committed.messageId, sessionId: session.id, created: committed.created }
   }
 
@@ -275,6 +322,11 @@ export class RunOrchestrationService {
      * 执行的 Agent 版本；个人/独立会话忽略此字段，沿用会话绑定版本。
      */
     workspaceAgentMemberId?: string
+    /**
+     * 项目空间 S6：定时触发的执行（无人在场）只装配项目任务读工具；
+     * 缺省表示由人发起，团队空间可读可写。
+     */
+    scheduled?: boolean
     cumulativeBudget?: TaskBudgetInput
     authorizationContext?: SessionAuthorizationContext
   }) {
@@ -291,15 +343,31 @@ export class RunOrchestrationService {
     }
     const session = await this.requireSessionAccess(input.sessionId, input.userId, 'write')
     let agentVersionId = session.agentVersionId
-    const teamAgentMemberId = session.workspaceType === 'team' ? input.workspaceAgentMemberId : undefined
+    let taskThread = false
     if (session.workspaceType === 'team') {
+      // 项目空间 S1：任务线程固定承接 Agent，回复无需 @；同一时间只允许一个执行。
+      // 此处先行拒绝避免无谓授权；并发回复由 createRun 在 Session 行锁内复核。
+      const thread = await this.deps.projectTasks?.resolveTaskThread(session.id)
+      taskThread = Boolean(thread)
+      let workspaceAgentMemberId = input.workspaceAgentMemberId
+      if (thread) {
+        if (workspaceAgentMemberId && workspaceAgentMemberId !== thread.agentMemberId) {
+          throw requestInvalid('任务对话只能交给负责该任务的 Agent')
+        }
+        if (thread.status === 'done') throw stateConflict('任务已完成，改回进行中后才能交给 Agent')
+        workspaceAgentMemberId = thread.agentMemberId
+        await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
+      } else {
+        // S3：员工任务的任务对话不能 @Agent 发起执行。
+        await this.deps.projectTasks?.assertNotEmployeeTaskThread(session.id)
+      }
       // TW-10 @ 触发：团队会话每次执行都必须显式绑定当前可用的 Agent 成员；
       // 不再回退到会话级 agentVersionId，避免历史绑定绕过成员状态复核。
-      if (!input.workspaceAgentMemberId || !this.deps.agentMembers) {
+      if (!workspaceAgentMemberId || !this.deps.agentMembers) {
         throw requestInvalid('团队空间对话必须通过 @Agent 成员发起执行')
       }
       agentVersionId = (
-        await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, input.workspaceAgentMemberId)
+        await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, workspaceAgentMemberId)
       ).agentVersionId
     }
     if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法发起执行')
@@ -331,8 +399,11 @@ export class RunOrchestrationService {
       requestedBy: input.userId,
       idempotencyKey: input.idempotencyKey,
       taskBudget: input.cumulativeBudget,
+      ...(taskThread ? { requireIdleSession: { conflictMessage: TASK_THREAD_BUSY } } : {}),
     })
     if (run.currentAttemptId || run.status !== 'queued') return run
+    // 项目空间 S4：任务对话的第一次执行让待办的 Agent 任务进入进行中。
+    if (taskThread) await this.deps.projectTasks?.noteTaskRunStarted?.(session.id)
     await this.deps.conversations.appendMessage({
       sessionId: session.id,
       runId: run.id,
@@ -342,20 +413,22 @@ export class RunOrchestrationService {
       messageId: `message-user-${run.id}`,
     })
     await this.dispatcher.failUndispatchedRun(run, async () => {
-      const history = await this.deps.conversations.getConversationHistory(session.id, run.id)
+      const context = await this.conversationContext(session.id, run.id)
       await this.dispatcher.dispatch(run, {
         prompt,
         workspaceId: session.workspaceId,
         agentVersionId,
-        workspaceAgentMemberId: teamAgentMemberId,
         userId: input.userId,
         fileIds: input.fileIds ?? [],
         preparedFiles,
         authorization,
         additionalSkillReferences,
-        selectedSkillReference: session.selectedSkillReference ?? undefined,
-        history,
+        history: context.history,
+        conversationSummary: context.summary,
         limits: attemptLimitsForBudget(normalizedBudget),
+        projectTaskToolMode: session.workspaceType === 'team'
+          ? (input.scheduled ? 'read' : 'read-write')
+          : 'none',
       })
     })
     await this.deps.operations?.appendAudit(input.userId, 'run.create', run.id, 'success', `trace-${run.id}`, '员工创建真实 Run')
@@ -431,7 +504,9 @@ export class RunOrchestrationService {
   async cancel(runId: string, userId: string, authorizationContext?: SessionAuthorizationContext) {
     await this.deps.authorization?.authorizeWorkbench({ userId, ...authorizationContext })
     const run = await this.requireWritableRun(runId, userId)
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务已取消，终止所有活动子任务')
+    if (['queued', 'running', 'cancel_requested', 'waiting'].includes(run.status)) {
+      await this.deps.runs.recordCancelRequester(tenantId, run.id, userId)
+    }
     if (run.status === 'waiting') {
       if (!this.deps.persistentWait) throw new Error('持久化等待服务未接线')
       await this.deps.persistentWait.cancelRun(run.id, userId)
@@ -455,11 +530,9 @@ export class RunOrchestrationService {
       if (!this.deps.tasks) throw requestInvalid('Task 重试服务未接线')
       const task = await this.deps.tasks.getTask(tenantId, run.taskId)
       if (!task) throw requestInvalid('原 Task 不存在，无法重试')
-      // PF-06 子任务的安全边界来自持久化父子关系、父 Attempt 活性、深度和
-      // 权限上限。通用 retry 只会重建普通 Manifest，无法合法延续这些约束；
-      // 因此必须由仍在运行的父 Agent 重新发起委派，而不是脱离父任务重跑。
+      // Agent 委派已删除（2026-10-16）；历史委派子任务脱离父任务后无法合法重跑。
       if (task.sourceType === 'delegation') {
-        throw requestInvalid('委派子任务不支持通用重试；请由仍在运行的父 Agent 重新发起委派')
+        throw requestInvalid('委派子任务不支持重试')
       }
       // 主动任务重跑必须重新经过规则状态、触发去重和已批准授权上限。
       // Task 来源不可变，不能依赖可能缺失或在重试后丢失的 Manifest purpose。
@@ -522,33 +595,17 @@ export class RunOrchestrationService {
     // TW-10：共享会话按消息绑定 Agent——重试必须沿用原 Attempt Manifest 记录的
     // 固定版本（requireWritableRun 已完成写轨校验）。会话级绑定对未绑定讨论串
     // 恒为 null、对已绑定会话也可能与触发时成员版本漂移，不能回落；缺失即拒绝。
-    const manifest = lastAttempt?.manifest as RuntimeManifest | undefined
-    let agentVersionId = workspaceType === 'team'
-      ? manifest?.agent_version_id ?? null
+    const manifestAgentVersionId = (lastAttempt?.manifest as RuntimeManifest | undefined)?.agent_version_id
+    const agentVersionId = workspaceType === 'team'
+      ? manifestAgentVersionId ?? null
       : session.agentVersionId
-    if (workspaceType === 'team') {
-      if (!agentVersionId) {
-        agentVersionId = await this.deps.runs.findPinnedAgentVersionIdForRun(tenantId, run.id)
-      }
-      if (!agentVersionId) {
-        const memberId = manifest?.workspace_agent_member_id
-          ?? await this.deps.runs.findWorkspaceAgentMemberIdForRun(tenantId, run.id)
-        if (memberId && this.deps.agentMembers) {
-          agentVersionId = (
-            await this.deps.agentMembers.requireAvailableAgentMemberVersion(session.workspaceId, memberId)
-          ).agentVersionId
-        }
-      }
-      if (!agentVersionId) {
-        throw requestInvalid(
-          run.currentAttemptId
-            ? '原运行缺少 Agent 版本记录，无法重试；请在下方输入框重新 @Agent 发起执行'
-            : '原运行未完成派发，无法重试；请在下方输入框重新 @Agent 发起执行',
-        )
-      }
-    } else if (!agentVersionId) {
-      throw requestInvalid('Session 未绑定 Agent，无法重试')
+    if (workspaceType === 'team' && !manifestAgentVersionId) {
+      throw requestInvalid('原运行缺少 Agent 版本记录，无法重试；请重新 @Agent 发起执行')
     }
+    if (!agentVersionId) throw requestInvalid('Session 未绑定 Agent，无法重试')
+    // 项目空间 S1：任务线程的重试同样受“同一时间只允许一个执行”约束。
+    const taskThread = workspaceType === 'team' && Boolean(await this.deps.projectTasks?.resolveTaskThread(session.id))
+    if (taskThread) await this.deps.projectTasks!.assertTaskThreadIdle(session.id)
     const additionalSkillReferences = session.selectedSkillReference
       ? [session.selectedSkillReference]
       : []
@@ -584,6 +641,7 @@ export class RunOrchestrationService {
         sessionId: session.id,
         requestedBy: userId,
         idempotencyKey: `retry-of-${run.id}-${run.currentAttemptId ?? 'none'}`,
+        ...(taskThread ? { requireIdleSession: { conflictMessage: TASK_THREAD_BUSY } } : {}),
       })
       if (retried.currentAttemptId || retried.status !== 'queued') return retried
       await this.dispatcher.failUndispatchedRun(retried, async () => {
@@ -597,7 +655,7 @@ export class RunOrchestrationService {
           senderUserId: userId,
           messageId: `message-user-${retried.id}`,
         })
-        const history = await this.deps.conversations.getConversationHistory(session.id, retried.id)
+        const context = await this.conversationContext(session.id, retried.id)
         await this.dispatcher.dispatch(retried, {
           prompt,
           workspaceId: session.workspaceId,
@@ -606,16 +664,19 @@ export class RunOrchestrationService {
           fileIds,
           authorization,
           additionalSkillReferences,
-          selectedSkillReference: session.selectedSkillReference ?? undefined,
-          history,
+          history: context.history,
+          conversationSummary: context.summary,
+          // 重试由人发起：团队空间与原运行一样装配项目任务工具（S6）。
+          projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
         })
       })
       await this.deps.operations?.appendAudit(userId, 'run.retry', retried.id, 'success', `trace-${retried.id}`, `员工重新发起共享运行（来源 ${run.id}）`)
       return this.deps.runs.getRun(tenantId, retried.id)
     }
+    const context = await this.conversationContext(session.id, run.id)
     const continued = await withContinuationOutputs(
       this.deps.conversations,
-      await this.deps.conversations.getConversationHistory(session.id, run.id),
+      context.history,
       run.id,
       prompt,
     )
@@ -628,11 +689,12 @@ export class RunOrchestrationService {
       fileIds,
       authorization,
       additionalSkillReferences,
-      selectedSkillReference: session.selectedSkillReference ?? undefined,
       history: continued.history,
+      conversationSummary: context.summary,
       limits: lastAttempt?.manifest
         ? manifestLimitsForRetry(lastAttempt.manifest as unknown as RuntimeManifest)
         : undefined,
+      projectTaskToolMode: workspaceType === 'team' ? 'read-write' : 'none',
     })
     await this.deps.operations?.appendAudit(userId, 'run.retry', runId, 'success', `trace-${runId}`, '员工创建新的不可变 Attempt')
     return this.deps.runs.getRun(tenantId, run.id)

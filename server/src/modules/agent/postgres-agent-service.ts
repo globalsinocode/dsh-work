@@ -115,10 +115,13 @@ interface VersionRow {
 
 export interface WorkbenchAgentDefinition {
   id: string
+  versionId: string
+  versionReference: string
+  version: string
+  publishedAt: string
   name: string
   description: string
   welcomeMessage: string
-  version: string
   examplePrompts: string[]
 }
 
@@ -152,6 +155,8 @@ export interface RuntimeAgentSnapshot {
   modelRequirements: AgentSpec['model']['requirements']
   dataRequirements?: AgentSpec['data']['collections']
   stateEnabled?: boolean
+  webSearchEnabled?: boolean
+  projectTasksEnabled?: boolean
   systemPrompt: string
   skills: string[]
   skillInstructions: RuntimeSkillConfiguration[]
@@ -779,9 +784,11 @@ export class PostgresAgentService {
     // assertAgentVersionVisibleToRoles 的豁免保持一致：可见角色表达「哪些员工能看到/使用」，
     // 不是「谁有权部署」。使用面不变。
     const governance = isPlatformGovernance(roleIds)
-    return this.database<WorkbenchAgentDefinition[]>`
-      select a.id, av.name, av.description, av.welcome_message as "welcomeMessage",
-             av.version, av.example_prompts as "examplePrompts"
+    const rows = await this.database<(Omit<WorkbenchAgentDefinition, 'versionReference' | 'publishedAt'> & {
+      publishedAt: Date | null
+    })[]>`
+      select a.id, av.id as "versionId", av.name, av.description, av.welcome_message as "welcomeMessage",
+             av.version, av.example_prompts as "examplePrompts", av.published_at as "publishedAt"
         from agents a
         join agent_versions av on av.tenant_id = a.tenant_id and av.id = a.active_version_id
         join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
@@ -797,6 +804,82 @@ export class PostgresAgentService {
        order by case when a.id = ${DEFAULT_WORKBENCH_AGENT_ID} then 0 else 1 end,
                 a.updated_at desc, a.id
     `
+    return rows.map(row => ({
+      ...row,
+      versionReference: `${row.id}@${row.version}`,
+      publishedAt: row.publishedAt?.toISOString() ?? '',
+    }))
+  }
+
+  async lookupVersionReference(versionId: string): Promise<string | null> {
+    const [row] = await this.database<{ agentId: string; version: string }[]>`
+      select agent_id as "agentId", version
+        from agent_versions
+       where tenant_id = ${tenantId} and id = ${versionId}
+    `
+    return row ? `${row.agentId}@${row.version}` : null
+  }
+
+  async resolveWorkbenchAgentVersionById(input: {
+    agentId: string
+    versionId: string
+    userId: string
+    roleIds?: string[]
+    requiredSkillReferences?: string[]
+  }): Promise<{ id: string; agentId: string; version: string; reference: string }> {
+    const roleIds = input.roleIds === undefined
+      ? (await this.database<{ roleId: string }[]>`
+          select role_id as "roleId" from user_roles
+           where tenant_id = ${tenantId} and user_id = ${input.userId}
+             and (valid_until is null or valid_until > now())
+        `).map(row => row.roleId)
+      : unique(input.roleIds)
+    if (roleIds.length === 0) throw accessDenied('当前用户没有可用 Agent')
+    const governance = isPlatformGovernance(roleIds)
+    const [row] = await this.database<{
+      id: string
+      agentId: string
+      version: string
+      versionStatus: PublishStatus
+      agentStatus: AgentDefinition['status']
+      skills: string[]
+      tools: string[]
+      visibleRoleIds: string[]
+      dataScopes: string[]
+    }[]>`
+      select av.id, av.agent_id as "agentId", av.version, av.status as "versionStatus",
+             a.status as "agentStatus", av.skill_refs as skills, av.tool_refs as tools,
+             av.visible_role_ids as "visibleRoleIds", av.data_scopes as "dataScopes"
+        from agent_versions av
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
+        join execution_principals ep on ep.tenant_id = a.tenant_id and ep.agent_id = a.id
+          and ep.kind = 'agent' and ep.status = 'active'
+        join users u on u.tenant_id = a.tenant_id and u.id = ${input.userId} and u.status = 'active'
+       where av.tenant_id = ${tenantId} and av.id = ${input.versionId} and av.agent_id = ${input.agentId}
+    `
+    if (!row) throw notFound('Agent Version 不存在或与所选 Agent 不匹配')
+    if (row.agentStatus !== 'published' || row.versionStatus !== 'published') {
+      throw new RequestError(409, 'selected_version_unavailable', '所选版本已不可用，请重新选择')
+    }
+    if (!governance && !roleIds.some(roleId => row.visibleRoleIds.includes(roleId))) {
+      throw accessDenied('Agent 不存在或当前用户不可用')
+    }
+    const additional = input.requiredSkillReferences ?? []
+    if (additional.length) {
+      const principal = await this.getAgentExecutionPrincipal(row.agentId)
+      await this.assertCapabilityReferences(
+        mergeSkillReferences(row.skills, additional),
+        row.tools,
+        principal.roleIds,
+        row.dataScopes.filter(scope => principal.dataScopes.includes(scope)),
+      )
+    }
+    return {
+      id: row.id,
+      agentId: row.agentId,
+      version: row.version,
+      reference: `${row.agentId}@${row.version}`,
+    }
   }
 
   async resolveWorkbenchAgentVersion(
@@ -1211,11 +1294,21 @@ export class PostgresAgentService {
   }
 }
 
+type NormalizedAgentDraftConfiguration = AgentDraftConfiguration & {
+  visibility: string
+  roleIds: string[]
+  dataScopes: string[]
+  skills: string[]
+  tools: string[]
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
+}
+
 function normalizeConfiguration(
   input: AgentDraftConfiguration,
   owner: string,
   department: string,
-): AgentDraftConfiguration {
+): NormalizedAgentDraftConfiguration {
   const welcomeMessage = input.welcomeMessage.trim()
     || `你好，我是${input.name.trim() || '企业 Agent'}。${input.description.trim() || '我会协助你完成工作。'}`.slice(0, 120)
   return {
@@ -1224,22 +1317,24 @@ function normalizeConfiguration(
     description: input.description.trim(),
     owner,
     department,
-    visibility: input.visibility.trim() || '指定角色',
-    roleIds: unique(input.roleIds),
-    dataScopes: unique(input.dataScopes),
+    visibility: input.visibility?.trim() || '指定角色',
+    roleIds: unique(input.roleIds ?? (input as CreateAgentDraftInput).visibleRoleIds ?? []),
+    dataScopes: unique(input.dataScopes ?? []),
     welcomeMessage,
     examplePrompts: unique(input.examplePrompts),
     systemPrompt: input.systemPrompt.trim(),
     ...(input.workInstructions !== undefined ? { workInstructions: input.workInstructions?.trim() ?? '' } : {}),
-    skills: unique(input.skills),
-    tools: unique(input.tools),
+    skills: unique(input.skills ?? []),
+    tools: unique(input.tools ?? []),
+    webSearchEnabled: input.webSearchEnabled ?? false,
+    projectTasksEnabled: input.projectTasksEnabled ?? false,
     mcpScope: normalizeAgentMcpScope(input.mcpScope),
     delegationPolicy: normalizeDelegationPolicy(input.delegationPolicy),
     changeSummary: input.changeSummary.trim() || '更新 Agent 配置',
   }
 }
 
-function assertConfiguration(input: AgentDraftConfiguration) {
+function assertConfiguration(input: NormalizedAgentDraftConfiguration) {
   if (!/^[a-z][a-z0-9-]{2,47}$/.test(input.id)) throw invalidRequest('Agent 标识格式不正确')
   // 定义字段与包入口共用同一规范化校验（AgentSpec 内容边界）。
   assertAgentSpecContent(agentSpecFromConfiguration(input, ''))
@@ -1274,6 +1369,8 @@ function toAgentDefinition(row: AgentRow): AgentDefinition {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.agentSpec?.capabilities.tools ?? row.tools,
+    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
+    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     updatedAt: formatDateTime(row.updatedAt),
@@ -1305,6 +1402,8 @@ function toVersionRecord(row: VersionRow): AgentVersionRecord {
     timeoutSeconds: row.timeoutSeconds,
     skills: row.skills,
     tools: row.tools,
+    webSearchEnabled: row.agentSpec?.capabilities.webSearch ?? false,
+    projectTasksEnabled: row.agentSpec?.capabilities.projectTasks ?? false,
     mcpScope: normalizeAgentMcpScope(row.mcpScope),
     delegationPolicy: row.delegationPolicy,
     ...(row.bindingRefs?.length ? { bindingRefs: row.bindingRefs } : {}),

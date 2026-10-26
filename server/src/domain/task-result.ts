@@ -42,7 +42,7 @@ export const TASK_RESULT_VERSION = 'task-result/v1'
 export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_achieved'
 
 /** 回执类别：回答提交、成果登记、平台工具动作。 */
-export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool' | 'record'
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
 
 /**
  * 回执核验状态：
@@ -151,10 +151,10 @@ export interface TaskResultEvidence {
     artifact: Artifact
     artifactVersionId: string
   }>
-  /** Current Attempt's durable collection versions; no record body is exposed. */
-  recordVersions?: Array<{ id: string; deleted?: boolean }>
   /** Current Attempt's write operations whose effect is still unknown. */
   unknownOperations?: Array<{ id: string; actionRef: string }>
+  /** Agent 数据平面：当前 Attempt 写入或删除的记录版本引用。 */
+  recordVersions?: Array<{ id: string; attemptId: string; runId: string; deleted: boolean }>
   sources: TaskSource[]
   /**
    * 当前 Attempt 的平台工具审计记录。`decision` 非空的行为授权决定记录
@@ -274,10 +274,6 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       label: `成果已登记：${artifact.name}（v${artifact.version}）`,
     })
   }
-  for (const record of evidence.recordVersions ?? []) {
-    receipts.push({ kind: 'record', status: 'completed', ref: record.id,
-      label: record.deleted ? '结构化记录版本曾登记，内容已按保留政策删除' : '结构化记录版本已登记' })
-  }
   const artifactsClaimed = terminalMetadata ? metadataNumber(terminalMetadata, 'artifact_count') : null
   if (artifactsClaimed !== null && artifactsClaimed > artifacts.length) {
     receipts.push({
@@ -324,6 +320,25 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       message: `工具 ${operation.actionRef} 的实际效果未知；须查询权威系统回执后才能确认目标。` })
   }
 
+  const recordVersionEvidence = evidence.recordVersions ?? []
+  const dataRecordVersions = recordVersionEvidence.filter(version => !version.deleted)
+  for (const version of dataRecordVersions) {
+    receipts.push({
+      kind: 'artifact',
+      status: 'completed',
+      ref: version.id,
+      label: 'Agent 数据记录版本已登记',
+    })
+  }
+  for (const tombstone of recordVersionEvidence.filter(version => version.deleted)) {
+    receipts.push({
+      kind: 'artifact',
+      status: 'completed',
+      ref: tombstone.id,
+      label: 'Agent 数据记录版本已登记（保留期清理后仅存删除证明）',
+    })
+  }
+
   if (outputTruncated) {
     pendingItems.push({
       kind: 'output_truncated',
@@ -346,12 +361,10 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
   const hasCommittedDeliverable = receipts.some(
     receipt => receipt.status === 'completed',
   )
-  // A state cursor or collection read is platform work, not evidence that the
-  // business goal is true. Durable record versions are verified separately.
   const hasVerifiedDeliverable = receipts.some(
-    receipt => receipt.status === 'completed' && (receipt.kind === 'artifact' || receipt.kind === 'record'),
-  ) || toolAudits.some(audit => audit.decision === null && audit.result === 'success'
-    && !/^(state_|data_)/.test(audit.toolName ?? ''))
+    receipt => receipt.status === 'completed' && receipt.kind === 'artifact',
+  ) || toolAudits.some(audit => audit.decision === null && audit.result === 'success')
+    || recordVersionEvidence.length > 0
   let outcome: TaskResultOutcome
   if (!terminal) {
     outcome = 'pending'

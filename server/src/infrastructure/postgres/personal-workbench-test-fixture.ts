@@ -22,6 +22,16 @@ import { Router, envelope, requireRequestIdentity } from '../../http/router.ts'
 import { registerConversationRoutes } from '../../http/workbench/conversation-routes.ts'
 import { registerContentRoutes } from '../../http/workbench/content-routes.ts'
 import { registerAutomationRoutes } from '../../http/workbench/automation-routes.ts'
+import { registerWorkspaceActivityRoutes } from '../../http/workbench/workspace-activity-routes.ts'
+import { registerWorkspaceAgentMemberRoutes } from '../../http/workbench/workspace-agent-member-routes.ts'
+import { PostgresWorkspaceActivityService } from '../../modules/workbench/application/postgres-workspace-activity-service.ts'
+import { PostgresWorkspaceService } from '../../modules/workbench/application/postgres-workspace-service.ts'
+import { PostgresWorkspaceAgentMemberService } from '../../modules/workbench/application/postgres-workspace-agent-member-service.ts'
+import { bindWorkspaceNotificationRecipients } from '../../modules/workbench/application/workspace-activity-writer.ts'
+import {
+  WorkspaceNotificationRecipientService,
+  createPostgresNotificationRecipientPorts,
+} from '../../modules/workbench/application/workspace-notification-recipient-service.ts'
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
@@ -33,6 +43,8 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   runtime?: AgentRuntimePort
   browser?: boolean
   automationMaxConcurrent?: number
+  /** Register team agent members + workspace notifications (batch 3 P1 browser). */
+  teamCollaboration?: boolean
 } = {}) {
   const db = await createThrowawayDatabase({ namePrefix: prefix, maxConnections: 6 })
   const root = await mkdtemp(join(tmpdir(), prefix))
@@ -41,6 +53,9 @@ export async function personalWorkbenchFixture(prefix: string, options: {
   const conversations = new PostgresConversationRepository(db.client)
   const runs = new PostgresRunRepository(db.client)
   const agents = new PostgresAgentService(db.client)
+  const agentMembers = options.teamCollaboration
+    ? new PostgresWorkspaceAgentMemberService(db.client, auth, agents)
+    : undefined
   const automationRepository = new PostgresAutomationRepository(db.client)
   const runtime = options.runtime ?? new UnavailableRuntime('runtime-local-01')
   const orchestration = new RunOrchestrationService(runs, conversations,
@@ -48,6 +63,7 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     content, undefined, agents, undefined, auth, {
       automationMaxConcurrent: options.automationMaxConcurrent,
       automationStatusLookup: runId => automationRepository.automationStatusForRun(runId),
+      agentMembers,
     })
   const automationService = new AutomationService(
     db.client,
@@ -66,11 +82,26 @@ export async function personalWorkbenchFixture(prefix: string, options: {
     const user = request.headers['x-test-user-id']
     return user ? { ...identity, userId: String(user) } : identity
   } })
-  registerConversationRoutes(router, conversations, orchestration, runs, agents, auth)
+  registerConversationRoutes(router, conversations, orchestration, runs, agents, auth, undefined, undefined, agentMembers)
   registerContentRoutes(router, content, auth)
   if (options.browser) {
     registerWorkbenchAgentRoutes(router, agents, auth)
     registerAutomationRoutes(router, automationService)
+    if (options.teamCollaboration) {
+      const workspaces = new PostgresWorkspaceService(db.client)
+      const recipientPorts = createPostgresNotificationRecipientPorts(db.client)
+      bindWorkspaceNotificationRecipients(new WorkspaceNotificationRecipientService(
+        db.client,
+        recipientPorts.participants,
+        recipientPorts.members,
+      ))
+      registerWorkspaceActivityRoutes(
+        router,
+        new PostgresWorkspaceActivityService(db.client, workspaces),
+        auth,
+      )
+      if (agentMembers) registerWorkspaceAgentMemberRoutes(router, agentMembers, auth)
+    }
     router.get('/api/workbench/v1/session', (_request, context) => {
       const identity = requireRequestIdentity(context, 'workbench')
       return envelope('workbench', { user: identity.profile, identityProvider: 'prototype-sso', apiAudience: 'workbench' })

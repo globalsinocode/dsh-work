@@ -1,7 +1,7 @@
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
-import type { RuntimeManifest } from '../runtime/runtime-types.ts'
+import type { McpConnectionSnapshot, RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
@@ -32,6 +32,11 @@ type AuthorizationPort = Pick<PostgresAuthorizationService,
 type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
   'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
 
+/** 执行期的 MCP pin 复核（per-agent 连接快照）。 */
+export interface ExecutionToolCheckPort {
+  assertPinnedConnections?(pins: readonly McpConnectionSnapshot[]): Promise<void>
+}
+
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
 export async function assertCurrentExecutionAuthorization(
   authorization: AuthorizationPort,
@@ -39,6 +44,7 @@ export async function assertCurrentExecutionAuthorization(
   manifest: RuntimeManifest,
   bindings?: ExecutionBindingAuthorizationPort,
   toolBindingsChecked = false,
+  toolChecks?: ExecutionToolCheckPort,
 ): Promise<void> {
   try {
     // B-03/I-04：Attempt 固定的工具绑定修订在 purpose 分流前统一复核——
@@ -50,8 +56,13 @@ export async function assertCurrentExecutionAuthorization(
       await bindings.assertActiveToolBindings(manifest.tool_bindings)
     }
     if (manifest.mcp_connections?.length) {
-      if (!bindings?.assertActiveMcpConnections || !manifest.agent_version_id) throw new ToolBindingCheckUnavailableError()
-      await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+      if (bindings?.assertActiveMcpConnections && manifest.agent_version_id) {
+        await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+      } else if (toolChecks?.assertPinnedConnections) {
+        await toolChecks.assertPinnedConnections(manifest.mcp_connections)
+      } else {
+        throw new ToolBindingCheckUnavailableError()
+      }
     }
     if (manifest.agent_version_id) await authorization.requireActiveAgentPrincipal(manifest.agent_version_id)
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-

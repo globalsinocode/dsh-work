@@ -505,10 +505,77 @@ test('EX-01 tool call outcomes are kept as run steps and counted in the task res
   const toolSteps = task.steps.filter(step => step.tool)
   assert.deepEqual(toolSteps.map(step => [step.title, step.status, step.tool, step.detail]), [
     ['调用工具', 'succeeded', 'read', 'read：调用成功'],
-    ['工具调用失败', 'failed', 'data_create', 'data_create：调用失败，调用参数不符合工具要求'],
+    // 已有结果的“正在调用”被结果替代；本轮结束仍无结果的显示为未收到结果。
+    ['工具结果未返回', 'pending', 'web_fetch', 'web_fetch：未收到调用结果'],
+    ['工具调用失败', 'failed', 'demo_tool', 'demo_tool：调用失败，调用参数不符合工具要求'],
   ])
   assert.equal(task.result.evidence.toolCalls, 2)
   assert.equal(task.result.evidence.toolFailures, 1)
+})
+
+test('EX-02 long conversations keep the first message, fall back to trimming and then use a background summary', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '长对话摘要' })
+  // 40 条较早的消息，合计 80000 字符，超过 64000 字符的历史预算。
+  const base = Date.now() - 3_600_000
+  for (let index = 0; index < 40; index += 1) {
+    const role = index % 2 === 0 ? 'user' : 'assistant'
+    const content = index === 0 ? `目标：按华东区口径汇总，不要修改原始数据。${'甲'.repeat(1_980)}` : `第${index}条${'乙'.repeat(1_995)}`
+    await database`
+      insert into messages (id, tenant_id, session_id, role, content, created_at)
+      values (${`message-long-${index}`}, 'tenant-dsh-work', ${session.id}, ${role}, ${content}, ${new Date(base + index * 1000)})
+    `
+  }
+  const manifestOf = async (runId: string) => {
+    const run = await runs.getRun('tenant-dsh-work', runId)
+    const attempt = await runs.getAttempt('tenant-dsh-work', run!.currentAttemptId!)
+    return attempt!.manifest as unknown as RuntimeManifest
+  }
+
+  const first = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第一轮', idempotencyKey: randomUUID() })
+  assert.ok(first)
+  await waitForTask(first.id, 'succeeded')
+  const trimmed = await manifestOf(first.id)
+  const trimmedHistory = trimmed.input.conversation_history ?? []
+  assert.ok(trimmedHistory[0]?.content.startsWith('目标：按华东区口径汇总'), '兜底裁剪保留首条消息')
+  assert.ok(trimmedHistory.reduce((total, message) => total + message.content.length, 0) <= 64_000)
+  assert.ok(trimmedHistory.length < 41, '较早的中间消息被裁掉')
+  assert.equal(trimmed.input.conversation_summary, undefined)
+
+  // 该轮结束后在后台生成摘要：一次 session-summary 运行，没有 Session，不产生聊天消息。
+  const deadline = Date.now() + 5_000
+  let stored: { status: string; content: string | null; sourceRunId: string; count: number } | undefined
+  while (Date.now() < deadline) {
+    [stored] = await database<Array<{ status: string; content: string | null; sourceRunId: string; count: number }>>`
+      select status, content, source_run_id as "sourceRunId", covered_message_count as count
+        from session_summaries where session_id = ${session.id} order by created_at desc limit 1
+    `
+    if (stored?.status === 'succeeded') break
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.equal(stored?.status, 'succeeded')
+  assert.equal(stored?.content, 'M3 真实回答')
+  const summaryManifest = await manifestOf(stored!.sourceRunId)
+  assert.equal(summaryManifest.purpose, 'session-summary')
+  assert.equal(summaryManifest.session_id, null)
+  assert.deepEqual(summaryManifest.tools, [])
+  assert.equal(summaryManifest.summary_target?.session_id, session.id)
+  assert.match(summaryManifest.input.message, /第1条/)
+  assert.doesNotMatch(summaryManifest.input.message, /目标：按华东区口径/, '首条消息不进入摘要')
+  const [messageCount] = await database<{ count: number }[]>`
+    select count(*)::integer as count from messages where session_id = ${session.id}
+  `
+  assert.equal(messageCount?.count, 42, '摘要运行的回答不写入会话消息')
+
+  const second = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '第二轮', idempotencyKey: randomUUID() })
+  assert.ok(second)
+  await waitForTask(second.id, 'succeeded')
+  const summarized = await manifestOf(second.id)
+  assert.equal(summarized.input.conversation_summary?.content, 'M3 真实回答')
+  assert.equal(summarized.input.conversation_summary?.covered_message_count, stored!.count)
+  const history = summarized.input.conversation_history ?? []
+  assert.ok(history[0]?.content.startsWith('目标：按华东区口径汇总'))
+  assert.ok(history.every(message => !message.content.startsWith('第1条')), '已被摘要覆盖的消息不再以原文带入')
+  assert.ok(history.reduce((total, message) => total + message.content.length, 0) + 'M3 真实回答'.length <= 64_000)
 })
 
 test('EX-02 backfill makes artifacts published without an extraction referenceable', async () => {
@@ -737,7 +804,7 @@ test('compilation failure converges the Run instead of leaving it queued without
     versionId: session.agentVersionId, systemPrompt: 'Read the selected Skill resources and answer the employee faithfully.',
     skills: ['first@1.0.0', 'second@1.0.0'],
     skillInstructions: ['first', 'second'].map(id => ({ id, version: '1.0.0', instructions: 'Read the packaged resources and summarize their contents.', tools: [], files: [resource('x'.repeat(600 * 1024))] })),
-    tools: [], runtimeTools: [], toolBindings: [], mcpConnections: [], approvalMode: 'risk_based', roleIds: [], dataScopes: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
+    runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'], projectTasksEnabled: false, mcpConnections: [], approvalMode: 'risk_based', roleIds: [], maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
   }
   snapshot.skillInstructions[0]!.files = [resource('x'.repeat(1024 * 1024 + 1))]
   const failing = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
@@ -776,15 +843,16 @@ test('model admission rejects employee, automation and release trial preparation
           const snapshot: RuntimeAgentSnapshot = {
             versionId: session.agentVersionId, modelRequirements: ['structured-output'],
             systemPrompt: '请根据当前授权范围内的信息回答用户问题，并标注结论依据。',
-            skills: [], skillInstructions: [], tools: [], runtimeTools: [], toolBindings: [], mcpConnections: [],
-            approvalMode: 'risk_based', roleIds: [], dataScopes: [],
+            skills: [], skillInstructions: [], runtimeTools: [], tools: [], toolBindings: [], dataScopes: ['enterprise:authorized'],
+            projectTasksEnabled: false, mcpConnections: [],
+            approvalMode: 'risk_based', roleIds: [],
             maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300,
           }
           const service = new RunOrchestrationService(runs, conversations, models, runtime, undefined, undefined, {
             getRuntimeSnapshot: async () => snapshot,
           } as unknown as PostgresAgentService)
           const submit = async () => {
-            if (purpose === 'trial') return service.runReleaseTrialCase({ userId: 'U00001', sessionId: session.id, draftVersionId: session.agentVersionId!, message: '测试能力准入', idempotencyKey: randomUUID() })
+            if (purpose === 'trial') return service.startReleaseTrialCase({ userId: 'U00001', sessionId: session.id, agentVersionId: session.agentVersionId!, message: '测试能力准入', idempotencyKey: randomUUID() })
             if (purpose === 'employee') return service.startRun({ userId: 'U00001', sessionId: session.id, prompt: '测试能力准入', idempotencyKey: randomUUID() })
             const run = await runs.createRun({ tenantId: 'tenant-dsh-work', sessionId: session.id, requestedBy: 'U00001', idempotencyKey: randomUUID() })
             return service.dispatchAutomation(run, { userId: 'U00001', workspaceId: session.workspaceId, agentVersionId: session.agentVersionId!, prompt: '测试能力准入', fileIds: [], attemptId: `attempt-${randomUUID()}` })
@@ -922,7 +990,7 @@ test('cancel and retry keep one Run and create a new immutable Attempt', async (
   assert.deepEqual(attempts[1]?.manifest.input.conversation_history, expectedHistory)
 })
 
-test('generic retry rejects a delegated Task even when its Attempt lost delegation context', async () => {
+test('generic retry rejects a historical delegated Task', async () => {
   const task = await tasks.createTask({
     tenantId: 'tenant-dsh-work', requestedBy: 'U00001', sourceType: 'delegation',
     sourceRef: 'task-parent-retry-guard', correlationKey: `delegation-retry-guard-${randomUUID()}`,
@@ -937,7 +1005,7 @@ test('generic retry rejects a delegated Task even when its Attempt lost delegati
 
   await assert.rejects(
     orchestration.retry(run.id, 'U00001'),
-    /委派子任务不支持通用重试/,
+    /委派子任务不支持重试/,
   )
   assert.equal((await runs.getRun('tenant-dsh-work', run.id))?.currentAttemptId, null)
 })
@@ -1298,10 +1366,14 @@ class DeterministicRuntime implements AgentRuntimePort {
         return
       }
       if (manifest.input.message === '工具调用有一次失败') {
-        // EX-01 夹具：工具调用结果以 tool.completed 事件上报，终态声明失败次数。
+        // EX-01 夹具：工具调用实时以 tool.started 开始、tool.completed 结束，终态声明失败次数；
+        // c3 只开始、没有结果。
+        this.emit(execution, 'tool.started', 'read：正在调用', { call_id: 'c1', tool_name: 'read', status: 'running', live: true })
         this.emit(execution, 'tool.completed', 'read：调用成功', { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null })
-        this.emit(execution, 'tool.completed', 'data_create：调用失败，调用参数不符合工具要求', {
-          call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
+        this.emit(execution, 'tool.started', 'demo_tool：正在调用', { call_id: 'c2', tool_name: 'demo_tool', status: 'running', live: true })
+        this.emit(execution, 'tool.started', 'web_fetch：正在调用', { call_id: 'c3', tool_name: 'web_fetch', status: 'running', live: true })
+        this.emit(execution, 'tool.completed', 'demo_tool：调用失败，调用参数不符合工具要求', {
+          call_id: 'c2', tool_name: 'demo_tool', status: 'failed', error_code: 'TOOL_INPUT_INVALID', reason: '调用参数不符合工具要求',
         })
         this.emit(execution, 'assistant.completed', '已改用其他方式完成')
         execution.snapshot.status = 'completed'

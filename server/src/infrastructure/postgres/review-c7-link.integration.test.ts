@@ -10,11 +10,10 @@ import { zipSync, strToU8 } from 'fflate'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
-import { UnavailableRuntime, ExecutionCapabilityUnavailableError } from '../../modules/runtime/execution-capabilities.ts'
+import { ExecutionCapabilityUnavailableError } from '../../modules/runtime/execution-capabilities.ts'
 import type { SkillSource } from '../../modules/skill/skill-source.ts'
 import { Router } from '../../http/router.ts'
 import { testApiAuthenticator } from '../../testing/test-identity.ts'
@@ -23,7 +22,7 @@ import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
 const tenant = 'tenant-dsh-work', actor = 'U00008'
 let db: ThrowawayDatabase, store: SkillArtifactStore, root: string
-let tools: PostgresToolConnectorService, auth: PostgresAuthorizationService
+let auth: PostgresAuthorizationService
 const fixtures = new Map<string, Uint8Array>()
 let acquireCount = 0, dshAvailable = false, pythonAvailable = false
 const checkRuntime = async (references: string[]) => {
@@ -38,7 +37,7 @@ const acquire = async (source: SkillSource, signal: AbortSignal) => {
   return { bytes, resolvedUrl: source.url, resolvedRef: 'a'.repeat(40) }
 }
 function service(download = acquire) {
-  return new AdminSkillInstallationService(db.client, orchestration, auth, tools, download, false, [], store, checkRuntime)
+  return new AdminSkillInstallationService(db.client, orchestration, auth, download, false, [], store, checkRuntime)
 }
 function source(files: Record<string, string> = {}, instruction = 'Return a deterministic text answer from the provided input.') {
   const name = `link-${randomUUID().slice(0, 8)}`, url = `https://github.com/fixture/${name}`
@@ -50,7 +49,6 @@ before(async () => {
   root = await mkdtemp(join(tmpdir(), 'dsh-review-c7-'))
   store = new SkillArtifactStore(new LocalObjectStorage(join(root, 'skills'), { fileMode: 0o400 }))
   auth = new PostgresAuthorizationService(db.client)
-  tools = new PostgresToolConnectorService(db.client, new UnavailableRuntime('runtime-local-01'))
 })
 after(async () => { await db?.dispose(); if (root) await rm(root, { recursive: true, force: true }) })
 
@@ -145,24 +143,10 @@ test('structural incompatibilities cannot be installed even while runtime requir
   await assert.rejects(svc.prepareLink(actor, unsafe), /Skill 包校验/)
 })
 
-test('unhealthy registered connectors allow draft storage but cannot satisfy execution/publication readiness', async () => {
-  const svc = service(), link = source({ 'references/data.txt': 'marker' }, 'Use the read tool to read references/data.txt and report exactly the value.')
-  const [connector] = await db.client`select connector_id from tools where id = 'read' and tenant_id = ${tenant}`
-  assert.ok(connector)
-  await db.client`update connectors set status = 'offline' where id = ${connector.connector_id}`
-  try {
-    const plan = await svc.prepareLink(actor, link)
-    assert.equal(plan.canSaveDraft, true)
-    assert.ok(plan.publicationBlockers?.some(b => b.code === 'TOOLS_UNAVAILABLE'))
-    assert.equal((await svc.confirmDirect(actor, plan.id, plan.planSha256!)).status, 'installed')
-    await assert.rejects(tools.assertAvailableReferences(['read@1.0.0']))
-  } finally { await db.client`update connectors set status = 'healthy' where id = ${connector.connector_id}` }
-})
-
 test('link drafts cannot publish while Runtime is unavailable even if prior valid evidence exists; duplicate import preserves active versions', async () => {
   const svc = service(), input = source(), plan = await svc.prepareLink(actor, input)
   const installed = await svc.confirmDirect(actor, plan.id, plan.planSha256!), skillId = installed.skillId!
-  const skills = new PostgresSkillService(db.client, undefined, tools, store)
+  const skills = new PostgresSkillService(db.client, undefined, store)
   skills.setPublicationAvailabilityChecker(checkRuntime)
   // Explicit SYNTHETIC evidence for domain persistence and publication checks, not a real DSH invocation.
   const { PostgresRunRepository } = await import('../../modules/run/postgres-run-repository.ts')
@@ -189,7 +173,7 @@ test('link drafts cannot publish while Runtime is unavailable even if prior vali
     assert.equal((await skills.startSkillTest({ skillId, actor })).status, 'passed')
     dshAvailable = false
     await assert.rejects(skills.setStatus({ skillId, actor, status: 'published' }), { code: 'RUNTIME_UNAVAILABLE' })
-    const unknown = new PostgresSkillService(db.client, undefined, tools, store)
+    const unknown = new PostgresSkillService(db.client, undefined, store)
     await assert.rejects(unknown.setStatus({ skillId, actor, status: 'published' }), { code: 'RUNTIME_UNAVAILABLE' })
     dshAvailable = true
     await skills.setStatus({ skillId, actor, status: 'published' })
@@ -219,7 +203,7 @@ test('publication closure checks link-origin dependencies even when the root cam
   await db.client`insert into skill_version_dependencies (tenant_id, skill_version_id, dependency_skill_version_id, dependency_type, evidence)
     select ${tenant}, p.draft_version_id, c.draft_version_id, 'skill', 'synthetic closure test' from skills p, skills c
     where p.id = ${parent.skillId!} and c.id = ${child.skillId!}`
-  const skills = new PostgresSkillService(db.client, undefined, tools, store)
+  const skills = new PostgresSkillService(db.client, undefined, store)
   skills.setPublicationAvailabilityChecker(checkRuntime)
   await assert.rejects(skills.setStatus({ skillId: parent.skillId!, actor, status: 'published' }), { code: 'RUNTIME_UNAVAILABLE' })
 })
@@ -246,7 +230,7 @@ test('confirmed source metadata cannot be forged through HTTP and read-only call
   } finally { server.closeAllConnections(); server.close(); await once(server, 'close') }
 })
 
-test('write permission and tool policy are rechecked after preview; an installed plan cannot be changed into a Run', async () => {
+test('write permission is rechecked after preview; an installed plan cannot be changed into a Run', async () => {
   const svc = service(), plan = await svc.prepareLink(actor, source())
   await db.client`update users set status = 'disabled' where id = ${actor}`
   try { await assert.rejects(svc.confirmDirect(actor, plan.id, plan.planSha256!), { status: 403 }) }
@@ -254,10 +238,6 @@ test('write permission and tool policy are rechecked after preview; an installed
   const [pending] = await db.client`select status from skill_installations where id = ${plan.id}`
   assert.equal(pending!.status, 'pending')
   await assert.rejects(db.client`update skill_installations set channel = 'assistant' where id = ${plan.id}`, /check constraint/)
-  const readPlan = await svc.prepareLink(actor, source({ 'references/data.txt': 'example' }, 'Use read to read references/data.txt exactly.'))
-  await db.client`update tools set status = 'disabled' where id = 'read'`
-  try { await assert.rejects(svc.confirmDirect(actor, readPlan.id, readPlan.planSha256!), /工具/) }
-  finally { await db.client`update tools set status = 'available' where id = 'read'` }
 })
 
 test('a duplicate link import cannot evade the publication gate by reusing an older ZIP draft without a link manifest flag', async () => {
@@ -269,7 +249,7 @@ test('a duplicate link import cannot evade the publication gate by reusing an ol
   assert.equal(reused.resultType, 'duplicate'); assert.equal(reused.skillId, zip.skillId)
   const [version] = await db.client`select manifest from skill_versions where skill_id = ${zip.skillId!}`
   assert.equal(version!.manifest.installationChannel, undefined, 'do not mutate prior version metadata')
-  const skills = new PostgresSkillService(db.client, undefined, tools, store)
+  const skills = new PostgresSkillService(db.client, undefined, store)
   skills.setPublicationAvailabilityChecker(checkRuntime)
   await assert.rejects(skills.setStatus({ skillId: reused.skillId!, actor, status: 'published' }), { code: 'RUNTIME_UNAVAILABLE' })
 })
@@ -277,7 +257,7 @@ test('a duplicate link import cannot evade the publication gate by reusing an ol
 test('publication verifies declared Python packages through the current capability checker, not the old install-time label', async () => {
   const svc = service(), plan = await svc.prepareLink(actor, source({ 'scripts/check.py': 'print("ok")', 'requirements.txt': 'missing-fixture-package==1.0.0\n' }))
   const installed = await svc.confirmDirect(actor, plan.id, plan.planSha256!)
-  const skills = new PostgresSkillService(db.client, undefined, tools, store)
+  const skills = new PostgresSkillService(db.client, undefined, store)
   skills.setPublicationAvailabilityChecker(async (references, requiredPackages) => {
     assert.ok(references.includes('python_execute@1.0.0'))
     assert.deepEqual(requiredPackages, ['missing-fixture-package'])

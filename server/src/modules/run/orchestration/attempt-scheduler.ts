@@ -1,4 +1,5 @@
 import { assertRuntimeModelRequirements, ExecutionCapabilityUnavailableError } from '../../runtime/execution-capabilities.ts'
+import { backgroundLaneMaxConcurrent, isBackgroundLanePurpose, isBackgroundPurpose, type BackgroundLanePurpose } from '../../../domain/background-lanes.ts'
 import type { RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { AuthorizationCheckUnavailableError } from '../current-execution-authorization.ts'
 import type { RunRepository } from '../run-repository.ts'
@@ -6,6 +7,13 @@ import type { RunRecord } from '../run-types.ts'
 import type { ExecutionAuthorizationGate } from './execution-authorization-gate.ts'
 import type { RunEventRecorder } from './run-event-recorder.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
+
+/** 后台车道容量不足以保留交互余量时的失败说明；摘要与档案在下一次触发时重试，验证案例可重跑。 */
+const backgroundCapacityMessage: Record<BackgroundLanePurpose, string> = {
+  'session-summary': 'Runtime 容量不足以在保留交互余量的同时生成摘要',
+  'agent-release-trial': 'Runtime 容量不足以在保留交互余量的同时运行验证案例',
+  'project-archive': 'Runtime 容量不足以在保留交互余量的同时整理项目档案',
+}
 
 /**
  * In-process scheduler: claims persisted Attempts within Runtime capacity (keeping one
@@ -105,7 +113,7 @@ export class AttemptScheduler {
           // 2.6s 内重试 6 次、run 永远 queued）。这里收敛为终态并落说明事件。
           if (await this.isWorkspaceArchivedForAttempt(attemptId)) {
             this.pendingExecutions.splice(index, 1)
-            await this.gate.failRunForRevokedAuthorization(
+            await this.gate.failRunBeforeStart(
               next.run,
               next.manifest,
               '工作空间已归档，任务未执行',
@@ -114,7 +122,7 @@ export class AttemptScheduler {
           }
           // AG-03：自动任务并发车道——有效上限 = min(配置, capacity-1)。
           // 车道为 0（容量不足以保留交互余量）时收敛为「容量不足」而非空转；
-          // 车道满则该项留队，继续扫描后续任务，不阻塞交互执行。
+          // 车道满（含后台车道合计已占 capacity-1）则该项留队，继续扫描后续任务，不阻塞交互执行。
           // Runtime 行缺失或暂停接活只是「暂不可调度」——落到下方统一的
           // schedulePump+break 重排路径，不得误收敛为容量失败。
           if (next.manifest.purpose === 'automation') {
@@ -125,17 +133,34 @@ export class AttemptScheduler {
               await this.failAutomationRunForCapacity(next.run, next.manifest)
               continue
             }
-            if (lane.exists && lane.accepting && lane.running >= lane.allowed) {
+            if (lane.exists && lane.accepting && (lane.running >= lane.allowed || lane.backgroundFull)) {
               index += 1
               continue
             }
           }
-          // PF-06: an ordinary item may be ahead of a child whose Worker slot is
-          // already reserved. Keep the ordinary item queued and scan later items;
-          // breaking here would strand the child behind it until the parent times out.
-          // Full capacity and paused Runtimes still take the normal retry path.
-          if (!next.manifest.delegation_context
-            && await this.deps.runs.isBlockedByDelegationReservation(tenantId, runtimeId)) {
+          // EX-02 摘要与 S3 验证案例车道同理——容量不足以保留交互余量时直接失败
+          // （摘要下一轮退回裁剪，验证案例可重跑），车道满则留队，继续扫描交互任务。
+          if (isBackgroundLanePurpose(next.manifest.purpose)) {
+            const purpose = next.manifest.purpose
+            const lane = await this.deps.runs.backgroundLaneUsage(tenantId, runtimeId, purpose, backgroundLaneMaxConcurrent[purpose])
+            if (lane.exists && lane.accepting && lane.allowed <= 0) {
+              this.pendingExecutions.splice(index, 1)
+              const reason = backgroundCapacityMessage[purpose]
+              // 容量不足是配置问题，不是授权撤销：用独立错误码；无 Session 的系统运行由
+              // gate 直接交给摘要/档案入口收敛。项目档案的失败分支会计入整理重试次数
+              // （上限 3 次），长期容量不足可能放弃该批输入，功能规则“限额”一节已注明需先扩容量。
+              await this.gate.failRunBeforeStart(next.run, next.manifest, reason, {
+                errorCode: 'BACKGROUND_CAPACITY_EXHAUSTED',
+                displayMessage: `${reason}，任务未执行`,
+              })
+              continue
+            }
+            if (lane.exists && lane.accepting && (lane.running >= lane.allowed || lane.backgroundFull)) {
+              index += 1
+              continue
+            }
+          }
+          if (await this.deps.runs.isBlockedByDelegationReservation(tenantId, runtimeId)) {
             index += 1
             continue
           }
@@ -143,8 +168,8 @@ export class AttemptScheduler {
           break
         }
         this.pendingExecutions.splice(index, 1)
-        // 自动任务领取成功即占一路车道，缓存读数失效，下一个 automation 项重查。
-        if (next.manifest.purpose === 'automation') automationLane = null
+        // 后台任务领取成功即占一路车道（及后台合计），缓存读数失效，下一个 automation 项重查。
+        if (isBackgroundPurpose(next.manifest.purpose)) automationLane = null
         void this.executeClaimed(next.run, next.manifest)
       }
       // 车道满等原因留队的项：补一次延迟重排兜底。运行中的 Attempt 结束时
@@ -173,7 +198,7 @@ export class AttemptScheduler {
       // 只决定是否执行，绝不改写 Manifest；个人空间不再豁免。
       const recheck = await this.gate.recheckExecutionAuthorization(run, manifest)
       if (recheck.denied) {
-        await this.gate.failRunForRevokedAuthorization(run, manifest, recheck.reason)
+        await this.gate.failRunBeforeStart(run, manifest, recheck.reason)
         return
       }
       // 撤权清扫可能在「领取 → 复核」之间已经把这个 run 收敛为终态（系统取消）。
@@ -213,8 +238,6 @@ export class AttemptScheduler {
           eventType: 'run.failed', displayMessage: '授权检查暂不可用，任务未执行',
           safeMetadata: { error_code: error.code }, traceId: `trace-${run.id}` })
       }
-      await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务执行异常，终止所有活动子任务')
-      await this.deps.delegation?.observeChildTerminal(run.id)
       console.error('runtime dispatch failed', error)
     } finally {
       // 事件链 settle 后清掉本 Attempt 的内存痕迹（assistantOutputs / eventWrites），
@@ -253,8 +276,6 @@ export class AttemptScheduler {
       safeMetadata: { error_code: 'AUTOMATION_CAPACITY_EXHAUSTED' },
       traceId: `trace-${run.id}`,
     })
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务因容量不足失败，终止所有活动子任务')
-    await this.deps.delegation?.observeChildTerminal(run.id)
   }
 
   /**

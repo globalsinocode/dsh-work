@@ -4,7 +4,12 @@ import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
+import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
+import { LocalObjectStorage } from '../../infrastructure/storage/local-object-storage.ts'
 import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ALLOWED_TOOL_CONNECTOR_IDS_ENV, resolveAllowedToolConnectorIds } from '../../domain/tool-category.ts'
 import type { AgentRuntimePort, RuntimeHealth } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
@@ -74,7 +79,7 @@ before(async () => {
   throwaway = await createThrowawayDatabase({ namePrefix: 'dsh_work_m4_tool_test', maxConnections: 3 })
   database = throwaway.client
   tools = new PostgresToolConnectorService(database, runtime)
-  skills = new PostgresSkillService(database, undefined, tools)
+  skills = new PostgresSkillService(database, undefined, new SkillArtifactStore(new LocalObjectStorage(mkdtempSync(join(tmpdir(), 'm4-tool-artifacts-')), { fileMode: 0o400 })))
   agents = new PostgresAgentService(database, undefined, skills, tools)
 })
 

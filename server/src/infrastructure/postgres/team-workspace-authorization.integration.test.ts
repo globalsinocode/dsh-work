@@ -539,7 +539,8 @@ test('listGrantSources groups active sources by capability and includes legacy s
   // The seeded ws-supply grants were backfilled with legacy_unresolved sources by migration 0022.
   await database.begin(async transaction => {
     const groups = await grantSources.listGrantSources(transaction, 'ws-supply')
-    assert.equal(groups.length, 3)
+    // 种子的 Agent 与 Skill 授权；工具授权已随内置工具代码化删除。
+    assert.equal(groups.length, 2)
     for (const group of groups) {
       assert.equal(group.sources.length, 1)
       assert.equal(group.sources[0]?.sourceType, 'legacy_unresolved')
@@ -668,32 +669,7 @@ test('5-T4 授权拒绝类型化：消息不变，HTTP 仍是 403 permission_den
     () => authorization.requirePlatformAdmin(bareUserId),
   )
 
-  // 3）角色不可调用工具：临时把只读工具收紧到平台管理员角色。
-  const [toolBefore] = await database<{ allowedRoleIds: string[] }[]>`
-    select allowed_role_ids as "allowedRoleIds" from tools
-     where tenant_id = ${tenantId} and id = 'read'
-  `
-  await database`
-    update tools set allowed_role_ids = '["role-platform-admin"]'::jsonb
-     where tenant_id = ${tenantId} and id = 'read'
-  `
-  try {
-    await expectTypedDenial(
-      'resolveAndAuthorizeTools',
-      '当前用户角色不可调用工具：read@1.0.0',
-      () => authorization.authorizeRuntime({
-        userId: 'U00001',
-        agentVersionId: 'agent-version-dsh-work-assistant-1',
-      }),
-    )
-  } finally {
-    await database`
-      update tools set allowed_role_ids = ${database.json(toolBefore?.allowedRoleIds ?? ['role-employee', 'role-platform-admin'])}
-       where tenant_id = ${tenantId} and id = 'read'
-    `
-  }
-
-  // 4）空间已配置能力授权，但不含本次请求的 Agent 版本。
+  // 3）空间已配置能力授权，但不含本次请求的 Agent 版本。
   const workspaceId = `ws-t2-typed-cap-${suffix}`
   await createTeamWorkspace(workspaceId, [{ userId: 'U00001', role: 'owner' }])
   await database`
@@ -709,41 +685,6 @@ test('5-T4 授权拒绝类型化：消息不变，HTTP 仍是 403 permission_den
       agentVersionId: 'agent-version-dsh-work-assistant-1',
     }),
   )
-
-  // 5）管理员收紧工具范围后，未授权的数据范围仍是类型化 403。
-  const [scopeBefore] = await database<{ dataScopes: string[] }[]>`
-    select data_scopes as "dataScopes" from tools
-     where tenant_id = ${tenantId} and id = 'read'
-  `
-  assert.ok(scopeBefore)
-  await database`
-    update tools set data_scopes = '["workspace:authorized", "enterprise:authorized"]'::jsonb
-     where tenant_id = ${tenantId} and id = 'read'
-  `
-  await database`
-    delete from data_scope_grants
-     where tenant_id = ${tenantId} and id = 'grant-role-employee-workspace'
-  `
-  try {
-    await expectTypedDenial(
-      'requireScopes',
-      '工具 read@1.0.0要求未授权的数据范围：workspace:authorized',
-      () => authorization.authorizeRuntime({
-        userId: 'U00001',
-        agentVersionId: 'agent-version-dsh-work-assistant-1',
-      }),
-    )
-  } finally {
-    await database`
-      update tools set data_scopes = ${database.json(scopeBefore.dataScopes)}
-       where tenant_id = ${tenantId} and id = 'read'
-    `
-    await database`
-      insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
-      values ('grant-role-employee-workspace', ${tenantId}, 'role', 'role-employee', 'capability', 'workspace:authorized')
-      on conflict do nothing
-    `
-  }
 })
 
 // ---------------------------------------------------------------------------
@@ -877,16 +818,16 @@ async function createCandidateAgent(input: {
     await transaction`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-        timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+        example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+        timeout_seconds, skill_refs, status, created_by, change_summary
       ) values (
         ${versionId}, ${tenantId}, ${input.id}, '1.0.0', '候选测试 Agent', '用于验证团队空间 Agent 候选过滤。',
         '', ${transaction.json(['测试'] as string[])}, '你是候选测试 Agent。',
-        ${transaction.json(input.roleIds)}, ${transaction.json(['enterprise:authorized'] as string[])},
-        65536, 20, 300, ${transaction.json([] as string[])}, ${transaction.json([] as string[])},
+        65536, 20, 300, ${transaction.json([] as string[])},
         ${versionStatus}, 'U00001', '候选过滤测试'
       )
     `
+    await transaction`update agents set visible_role_ids = ${transaction.json(input.roleIds)} where tenant_id = ${tenantId} and id = ${input.id}`
     if (input.status !== 'draft') {
       await transaction`
         update agents set active_version_id = ${versionId}
@@ -948,16 +889,16 @@ async function seedAuthorizableAgent(workspaceId: string, versionId: string, vis
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '5-T4 测试 Agent', '5-T4 用例版本。', '',
       ${database.json([] as string[])}, '你是 5-T4 测试 Agent。',
-      ${database.json(visibleRoleIds)}, ${database.json(['enterprise:authorized'] as string[])},
-      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])},
       'published', 'U00008', '5-T4 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(visibleRoleIds)} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     insert into workspace_capability_grants (tenant_id, workspace_id, capability_type, capability_version_id)
     values (${tenantId}, ${workspaceId}, 'agent', ${versionId})
@@ -999,16 +940,16 @@ test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403�
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${noGrantVersion}, ${tenantId}, ${`${noGrantWorkspace}-agent`}, '1.0.0', '5-T4 无授权 Agent', '5-T4 用例。', '',
       ${database.json([] as string[])}, '你是 5-T4 测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
-      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])},
       'published', 'U00008', '5-T4 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${`${noGrantWorkspace}-agent`}`
   await grantAgentExecution(`${noGrantWorkspace}-agent`)
   await expectTypedDenial(
     'requireWorkspaceCapabilities 未配置授权',
@@ -1042,4 +983,76 @@ test('5-T4 后续：三处原先落 500/409 的授权拒绝已类型化为 403�
 
   // 说明：`authorizeTeamRunExecution` 里「成员在读两次之间被移除」的那条（原 500）只能在竞态窗口
   // 触发，无法在集成用例里稳定构造；它与上面第 3 条同处一个方法、同一改造方式，故未单独构造。
+})
+
+// ---------------------------------------------------------------------------
+// 项目空间 S0：团队交付边界 = 全体现任成员
+// ---------------------------------------------------------------------------
+
+test('项目空间 S0：团队 Run 角色只取 Agent 授权，数据范围取全体现任成员交集', async () => {
+  const workspaceId = `ws-s0-audience-${suffix}`
+  const versionId = `${workspaceId}-version`
+  const agentId = `${versionId}-agent`
+  const principalId = `principal-agent-${agentId}`
+  const ownerId = `user-s0-owner-${suffix}`
+  const memberId = `user-s0-member-${suffix}`
+  const narrowId = `user-s0-narrow-${suffix}`
+  const scopeA = `scope-s0-a-${suffix}`
+  const scopeB = `scope-s0-b-${suffix}`
+  await createUser(ownerId, 'S0 负责人')
+  await createUser(memberId, 'S0 成员')
+  await createUser(narrowId, 'S0 窄范围员工')
+  for (const [userId, scopes] of [[ownerId, [scopeA, scopeB]], [memberId, [scopeA, scopeB]], [narrowId, [scopeA]]] as const) {
+    for (const scope of scopes) {
+      await database`
+        insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+        values (${`grant-${randomUUID()}`}, ${tenantId}, 'user', ${userId}, 'capability', ${scope})
+      `
+    }
+  }
+  await createTeamWorkspace(workspaceId, [
+    { userId: ownerId, role: 'owner' },
+    { userId: memberId, role: 'member' },
+  ])
+  await seedAuthorizableAgent(workspaceId, versionId)
+  // Agent 另持有成员都不具备的岗位角色，以及 A、B 两个数据范围。
+  await database`
+    insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
+    values (${tenantId}, ${principalId}, 'role-platform-admin')
+  `
+  for (const scope of [scopeA, scopeB]) {
+    await database`
+      insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+      values (${tenantId}, ${principalId}, ${scope})
+    `
+  }
+  const run = () => authorization.authorizeTeamRunExecution({ userId: memberId, workspaceId, agentVersionId: versionId })
+
+  const full = await run()
+  assert.ok(full.roleIds.includes('role-platform-admin'), '角色只取 Agent 授权，不与发起人求交')
+  assert.ok(full.dataScopes.includes(scopeA) && full.dataScopes.includes(scopeB))
+
+  // 加入只具备 A 的员工（只读成员同样计入交付边界）：B 不再可交付。
+  await database`
+    insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
+    values (${tenantId}, ${workspaceId}, ${narrowId}, 'viewer', ${ownerId})
+  `
+  const narrowed = await run()
+  assert.ok(narrowed.dataScopes.includes(scopeA))
+  assert.ok(!narrowed.dataScopes.includes(scopeB), '共同数据范围随成员加入收紧')
+  assert.ok(narrowed.roleIds.includes('role-platform-admin'), '岗位角色不随成员组成变化')
+
+  // 停用账号不能读取任何内容，不计入交付边界。
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${narrowId}`
+  assert.ok((await run()).dataScopes.includes(scopeB))
+  await database`update users set status = 'active' where tenant_id = ${tenantId} and id = ${narrowId}`
+
+  // 移除后恢复（只影响新的授权决策）。
+  await database`delete from workspace_members where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and user_id = ${narrowId}`
+  assert.ok((await run()).dataScopes.includes(scopeB))
+
+  // 个人请求保持原契约：角色仍与员工求交。
+  const standalone = await authorization.authorizeRuntime({ userId: memberId, agentVersionId: versionId })
+  assert.ok(!standalone.roleIds.includes('role-platform-admin'))
+  assert.ok(standalone.dataScopes.includes(scopeB))
 })

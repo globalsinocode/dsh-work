@@ -1,31 +1,31 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { summarizeToolCalls, toolCallDisplayMessage, toolFailureReason } from './tool-call-summary.ts'
+import { liveToolCallSummary, summarizeToolCalls, toolCallDisplayMessage, toolFailureReason } from './tool-call-summary.ts'
 
 test('EX-01 session log calls are enriched with platform bridge failure codes', () => {
   const summaries = summarizeToolCalls([
     { callId: 'c1', toolName: 'read', status: 'succeeded' },
-    { callId: 'c2', toolName: 'data_create', status: 'failed' },
-    { callId: 'c3', toolName: 'state_get', status: 'succeeded' },
+    { callId: 'c2', toolName: 'python_execute', status: 'failed' },
+    { callId: 'c3', toolName: 'propose_memory', status: 'succeeded' },
     { callId: 'c4', toolName: 'bash', status: 'failed' },
     { callId: 'c5', toolName: 'web_fetch', status: 'unknown' },
   ], [
-    { toolName: 'data_create', callId: 'c2', errorCode: 'TOOL_INPUT_INVALID' },
+    { toolName: 'python_execute', callId: 'c2', errorCode: 'TOOL_INPUT_INVALID' },
     // Matched by name when DSH did not send the call id; the bridge error wins over the log.
-    { toolName: 'state_get', callId: null, errorCode: 'TOOL_PERMISSION_DENIED' },
+    { toolName: 'propose_memory', callId: null, errorCode: 'TOOL_PERMISSION_DENIED' },
   ])
   assert.deepEqual(summaries, [
     { call_id: 'c1', tool_name: 'read', status: 'succeeded', error_code: null },
-    { call_id: 'c2', tool_name: 'data_create', status: 'failed', error_code: 'TOOL_INPUT_INVALID' },
-    { call_id: 'c3', tool_name: 'state_get', status: 'failed', error_code: 'TOOL_PERMISSION_DENIED' },
+    { call_id: 'c2', tool_name: 'python_execute', status: 'failed', error_code: 'TOOL_INPUT_INVALID' },
+    { call_id: 'c3', tool_name: 'propose_memory', status: 'failed', error_code: 'TOOL_PERMISSION_DENIED' },
     { call_id: 'c4', tool_name: 'bash', status: 'failed', error_code: null },
     { call_id: 'c5', tool_name: 'web_fetch', status: 'unknown', error_code: null },
   ])
   assert.deepEqual(summaries.map(toolCallDisplayMessage), [
     'read：调用成功',
-    'data_create：调用失败，调用参数不符合工具要求',
-    'state_get：调用失败，工具未获授权，或本次执行已结束',
+    'python_execute：调用失败，调用参数不符合工具要求',
+    'propose_memory：调用失败，工具未获授权，或本次执行已结束',
     'bash：调用失败，工具返回失败',
     'web_fetch：未收到调用结果',
   ])
@@ -45,4 +45,18 @@ test('EX-01 unknown codes fall back to a fixed reason instead of echoing tool te
   assert.equal(toolFailureReason('CRM_SECRET_LEAKED: token=abc'), '工具返回失败')
   assert.equal(toolFailureReason(null), '工具返回失败')
   assert.equal(toolFailureReason('TOOL_CALL_LIMIT_EXCEEDED'), '已达到本次执行的工具调用次数上限')
+})
+
+test('EX-01 live summary takes a typed failure only from the bridge outcome with the same call id', () => {
+  const outcomes = [
+    { toolName: 'demo_tool', callId: 'call-1', errorCode: 'TOOL_INPUT_INVALID' },
+    { toolName: 'read', callId: null, errorCode: 'TOOL_TIMEOUT' },
+  ]
+  assert.deepEqual(liveToolCallSummary({ callId: 'call-1', toolName: 'demo_tool', status: 'completed' }, outcomes),
+    { call_id: 'call-1', tool_name: 'demo_tool', status: 'failed', error_code: 'TOOL_INPUT_INVALID' })
+  // 没有同 call id 的平台结果：按 DSH 报告的状态，不按名称猜测。
+  assert.deepEqual(liveToolCallSummary({ callId: 'call-2', toolName: 'read', status: 'completed' }, outcomes),
+    { call_id: 'call-2', tool_name: 'read', status: 'succeeded', error_code: null })
+  assert.deepEqual(liveToolCallSummary({ callId: 'call-3', toolName: 'bash', status: 'failed' }, outcomes),
+    { call_id: 'call-3', tool_name: 'bash', status: 'failed', error_code: null })
 })

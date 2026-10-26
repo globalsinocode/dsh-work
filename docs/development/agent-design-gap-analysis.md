@@ -2,13 +2,15 @@
 
 **初次核对：** 2026-09-19；**实施范围更新：** 2026-09-25；**AE-03 目标设计更新：** 2026-09-24；**Agent 管理更新方案确认：** 2026-09-27<br>
 **阶段状态：** 平台基础能力的代码建设阶段收口；本清单保留为规范差异与实施记录。PF-07 全量 P2 仍是独立的目标版本发布验收事项，不标记为完成，也不阻止无关新任务的开发。<br>
-**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。[双账号隔离环境的本轮进度](../history/pf07/pf07-oidc-isolated-progress-2026-09-23.md)已覆盖一个真实 OIDC 身份的 MCP 写入/回执，以及私人受控记忆的发布、检索与撤回；第二身份的实际 Run、其他能力和故障撤权矩阵仍待验收。[较早的本地真实链路核对](../history/pf07/pf07-real-chain-check-2026-09-23.md)只覆盖单身份 DSH 与外部 MCP 只读调用。此前 P2 只有口头结论且早于当前平台能力，不能作为 PF-07 验收；全量 P2 门禁未通过。完成记录与剩余范围见第 4、5 节。<br>
+**代码基线：** 初次核对为 `3f4f4bf`；本文同时记录生命周期实现映射与通用参考 Agent。B-01～B-05 与 PF-01～PF-06 已达到代码级；PF-07 的矩阵、测试入口和验收记录模板已建立。双账号隔离环境曾覆盖部分真实 OIDC MCP 与受控记忆场景，第二身份 Run、故障撤权矩阵与更早的单身份链路核对不能替代全量 P2；此前口头 P2 结论早于当前平台能力。完成记录与剩余范围见第 4、5 节。<br>
 **规范入口：** [Agent 设计规范](agent-design-standard.md)。<br>
 **范围：** 核对契约与执行实现，并运行本轮相关单测和专用一次性 PostgreSQL 集成测试。不将历史报告或受控 Runtime 测试等同于浏览器、真实 DSH 或 OIDC 验收。
 
+**2026-10-26 三方兼容合并：** 与 tonycc `main` 合入时 PF-06、AE-03、发布治理与 MCP 治理默认保留；tonycc 删除委派/Data Plane 的迁移不采纳。决策与验收映射见 [three-way-merge-capability-decisions-2026-10-26.md](three-way-merge-capability-decisions-2026-10-26.md)。
+
 **2026-10-13 授权流程改版：** 新建草稿只需 Agent 定义与按需依赖；平台创建独立执行身份，初始业务角色与平台数据范围均可为空，MCP 新建默认不接入。发布工作台在首项试运行前设置员工可见角色及可选的平台数据上限；平台数据上限变更后作废旧证据，可见角色自 2026-10-14 起作为发布属性不作废证据（见下段）。基础文本任务以有效独立身份进入 DSH Run/Attempt；平台工具、结构化数据和业务范围仍按当前身份与版本声明复核，缺口在派发前显示。`dataScopes` 是 dsh-work 平台数据边界，不过滤 MCP 上游数据；MCP 实际可读写内容以连接器凭据与上游服务为准。本段为本轮代码目标与范围，不表示真实 DSH/OIDC 或企业 MCP 已完成验收。
 
-**2026-10-14 发布流程修复批次（AR-01 及 AR-02/04/05 后端部分，前端操作流程不变）：** 平台管理员判定统一为单一函数（本地授予、角色启用、租户有效）；回滚只移动活动版本指针，不改启停状态、不停用进行中草稿，并加锁拒绝过期/并发回滚；编辑器保存回传修订且不再写发布范围；未填写业务确认意见时不再代填 `business_accepted`；Runtime 检查项不再声称“已适配 DSH Lock”；改写平台生成案例即清除 `generated` 标记；可见角色移出定义指纹；试运行与员工执行使用同一审批模式、写入策略、工具集与超时，需审批动作在试运行中直接拒绝、MCP 调用返回 trial_only（MCP 尚无只读/写入分类，只读调用同样不执行）、委派拒绝；新版本沿用上一版改写过的案例；服务启动收敛执行中的试运行。证据层级为 P1（隔离 PostgreSQL、合成 Runtime）与单元测试，未做真实 DSH/OIDC/企业 MCP 的 P2 验收；试运行身份的员工披露上限、后台批量执行、冻结快照与风险分级门禁仍按[优化方案](../design/agent-release-optimization-plan.md)待实施。
+**2026-10-14 发布流程修复批次（AR-01 及 AR-02/04/05 后端部分，前端操作流程不变）：** 平台管理员判定统一为单一函数（本地授予、角色启用、租户有效）；回滚只移动活动版本指针，不改启停状态、不停用进行中草稿，并加锁拒绝过期/并发回滚；编辑器保存回传修订且不再写发布范围；未填写业务确认意见时不再代填 `business_accepted`；Runtime 检查项不再声称“已适配 DSH Lock”；改写平台生成案例即清除 `generated` 标记；可见角色移出定义指纹；试运行与员工执行使用同一审批模式、写入策略、工具集与超时，需审批动作在试运行中直接拒绝、MCP 调用返回 trial_only（MCP 尚无只读/写入分类，只读调用同样不执行）、委派拒绝；新版本沿用上一版改写过的案例；服务启动收敛执行中的试运行。证据层级为 P1（隔离 PostgreSQL、合成 Runtime）与单元测试，未做真实 DSH/OIDC/企业 MCP 的 P2 验收；试运行身份的员工披露上限、后台批量执行、冻结快照与风险分级门禁仍按发布治理后续批次待实施。
 **Run 本地工具授权口径：** 已准入且路径逐次受控的 DSH 文件工具若保持平台默认角色/范围策略，只能访问当前隔离 Run 工作区，可随独立 Agent 基础资格使用，不把旧的员工角色和 `workspace:authorized` 要求当成 Agent 业务授权；`glob`/`grep` 因路径可省略而仍须显式授权。管理员收紧工具策略后恢复显式授权门禁。文件输入、工作空间成员、工具状态及绑定仍在各自执行边界复核。此为代码行为目标，真实 DSH/OIDC 仍需单独验收。
 
 **2026-10-03 流程更新：** Agent 的新建、编辑只通过管理端界面配置；ZIP 导入页面、客户端调用、管理 API 和发布服务导入方法已移除，版本 ZIP 导出与离线包格式校验保留。发布操作收敛为「界面配置 → 人工试运行验证 → 确认发布」：五类默认案例用带状态的页签逐项填写、逐项通过 DSH 执行与人工确认；自动检查失败不派发该项 Run，前一项未确认不能运行下一项，未运行案例可在轮到它时调整而保留前序已通过证据；发布事务仍要求五项完整通过。下文 2026-09 的 ZIP 导入实施记录是历史证据，不再描述当前可用入口；PF-07 的 P2 状态不因界面简化而改变。
@@ -91,7 +93,7 @@ AE-02 保留两条语义边界：`requested_by` 继续指向人类请求者，�
 | AS-09 预算与委派 | **PF-02 累计预算与 PF-06 受控委派均已代码级实现**。Agent Version 固定允许的目标版本及深度、并行、超时；`delegate_agent` 经平台桥创建无 Session 子 Task/Run，沿用当前用户和工作空间，权限取当前授权与父 Attempt 上限交集，预算指向根 Task 范围。父子关系持久化，取消、终态和启动恢复均收敛；子结果使用 `task-result/v1`，仅文本成功标记 `unverified` | PostgreSQL 用例覆盖精确版本策略、幂等、深度、并行、Runtime 容量、根预算、父任务失效、取消与重启对账；Runtime/策略/Schema 测试覆盖工具注册、上下文和严格结果契约；管理端组件覆盖策略保存。真实多 Agent DSH、OIDC 撤权及压力/故障仍留 PF-07 | Token/成本仍为不支持；具体 Agent 只有模板触发且目标版本、最小上下文、预算和失败语义验收完成后才启用委派 |
 | AS-10 真实结果 | **基础已实现（B-04）**。[任务结果领域投影](../../server/src/domain/task-result.ts)与仓储/API/前端以 `task-result/v1` 区分执行终态、业务结果、回执、证据和待处理项；成果引用固定到来源 Attempt 与不可变版本 | 领域、PostgreSQL、HTTP、前端及 [P1 浏览器用例](../../e2e/personal-integration/task-result.spec.ts)覆盖已登记成果、仅回答、成果登记缺口和失败路径；仍不能替代具体 Agent 的目标质量评测或真实外部写回执 | 具体 Agent 补目标案例；外部异步写能力接入时补 `accepted` 后状态核对；真实 DSH/OIDC 留 P2 |
 | AS-11 版本追溯 | **部分实现**。[迁移 0039](../../server/migrations/0039_agent_release_governance.sql)保存包、候选、试运行和证据；试运行通过后单次审核确认即发布，事务内复核 sealedRevision、当前定义、依赖/绑定及最新 v1 试运行；既有 `submitted` 候选仍可完成或退回；RunAttemptRecord 保存 Manifest 摘要和模型路由快照 | 发布集成覆盖草稿直接发布、修改候选使证据失效、人工判失败阻塞、旧 v1 证据拒绝、既有待审候选完成和绑定漂移；P0 浏览器验证单次确认交互；跨环境变更验证未覆盖 | 与 AS-01 一起补真实发布依赖；小范围启用和目标环境验证仍是发布门槛 |
-| AS-12 评测与审计 | **基础契约已实现**。发布服务采用 [`AgentEvaluationSuite v1`](agent-evaluation-template.yaml)，要求 success/invalid_input/permission_denied/prompt_injection/capability_failure 五类案例；候选与版本证据记录契约版本、case Run/Attempt、机器断言和人工 rubric 结论 | 包解析拒绝旧数组、未知版本/字段/断言；发布集成使用 `TrialStubRuntime` 验证五类案例和逐项人工判定。平台故障/安全测试独立维护，真实目标质量与成本仍需具体 Agent/P2 证明 | 为每个拟发布 Agent 替换通用输入/rubric并留 P2；不复制平台通用故障套件，也不将平台生成五案例视为业务验收完成 |
+| AS-12 评测与审计 | **基础契约已实现**。发布服务采用 AgentEvaluationSuite v1，要求 success/invalid_input/permission_denied/prompt_injection/capability_failure 五类案例；候选与版本证据记录契约版本、case Run/Attempt、机器断言和人工 rubric 结论 | 包解析拒绝旧数组、未知版本/字段/断言；发布集成使用 `TrialStubRuntime` 验证五类案例和逐项人工判定。平台故障/安全测试独立维护，真实目标质量与成本仍需具体 Agent/P2 证明 | 为每个拟发布 Agent 替换通用输入/rubric并留 P2；不复制平台通用故障套件，也不将平台生成五案例视为业务验收完成 |
 
 下文按日期保留的实施记录中如出现 `submitForReview`，描述的是当时的两步流程；当前 Agent 发布入口已移除该提交步骤，以本节 AS-11 和[生命周期模板](agent-lifecycle-template.md)为准。
 
@@ -127,7 +129,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 ## 4. 具体需要实施的工作
 
-2026-09-20 起按“不考虑历史兼容”组织实施：I-01～I-08 合并为 B-01～B-05。2026-09-21 进一步决定在继续开发具体 Agent 前完成平台基础能力计划，原按需暂缓的 I-09～I-13 与外部异步动作、累计预算纳入 PF-01～PF-07；这些能力先在平台层依序建设，具体 Agent 仍按触发条件选择，不默认启用。B-01/B-02 已清理旧包别名、双格式与旧引用接受，B-03 已落地 default 环境绑定修订。保留 I 编号用于差异追踪；未标完成的要求不能当作已支持能力。工程归属沿用 [AG-03 实施方案](../design/automation-implementation-plan.md)及 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)。
+2026-09-20 起按“不考虑历史兼容”组织实施：I-01～I-08 合并为 B-01～B-05。2026-09-21 进一步决定在继续开发具体 Agent 前完成平台基础能力计划，原按需暂缓的 I-09～I-13 与外部异步动作、累计预算纳入 PF-01～PF-07；这些能力先在平台层依序建设，具体 Agent 仍按触发条件选择，不默认启用。B-01/B-02 已清理旧包别名、双格式与旧引用接受，B-03 已落地 default 环境绑定修订。保留 I 编号用于差异追踪；未标完成的要求不能当作已支持能力。工程归属沿用 [Runtime EX 方案](../design/runtime-execution-optimization-plan.md)与 [架构总览](overview.md) 中的自动任务章节。
 
 为便于追踪已有代码和验收目录，保留阶段编号：AG-01 表示 Agent 包与发布，AG-02 表示工具扩展，AG-03 表示轻量自动任务，AG-04 表示受控经验。AG-01/02/04 的后续工作直接以本文 I 编号为入口，无需查阅已删除的总方案；AG-03 与 EX 的细节使用上述现存文档。阶段编号不表示能力已实现或已授权启动。
 
@@ -157,7 +159,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | PF-06（代码级与管理端已完成，2026-09-23） | 受控 Agent 委派 | 平台受管的精确目标版本允许列表；无 Session 父子 Task/Run；最小显式上下文；当前授权与父快照上限交集；PF-02 根预算；深度/并行/容量预留/超时门禁；委派 Task 禁止通用重试；取消、重启对账和全回执 `task-result/v1` 合并 | 一次性 PostgreSQL、Runtime/Schema/策略、当前授权和管理端组件测试覆盖版本固定、幂等、边界、预算、撤权、重试隔离、满载拒绝与子席位预留、取消、恢复及混合回执结果真值；真实 DSH 多 Agent、真实身份撤权和容量故障留 PF-07 P2 |
 | PF-07（部分完成） | 平台基线验收 | [版本化能力矩阵](agent-platform-capabilities.v1.json)、P0/P1 入口和 [验收手册](pf07-platform-acceptance.md)已建立；覆盖无 Session、外部动作、累计预算、MCP、等待/审批、记忆和委派 | P1 已在本地隔离环境运行，目标提交与 CI 结果仍需固定；当前版本 P2 尚须在真实 DSH/OIDC/批准连接上执行并留代码版本、身份、环境、Runtime、Run/Attempt、故障/撤权和结果证据，复核通过后才开放给 Agent 发布 |
 
-**阶段移交：** 本清单不再作为继续新功能开发的排队清单。PF-07 的目标版本真实验收继续开放，由[运行手册](pf07-platform-acceptance.md)跟踪环境、身份、Runtime、Run/Attempt、故障与验收人证据；[本地隔离环境进度](../history/pf07/pf07-oidc-isolated-progress-2026-09-23.md)仅覆盖部分场景。此前手工 P2 无原始记录且早于当前能力，不能作为通过依据。发布依赖这些能力的 Agent 时，须完成适用场景并经复核后再开放；平台整体 PF-07 仍未通过。
+**阶段移交：** 本清单不再作为继续新功能开发的排队清单。PF-07 的目标版本真实验收继续开放，由[运行手册](pf07-platform-acceptance.md)跟踪环境、身份、Runtime、Run/Attempt、故障与验收人证据；本地隔离环境进度仅覆盖部分场景。此前手工 P2 无原始记录且早于当前能力，不能作为通过依据。发布依赖这些能力的 Agent 时，须完成适用场景并经复核后再开放；平台整体 PF-07 仍未通过。
 
 **PF-01 完成记录（2026-09-21）：** `0050_task_operation_foundation.sql` 建立 `tasks` 与 `task_operations`，`0051_session_neutral_task_execution.sql` 将 Run 和 Artifact 的 Session 关系改为可选并固定 Task 归属。Task 以 `source_type + correlation_key` 幂等，API/event 请求同时固定请求摘要，同键换请求内容会冲突；Task 与无 Session Run 在同一事务受理。Runtime Manifest 必填 `task_id`，`session_id` 可为空。`POST /api/workbench/v1/task-executions` 受理 API/event Task，查询、取消和重试继续使用既有 Run/Attempt、Runtime Adapter 与 DSH；结果、事件和 Artifact 由 Task 查询，Artifact 下载按当前 Workspace 权限和 Task 发起者重新鉴权。
 
@@ -231,7 +233,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **2026-09-19 复审加固：** 针对复审发现的边界问题完成第二轮修复。`requestChanges` 与 `withdrawSubmission` 改为事务内先锁 `agents` 再锁进行中候选行（与 publish/ensureCandidate 同序，避免死锁），状态校验与更新同事务完成，并发提交/发布/撤回不再相互写偏；不存在的 Agent 统一返回 404。`resolveDeclared` 收敛到能力服务的规范断言（`assertPublishedReferences`/`assertAvailableReferences`），未锁版本的声明先解析到平台当前活动/最新发布版本再断言，声明工具版本与平台可用版本不一致（如 `read@9.9.9`）明确进缺失而不再静默改写为平台版本，Skill 运行时依赖工具同样按锁定引用校验；`skillVersionPublished` 私有重复逻辑随之删除。包内能力 id 唯一性在 `consumeDeclared` 显式校验：tool.yaml 的 `id` 可与目录名不同，两个目录声明同一 id 由“Map 静默覆盖”改为明确拒绝。发布检查 `manifest` 项补齐 `AGENT_ID_PATTERN`、`VERSION_PATTERN`（x.y.z）与系统提示词 ≥20 字符校验并给出首个失败原因，常量自包解析器导出复用，与配置入口口径一致。验证：`agent-package.test.ts` 35/35、`agent-release-governance.integration.test.ts` 17/17（专用可丢弃 PostgreSQL）、`pnpm typecheck`、`pnpm verify`、`pnpm check:architecture`、改动文件 eslint、`git diff --check` 均通过；未跑浏览器 E2E 与真实 DSH/OIDC 验收。
 
-**改动位置：** [包解析器](../../server/src/modules/agent/agent-package.ts) 与新增[解析单测](../../server/src/modules/agent/agent-package.test.ts)、[发布服务](../../server/src/modules/agent/postgres-agent-release-service.ts)（生成案例来源标记）、[发布集成测试](../../server/src/infrastructure/postgres/agent-release-governance.integration.test.ts)、[领域类型](../../apps/admin-web/src/types/domain.ts)、[发布工作台](../../apps/admin-web/src/views/AgentReleaseWorkbenchView.vue)（生成案例来源提示）、根与服务端 `package.json`（`test:agent-package` 接入 ci:check）。
+**改动位置：** [包解析器](../../server/src/modules/agent/agent-package.ts)、`pnpm test:agent-package`、[发布服务](../../server/src/modules/agent/postgres-agent-release-service.ts)（生成案例来源标记）、[发布集成测试](../../server/src/infrastructure/postgres/agent-release-governance.integration.test.ts)、[领域类型](../../apps/admin-web/src/types/domain.ts)、[Agent 草稿视图](../../apps/admin-web/src/views/AgentDraftView.vue)（生成案例来源提示）、根与服务端 `package.json`（`test:agent-package` 接入 ci:check）。
 
 1. B-01 定义唯一清单格式、规范字段、显式默认值和长度/类型限制；未知字段、旧别名、未支持格式及受管身份/凭据/端点声明直接拒绝，不保留警告后忽略或双格式解析。原基线已实现的依赖和安全拒绝规则继续复用。
 2. 将包内同名依赖的显式版本冲突从“警告并覆盖”改为清楚的失败；同时检查别名字段并存冲突、重复依赖及未解析引用。报告具体字段、声明版本与包内版本，供管理员修正。
@@ -242,7 +244,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 ### I-03 落实配置和 ZIP 共用的规范化定义
 
-**改动位置：** `server/src/modules/agent/`、[运行准备](../../server/src/modules/run/run-orchestration-service.ts)、[模型治理](../../server/src/modules/model/model-governance-service.ts)、Runtime 类型/编译器、管理 API 与 [Agent 编辑组件](../../apps/admin-web/src/components/AgentDraftDialog.vue)。新定义类型/Schema 的名称与路径在实现时确定。
+**改动位置：** `server/src/modules/agent/`、[运行准备](../../server/src/modules/run/run-orchestration-service.ts)、[模型治理](../../server/src/modules/model/model-governance-service.ts)、Runtime 类型/编译器、管理 API 与 [Agent 草稿视图](../../apps/admin-web/src/views/AgentDraftView.vue)。新定义类型/Schema 的名称与路径在实现时确定。
 
 1. 建立平台内部规范化定义及校验入口，让配置创建和 ZIP 导入映射到同一种内容结构；分别保存可变目录信息、不可变定义及内容摘要，避免不同入口采用不同默认值。
 2. 增加版本化的输入要求与输出要求：支持的数据类型、必要参数/文件、结果形式及成果要求；自由文本 Agent 可继承平台默认契约。缺失输入应在 Run 准备阶段反馈；结构不合法的输出不能仅凭成功终态宣称符合契约。
@@ -254,11 +256,11 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 
 **B-01 原实施记录（2026-09-20；原 v1 指令路径已由 AE-01 替换，模型准入的后续进展见下文）：**
 
-- **唯一包格式与严格 Schema：** [agent-package.ts](../../server/src/modules/agent/agent-package.ts) 只接受 `apiVersion/kind/metadata/spec` 分层清单，由 [agent-package.schema.ts](../../server/src/modules/agent/agent-package.schema.ts) 与 [agent-package.schema.json](agent-package.schema.json)（Ajv 2020，`additionalProperties: false`，TS 常量导出保证零漂移）校验；旧扁平清单、全部字段别名、未知字段、重复 YAML 键、锚点别名及平台受管字段（凭据/端点/模型路由/执行环境/绑定/授权/调度/安装钩子等保留关键字）直接 422 拒绝。
+- **唯一包格式与严格 Schema：** [agent-package.ts](../../server/src/modules/agent/agent-package.ts) 只接受 `apiVersion/kind/metadata/spec` 分层清单，由 [agent-package.schema.ts](../../server/src/modules/agent/agent-package.schema.ts)（Ajv 2020，`additionalProperties: false`，TS 常量导出保证零漂移）校验；旧扁平清单、全部字段别名、未知字段、重复 YAML 键、锚点别名及平台受管字段（凭据/端点/模型路由/执行环境/绑定/授权/调度/安装钩子等保留关键字）直接 422 拒绝。
 - **规范化 AgentSpec：** 新增 [agent-spec.ts](../../server/src/modules/agent/agent-spec.ts) 定义 `AgentSpec`（metadata、instructions 文件引用+正文、capabilities 精确引用、input/output/context、catalog、limits、evaluation、model.requirements）；`agentSpecFromConfiguration` 将配置表单归一化为 `prompts/system.md` 文件表示，与 ZIP 解析结果同构。
 - **持久化：** 迁移 `0046_agent_spec_definition.sql` 将 `agent_versions.max_tokens` 更换为 `max_output_bytes` + `max_tool_calls` 并新增 `agent_spec jsonb`；配置创建/草稿更新/版本分叉与 ZIP 导入四条版本写入路径均固化展开后的 spec；既有行按平台默认值补齐、不回填（不考虑历史兼容）。`timeout_seconds` 语义不变。
 - **依赖与运行时：** 依赖仅接受 `id@x.y.z` 精确引用，声明版本与包内候选版本不一致、同 id 多版本均拒绝；运行编排按 `max_output_bytes`/`max_tool_calls` 映射 Attempt 限额，平台策略上限不变。模型能力要求仅声明与校验，路由/凭据仍平台管理，执行侧消费待 B-02/B-03。
-- **消费端：** 领域类型、Admin 管理端（domain 类型、AgentDraftDialog、管理视图、发布工作台）、OpenAPI 文档及全部测试夹具切换为 `maxOutputBytes`/`maxToolCalls`。
+- **消费端：** 领域类型、Admin 管理端（domain 类型、`AgentDraftView`、管理视图、验证与发布面板）、OpenAPI 文档及全部测试夹具切换为 `maxOutputBytes`/`maxToolCalls`。
 - **验证：** `agent-package.test.ts` 67/67（重写为新格式套件：严格 Schema、平台字段拒绝、精确依赖、包内候选版本匹配、checksums）；发布治理集成 17/17（专用可丢弃 PostgreSQL）；server + workbench-web + admin-web `tsc --noEmit` 通过；集成夹具原生 INSERT 同步更名。
 - **未覆盖：** 浏览器 E2E、真实 DSH/OIDC 验收未运行；`model.requirements` 无运行时消费方；既有 `agent_spec` 为 null 的旧版本行不回填，运行时快照仍由列字段驱动。
 
@@ -381,7 +383,7 @@ B-04/I-06 已实现 `task-result/v1` 读时投影：`succeeded` 只表示平台�
 | 层级 | 证据入口 | 当前状态 | 尚缺 |
 | --- | --- | --- | --- |
 | 平台通用约束 | Runtime、授权、故障、包格式、自动任务服务单元/集成套件 | 阶段矩阵见下表；受理、领取、活动执行、成果提交与结果读取已有代码级证据 | 真实身份、目标 DSH 和批准工具留待 P2 |
-| Agent 专属目标 | 发布治理的 `AgentEvaluationSuite v1` 与[模板](agent-evaluation-template.yaml) | 五类案例、契约版本、机器断言、Run/Attempt/输出证据及人工 rubric 已接入发布链路 | 平台生成案例仅作起点；每个拟发布 Agent 仍需补真实目标输入、能力特有失败和 P2 结果 |
+| Agent 专属目标 | 发布治理的 `AgentEvaluationSuite v1` | 五类案例、契约版本、机器断言、Run/Attempt/输出证据及人工 rubric 已接入发布链路 | 平台生成案例仅作起点；每个拟发布 Agent 仍需补真实目标输入、能力特有失败和 P2 结果 |
 | P0 浏览器 | `e2e/automation-smoke.spec.ts` | 已实现，验证入口与表单反馈 | 不证明 PostgreSQL、Runtime、OIDC 或 DSH |
 | P1 浏览器 | `e2e/automation.integration.spec.ts` | 第一批 5/5 通过；一次性 PostgreSQL + 合成 Runtime/身份 | 继续补第 2、3 条未覆盖的阶段化安全/故障场景 |
 | P2 真实验收 | 手工验收记录；自动化路径预留为 `e2e/automation.acceptance.spec.ts` | 此前仅有口头完成结论，无可归档原始记录；自动化 spec 未创建 | 在当前目标版本重新执行真实 DSH Lock/Adapter/模型、OIDC、多账号、批准工具、目标环境容量/故障场景并留验收结论 |

@@ -205,6 +205,18 @@ latest migrations in source: 0082, 0083
 - 广场展示版本与实际绑定版本：
 - 管理端撤权后 UI 收敛：
 
+## 9.1 授权撤权与 Session 刷新（B6，只读）
+
+请从最近 7 天已有访问日志统计（不触发新的撤权或写操作）：
+
+1. 管理端与员工端 `/api/*/v1/session` 成功刷新次数（按门户、按日）。
+2. 授权相关 **403** 计数，按 `error.code` 分组：`authorization_denied`、`permission_revoked`、`role_disabled`、`data_scope_revoked`、其他 403。
+3. 同一浏览器会话内，连续授权 403 后 `/session` 刷新次数分布（关注是否 >1 的异常合并失败）。
+4. `/login` ↔ `/forbidden` 或 `/login` ↔ 受保护路由的往返次数（疑似 redirect loop）。
+5. 撤权后仍出现的管理写请求 **403** 次数（只计数，不重放写请求）。
+
+不得输出用户 ID、角色名、scope 值、SQL 或 Cookie/Token。
+
 ## 10. 结论
 - 已由目标机证实的断点：
 - 仅代码审阅推断、尚未证实的断点：

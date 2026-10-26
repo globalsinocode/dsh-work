@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 
-import { workbenchApi } from '../api/client'
+import { WorkbenchApiError, workbenchApi } from '../api/client'
 import type { UserProfile, UserRole, WorkbenchSession } from '../types/domain'
 
 export const roleLabels: Record<UserRole, string> = {
@@ -35,28 +35,46 @@ export const useAuthStore = defineStore('workbench-auth', () => {
   )
   let pendingLoad: Promise<void> | undefined
 
-  async function load() {
-    if (initialized.value) return
-    if (pendingLoad) return pendingLoad
-    pendingLoad = (async () => {
-      loading.value = true
-      error.value = ''
-      try {
-        const session = await workbenchApi.getSession()
-        sessionUser.value = session.user
-        identityProvider.value = session.identityProvider
-        initialized.value = true
-      } catch (cause) {
+  async function fetchAndApplySession() {
+    loading.value = true
+    error.value = ''
+    try {
+      const session = await workbenchApi.getSession()
+      sessionUser.value = session.user
+      identityProvider.value = session.identityProvider
+      initialized.value = true
+    } catch (cause) {
+      if (cause instanceof WorkbenchApiError && cause.status === 401) {
         sessionUser.value = null
         identityProvider.value = null
+        initialized.value = false
+      } else if (cause instanceof WorkbenchApiError && cause.status === 403) {
+        initialized.value = true
+      } else {
+        sessionUser.value = null
+        identityProvider.value = null
+        initialized.value = false
         error.value = cause instanceof Error ? cause.message : '登录会话加载失败'
-        throw cause
-      } finally {
-        loading.value = false
-        pendingLoad = undefined
       }
-    })()
-    return pendingLoad
+      throw cause
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    if (pendingLoad) return pendingLoad
+    pendingLoad = fetchAndApplySession()
+    try {
+      await pendingLoad
+    } finally {
+      pendingLoad = undefined
+    }
+  }
+
+  async function load() {
+    if (initialized.value) return
+    await refresh()
   }
 
   function login(returnTo = currentReturnTo()) {
@@ -92,6 +110,7 @@ export const useAuthStore = defineStore('workbench-auth', () => {
     error,
     identityProvider,
     load,
+    refresh,
     login,
     logout,
     switchAccount,

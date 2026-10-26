@@ -53,6 +53,8 @@ export async function createPlatformToolBridge(
   limit: number,
   authorize?: () => Promise<void>,
   operations?: PlatformToolOperationLifecycle,
+  /** Runtime 紧急停用的内置工具：只拒绝这一次调用，不终止 Attempt。 */
+  toolDisabled?: (toolName: string) => Promise<boolean>,
 ) {
   const prepared = Object.fromEntries(Object.entries(tools).map(([name, registration]) => [
     name,
@@ -79,6 +81,19 @@ export async function createPlatformToolBridge(
         }
         try {
           await authorize()
+          const toolHeader = request.headers['x-dsh-tool-name']
+          const toolName = (Array.isArray(toolHeader) ? toolHeader[0] : toolHeader)?.trim()
+          if (toolName && toolDisabled) {
+            let disabled: boolean
+            try { disabled = await toolDisabled(toolName) } catch {
+              response.writeHead(503).end(JSON.stringify({ error: '内置工具停用状态暂不可读，本次调用未执行' }))
+              return
+            }
+            if (disabled) {
+              response.end(JSON.stringify({ authorized: true, toolDisabled: true }))
+              return
+            }
+          }
           response.end(JSON.stringify({ authorized: true }))
         } catch (error) {
           const revoked = isAuthorizationDenied(error)
@@ -273,6 +288,13 @@ function isAuthorizationDenied(error: unknown): boolean {
     && 'code' in error && error.code === 'permission_denied'
 }
 
+/**
+ * After a tool deadline or Attempt cancellation, wait for the handler to stop.
+ * Python sandbox removal finishes inside this window. A handler that ignores
+ * AbortSignal still returns so the serialized lock can stay held until it settles.
+ */
+const HANDLER_CLEANUP_GRACE_MS = 12_000
+
 async function executeWithTimeout(
   registration: PlatformToolRegistration,
   input: Record<string, unknown>,
@@ -284,23 +306,48 @@ async function executeWithTimeout(
   const handler = Promise.resolve().then(() => registration.handler(input, signal))
   if (onHandlerSettled) void handler.then(onHandlerSettled, onHandlerSettled)
   let timer: NodeJS.Timeout | undefined
-  let rejectOnAbort: (() => void) | undefined
+  let graceTimer: NodeJS.Timeout | undefined
+  let removeAbortListener = () => {}
   try {
-    return await Promise.race([
-      handler,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(toolTimeout(registration.contract))
-          timeoutController.abort()
-        }, registration.contract.timeoutMs)
-        rejectOnAbort = () => reject(new DOMException('Aborted', 'AbortError'))
-        attemptSignal.addEventListener('abort', rejectOnAbort, { once: true })
-      }),
-    ])
+    const outcome = await new Promise<
+      | { type: 'value'; value: unknown }
+      | { type: 'error'; error: unknown }
+      | { type: 'timeout' }
+      | { type: 'abort' }
+    >(resolve => {
+      handler.then(
+        value => resolve({ type: 'value', value }),
+        error => resolve({ type: 'error', error }),
+      )
+      timer = setTimeout(() => resolve({ type: 'timeout' }), registration.contract.timeoutMs)
+      const onAbort = () => resolve({ type: 'abort' })
+      if (attemptSignal.aborted) onAbort()
+      else attemptSignal.addEventListener('abort', onAbort, { once: true })
+      removeAbortListener = () => attemptSignal.removeEventListener('abort', onAbort)
+    })
+    if (outcome.type === 'value') return outcome.value
+    if (outcome.type === 'error') throw outcome.error
+    // Abort first, then wait until the handler has stopped the underlying work.
+    if (outcome.type === 'timeout') timeoutController.abort()
+    const cleaned = await new Promise<{ pending: true } | { pending: false; error?: unknown }>(resolve => {
+      handler.then(
+        () => resolve({ pending: false }),
+        error => resolve({ pending: false, error }),
+      )
+      graceTimer = setTimeout(() => resolve({ pending: true }), HANDLER_CLEANUP_GRACE_MS)
+    })
+    if (!cleaned.pending && cleaned.error !== undefined && !isHandlerAbort(cleaned.error)) throw cleaned.error
+    if (outcome.type === 'timeout') throw toolTimeout(registration.contract)
+    throw new DOMException('Aborted', 'AbortError')
   } finally {
     if (timer !== undefined) clearTimeout(timer)
-    if (rejectOnAbort) attemptSignal.removeEventListener('abort', rejectOnAbort)
+    if (graceTimer !== undefined) clearTimeout(graceTimer)
+    removeAbortListener()
   }
+}
+
+function isHandlerAbort(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || (error as NodeJS.ErrnoException).code === 'ABORT_ERR')
 }
 
 const writtenErrorCodes = new WeakMap<import('node:http').ServerResponse, string>()

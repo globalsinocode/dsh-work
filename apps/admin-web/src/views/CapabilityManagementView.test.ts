@@ -99,6 +99,7 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
       serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
       capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
       capabilities: [{ name: 'query', description: '查询', inputSchema: { type: 'object' } }],
+      pendingCapabilities: [],
       discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
     },
   }

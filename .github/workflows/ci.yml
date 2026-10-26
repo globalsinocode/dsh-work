@@ -157,6 +157,9 @@ jobs:
       - name: Run personal workbench P1 browser journeys
         run: pnpm test:e2e:personal
 
+      - name: Run project space P1 browser journeys
+        run: pnpm test:e2e:project-space
+
       - name: Run MCP administration P1 browser journey
         run: pnpm test:e2e:mcp-admin
 

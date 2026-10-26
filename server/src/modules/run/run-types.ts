@@ -64,6 +64,11 @@ export interface CreateRunInput {
   taskBudget?: TaskBudgetInput | null
   /** Required when sessionId is null; checked against the Task owner workspace. */
   workspaceId?: string | null
+  /**
+   * 项目空间任务线程：同一 Session 同一时间只允许一个活动 Run。在 Session 行锁内复核，
+   * 有其他活动 Run 时以 conflictMessage 拒绝（幂等重放不受影响）。
+   */
+  requireIdleSession?: { conflictMessage: string }
 }
 
 export interface CreateAttemptInput {

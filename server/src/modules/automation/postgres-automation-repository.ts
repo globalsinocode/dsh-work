@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseClient, DatabaseTransaction } from '../../infrastructure/postgres/database.ts'
 import type { RuntimeScopeCeiling } from '../authorization/postgres-authorization-service.ts'
 import type { JsonObject } from '../../domain/run-state.ts'
+import { invalidRequest } from '../../domain/request-errors.ts'
 import type {
   AutomationAdmissionStatus,
   AutomationExecutionKind,
+  AutomationExecutionPage,
   AutomationExecutionRecord,
   AutomationInputTemplate,
   AutomationRecord,
@@ -35,6 +37,8 @@ interface AutomationRow {
   confirmedConfigRevision: string
   revision: number
   status: AutomationStatus
+  archivedAt?: Date | null
+  archivedBy?: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -71,6 +75,7 @@ const AUTOMATION_COLUMNS = `
   agent_automations.scope_ceiling as "scopeCeiling",
   agent_automations.confirmed_config_revision as "confirmedConfigRevision",
   agent_automations.revision, agent_automations.status,
+  agent_automations.archived_at as "archivedAt", agent_automations.archived_by as "archivedBy",
   agent_automations.created_at as "createdAt", agent_automations.updated_at as "updatedAt"
 `
 
@@ -118,9 +123,34 @@ function mapAutomation(row: AutomationRow): AutomationRecord {
     agentName: row.agentName ?? null,
     agentVersion: row.agentVersion ?? null,
     nextSlotUtc: row.nextSlotUtc ? row.nextSlotUtc.toISOString() : null,
+    archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
+    archivedBy: row.archivedBy ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
+}
+
+function encodeExecutionCursor(createdAt: string, id: string): string {
+  return Buffer.from(JSON.stringify({ at: createdAt, id })).toString('base64url')
+}
+
+function decodeExecutionCursor(cursor: string): { createdAt: string; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { at?: unknown; id?: unknown }
+    if (typeof parsed.at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(parsed.at) || !Number.isFinite(Date.parse(parsed.at))
+      || typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 160 || cursor.length > 1024) {
+      throw new Error('shape')
+    }
+    return { createdAt: parsed.at, id: parsed.id }
+  } catch {
+    throw invalidRequest('无效的分页游标')
+  }
+}
+
+function clampExecutionLimit(limit: number | undefined): number {
+  if (limit === undefined) return 50
+  if (!Number.isInteger(limit) || limit < 1) return 1
+  return Math.min(limit, 100)
 }
 
 /**
@@ -203,17 +233,65 @@ export class PostgresAutomationRepository {
     return row ? mapAutomation(row) : null
   }
 
-  async listByOwner(ownerUserId: string): Promise<AutomationRecord[]> {
+  async listByOwner(
+    ownerUserId: string,
+    input?: { status?: 'active' | 'archived' },
+  ): Promise<AutomationRecord[]> {
+    const archivedOnly = input?.status === 'archived'
     const rows = await this.database<AutomationRow[]>`
       select ${this.database.unsafe(AUTOMATION_DISPLAY_COLUMNS)}
         from agent_automations
         ${this.database.unsafe(AUTOMATION_AGENT_JOIN)}
        where agent_automations.tenant_id = ${tenantId}
          and agent_automations.owner_user_id = ${ownerUserId}
-         and agent_automations.status <> 'disabled'
+         and ${archivedOnly
+           ? this.database`agent_automations.status = 'disabled'`
+           : this.database`agent_automations.status <> 'disabled'`}
        order by agent_automations.created_at desc
     `
     return rows.map(mapAutomation)
+  }
+
+  async archive(
+    id: string,
+    ownerUserId: string,
+    actorUserId: string,
+    tx?: DatabaseTransaction,
+  ): Promise<AutomationRecord | null> {
+    const executor = tx ?? this.database
+    const [row] = await executor<AutomationRow[]>`
+      update agent_automations set
+        status = 'disabled',
+        archived_at = now(),
+        archived_by = ${actorUserId},
+        next_slot_utc = null,
+        updated_at = now()
+      where tenant_id = ${tenantId} and id = ${id}
+        and owner_user_id = ${ownerUserId}
+        and status in ('draft', 'enabled', 'paused')
+      returning id
+    `
+    return row ? this.getById(row.id) : null
+  }
+
+  async restoreArchived(
+    id: string,
+    ownerUserId: string,
+    tx?: DatabaseTransaction,
+  ): Promise<AutomationRecord | null> {
+    const executor = tx ?? this.database
+    const [row] = await executor<AutomationRow[]>`
+      update agent_automations set
+        status = 'paused',
+        archived_at = null,
+        archived_by = null,
+        updated_at = now()
+      where tenant_id = ${tenantId} and id = ${id}
+        and owner_user_id = ${ownerUserId}
+        and status = 'disabled'
+      returning id
+    `
+    return row ? this.getById(row.id) : null
   }
 
   /** 到期任务：enabled 且下一未处理槽位已到（扫描入口）。 */
@@ -439,16 +517,38 @@ export class PostgresAutomationRepository {
     `
   }
 
-  async listExecutions(automationId: string, limit = 50): Promise<AutomationExecutionRecord[]> {
-    const rows = await this.database<ExecutionRow[]>`
-      select ${this.database.unsafe(EXECUTION_COLUMNS)}, r.status as "runStatus"
+  async listExecutions(
+    automationId: string,
+    input?: { limit?: number; cursor?: string | null },
+  ): Promise<AutomationExecutionPage> {
+    const limit = clampExecutionLimit(input?.limit)
+    const cursor = input?.cursor ? decodeExecutionCursor(input.cursor) : null
+    const rows = await this.database<(ExecutionRow & { cursorCreatedAt: Date })[]>`
+      select ${this.database.unsafe(EXECUTION_COLUMNS)}, r.status as "runStatus",
+             e.created_at as "cursorCreatedAt"
         from automation_executions e
         left join runs r on r.tenant_id = e.tenant_id and r.id = e.run_id
        where e.tenant_id = ${tenantId} and e.automation_id = ${automationId}
-       order by e.created_at desc
-       limit ${limit}
+         and ${cursor === null
+           ? this.database`true`
+           : this.database`(e.created_at, e.id) < (${cursor.createdAt}::text::timestamptz, ${cursor.id})`}
+       order by e.created_at desc, e.id desc
+       limit ${limit + 1}
     `
-    return rows.map(mapExecution)
+    const hasMore = rows.length > limit
+    const slice = rows.slice(0, limit)
+    const items = slice.map((row) => {
+      const { cursorCreatedAt: _cursorCreatedAt, ...executionRow } = row
+      return mapExecution(executionRow)
+    })
+    const last = slice[slice.length - 1]
+    return {
+      items,
+      hasMore,
+      nextCursor: hasMore && last
+        ? encodeExecutionCursor(last.cursorCreatedAt.toISOString(), last.id)
+        : null,
+    }
   }
 
   async getExecution(automationId: string, executionId: string): Promise<AutomationExecutionRecord | null> {

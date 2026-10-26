@@ -51,6 +51,12 @@ export interface TaskSource {
   updatedAt?: string
 }
 
+export interface ArtifactOrigin {
+  projectTask: { id: string; title: string } | null
+  agent: { name: string; version: string } | null
+  initiatedBy: string | null
+}
+
 export interface Artifact {
   id: string
   name: string
@@ -64,6 +70,8 @@ export interface Artifact {
   fileId?: string
   canReference?: boolean
   summary: string
+  /** 项目空间等场景下的成果来源归因。 */
+  origin?: ArtifactOrigin | null
 }
 
 export interface ChatMessage {
@@ -159,6 +167,8 @@ export interface RuntimeDefinition {
   checkedAt: string
   healthMessage: string
   capabilities: string[]
+  /** 紧急停用的内置工具 id 列表（代码注册表工具名）。 */
+  disabledTools: string[]
 }
 
 export interface DshRuntimeToolConnectorStatus {
@@ -180,6 +190,7 @@ export interface UpdateRuntimeConfigurationInput {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  disabledTools?: string[]
   actor: string
 }
 
@@ -237,6 +248,23 @@ export interface WorkspaceFile {
   canReference?: boolean
 }
 
+/** 工作区文件列表/上传 API 的统一投影（hardening GC 与团队空间选择器）。 */
+export interface WorkspaceFileProjection {
+  id: string
+  logicalFileId: string
+  name: string
+  source: 'workspace'
+  sizeLabel: string
+  versionNo: number
+  versionCount: number
+  parseStatus: 'pending' | 'succeeded' | 'failed'
+  parseErrorCode: string | null
+  canReference: boolean
+  canDownload: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Workspace {
   id: string
   name: string
@@ -286,6 +314,8 @@ export interface AgentDefinition {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
@@ -299,9 +329,9 @@ export interface AgentDraftConfiguration {
   description: string
   owner: string
   department: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
+  visibility?: string
+  roleIds?: string[]
+  dataScopes?: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -309,8 +339,10 @@ export interface AgentDraftConfiguration {
   maxOutputBytes: number
   maxToolCalls: number
   timeoutSeconds: number
-  skills: string[]
-  tools: string[]
+  skills?: string[]
+  tools?: string[]
+  webSearchEnabled?: boolean
+  projectTasksEnabled?: boolean
   mcpScope?: AgentMcpScope
   /** Optional definition request; collection publication and grants remain platform-owned. */
   data?: { state: boolean; collections: Array<{
@@ -325,6 +357,8 @@ export interface CreateAgentDraftInput extends AgentDraftConfiguration {
   actor: string
   executionRoleIds?: string[]
   executionDataScopes?: string[]
+  /** 历史测试/脚本别名，写入时映射到 roleIds。 */
+  visibleRoleIds?: string[]
 }
 
 export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id'> {
@@ -362,6 +396,8 @@ export interface AgentVersionRecord {
   timeoutSeconds: number
   skills: string[]
   tools: string[]
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
   delegationPolicy?: AgentDelegationPolicy
 }
@@ -547,6 +583,7 @@ export interface ConnectorDefinition {
     approvedDigest: string | null
     capabilityCount: number
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null

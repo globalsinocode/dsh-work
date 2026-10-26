@@ -7,7 +7,7 @@
 
 本文统一描述 dsh-work 的产品范围、系统边界和长期架构。接口字段、物理表和验证命令不在本文重复维护，分别以可执行契约、SQL 迁移和开发测试指南为准。
 
-Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进，并用[生命周期实现映射](agent-lifecycle-implementation-map.md)定位平台对象和门禁；代码支持程度及未实现项见[差异清单](agent-design-gap-analysis.md)。本文保留系统职责与执行链的架构边界。
+Agent 定义、能力依赖、状态、授权、发布和评测的通用要求统一见 [Agent 设计规范](agent-design-standard.md)；新 Agent 按[通用 Agent 全生命周期模板](agent-lifecycle-template.md)推进；已交付功能的产品与安全规则见[功能规则](feature-rules.md)，未完成事项见第 10 节。本文保留系统职责与执行链的架构边界。
 
 ## 1. 产品定位与范围
 
@@ -43,7 +43,7 @@ MVP 明确不包含：
 - Skill 的 `SKILL.md`、参考文件和脚本保存在 `DSH_WORK_DATA_ROOT/skills` 的内容寻址文件夹中；PostgreSQL 只保存相对引用和校验索引，数据库与该数据目录必须成组备份和恢复；
 - 企业身份由服务端建立，浏览器传入的用户、角色或操作人字段不能作为授权事实；
 - DSH 只能通过受控适配器和平台能力调用模型、Tool 与成果存储；
-- MCP 复用 Connector 控制面，健康且能力快照已同步的 MCP Server 默认对全部 Agent 可用；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
+- MCP 复用 Connector 控制面，Agent Version 按整个 Connector 显式选择（`selected`，默认 `none`）；新增或输入 Schema 变化的 MCP Tool 须管理员确认后才生效；实际 Tool 调用由 DSH 完成并逐调用审计，不复制为平台 Tool Version/Binding；
 - 使用 AI Hub 账号时，上游不可用不得绕过登录、Token 刷新或员工目录同步；已有 Session 只在 Access Token 尚未进入刷新窗口时独立使用本地授权，不能把 Session 有效期等同于离线可用时长。
 
 ## 3. 架构原则
@@ -77,7 +77,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 - **禁止第二套 Agent 执行逻辑。** 不得在前端、业务后端或独立服务中绕过 DSH，直接调用模型 API 实现 Agent 对话、工具调用循环、多步推理、模型上下文推进或循环内重试；不得为安装助手等场景另引入并行 Agent 执行框架。
 - **DSH 持有单次 Attempt 内的执行循环。** 模型交互、工具调用编排与循环上下文由 DSH 负责；平台复用现有 Runtime Adapter 处理启动、取消、超时、事件转换和进程回收。
 - **平台持有业务事实和工具实现。** 身份与权限、会话和安装记录、队列调度、Attempt 重试、断线恢复、幂等及审计由平台负责。下载、解包、校验、入库和版本发布是受控业务工具；其确定性流程与事务恢复不属于另一套 Agent Loop。管理端安装工具按管理身份授权，不扩大员工 Agent 的工具权限。
-- **Agent 委派仍是同一链路的子任务。** `delegate_agent` 只创建受控的无 Session 子 Task/Run；目标固定到已发布 Agent Version，子 Attempt 仍由 Runtime Adapter 启动 DSH。平台只负责父子关系、权限上限、根预算、容量、取消、恢复和结果契约，不在父子 Task 之间运行模型编排循环。
+- **暂不提供 Agent 委派。** 原 PF-06 `delegate_agent` 已于 2026-10-16 删除；AI 员工之间需要交接工作时再按 AI 员工交接场景重新设计。历史委派子 Task 保留记录但不能重试。
 - **模型治理不承担 Agent 执行。** Model 模块只承担路由、凭据引用和计量等治理职责，不能自行发起一条绕过 DSH 的业务 Agent 路线；当前路由也尚未传给 DSH（见 4.4）。
 - **DSH 不可用时禁止绕过。** 需要 Agent 的对话和试运行明确报告不可用，不能自动降级到直接调用模型。已有安装记录和确定性平台管理操作可按自身权限继续工作；这不代表 Agent 仍可运行。
 - **扩展现有链路。** 安装助手所需工具调用或资源能力不足时，应扩展现有 Run/Runtime 契约和 DSH 能力。Runtime 可替换表示通过既有端口统一迁移执行内核，不表示允许各业务场景自行选择或维护第二套引擎。Mock Runtime 仅供测试与原型使用，不是生产回退方案。
@@ -86,9 +86,12 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 ### 3.6 工具分类与管理边界
 
-运行时统一通过 DSH 发起工具调用，不代表所有工具使用同一套管理对象。DSH 普通内置工具从当前 Profile 批量同步进入平台目录：普通业务工具都有 Tool/Tool Version 记录，但只有完成平台安全准入的工具才获得 `connector-dsh-workspace` 活动 Binding，并可由 Agent Version 精确引用；尚未准入或已从当前 Profile 消失的普通工具记录保留可见、保持停用且不能授权。文件工具 `read_image`、`str_replace_editor` 和网络工具 `web_search` 在平台路径/查询参数约束下自动准入；`web_fetch` 在 DSH 实现连接层私网地址与重定向防护前保持不可准入且禁止执行。DSH Agent 协作与 Runtime 控制工具不进入普通工具列表，分别通过受控委派、Skill、工作流等平台流程治理。dsh-work 内置执行工具由 Agent/Skill Manifest 声明，其中 `delegate_agent` 只有在版本配置受控目标时才注入；dsh-work 内置平台工具由平台按 Run purpose 注入；MCP 外部工具以 Connector 为管理单元，成功发现的能力快照自动生效并默认对全部 Agent 可用。管理端 `DSH 工具管理` 只展示第一类，`connector-dsh-workspace` 的运行状态进入 `安全与运维 → Runtimes`，MCP 进入 `MCP 连接器`，其余两类通过代码契约、对应业务流程和运行审计治理。
+运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不获得平台 Tool Version/Binding，平台内置工具也不能借 Connector 或普通 Tool 配置扩大用途。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
+- **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
+
+该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。
 
 ## 4. 逻辑架构
 
@@ -156,7 +159,7 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 
 ### 4.1 体验层
 
-- `apps/workbench-web`：主导航提供新对话、Skill 广场、AI 同事、团队空间和自动任务；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见 [个人工作闭环](review-batch03.md)；
+- `apps/workbench-web`：A 工作模式主导航提供新对话、Skill 广场、AI 同事、项目空间和定时任务，B 协作模式主导航提供对话、AI 同事、群组和定时任务（模式为用户偏好，见[项目空间方案第 12 节](../design/project-space-plan.md)）；历史对话、我的文件及用户设置保留路由与上下文入口。默认个人 Workspace 隐藏在后台，旧链接与数据归属保留，见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)；
 - `apps/admin-web`：运营、Agent、Skill/Tool、Runtime、Session、权限、模型用量、审计和健康；
 - 两个应用拥有独立路由、Pinia、API 客户端、DTO 和构建产物；
 - `packages/` 只共享 Design Token 和无业务状态组件，不共享认证状态或业务 Store。
@@ -174,7 +177,6 @@ DSH 直接调用模型并直连 MCP 服务，平台不设模型或连接器网�
 - Runtime Adapter 只依赖固定的 ACP JSON-RPC stdio 协议；
 - Runtime Manifest 使用规范化 JSON 与 SHA-256 固定运行输入；
 - Runtime Manifest 同时固定 Task 预算范围、累计上限和本 Attempt 预占；PostgreSQL 在 Attempt 创建事务中完成并发预算检查，终态结算或释放预占；
-- 委派子 Manifest 固定父子关系、深度和父权限上限；子 Task 的预算范围指向根 Task，执行前及活动期复核当前权限与父 Attempt 活性；
 - 一个 Attempt 默认对应一个隔离目录和一个 DSH Worker 进程；
 - Adapter 负责启动、取消、超时、回收、事件转换和错误分类；
 - 调度容量、排空/停用、重启恢复和 SSE 游标由 dsh-work 持久化控制。
@@ -227,7 +229,7 @@ flowchart LR
 |---|---|---|
 | Workspace | 个人或团队工作上下文 | Session、文件、成果必须归属一个 Workspace；团队资源受成员关系约束 |
 | Product Session | 用户可继续的业务对话 | 不等于 DSH Runtime Session；锁定 Agent Version，可选锁定一个已发布 Skill Version |
-| Task | 一次来自会话、自动任务、API、事件、系统或受控委派的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属；委派子 Task 共用根预算范围 |
+| Task | 一次来自会话、自动任务、主动任务、API、事件或系统的业务任务 | 稳定关联键幂等受理；可选关联 Session；拥有 Run、外部操作和最终结果归属 |
 | Run | 一次用户任务 | 幂等创建；拥有一个或多个按序 Attempt |
 | Attempt | 一次不可变执行尝试 | 固定 Manifest、模型路由快照、权限、文件与来源快照；终态不可回退 |
 | Run Event | 面向产品的标准运行事件 | 先落库后发送；稳定 ID 与全 Run 顺序；不暴露隐藏推理 |
@@ -254,7 +256,7 @@ flowchart LR
 | 文件、成果、对话和工作空间 | `server/src/modules/workbench` |
 | PostgreSQL 与迁移 | `server/src/infrastructure/postgres`、`server/migrations` |
 
-`scripts/check-architecture.mjs` 检查前端边界（应用可以依赖共享包，两个前端不能互相依赖，前端不能引用服务端领域类型），并经 `scripts/checks/server-dependencies.mjs` 检查服务端分层：`domain` 只依赖自身，业务模块与基础设施不得依赖 HTTP 层或 `main.ts`，生产代码不得引用 `server/src/testing`，模块之间不得形成循环依赖（基线已清零，新增循环会使 `pnpm lint` 失败）。跨模块协作优先依赖消费方定义的端口，例如审计写入 `AuditTrail`、发起 Run 的 `AdminRunLauncher` / `ReleaseTrialRunner`、存储 `ObjectStorage`。Run 编排按职责拆在 `server/src/modules/run/orchestration/`：调度器、事件记录、预算、执行授权闸门、Attempt 派发与各场景入口（管理助手、发布试运行、自动任务/主动任务/委派），`RunOrchestrationService` 保留员工入口并作为对外门面。 `pnpm verify` 另外检查应用入口 `main.ts` 不引用 `server/src/testing` 中的测试身份和冒烟数据。
+`scripts/check-architecture.mjs` 检查前端边界（应用可以依赖共享包，两个前端不能互相依赖，前端不能引用服务端领域类型），并经 `scripts/checks/server-dependencies.mjs` 检查服务端分层：`domain` 只依赖自身，业务模块与基础设施不得依赖 HTTP 层或 `main.ts`，生产代码不得引用 `server/src/testing`，模块之间不得形成循环依赖（基线已清零，新增循环会使 `pnpm lint` 失败）。跨模块协作优先依赖消费方定义的端口，例如审计写入 `AuditTrail`、发起 Run 的 `AdminRunLauncher` / `ReleaseTrialRunner`、存储 `ObjectStorage`。Run 编排按职责拆在 `server/src/modules/run/orchestration/`：调度器、事件记录、预算、执行授权闸门、Attempt 派发与各场景入口（管理助手、发布验证、自动任务/主动任务、会话摘要；后台车道上限见 `server/src/domain/background-lanes.ts`），`RunOrchestrationService` 保留员工入口并作为对外门面。 `pnpm verify` 另外检查应用入口 `main.ts` 不引用 `server/src/testing` 中的测试身份和冒烟数据。
 
 ## 9. 身份、安全与数据边界
 
@@ -273,15 +275,25 @@ flowchart LR
 ## 10. 当前边界与独立开发
 
 - Agent、Skill、文件、知识、运行、审计和本地授权属于 dsh-work，可独立开发和发布；独立账号登录无需启动 AI Hub。
-- Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。实现边界见 [管理助手方案](../design/admin-assistant-plan.md)与[对话安装实现](../design/admin-skill-installation-implementation.md)，完整方案见 [Skill 安装方案](../design/skill-installation-plan.md)。
-- 管理端已有 Agent 配置/ZIP 候选、封存试运行、逐项确认和发布流程；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，当前核对见[差异清单](agent-design-gap-analysis.md)。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
-- 已有 Skill 的 Python 脚本执行采用 [受控执行方案](../design/skill-python-execution-plan.md)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统和资源受限的临时容器；未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
+- Skill 已有版本、配置校验、发布和 Agent 固定引用能力；管理端已将手工创建/编辑表单替换为独立「新增 Skill」页签，该页签仅提供 ZIP 上传，链接、明确自然语言和命令格式安装迁入独立「管理助手」页面。管理助手通过 `admin-assistant` DSH Run 处理普通问答和意图提案，管理员第一次确认后才调度 `admin-skill-install`、`admin-agent-manage` 或 `admin-platform-operations` 专用 Run。Agent 与 Runtime 专用助手只生成绑定摘要的精确操作计划，第二次确认且目标状态未变化时才复用既有领域服务写入。Skill 安装继续生成结构化包计划并以一个事务保存根 Skill、同源依赖和依赖图；严格试运行要求所有 Skill 留下真实激活证据，管理员随后发布。资源随版本存储，新的 Attempt 先获得渐进式目录，再通过 `activate_skill` 获取锁定正文和只读资源路径。规则见[功能规则](feature-rules.md#4-管理助手)。
+- 管理端 Agent 查看与编辑分离：详情页只读展示概览并管理岗位权限、主动任务、经验、版本历史和运行记录；职责与人格、能力（及首次发布前的角色与权限）在独立的草稿编辑流程中按步骤修改并自动保存，最后一步“验证与发布”：验证时冻结待发布版本，示例问题、主动任务与自定义问题在后台并行运行，逐项判定通过后发布，回滚只移动版本指针（[功能规则](feature-rules.md#9-agent-验证与发布)）；自动任务已有本人身份、固定 Agent Version、独立 Session 的实现及回归用例。代码和用例存在不代表目标环境真实 DSH、OIDC 或完整 E2E 验收通过，未完成事项见本节末尾。员工自助贡献、按对象负责人审核、新工具完整准入和受控经验积累仍属后续范围；当前 Agent/Tool 上传配置由管理员负责，不建设外部开发者生态。未来经验提炼仅生成候选，经确认后发布，不自动修改 Prompt、Skill、脚本、工具或权限，也不共享私人数据与凭据。
+- 已有 Skill 的 Python 脚本执行遵守[功能规则第 6 节](feature-rules.md#6-skill-python-执行)：DSH 调用平台 `python_execute`，每次调用使用摘要锁定、无网络、只读根文件系统、非 root 用户和资源受限的临时容器；取消或超时会停止并删除该容器。未配置合规镜像时安装计划标记不兼容，不存在宿主机 Python 或直接模型调用回退。
 - Runtime 以单机执行为基线；多节点租约、失联回收和跨节点调度需要另行实现，不能只增加实例就认定已经支持。
 - 使用 AI Hub 账号时依赖其 OIDC、`/me`、员工目录和一次性 Bootstrap；专用 Scope、`actor_type`、`business_user` 及数据库提供方标记意味着替换身份平台需要适配和映射迁移。
 - AI Hub 账号的业务角色在本地，但上游账号停用或转为平台账号仍会影响访问资格；默认每 900 秒同步，失败会延迟状态传播。
 - 普通 OIDC 登录不要求 Bootstrap Scope；仅显式首次认领入口申请。独立账号使用受控命令和持久化一次性账本初始化首位管理员，不访问上游。
 - `/health` 的 SSO 字段表示解析后的登录能力配置，不是身份服务可用性检测；接口契约与真实双系统故障行为需独立验证。
 - 企业只读 Connector、真实知识源、恶意文件扫描、数据出口、目标容量和备份恢复，均需针对部署环境提供证据。合成数据、历史测试与发布成功不能代替业务验收。
+
+### 未完成与未验收事项
+
+代码和测试存在不等于目标环境已验收。以下事项仍开放，按对应文档跟踪：
+
+- **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
+- **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
+- **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
+- **项目空间：** S0～S4 与 S5（员工端双模式）已实现；S6（Agent 项目任务工具：版本开关、装配、via 归因与时间线卡片）服务端与员工端已接通，集成测试见 `project-task-tools.integration.test.ts`；真实 DSH 中 Agent 选择并调用工具属 P2，见 [项目空间方案](../design/project-space-plan.md) 第 13 节。项目档案员是 `project-archive` 系统运行，与会话摘要一样经 Run/Attempt → Runtime Adapter → DSH 执行。
+- **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 
 开发模式、自动化和上线前验证入口见 [开发与测试](development.md)；身份协议与生命周期见 [独立登录](../release/local-authentication.md) 或 [AI Hub 接入](../release/ai-hub-sso-integration.md)。
 
@@ -302,9 +314,7 @@ flowchart LR
 - [文档导航](../index/README.md)
 - [Agent 设计规范](agent-design-standard.md)
 - [通用 Agent 全生命周期模板](agent-lifecycle-template.md)
-- [Agent 全生命周期实现映射](agent-lifecycle-implementation-map.md)
-- [通用文本整理助手参考记录](reference-agent-lifecycle-record.md)
-- [Agent 规范与当前实现差异清单](agent-design-gap-analysis.md)
+- [功能规则](feature-rules.md)
 - [开发与测试](development.md)
 - [数据模型](../design/data-model.md)
 - [内部端口与契约](internal-ports.md)

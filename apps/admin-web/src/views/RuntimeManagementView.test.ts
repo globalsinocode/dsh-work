@@ -1,4 +1,4 @@
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import RuntimeManagementView from './RuntimeManagementView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useContentStore } from '../stores/content'
-import type { DshRuntimeToolConnectorStatus, RuntimeDefinition } from '../types/domain'
+import type { BuiltinToolStatus, RuntimeDefinition } from '../types/domain'
 
 const wrappers: VueWrapper[] = []
 
@@ -22,20 +22,17 @@ const runtime: RuntimeDefinition = {
   maxConcurrentWorkers: 4, activeWorkers: 1, queuedRuns: 0, attemptTimeoutMinutes: 30,
   lastHeartbeat: '刚刚', checkedAt: '刚刚', healthMessage: 'DSH Runtime 可用。',
   capabilities: ['ACP stdio', 'DSH Agent Loop'],
+  disabledTools: [],
 }
 
-const toolConnector: DshRuntimeToolConnectorStatus = {
-  runtimeId: runtime.id,
-  connectorId: 'connector-dsh-workspace',
-  name: 'DSH Runtime 内置工具连接器',
-  status: 'healthy',
-  endpoint: 'dsh://workspace',
-  toolCount: 4,
-  activeBindingCount: 3,
-  latestBindingRevision: 2,
-  catalogDigest: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-  lastCheckedAt: '刚刚',
-  lastHealthMessage: 'DSH 内置工具目录检查通过。',
+const builtin: BuiltinToolStatus = {
+  tools: [
+    { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [] },
+    { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: [] },
+    { name: 'python_execute', label: 'Python 执行', source: 'platform', effect: 'write', risk: 'medium', assembly: 'runtime', constraints: [] },
+  ],
+  disabledTools: [],
+  catalog: { checkedAt: '2026-10-22T00:00:00.000Z', missingTools: ['web_search'] },
 }
 
 async function render() {
@@ -45,7 +42,7 @@ async function render() {
   const content = useContentStore()
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
   content.runtimes.push(runtime)
-  content.dshRuntimeToolConnector = toolConnector
+  content.builtinTools = builtin
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/runtimes', component: RuntimeManagementView }],
@@ -71,27 +68,42 @@ async function render() {
   return { wrapper, content }
 }
 
-describe('Runtime DSH built-in tool connector operations', () => {
-  it('shows the internal connector in Runtime details and checks it from the operations entry', async () => {
+interface RuntimeViewState {
+  inspect: (item: RuntimeDefinition) => void
+  openConfiguration: (item: RuntimeDefinition) => void
+  saveConfiguration: () => Promise<void>
+  configurationForm: { disabledTools: string[] }
+  disableableTools: Array<{ name: string }>
+  catalogAlert: { type: string; title: string } | null
+}
+
+function state(wrapper: VueWrapper) {
+  return (wrapper.vm.$ as unknown as { setupState: RuntimeViewState }).setupState
+}
+
+describe('Runtime built-in tools', () => {
+  it('shows the read-only registry and the catalog check in Runtime details', async () => {
+    const { wrapper } = await render()
+    state(wrapper).inspect(runtime)
+    await flushPromises()
+
+    const panel = wrapper.get('[aria-label="内置工具"]')
+    expect(panel.text()).toContain('随平台代码发布')
+    expect(panel.text()).toContain('DSH 未提供以下内置工具，相关运行会失败：web_search')
+    expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search'])
+  })
+
+  it('confirms before disabling a tool and saves the list with the Runtime configuration', async () => {
     const { wrapper, content } = await render()
-    const check = vi.spyOn(content, 'checkDshRuntimeToolConnector').mockResolvedValue(toolConnector)
-
-    const setupState = (wrapper.vm.$ as unknown as {
-      setupState: { inspect: (item: RuntimeDefinition) => void }
-    }).setupState
-    setupState.inspect(runtime)
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    const update = vi.spyOn(content, 'updateRuntimeConfiguration').mockResolvedValue({ ...runtime, disabledTools: ['web_search'] })
+    state(wrapper).openConfiguration(runtime)
+    await flushPromises()
+    state(wrapper).configurationForm.disabledTools = ['web_search']
+    await state(wrapper).saveConfiguration()
     await flushPromises()
 
-    const panel = wrapper.get('[aria-label="DSH Runtime 内置工具连接"]')
-    expect(panel.text()).toContain('connector-dsh-workspace')
-    expect(panel.text()).toContain('4 个')
-    expect(panel.text()).toContain('3 个 · 最高 rev2')
-    expect(panel.text()).toContain('1234567890ab')
-    expect(panel.text()).not.toContain('Bearer Token')
-    expect(panel.text()).not.toContain('Agent 权限')
-
-    await panel.get('[data-action="check-dsh-tool-connector"]').trigger('click')
-    await flushPromises()
-    expect(check).toHaveBeenCalledOnce()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('web_search'), '确认停用内置工具', expect.anything())
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: runtime.id, disabledTools: ['web_search'] }))
   })
 })

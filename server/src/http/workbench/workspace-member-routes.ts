@@ -17,6 +17,11 @@ import {
   type Router,
 } from '../router.ts'
 import { invalidRequest } from '../../domain/request-errors.ts'
+import {
+  projectAllRoles as allRoles,
+  projectGovernanceRoles as governanceRoles,
+  projectOwnerRoles as ownerRoles,
+} from '../../domain/project-roles.ts'
 
 const basePath = '/api/workbench/v1'
 
@@ -29,10 +34,21 @@ export function registerWorkspaceMemberRoutes(
   members: PostgresWorkspaceMemberService,
   authorization: PostgresAuthorizationService,
 ) {
+  // 新建项目空间（群组）时可一并加入的同事（不含本人）。任何员工工作台用户都可建空间，因此
+  // 只要求工作台身份；口径与空间内候选一致。
+  router.get(`${basePath}/member-candidates`, async (_request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    await authorization.authorizeWorkbench({ userId: identity.userId, ...sessionAuthorizationContext(identity) })
+    const query = (context.url.searchParams.get('query') ?? '').trim()
+    const limit = parseLimit(context.url.searchParams.get('limit'))
+    const cursor = context.url.searchParams.get('cursor') ?? undefined
+    return envelope('workbench', await members.listNewSpaceMemberCandidates(identity.userId, { query, cursor, limit }), 'postgres')
+  })
+
   router.get(`${basePath}/workspaces/:workspaceId/member-candidates`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'])
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles)
     const query = (context.url.searchParams.get('query') ?? '').trim()
     const limit = parseLimit(context.url.searchParams.get('limit'))
     const cursor = context.url.searchParams.get('cursor') ?? undefined
@@ -48,14 +64,14 @@ export function registerWorkspaceMemberRoutes(
   router.get(`${basePath}/workspaces/:workspaceId/members`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin', 'member', 'viewer'], { allowArchived: true })
+    await requireTeamActor(authorization, identity, workspaceId, allRoles, { allowArchived: true })
     return envelope('workbench', await members.listMembers(workspaceId, identity.userId), 'postgres')
   })
 
   router.post(`${basePath}/workspaces/:workspaceId/members`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'])
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles)
     const body = await readJsonBody<{ userId?: unknown; role?: unknown }>(request)
     const targetUserId = requireNonEmptyString(body.userId, 'userId')
     const role = parseMemberRole(body.role)
@@ -67,7 +83,7 @@ export function registerWorkspaceMemberRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
     const targetUserId = context.params['userId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'])
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles)
     const body = await readJsonBody<{ role?: unknown }>(request)
     const role = parseMemberRole(body.role)
     const member = await members.changeMemberRole(workspaceId, targetUserId, role, identity.userId)
@@ -80,7 +96,7 @@ export function registerWorkspaceMemberRoutes(
     const targetUserId = context.params['userId'] ?? ''
     // 3-T1 治理例外：归档空间仍必须能执行紧急收权（撤销访问），否则「只读保留」
     // 会连带冻结撤权能力。仅此路径显式允许归档。
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin'], { allowArchived: true })
+    await requireTeamActor(authorization, identity, workspaceId, governanceRoles, { allowArchived: true })
     const result = await members.removeMember(workspaceId, targetUserId, identity.userId)
     return envelope('workbench', result, 'postgres')
   })
@@ -88,7 +104,7 @@ export function registerWorkspaceMemberRoutes(
   router.post(`${basePath}/workspaces/:workspaceId/exit`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner', 'admin', 'member', 'viewer'])
+    await requireTeamActor(authorization, identity, workspaceId, allRoles)
     const result = await members.exitWorkspace(workspaceId, identity.userId)
     return envelope('workbench', result, 'postgres')
   })
@@ -98,7 +114,7 @@ export function registerWorkspaceMemberRoutes(
     const workspaceId = context.params['workspaceId'] ?? ''
     // 3-T1 治理例外：归档空间仍必须能转交负责人（负责人不可被直接移除，转交是
     // 归档后唯一的负责人治理动作）。仅此路径显式允许归档。
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'], { allowArchived: true })
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles, { allowArchived: true })
     const body = await readJsonBody<{ toUserId?: unknown }>(request)
     const toUserId = requireNonEmptyString(body.toUserId, 'toUserId')
     const result = await members.transferWorkspaceOwner(workspaceId, toUserId, identity.userId)

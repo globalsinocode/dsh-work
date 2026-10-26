@@ -543,6 +543,49 @@ test('team_auth_revision 兜底：无事件行的修订变更仍触发全量复�
   assert.equal((await runRow(runId)).status, 'cancelled')
 })
 
+test('项目空间 S0：加入数据范围更小的成员后，清扫取消快照超出共同范围的运行', async () => {
+  const ws = uniqueWorkspace('s0-narrow')
+  const ownerId = `${ws}-owner`
+  const userId = `${ws}-user`
+  const narrowId = `${ws}-narrow`
+  const versionId = `${ws}-version`
+  const scope = `${ws}-scope`
+  await seedUser(ownerId, 'S0 负责人')
+  await seedUser(userId, 'S0 成员')
+  await seedUser(narrowId, 'S0 窄范围员工')
+  for (const subject of [ownerId, userId]) {
+    await database`
+      insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
+      values (${`grant-${subject}`}, ${tenantId}, 'user', ${subject}, 'capability', ${scope})
+    `
+  }
+  await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId, role: 'member' }])
+  const { agentId } = await seedAgent(ws, versionId)
+  await database`
+    insert into agent_principal_scope_grants (tenant_id, principal_id, scope_value)
+    values (${tenantId}, ${`principal-agent-${agentId}`}, ${scope})
+  `
+  await grantAgentVersion(ws, versionId)
+  await addAgentMemberRow(ws, `${ws}-wam`, agentId, versionId)
+  const sessionId = `${ws}-session`
+  await createSession(sessionId, ws, userId, versionId)
+  const scopedRun = `${ws}-run-scoped`
+  const plainRun = `${ws}-run-plain`
+  await createRunWithAttempt({ id: scopedRun, sessionId, requestedBy: userId, status: 'queued', agentVersionId: versionId, workspaceId: ws, dataScopes: [scope] })
+  await createRunWithAttempt({ id: plainRun, sessionId, requestedBy: userId, status: 'queued', agentVersionId: versionId, workspaceId: ws })
+  await sweep.sweepOnce()
+  assert.equal((await runRow(scopedRun)).status, 'queued', '成员未变化时不取消')
+
+  await database`
+    insert into workspace_members (tenant_id, workspace_id, user_id, member_role, added_by)
+    values (${tenantId}, ${ws}, ${narrowId}, 'viewer', ${ownerId})
+  `
+  await bumpRevision(ws)
+  await sweep.sweepOnce()
+  await waitFor(async () => (await runRow(scopedRun)).status === 'cancelled', '超出共同范围的运行被取消')
+  assert.equal((await runRow(plainRun)).status, 'queued', '未使用被收紧范围的运行不受影响')
+})
+
 // ---------------------------------------------------------------------------
 // 5.2 执行前复核
 // ---------------------------------------------------------------------------
@@ -938,6 +981,36 @@ test('REST 读取：被移出的成员不得读取团队运行详情，列表也
   assert.equal(cancelBody.includes('团队运行正文'), false, '取消响应不得包含正文')
 })
 
+test('HTTP 403：团队收权返回 permission_revoked 且不泄露成员或空间标识', async () => {
+  const ws = uniqueWorkspace('http-revocation-code')
+  const ownerId = `${ws}-owner`
+  const userId = `${ws}-user`
+  const versionId = `${ws}-version`
+  await seedUser(ownerId, '收权码负责人')
+  await seedUser(userId, '收权码成员')
+  await createTeamWorkspace(ws, [{ userId: ownerId, role: 'owner' }, { userId, role: 'member' }])
+  await seedAgent(ws, versionId)
+  await grantAgentVersion(ws, versionId)
+  const sessionId = `${ws}-session`
+  await createSession(sessionId, ws, userId, versionId)
+  const runId = `${ws}-run`
+  await createRunWithAttempt({ id: runId, sessionId, requestedBy: userId, status: 'running', agentVersionId: versionId, workspaceId: ws })
+  await members.removeMember(ws, userId, ownerId)
+  const response = await fetch(`${baseUrl}/api/workbench/v1/runs/${runId}/cancel`, {
+    method: 'POST',
+    headers: { 'x-test-user-id': userId },
+  })
+  await assertStableRevocationCode(response, 'permission_revoked')
+})
+
+test('HTTP 403：停用用户返回 role_disabled 且不泄露用户标识', async () => {
+  const userId = `${uniqueWorkspace('disabled-user')}-user`
+  await seedUser(userId, '停用用户')
+  await database`update users set status = 'disabled' where tenant_id = ${tenantId} and id = ${userId}`
+  const response = await fetch(`${baseUrl}/api/workbench/v1/tasks`, { headers: { 'x-test-user-id': userId } })
+  await assertStableRevocationCode(response, 'role_disabled')
+})
+
 test('REST 读取：归档后现任成员仍可读详情与列表，被移出成员仍拒绝（3-T1 双轨）', async () => {
   const ws = uniqueWorkspace('rest-archived-read')
   const ownerId = `${ws}-owner`
@@ -1294,6 +1367,14 @@ test('收权清扫：复核抛出基础设施故障时不得取消运行', async
 // 测试辅助
 // ---------------------------------------------------------------------------
 
+async function assertStableRevocationCode(response: Response, expectedCode: string) {
+  assert.equal(response.status, 403)
+  const body = await response.json() as { error: { code: string; message: string; suggestion: string } }
+  assert.equal(body.error.code, expectedCode)
+  assert.doesNotMatch(body.error.message, /U000|user-|ws-|role-/)
+  assert.doesNotMatch(body.error.suggestion, /U000|user-|ws-|role-/)
+}
+
 function testApiAuthenticator(request: import('node:http').IncomingMessage): Promise<RequestIdentity> {
   const header = request.headers['x-test-user-id']
   const userId = Array.isArray(header) ? header[0] : header
@@ -1379,16 +1460,16 @@ async function seedAgent(workspacePrefix: string, versionId: string, suffix = ''
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', 'T5 测试 Agent', 'T5 收权测试版本。',
       '', ${database.json([] as string[])}, '你是 T5 集成测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
-      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])},
       'published', 'U00008', 'T5 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}
@@ -1431,17 +1512,17 @@ async function seedAgentWithVersions(agentId: string, versionIds: string[]) {
     await database`
       insert into agent_versions (
         id, tenant_id, agent_id, version, name, description, welcome_message,
-        example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-        timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+        example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+        timeout_seconds, skill_refs, status, created_by, change_summary
       ) values (
         ${versionId}, ${tenantId}, ${agentId}, ${`1.0.${index}`}, 'T5 多版本 Agent', 'T5 版本。',
         '', ${database.json([] as string[])}, '你是 T5 集成测试 Agent。',
-        ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'])},
-        65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+        65536, 20, 300, ${database.json([] as string[])},
         'published', 'U00008', ${`T5 版本 ${index}`}
       )
     `
   }
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionIds[versionIds.length - 1] ?? null}
      where tenant_id = ${tenantId} and id = ${agentId}
@@ -1477,6 +1558,7 @@ async function createRunWithAttempt(input: {
   status: 'queued' | 'running' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
   agentVersionId: string
   workspaceId: string
+  dataScopes?: string[]
 }) {
   const attemptId = `${input.id}-attempt`
   const manifest = {
@@ -1489,7 +1571,7 @@ async function createRunWithAttempt(input: {
     workspace_id: input.workspaceId,
     agent_version_id: input.agentVersionId,
     user_context: { user_id: input.requestedBy, tenant_id: tenantId, role_ids: [] },
-    skills: [], data_scopes: [], input: { message: 'revocation fixture', file_mounts: [] },
+    skills: [], data_scopes: input.dataScopes ?? [], input: { message: 'revocation fixture', file_mounts: [] },
   }
   // runs_current_attempt_fk is deferrable — both rows must exist at commit.
   await database.begin(async transaction => {

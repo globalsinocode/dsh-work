@@ -54,6 +54,8 @@ export const AGENT_PACKAGE_SCHEMA = {
           properties: {
             skills: { type: 'array', maxItems: AGENT_SPEC_BOUNDS.capabilities.max, items: { $ref: '#/$defs/capabilityRef' } },
             tools: { type: 'array', maxItems: AGENT_SPEC_BOUNDS.capabilities.max, items: { $ref: '#/$defs/capabilityRef' } },
+            webSearch: { type: 'boolean' },
+            projectTasks: { type: 'boolean' },
           },
         },
         input: {
@@ -162,7 +164,12 @@ export interface AgentPackageManifestDocument {
   spec: {
     instructions: string
     workProcedures?: string
-    capabilities?: { skills?: Array<{ id: string; version: string }>; tools?: Array<{ id: string; version: string }> }
+    capabilities?: {
+      skills?: Array<{ id: string; version: string }>
+      tools?: Array<{ id: string; version: string }>
+      webSearch?: boolean
+      projectTasks?: boolean
+    }
     input?: { type: string }
     output?: { type: string }
     context?: { conversationHistory: string }

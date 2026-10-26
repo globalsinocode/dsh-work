@@ -24,6 +24,8 @@ const statusMap: Record<string, { label: string; tone: string }> = {
   missing: { label: '登记缺失', tone: 'danger' },
   published: { label: '已发布', tone: 'success' },
   draft: { label: '草稿', tone: 'neutral' },
+  candidate: { label: '待发布', tone: 'info' },
+  interrupted: { label: '已中断', tone: 'warning' },
   disabled: { label: '已停用', tone: 'danger' },
   available: { label: '可用', tone: 'success' },
   degraded: { label: '性能下降', tone: 'warning' },

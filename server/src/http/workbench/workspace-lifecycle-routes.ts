@@ -1,4 +1,5 @@
 import type { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
+import { projectOwnerRoles as ownerRoles } from '../../domain/project-roles.ts'
 import type { PostgresWorkspaceLifecycleService } from '../../modules/workbench/application/postgres-workspace-lifecycle-service.ts'
 import { envelope, requireRequestIdentity, type Router } from '../router.ts'
 import { requireTeamActor } from './workspace-member-routes.ts'
@@ -27,14 +28,14 @@ export function registerWorkspaceLifecycleRoutes(
   router.post(`${basePath}/workspaces/:workspaceId/archive`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'], ownerOnly)
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles, ownerOnly)
     return envelope('workbench', await lifecycle.archiveWorkspace(workspaceId, identity.userId), 'postgres')
   })
 
   router.post(`${basePath}/workspaces/:workspaceId/restore`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const workspaceId = context.params['workspaceId'] ?? ''
-    await requireTeamActor(authorization, identity, workspaceId, ['owner'], ownerOnly)
+    await requireTeamActor(authorization, identity, workspaceId, ownerRoles, ownerOnly)
     return envelope('workbench', await lifecycle.restoreWorkspace(workspaceId, identity.userId), 'postgres')
   })
 }

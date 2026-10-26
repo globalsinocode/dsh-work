@@ -1,4 +1,5 @@
 import type {
+  NewSpaceDisclosureImpact,
   PersonalFile,
   PersonalFileQuery,
   UserSessionSummary,
@@ -9,6 +10,7 @@ import type {
   Automation,
   AgentRoutineResult,
   AutomationExecution,
+  AutomationExecutionPage,
   AutomationInputTemplate,
   AutomationSchedule,
   MemberCandidatePage,
@@ -16,6 +18,12 @@ import type {
   TaskResult,
   TaskRun,
   TeamMemberRole,
+  UiMode,
+  AgentConversation,
+  ConversationLocation,
+  ConversationTarget,
+  WorkspaceTimelineItem,
+  UserPreferences,
   WorkbenchAgent,
   WorkbenchSession,
   WorkbenchSkill,
@@ -23,11 +31,23 @@ import type {
   WorkspaceActivityPage,
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
+  MemberDisclosureImpact,
+  ProjectArchive,
+  ProjectArchiveVersion,
+  ProjectBrief,
+  ProjectTask,
+  ProjectTaskEvent,
+  ProjectTaskInput,
+  ProjectTaskPage,
   WorkspaceFile,
+  WorkspaceFilePage,
   WorkspaceFileVersionPage,
   WorkspaceLifecycleResult,
   WorkspaceMember,
   WorkspaceMemberDirectory,
+  AccountNotificationCounts,
+  AccountNotificationPage,
+  AccountNotificationQuery,
   WorkspaceNotificationState,
   WorkspaceNotificationView,
   WorkspaceSessionPage,
@@ -38,6 +58,7 @@ import type {
   WorkspaceUsageQuery,
   UploadedWorkspaceFileVersion,
 } from '../types/domain'
+import { isAuthorizationChangeCode, notifyAuthorizationChange } from '../utils/authorization-change'
 
 interface ApiEnvelope<T> {
   data: T
@@ -90,6 +111,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const error = await parseApiError(response, `员工工作台接口请求失败（${response.status}）`)
     if (response.status === 401 && path !== '/session') redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
 
@@ -97,17 +121,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data
 }
 
+function filenameFromContentDisposition(header: string | null) {
+  if (!header) return undefined
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1])
+    } catch {
+      return utf8[1]
+    }
+  }
+  const plain = header.match(/filename="([^"]+)"/i)
+  return plain?.[1]
+}
+
 async function requestBlob(path: string) {
   const response = await fetch(`${baseUrl}${path}`, {
     credentials: 'include',
-    headers: { Accept: 'application/octet-stream' },
+    headers: { Accept: 'application/octet-stream, text/plain' },
   })
   if (!response.ok) {
     const error = await parseApiError(response, `文件下载失败（${response.status}）`)
     if (response.status === 401) redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
     throw error
   }
   return response.blob()
+}
+
+async function requestBlobDownload(path: string) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/octet-stream, text/plain' },
+  })
+  if (!response.ok) {
+    const error = await parseApiError(response, `文件下载失败（${response.status}）`)
+    if (response.status === 401) redirectToLogin()
+    if (response.status === 403 && isAuthorizationChangeCode(error.code)) {
+      await notifyAuthorizationChange(error)
+    }
+    throw error
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+  }
 }
 
 function redirectToLogin() {
@@ -143,6 +203,30 @@ export const workbenchApi = {
   getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}/summary`),
 
   getSession: () => request<WorkbenchSession>('/session'),
+  getPreferences: () => request<UserPreferences>('/me/preferences'),
+  updatePreferences: (input: { uiMode: UiMode }) =>
+    request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
+  listConversationTargets: (query: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: ConversationTarget[]; nextCursor: string | null }>(`/me/conversation-targets?${params}`)
+  },
+  getAgentConversation: (agentId: string, cursor?: string) =>
+    request<AgentConversation>(
+      `/me/conversation-targets/agent/${encodeURIComponent(agentId)}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  getWorkspaceTimeline: (workspaceId: string, before?: string) =>
+    request<{ workspaceId: string; items: WorkspaceTimelineItem[]; nextCursor: string | null }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/timeline${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    ),
+  /** S5e：本人在对话对象上的已读位置前进到 upTo（缺省为当前时间），只进不退。 */
+  markConversationTargetRead: (type: 'agent' | 'group', id: string, upTo?: string) =>
+    request<{ type: 'agent' | 'group'; id: string; lastReadAt: string }>(
+      `/me/conversation-targets/${type}/${encodeURIComponent(id)}/read`,
+      { method: 'POST', body: JSON.stringify(upTo ? { upTo } : {}) },
+    ),
+  resolveConversation: (conversationId: string) =>
+    request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
   listMcpGrants: () => request<{ list: import('@/types/domain').McpUserGrantListItem[]; total: number; page: number; pageSize: number }>('/mcp-grants'),
@@ -158,11 +242,40 @@ export const workbenchApi = {
   getRun: (runId: string) => request<TaskRun>(`/runs/${encodeURIComponent(runId)}`),
   /** I-06：Run 的版本化任务结果投影（task-result/v1），与 Run 详情同一授权边界。 */
   getRunResult: (runId: string) => request<TaskResult>(`/runs/${encodeURIComponent(runId)}/result`),
-  createSession: (input: { title: string; workspaceId?: string; agentId?: string; skillId?: string; workspaceAgentMemberId?: string }) =>
+  createSession: (input: {
+    title: string
+    workspaceId?: string
+    agentId?: string
+    agentVersionId?: string
+    skillId?: string
+    skillVersionId?: string
+    workspaceAgentMemberId?: string
+    clientIntentId?: string
+  }) =>
     // TW-10：团队讨论会话可为 null（首次 @Agent 前不绑定 Agent）。
-    request<{ id: string; workspaceId: string; agentVersionId: string | null; title: string; createdAt: string }>('/sessions', {
+    request<{
+      id: string
+      workspaceId: string
+      agentVersionId: string | null
+      agentVersionReference?: string | null
+      skillVersionId?: string | null
+      skillVersionReference?: string | null
+      title: string
+      createdAt: string
+      status?: 'draft' | 'active' | 'archived'
+      replayed?: boolean
+    }>('/sessions', {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+  downloadSessionExport: (sessionId: string) =>
+    requestBlobDownload(`/sessions/${encodeURIComponent(sessionId)}/export`),
+  downloadRunExport: (runId: string) =>
+    requestBlobDownload(`/runs/${encodeURIComponent(runId)}/export`),
+  discardDraftSession: (sessionId: string, clientIntentId: string) =>
+    request<{ discarded: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/discard-draft`, {
+      method: 'POST',
+      body: JSON.stringify({ clientIntentId }),
     }),
   deleteSession: (sessionId: string) => request<{ sessionId: string; title: string; archived: true }>(
     `/sessions/${encodeURIComponent(sessionId)}`,
@@ -204,10 +317,26 @@ export const workbenchApi = {
     status === 'all' ? '/workspaces' : `/workspaces?status=${status}`,
     { method: 'GET' },
   ),
-  createWorkspace: (input: { name: string; description: string }) => request<Workspace>('/workspaces', {
+  /** 新建项目空间（群组）：agentIds 为创建时加入的 Agent 成员，至少一个（功能规则 3.3、方案 12.8）。 */
+  createWorkspace: (input: { name: string; description: string; agentIds: string[]; memberUserIds?: string[] }) => request<Workspace>('/workspaces', {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  /** 新建项目空间（群组）前预览：加入所选同事后，所选 Agent 会失去哪些可交付数据范围（只读）。 */
+  previewNewSpaceDisclosureImpact: (input: { agentIds: string[]; memberUserIds: string[] }) =>
+    request<NewSpaceDisclosureImpact[]>('/workspaces/disclosure-impact', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** 新建项目空间（群组）时可一并加入的同事（不含本人）。 */
+  listNewSpaceMemberCandidates: (input: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (input.query) search.set('query', input.query)
+    if (input.cursor) search.set('cursor', input.cursor)
+    if (input.limit !== undefined) search.set('limit', String(input.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return request<MemberCandidatePage>(`/member-candidates${suffix}`, { method: 'GET' })
+  },
   /** 团队空间名称/说明保存（仅负责人；说明传 `null` 显式清空）。 */
   updateWorkspace: (workspaceId: string, input: WorkspaceUpdateInput) =>
     request<Workspace>(`/workspaces/${encodeURIComponent(workspaceId)}`, {
@@ -224,7 +353,15 @@ export const workbenchApi = {
     request<WorkspaceLifecycleResult>(`/workspaces/${encodeURIComponent(workspaceId)}/restore`, {
       method: 'POST',
     }),
-  uploadWorkspaceFile: async (workspaceId: string, file: File) => request<Workspace['files'][number]>(
+  listWorkspaceFiles: (workspaceId: string, options: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    if (options.query?.trim()) params.set('query', options.query.trim())
+    if (options.cursor) params.set('cursor', options.cursor)
+    if (options.limit) params.set('limit', String(options.limit))
+    const suffix = params.toString() ? `?${params.toString()}` : ''
+    return request<WorkspaceFilePage>(`/workspaces/${encodeURIComponent(workspaceId)}/files${suffix}`, { method: 'GET' })
+  },
+  uploadWorkspaceFile: async (workspaceId: string, file: File) => request<WorkspaceFile>(
     `/workspaces/${encodeURIComponent(workspaceId)}/files`,
     {
       method: 'POST',
@@ -367,6 +504,82 @@ export const workbenchApi = {
     request<WorkspaceAgentMember[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'GET',
     }),
+  getProjectBrief: (workspaceId: string) =>
+    request<ProjectBrief | null>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, { method: 'GET' }),
+  saveProjectBrief: (workspaceId: string, input: { content: string; dueDate: string | null }) =>
+    request<ProjectBrief>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  getProjectArchive: (workspaceId: string) =>
+    request<ProjectArchive>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, { method: 'GET' }),
+  saveProjectArchive: (workspaceId: string, input: { baseVersionNo: number; items: string[] }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  listProjectArchiveVersions: (workspaceId: string) =>
+    request<ProjectArchiveVersion[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/versions`, { method: 'GET' }),
+  rollbackProjectArchive: (workspaceId: string, input: { versionNo: number; baseVersionNo: number }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/rollback`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listProjectTasks: (workspaceId: string, options: { limit?: number; cursor?: string; sessionId?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    if (options.cursor) query.set('cursor', options.cursor)
+    if (options.sessionId) query.set('sessionId', options.sessionId)
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return request<ProjectTaskPage>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks${suffix}`, { method: 'GET' })
+  },
+  getProjectTask: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }),
+  createProjectTask: (workspaceId: string, input: ProjectTaskInput) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateProjectTask: (workspaceId: string, taskId: string, input: Partial<ProjectTaskInput>) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  removeProjectTask: (workspaceId: string, taskId: string) =>
+    request<{ removed: true }>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    }),
+  /** 启动 Agent 任务；prompt 为成员在任务对话里写下的补充要求（可省略）。 */
+  startProjectTask: (workspaceId: string, taskId: string, idempotencyKey: string, prompt?: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/start`, {
+      method: 'POST',
+      body: JSON.stringify(prompt ? { idempotencyKey, prompt } : { idempotencyKey }),
+    }),
+  listProjectTaskEvents: (workspaceId: string, taskId: string) =>
+    request<ProjectTaskEvent[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/events`, { method: 'GET' }),
+  setProjectTaskStatus: (
+    workspaceId: string,
+    taskId: string,
+    input: { status: 'todo' | 'in_progress' | 'done'; completionNote?: string; deliverableFileIds?: string[] },
+  ) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/status`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  resumeProjectTaskSchedule: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/schedule/resume`, {
+      method: 'POST',
+    }),
+  markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
+      method: 'POST',
+      body: JSON.stringify(title ? { title } : {}),
+    }),
+  previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
+    request<MemberDisclosureImpact[]>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/agent-members/disclosure-impact?userId=${encodeURIComponent(userId)}`,
+      { method: 'GET' },
+    ),
   addWorkspaceAgentMember: (workspaceId: string, input: { agentId: string }) =>
     request<WorkspaceAgentMember>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'POST',
@@ -432,6 +645,23 @@ export const workbenchApi = {
       `/workspaces/${encodeURIComponent(workspaceId)}/notifications/unmute`,
       { method: 'POST' },
     ),
+  listNotifications: (input: AccountNotificationQuery = {}) => {
+    const search = new URLSearchParams()
+    if (input.cursor) search.set('cursor', input.cursor)
+    if (input.limit !== undefined) search.set('limit', String(input.limit))
+    if (input.unread) search.set('unread', 'true')
+    if (input.workspaceId) search.set('workspaceId', input.workspaceId)
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return request<AccountNotificationPage>(`/notifications${suffix}`)
+  },
+  getNotificationCounts: () => request<AccountNotificationCounts>('/notifications/counts'),
+  markNotificationsRead: (input: { throughSequence: number; workspaceId?: string }) =>
+    request<{ lastReadSequence: number }>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  notificationEventsUrl: (since?: number) =>
+    `${baseUrl}/notifications/events${since !== undefined ? `?since=${encodeURIComponent(String(since))}` : ''}`,
   /**
    * 空间用量（TW-09 / 4-T2，读取轨）。只展示 token 与调用次数，服务端不返回金额
    * （口径 §1）。仅负责人／管理员可读：普通成员与只读成员服务端返回 403，个人空间
@@ -447,7 +677,12 @@ export const workbenchApi = {
     )
   },
   // ---- AG-03 自动任务 ----
-  getAutomations: () => request<Automation[]>('/automations'),
+  getAutomations: (input?: { status?: 'active' | 'archived' }) => {
+    const params = new URLSearchParams()
+    if (input?.status) params.set('status', input.status)
+    const suffix = params.size > 0 ? `?${params.toString()}` : ''
+    return request<Automation[]>(`/automations${suffix}`)
+  },
   getAgentRoutineResults: () => request<AgentRoutineResult[]>('/agent-routine-results'),
   createAutomation: (input: {
     name: string
@@ -471,6 +706,10 @@ export const workbenchApi = {
     request<Automation>(`/automations/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
   pauseAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}/pause`, { method: 'POST' }),
+  archiveAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  restoreAutomation: (id: string) =>
+    request<Automation>(`/automations/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
   disableAutomation: (id: string) =>
     request<Automation>(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   trialRunAutomation: (id: string, idempotencyKey: string) =>
@@ -483,8 +722,18 @@ export const workbenchApi = {
       method: 'POST',
       body: JSON.stringify({ idempotencyKey }),
     }),
-  listAutomationExecutions: (id: string) =>
-    request<AutomationExecution[]>(`/automations/${encodeURIComponent(id)}/executions`),
+  listAutomationExecutions: (
+    id: string,
+    input?: { limit?: number; cursor?: string | null },
+  ) => {
+    const params = new URLSearchParams()
+    if (input?.limit !== undefined) params.set('limit', String(input.limit))
+    if (input?.cursor) params.set('cursor', input.cursor)
+    const suffix = params.size > 0 ? `?${params.toString()}` : ''
+    return request<AutomationExecutionPage>(
+      `/automations/${encodeURIComponent(id)}/executions${suffix}`,
+    )
+  },
 }
 
 /**

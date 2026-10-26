@@ -37,6 +37,7 @@ export class BackgroundRunEntry {
     attemptId: string
     authorization?: RuntimeAuthorizationDecision
     budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+    timezone?: string
   }) {
     // AG-03：消息写入与 Attempt 提交同属「派发前准备」，必须同受
     // failUndispatchedRun 保护——appendMessage 失败若留 queued 幽灵 Run，
@@ -60,6 +61,7 @@ export class BackgroundRunEntry {
         purpose: 'automation',
         attemptId: input.attemptId,
         limits: input.budget,
+        timezone: input.timezone,
       })
     })
   }
@@ -69,6 +71,7 @@ export class BackgroundRunEntry {
     prompt: string; workspaceId: string; agentVersionId: string; recipientUserId: string;
     attemptId: string; authorization: RuntimeAuthorizationDecision;
     budget?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
+    timezone?: string
   }): Promise<void> {
     await this.dispatcher.failUndispatchedRun(run, () => this.dispatcher.dispatch(run, {
       prompt: input.prompt,
@@ -80,6 +83,7 @@ export class BackgroundRunEntry {
       purpose: 'agent-routine',
       attemptId: input.attemptId,
       limits: input.budget,
+      timezone: input.timezone,
     }))
   }
 

@@ -1,254 +1,55 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { StatusTag } from '@dsh-work/ui-core'
-import { adminApi } from '@/api/client'
-import AgentDraftDialog from '@/components/AgentDraftDialog.vue'
-import AgentRoutinePanel from '@/components/AgentRoutinePanel.vue'
+import AgentCreateDialog from '@/components/agent-detail/AgentCreateDialog.vue'
 import { useListPagination } from '@/composables/use-list-pagination'
-import {
-  useAgentGovernanceStore,
-  type EvidenceRef,
-  type SubmissionStatus,
-} from '@/stores/agentGovernance'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import type { AgentDefinition, AgentPrincipalGovernance, AgentPrincipalRoleOption, AgentReleaseRecord, AgentVersionRecord } from '@/types/domain'
+import type { AgentDefinition } from '@/types/domain'
+import { activeVersionOf, availabilityOf, draftEntryStep, pendingVersionOf as pendingOf, type AgentDraftStep } from '@/utils/agent-status'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
-const governance = useAgentGovernanceStore()
 const query = ref('')
 const statusFilter = ref('all')
-const selectedAgentId = ref('')
-const drawerOpen = ref(false)
-const editorOpen = ref(false)
-const editingAgent = ref<AgentDefinition>()
-const activeDetailTab = ref<'overview' | 'versions' | 'releases' | 'routines'>('overview')
+const createOpen = ref(false)
 const actionLoading = ref('')
-const workspaceJoinSaving = ref(false)
-const joinedWorkspacesLoading = ref(false)
-const principal = ref<AgentPrincipalGovernance>()
-const principalDraft = ref<AgentPrincipalGovernance>()
-const principalLoading = ref(false)
-const principalSaving = ref(false)
-const availableRoles = ref<AgentPrincipalRoleOption[]>([])
-const principalRolesUnavailable = ref(false)
-const agentRoleLabels: Record<string, string> = {
-  'role-platform-admin': '平台管理员',
-  'role-employee': '试点员工',
-  'role-supply': '供应链分析人员',
-  'role-manager': '部门负责人',
-  'role-auditor': '安全审计员',
-}
-const submissionLabel: Record<SubmissionStatus, string> = {
-  draft: '草稿',
-  submitted: '待审核',
-  changes_requested: '已退回',
-  published: '已发布',
-  withdrawn: '已撤回',
-}
-const evidenceLabel: Record<EvidenceRef['kind'], string> = {
-  configuration_checked: '配置检查',
-  runtime_verified: '真实试运行',
-  business_accepted: '业务确认',
-}
-
-const allAgents = computed(() => contentStore.agents)
-const selectedAgent = computed(() =>
-  allAgents.value.find((agent) => agent.id === selectedAgentId.value),
-)
-const selectedVersions = computed(() =>
-  contentStore.agentVersions.filter((version) => version.agentId === selectedAgentId.value),
-)
-const selectedReleases = computed(() =>
-  contentStore.agentReleaseRecords.filter((record) => record.agentId === selectedAgentId.value),
-)
-const selectedGovernance = computed(() =>
-  selectedAgent.value
-    ? governance.versionGovernance(selectedAgent.value.id, selectedAgent.value.version)
-    : undefined,
-)
 
 const filteredAgents = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  return allAgents.value.filter((agent) => {
+  return contentStore.agents.filter((agent) => {
     const matchesQuery = !keyword || `${agent.name} ${agent.description} ${agent.owner}`.toLowerCase().includes(keyword)
     const matchesStatus = statusFilter.value === 'all' || agent.status === statusFilter.value
     return matchesQuery && matchesStatus
   })
 })
-const joinedWorkspaces = computed(() =>
-  contentStore.agentJoinedWorkspaces[selectedAgentId.value] ?? [],
-)
 const { currentPage: agentPage, pagedItems: pagedAgents } =
   useListPagination(filteredAgents, { resetOn: [query, statusFilter] })
-const { currentPage: joinedWorkspacePage, pagedItems: pagedJoinedWorkspaces } =
-  useListPagination(joinedWorkspaces, { resetOn: selectedAgentId })
-const { currentPage: versionPage, pagedItems: pagedVersions } =
-  useListPagination(selectedVersions, { resetOn: selectedAgentId })
-const { currentPage: releasePage, pagedItems: pagedReleases } =
-  useListPagination(selectedReleases, { resetOn: selectedAgentId })
 
-function draftVersionOf(agentId: string) {
-  return contentStore.agentVersions.find(
-    (version) => version.agentId === agentId && version.status === 'draft',
-  )
+function pendingVersionOf(agentId: string) {
+  return pendingOf(contentStore.agents.find(agent => agent.id === agentId), contentStore.agentVersions)
 }
 
-function candidateOf(agentId: string) {
-  return governance.overlays[agentId]?.candidate
+function availabilityTag(agent: AgentDefinition) {
+  return availabilityOf(agent)
 }
 
-function versionGov(version: AgentVersionRecord) {
-  return selectedAgent.value
-    ? governance.versionGovernance(selectedAgent.value.id, version.version)
-    : { bindingRevision: '—', evidence: [], revoked: false }
+/** 详情页只读查看与运维。 */
+function openDetail(agent: AgentDefinition) {
+  void router.push({ path: `/agents/${encodeURIComponent(agent.id)}` })
 }
 
-function availabilityTag(agent: AgentDefinition): { status: string; label: string } {
-  if (agent.status === 'published') return { status: 'published', label: '已启用' }
-  if (agent.status === 'disabled') return { status: 'disabled', label: '已停用' }
-  return { status: 'draft', label: '未发布' }
-}
-
-// 草稿版本出现/消失时同步候选叠加，避免在渲染期间懒建。
-watch(() => contentStore.agentVersions, () => {
-  for (const agent of contentStore.agents) {
-    governance.candidateFor(agent.id, draftVersionOf(agent.id)?.version)
-  }
-}, { deep: true })
-
-function inspect(agent: AgentDefinition) {
-  selectedAgentId.value = agent.id
-  activeDetailTab.value = 'overview'
-  drawerOpen.value = true
-  void loadJoinedWorkspaces(agent.id)
-  void loadPrincipal(agent.id)
-}
-
-async function loadPrincipal(agentId: string) {
-  principal.value = undefined
-  principalDraft.value = undefined
-  availableRoles.value = []
-  principalRolesUnavailable.value = false
-  principalLoading.value = true
-  try {
-    const [recordResult, rolesResult] = await Promise.allSettled([
-      adminApi.getAgentPrincipal(agentId), adminApi.getAgentPrincipalRoleOptions(),
-    ])
-    if (selectedAgentId.value !== agentId) return
-    if (recordResult.status === 'rejected') throw recordResult.reason
-    const record = recordResult.value
-    principal.value = record
-    principalDraft.value = { ...record, roleIds: [...record.roleIds], dataScopes: [...record.dataScopes] }
-    if (rolesResult.status === 'fulfilled') {
-      availableRoles.value = rolesResult.value
-    } else {
-      principalRolesUnavailable.value = true
-      availableRoles.value = record.roleIds.map(id => ({ id, name: agentRoleLabels[id] ?? id, status: 'disabled' }))
-    }
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    if (selectedAgentId.value === agentId) principalLoading.value = false
-  }
-}
-
-async function savePrincipal() {
-  const draft = principalDraft.value
-  if (!draft || principalSaving.value) return
-  try {
-    await ElMessageBox.confirm(
-      '更新后新执行按当前授权运行；撤销授权或停用身份会阻止排队及后续动作。',
-      '确认更新 Agent 独立执行身份？',
-      { confirmButtonText: '确认更新', cancelButtonText: '取消', type: 'warning' },
-    )
-    principalSaving.value = true
-    const updated = await adminApi.updateAgentPrincipal(draft)
-    principal.value = updated
-    principalDraft.value = { ...updated, roleIds: [...updated.roleIds], dataScopes: [...updated.dataScopes] }
-    ElMessage.success('Agent 身份授权已更新')
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    principalSaving.value = false
-  }
-}
-
-const principalScopeOptions = computed(() => [...new Set([
-  ...(selectedAgent.value?.dataScopes ?? []), ...(principal.value?.dataScopes ?? []),
-])].sort())
-
-function openCandidate(agent: AgentDefinition) {
-  void router.push(`/agents/${encodeURIComponent(agent.id)}/release/trial`)
-}
-
-async function loadJoinedWorkspaces(agentId: string) {
-  if (authStore.identityProvider === 'prototype-sso') return
-  joinedWorkspacesLoading.value = true
-  try {
-    await contentStore.loadAgentJoinedWorkspaces(agentId)
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    joinedWorkspacesLoading.value = false
-  }
-}
-
-/**
- * 平台治理开关（convergence §1）：关闭后该 Agent 不再出现在团队空间「添加 Agent」
- * 搜索结果，也不能被加入；已加入的空间与既有授权不受影响。
- */
-async function toggleWorkspaceJoin(next: boolean) {
-  const agent = selectedAgent.value
-  if (!agent) return
-  try {
-    await ElMessageBox.confirm(
-      next
-        ? '开启后该 Agent 会重新出现在团队空间的「添加 Agent」搜索结果中。'
-        : '关闭后该 Agent 不再出现在团队空间的「添加 Agent」搜索结果中，也不能被加入；已加入的成员关联与既有授权不受影响。',
-      `${next ? '开启' : '关闭'}「允许加入团队空间」“${agent.name}”？`,
-      { confirmButtonText: `确认${next ? '开启' : '关闭'}`, cancelButtonText: '取消', type: 'warning' },
-    )
-    workspaceJoinSaving.value = true
-    await contentStore.setAgentWorkspaceJoin(agent.id, next)
-    ElMessage.success(`已${next ? '开启' : '关闭'}「允许加入团队空间」，操作已写入审计`)
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    workspaceJoinSaving.value = false
-  }
-}
-
-function openCreate() {
-  editingAgent.value = undefined
-  editorOpen.value = true
-}
-
-function openEdit(agent: AgentDefinition) {
-  editingAgent.value = agent
-  editorOpen.value = true
-}
-
-async function handleDraftSaved(agent: AgentDefinition) {
-  governance.ensureOverlay(agent.id)
-  // 等待候选同步完成（修订推进 + 旧检查/封存作废），再允许后续试运行/发布操作
-  await governance.noteDraftSaved(agent.id)
-}
-
-function evidenceName(evidence: EvidenceRef) {
-  return evidenceLabel[evidence.kind]
-}
-
-function agentRoleNames(agent: AgentDefinition) {
-  return agent.roleIds
-    .map((roleId) => agentRoleLabels[roleId] ?? roleId)
-    .join('、')
+/** 草稿编辑流程：已冻结待发布时直接进入验证与发布，否则从职责与人格开始。 */
+function openDraft(agent: AgentDefinition, step?: AgentDraftStep) {
+  void router.push({
+    path: `/agents/${encodeURIComponent(agent.id)}/draft`,
+    query: { step: step ?? draftEntryStep(pendingVersionOf(agent.id)) },
+  })
 }
 
 function formatUpdatedAt(value: string) {
@@ -257,8 +58,7 @@ function formatUpdatedAt(value: string) {
 }
 
 async function changeAvailability(agent: AgentDefinition) {
-  const disabling = agent.status === 'published'
-  const nextStatus = disabling ? 'disabled' : 'published'
+  const disabling = agent.status !== 'disabled'
   const actionLabel = disabling ? '停用' : '启用'
   try {
     await ElMessageBox.confirm(
@@ -269,75 +69,24 @@ async function changeAvailability(agent: AgentDefinition) {
       { confirmButtonText: `确认${actionLabel}`, cancelButtonText: '取消', type: 'warning' },
     )
     actionLoading.value = `status:${agent.id}`
-    await contentStore.setAgentStatus(agent.id, nextStatus)
-    ElMessage.success(`Agent 已${actionLabel}，操作已写入发布记录`)
+    await contentStore.setAgentStatus(agent.id, disabling ? 'disabled' : 'published')
+    ElMessage.success(`Agent 已${actionLabel}，操作已写入审计`)
   } catch (cause) {
     if (cause instanceof Error) ElMessage.error(cause.message)
   } finally {
     actionLoading.value = ''
   }
-}
-
-async function rollback(version: AgentVersionRecord) {
-  const agent = selectedAgent.value
-  if (!agent) return
-  try {
-    await ElMessageBox.confirm(
-      `活动版本将切换为已发布的 v${version.version}。Agent 的启用/停用状态和进行中的草稿保持不变，历史版本不会被修改。`,
-      `回滚“${agent.name}”？`,
-      { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' },
-    )
-    actionLoading.value = `rollback:${version.id}`
-    await contentStore.rollbackAgent(agent.id, version.version)
-    activeDetailTab.value = 'releases'
-    ElMessage.success(`已回滚到 v${version.version}，发布记录已生成`)
-  } catch (cause) {
-    if (cause instanceof Error) ElMessage.error(cause.message)
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-async function exportVersion(version: AgentVersionRecord) {
-  const agent = selectedAgent.value
-  if (!agent) return
-  actionLoading.value = `export:${version.id}`
-  try {
-    const blob = await adminApi.downloadAgentVersionPackage(agent.id, version.id)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${agent.id}-v${version.version}.zip`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    requestAnimationFrame(() => URL.revokeObjectURL(url))
-  } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : 'Agent 包导出失败')
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-function releaseActionLabel(record: AgentReleaseRecord) {
-  return {
-    published: '发布版本',
-    enabled: '启用 Agent',
-    disabled: '停用 Agent',
-    rollback: '版本回滚',
-  }[record.action]
 }
 
 onMounted(async () => {
   await contentStore.load()
-  void Promise.allSettled([governance.loadSubmissionIndex(), governance.loadEvidenceIndex()])
 })
 </script>
 
 <template>
   <div class="ops-page agent-page">
     <el-alert v-if="contentStore.error" :title="contentStore.error" type="error" show-icon @close="contentStore.error = ''" />
-    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Agent 配置、版本和发布记录。" />
+    <el-alert v-if="authStore.isAuditor" type="info" show-icon :closable="false" title="当前为安全审计员视图，仅可查看 Agent 配置与版本；发布、回滚和启停记录见审计日志。" />
 
     <section class="content-panel filter-panel">
       <div class="filter-bar">
@@ -350,32 +99,29 @@ onMounted(async () => {
         </el-select>
         <span class="filter-bar__meta">{{ filteredAgents.length }} 个 Agent</span>
         <el-button @click="$router.push('/assistant?context=agents')">交给管理助手</el-button>
-        <el-button v-if="authStore.canManage" class="create-button" type="primary" :icon="Plus" data-action="create-agent" @click="openCreate">创建 Agent</el-button>
+        <el-button v-if="authStore.canManage" class="create-button" type="primary" :icon="Plus" data-action="create-agent" @click="createOpen = true">创建 Agent</el-button>
       </div>
     </section>
 
     <section class="content-panel content-panel--flush agent-table">
-      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedAgents" empty-text="暂无匹配的 Agent" @row-click="inspect">
+      <el-table class="data-table" v-loading="contentStore.loading" :data="pagedAgents" empty-text="暂无匹配的 Agent" @row-click="(row: AgentDefinition) => openDetail(row)">
         <el-table-column label="Agent" min-width="300"><template #default="scope"><div class="agent-cell"><span class="agent-cell__mark">d</span><div><strong>{{ scope.row.name }}</strong><small>{{ scope.row.description }}</small></div></div></template></el-table-column>
-        <el-table-column label="发布版本" width="130">
+        <el-table-column label="当前版本" width="120">
           <template #default="scope">
-            <template v-if="scope.row.status !== 'draft'">
-              <span class="code-text mono">v{{ scope.row.version }}</span>
-              <small class="cell-sub">{{ governance.versionGovernance(scope.row.id, scope.row.version).bindingRevision }}</small>
-            </template>
+            <span v-if="activeVersionOf(scope.row)" class="code-text mono">v{{ activeVersionOf(scope.row) }}</span>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
         <el-table-column label="可用性" width="105"><template #default="scope"><StatusTag v-bind="availabilityTag(scope.row)" /></template></el-table-column>
-        <el-table-column label="候选 / 提交" width="140">
+        <el-table-column label="待发布" width="140">
           <template #default="scope">
             <button
-              v-if="candidateOf(scope.row.id)"
+              v-if="pendingVersionOf(scope.row.id)"
               type="button"
               class="candidate-tag"
-              data-action="open-candidate"
-              @click.stop="openCandidate(scope.row)"
-            >rev {{ candidateOf(scope.row.id)?.revision ?? 1 }} · {{ submissionLabel[candidateOf(scope.row.id)?.status ?? 'draft'] }}</button>
+              data-action="open-release"
+              @click.stop="openDraft(scope.row, 'release')"
+            >v{{ pendingVersionOf(scope.row.id)?.version }} · {{ pendingVersionOf(scope.row.id)?.status === 'candidate' ? '已冻结' : '草稿' }}</button>
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
@@ -384,160 +130,18 @@ onMounted(async () => {
         <el-table-column label="更新时间" width="170">
           <template #default="scope">{{ formatUpdatedAt(scope.row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="290" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="scope">
-            <el-button link type="primary" :icon="View" data-action="view-agent" @click.stop="inspect(scope.row)">查看</el-button>
-            <el-button v-if="authStore.canManage" link type="primary" data-action="edit-agent" @click.stop="openEdit(scope.row)">{{ scope.row.status === 'draft' ? '编辑' : '创建新版本' }}</el-button>
-            <el-button v-if="authStore.canManage && (candidateOf(scope.row.id) || draftVersionOf(scope.row.id))" link type="primary" data-action="open-candidate" @click.stop="openCandidate(scope.row)">试运行与发布</el-button>
-            <el-button v-if="authStore.canManage && scope.row.status !== 'draft'" link type="primary" :loading="actionLoading === `status:${scope.row.id}`" :data-action="scope.row.status === 'published' ? 'disable-agent' : 'enable-agent'" @click.stop="changeAvailability(scope.row)">{{ scope.row.status === 'published' ? '停用' : '启用' }}</el-button>
+            <el-button link type="primary" :icon="View" data-action="view-agent" @click.stop="openDetail(scope.row)">查看</el-button>
+            <el-button v-if="authStore.canManage" link type="primary" data-action="edit-agent-draft" @click.stop="openDraft(scope.row)">{{ pendingVersionOf(scope.row.id) ? '继续编辑' : '编辑配置' }}</el-button>
+            <el-button v-if="authStore.canManage && activeVersionOf(scope.row)" link type="primary" :loading="actionLoading === `status:${scope.row.id}`" :data-action="scope.row.status === 'disabled' ? 'enable-agent' : 'disable-agent'" @click.stop="changeAvailability(scope.row)">{{ scope.row.status === 'disabled' ? '启用' : '停用' }}</el-button>
           </template>
         </el-table-column>
       </el-table>
       <div class="table-footer table-footer--pager"><el-pagination v-model:current-page="agentPage" background layout="prev, pager, next" :total="filteredAgents.length" :page-size="10" /></div>
     </section>
 
-    <el-drawer v-model="drawerOpen" size="min(1040px, 100vw)">
-      <template #header>
-        <span class="drawer-title">Agent 治理详情</span>
-      </template>
-      <template v-if="selectedAgent">
-        <div class="agent-detail__hero"><span class="agent-detail__mark">d</span><div><h2>{{ selectedAgent.name }}</h2><p>{{ selectedAgent.description }}</p></div><StatusTag v-bind="availabilityTag(selectedAgent)" /></div>
-
-        <div class="status-tabs agent-detail__tabs" role="tablist" aria-label="Agent 详情类型">
-          <button class="status-tab" :class="{ active: activeDetailTab === 'overview' }" type="button" role="tab" :aria-selected="activeDetailTab === 'overview'" @click="activeDetailTab = 'overview'">概览与生命周期</button>
-          <button class="status-tab" :class="{ active: activeDetailTab === 'versions' }" type="button" role="tab" :aria-selected="activeDetailTab === 'versions'" @click="activeDetailTab = 'versions'">版本历史 <span class="tab-count">{{ selectedVersions.length }}</span></button>
-          <button class="status-tab" :class="{ active: activeDetailTab === 'releases' }" type="button" role="tab" :aria-selected="activeDetailTab === 'releases'" @click="activeDetailTab = 'releases'">发布记录 <span class="tab-count">{{ selectedReleases.length }}</span></button>
-          <button class="status-tab" :class="{ active: activeDetailTab === 'routines' }" type="button" role="tab" :aria-selected="activeDetailTab === 'routines'" @click="activeDetailTab = 'routines'">主动任务</button>
-        </div>
-
-        <template v-if="activeDetailTab === 'overview'">
-          <section class="agent-detail__section" v-loading="principalLoading">
-            <h3>独立执行身份</h3>
-            <p class="muted">Agent 以自己的身份执行；负责人只负责治理。员工发起的任务仍受员工当前数据授权约束。</p>
-            <template v-if="principalDraft">
-              <dl class="agent-detail__meta"><div><dt>Principal</dt><dd class="mono">{{ principalDraft.principalId }}</dd></div><div><dt>授权修订</dt><dd>{{ principalDraft.authorizationVersion }}</dd></div></dl>
-              <el-alert v-if="principalRolesUnavailable" type="warning" :closable="false" title="角色目录暂不可用；仍可停用身份或撤销已有角色，恢复后可新增授权。" />
-              <el-form label-position="top">
-                <el-form-item label="执行身份状态"><el-switch v-model="principalDraft.status" active-value="active" inactive-value="disabled" active-text="启用" inactive-text="停用" :disabled="!authStore.canManage" /></el-form-item>
-                <el-form-item label="执行角色"><el-select v-model="principalDraft.roleIds" multiple filterable placeholder="请选择授权角色" :disabled="!authStore.canManage || (principalRolesUnavailable && !principalDraft.roleIds.length)"><el-option v-for="role in availableRoles" :key="role.id" :label="role.name" :value="role.id" :disabled="role.status === 'disabled' && !principalDraft.roleIds.includes(role.id)" /></el-select></el-form-item>
-                <el-form-item label="平台数据授权范围"><el-select v-model="principalDraft.dataScopes" multiple filterable placeholder="基础运行可留空；业务能力按需授权" :disabled="!authStore.canManage"><el-option v-for="scope in principalScopeOptions" :key="scope" :label="scope" :value="scope" /></el-select></el-form-item>
-              </el-form>
-              <el-button v-if="authStore.canManage" type="primary" :loading="principalSaving" @click="savePrincipal">保存身份授权</el-button>
-            </template>
-            <p v-else-if="!principalLoading" class="muted">当前无法读取 Agent 身份授权，请稍后刷新。</p>
-          </section>
-          <section class="agent-detail__section governance-status">
-            <h3>治理状态</h3>
-            <dl class="agent-detail__meta">
-              <div><dt>发布版本</dt><dd class="mono">{{ selectedAgent.status === 'draft' ? '—' : `v${selectedAgent.version}` }}</dd></div>
-              <div><dt>绑定修订</dt><dd class="mono">{{ selectedGovernance?.bindingRevision ?? '—' }}</dd></div>
-              <div><dt>可用性</dt><dd><StatusTag v-bind="availabilityTag(selectedAgent)" /></dd></div>
-              <div>
-                <dt>证据</dt>
-                <dd class="evidence-chips">
-                  <el-tag v-for="item in selectedGovernance?.evidence ?? []" :key="item.kind + item.at" size="small" type="success" effect="plain" :title="`${item.summary} · ${item.by}`">{{ evidenceName(item) }}</el-tag>
-                  <span v-if="!selectedGovernance?.evidence.length" class="muted">暂无运行证据</span>
-                </dd>
-              </div>
-            </dl>
-          </section>
-          <dl class="agent-detail__meta">
-            <div><dt>Agent 标识</dt><dd class="mono">{{ selectedAgent.id }}</dd></div><div><dt>活动版本</dt><dd class="mono">v{{ selectedAgent.version }}</dd></div><div><dt>负责人</dt><dd>{{ selectedAgent.owner }}</dd></div><div><dt>归属部门</dt><dd>{{ selectedAgent.department }}</dd></div><div><dt>可见范围</dt><dd>{{ selectedAgent.visibility }}</dd></div><div><dt>可见角色</dt><dd>{{ agentRoleNames(selectedAgent) }}</dd></div><div><dt>运行限制</dt><dd>{{ selectedAgent.timeoutSeconds }} 秒 · {{ selectedAgent.maxToolCalls }} 次工具调用 · {{ selectedAgent.maxOutputBytes.toLocaleString() }} 字节输出</dd></div>
-          </dl>
-          <section class="agent-detail__section"><h3>员工使用体验</h3><div class="experience-card"><strong>欢迎语</strong><p>{{ selectedAgent.welcomeMessage }}</p><strong>示例问题</strong><div class="chip-list"><span v-for="prompt in selectedAgent.examplePrompts" :key="prompt">{{ prompt }}</span></div></div></section>
-          <section class="agent-detail__section"><h3>SOUL.md · 人格与工作原则</h3><pre class="prompt-preview">{{ selectedAgent.systemPrompt }}</pre></section>
-          <section v-if="selectedAgent.workInstructions" class="agent-detail__section"><h3>AGENTS.md · 工作规程</h3><pre class="prompt-preview">{{ selectedAgent.workInstructions }}</pre></section>
-          <section class="agent-detail__section"><h3>Skill 引用</h3><div class="chip-list"><span v-for="skill in selectedAgent.skills" :key="skill">{{ skill }}</span></div></section>
-          <section class="agent-detail__section"><h3>MCP 连接范围与上游权限</h3><p>{{ selectedAgent.mcpScope?.mode === 'selected' ? '仅使用选定连接器' : selectedAgent.mcpScope?.mode === 'none' ? '不使用 MCP' : '全部可用 MCP' }}</p><div v-if="selectedAgent.mcpScope?.mode === 'selected'" class="chip-list chip-list--code"><span v-for="id in selectedAgent.mcpScope.connectorIds" :key="id">{{ contentStore.connectors.find(connector => connector.id === id)?.name ?? id }}：{{ contentStore.connectors.find(connector => connector.id === id)?.scopeDescription ?? '未登记上游权限说明' }}</span></div><p>实际可访问数据由 MCP 服务及其凭据决定；平台数据授权范围不会过滤 MCP 返回的数据。</p></section>
-          <section class="agent-detail__section"><h3>平台数据范围上限</h3><div class="chip-list"><span v-for="scope in selectedAgent.dataScopes" :key="scope">{{ scope }}</span><span v-if="!selectedAgent.dataScopes.length">未配置；基础 Agent 可正常运行</span></div></section>
-          <section class="agent-detail__section">
-            <h3>团队空间治理</h3>
-            <div class="governance-row">
-              <div>
-                <strong>允许加入团队空间</strong>
-                <p>关闭后该 Agent 不再出现在团队空间的「添加 Agent」搜索结果中，也不能被加入；已加入的空间、成员关联与既有授权不受影响。</p>
-              </div>
-              <el-switch
-                v-if="authStore.canManage"
-                :model-value="selectedAgent.allowWorkspaceJoin"
-                :loading="workspaceJoinSaving"
-                active-text="允许"
-                inactive-text="禁止"
-                data-action="toggle-agent-workspace-join"
-                @change="(value: string | number | boolean) => toggleWorkspaceJoin(value === true)"
-              />
-              <StatusTag v-else :status="selectedAgent.allowWorkspaceJoin ? 'published' : 'disabled'" :label="selectedAgent.allowWorkspaceJoin ? '允许加入' : '禁止加入'" />
-            </div>
-            <div class="joined-workspaces">
-              <h4>已加入空间 <span class="tab-count">{{ joinedWorkspaces.length }}</span></h4>
-              <el-table
-                v-loading="joinedWorkspacesLoading"
-                class="data-table"
-                :data="pagedJoinedWorkspaces"
-                empty-text="该 Agent 尚未加入任何团队空间"
-              >
-                <el-table-column prop="workspaceName" label="空间" min-width="180" />
-                <el-table-column label="固定版本" width="100"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span></template></el-table-column>
-                <el-table-column label="成员状态" width="110"><template #default="scope"><StatusTag :status="scope.row.memberStatus === 'available' ? 'published' : 'disabled'" :label="scope.row.memberStatus === 'available' ? '可用' : '已停用'" /></template></el-table-column>
-                <el-table-column prop="addedBy" label="加入人" min-width="120" />
-                <el-table-column label="加入时间" width="165"><template #default="scope">{{ formatUpdatedAt(scope.row.createdAt) }}</template></el-table-column>
-              </el-table>
-              <el-pagination v-model:current-page="joinedWorkspacePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="joinedWorkspaces.length" :page-size="10" />
-              <el-alert type="info" :closable="false" show-icon title="停用或移出某个空间前，先确认该 Agent 的固定版本与成员状态，避免影响仍在使用它的团队会话。" />
-            </div>
-          </section>
-          <section class="agent-detail__section"><h3>版本策略</h3><el-alert type="info" :closable="false" show-icon title="创建运行时锁定活动版本；已发布版本不可原地修改，回滚只切换活动版本指针。" /></section>
-        </template>
-
-
-        <section v-else-if="activeDetailTab === 'versions'" class="agent-detail__table">
-          <el-table class="data-table" :data="pagedVersions" empty-text="暂无版本记录">
-            <el-table-column label="版本" width="120"><template #default="scope"><span class="mono">v{{ scope.row.version }}</span><small v-if="scope.row.version === selectedAgent?.version" class="current-version">当前</small><small class="cell-sub mono">{{ versionGov(scope.row).bindingRevision }}</small></template></el-table-column>
-            <el-table-column label="变更说明" min-width="200"><template #default="scope"><div class="version-summary"><strong>{{ scope.row.summary }}</strong><small>{{ scope.row.createdBy }} · {{ formatUpdatedAt(scope.row.createdAt) }}</small></div></template></el-table-column>
-            <el-table-column label="状态" width="95"><template #default="scope"><StatusTag :status="scope.row.status" /></template></el-table-column>
-            <el-table-column label="证据" min-width="160">
-              <template #default="scope">
-                <div v-if="versionGov(scope.row).evidence.length" class="evidence-chips">
-                  <el-tag v-for="item in versionGov(scope.row).evidence" :key="item.kind + item.at" size="small" effect="plain" :title="item.summary">{{ evidenceName(item) }}</el-tag>
-                </div>
-                <span v-else class="muted">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
-              <template #default="scope">
-                <el-button v-if="authStore.canManage" link type="primary" :loading="actionLoading === `export:${scope.row.id}`" @click="exportVersion(scope.row)">导出包</el-button>
-                <el-button v-if="authStore.canManage && scope.row.status !== 'draft' && scope.row.version !== selectedAgent?.version" link type="primary" :loading="actionLoading === `rollback:${scope.row.id}`" data-action="rollback-agent" @click="rollback(scope.row)">回滚至此</el-button>
-                <span v-if="!authStore.canManage" class="muted">—</span>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-pagination v-model:current-page="versionPage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedVersions.length" :page-size="10" />
-        </section>
-
-        <AgentRoutinePanel v-else-if="activeDetailTab === 'routines'" :agent-id="selectedAgent.id" :versions="selectedVersions" :principal="principal" :can-manage="authStore.canManage" />
-
-        <section v-else class="agent-detail__releases">
-          <el-empty v-if="!selectedReleases.length" description="暂无发布记录" />
-          <template v-else>
-            <el-timeline><el-timeline-item v-for="record in pagedReleases" :key="record.id" :timestamp="formatUpdatedAt(record.time)" placement="top"><article class="release-record"><div><strong>{{ releaseActionLabel(record) }} · v{{ record.version }}</strong><StatusTag :status="record.action === 'disabled' ? 'disabled' : 'published'" :label="releaseActionLabel(record)" /></div><p>{{ record.note }}</p><small>操作人：{{ record.actor }}</small></article></el-timeline-item></el-timeline>
-            <el-pagination v-model:current-page="releasePage" class="list-pagination" background hide-on-single-page layout="prev, pager, next" :total="selectedReleases.length" :page-size="10" />
-          </template>
-        </section>
-
-        <div v-if="authStore.canManage" class="agent-detail__footer">
-          <el-button @click="openEdit(selectedAgent)">{{ selectedAgent.status === 'draft' ? '编辑 Agent' : '创建新版本' }}</el-button>
-          <el-button v-if="candidateOf(selectedAgent.id) || draftVersionOf(selectedAgent.id)" type="primary" @click="openCandidate(selectedAgent)">前往发布工作台</el-button>
-          <el-button v-if="selectedAgent.status !== 'draft'" :type="selectedAgent.status === 'published' ? 'danger' : 'primary'" :loading="actionLoading === `status:${selectedAgent.id}`" @click="changeAvailability(selectedAgent)">{{ selectedAgent.status === 'published' ? '停用 Agent' : '启用 Agent' }}</el-button>
-        </div>
-      </template>
-    </el-drawer>
-
-    <AgentDraftDialog
-      v-model="editorOpen"
-      :agent="editingAgent"
-      @saved="handleDraftSaved"
-      @continue-release="openCandidate"
-    />
+    <AgentCreateDialog v-model="createOpen" @created="(agent: AgentDefinition) => openDraft(agent, 'profile')" />
   </div>
 </template>
 
@@ -551,51 +155,10 @@ onMounted(async () => {
 .candidate-tag { padding: 3px 9px; border: 1px solid var(--color-primary); border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); cursor: pointer; font-size: var(--font-size-badge); }
 .candidate-tag:hover, .candidate-tag:focus-visible { color: var(--color-bg-base); background: var(--color-primary); outline: none; }
 .agent-cell { display: flex; min-width: 0; align-items: center; gap: 10px; cursor: pointer; }
-.agent-cell__mark,
-.agent-detail__mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-button); color: var(--color-bg-base); background: var(--color-primary); font-size: var(--font-size-heading); font-weight: var(--font-weight-heading); font-style: italic; }
+.agent-cell__mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-button); color: var(--color-bg-base); background: var(--color-primary); font-size: var(--font-size-heading); font-weight: var(--font-weight-heading); font-style: italic; }
 .agent-cell > div { display: flex; min-width: 0; flex-direction: column; }
 .agent-cell strong { color: var(--color-text-heading); font-size: var(--font-size-caption); font-weight: var(--font-weight-title); }
 .agent-cell small { max-width: 440px; margin-top: 4px; overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-badge); text-overflow: ellipsis; white-space: nowrap; }
 .agent-table code { color: var(--color-text-secondary); font-size: var(--font-size-badge); }
-.drawer-title { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-heading); font-size: var(--font-size-body); font-weight: var(--font-weight-title); }
-.agent-detail__hero { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: var(--spacing-card); border-radius: var(--radius-card); background: var(--color-bg-subtle); }
-.agent-detail__mark { width: 43px; height: 43px; border-radius: var(--radius-card); }
-.agent-detail__hero h2 { margin: 0; color: var(--color-text-heading); font-size: var(--font-size-title); }
-.agent-detail__hero p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.5; }
-.agent-detail__tabs { margin: 18px 0 4px; }
-.agent-detail__meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 24px; margin: 12px 0 0; }
-.agent-detail__meta div { padding: 10px 0; border-bottom: 1px solid var(--color-border); }
-.agent-detail__meta dt { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.agent-detail__meta dd { margin: 4px 0 0; color: var(--color-text-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-badge); }
-.agent-detail__section { margin-top: 24px; }
-.agent-detail__section h3 { margin: 0 0 9px; color: var(--color-text-heading); font-size: var(--font-size-body); }
-.governance-status { margin-top: 14px; }
-.governance-status .agent-detail__meta { margin-top: 0; }
-.evidence-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip-list { display: flex; flex-wrap: wrap; gap: 7px; }
-.chip-list span { padding: 6px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-badge); }
-.chip-list--code span { color: var(--color-text-secondary); background: var(--color-bg-subtle); font-family: monospace; }
-.experience-card { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
-.experience-card strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.experience-card p { margin: 5px 0 12px; color: var(--color-text-primary); font-size: var(--font-size-caption); line-height: 1.6; }
-.prompt-preview { max-height: 220px; margin: 0; padding: 14px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-button); color: var(--color-text-primary); background: var(--color-bg-subtle); font-family: inherit; font-size: var(--font-size-caption); line-height: 1.65; white-space: pre-wrap; }
-.agent-detail__table { margin-top: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); overflow: hidden; }
-.current-version { display: inline-flex; margin-left: 5px; padding: 2px 5px; border-radius: var(--radius-tag); color: var(--color-primary); background: var(--color-primary-light); font-size: var(--font-size-micro); }
-.version-summary { display: flex; flex-direction: column; }
-.version-summary strong { color: var(--color-text-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-badge); }
-.version-summary small { margin-top: 4px; color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.agent-detail__releases { margin-top: 18px; }
-.governance-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-subtle); }
-.governance-row strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.governance-row p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: var(--font-size-badge); line-height: 1.6; }
-.joined-workspaces { margin-top: 16px; }
-.joined-workspaces h4 { margin: 0 0 9px; color: var(--color-text-heading); font-size: var(--font-size-body); }
-.joined-workspaces .data-table { margin-bottom: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-card); overflow: hidden; }
-.release-record { padding: 12px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-button); background: var(--color-bg-base); }
-.release-record > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.release-record strong { color: var(--color-text-heading); font-size: var(--font-size-caption); }
-.release-record p { margin: 7px 0; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.5; }
-.release-record small { color: var(--color-text-muted); font-size: var(--font-size-badge); }
-.agent-detail__footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--color-border); }
-@media (max-width: 700px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } .agent-detail__meta { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .filter-bar, .filter-bar .el-input, .filter-bar .el-select { width: 100%; } }
 </style>

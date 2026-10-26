@@ -1,12 +1,23 @@
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
+import * as vueCompiler from 'vue/compiler-sfc'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue({ compiler: vueCompiler })],
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      vue: fileURLToPath(new URL('./node_modules/vue/dist/vue.esm-bundler.js', import.meta.url)),
+      'vue/compiler-sfc': fileURLToPath(new URL('./node_modules/vue/compiler-sfc/index.mjs', import.meta.url)),
+    },
+    dedupe: ['vue'],
+  },
+  server: {
+    deps: {
+      inline: ['vue', 'element-plus'],
+    },
   },
   test: {
     environment: 'happy-dom',

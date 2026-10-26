@@ -21,6 +21,6 @@ it('late content refresh and creation cannot enter a new account Store',async()=
  vi.mocked(workbenchApi.getArtifacts).mockResolvedValue([]);vi.mocked(workbenchApi.getAgents).mockResolvedValue([])
  const store=useContentStore(),pending=store.refresh();store.reset();wait.resolve([{id:'other-team'}] as never);await pending;expect(store.workspaces).toEqual([])
  const create=deferred<never>();vi.mocked(workbenchApi.createWorkspace).mockReturnValue(create.promise)
- const creating=store.createTeamWorkspace({name:'old',description:''});const rejected=expect(creating).rejects.toThrow('账号已切换')
+ const creating=store.createTeamWorkspace({name:'old',description:'',agentIds:['agent-1']});const rejected=expect(creating).rejects.toThrow('账号已切换')
  store.reset();create.resolve({id:'old-team'} as never);await rejected;expect(store.workspaces).toEqual([])
 })

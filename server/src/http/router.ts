@@ -8,6 +8,7 @@ import type {
   ApiAuthenticator,
   RequestIdentity,
 } from '../modules/identity/types.ts'
+import { publicAuthorizationResponseCode } from '../domain/authorization-errors.ts'
 import { invalidRequest, stateConflict } from '../domain/request-errors.ts'
 
 export interface ApiMeta {
@@ -71,6 +72,10 @@ export class Router {
     this.register('POST', path, handler)
   }
 
+  put(path: string, handler: RouteHandler) {
+    this.register('PUT', path, handler)
+  }
+
   patch(path: string, handler: RouteHandler) {
     this.register('PATCH', path, handler)
   }
@@ -101,7 +106,7 @@ export class Router {
     const requestId = resolveRequestId(request)
     response.setHeader('X-Request-Id', requestId)
     if (request.method === 'OPTIONS') {
-      response.writeHead(204, { Allow: 'GET, POST, PATCH, DELETE, OPTIONS' })
+      response.writeHead(204, { Allow: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' })
       response.end()
       return
     }
@@ -191,10 +196,11 @@ export function classifyHttpError(error: unknown, path: string): { status: numbe
           : status === 503 && error.code.startsWith('skill_')
             ? '请管理员检查 Skill 存储和试运行执行能力，恢复后重试。'
             : suggestions[status])
+    const code = status === 403 ? publicAuthorizationResponseCode(error.code) : error.code
     return {
       status,
       error: {
-        code: error.code,
+        code,
         message: status === 500 ? `${object}操作未完成` : status === 504 ? `${object}处理超时` : error.message,
         object,
         suggestion,
@@ -363,7 +369,7 @@ export function routeValidationFailed(message: string) {
 export function routePermissionDenied(message: string) {
   const error = new Error(message) as Error & { status: number; code: string }
   error.status = 403
-  error.code = 'permission_denied'
+  error.code = 'authorization_denied'
   return error
 }
 

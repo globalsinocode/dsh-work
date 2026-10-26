@@ -495,5 +495,11 @@ async function waitUntil(check: () => Promise<boolean>, description: string) {
 }
 
 function hasCode(error: unknown, code: string) {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  const errCode = (error as { code: string }).code
+  if (code === 'permission_denied'
+    && (errCode === 'permission_denied' || errCode === 'authorization_denied')) {
+    return true
+  }
+  return errCode === code
 }

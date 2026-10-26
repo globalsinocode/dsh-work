@@ -27,7 +27,6 @@ export class RunCancellation {
   async systemCancelRun(runId: string, cause: 'system_revoke', reason?: string) {
     const run = await this.deps.runs.getRun(tenantId, runId)
     if (!run) throw notFound(`Run 不存在：${runId}`)
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, reason ?? '父任务授权已撤销，终止所有活动子任务')
     if (run.status === 'waiting') {
       if (!this.deps.persistentWait) throw new Error('持久化等待服务未接线')
       await this.deps.persistentWait.cancelRun(run.id, 'system')

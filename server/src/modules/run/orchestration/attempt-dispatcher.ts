@@ -55,6 +55,8 @@ export class AttemptDispatcher {
      */
     selectedSkillReference?: string
     history?: RuntimeManifest['input']['conversation_history']
+    /** EX-02 summary of the conversation between the first message and the recent history. */
+    conversationSummary?: RuntimeManifest['input']['conversation_summary'] | null
     /** AG-03/管理侧 purpose；缺省为员工交互运行（无 purpose 字段）。 */
     purpose?: RuntimeManifest['purpose']
     /** 确定性 Attempt ID（自动任务 = attempt-<executionId>），缺省随机。 */
@@ -63,6 +65,10 @@ export class AttemptDispatcher {
     limits?: { timeoutSeconds?: number; maxToolCalls?: number; maxOutputBytes?: number }
     /** PF-06 immutable parent/root lineage. */
     delegation?: NonNullable<RuntimeManifest['delegation_context']>
+    /** 项目空间 S6：任务工具读/写模式（定时触发等场景）。 */
+    projectTaskToolMode?: 'none' | 'read' | 'read-write'
+    /** 员工时区：用于 Manifest 相对日期说明（定时任务等）。 */
+    timezone?: string
   }) {
     const runtimePolicy = await this.deps.operations?.getRuntimePolicy(runtimeId)
     const agent = this.deps.agents
@@ -214,10 +220,12 @@ export class AttemptDispatcher {
         file_mounts: preparedFiles.map(file => file.mount),
         ...(attachments.length ? { attachments } : {}),
         ...(input.history?.length ? { conversation_history: input.history } : {}),
+        ...(input.history?.length && input.conversationSummary ? { conversation_summary: input.conversationSummary } : {}),
       },
       budget: await this.budget.manifest(run, limits),
       limits,
       created_at: new Date().toISOString(),
+      ...(input.timezone ? { timezone: input.timezone } : {}),
       trace_id: `trace-${run.id}-${attemptId}`,
     }
     await this.submit(run, manifest, route, {

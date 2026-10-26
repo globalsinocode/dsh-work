@@ -3,6 +3,7 @@ import { crc32, inflateRawSync } from 'node:zlib'
 import { parseDocument } from 'yaml'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { RequestError } from '../../domain/request-errors.ts'
+import { builtinToolReference, skillToolName } from '../runtime/builtin-tools.ts'
 
 export interface SkillPackage {
   name: string
@@ -154,11 +155,11 @@ export function parseSkillPackage(bytes: Uint8Array, selected?: string, director
     if (!packaged.some(file => file.path === reference)) fail(`缺少引用文件 ${reference}，请提供完整 Skill 目录或 ZIP`)
   }
   const tools = new Set(metadata.toolIds)
-  if (packaged.length > 1) tools.add('read@1.0.0')
+  if (packaged.length > 1) tools.add(builtinToolReference('read'))
   const requirements = [...metadata.requirements]
   if (packaged.some(file => file.path.endsWith('.py'))) {
     requirements.push({ type: 'python', name: 'python-runtime', status: 'needs_review', evidence: '包中包含 Python 源文件' })
-    tools.add('python_execute@1.0.0')
+    tools.add(builtinToolReference('python_execute'))
     for (const file of packaged.filter(item => /(?:^|\/)requirements(?:-[A-Za-z0-9._-]+)?\.txt$/i.test(item.path))) {
       for (const line of file.content.split(/\r?\n/).map(value => value.trim()).filter(value => value && !value.startsWith('#'))) {
         const requirement = line.split(/\s+#/, 1)[0]!
@@ -223,8 +224,8 @@ function parseEntry(text: string) {
   const requirements: SkillRequirement[] = []
   const supportedTools: string[] = []
   for (const value of toolNames as string[]) {
-    const normalized = value.trim().toLowerCase()
-    if (['read', 'glob', 'grep'].includes(normalized)) supportedTools.push(normalized)
+    const toolName = skillToolName(value)
+    if (toolName) supportedTools.push(toolName)
     else requirements.push({ type: 'tool', name: value.trim(), status: 'unsupported', evidence: 'allowed-tools 声明' })
   }
   const declaredDependencies = metadata['dependencies'] ?? metadata['requires']
@@ -246,7 +247,7 @@ function parseEntry(text: string) {
   if (typeof disableModelInvocation !== 'boolean') return fail('disable-model-invocation 必须是布尔值')
   const version = metadata['version']
   if (version !== undefined && (typeof version !== 'string' || version.length > 80)) return fail('version 格式无效')
-  return { name: name.trim(), description: description.trim(), instructions, toolIds: [...new Set(supportedTools)].map(name => `${name}@1.0.0`), version: typeof version === 'string' ? version : null, requirements, disableModelInvocation }
+  return { name: name.trim(), description: description.trim(), instructions, toolIds: [...new Set(supportedTools)].map(builtinToolReference), version: typeof version === 'string' ? version : null, requirements, disableModelInvocation }
 }
 
 function inferSkillDependencies(instructions: string): string[] {

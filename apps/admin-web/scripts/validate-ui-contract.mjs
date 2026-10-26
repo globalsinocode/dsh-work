@@ -48,10 +48,8 @@ requireFragments('../../packages/admin-components/src/AdminShell.vue', [
   '管理助手',
   'Agent 治理',
   'Skill 管理',
-  'DSH 工具管理',
   'MCP 连接器',
   '组织与权限',
-  '工具权限',
   '模型用量',
   '模型治理',
   '运行治理',
@@ -83,18 +81,16 @@ requireFragments('src/router/index.ts', [
   "meta: { title: '运营概览'",
   "meta: { title: '管理助手'",
   "meta: { title: 'Agent 管理'",
-  "meta: { title: 'Agent 发布工作台 ·",
-  "path: '/agents/:agentId/release/trial'",
-  "path: '/agents/:agentId/release/review'",
+  "meta: { title: 'Agent 详情'",
+  "path: '/agents/:agentId'",
+  "path: '/agents/:agentId/release/:step(definition|checks|trial|review)?'",
   "meta: { title: 'Skill 管理'",
-  "meta: { title: 'DSH 工具管理'",
   "meta: { title: 'MCP 连接器'",
   "meta: { title: '模型用量'",
   "meta: { title: '模型治理'",
   "meta: { title: 'Runtimes'",
   "meta: { title: 'Session 列表'",
   "meta: { title: '工作空间'",
-  "meta: { title: '工具权限'",
   "meta: { title: '审计记录'",
   "meta: { title: '系统健康'",
   "meta: { title: '接入规范'",
@@ -104,9 +100,9 @@ requireFragments('src/router/index.ts', [
 const businessViews = [
   'AdminOverviewView.vue',
   'AgentManagementView.vue',
-  'AgentReleaseWorkbenchView.vue',
+  'AgentDetailView.vue',
+  'AgentDraftView.vue',
   'CapabilityManagementView.vue',
-  'PermissionManagementView.vue',
   'AuditView.vue',
   'SystemHealthView.vue',
   'RuntimeManagementView.vue',
@@ -116,7 +112,6 @@ const businessViews = [
 const listViews = [
   'AgentManagementView.vue',
   'CapabilityManagementView.vue',
-  'PermissionManagementView.vue',
   'AuditView.vue',
   'RuntimeManagementView.vue',
   'WorkspaceManagementView.vue',
@@ -136,42 +131,66 @@ for (const name of listViews) {
 
 requireFragments('src/views/AgentManagementView.vue', [
   'data-action="view-agent"',
-  'data-action="open-candidate"',
-  '@continue-release="openCandidate"',
+  'data-action="open-release"',
+  'data-action="edit-agent-draft"',
+  'AgentCreateDialog',
 ])
-forbidFragments('src/views/AgentManagementView.vue', ["activeDetailTab === 'candidate'", 'data-action="publish-agent"'])
-const agentManagementView = read('src/views/AgentManagementView.vue')
-const savedHandlerStart = agentManagementView.indexOf('function handleDraftSaved')
-const savedHandlerEnd = agentManagementView.indexOf('function evidenceName', savedHandlerStart)
-if (savedHandlerStart < 0 || savedHandlerEnd < 0 || agentManagementView.slice(savedHandlerStart, savedHandlerEnd).includes('router.push')) {
-  failures.push('Agent 草稿保存后不得自动跳转发布页面')
-}
-requireFragments('src/components/AgentDraftDialog.vue', [
-  '草稿已保存在 Agent 管理中',
-  '进入人工试运行验证',
-  "'continue-release': [agent: AgentDefinition]",
+// 列表只负责导航：查看进入只读详情，编辑进入草稿编辑流程。
+forbidFragments('src/views/AgentManagementView.vue', ['el-drawer', 'AgentDraftDialog', 'AgentAccessPanel', 'data-action="publish-agent"'])
+requireFragments('src/components/agent-detail/AgentCreateDialog.vue', ['SOUL.md', '创建并继续配置'])
+forbidFragments('src/components/agent-detail/AgentCreateDialog.vue', ['AgentZipImportPanel', 'ZIP 导入', 'visibleRoleIds', 'dataScopes'])
+// 详情页只读查看与运维；版本内容只在草稿编辑流程中修改，两处不混用。
+requireFragments('src/views/AgentDetailView.vue', [
+  '概览',
+  '岗位权限',
+  '主动任务',
+  '经验',
+  '版本历史',
+  '运行记录',
+  'data-action="edit-agent-draft"',
 ])
-forbidFragments('src/components/AgentDraftDialog.vue', ['AgentZipImportPanel', 'ZIP 导入'])
-requireFragments('src/views/AgentReleaseWorkbenchView.vue', [
+forbidFragments('src/views/AgentDetailView.vue', [
+  'provideAgentDraftEditor',
+  'AgentProfileSection',
+  'AgentCapabilitySection',
+  'AgentReleasePanel',
+  'draft-save-status',
+])
+requireFragments('src/views/AgentDraftView.vue', [
+  '职责与人格',
+  '能力',
+  '角色与权限',
+  '验证与发布',
+  'provideAgentDraftEditor',
+  'onBeforeRouteLeave',
+  'draft-save-status',
+  'data-action="exit-draft"',
+])
+requireFragments('src/components/agent-detail/AgentVersionsPanel.vue', ['版本历史', 'data-action="rollback-agent"'])
+requireFragments('src/components/agent-detail/AgentReleasePanel.vue', [
+  '验证前检查',
   '验证案例',
-  '运行本项',
+  '自定义测试问题',
+  '机器检查',
+  '重跑本项',
   '确认不通过',
   '不通过原因',
-  '验证结论',
+  '验证结果',
   '确认发布',
-  "activeStep === 'trial'",
+  'data-action="start-validation"',
   'data-action="publish-agent"',
 ])
-forbidFragments('src/views/AgentReleaseWorkbenchView.vue', ['class="workbench-header"', 'Agent 候选发布流程', '查看配置摘要', "activeStep === 'definition'", "activeStep === 'checks'"])
+requireFragments('src/components/agent-detail/AgentExperiencePanel.vue', ['批准并发布', '拒绝时必须填写原因', '/experience-iterations'])
+forbidFragments('src/components/agent-detail/AgentReleasePanel.vue', ['提交审核', '退回修改', '撤回候选', '导出包', '人工判定标准', 'data-action="rollback-agent"'])
 requireFragments('src/views/CapabilityManagementView.vue', [
   'data-action="view-skill"',
-  'data-action="view-tool"',
   'data-action="view-connector"',
-  '工具列表',
   'MCP 连接器列表',
   '新增 Skill',
 ])
+forbidFragments('../../packages/admin-components/src/AdminShell.vue', ['DSH 工具管理', '工具权限'])
 forbidFragments('src/views/CapabilityManagementView.vue', [
+  'data-action="sync-dsh-tools"',
   'data-action="edit-tool"',
   'data-action="edit-connector"',
   'data-action="create-tools"',
@@ -195,7 +214,6 @@ requireFragments('src/views/ModelGovernanceView.vue', [
   '密钥正文未进入 dsh-work',
   'Agent 不单独配置模型',
 ])
-requireFragments('src/views/PermissionManagementView.vue', ['data-action="configure-tool-permission"'])
 requireFragments('src/views/AuditView.vue', ['data-action="view-audit"'])
 requireFragments('src/views/SystemHealthView.vue', ['data-action="refresh-health"'])
 forbidFragments('src/views/SystemHealthView.vue', [
@@ -209,6 +227,8 @@ requireFragments('src/views/RuntimeManagementView.vue', [
   'data-action="check-runtime"',
   'data-action="configure-runtime"',
   'data-action="save-runtime-configuration"',
+  '内置工具',
+  '紧急停用内置工具',
   '最大并发 Worker 数',
   '单次执行超时时间',
   '调度状态',

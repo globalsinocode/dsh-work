@@ -2,7 +2,18 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({ getSession: vi.fn() }))
-vi.mock('../api/client', () => ({ adminApi: api }))
+vi.mock('../api/client', () => ({
+  adminApi: api,
+  AdminApiError: class AdminApiError extends Error {
+    status: number
+    code: string
+    constructor(payload: { code?: string }, status: number, message: string) {
+      super(message)
+      this.status = status
+      this.code = payload.code ?? 'request_failed'
+    }
+  },
+}))
 
 describe('admin auth store', () => {
   beforeEach(() => {
@@ -70,6 +81,36 @@ describe('admin auth store', () => {
     expect(store.canManageIdentity).toBe(false)
     expect(store.canReadAdmin).toBe(true)
     expect(store.identityAdministrationAvailable).toBe(true)
+  })
+
+  it('coalesces concurrent refresh calls and replaces permissions', async () => {
+    let resolve!: (value: unknown) => void
+    api.getSession.mockReturnValue(new Promise(value => { resolve = value }))
+    const { useAuthStore } = await import('./auth')
+    const store = useAuthStore()
+    const first = store.refresh()
+    const second = store.refresh()
+    expect(api.getSession).toHaveBeenCalledTimes(1)
+    resolve({
+      identityProvider: 'prototype-sso',
+      apiAudience: 'admin',
+      permissions: ['audit:read'],
+      user: {
+        id: 'U00019', name: '安全审计员', title: '审计员', department: '信息安全部',
+        avatarText: '审', role: 'auditor', dataScopes: ['审计记录'],
+      },
+    })
+    await Promise.all([first, second])
+    expect(store.permissions).toEqual(['audit:read'])
+  })
+
+  it('clears access when refreshed Session is no longer authorized', async () => {
+    const { AdminApiError } = await import('../api/client')
+    api.getSession.mockRejectedValue(new AdminApiError({}, 403, 'forbidden'))
+    const { useAuthStore } = await import('./auth')
+    const store = useAuthStore()
+    await expect(store.refresh()).rejects.toBeDefined()
+    expect(store.canAccessAdmin).toBe(false)
   })
 
   it('enables account administration for a local platform administrator', async () => {

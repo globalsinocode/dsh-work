@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -22,16 +22,25 @@ import {
 import { AppLogo } from '@dsh-work/ui-core'
 import { roleLabels, useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
+import { useNotificationStore } from '@/stores/notifications'
 import { useTaskStore } from '@/stores/tasks'
+import NotificationInbox from '@/components/NotificationInbox.vue'
 import type { TaskRun } from '@/types/domain'
 import { isTaskInArchivedWorkspace } from '@/utils/archived-workspaces'
 import { conversationRemovalNotice } from '@/utils/content-lifecycle'
 import { notifyActionFailure } from '@/utils/feedback'
+import {
+  createAuthorizationChangeHandler,
+  setAuthorizationChangeHandler,
+} from '@/utils/authorization-change'
+import { registerVisibilityAuthRefresh } from '@/utils/visibility-auth-refresh'
+import { exportConversation } from '@/utils/conversation-export'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const taskStore = useTaskStore()
+const notificationStore = useNotificationStore()
 const contentStore = useContentStore()
 
 const mobileOpen = ref(false)
@@ -81,20 +90,6 @@ function copyConversationLink(task: TaskRun) {
   ElMessage.success('对话链接已复制')
 }
 
-function exportConversation(task: TaskRun) {
-  const content = task.messages
-    .map((message) => `${message.role === 'user' ? '我' : 'dsh-work'}：${message.content}`)
-    .join('\n\n')
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `${task.title}-对话记录.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
-  ElMessage.success('对话记录已导出')
-}
-
 async function deleteConversation(task: TaskRun) {
   if (deletingSessionId.value) return
   if (isTaskInArchivedWorkspace(task, contentStore.workspaces)) {
@@ -138,7 +133,12 @@ async function deleteConversation(task: TaskRun) {
 function onRecentConversationCommand(command: string | number | object, task: TaskRun) {
   const value = String(command)
   if (value === 'copy-link') copyConversationLink(task)
-  if (value === 'export') exportConversation(task)
+  if (value === 'export-session') {
+    void exportConversation({ scope: 'session', sessionId: task.sessionId, title: task.title })
+  }
+  if (value === 'export-run') {
+    void exportConversation({ scope: 'run', sessionId: task.sessionId, runId: task.id, title: task.title })
+  }
   if (value === 'delete') void deleteConversation(task)
 }
 
@@ -150,11 +150,33 @@ watch(
 )
 
 watch(() => authStore.user.id, (id, previous) => {
-  if (previous && id !== previous) { taskStore.reset(); contentStore.reset() }
+  if (previous && id !== previous) {
+    taskStore.reset()
+    contentStore.reset()
+    notificationStore.reset()
+  }
   if (id === '—') return
-  void Promise.all([taskStore.load(), contentStore.load()]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
+  void Promise.all([
+    taskStore.load(),
+    contentStore.load(),
+    notificationStore.load(),
+  ]).catch(cause => notifyActionFailure('加载工作台', '工作内容', cause))
 }, { immediate: true })
-onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加载身份', '当前账号', cause)) })
+const authorizationHandler = createAuthorizationChangeHandler(() => authStore.refresh())
+let removeVisibilityListener: (() => void) | undefined
+
+onMounted(() => {
+  setAuthorizationChangeHandler(authorizationHandler)
+  void authStore.load().catch(cause => notifyActionFailure('加载身份', '当前账号', cause))
+  removeVisibilityListener = registerVisibilityAuthRefresh(() => {
+    void taskStore.refresh()
+    return authStore.initialized ? authStore.refresh() : Promise.resolve()
+  })
+})
+onBeforeUnmount(() => {
+  setAuthorizationChangeHandler(null)
+  removeVisibilityListener?.()
+})
 </script>
 
 <template>
@@ -229,9 +251,13 @@ onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加�
                   <el-icon><Share /></el-icon>
                   复制对话链接
                 </el-dropdown-item>
-                <el-dropdown-item command="export">
+                <el-dropdown-item command="export-session">
                   <el-icon><Download /></el-icon>
-                  导出对话记录
+                  导出完整会话
+                </el-dropdown-item>
+                <el-dropdown-item command="export-run">
+                  <el-icon><Download /></el-icon>
+                  导出本次 Run
                 </el-dropdown-item>
                 <el-dropdown-item
                   v-if="!isTaskInArchivedWorkspace(task, contentStore.workspaces)"
@@ -249,6 +275,7 @@ onMounted(() => { void authStore.load().catch(cause => notifyActionFailure('加�
       </section>
 
       <div class="employee-sidebar__footer">
+        <NotificationInbox />
         <el-dropdown trigger="click" placement="top-start" @command="onAccountCommand">
           <button class="profile-button" type="button" aria-label="打开用户中心">
             <span class="profile-button__avatar">{{ authStore.user.avatarText }}</span>

@@ -17,12 +17,13 @@ import type { RunOrchestrationService } from '../run/run-orchestration-service.t
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
+import { nextSlotUtc, normalizeSchedule } from '../../domain/execution-schedule.ts'
 import type { RunRecord } from '../run/run-types.ts'
-import { nextSlotUtc, normalizeSchedule } from './automation-calendar.ts'
 import type { PostgresAutomationRepository } from './postgres-automation-repository.ts'
 import {
   AutomationReasonCodes,
   frozenConfigToJson,
+  type AutomationExecutionPage,
   type AutomationExecutionRecord,
   type AutomationInputTemplate,
   type AutomationModuleConfig,
@@ -189,27 +190,78 @@ export class AutomationService {
     return updated
   }
 
-  async listMine(ownerUserId: string): Promise<AutomationRecord[]> {
-    return this.automations.listByOwner(ownerUserId)
+  async listMine(
+    ownerUserId: string,
+    input?: { status?: 'active' | 'archived' },
+  ): Promise<AutomationRecord[]> {
+    return this.automations.listByOwner(ownerUserId, input)
   }
 
   async getMine(ownerUserId: string, id: string): Promise<AutomationRecord> {
-    const automation = await this.automations.getByIdForOwner(id, ownerUserId)
-    if (!automation || automation.status === 'disabled') throw notFound()
+    const automation = await this.getOwned(ownerUserId, id)
+    if (automation.status === 'disabled') throw notFound()
     return automation
   }
 
-  async listExecutions(ownerUserId: string, automationId: string): Promise<AutomationExecutionRecord[]> {
-    await this.getMine(ownerUserId, automationId)
-    const executions = await this.automations.listExecutions(automationId)
-    // I-06：执行列表附带关联 Run 的业务结果核验状态（task-result/v1），
-    // 同一契约投影——自动任务不复制第二份结果状态机，详情仍经会话入口查看。
-    const runIds = executions.map(execution => execution.runId).filter((id): id is string => id !== null)
+  private async getOwned(ownerUserId: string, id: string): Promise<AutomationRecord> {
+    const automation = await this.automations.getByIdForOwner(id, ownerUserId)
+    if (!automation) throw notFound()
+    return automation
+  }
+
+  async listExecutions(
+    ownerUserId: string,
+    automationId: string,
+    input?: { limit?: number; cursor?: string | null },
+  ): Promise<AutomationExecutionPage> {
+    await this.getOwned(ownerUserId, automationId)
+    const page = await this.automations.listExecutions(automationId, input)
+    const runIds = page.items.map(execution => execution.runId).filter((id): id is string => id !== null)
     const outcomes = await this.conversations.getTaskResultOutcomes(runIds)
-    return executions.map(execution => ({
-      ...execution,
-      resultOutcome: execution.runId ? outcomes.get(execution.runId) ?? null : null,
-    }))
+    return {
+      ...page,
+      items: page.items.map(execution => ({
+        ...execution,
+        resultOutcome: execution.runId ? outcomes.get(execution.runId) ?? null : null,
+      })),
+    }
+  }
+
+  async archive(ownerUserId: string, automationId: string): Promise<AutomationRecord> {
+    await this.getMine(ownerUserId, automationId)
+    const updated = await this.automations.archive(automationId, ownerUserId, ownerUserId)
+    if (!updated) throw conflict('自动任务状态已变化，请刷新后重试', 'state_conflict')
+    await this.convergeQueuedExecutions(automationId, '任务已归档', AutomationReasonCodes.taskDisabled)
+    await this.operations?.appendAudit(
+      ownerUserId, 'automation.archive', automationId, 'success', `trace-automation-${automationId}`, '员工归档自动任务',
+    )
+    return updated
+  }
+
+  async restore(ownerUserId: string, automationId: string, _sessionRoleIds?: string[]): Promise<AutomationRecord> {
+    const automation = await this.getOwned(ownerUserId, automationId)
+    if (automation.status !== 'disabled') {
+      throw conflict('只有已归档的自动任务可以恢复', 'state_conflict')
+    }
+    await this.authorization.resolveAutomationSubject(ownerUserId)
+    await this.authorizeExecution({
+      userId: ownerUserId,
+      workspaceId: automation.workspaceId,
+      agentVersionId: automation.agentVersionId,
+      scopeCeiling: automation.scopeCeiling,
+    })
+    await this.content.assertRuntimeFileAccess({
+      fileIds: automation.inputTemplate.fileIds ?? [],
+      userId: ownerUserId,
+      workspaceId: automation.workspaceId,
+      tenantId,
+    })
+    const updated = await this.automations.restoreArchived(automationId, ownerUserId)
+    if (!updated) throw conflict('自动任务状态已变化，请刷新后重试', 'state_conflict')
+    await this.operations?.appendAudit(
+      ownerUserId, 'automation.restore', automationId, 'success', `trace-automation-${automationId}`, '员工恢复已归档自动任务',
+    )
+    return updated
   }
 
   /**
@@ -286,12 +338,7 @@ export class AutomationService {
   }
 
   async disable(ownerUserId: string, id: string): Promise<AutomationRecord> {
-    await this.getMine(ownerUserId, id)
-    const updated = await this.automations.transitionStatus(id, ['draft', 'enabled', 'paused'], 'disabled')
-    if (!updated) throw conflict('自动任务状态已变化，请刷新后重试', 'state_conflict')
-    await this.convergeQueuedExecutions(id, '任务已停用', AutomationReasonCodes.taskDisabled)
-    await this.operations?.appendAudit(ownerUserId, 'automation.disable', id, 'success', `trace-automation-${id}`, '员工停用自动任务')
-    return updated
+    return this.archive(ownerUserId, id)
   }
 
   /**
@@ -588,14 +635,15 @@ export class AutomationService {
       })
       await this.advanceCursorInTx(transaction, request, task)
       if (!execution) throw new Error('执行记录创建失败')
-      return { kind: 'recorded' as const, execution, run, decision }
+      return { kind: 'recorded' as const, execution, run, decision, timezone: task.schedule.timezone }
     })
 
     if (!accepted || accepted.kind !== 'recorded' || !accepted.execution) return accepted?.execution ?? null
-    const { execution, run, decision } = accepted as {
+    const { execution, run, decision, timezone } = accepted as {
       execution: AutomationExecutionRecord
       run?: RunRecord
       decision?: RuntimeAuthorizationDecision
+      timezone?: string
     }
     if (execution.admissionStatus !== 'accepted') return execution
 
@@ -610,6 +658,7 @@ export class AutomationService {
         attemptId: `attempt-${execution.id}`,
         authorization: decision,
         budget: frozen.budget,
+        timezone,
       })
     } catch (error) {
       // dispatch 失败收敛：Run 仍是「无 Attempt 的 queued」时落 failed

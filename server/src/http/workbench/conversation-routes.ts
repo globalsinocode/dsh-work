@@ -5,10 +5,15 @@ import type { RunRepository } from '../../modules/run/run-repository.ts'
 import type { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import type { PostgresAuthorizationService, TeamMemberRole } from '../../modules/authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject } from '../../domain/authorization-errors.ts'
+import {
+  projectAllRoles as allRoles,
+  projectWriterRoles as writerRoles,
+} from '../../domain/project-roles.ts'
 import type { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import type { TaskRun } from '../../domain/types.ts'
 import type { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import type { TaskBudgetInput } from '../../modules/task/task-budget-types.ts'
+import { SessionExportService } from '../../modules/workbench/application/session-export-service.ts'
 import {
   envelope,
   httpResult,
@@ -35,6 +40,8 @@ export function registerConversationRoutes(
   skills?: PostgresSkillService,
   agentMembers?: PostgresWorkspaceAgentMemberService,
 ) {
+  const sessionExport = new SessionExportService({ conversations, orchestration, authorization })
+
   router.get(`${basePath}/tasks`, async (_request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
@@ -66,7 +73,7 @@ export function registerConversationRoutes(
     await authorization.requireTeamRole(
       workspaceId,
       userId,
-      ['owner', 'admin', 'member', 'viewer'],
+      allRoles,
       { purpose: 'read' },
     )
     const limit = parseSessionPageLimit(context.url.searchParams.get('limit'))
@@ -106,8 +113,11 @@ export function registerConversationRoutes(
       title: unknown
       workspaceId?: unknown
       agentId?: unknown
+      agentVersionId?: unknown
       skillId?: unknown
+      skillVersionId?: unknown
       workspaceAgentMemberId?: unknown
+      clientIntentId?: unknown
     } | null>(request)
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw routeValidationFailed('请求体必须是 JSON 对象')
@@ -115,51 +125,77 @@ export function registerConversationRoutes(
     for (const [field, value] of Object.entries({
       workspaceId: body.workspaceId,
       agentId: body.agentId,
+      agentVersionId: body.agentVersionId,
       skillId: body.skillId,
+      skillVersionId: body.skillVersionId,
       workspaceAgentMemberId: body.workspaceAgentMemberId,
+      clientIntentId: body.clientIntentId,
     })) {
       if (value !== undefined && typeof value !== 'string') throw routeValidationFailed(`${field} 必须是字符串`)
     }
+    if (body.agentVersionId !== undefined && body.agentId === undefined) {
+      throw routeValidationFailed('agentVersionId 必须与 agentId 一起提供')
+    }
+    if (body.skillVersionId !== undefined && body.skillId === undefined) {
+      throw routeValidationFailed('skillVersionId 必须与 skillId 一起提供')
+    }
+    const clientIntentId = typeof body.clientIntentId === 'string' ? body.clientIntentId.trim() : ''
+    if (clientIntentId && clientIntentId.length > 128) throw routeValidationFailed('clientIntentId 不能超过 128 个字符')
     const workspaceId = body.workspaceId as string | undefined
     const agentId = body.agentId as string | undefined
+    const agentVersionIdInput = body.agentVersionId as string | undefined
     const skillId = body.skillId as string | undefined
+    const skillVersionIdInput = body.skillVersionId as string | undefined
     const workspaceAgentMemberId = body.workspaceAgentMemberId as string | undefined
     const access = await authorization.authorizeWorkbench({ userId, ...authorizationContext })
+    const roleIds = access?.roleIds ?? identity.roleIds
     // Team workspaces must start sessions through the agent member
     // association (pinned version); personal workspaces, non-members and
     // omitted workspaceIds keep the existing resolution path untouched
     // (AC-23).
     const selectedSkillVersion = skillId && skills
-      ? await skills.resolveWorkbenchSkillVersion(skillId)
+      ? skillVersionIdInput
+        ? await skills.resolveWorkbenchSkillVersionById({ skillId, versionId: skillVersionIdInput })
+        : await skills.resolveWorkbenchSkillVersion(skillId)
       : undefined
     const workspaceType = await authorization.resolveWorkspaceType(workspaceId, userId)
     // TW-10：团队空间会话是全队共享讨论，创建时不再强制绑定 Agent 成员——
     // 普通消息不产生 Run，@Agent 时才按成员固定版本执行。只读成员不得创建
     // 讨论串；显式携带成员关联时仍校验其可用性并记录固定版本（会话级默认值）。
     if (workspaceType === 'team') {
-      await authorization.requireTeamRole(workspaceId!, userId, ['owner', 'admin', 'member'])
+      await authorization.requireTeamRole(workspaceId!, userId, writerRoles)
       // 单独传 agentId 不传成员关联是有歧义的输入：拒绝而不是静默创建
       // 未绑定会话，避免调用方误以为 Agent 已绑定（发现延迟到首次 startRun）。
       if (agentId !== undefined && !workspaceAgentMemberId) {
         throw routeValidationFailed('团队空间对话不能单独使用 agentId；请通过 workspaceAgentMemberId 选择 Agent 成员')
       }
     }
+    const skillReferences = selectedSkillVersion ? [selectedSkillVersion.reference] : []
     const agentVersionId = workspaceType === 'team'
       ? workspaceAgentMemberId
         ? await resolveTeamSessionAgentVersion(
             agentMembers,
             agents,
-            { workspaceId, workspaceAgentMemberId, agentId },
+            { workspaceId, workspaceAgentMemberId, agentId, agentVersionId: agentVersionIdInput },
             userId,
-            access?.roleIds ?? identity.roleIds,
+            roleIds,
+            skillReferences,
           )
         : null
-      : await agents.resolveWorkbenchAgentVersion(
-          agentId,
-          userId,
-          access?.roleIds ?? identity.roleIds,
-          selectedSkillVersion ? [selectedSkillVersion.reference] : [],
-        )
+      : agentId && agentVersionIdInput
+        ? (await agents.resolveWorkbenchAgentVersionById({
+            agentId,
+            versionId: agentVersionIdInput,
+            userId,
+            roleIds,
+            requiredSkillReferences: skillReferences,
+          })).id
+        : await agents.resolveWorkbenchAgentVersion(
+            agentId,
+            userId,
+            roleIds,
+            skillReferences,
+          )
     const session = await orchestration.createSession({
       userId,
       title: body.title,
@@ -167,9 +203,61 @@ export function registerConversationRoutes(
       agentVersionId,
       selectedSkillVersionId: selectedSkillVersion?.id,
       selectedSkillReference: selectedSkillVersion?.reference,
+      clientIntentId: clientIntentId || undefined,
       authorizationContext,
     })
-    return httpResult(201, envelope('workbench', session, 'postgres'))
+    return httpResult(
+      session.replayed ? 200 : 201,
+      envelope('workbench', await enrichSessionVersionBindings(agents, skills, session), 'postgres'),
+    )
+  })
+
+  router.get(`${basePath}/sessions/:sessionId/export`, async (_request, context, response) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const sessionId = context.params['sessionId'] ?? ''
+    const exported = await sessionExport.exportSession({ sessionId, userId })
+    response.writeHead(200, {
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(exported.filename.replace(/[\r\n"]/g, '_'))}`,
+      'Content-Type': exported.contentType,
+      'X-Content-Type-Options': 'nosniff',
+    })
+    for await (const chunk of exported.content) response.write(chunk)
+    response.end()
+  })
+
+  router.get(`${basePath}/runs/:runId/export`, async (_request, context, response) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const runId = context.params['runId'] ?? ''
+    const task = await conversations.getTask(runId, userId)
+    if (!task || (!(await authorizeTeamTaskRead(authorization, task, userId)))) {
+      return httpResult(404, { error: { code: 'run_not_found', message: 'Run 不存在或不可访问' } })
+    }
+    const exported = await sessionExport.exportRun({ runId, userId })
+    response.writeHead(200, {
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(exported.filename.replace(/[\r\n"]/g, '_'))}`,
+      'Content-Type': exported.contentType,
+      'X-Content-Type-Options': 'nosniff',
+    })
+    for await (const chunk of exported.content) response.write(chunk)
+    response.end()
+  })
+
+  router.post(`${basePath}/sessions/:sessionId/discard-draft`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    const body = await readJsonBody<{ clientIntentId?: unknown } | null>(request)
+    const clientIntentId = typeof body?.clientIntentId === 'string' ? body.clientIntentId.trim() : ''
+    if (!clientIntentId) throw routeValidationFailed('clientIntentId 必须是非空字符串')
+    const sessionId = context.params['sessionId'] ?? ''
+    const discarded = await conversations.discardEmptyDraftSession({ sessionId, userId, clientIntentId })
+    return envelope('workbench', { discarded }, 'postgres')
   })
 
   if (skills) {
@@ -248,12 +336,17 @@ export function registerConversationRoutes(
   router.post(`${basePath}/sessions/:sessionId/messages`, async (request, context) => {
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
-    const body = await readJsonBody<{ content?: unknown; idempotencyKey?: unknown } | null>(request)
+    const body = await readJsonBody<{ content?: unknown; idempotencyKey?: unknown; mentionedUserIds?: unknown } | null>(request)
     if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw routeValidationFailed('请求体必须是 JSON 对象')
     }
     if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== 'string') {
       throw routeValidationFailed('idempotencyKey 必须是字符串')
+    }
+    if (body.mentionedUserIds !== undefined) {
+      if (!Array.isArray(body.mentionedUserIds) || body.mentionedUserIds.some(id => typeof id !== 'string')) {
+        throw routeValidationFailed('mentionedUserIds 必须是字符串数组')
+      }
     }
     await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
     const headerKey = request.headers['idempotency-key']
@@ -268,6 +361,7 @@ export function registerConversationRoutes(
       sessionId: context.params['sessionId'] ?? '',
       content: body.content,
       idempotencyKey,
+      mentionedUserIds: body.mentionedUserIds as string[] | undefined,
     })
     return httpResult(201, envelope('workbench', result, 'postgres'))
   })
@@ -415,7 +509,7 @@ export function registerConversationRoutes(
     await authorization.requireTeamRole(
       workspaceId,
       userId,
-      ['owner', 'admin', 'member', 'viewer'],
+      allRoles,
       { purpose: 'read' },
     )
     // since：客户端「状态为最新」的水位线（二审残留——建流前已归档的会话
@@ -526,9 +620,10 @@ async function authorizeTeamTaskRead(
 async function resolveTeamSessionAgentVersion(
   agentMembers: PostgresWorkspaceAgentMemberService | undefined,
   agents: PostgresAgentService,
-  body: { workspaceId?: string; agentId?: string; workspaceAgentMemberId?: string },
+  body: { workspaceId?: string; agentId?: string; workspaceAgentMemberId?: string; agentVersionId?: string },
   userId: string,
   roleIds: string[],
+  requiredSkillReferences: string[] = [],
 ) {
   if (!agentMembers || !body.workspaceId || !body.workspaceAgentMemberId) {
     throw invalidRequest('团队空间对话必须通过 Agent 成员关联发起')
@@ -537,13 +632,56 @@ async function resolveTeamSessionAgentVersion(
     body.workspaceId,
     body.workspaceAgentMemberId,
   )
+  if (body.agentVersionId !== undefined && body.agentVersionId !== member.agentVersionId) {
+    throw invalidRequest('团队空间对话必须通过 Agent 成员关联发起')
+  }
   if (body.agentId !== undefined) {
-    const rawVersionId = await agents.resolveWorkbenchAgentVersion(body.agentId, userId, roleIds)
+    const rawVersionId = body.agentVersionId
+      ? (await agents.resolveWorkbenchAgentVersionById({
+          agentId: body.agentId,
+          versionId: body.agentVersionId,
+          userId,
+          roleIds,
+          requiredSkillReferences,
+        })).id
+      : await agents.resolveWorkbenchAgentVersion(body.agentId, userId, roleIds, requiredSkillReferences)
     if (rawVersionId !== member.agentVersionId) {
       throw invalidRequest('团队空间对话必须通过 Agent 成员关联发起')
     }
   }
   return member.agentVersionId
+}
+
+async function enrichSessionVersionBindings(
+  agents: PostgresAgentService,
+  skills: PostgresSkillService | undefined,
+  session: {
+    id: string
+    workspaceId: string
+    agentVersionId: string | null
+    selectedSkillVersionId?: string | null
+    title: string
+    createdAt: string
+    status?: 'draft' | 'active' | 'archived'
+    replayed?: boolean
+  },
+) {
+  let agentVersionReference: string | null = null
+  let skillVersionId: string | null = session.selectedSkillVersionId ?? null
+  let skillVersionReference: string | null = null
+  if (session.agentVersionId) {
+    agentVersionReference = await agents.lookupVersionReference(session.agentVersionId)
+  }
+  if (skillVersionId && skills) {
+    skillVersionReference = await skills.lookupVersionReference(skillVersionId)
+  }
+  return {
+    ...session,
+    agentVersionId: session.agentVersionId,
+    agentVersionReference,
+    skillVersionId,
+    skillVersionReference,
+  }
 }
 
 export interface TeamStreamAccess {
@@ -603,6 +741,8 @@ export async function streamRunEvents(
     if (events.length > 0 && !(await canDeliver())) break
     for (const event of events) {
       cursor = event.id
+      // 迟到事件（平台已结束的 Attempt 发来的终态等）只留在日志里，不推给页面。
+      if (event.safeMetadata['late'] === true) continue
       response.write(`id: ${event.id}\n`)
       response.write(`event: ${event.eventType}\n`)
       response.write(`data: ${JSON.stringify({

@@ -77,7 +77,7 @@ export const useToolGovernanceStore = defineStore('tool-governance', () => {
       const separator = reference.lastIndexOf('@')
       return separator > 0 ? reference.slice(0, separator) : reference
     }
-    const matches = (references: string[]) => references.some(reference => refId(reference) === toolId)
+    const matches = (references: string[] | undefined) => (references ?? []).some(reference => refId(reference) === toolId)
     return agents.flatMap((agent) => {
       const matched = versions
         .filter(version => version.agentId === agent.id && matches(version.tools))

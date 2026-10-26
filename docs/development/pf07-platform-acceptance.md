@@ -1,12 +1,12 @@
 # PF-07 平台能力验收与运行手册
 
-**矩阵版本：** `agent-platform-capabilities/v1`，代码基线 `3217cbb`。矩阵在 [agent-platform-capabilities.v1.json](agent-platform-capabilities.v1.json)；基线只是能力实现的起点，实际验收必须填写所部署的精确提交和版本。七项能力包括无 Session 任务、外部动作回执、累计预算、MCP、持久化等待、受控记忆和 Agent 委派。Token/成本硬预算、MCP Resources/Prompts/stdio、原 ACP Session 恢复及通用外部异步写连接器仍不在可发布能力之列。
+**矩阵版本：** `agent-platform-capabilities/v1`，代码基线 `3217cbb`。矩阵在 [agent-platform-capabilities.v1.json](agent-platform-capabilities.v1.json)；基线只是能力实现的起点，实际验收必须填写所部署的精确提交和版本。六项能力包括无 Session 任务、外部动作回执、累计预算、MCP、持久化等待和受控记忆（Agent 委派已于 2026-10-16 删除）。Token/成本硬预算、MCP Resources/Prompts/stdio、原 ACP Session 恢复及通用外部异步写连接器仍不在可发布能力之列。
 
 ## 分层执行
 
 1. **P0 契约：** 在代码版本固定后运行 `pnpm test:pf07:matrix`、`pnpm test:m1` 和 `pnpm test:review:unit`。矩阵检查确保能力有 P0/P1 命令和 P2 场景；它不运行能力测试。
-2. **P1 服务：** 只用专用可丢弃 PostgreSQL 运行 `pnpm test:pf07:p1`。MCP 管理的 P1 浏览器旅程另运行 `pnpm test:e2e:mcp-admin`；个人任务、审批与记忆的前端旅程按 [TEST-CATALOG](../../e2e/TEST-CATALOG.md) 选用现有 P0/P1 套件。记录每条命令、提交、运行环境、退出结果和失败日志引用。CI 执行 PF-01～PF-06 的服务集成套件；浏览器套件按对应配置单独执行。
-3. **P2 真实链路：** 先固定目标部署、OIDC 身份、DSH Lock、Adapter、模型和批准连接。按矩阵逐场景执行真实 Run/Attempt，记录操作回执、审计/成果引用以及故障和撤权后的拒绝结果。MCP、等待及记忆的具体动作见 [TEST-CATALOG](../../e2e/TEST-CATALOG.md) 的 `PF-MCP-P2`、`PF-WAIT-P2`、`PF-MEMORY-P2`。无 Session、外部动作、预算和委派按矩阵场景逐项执行；委派必须核对父子 Run、根预算、真实身份撤权、容量耗尽、取消/重启及混合回执，不能以子回答文本作为权威成功。
+2. **P1 服务：** 只用专用可丢弃 PostgreSQL 运行 `pnpm test:pf07:p1`。MCP 管理的 P1 浏览器旅程另运行 `pnpm test:e2e:mcp-admin`；个人任务、审批与记忆的前端旅程按 [TEST-CATALOG](../../e2e/TEST-CATALOG.md) 选用现有 P0/P1 套件。记录每条命令、提交、运行环境、退出结果和失败日志引用。CI 执行 PF-01～PF-05 的服务集成套件；浏览器套件按对应配置单独执行。
+3. **P2 真实链路：** 先固定目标部署、OIDC 身份、DSH Lock、Adapter、模型和批准连接。按矩阵逐场景执行真实 Run/Attempt，记录操作回执、审计/成果引用以及故障和撤权后的拒绝结果。MCP、等待及记忆的具体动作见验收目录的 `PF-MCP-P2`、`PF-WAIT-P2`（[管理端与平台](../../e2e/catalog/admin-platform.md)）与 `PF-MEMORY-P2`（[Agent](../../e2e/catalog/agents.md)）。无 Session、外部动作和预算按矩阵场景逐项执行。
 
 ## P2 记录与发布门禁
 
@@ -14,13 +14,13 @@
 
 `node scripts/acceptance/pf07.mjs /path/to/pf07-evidence.json` 只检查字段、能力和场景完整性；验收人仍须逐项打开引用，核实真实身份、目标服务、Run/Attempt、动作效果和撤权/故障结果后签署结论。仅当 P0、P1、P2 在同一目标版本均通过，且所有适用场景被复核，才把这些平台能力开放给具体 Agent 发布。某能力未使用时可以在具体 Agent 的发布范围中排除它，不能在平台整体 P2 记录里伪造通过。
 
-**当前证据状态：** PF-01～PF-06 代码级记录已存在。[2026-09-23 双账号隔离环境进度](../history/pf07/pf07-oidc-isolated-progress-2026-09-23.md)记录了真实 OIDC 的 MCP 写入、审计与回执，以及私人受控记忆的发布、检索和撤回；另一账号的实际 Run、审批、预算与委派等场景仍未完成，不能当作全量 P2。[较早的本地真实链路核对](../history/pf07/pf07-real-chain-check-2026-09-23.md)使用现有开发库和单身份，也不能代替专用环境验收。此前 P2 只有口头结论，未提供版本、身份、环境和 Run/Attempt 等原始记录；它发生在当前平台能力形成之前，不能作为 PF-07 的 P2 证据。2026-09-14 的真实 DSH 验收使用合成身份，也早于 PF-01～PF-06。PF-07 应按当前目标版本逐场景执行并留证，发布门禁仍未通过。
+**当前证据状态：** PF-01～PF-05 代码级记录已存在。2026-09-23 的双账号隔离环境进度记录了真实 OIDC 的 MCP 写入、审计与回执，以及私人受控记忆的发布、检索和撤回；另一账号的实际 Run、审批与预算等场景仍未完成，不能当作全量 P2。较早的本地真实链路核对使用现有开发库和单身份，也不能代替专用环境验收。此前 P2 只有口头结论，未提供版本、身份、环境和 Run/Attempt 等原始记录；它发生在当前平台能力形成之前，不能作为 PF-07 的 P2 证据。2026-09-14 的真实 DSH 验收使用合成身份，也早于 PF-01～PF-06。PF-07 应按当前目标版本逐场景执行并留证，发布门禁仍未通过。
 
 ## 可丢弃 MCP 写动作靶场
 
 `pnpm test:pf07:fixture` 检查本地 Streamable HTTP MCP 的 Bearer 拒绝、工具清单、幂等写入、冲突与超时后权威回执；这一层只验证测试靶场自身。`pnpm probe:pf07:mcp` 从 `.env` 解析当前锁定的真实 DSH，临时启动仅监听 `127.0.0.1` 的靶场，执行发现及一次真实模型驱动的 MCP 写入和回执查询，最后销毁靶场与 Attempt 工作目录。脚本只输出工具名、临时 Run/Attempt ID、回执 ID 和脱敏调用结果，不输出临时 Bearer Token。
 
-`pnpm probe:pf07:mcp:platform` 在 `DSH_WORK_TEST_DATABASE_URL` 指向的本地 PostgreSQL 维护实例中自建、迁移并销毁一次性数据库。它使用合成用户与真实平台服务登记、加密存储、解析 MCP；经真实 Run/Attempt → DSH 验证 Agent Version 的 `all`、`selected`、`none` 范围：写入和查询外部回执、审计实际 MCP 调用、排除未选 Connector，并用默认文件工具生成可从 Artifact 存储读取的文件。随后验证错误凭据、工具清单变化、停用、删除、选定连接失效时拒绝新 Attempt，以及 Manifest 不含密钥。脚本的外部工具审批回调固定为测试允许，且会销毁数据库、文件和测试回执；这是隔离的工程回归，不能作为真实 OIDC 身份、人工审批或可事后查询的 P2 记录。命令只接受回环 PostgreSQL，禁止指向开发业务库或生产库。
+`pnpm probe:pf07:mcp:platform` 在 `DSH_WORK_TEST_DATABASE_URL` 指向的本地 PostgreSQL 维护实例中自建、迁移并销毁一次性数据库。它使用合成用户与真实平台服务登记、加密存储、解析 MCP；经真实 Run/Attempt → DSH 验证 Agent Version 的 `selected`、`none` 范围：写入和查询外部回执、审计实际 MCP 调用、排除未选 Connector，并用默认文件工具生成可从 Artifact 存储读取的文件。随后验证错误凭据、工具清单新增须确认、停用、删除、选定连接失效时拒绝新 Attempt，以及 Manifest 不含密钥。脚本的外部工具审批回调固定为测试允许，且会销毁数据库、文件和测试回执；这是隔离的工程回归，不能作为真实 OIDC 身份、人工审批或可事后查询的 P2 记录。命令只接受回环 PostgreSQL，禁止指向开发业务库或生产库。
 
 单独长时间运行靶场时，先在 Git 工作区外建立权限为 `0600` 的 Token 文件，设置 `PF07_MCP_TEST_TOKEN_FILE`，再运行 `node scripts/acceptance/pf07-mcp-fixture.mjs`；可设置 `PF07_MCP_TEST_PORT` 固定回环端口、`PF07_MCP_RECEIPTS_PATH` 保存权威写入 JSONL，以及 `PF07_MCP_CATALOG_VERSION=2` 模拟新增工具。不要把 Token 或回执文件提交到仓库。完成后停止服务，并清理一次性连接器、数据库和记录。
 

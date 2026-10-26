@@ -159,6 +159,7 @@ test('admin Agent 详情返回只读的「已加入空间」清单，已移出�
   assert.equal(items[0]?.version, '1.0.0')
   assert.equal(items[0]?.workspaceType, 'team')
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const afterRemoval = await api('GET', `/api/admin/v1/agents/${agent.id}/workspaces`, { as: adminUserId })
@@ -196,12 +197,11 @@ test('对账清单列出 legacy 来源与可能归属 Agent，仅提示不自动
   assert.deepEqual(supplyAgent.possibleAgents.map(agent => agent.agentId), ['agent-dsh-work-assistant'])
   assert.match(supplyAgent.inferenceNote, /仅提示不自动回填/)
 
-  const supplyTool = data.items.find(item => item.workspaceId === 'ws-supply' && item.capabilityType === 'tool')
-  assert.ok(supplyTool)
-  assert.deepEqual(supplyTool.possibleAgents, [])
+  // 工具授权已随内置工具代码化移除，只剩 Agent 与 Skill 的 legacy 来源。
+  assert.equal(data.items.some(item => item.capabilityType === 'tool'), false)
 
   const supplySummary = data.workspaceSummary.find(entry => entry.workspaceId === 'ws-supply')
-  assert.equal(supplySummary?.unresolvedCount, 3)
+  assert.equal(supplySummary?.unresolvedCount, 2)
 
   // 只列 legacy_unresolved 来源。
   const [legacyCount] = await database<{ count: number }[]>`
@@ -214,17 +214,17 @@ test('对账清单列出 legacy 来源与可能归属 Agent，仅提示不自动
 test('对账完成把 legacy 来源改写为 manual、不删除任何行、不改变有效授权集合并记审计', async () => {
   const workspaceId = `ws-t7-reconcile-${suffix}`
   await createTeamWorkspace(workspaceId, [{ userId: adminUserId, role: 'owner' }])
-  const tool = await createTool({ id: `tool-t7-rec-${suffix}` })
+  const skill = await createSkill({ id: `skill-t7-rec-${suffix}` })
   const legacySourceId = await seedLegacySource({
     workspaceId,
-    capabilityType: 'tool',
-    capabilityVersionId: tool.versionId,
+    capabilityType: 'skill',
+    capabilityVersionId: skill.versionId,
   })
   // 第二个 legacy 来源：覆盖 admin UI 的「按空间批量对账」多 id 路径。
   const secondLegacySourceId = await seedLegacySource({
     workspaceId,
-    capabilityType: 'tool',
-    capabilityVersionId: tool.versionId,
+    capabilityType: 'skill',
+    capabilityVersionId: skill.versionId,
   })
   // 一条已撤销的来源行，用于验证对账不会物理删除撤销行。
   await database`
@@ -232,7 +232,7 @@ test('对账完成把 legacy 来源改写为 manual、不删除任何行、不�
       id, tenant_id, workspace_id, capability_type, capability_version_id,
       source_type, source_ref_id, status, created_by, revoked_at
     ) values (
-      ${`wgs-t7-revoked-${suffix}`}, ${tenantId}, ${workspaceId}, 'tool', ${tool.versionId},
+      ${`wgs-t7-revoked-${suffix}`}, ${tenantId}, ${workspaceId}, 'skill', ${skill.versionId},
       'legacy_unresolved', null, 'revoked', 'U00001', now()
     )
   `
@@ -333,17 +333,17 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   const ownerId = `user-t7-gate-${suffix}`
   await createDirectoryUser(ownerId, 'T7 门禁负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  const tool = await createTool({ id: `tool-t7-gate-${suffix}` })
+  const skill = await createSkill({ id: `skill-t7-gate-${suffix}` })
   const legacySourceId = await seedLegacySource({
     workspaceId,
-    capabilityType: 'tool',
-    capabilityVersionId: tool.versionId,
+    capabilityType: 'skill',
+    capabilityVersionId: skill.versionId,
   })
   const agent = await createPublishedAgent({
     id: `agent-t7-gate-${suffix}`,
     name: 'T7 门禁 Agent',
     ownerId,
-    toolRefs: [`tool-t7-gate-${suffix}@1.0.0`],
+    skillRefs: [`skill-t7-gate-${suffix}@1.0.0`],
   })
 
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
@@ -361,6 +361,7 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   assert.match(errorMessage(blockedDisable), /待对账的历史授权来源/)
   assert.match(errorMessage(blockedDisable), /完成对账前不能停用 Agent 成员/)
 
+  await keepAnotherAgentMember(workspaceId)
   const blockedRemove = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(blockedRemove.status, 409)
   assert.match(errorMessage(blockedRemove), /完成对账前不能移除 Agent 成员/)
@@ -385,6 +386,7 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   })
   assert.equal(reconciled.status, 200)
 
+  await keepAnotherAgentMember(workspaceId)
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${workspaceId}/agent-members/${memberId}`, { as: ownerId })
   assert.equal(removed.status, 200)
   const [afterMember] = await database<AgentMemberRow[]>`
@@ -393,17 +395,17 @@ test('存在 legacy 来源时移除或停用 Agent 被拒绝并提示先对账�
   `
   assert.equal(afterMember?.status, 'removed')
 
-  // legacy 来源对账后成为 manual 并保持 active，因此该工具授权不因移出 Agent 被删除。
-  const [legacyToolSource] = await database<{ sourceType: string; status: string }[]>`
+  // legacy 来源对账后成为 manual 并保持 active，因此该 Skill 授权不因移出 Agent 被删除。
+  const [legacySkillSource] = await database<{ sourceType: string; status: string }[]>`
     select source_type as "sourceType", status from workspace_grant_sources
      where tenant_id = ${tenantId} and id = ${legacySourceId}
   `
-  assert.equal(legacyToolSource?.sourceType, 'manual')
-  assert.equal(legacyToolSource?.status, 'active')
+  assert.equal(legacySkillSource?.sourceType, 'manual')
+  assert.equal(legacySkillSource?.status, 'active')
   const [preservedGrant] = await database<{ count: number }[]>`
     select count(*)::integer as count from workspace_capability_grants
      where tenant_id = ${tenantId} and workspace_id = ${workspaceId}
-       and capability_type = 'tool' and capability_version_id = ${tool.versionId}
+       and capability_type = 'skill' and capability_version_id = ${skill.versionId}
   `
   assert.equal(preservedGrant?.count, 1, '来源不明的存量授权不能因移出 Agent 顺带删除')
 })
@@ -413,17 +415,17 @@ test('并发「对账 + 移出 Agent 成员」按同一锁序串行化，不死�
   const ownerId = `user-t7-deadlock-${suffix}`
   await createDirectoryUser(ownerId, 'T7 死锁负责人')
   await createTeamWorkspace(workspaceId, [{ userId: ownerId, role: 'owner' }])
-  const tool = await createTool({ id: `tool-t7-deadlock-${suffix}` })
+  const skill = await createSkill({ id: `skill-t7-deadlock-${suffix}` })
   const legacySourceId = await seedLegacySource({
     workspaceId,
-    capabilityType: 'tool',
-    capabilityVersionId: tool.versionId,
+    capabilityType: 'skill',
+    capabilityVersionId: skill.versionId,
   })
   const agent = await createPublishedAgent({
     id: `agent-t7-deadlock-${suffix}`,
     name: 'T7 死锁 Agent',
     ownerId,
-    toolRefs: [`tool-t7-deadlock-${suffix}@1.0.0`],
+    skillRefs: [`skill-t7-deadlock-${suffix}@1.0.0`],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
     as: ownerId,
@@ -441,6 +443,7 @@ test('并发「对账 + 移出 Agent 成员」按同一锁序串行化，不死�
   //   - 移出 200：对账先完成，门禁已解除；
   //   - 移出 409：移出先持锁、被门禁拒绝；等对账完成后重试，最终状态一致。
   // 无论哪种顺序，都不得出现 deadlock。
+  await keepAnotherAgentMember(workspaceId)
   const [reconciled, firstRemoval] = await Promise.all([
     api('POST', '/api/admin/v1/grant-sources/reconcile', {
       as: adminUserId,
@@ -471,6 +474,29 @@ test('并发「对账 + 移出 Agent 成员」按同一锁序串行化，不死�
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * 方案 12.8 / 功能规则 3.3：项目空间不能移出最后一个 Agent 成员。测试“移出”行为的用例先放入一个
+ * 停用的锚点 Agent 成员（直接写行，不带授权来源，不影响授权与会话断言），被测 Agent 才能移出。
+ */
+let anchorAgentReady: Promise<{ id: string; versionId: string }> | undefined
+async function keepAnotherAgentMember(workspaceId: string) {
+  const [owner] = await database<{ userId: string }[]>`
+    select user_id as "userId" from workspace_members
+     where tenant_id = ${tenantId} and workspace_id = ${workspaceId} and member_role = 'owner'`
+  anchorAgentReady ??= (async () => {
+    await createPublishedAgent({ id: 'agent-s5d-anchor', name: 'S5d 锚点 Agent', ownerId: owner!.userId })
+    const [row] = await database<{ versionId: string }[]>`
+      select active_version_id as "versionId" from agents where tenant_id = ${tenantId} and id = 'agent-s5d-anchor'`
+    return { id: 'agent-s5d-anchor', versionId: row!.versionId }
+  })()
+  const anchor = await anchorAgentReady
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values (${`wam-anchor-${workspaceId}`}, ${tenantId}, ${workspaceId}, ${anchor.id}, ${anchor.versionId}, 'disabled', ${owner!.userId})
+    on conflict (tenant_id, workspace_id, agent_id) do nothing
+  `
+}
 function testApiAuthenticator(request: IncomingMessage, audience: ApiAudience): Promise<RequestIdentity> {
   const header = request.headers['x-test-user-id']
   const userId = Array.isArray(header) ? header[0] : header
@@ -542,7 +568,7 @@ async function createPublishedAgent(input: {
   id: string
   name?: string
   ownerId: string
-  toolRefs?: string[]
+  skillRefs?: string[]
   allowJoin?: boolean
 }) {
   await database`
@@ -558,16 +584,16 @@ async function createPublishedAgent(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.id}, '1.0.0', 'T7 测试 Agent', 'T7 对账与治理集成测试。',
       '', ${database.json(['测试'] as string[])}, '你是 T7 集成测试 Agent。',
-      ${database.json(['role-employee'])}, ${database.json(['enterprise:authorized'])},
-      65536, 20, 300, ${database.json([] as string[])}, ${database.json(input.toolRefs ?? [])},
+      65536, 20, 300, ${database.json(input.skillRefs ?? [])},
       'published', ${input.ownerId}, 'T7 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${input.id}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}
@@ -575,25 +601,23 @@ async function createPublishedAgent(input: {
   return { id: input.id, versionId }
 }
 
-async function createTool(input: { id: string }) {
-  const versionId = `tool-version-${input.id}-1`
+async function createSkill(input: { id: string }) {
+  const versionId = `skill-version-${input.id}-1`
   await database.begin(async transaction => {
     await transaction`
-      insert into tools (
-        id, tenant_id, key, name, source, status, connector_id, system, description,
-        dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
-        approval_policy, last_checked_at
-      ) values (
-        ${input.id}, ${tenantId}, ${`dsh-${input.id}`}, 'T7 测试工具', 'platform', 'available',
-        'connector-dsh-workspace', 'DSH Runtime', 'T7 对账集成测试工具。',
-        ${input.id}, 'read', 30, ${transaction.json(['role-employee'] as string[])},
-        ${transaction.json(['enterprise:authorized'] as string[])}, 'none', now()
-      )
+      insert into skills (id, tenant_id, key, name, category, description, owner_user_id, created_by, status)
+      values (${input.id}, ${tenantId}, ${input.id}, 'T7 测试技能', '文件', 'T7 对账集成测试技能。', 'U00008', 'U00008', 'published')
     `
     await transaction`
-      insert into tool_versions (id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status)
-      values (${versionId}, ${tenantId}, ${input.id}, '1.0.0', '{}', '{}', 'low', 'published')
+      insert into skill_versions (
+        id, tenant_id, skill_id, version, name, category, description, instructions,
+        manifest, tool_refs, test_prompt, status, created_by, published_by, published_at, change_summary
+      ) values (
+        ${versionId}, ${tenantId}, ${input.id}, '1.0.0', 'T7 测试技能', '文件', 'T7 对账集成测试技能。',
+        '按用户输入整理要点并标注不确定的信息。', '{}', '[]', '测试问题', 'published', 'U00008', 'U00008', now(), 'T7 测试'
+      )
     `
+    await transaction`update skills set active_version_id = ${versionId} where tenant_id = ${tenantId} and id = ${input.id}`
   })
   return { id: input.id, versionId }
 }
@@ -603,7 +627,7 @@ async function createTool(input: { id: string }) {
  */
 async function seedLegacySource(input: {
   workspaceId: string
-  capabilityType: 'agent' | 'skill' | 'tool'
+  capabilityType: 'agent' | 'skill'
   capabilityVersionId: string
 }) {
   const sourceId = `wgs-legacy-t7-${suffix}-${randomUUID().slice(0, 8)}`

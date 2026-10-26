@@ -5,6 +5,9 @@ import { normalizeAgentMcpScope } from './agent-mcp-scope.ts'
 
 test('MCP scope defaults to none and normalizes selected Connector IDs', () => {
   assert.deepEqual(normalizeAgentMcpScope(undefined), { mode: 'none', connectorIds: [] })
+  assert.deepEqual(normalizeAgentMcpScope({ mode: 'all', connectorIds: [] }), {
+    mode: 'all', connectorIds: [],
+  })
   assert.deepEqual(normalizeAgentMcpScope({ mode: 'selected', connectorIds: ['mcp-b', 'mcp-a', 'mcp-b'] }), {
     mode: 'selected', connectorIds: ['mcp-a', 'mcp-b'],
   })
@@ -20,7 +23,7 @@ test('MCP scope rejects ambiguous or invalid selections', () => {
     { mode: 'all', connectorIds: ['mcp-a'] },
     { mode: 'selected', connectorIds: [''] },
     { mode: 'selected', connectorIds: Array.from({ length: 21 }, (_, index) => `mcp-${index}`) },
-    { mode: 'all', connectorIds: [], unexpected: true },
+    { mode: 'none', connectorIds: [], unexpected: true },
   ]) {
     assert.throws(() => normalizeAgentMcpScope(scope), { status: 422, code: 'validation_failed' })
   }

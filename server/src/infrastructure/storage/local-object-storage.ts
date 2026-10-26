@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, mkdir, open, rm, writeFile } from 'node:fs/promises'
+import { link, lstat, mkdir, open, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { isStrictResolvedPathInside } from '../../domain/host-path.ts'
@@ -32,6 +32,18 @@ export class LocalObjectStorage implements ObjectStorage {
     } finally {
       await rm(temporary, { force: true })
     }
+  }
+
+  async deleteIfExists(key: string): Promise<boolean> {
+    const target = this.pathFor(key)
+    try {
+      if (!(await lstat(target)).isFile()) return false
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+      throw error
+    }
+    await rm(target, { force: true })
+    return true
   }
 
   async get(key: string): Promise<Buffer> {

@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import type { InstalledSkillPackage, SkillInstallationPlan } from '@/types/assistant'
 import { Document } from '@element-plus/icons-vue'
-defineProps<{ source: string; package: InstalledSkillPackage; plan?: SkillInstallationPlan | null; resolvedRef?: string }>()
+import { computed } from 'vue'
+const props = defineProps<{ source: string; package: InstalledSkillPackage; plan?: SkillInstallationPlan | null; resolvedRef?: string }>()
+const matchedTools = computed(() => props.plan?.summary.toolIds ?? props.package.toolIds)
+/** 既无匹配的内置工具、也没有声明但不支持的工具时，才是纯指令 Skill。 */
+const instructionOnly = computed(() => !matchedTools.value.length && !props.package.requirements.some(requirement => requirement.type === 'tool'))
+const requirementStatusLabels: Record<InstalledSkillPackage['requirements'][number]['status'], string> = {
+  resolved: '已满足', missing: '缺失', unsupported: '不支持', needs_review: '待复核',
+}
 </script>
 
 <template>
@@ -17,7 +24,7 @@ defineProps<{ source: string; package: InstalledSkillPackage; plan?: SkillInstal
           <el-table class="data-table" :data="package.files" empty-text="暂无文件"><el-table-column prop="path" label="文件" min-width="190" /><el-table-column prop="size" label="大小（字节）" width="125" /></el-table>
           <el-collapse><el-collapse-item title="查看执行说明" name="instructions"><pre class="package-instructions">{{ package.instructions }}</pre></el-collapse-item></el-collapse>
         </div>
-        <aside class="dependency-panel"><h4>工具与运行能力</h4><p v-if="!plan?.summary.toolIds.length">纯指令 Skill，无工具依赖。</p><div v-for="tool in plan?.summary.toolIds ?? package.toolIds" :key="tool" class="dependency-title"><strong>{{ tool }}</strong><el-tag type="success" size="small">已匹配</el-tag></div><div v-for="requirement in package.requirements" :key="`${requirement.type}-${requirement.name}`" class="dependency-title"><strong>{{ requirement.name }}</strong><el-tag :type="requirement.status === 'resolved' ? 'success' : requirement.status === 'needs_review' ? 'warning' : 'danger'" size="small">{{ requirement.status }}</el-tag></div><dl><div><dt>访问范围</dt><dd>当前任务授权文件与固定版本 Skill 资源</dd></div><div><dt>执行方式</dt><dd>DSH 按需激活；Python 仅通过平台沙箱执行</dd></div></dl><p class="dependency-note">管理员确认的是完整计划。平台只保存草稿，严格试运行通过后才能发布。</p></aside>
+        <aside class="dependency-panel"><h4>工具与运行能力</h4><p v-if="instructionOnly">纯指令 Skill，无工具依赖。</p><div v-for="tool in matchedTools" :key="tool" class="dependency-title"><strong>{{ tool }}</strong><el-tag type="success" size="small">已匹配</el-tag></div><div v-for="requirement in package.requirements" :key="`${requirement.type}-${requirement.name}`" class="dependency-title"><strong>{{ requirement.name }}</strong><el-tag :type="requirement.status === 'resolved' ? 'success' : requirement.status === 'needs_review' ? 'warning' : 'danger'" size="small">{{ requirementStatusLabels[requirement.status] }}</el-tag></div><dl><div><dt>访问范围</dt><dd>当前任务授权文件与固定版本 Skill 资源</dd></div><div><dt>执行方式</dt><dd>DSH 按需激活；Python 仅通过平台沙箱执行</dd></div></dl><p class="dependency-note">管理员确认的是完整计划。平台只保存草稿，严格试运行通过后才能发布。</p></aside>
       </div>
 </template>
 

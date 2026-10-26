@@ -11,6 +11,8 @@ import { useContentStore } from '@/stores/content'
 import { useTaskStore } from '@/stores/tasks'
 import type {
   Artifact,
+  ProjectTask,
+  ProjectTaskPage,
   Workspace,
   WorkspaceActivityItem,
   WorkspaceActivityPage,
@@ -26,6 +28,10 @@ import ConversationStarter from '@/components/ConversationStarter.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
 import WorkspaceDetailView from './WorkspaceDetailView.vue'
 
+function page(items: ProjectTask[], nextCursor: string | null = null): ProjectTaskPage {
+  return { items, nextCursor, total: items.length }
+}
+
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 const route = vi.hoisted(() => ({
   name: undefined as string | undefined,
@@ -36,7 +42,14 @@ const route = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({
   useRouter: () => router,
   useRoute: () => route,
-  RouterView: { template: '<div data-testid="router-view" />' },
+  RouterView: defineComponent({
+    setup() {
+      return () => (route.name === 'workspace-conversation'
+        ? h('div', { 'data-testid': 'team-space-composer-dock' })
+        : h('div', { 'data-testid': 'router-view' }))
+    },
+  }),
+  RouterLink: { props: ['to'], template: '<a :href="String(to)"><slot /></a>' },
 }))
 
 function workspace(overrides: Partial<Workspace> = {}): Workspace {
@@ -158,6 +171,18 @@ async function mountView(
   return { wrapper, contentStore }
 }
 
+
+/**
+ * 成员、Agent、空间设置与用量四个管理弹窗的打开状态（按挂载顺序）。项目空间 S1 的
+ * 简报与任务编辑弹窗由各自组件单测覆盖，这里排除，避免位置断言随页签内容漂移。
+ */
+function managementDialogStates(wrapper: { findAllComponents: (component: typeof ElDialog) => Array<{ props: (name: string) => unknown }> }) {
+  const projectDialogTitles = /项目简报|新建任务|编辑任务|完成任务|^添加成员$/
+  return wrapper.findAllComponents(ElDialog)
+    .filter(dialog => !projectDialogTitles.test(String(dialog.props('title') ?? '')))
+    .map(dialog => dialog.props('modelValue'))
+}
+
 describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
   beforeEach(() => {
     route.name = undefined
@@ -171,6 +196,9 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     vi.spyOn(workbenchApi, 'listWorkspaceActivity').mockResolvedValue(activityPage([]))
     vi.spyOn(workbenchApi, 'getWorkspaceNotifications').mockResolvedValue(notificationView())
     vi.spyOn(workbenchApi, 'listWorkspaceUsage').mockResolvedValue(usageFixture())
+    vi.spyOn(workbenchApi, 'getProjectBrief').mockResolvedValue(null)
+    vi.spyOn(workbenchApi, 'listProjectTasks').mockResolvedValue(page([]))
+    vi.spyOn(workbenchApi, 'getProjectArchive').mockResolvedValue({ current: null, archivistRunning: false })
   })
 
   it('refreshes workspace artifacts when team session activity updates', async () => {
@@ -224,8 +252,10 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('[data-testid="panel-workspace-settings"]').exists()).toBe(true)
     // 服务端确认 owner：4-T2 的空间用量区块与详情弹窗随之挂载（默认关闭）。
     expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(true)
-    // 成员、Agent、空间设置与用量详情四个弹窗均默认关闭。
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([false, false, false, false])
+    // 成员、Agent、空间设置、用量详情，以及项目简报与任务的编辑弹窗均默认关闭。
+    const states = wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))
+    expect(states.length).toBeGreaterThanOrEqual(4)
+    expect(states.every(open => open === false)).toBe(true)
   })
 
   it('opens the team management entry only for the resolved owner', async () => {
@@ -239,18 +269,17 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(settingsEntry.exists()).toBe(true)
     // 服务端确认 owner：4-T2 的空间用量区块随之挂载。
     expect(wrapper.find('[data-testid="panel-usage-section"]').exists()).toBe(true)
-    const dialogs = wrapper.findAllComponents(ElDialog)
-    expect(dialogs.map(dialog => dialog.props('modelValue'))).toEqual([false, false, false, false])
+    expect(managementDialogStates(wrapper)).toEqual([false, false, false, false])
 
     // 团队分支才挂载 2.6 成员管理弹窗与 2.7 空间设置弹窗。
     await entry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, false, false])
+    expect(managementDialogStates(wrapper)).toEqual([true, false, false, false])
     expect(wrapper.find('.member-dialog__body').exists()).toBe(true)
 
     await settingsEntry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, false, true, false])
+    expect(managementDialogStates(wrapper)).toEqual([true, false, true, false])
     expect(wrapper.find('.settings-dialog__body').exists()).toBe(true)
 
     // 「管理 Agent」独立入口：右栏 Agent 区块触发第二个弹窗，成员弹窗不再混管 Agent。
@@ -258,9 +287,37 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(agentEntry.exists()).toBe(true)
     await agentEntry.trigger('click')
     await flushPromises()
-    expect(wrapper.findAllComponents(ElDialog).map(dialog => dialog.props('modelValue'))).toEqual([true, true, true, false])
+    expect(managementDialogStates(wrapper)).toEqual([true, true, true, false])
     expect(wrapper.find('[data-testid="member-section-agent"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="member-section-employee"]').exists()).toBe(true)
+  })
+
+  it('opens a project space on the 任务 tab with the brief in the side panel (项目空间 S1)', async () => {
+    const { wrapper } = await mountView(workspace())
+
+    expect(wrapper.findAll('.workspace-context-tabs [role="tab"]').map(tab => tab.text().replace(/\d+$/, ''))).toEqual(['任务', '对话', '共享文件', '成果', '档案'])
+    expect(wrapper.get('#workspace-tab-tasks').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('#workspace-panel-tasks').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="project-brief"]').exists()).toBe(true)
+    expect(workbenchApi.listProjectTasks).toHaveBeenCalledWith('ws-team')
+    expect(workbenchApi.getProjectBrief).toHaveBeenCalledWith('ws-team')
+    // 项目空间 S2：档案只在打开档案页签时加载。
+    expect(workbenchApi.getProjectArchive).not.toHaveBeenCalled()
+  })
+
+  it('opens the 档案 tab from ?tab=archive and loads the project archive (项目空间 S2)', async () => {
+    route.query = { tab: 'archive' }
+    const { wrapper } = await mountView(workspace())
+    expect(wrapper.get('#workspace-tab-archive').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('#workspace-panel-archive').exists()).toBe(true)
+    expect(workbenchApi.getProjectArchive).toHaveBeenCalledWith('ws-team')
+  })
+
+  it('selecting the default 任务 tab drops ?tab from the URL', async () => {
+    route.query = { tab: 'files' }
+    const { wrapper } = await mountView(workspace())
+    await wrapper.get('#workspace-tab-tasks').trigger('click')
+    expect(router.replace).toHaveBeenLastCalledWith({ query: {} })
   })
 
   it('renders the 新对话／历史对话 switch for a team space and defaults to the new conversation', async () => {
@@ -351,8 +408,20 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
 
     // 线程路由下正文是内嵌 RouterView；切页签必须同时归位路径，
     // 否则旧线程一直占位、文件页签内容可达但 URL 语义错乱。
-    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    // 项目空间页签顺序：任务、对话、共享文件、成果。
+    await wrapper.findAll('[role="tab"]')[2]!.trigger('click')
     expect(router.replace).toHaveBeenCalledWith({ path: '/workspaces/ws-team', query: { tab: 'files' } })
+  })
+
+  it('keeps the conversation tab active for an embedded task thread even with ?tab=tasks (PS-E2E-03)', async () => {
+    route.name = 'workspace-conversation'
+    route.params = { id: 'ws-team', conversationId: 'run-001' }
+    route.query = { tab: 'tasks' }
+    const { wrapper } = await mountView(workspace())
+
+    const tabs = wrapper.findAll('[role="tab"]')
+    expect(tabs[1]!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('[data-testid="project-task-row"]').exists()).toBe(false)
   })
 
   it('restores the history view from a ?view=history deep link after the workspace resolves', async () => {
@@ -454,6 +523,12 @@ describe('WorkspaceDetailView 团队分支与个人空间红线', () => {
     expect(wrapper.find('.settings-dialog__body').exists()).toBe(false)
     // 个人空间右栏文案保持现状。
     expect(wrapper.text()).toContain('系统已为你创建唯一的默认个人空间')
+    // 项目空间 S1：个人空间没有任务页签与简报，也不发相关请求。
+    expect(wrapper.find('#workspace-tab-tasks').exists()).toBe(false)
+    expect(wrapper.find('#workspace-tab-archive').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="project-brief"]').exists()).toBe(false)
+    expect(workbenchApi.listProjectTasks).not.toHaveBeenCalled()
+    expect(workbenchApi.getProjectBrief).not.toHaveBeenCalled()
   })
 
   it('ignores a ?view=history deep link on a personal space without any team request (AC-23)', async () => {
@@ -550,6 +625,19 @@ describe('WorkspaceDetailView 归档只读态（design §2.7 / AC-14 / AC-23）'
     const { wrapper } = await mountView(archivedWorkspace(), { artifacts: [artifact] })
 
     expect(wrapper.text()).toContain('季度报告.xlsx')
+  })
+
+  it('labels project space artifacts with their task, Agent version and initiator (项目空间方案第 6 节)', async () => {
+    route.query = { tab: 'artifacts' }
+    const { wrapper } = await mountView(workspace(), {
+      artifacts: [
+        { ...artifact, id: 'artifact-task', name: '缺货分析.md', origin: { projectTask: { id: 'ptask-1', title: '分析缺货原因' }, agent: { name: '缺货分析助手', version: '1.2.0' }, initiatedBy: '周衡' } },
+        { ...artifact, id: 'artifact-chat', name: '临时汇总.md', origin: { projectTask: null, agent: { name: '缺货分析助手', version: '1.2.0' }, initiatedBy: '林岚' } },
+        { ...artifact, id: 'artifact-plain', name: '无来源.md', origin: null },
+      ],
+    })
+    const origins = wrapper.findAll('[data-testid="artifact-card-origin"]').map(node => node.text())
+    expect(origins).toEqual(['任务「分析缺货原因」 · 缺货分析助手 1.2.0 · 周衡 发起', '缺货分析助手 1.2.0 · 林岚 发起'])
   })
 
   it('offers 恢复空间 only to the owner and restores after confirmation', async () => {
@@ -785,12 +873,16 @@ describe('WorkspaceDetailView 文件版本 UI（TW-07 / 3-T9）', () => {
       id: 'file-4',
       logicalFileId: 'wfile-1',
       versionNo: 4,
+      versionCount: 4,
       name: '库存明细.xlsx',
-      type: 'XLSX',
-      size: '13 KB',
-      uploadedBy: '林岚',
-      uploadedAt: '刚刚',
-      extractionStatus: 'succeeded',
+      source: 'workspace',
+      sizeLabel: '13 KB',
+      parseStatus: 'succeeded',
+      parseErrorCode: null,
+      canReference: true,
+      canDownload: true,
+      createdAt: '2026-09-10T08:00:00.000Z',
+      updatedAt: '2026-09-10T08:00:00.000Z',
     })
     vi.spyOn(workbenchApi, 'downloadWorkspaceFileVersion').mockResolvedValue(new Blob(['x']))
   })
