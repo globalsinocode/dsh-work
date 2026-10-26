@@ -426,6 +426,7 @@ export class AdminQueryService {
       tools: builtinTools,
       disabledTools: runtime?.disabledTools ?? [],
       catalog: { checkedAt: new Date().toISOString(), missingTools: [] },
+      executionContainer: { status: 'not-configured' },
     }
   }
 

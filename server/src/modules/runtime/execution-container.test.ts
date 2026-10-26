@@ -72,12 +72,16 @@ function command(overrides: Partial<ContainerCommand> = {}): ContainerCommand {
   return { argv: ['rg', '--files'], cwd: '/ws', maxOutputBytes: 1024, timeoutMs: 1000, ...overrides }
 }
 
-test('only DSH-bundled ripgrep maps into the container; anything else is refused', () => {
-  assert.equal(mapExecutable(darwinRg), 'rg')
-  assert.equal(mapExecutable('/srv/dsh/node_modules/@vscode/ripgrep-linux-x64/bin/rg'), 'rg')
-  assert.equal(mapExecutable('/srv/dsh/node_modules/@vscode/ripgrep/bin/rg'), 'rg')
-  for (const argv0 of ['bash', '/bin/bash', 'rg', '/usr/bin/rg', '/tmp/@vscode/ripgrep-x/bin/rg-evil', 'sandbox-exec']) {
-    assert.throws(() => mapExecutable(argv0), /不允许运行/, argv0)
+test('only DSH-bundled ripgrep and bash -c map into the container; anything else is refused', () => {
+  assert.equal(mapExecutable([darwinRg, '--files']), 'rg')
+  assert.equal(mapExecutable(['/srv/dsh/node_modules/@vscode/ripgrep-linux-x64/bin/rg']), 'rg')
+  assert.equal(mapExecutable(['/srv/dsh/node_modules/@vscode/ripgrep/bin/rg']), 'rg')
+  // dsh-bash-local's only form; the image's bash runs it.
+  assert.equal(mapExecutable(['bash', '-c', 'python x.py']), 'bash')
+  for (const argv of [['bash'], ['bash', '-c'], ['bash', 'script.sh'], ['bash', '-c', 'x', 'extra'], ['bash', '-lc', 'x'],
+    ['/bin/bash', '-c', 'x'], ['/opt/homebrew/bin/bash', '-c', 'x'], ['sh', '-c', 'x'], ['rg'], ['/usr/bin/rg'],
+    ['/tmp/@vscode/ripgrep-x/bin/rg-evil'], ['sandbox-exec', '-p', 'x', 'bash', '-c', 'x']]) {
+    assert.throws(() => mapExecutable(argv), /不允许运行/, argv.join(' '))
   }
 })
 
@@ -253,7 +257,8 @@ test('execution container posture is fixed and mounts the workspace at the same 
   assert.deepEqual(args.slice(imageIndex), [image, 'infinity'])
   const options = args.slice(0, imageIndex)
   for (const [flag, value] of [['--network', 'none'], ['--cap-drop', 'ALL'], ['--pull', 'never'], ['--user', '501:20'],
-    ['--memory', '1g'], ['--memory-swap', '1g'], ['--pids-limit', '256'], ['--entrypoint', 'sleep'], ['--workdir', '/runtime/t/r/a/workspace']]) {
+    ['--memory', '1g'], ['--memory-swap', '1g'], ['--pids-limit', '256'], ['--entrypoint', 'sleep'], ['--workdir', '/runtime/t/r/a/workspace'],
+    ['--ulimit', `fsize=${256 * 1024 * 1024}:${256 * 1024 * 1024}`]]) {
     assert.equal(options[options.indexOf(flag!) + 1], value, flag)
   }
   for (const flag of ['--read-only', '--init', 'no-new-privileges', 'seccomp=builtin', '-d']) assert.ok(options.includes(flag), flag)
@@ -317,8 +322,13 @@ test('execution container overlay is appended to every DSH process of the instal
     const text = await readFile(overlay, 'utf8')
     assert.doesNotMatch(text, /__DSH_WORK_REMOTE_SUBPROCESS_MODULE__/)
     assert.match(text, new RegExp(JSON.stringify(join(projectRoot, 'server/config/dsh/dsh-work-remote-subprocess.js')).replaceAll('/', '\\/')))
-    for (const disabled of ['subprocess', 'tool-jobs']) assert.match(text, new RegExp(`- id: ${disabled}\\n  disabled: true`))
+    // Stage 2: bash runs unwrapped in the container (bash-local), so the host sandbox wrapper and
+    // the permission presets that refuse an unwrapped executor are off; no background jobs.
+    for (const disabled of ['subprocess', 'tool-jobs', 'bash-sandbox', 'permission']) assert.match(text, new RegExp(`- id: ${disabled}\\n  disabled: true`))
     assert.match(text, /enableRunInBackground: false/)
+    assert.match(text, /- id: bash-local\n\s+name: '@deepseek-ai\/dsh-bash-local'/)
+    assert.match(text, /maxTimeoutMs: 600000/)
+    assert.doesNotMatch(text, /- id: (fs-sandbox|sandbox-policy|sandbox|approval)\n\s+disabled: true/, 'the file fence and approval stay on')
     await assert.rejects(withExecutionContainerOverlay({ ...installation, adapter: 'legacy-acp-demo' } as DshRuntimeInstallation, { projectRoot }), /官方 acp Profile/)
   } finally {
     await rm(projectRoot, { recursive: true, force: true })

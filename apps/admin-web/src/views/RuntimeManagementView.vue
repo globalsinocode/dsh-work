@@ -77,8 +77,24 @@ const catalogAlert = computed(() => {
   return { type: 'success' as const, title: '启动时已核对 DSH 工具目录，内置工具齐全' }
 })
 
+/** 执行容器决定 bash 是否装配；不可用的原因只写服务日志，这里说明影响与处理入口。 */
+const executionContainerAlert = computed(() => {
+  const status = contentStore.builtinTools?.executionContainer?.status
+  if (status === 'available') return { type: 'success' as const, title: '执行容器已启用：员工侧 Agent 运行装配 bash，命令在每次运行专用的断网容器中执行' }
+  if (status === 'unavailable') return { type: 'warning' as const, title: '执行容器启动检查未通过：本次启动不装配 bash，原因见服务日志；修复后需重启服务' }
+  if (status === 'not-configured') return { type: 'info' as const, title: '执行容器模式未开启（DSH_WORK_EXECUTION_CONTAINER）：不装配 bash' }
+  return null
+})
+
 function assemblyLabel(tool: BuiltinTool) {
-  return { always: '默认装配', 'agent-opt-in': 'Agent 开启后装配', runtime: '按运行内容装配', purpose: '管理运行专用' }[tool.assembly]
+  return {
+    always: '默认装配',
+    'agent-opt-in': 'Agent 开启后装配',
+    runtime: '按运行内容装配',
+    purpose: '管理运行专用',
+    workspace: '项目空间运行装配',
+    'execution-container': '执行容器可用时装配',
+  }[tool.assembly]
 }
 
 function toolDisabled(tool: BuiltinTool, runtime: RuntimeDefinition) {
@@ -272,6 +288,7 @@ onMounted(() => contentStore.load())
           <h3>内置工具</h3>
           <p class="field-help">内置工具随平台代码发布，管理员不能新增或修改；需要时可在“配置 Runtime”中紧急停用 DSH 工具。</p>
           <el-alert v-if="catalogAlert" class="runtime-builtin-tools__catalog" :type="catalogAlert.type" :closable="false" show-icon :title="catalogAlert.title" />
+          <el-alert v-if="executionContainerAlert" class="runtime-builtin-tools__catalog" :type="executionContainerAlert.type" :closable="false" show-icon :title="executionContainerAlert.title" data-testid="execution-container-status" />
           <el-table class="data-table" :data="builtinTools" size="small" empty-text="内置工具清单加载失败">
             <el-table-column label="工具" min-width="170"><template #default="scope"><div class="builtin-tool-cell"><strong>{{ scope.row.label }}</strong><code>{{ scope.row.name }}</code></div></template></el-table-column>
             <el-table-column label="来源" width="88"><template #default="scope">{{ scope.row.source === 'dsh' ? 'DSH' : '平台' }}</template></el-table-column>

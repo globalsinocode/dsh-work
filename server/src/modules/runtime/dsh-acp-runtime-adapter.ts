@@ -216,6 +216,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
   async assertAvailable(manifest?: RuntimeManifest): Promise<void> {
     await this.assertModelRequirements(manifest?.model_requirements ?? [])
+    // bash only runs inside the Attempt execution container. Without it (no overlay) DSH would
+    // run the command on the host, so a Manifest carrying bash is refused, never downgraded.
+    if (!this.configuration.remoteExecution && manifest?.tools?.some(tool => tool.id === 'bash')) {
+      throw new ExecutionCapabilityUnavailableError('execution-container')
+    }
   }
 
   async execute(manifest: RuntimeManifest): Promise<RuntimeExecutionHandle> {
@@ -1372,6 +1377,13 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       '# 成果文件',
       '需要向用户交付文件时，必须使用 write 工具写入 output 目录。Markdown、纯文本、CSV 和 HTML 分别使用 output/<文件名>.md、.txt、.csv、.html；不要写入其他目录。',
       '只有 output 目录中通过平台检查并登记的文件会作为可下载成果展示。回答中应明确说明已生成的文件名。',
+    ].join('\n'))
+  }
+  if (manifest.tools.some(tool => tool.id === 'bash')) {
+    sections.push([
+      '# 运行命令',
+      'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
+      '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件，格式限于 Markdown、纯文本、CSV 和 HTML；其他格式或子目录会导致成果登记失败。',
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

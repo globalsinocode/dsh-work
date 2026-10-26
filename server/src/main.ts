@@ -370,6 +370,7 @@ async function start() {
     tools: builtinTools,
     disabledTools: [...(await operations.getRuntimePolicy('runtime-local-01')).disabledTools],
     catalog: builtinCatalog,
+    executionContainer: { status: executionContainerCapability.status },
   })
   const skills = new PostgresSkillService(database, operations, skillArtifacts)
   // C7 only inspects execution capability; it never starts a Worker/model call.
@@ -424,6 +425,7 @@ async function start() {
       projectTasks: projects,
       projectArchive,
       timezone: resolvePlatformTimezone(process.env.DSH_WORK_TIMEZONE),
+      executionContainerAvailable: attemptContainers !== null,
     },
   )
   projects.attachRunStarter(orchestration)

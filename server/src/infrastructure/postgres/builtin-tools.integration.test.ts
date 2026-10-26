@@ -6,6 +6,12 @@ import { PostgresAgentService } from '../../modules/agent/postgres-agent-service
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { builtinTools, missingDshBuiltinTools } from '../../modules/runtime/builtin-tools.ts'
+import { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
+import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
+import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
+import { PostgresModelGovernanceRepository } from '../../modules/model/postgres-model-governance-repository.ts'
+import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
+import type { AgentRuntimePort, RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 
@@ -58,9 +64,11 @@ test('迁移后工具治理表与 DSH 内置工具连接器不再存在', async 
 
 test('注册表与 DSH 工具目录比对：缺失的 DSH 工具被报告，平台工具不参与比对', () => {
   const dsh = builtinTools.filter(tool => tool.source === 'dsh').map(tool => tool.name)
-  assert.deepEqual(missingDshBuiltinTools([...dsh, 'bash']), [])
+  assert.deepEqual(missingDshBuiltinTools([...dsh, 'job_list']), [])
   assert.deepEqual(missingDshBuiltinTools(dsh.filter(name => name !== 'todo_write')), ['todo_write'])
-  assert.equal(builtinTools.some(tool => tool.name === 'bash' || tool.name === 'web_fetch'), false)
+  // bash 是 DSH 工具（执行隔离阶段 2），同样参与目录比对；web_fetch 与后台任务工具仍不在注册表。
+  assert.deepEqual(missingDshBuiltinTools(dsh.filter(name => name !== 'bash')), ['bash'])
+  assert.equal(builtinTools.some(tool => ['web_fetch', 'job_list', 'job_output', 'job_kill'].includes(tool.name)), false)
 })
 
 test('Agent 运行装配默认内置工具，联网搜索按版本开关；Skill 依赖平台不提供的工具时拒绝', async () => {
@@ -135,4 +143,55 @@ test('Runtime 停用清单只接受 DSH 内置工具，省略时保留当前设�
   assert.deepEqual((await update(undefined))?.disabledTools, ['read_image', 'web_search'])
   assert.deepEqual((await operations.getRuntimePolicy(runtime.id)).disabledTools, ['read_image', 'web_search'])
   assert.deepEqual((await update([]))?.disabledTools, [])
+})
+
+test('员工对话只在执行容器可用时装配 bash，Runtime 停用清单同样作用于 bash', async () => {
+  const created = await agents.createAgent({
+    id: `agent-bash-${randomUUID().slice(0, 8)}`,
+    name: '数据处理助手', description: '在执行容器中运行命令整理与统计数据。', owner: '平台治理', department: '平台治理',
+    welcomeMessage: '', examplePrompts: ['整理数据'], systemPrompt: '你是数据处理助手，只处理当前工作区中已经授权的数据文件。',
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: [],
+    changeSummary: '验证 bash 装配', actor: ADMIN,
+    executionRoleIds: ['role-employee'], executionDataScopes: ['workspace:authorized'],
+  })
+  const runtime: AgentRuntimePort = {
+    async execute(manifest) {
+      return { runId: manifest.run_id, attemptId: manifest.attempt_id, acceptedAt: new Date().toISOString(), done: new Promise(() => undefined) }
+    },
+    subscribe: () => () => undefined,
+    async cancel() { return { accepted: false } },
+    status: () => undefined,
+    async health() {
+      return { status: 'healthy', runtimeId: 'runtime-local-01', activeExecutions: 0, acceptingRuns: true, dshRepository: '/tmp', transport: 'acp-stdio', message: 'test' }
+    },
+    async close() {},
+  }
+  const orchestration = (executionContainerAvailable: boolean) => new RunOrchestrationService(
+    new PostgresRunRepository(database), new PostgresConversationRepository(database),
+    new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
+    undefined, operations, agents, undefined, undefined, { executionContainerAvailable },
+  )
+  const toolsOf = async (service: RunOrchestrationService) => {
+    const session = await service.createSession({ userId: 'U00001', title: 'bash 装配', agentVersionId: created.version.id })
+    const run = (await service.startRun({ userId: 'U00001', sessionId: session.id, prompt: '统计数据', idempotencyKey: randomUUID() }))!
+    // Attempt 创建时持久化的 Manifest 即装配结果（是否交给 Runtime 取决于调度状态）。
+    const [attempt] = await database<{ manifest: RuntimeManifest }[]>`
+      select manifest from run_attempts where tenant_id = ${tenantId} and run_id = ${run.id}`
+    assert.ok(attempt, '已创建 Attempt')
+    return attempt.manifest.tools.map(tool => tool.id)
+  }
+  const runtimeRow = (await operations.getRuntimes()).find(item => item.id === 'runtime-local-01')!
+  const setDisabled = (disabledTools: string[]) => operations.updateRuntimeConfiguration({
+    runtimeId: runtimeRow.id, maxConcurrentWorkers: runtimeRow.maxConcurrentWorkers,
+    attemptTimeoutMinutes: runtimeRow.attemptTimeoutMinutes, schedulingStatus: runtimeRow.schedulingStatus, disabledTools, actor: ADMIN,
+  })
+  await setDisabled([])
+  try {
+    assert.ok((await toolsOf(orchestration(true))).includes('bash'))
+    assert.equal((await toolsOf(orchestration(false))).includes('bash'), false)
+    await setDisabled(['bash'])
+    assert.equal((await toolsOf(orchestration(true))).includes('bash'), false)
+  } finally {
+    await setDisabled([])
+  }
 })

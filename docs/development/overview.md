@@ -22,7 +22,7 @@ MVP 聚焦三类业务场景：
 MVP 明确不包含：
 
 - 员工自建 Tool、Connector、插件或 MCP；
-- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 Shell 已定为后续目标，见[执行隔离方案](../design/execution-isolation-plan.md)，实施并验收前不可用）；
+- 任意 Shell、任意 SQL 或 DSH Web UI 直达（执行容器内的受控单次 `bash` 已实现但随执行容器模式默认关闭，Mac mini 验收前不在生产开启，见[执行隔离方案](../design/execution-isolation-plan.md)）；
 - 写入 ERP/MES 等高风险业务操作；
 - PPT 生成、开放式 Agent 市场和跨企业多租户 SaaS；
 - 为了形式上的“平台化”拆分业务微服务。
@@ -88,7 +88,7 @@ dsh-work 保存可面向用户和治理的业务状态；DSH 保存运行时技�
 
 运行时统一通过 DSH 发起工具调用。工具分两类管理：
 
-- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。注册表以外的工具（如 `bash`、`web_fetch`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具及启动时与 DSH 工具目录的核对结果。
+- **内置工具**（DSH 原生工具与 dsh-work 平台工具）随代码发布，[注册表](../../server/src/modules/runtime/builtin-tools.ts)是唯一来源，不是可管理的数据，没有目录同步、逐工具授权或绑定修订。每个 Agent 运行默认获得工作区文件与任务进度工具（`read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`），由执行策略限制在当前 Run 工作区和 output 目录；联网搜索 `web_search` 与项目任务管理（`project_tasks_*`）由 Agent 版本开关决定——后者仅在团队空间由人发起的运行中装配（定时执行只装配读工具）；激活 Skill、Python 执行和经验申请按运行内容装配；管理工具按 Run purpose 注入。`bash` 只在执行容器模式启用且本次启动检查通过时，由平台为员工侧 Agent 运行（对话、定时任务、发布试运行）装配，在每 Attempt 的断网执行容器中前台单次执行；系统与管理运行不装配，Skill 不能声明，模式未开启时不出现在模型可见工具中。注册表以外的工具（如 `web_fetch`、后台任务 `job_*`、Agent 协作与 Runtime 控制工具）一律不放行。管理员只能在 Runtime 配置中紧急停用 DSH 工具：新运行不再装配，执行中的运行再调用该工具时只拒绝这一次调用并告知模型，运行本身不中断。模型只看到本次运行放行的工具。管理端在 `安全与运维 → Runtimes` 只读展示内置工具、启动时与 DSH 工具目录的核对结果，以及执行容器状态（决定是否装配 `bash`）。
 - **MCP 外部工具**以 Connector 为管理单元，由 Agent Version 显式选择；登记时发现的清单即生效，之后新增或输入 Schema 变化的 Tool 须管理员确认，入口为 `MCP 连接器`。
 
 该分类不改变执行职责：DSH 仍持有单次 Attempt 的 Agent Loop；Platform Tool Bridge 只提供确定性处理器；MCP Connector 不进入内置工具注册表，内置工具也不能借 Connector 配置扩大用途。
@@ -292,7 +292,7 @@ flowchart LR
 - **平台基线 P2（PF-07）：** 当前目标版本尚未在真实 DSH、OIDC、多账号和批准连接器下逐场景留证，发布门禁未通过，见 [PF-07 验收手册](pf07-platform-acceptance.md)。
 - **Agent 配置与发布：** 规则见[功能规则](feature-rules.md)第 8、9 节；验证中的 MCP 与平台写入隔离尚未真实验收，需审批工具待首个准入时补测。
 - **Runtime 执行：** 见 [Runtime 优化方案](../design/runtime-execution-optimization-plan.md)。
-- **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分与 1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）已实现：执行容器模式（`DSH_WORK_EXECUTION_CONTAINER`，默认关闭）下 `glob`/`grep` 在每 Attempt 的执行容器内运行，Mac mini 未验收。DSH Worker 的文件工具仍是应用层边界；目标是文件与命令操作经平台中转落到执行容器，并放开 C 档（前台单次 `bash` 与 Office 工具链，后台任务暂缓），见[执行隔离方案](../design/execution-isolation-plan.md)。阶段 2 交付并验收前，3.6 中 `bash` 不放行的规则继续有效。
+- **执行隔离与受控 Shell：** 阶段 1a（容器统一经执行器模块启动）、1b 的 subprocess 部分、1c（“静止”保证：命令后清扫、清理期间工具等待、无法恢复时 Attempt 失败、`output/` 本身检查、工具独占性准入）与 2a（C 档单次 `bash`：执行容器内运行、平台装配、单文件大小上限、安全回归）已实现：执行容器模式（`DSH_WORK_EXECUTION_CONTAINER`，默认关闭）下 `glob`/`grep`/`bash` 在每 Attempt 的执行容器内运行，本机真实 Docker 与 DSH 用例通过，Mac mini 未验收，生产不开启。DSH Worker 的文件工具仍是应用层边界。未完成：2b Office 生产镜像；Office 等二进制格式尚不能作为成果交付（成果只收 Markdown、文本、CSV、HTML）；工作区总磁盘用量没有上限；C 档 P2 验收。见[执行隔离方案](../design/execution-isolation-plan.md)。
 - **项目空间：** S0～S6 已实现（含双模式与 Agent 项目任务工具）；服务端/组件/P0 与部分 P1、本地真实 DSH 证据见验收目录与发布/PR 留证。OIDC/生产 P2 与部分 P1 旅程仍开放，决策背景见 [项目空间方案](../design/project-space-plan.md)。项目档案员是 `project-archive` 系统运行，经 Run/Attempt → Runtime Adapter → DSH 执行。
 - **已交付功能的遗留项：** 团队空间、管理助手、Skill 安装、Python 执行和自动任务的未完成部分列在[功能规则](feature-rules.md)各节末尾。
 

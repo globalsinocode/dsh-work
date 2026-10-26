@@ -2,11 +2,18 @@ import type { AgentRuntimePort, McpRuntimeConnection, RuntimeManifest, RuntimeEv
 
 export class ExecutionCapabilityUnavailableError extends Error {
   readonly status = 503
-  readonly code: 'RUNTIME_UNAVAILABLE' | 'PYTHON_UNAVAILABLE' | 'MODEL_CAPABILITY_UNAVAILABLE'
-  constructor(capability: 'dsh' | 'python' | 'model') {
-    super(capability === 'dsh' ? 'DSH 执行能力不可用，请管理员检查配置并重启服务后重试' : capability === 'python' ? 'Python 执行能力不可用，其他不依赖 Python 的任务可继续' : '当前 DSH 链路尚不能保证 Agent 声明的模型能力，请管理员核对 Agent 要求与 Runtime 支持情况')
+  readonly code: 'RUNTIME_UNAVAILABLE' | 'PYTHON_UNAVAILABLE' | 'MODEL_CAPABILITY_UNAVAILABLE' | 'EXECUTION_CONTAINER_UNAVAILABLE'
+  constructor(capability: 'dsh' | 'python' | 'model' | 'execution-container') {
+    super({
+      dsh: 'DSH 执行能力不可用，请管理员检查配置并重启服务后重试',
+      python: 'Python 执行能力不可用，其他不依赖 Python 的任务可继续',
+      model: '当前 DSH 链路尚不能保证 Agent 声明的模型能力，请管理员核对 Agent 要求与 Runtime 支持情况',
+      'execution-container': '执行容器不可用，需要运行命令的任务暂不能执行，请管理员检查执行容器配置',
+    }[capability])
     this.name = 'ExecutionCapabilityUnavailableError'
-    this.code = capability === 'dsh' ? 'RUNTIME_UNAVAILABLE' : capability === 'python' ? 'PYTHON_UNAVAILABLE' : 'MODEL_CAPABILITY_UNAVAILABLE'
+    this.code = ({
+      dsh: 'RUNTIME_UNAVAILABLE', python: 'PYTHON_UNAVAILABLE', model: 'MODEL_CAPABILITY_UNAVAILABLE', 'execution-container': 'EXECUTION_CONTAINER_UNAVAILABLE',
+    } as const)[capability]
   }
 }
 
@@ -54,9 +61,7 @@ export async function probeExecutionCapability<T>(
   catch (error) {
     onFailure?.(error)
     // Do not expose subprocess stderr, credentials or local paths through health.
-    const code = capability === 'execution-container'
-      ? 'EXECUTION_CONTAINER_UNAVAILABLE'
-      : new ExecutionCapabilityUnavailableError(capability).code
+    const code = new ExecutionCapabilityUnavailableError(capability).code
     return { value: null, state: { status: 'unavailable', code } }
   }
 }

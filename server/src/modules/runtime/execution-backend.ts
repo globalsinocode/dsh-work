@@ -51,6 +51,11 @@ export const EXECUTION_CONTAINER_LIMITS = {
   pidsLimit: '256',
   tmpfsSize: '128m',
   homeSize: '256m',
+  /**
+   * Largest single file a command may write (`ulimit -f`), workspace included. Well above the
+   * 10 MB artifact limit so Office conversions have room; total workspace disk is not bounded.
+   */
+  maxFileBytes: 256 * 1024 * 1024,
   /** Upper bound for one command; the caller's own timeout is usually shorter. */
   maxCommandMs: 600_000,
   maxOutputBytes: 16 * 1024 * 1024,

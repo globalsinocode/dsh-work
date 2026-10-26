@@ -33,7 +33,7 @@ Agent 通用设计与评审要求见 [Agent 设计规范](agent-design-standard.
 
 接口修改必须同步消费者、Schema 和相应测试。公开 API、内部 TypeScript 类型和 DSH ACP 是不同边界，不应直接复用上游内部对象代替产品契约。
 
-内置工具不是可管理的数据：不存在工具目录同步、逐工具授权或绑定修订。每次 Attempt 由 `agentBuiltinToolNames` 按 Agent 版本的 `web_search_enabled` 生成 DSH 工具清单，加上按运行内容需要的平台工具，以及（无 purpose 的员工运行中）按 `project_tasks_enabled` 与 `projectTaskToolMode`（团队空间人发起为 `read-write`、定时执行为 `read`）装配的项目任务工具，再去掉 Runtime 配置 `disabled_tools` 中的工具，写入 Manifest `tools`（`name@1.0.0`）；DSH 工具策略只放行该清单。Skill 的 `allowed-tools` 按名称匹配注册表（忽略大小写与下划线，`WebSearch` → `web_search`），声明联网搜索的 Skill 只能被开启联网搜索的 Agent 引用；项目任务工具与管理用途工具不能由 Skill 声明；注册表以外的工具（如 `bash`、`web_fetch`）一律不可用。
+内置工具不是可管理的数据：不存在工具目录同步、逐工具授权或绑定修订。每次 Attempt 由 `agentBuiltinToolNames` 按 Agent 版本的 `web_search_enabled` 生成 DSH 工具清单，加上按运行内容需要的平台工具，以及（无 purpose 的员工运行中）按 `project_tasks_enabled` 与 `projectTaskToolMode`（团队空间人发起为 `read-write`、定时执行为 `read`）装配的项目任务工具，以及（员工侧 Agent 运行、本次启动的执行容器可用时，`executionToolNames`）`bash`，再去掉 Runtime 配置 `disabled_tools` 中的工具，写入 Manifest `tools`（`name@1.0.0`）；DSH 工具策略只放行该清单。会话摘要、项目档案员与管理运行另行编译 Manifest，不装配 `bash`。Runtime Adapter 没有执行容器时拒绝带 `bash` 的 Manifest（`EXECUTION_CONTAINER_UNAVAILABLE`），不降级到宿主执行。Skill 的 `allowed-tools` 按名称匹配注册表（忽略大小写与下划线，`WebSearch` → `web_search`），声明联网搜索的 Skill 只能被开启联网搜索的 Agent 引用；项目任务工具、管理用途工具与 `bash` 不能由 Skill 声明（`allowed-tools` 中的 `Bash` 仍记为不支持的依赖）；注册表以外的工具（如 `web_fetch`）一律不可用。
 
 紧急停用清单是运维止损开关而不是授权：派发新 Attempt 时排除被停用工具；执行中的 Attempt 不因停用而失败，DSH 工具策略在每次调用的执行授权探测中携带工具名，Platform Tool Bridge 读取当前停用清单（Runtime Adapter 的 `disabledBuiltinTools`），被停用工具只拒绝本次调用，并以固定文案告知模型该工具已被管理员临时停用，由模型基于已有结果继续作答。未接线时视为没有停用。
 
@@ -79,7 +79,7 @@ Agent 的额外模型要求通过 `assertModelRequirements(requirements, target)
 
 `/health/live` 表示进程存活；`/health/ready` 验证核心数据库可达，并报告启动时校验的身份配置与各执行能力状态。DSH/Python 预检失败不否定核心就绪；DB/身份初始化失败仍不监听。就绪不代表实时 OIDC/模型业务联调通过。修复执行配置后需重启重探，不提供自动回退。`/health` 新增 `executionCapabilities`；其 `dshRuntime` 使用 RuntimeHealth 的状态，不再把未连接写成 connected。
 
-执行容器模式只在启动时确定：开关为 `on` 时检查执行镜像（含 `rg`）、按 label 清扫遗留容器、生成执行容器叠加层并以叠加后的组合重跑 DSH 预检，再读取工具目录核对 DSH 的实际调度（`dshScheduling`）：注册表工具与 `bash` 中只有 `read`、`read_image`、`web_search` 可并行，其余必须独占，未报告也按不满足处理；任一步失败时本次启动的 DSH 子进程仍在宿主执行，`executionCapabilities.executionContainer` 报告 `unavailable`（`EXECUTION_CONTAINER_UNAVAILABLE`），原因只写服务日志；开关取值不是 `on`/`off` 时同样按不可用处理。未设置开关时为 `not-configured`。运行中途不切换模式。
+执行容器模式只在启动时确定：开关为 `on` 时检查执行镜像（含 `rg`）、按 label 清扫遗留容器、生成执行容器叠加层并以叠加后的组合重跑 DSH 预检，再读取工具目录核对 DSH 的实际调度（`dshScheduling`）：注册表工具与 `bash` 中只有 `read`、`read_image`、`web_search` 可并行，其余必须独占，未报告也按不满足处理；任一步失败时本次启动的 DSH 子进程仍在宿主执行，`executionCapabilities.executionContainer` 报告 `unavailable`（`EXECUTION_CONTAINER_UNAVAILABLE`），原因只写服务日志；开关取值不是 `on`/`off` 时同样按不可用处理。未设置开关时为 `not-configured`。运行中途不切换模式。叠加层停用 `subprocess`、`bash-sandbox`、`permission` 与 `tool-jobs`，插入 remote subprocess 与 `dsh-bash-local`；平台只接受 DSH 自带 ripgrep 与 `bash -c <命令>` 两种 argv，分别在镜像内的 `rg`、`bash` 中执行。管理端内置工具状态（`/runtimes/builtin-tools`）带 `executionContainer.status`，Runtime 页面据此说明是否装配 `bash`。
 
 发布脚本的严格 DSH 预检保持不变；核心就绪不能替代上线前的真实执行验收。
 

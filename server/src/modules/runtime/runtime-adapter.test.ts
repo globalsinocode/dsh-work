@@ -380,6 +380,29 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(await readdir(root), [])
     await adapter.assertAvailable(manifest('run-standard', 'attempt-standard'))
   })
+  it('refuses a Manifest carrying bash when there is no execution container, before starting anything', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-work-bash-admission-'))
+    const adapter = new DshAcpRuntimeAdapter({
+      runtimeId: 'runtime-bash-test', runtimeRoot: root, dshRepository: process.cwd(),
+      process: { command: 'must-not-start', args: [], cwd: process.cwd() },
+    })
+    adapters.push(adapter)
+    const base = manifest('run-bash-check', 'attempt-bash-check')
+    const input = { ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }
+    // Without the overlay DSH would run bash on the host: refused, never downgraded.
+    await assert.rejects(adapter.assertAvailable(input), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+    await assert.rejects(adapter.execute(input), { code: 'EXECUTION_CONTAINER_UNAVAILABLE' })
+    assert.deepEqual(await readdir(root), [])
+  })
+  it('explains the execution container and the output rules only when bash is assembled', () => {
+    const base = manifest('run-bash-prompt', 'attempt-bash-prompt')
+    const withBash = renderSystemPrompt(compileRuntimeManifest({ ...base, tools: [...base.tools, { id: 'bash', version: '1.0.0' }] }).manifest)
+    assert.match(withBash, /# 运行命令/)
+    assert.match(withBash, /不能联网/)
+    assert.match(withBash, /不支持后台运行/)
+    assert.match(withBash, /中间文件放在工作区其他目录/)
+    assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest), /# 运行命令/)
+  })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-work-runtime-catalog-test-'))
     const adapter = new DshAcpRuntimeAdapter({

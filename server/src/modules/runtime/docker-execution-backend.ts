@@ -319,6 +319,7 @@ export function buildExecutionContainerArguments(spec: ExecutionContainerSpec, f
     '--memory', limits.memory,
     ...(features.memorySwap ? ['--memory-swap', limits.memory] : []),
     '--cpus', limits.cpus,
+    '--ulimit', `fsize=${limits.maxFileBytes}:${limits.maxFileBytes}`,
     '--user', spec.user,
     '--tmpfs', `/tmp:rw,nosuid,nodev,size=${limits.tmpfsSize},mode=1777`,
     '--tmpfs', `${EXECUTION_CONTAINER_HOME}:rw,nosuid,nodev,size=${limits.homeSize},uid=${uid},gid=${gid},mode=0700`,

@@ -179,7 +179,7 @@ router.get(`${base}/identity/roles`, async () => envelope('admin', await databas
 `, 'postgres'))
 registerAgentRoutes(router, agents, new PostgresAgentAccessService(database.client))
 registerAgentValidationRoutes(router, agents, validation, new PostgresAgentRunHistory(database.client))
-registerToolRoutes(router, mcp, async () => ({ tools: builtinTools, disabledTools: [], catalog: null }))
+registerToolRoutes(router, mcp, async () => ({ tools: builtinTools, disabledTools: [], catalog: null, executionContainer: { status: 'not-configured' } }))
 router.get('/health', () => ({ status: 'ok', testOnly: true, runtime: 'synthetic-agent-release-trial' }))
 
 const server = createServer((request, response) => void router.handle(request, response))

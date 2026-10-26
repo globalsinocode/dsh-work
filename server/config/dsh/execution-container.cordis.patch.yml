@@ -1,9 +1,16 @@
 # dsh-work 执行容器模式叠加层（DSH_WORK_EXECUTION_CONTAINER=on 且启动检查通过时，追加在部署 patch 之后）。
 # 子进程改经平台工具桥落到每 Attempt 的执行容器：停用本机 subprocess，插入 remote 实现。
 # patch 不能替换已有条目的包名，只能停用原条目再插入新条目。
-# 1b 只放开容器内的 rg（glob/grep）；bash 仍被 dsh-work 工具策略拒绝。
-# bash-sandbox 与 permission 的替换留到阶段 2（放开 bash 时一并处理）。
 - id: subprocess
+  disabled: true
+
+# 阶段 2（C 档）：bash 在执行容器内运行。bash-sandbox 把命令包进 Seatbelt/bwrap，
+# 包装程序在容器内不存在，改挂不做包装的 dsh-bash-local；隔离由执行容器提供。
+# permission 预设拒绝装配在不受限的 bash 执行器之上，一并停用；审批仍由 dsh-user-approval
+# 与 dsh-work 工具策略承担（执行隔离方案 3.5、4.1）。
+- id: bash-sandbox
+  disabled: true
+- id: permission
   disabled: true
 
 # C 档不含后台任务（执行隔离方案第 6 节）
@@ -17,3 +24,9 @@
     - id: dsh-work-remote-subprocess
       # Replaced with an absolute path when the overlay is generated.
       name: __DSH_WORK_REMOTE_SUBPROCESS_MODULE__
+    - id: bash-local
+      name: '@deepseek-ai/dsh-bash-local'
+      config:
+        # 与 bash-sandbox 的默认值一致；上限与平台单条命令上限（EXECUTION_CONTAINER_LIMITS.maxCommandMs）一致。
+        timeoutMs: 60000
+        maxTimeoutMs: 600000

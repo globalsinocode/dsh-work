@@ -204,7 +204,7 @@ export interface BuiltinTool {
   source: 'dsh' | 'platform'
   effect: 'read' | 'write'
   risk: 'low' | 'medium'
-  assembly: 'always' | 'agent-opt-in' | 'runtime' | 'purpose'
+  assembly: 'always' | 'agent-opt-in' | 'runtime' | 'purpose' | 'workspace' | 'execution-container'
   constraints: string[]
 }
 
@@ -213,6 +213,8 @@ export interface BuiltinToolStatus {
   disabledTools: string[]
   /** 服务启动时与 DSH 工具目录的比对结果；未比对时为 null。 */
   catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
+  /** 本次启动的执行容器状态：决定 bash 是否装配。 */
+  executionContainer: { status: 'available' | 'unavailable' | 'not-configured' }
 }
 
 export interface UpdateRuntimeConfigurationInput {

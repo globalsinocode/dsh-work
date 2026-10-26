@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
+**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；阶段 2a（C 档单次 `bash`，3.8）已实施（2026-10-27，同上，Mac mini 验收未执行）；2b（Office 生产镜像）未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。执行容器模式默认关闭，在阶段 2b 完成并通过第 9 节 P2 验收前不在生产开启。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向；1c 定案为“静止”保证、不移植 remote fs）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -200,6 +200,17 @@ patch 不能替换已有条目的包名（`name mismatch … skipping`），替�
 不采用 remote fs。与之相比：不需要解析 DSH 模块、不复刻编辑语义、读文件没有 `exec` 开销、不依赖 macOS 专有标志；代价是每条 `bash` 命令后多一次静止确认（约 0.1 s，异常时约 0.4 s 重建）。
 
 
+### 3.8 阶段 2a 实施发现（2026-10-27）
+
+本机 DSH `0.1.2-rc.1`、执行镜像 `dsh-exec-test:rg`（基于 `python:3.12-slim`，含 `rg`），经与 1b 相同的真实 DSH 端到端用例验证：
+
+- **装配：** 叠加层停用 `bash-sandbox` 与 `permission` 后插入 `@deepseek-ai/dsh-bash-local`，DSH 正常启动，启动准入读到的 `bash` 仍为独占调度。
+- **审批：** 停用 `permission` 后 DSH 对 `bash` 不另行发起权限请求（`DSH_PERMISSION_MODE=workspace-write`、审批模式“从不”时零次请求）；是否确认仍只由 dsh-work 工具策略按 Agent 审批模式决定，与第 6 节定案一致。
+- **argv：** `dsh-bash-local` 交给 `ctx.subprocess` 的永远是 `['bash', '-c', <命令>]`。平台只接受这一形式并在镜像内 `bash` 执行；`/bin/bash`、`bash -lc`、`sh -c` 等其他形式与宿主路径一律拒绝。
+- **环境：** 容器内只有执行器固定的变量与镜像自带变量（如 `PYTHON_VERSION`），`DSH_*`、Worker 变量与 MCP 凭据都不进入。
+- **成果收集的限制：** `output/` 只接受顶层的 Markdown、文本、CSV、HTML 普通文件（单个 ≤10 MB，合计 ≤20 MB），其他格式、子目录或隐藏文件会令成果登记失败。`bash` 放开后模型可能写出 `.xlsx`、`.docx` 等；2a 在 Runtime 说明中要求中间文件放在工作区其他目录或 `/tmp`，Office 等二进制成果的登记、扫描与预览须随 2b 另行设计，在此之前 C 档的 Office 价值只能体现为转换为文本类成果。
+- **Skill 声明：** Skill 的 `allowed-tools` 中的 `Bash` 维持“不支持的依赖”，不映射到 `bash`：`bash` 是否可用取决于部署的执行容器状态，Skill 发布校验不能依赖它；Skill 试运行不装配 `bash`。
+
 ## 4. 方案
 
 ### 4.1 执行链路：经平台中转
@@ -234,7 +245,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
   - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search` 可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
 - **宿主侧读取工作区。** 产物收集、检查点复制、输入挂载等宿主侧操作只在静止期间进行：Attempt 结束时先让工具桥停止接收命令、等待清理结束并删除执行容器，再收集成果，任何一步失败都令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败且不收集；持久化等待的检查点在读取 `output/` 前等待执行容器空闲，不空闲则不创建检查点。读取时并先确认 `output/` 等目录本身是工作区内的真实目录（`lstat` 与真实路径，3.7 发现现有代码未检查目录本身），文件只收普通文件，拒绝管道等特殊文件；macOS 上读取可再加 `O_NOFOLLOW_ANY`。
 - **remote subprocess 插件**按官方 `SubprocessRuntime` 接口实现，参照 KnowWork 的 `remote-subprocess`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
-- **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local` 只在放开 bash 时才需要，留到阶段 2（3.5 已验证可装配）。`fs-sandbox` 保持不变（1c 不替换 `ctx.fs`）。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
+- **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。阶段 2a 再停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local`（`timeoutMs` 60000、`maxTimeoutMs` 600000，与平台单条命令上限一致；3.8）。`fs-sandbox` 保持不变（1c 不替换 `ctx.fs`）。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
 - **执行器模块**：业务服务内唯一调用容器运行时的代码，由现有 [python-skill-runner.ts](../../server/src/modules/runtime/python-skill-runner.ts) 重构而来；只暴露固定参数的接口（固定姿态、白名单镜像、本 Attempt 工作区挂载），其他代码不再直接拼接 `docker` 命令。它与业务服务同进程、同账号，提供的是代码边界而非账号隔离：业务服务被攻破即可控制容器运行时，须在总览中如实标注。独立账号的执行器组件见第 10 节。
 
 ### 4.2 执行容器
@@ -247,7 +258,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 文件系统 | 只读根；只挂本 Attempt 工作区（含 `output/`），按宿主绝对路径挂载（4.1）；`/tmp` 与 `HOME`（LibreOffice 等工具的 profile 目录）为限额 tmpfs；LibreOffice 须显式指定 `-env:UserInstallation` 指向可写目录（容器 uid 无 `passwd` 条目时不会使用 `HOME`，见 3.5） |
 | 属主映射 | 容器内非 root uid 须能写工作区；Docker Desktop 由文件共享层映射到宿主用户 |
 | 网络 | `none` |
-| 资源 | CPU、内存（内存+交换相等）、pids、`fsize`、单命令超时、Attempt 总时长 |
+| 资源 | CPU 2、内存 1 GiB（内存+交换相等）、pids 256、单文件 256 MiB（`ulimit -f`，远大于 10 MB 的成果上限，给 Office 转换的中间文件留余量）、单条命令最长 600 s（DSH 默认 60 s）、Attempt 总时长（沿用 Attempt 超时：超时即取消并删除执行容器）；工作区总磁盘用量不设上限（第 8 节） |
 | 进程 | `init: true`；命令放入独立进程组，取消与超时整组 `SIGKILL`，容器内看门狗兜底；可能派生进程的命令结束后须确认容器静止，不干净则删除容器（4.1） |
 | 镜像 | 摘要锁定、`--pull never`、工具链显式清单（Office 采用原生 LibreOffice；包含 DSH 工具依赖的 `rg` 等二进制，见 4.1 可执行文件映射）；运行时不安装依赖 |
 | 环境变量 | 由执行器固定给出 `LANG`、`PATH`、`HOME`、`TMPDIR`；remote subprocess 传来的 env 一律忽略，不合并宿主进程环境 |
@@ -287,7 +298,8 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 1b①（已实施） | 执行容器模式开关（默认关闭，启动时确定，失败则本次启动退回宿主执行并在健康状态报告不可用）；执行容器（每 Attempt 惰性创建、Attempt 结束删除、启动清扫）；remote subprocess 经工具桥 `/subprocess/exec` 与平台中转（`rg` 映射，`glob`、`grep` 在容器内运行）；固定环境变量；命令逐条审计（`run.container.command`）；进程组终止与容器内看门狗 | 命令类工具进入执行容器 | 1a；3.5 探针 |
 | 1b② | `python_execute` 并入执行容器（4.4） | 同一 Attempt 只有一个执行容器 | 1b①；确定脚本路径契约 |
 | 1c（已实施） | “静止”保证（3.7、4.1）：命令后清扫与“不干净就删除容器”、超时与取消时由 `/authorize-execution` 等待清理、静止无法恢复时 Attempt 失败；检查点读取与成果发布先确认 `output/` 本身；工具独占性纳入 DSH 升级准入测试 | 容器内代码无法利用宿主文件操作的竞态或替换后的目录越界 | 1b①；3.7 探针（已完成） |
-| 2 | 放开 C 档：单次 `bash`（关闭后台运行）与 Office 工具链；同步修改总览、功能规则与内置工具注册表（第 6 节） | 模型可“写代码 → 运行 → 看结果 → 修正”，覆盖数据处理、准确计算、Office 文件生成与转换 | 1a–1c 完成（放开 bash 前必须先有“静止”保证，见 4.1）；第 6 节前置事项已定案 |
+| 2a（已实施） | 放开 C 档单次 `bash`：叠加层改挂 `dsh-bash-local`、平台只接受 `bash -c` 形式；内置工具注册表新增 `bash`（装配方式 `execution-container`，风险中）；执行容器可用时员工侧 Agent 运行装配、Runtime 无执行容器时拒绝带 `bash` 的 Manifest；单文件大小上限；Runtime 说明告知容器限制与 `output/` 规则；管理端 Runtime 页面显示执行容器状态；安全回归；同步总览、功能规则与内部端口（3.8） | 模型可“写代码 → 运行 → 看结果 → 修正”，覆盖数据处理与准确计算 | 1a–1c 完成（放开 bash 前必须先有“静止”保证，见 4.1）；第 6 节前置事项已定案 |
+| 2b | Office 生产镜像：原生 LibreOffice、poppler、pandoc、ripgrep 与常用 Python 包，摘要锁定，在可靠的构建环境产出；LibreOffice 用户配置目录 | Office 文件生成与转换 | 2a；构建与托管位置待定 |
 
 已定以 C 档为目标，1c 是阶段 2 的必要前提，不推迟。“静止”保证不改变文件工具的执行位置，读写不经容器 `exec`；代价是每条 `bash` 命令后多一次静止确认（约 0.1 s，异常时删除并重建约 0.4 s，3.7）。
 
@@ -297,7 +309,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 - **C 档范围：** 前台单次 `bash`（`tool-bash` 配置 `enableRunInBackground: false`，不挂载 `tool-jobs`）与执行容器内的 Office 工具链。模型用文件工具写出脚本，再经 `bash` 运行（如 `python x.py`），因此 C 档已覆盖 B 档能力，不另设“提交 Python 源码”的工具。`python_execute` 保持只运行已激活 Skill 登记入口的约束。
 - **D 档暂缓的原因：** DSH 后台任务挂在 Worker 进程上，dsh-work 每 Attempt 一个 Worker、执行容器随 Attempt 回收，后台任务在 Attempt 结束时一并终止，只能用于单个 Attempt 内的并行或较长命令；收集模式下 `job_output` 在任务结束前读不到内容（4.3）；中断后不可恢复（第 2 节）。跨轮的长任务需求按定时任务或持久化等待另行设计，不经 D 档解决。C 档稳定后若仍需要 D 档，另行评审。
-- **生效条件：** 本决策是目标，不是已支持能力。[总览第 1 节](../development/overview.md#1-产品定位与范围)“MVP 不包含任意 Shell”、[总览 3.6](../development/overview.md#36-工具分类与管理边界)“注册表以外的 `bash` 一律不放行”与[功能规则第 6 节](../development/feature-rules.md#6-skill-python-执行)在阶段 2 交付并验收前继续有效；阶段 2 交付时同步修改总览、功能规则与内置工具注册表。
+- **生效条件：** 2a 已把 `bash` 加入内置工具注册表并同步总览、功能规则与内部端口（2026-10-27），但只在执行容器模式开启且启动检查通过时装配；该模式默认关闭，在 2b 完成并通过第 9 节 P2 验收前不在生产开启，[总览第 1 节](../development/overview.md#1-产品定位与范围)“MVP 不包含任意 Shell”在此之前继续有效。
 
 **不放开时的影响（决策背景）：** 知识查询与企业系统只读查询基本不受影响；MVP 场景 3（文件分析与成果交付）中的准确统计、多表关联、生成格式规范的 Excel/Word、格式转换等，只能依赖预制 Skill，模型无法“写代码 → 运行 → 看结果 → 修正”。
 
@@ -359,6 +371,8 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | DSH 升级改变 `ctx.subprocess` 接口 | remote subprocess 插件纳入 DSH 升级准入测试 |
 | 凭据经环境变量进入容器 | 容器环境变量由执行器固定，忽略传入 env（4.2），安全回归覆盖 |
 | 服务崩溃遗留容器 | 启动与周期清扫按 label 删除（4.4） |
+| 命令写满宿主磁盘 | 单文件 256 MiB 上限；工作区总用量未设上限，依赖 Attempt 超时与工作区随 Attempt 回收，必要时另行评审配额 |
+| 模型在 `output/` 写入不支持的格式或子目录，导致成果登记失败 | Runtime 说明要求中间文件放在工作区其他目录或 `/tmp`；Office 等二进制成果的登记与预览随 2b 另行设计（3.8） |
 
 ## 9. 验证
 
@@ -370,6 +384,8 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 | P2 真实验收 | Mac mini 在目标 DSH 版本下逐场景留证；C 档放开时另行验收：模型写脚本经 `bash` 运行并生成 Office 产物、`run_in_background` 被拒绝、`job_*` 工具不可见 |
 
 Mock、探针或 P1 通过不能代替 P2。
+
+**2a 的覆盖（2026-10-27）：** 单元 `execution-container.test.ts`（`bash -c` 是唯一接受的 shell 形式、叠加层停用与插入项、容器参数含单文件上限）、`builtin-tools.test.ts`（装配方式、Skill 不能声明）、`runtime-adapter.test.ts`（无执行容器时拒绝带 `bash` 的 Manifest、Runtime 说明）；集成 `builtin-tools.integration.test.ts`（员工对话仅在执行容器可用时装配 `bash`，紧急停用同样生效）；真实 DSH + 真实 Docker `execution-container.e2e.test.ts`（opt-in）：`bash` 以服务用户在容器内运行并写入共享工作区、DSH 不另行要求审批、Worker 环境变量/工具桥 socket/`DSH_HOME`/其他 Attempt 工作区/项目文件在容器内不可见、出网失败、根文件系统只读、`setsid`/`nohup` 残留在下一个工具前已清除、`run_in_background` 被拒绝、`job_*` 不可见、只有 `rg` 与 `bash` 到达容器且逐条审计；`execution-container-startup.integration.test.ts` 覆盖叠加 `dsh-bash-local` 后的启动准入（`bash` 仍独占调度）。未覆盖：P2、Office 产物、取消与超时在 `bash` 上的端到端回收（执行器层已由真实 Docker 用例覆盖）。
 
 ## 10. 后续方向（不在本方案范围）
 

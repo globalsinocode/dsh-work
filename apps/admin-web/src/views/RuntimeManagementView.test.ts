@@ -30,9 +30,11 @@ const builtin: BuiltinToolStatus = {
     { name: 'read', label: '读取文本文件', source: 'dsh', effect: 'read', risk: 'low', assembly: 'always', constraints: [] },
     { name: 'web_search', label: '联网搜索', source: 'dsh', effect: 'read', risk: 'medium', assembly: 'agent-opt-in', constraints: [] },
     { name: 'python_execute', label: 'Python 执行', source: 'platform', effect: 'write', risk: 'medium', assembly: 'runtime', constraints: [] },
+    { name: 'bash', label: '运行命令', source: 'dsh', effect: 'write', risk: 'medium', assembly: 'execution-container', constraints: [] },
   ],
   disabledTools: [],
   catalog: { checkedAt: '2026-10-22T00:00:00.000Z', missingTools: ['web_search'] },
+  executionContainer: { status: 'unavailable' },
 }
 
 async function render() {
@@ -90,7 +92,9 @@ describe('Runtime built-in tools', () => {
     const panel = wrapper.get('[aria-label="内置工具"]')
     expect(panel.text()).toContain('随平台代码发布')
     expect(panel.text()).toContain('DSH 未提供以下内置工具，相关运行会失败：web_search')
-    expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search'])
+    // 执行容器决定 bash 是否装配：不可用时说明影响与处理方式，原因只在服务日志。
+    expect(panel.get('[data-testid="execution-container-status"]').text()).toContain('执行容器启动检查未通过：本次启动不装配 bash')
+    expect(state(wrapper).disableableTools.map(tool => tool.name)).toEqual(['read', 'web_search', 'bash'])
   })
 
   it('confirms before disabling a tool and saves the list with the Runtime configuration', async () => {

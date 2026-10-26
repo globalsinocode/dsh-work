@@ -594,7 +594,8 @@ test('Runtime 停用的内置工具不进入新 Attempt，执行中的 Attempt �
     schedulingStatus: 'accepting', disabledTools, actor: ADMIN,
   })
   await assert.rejects(configure(['activate_skill']), /只能停用 DSH 内置工具/)
-  await assert.rejects(configure(['bash']), /只能停用 DSH 内置工具/)
+  // bash 已是 DSH 内置工具（执行隔离阶段 2），可以紧急停用；注册表以外的工具仍不能出现在停用清单中。
+  await assert.rejects(configure(['web_fetch']), /只能停用 DSH 内置工具/)
   const agentId = `agent-kill-${randomUUID().slice(0, 8)}`
   await createDraftAgent(agentId, { skills: [], webSearchEnabled: true, examplePrompts: ['执行中停用'] })
   trialRuntime.hold('执行中停用')

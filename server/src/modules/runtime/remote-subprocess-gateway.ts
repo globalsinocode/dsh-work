@@ -45,7 +45,7 @@ export interface RemoteSubprocessGatewayOptions {
 /**
  * Platform side of the remote `ctx.subprocess`: validates what DSH asks to run,
  * maps it to an executable inside the image, and records one audit entry per command.
- * Stage 1b allows only ripgrep (glob/grep); `bash` joins the allowlist in stage 2.
+ * Allowed: ripgrep (glob/grep) and, from stage 2, `bash -c <command>` from dsh-bash-local.
  */
 export function createRemoteSubprocessGateway(options: RemoteSubprocessGatewayOptions) {
   // DSH reports resolved paths (macOS /var → /private/var); compare resolved against resolved.
@@ -53,7 +53,7 @@ export function createRemoteSubprocessGateway(options: RemoteSubprocessGatewayOp
   const now = options.now ?? (() => performance.now())
   return async (body: Record<string, unknown>, signal: AbortSignal): Promise<ContainerCommandResult> => {
     const request = parseRequest(body)
-    const executable = mapExecutable(request.argv[0]!)
+    const executable = mapExecutable(request.argv)
     const cwd = normalize(request.cwd)
     const resolvedCwd = resolvedPath(cwd)
     if (!roots.some(root => isWithin(root, cwd)) || !roots.some(root => isWithin(root, resolvedCwd))) {
@@ -98,8 +98,15 @@ function resolvedPath(path: string) {
   try { return realpathSync(path) } catch { return normalize(path) }
 }
 
-export function mapExecutable(argv0: string): string {
+/**
+ * Host executables never run in the container as given: ripgrep maps to the image's `rg`,
+ * and the only accepted shell form is dsh-bash-local's `bash -c <command>`, which runs
+ * the image's `bash`. Any other program or host path is refused.
+ */
+export function mapExecutable(argv: readonly string[]): string {
+  const argv0 = argv[0] ?? ''
   if (RIPGREP_PATH.test(argv0)) return 'rg'
+  if (argv0 === 'bash' && argv.length === 3 && argv[1] === '-c') return 'bash'
   throw denied(`执行容器不允许运行该程序：${argv0.split('/').at(-1) ?? argv0}`)
 }
 

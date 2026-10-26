@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -23,13 +23,18 @@ const skip = !image ? 'DSH_WORK_EXECUTION_E2E_IMAGE is not set'
     : spawnSync('docker', ['info'], { timeout: 5_000 }).status !== 0 ? 'Docker is not available' : false
 const projectRoot = resolve(import.meta.dirname, '../../../..')
 
-test('DSH glob/grep run inside the Attempt execution container; bash stays refused', { skip, timeout: 180_000 }, async () => {
+test('DSH glob/grep/bash run inside the Attempt execution container and stay contained', { skip, timeout: 240_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-exec-e2e-'))
   const workspace = join(root, 'workspace')
   await mkdir(join(workspace, 'notes'), { recursive: true })
+  await mkdir(join(workspace, 'output'), { recursive: true })
   await writeFile(join(workspace, 'a.txt'), 'hello world\n')
   await writeFile(join(workspace, 'notes', 'b.txt'), 'hello again\n')
   await writeFile(join(workspace, 'c.md'), 'nothing here\n')
+  // Another Attempt's workspace and host files next to this one: never visible in the container.
+  await mkdir(join(root, 'other-attempt'), { recursive: true })
+  await writeFile(join(root, 'other-attempt', 'secret.txt'), 'other attempt secret\n')
+  const sentinel = `dsh-work-e2e-sentinel-${Date.now()}`
   const env = { ...process.env, DSH_WORK_DATA_ROOT: join(root, 'data') }
 
   // Same composition main.ts uses: deployment patch, then the execution container overlay, verified by preflight.
@@ -41,19 +46,43 @@ test('DSH glob/grep run inside the Attempt execution container; bash stays refus
   await backend.inspectExecutionImage(containers.image, containers.user)
   await backend.detectFeatures()
 
-  const steps = [
+  const dshHome = join(root, 'dsh-home')
+  const probe = (label: string, script: string) => ({ name: 'bash', args: { command: script, description: label } })
+  const buildSteps = (socket: string) => [
     { name: 'glob', args: { pattern: '**/*.txt' } },
     { name: 'grep', args: { pattern: 'hello' } },
-    { name: 'bash', args: { command: 'id', description: 'should be refused' } },
+    // The model writes and runs a script; its output lands in the shared workspace.
+    probe('script', 'mkdir -p work && printf "print(sum(range(101)))" > work/s.py && python3 work/s.py > output/sum.txt && cat output/sum.txt && id -u'),
+    // Fixed environment: no Worker variables, no DSH_HOME, no bridge socket, no other workspaces or host files.
+    probe('env', [
+      'env; echo ---',
+      'cat /proc/1/environ | tr "\\0" "\\n"; echo ---',
+      `test -e ${JSON.stringify(socket)} && echo SOCKET_VISIBLE`,
+      `for path in ${JSON.stringify(dshHome)} ${JSON.stringify(join(root, 'other-attempt'))} ${JSON.stringify(join(projectRoot, '.env'))} ${JSON.stringify(join(projectRoot, 'server'))}; do test -e "$path" && echo "VISIBLE $path"; done`,
+      'echo ENV_DONE',
+    ].join('\n')),
+    // No network and a read-only root.
+    probe('network', 'python3 -c "import socket; socket.create_connection((\'1.1.1.1\', 53), 3)" && echo NET_OK || echo NET_BLOCKED; (echo x > /etc/x) 2>/dev/null && echo ROOT_WRITABLE || echo ROOT_READONLY'),
+    // Detached leftovers: the quiescence step must clear them before the next tool runs.
+    probe('leftover', 'setsid sleep 300 > /dev/null 2>&1 < /dev/null & nohup sleep 301 > /dev/null 2>&1 & echo STARTED'),
+    probe('leftover-check', 'for p in /proc/[0-9]*; do tr "\\0" " " < "$p/cmdline" 2>/dev/null; echo; done | grep -c "^sleep 30[01]" || true'),
+    // C tier has no background jobs.
+    { name: 'bash', args: { command: 'echo BACKGROUND_RAN', description: 'background', run_in_background: true } },
   ]
-  const toolResults: unknown[] = []
+  let steps: ReturnType<typeof buildSteps> = []
+  const toolResults: string[] = []
+  let modelToolNames: string[] = []
   const model = createServer((request, response) => {
     let body = ''
     request.on('data', chunk => { body += chunk })
     request.on('end', () => {
-      const parsed = JSON.parse(body) as { messages: Array<{ role: string; content?: unknown }> }
+      const parsed = JSON.parse(body) as { messages: Array<{ role: string; content?: unknown }>; tools?: Array<{ function?: { name?: string } }> }
+      if (!modelToolNames.length) modelToolNames = (parsed.tools ?? []).map(tool => tool.function?.name ?? '')
       const results = parsed.messages.filter(message => message.role === 'tool')
-      if (results.length) toolResults[results.length - 1] = results.at(-1)!.content
+      if (results.length) {
+        const content = results.at(-1)!.content
+        toolResults[results.length - 1] = typeof content === 'string' ? content : JSON.stringify(content)
+      }
       const step = steps[results.length]
       const delta = step
         ? { role: 'assistant', content: null, tool_calls: [{ index: 0, id: `call_${results.length}`, type: 'function', function: { name: step.name, arguments: JSON.stringify(step.args) } }] }
@@ -77,45 +106,71 @@ test('DSH glob/grep run inside the Attempt execution container; bash stays refus
 
   const audits: ContainerCommandAudit[] = []
   const attemptId = 'e2e-attempt'
-  const bridge = await createPlatformToolBridge({}, 10, undefined, undefined, undefined, createRemoteSubprocessGateway({
+  const bridge = await createPlatformToolBridge({}, 20, undefined, undefined, undefined, createRemoteSubprocessGateway({
     workspace,
     run: (command, signal) => containers.exec(attemptId, workspace, command, signal),
     onCommand: audit => audits.push(audit),
   }))
+  // The bridge socket's host path is only known now; the env probe checks it is not reachable.
+  steps = buildSteps(bridge.socket)
   const client = AcpJsonRpcClient.launch({
     ...installation.process,
     args: [...installation.process.args, '--patch', modelPatch],
     env: {
       ...installation.process.env,
-      DSH_HOME: join(root, 'dsh-home'),
+      DSH_HOME: dshHome,
       DSHW_E2E_KEY: 'e2e-key',
+      DSH_WORK_E2E_SENTINEL: sentinel,
       DSH_PLATFORM_TOOL_SOCKET: bridge.socket,
       DSH_PERMISSION_MODE: 'workspace-write',
       DSH_SNAPSHOT: 'record',
       DSH_SNAPSHOT_SESSIONS_ROOT: join(root, 'sessions'),
       DSH_ALLOWED_TOOLS_JSON: JSON.stringify(['glob', 'grep', 'bash']),
-      DSH_MAX_TOOL_CALLS: '10',
+      DSH_MAX_TOOL_CALLS: '20',
       DSH_WORKSPACE_ROOT: workspace,
       DSH_TOOL_APPROVAL_MODE: 'never',
       DSH_TOOL_APPROVAL_LOG: join(root, 'approvals.jsonl'),
     },
   }, {
     onSessionUpdate: () => undefined,
-    onPermissionRequest: async () => ({ outcome: { outcome: 'cancelled' } }),
+    onPermissionRequest: async () => { permissionRequests += 1; return { outcome: { outcome: 'cancelled' } } },
   })
+  let permissionRequests = 0
   try {
     await client.initialize()
     const sessionId = await client.newSession(workspace)
     await client.prompt(sessionId, 'run the checks')
-    const [globResult, grepResult, bashResult] = toolResults.map(value => typeof value === 'string' ? value : JSON.stringify(value))
+    const [globResult, grepResult, scriptResult, envResult, networkResult, leftoverResult, leftoverCheck, backgroundResult] = toolResults
     assert.match(globResult ?? '', /a\.txt/)
     assert.match(globResult ?? '', /notes\/b\.txt/)
     assert.doesNotMatch(globResult ?? '', /c\.md/)
     assert.match(grepResult ?? '', /hello world/)
     assert.match(grepResult ?? '', /hello again/)
-    assert.doesNotMatch(bashResult ?? '', /uid=/, 'bash never ran')
-    assert.deepEqual(audits.map(audit => [audit.executable, audit.exitCode]), [['rg', 0], ['rg', 0]], 'only the two rg commands reached the container')
-    assert.equal(containers.activeAttempts.length, 1, 'one container for the Attempt')
+
+    // bash ran in the container, as the service user, writing into the shared workspace.
+    assert.match(scriptResult ?? '', new RegExp(`5050\\s+${resolveExecutionContainerUser().split(':')[0]}`))
+    assert.equal((await readFile(join(workspace, 'output', 'sum.txt'), 'utf8')).trim(), '5050')
+    assert.equal(permissionRequests, 0, 'approval follows the Agent mode (never here); DSH adds no prompt of its own')
+
+    assert.match(envResult ?? '', /ENV_DONE/)
+    assert.doesNotMatch(envResult ?? '', new RegExp(sentinel), 'Worker variables never reach the container')
+    assert.doesNotMatch(envResult ?? '', /DSH_|DSHW_E2E_KEY|e2e-key/)
+    assert.doesNotMatch(envResult ?? '', /SOCKET_VISIBLE|VISIBLE /)
+
+    assert.match(networkResult ?? '', /NET_BLOCKED/)
+    assert.match(networkResult ?? '', /ROOT_READONLY/)
+
+    assert.match(leftoverResult ?? '', /STARTED/)
+    assert.equal((leftoverCheck ?? '').trim(), '0', 'setsid/nohup leftovers are gone before the next tool runs')
+
+    assert.doesNotMatch(backgroundResult ?? '', /BACKGROUND_RAN/, 'run_in_background never starts a job')
+    assert.ok(modelToolNames.includes('bash'), 'bash is visible to the model')
+    assert.equal(modelToolNames.some(name => name.startsWith('job_')), false, 'job tools are not visible')
+
+    // Only ripgrep and bash -c reach the container, each command audited.
+    assert.deepEqual([...new Set(audits.map(audit => audit.executable))].sort(), ['bash', 'rg'])
+    assert.ok(audits.filter(audit => audit.executable === 'bash').length >= 5)
+    assert.equal(containers.activeAttempts.length <= 1, true, 'at most one container for the Attempt')
   } finally {
     await client.close().catch(() => undefined)
     await bridge.close()
