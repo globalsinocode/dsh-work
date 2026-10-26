@@ -8,7 +8,7 @@
     "dev:server": "pnpm --filter @dsh-work/server dev",
     "dev:workbench": "pnpm --filter @dsh-work/workbench-web dev",
     "dev:admin": "pnpm --filter @dsh-work/admin-web dev",
-    "dev:all": "pnpm --parallel --filter @dsh-work/server --filter @dsh-work/workbench-web --filter @dsh-work/admin-web dev",
+    "dev:all": "node --env-file-if-exists=.env scripts/dev/free-dev-ports.mjs && pnpm --parallel --filter @dsh-work/server --filter @dsh-work/workbench-web --filter @dsh-work/admin-web dev",
     "build": "pnpm --filter @dsh-work/workbench-web --filter @dsh-work/admin-web --filter @dsh-work/server build",
     "typecheck": "pnpm --filter @dsh-work/workbench-web --filter @dsh-work/admin-web --filter @dsh-work/server typecheck",
     "test:m1": "pnpm --filter @dsh-work/server test:runtime",
