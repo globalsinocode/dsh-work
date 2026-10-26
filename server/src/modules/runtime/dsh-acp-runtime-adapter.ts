@@ -169,10 +169,19 @@ export interface DshAcpRuntimeAdapterConfiguration {
   }
   /** 执行容器内每条命令的审计摘要；不含输出正文。 */
   recordContainerCommand?: (manifest: RuntimeManifest, audit: ContainerCommandAudit) => Promise<void>
+  /**
+   * Registers the files under output/ as artifacts. Non-compliant files are skipped with a
+   * fixed reason code instead of failing the Attempt (execution isolation 2b-2); structural
+   * problems (output/ replaced, workspace or authorization) still throw.
+   */
   collectArtifacts?: (
     manifest: RuntimeManifest,
     workspaceDirectory: string,
-  ) => Promise<Array<{ name: string; size: number }>>
+  ) => Promise<{
+    published: Array<{ name: string; size: number }>
+    skipped: Array<{ name: string; reason: string }>
+    skippedTotal: number
+  }>
   /** PF-01 durable receipts for write-effect platform tools. */
   operationLifecycle?: (manifest: RuntimeManifest) => PlatformToolOperationLifecycle
   /** Resolve current connector grants and credentials immediately before Worker spawn. */
@@ -720,10 +729,17 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
       // 静止保证（方案 3.7）：读取 output/ 前先停止接收命令、等待清理结束并删除执行容器。
       if (!(await this.settleExecutionContainer(record))) return
       let artifacts: Array<{ name: string; size: number }> = []
+      let skippedArtifacts: Array<{ name: string; reason: string }> = []
+      let skippedArtifactTotal = 0
       const collectStartMono = performance.now()
-      if (!isAdminRunPurpose(record.manifest.purpose) && record.manifest.tools.some(tool => tool.id === 'write')) {
+      // bash 也能在 output/ 写出成果（执行隔离 2b）：write 被紧急停用时同样要收集。
+      if (!isAdminRunPurpose(record.manifest.purpose)
+        && record.manifest.tools.some(tool => tool.id === 'write' || tool.id === 'bash')) {
         if (!this.configuration.collectArtifacts) throw dependencyUnavailable('成果收集服务不可用')
-        artifacts = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
+        const collection = await this.configuration.collectArtifacts(record.manifest, workspaceDirectory)
+        artifacts = collection.published
+        skippedArtifacts = collection.skipped
+        skippedArtifactTotal = collection.skippedTotal
       }
       const artifactCollectMs = Math.round(performance.now() - collectStartMono)
       if (record.terminal) return
@@ -754,6 +770,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         tool_failed_count: toolCalls.failed,
         ...(toolCalls.omitted > 0 ? { tool_calls_omitted: toolCalls.omitted } : {}),
         artifact_count: artifacts.length,
+        ...(skippedArtifactTotal > 0 ? { artifacts_skipped: skippedArtifacts, artifacts_skipped_total: skippedArtifactTotal } : {}),
         artifact_collect_ms: artifactCollectMs,
         worker_rss_kb: workerResources?.rssKb ?? null,
         worker_cpu_ms: workerResources?.cpuMs ?? null,
@@ -1383,7 +1400,7 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
     sections.push([
       '# 运行命令',
       'bash 在本次运行专用的执行容器中执行：不能联网，只能使用镜像中已安装的程序与 Python 包，不能安装新依赖；每次一条前台命令，单条命令有时限，不支持后台运行；工作目录就是当前会话工作区，文件读写与工具看到的是同一份。',
-      '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件，格式限于 Markdown、纯文本、CSV 和 HTML；其他格式或子目录会导致成果登记失败。',
+      '命令产生的中间文件放在工作区其他目录（例如 work/）或 /tmp，不要放进 output。output 只放要交付给用户的顶层文件：Markdown、纯文本、CSV、HTML，以及 xlsx、docx、pptx、pdf、png、jpg；单个不超过 20 MB、合计不超过 50 MB、最多 20 个。含宏、脚本或会访问外部内容的文件，以及其他格式、子目录和隐藏文件都不会登记为成果，回答下方会列出未登记的文件。',
     ].join('\n'))
   }
   if (manifest.agent_configuration.skill_instructions.length > 0) {

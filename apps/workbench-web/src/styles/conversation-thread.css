@@ -601,3 +601,25 @@
     min-width: 0;
   }
 }
+
+/* 执行隔离 2b-2：未登记为成果的文件，列在本轮回复下 */
+.answer-skipped {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid #f0d9b5;
+  border-radius: 10px;
+  background: #fdf8ef;
+  color: #7a5a1f;
+  font-size: var(--dsh-font-size-caption);
+  line-height: 1.6;
+}
+
+.answer-skipped__title {
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+
+.answer-skipped ul {
+  margin: 0;
+  padding-left: 18px;
+}

@@ -57,6 +57,9 @@ onMounted(() => contentStore.refresh())
         <el-option label="Excel" value="xlsx" />
         <el-option label="PDF" value="pdf" />
         <el-option label="Word" value="docx" />
+        <el-option label="PowerPoint" value="pptx" />
+        <el-option label="PNG 图片" value="png" />
+        <el-option label="JPG 图片" value="jpg" />
         <el-option label="Markdown" value="markdown" />
         <el-option label="HTML" value="html" />
         <el-option label="CSV" value="csv" />

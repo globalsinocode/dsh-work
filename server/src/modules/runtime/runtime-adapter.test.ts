@@ -401,6 +401,7 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.match(withBash, /不能联网/)
     assert.match(withBash, /不支持后台运行/)
     assert.match(withBash, /中间文件放在工作区其他目录/)
+    assert.match(withBash, /xlsx、docx、pptx、pdf、png、jpg/)
     assert.doesNotMatch(renderSystemPrompt(compileRuntimeManifest(base).manifest), /# 运行命令/)
   })
   it('discovers the session-scoped tool schemas from an isolated active DSH Profile', async () => {
@@ -835,7 +836,7 @@ describe('DSH ACP Runtime Adapter', () => {
 
   it('execution container mode releases the container before reading output/ for artifacts', async () => {
     const order: string[] = []
-    const adapter = await createAdapter(500, undefined, async () => { order.push('collect'); return [] }, {
+    const adapter = await createAdapter(500, undefined, async () => { order.push('collect'); return { published: [], skipped: [], skippedTotal: 0 } }, {
       remoteExecution: {
         exec: async () => { throw new Error('unused') },
         waitUntilIdle: async () => { order.push('idle'); return 'idle' as const },
@@ -849,9 +850,36 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.deepEqual(order.slice(-3), ['idle', 'release', 'collect'], 'idle, then released, then read')
   })
 
+  it('collects output/ when only bash is assembled and reports skipped files without failing the Attempt', async () => {
+    let collected = 0
+    const skipped = [{ name: '宏.xlsx', reason: 'active_content' }]
+    const adapter = await createAdapter(500, undefined, async () => {
+      collected += 1
+      return { published: [{ name: '数据.xlsx', size: 10 }], skipped, skippedTotal: 2 }
+    }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => undefined,
+      },
+    })
+    const input = manifest('run-bash-only-collect', 'attempt-exec-bash')
+    input.tools = [...input.tools.filter(tool => tool.id !== 'write'), { id: 'bash', version: '1.0.0' }]
+    const events: RuntimeEvent[] = []
+    const handle = await adapter.execute(input)
+    adapter.subscribe(input.run_id, event => events.push(event))
+    const result = await handle.done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.equal(collected, 1, 'write is not assembled, bash may still have written artifacts')
+    const completed = events.find(event => event.event_type === 'run.completed')
+    assert.equal(completed?.safe_metadata['artifact_count'], 1)
+    assert.deepEqual(completed?.safe_metadata['artifacts_skipped'], skipped)
+    assert.equal(completed?.safe_metadata['artifacts_skipped_total'], 2)
+  })
+
   it('execution container mode never reads output/ when the container could not be released', async () => {
     let collected = false
-    const adapter = await createAdapter(500, undefined, async () => { collected = true; return [] }, {
+    const adapter = await createAdapter(500, undefined, async () => { collected = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
       remoteExecution: {
         exec: async () => { throw new Error('unused') },
         waitUntilIdle: async () => 'idle' as const,
@@ -1091,7 +1119,7 @@ describe('DSH ACP Runtime Adapter', () => {
         name,
         content: await readFile(join(workspaceDirectory, 'output', name), 'utf8'),
       })
-      return [{ name, size: Buffer.byteLength(collected[0]!.content) }]
+      return { published: [{ name, size: Buffer.byteLength(collected[0]!.content) }], skipped: [], skippedTotal: 0 }
     })
     const input = manifest('run-artifact', 'attempt-1', '[artifact] create report')
     input.tools = [{ id: 'write', version: '1.0.0' }]
@@ -1710,7 +1738,7 @@ describe('current execution authorization', () => {
   it('does not commit a completed response if permission was revoked during artifact collection', async () => {
     let revoked = false
     const events: RuntimeEvent[] = []
-    const adapter = await createAdapter(200, undefined, async () => { revoked = true; return [] }, {
+    const adapter = await createAdapter(200, undefined, async () => { revoked = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
       authorizeExecution: async () => { if (revoked) throw Object.assign(new Error('revoked'), { code: 'permission_denied' }) },
     })
     const input = manifest('run-revoke-at-output', 'attempt-1', '[artifact]')
@@ -1726,7 +1754,7 @@ describe('current execution authorization', () => {
   it('does not commit a completed response when authorization is unavailable during artifact collection', async () => {
     let unavailable = false
     const events: RuntimeEvent[] = []
-    const adapter = await createAdapter(200, undefined, async () => { unavailable = true; return [] }, {
+    const adapter = await createAdapter(200, undefined, async () => { unavailable = true; return { published: [], skipped: [], skippedTotal: 0 } }, {
       authorizeExecution: async () => { if (unavailable) throw new Error('authorization database unavailable') },
     })
     const input = manifest('run-authorization-outage-at-output', 'attempt-1', '[artifact]')

@@ -47,7 +47,7 @@ export interface TaskSource {
 export interface Artifact {
   id: string
   name: string
-  type: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  type: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   size: string
   createdAt: string
@@ -97,6 +97,8 @@ export interface TaskResultReceipt {
 export type TaskResultPendingKind =
   | 'answer_uncommitted'
   | 'artifact_registration_gap'
+  /** 执行隔离 2b-2：output 中的文件不合规，未登记为成果（回答下方列出文件与原因）。 */
+  | 'artifact_skipped'
   | 'no_deliverable'
   | 'no_verified_deliverable'
   | 'output_truncated'

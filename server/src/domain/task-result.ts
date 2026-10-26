@@ -25,6 +25,7 @@
  */
 import type { JsonObject, RunState } from './run-state.ts'
 import type { Artifact, TaskSource, TaskRunError } from './types.ts'
+import { ARTIFACT_SKIP_REASON_TEXT, isArtifactSkipReason } from './artifact-skip-reasons.ts'
 
 export const TASK_RESULT_VERSION = 'task-result/v1'
 
@@ -69,6 +70,8 @@ export interface TaskResultReceipt {
 export type TaskResultPendingKind =
   | 'answer_uncommitted'
   | 'artifact_registration_gap'
+  /** 执行隔离 2b-2：output 中的文件不合规，未登记为成果（回答下方列出文件与原因）。 */
+  | 'artifact_skipped'
   | 'no_deliverable'
   | 'no_verified_deliverable'
   | 'output_truncated'
@@ -284,6 +287,24 @@ export function deriveTaskResult(evidence: TaskResultEvidence): TaskResult {
       kind: 'artifact_registration_gap',
       message: `执行报告生成 ${artifactsClaimed} 个成果，实际登记 ${artifacts.length} 个；缺失成果不视为已交付。`,
     })
+  }
+
+  // 执行隔离 2b-2：output 中不合规、未登记的文件逐个列出（原因为固定文案），本轮因此不算完全达成。
+  if (terminalMetadata) {
+    const skipped = Array.isArray(terminalMetadata['artifacts_skipped']) ? terminalMetadata['artifacts_skipped'] : []
+    let listed = 0
+    for (const item of skipped) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const name = (item as Record<string, unknown>)['name']
+      const reason = (item as Record<string, unknown>)['reason']
+      if (typeof name !== 'string' || !isArtifactSkipReason(reason)) continue
+      listed += 1
+      pendingItems.push({ kind: 'artifact_skipped', message: `“${name}”未登记为成果：${ARTIFACT_SKIP_REASON_TEXT[reason]}` })
+    }
+    const total = metadataNumber(terminalMetadata, 'artifacts_skipped_total')
+    if (total !== null && total > listed) {
+      pendingItems.push({ kind: 'artifact_skipped', message: `另有 ${total - listed} 个文件未登记为成果。` })
+    }
   }
 
   // 平台工具回执：tool_audit_logs 区分两类记录——`decision` 非空的行是

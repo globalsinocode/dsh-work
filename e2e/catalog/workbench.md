@@ -131,6 +131,20 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 刷新后两轮成果分别位于对应回复下，正文与各自一轮的输入对应；「继续修改」仅一处；读取失败可原处提示并重试成功。P2 另需在目标环境用真实 DSH 两轮各生成一份 Markdown，刷新后核对两份正文。
 
+### EX-ARTIFACT-03 运行命令生成的 Office 等成果登记；不合规文件跳过并提示（执行隔离 2b-2）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL 与成果发布服务、校验模块单元测试、员工端组件测试；真实 DSH 生成 Office 文件属 P2<br>
+**前置数据：** 一次成功 Run 的 `output/` 中同时有合规的 xlsx/docx/pptx/pdf/png/jpg、文本类成果，以及不合规的文件（不支持的格式、子目录、隐藏文件、超过 20 MB、扩展名与文件头不符、含宏或脚本等活动内容）<br>
+**spec：** `server/src/modules/workbench/application/artifact-file-policy.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/domain/task-result.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`apps/workbench-web/src/components/conversation/conversation-components.test.ts`
+
+1. 合规文件登记为成果，回答照常提交；二进制成果卡片只提供下载，暂不提供“查看正文”与“继续修改”。
+2. 不合规文件不登记、不落盘，其余成果不受影响；该轮回答下方列出未登记的文件及原因（如“格式不支持”“含宏或脚本等活动内容”“超过 20 MB”），结果核验标为未完全达成。
+3. Office 文件允许普通超链接；含宏、ActiveX、嵌入的 OLE 对象、外部数据连接、打开时取远程内容的外部关系，或 PDF 脚本、启动动作、嵌入文件时不登记；无法完整检查的文件按不合规处理。
+4. 单个成果不超过 20 MB、每轮合计不超过 50 MB、最多 20 个；超出部分按文件名顺序跳过并说明。
+5. `output/` 本身被替换为链接、工作空间或授权复核失败时，整轮仍按失败处理，不登记任何成果。
+
+**验收：** 上述测试通过；同一输出重复发布结果一致。P2 另需在目标环境用真实 DSH 经 `bash` 生成 xlsx/docx 并转换为 PDF，下载核对内容，并制造一个不合规文件确认回答仍保留并列出原因。
+
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>

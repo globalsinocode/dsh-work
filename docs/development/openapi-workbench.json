@@ -4734,6 +4734,7 @@
             "enum": [
               "answer_uncommitted",
               "artifact_registration_gap",
+              "artifact_skipped",
               "no_deliverable",
               "no_verified_deliverable",
               "output_truncated",

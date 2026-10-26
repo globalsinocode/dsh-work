@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +33,7 @@ import { PostgresTaskQueryService } from '../../modules/run/postgres-task-query-
 import type { DatabaseClient } from './database.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
+import { minimalDocx, minimalXlsx } from '../../testing/office-fixtures.ts'
 
 const databaseUrl = process.env.DSH_WORK_TEST_DATABASE_URL
 if (!databaseUrl) throw new Error('DSH_WORK_TEST_DATABASE_URL 未配置')
@@ -403,7 +405,8 @@ test('validated Runtime output is published once as a downloadable Artifact', as
 
     const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
     const repeated = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-    assert.deepEqual(first, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+    assert.deepEqual(first.published, [{ name: '生产欠料管理PRD.md', size: Buffer.byteLength('# 生产欠料管理 PRD\n') }])
+    assert.deepEqual(first.skipped, [])
     assert.deepEqual(repeated, first)
     releaseCompletion()
     await waitForTask(created.id, 'succeeded')
@@ -627,7 +630,7 @@ test('HTML Runtime output is published as a previewable html Artifact', async ()
     const manifest = attempt!.manifest as unknown as RuntimeManifest
 
     const published = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
-    assert.deepEqual(published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
+    assert.deepEqual(published.published, [{ name: '华东区风险看板.html', size: Buffer.byteLength(markup) }])
     releaseCompletion()
     await waitForTask(created.id, 'succeeded')
 
@@ -1445,3 +1448,70 @@ class DeterministicRuntime implements AgentRuntimePort {
     execution.resolve(structuredClone(execution.snapshot))
   }
 }
+
+test('2b-2: compliant files are published, non-compliant ones are skipped with a reason, and re-publishing agrees', async () => {
+  const session = await orchestration.createSession({ userId: 'U00001', title: '运行命令生成成果' })
+  const root = await mkdtemp(join(tmpdir(), 'dsh-work-artifact-policy-'))
+  const workspaceDirectory = join(root, 'workspace')
+  const output = join(workspaceDirectory, 'output')
+  await mkdir(join(output, 'tmp'), { recursive: true })
+  await writeFile(join(root, 'host-secret.md'), '# host\n')
+  await writeFile(join(output, '周报.md'), '# 周报\n')
+  await writeFile(join(output, '数据.xlsx'), minimalXlsx())
+  await writeFile(join(output, '宏.xlsx'), minimalXlsx({ 'xl/vbaProject.bin': 'macro' }))
+  await writeFile(join(output, '图.svg'), '<svg/>')
+  await writeFile(join(output, '伪装.pdf'), Buffer.from('89504e470d0a1a0a00', 'hex'))
+  await writeFile(join(output, '.草稿.md'), '# hidden\n')
+  await writeFile(join(output, '大文件.txt'), Buffer.alloc(20 * 1024 * 1024 + 1, 0x61))
+  await writeFile(join(output, '说明.docx'), minimalDocx())
+  await symlink(join(root, 'host-secret.md'), join(output, '链接.md'))
+  const fifo = spawnSync('mkfifo', [join(output, '管道.txt')]).status === 0
+
+  let release: () => void = () => undefined
+  runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+  try {
+    const created = await orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '整理数据', idempotencyKey: randomUUID() })
+    assert.ok(created)
+    await waitForTask(created.id, 'running')
+    const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+    const manifest = attempt!.manifest as unknown as RuntimeManifest
+
+    const first = await content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+    assert.deepEqual(first.published.map(item => item.name).sort(), ['周报.md', '数据.xlsx', '说明.docx'].sort())
+    const reasons = Object.fromEntries(first.skipped.map(item => [item.name, item.reason]))
+    assert.deepEqual(reasons, {
+      'tmp': 'not_regular_file',
+      '宏.xlsx': 'active_content',
+      '图.svg': 'unsupported_format',
+      '伪装.pdf': 'content_mismatch',
+      '.草稿.md': 'hidden_file',
+      '大文件.txt': 'too_large',
+      '链接.md': 'not_regular_file',
+      ...(fifo ? { '管道.txt': 'not_regular_file' } : {}),
+    })
+    assert.equal(first.skippedTotal, first.skipped.length)
+    // 判断只依赖文件名与内容：重复发布得到相同结果。
+    assert.deepEqual(await content.publishRuntimeArtifacts({ manifest, workspaceDirectory }), first)
+    release()
+    await waitForTask(created.id, 'succeeded')
+    assert.deepEqual(await content.publishRuntimeArtifacts({ manifest, workspaceDirectory }), first, 'idempotent after success')
+
+    const task = await conversations.getTask(created.id, 'U00001')
+    const byName = new Map(task!.result.artifacts.map(artifact => [artifact.name, artifact]))
+    assert.equal(byName.get('数据.xlsx')?.type, 'xlsx')
+    assert.equal(byName.get('说明.docx')?.type, 'docx')
+    // 二进制成果在 2b-3 之前没有解析文本：可下载，不可引用。
+    assert.equal(byName.get('数据.xlsx')?.canReference, false)
+    assert.equal(byName.get('周报.md')?.canReference, true)
+    const fileId = await content.artifactFileId(byName.get('数据.xlsx')!.id, 1, 'U00001')
+    const downloaded = await content.readFile(fileId, 'U00001')
+    assert.equal(downloaded.mimeType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    assert.ok(downloaded.bytes.equals(minimalXlsx()))
+    const stored = await database<{ name: string }[]>`
+      select original_name as name from file_objects
+       where tenant_id = 'tenant-dsh-work' and session_id = ${session.id}`
+    assert.deepEqual(stored.map(row => row.name).sort(), ['周报.md', '数据.xlsx', '说明.docx'].sort(), 'skipped files are never stored')
+  } finally {
+    release()
+  }
+})

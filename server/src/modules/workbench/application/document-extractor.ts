@@ -160,7 +160,11 @@ function decodePdfHex(bytes: Buffer) {
   return bytes.toString('latin1')
 }
 
-function readZip(bytes: Buffer) {
+/**
+ * Bounded ZIP reader for OOXML: entry count, per-entry and total inflated size are capped.
+ * Duplicate names and encrypted entries are refused (a duplicate would silently shadow a part).
+ */
+export function readZip(bytes: Buffer) {
   const signature = 0x06054b50
   let eocdOffset = -1
   for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 65_557); index -= 1) {
@@ -177,6 +181,7 @@ function readZip(bytes: Buffer) {
   for (let entry = 0; entry < entryCount; entry += 1) {
     assertBufferRange(bytes, offset, 46, 'ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
     if (bytes.readUInt32LE(offset) !== 0x02014b50) throw extractionError('ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
+    const flags = bytes.readUInt16LE(offset + 8)
     const method = bytes.readUInt16LE(offset + 10)
     const compressedSize = bytes.readUInt32LE(offset + 20)
     const uncompressedSize = bytes.readUInt32LE(offset + 24)
@@ -193,6 +198,8 @@ function readZip(bytes: Buffer) {
     }
     assertBufferRange(bytes, offset + 46, nameLength + extraLength + commentLength, 'ZIP_DIRECTORY_INVALID', 'Office 文件目录结构无效')
     const name = bytes.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+    if (flags & 0x1) throw extractionError('ZIP_ENTRY_ENCRYPTED', `Office 文件条目已加密：${name}`)
+    if (entries.has(name)) throw extractionError('ZIP_DUPLICATE_ENTRY', `Office 文件条目重复：${name}`)
     assertBufferRange(bytes, localOffset, 30, 'ZIP_ENTRY_INVALID', `Office 文件条目无效：${name}`)
     if (bytes.readUInt32LE(localOffset) !== 0x04034b50) throw extractionError('ZIP_ENTRY_INVALID', `Office 文件条目无效：${name}`)
     const localNameLength = bytes.readUInt16LE(localOffset + 26)

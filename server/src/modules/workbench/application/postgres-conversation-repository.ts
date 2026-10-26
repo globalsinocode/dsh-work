@@ -152,7 +152,7 @@ interface ArtifactRow {
   id: string
   artifactVersionId: string
   name: string
-  artifactType: 'xlsx' | 'docx' | 'pdf' | 'markdown' | 'csv' | 'text' | 'html'
+  artifactType: 'xlsx' | 'docx' | 'pptx' | 'pdf' | 'png' | 'jpg' | 'markdown' | 'csv' | 'text' | 'html'
   version: number
   sizeBytes: string | number
   createdAt: Date

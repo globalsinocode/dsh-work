@@ -11,10 +11,14 @@ import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
 import { extractDocument } from './document-extractor.ts'
+import {
+  ARTIFACT_LIMITS, artifactFormat, checkArtifactContent, checkArtifactName, displayArtifactName, isTextArtifactType,
+  type ArtifactSkipReason,
+} from './artifact-file-policy.ts'
 import { PostgresWorkspaceService, readableWorkspacePredicate, type WorkspaceType } from './postgres-workspace-service.ts'
 import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
-import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
+import { invalidRequest } from '../../../domain/request-errors.ts'
 import type { ObjectStorage } from '../../../domain/object-storage.ts'
 import { assertRealWorkspaceDirectory } from '../../../infrastructure/storage/workspace-directory.ts'
 
@@ -147,6 +151,16 @@ export interface PreparedRuntimeFile {
   fileId: string
   extractionId: string
   mount: FileMount
+}
+
+/** Most skipped files reported back per run; the total is reported as well. */
+const MAX_REPORTED_SKIPS = 20
+
+/** Artifact collection of one Attempt: registered files and the ones skipped with a fixed reason. */
+export interface RuntimeArtifactCollection {
+  published: Array<{ name: string; size: number }>
+  skipped: Array<{ name: string; reason: ArtifactSkipReason }>
+  skippedTotal: number
 }
 
 interface PreparedRuntimeArtifact {
@@ -1688,11 +1702,11 @@ export class PostgresContentService {
   async publishRuntimeArtifacts(input: {
     manifest: import('../../runtime/runtime-types.ts').RuntimeManifest
     workspaceDirectory: string
-  }): Promise<Array<{ name: string; size: number }>> {
+  }): Promise<RuntimeArtifactCollection> {
     const { manifest } = input
     // 管理侧 purpose 不产生员工成果；自动化任务（purpose='automation'）是
     // 员工运行，仍走正常成果收集（AG-03）。
-    if (isAdminRunPurpose(manifest.purpose)) return []
+    if (isAdminRunPurpose(manifest.purpose)) return { published: [], skipped: [], skippedTotal: 0 }
     const workspaceRoot = resolve(input.workspaceDirectory)
     const outputRoot = resolve(workspaceRoot, 'output')
     if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw invalidRequest('Runtime 成果目录无效')
@@ -1700,7 +1714,6 @@ export class PostgresContentService {
     await assertRealWorkspaceDirectory(workspaceRoot, outputRoot)
     await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
     const entries = await readdir(outputRoot, { withFileTypes: true })
-    if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 
     // EX-02：本 Attempt 挂载过同会话的成果、并输出同名文件时，登记为该成果的下一版本；
     // 未引用或同名指向多个成果（无法确定）时仍作为新成果，不把碰巧同名的文件串成版本。
@@ -1717,25 +1730,34 @@ export class PostgresContentService {
       for (const row of referenced) revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
     }
 
+    // 执行隔离 2b-2：不合规的文件跳过并说明原因，不让整轮回答丢失；判断只依赖文件名与内容，
+    // 同一输出重复发布得到相同结果。output/ 本身被替换、空间或授权复核失败仍整轮失败（见上文）。
     const prepared: PreparedRuntimeArtifact[] = []
+    const skipped: RuntimeArtifactCollection['skipped'] = []
+    let skippedTotal = 0
+    const skip = (name: string, reason: ArtifactSkipReason) => {
+      skippedTotal += 1
+      if (skipped.length < MAX_REPORTED_SKIPS) skipped.push({ name: displayArtifactName(name), reason })
+    }
     let totalBytes = 0
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isFile() || entry.name.startsWith('.') || entry.name.includes('\0')) {
-        throw new Error(`成果目录只允许顶层普通文件：${entry.name}`)
-      }
-      const extension = extname(entry.name).toLowerCase()
-      const type = artifactTypeForExtension(extension)
-      if (!type) throw new Error(`成果文件格式不受支持：${entry.name}`)
+      const nameProblem = checkArtifactName(entry.name)
+      if (nameProblem === 'invalid_name' || nameProblem === 'hidden_file') { skip(entry.name, nameProblem); continue }
       const sourcePath = resolve(outputRoot, entry.name)
-      if (!sourcePath.startsWith(`${outputRoot}/`)) throw invalidRequest(`成果文件路径无效：${entry.name}`)
+      // lstat 而不是 stat：不跟随链接，也不打开管道等特殊文件；硬链接（nlink > 1）同样不收。
       const details = await lstat(sourcePath)
-      if (!details.isFile() || details.nlink !== 1) throw new Error(`成果文件不是独立普通文件：${entry.name}`)
-      if (details.size < 1 || details.size > 10 * 1024 * 1024) throw invalidRequest(`成果文件大小必须为 1 B～10 MB：${entry.name}`)
-      totalBytes += details.size
-      if (totalBytes > 20 * 1024 * 1024) throw stateConflict('单次 Run 成果文件合计不能超过 20 MB')
+      if (!details.isFile() || details.nlink !== 1) { skip(entry.name, 'not_regular_file'); continue }
+      if (nameProblem) { skip(entry.name, nameProblem); continue }
+      if (details.size > ARTIFACT_LIMITS.maxFileBytes) { skip(entry.name, 'too_large'); continue }
+      if (prepared.length >= ARTIFACT_LIMITS.maxFiles) { skip(entry.name, 'too_many_files'); continue }
+      if (totalBytes + details.size > ARTIFACT_LIMITS.maxTotalBytes) { skip(entry.name, 'total_too_large'); continue }
       const bytes = await readFile(sourcePath)
-      const scan = await this.scanner.scan({ name: entry.name, mimeType: artifactMimeType(type), bytes })
-      if (!scan.clean) throw new Error(`成果文件安全检查未通过：${entry.name}`)
+      const format = artifactFormat(entry.name)!
+      const contentProblem = checkArtifactContent(entry.name, bytes)
+      if (contentProblem) { skip(entry.name, contentProblem); continue }
+      const scan = await this.scanner.scan({ name: entry.name, mimeType: format.mimeType, bytes })
+      if (!scan.clean) { skip(entry.name, 'security_scan_failed'); continue }
+      totalBytes += bytes.length
       const contentSha256 = createHash('sha256').update(bytes).digest('hex')
       const identity = createHash('sha256').update(`${manifest.attempt_id}\0${entry.name}\0${contentSha256}`).digest('hex').slice(0, 32)
       const artifactIdentity = createHash('sha256').update(`${manifest.run_id}\0${entry.name}`).digest('hex').slice(0, 32)
@@ -1745,12 +1767,12 @@ export class PostgresContentService {
         artifactVersionId: `artifact-version-${identity}`,
         fileId,
         name: entry.name,
-        type,
-        mimeType: artifactMimeType(type),
+        type: format.type,
+        mimeType: format.mimeType,
         bytes,
         sha256: contentSha256,
-        storageKey: join('artifact-files', manifest.task_id, `file-artifact-${identity}${extension}`),
-        text: artifactInputText(type, bytes, fileId),
+        storageKey: join('artifact-files', manifest.task_id, `file-artifact-${identity}${extname(entry.name).toLowerCase()}`),
+        text: artifactInputText(format.type, bytes, fileId),
       })
     }
 
@@ -1868,7 +1890,7 @@ export class PostgresContentService {
         `
       }
     })
-    return prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length }))
+    return { published: prepared.map(artifact => ({ name: artifact.name, size: artifact.bytes.length })), skipped, skippedTotal }
   }
 
   /**
@@ -1883,6 +1905,7 @@ export class PostgresContentService {
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
         join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
        where av.tenant_id = ${tenantId} and f.removed_at is null and f.scan_status = 'clean'
+         and a.artifact_type in ('markdown', 'text', 'csv', 'html')
          and not exists (select 1 from file_extractions fe where fe.tenant_id = f.tenant_id and fe.file_id = f.id)
        order by f.id
        limit ${limit}
@@ -2197,22 +2220,6 @@ function detectedType(extension: string): 'pdf' | 'docx' | 'xlsx' | 'csv' | 'tex
   return 'text'
 }
 
-function artifactTypeForExtension(extension: string): Artifact['type'] | null {
-  if (extension === '.md') return 'markdown'
-  if (extension === '.txt') return 'text'
-  if (extension === '.csv') return 'csv'
-  if (extension === '.html' || extension === '.htm') return 'html'
-  return null
-}
-
-function artifactMimeType(type: Artifact['type']) {
-  if (type === 'markdown') return 'text/markdown; charset=utf-8'
-  if (type === 'csv') return 'text/csv; charset=utf-8'
-  if (type === 'html') return 'text/html; charset=utf-8'
-  if (type === 'text') return 'text/plain; charset=utf-8'
-  return 'application/octet-stream'
-}
-
 /**
  * Artifacts are already text (Markdown, text, CSV, HTML). The extraction keeps the original
  * content, not a summary, so a later turn can revise the file itself. Text that is not valid
@@ -2220,6 +2227,8 @@ function artifactMimeType(type: Artifact['type']) {
  * still published, it just cannot be attached to a later message.
  */
 function artifactInputText(type: Artifact['type'], bytes: Buffer, fileId: string): ArtifactInputText | null {
+  // 二进制成果（Office、PDF、图片）的解析文本由 2b-3 的解析器生成；不能把原始字节当文本挂载。
+  if (!isTextArtifactType(type)) return null
   let content: string
   try {
     content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)

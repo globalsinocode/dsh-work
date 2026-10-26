@@ -73,6 +73,12 @@ function artifactsForMessage(message: ChatMessage) {
   )
 }
 
+/** 执行隔离 2b-2：本轮 output 中未登记为成果的文件及原因，列在本轮最后一条回复下。 */
+function skippedArtifactsForMessage(message: ChatMessage) {
+  if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return []
+  return task.value.result.pendingItems.filter(item => item.kind === 'artifact_skipped').map(item => item.message)
+}
+
 /** 本轮最后一条回复在执行结束后显示业务结论与耗时，代替发送时间。 */
 function messageMeta(message: ChatMessage) {
   if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return undefined
@@ -184,6 +190,19 @@ async function toggleMarkdownPreview(artifact: Artifact) {
           />
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="skippedArtifactsForMessage(message).length"
+      class="answer-skipped"
+      role="note"
+      aria-label="未登记为成果的文件"
+      data-testid="artifact-skipped"
+    >
+      <p class="answer-skipped__title">以下文件未登记为成果</p>
+      <ul>
+        <li v-for="line in skippedArtifactsForMessage(message)" :key="line">{{ line }}</li>
+      </ul>
     </div>
 
     <div class="assistant-actions">

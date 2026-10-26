@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；阶段 2a（C 档单次 `bash`，3.8）已实施（2026-10-27，同上，Mac mini 验收未执行）；2b（Office 工具链与二进制成果）已定案（2026-10-27，4.6），未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。执行容器模式默认关闭，在阶段 2b 完成并通过第 9 节 P2 验收前不在生产开启。<br>
+**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；阶段 2a（C 档单次 `bash`，3.8）已实施（2026-10-27，同上，Mac mini 验收未执行）；2b（Office 工具链与二进制成果）已定案（2026-10-27，4.6），其中 2b-2（成果收集与校验、不合规文件跳过并提示）已实施（2026-10-27，单元与集成用例通过），其余未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。执行容器模式默认关闭，在阶段 2b 完成并通过第 9 节 P2 验收前不在生产开启。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向；1c 定案为“静止”保证、不移植 remote fs）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -290,7 +290,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 
 `ExecutionBackend` 端口保留，首版只实现 `docker`：Mac mini 使用 Docker Desktop（OrbStack、colima 的 docker CLI 兼容）。端口职责：创建/删除执行容器、挂载 Attempt 工作区、按 Manifest 设置资源、取消时整组回收、启动时报告能力（容器运行时与合规镜像是否可用）。能力不满足时可执行工具不出现在模型可见工具中（第 6 节）。Kubernetes、Linux rootless 等实现在出现对应部署形态时再加（第 10 节）。
 
-### 4.6 阶段 2b：Office 工具链与二进制成果（已定案，未实施）
+### 4.6 阶段 2b：Office 工具链与二进制成果（已定案；2b-2 已实施）
 
 2a 放开了 `bash`，但 C 档的主要价值（生成与转换 Office 文件）还到不了用户手里：成果只收 `output/` 顶层的 Markdown、文本、CSV、HTML，引用到下一轮的输入只有解析文本。2b 把执行镜像、成果收集、引用与预览一起补齐。以下“现状”均为 2026-10-27 核对代码的结论。
 
@@ -313,7 +313,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
    - `soffice` 包装脚本固定加 `-env:UserInstallation=file://$HOME/.lo-profile`（3.5：容器 uid 无 `passwd` 条目时默认配置失败）。
    - 镜像以 label 声明工具链清单；执行容器预检除 `rg` 外再检查 `bash`、`soffice --version`、`pdftoppm -v`，清单写入 Runtime 说明，模型据此选择工具而不是猜测。
    - 与 Python 镜像的关系：1b② 之后 `python_execute` 也在执行容器中运行，届时两个镜像合一；在此之前 `DSH_WORK_PYTHON_IMAGE` 可指向同一镜像，但不强制。
-2. **2b-2 成果收集与校验**（宿主侧、执行容器静止之后，沿用 1c 的目录检查）。
+2. **2b-2 成果收集与校验**（已实施，2026-10-27；宿主侧、执行容器静止之后，沿用 1c 的目录检查）。实现见 `artifact-file-policy.ts`；收集触发条件改为装配了 `write` 或 `bash`（`write` 被紧急停用时 `bash` 写出的成果仍要收集）；二进制成果不生成解析文本，`canReference` 为假，直到 2b-3。Excel 公式中的 DDE 无法可靠识别，记为残余风险由杀毒端口覆盖。
    - 收集失败的语义见决策 8。
    - 接受的格式见决策 3；扩展名与文件头一致（PDF `%PDF-`，OOXML 为含 `[Content_Types].xml` 的 ZIP，PNG/JPEG 文件头），不一致即不合规。
    - 平台策略检查（与可替换的杀毒端口分开），按决策 5 精确拒绝：OOXML 拒绝宏部件（`vbaProject.bin`）、嵌入对象（OLE）、外部数据连接，以及除超链接以外的外部关系（外链图片、模板等打开时会取远程内容的关系）；普通超链接允许。PDF 拒绝 `/JavaScript`、`/JS`、`/Launch`、`/EmbeddedFile`，以及指向脚本的 `/OpenAction`；`/URI` 链接允许。ZIP 沿用 `document-extractor` 的条目数与解压大小上限。被拒绝的文件按决策 8 跳过并说明原因。

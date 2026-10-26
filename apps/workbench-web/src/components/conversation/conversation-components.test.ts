@@ -198,6 +198,30 @@ describe('RunMessageList', () => {
     expect(wrapper.get('[data-testid="artifact-body-artifact-1"]').text()).toContain('备忘正文')
   })
 
+  it('lists files that were not registered as artifacts under the run’s last reply', () => {
+    const skippedRun = run({
+      result: result({
+        outcome: 'unverified',
+        artifacts: [artifact({ type: 'xlsx', name: '数据.xlsx' })],
+        pendingItems: [
+          { kind: 'artifact_skipped', message: '“宏.xlsx”未登记为成果：含宏、脚本或会访问外部内容的组件' },
+          { kind: 'no_verified_deliverable', message: '其他待核验事项不在这里显示' },
+        ],
+      }),
+    })
+    const wrapper = mount(RunMessageList, { global, props: { task: skippedRun, isOwn: m => m.role === 'user', canFollowUp: true } })
+    const note = wrapper.get('[data-testid="artifact-skipped"]')
+    expect(note.attributes('role')).toBe('note')
+    expect(note.text()).toContain('以下文件未登记为成果')
+    expect(note.text()).toContain('“宏.xlsx”未登记为成果：含宏、脚本或会访问外部内容的组件')
+    expect(note.text()).not.toContain('其他待核验事项')
+    // 二进制成果在 2b-3 之前只能下载：没有“查看正文”。
+    expect(wrapper.find('[data-testid="preview-artifact-artifact-1"]').exists()).toBe(false)
+
+    const clean = mount(RunMessageList, { global, props: { task: run({ result: result({ artifacts: [artifact()] }) }), isOwn: () => false } })
+    expect(clean.find('[data-testid="artifact-skipped"]').exists()).toBe(false)
+  })
+
   it('marks referenced artifacts and hides “继续修改” when follow-up is not allowed', async () => {
     const props = { task: run({ result: result({ artifacts: [artifact()] }) }), isOwn: () => false, canFollowUp: true, referencedFileIds: ['file-1'] }
     const referenced = mount(RunMessageList, { global, props })

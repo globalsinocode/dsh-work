@@ -2673,7 +2673,10 @@
             "enum": [
               "xlsx",
               "docx",
+              "pptx",
               "pdf",
+              "png",
+              "jpg",
               "markdown",
               "csv",
               "text",
