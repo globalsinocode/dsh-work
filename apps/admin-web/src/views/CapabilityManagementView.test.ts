@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import CapabilityManagementView from './CapabilityManagementView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useContentStore } from '../stores/content'
+import { useToolGovernanceStore } from '../stores/toolGovernance'
 
 const wrappers: VueWrapper[] = []
 afterEach(() => {
@@ -21,9 +22,12 @@ async function render(canManage = true, initial = '/skills') {
   useAuthStore().$patch({ permissions: canManage ? ['admin:write'] : ['admin:read'] })
   const content = useContentStore()
   vi.spyOn(content, 'load').mockResolvedValue(undefined)
+  const toolGovernance = useToolGovernanceStore()
+  vi.spyOn(toolGovernance, 'loadBindings').mockResolvedValue(undefined)
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/skills', component: CapabilityManagementView },
     { path: '/skills/install', component: CapabilityManagementView },
+    { path: '/tools', component: CapabilityManagementView },
     { path: '/connectors', component: CapabilityManagementView },
   ] })
   await router.push(initial)
@@ -47,7 +51,12 @@ async function render(canManage = true, initial = '/skills') {
   })
   wrappers.push(wrapper)
   await flushPromises()
-  return { wrapper, router, auth: useAuthStore(), content }
+  return { wrapper, router, auth: useAuthStore(), content, toolGovernance }
+}
+
+function updateStubbedSelect(wrapper: VueWrapper, selector: string, value: string) {
+  const select = wrapper.getComponent(selector) as unknown as VueWrapper
+  select.vm.$emit('update:modelValue', value)
 }
 
 function strictDraftSkill(): import('../types/domain').SkillDefinition {
@@ -67,6 +76,18 @@ function strictDraftSkill(): import('../types/domain').SkillDefinition {
   }
 }
 
+function disabledDshTool(): import('../types/domain').ToolDefinition {
+  return {
+    id: 'read', version: '1.0.0', name: '读取文件', system: 'DSH Runtime',
+    description: '读取当前 Run 已授权的文件。', connectorId: 'connector-dsh-workspace',
+    risk: 'low', mode: 'read', status: 'disabled', inputSchema: '{}', outputSchema: '{}',
+    outputValidation: 'unavailable', retryPolicy: 'safe', concurrencyPolicy: 'concurrent',
+    completionSemantics: 'completed', timeoutSeconds: 30, allowedRoles: ['平台管理员'],
+    allowedRoleIds: ['role-platform-admin'],
+    dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
+  }
+}
+
 function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
   return {
     id: 'connector-mcp-offline', name: '离线待审核 MCP', system: 'MCP', status: 'offline',
@@ -78,7 +99,6 @@ function offlinePendingMcp(): import('../types/domain').ConnectorDefinition {
       serverName: 'offline_pending', transport: 'streamable-http', approvalStatus: 'pending_review',
       capabilityDigest: 'a'.repeat(64), approvedDigest: null, capabilityCount: 1,
       capabilities: [{ name: 'query', description: '查询', inputSchema: { type: 'object' } }],
-      pendingCapabilities: [],
       discoveredAt: '2026-09-22T00:00:00.000Z', reviewedAt: null, reviewedBy: null,
     },
   }
@@ -132,27 +152,124 @@ describe('Skill installation sibling tab', () => {
     expect(router.currentRoute.value.path).toBe('/skills')
   })
 
-  it('renders connectors as an independent page without the Skill tabs or a DSH tool page', async () => {
-    const { wrapper } = await render(true, '/connectors')
+  it('renders tools and connectors as independent pages without the Skill tabs', async () => {
+    const { wrapper, router } = await render(true, '/tools')
     expect(wrapper.find('[role="tablist"][aria-label="Skill 管理"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="DSH 内置工具列表"]').attributes('aria-label')).toBe('DSH 内置工具列表')
+    expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 DSH 内置工具名称、标识或说明')
+    expect(wrapper.get('[data-testid="tool-runtime-status-filter"]').attributes('aria-label')).toBe('运行状态')
+    expect(wrapper.get('[data-testid="tool-admission-filter"]').attributes('aria-label')).toBe('平台准入')
+    expect(wrapper.get('[data-testid="tool-admission-help"]').text()).toContain('不代表任何 Agent 已经获得使用权')
+    expect(wrapper.findAll('button').some(button => button.text() === '交给管理助手')).toBe(false)
+    expect(wrapper.get('[data-action="sync-dsh-tools"]').text()).toContain('同步 DSH 工具')
+    expect(wrapper.find('[data-action="register-tool-candidate"]').exists()).toBe(false)
+
+    await router.push('/connectors')
+    await flushPromises()
     expect(wrapper.get('[aria-label="MCP 连接器列表"]').attributes('aria-label')).toBe('MCP 连接器列表')
     expect(wrapper.get('.capability-toolbar input').attributes('placeholder')).toBe('搜索 MCP 名称、标识或 serverName')
-    expect(wrapper.find('[data-action="sync-dsh-tools"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="tool-admission-filter"]').exists()).toBe(false)
   })
 
-  it('shows Skill tool references by name and explains platform defaults when none are declared', async () => {
-    const { wrapper, content } = await render()
-    content.skills.push({ ...strictDraftSkill(), status: 'published', toolIds: ['read@1.0.0', 'web_search@1.0.0'] })
-    content.skills.push({ ...strictDraftSkill(), id: 'skill-plain', name: '纯文本 Skill', status: 'published', toolIds: [] })
+  it('synchronizes every discovered DSH tool and keeps unadmitted tools non-actionable', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    const edit: import('../types/domain').ToolDefinition = {
+      id: 'edit', version: '1.0.0', name: '编辑文本文件', system: 'DSH Runtime',
+      description: '精确替换成果目录中的文本。', connectorId: 'connector-dsh-workspace',
+      risk: 'low', mode: 'write', status: 'available', inputSchema: '{}', outputSchema: '{}',
+      admissionStatus: 'approved', admissionMessage: '已完成平台安全准入，可在 Agent 版本中授权',
+      outputValidation: 'unavailable', retryPolicy: 'never', concurrencyPolicy: 'serialized', completionSemantics: 'completed',
+      timeoutSeconds: 30, allowedRoles: ['普通员工', '平台管理员'],
+      allowedRoleIds: ['role-employee', 'role-platform-admin'],
+      dataScopes: ['workspace:authorized'], approvalPolicy: 'none', lastCheckedAt: '刚刚',
+    }
+    const bash: import('../types/domain').ToolDefinition = {
+      ...edit, id: 'bash', name: '执行 Shell 命令', risk: 'high', status: 'disabled',
+      admissionStatus: 'unavailable', admissionMessage: 'MVP 不开放任意 Shell',
+      allowedRoleIds: ['role-platform-admin'], allowedRoles: ['平台管理员'], approvalPolicy: 'always',
+    }
+    const sync = vi.spyOn(content, 'syncDshTools').mockImplementation(async () => {
+      content.$patch({ tools: [edit, bash] })
+      return { tools: [edit, bash], discoveredCount: 2, admittedCount: 1, unavailableCount: 1, synchronizedAt: '2026-09-23T00:00:00.000Z' }
+    })
     await flushPromises()
-    const buttons = wrapper.findAll('[data-action="view-skill"]')
-    await buttons[0]!.trigger('click')
+
+    await wrapper.get('[data-action="sync-dsh-tools"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('read、web_search')
-    await buttons[1]!.trigger('click')
+
+    expect(sync).toHaveBeenCalledOnce()
+    expect(wrapper.text()).toContain('编辑文本文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+    expect(wrapper.text()).toContain('尚未准入')
+    expect(wrapper.find('[data-action="configure-tool-permissions"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('在 Agent 版本中配置')
+  })
+
+  it('filters tools independently by runtime status and platform admission', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    const available: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'glob', name: '搜索文件', status: 'available',
+      admissionStatus: 'approved', admissionMessage: '已完成平台安全准入',
+    }
+    const disabled: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'read', name: '读取文件', admissionStatus: 'approved',
+      admissionMessage: '已完成平台安全准入',
+    }
+    const unavailable: import('../types/domain').ToolDefinition = {
+      ...disabledDshTool(), id: 'bash', name: '执行 Shell 命令', admissionStatus: 'unavailable',
+      admissionMessage: 'MVP 不开放任意 Shell',
+    }
+    content.$patch({ tools: [available, disabled, unavailable] })
     await flushPromises()
-    expect(wrapper.text()).toContain('无（使用平台默认装配的内置工具）')
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-runtime-status-filter"]', 'disabled')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('搜索文件')
+    expect(wrapper.text()).toContain('读取文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-admission-filter"]', 'unavailable')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('读取文件')
+    expect(wrapper.text()).toContain('执行 Shell 命令')
+
+    updateStubbedSelect(wrapper, '[data-testid="tool-runtime-status-filter"]', 'available')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('执行 Shell 命令')
+    expect(wrapper.text()).toContain('暂无匹配的 DSH 内置工具')
+  })
+
+  it('keeps the existing platform directory when DSH synchronization fails', async () => {
+    const { wrapper, content } = await render(true, '/tools')
+    content.tools.push(disabledDshTool())
+    vi.spyOn(content, 'syncDshTools').mockRejectedValue(new Error('DSH Runtime 工具目录发现失败'))
+    await flushPromises()
+
+    await wrapper.get('[data-action="sync-dsh-tools"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('读取文件')
+  })
+
+  it('does not expose tool creation to read-only administrators', async () => {
+    const { wrapper } = await render(false, '/tools')
+    expect(wrapper.find('[data-action="sync-dsh-tools"]').exists()).toBe(false)
+  })
+
+  it('keeps the enable action when a disabled tool has revoked binding history', async () => {
+    const { wrapper, content, toolGovernance } = await render(true, '/tools')
+    content.tools.push(disabledDshTool())
+    toolGovernance.serverBindings.read = {
+      revoked: true,
+      bindingRevision: {
+        id: 'tool-binding-read rev2', endpoint: 'dsh://workspace', executor: 'read',
+        credentialSlot: '—（无凭据槽位）', filterPolicy: 'Runtime Manifest + Sandbox · default', sealedAt: '刚刚',
+      },
+    }
+    await flushPromises()
+
+    expect(wrapper.get('[data-action="enable-tool"]').text()).toBe('启用')
+    expect(wrapper.get('.el-table__row').text()).toContain('已停用')
+    expect(wrapper.get('.el-table__row').text()).not.toContain('已撤销')
   })
 
   it('keeps offline status ahead of a retained legacy MCP review state', async () => {
@@ -185,7 +302,7 @@ describe('Skill installation sibling tab', () => {
     await wrapper.get('[data-action="view-connector"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('适用 Agent')
-    expect(wrapper.text()).toContain('在 Agent 能力配置中选择')
+    expect(wrapper.text()).toContain('全部 Agent')
     await wrapper.get('[data-action="view-mcp-tools"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('[aria-label="MCP 工具清单"]').text()).toContain('query')

@@ -1,9 +1,9 @@
 import { normalizeSkillTestScenario } from '../../domain/skill-test-scenario.ts'
+import { archiveDigest, normalizeArchiveItems } from '../../domain/project-archive.ts'
 import { MAX_SKILL_FILES, MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
 import { SKILL_ARTIFACT_REF_PATTERN } from '../../domain/skill-artifact-ref.ts'
-import { createHash } from 'node:crypto'
-
 import { canonicalJson, sha256 } from './canonical-json.ts'
+import { isValidTimezone } from '../../domain/execution-time.ts'
 import { isSafeResumeWorkspacePath } from './resume-workspace-path.ts'
 import {
   MAX_MCP_CONNECTIONS_PER_ATTEMPT,
@@ -13,15 +13,15 @@ import {
 } from './runtime-types.ts'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
-const CAPABILITY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}@[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
-const BINDING_FIELDS = new Set(['tool', 'binding_id', 'revision', 'digest'])
-const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest', 'grant_subject_id', 'credential_version'])
+const MCP_CONNECTION_FIELDS = new Set(['connector_id', 'server_name', 'transport', 'endpoint', 'auth_type', 'capability_digest'])
 const RESUME_FIELDS = new Set(['strategy', 'checkpoint_id', 'checkpoint_digest', 'source_attempt_id', 'approval_id', 'action_name', 'parameter_digest', 'resource_ref', 'data_version', 'approved_by', 'approved_at', 'checkpoint_context_sha256', 'checkpoint_context'])
 // 引用规则由 domain/skill-artifact-ref.ts 统一提供，与 SkillArtifactStore
 // 读写同口径；runtime-manifest.schema.json 中的等价 pattern 由 contracts 静态检查固定。
 const ARTIFACT_REF_PATTERN = SKILL_ARTIFACT_REF_PATTERN
 const SKILL_FIELDS = new Set(['id', 'name', 'description', 'version', 'instructions', 'artifact_ref', 'instructions_sha256', 'dependencies', 'disable_model_invocation', 'files'])
 const SKILL_FILE_FIELDS = new Set(['path', 'content', 'sha256', 'size'])
+const PROJECT_BRIEF_FIELDS = new Set(['version_id', 'version_no', 'content', 'content_sha256', 'due_date'])
+const PROJECT_ARCHIVE_FIELDS = new Set(['version_id', 'version_no', 'items', 'items_sha256'])
 
 function assertId(name: string, value: string): void {
   if (typeof value !== 'string' || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`)
@@ -63,14 +63,6 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     throw new TypeError('agent_configuration.system_prompt must be at least 20 characters')
   }
   const skillReferences = new Set(input.skills.map(skill => `${skill.id}@${skill.version}`))
-  // 会话级指定 Skill 必须是本 Run 固定快照里的引用：不接受 latest 语义、
-  // 不接受未授权引用，也不接受非法形态（fail-closed）。
-  if (input.selected_skill !== undefined
-    && (typeof input.selected_skill !== 'string'
-      || !CAPABILITY_REF_PATTERN.test(input.selected_skill)
-      || !skillReferences.has(input.selected_skill))) {
-    throw new TypeError('selected_skill 必须是本 Run 固定快照中的 Skill 引用（id@version）')
-  }
   const skillNames = new Set<string>()
   for (const skill of input.agent_configuration.skill_instructions) {
     for (const key of Object.keys(skill)) {
@@ -124,8 +116,46 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     normalizeSkillTestScenario(input.test_scenario, input.agent_configuration.skill_instructions)
   }
   const history = input.input.conversation_history ?? []
-  if (history.length > 12 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 24000) {
+  if (history.length > 500 || history.some(message => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') || history.reduce((size, message) => size + message.content.length, 0) > 64_000) {
     throw new TypeError('conversation_history exceeds the bounded conversation context')
+  }
+  const summary = input.input.conversation_summary
+  if (summary !== undefined) {
+    if (typeof summary.content !== 'string' || !summary.content.trim() || summary.content.length > 8_000
+      || !Number.isInteger(summary.covered_message_count) || summary.covered_message_count < 1
+      || summary.sha256 !== sha256(summary.content)
+      || Object.keys(summary).some(key => !['content', 'covered_message_count', 'sha256'].includes(key))) {
+      throw new TypeError('conversation_summary is invalid')
+    }
+  }
+  if ((input.purpose === 'session-summary') !== (input.summary_target !== undefined)) {
+    throw new TypeError('summary_target is required for and only allowed with the session-summary purpose')
+  }
+  if ((input.purpose === 'project-archive') !== (input.archive_target !== undefined)) {
+    throw new TypeError('archive_target is required for and only allowed with the project-archive purpose')
+  }
+  if (input.purpose === 'project-archive') {
+    const target = input.archive_target!
+    if (!target || Object.keys(target).some(key => key !== 'workspace_id' && key !== 'update_id')) throw new TypeError('archive_target is invalid')
+    assertId('archive_target.workspace_id', target.workspace_id)
+    assertId('archive_target.update_id', target.update_id)
+    if (input.agent_version_id !== null || input.workspace_id !== '' || input.session_id !== null
+      || input.tools.length || input.skills.length || input.mcp_connections?.length || input.data_scopes.length
+      || input.input.file_mounts.length || history.length || summary !== undefined || input.project_context !== undefined) {
+      throw new TypeError('project-archive runs carry no Agent, Workspace, Session, tools, data scopes, files or history')
+    }
+  }
+  if (input.purpose === 'session-summary') {
+    const target = input.summary_target!
+    if (typeof target.session_id !== 'string' || !target.session_id || typeof target.covered_through_message_id !== 'string' || !target.covered_through_message_id
+      || Object.keys(target).some(key => !['session_id', 'covered_through_message_id'].includes(key))) {
+      throw new TypeError('summary_target is invalid')
+    }
+    if (input.agent_version_id !== null || input.workspace_id !== '' || input.session_id !== null
+      || input.tools.length || input.skills.length || input.mcp_connections?.length
+      || input.input.file_mounts.length || history.length || summary !== undefined) {
+      throw new TypeError('session-summary runs carry no Agent, Workspace, Session, tools, files or history')
+    }
   }
   if (input.input.message.trim().length === 0) throw new TypeError('input.message must not be blank')
   if (input.resume !== undefined) {
@@ -193,26 +223,6 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   }
   if (mountedBytes > 1024 * 1024) throw new RangeError('mounted extracted text must not exceed 1 MB')
 
-  // 附件（工作簿内嵌图片）单独计量：数量、单个体积、总体积都与文本挂载解耦。
-  const attachments = input.input.attachments ?? []
-  if (attachments.length > 12) throw new RangeError('input.attachments must contain at most 12 files')
-  let attachmentBytes = 0
-  for (const attachment of attachments) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(attachment.name)) throw new TypeError(`invalid attachment name: ${attachment.name}`)
-    if (attachment.mount_path !== `/workspace/input/attachments/${attachment.name}`) {
-      throw new TypeError(`attachment mount path must be /workspace/input/attachments/: ${attachment.mount_path}`)
-    }
-    if (mountedPaths.has(attachment.mount_path)) throw new TypeError(`duplicate file mount path: ${attachment.mount_path}`)
-    mountedPaths.add(attachment.mount_path)
-    if (!attachment.media_type.startsWith('image/')) throw new TypeError(`attachment media type must be an image: ${attachment.media_type}`)
-    const bytes = Buffer.from(attachment.content_base64, 'base64')
-    if (!bytes.length) throw new TypeError(`attachment content is empty: ${attachment.name}`)
-    if (bytes.length > 6 * 1024 * 1024) throw new RangeError(`attachment exceeds 6 MB: ${attachment.name}`)
-    if (createHash('sha256').update(bytes).digest('hex') !== attachment.content_sha256) throw new TypeError(`attachment checksum mismatch: ${attachment.name}`)
-    attachmentBytes += bytes.length
-  }
-  if (attachmentBytes > 16 * 1024 * 1024) throw new RangeError('mounted attachments must not exceed 16 MB')
-
   if (input.knowledge_context.length > 3) throw new RangeError('knowledge_context must contain at most 3 documents')
   for (const document of input.knowledge_context) {
     assertId('knowledge_context.documentId', document.documentId)
@@ -236,61 +246,29 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!memory.excerpt.trim() || memory.excerpt.length > 4000) throw new TypeError('memory excerpt is invalid')
   }
 
-  if (input.delegation_policy !== undefined) {
-    const policy = input.delegation_policy
-    if (!Array.isArray(policy.allowed_agent_version_ids) || policy.allowed_agent_version_ids.length > 16
-      || policy.allowed_agent_version_ids.some(id => typeof id !== 'string' || !ID_PATTERN.test(id))
-      || new Set(policy.allowed_agent_version_ids).size !== policy.allowed_agent_version_ids.length) {
-      throw new TypeError('delegation_policy.allowed_agent_version_ids is invalid')
+  if (input.project_context !== undefined) {
+    const context = input.project_context
+    if (!context || typeof context !== 'object' || Object.keys(context).some(key => key !== 'brief' && key !== 'archive')
+      || (context.brief === undefined && context.archive === undefined)) throw new TypeError('project_context is invalid')
+    const brief = context.brief
+    if (brief !== undefined) {
+      if (!brief || Object.keys(brief).some(key => !PROJECT_BRIEF_FIELDS.has(key))) throw new TypeError('project_context brief has unknown fields')
+      assertId('project_context.brief.version_id', brief.version_id)
+      if (!Number.isInteger(brief.version_no) || brief.version_no < 1) throw new TypeError('project brief version_no is invalid')
+      if (typeof brief.content !== 'string' || !brief.content.trim() || brief.content.length > 8000) throw new TypeError('project brief content is invalid')
+      if (brief.content_sha256 !== sha256(brief.content)) throw new TypeError('project brief content_sha256 does not match content')
+      if (brief.due_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(brief.due_date)) throw new TypeError('project brief due_date is invalid')
     }
-    if (!Number.isInteger(policy.max_depth) || policy.max_depth < 1 || policy.max_depth > 4
-      || !Number.isInteger(policy.max_parallel) || policy.max_parallel < 1 || policy.max_parallel > 4
-      || !Number.isInteger(policy.timeout_seconds) || policy.timeout_seconds < 10 || policy.timeout_seconds > 300) {
-      throw new TypeError('delegation_policy limits are invalid')
+    const archive = context.archive
+    if (archive !== undefined) {
+      if (!archive || Object.keys(archive).some(key => !PROJECT_ARCHIVE_FIELDS.has(key))) throw new TypeError('project_context archive has unknown fields')
+      assertId('project_context.archive.version_id', archive.version_id)
+      if (!Number.isInteger(archive.version_no) || archive.version_no < 1) throw new TypeError('project archive version_no is invalid')
+      const normalized = normalizeArchiveItems(archive.items)
+      if ('error' in normalized || normalized.items.length !== archive.items.length
+        || normalized.items.some((item, index) => item !== archive.items[index])) throw new TypeError('project archive items are invalid')
+      if (archive.items_sha256 !== archiveDigest(archive.items)) throw new TypeError('project archive items_sha256 does not match items')
     }
-    const hasTool = input.tools.some(tool => tool.id === 'delegate_agent')
-    if (hasTool !== (policy.allowed_agent_version_ids.length > 0)) {
-      throw new TypeError('delegate_agent tool and non-empty delegation_policy must be declared together')
-    }
-  } else if (input.tools.some(tool => tool.id === 'delegate_agent')) {
-    throw new TypeError('delegate_agent requires delegation_policy')
-  }
-  if (input.delegation_context !== undefined) {
-    const context = input.delegation_context
-    assertId('delegation_context.delegation_id', context.delegation_id)
-    assertId('delegation_context.root_task_id', context.root_task_id)
-    assertId('delegation_context.parent_task_id', context.parent_task_id)
-    assertId('delegation_context.parent_run_id', context.parent_run_id)
-    assertId('delegation_context.parent_attempt_id', context.parent_attempt_id)
-    if (!Number.isInteger(context.depth) || context.depth < 1 || context.depth > 4
-      || !Number.isInteger(context.max_depth) || context.max_depth < context.depth || context.max_depth > 4) {
-      throw new TypeError('delegation_context depth is invalid')
-    }
-    if (!Array.isArray(context.role_ceiling) || !Array.isArray(context.data_scope_ceiling)
-      || context.role_ceiling.some(value => typeof value !== 'string')
-      || context.data_scope_ceiling.some(value => typeof value !== 'string')) {
-      throw new TypeError('delegation_context permission ceiling is invalid')
-    }
-    if (input.budget.scope_task_id !== context.root_task_id) {
-      throw new TypeError('delegated Attempt must share the root Task budget scope')
-    }
-  }
-
-  // B-03/I-04：tool_bindings 是 Attempt 固定的平台绑定快照；逐字段校验并拒绝工具级重复固定。
-  const pinnedTools = new Set<string>()
-  for (const binding of input.tool_bindings ?? []) {
-    for (const key of Object.keys(binding)) {
-      if (!BINDING_FIELDS.has(key)) throw new TypeError(`tool_bindings 存在未声明字段：${key}`)
-    }
-    if (!CAPABILITY_REF_PATTERN.test(binding.tool ?? '')) throw new TypeError('tool_bindings[].tool 必须是 id@version 平台引用')
-    // tools[] 使用 DSH 运行时名（dsh_tool_name@version），tool_bindings 使用平台
-    // 引用（tool_id@version）——两者命名空间不同，无法也不应做成员一致性比较；
-    // 「pin 对应的是清单声明的工具」由 getRuntimeSnapshot 的解析路径保证。
-    if (pinnedTools.has(binding.tool)) throw new TypeError(`tool_bindings 重复固定了 ${binding.tool}`)
-    pinnedTools.add(binding.tool)
-    if (!binding.binding_id?.trim()) throw new TypeError('tool_bindings[].binding_id 不允许为空')
-    if (!Number.isInteger(binding.revision) || binding.revision < 1) throw new TypeError('tool_bindings[].revision 必须是正整数')
-    if (!/^[a-f0-9]{64}$/.test(binding.digest ?? '')) throw new TypeError('tool_bindings[].digest 必须是 sha256 摘要')
   }
 
   if ((input.mcp_connections?.length ?? 0) > MAX_MCP_CONNECTIONS_PER_ATTEMPT) {
@@ -309,17 +287,8 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) {
       throw new TypeError('mcp_connections[].endpoint 无效')
     }
-    if (!['none', 'bearer', 'user_oauth'].includes(connection.auth_type)) throw new TypeError('mcp_connections[].auth_type 无效')
+    if (!['none', 'bearer'].includes(connection.auth_type)) throw new TypeError('mcp_connections[].auth_type 无效')
     if (!/^[a-f0-9]{64}$/.test(connection.capability_digest)) throw new TypeError('mcp_connections[].capability_digest 必须是 sha256 摘要')
-    if (connection.auth_type === 'user_oauth') {
-      if (!connection.grant_subject_id?.trim()) throw new TypeError('user_oauth 必须固定 grant_subject_id')
-      const credentialVersion = connection.credential_version
-      if (credentialVersion === undefined || !Number.isInteger(credentialVersion) || credentialVersion < 1) {
-        throw new TypeError('user_oauth 的 credential_version 必须是正整数')
-      }
-    } else if (connection.grant_subject_id !== undefined || connection.credential_version !== undefined) {
-      throw new TypeError('none 与 bearer 不能携带用户授权字段')
-    }
     if (pinnedMcpConnectors.has(connection.connector_id) || pinnedMcpNames.has(connection.server_name)) {
       throw new TypeError('mcp_connections 不允许重复连接器或 server_name')
     }
@@ -329,6 +298,9 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
   if (input.mcp_connections?.length && input.permission_policy.network_policy !== 'allowlist') {
     throw new TypeError('mcp_connections 要求 network_policy=allowlist')
   }
+
+  if (input.timezone !== undefined && !isValidTimezone(input.timezone)) throw new TypeError('timezone must be a valid IANA timezone')
+  if (Number.isNaN(Date.parse(input.created_at))) throw new TypeError('created_at must be an ISO date-time')
 
   const manifest = structuredClone(input)
   const serialized = canonicalJson(manifest)

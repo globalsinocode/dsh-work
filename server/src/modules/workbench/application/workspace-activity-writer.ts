@@ -26,6 +26,9 @@ export type WorkspaceActivityKind =
   | 'file_version_added'
   | 'workspace_archived'
   | 'workspace_restored'
+  | 'brief_updated'
+  | 'project_task_created'
+  | 'project_task_completed'
   | 'discussion_posted'
   | 'member_mentioned'
   | 'run_completed'
@@ -36,6 +39,8 @@ export type WorkspaceActivityObjectType =
   | 'agent_member'
   | 'file'
   | 'workspace'
+  | 'brief'
+  | 'project_task'
   | 'session'
   | 'run'
 
