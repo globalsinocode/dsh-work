@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26，单元、集成与本机真实 Docker 用例通过；Mac mini 验收未执行）；1b 起尚未实施。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
+**状态：** 阶段 1a 已实施（2026-10-26，单元、集成与本机真实 Docker 用例通过；Mac mini 验收未执行）；1b 前提探针已完成：remote subprocess 可行性、acp Profile 替换方式与 Office 工具链镜像（冷启动、LibreOffice、`rg` 一致性）均已在本机验证（3.5）；1b 起尚未实施。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -94,12 +94,60 @@ KnowWork v0.0.2 的执行链路分两部分：
 
 结论：加固姿态下 Worker 可正常运行；冷启动增量约 0.6 s，全部来自 `tsx` 即时编译，预编译缓存（约 5 MB）只读挂载即可与宿主持平；禁止跨 Attempt 共享可写编译缓存；去除 `tsx` 需改用官方打包发行版，尚未验证。本探针只覆盖 Worker 容器，**未覆盖执行容器**（3.5）。
 
-### 3.5 未覆盖
+### 3.5 探针三：阶段 1b 前提（2026-10-26）
 
-- **执行容器冷启动**：含 Office 工具链的镜像创建、就绪与首条命令耗时，以及多 Attempt 并发创建时的耗时与内存。须在阶段 1b 设计评审前测量（4.4）。
-- **remote 插件可移植性**：KnowWork 的 `remote-fs`、`remote-subprocess` 基于 DSH `0.2.1-rc.2`；`0.1.2-rc.1` 的抽象基类存在（3.1），但 `remote-fs` 所用接口能否直接移植需测试验证。
-- **acp Profile 组成**：dsh-work 使用的官方 `acp` Profile 是否挂载 `filesystem`、`subprocess` 插件，以及停用与替换方式，尚未核对。
-- **搜索工具在容器内运行**：`glob`、`grep` 经 remote subprocess 映射到镜像内 `rg`（4.1）后的输出格式与版本一致性，尚未验证。
+本机 DSH `0.1.2-rc.1` 源码检出、`--profile acp --patch <探针 patch>`、独立临时 `DSH_HOME`、`DSH_TELEMETRY_MODE=DISABLED`，上游为脚本化的 OpenAI 兼容假模型（依次要求 `bash`、`glob`、`grep`）。探针 remote subprocess 插件把每次 spawn 经 `docker exec` 落到一个断网、只读根、`cap-drop ALL`、非 root、按宿主绝对路径挂载工作区的 `python:3.12-slim` 容器，并以固定环境变量执行。探针脚本保存在会话 scratchpad，未进入仓库。
+
+**acp Profile 组成（`--dump-config`）：**
+
+| 服务 | 插件 | 结论 |
+| --- | --- | --- |
+| `ctx.subprocess` | `subprocess`（`dsh-subprocess-local`） | 停用后插入 remote 实现 |
+| `ctx.fs` | `fs-sandbox`（`dsh-fs-sandbox`，继承宿主 `LocalFileSystem`，写入按 `sandbox-policy` 围栏） | 1c 替换；1b 保持 |
+| bash 执行器 | `bash-sandbox`（经 `ctx.sandbox` 把 argv 包进 Seatbelt/bwrap） | 包装程序在容器内不存在，须停用并改挂 `dsh-bash-local` |
+| 权限预设 | `permission`（`dsh-permission-presets`） | 拒绝装配在不受限的 bash 执行器之上，DSH 启动失败；须停用。审批仍由 `dsh-user-approval` 与 dsh-work 策略插件承担 |
+| 后台任务 | `tool-jobs`（默认挂载） | C 档停用 |
+
+patch 不能替换已有条目的包名（`name mismatch … skipping`），替换方式只能是停用原条目并插入新条目（与 KnowWork 相同）。
+
+**端到端结果：**
+
+| 项 | 结果 |
+| --- | --- |
+| DSH 加载 remote subprocess 并完成 `initialize → session/new → prompt` | ✅ |
+| `bash` 在容器内执行 | ✅ uid 501、cwd 为宿主绝对路径、写入的 `out.txt` 在宿主工作区可见且属主为宿主用户，收集模式输出回到模型 |
+| DSH 交给 subprocess 的 env | `DSH_HOME`、`DSH_SESSION_ID`、`DSH_SHELL`、`GIT_PAGER`、`NO_COLOR`、`PAGER`、`TERM`；固定环境变量后均未进入容器（印证 4.2） |
+| `glob`、`grep` | DSH 传入平台专用包路径 `@vscode/ripgrep-darwin-arm64/bin/rg`；映射规则须匹配 `@vscode/ripgrep(-<平台>)?/bin/rg`。映射为 `rg` 后因探针镜像不含 `rg` 退出 127，镜像须内置 `rg` |
+| `0.1.2-rc.1` 的 `SubprocessRuntime` | 抽象方法只有 `resolveExecutable`、`spawn`、`spawnTerminal`（KnowWork 基于 0.2.1 另有 `terminalEnvironment`）；`SubprocessHandle` 须带 `pid` |
+
+**执行容器冷启动（含 4.2 姿态，创建 → 首条 `exec` 返回）：**
+
+| 镜像 | 单个（中位数 / 最大） | 4 个并发（中位数 / 最大） | 删除（中位数） |
+| --- | --- | --- | --- |
+| 基线 `python:3.12-slim` | 176 / 302 ms | 213 / 252 ms | 51–70 ms |
+| Office 探针镜像（解压后约 1.4 GB） | 178 / 580 ms | 236 / 574 ms | 52–77 ms |
+
+容器创建基本不随镜像大小变化，最大值出现在首次创建。
+
+**Office 探针镜像：** 基于同一 `python:3.12-slim`（Debian 13），安装 `libreoffice-{writer,calc,impress}-nogui`（25.2.3）、`poppler-utils`、`pandoc`、`ripgrep`（14.1.1）、`fonts-liberation2` 与 pandas、openpyxl、python-docx、python-pptx；不含中文字体。构建时本机代理对 `deb.debian.org` 的 HTTP 请求间歇返回 502，改用 HTTPS 源并在构建步骤内重试后成功（约 140 s）；正式镜像应在可靠的构建环境中产出并按摘要锁定。
+
+| 项 | 结果（简单样例文档，3 次一致） |
+| --- | --- |
+| LibreOffice 默认用户配置 | ❌ 非 root uid 在容器内无 `passwd` 条目，即使 `HOME` 为可写 tmpfs，也报 “User installation could not be completed” 退出 77；指定 `-env:UserInstallation=file://<可写目录>` 后正常。镜像或执行器须显式设置配置目录 |
+| docx → PDF | 首次约 320 ms（含建立用户配置），再次约 160 ms |
+| xlsx → PDF | 约 130 ms |
+| PDF → PNG（`pdftoppm`） | 约 22 ms |
+| 容器内存峰值（`memory.peak`） | 约 157 MB（上限 1 GiB） |
+| `glob`（`rg --files --sort=modified …`） | 宿主 DSH 自带 `rg` 15.0.0 与镜像 `rg` 14.1.1 输出完全一致，含隐藏文件、`.git` 排除与中文路径 |
+| `grep`（`rg --json`） | 匹配记录集合一致；文件顺序不同（未排序时 `rg` 并行遍历，顺序本就不确定） |
+| DSH 端到端（Office 镜像） | `bash`、`glob`、`grep` 均在容器内完成，结果回到模型 |
+
+真实文档的转换耗时会更高（KnowWork 实测 2–5 秒），以上只说明工具链在 4.2 姿态下可用及启动开销量级。
+
+### 3.6 未覆盖
+
+- **正式执行镜像**：中文字体、工具链显式清单与 `rg` 版本是否与 DSH 依赖对齐（探针为 14.1.1，DSH 自带 15.0.0）；真实业务文档的转换耗时与内存；多 Attempt 并发时的总内存。
+- **remote fs 可移植性**：KnowWork 的 `remote-fs` 基于 DSH `0.2.1-rc.2`；`0.1.2-rc.1` 的 `FileSystem` 抽象基类存在（3.1），能否直接移植需测试验证（1c）。
 - **可选简化：宿主侧安全文件访问（待验证）**：remote fs 的 `stat`、`read`、`write` 等操作改由平台在宿主上直接读写挂载的工作区，只有命令进入执行容器。平台本就需要逐级不跟随符号链接的宿主侧读写能力（产物收集、检查点复制等，4.1），remote fs 可复用同一模块，并省去每次文件操作一次容器 `exec` 的开销。前提是能可靠地逐级不跟随符号链接并防检查后替换：macOS 需 `O_NOFOLLOW_ANY`，Linux 需 `openat2` 的 `RESOLVE_BENEATH`；Node 未直接提供 `openat` 与逐级解析，可能需要小型原生辅助模块。须在阶段 1c 设计评审前验证；不可行则 remote fs 维持在执行容器内 `exec`。
 
 ## 4. 方案
@@ -129,10 +177,11 @@ DSH Worker（每 Attempt 一个，宿主进程）
 - **试运行不在操作层另做隔离。** 执行容器断网，底层操作没有外部效果；MCP 与平台工具的 `trial_only` 维持现状。
 - **审计。** 平台对命令逐条记录（`bash` 与 `python_execute`：命令、退出码、耗时、输出摘要），进入 Attempt 事件。文件工具调用沿用工具层已有记录（3.1：Attempt 事件含工具名与状态，参数在 DSH 会话日志），平台不按底层文件操作另做审计，也不需要把底层操作与工具调用关联。
 - **路径一致。** 执行容器把 Attempt 工作区按宿主绝对路径原样挂载（可另提供 `/workspace` 别名），DSH、模型与容器内命令看到同一路径。否则模型从工具输出取得的宿主路径在容器命令中不存在，容器命令输出的 `/workspace/...` 路径交给 DSH 文件工具也对不上。KnowWork 以容器内 `/sessions/<会话 id>` → `/workspace` 符号链接达到同一效果。路径中含租户、Run 与 Attempt 标识，不含凭据。
-- **可执行文件映射。** remote subprocess 只接受白名单内的可执行文件：DSH 自带二进制按白名单映射到镜像内同名工具，`@vscode/ripgrep` 的 `rgPath` 映射为镜像内 `rg`（版本与 DSH 依赖对齐），保证默认工具 `glob`、`grep` 可用（3.1）；其他宿主绝对路径一律拒绝。
-- **可执行能力放开时文件操作必须同步改为远程。** 执行容器能运行代码后，可在共享工作区创建指向外部的符号链接，或在检查与使用之间替换路径；DSH 文件工具若仍在宿主执行，`realpath` 校验存在检查与使用之间的竞态。remote fs 的实现方式（宿主侧安全文件访问或容器内 `exec`）视 3.5 的验证结果确定。
+- **可执行文件映射。** remote subprocess 只接受白名单内的可执行文件：DSH 自带二进制按白名单映射到镜像内同名工具，`@vscode/ripgrep` 的 `rgPath`（平台专用包路径，如 `@vscode/ripgrep-darwin-arm64/bin/rg`，见 3.5）映射为镜像内 `rg`（版本与 DSH 依赖对齐），保证默认工具 `glob`、`grep` 可用（3.1）；其他宿主绝对路径一律拒绝。
+- **可执行能力放开时文件操作必须同步改为远程。** 执行容器能运行代码后，可在共享工作区创建指向外部的符号链接，或在检查与使用之间替换路径；DSH 文件工具若仍在宿主执行，`realpath` 校验存在检查与使用之间的竞态。remote fs 的实现方式（宿主侧安全文件访问或容器内 `exec`）视 3.6 的验证结果确定。
 - **宿主侧读取工作区逐级不跟随符号链接。** 产物收集、检查点复制、输入挂载、平台工具读写工作区等所有宿主侧操作，逐级不跟随符号链接（或改为在执行容器内读取后交付），只接受普通文件，并防检查与使用之间被替换。KnowWork 在容器内读取，最后一级不跟随即可；dsh-work 在宿主读取，要求更严。
 - **remote 插件**按官方 `SubprocessRuntime`、`FileSystem` 接口实现，参照 KnowWork 的 `remote-subprocess`、`remote-fs`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
+- **acp Profile 调整（3.5 已验证可装配）：** 停用 `subprocess`、`bash-sandbox`、`permission`、`tool-jobs`；插入 remote subprocess 与 `dsh-bash-local`；`tool-bash` 配置 `enableRunInBackground: false`。1c 时再以 remote fs 替换 `fs-sandbox`。patch 不能替换已有条目的包名，只能停用后插入。
 - **执行器模块**：业务服务内唯一调用容器运行时的代码，由现有 [python-skill-runner.ts](../../server/src/modules/runtime/python-skill-runner.ts) 重构而来；只暴露固定参数的接口（固定姿态、白名单镜像、本 Attempt 工作区挂载），其他代码不再直接拼接 `docker` 命令。它与业务服务同进程、同账号，提供的是代码边界而非账号隔离：业务服务被攻破即可控制容器运行时，须在总览中如实标注。独立账号的执行器组件见第 10 节。
 
 ### 4.2 执行容器
@@ -142,7 +191,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 项 | 要求 |
 | --- | --- |
 | 账号与权限 | 非 root、`cap-drop ALL`、`no-new-privileges`、`seccomp`；宿主启用 AppArmor 时附加 |
-| 文件系统 | 只读根；只挂本 Attempt 工作区（含 `output/`），按宿主绝对路径挂载（4.1）；`/tmp` 与 `HOME`（LibreOffice 等工具的 profile 目录）为限额 tmpfs |
+| 文件系统 | 只读根；只挂本 Attempt 工作区（含 `output/`），按宿主绝对路径挂载（4.1）；`/tmp` 与 `HOME`（LibreOffice 等工具的 profile 目录）为限额 tmpfs；LibreOffice 须显式指定 `-env:UserInstallation` 指向可写目录（容器 uid 无 `passwd` 条目时不会使用 `HOME`，见 3.5） |
 | 属主映射 | 容器内非 root uid 须能写工作区；Docker Desktop 由文件共享层映射到宿主用户 |
 | 网络 | `none` |
 | 资源 | CPU、内存（内存+交换相等）、pids、`fsize`、单命令超时、Attempt 总时长 |
@@ -167,7 +216,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | **每 Attempt（采用）** | 回收简单、隔离清洁，同时存在的容器数 ≈ 活跃 Attempt 数 |
 | 每会话常驻 | 不减少并发容器数，空闲期也占资源，需要找回、收养与空闲清扫逻辑；不采用 |
 
-**生命周期：** 容器以唯一名称和 label（组件、Attempt）创建，Attempt 终态时删除；服务启动时与周期性按 label 删除孤儿容器（服务崩溃后遗留）。容器从不复用，因此不需要按名称找回、收养核对或姿态摘要重建。预热池不纳入本方案；若 3.5 的冷启动实测不可接受，另行评审。
+**生命周期：** 容器以唯一名称和 label（组件、Attempt）创建，Attempt 终态时删除；服务启动时与周期性按 label 删除孤儿容器（服务崩溃后遗留）。容器从不复用，因此不需要按名称找回、收养核对或姿态摘要重建。预热池不纳入本方案；若 3.5、3.6 的冷启动实测不可接受，另行评审。
 
 `python_execute` 并入执行容器后（阶段 1b），同一 Attempt 内的多次调用共用该执行容器，不再是每次调用一个干净环境，可看到此前命令留下的文件；激活 Skill 的目录改为只读挂入执行容器。两点均须同步修改[功能规则第 6 节](../development/feature-rules.md#6-skill-python-执行)。
 
@@ -182,8 +231,8 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 阶段 | 内容 | 收益 | 前提 |
 | --- | --- | --- | --- |
 | 1a（已实施） | 执行器模块与 `ExecutionBackend` 端口（`docker` 实现），由 `python-skill-runner` 重构；`python_execute` 改经执行器（仍为每次调用一个容器）；孤儿清扫（启动时全量清扫，运行中只重试本进程删除失败的容器）；全局并发槽位（`DSH_WORK_EXECUTION_MAX_CONTAINERS`，按服务实例计算，删除确认前占用） | 容器参数集中在一处、经固定接口调用，业务代码不再直接拼接 `docker` 命令 | 不改 DSH |
-| 1b | 执行容器；remote subprocess 经工具桥与平台中转（含可执行文件映射，`glob`、`grep` 在容器内运行）；`python_execute` 并入执行容器（4.4）；固定环境变量；命令逐条审计 | 命令类工具进入执行容器 | 1a；执行容器冷启动实测；remote subprocess 在 `0.1.2-rc.1` 上验证；acp Profile 替换方式核对 |
-| 1c | remote fs（实现方式视 3.5 宿主侧安全文件访问的验证结果）；宿主侧读取逐级不跟随符号链接 | 文件工具从应用层边界升级为隔离边界 | 1b；3.5 宿主侧安全文件访问验证；remote fs 在 `0.1.2-rc.1` 上验证 |
+| 1b | 执行容器；remote subprocess 经工具桥与平台中转（含可执行文件映射，`glob`、`grep` 在容器内运行）；`python_execute` 并入执行容器（4.4）；固定环境变量；命令逐条审计 | 命令类工具进入执行容器 | 1a；前提探针已由 3.5 完成（remote subprocess、acp Profile 替换、Office 镜像冷启动与 `rg` 一致性） |
+| 1c | remote fs（实现方式视 3.6 宿主侧安全文件访问的验证结果）；宿主侧读取逐级不跟随符号链接 | 文件工具从应用层边界升级为隔离边界 | 1b；3.6 宿主侧安全文件访问验证；remote fs 在 `0.1.2-rc.1` 上验证 |
 | 2 | 放开 C 档：单次 `bash`（关闭后台运行）与 Office 工具链；同步修改总览、功能规则与内置工具注册表（第 6 节） | 模型可“写代码 → 运行 → 看结果 → 修正”，覆盖数据处理、准确计算、Office 文件生成与转换 | 1a–1c 完成（文件操作必须先改为远程，见 4.1）；第 6 节待定事项定案 |
 
 已定以 C 档为目标，1c 是阶段 2 的必要前提，不推迟。1c 单独看安全收益有限（只防 DSH 文件工具自身漏洞），并可能给每次文件操作增加中转延迟，须在 1c 实测并控制。
@@ -242,8 +291,8 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 
 | 风险 | 处理 |
 | --- | --- |
-| 执行容器冷启动叠加在每轮执行上 | 阶段 1b 前实测（3.5）；不可接受时另行评审预热池（4.4） |
-| 文件操作经平台中转增加延迟 | 3.5 宿主侧安全文件访问可省去容器 `exec`；1c 实测后再优化，不为性能绕过服务端关口 |
+| 执行容器冷启动叠加在每轮执行上 | 已实测约 0.2 s（3.5）；不可接受时另行评审预热池（4.4） |
+| 文件操作经平台中转增加延迟 | 3.6 宿主侧安全文件访问可省去容器 `exec`；1c 实测后再优化，不为性能绕过服务端关口 |
 | 默认工具 `glob`、`grep` 在容器内找不到宿主 ripgrep | 可执行文件白名单映射到镜像内 `rg`（4.1），P1 覆盖 |
 | DSH 与容器看到的路径不一致 | 工作区按宿主绝对路径挂载（4.1） |
 | 宿主侧读取经工作区内符号链接越界 | 逐级不跟随符号链接、只收普通文件、防检查后替换（4.1），安全回归覆盖 |
