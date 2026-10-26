@@ -250,6 +250,11 @@ export interface TaskRun {
   messages: ChatMessage[]
   steps: RunStep[]
   /**
+   * 个人会话详情会带回整段多轮消息：threadArtifacts 是这些消息所属各 Run
+   * 的成果合集，供气泡按 runId 挂到对应回复下。本轮核验仍只用 result.artifacts。
+   */
+  threadArtifacts?: Artifact[]
+  /**
    * 客户端收到该 Run 最后一个运行事件的时刻（毫秒）；只用于“长时间无输出”提示，
    * 不来自服务端。开始关注一个执行中的 Run 时以当时为起点。
    */

@@ -128,6 +128,12 @@ export interface TaskRun {
   currentUserRole?: 'owner' | 'admin' | 'member' | 'viewer' | null
   messages: ChatMessage[]
   steps: RunStep[]
+  /**
+   * 个人会话详情会带回整段多轮消息：threadArtifacts 是这些消息所属各 Run
+   * 的成果合集（按各自 current attempt 登记），供气泡按 runId 挂到对应回复下。
+   * 本轮核验仍只用 result.artifacts（当前 Run）。团队 Run 详情与本轮一致时可省略。
+   */
+  threadArtifacts?: Artifact[]
   attachments: string[]
   skill?: {
     id: string

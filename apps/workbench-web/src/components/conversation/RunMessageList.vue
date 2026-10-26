@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
-import { ArrowDown, Close, CopyDocument, Document, EditPen, Lock, RefreshRight, Share, Warning } from '@element-plus/icons-vue'
-import { StatusTag } from '@dsh-work/ui-core'
+import { computed, reactive, toRef } from 'vue'
+import { ArrowDown, ArrowUp, Close, CopyDocument, Document, EditPen, Lock, RefreshRight, Share, Warning, View } from '@element-plus/icons-vue'
+import { AssistantMessageContent, StatusTag } from '@dsh-work/ui-core'
 
 import ConversationMessageItem from './ConversationMessageItem.vue'
+import { workbenchApi } from '@/api/client'
 import { resultOutcomeLabels, useRunProgress } from '@/composables/useRunProgress'
 import type { Artifact, ChatMessage, TaskRun } from '@/types/domain'
+import { notifyActionFailure } from '@/utils/feedback'
 import '@/styles/conversation-thread.css'
 
 /**
  * 一次执行（Run）的消息流（S5b 从 ConversationView 拆出）：消息、本轮成果卡片（下载 /
  * 继续修改）、执行中状态、审批等待、失败与结论提示。A 的对话详情与 B 的对话页（每段会话）
  * 共用；操作只发事件，写权限与导航由调用方决定。
+ *
+ * 个人会话详情可能含多轮 Run 的消息：成果优先取 threadArtifacts，并按 artifact.runId
+ * 挂到该 Run 最后一条助手回复下，避免只展示最新 Run 的 result.artifacts。
  */
 const props = withDefaults(defineProps<{
   task: TaskRun
@@ -35,11 +40,21 @@ const emit = defineEmits<{
 const task = toRef(props, 'task')
 const { currentStepLabel, quietLabel, isTerminalRun } = useRunProgress(computed(() => task.value))
 
-const lastAssistantMessageId = computed(() =>
-  [...task.value.messages]
-    .reverse()
-    .find(message => message.role === 'assistant' && message.runId === task.value.id)?.id,
+/** 气泡可展示的成果：多轮线程用 threadArtifacts，否则退回本轮 result.artifacts。 */
+const displayArtifacts = computed(() =>
+  task.value.threadArtifacts?.length ? task.value.threadArtifacts : task.value.result.artifacts,
 )
+
+/** 每个 runId 下最后一条助手消息 id → 用于挂成果卡。 */
+const lastAssistantIdByRun = computed(() => {
+  const map = new Map<string, string>()
+  for (const message of task.value.messages) {
+    if (message.role === 'assistant' && message.runId) map.set(message.runId, message.id)
+  }
+  return map
+})
+
+const lastAssistantMessageId = computed(() => lastAssistantIdByRun.value.get(task.value.id))
 
 function belongsToCurrentRun(message: ChatMessage) {
   return message.runId === task.value.id
@@ -49,10 +64,53 @@ function isReferenced(artifact: Artifact) {
   return Boolean(artifact.fileId && props.referencedFileIds.includes(artifact.fileId))
 }
 
+function artifactsForMessage(message: ChatMessage) {
+  if (message.role !== 'assistant' || !message.runId) return []
+  if (lastAssistantIdByRun.value.get(message.runId) !== message.id) return []
+  return displayArtifacts.value.filter(artifact =>
+    artifact.runId === message.runId
+    || (!artifact.runId && message.runId === task.value.id),
+  )
+}
+
 /** 本轮最后一条回复在执行结束后显示业务结论与耗时，代替发送时间。 */
 function messageMeta(message: ChatMessage) {
   if (message.id !== lastAssistantMessageId.value || !belongsToCurrentRun(message) || !isTerminalRun.value) return undefined
   return `${resultOutcomeLabels[task.value.result.outcome]}${task.value.duration ? ` · ${task.value.duration}` : ''}`
+}
+
+/** Markdown 成果就地展开预览：气泡内可读完整正文；加载失败时在原处提示，再次展开会重新加载。 */
+const previewState = reactive<Record<string, { open: boolean; loading: boolean; text: string; error: string }>>({})
+
+function previewKey(artifact: Artifact) {
+  return `${artifact.id}@${artifact.version}`
+}
+
+function isPreviewOpen(artifact: Artifact) {
+  return Boolean(previewState[previewKey(artifact)]?.open)
+}
+
+async function toggleMarkdownPreview(artifact: Artifact) {
+  if (artifact.type !== 'markdown' && artifact.type !== 'text') return
+  const key = previewKey(artifact)
+  const current = previewState[key]
+  if (current?.open) {
+    current.open = false
+    return
+  }
+  if (current?.text) {
+    current.open = true
+    return
+  }
+  previewState[key] = { open: true, loading: true, text: '', error: '' }
+  try {
+    const blob = await workbenchApi.downloadArtifact(artifact.id, artifact.version)
+    const text = await blob.text()
+    previewState[key] = { open: true, loading: false, text, error: '' }
+  } catch (cause) {
+    previewState[key] = { open: true, loading: false, text: '', error: '预览加载失败' }
+    notifyActionFailure('预览成果', `成果“${artifact.name}”V${artifact.version}`, cause, '可改用下载后本地打开；若仍失败，请联系工作空间管理员。')
+  }
 }
 </script>
 
@@ -65,37 +123,66 @@ function messageMeta(message: ChatMessage) {
     :meta="messageMeta(message)"
   >
     <div
-      v-if="message.id === lastAssistantMessageId && belongsToCurrentRun(message) && task.result.artifacts.length"
+      v-if="artifactsForMessage(message).length"
       class="answer-artifacts"
+      data-testid="answer-artifacts"
     >
       <div
-        v-for="artifact in task.result.artifacts"
+        v-for="artifact in artifactsForMessage(message)"
         :key="artifact.id"
         class="answer-artifact"
+        :data-testid="`answer-artifact-${artifact.id}`"
       >
-        <button
-          type="button"
-          class="answer-artifact__download"
-          @click="emit('download', artifact)"
+        <div class="answer-artifact__row">
+          <button
+            type="button"
+            class="answer-artifact__download"
+            :aria-label="`下载成果 ${artifact.name}`"
+            @click="emit('download', artifact)"
+          >
+            <span><el-icon><Document /></el-icon></span>
+            <span>
+              <strong>{{ artifact.name }}</strong>
+              <small>{{ artifact.size }} · V{{ artifact.version }}</small>
+            </span>
+            <el-icon><ArrowDown /></el-icon>
+          </button>
+          <button
+            v-if="artifact.type === 'markdown' || artifact.type === 'text'"
+            type="button"
+            class="answer-artifact__preview"
+            :aria-label="isPreviewOpen(artifact) ? `收起 ${artifact.name} 正文` : `展开 ${artifact.name} 正文`"
+            :aria-expanded="isPreviewOpen(artifact)"
+            :data-testid="`preview-artifact-${artifact.id}`"
+            @click="toggleMarkdownPreview(artifact)"
+          >
+            <el-icon><component :is="isPreviewOpen(artifact) ? ArrowUp : View" /></el-icon>
+            {{ isPreviewOpen(artifact) ? '收起正文' : '查看正文' }}
+          </button>
+          <button
+            v-if="canFollowUp && artifact.canReference && artifact.fileId && belongsToCurrentRun(message)"
+            type="button"
+            class="answer-artifact__revise"
+            :data-testid="`continue-editing-${artifact.id}`"
+            :disabled="isReferenced(artifact)"
+            @click="emit('continue-editing', artifact)"
+          >
+            <el-icon><EditPen /></el-icon>
+            {{ isReferenced(artifact) ? '已引用' : '继续修改' }}
+          </button>
+        </div>
+        <div
+          v-if="previewState[`${artifact.id}@${artifact.version}`]?.open"
+          class="answer-artifact__body"
+          :data-testid="`artifact-body-${artifact.id}`"
         >
-          <span><el-icon><Document /></el-icon></span>
-          <span>
-            <strong>{{ artifact.name }}</strong>
-            <small>{{ artifact.size }} · V{{ artifact.version }}</small>
-          </span>
-          <el-icon><ArrowDown /></el-icon>
-        </button>
-        <button
-          v-if="canFollowUp && artifact.canReference && artifact.fileId"
-          type="button"
-          class="answer-artifact__revise"
-          :data-testid="`continue-editing-${artifact.id}`"
-          :disabled="isReferenced(artifact)"
-          @click="emit('continue-editing', artifact)"
-        >
-          <el-icon><EditPen /></el-icon>
-          {{ isReferenced(artifact) ? '已引用' : '继续修改' }}
-        </button>
+          <p v-if="previewState[`${artifact.id}@${artifact.version}`]?.loading" class="answer-artifact__body-status">正在加载正文…</p>
+          <p v-else-if="previewState[`${artifact.id}@${artifact.version}`]?.error" class="answer-artifact__body-status">{{ previewState[`${artifact.id}@${artifact.version}`].error }}</p>
+          <AssistantMessageContent
+            v-else
+            :text="previewState[`${artifact.id}@${artifact.version}`]?.text || ''"
+          />
+        </div>
       </div>
     </div>
 

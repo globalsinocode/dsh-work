@@ -1,6 +1,6 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Artifact, ChatMessage, SessionThread, TaskResult, TaskRun } from '@/types/domain'
@@ -9,7 +9,8 @@ import RunComposer from './RunComposer.vue'
 import RunMessageList from './RunMessageList.vue'
 import SessionDiscussionList from './SessionDiscussionList.vue'
 
-vi.mock('@/api/client', () => ({ workbenchApi: {} }))
+const { downloadArtifact } = vi.hoisted(() => ({ downloadArtifact: vi.fn() }))
+vi.mock('@/api/client', () => ({ workbenchApi: { downloadArtifact } }))
 
 // S5b：从 ConversationView 拆出的消息组件，A 的对话详情与 B 的对话页共用。
 
@@ -48,10 +49,15 @@ function artifact(overrides: Partial<Artifact> = {}): Artifact {
   return {
     id: 'artifact-1',
     name: '库存周报.md',
+    type: 'markdown',
     size: '2 KB',
     version: 1,
+    createdAt: '2026-10-23T10:05:00.000Z',
+    runId: 'run-1',
+    workspaceId: 'ws-personal',
     fileId: 'file-1',
     canReference: true,
+    summary: '',
     ...overrides,
   } as Artifact
 }
@@ -91,6 +97,7 @@ const global = { plugins: [ElementPlus] }
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  downloadArtifact.mockReset()
 })
 
 describe('ConversationMessageItem', () => {
@@ -134,6 +141,61 @@ describe('RunMessageList', () => {
     expect(wrapper.emitted('continue-editing')).toEqual([[file]])
     expect(wrapper.emitted('copy-answer')).toEqual([['分析完成']])
     expect(wrapper.emitted('copy-link')).toHaveLength(1)
+  })
+
+  it('attaches threadArtifacts to each run’s last assistant reply and expands markdown body', async () => {
+    const older = artifact({ id: 'artifact-old', name: '周会纪要.md', runId: 'run-old', type: 'markdown' })
+    const newer = artifact({ id: 'artifact-new', name: '备忘.md', runId: 'run-1', type: 'markdown' })
+    downloadArtifact.mockResolvedValue(new Blob(['# 周会纪要\n\n- 项'], { type: 'text/markdown' }))
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: {
+        task: run({
+          id: 'run-1',
+          messages: [
+            { id: 'u1', role: 'user', content: '写纪要', createdAt: '10:00', runId: 'run-old' },
+            { id: 'a1', role: 'assistant', content: '已生成文件', createdAt: '10:01', runId: 'run-old' },
+            { id: 'u2', role: 'user', content: '再写备忘', createdAt: '10:02', runId: 'run-1' },
+            { id: 'a2', role: 'assistant', content: '备忘已就绪', createdAt: '10:03', runId: 'run-1' },
+          ],
+          result: result({ artifacts: [newer] }),
+          threadArtifacts: [older, newer],
+        }),
+        isOwn: m => m.role === 'user',
+        canFollowUp: true,
+      },
+    })
+    expect(wrapper.findAll('[data-testid="answer-artifacts"]')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="answer-artifact-artifact-old"]').text()).toContain('周会纪要.md')
+    expect(wrapper.get('[data-testid="answer-artifact-artifact-new"]').text()).toContain('备忘.md')
+    // 继续修改只出现在当前 Run 的成果上
+    expect(wrapper.find('[data-testid="continue-editing-artifact-old"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="continue-editing-artifact-new"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="preview-artifact-artifact-old"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="artifact-body-artifact-old"]').text()).toContain('周会纪要')
+  })
+
+  it('shows a failed markdown preview inline and reloads when expanded again', async () => {
+    const file = artifact({ type: 'markdown', name: '备忘.md' })
+    downloadArtifact.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce(new Blob(['# 备忘正文']))
+    const wrapper = mount(RunMessageList, {
+      global,
+      props: { task: run({ result: result({ artifacts: [file] }) }), isOwn: m => m.role === 'user', canFollowUp: true },
+    })
+    const toggle = () => wrapper.get('[data-testid="preview-artifact-artifact-1"]').trigger('click')
+
+    await toggle()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="artifact-body-artifact-1"]').text()).toContain('预览加载失败')
+
+    await toggle()
+    expect(wrapper.find('[data-testid="artifact-body-artifact-1"]').exists()).toBe(false)
+    await toggle()
+    await flushPromises()
+    expect(downloadArtifact).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-testid="artifact-body-artifact-1"]').text()).toContain('备忘正文')
   })
 
   it('marks referenced artifacts and hides “继续修改” when follow-up is not allowed', async () => {

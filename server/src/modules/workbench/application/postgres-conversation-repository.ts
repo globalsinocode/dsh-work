@@ -1434,6 +1434,35 @@ export class PostgresConversationRepository {
     }
   }
 
+
+  /**
+   * 个人会话详情展示整段多轮消息时，按消息所属 Run 装载各自当前 Attempt 的成果，
+   * 让历史轮次的成果卡仍能挂在对应回复下（不只最新 Run 的 result.artifacts）。
+   */
+  private async loadThreadArtifactsForRuns(runIds: string[]): Promise<Array<ArtifactRow & { sourceRunId: string }>> {
+    if (!runIds.length) return []
+    return this.database<Array<ArtifactRow & { sourceRunId: string }>>`
+      select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
+             f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
+             f.id as "fileId",
+             (f.scan_status = 'clean' and f.removed_at is null and exists (
+               select 1 from file_extractions fe
+                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+             )) as "canReference",
+             av.source_run_id as "sourceRunId"
+        from artifact_versions av
+        join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+        join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
+        join runs r on r.tenant_id = av.tenant_id and r.id = av.source_run_id
+       where av.tenant_id = ${tenantId}
+         and av.source_run_id = any(${runIds})
+         and av.source_attempt_id is not null
+         and av.source_attempt_id = r.current_attempt_id
+       order by av.created_at asc, av.version_no asc
+    `
+  }
+
   private async mapTask(row: TaskRow): Promise<TaskRun> {
     // 团队 Run 详情只取该 Run 的消息（评审 M8）：共享会话里全会话加载会把
     // 几百条无关讨论一并载入。个人 Run 详情保持 AC-23 原契约——返回会话的
@@ -1446,6 +1475,14 @@ export class PostgresConversationRepository {
       runMessages.filter(message => message.role === 'assistant').map(message => message.id),
     )
     const evidence = await this.loadTaskResultEvidence(row, committedMessageIds)
+    const threadRunIds = [...new Set(
+      messages.map(message => message.runId).filter((id): id is string => Boolean(id)),
+    )]
+    // 个人会话详情含整段多轮消息：装载各 Run 当前 Attempt 的成果，供前端按 runId 挂卡。
+    // 本轮核验仍只用 evidence → result.artifacts。团队详情消息已按 Run 收窄，与本轮一致。
+    const threadArtifacts = row.workspaceType === 'personal' && threadRunIds.length > 1
+      ? (await this.loadThreadArtifactsForRuns(threadRunIds)).map(artifact => mapArtifactRow(artifact, artifact.sourceRunId))
+      : evidence.artifacts.map(item => item.artifact)
     const attachments = row.currentAttemptId
       ? await this.database<AttachmentRow[]>`
           select f.original_name as name from run_input_files rif
@@ -1475,6 +1512,7 @@ export class PostgresConversationRepository {
       stoppedBy: row.stoppedByName,
       messages: messages.map(mapMessage),
       steps: mapSteps(row.id, evidence.events, row.status),
+      threadArtifacts,
       result: deriveTaskResult(evidence),
       attachments: attachments.map(attachment => attachment.name),
       skill: row.selectedSkillId && row.selectedSkillName && row.selectedSkillVersion
