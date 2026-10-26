@@ -323,6 +323,8 @@ export interface RuntimeToolDescriptor {
   concurrencyPolicy: 'concurrent' | 'serialized'
   completionSemantics: 'completed' | 'accepted'
   timeoutSeconds: number
+  /** DSH's own scheduling for the tool when the catalog reports it (execution isolation 3.7). */
+  dshScheduling?: 'parallel' | 'exclusive'
 }
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void

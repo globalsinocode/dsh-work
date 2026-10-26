@@ -64,6 +64,8 @@ export function createRemoteSubprocessGateway(options: RemoteSubprocessGatewayOp
       cwd,
       maxOutputBytes: request.maxOutputBytes,
       timeoutMs: request.timeoutMs,
+      // ripgrep only reads and exits; anything else may leave processes behind (plan 3.7).
+      mayLeaveProcesses: executable !== 'rg',
     }
     const started = now()
     let result: ContainerCommandResult | undefined

@@ -48,7 +48,7 @@ import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
 import { ContainerExecutor, parseMaxContainers } from './modules/runtime/container-executor.ts'
 import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
-import { AttemptExecutionContainers, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
+import { AttemptExecutionContainers, assertExclusiveToolScheduling, resolveExecutionContainerUser } from './modules/runtime/attempt-execution-containers.ts'
 import { redactSensitiveText } from './security/safe-observability.ts'
 import {
   preflightDshRuntime,
@@ -181,6 +181,14 @@ async function start() {
       await containers.preflight()
       const installation = await withExecutionContainerOverlay(baseInstallation, { projectRoot })
       await preflightDshRuntime(installation)
+      // 静止保证的准入：DSH 必须独占调度 bash 与写类工具（执行隔离方案 3.7）。
+      const catalog = await new DshAcpRuntimeAdapter({
+        runtimeId: 'execution-container-admission',
+        runtimeRoot: resolve(dataRoot, 'dsh-attempts'),
+        dshRepository: installation.home,
+        process: installation.process,
+      }).listTools()
+      assertExclusiveToolScheduling(catalog)
       return { containers, installation }
     }, error => {
       console.warn(`execution container unavailable; DSH subprocesses stay on the host for this run: ${redactSensitiveText(error instanceof Error ? error.message : String(error)).slice(0, 500)}`)

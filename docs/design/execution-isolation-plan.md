@@ -1,6 +1,6 @@
 # 执行隔离与受控 Shell 方案
 
-**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c 做法已定案为“静止”保证（3.7、4.1），尚未实施；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
+**状态：** 阶段 1a 已实施（2026-10-26）；阶段 1b 的 subprocess 部分已实施（2026-10-26，开关 `DSH_WORK_EXECUTION_CONTAINER` 默认关闭；单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过），`python_execute` 并入执行容器另作 1b②，待确定脚本路径契约（4.4）；1c（“静止”保证，3.7、4.1）已实施（2026-10-26，单元、集成、本机真实 Docker 与真实 DSH 端到端用例通过；Mac mini 验收未执行）；Mac mini 验收均未执行。可执行能力已定以 **C 档**（单次 `bash` 与 Office 工具链）为目标，D 档（后台任务）暂缓（第 6 节）；阶段 2 前置事项已于 2026-10-26 定案（第 6 节）。在阶段 1a–2 实施并通过第 9 节验收前均不可用。<br>
 **更新日期：** 2026-10-26（按 KnowWork 源码复核修订：执行通道经平台中转、阶段重排、容器粒度与并发、产品决策新增中间选项；评审修订：审批保留在工具层、路径一致与可执行文件映射、宿主侧符号链接防护、阶段 1 拆分、档位按隔离要求重评；决定以 C 档为目标；简化：执行器改为服务内模块、只实现 docker 后端、容器按一次性容器管理、文件工具审计复用工具层记录、容器环境变量固定、非 C 档内容移至第 10 节后续方向；1c 定案为“静止”保证、不移植 remote fs）<br>
 **依据：** 当前 Runtime Adapter、Platform Tool Bridge、DSH 工具策略与 Python 执行代码；DSH `0.1.2-rc.1`（`76fda72979`）的 `dsh-sandbox*`、`dsh-fs*`、`dsh-subprocess*`、`dsh-shell*`、`dsh-e2b` 系列源码与 README；KnowWork v0.0.2（`83c763e`）runtime-host 与会话沙箱实现（对照参考）；2026-10-25 两次本地探针（第 3 节）。<br>
 **执行基线：** 每个 Attempt 一个独立 DSH ACP Worker，不改变进程模型；不新增执行循环。
@@ -183,6 +183,8 @@ patch 不能替换已有条目的包名（`name mismatch … skipping`），替�
 
 **DSH 工具调度（`packages/core/agent-loop/src/tool-calls.ts`、`core/tools`）：** 只有声明 `isConcurrencySafe` 的工具会并行；`0.1.2-rc.1` 中 `read`、`read_image`（及联网搜索、子 Agent）可并行，`bash`、`write`、`edit`、`str_replace_editor`、`glob`、`grep` 都是独占调用，前一组结束后下一组才开始。dsh-work 的平台工具（含 `python_execute`）均未声明可并行，同样独占。因此 `bash` 运行期间不会有任何文件工具同时执行。
 
+**调度方式随参数变化（1c 实施时发现）：** DSH 按每次调用的参数判断能否并行，`read` 不带参数时报告独占、带 `file_path` 时报告并行。因此工具目录按“空参数”与“按输入 Schema 构造的参数”各探测一次，任一为并行即记为并行；按此在真实 DSH 中得到：`read`、`read_image`、`web_search` 并行，`bash`、`write`、`edit`、`str_replace_editor`、`glob`、`grep`、`todo_write` 独占（`web_fetch`、子 Agent 也报告并行，但不在注册表内，被工具策略拒绝）。这一核对是启发式的：只覆盖探测时用到的参数形态，`0.1.2-rc.1` 中 `bash`、`write`、`edit` 根本没有定义 `isConcurrencySafe`，因此结论成立；DSH 升级时须在源码中再确认这些工具及会启动容器代码的平台工具仍未定义 `isConcurrencySafe`（见 [Runtime 交付](../release/dsh-runtime-delivery.md)第 5 节）。
+
 **remote fs 移植：** `FileSystem` 有 12 个抽象方法，并带版本号（`FsVersion`）、写入意图与 `fs/observed` 等事件；`tool-fs` 用 `instanceof FsError` 判断错误，实现必须使用 DSH 自己加载的 `FsError` 类，即插件要从 DSH 安装目录解析 `@deepseek-ai/dsh-fs`（不能像 subprocess 插件那样不引用 DSH）。KnowWork 的 `remote-fs` 约 250 行，基于 `0.2.1`（另实现了 `0.1.2-rc.1` 没有的 `readByteRange`），并自行实现了编辑语义。移植可行，但需要模块解析机制、维护一份与 DSH 一致的编辑语义，且每次文件操作都要一次容器 `exec`（约 60 ms 起）。
 
 **宿主侧读取工作区的现状：** 七个带路径参数的文件工具都经工具策略的真实路径检查。检查点读取（`readCheckpointWorkspaceFiles`）与成果发布（`publishRuntimeArtifacts`）会拒绝 `output/` 内的符号链接与硬链接文件，但**不检查 `output/` 目录本身**：容器内代码若把 `output` 换成指向宿主目录的符号链接，两者都会读到工作区外的文件。目前没有途径创建该链接（容器只运行 `rg`），放开 bash 后即成为静态（非竞态）的外泄路径，无论 1c 选哪种做法都必须修复。
@@ -227,10 +229,10 @@ DSH Worker（每 Attempt 一个，宿主进程）
 - **可执行文件映射。** remote subprocess 只接受白名单内的可执行文件：DSH 自带二进制按白名单映射到镜像内同名工具，`@vscode/ripgrep` 的 `rgPath`（平台专用包路径，如 `@vscode/ripgrep-darwin-arm64/bin/rg`，见 3.5）映射为镜像内 `rg`（版本与 DSH 依赖对齐），保证默认工具 `glob`、`grep` 可用（3.1）；其他宿主绝对路径一律拒绝。
 - **“静止”保证代替 remote fs（1c，3.7 定案）。** 执行容器能运行代码后，可在共享工作区留下指向外部的符号链接，或在宿主检查路径与使用路径之间替换路径。dsh-work 不把文件工具搬进容器，而是保证宿主读写工作区时容器内没有任何进程，从而消除检查与使用之间的竞态；容器留下的静态符号链接由工具策略的真实路径检查拦截。具体要求：
   - 每条可能派生进程的命令（`bash`；1b② 后的 Python）结束后先清扫残留进程，确认失败、清扫命令无法执行或进程数耗尽时删除容器（下次命令再惰性创建）。清扫只是优化，“不干净就删除”才是保证。
-  - 超时或取消时，平台在清理与静止确认完成前把执行容器标为忙；工具桥的 `/authorize-execution`（每次工具调用前探测当前授权）在忙时等待，超过时限拒绝本次工具调用。插件侧取消后也等待平台确认，作为补充。
-  - 静止无法恢复（删除容器也失败）时 Attempt 立即失败，不再执行任何工具。
-  - `bash`、`write`、`edit`、`str_replace_editor`、`glob`、`grep` 与平台工具在 DSH 中独占执行，只有 `read`、`read_image` 可并行（3.7）；这一点是安全不变量，纳入 DSH 升级准入测试。
-- **宿主侧读取工作区。** 产物收集、检查点复制、输入挂载等宿主侧操作只在静止期间进行，并先确认 `output/` 等目录本身是工作区内的真实目录（`lstat` 与真实路径，3.7 发现现有代码未检查目录本身），文件只收普通文件，拒绝管道等特殊文件；macOS 上读取可再加 `O_NOFOLLOW_ANY`。
+  - 超时或取消时，平台在清理与静止确认完成前把执行容器标为忙；执行容器模式下工具桥的 `/authorize-execution`（策略每次工具调用前都会探测）先等待执行容器空闲，最多 3 秒（在策略 6 秒的探测时限之内；正常清理约 0.1–0.4 s），超时只拒绝本次工具调用。插件侧“取消后等待平台确认”未实施，由该等待替代。
+  - 静止无法恢复（删除容器也失败）时，下一次授权探测即令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败，不再执行任何工具；该 Attempt 的执行容器也拒绝后续命令。
+  - 在 dsh-work 内置工具注册表的工具与 `bash` 中，只有 `read`、`read_image`、`web_search` 可由 DSH 并行调度，其余必须独占（3.7）。这是安全不变量：工具策略在工具目录中发布 DSH 实际的调度方式（`dshScheduling`），执行容器模式启动检查据此准入，不满足或未报告即视为执行容器不可用。
+- **宿主侧读取工作区。** 产物收集、检查点复制、输入挂载等宿主侧操作只在静止期间进行：Attempt 结束时先让工具桥停止接收命令、等待清理结束并删除执行容器，再收集成果，任何一步失败都令 Attempt 以 `EXECUTION_CONTAINER_UNRECOVERABLE` 失败且不收集；持久化等待的检查点在读取 `output/` 前等待执行容器空闲，不空闲则不创建检查点。读取时并先确认 `output/` 等目录本身是工作区内的真实目录（`lstat` 与真实路径，3.7 发现现有代码未检查目录本身），文件只收普通文件，拒绝管道等特殊文件；macOS 上读取可再加 `O_NOFOLLOW_ANY`。
 - **remote subprocess 插件**按官方 `SubprocessRuntime` 接口实现，参照 KnowWork 的 `remote-subprocess`；DSH 官方 bash、文件工具与 `present` 原样使用。路径只认本 Attempt 工作区。
 - **acp Profile 调整：** 1b 停用 `subprocess`、`tool-jobs`，插入 remote subprocess，`tool-bash` 配置 `enableRunInBackground: false`（[执行容器叠加层](../../server/config/dsh/execution-container.cordis.patch.yml)，追加在部署 patch 之后，作用于 Attempt、工具目录探测、MCP 发现与预检的所有 DSH 进程）。停用 `bash-sandbox`、`permission` 并改挂 `dsh-bash-local` 只在放开 bash 时才需要，留到阶段 2（3.5 已验证可装配）。`fs-sandbox` 保持不变（1c 不替换 `ctx.fs`）。patch 不能替换已有条目的包名，只能停用后插入。插件以 `ctx.provide('subprocess', …)` 注册，不引用 DSH 包，与工具策略插件一样以绝对路径装配。
 - **执行器模块**：业务服务内唯一调用容器运行时的代码，由现有 [python-skill-runner.ts](../../server/src/modules/runtime/python-skill-runner.ts) 重构而来；只暴露固定参数的接口（固定姿态、白名单镜像、本 Attempt 工作区挂载），其他代码不再直接拼接 `docker` 命令。它与业务服务同进程、同账号，提供的是代码边界而非账号隔离：业务服务被攻破即可控制容器运行时，须在总览中如实标注。独立账号的执行器组件见第 10 节。
@@ -284,7 +286,7 @@ DSH Worker（每 Attempt 一个，宿主进程）
 | 1a（已实施） | 执行器模块与 `ExecutionBackend` 端口（`docker` 实现），由 `python-skill-runner` 重构；`python_execute` 改经执行器（仍为每次调用一个容器）；孤儿清扫（启动时全量清扫，运行中只重试本进程删除失败的容器）；全局并发槽位（`DSH_WORK_EXECUTION_MAX_CONTAINERS`，按服务实例计算，删除确认前占用） | 容器参数集中在一处、经固定接口调用，业务代码不再直接拼接 `docker` 命令 | 不改 DSH |
 | 1b①（已实施） | 执行容器模式开关（默认关闭，启动时确定，失败则本次启动退回宿主执行并在健康状态报告不可用）；执行容器（每 Attempt 惰性创建、Attempt 结束删除、启动清扫）；remote subprocess 经工具桥 `/subprocess/exec` 与平台中转（`rg` 映射，`glob`、`grep` 在容器内运行）；固定环境变量；命令逐条审计（`run.container.command`）；进程组终止与容器内看门狗 | 命令类工具进入执行容器 | 1a；3.5 探针 |
 | 1b② | `python_execute` 并入执行容器（4.4） | 同一 Attempt 只有一个执行容器 | 1b①；确定脚本路径契约 |
-| 1c | “静止”保证（3.7、4.1）：命令后清扫与“不干净就删除容器”、超时与取消时由 `/authorize-execution` 等待清理、静止无法恢复时 Attempt 失败；检查点读取与成果发布先确认 `output/` 本身；工具独占性纳入 DSH 升级准入测试 | 容器内代码无法利用宿主文件操作的竞态或替换后的目录越界 | 1b①；3.7 探针（已完成） |
+| 1c（已实施） | “静止”保证（3.7、4.1）：命令后清扫与“不干净就删除容器”、超时与取消时由 `/authorize-execution` 等待清理、静止无法恢复时 Attempt 失败；检查点读取与成果发布先确认 `output/` 本身；工具独占性纳入 DSH 升级准入测试 | 容器内代码无法利用宿主文件操作的竞态或替换后的目录越界 | 1b①；3.7 探针（已完成） |
 | 2 | 放开 C 档：单次 `bash`（关闭后台运行）与 Office 工具链；同步修改总览、功能规则与内置工具注册表（第 6 节） | 模型可“写代码 → 运行 → 看结果 → 修正”，覆盖数据处理、准确计算、Office 文件生成与转换 | 1a–1c 完成（放开 bash 前必须先有“静止”保证，见 4.1）；第 6 节前置事项已定案 |
 
 已定以 C 档为目标，1c 是阶段 2 的必要前提，不推迟。“静止”保证不改变文件工具的执行位置，读写不经容器 `exec`；代价是每条 `bash` 命令后多一次静止确认（约 0.1 s，异常时删除并重建约 0.4 s，3.7）。

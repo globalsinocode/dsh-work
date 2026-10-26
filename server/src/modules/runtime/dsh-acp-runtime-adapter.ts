@@ -12,6 +12,7 @@ import {
 } from './acp-json-rpc-client.ts'
 import { createPlatformToolBridge, type PlatformToolOperationLifecycle } from './platform-tool-bridge.ts'
 import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
+import { assertRealWorkspaceDirectory } from '../../infrastructure/storage/workspace-directory.ts'
 import type { ContainerCommand, ContainerCommandResult } from './execution-backend.ts'
 import { formatExecutionTime } from '../../domain/execution-time.ts'
 import {
@@ -56,6 +57,10 @@ import { isDshBuiltinTool } from './builtin-tools.ts'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_SETUP_TIMEOUT_MS = 120_000
+/** Within the policy's 6 s authorization probe; cleanup normally takes 0.1–0.4 s (plan 3.7). */
+const EXECUTION_CONTAINER_IDLE_WAIT_MS = 3_000
+/** End-of-Attempt or checkpoint reads have no probe deadline; a killed command plus a sweep fit well within this. */
+const EXECUTION_CONTAINER_SETTLE_WAIT_MS = 30_000
 
 interface ExecutionRecord {
   manifest: RuntimeManifest
@@ -158,6 +163,8 @@ export interface DshAcpRuntimeAdapterConfiguration {
    */
   remoteExecution?: {
     exec(attemptId: string, workspace: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult>
+    /** 静止保证（方案 3.7）：命令及其后的静止确认都结束前为 busy；静止无法恢复时为 failed。 */
+    waitUntilIdle(attemptId: string, timeoutMs: number): Promise<'idle' | 'busy' | 'failed'>
     release(attemptId: string): Promise<void>
   }
   /** 执行容器内每条命令的审计摘要；不含输出正文。 */
@@ -580,9 +587,17 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
         registerPlatformTool(name, async (input, signal) => handle(name, input, record.manifest, signal))
       }
       const remoteExecution = this.configuration.remoteExecution
+      // Container mode: every tool's authorization probe first waits until the Attempt
+      // container is quiescent, so the host never touches the workspace while container code runs.
+      const authorizeTool = remoteExecution
+        ? async () => {
+          await this.awaitExecutionContainerIdle(record, remoteExecution)
+          await this.verifyExecutionAuthorization(record)
+        }
+        : this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined
       if (Object.keys(platformTools).length || this.configuration.authorizeExecution || remoteExecution) {
         record.bridge = await createPlatformToolBridge(platformTools as Record<string, PlatformToolRegistration>, record.manifest.limits.max_tool_calls,
-          this.configuration.authorizeExecution ? () => this.verifyExecutionAuthorization(record) : undefined,
+          authorizeTool,
           this.configuration.operationLifecycle?.(record.manifest),
           this.configuration.disabledBuiltinTools ? async (toolName) => {
             const disabled = await this.configuration.disabledBuiltinTools!()
@@ -622,7 +637,7 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           env: {
             ...processConfiguration.env,
             ...(record.bridge ? { DSH_PLATFORM_TOOL_SOCKET: record.bridge.socket } : {}),
-            DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution)),
+            DSH_REQUIRE_CURRENT_AUTHORIZATION: String(Boolean(this.configuration.authorizeExecution || this.configuration.remoteExecution)),
             DSH_PERMISSION_MODE: 'workspace-write',
             DSH_SNAPSHOT: 'record',
             DSH_SNAPSHOT_SESSIONS_ROOT: join(record.snapshot.attemptDirectory, 'sessions'),
@@ -697,6 +712,8 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
 
       // EX-00：Worker 在 prompt 结束时仍存活，此时采样其驻留内存与累计 CPU 时间。
       const workerResources = await sampleWorkerResources(record.client?.pid)
+      // 静止保证（方案 3.7）：读取 output/ 前先停止接收命令、等待清理结束并删除执行容器。
+      if (!(await this.settleExecutionContainer(record))) return
       let artifacts: Array<{ name: string; size: number }> = []
       const collectStartMono = performance.now()
       if (!isAdminRunPurpose(record.manifest.purpose) && record.manifest.tools.some(tool => tool.id === 'write')) {
@@ -897,6 +914,59 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     if (record.terminal) throw new Error('Attempt 已结束')
   }
 
+  /**
+   * 静止保证（方案 3.7）：Attempt 结束、宿主读取 output/ 之前调用。先让工具桥不再接收命令，
+   * 再等待清理结束并删除执行容器；任何一步失败都令 Attempt 失败，返回 false，调用方不再读取工作区。
+   */
+  private async settleExecutionContainer(record: ExecutionRecord): Promise<boolean> {
+    const remoteExecution = this.configuration.remoteExecution
+    if (!remoteExecution) return true
+    record.bridge?.abort()
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_SETTLE_WAIT_MS)
+    let released = state === 'idle'
+    if (released) {
+      released = await remoteExecution.release(record.manifest.attempt_id).then(() => true, () => false)
+    }
+    if (released) return true
+    if (!record.terminal) this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器未能静止或回收，未收集成果')
+    return false
+  }
+
+  /** 读取工作区前确认执行容器空闲；不空闲则拒绝（静止无法恢复时 Attempt 失败）。 */
+  private async assertExecutionContainerIdle(record: ExecutionRecord): Promise<void> {
+    const remoteExecution = this.configuration.remoteExecution
+    if (!remoteExecution) return
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_SETTLE_WAIT_MS)
+    if (state === 'idle') return
+    if (state === 'failed' && !record.terminal) {
+      record.bridge?.abort()
+      this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器无法恢复静止，任务已停止')
+      void record.client?.close().catch(() => undefined)
+    }
+    throw stateConflict('执行容器尚未静止，不能读取工作区')
+  }
+
+  /**
+   * 静止保证（方案 3.7、4.1）：等待本 Attempt 执行容器内的命令及其后的静止确认结束。
+   * 超时只拒绝本次工具调用；静止无法恢复时 Attempt 立即失败，不再执行任何工具。
+   */
+  private async awaitExecutionContainerIdle(
+    record: ExecutionRecord,
+    remoteExecution: NonNullable<DshAcpRuntimeAdapterConfiguration['remoteExecution']>,
+  ): Promise<void> {
+    const state = await remoteExecution.waitUntilIdle(record.manifest.attempt_id, EXECUTION_CONTAINER_IDLE_WAIT_MS)
+    if (state === 'idle') return
+    if (state === 'failed') {
+      if (!record.terminal) {
+        record.bridge?.abort()
+        this.finishFailed(record, 'EXECUTION_CONTAINER_UNRECOVERABLE', '执行容器无法恢复静止，任务已停止')
+        void record.client?.close().catch(() => undefined)
+      }
+      throw Object.assign(new Error('执行容器无法恢复静止'), { code: 'permission_denied' })
+    }
+    throw Object.assign(new Error('执行容器仍在清理，本次工具调用未执行'), { code: 'execution_container_busy' })
+  }
+
   /** A non-overlapping lifecycle check; it never runs an Agent or retries a tool. */
   private scheduleAuthorizationCheck(record: ExecutionRecord): void {
     if (!this.configuration.authorizeExecution || record.terminal) return
@@ -980,7 +1050,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
           parameterDigest,
           resourceRef,
           dataVersion,
-          checkpointState: await captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId),
+          checkpointState: await (async () => {
+            // 静止保证（方案 3.7）：检查点要读取 output/，执行容器必须已经静止。
+            await this.assertExecutionContainerIdle(record)
+            return captureResumeCheckpointContext(record, actionArguments ?? {}, toolCallId)
+          })(),
         }
     // F-01：发布试运行没有审批人，也不能产生外部效果。生产中需要人工审批的动作在试运行中
     // 直接拒绝（trial_only），不创建持久化审批等待；无需审批的动作与生产一致自动放行。
@@ -1175,6 +1249,11 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
   private now(): string {
     return (this.configuration.now?.() ?? new Date()).toISOString()
   }
+}
+
+function dshSchedulingOf(contract: object): Pick<RuntimeToolDescriptor, 'dshScheduling'> {
+  const scheduling = (contract as Record<string, unknown>)['dshScheduling']
+  return scheduling === 'parallel' || scheduling === 'exclusive' ? { dshScheduling: scheduling } : {}
 }
 
 function isRuntimeToolContract(value: unknown): value is {
@@ -1418,7 +1497,7 @@ async function captureResumeCheckpointContext(
   return {
     pending_action: { arguments: jsonClone(actionArguments) as Record<string, unknown> },
     completed_tool_results: completedToolResults,
-    workspace_files: await readCheckpointWorkspaceFiles(join(record.snapshot.attemptDirectory, 'workspace', 'output')),
+    workspace_files: await readCheckpointWorkspaceFiles(join(record.snapshot.attemptDirectory, 'workspace', 'output'), join(record.snapshot.attemptDirectory, 'workspace')),
     assistant_output: assistantOutput,
   }
 }
@@ -1470,10 +1549,13 @@ async function readCompletedToolResults(
   return completed
 }
 
-async function readCheckpointWorkspaceFiles(
+export async function readCheckpointWorkspaceFiles(
   outputRoot: string,
+  workspaceRoot: string,
 ): Promise<RuntimeResumeCheckpointContext['workspace_files']> {
   const result: RuntimeResumeCheckpointContext['workspace_files'] = []
+  // 执行隔离 1c：output/ 本身可能被容器内代码换成指向宿主目录的链接。子目录与文件仍由下面逐项按类型检查。
+  if (!(await assertRealWorkspaceDirectory(workspaceRoot, outputRoot))) return result
   let totalBytes = 0
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
@@ -1809,6 +1891,7 @@ function parseRuntimeToolCatalog(values: unknown[]): RuntimeToolDescriptor[] {
       concurrencyPolicy: value['contract']['concurrencyPolicy'],
       completionSemantics: value['contract']['completionSemantics'],
       timeoutSeconds: value['contract']['timeoutSeconds'],
+      ...dshSchedulingOf(value['contract']),
     }
   })
 }

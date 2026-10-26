@@ -97,6 +97,10 @@ export async function createPlatformToolBridge(
           }
           response.end(JSON.stringify({ authorized: true }))
         } catch (error) {
+          if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'execution_container_busy') {
+            response.writeHead(409).end(JSON.stringify({ error: '执行容器仍在清理，请稍后重试', retryLater: true }))
+            return
+          }
           const revoked = isAuthorizationDenied(error)
           response.writeHead(revoked ? 403 : 503).end(JSON.stringify({
             error: revoked ? '当前执行授权已撤销' : '当前执行授权检查暂不可用',

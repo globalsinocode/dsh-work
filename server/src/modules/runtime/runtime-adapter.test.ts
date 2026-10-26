@@ -710,6 +710,7 @@ describe('DSH ACP Runtime Adapter', () => {
           execs.push({ attemptId, workspace, argv: command.argv, cwd: command.cwd })
           return { exitCode: 0, stdout: 'a.txt\n', stderr: '', truncated: false, timedOut: false }
         },
+        waitUntilIdle: async () => { events.push('idle-check'); return 'idle' as const },
         release: async () => { events.push('release') },
       },
       recordContainerCommand: async (manifest, audit) => {
@@ -720,13 +721,102 @@ describe('DSH ACP Runtime Adapter', () => {
     const result = await handle.done
     assert.equal(result.status, 'completed')
     await waitForCondition(() => events.includes('release'))
-    assert.deepEqual(events, ['exec', 'release'], 'released only after the bridge stopped taking commands')
+    assert.deepEqual(events.filter(event => event !== 'idle-check'), ['exec', 'release'], 'released only after the bridge stopped taking commands')
+    assert.ok(events.indexOf('idle-check') > -1 && events.indexOf('idle-check') < events.indexOf('exec'), 'the authorization probe waited for the container to be idle first')
     assert.equal(execs.length, 1)
     assert.equal(execs[0]!.attemptId, 'attempt-exec-1')
     assert.deepEqual(execs[0]!.argv, ['rg', '--files'], 'DSH-bundled ripgrep is mapped to the image rg')
     assert.equal(execs[0]!.cwd, execs[0]!.workspace)
     assert.equal(execs[0]!.workspace, join(result.attemptDirectory, 'workspace'), 'the Adapter passes its own Attempt workspace')
     assert.deepEqual(audits, [{ runId: 'run-execution-container', executable: 'rg', exitCode: 0 }])
+  })
+
+  it('execution container mode fails the Attempt when the container cannot be made quiescent', async () => {
+    let execs = 0
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { execs += 1; throw new Error('must not run') },
+        waitUntilIdle: async () => 'failed' as const,
+        release: async () => {},
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-unrecoverable', 'attempt-exec-2', '[remote-exec]'))).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_CONTAINER_UNRECOVERABLE')
+    assert.equal(execs, 0, 'no tool ran once quiescence could not be restored')
+  })
+
+  it('execution container mode refuses a tool call while the container is still cleaning up', async () => {
+    let execs = 0
+    let probes = 0
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { execs += 1; throw new Error('must not run') },
+        // Still cleaning up at the tool's probe; finished by the end of the Attempt.
+        waitUntilIdle: async () => (probes++ === 0 ? 'busy' as const : 'idle' as const),
+        release: async () => {},
+      },
+    })
+    const input = manifest('run-execution-busy', 'attempt-exec-3', '[remote-exec]')
+    const handle = await adapter.execute(input)
+    const events: RuntimeEvent[] = []
+    adapter.subscribe(input.run_id, event => { events.push(event) })
+    const result = await handle.done
+    assert.equal(result.status, 'completed', 'only the tool call is refused; the Attempt continues')
+    assert.equal(execs, 0)
+    const answer = events.filter(event => event.event_type === 'assistant.delta').map(event => event.display_message ?? '').join('')
+    assert.match(answer, /authorize:409/)
+  })
+
+  it('execution container mode releases the container before reading output/ for artifacts', async () => {
+    const order: string[] = []
+    const adapter = await createAdapter(500, undefined, async () => { order.push('collect'); return [] }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => { order.push('idle'); return 'idle' as const },
+        release: async () => { order.push('release') },
+      },
+    })
+    const input = manifest('run-execution-settle', 'attempt-exec-4')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'completed', result.errorMessage ?? undefined)
+    assert.deepEqual(order.slice(-3), ['idle', 'release', 'collect'], 'idle, then released, then read')
+  })
+
+  it('execution container mode never reads output/ when the container could not be released', async () => {
+    let collected = false
+    const adapter = await createAdapter(500, undefined, async () => { collected = true; return [] }, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'idle' as const,
+        release: async () => { throw new Error('沙箱容器清理失败，容器可能仍在运行') },
+      },
+    })
+    const input = manifest('run-execution-unreleased', 'attempt-exec-5')
+    input.tools = [...input.tools, { id: 'write', version: '1.0.0' }]
+    const result = await (await adapter.execute(input)).done
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'EXECUTION_CONTAINER_UNRECOVERABLE')
+    assert.equal(collected, false)
+  })
+
+  it('execution container mode refuses a persistent-wait checkpoint while the container is still busy', async () => {
+    let decisionRequested = false
+    const adapter = await createAdapter(500, undefined, undefined, {
+      remoteExecution: {
+        exec: async () => { throw new Error('unused') },
+        waitUntilIdle: async () => 'busy' as const,
+        release: async () => {},
+      },
+      permissionDecision: async () => {
+        decisionRequested = true
+        return { decision: 'wait', approvalId: 'approval-x', checkpointId: 'checkpoint-x', checkpointDigest: 'd'.repeat(64), expiresAt: '2026-09-23T00:00:00.000Z' }
+      },
+    })
+    const result = await (await adapter.execute(manifest('run-execution-checkpoint', 'attempt-exec-6', '[permission] read inventory'))).done
+    assert.notEqual(result.status, 'waiting', 'no checkpoint was created from a workspace that may still change')
+    assert.equal(decisionRequested, false)
   })
 
   it('creates an isolated Attempt and emits ordered safe completion events', async () => {

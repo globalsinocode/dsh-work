@@ -16,6 +16,7 @@ import { workspaceStateConflict } from './workspace-state-conflict-error.ts'
 import { recordWorkspaceActivity } from './workspace-activity-writer.ts'
 import { invalidRequest, stateConflict } from '../../../domain/request-errors.ts'
 import type { ObjectStorage } from '../../../domain/object-storage.ts'
+import { assertRealWorkspaceDirectory } from '../../../infrastructure/storage/workspace-directory.ts'
 
 const tenantId = 'tenant-dsh-work'
 const allowedExtensions = new Set(['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'])
@@ -1692,11 +1693,12 @@ export class PostgresContentService {
     // 管理侧 purpose 不产生员工成果；自动化任务（purpose='automation'）是
     // 员工运行，仍走正常成果收集（AG-03）。
     if (isAdminRunPurpose(manifest.purpose)) return []
-    await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
-
     const workspaceRoot = resolve(input.workspaceDirectory)
     const outputRoot = resolve(workspaceRoot, 'output')
     if (!outputRoot.startsWith(`${workspaceRoot}/`)) throw invalidRequest('Runtime 成果目录无效')
+    // 执行隔离 1c：output/ 本身可能被容器内代码换成指向宿主目录的链接，读取前先确认。
+    await assertRealWorkspaceDirectory(workspaceRoot, outputRoot)
+    await this.requireActiveWorkspace(manifest.workspace_id, manifest.user_context.user_id)
     const entries = await readdir(outputRoot, { withFileTypes: true })
     if (entries.length > 20) throw invalidRequest('单次 Run 最多生成 20 个成果文件')
 

@@ -77,6 +77,11 @@ export interface ContainerCommand {
   cwd: string
   maxOutputBytes: number
   timeoutMs: number
+  /**
+   * True when the program can leave processes behind (`bash`; Python later). The
+   * container must then be verified quiescent before the host touches the workspace again.
+   */
+  mayLeaveProcesses?: boolean
 }
 
 export interface ContainerCommandResult {
@@ -97,8 +102,17 @@ export interface ExecutionBackend {
   /** Startup only: removes every container this service manages. Assumes a single service instance. */
   removeOrphans(): Promise<void>
   startPythonSandbox(spec: PythonSandboxSpec): RunningSandbox
-  /** Starts an idle execution container with the fixed posture; commands run through `exec`. */
-  startExecutionContainer(spec: ExecutionContainerSpec): Promise<void>
+  /**
+   * Starts an idle execution container with the fixed posture; commands run through `exec`.
+   * Returns the PID (inside the container) of the keeper process that holds it open.
+   */
+  startExecutionContainer(spec: ExecutionContainerSpec): Promise<{ keeperPid: number }>
+  /**
+   * Kills every process except PID 1 and the keeper, repeating until a full pass finds
+   * none (plan 3.7). Resolves false when that cannot be confirmed (for example the pids
+   * limit is exhausted); the caller then removes the container. Never throws for that.
+   */
+  quiesce(name: string, keeperPid: number): Promise<boolean>
   /**
    * Runs one command in its own process group. Abort or timeout kills the whole
    * group inside the container before this settles (a dropped exec alone would not).

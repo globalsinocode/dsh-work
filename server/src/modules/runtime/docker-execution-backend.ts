@@ -28,6 +28,7 @@ export const EXECUTION_COMMAND_ENV = [
   'TMPDIR=/tmp',
 ] as const
 const KILL_GROUP_TIMEOUT_MS = 10_000
+const QUIESCE_TIMEOUT_MS = 10_000
 const CLIENT_EXIT_WAIT_MS = 2_000
 const WATCHDOG_GRACE_SECONDS = 10
 
@@ -47,6 +48,30 @@ wait "$p"; s=$?
 kill -KILL -"$w" 2>/dev/null
 rm -f "$f"
 exit "$s"`
+
+/**
+ * Quiescence sweep (plan 3.7): SIGKILL every process except PID 1, the keeper and this
+ * shell's own children, until one full pass finds none. Zombies hold no code and are
+ * skipped; PID 1 (docker-init) reaps them. sh builtins only, so it needs nothing from the image.
+ */
+const QUIESCE = `keep="$1"
+for round in 1 2 3 4 5; do
+  found=0
+  for d in /proc/[0-9]*; do
+    p=\${d#/proc/}
+    case "$p" in 1|"$keep"|"$$") continue ;; esac
+    read -r stat < "$d/stat" 2>/dev/null || continue
+    set -- \${stat##*) }
+    case "$1" in Z|X) continue ;; esac
+    [ "$2" = "$$" ] && continue
+    kill -KILL "$p" 2>/dev/null
+    found=$((found + 1))
+  done
+  [ "$found" -eq 0 ] && { echo clean; exit 0; }
+  sleep 0.05
+done
+echo busy
+exit 1`
 
 const KILL_GROUP = `f="/tmp/.dsh-exec-$1"; i=0
 while [ ! -s "$f" ] && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
@@ -129,9 +154,24 @@ export class DockerExecutionBackend implements ExecutionBackend {
   async startExecutionContainer(spec: ExecutionContainerSpec) {
     const args = buildExecutionContainerArguments(spec, { memorySwap: this.memorySwap, apparmor: this.apparmor })
     const started = await runCommand(this.command, args, 60_000)
-    if (started.exitCode === 0) return
+    if (started.exitCode === 0) {
+      // Right after start PID 1 (docker-init) has exactly one child: the keeper.
+      const children = await runCommand(this.command, ['exec', spec.name, 'cat', '/proc/1/task/1/children'], 15_000).catch(() => undefined)
+      const keeperPid = Number(children?.stdout.trim().split(/\s+/)[0])
+      if (children?.exitCode === 0 && Number.isSafeInteger(keeperPid) && keeperPid > 1) return { keeperPid }
+    }
     await runCommand(this.command, ['rm', '-f', spec.name], RM_TIMEOUT_MS).catch(() => undefined)
     throw dependencyUnavailable(`执行容器启动失败：${brief(started.stderr) || spec.name}`)
+  }
+
+  async quiesce(name: string, keeperPid: number): Promise<boolean> {
+    if (!EXECUTION_CONTAINER_NAME_PATTERN.test(name) || !Number.isSafeInteger(keeperPid) || keeperPid <= 1) return false
+    try {
+      const swept = await runCommand(this.command, ['exec', name, 'sh', '-c', QUIESCE, 'dsh-quiesce', String(keeperPid)], QUIESCE_TIMEOUT_MS)
+      return swept.exitCode === 0 && swept.stdout.trim() === 'clean'
+    } catch {
+      return false
+    }
   }
 
   async exec(name: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult> {

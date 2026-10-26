@@ -17,7 +17,8 @@ class FakeBackend implements ExecutionBackend {
   async inspectExecutionImage() {}
   async detectFeatures() {}
   async removeOrphans() {}
-  async startExecutionContainer() { throw new Error('not used by these tests') }
+  async startExecutionContainer(): Promise<{ keeperPid: number }> { throw new Error('not used by these tests') }
+  async quiesce() { return true }
   async exec(): Promise<ContainerCommandResult> { throw new Error('not used by these tests') }
 
   startPythonSandbox(spec: PythonSandboxSpec): RunningSandbox {

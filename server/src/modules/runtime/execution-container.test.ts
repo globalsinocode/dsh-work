@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { stateConflict } from '../../domain/request-errors.ts'
-import { AttemptExecutionContainers } from './attempt-execution-containers.ts'
+import { AttemptExecutionContainers, assertExclusiveToolScheduling } from './attempt-execution-containers.ts'
 import { buildExecutionContainerArguments, EXECUTION_COMMAND_ENV } from './docker-execution-backend.ts'
 import { withExecutionContainerOverlay, type DshRuntimeInstallation } from './dsh-runtime-installation.ts'
 import {
@@ -28,6 +28,9 @@ class FakeExecBackend implements ExecutionBackend {
   readonly commands: Array<{ name: string; command: ContainerCommand }> = []
   removeFailures = 0
   startDelayMs = 0
+  /** Results of successive quiesce calls; `true` when the list is empty. */
+  quiesceResults: boolean[] = []
+  readonly quiesced: string[] = []
 
   async inspectImage() {}
   async inspectExecutionImage() {}
@@ -39,10 +42,20 @@ class FakeExecBackend implements ExecutionBackend {
   async startExecutionContainer(spec: ExecutionContainerSpec) {
     this.started.push(spec)
     if (this.startDelayMs) await new Promise(resolve => setTimeout(resolve, this.startDelayMs))
+    return { keeperPid: 7 }
   }
 
-  async exec(name: string, command: ContainerCommand): Promise<ContainerCommandResult> {
+  async quiesce(name: string) {
+    this.quiesced.push(name)
+    return this.quiesceResults.shift() ?? true
+  }
+
+  /** Overrides how a command behaves; by default it succeeds at once. */
+  execBehavior?: (command: ContainerCommand, signal: AbortSignal) => Promise<ContainerCommandResult>
+
+  async exec(name: string, command: ContainerCommand, signal: AbortSignal): Promise<ContainerCommandResult> {
     this.commands.push({ name, command })
+    if (this.execBehavior) return this.execBehavior(command, signal)
     return { exitCode: 0, stdout: `ran ${command.argv[0]}`, stderr: '', truncated: false, timedOut: false }
   }
 
@@ -156,6 +169,79 @@ test('a failed removal is retried later for this process only', async () => {
   assert.deepEqual(backend.removed, [name])
   containers.startMaintenance(60_000)
   containers.close()
+})
+
+test('quiescence: rg needs no check; a command that may leave processes is swept, and a dirty container is replaced', async () => {
+  const backend = new FakeExecBackend()
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20' })
+  const signal = new AbortController().signal
+  await containers.exec('a1', '/ws', command(), signal)
+  assert.deepEqual(backend.quiesced, [], 'ripgrep only reads and exits')
+
+  await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'x'], mayLeaveProcesses: true }), signal)
+  assert.equal(backend.quiesced.length, 1)
+  assert.equal(backend.removed.length, 0, 'a clean sweep keeps the container')
+
+  backend.quiesceResults = [false]
+  await containers.exec('a1', '/ws', command({ argv: ['bash', '-c', 'x &'], mayLeaveProcesses: true }), signal)
+  assert.equal(backend.removed.length, 1, 'not confirmed clean: removed')
+  assert.deepEqual(containers.activeAttempts, [], 'no container until the next command')
+  await containers.exec('a1', '/ws', command(), signal)
+  assert.equal(backend.started.length, 2, 'the next command recreates it')
+  assert.equal(await containers.waitUntilIdle('a1', 100), 'idle')
+})
+
+test('quiescence: a cancelled command stays busy until cleanup finished, even after the caller gave up', async () => {
+  const backend = new FakeExecBackend()
+  let finishSweep: (clean: boolean) => void = () => {}
+  backend.quiesce = async name => { backend.quiesced.push(name); return new Promise<boolean>(resolve => { finishSweep = resolve }) }
+  backend.execBehavior = async (_command, signal) => {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
+    throw new DOMException('Aborted', 'AbortError')
+  }
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20' })
+  const controller = new AbortController()
+  const pending = containers.exec('a1', '/ws', command(), controller.signal)
+  await waitFor(() => backend.commands.length === 1)
+  controller.abort()
+  await waitFor(() => backend.quiesced.length === 1)
+  assert.equal(await containers.waitUntilIdle('a1', 50), 'busy', 'the sweep after a cancel is still running')
+  finishSweep(true)
+  await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === 'AbortError')
+  assert.equal(await containers.waitUntilIdle('a1', 1000), 'idle')
+})
+
+test('quiescence: if even removal fails the Attempt is failed and refuses further commands', async () => {
+  const backend = new FakeExecBackend()
+  backend.quiesceResults = [false]
+  backend.removeFailures = 1
+  const containers = new AttemptExecutionContainers(backend, { image, user: '501:20' })
+  const signal = new AbortController().signal
+  await containers.exec('a1', '/ws', command({ argv: ['bash'], mayLeaveProcesses: true }), signal)
+  assert.equal(await containers.waitUntilIdle('a1', 100), 'failed')
+  await assert.rejects(containers.exec('a1', '/ws', command(), signal), /无法恢复静止/)
+  assert.equal(backend.started.length, 1, 'no new container for a failed Attempt')
+  assert.deepEqual(containers.pendingRemovals, [backend.started[0]!.name], 'removal is still retried in the background')
+  assert.equal(await containers.waitUntilIdle('other-attempt', 100), 'idle', 'other Attempts are unaffected')
+})
+
+test('admission: only plain reads may run alongside other tools; bash and writes must be exclusive', () => {
+  // What DSH 0.1.2-rc.1 reports (plan 3.7), including parallel tools the policy never allows.
+  const reported = [
+    ['read', 'parallel'], ['read_image', 'parallel'], ['web_search', 'parallel'], ['glob', 'exclusive'], ['grep', 'exclusive'],
+    ['write', 'exclusive'], ['edit', 'exclusive'], ['str_replace_editor', 'exclusive'], ['todo_write', 'exclusive'],
+    ['bash', 'exclusive'], ['web_fetch', 'parallel'], ['subagent', 'parallel'],
+  ] as const
+  const catalog = reported.map(([id, dshScheduling]) => ({ id, dshScheduling }))
+  assertExclusiveToolScheduling(catalog)
+
+  const withMode = (id: string, mode: 'parallel' | 'exclusive' | undefined) =>
+    catalog.map(tool => tool.id === id ? { id, ...(mode ? { dshScheduling: mode } : {}) } : tool)
+  assert.throws(() => assertExclusiveToolScheduling(withMode('bash', 'parallel')), /静止保证：bash（parallel）/)
+  assert.throws(() => assertExclusiveToolScheduling(withMode('write', 'parallel')), /write（parallel）/)
+  assert.throws(() => assertExclusiveToolScheduling(withMode('grep', undefined)), /grep（未报告）/, 'an unreported mode fails closed')
+  assert.throws(() => assertExclusiveToolScheduling([...catalog, { id: 'python_execute', dshScheduling: 'parallel' as const }]), /python_execute/)
+  assertExclusiveToolScheduling(withMode('read', 'exclusive'))
 })
 
 test('execution container posture is fixed and mounts the workspace at the same path', () => {
@@ -278,6 +364,48 @@ test('real docker: commands run as the service user at the host path, and timeou
     setTimeout(() => controller.abort(), 300)
     await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === 'AbortError')
     assert.equal(await sleepersIn(backend, name, workspace), 0, 'abort killed the whole process group')
+  } finally {
+    await backend.remove(name).catch(() => undefined)
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+test('real docker: the quiescence sweep clears leftover processes and reports fork pressure as not clean', { skip: dockerTarget.skip, timeout: 120_000 }, async () => {
+  const { DockerExecutionBackend } = await import('./docker-execution-backend.ts')
+  const workspace = await mkdtemp(join(tmpdir(), 'dsh-exec-quiesce-'))
+  const backend = new DockerExecutionBackend()
+  const user = `${process.getuid?.()}:${process.getgid?.()}`
+  const name = `dsh-exec-${'6b'.repeat(8)}`
+  await backend.remove(name).catch(() => undefined)
+  const run = (cmd: string) => backend.exec(name, { argv: ['sh', '-c', cmd], cwd: workspace, maxOutputBytes: 4096, timeoutMs: 10_000 }, new AbortController().signal)
+  // Count through a plain `docker exec` (no wrapper or watchdog), like the sweep itself runs.
+  const others = async (keeper: number) => Number(spawnSync('docker', ['exec', name, 'sh', '-c',
+    'k="$1"; n=0; for d in /proc/[0-9]*; do p=${d#/proc/}; case "$p" in 1|"$k"|$$) continue;; esac; read -r s < "$d/stat" 2>/dev/null || continue; set -- ${s##*) }; case "$1" in Z|X) continue;; esac; [ "$2" = "$$" ] && continue; n=$((n+1)); done; echo $n',
+    'dsh-count', String(keeper)], { encoding: 'utf8' }).stdout.trim())
+  try {
+    await backend.detectFeatures()
+    let { keeperPid } = await backend.startExecutionContainer({ name, image: dockerTarget.image!, user, workspace })
+    let keeper = keeperPid
+    assert.ok(keeperPid > 1)
+    await run('sleep 300 & setsid sh -c "sleep 301" </dev/null >/dev/null 2>&1 & nohup sh -c "while true; do sleep 1; done" >/dev/null 2>&1 &')
+    assert.ok(await others(keeperPid) >= 3, 'leftover processes outlive the command')
+    assert.equal(await backend.quiesce(name, keeperPid), true)
+    assert.equal(await others(keeperPid), 0, 'the sweep left only PID 1 and the keeper')
+    assert.equal((await run('echo alive')).stdout.trim(), 'alive', 'the container is still usable')
+
+    // Fork pressure: "clean" may only be reported when nothing is left; otherwise false (the caller then removes the container).
+    for (const settleMs of [0, 1500]) {
+      await run('(while true; do sleep 5 & done) >/dev/null 2>&1 &').catch(() => undefined)
+      await new Promise(resolve => setTimeout(resolve, settleMs))
+      const clean = await backend.quiesce(name, keeperPid)
+      if (clean) assert.equal(await others(keeperPid), 0, `reported clean after ${settleMs} ms of fork pressure, so nothing may be left`)
+      else {
+        await backend.remove(name)
+        const restarted = await backend.startExecutionContainer({ name, image: dockerTarget.image!, user, workspace })
+        keeper = restarted.keeperPid
+      }
+      keeperPid = keeper
+    }
   } finally {
     await backend.remove(name).catch(() => undefined)
     await rm(workspace, { recursive: true, force: true })

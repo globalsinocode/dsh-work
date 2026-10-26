@@ -172,16 +172,22 @@ lines.on('line', (line) => {
       return
     }
     if (text.includes('[remote-exec]')) {
-      // Execution container mode: what the remote ctx.subprocess sends for a DSH glob.
-      void postToBridge('/subprocess/exec', {
-        argv: ['/dsh/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg', '--files'],
-        cwd: process.env.DSH_WORKSPACE_ROOT,
-        maxOutputBytes: 1024,
-        timeoutMs: 5_000,
-      }).then(output => {
+      // Execution container mode: the policy's authorization probe, then what the remote
+      // ctx.subprocess sends for a DSH glob.
+      void (async () => {
+        const probe = await postToBridgeWithStatus('/authorize-execution', {})
+        if (probe.status !== 200) {
+          pending.answer += `\nauthorize:${probe.status}`
+          return
+        }
+        const output = await postToBridge('/subprocess/exec', {
+          argv: ['/dsh/node_modules/@vscode/ripgrep-darwin-arm64/bin/rg', '--files'],
+          cwd: process.env.DSH_WORKSPACE_ROOT,
+          maxOutputBytes: 1024,
+          timeoutMs: 5_000,
+        })
         pending.answer += `\nremote-exec:${output}`
-        finishPrompt(pending, 'end_turn')
-      }, () => failPrompt(pending, 'Remote exec failed', 'tool'))
+      })().then(() => finishPrompt(pending, 'end_turn'), () => failPrompt(pending, 'Remote exec failed', 'tool'))
       return
     }
     if (text.includes('[tool-live]')) {
@@ -432,6 +438,21 @@ function send(message: JsonRpcMessage): void {
 
 function callPlatformTool(name: string, input: Record<string, unknown>): Promise<string> {
   return postToBridge(name === 'prepare_skill_installation' ? '/prepare-skill' : `/tools/${name}`, input)
+}
+
+function postToBridgeWithStatus(path: string, input: Record<string, unknown>): Promise<{ status: number; body: string }> {
+  const socketPath = process.env.DSH_PLATFORM_TOOL_SOCKET!
+  const body = JSON.stringify(input)
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, response => {
+      let output = ''
+      response.on('data', chunk => { output += String(chunk) })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: output }))
+      response.on('error', reject)
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
 }
 
 function postToBridge(path: string, input: Record<string, unknown>): Promise<string> {
