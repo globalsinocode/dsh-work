@@ -95,11 +95,12 @@
 **前置数据：** 已发布 Skill `skill-document`（依赖 `read`）；一个声明 `web_search` 的已发布 Skill；默认 Runtime `runtime-local-01`
 **spec：** `server/src/infrastructure/postgres/builtin-tools.integration.test.ts`、`server/src/infrastructure/postgres/agent-release-governance.integration.test.ts`、`server/src/modules/run/current-execution-authorization.test.ts`、`server/src/modules/skill/skill-package.test.ts`
 
-1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search`；运行审批模式为无需审批。
+1. 新建 Agent，不开启联网搜索：运行快照装配 `read`、`glob`、`grep`、`read_image`、`write`、`edit`、`str_replace_editor`、`todo_write`，不含 `web_search` 与 `bash`；运行审批模式为无需审批。
+   - 执行容器模式开启且启动检查通过时，员工对话的 Manifest 另含 `bash`；未开启或不可用时不含（执行隔离 2a）。
 2. 在 Agent 能力中开启“允许联网搜索”，验证运行的 Manifest 含 `web_search`；编辑时不改开关则保留原设置。
-3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供的工具（如 `bash`）时说明“平台不提供该工具”。
+3. 选择声明 `web_search` 的 Skill 而 Agent 未开启联网搜索，保存与验证被拒绝并提示“未开启联网搜索”；Skill 依赖平台不提供或不能由 Skill 声明的工具（如 `bash`）时说明“平台不提供该工具”。
 4. SKILL.md 的 `allowed-tools` 按名称匹配内置工具（`Read`、`WebSearch`、`str_replace_editor`），未知工具标为不支持。
-5. 在 Runtime 配置中紧急停用 `web_search`：只接受 DSH 内置工具，平台工具（如 `python_execute`、`activate_skill`）被拒绝；新 Attempt 不再装配被停用工具，模型看不到它；执行中的 Attempt 再调用该工具时只拒绝这一次调用并告知模型“已被管理员临时停用”，运行继续并给出基于已有结果的回答；清空停用清单后恢复。
+5. 在 Runtime 配置中紧急停用 `web_search`（`bash` 同样可停用）：只接受 DSH 内置工具，平台工具（如 `python_execute`、`activate_skill`）与注册表以外的工具（如 `web_fetch`）被拒绝；新 Attempt 不再装配被停用工具，模型看不到它；执行中的 Attempt 再调用该工具时只拒绝这一次调用并告知模型“已被管理员临时停用”，运行继续并给出基于已有结果的回答；清空停用清单后恢复。
 
 **验收：** 管理员不能新增、同步或逐个授权内置工具；工具集由平台代码决定，Agent 只决定是否允许联网搜索；工作空间授权只包含 Agent 与 Skill；停用清单是运维止损开关，不是授权：派发时不装配，执行中只拒绝被停用工具的调用，不让运行整体失败。
 
@@ -113,7 +114,7 @@
 
 1. 管理端导航中不再出现“DSH 工具管理”与“工具权限”；旧地址 `/tools`、`/permissions` 跳转到 Runtimes。
 2. 进入“Agent 治理 → MCP 连接器”，列表只包含外部 MCP Connector。
-3. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情，“内置工具”区域列出全部内置工具的名称、来源（DSH/平台）、装配方式与停用状态，并显示服务启动时与 DSH 工具目录的核对结果。
+3. 进入“安全与运维 → Runtimes”，打开当前 Runtime 详情，“内置工具”区域列出全部内置工具的名称、来源（DSH/平台）、装配方式与停用状态，并显示服务启动时与 DSH 工具目录的核对结果，以及执行容器状态：已启用时说明装配 `bash`，未开启或启动检查未通过时说明不装配 `bash`（不可用的原因只在服务日志）。
 4. 在“配置 Runtime”中选择要紧急停用的 DSH 工具，保存前确认影响；平台工具不出现在可选项中。
 
 **验收：** 内置工具只读展示，唯一可操作的是 Runtime 级紧急停用；`/api/admin/v1/tools` 等工具治理接口不存在；MCP 页面与接口只返回外部 MCP Connector。

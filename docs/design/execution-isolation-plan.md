@@ -385,7 +385,7 @@ B、C、D 的风险由执行容器姿态决定，隔离要求相同，不能因�
 
 Mock、探针或 P1 通过不能代替 P2。
 
-**2a 的覆盖（2026-10-27）：** 单元 `execution-container.test.ts`（`bash -c` 是唯一接受的 shell 形式、叠加层停用与插入项、容器参数含单文件上限）、`builtin-tools.test.ts`（装配方式、Skill 不能声明）、`runtime-adapter.test.ts`（无执行容器时拒绝带 `bash` 的 Manifest、Runtime 说明）；集成 `builtin-tools.integration.test.ts`（员工对话仅在执行容器可用时装配 `bash`，紧急停用同样生效）；真实 DSH + 真实 Docker `execution-container.e2e.test.ts`（opt-in）：`bash` 以服务用户在容器内运行并写入共享工作区、DSH 不另行要求审批、Worker 环境变量/工具桥 socket/`DSH_HOME`/其他 Attempt 工作区/项目文件在容器内不可见、出网失败、根文件系统只读、`setsid`/`nohup` 残留在下一个工具前已清除、`run_in_background` 被拒绝、`job_*` 不可见、只有 `rg` 与 `bash` 到达容器且逐条审计；`execution-container-startup.integration.test.ts` 覆盖叠加 `dsh-bash-local` 后的启动准入（`bash` 仍独占调度）。未覆盖：P2、Office 产物、取消与超时在 `bash` 上的端到端回收（执行器层已由真实 Docker 用例覆盖）。
+**2a 的覆盖（2026-10-27）：** 单元 `execution-container.test.ts`（`bash -c` 是唯一接受的 shell 形式、叠加层停用与插入项、容器参数含单文件上限）、`builtin-tools.test.ts`（装配方式、Skill 不能声明）、`runtime-adapter.test.ts`（无执行容器时拒绝带 `bash` 的 Manifest、Runtime 说明）；集成 `builtin-tools.integration.test.ts`（员工对话仅在执行容器可用时装配 `bash`，紧急停用同样生效）；真实 DSH + 真实 Docker `execution-container.e2e.test.ts`（opt-in）：`bash` 以服务用户在容器内运行并写入共享工作区、DSH 不另行要求审批、Worker 环境变量/工具桥 socket/`DSH_HOME`/其他 Attempt 工作区/项目文件在容器内不可见、出网失败、根文件系统只读、`setsid`/`nohup` 残留在下一个工具前已清除、`bash` 超过自身时限（`timeoutMs`）时平台中断请求并整组杀掉容器内进程、`run_in_background` 被拒绝、`job_*` 不可见、只有 `rg` 与 `bash` 到达容器且逐条审计；`execution-container-startup.integration.test.ts` 覆盖叠加 `dsh-bash-local` 后的启动准入（`bash` 仍独占调度）。未覆盖：P2、Office 产物、用户取消 Run 时 `bash` 的端到端回收（执行器层的中断已由真实 Docker 用例覆盖）。
 
 ## 10. 后续方向（不在本方案范围）
 

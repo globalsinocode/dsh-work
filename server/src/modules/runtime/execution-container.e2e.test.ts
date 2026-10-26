@@ -64,8 +64,12 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     // No network and a read-only root.
     probe('network', 'python3 -c "import socket; socket.create_connection((\'1.1.1.1\', 53), 3)" && echo NET_OK || echo NET_BLOCKED; (echo x > /etc/x) 2>/dev/null && echo ROOT_WRITABLE || echo ROOT_READONLY'),
     // Detached leftovers: the quiescence step must clear them before the next tool runs.
+    // The braces send bash's own redirect error (a process exiting mid-scan) to /dev/null too.
     probe('leftover', 'setsid sleep 300 > /dev/null 2>&1 < /dev/null & nohup sleep 301 > /dev/null 2>&1 & echo STARTED'),
-    probe('leftover-check', 'for p in /proc/[0-9]*; do tr "\\0" " " < "$p/cmdline" 2>/dev/null; echo; done | grep -c "^sleep 30[01]" || true'),
+    probe('leftover-check', 'for p in /proc/[0-9]*; do { tr "\\0" " " < "$p/cmdline"; } 2>/dev/null; echo; done | grep -c "^sleep 30[01]" || true'),
+    // bash-local's own deadline: terminate aborts the bridge request and the platform kills the process group.
+    { name: 'bash', args: { command: 'sleep 30; echo SHOULD_NOT_PRINT', description: 'timeout', timeoutMs: 2000 } },
+    probe('timeout-check', 'for p in /proc/[0-9]*; do { tr "\\0" " " < "$p/cmdline"; } 2>/dev/null; echo; done | grep -c "^sleep 30 *$" || true'),
     // C tier has no background jobs.
     { name: 'bash', args: { command: 'echo BACKGROUND_RAN', description: 'background', run_in_background: true } },
   ]
@@ -140,7 +144,7 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     await client.initialize()
     const sessionId = await client.newSession(workspace)
     await client.prompt(sessionId, 'run the checks')
-    const [globResult, grepResult, scriptResult, envResult, networkResult, leftoverResult, leftoverCheck, backgroundResult] = toolResults
+    const [globResult, grepResult, scriptResult, envResult, networkResult, leftoverResult, leftoverCheck, timeoutResult, timeoutCheck, backgroundResult] = toolResults
     assert.match(globResult ?? '', /a\.txt/)
     assert.match(globResult ?? '', /notes\/b\.txt/)
     assert.doesNotMatch(globResult ?? '', /c\.md/)
@@ -163,7 +167,15 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     assert.match(leftoverResult ?? '', /STARTED/)
     assert.equal((leftoverCheck ?? '').trim(), '0', 'setsid/nohup leftovers are gone before the next tool runs')
 
-    assert.doesNotMatch(backgroundResult ?? '', /BACKGROUND_RAN/, 'run_in_background never starts a job')
+    assert.ok(timeoutResult !== undefined, 'the timeout step ran')
+    assert.doesNotMatch(timeoutResult, /SHOULD_NOT_PRINT/)
+    const timedOut = audits.find(audit => audit.summary.includes('SHOULD_NOT_PRINT'))
+    assert.ok(timedOut && (timedOut.aborted || timedOut.timedOut), 'the timed-out command was cut off in the container')
+    assert.ok(timedOut.durationMs < 15_000, `cut off near its 2 s deadline, not after sleep 30 (${timedOut.durationMs} ms)`)
+    assert.equal((timeoutCheck ?? '').trim(), '0', 'the timed-out process group is gone before the next tool runs')
+
+    assert.ok(backgroundResult !== undefined, 'the background step ran')
+    assert.doesNotMatch(backgroundResult, /BACKGROUND_RAN/, 'run_in_background never starts a job')
     assert.ok(modelToolNames.includes('bash'), 'bash is visible to the model')
     assert.equal(modelToolNames.some(name => name.startsWith('job_')), false, 'job tools are not visible')
 
