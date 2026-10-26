@@ -32,3 +32,5 @@ deploy/certs/
 .idea/
 .vscode/
 tmp-agent-packages/
+docs/development/fixtures/agency-agents/_cache/
+docs/development/fixtures/skill-plaza-candidates/.cache/
