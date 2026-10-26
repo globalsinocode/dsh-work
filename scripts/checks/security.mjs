@@ -35,6 +35,7 @@ export function checkSecurity(check) {
   ])
   check.includes('server/src/modules/runtime/acp-json-rpc-client.ts', [
     'buildAcpChildEnvironment', 'isSensitiveEnvironmentKey', 'redactSensitiveText',
+    "DSH_TELEMETRY_DISABLED: '1'", "DSH_TELEMETRY_MODE: 'DISABLED'",
   ])
   check.assert(!/spawn\([\s\S]{0,400}env:\s*process\.env/.test(check.read('server/src/modules/runtime/acp-json-rpc-client.ts')),
     'ACP 子进程不得直接继承 process.env')

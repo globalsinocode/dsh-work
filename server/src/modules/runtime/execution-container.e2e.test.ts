@@ -89,7 +89,6 @@ test('DSH glob/grep run inside the Attempt execution container; bash stays refus
       ...installation.process.env,
       DSH_HOME: join(root, 'dsh-home'),
       DSHW_E2E_KEY: 'e2e-key',
-      DSH_TELEMETRY_MODE: 'DISABLED',
       DSH_PLATFORM_TOOL_SOCKET: bridge.socket,
       DSH_PERMISSION_MODE: 'workspace-write',
       DSH_SNAPSHOT: 'record',

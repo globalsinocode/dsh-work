@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, it } from 'node:test'
-import { buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
+import { AcpJsonRpcClient, buildAcpChildEnvironment } from './acp-json-rpc-client.ts'
 import {
   diagnoseMcpAuthenticationFailure,
   DshAcpRuntimeAdapter,
@@ -460,6 +460,48 @@ describe('DSH ACP Runtime Adapter', () => {
     } finally {
       if (originalDatabaseUrl === undefined) delete process.env.DSH_WORK_DATABASE_URL
       else process.env.DSH_WORK_DATABASE_URL = originalDatabaseUrl
+    }
+  })
+
+  it('forces DSH session telemetry off and refuses telemetry overrides', () => {
+    const originalMode = process.env.DSH_TELEMETRY_MODE
+    process.env.DSH_TELEMETRY_MODE = 'FULL'
+    try {
+      const environment = buildAcpChildEnvironment({ DSH_AGENT_SYSTEM_PROMPT: '安全提示词' })
+      assert.equal(environment['DSH_TELEMETRY_DISABLED'], '1')
+      assert.equal(environment['DSH_TELEMETRY_MODE'], 'DISABLED')
+      for (const key of ['DSH_TELEMETRY_DISABLED', 'DSH_TELEMETRY_MODE', 'DSH_TELEMETRY_OTLP_URL']) {
+        assert.throws(() => buildAcpChildEnvironment({ [key]: '' }), /遥测由平台强制关闭/)
+      }
+    } finally {
+      if (originalMode === undefined) delete process.env.DSH_TELEMETRY_MODE
+      else process.env.DSH_TELEMETRY_MODE = originalMode
+    }
+  })
+
+  it('launches every ACP worker with telemetry disabled', async () => {
+    // Echoes its telemetry environment in the initialize result, so this checks the spawned process itself.
+    const echoWorker = [
+      "const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('DSH_TELEMETRY')))",
+      "process.stdin.once('data', chunk => {",
+      "  const { id } = JSON.parse(String(chunk).split('\\n')[0])",
+      "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result: { protocolVersion: 1, env } }) + '\\n')",
+      '})',
+    ].join('\n')
+    const client = AcpJsonRpcClient.launch({
+      command: process.execPath,
+      args: ['-e', echoWorker],
+      cwd: moduleDirectory,
+      env: { DSH_SNAPSHOT: 'record' },
+    }, {
+      onSessionUpdate: () => undefined,
+      onPermissionRequest: async () => ({ outcome: { outcome: 'cancelled' } }),
+    })
+    try {
+      const response = await client.initialize()
+      assert.deepEqual(response['env'], { DSH_TELEMETRY_DISABLED: '1', DSH_TELEMETRY_MODE: 'DISABLED' })
+    } finally {
+      await client.close()
     }
   })
 
