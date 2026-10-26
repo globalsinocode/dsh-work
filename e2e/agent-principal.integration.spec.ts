@@ -136,10 +136,6 @@ test('AE-02 the draft flow requires visible and job roles chosen by hand and sav
   await steps.getByRole('button', { name: /角色与权限/ }).click()
   const section = page.getByRole('region', { name: '角色与权限' })
   await expect(section.getByRole('button', { name: '保存岗位权限' })).toHaveCount(0)
-  await expect(section.getByRole('button', { name: '补齐所需授权' })).toHaveCount(0)
-  // 未选择岗位角色和数据范围之前，不预填，也不提示能力缺授权。
-  await expect(section.getByTestId('agent-access-capability-summary')).toHaveCount(0)
-  await expect(section.getByText('缺少授权')).toHaveCount(0)
 
   // 必填未完成时停留在本步并标出字段。
   await page.getByRole('button', { name: '下一步：验证与发布' }).click()
@@ -155,20 +151,16 @@ test('AE-02 the draft flow requires visible and job roles chosen by hand and sav
   await section.getByText('选择可以使用该 Agent 的员工角色').click()
   await page.getByRole('option', { name: '普通员工' }).click()
   await closeDropdown()
-  await section.getByText('选择它持有的岗位角色，决定它能使用哪些能力').click()
-  // 只做标记、不预选：能力需要的角色标出“能力需要”，含管理权限的角色标出风险。
-  await expect(page.getByRole('option', { name: /普通员工/ })).toContainText('能力需要')
+  await section.getByText('选择它持有的岗位角色，决定它以什么身份执行').click()
+  // 只做标记、不预选：含管理权限的角色标出风险；选择业务角色不提示改选。
   await expect(page.getByRole('option', { name: /平台管理员/ })).toContainText('含管理权限')
   await page.getByRole('option', { name: /普通员工/ }).click()
   await closeDropdown()
-  // 选择岗位角色后才显示能力可用情况：平台默认能力还缺数据范围。
-  const summary = section.getByTestId('agent-access-capability-summary')
-  await expect(summary).toContainText('缺少授权')
+  await expect(section.getByTestId('role-privileged-warning')).toHaveCount(0)
   await section.getByText('不需要企业数据时可留空').click()
   await page.keyboard.type('workspace:authorized')
   await page.keyboard.press('Enter')
   await closeDropdown()
-  await expect(summary).toContainText('项能力均可用')
 
   await page.getByRole('button', { name: '下一步：验证与发布' }).click()
   await expect(page).toHaveURL(/\/draft\?step=release$/)
