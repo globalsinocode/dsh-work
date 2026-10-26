@@ -364,6 +364,14 @@ test('Agent 加入与移出各写入一条动态', async () => {
   assert.equal(added.status, 201)
   const memberId = (added.body.data as { id: string }).id
 
+  // 项目空间至少保留一个 Agent 成员（S5d）：直接放入一个停用的锚点 Agent，不产生动态。
+  const anchorId = `${agentId}-anchor`
+  const anchorVersionId = await createPublishedAgent(anchorId)
+  await database`
+    insert into workspace_agent_members (id, tenant_id, workspace_id, agent_id, agent_version_id, status, added_by)
+    values (${`wam-anchor-${ws}`}, ${tenantId}, ${ws}, ${anchorId}, ${anchorVersionId}, 'disabled', ${owner})
+  `
+
   const removed = await api('DELETE', `/api/workbench/v1/workspaces/${ws}/agent-members/${memberId}`, { as: owner })
   assert.equal(removed.status, 200)
 
@@ -982,16 +990,16 @@ async function createPublishedAgent(agentId: string) {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '动态测试 Agent', '3-T7 Agent 成员动态。',
       '', ${database.json(['测试'] as string[])}, '你是动态测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
-      65536, 20, 300, ${database.json([] as string[])}, ${database.json([] as string[])},
+      65536, 20, 300, ${database.json([] as string[])},
       'published', 'U00008', '3-T7 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}

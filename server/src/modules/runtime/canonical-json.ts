@@ -19,3 +19,8 @@ export function canonicalJson(value: unknown): string {
 export function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
+
+/** 单个 MCP Tool 的契约摘要：只看输入 Schema。平台与 DSH 工具策略使用同一算法逐工具校验。 */
+export function mcpToolSchemaDigest(inputSchema: unknown): string {
+  return sha256(canonicalJson(inputSchema ?? {}))
+}

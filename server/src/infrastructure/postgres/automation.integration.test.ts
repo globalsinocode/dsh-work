@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
+import { nextSlotUtc } from '../../domain/execution-schedule.ts'
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
-import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
 import { AutomationService } from '../../modules/automation/automation-service.ts'
 import { AutomationTriggerSweep } from '../../modules/automation/automation-trigger-sweep.ts'
-import { nextSlotUtc } from '../../modules/automation/automation-calendar.ts'
+import { loadStartupIdentityConfiguration } from '../../modules/identity/config.ts'
 import { PostgresAutomationRepository } from '../../modules/automation/postgres-automation-repository.ts'
 import { defaultAutomationConfig } from '../../modules/automation/automation-types.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -145,14 +145,13 @@ async function seedOwner(prefix: string, provider: 'ai-hub' | 'local' = 'ai-hub'
   `
   await database`
     insert into agent_versions (
-      id, tenant_id, agent_id, version, name, description, system_prompt,
-      visible_role_ids, data_scopes, skill_refs, tool_refs, status, created_by
+      id, tenant_id, agent_id, version, name, description, system_prompt, skill_refs, status, created_by
     ) values (
       ${versionId}, ${tenantId}, ${agentId}, '1.0.0', '自动任务测试 Agent', '', '你是自动任务集成测试 Agent，请准确完成任务输入。',
-      ${database.json(['role-employee'])}, ${database.json(['enterprise:authorized'])},
-      '[]', '[]', 'published', ${userId}
+      '[]', 'published', ${userId}
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'])} where tenant_id = ${tenantId} and id = ${agentId}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${agentId}

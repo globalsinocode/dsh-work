@@ -200,6 +200,18 @@ lines.on('line', (line) => {
       })().catch(() => failPrompt(pending, 'Artifact write failed', 'tool'))
       return
     }
+    if (text.includes('[tool-live]')) {
+      // EX-01: the ACP tool lifecycle exactly as DSH 0.1.2-rc.1 sends it (packages/acp/acp/src/updates.ts):
+      // tool_call (in_progress, rawInput) then tool_call_update (completed/failed, content), by toolCallId.
+      const update = (value: Record<string, unknown>) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-read', title: 'read', kind: 'other', status: 'in_progress', rawInput: { path: 'input/SECRET-ARG.md' } })
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-read', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'SECRET-OUTPUT' } }] })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-bash', title: 'bash', kind: 'other', status: 'in_progress', rawInput: { command: 'cat SECRET-ARG' } })
+      update({ sessionUpdate: 'tool_call_update', toolCallId: 'call-bash', status: 'failed', content: [] })
+      update({ sessionUpdate: 'tool_call', toolCallId: 'call-fetch', title: 'web_fetch', kind: 'other', status: 'in_progress', rawInput: { url: 'https://example.test' } })
+      void writeToolLog().then(() => finishPrompt(pending, 'end_turn'), () => failPrompt(pending, 'Session log write failed', 'tool'))
+      return
+    }
     if (text.includes('[tool-log]') || text.includes('[tool-log-fail]')) {
       const failing = text.includes('[tool-log-fail]')
       void writeToolLog().then(
@@ -221,21 +233,13 @@ lines.on('line', (line) => {
       void emitPermissionRequest(requestId, sessionId).catch(() => failPrompt(pending, 'Permission log write failed', 'tool'))
       return
     }
-    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'delegate_agent', 'propose_memory'].includes(name))) {
+    if (process.env.DSH_PLATFORM_TOOL_SOCKET && JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]').some((name: string) => ['activate_skill', 'prepare_skill_installation', 'propose_admin_task', 'prepare_admin_action', 'propose_memory'].includes(name))) {
       const allowedTools = JSON.parse(process.env.DSH_ALLOWED_TOOLS_JSON ?? '[]') as string[]
       const activating = allowedTools.includes('activate_skill')
       const skillName = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/(?:必须先调用 activate_skill 激活 |^- )([^（，\n]+)/m)?.[1]?.trim() ?? ''
       void (async () => {
         try {
-          if (allowedTools.includes('delegate_agent')) {
-            const targetAgentVersionId = process.env.DSH_AGENT_SYSTEM_PROMPT?.match(/允许的目标 Agent Version ID：([^、\n]+)/)?.[1]?.trim()
-            if (!targetAgentVersionId) throw new Error('No delegation target in system prompt')
-            pending.answer = await callPlatformTool('delegate_agent', {
-              targetAgentVersionId,
-              task: currentText,
-              context: '只传递当前测试任务所需的最小上下文。',
-            })
-          } else if (allowedTools.includes('propose_memory')) {
+          if (allowedTools.includes('propose_memory')) {
             pending.answer = await callPlatformTool('propose_memory', {
               kind: 'experience', title: '资料核对经验',
               content: '整理资料时先核对来源与日期，并标明尚待确认的信息。',

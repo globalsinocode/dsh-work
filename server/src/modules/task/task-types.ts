@@ -35,7 +35,7 @@ export interface CreateTaskInput {
   sourceRef?: string | null
   correlationKey: string
   requestDigest?: string | null
-  /** PF-06 delegated Tasks will point at the root Task's shared budget scope. */
+  /** Budget account owner; defaults to the Task itself. */
   budgetScopeTaskId?: string
   budget?: TaskBudgetInput | null
   workspaceId?: string | null

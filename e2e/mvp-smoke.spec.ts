@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { mockTasks } from '../server/src/testing/p0-smoke/data.ts'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 const adminUrl = `http://localhost:${process.env.DSH_WORK_ADMIN_PORT ?? 4180}`
 
 test('employee can open the workbench and enter a team workspace', async ({ page }) => {
@@ -21,9 +26,9 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   await commonTasks.getByRole('button', { name: '分析文件' }).click()
   await expect(page.getByLabel('对话输入')).toHaveValue('分析我上传的文件，概括主要指标、异常项和需要跟进的问题。')
 
-  await page.getByRole('button', { name: '团队空间', exact: true }).click()
+  await page.getByRole('button', { name: '项目空间', exact: true }).click()
   await expect(page).toHaveURL(/\/workspaces$/)
-  await expect(page.getByRole('heading', { name: '团队空间', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '项目空间', exact: true })).toBeVisible()
   await expect(page.getByText('供应链经营分析', { exact: true })).toBeVisible()
 
   await page.getByText('供应链经营分析', { exact: true }).first().click()
@@ -31,9 +36,12 @@ test('employee can open the workbench and enter a team workspace', async ({ page
   // 页签可访问名是「标签 + 计数」（如「对话 12」）；对话页签内还有一层
   // 「新对话／历史对话」切换（同为 role=tab），因此限定在外层 tablist 内匹配。
   const workspaceTabs = page.getByRole('tablist', { name: '工作空间内容' })
-  await expect(workspaceTabs.getByRole('tab', { name: /^对话/ })).toHaveAttribute('aria-selected', 'true')
+  // 项目空间默认进入“任务”页签（项目空间 S1）。
+  await expect(workspaceTabs.getByRole('tab', { name: /^任务/ })).toHaveAttribute('aria-selected', 'true')
+  await expect(workspaceTabs.getByRole('tab', { name: /^对话/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toBeVisible()
   await expect(workspaceTabs.getByRole('tab', { name: /^成果/ })).toBeVisible()
+  await expect(workspaceTabs.getByRole('tab', { name: /^档案/ })).toBeVisible()
 })
 
 test('employee can inspect shared files and workspace artifacts', async ({ page }) => {
@@ -41,7 +49,7 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
 
   const workspaceTabs = page.getByRole('tablist', { name: '工作空间内容' })
   await expect(workspaceTabs.getByRole('tab', { name: /^共享文件/ })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('heading', { name: '共享文件', exact: true })).toBeVisible()
+  await expect(page.locator('#workspace-panel-files')).toBeVisible()
 
   const filesPanel = page.locator('#workspace-panel-files')
   await expect(filesPanel.getByText('八月生产计划_v3.xlsx', { exact: true })).toBeVisible()
@@ -50,7 +58,7 @@ test('employee can inspect shared files and workspace artifacts', async ({ page 
   await expect(filesPanel.getByRole('button', { name: '引用到对话' })).toHaveCount(0)
 
   await workspaceTabs.getByRole('tab', { name: /^成果/ }).click()
-  await expect(page.getByRole('heading', { name: '成果', exact: true })).toBeVisible()
+  await expect(page.locator('#workspace-panel-artifacts')).toBeVisible()
   await expect(page.getByText('华东区订单交付风险清单.xlsx', { exact: true })).toBeVisible()
   await expect(page.getByText('华东区交付风险分析报告.pdf', { exact: true })).toBeVisible()
 })
@@ -101,31 +109,17 @@ test('administrator can navigate governance modules and switch Skill tabs', asyn
   await expect(page.getByText('企业知识 MCP', { exact: true })).toBeVisible()
   await expect(page.getByText('DSH Runtime 内置工具连接器', { exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'DSH 工具管理', exact: true }).click()
-  await expect(page).toHaveURL(/\/tools$/)
-  await page.getByRole('button', { name: '同步 DSH 工具', exact: true }).click()
-  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
-  await expect(page.getByText('任务进度清单', { exact: true })).toBeVisible()
-  await expect(page.getByText('在 Agent 版本中配置', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('不代表任何 Agent 已经获得使用权', { exact: false })).toBeVisible()
-
-  const admissionFilter = page.getByTestId('tool-admission-filter')
-  const runtimeStatusFilter = page.getByTestId('tool-runtime-status-filter')
-  await admissionFilter.click()
-  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '可授权', exact: true }).click()
-  await expect(page.getByText('编辑文本文件', { exact: true })).toBeVisible()
-
-  await runtimeStatusFilter.click()
-  await page.locator('.el-select-dropdown:visible').getByRole('option', { name: '已停用', exact: true }).click()
-  await expect(page.getByText('暂无匹配的 DSH 内置工具', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'DSH 工具管理', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '工具权限', exact: true })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Runtimes', exact: true }).click()
   await expect(page).toHaveURL(/\/runtimes$/)
   await expect(page.getByText('Runtimes', { exact: true }).first()).toBeVisible()
   await page.getByRole('button', { name: '查看' }).first().click()
-  const dshConnector = page.getByRole('region', { name: 'DSH Runtime 内置工具连接' })
-  await expect(dshConnector.getByText('connector-dsh-workspace', { exact: true })).toBeVisible()
-  await expect(dshConnector.getByRole('button', { name: '检查工具连接' })).toBeVisible()
+  const builtinTools = page.getByRole('region', { name: '内置工具' })
+  await expect(builtinTools.getByText('任务进度清单', { exact: true })).toBeVisible()
+  await expect(builtinTools.getByText('联网搜索', { exact: true })).toBeVisible()
+  await expect(builtinTools.getByText('随平台代码发布', { exact: false })).toBeVisible()
 })
 
 test('platform administrator can inspect and resolve an action-bound approval', async ({ page }) => {

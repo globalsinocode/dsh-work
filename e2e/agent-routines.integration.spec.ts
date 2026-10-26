@@ -16,9 +16,10 @@ test('AE-05 administrator approves and pauses an Agent-owned routine, preserving
 
   await page.goto('/agents')
   await page.getByRole('row').filter({ hasText: 'dsh-work' }).first().click()
-  const drawer = page.locator('.el-drawer').filter({ hasText: 'Agent 治理详情' })
-  await drawer.getByRole('tab', { name: '主动任务' }).click()
-  const row = drawer.getByRole('row').filter({ hasText: 'P1 主动巡检' })
+  await expect(page).toHaveURL(new RegExp(`/agents/${agentId}$`))
+  await page.getByRole('tab', { name: '主动任务' }).click()
+  const routines = page.getByRole('tabpanel', { name: '主动任务' })
+  const row = routines.getByRole('row').filter({ hasText: 'P1 主动巡检' })
   await expect(row).toContainText('草稿')
   await row.getByRole('button', { name: '确认并启用' }).click()
   const approval = page.getByRole('dialog', { name: '确认 Agent 主动任务授权上限' })

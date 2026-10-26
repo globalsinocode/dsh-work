@@ -37,6 +37,25 @@ export interface ExperienceIterationAgentSummary {
   latestApplicationAt: string | null
 }
 
+/** AE-04 已发布经验；当前版本为空表示已停用，不再被检索。 */
+export interface AgentExperience {
+  entryId: string
+  agentId: string
+  title: string
+  currentVersionId: string | null
+  versions: Array<{
+    id: string
+    version: number
+    title: string
+    content: string
+    contentDigest: string
+    publishedAt: string
+    publishedBy: string
+    usable: boolean
+  }>
+  updatedAt: string
+}
+
 export interface ExperienceIterationApplication {
   id: string
   agentId: string
@@ -87,10 +106,12 @@ export interface IdentityRoleSummary {
   updatedAt: string
 }
 
-export interface AgentPrincipalRoleOption {
+export interface AgentAccessRoleOption {
   id: string
   name: string
   status: 'active' | 'disabled'
+  /** 角色带有管理端或审计权限；授予 Agent 时提示风险。旧服务端未返回时视为 false。 */
+  privileged?: boolean
 }
 
 export interface IdentityUserSummary {
@@ -172,20 +193,26 @@ export interface RuntimeDefinition {
   checkedAt: string
   healthMessage: string
   capabilities: string[]
+  /** 管理员紧急停用的 DSH 内置工具；新运行不再装配，在途运行下一次调用被拒绝。 */
+  disabledTools: string[]
 }
 
-export interface DshRuntimeToolConnectorStatus {
-  runtimeId: string | null
-  connectorId: string
+/** 内置工具注册表条目：随代码发布，只读展示。 */
+export interface BuiltinTool {
   name: string
-  status: 'healthy' | 'degraded' | 'offline' | 'disabled'
-  endpoint: string
-  toolCount: number
-  activeBindingCount: number
-  latestBindingRevision: number | null
-  catalogDigest: string
-  lastCheckedAt: string
-  lastHealthMessage: string
+  label: string
+  source: 'dsh' | 'platform'
+  effect: 'read' | 'write'
+  risk: 'low' | 'medium'
+  assembly: 'always' | 'agent-opt-in' | 'runtime' | 'purpose'
+  constraints: string[]
+}
+
+export interface BuiltinToolStatus {
+  tools: BuiltinTool[]
+  disabledTools: string[]
+  /** 服务启动时与 DSH 工具目录的比对结果；未比对时为 null。 */
+  catalog: { checkedAt: string; missingTools: string[] } | { checkedAt: string; error: string } | null
 }
 
 export interface UpdateRuntimeConfigurationInput {
@@ -193,6 +220,8 @@ export interface UpdateRuntimeConfigurationInput {
   maxConcurrentWorkers: number
   attemptTimeoutMinutes: number
   schedulingStatus: RuntimeDefinition['schedulingStatus']
+  /** 省略时保留当前停用清单。 */
+  disabledTools?: string[]
 }
 
 export interface SessionDefinition {
@@ -230,15 +259,11 @@ export interface ManagedWorkspaceDefinition {
 
 export type PublishStatus = 'draft' | 'published' | 'disabled'
 
-export interface AgentDelegationPolicy {
-  allowedAgentVersionIds: string[]
-  maxDepth: number
-  maxParallel: number
-  timeoutSeconds: number
-}
+/** 验证时草稿冻结为 candidate（不可变），通过验证后发布为 published。 */
+export type AgentVersionStatus = PublishStatus | 'candidate'
 
 export type AgentMcpScope =
-  | { mode: 'all' | 'none'; connectorIds: [] }
+  | { mode: 'none'; connectorIds: [] }
   | { mode: 'selected'; connectorIds: string[] }
 
 export interface AgentDefinition {
@@ -247,12 +272,15 @@ export interface AgentDefinition {
   description: string
   owner: string
   department: string
+  /** 员工可见范围的摘要文字，由 roleIds 派生。 */
   visibility: string
+  /** Agent 级可见角色：哪些角色可以向它请求工作；在岗位权限中修改，立即生效。 */
   roleIds: string[]
-  dataScopes: string[]
   allowWorkspaceJoin: boolean
   status: PublishStatus
   version: string
+  /** 当前版本指针指向的已发布版本；从未发布时为 null。`version` 是工作版本（有草稿时为草稿）。 */
+  activeVersion?: string | null
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -261,9 +289,11 @@ export interface AgentDefinition {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 是否允许联网搜索（web_search）；其他内置工具由平台统一装配。 */
+  webSearchEnabled: boolean
+  /** 是否允许项目任务管理（project_task_*）。 */
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
-  delegationPolicy?: AgentDelegationPolicy
   updatedAt: string
   /** 草稿编辑的乐观并发修订，保存时回传为 expectedRevision；原型模式不提供。 */
   revision?: string
@@ -280,13 +310,30 @@ export interface AgentJoinedWorkspaceRecord {
   createdAt: string
 }
 
-export interface AgentPrincipalGovernance {
-  principalId: string
+/** S2 岗位权限：谁可以向 Agent 请求工作、它持有哪些岗位角色、能接触哪些数据。属于 Agent，修改立即生效。 */
+export interface AgentAccess {
   agentId: string
-  status: 'active' | 'disabled'
-  authorizationVersion: number
+  /** 乐观并发修订号，保存时回传为 expectedRevision。 */
+  revision: number
+  principalId: string
+  principalStatus: 'active' | 'disabled'
+  visibleRoleIds: string[]
   roleIds: string[]
   dataScopes: string[]
+  roleOptions: AgentAccessRoleOption[]
+  scopeOptions: string[]
+  routines: Array<{
+    id: string; name: string; status: string; schedule: Partial<AgentRoutineSchedule>
+    recipientUserId: string; recipientName: string
+  }>
+}
+
+export interface UpdateAgentAccessInput {
+  expectedRevision: number
+  visibleRoleIds: string[]
+  roleIds: string[]
+  dataScopes: string[]
+  principalStatus?: 'active' | 'disabled'
 }
 
 export type AgentRoutineSchedule =
@@ -365,9 +412,6 @@ export interface AgentDraftConfiguration {
   description: string
   owner: string
   department: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -376,13 +420,11 @@ export interface AgentDraftConfiguration {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  /** 编辑时省略则保留当前设置，新建时默认关闭。 */
+  webSearchEnabled?: boolean
+  /** 编辑时省略则保留当前设置，新建时默认关闭。 */
+  projectTasksEnabled?: boolean
   mcpScope?: AgentMcpScope
-  data?: { state: boolean; collections: Array<{
-    key: string; scope: 'installation' | 'workspace' | 'tenant'; schemaVersion: number;
-    actions: Array<'query' | 'propose' | 'create' | 'update' | 'transition'>
-  }> }
-  delegationPolicy: AgentDelegationPolicy
   changeSummary: string
 }
 
@@ -397,46 +439,17 @@ export interface UpdateAgentDraftInput extends Omit<AgentDraftConfiguration, 'id
   expectedRevision?: string
 }
 
-/** B-03/I-04：发布时固定的平台工具绑定修订引用。 */
-export interface AgentBindingRef {
-  tool: string
-  binding_id: string
-  revision: number
-  digest: string
-}
-
-/** /tools/bindings 返回的绑定修订（不含密钥值）。 */
-export interface ToolBindingRecord {
-  tool: string
-  bindingId: string
-  revision: number
-  digest: string
-  connectorId: string
-  executor: string
-  endpoint: string
-  credentialRef: string | null
-  identityPolicy: string
-  environment: string
-  approvalPolicy: string
-  status: 'active' | 'superseded' | 'revoked'
-  sealedAt: string
-}
-
 export interface AgentVersionRecord {
   id: string
   agentId: string
   version: string
-  status: PublishStatus
-  bindingRefs?: AgentBindingRef[]
+  status: AgentVersionStatus
   createdAt: string
   createdBy: string
   publishedAt?: string
   publishedBy?: string
   sourceVersion?: string
   summary: string
-  visibility: string
-  roleIds: string[]
-  dataScopes: string[]
   welcomeMessage: string
   examplePrompts: string[]
   systemPrompt: string
@@ -445,19 +458,9 @@ export interface AgentVersionRecord {
   maxToolCalls: number
   timeoutSeconds: number
   skills: string[]
-  tools: string[]
+  webSearchEnabled: boolean
+  projectTasksEnabled: boolean
   mcpScope?: AgentMcpScope
-  delegationPolicy?: AgentDelegationPolicy
-}
-
-export interface AgentReleaseRecord {
-  id: string
-  agentId: string
-  version: string
-  action: 'published' | 'enabled' | 'disabled' | 'rollback'
-  actor: string
-  time: string
-  note: string
 }
 
 export interface SkillDefinition {
@@ -547,64 +550,6 @@ export interface UpdateSkillInput extends Omit<SkillConfiguration, 'id'> {
   skillId: string
 }
 
-export interface ToolDefinition {
-  id: string
-  version?: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: 'low' | 'medium' | 'high'
-  mode: 'read' | 'write'
-  status: 'available' | 'degraded' | 'disabled'
-  admissionStatus?: 'approved' | 'unavailable'
-  admissionMessage?: string
-  inputSchema: string
-  outputSchema: string
-  outputValidation: 'runtime' | 'platform' | 'unavailable'
-  retryPolicy: 'safe' | 'never' | 'verify-first'
-  concurrencyPolicy: 'concurrent' | 'serialized'
-  completionSemantics: 'completed' | 'accepted'
-  timeoutSeconds: number
-  /** Stable authorization identifiers; allowedRoles contains display names only. */
-  allowedRoleIds: string[]
-  allowedRoles: string[]
-  dataScopes: string[]
-  agentRunLocalDefault?: boolean
-  approvalPolicy: 'none' | 'sensitive' | 'always'
-  lastCheckedAt: string
-}
-
-export interface ToolCatalogSyncResult {
-  tools: ToolDefinition[]
-  discoveredCount: number
-  admittedCount: number
-  unavailableCount: number
-  synchronizedAt: string
-}
-
-export interface ToolCatalogCandidate {
-  id: string
-  version: string
-  name: string
-  system: string
-  description: string
-  connectorId: string
-  risk: ToolDefinition['risk']
-  mode: ToolDefinition['mode']
-  timeoutSeconds: number
-  defaultAllowedRoles: string[]
-  defaultDataScopes: string[]
-  defaultApprovalPolicy: ToolDefinition['approvalPolicy']
-  requirements: string[]
-  outputValidation: ToolDefinition['outputValidation']
-  retryPolicy: ToolDefinition['retryPolicy']
-  concurrencyPolicy: ToolDefinition['concurrencyPolicy']
-  completionSemantics: ToolDefinition['completionSemantics']
-  status: 'ready' | 'installed' | 'unavailable'
-  availabilityMessage: string
-}
-
 export interface ConnectorDefinition {
   id: string
   name: string
@@ -629,7 +574,10 @@ export interface ConnectorDefinition {
     capabilityDigest: string | null
     approvedDigest: string | null
     capabilityCount: number
+    /** 生效清单：Agent 运行时只能调用这些 Tool。 */
     capabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+    /** 已发现但未生效的 Tool（新增或输入 Schema 变化），须管理员确认。 */
+    pendingCapabilities: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
     discoveredAt: string | null
     reviewedAt: string | null
     reviewedBy: string | null
@@ -831,130 +779,98 @@ export interface PlatformStatus {
   artifactStorage: 'not-configured' | 'local-mvp'
 }
 
-/* ---------- Agent 发布治理（与 server agent-release 契约对齐） ---------- */
+/* ---------- Agent 验证与发布（S3，与 server agent-validation 契约对齐） ---------- */
 
-export type AgentSubmissionStatus = 'draft' | 'submitted' | 'changes_requested' | 'published' | 'withdrawn'
+export type ValidationCaseSource = 'example' | 'routine' | 'custom'
+export type ValidationCaseStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'interrupted' | 'cancelled'
 
-export interface AgentEvalCase {
+/** 固定三项机器检查；不全部通过时不能判为通过。 */
+export interface ValidationChecks {
+  runRecorded: boolean
+  executionSucceeded: boolean
+  outputNonEmpty: boolean
+}
+
+export interface ValidationCase {
   id: string
-  evaluationApiVersion: 'dsh-work.ai/evaluation/v1'
-  name: string
-  kind: 'success' | 'invalid_input' | 'permission_denied' | 'prompt_injection' | 'capability_failure'
-  input: string
-  automatedAssertions: Array<'run_attempt_recorded' | 'execution_succeeded' | 'output_non_empty'>
-  manualReview: { required: true; rubric: string }
-  /** 平台按定义自动生成的默认案例来源标记；包内 evals 或管理员登记的案例无此字段 */
-  origin?: 'generated'
+  position: number
+  source: ValidationCaseSource
+  sourceRef: string | null
+  prompt: string
+  status: ValidationCaseStatus
+  runId: string | null
+  attemptId: string | null
+  runCount: number
+  checks: ValidationChecks | null
+  output: string
+  error: string | null
+  verdict: 'passed' | 'failed' | null
+  verdictNote: string | null
+  verdictBy: string | null
+  verdictAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
 }
 
-export interface AgentCapabilityRef { id: string; version: string; path?: string }
-
-export type AgentCheckStatus = 'passed' | 'failed' | 'pending'
-export interface AgentCheckItem { id: string; label: string; status: AgentCheckStatus; detail: string }
-
-export interface AgentPlanItem {
-  kind: 'agent' | 'skill' | 'tool' | 'binding'
-  name: string
-  action: 'create' | 'reuse' | 'upgrade' | 'blocked'
-  version: string
-  detail: string
-}
-
-export type AgentTrialStepStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped'
-
-/** 单个评估案例的真实执行证据与审核人逐项确认结论。 */
-export interface AgentTrialCaseRun {
-  caseId: string
-  name: string
-  kind: AgentEvalCase['kind']
-  /** JSONB 中可能仍有升级前试运行；缺少 v1 字段时管理端必须降级展示并阻止发布。 */
-  evaluationApiVersion?: AgentEvalCase['evaluationApiVersion']
-  automatedAssertions?: Array<{
-    assertion: AgentEvalCase['automatedAssertions'][number]
-    passed: boolean
-    detail: string
-  }>
-  manualReview?: AgentEvalCase['manualReview']
-  expect?: string
-  runId?: string | null
-  attemptId?: string | null
-  status: string
-  outputExcerpt: string
-  error?: string
-  verdict?: 'passed' | 'failed'
-  verdictNote?: string
-}
-
-export interface AgentTrialStep {
-  id: string; label: string; status: AgentTrialStepStatus; detail?: string; caseRuns?: AgentTrialCaseRun[]
-  currentCaseId?: string
-}
-
-export interface AgentTrialRun {
-  id: string
-  submissionRevision: number
-  status: 'checking' | 'queued' | 'executing' | 'asserting' | 'passed' | 'failed' | 'cancelled'
-  steps: AgentTrialStep[]
-  progress?: {
-    caseId: string
-    runId: string | null
-    attemptId: string | null
-    runStatus: string | null
-    events: Array<{ type: string; label: string; occurredAt: string }>
-  }
-  startedAt: string
-  finishedAt?: string
-  failureStage?: string
-}
-
-export interface AgentReleaseCandidate {
+export interface AgentValidation {
   id: string
   agentId: string
   agentVersionId: string
   version: string
-  revision: number
-  status: AgentSubmissionStatus
-  source: 'config' | 'zip'
-  sealedRevision?: number
-  sealedAt?: string
-  /** B-03/I-04：封存时固定的平台绑定依据。 */
-  bindingRefs: AgentBindingRef[]
-  cases: AgentEvalCase[]
-  packageRefs: { skills: AgentCapabilityRef[]; tools: AgentCapabilityRef[] }
-  missingDeps: { skills: string[]; tools: string[] }
-  checks: AgentCheckItem[]
-  plan: AgentPlanItem[]
-  reviewNote?: string
+  status: 'running' | 'completed' | 'superseded' | 'published'
+  createdBy: string
+  createdAt: string
+  completedAt: string | null
+  cases: ValidationCase[]
+  publishable: boolean
 }
 
-export interface AgentVersionEvidence {
-  kind: 'configuration_checked' | 'runtime_verified' | 'business_accepted'
-  summary: string
-  runId?: string
-  at: string
-  by: string
-  scope: string
+export interface AgentReleaseCheck {
+  id: 'audience' | 'roles' | 'principal' | 'dependencies' | 'authorization' | 'mcp' | 'cases' | 'bindings'
+  label: string
+  passed: boolean
+  detail: string
+  /** 不阻断验证的提示。 */
+  warning?: string
 }
 
-export interface AgentReleaseState {
-  candidate?: AgentReleaseCandidate
-  trialRuns: AgentTrialRun[]
-  /** key = 版本号字符串 */
-  evidence: Record<string, AgentVersionEvidence[]>
-  packageWarnings: string[]
-  /** 只读标记：草稿相对候选已变更/尚未同步（由 POST candidate 端点负责落库） */
-  definitionChanged?: boolean
-}
-
-export interface AgentSubmissionSummary {
+export interface AgentReleaseOverview {
   agentId: string
-  revision: number
-  status: AgentSubmissionStatus
-  source: 'config' | 'zip'
+  activeVersion: { id: string; version: string } | null
+  draft: { id: string; version: string; status: 'draft' | 'candidate' } | null
+  candidate: { id: string; version: string } | null
+  draftChanged: boolean
+  testCases: Array<{ id: string; prompt: string }>
+  plannedCases: Array<{ source: ValidationCaseSource; sourceRef: string | null; prompt: string }>
+  checks: AgentReleaseCheck[]
+  usesMcp: boolean
+  validation: AgentValidation | null
 }
 
-export interface AgentVersionEvidenceEntry {
-  agentId: string
+export type AgentRunSource = 'conversation' | 'validation' | 'routine' | 'automation' | 'api' | 'event' | 'system'
+
+/** 以 Agent 执行身份运行的最近 Run（详情页运行记录）。 */
+export interface AgentRunSummary {
+  runId: string
+  status: string
+  source: AgentRunSource
+  version: string | null
+  requestedBy: string
+  sessionTitle: string | null
+  errorCode: string | null
+  createdAt: string
+  startedAt: string | null
+  endedAt: string | null
+}
+
+export interface AgentVersionHistoryItem {
+  id: string
   version: string
-  evidence: AgentVersionEvidence[]
+  status: AgentVersionStatus
+  summary: string
+  createdAt: string
+  createdBy: string
+  publishedAt: string | null
+  publishedBy: string | null
+  active: boolean
 }

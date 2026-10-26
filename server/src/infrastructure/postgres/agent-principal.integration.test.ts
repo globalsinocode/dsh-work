@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 
 import { PostgresAgentService } from '../../modules/agent/postgres-agent-service.ts'
+import { PostgresAgentAccessService } from '../../modules/agent/agent-access-service.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresTaskRepository } from '../../modules/task/postgres-task-repository.ts'
 import type { DatabaseClient } from './database.ts'
@@ -56,9 +57,7 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     description: '验证 Agent 执行身份和治理负责人是不同的主体。',
     owner: '治理负责人',
     department: '平台治理',
-    visibility: '指定角色',
-    roleIds: ['role-employee'],
-    dataScopes: ['workspace:authorized'],
+    visibleRoleIds: ['role-employee'],
     welcomeMessage: '',
     examplePrompts: ['整理这段文字'],
     systemPrompt: '你是文本整理 Agent，只使用当前输入，不能推断缺失的事实。',
@@ -66,7 +65,6 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     maxToolCalls: 20,
     timeoutSeconds: 300,
     skills: [],
-    tools: [],
     changeSummary: '创建独立身份测试草稿',
     actor,
   })
@@ -111,38 +109,56 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     insert into data_scope_grants (id, tenant_id, subject_type, subject_id, scope_code, scope_value)
     values (${`grant-${randomUUID()}`}, ${tenantId}, 'user', ${actor}, 'capability', 'workspace:authorized')
   `
-  const ungranted = await agents.getAgentPrincipal(agentId)
-  assert.deepEqual({ roles: ungranted.roleIds, scopes: ungranted.dataScopes }, { roles: [], scopes: [] })
+  const access = new PostgresAgentAccessService(database)
+  const ungranted = await access.getAccess(agentId)
+  assert.deepEqual({ visible: ungranted.visibleRoleIds, roles: ungranted.roleIds, scopes: ungranted.dataScopes },
+    { visible: ['role-employee'], roles: [], scopes: [] })
+  // 角色选项标出含管理/审计权限的角色，页面据此提示风险。
+  assert.equal(ungranted.roleOptions.find(role => role.id === 'role-platform-admin')?.privileged, true)
+  assert.equal(ungranted.roleOptions.find(role => role.id === 'role-employee')?.privileged, false)
   const basicDecision = await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })
   assert.deepEqual(basicDecision.roleIds, [])
   assert.deepEqual(basicDecision.dataScopes, [])
-  await agents.updateAgentPrincipal({ agentId, actor,
-    expectedAuthorizationVersion: ungranted.authorizationVersion,
-    status: 'active', roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  // S2: no version ceiling — the Agent's own grant is enough, bounded by the employee's scopes.
+  const granted = await access.updateAccess({ agentId, actor, expectedRevision: ungranted.revision,
+    visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
   })
+  assert.equal(granted.revision, ungranted.revision + 1)
   const initialDecision = await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })
   assert.equal(initialDecision.executorPrincipalId, principal.id)
   assert.deepEqual(initialDecision.dataScopes, ['workspace:authorized'])
-  assert.deepEqual(await authorization.resolveAgentPrincipalTrialScope(versionId,
-    ['role-employee', 'role-platform-admin'], ['workspace:authorized']),
-  { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
-  const originalGrant = await agents.getAgentPrincipal(agentId)
-  const revoked = await agents.updateAgentPrincipal({ agentId, actor,
-    expectedAuthorizationVersion: originalGrant.authorizationVersion,
-    status: 'active', roleIds: ['role-employee'], dataScopes: [],
+  assert.deepEqual(await authorization.resolveAgentPrincipalTrialScope(versionId),
+    { roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
+  const revoked = await access.updateAccess({ agentId, actor, expectedRevision: granted.revision,
+    visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: [],
   })
   assert.equal(revoked.dataScopes.length, 0)
   assert.deepEqual((await authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId })).dataScopes, [])
-  await assert.rejects(authorization.resolveAgentPrincipalTrialScope(versionId,
-    ['role-employee'], ['workspace:authorized']), /缺少平台数据授权范围：workspace:authorized/)
-  await assert.rejects(agents.updateAgentPrincipal({ agentId, actor,
-    expectedAuthorizationVersion: originalGrant.authorizationVersion,
-    status: 'active', roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
-  }), /授权已变化/)
-  await agents.updateAgentPrincipal({ agentId, actor,
-    expectedAuthorizationVersion: revoked.authorizationVersion,
-    status: 'active', roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  assert.deepEqual(await authorization.resolveAgentPrincipalTrialScope(versionId),
+    { roleIds: ['role-employee'], dataScopes: [] })
+  await assert.rejects(access.updateAccess({ agentId, actor, expectedRevision: granted.revision,
+    visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  }), /岗位权限已被修改/)
+  await assert.rejects(access.updateAccess({ agentId, actor, expectedRevision: revoked.revision,
+    visibleRoleIds: ['role-employee', 'role-does-not-exist'], roleIds: [], dataScopes: [],
+  }), /无效或已停用的角色/)
+  // Removing the audience takes effect immediately for the published version.
+  const hidden = await access.updateAccess({ agentId, actor, expectedRevision: revoked.revision,
+    visibleRoleIds: [], roleIds: ['role-employee'], dataScopes: [],
   })
+  assert.equal((await agents.listWorkbenchAgents(actor)).some(agent => agent.id === agentId), false)
+  await assert.rejects(authorization.authorizeRuntime({ userId: actor, agentVersionId: versionId }), /不可使用所选 Agent/)
+  const restored = await access.updateAccess({ agentId, actor, expectedRevision: hidden.revision,
+    visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['workspace:authorized'],
+  })
+  assert.equal((await agents.listWorkbenchAgents(actor)).some(agent => agent.id === agentId), true)
+  const [audit] = await database<{ context: { visibleRoleIds: { added: string[] } } }[]>`
+    select safe_context as context from audit_events
+     where tenant_id = ${tenantId} and action = 'agent.access.update' and object_id = ${agentId}
+     order by occurred_at desc limit 1
+  `
+  assert.deepEqual(audit?.context.visibleRoleIds.added, ['role-employee'])
+  assert.equal(restored.principalStatus, 'active')
 
   const tasks = new PostgresTaskRepository(database)
   const task = await tasks.createTask({
@@ -157,7 +173,8 @@ test('new Agent has a stable principal distinct from its governance owner, and d
     insert into runs (id, tenant_id, task_id, session_id, requested_by, idempotency_key, status)
     values (${runId}, ${tenantId}, ${task.id}, null, ${actor}, ${`principal-${randomUUID()}`}, 'queued')
   `
-  const pinnedRevision = (await agents.getAgentPrincipal(agentId)).authorizationVersion
+  // Attempts pin the execution principal's authorization version, not the access revision.
+  const pinnedRevision = (await agents.getAgentExecutionPrincipal(agentId)).authorizationVersion
   await assert.rejects(database`
     insert into run_attempts (id, tenant_id, run_id, attempt_no, manifest, manifest_sha256, model_route_snapshot, status)
     values (${`attempt-${randomUUID()}`}, ${tenantId}, ${runId}, 1,

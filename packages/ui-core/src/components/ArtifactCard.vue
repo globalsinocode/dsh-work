@@ -13,6 +13,8 @@ interface ArtifactCardItem {
 
 const props = defineProps<{
   artifact: ArtifactCardItem
+  /** 来源说明（如项目空间的所属任务、承接 Agent 与发起人）；由宿主拼好后传入。 */
+  origin?: string
 }>()
 
 const emit = defineEmits<{
@@ -51,6 +53,7 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
         <strong :title="artifact.name">{{ artifact.name }}</strong>
         <span>V{{ artifact.version }}</span>
       </div>
+      <p v-if="origin" class="artifact-card__origin" data-testid="artifact-card-origin" :title="origin">{{ origin }}</p>
       <p>{{ artifact.summary }}</p>
       <div class="artifact-card__meta">
         <span>{{ artifact.size }}</span>
@@ -223,5 +226,10 @@ const typeLabel = computed(() => ARTIFACT_TYPE_ABBREV[props.artifact.type])
     grid-column: 2;
     justify-content: flex-start;
   }
+}
+
+/* 来源说明与摘要同样单行省略，悬停显示全文；颜色比摘要深一级以便区分。 */
+.artifact-card__body .artifact-card__origin {
+  color: var(--dsh-color-text);
 }
 </style>

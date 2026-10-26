@@ -311,13 +311,6 @@
       },
       "uniqueItems": true
     },
-    "tool_bindings": {
-      "type": "array",
-      "description": "B-03/I-04：Attempt 固定的平台工具绑定修订引用（批准的连接/凭据槽位/身份策略/环境/授权范围的语义摘要）。无平台工具的运行省略该字段；引用是执行证据而非继续授权。",
-      "items": {
-        "$ref": "#/$defs/toolBindingRef"
-      }
-    },
     "mcp_connections": {
       "type": "array",
       "description": "PF-03：本 Attempt 固定的 MCP Connector 快照。运行时按当前连接器状态和能力摘要持续复核；快照不包含凭据值。",
@@ -378,6 +371,44 @@
         "additionalProperties": false
       }
     },
+    "project_context": {
+      "type": "object",
+      "description": "项目空间 S1/S2：项目任务线程的执行固定当时的项目简报与项目档案版本，至少携带其一；参考资料，不是操作授权。",
+      "minProperties": 1,
+      "properties": {
+        "brief": {
+          "type": "object",
+          "required": ["version_id", "version_no", "content", "content_sha256", "due_date"],
+          "properties": {
+            "version_id": { "type": "string", "minLength": 1 },
+            "version_no": { "type": "integer", "minimum": 1 },
+            "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
+            "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "due_date": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          },
+          "additionalProperties": false
+        },
+        "archive": {
+          "type": "object",
+          "description": "项目空间 S2：执行时的项目档案版本。条目规范化、去重与摘要一致性由编译器校验。",
+          "required": ["version_id", "version_no", "items", "items_sha256"],
+          "properties": {
+            "version_id": { "type": "string", "minLength": 1 },
+            "version_no": { "type": "integer", "minimum": 1 },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+            },
+            "items_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "memory_context": {
       "type": "array",
       "maxItems": 3,
@@ -403,41 +434,6 @@
           "excerpt": { "type": "string", "minLength": 1, "maxLength": 4000 }
         },
         "additionalProperties": false
-      }
-    },
-    "delegation_policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["allowed_agent_version_ids", "max_depth", "max_parallel", "timeout_seconds"],
-      "properties": {
-        "allowed_agent_version_ids": {
-          "type": "array",
-          "maxItems": 16,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
-        },
-        "max_depth": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "max_parallel": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "timeout_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
-      }
-    },
-    "delegation_context": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "delegation_id", "root_task_id", "parent_task_id", "parent_run_id",
-        "parent_attempt_id", "depth", "max_depth", "role_ceiling", "data_scope_ceiling"
-      ],
-      "properties": {
-        "delegation_id": { "type": "string", "minLength": 1 },
-        "root_task_id": { "type": "string", "minLength": 1 },
-        "parent_task_id": { "type": "string", "minLength": 1 },
-        "parent_run_id": { "type": "string", "minLength": 1 },
-        "parent_attempt_id": { "type": "string", "minLength": 1 },
-        "depth": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "max_depth": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "role_ceiling": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
-        "data_scope_ceiling": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
       }
     },
     "model_requirements": {
@@ -479,8 +475,8 @@
         },
         "conversation_history": {
           "type": "array",
-          "maxItems": 12,
-          "description": "同一授权会话的最近消息，内容合计最多 24000 字符；历史不构成新操作授权。",
+          "maxItems": 500,
+          "description": "同一授权会话的首条用户消息与最近消息（EX-02），内容合计最多 64000 字符；管理会话另限 12 条、24000 字符。历史不构成新操作授权。",
           "items": {
             "type": "object",
             "required": [
@@ -496,11 +492,36 @@
               },
               "content": {
                 "type": "string",
-                "maxLength": 24000
+                "maxLength": 64000
               }
             },
             "additionalProperties": false
           }
+        },
+        "conversation_summary": {
+          "type": "object",
+          "description": "EX-02：平台经 DSH 生成的较早对话摘要，位于首条消息与最近消息之间；原文优先于摘要，摘要不构成操作授权。",
+          "required": [
+            "content",
+            "covered_message_count",
+            "sha256"
+          ],
+          "properties": {
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "covered_message_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -648,6 +669,12 @@
       "type": "string",
       "format": "date-time"
     },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "IANA timezone the run's current time is expressed in; the Runtime Adapter renders created_at in it for the model."
+    },
     "trace_id": {
       "type": "string"
     },
@@ -661,9 +688,40 @@
         "admin-platform-operations",
         "agent-release-trial",
         "automation",
-        "agent-routine"
+        "agent-routine",
+        "session-summary",
+        "project-archive"
       ],
-      "description": "管理侧 purpose（admin-* 与 agent-release-trial）的运行不绑定员工 Workspace/Agent；automation 是员工拥有的自动任务，agent-routine 是 Agent Principal 拥有的主动任务，二者均要求 workspace_id 与 agent_version_id。"
+      "description": "管理侧 purpose（admin-* 与 agent-release-trial）的运行不绑定员工 Workspace/Agent；automation 是员工拥有的自动任务，agent-routine 是 Agent Principal 拥有的主动任务，二者均要求 workspace_id 与 agent_version_id；session-summary 是平台为长对话生成摘要的系统运行，不绑定 Agent、不带工具，必须带 summary_target；project-archive 是项目空间 S2 的项目档案员系统运行，不绑定 Agent、不带工具与数据范围，必须带 archive_target。"
+    },
+    "archive_target": {
+      "type": "object",
+      "description": "项目空间 S2：project-archive 运行所整理的项目空间与整理批次；仅该 purpose 使用。",
+      "required": ["workspace_id", "update_id"],
+      "properties": {
+        "workspace_id": { "type": "string", "minLength": 1 },
+        "update_id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "summary_target": {
+      "type": "object",
+      "description": "EX-02：session-summary 运行所摘要的会话与覆盖到的最后一条消息；仅该 purpose 使用。",
+      "required": [
+        "session_id",
+        "covered_through_message_id"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "covered_through_message_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     },
     "installation_source": {
       "type": "string",
@@ -784,35 +842,6 @@
         },
         "version": {
           "type": "string"
-        }
-      },
-      "additionalProperties": false
-    },
-    "toolBindingRef": {
-      "type": "object",
-      "required": [
-        "tool",
-        "binding_id",
-        "revision",
-        "digest"
-      ],
-      "properties": {
-        "tool": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9._:-]+@[A-Za-z0-9._:-]+$"
-        },
-        "binding_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "revision": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "digest": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$",
-          "description": "绑定修订的语义摘要；修订行不可变保存完整快照（连接/凭据槽位/身份策略/环境/授权范围），Attempt 凭此引用追溯。"
         }
       },
       "additionalProperties": false
@@ -960,6 +989,73 @@
   "allOf": [
     {
       "if": {
+        "required": ["purpose"],
+        "properties": { "purpose": { "const": "project-archive" } }
+      },
+      "then": {
+        "required": ["archive_target"],
+        "properties": {
+          "archive_target": { "type": "object" },
+          "session_id": { "type": "null" },
+          "tools": { "type": "array", "maxItems": 0 },
+          "skills": { "type": "array", "maxItems": 0 },
+          "data_scopes": { "type": "array", "maxItems": 0 }
+        }
+      },
+      "else": {
+        "not": {
+          "required": ["archive_target"],
+          "properties": { "archive_target": { "type": "object" } }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "purpose"
+        ],
+        "properties": {
+          "purpose": {
+            "const": "session-summary"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "summary_target"
+        ],
+        "properties": {
+          "summary_target": {
+            "type": "object"
+          },
+          "session_id": {
+            "type": "null"
+          },
+          "tools": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "skills": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "summary_target"
+          ],
+          "properties": {
+            "summary_target": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
         "required": [
           "purpose"
         ],
@@ -972,6 +1068,12 @@
               },
               {
                 "const": "agent-release-trial"
+              },
+              {
+                "const": "session-summary"
+              },
+              {
+                "const": "project-archive"
               }
             ]
           }

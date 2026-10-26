@@ -45,16 +45,12 @@ export function apply(ctx) {
 
   const maximumCalls = process.env.DSH_MAX_TOOL_CALLS === undefined ? 1000 : Number(process.env.DSH_MAX_TOOL_CALLS)
   let calls = 0
-  let verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
-  const refreshMcpCapabilityDigests = () => {
-    verifiedMcpServers = verifyMcpCapabilityDigests(allowedMcpServers, approvedMcpCapabilities, ctx.tools.schemas())
-  }
-  ctx.on('tools/change', refreshMcpCapabilityDigests)
-  const denialReason = execution => {
-    // Recompute here as a fail-closed fallback in case a third-party plugin
-    // mutates its catalog without emitting tools/change.
-    refreshMcpCapabilityDigests()
-    return validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot)
+  // MCP 逐工具校验每次都读取 DSH 当前加载的 Schema，远端在运行中改变工具清单时同样生效。
+  const denialReason = execution =>
+    validateExecution(execution, allowedTools, allowedMcpServers, approvedMcpCapabilities, () => ctx.tools.schemas(), workspaceRoot)
+  // 模型只看到本次 Manifest 放行的工具；目录探测需要完整目录，不做裁剪。
+  if (!process.env.DSH_WORK_TOOL_CATALOG_MODE) {
+    restrictModelVisibleTools(ctx, name => isToolNameAllowed(name, allowedTools, allowedMcpServers, approvedMcpCapabilities))
   }
 
   ctx.on('tools/pre-execute', async (execution, next) => {
@@ -65,14 +61,18 @@ export function apply(ctx) {
     }
 
     if (!Number.isInteger(maximumCalls) || maximumCalls < 0 || ++calls > maximumCalls) return { kind: 'deny', reason: '当前 Attempt 工具调用次数已达上限，请停止调用并报告原因' }
-    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
-      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
+    const currentAuthorizationDenial = async () => {
+      if (!requireCurrentAuthorization) return undefined
+      const result = await authorizeCurrentExecution(authorizationSocket, execution.signal, execution.name)
+      if (result === 'disabled') return disabledToolReason(execution.name)
+      return result === 'authorized' ? undefined : '当前执行授权不可用或已撤销'
     }
+    const before = await currentAuthorizationDenial()
+    if (before !== undefined) return { kind: 'deny', reason: before }
     const downstream = await next()
     if (downstream.kind === 'deny') return downstream
-    if (requireCurrentAuthorization && !(await authorizeCurrentExecution(authorizationSocket, execution.signal))) {
-      return { kind: 'deny', reason: '当前执行授权不可用或已撤销' }
-    }
+    const after = await currentAuthorizationDenial()
+    if (after !== undefined) return { kind: 'deny', reason: after }
     const requiresApproval = downstream.kind === 'ask' || approvalMode !== 'never'
     if (!requiresApproval) return downstream
     if (!recordApprovalRequest(approvalLog, execution)) {
@@ -126,13 +126,12 @@ function publishRuntimeToolCatalog(ctx, path, mode) {
 }
 
 const readTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation'])
-const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'state_get', 'data_query', 'data_create', 'data_update', 'data_propose', 'data_transition'])
-const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'delegate_agent', 'state_get', 'data_query'])
+const retrySafeTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state', 'prepare_skill_installation', 'activate_skill', 'propose_memory', 'project_tasks_list', 'project_task_get'])
+const concurrentTools = new Set(['read', 'read_image', 'glob', 'grep', 'web_fetch', 'web_search', 'get_goal', 'job_list', 'job_output', 'inspect_admin_state'])
 const toolTimeoutSeconds = new Map([
   ['todo_write', 10], ['create_goal', 10], ['get_goal', 10], ['update_goal', 10],
   ['job_list', 10], ['job_kill', 10], ['bash', 60],
   ['prepare_skill_installation', 120], ['python_execute', 300],
-  ['delegate_agent', 300],
 ])
 
 function publishToolContract(schema) {
@@ -177,6 +176,7 @@ function parseAllowedMcpServers(value) {
   }
 }
 
+/** 生效清单：serverName → (Tool 名称 → 输入 Schema 摘要)。格式错误时整体为空（fail closed）。 */
 function parseApprovedMcpCapabilities(value) {
   const approved = new Map()
   if (!value) return approved
@@ -187,9 +187,14 @@ function parseApprovedMcpCapabilities(value) {
       if (!isRecord(item)
         || typeof item.serverName !== 'string'
         || !/^[A-Za-z0-9_-]{1,32}$/.test(item.serverName)
-        || typeof item.digest !== 'string'
-        || !/^[a-f0-9]{64}$/.test(item.digest)) return new Map()
-      approved.set(item.serverName, { digest: item.digest })
+        || !Array.isArray(item.tools)) return new Map()
+      const tools = new Map()
+      for (const tool of item.tools) {
+        if (!isRecord(tool) || typeof tool.name !== 'string' || !tool.name
+          || typeof tool.schemaDigest !== 'string' || !/^[a-f0-9]{64}$/.test(tool.schemaDigest)) return new Map()
+        tools.set(tool.name, tool.schemaDigest)
+      }
+      approved.set(item.serverName, tools)
     }
     return approved
   } catch {
@@ -236,6 +241,7 @@ function recordApprovalRequest(path, execution) {
   }
 }
 
+/** 与平台 server/src/modules/runtime/canonical-json.ts 对 JSON 值的结果一致（对象键排序）。 */
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (isRecord(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`
@@ -258,14 +264,12 @@ function approvalDataVersion(parameters) {
   return 'unspecified'
 }
 
-function validateExecution(execution, allowedTools, allowedMcpServers, verifiedMcpServers, workspaceRoot) {
+function validateExecution(execution, allowedTools, allowedMcpServers, approvedMcpCapabilities, loadSchemas, workspaceRoot) {
   const mcpServer = matchConfiguredMcpServer(execution.name, allowedMcpServers)
   if (!allowedTools.has(execution.name) && !(mcpServer && allowedMcpServers.has(mcpServer))) {
     return `dsh-work Runtime Manifest 未授权工具：${execution.name}`
   }
-  if (mcpServer && !verifiedMcpServers.has(mcpServer)) {
-    return `dsh-work MCP 能力清单与已审核摘要不一致：${mcpServer}`
-  }
+  if (mcpServer) return validateMcpExecution(execution.name, mcpServer, approvedMcpCapabilities, loadSchemas())
 
   const webDenial = validateWebExecution(execution)
   if (webDenial !== undefined) return webDenial
@@ -333,6 +337,45 @@ function validateWebExecution(execution) {
   return undefined
 }
 
+/** 名称级放行：Manifest 中的工具，或已选 MCP Server 生效清单中的 Tool。参数与 Schema 仍在调用时校验。 */
+export function isToolNameAllowed(name, allowedTools, allowedMcpServers, approvedMcpCapabilities) {
+  if (allowedTools.has(name)) return true
+  const server = matchConfiguredMcpServer(name, allowedMcpServers)
+  return server !== undefined && approvedMcpCapabilities.get(server)?.has(name.slice(`mcp__${server}__`.length)) === true
+}
+
+/**
+ * 把未放行的工具从模型可见列表中移除（DSH agent 作用域的 tools.restrict）。只影响模型看到什么；
+ * 调用仍由 pre-execute 与 guard 拦截，裁剪失败时不影响安全边界。工具清单变化（如 MCP 连接完成）
+ * 后对新出现的工具再次裁剪。
+ */
+export function restrictModelVisibleTools(ctx, isAllowed) {
+  const agents = new Set()
+  const hidden = new WeakMap()
+  const restrict = (agent) => {
+    let names
+    try { names = ctx.tools.schemas(agent).map(schema => schema.name) } catch { return }
+    const done = hidden.get(agent) ?? new Set()
+    hidden.set(agent, done)
+    const deny = names.filter(name => typeof name === 'string' && name !== 'run_code' && !done.has(name) && !isAllowed(name))
+    if (!deny.length || typeof agent?.ctx?.tools?.restrict !== 'function') return
+    try {
+      agent.ctx.tools.restrict({ deny })
+      deny.forEach(name => done.add(name))
+    } catch {
+      // 某些名称不能裁剪（例如 agent 自身作用域注册的工具）时逐个尝试，其余保持可见但仍不可调用。
+      for (const name of deny) {
+        try { agent.ctx.tools.restrict({ deny: [name] }); done.add(name) } catch { /* 调用仍被拦截 */ }
+      }
+    }
+  }
+  ctx.on('agent/session-start', ({ agent }) => {
+    agents.add(agent)
+    restrict(agent)
+  }, { global: true })
+  ctx.on('tools/change', () => { for (const agent of agents) restrict(agent) }, { global: true })
+}
+
 function matchConfiguredMcpServer(toolName, serverNames) {
   if (typeof toolName !== 'string') return undefined
   return [...serverNames]
@@ -340,27 +383,17 @@ function matchConfiguredMcpServer(toolName, serverNames) {
     .find(serverName => toolName.startsWith(`mcp__${serverName}__`))
 }
 
-function verifyMcpCapabilityDigests(allowedServers, approved, schemas) {
-  const verified = new Set()
-  for (const serverName of allowedServers) {
-    const expected = approved.get(serverName)
-    if (!expected) continue
-    const prefix = `mcp__${serverName}__`
-    const capabilities = schemas.flatMap(schema => {
-      if (!isRecord(schema) || typeof schema.name !== 'string' || !schema.name.startsWith(prefix)
-        || typeof schema.description !== 'string' || !isRecord(schema.parameters)) return []
-      return [{
-        name: schema.name.slice(prefix.length),
-        description: schema.description.trim().slice(0, 2000),
-        inputSchema: JSON.parse(JSON.stringify(schema.parameters)),
-      }]
-    }).sort((left, right) => left.name.localeCompare(right.name))
-    if (capabilities.length
-      && createHash('sha256').update(JSON.stringify(capabilities)).digest('hex') === expected.digest) {
-      verified.add(serverName)
-    }
+/** 只放行生效清单中的 Tool，且 DSH 当前加载的输入 Schema 摘要与确认时一致。 */
+function validateMcpExecution(toolName, serverName, approvedMcpCapabilities, schemas) {
+  const capabilityName = toolName.slice(`mcp__${serverName}__`.length)
+  const expected = approvedMcpCapabilities.get(serverName)?.get(capabilityName)
+  if (!expected) return `dsh-work MCP Tool 尚未确认生效：${toolName}`
+  const schema = schemas.find(candidate => isRecord(candidate) && candidate.name === toolName)
+  if (!schema || !isRecord(schema.parameters)
+    || createHash('sha256').update(canonicalJson(schema.parameters)).digest('hex') !== expected) {
+    return `dsh-work MCP Tool 输入 Schema 已变化，待管理员确认：${toolName}`
   }
-  return verified
+  return undefined
 }
 
 function realpathWithMissingTail(candidate) {
@@ -446,21 +479,6 @@ function registerPlatformTools(ctx) {
     },
   })
   registerPlatformTool(ctx, socketPath, {
-    name: 'delegate_agent',
-    description: 'Delegate one bounded subtask to an explicitly allowed published Agent Version. The child uses the same user, workspace, cumulative budget and narrowed permission ceiling. Returns a task-result/v1 outcome; failed or unverified child work must not be presented as verified success.',
-    parameters: {
-      type: 'object',
-      properties: {
-        targetAgentVersionId: { type: 'string', minLength: 1, maxLength: 128, description: 'Exact Agent Version ID from the current Run delegation policy.' },
-        task: { type: 'string', minLength: 1, maxLength: 12000, description: 'Bounded subtask with an explicit expected result.' },
-        context: { type: 'string', maxLength: 4000, description: 'Optional minimal context needed by the child. Do not copy the whole conversation.' },
-      },
-      required: ['targetAgentVersionId', 'task'],
-      additionalProperties: false,
-    },
-    concurrencySafe: true,
-  })
-  registerPlatformTool(ctx, socketPath, {
     name: 'propose_memory',
     description: 'Submit a short-lived reusable-experience application for this stable Agent. The application must cite the current Run and Attempt, does not publish itself, and requires administrator review. Release trials return trial_only and do not persist an application.',
     parameters: {
@@ -473,64 +491,70 @@ function registerPlatformTools(ctx) {
       required: ['kind', 'title', 'content'],
     },
   })
+  const assignee = {
+    type: 'object',
+    description: 'Task owner: an employee member (type "employee", the userId) or an Agent member (type "agent", the agentMemberId). Get ids from project_tasks_list.members.',
+    properties: { type: { type: 'string', enum: ['employee', 'agent'] }, id: { type: 'string', minLength: 1, maxLength: 160 } },
+    required: ['type', 'id'],
+    additionalProperties: false,
+  }
   registerPlatformTool(ctx, socketPath, {
-    name: 'state_get',
-    description: 'Read one bounded, private operational state value for the current Agent installation. State is not business truth or long-term memory.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['namespace', 'key'] },
-    concurrencySafe: true,
+    name: 'project_tasks_list',
+    description: 'List project tasks of the project space this run belongs to, plus the members a task can be assigned to. Returns title, owner, status, due date and latest execution; never task conversation content. Use it before creating or changing a task to get task ids and member ids.',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['open', 'todo', 'in_progress', 'done', 'all'], description: 'open (default) = todo and in_progress.' },
+        assigneeId: { type: 'string', minLength: 1, maxLength: 160, description: 'Only tasks owned by this userId or agentMemberId.' },
+        query: { type: 'string', minLength: 1, maxLength: 120, description: 'Literal text contained in the title.' },
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
+      },
+      additionalProperties: false,
+    },
   })
   registerPlatformTool(ctx, socketPath, {
-    name: 'state_put',
-    description: 'Write one bounded, expiring operational state value with an exact expected version. Never use it for authoritative business records.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { namespace: { type: 'string', minLength: 1, maxLength: 80 }, key: { type: 'string', minLength: 1, maxLength: 160 },
-        value: {}, expectedVersion: { type: 'integer', minimum: 0 }, ttlSeconds: { type: 'integer', minimum: 60, maximum: 7776000 } },
-      required: ['namespace', 'key', 'value', 'expectedVersion', 'ttlSeconds'] },
+    name: 'project_task_get',
+    description: 'Read one project task of this project space: description, owner, status, due date, schedule and latest execution. Never returns task conversation content.',
+    parameters: {
+      type: 'object',
+      properties: { taskId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['taskId'],
+      additionalProperties: false,
+    },
   })
   registerPlatformTool(ctx, socketPath, {
-    name: 'data_query',
-    description: 'Query the current authorized versioned collection using only published query fields and a bounded limit.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, field: { type: 'string', maxLength: 64 },
-        equals: { type: 'string', maxLength: 500 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
-        after: { type: 'string', maxLength: 160 } },
-      required: ['collectionKey'] },
-    concurrencySafe: true,
+    name: 'project_task_create',
+    description: 'Create a project task in this project space on behalf of the member who asked you, within that member\'s permissions. The task is written immediately and shown in the group chat. A task assigned to an Agent gets a manual schedule and is not started automatically. dueDate is YYYY-MM-DD in the run timezone and must not be earlier than today; when a relative date such as "this Friday" has already passed, use the next one or ask the member first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee,
+        dueDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      required: ['title', 'assignee'],
+      additionalProperties: false,
+    },
   })
   registerPlatformTool(ctx, socketPath, {
-    name: 'data_create',
-    description: 'Create an approved lightweight collection record. Requires an exact published collection, current grant, schema validation and a stable operation key.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
-        data: { type: 'object' }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['collectionKey', 'recordKey', 'data', 'operationKey'] },
-  })
-  registerPlatformTool(ctx, socketPath, {
-    name: 'data_update',
-    description: 'Write a new immutable version of an existing approved collection record. Requires expectedVersion and a stable operation key.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
-        data: { type: 'object' }, expectedVersion: { type: 'integer', minimum: 1 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
-  })
-  registerPlatformTool(ctx, socketPath, {
-    name: 'data_propose',
-    description: 'Submit a schema-checked record proposal for platform administrator review. This does not publish a record or prove a business fact.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
-        data: { type: 'object' }, expectedVersion: { type: 'integer', minimum: 0 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['collectionKey', 'recordKey', 'data', 'expectedVersion', 'operationKey'] },
-  })
-  registerPlatformTool(ctx, socketPath, {
-    name: 'data_transition',
-    description: 'Change the status field of an approved record only when its version and current status match, subject to the published Schema.',
-    parameters: { type: 'object', additionalProperties: false,
-      properties: { collectionKey: { type: 'string', minLength: 3, maxLength: 80 }, recordKey: { type: 'string', minLength: 1, maxLength: 160 },
-        expectedVersion: { type: 'integer', minimum: 1 }, expectedStatus: { type: 'string', minLength: 1, maxLength: 80 },
-        nextStatus: { type: 'string', minLength: 1, maxLength: 80 }, operationKey: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['collectionKey', 'recordKey', 'expectedVersion', 'expectedStatus', 'nextStatus', 'operationKey'] },
+    name: 'project_task_update',
+    description: 'Change one project task in this project space on behalf of the member who asked you, within that member\'s permissions: title, description, due date (YYYY-MM-DD, not earlier than today; null clears it), owner, or status (todo, in_progress, done; completionNote only with done). Changes are written immediately and shown in the group chat. Tasks cannot be removed.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', minLength: 1, maxLength: 160 },
+        title: { type: 'string', minLength: 1, maxLength: 120 },
+        description: { type: 'string', maxLength: 4000 },
+        assignee,
+        dueDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'] },
+        completionNote: { type: 'string', maxLength: 4000 },
+      },
+      required: ['taskId'],
+      minProperties: 2,
+      additionalProperties: false,
+    },
   })
   registerPlatformTool(ctx, socketPath, {
     name: 'activate_skill',
@@ -613,11 +637,20 @@ function platformToolFailure(error) {
 }
 
 /** A product-owned Unix-socket check, not a model tool or external network request. */
-function authorizeCurrentExecution(socketPath, signal) {
-  if (!socketPath) return Promise.resolve(false)
+export function disabledToolReason(toolName) {
+  return `管理员已临时停用内置工具 ${toolName}，本次调用未执行。不要再调用该工具；依赖它的部分请说明暂时无法完成，并基于已有结果继续作答。`
+}
+
+/**
+ * 执行授权探测。返回 'authorized'、'disabled'（Runtime 紧急停用了该内置工具，只拒绝本次调用）
+ * 或 'denied'（授权已撤销或不可用）。
+ */
+function authorizeCurrentExecution(socketPath, signal, toolName) {
+  if (!socketPath) return Promise.resolve('denied')
   return new Promise(resolve => {
     const timeout = globalThis.AbortSignal.timeout(6000)
     const req = request({ socketPath, path: '/authorize-execution', method: 'POST',
+      headers: typeof toolName === 'string' && /^[A-Za-z0-9_.-]{1,200}$/.test(toolName) ? { 'x-dsh-tool-name': toolName } : {},
       signal: signal ? globalThis.AbortSignal.any([signal, timeout]) : timeout }, response => {
       let body = ''
       response.setEncoding('utf8')
@@ -625,13 +658,16 @@ function authorizeCurrentExecution(socketPath, signal) {
         body += chunk
         if (body.length > 1024) req.destroy()
       })
-      response.on('error', () => resolve(false))
+      response.on('error', () => resolve('denied'))
       response.on('end', () => {
-        try { resolve(response.statusCode === 200 && JSON.parse(body).authorized === true) }
-        catch { resolve(false) }
+        try {
+          const parsed = JSON.parse(body)
+          if (response.statusCode !== 200 || parsed.authorized !== true) resolve('denied')
+          else resolve(parsed.toolDisabled === true ? 'disabled' : 'authorized')
+        } catch { resolve('denied') }
       })
     })
-    req.on('error', () => resolve(false))
+    req.on('error', () => resolve('denied'))
     req.end()
   })
 }

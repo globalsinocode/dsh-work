@@ -313,13 +313,11 @@ test('@Agent 触发：成员在共享会话中按成员固定版本发起 Run，
     { userId: memberId, role: 'member' },
     { userId: viewerId, role: 'viewer' },
   ])
-  await createTool({ id: 'tool-tw10' })
-  await createSkill({ id: 'skill-tw10', toolRefs: ['tool-tw10@1.0.0'] })
+  await createSkill({ id: 'skill-tw10', toolRefs: ['read@1.0.0'] })
   const agent = await createPublishedAgent({
     id: 'agent-tw10',
     name: '欠料追踪助手',
     skillRefs: ['skill-tw10@1.0.0'],
-    toolRefs: ['tool-tw10@1.0.0'],
   })
   const joined = await api('POST', `/api/workbench/v1/workspaces/${workspaceId}/agent-members`, {
     as: ownerId,
@@ -753,7 +751,6 @@ async function createPublishedAgent(input: {
   id: string
   name?: string
   skillRefs?: string[]
-  toolRefs?: string[]
 }) {
   await database`
     insert into agents (
@@ -768,22 +765,21 @@ async function createPublishedAgent(input: {
   await database`
     insert into agent_versions (
       id, tenant_id, agent_id, version, name, description, welcome_message,
-      example_prompts, system_prompt, visible_role_ids, data_scopes, max_output_bytes, max_tool_calls,
-      timeout_seconds, skill_refs, tool_refs, status, created_by, change_summary
+      example_prompts, system_prompt, max_output_bytes, max_tool_calls,
+      timeout_seconds, skill_refs, status, created_by, change_summary
     ) values (
       ${versionId}, ${tenantId}, ${input.id}, '1.0.0', ${input.name ?? 'TW10 测试 Agent'}, 'TW-10 测试。',
       '', ${database.json(['测试'] as string[])}, '你是 TW-10 集成测试 Agent。',
-      ${database.json(['role-employee'] as string[])}, ${database.json(['enterprise:authorized'] as string[])},
-      65536, 20, 300, ${database.json(input.skillRefs ?? [])}, ${database.json(input.toolRefs ?? [])},
+      65536, 20, 300, ${database.json(input.skillRefs ?? [])},
       'published', 'U00008', 'TW-10 测试版本'
     )
   `
+  await database`update agents set visible_role_ids = ${database.json(['role-employee'] as string[])} where tenant_id = ${tenantId} and id = ${input.id}`
   await database`
     update agents set active_version_id = ${versionId}
      where tenant_id = ${tenantId} and id = ${input.id}
   `
-  // Tools are authorized against the Agent's own execution principal, not the
-  // triggering member: grant it the same role and scope the version declares.
+  // The Agent executes with its own principal, not the triggering member's.
   await database`
     insert into agent_principal_role_grants (tenant_id, principal_id, role_id)
     values (${tenantId}, ${`principal-agent-${input.id}`}, 'role-employee')
@@ -822,29 +818,6 @@ async function createSkill(input: { id: string; toolRefs?: string[] }) {
     await transaction`
       update skills set active_version_id = ${versionId}
        where tenant_id = ${tenantId} and id = ${input.id}
-    `
-  })
-  return { id: input.id, versionId }
-}
-
-async function createTool(input: { id: string }) {
-  const versionId = `tool-version-${input.id}-1`
-  await database.begin(async transaction => {
-    await transaction`
-      insert into tools (
-        id, tenant_id, key, name, source, status, connector_id, system, description,
-        dsh_tool_name, mode, timeout_seconds, allowed_role_ids, data_scopes,
-        approval_policy, last_checked_at
-      ) values (
-        ${input.id}, ${tenantId}, ${`dsh-${input.id}`}, 'TW10 测试工具', 'platform', 'available',
-        'connector-dsh-workspace', 'DSH Runtime', 'TW-10 测试工具。',
-        ${input.id}, 'read', 30, ${transaction.json(['role-employee'] as string[])},
-        ${transaction.json(['enterprise:authorized'] as string[])}, 'none', now()
-      )
-    `
-    await transaction`
-      insert into tool_versions (id, tenant_id, tool_id, version, input_schema, output_schema, risk_level, status)
-      values (${versionId}, ${tenantId}, ${input.id}, '1.0.0', '{}', '{}', 'low', 'published')
     `
   })
   return { id: input.id, versionId }

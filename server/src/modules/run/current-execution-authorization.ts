@@ -1,8 +1,7 @@
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import { isAdminRunPurpose } from '../runtime/runtime-types.ts'
-import type { RuntimeManifest } from '../runtime/runtime-types.ts'
-import type { PostgresToolConnectorService } from '../tool/postgres-tool-connector-service.ts'
+import type { McpConnectionSnapshot, RuntimeManifest } from '../runtime/runtime-types.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 
 export class AuthorizationCheckUnavailableError extends Error {
@@ -15,43 +14,37 @@ export class AuthorizationCheckUnavailableError extends Error {
 }
 
 /**
- * Manifest 声明了工具绑定 pin 但平台未接线绑定复核端口时的 fail-closed 信号。
+ * Manifest 固定了 MCP 连接但平台未接线复核端口时的 fail-closed 信号。
  * 区别于一般基础设施不可用：队列认领点把它收敛为任务拒绝（fail 而非无限重排）。
  */
-export class ToolBindingCheckUnavailableError extends AuthorizationCheckUnavailableError {
+export class ToolCheckUnavailableError extends AuthorizationCheckUnavailableError {
   constructor() {
     super()
-    this.name = 'ToolBindingCheckUnavailableError'
+    this.name = 'ToolCheckUnavailableError'
   }
+}
+
+/** 执行期的工具复核：Attempt 固定的 MCP 连接。内置工具的紧急停用逐次调用判断，见 Runtime Adapter。 */
+export interface ExecutionToolCheckPort {
+  assertPinnedConnections?(pins: readonly McpConnectionSnapshot[]): Promise<void>
 }
 
 type AuthorizationPort = Pick<PostgresAuthorizationService,
   'workspaceTypeOf' | 'authorizeRuntime' | 'authorizeTeamRunExecution' | 'requireAdminReader' | 'requirePlatformAdmin' | 'requireActiveAgentPrincipal' | 'assertAgentPrincipalSnapshot'>
   & Partial<Pick<PostgresAuthorizationService, 'assertAgentRoutineRun'>>
 
-type ExecutionBindingAuthorizationPort = Partial<Pick<PostgresToolConnectorService,
-  'assertActiveToolBindings' | 'assertActiveMcpConnections'>>
-
 /** All checks use live grants and pinned versions. This never rewrites the Manifest. */
 export async function assertCurrentExecutionAuthorization(
   authorization: AuthorizationPort,
   content: Pick<PostgresContentService, 'recheckRuntimeFiles'> | undefined,
   manifest: RuntimeManifest,
-  bindings?: ExecutionBindingAuthorizationPort,
-  toolBindingsChecked = false,
+  tools?: ExecutionToolCheckPort,
 ): Promise<void> {
   try {
-    // B-03/I-04：Attempt 固定的工具绑定修订在 purpose 分流前统一复核——
-    // 试运行与管理运行同样适用；撤销/被取代/语义漂移/行缺失一律拒绝。
-    // Manifest 声明了 pin 而复核端口未接线时 fail-closed 为不可用。
-    // 队列认领点已做同一检查时可跳过，避免每次认领重复查询。
-    if (!toolBindingsChecked && manifest.tool_bindings?.length) {
-      if (!bindings?.assertActiveToolBindings) throw new ToolBindingCheckUnavailableError()
-      await bindings.assertActiveToolBindings(manifest.tool_bindings)
-    }
+    // MCP 复核在 purpose 分流前统一进行，试运行与管理运行同样适用。
     if (manifest.mcp_connections?.length) {
-      if (!bindings?.assertActiveMcpConnections || !manifest.agent_version_id) throw new ToolBindingCheckUnavailableError()
-      await bindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
+      if (!tools?.assertPinnedConnections) throw new ToolCheckUnavailableError()
+      await tools.assertPinnedConnections(manifest.mcp_connections)
     }
     if (manifest.agent_version_id) await authorization.requireActiveAgentPrincipal(manifest.agent_version_id)
     // 管理目的集合以 isAdminRunPurpose 为准：agent-release-trial 不带 admin-
@@ -78,21 +71,14 @@ export async function assertCurrentExecutionAuthorization(
     }
     const type = await authorization.workspaceTypeOf(manifest.workspace_id)
     if (type === null) throw authorizationDenied('工作空间不存在或已归档')
-    const delegationCeiling = manifest.delegation_context
-      ? {
-          roleIds: manifest.delegation_context.role_ceiling,
-          dataScopes: manifest.delegation_context.data_scope_ceiling,
-        }
-      : undefined
     const input = {
       userId: manifest.user_context.user_id,
       workspaceId: manifest.workspace_id,
       agentVersionId: manifest.agent_version_id,
       additionalSkillReferences: (manifest.skills ?? []).map(skill => `${skill.id}@${skill.version}`),
-      ...(delegationCeiling ? { scopeCeiling: delegationCeiling } : {}),
     }
     const current = type === 'team'
-      ? await authorization.authorizeTeamRunExecution({ ...input, requireAgentMember: Boolean(manifest.delegation_context) })
+      ? await authorization.authorizeTeamRunExecution(input)
       : await authorization.authorizeRuntime(input)
     if (manifest.principal_context && (
       manifest.principal_context.executed_as !== current.executorPrincipalId

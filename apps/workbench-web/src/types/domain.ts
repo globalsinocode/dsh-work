@@ -27,6 +27,8 @@ export interface RunStep {
   detail: string
   status: StepStatus
   tool?: string
+  /** EX-01：工具调用步骤所属的调用；快照与实时事件按它合并为同一行。 */
+  callId?: string
   duration?: string
 }
 
@@ -55,6 +57,12 @@ export interface Artifact {
   fileId?: string
   canReference?: boolean
   summary: string
+  /** 项目空间成果的来源：所属项目任务、承接 Agent 及版本、发起人；个人空间为 null。 */
+  origin?: {
+    projectTask: { id: string; title: string } | null
+    agent: { name: string; version: string } | null
+    initiatedBy: string | null
+  } | null
 }
 
 /**
@@ -68,7 +76,7 @@ export type TaskResultOutcome = 'pending' | 'achieved' | 'unverified' | 'not_ach
 /** Run 执行状态原文（含 waiting/cancel_requested）；比展示用 RunStatus 更原始。 */
 export type TaskResultExecution = 'queued' | 'running' | 'waiting' | 'cancel_requested' | 'succeeded' | 'failed' | 'cancelled'
 
-export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool' | 'record'
+export type TaskResultReceiptKind = 'answer' | 'artifact' | 'tool'
 
 /**
  * 回执核验状态：completed=已完成且有持久化登记；accepted=仅受理/获准——
@@ -178,6 +186,8 @@ export interface SessionThreadMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** ISO 发送时间（createdAt 只是展示用的时分）；旧服务端可能缺省。 */
+  sentAt?: string
   runId: string | null
   senderId: string | null
   senderName: string | null
@@ -204,6 +214,8 @@ export interface SessionThread {
     status: string
     requestedBy: string
     requesterName: string
+    /** 已停止的执行：请求停止的员工姓名。 */
+    stoppedByName?: string | null
     createdAt: string
   }>
   /** 还有更早的消息页时 true；用 messagesCursor 作 before 翻页。 */
@@ -231,10 +243,17 @@ export interface TaskRun {
   owner: string
   /** 触发人用户 id（TW-10 共享线程里区分「我发起的」与他人发起的 Run）。 */
   requestedBy: string
+  /** 已停止的 Run：请求停止的员工姓名（项目空间方案第 5 节）；系统撤权取消为 null。 */
+  stoppedBy?: string | null
   /** 调用者在 Run 所属空间的当前角色（TW-10 读轨）；个人/独立空间为 null。 */
   currentUserRole?: TeamMemberRole | null
   messages: ChatMessage[]
   steps: RunStep[]
+  /**
+   * 客户端收到该 Run 最后一个运行事件的时刻（毫秒）；只用于“长时间无输出”提示，
+   * 不来自服务端。开始关注一个执行中的 Run 时以当时为起点。
+   */
+  lastActivityAt?: number
   attachments: string[]
   skill?: Pick<WorkbenchSkill, 'id' | 'name' | 'version'>
   /**
@@ -407,6 +426,9 @@ export type WorkspaceActivityKind =
   | 'member_mentioned'
   | 'run_completed'
   | 'run_failed'
+  | 'brief_updated'
+  | 'project_task_created'
+  | 'project_task_completed'
 
 export type WorkspaceActivityObjectType =
   | 'member'
@@ -415,6 +437,149 @@ export type WorkspaceActivityObjectType =
   | 'workspace'
   | 'session'
   | 'run'
+  | 'brief'
+  | 'project_task'
+
+/** 项目空间 S1：项目简报（最新版本）。 */
+export interface ProjectBrief {
+  versionId: string
+  versionNo: number
+  content: string
+  dueDate: string | null
+  updatedBy: { userId: string; displayName: string }
+  updatedAt: string
+}
+
+/** 项目空间 S2：项目档案的一个版本（条目列表）。来源按版本记录。 */
+export interface ProjectArchiveVersion {
+  versionId: string
+  versionNo: number
+  items: string[]
+  sourceKind: 'archivist' | 'manual' | 'rollback'
+  /** 档案员版本所依据的项目任务。 */
+  sourceTasks: Array<{ id: string; title: string }>
+  rollbackFromVersionNo: number | null
+  createdBy: { userId: string; displayName: string } | null
+  createdAt: string
+}
+
+export interface ProjectArchive {
+  current: ProjectArchiveVersion | null
+  archivistRunning: boolean
+}
+
+/** S4：两类任务状态相同，由人推进；单次执行的结果见 `latestRunStatus`。 */
+export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done'
+export type ProjectTaskAction = 'edit' | 'remove' | 'start' | 'set_status' | 'complete' | 'resume'
+
+/** S4：Agent 任务的执行规则；“工作日”是 weekly + 周一至周五。 */
+export interface ProjectTaskSchedule {
+  kind: 'manual' | 'daily' | 'weekly'
+  timezone: string
+  timeOfDay?: string
+  /** 0=周日 … 6=周六 */
+  weekdays?: number[]
+}
+
+export type ProjectTaskScheduleState = 'active' | 'paused' | 'stopped'
+
+/** 新建 / 编辑时提交的执行规则（时区由服务端取平台默认时区）。 */
+export interface ProjectTaskScheduleInput {
+  kind: 'manual' | 'daily' | 'weekly'
+  timeOfDay?: string
+  weekdays?: number[]
+}
+
+export interface ProjectTaskFile {
+  fileObjectId: string
+  logicalFileId: string
+  name: string
+  versionNo: number
+}
+
+export interface ProjectTask {
+  id: string
+  title: string
+  description: string
+  createdBy: { userId: string; displayName: string }
+  assignee:
+    | { type: 'employee'; userId: string; displayName: string }
+    | { type: 'agent'; agentMemberId: string; name: string }
+  status: ProjectTaskStatus
+  /** 任务对话（S3 起两类任务创建时都有）。 */
+  sessionId: string | null
+  latestRunId: string | null
+  /** 最近一次执行的状态与时间（Agent 任务）。 */
+  latestRunStatus: string | null
+  latestRunAt: string | null
+  /** S4：Agent 任务的执行规则；员工任务为 null。 */
+  schedule: ProjectTaskSchedule | null
+  scheduleState: ProjectTaskScheduleState | null
+  scheduleReason: string | null
+  nextRunAt: string | null
+  inputFiles: ProjectTaskFile[]
+  deliverableFiles: ProjectTaskFile[]
+  completionNote: string | null
+  completedAt: string | null
+  dueDate: string | null
+  createdAt: string
+  updatedAt: string
+  allowedActions: ProjectTaskAction[]
+}
+
+/** 项目任务分页：`nextCursor` 非空时可用它加载下一页；`total` 是当前空间的全部未移除任务数。 */
+/**
+ * 任务事件，在任务对话中作为系统记录展示：状态推进、完成、改派（S3），
+ * 执行规则变更、暂停 / 恢复 / 停止与定时执行的受理、跳过、错过（S4），
+ * 以及经 Agent 的标题 / 说明 / 截止日期修改（S6 edited）。
+ */
+export interface ProjectTaskEvent {
+  id: string
+  kind:
+    | 'status_changed' | 'completed' | 'reassigned' | 'edited'
+    | 'schedule_changed' | 'schedule_paused' | 'schedule_resumed' | 'schedule_stopped'
+    | 'scheduled_run' | 'execution_skipped' | 'execution_missed'
+  sessionId: string | null
+  /** 定时执行类事件的 actor 是规则设置人（仅归因），界面显示为“定时执行”。 */
+  actor: { userId: string; displayName: string }
+  metadata: {
+    from?: string
+    to?: string
+    auto?: boolean
+    note?: string | null
+    deliverables?: string[]
+    schedule?: ProjectTaskSchedule
+    reason?: string
+    runId?: string | null
+    slot?: string
+    title?: string
+    description?: string
+    dueDate?: string | null
+    /** 经 Agent 写入时的归因（S6）。 */
+    via?: { agentMemberId: string; agentName: string; runId: string }
+    count?: number
+    failures?: number
+  }
+  createdAt: string
+}
+
+export interface ProjectTaskPage {
+  items: ProjectTask[]
+  nextCursor: string | null
+  total: number
+}
+
+export interface ProjectTaskInput {
+  title: string
+  description?: string
+  assignee: { type: 'employee' | 'agent'; id: string }
+  inputFileIds?: string[]
+  dueDate?: string | null
+  /** S4：Agent 任务的执行规则；不传时服务端默认每天 09:00。 */
+  schedule?: ProjectTaskScheduleInput
+  /** S4：新建时“保存并立即执行”。 */
+  startNow?: boolean
+}
 
 /**
  * 一条团队动态。`objectId` 只是安全对象引用（成员／Agent／逻辑文件／空间 id），
@@ -592,6 +757,8 @@ export interface WorkspaceSessionSummary {
   lastActiveAt: string
   runCount: number
   latestRun: { id: string; status: RunStatus } | null
+  /** 任务线程所属的项目任务；普通讨论为 null（旧数据可能缺省）。 */
+  projectTaskId?: string | null
 }
 
 export interface WorkspaceSessionPage {
@@ -658,7 +825,112 @@ export interface WorkspaceAgentMember {
    * 恒为 null，前端只在非空时展示行内 tooltip 与红色状态点。
    */
   unavailableReason?: string | null
+  /**
+   * 项目空间 S0：Agent 在本空间可交付的数据范围（Agent 授权 ∩ 全体现任成员共同范围）。
+   * 仅负责人与管理员获得；其他角色缺省。
+   */
+  deliverableDataScopes?: string[]
 }
+
+/** 项目空间 S0：添加某位员工后会失去部分可交付数据范围的 Agent 成员。 */
+/** 新建项目空间前的数据范围影响预览（按所选 Agent）。 */
+export interface NewSpaceDisclosureImpact {
+  agentId: string
+  name: string
+  lostDataScopes: string[]
+}
+
+export interface MemberDisclosureImpact {
+  agentMemberId: string
+  name: string
+  lostDataScopes: string[]
+}
+
+/** 员工端界面模式（S5，D19）：work = A 工作模式（缺省），collab = B 协作模式。 */
+export type UiMode = 'work' | 'collab'
+
+export interface UserPreferences {
+  uiMode: UiMode
+  updatedAt: string | null
+}
+
+/** 协作模式对话列表的一行（S5c）：与某个 AI 同事的单聊或一个群组，而不是单个 Session。 */
+export interface ConversationTarget {
+  type: 'agent' | 'group'
+  /** 单聊为 Agent ID，群组为项目空间 ID。 */
+  id: string
+  name: string
+  description: string
+  avatarNames: string[]
+  lastMessage: { role: 'user' | 'assistant'; authorName: string; text: string; sentAt: string } | null
+  lastActiveAt: string
+  /** 单聊：AI 同事当前是否可用；群组恒为 true。 */
+  available: boolean
+  /** 已读位置之后他人发送的消息数，最多 100（S5e）。 */
+  unreadCount: number
+  /** 群组已按空间静音：未读以弱化样式显示。 */
+  muted: boolean
+}
+
+export interface AgentConversationSegment {
+  sessionId: string
+  title: string
+  createdAt: string
+  lastActiveAt: string
+  agentVersion: string
+  runCount: number
+  latestRun: { id: string; status: string } | null
+}
+
+/** 与某个 AI 同事的单聊：会话分段（新到旧）与发送时续写的会话。 */
+export interface AgentConversation {
+  agent: { id: string; name: string; description: string; version: string; available: boolean }
+  items: AgentConversationSegment[]
+  nextCursor: string | null
+  /** null：发送时开启新会话（首次对话或 Agent 版本已变化）。 */
+  continueSessionId: string | null
+}
+
+/** 群聊时间线的一项（S5d，GET /workspaces/:id/timeline）。 */
+export type WorkspaceTimelineItem =
+  | {
+      kind: 'message'; id: string; at: string; sessionId: string; sessionTitle: string
+      role: 'user' | 'assistant'; content: string; senderId: string | null; senderName: string | null
+      agentName: string | null; runId: string | null; runRequesterName: string | null
+    }
+  | {
+      kind: 'run'; id: string; at: string; sessionId: string; sessionTitle: string; runId: string
+      status: string; requesterName: string; agentName: string | null; stoppedByName: string | null
+    }
+  | {
+      kind: 'task'; id: string; at: string
+      event: 'created' | 'run_finished' | 'completed' | 'edited' | 'reassigned' | 'status_changed'
+      actorName: string | null
+      viaAgentName: string | null
+      task: {
+        id: string; title: string; status: 'todo' | 'in_progress' | 'done'; assigneeType: 'employee' | 'agent'
+        assigneeName: string; schedule: ProjectTaskSchedule | null; removed: boolean
+      }
+      run: { id: string; status: string; scheduled: boolean; quiet: boolean; summary: string | null } | null
+      /** 完成说明（completed）。 */
+      note: string | null
+      /** 经 Agent 的修改内容（S6）：edited 为新值与 previous，reassigned / status_changed 为 from / to。 */
+      changes?: TimelineTaskChanges | null
+    }
+  | { kind: 'system'; id: string; at: string; activityKind: string; actorName: string; safeMetadata: Record<string, unknown> }
+
+export interface TimelineTaskChanges {
+  title?: string
+  description?: string
+  dueDate?: string | null
+  previous?: { title?: string; dueDate?: string | null }
+  from?: string
+  to?: string
+}
+
+export type ConversationLocation =
+  | { type: 'agent'; agentId: string; sessionId: string }
+  | { type: 'group'; workspaceId: string; sessionId: string }
 
 export interface WorkbenchSession {
   user: UserProfile

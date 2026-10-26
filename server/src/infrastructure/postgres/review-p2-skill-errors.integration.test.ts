@@ -11,7 +11,6 @@ import { classifyHttpError, Router } from '../../http/router.ts'
 import { testApiAuthenticator } from '../../testing/test-identity.ts'
 import { SkillArtifactStore } from '../../modules/skill/skill-artifact-store.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { LocalObjectStorage } from '../storage/local-object-storage.ts'
 
@@ -25,7 +24,7 @@ const configuration = {
 before(async () => {
   db = await createThrowawayDatabase({ namePrefix: 'review_p2_skill' })
   root = await mkdtemp(join(tmpdir(), 'review-p2-skill-'))
-  service = new PostgresSkillService(db.client, undefined, new PostgresToolConnectorService(db.client), new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 })))
+  service = new PostgresSkillService(db.client, undefined, new SkillArtifactStore(new LocalObjectStorage(root, { fileMode: 0o400 })))
   draftId = (await service.createSkill(configuration)).skill.id
   const router = new Router({ authenticateApi: testApiAuthenticator })
   registerSkillRoutes(router, service)

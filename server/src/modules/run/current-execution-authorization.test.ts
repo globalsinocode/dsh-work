@@ -84,25 +84,6 @@ test('automation purpose is workspace-bound: never reaches the admin branch', as
   assert.equal(runtimeCalls, 1)
 })
 
-test('B-03/I-04: pinned tool bindings recheck before any purpose branch, fail-closed without a port', async () => {
-  const pin = { tool: 'read@1.0.0', binding_id: 'tool-binding-1', revision: 1, digest: 'a'.repeat(64) }
-  const pinned = { ...manifest, tool_bindings: [pin] } as RuntimeManifest
-  // Manifest 声明了 pin 但复核端口未接线：不可用而非放行。
-  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned), AuthorizationCheckUnavailableError)
-  // 管理目的分支同样在绑定复核之后：pin 失效在 requirePlatformAdmin 之前拒绝。
-  const trial = { ...pinned, purpose: 'agent-release-trial', workspace_id: '', agent_version_id: 'draft-v1' } as RuntimeManifest
-  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, trial), AuthorizationCheckUnavailableError)
-  // 接线后 pin 逐条交回复核端口；拒绝即授权失败。
-  let checked = 0
-  const bindings = { async assertActiveToolBindings(pins: unknown) { checked++; assert.deepEqual(pins, [pin]) } }
-  await assertCurrentExecutionAuthorization(ports(), undefined, pinned, bindings)
-  assert.equal(checked, 1)
-  const rejecting = { async assertActiveToolBindings() { throw authorizationDenied('revoked') } }
-  await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, rejecting), { code: 'permission_denied' })
-  // 无 pin 的 Manifest 不触碰复核端口。
-  await assertCurrentExecutionAuthorization(ports(), undefined, manifest, rejecting)
-})
-
 test('PF-03: pinned MCP Connectors require current connector availability before every purpose branch', async () => {
   const pin = {
     connector_id: 'connector-crm', server_name: 'crm', transport: 'streamable-http' as const,
@@ -115,53 +96,13 @@ test('PF-03: pinned MCP Connectors require current connector availability before
   )
   let checked = 0
   await assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertActiveMcpConnections(pins, agentVersionId) {
+    async assertPinnedConnections(pins) {
       checked += 1
       assert.deepEqual(pins, [pin])
-      assert.equal(agentVersionId, 'agent-v1')
     },
   })
   assert.equal(checked, 1)
   await assert.rejects(assertCurrentExecutionAuthorization(ports(), undefined, pinned, {
-    async assertActiveMcpConnections() { throw authorizationDenied('MCP connector unavailable') },
+    async assertPinnedConnections() { throw authorizationDenied('MCP connector unavailable') },
   }), { code: 'permission_denied' })
-})
-
-test('PF-06: delegated execution rechecks the frozen role/data ceiling and team Agent membership', async () => {
-  const delegated = {
-    ...manifest,
-    workspace_id: 'ws-team-1',
-    user_context: { ...manifest.user_context, role_ids: ['role-employee'] },
-    data_scopes: ['scope:one'],
-    delegation_context: {
-      delegation_id: 'delegation-1', root_task_id: 'task-root', parent_task_id: 'task-parent',
-      parent_run_id: 'run-parent', parent_attempt_id: 'attempt-parent', depth: 1, max_depth: 2,
-      role_ceiling: ['role-employee'], data_scope_ceiling: ['scope:one'],
-    },
-  } as RuntimeManifest
-  let runtimeCalls = 0
-  await assertCurrentExecutionAuthorization(ports({
-    async workspaceTypeOf() { return 'team' },
-    async authorizeRuntime() { throw new Error('team delegation must use the team execution gate') },
-    async authorizeTeamRunExecution(input) {
-      runtimeCalls += 1
-      assert.equal(input.requireAgentMember, true)
-      assert.deepEqual(input.scopeCeiling, { roleIds: ['role-employee'], dataScopes: ['scope:one'] })
-      return {
-        userId: 'u1', workspaceId: 'ws-team-1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: ['role-employee'], permissions: [],
-        dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
-      }
-    },
-  }), undefined, delegated)
-  assert.equal(runtimeCalls, 1)
-
-  await assert.rejects(assertCurrentExecutionAuthorization(ports({
-    async workspaceTypeOf() { return 'team' },
-    async authorizeTeamRunExecution() {
-      return {
-        userId: 'u1', workspaceId: 'ws-team-1', executorPrincipalId: 'principal-agent-a1', executorAuthorizationVersion: 1, roleIds: [], permissions: [],
-        dataScopes: ['scope:one'], agentVersionId: 'agent-v1',
-      }
-    },
-  }), undefined, delegated), { code: 'permission_denied' })
 })

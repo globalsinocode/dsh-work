@@ -72,6 +72,10 @@ export class Router {
     this.register('POST', path, handler)
   }
 
+  put(path: string, handler: RouteHandler) {
+    this.register('PUT', path, handler)
+  }
+
   patch(path: string, handler: RouteHandler) {
     this.register('PATCH', path, handler)
   }
@@ -102,7 +106,7 @@ export class Router {
     const requestId = resolveRequestId(request)
     response.setHeader('X-Request-Id', requestId)
     if (request.method === 'OPTIONS') {
-      response.writeHead(204, { Allow: 'GET, POST, PATCH, DELETE, OPTIONS' })
+      response.writeHead(204, { Allow: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' })
       response.end()
       return
     }

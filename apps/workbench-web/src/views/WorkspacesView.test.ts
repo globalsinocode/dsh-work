@@ -157,7 +157,7 @@ describe('WorkspacesView 归档筛选与归档卡片（design §2.1 / §6）', (
     await wrapper.find('[data-testid="workspace-filter-archived"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('暂无已归档的团队空间')
+    expect(wrapper.text()).toContain('暂无已归档的项目空间')
   })
 
   it('supports keyboard navigation across the archive filter (roving tabindex needs arrow keys)', async () => {

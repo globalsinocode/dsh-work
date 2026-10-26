@@ -1,4 +1,4 @@
-import { isAuthorizationDenial } from '../../domain/authorization-errors.ts'
+import { authorizationDenied, isAuthorizationDenial } from '../../domain/authorization-errors.ts'
 import type { DatabaseClient } from '../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../authorization/postgres-authorization-service.ts'
 import type { RunOrchestrationService } from './run-orchestration-service.ts'
@@ -286,11 +286,17 @@ export class RunRevocationSweep {
     const activeRuns = await this.runs.listActiveRunsInWorkspace(tenantId, workspaceId)
     for (const run of activeRuns) {
       try {
-        await this.authorization.authorizeTeamRunExecution({
+        const current = await this.authorization.authorizeTeamRunExecution({
           userId: run.requestedBy,
           workspaceId,
           agentVersionId: run.agentVersionId,
         })
+        // 项目空间 S0：交付边界是全体现任成员，加入数据范围更小的成员也会收紧授权。
+        // 快照里超出当前共同范围的数据范围按撤权处理。
+        const scopes = new Set(current.dataScopes)
+        if (run.dataScopes.some(scope => !scopes.has(scope))) {
+          throw authorizationDenied('空间成员变化后，任务快照超出当前可交付的数据范围')
+        }
       } catch (error) {
         // Only a *classified authorization denial* may cancel a run. Any other
         // throw is an infrastructure failure (DB outage/timeout, identity

@@ -14,7 +14,6 @@ import { strToU8, zipSync } from 'fflate'
 import { createThrowawayDatabase, type ThrowawayDatabase } from './test-database.ts'
 import { PostgresAuthorizationService } from '../../modules/authorization/postgres-authorization-service.ts'
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
-import { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import { PostgresConversationRepository } from '../../modules/workbench/application/postgres-conversation-repository.ts'
 import { PostgresRunRepository } from '../../modules/run/postgres-run-repository.ts'
 import { ModelGovernanceService } from '../../modules/model/model-governance-service.ts'
@@ -72,14 +71,13 @@ before(async () => {
   })
   const auth = new PostgresAuthorizationService(database.client)
   operations = new PostgresOperationsService(database.client, runtime, auth)
-  const tools = new PostgresToolConnectorService(database.client, runtime, operations)
-  const skills = new PostgresSkillService(database.client, operations, tools, artifactStore)
-  agents = new PostgresAgentService(database.client, operations, skills, tools)
+  const skills = new PostgresSkillService(database.client, operations, artifactStore)
+  agents = new PostgresAgentService(database.client, operations, skills)
   conversations = new PostgresConversationRepository(database.client)
   runs = new PostgresRunRepository(database.client)
   // B-03/I-04：Attempt 固定的绑定修订在执行前复核真实绑定服务。
-  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, agents, undefined, auth, { toolBindings: tools })
-  service = new AdminSkillInstallationService(database.client, orchestration, auth, tools, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
+  orchestration = new RunOrchestrationService(runs, conversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database.client)), runtime, undefined, operations, agents, undefined, auth)
+  service = new AdminSkillInstallationService(database.client, orchestration, auth, real ? acquireSkillSource : fixtureAcquire, false, [], artifactStore)
   assistant = new AdminAssistantService(database.client, orchestration, auth, service, skills, agents, operations)
 })
 after(async () => { await orchestration?.close(); await database?.dispose(); if (runtimeRoot) await rm(runtimeRoot, { recursive: true, force: true }) })
@@ -257,9 +255,6 @@ test('guarded Runtime and Agent mutations reject a stale plan revision inside th
     description: `${agentBefore.agent.description.slice(0, 170)}（并发更新）`,
     owner: agentBefore.agent.owner,
     department: agentBefore.agent.department,
-    visibility: agentBefore.agent.visibility,
-    roleIds: agentBefore.agent.roleIds,
-    dataScopes: agentBefore.agent.dataScopes,
     welcomeMessage: agentBefore.agent.welcomeMessage,
     examplePrompts: agentBefore.agent.examplePrompts,
     systemPrompt: agentBefore.agent.systemPrompt,
@@ -267,7 +262,8 @@ test('guarded Runtime and Agent mutations reject a stale plan revision inside th
     maxToolCalls: agentBefore.agent.maxToolCalls,
     timeoutSeconds: agentBefore.agent.timeoutSeconds,
     skills: agentBefore.agent.skills,
-    tools: agentBefore.agent.tools,
+    webSearchEnabled: agentBefore.agent.webSearchEnabled,
+    projectTasksEnabled: agentBefore.agent.projectTasksEnabled,
     changeSummary: '并发更新测试',
     actor,
   }
@@ -299,7 +295,7 @@ test('DSH tool preview, explicit confirmation, atomic idempotent install and dur
   assert.equal(JSON.stringify(version!.manifest).includes('SKILL_RESOURCE_MARKER_7F31'), false)
   assert.equal((await artifactStore.read(version!.manifest.artifact)).files.find(file => file.path === 'references/value.txt')?.content, 'SKILL_RESOURCE_MARKER_7F31')
   if (!real) {
-    const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
+    const skills = new PostgresSkillService(database.client, undefined, artifactStore)
     const skillId = results[0]!.installations[0]!.skillId!
     await assert.rejects(skills.testSkill({ skillId, actor }), /试运行不可用/)
     await assert.rejects(skills.setStatus({ skillId, actor, status: 'published' }), /测试/)
@@ -428,7 +424,7 @@ test('one confirmed plan atomically installs, tests and publishes same-source Sk
   assert.equal(after!.count, before!.count + 2)
   const [dependencyCount] = await database.client<{ count: number }[]>`select count(*)::int as count from skill_version_dependencies`
   assert.ok(dependencyCount!.count >= 1)
-  const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
+  const skills = new PostgresSkillService(database.client, undefined, artifactStore)
   skills.setPackageTester((userId, skill, prompt) => service.testPackage(userId, skill, prompt))
   assert.equal((await skills.testSkill({ skillId: rootId, actor })).status, 'passed')
   // Resource-only changes in a draft dependency must invalidate the root's
@@ -621,7 +617,7 @@ test('review 8a: same-version resource change cannot relabel a completed trial o
   const preview = await service.prepareZip(actor, { fileName: 'binding.zip', bytes: originalBytes })
   const installed = await service.confirmZip(actor, preview.id, preview.planSha256!)
   const skillId = installed.skillId!
-  const skills = new PostgresSkillService(database.client, undefined, undefined, artifactStore)
+  const skills = new PostgresSkillService(database.client, undefined, artifactStore)
   skills.setPackageTestLifecycle({
     start: (userId, skill, prompt) => service.startPackageTest(userId, skill, prompt),
     progress: (userId, skill, runId) => service.packageTestProgress(userId, skill, runId),

@@ -17,6 +17,7 @@ import type {
 import { PostgresTaskRepository, TaskContractConflictError } from '../task/postgres-task-repository.ts'
 import { TaskBudgetExceededError } from '../task/task-budget-types.ts'
 import { RequestError, accessDenied, notFound, stateConflict } from '../../domain/request-errors.ts'
+import { backgroundLaneMaxConcurrent, backgroundPurposes, isBackgroundLanePurpose, isBackgroundPurpose, type BackgroundLanePurpose } from '../../domain/background-lanes.ts'
 
 interface RunRow {
   id: string
@@ -160,6 +161,16 @@ export class PostgresRunRepository implements RunRepository {
         return mapRun(taskRun)
       }
 
+      if (input.requireIdleSession && input.sessionId) {
+        const [active] = await transaction<{ id: string }[]>`
+          select id from runs
+           where tenant_id = ${input.tenantId} and session_id = ${input.sessionId}
+             and status in ('queued', 'running', 'waiting', 'cancel_requested')
+             and not (requested_by = ${input.requestedBy} and idempotency_key = ${input.idempotencyKey})
+           limit 1
+        `
+        if (active) throw stateConflict(input.requireIdleSession.conflictMessage)
+      }
       const [created] = await transaction<RunRow[]>`
         insert into runs (
           id, tenant_id, task_id, session_id, requested_by, idempotency_key, status
@@ -388,6 +399,13 @@ export class PostgresRunRepository implements RunRepository {
       return mapAttempt(created)
   }
 
+  async recordCancelRequester(tenantId: string, runId: string, userId: string): Promise<void> {
+    await this.database`
+      update runs set cancel_requested_by = ${userId}
+       where tenant_id = ${tenantId} and id = ${runId} and cancel_requested_by is null
+    `
+  }
+
   async transitionRun(tenantId: string, runId: string, to: RunState): Promise<RunRecord> {
     return this.database.begin(async (transaction) => {
       const [current] = await transaction<RunRow[]>`
@@ -440,9 +458,8 @@ export class PostgresRunRepository implements RunRepository {
           from runtimes where tenant_id = ${tenantId} and id = ${runtimeId} for update
       `
       if (!runtime || runtime.schedulingStatus !== 'accepting') return false
-      const [pending] = await transaction<{ purpose: string | null; delegated: boolean }[]>`
-        select manifest->>'purpose' as purpose,
-               (manifest->'delegation_context') is not null as delegated
+      const [pending] = await transaction<{ purpose: string | null }[]>`
+        select manifest->>'purpose' as purpose
           from run_attempts
          where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
       `
@@ -454,21 +471,6 @@ export class PostgresRunRepository implements RunRepository {
            and status in ('running', 'cancel_requested')
       `
       if ((usage?.active ?? 0) >= runtime.capacity) return false
-      // PF-06: an admitted synchronous delegation reserves a Worker from the
-      // moment its relationship is committed until its child Attempt is claimed.
-      // Ordinary work cannot consume those reserved slots; the delegated child
-      // itself may claim one. The Runtime row lock serializes this with admission.
-      if (!pending.delegated) {
-        const [delegationReservations] = await transaction<{ reserved: number }[]>`
-          select count(*)::integer as reserved from task_delegations d
-          join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
-          left join run_attempts child_attempt
-            on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
-         where d.tenant_id = ${tenantId} and d.status in ('accepted', 'running')
-           and (child.current_attempt_id is null or child_attempt.status = 'queued')
-        `
-        if ((usage?.active ?? 0) + (delegationReservations?.reserved ?? 0) >= runtime.capacity) return false
-      }
       // AG-03：自动任务并发车道——计数与领取在同一 Runtime 行锁内完成。
       // 有效上限 = min(配置上限, capacity - 1)：始终为交互执行保留一路 Worker；
       // capacity ≤ 1 时车道为 0，超限返回 false 由调度泵区分「车道满跳过」
@@ -485,6 +487,27 @@ export class PostgresRunRepository implements RunRepository {
           if ((lane?.active ?? 0) >= laneLimit) return false
         }
       }
+      // EX-02 对话摘要与 S3 验证案例车道：各自有并发上限，且始终为交互执行保留一路 Worker。
+      if (isBackgroundLanePurpose(pending.purpose)) {
+        const laneLimit = Math.max(0, Math.min(backgroundLaneMaxConcurrent[pending.purpose], runtime.capacity - 1))
+        const [lane] = await transaction<{ active: number }[]>`
+          select count(*)::integer as active from run_attempts
+           where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
+             and status in ('running', 'cancel_requested')
+             and manifest->>'purpose' = ${pending.purpose}
+        `
+        if ((lane?.active ?? 0) >= laneLimit) return false
+      }
+      // 各后台车道合计同样只到 capacity - 1，避免多条车道同时用满后挤占交互执行。
+      if (isBackgroundPurpose(pending.purpose)) {
+        const [background] = await transaction<{ active: number }[]>`
+          select count(*)::integer as active from run_attempts
+           where tenant_id = ${tenantId} and runtime_id = ${runtimeId}
+             and status in ('running', 'cancel_requested')
+             and manifest->>'purpose' in ${transaction(backgroundPurposes)}
+        `
+        if ((background?.active ?? 0) >= runtime.capacity - 1) return false
+      }
       const [attempt] = await transaction<{ runId: string }[]>`
         update run_attempts set status = 'running', started_at = coalesce(started_at, now())
          where tenant_id = ${tenantId} and id = ${attemptId} and status = 'queued'
@@ -499,25 +522,6 @@ export class PostgresRunRepository implements RunRepository {
     })
   }
 
-  async isBlockedByDelegationReservation(tenantId: string, runtimeId: string): Promise<boolean> {
-    const [usage] = await this.database<{ capacity: number; schedulingStatus: string; active: number; reserved: number }[]>`
-      select r.capacity, r.scheduling_status as "schedulingStatus",
-             (select count(*)::integer from run_attempts a
-               where a.tenant_id = r.tenant_id and a.runtime_id = r.id
-                 and a.status in ('running', 'cancel_requested')) as active,
-             (select count(*)::integer from task_delegations d
-               join runs child on child.tenant_id = d.tenant_id and child.id = d.child_run_id
-               left join run_attempts child_attempt
-                 on child_attempt.tenant_id = child.tenant_id and child_attempt.id = child.current_attempt_id
-              where d.tenant_id = r.tenant_id and d.status in ('accepted', 'running')
-                and (child.current_attempt_id is null or child_attempt.status = 'queued')) as reserved
-        from runtimes r
-       where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
-    `
-    return Boolean(usage && usage.schedulingStatus === 'accepting' && usage.reserved > 0
-      && usage.active < usage.capacity && usage.active + usage.reserved >= usage.capacity)
-  }
-
   /**
    * AG-03 车道占用读数：返回自动任务有效并发上限与当前占用。
    * 有效上限 = min(配置上限, capacity - 1)，为交互执行保留一路；capacity ≤ 1
@@ -530,22 +534,36 @@ export class PostgresRunRepository implements RunRepository {
     tenantId: string,
     runtimeId: string,
     configuredMax: number,
-  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean }> {
-    const [row] = await this.database<{ capacity: number; schedulingStatus: string; running: number }[]>`
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }> {
+    return this.backgroundLaneUsage(tenantId, runtimeId, 'automation', configuredMax)
+  }
+
+  async backgroundLaneUsage(
+    tenantId: string,
+    runtimeId: string,
+    purpose: 'automation' | BackgroundLanePurpose,
+    configuredMax: number,
+  ): Promise<{ allowed: number; running: number; exists: boolean; accepting: boolean; backgroundFull: boolean }> {
+    const [row] = await this.database<{ capacity: number; schedulingStatus: string; running: number; background: number }[]>`
       select r.capacity, r.scheduling_status as "schedulingStatus",
              (select count(*)::integer from run_attempts a
                where a.tenant_id = r.tenant_id and a.runtime_id = r.id
                  and a.status in ('running', 'cancel_requested')
-                 and a.manifest->>'purpose' = 'automation') as running
+                 and a.manifest->>'purpose' = ${purpose}) as running,
+             (select count(*)::integer from run_attempts a
+               where a.tenant_id = r.tenant_id and a.runtime_id = r.id
+                 and a.status in ('running', 'cancel_requested')
+                 and a.manifest->>'purpose' in ${this.database(backgroundPurposes)}) as background
         from runtimes r
        where r.tenant_id = ${tenantId} and r.id = ${runtimeId}
     `
-    if (!row) return { allowed: 0, running: 0, exists: false, accepting: false }
+    if (!row) return { allowed: 0, running: 0, exists: false, accepting: false, backgroundFull: false }
     return {
       allowed: Math.max(0, Math.min(configuredMax, row.capacity - 1)),
       running: row.running,
       exists: true,
       accepting: row.schedulingStatus === 'accepting',
+      backgroundFull: row.background >= row.capacity - 1,
     }
   }
 
@@ -754,6 +772,13 @@ export class PostgresRunRepository implements RunRepository {
     throw new Error('系统事件写入失败：序列冲突重试耗尽')
   }
 
+  async markEventLate(tenantId: string, eventId: string): Promise<void> {
+    await this.database`
+      update run_events set safe_metadata = safe_metadata || '{"late": true}'::jsonb
+       where tenant_id = ${tenantId} and id = ${eventId}
+    `
+  }
+
   async readEvents(tenantId: string, runId: string, afterSequence = 0) {
     const rows = await this.database<EventRow[]>`
       select id, tenant_id as "tenantId", run_id as "runId", attempt_id as "attemptId",
@@ -942,12 +967,13 @@ export class PostgresRunRepository implements RunRepository {
   }
 
   async listActiveRunsInWorkspace(tenantId: string, workspaceId: string): Promise<WorkspaceActiveRun[]> {
-    const rows = await this.database<(RunRow & { agentVersionId: string })[]>`
+    const rows = await this.database<(RunRow & { agentVersionId: string; dataScopes: string[] })[]>`
       select r.id, r.tenant_id as "tenantId", r.task_id as "taskId", r.session_id as "sessionId",
              r.requested_by as "requestedBy", r.idempotency_key as "idempotencyKey",
              r.status, r.current_attempt_id as "currentAttemptId",
              r.created_at as "createdAt", r.updated_at as "updatedAt",
-             coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') as "agentVersionId"
+             coalesce(s.agent_version_id, ra.manifest->>'agent_version_id') as "agentVersionId",
+             coalesce(ra.manifest->'data_scopes', '[]'::jsonb) as "dataScopes"
         from runs r
         join tasks t on t.tenant_id = r.tenant_id and t.id = r.task_id
         left join sessions s on s.tenant_id = r.tenant_id and s.id = r.session_id
@@ -958,7 +984,7 @@ export class PostgresRunRepository implements RunRepository {
          and r.status in ('queued', 'running', 'waiting', 'cancel_requested')
        order by r.created_at asc
     `
-    return rows.map(row => ({ ...mapRun(row), agentVersionId: row.agentVersionId }))
+    return rows.map(row => ({ ...mapRun(row), agentVersionId: row.agentVersionId, dataScopes: row.dataScopes }))
   }
 }
 

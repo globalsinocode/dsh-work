@@ -264,6 +264,9 @@ onBeforeUnmount(() => {
             <div class="member-dialog__copy">
               <strong>{{ member.name }}</strong>
               <span>{{ member.description }}</span>
+              <span v-if="member.deliverableDataScopes" data-testid="agent-deliverable-scopes">
+                本空间可交付数据范围：{{ member.deliverableDataScopes.length ? member.deliverableDataScopes.join('、') : '无' }}
+              </span>
             </div>
             <el-tooltip
               :content="member.unavailableReason || agentStatusLabel(member)"

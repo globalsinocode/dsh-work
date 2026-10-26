@@ -1,4 +1,5 @@
 import type {
+  NewSpaceDisclosureImpact,
   PersonalFile,
   PersonalFileQuery,
   UserSessionSummary,
@@ -17,6 +18,12 @@ import type {
   TaskResult,
   TaskRun,
   TeamMemberRole,
+  UiMode,
+  AgentConversation,
+  ConversationLocation,
+  ConversationTarget,
+  WorkspaceTimelineItem,
+  UserPreferences,
   WorkbenchAgent,
   WorkbenchSession,
   WorkbenchSkill,
@@ -24,6 +31,14 @@ import type {
   WorkspaceActivityPage,
   WorkspaceActivityQuery,
   WorkspaceAgentMember,
+  MemberDisclosureImpact,
+  ProjectArchive,
+  ProjectArchiveVersion,
+  ProjectBrief,
+  ProjectTask,
+  ProjectTaskEvent,
+  ProjectTaskInput,
+  ProjectTaskPage,
   WorkspaceFile,
   WorkspaceFilePage,
   WorkspaceFileVersionPage,
@@ -188,6 +203,30 @@ export const workbenchApi = {
   getConversationSession: (id: string) => request<UserSessionSummary>(`/sessions/${encodeURIComponent(id)}/summary`),
 
   getSession: () => request<WorkbenchSession>('/session'),
+  getPreferences: () => request<UserPreferences>('/me/preferences'),
+  updatePreferences: (input: { uiMode: UiMode }) =>
+    request<UserPreferences>('/me/preferences', { method: 'PUT', body: JSON.stringify(input) }),
+  listConversationTargets: (query: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return request<{ items: ConversationTarget[]; nextCursor: string | null }>(`/me/conversation-targets?${params}`)
+  },
+  getAgentConversation: (agentId: string, cursor?: string) =>
+    request<AgentConversation>(
+      `/me/conversation-targets/agent/${encodeURIComponent(agentId)}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    ),
+  getWorkspaceTimeline: (workspaceId: string, before?: string) =>
+    request<{ workspaceId: string; items: WorkspaceTimelineItem[]; nextCursor: string | null }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/timeline${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    ),
+  /** S5e：本人在对话对象上的已读位置前进到 upTo（缺省为当前时间），只进不退。 */
+  markConversationTargetRead: (type: 'agent' | 'group', id: string, upTo?: string) =>
+    request<{ type: 'agent' | 'group'; id: string; lastReadAt: string }>(
+      `/me/conversation-targets/${type}/${encodeURIComponent(id)}/read`,
+      { method: 'POST', body: JSON.stringify(upTo ? { upTo } : {}) },
+    ),
+  resolveConversation: (conversationId: string) =>
+    request<ConversationLocation>(`/me/conversation-targets/resolve?conversation=${encodeURIComponent(conversationId)}`),
   getTasks: () => request<TaskRun[]>('/tasks'),
   getAgents: () => request<WorkbenchAgent[]>('/agents'),
   listMcpGrants: () => request<{ list: import('@/types/domain').McpUserGrantListItem[]; total: number; page: number; pageSize: number }>('/mcp-grants'),
@@ -278,10 +317,26 @@ export const workbenchApi = {
     status === 'all' ? '/workspaces' : `/workspaces?status=${status}`,
     { method: 'GET' },
   ),
-  createWorkspace: (input: { name: string; description: string }) => request<Workspace>('/workspaces', {
+  /** 新建项目空间（群组）：agentIds 为创建时加入的 Agent 成员，至少一个（功能规则 3.3、方案 12.8）。 */
+  createWorkspace: (input: { name: string; description: string; agentIds: string[]; memberUserIds?: string[] }) => request<Workspace>('/workspaces', {
     method: 'POST',
     body: JSON.stringify(input),
   }),
+  /** 新建项目空间（群组）前预览：加入所选同事后，所选 Agent 会失去哪些可交付数据范围（只读）。 */
+  previewNewSpaceDisclosureImpact: (input: { agentIds: string[]; memberUserIds: string[] }) =>
+    request<NewSpaceDisclosureImpact[]>('/workspaces/disclosure-impact', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** 新建项目空间（群组）时可一并加入的同事（不含本人）。 */
+  listNewSpaceMemberCandidates: (input: { query?: string; cursor?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (input.query) search.set('query', input.query)
+    if (input.cursor) search.set('cursor', input.cursor)
+    if (input.limit !== undefined) search.set('limit', String(input.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return request<MemberCandidatePage>(`/member-candidates${suffix}`, { method: 'GET' })
+  },
   /** 团队空间名称/说明保存（仅负责人；说明传 `null` 显式清空）。 */
   updateWorkspace: (workspaceId: string, input: WorkspaceUpdateInput) =>
     request<Workspace>(`/workspaces/${encodeURIComponent(workspaceId)}`, {
@@ -449,6 +504,82 @@ export const workbenchApi = {
     request<WorkspaceAgentMember[]>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'GET',
     }),
+  getProjectBrief: (workspaceId: string) =>
+    request<ProjectBrief | null>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, { method: 'GET' }),
+  saveProjectBrief: (workspaceId: string, input: { content: string; dueDate: string | null }) =>
+    request<ProjectBrief>(`/workspaces/${encodeURIComponent(workspaceId)}/brief`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  getProjectArchive: (workspaceId: string) =>
+    request<ProjectArchive>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, { method: 'GET' }),
+  saveProjectArchive: (workspaceId: string, input: { baseVersionNo: number; items: string[] }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  listProjectArchiveVersions: (workspaceId: string) =>
+    request<ProjectArchiveVersion[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/versions`, { method: 'GET' }),
+  rollbackProjectArchive: (workspaceId: string, input: { versionNo: number; baseVersionNo: number }) =>
+    request<ProjectArchiveVersion>(`/workspaces/${encodeURIComponent(workspaceId)}/project-archive/rollback`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listProjectTasks: (workspaceId: string, options: { limit?: number; cursor?: string; sessionId?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    if (options.cursor) query.set('cursor', options.cursor)
+    if (options.sessionId) query.set('sessionId', options.sessionId)
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return request<ProjectTaskPage>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks${suffix}`, { method: 'GET' })
+  },
+  getProjectTask: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }),
+  createProjectTask: (workspaceId: string, input: ProjectTaskInput) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  updateProjectTask: (workspaceId: string, taskId: string, input: Partial<ProjectTaskInput>) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+  removeProjectTask: (workspaceId: string, taskId: string) =>
+    request<{ removed: true }>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    }),
+  /** 启动 Agent 任务；prompt 为成员在任务对话里写下的补充要求（可省略）。 */
+  startProjectTask: (workspaceId: string, taskId: string, idempotencyKey: string, prompt?: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/start`, {
+      method: 'POST',
+      body: JSON.stringify(prompt ? { idempotencyKey, prompt } : { idempotencyKey }),
+    }),
+  listProjectTaskEvents: (workspaceId: string, taskId: string) =>
+    request<ProjectTaskEvent[]>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/events`, { method: 'GET' }),
+  setProjectTaskStatus: (
+    workspaceId: string,
+    taskId: string,
+    input: { status: 'todo' | 'in_progress' | 'done'; completionNote?: string; deliverableFileIds?: string[] },
+  ) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/status`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  resumeProjectTaskSchedule: (workspaceId: string, taskId: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/project-tasks/${encodeURIComponent(taskId)}/schedule/resume`, {
+      method: 'POST',
+    }),
+  markSessionAsProjectTask: (workspaceId: string, sessionId: string, title?: string) =>
+    request<ProjectTask>(`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/project-task`, {
+      method: 'POST',
+      body: JSON.stringify(title ? { title } : {}),
+    }),
+  previewMemberDisclosureImpact: (workspaceId: string, userId: string) =>
+    request<MemberDisclosureImpact[]>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/agent-members/disclosure-impact?userId=${encodeURIComponent(userId)}`,
+      { method: 'GET' },
+    ),
   addWorkspaceAgentMember: (workspaceId: string, input: { agentId: string }) =>
     request<WorkspaceAgentMember>(`/workspaces/${encodeURIComponent(workspaceId)}/agent-members`, {
       method: 'POST',

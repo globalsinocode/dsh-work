@@ -26,7 +26,9 @@ export function checkTeamWorkspace1a(check) {
   check.includes('server/src/http/workbench/workspace-member-routes.ts', [
     "router.get(`${basePath}/workspaces/:workspaceId/members`",
   ])
-  check.includes('apps/workbench-web/src/views/WorkspaceDetailView.vue', ['listWorkspaceMembers'])
+  // 员工端双模式 S5b 起，项目空间页（A 的 WorkspaceDetailView 与 B 的群组页共用）经 useProjectSpace 读取成员名册。
+  check.includes('apps/workbench-web/src/views/WorkspaceDetailView.vue', ['useProjectSpace'])
+  check.includes('apps/workbench-web/src/composables/useProjectSpace.ts', ['listWorkspaceMembers'])
 
   // 退出条件 2：多 Agent 共享授权不误删（AC-26）—— 来源多对多、对账门禁与原有用例。
   check.includes('server/src/modules/authorization/postgres-workspace-grant-source-service.ts', [

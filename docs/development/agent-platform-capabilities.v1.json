@@ -1,6 +1,6 @@
 {
   "schemaVersion": "agent-platform-capabilities/v1",
-  "baseline": "PF-01 through PF-06 implementation at 3217cbb; P2 evidence is assessed separately",
+  "baseline": "PF-01 through PF-05 implementation at 3217cbb (PF-06 Agent delegation removed 2026-10-16); P2 evidence is assessed separately",
   "capabilities": [
     {
       "id": "session-neutral-task",
@@ -43,13 +43,6 @@
       "p0": ["pnpm test:m1"],
       "p1": ["pnpm test:pf05:integration"],
       "p2Scenarios": ["real-recall", "identity-and-role-change", "revocation-while-waiting", "version-isolation"]
-    },
-    {
-      "id": "agent-delegation",
-      "package": "PF-06",
-      "p0": ["pnpm test:m1", "pnpm test:review:unit"],
-      "p1": ["pnpm test:pf06:integration"],
-      "p2Scenarios": ["real-parent-child-dsh", "identity-revocation", "capacity-exhaustion", "cancel-and-restart", "receipt-truth"]
     }
   ]
 }

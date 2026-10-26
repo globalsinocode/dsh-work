@@ -81,29 +81,38 @@ export function registerContentRoutes(
     const identity = requireRequestIdentity(context, 'workbench')
     const userId = identity.userId
     const access = await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
-    const body = await readJsonBody<{ name: string; description?: string }>(request)
-    if (body.name.trim().length < 2) throw invalidRequest('工作空间名称至少需要 2 个字符')
-    const workspace = await content.createWorkspace({
-      name: body.name,
-      description: body.description ?? '',
-    }, userId)
-    // 新团队空间自动加入平台默认 Agent（复用 addAgentMember 的版本固定与
-    // 授权派生事务）。默认 Agent 对该创建者不可用（未发布/未开放加入/
-    // 可见角色不含创建者/依赖闭包失效）时降级为「无 Agent」空态，
-    // 空间照常创建，由负责人后续手动添加。
-    if (workspace && agentMembers) {
-      try {
-        await agentMembers.addAgentMember(
-          workspace.id,
-          DEFAULT_WORKBENCH_AGENT_ID,
-          userId,
-          access?.roleIds ?? identity.roleIds,
-        )
-      } catch (error) {
-        console.warn('auto-join default agent failed', { workspaceId: workspace.id, error })
-      }
+    const body = await readJsonBody<{ name: string; description?: string; agentIds?: unknown; memberUserIds?: unknown }>(request)
+    if (typeof body.name !== 'string' || body.name.trim().length < 2) throw invalidRequest('工作空间名称至少需要 2 个字符')
+    const bodyAgentIds = optionalStringArray(body.agentIds, 'agentIds 必须是 Agent 标识数组')
+    const memberUserIds = optionalStringArray(body.memberUserIds, 'memberUserIds 必须是员工标识数组') ?? []
+    if (memberUserIds.length && !agentMembers) throw invalidRequest('当前环境不支持创建时加入同事')
+    const input = { name: body.name, description: body.description ?? '' }
+    // 方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员，创建与 Agent 加入在同一事务中
+    // 完成；任一 Agent 不能加入则整个创建失败，不再降级为“无 Agent”空间。未指定 agentIds 的旧调用
+    // 按平台默认 Agent 加入，同样失败即不创建。
+    let workspace
+    if (agentMembers) {
+      const agentIds = bodyAgentIds ?? [DEFAULT_WORKBENCH_AGENT_ID]
+      const workspaceId = await agentMembers.createTeamWorkspace(
+        input, agentIds, userId, access?.roleIds ?? identity.roleIds, memberUserIds)
+      workspace = (await content.listWorkspaces(userId, { status: 'active' })).find(item => item.id === workspaceId)
+    } else {
+      workspace = await content.createWorkspace(input, userId)
     }
     return httpResult(201, envelope('workbench', workspace, 'postgres'))
+  })
+
+  // 新建项目空间（群组）时一并选择同事：提交前预览对所选 Agent 可交付数据范围的影响（只读）。
+  router.post(`${basePath}/workspaces/disclosure-impact`, async (request, context) => {
+    const identity = requireRequestIdentity(context, 'workbench')
+    const userId = identity.userId
+    const access = await authorization.authorizeWorkbench({ userId, ...sessionAuthorizationContext(identity) })
+    if (!agentMembers) throw invalidRequest('当前环境不支持创建时加入同事')
+    const body = await readJsonBody<{ agentIds?: unknown; memberUserIds?: unknown }>(request)
+    const agentIds = optionalStringArray(body.agentIds, 'agentIds 必须是 Agent 标识数组') ?? []
+    const memberUserIds = optionalStringArray(body.memberUserIds, 'memberUserIds 必须是员工标识数组') ?? []
+    return envelope('workbench', await agentMembers.previewNewSpaceDisclosureImpact(
+      agentIds, memberUserIds, userId, access?.roleIds ?? identity.roleIds), 'postgres')
   })
 
   // 3-T3 依赖：团队空间名称/说明保存（1A 遗留的 PATCH）。仅负责人；清空说明显式传 null。
@@ -386,4 +395,10 @@ export function writeDownload(response: ServerResponse, name: string, mimeType: 
 function headerValue(request: IncomingMessage, name: string) {
   const header = request.headers[name]
   return Array.isArray(header) ? header[0] : header
+}
+
+function optionalStringArray(value: unknown, message: string): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw invalidRequest(message)
+  return value as string[]
 }

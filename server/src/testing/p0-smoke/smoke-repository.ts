@@ -1,6 +1,5 @@
 import {
   mockAgents,
-  mockAgentReleaseRecords,
   mockAgentVersions,
   mockArtifactFiles,
   mockArtifacts,
@@ -11,19 +10,16 @@ import {
   mockRuntimes,
   mockSkills,
   mockTasks,
-  mockTools,
   mockUsage,
   mockWorkspaces,
   prototypeUsers,
 } from './data.ts'
 import type {
   AgentDefinition,
-  AgentReleaseRecord,
   AgentVersionRecord,
   ConnectorDefinition,
   RuntimeDefinition,
   SkillDefinition,
-  ToolDefinition,
 } from '../../domain/types.ts'
 import { notFound, stateConflict } from '../../domain/request-errors.ts'
 
@@ -38,9 +34,13 @@ async function simulateIo() {
  * production always reads PostgreSQL. Edits are lost on restart by design.
  */
 export class SmokeRepository {
+  // 每个实例持有独立副本：P0 重置（POST /api/testing/p0/reset）新建实例即可回到初始数据，
+  // 不能直接改模块级的 mock 数组，否则写入会跨实例泄漏。
+  private readonly data: PrototypeData = copy(prototypeData)
+
   async read<K extends PrototypeCollection>(collection: K): Promise<PrototypeData[K]> {
     await simulateIo()
-    return copy(prototypeData[collection])
+    return copy(this.data[collection])
   }
 
   /**
@@ -61,7 +61,7 @@ export class SmokeRepository {
     patch: Partial<Omit<AgentDefinition, 'id'>>,
   ): Promise<AgentDefinition> {
     await simulateIo()
-    const agent = prototypeData.agents.find((item) => item.id === agentId)
+    const agent = this.data.agents.find((item) => item.id === agentId)
     if (!agent) throw notFound(`Agent 不存在：${agentId}`)
     Object.assign(agent, copy(patch))
     return copy(agent)
@@ -73,7 +73,7 @@ export class SmokeRepository {
     patch: Partial<Omit<AgentVersionRecord, 'id' | 'agentId' | 'version'>>,
   ): Promise<AgentVersionRecord> {
     await simulateIo()
-    const record = prototypeData.agentVersions.find(
+    const record = this.data.agentVersions.find(
       (item) => item.agentId === agentId && item.version === version,
     )
     if (!record) throw notFound(`Agent Version 不存在：${agentId}@${version}`)
@@ -86,26 +86,20 @@ export class SmokeRepository {
     version: AgentVersionRecord,
   ): Promise<{ agent: AgentDefinition; version: AgentVersionRecord }> {
     await simulateIo()
-    if (prototypeData.agents.some((item) => item.id === agent.id)) {
+    if (this.data.agents.some((item) => item.id === agent.id)) {
       throw stateConflict(`Agent 标识已存在：${agent.id}`)
     }
-    prototypeData.agents.unshift(copy(agent))
-    prototypeData.agentVersions.unshift(copy(version))
+    this.data.agents.unshift(copy(agent))
+    this.data.agentVersions.unshift(copy(version))
     return { agent: copy(agent), version: copy(version) }
-  }
-
-  async appendAgentRelease(record: AgentReleaseRecord): Promise<AgentReleaseRecord> {
-    await simulateIo()
-    prototypeData.agentReleaseRecords.unshift(copy(record))
-    return copy(record)
   }
 
   async createSkill(skill: SkillDefinition): Promise<SkillDefinition> {
     await simulateIo()
-    if (prototypeData.skills.some((item) => item.id === skill.id)) {
+    if (this.data.skills.some((item) => item.id === skill.id)) {
       throw stateConflict(`Skill 标识已存在：${skill.id}`)
     }
-    prototypeData.skills.unshift(copy(skill))
+    this.data.skills.unshift(copy(skill))
     return copy(skill)
   }
 
@@ -114,30 +108,10 @@ export class SmokeRepository {
     patch: Partial<Omit<SkillDefinition, 'id'>>,
   ): Promise<SkillDefinition> {
     await simulateIo()
-    const skill = prototypeData.skills.find((item) => item.id === skillId)
+    const skill = this.data.skills.find((item) => item.id === skillId)
     if (!skill) throw notFound(`Skill 不存在：${skillId}`)
     Object.assign(skill, copy(patch))
     return copy(skill)
-  }
-
-  async updateTool(
-    toolId: string,
-    patch: Partial<Omit<ToolDefinition, 'id'>>,
-  ): Promise<ToolDefinition> {
-    await simulateIo()
-    const tool = prototypeData.tools.find((item) => item.id === toolId)
-    if (!tool) throw notFound(`工具不存在：${toolId}`)
-    Object.assign(tool, copy(patch))
-    return copy(tool)
-  }
-
-  async createTool(tool: ToolDefinition): Promise<ToolDefinition> {
-    await simulateIo()
-    if (prototypeData.tools.some((item) => item.id === tool.id)) {
-      throw stateConflict(`工具已存在：${tool.name}`)
-    }
-    prototypeData.tools.unshift(copy(tool))
-    return copy(tool)
   }
 
   async updateConnector(
@@ -145,21 +119,10 @@ export class SmokeRepository {
     patch: Partial<Omit<ConnectorDefinition, 'id'>>,
   ): Promise<ConnectorDefinition> {
     await simulateIo()
-    const connector = prototypeData.connectors.find((item) => item.id === connectorId)
+    const connector = this.data.connectors.find((item) => item.id === connectorId)
     if (!connector) throw notFound(`连接器不存在：${connectorId}`)
     Object.assign(connector, copy(patch))
     return copy(connector)
-  }
-
-  async updateToolPermissions(
-    toolId: string,
-    patch: Pick<ToolDefinition, 'allowedRoleIds' | 'allowedRoles' | 'dataScopes' | 'approvalPolicy'>,
-  ): Promise<ToolDefinition> {
-    await simulateIo()
-    const tool = prototypeData.tools.find((item) => item.id === toolId)
-    if (!tool) throw notFound(`工具不存在：${toolId}`)
-    Object.assign(tool, copy(patch))
-    return copy(tool)
   }
 
   async updateRuntime(
@@ -167,7 +130,7 @@ export class SmokeRepository {
     patch: Partial<Omit<RuntimeDefinition, 'id'>>,
   ): Promise<RuntimeDefinition> {
     await simulateIo()
-    const runtime = prototypeData.runtimes.find((item) => item.id === runtimeId)
+    const runtime = this.data.runtimes.find((item) => item.id === runtimeId)
     if (!runtime) throw notFound(`Runtime 不存在：${runtimeId}`)
     Object.assign(runtime, copy(patch))
     return copy(runtime)
@@ -180,9 +143,7 @@ const prototypeData = {
   artifacts: mockArtifacts,
   agents: mockAgents,
   agentVersions: mockAgentVersions,
-  agentReleaseRecords: mockAgentReleaseRecords,
   skills: mockSkills,
-  tools: mockTools,
   connectors: mockConnectors,
   runtimes: mockRuntimes,
   auditEvents: mockAuditEvents,

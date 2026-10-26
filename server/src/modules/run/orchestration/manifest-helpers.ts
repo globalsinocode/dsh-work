@@ -1,26 +1,9 @@
 // Pure helpers that shape Runtime Manifests for the orchestration entry points.
 import type { RuntimeSkillConfiguration } from '../../skill/postgres-skill-service.ts'
 import type { AdminRunPurpose, RuntimeManifest } from '../../runtime/runtime-types.ts'
-import type { RuntimeAgentSnapshot } from '../../agent/postgres-agent-service.ts'
 import type { TaskBudgetLimits } from '../../task/task-budget-types.ts'
 import { platformToolsForPurpose } from '../../runtime/platform-tool-contracts.ts'
 import { requestInvalid } from '../../../domain/authorization-errors.ts'
-
-export function agentDataToolRefs(agent: RuntimeAgentSnapshot): RuntimeManifest['tools'] {
-  const names = new Set<string>()
-  if (agent.stateEnabled) {
-    names.add('state_get')
-    names.add('state_put')
-  }
-  const byAction = {
-    query: 'data_query', propose: 'data_propose', create: 'data_create',
-    update: 'data_update', transition: 'data_transition',
-  } as const
-  for (const requirement of agent.dataRequirements ?? []) {
-    for (const action of requirement.actions) names.add(byAction[action])
-  }
-  return [...names].map(id => ({ id, version: '1.0.0' }))
-}
 
 export function flattenSkillDependencies(skill: RuntimeSkillConfiguration): RuntimeSkillConfiguration[] {
   return (skill.dependencySkills ?? []).flatMap(item => [item, ...flattenSkillDependencies(item)])

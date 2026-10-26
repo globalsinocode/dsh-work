@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import Ajv2020Module from 'ajv/dist/2020.js'
 import { MAX_SKILL_BYTES } from '../../domain/skill-package-limits.ts'
+import { archiveDigest } from '../../domain/project-archive.ts'
 import { compileRuntimeManifest } from './manifest-compiler.ts'
 import { canonicalJson } from './canonical-json.ts'
 import { normalizePersistedRuntimeManifest } from './runtime-manifest-compatibility.ts'
@@ -123,6 +124,54 @@ function assertBothAccept(manifest: RuntimeManifest, label: string) {
 }
 
 describe('Runtime Manifest Schema / compiler boundary', () => {
+  it('EX-02 accepts a session-summary run and a conversation summary; rejects misuse', () => {
+    const turn = baseManifest()
+    turn.input.conversation_history = [{ role: 'user', content: '首条' }]
+    turn.input.conversation_summary = { content: '摘要', covered_message_count: 3, sha256: sha256('摘要') }
+    assertBothAccept(turn, 'conversation summary')
+    const forged = structuredClone(turn)
+    forged.input.conversation_summary!.sha256 = sha256('另一段')
+    assert.throws(() => compileRuntimeManifest(forged), /conversation_summary is invalid/)
+
+    const summaryRun = baseManifest()
+    summaryRun.purpose = 'session-summary'
+    summaryRun.summary_target = { session_id: 'session-long', covered_through_message_id: 'message-9' }
+    summaryRun.session_id = null
+    summaryRun.workspace_id = ''
+    summaryRun.agent_version_id = null
+    summaryRun.skills = []
+    summaryRun.tools = []
+    assertBothAccept(summaryRun, 'session-summary run')
+    const withTools = structuredClone(summaryRun)
+    withTools.tools = [{ id: 'read', version: '1.0.0' }]
+    assert.throws(() => compileRuntimeManifest(withTools), /session-summary runs carry no Agent/)
+    const strayTarget = baseManifest()
+    strayTarget.summary_target = { session_id: 's', covered_through_message_id: 'm' }
+    assert.throws(() => compileRuntimeManifest(strayTarget), /summary_target is required for and only allowed/)
+  })
+
+  it('项目空间 S2 accepts a project-archive run and rejects tools, data scopes or a stray target', () => {
+    const archiveRun = baseManifest()
+    archiveRun.purpose = 'project-archive'
+    archiveRun.archive_target = { workspace_id: 'ws-team', update_id: 'warchup-1' }
+    archiveRun.session_id = null
+    archiveRun.workspace_id = ''
+    archiveRun.agent_version_id = null
+    archiveRun.skills = []
+    archiveRun.tools = []
+    archiveRun.data_scopes = []
+    assertBothAccept(archiveRun, 'project-archive run')
+    const withTools = structuredClone(archiveRun)
+    withTools.tools = [{ id: 'read', version: '1.0.0' }]
+    assertBothReject(withTools, /project-archive runs carry no Agent|maxItems|must NOT have more/, 'archive run with tools')
+    const withScopes = structuredClone(archiveRun)
+    withScopes.data_scopes = ['scope-east']
+    assertBothReject(withScopes, /project-archive runs carry no Agent|must NOT have more/, 'archive run with data scopes')
+    const strayTarget = baseManifest()
+    strayTarget.archive_target = { workspace_id: 'ws-team', update_id: 'warchup-1' }
+    assert.throws(() => compileRuntimeManifest(strayTarget), /archive_target is required for and only allowed/)
+  })
+
   it('accepts a bounded MCP Connector snapshot and rejects secret or unsupported transport fields', () => {
     const manifest = baseManifest()
     manifest.permission_policy.network_policy = 'allowlist'
@@ -414,39 +463,6 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     }
   })
 
-  it('B-03/I-04: pins platform tool bindings at both boundaries without crossing the tools[] namespace', () => {
-    const pin = () => ({
-      tool: 'tool-erp-read@1.0.0',
-      binding_id: 'tool-binding-9f2c',
-      revision: 3,
-      digest: sha256('binding-snapshot'),
-    })
-    const applyBindings = (mutate: (pins: Record<string, unknown>[]) => void) => {
-      const manifest = baseManifest()
-      const pins = [pin()]
-      mutate(pins)
-      manifest.tool_bindings = pins as unknown as RuntimeManifest['tool_bindings']
-      return manifest
-    }
-    // tools[] 是 DSH 运行时名命名空间，tool_bindings 是平台 id@version 命名空间——
-    // 两者独立校验，互不交叉引用。
-    assertBothAccept(applyBindings(() => undefined), 'platform binding pin')
-    assertBothAccept(baseManifest(), 'manifest without tool_bindings')
-
-    assertBothReject(applyBindings(pins => { pins[0]!.endpoint = 'https://erp.internal' }), /未声明字段/, 'binding pin with undeclared field')
-    assertBothReject(applyBindings(pins => { pins[0]!.tool = 'not-a-reference' }), /id@version/, 'binding pin with malformed tool reference')
-    // 同一工具的重复固定是编译器侧检查——schema 无法表达按字段去重。
-    {
-      const duplicated = applyBindings(pins => { pins.push(pin()) })
-      assert.equal(schemaErrors(duplicated).valid, true)
-      assert.throws(() => compileRuntimeManifest(duplicated), /重复固定/)
-    }
-    assertBothReject(applyBindings(pins => { pins[0]!.binding_id = '' }), /binding_id/, 'binding pin with blank binding_id')
-    assertBothReject(applyBindings(pins => { pins[0]!.revision = 0 }), /revision/, 'binding pin with non-positive revision')
-    assertBothReject(applyBindings(pins => { pins[0]!.digest = 'A'.repeat(64) }), /digest/, 'binding pin with uppercase digest')
-    assertBothReject(applyBindings(pins => { pins[0]!.digest = 'abc' }), /digest/, 'binding pin with short digest')
-  })
-
   it('PF-04 pins a bounded approval checkpoint in a resumed Attempt', () => {
     const manifest = baseManifest()
     manifest.attempt_id = 'attempt-resumed'
@@ -513,37 +529,51 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     } as RuntimeManifest, /contentDigest/, 'invalid memory digest')
   })
 
-  it('PF-06 binds delegation policy, lineage and the root budget scope', () => {
+  it('项目空间 S1 pins the project brief version with a matching digest', () => {
     const manifest = baseManifest()
-    manifest.tools.push({ id: 'delegate_agent', version: '1.0.0' })
-    manifest.delegation_policy = {
-      allowed_agent_version_ids: ['agent-version-child-1'],
-      max_depth: 2,
-      max_parallel: 2,
-      timeout_seconds: 120,
+    const content = '目标：本季度把华东区缺货率降到 3% 以下。'
+    manifest.project_context = {
+      brief: { version_id: 'wbrief-1', version_no: 2, content, content_sha256: sha256(content), due_date: '2026-12-31' },
     }
-    assertBothAccept(manifest, 'delegation policy')
+    assertBothAccept(manifest, 'project brief context')
+    assertBothAccept({ ...manifest, project_context: { brief: { ...manifest.project_context.brief!, due_date: null } } }, 'brief without due date')
+    const tampered = { ...manifest, project_context: { brief: { ...manifest.project_context.brief!, content: '已被篡改' } } }
+    assert.equal(schemaErrors(tampered).valid, true, 'digest/body matching belongs to the compiler')
+    assert.throws(() => compileRuntimeManifest(tampered), /content_sha256/)
+    assertBothReject({
+      ...manifest,
+      project_context: { brief: { ...manifest.project_context.brief!, extra: true } },
+    } as unknown as RuntimeManifest, /project_context|brief/, 'unknown brief field')
+  })
 
-    const withoutTool = structuredClone(manifest)
-    withoutTool.tools = withoutTool.tools.filter(tool => tool.id !== 'delegate_agent')
-    assert.equal(schemaErrors(withoutTool).valid, true, 'the compiler owns the policy/tool relationship')
-    assert.throws(() => compileRuntimeManifest(withoutTool), /declared together/)
-
-    const child = structuredClone(manifest)
-    child.task_id = 'task-delegated-child'
-    child.run_id = 'run-delegated-child'
-    child.attempt_id = 'attempt-delegated-child'
-    child.agent_version_id = 'agent-version-child-1'
-    child.budget.scope_task_id = 'task-schema-check'
-    child.delegation_context = {
-      delegation_id: 'delegation-1', root_task_id: 'task-schema-check',
-      parent_task_id: 'task-schema-check', parent_run_id: 'run-schema-check',
-      parent_attempt_id: 'attempt-1', depth: 1, max_depth: 2,
-      role_ceiling: ['role-employee'], data_scope_ceiling: ['region:east'],
+  it('项目空间 S2 pins the project archive version with a matching digest', () => {
+    const manifest = baseManifest()
+    const items = ['缺货集中在高周转 SKU 类目。', '决策：按类目设置安全库存。']
+    manifest.project_context = {
+      archive: { version_id: 'warch-1', version_no: 3, items, items_sha256: archiveDigest(items) },
     }
-    assertBothAccept(child, 'delegated child lineage')
-    child.budget.scope_task_id = child.task_id
-    assert.equal(schemaErrors(child).valid, true, 'the compiler owns the lineage/budget relationship')
-    assert.throws(() => compileRuntimeManifest(child), /root Task budget scope/)
+    assertBothAccept(manifest, 'archive-only project context')
+    const content = '目标：缺货率降到 3%'
+    assertBothAccept({
+      ...manifest,
+      project_context: {
+        ...manifest.project_context,
+        brief: { version_id: 'wbrief-1', version_no: 1, content, content_sha256: sha256(content), due_date: null },
+      },
+    }, 'brief and archive')
+    const tampered = { ...manifest, project_context: { archive: { ...manifest.project_context.archive!, items: ['已被篡改'] } } }
+    assert.equal(schemaErrors(tampered).valid, true, 'digest/items matching belongs to the compiler')
+    assert.throws(() => compileRuntimeManifest(tampered), /items_sha256/)
+    const duplicated = ['同一条', '同一条']
+    assertBothReject({
+      ...manifest,
+      project_context: { archive: { ...manifest.project_context.archive!, items: duplicated, items_sha256: archiveDigest(duplicated) } },
+    }, /archive items are invalid/, 'duplicated archive items')
+    assertBothReject({ ...manifest, project_context: {} } as RuntimeManifest, /project_context|fewer than 1/, 'empty project context')
+  })
+
+  it('rejects the removed Agent delegation fields', () => {
+    const manifest = { ...baseManifest(), delegation_policy: { allowed_agent_version_ids: [] } } as unknown as RuntimeManifest
+    assert.equal(schemaErrors(manifest).valid, false)
   })
 })

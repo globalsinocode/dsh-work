@@ -1,58 +1,58 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
-import { RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowDown,
   ArrowRight,
   ChatDotRound,
   Close,
   Document,
   Files,
+  FolderOpened,
   InfoFilled,
+  List,
+  Notebook,
   Plus,
 } from '@element-plus/icons-vue'
 
 import { ArtifactCard } from '@dsh-work/ui-core'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import { useNotificationStore } from '@/stores/notifications'
-import { useTaskStore } from '@/stores/tasks'
 import { workbenchApi } from '@/api/client'
 import type {
   Artifact,
   TeamMemberRole,
   Workspace,
   WorkspaceActivityItem,
-  WorkspaceAgentMember,
   WorkspaceFile,
   WorkspaceFileVersion,
-  WorkspaceMember,
   WorkspaceNotificationState,
   WorkspaceUsageRange,
   WorkspaceUsageTotals,
 } from '@/types/domain'
 import ArtifactPreviewDialog from '@/components/ArtifactPreviewDialog.vue'
 import ConversationStarter from '@/components/ConversationStarter.vue'
+import ProjectBriefCard from '@/components/ProjectBriefCard.vue'
+import ProjectArchivePanel from '@/components/ProjectArchivePanel.vue'
+import ProjectTaskPanel from '@/components/ProjectTaskPanel.vue'
 import WorkspaceFileVersionsDialog from '@/components/WorkspaceFileVersionsDialog.vue'
 import WorkspaceAgentMemberDialog from '@/components/WorkspaceAgentMemberDialog.vue'
 import WorkspaceMemberDialog from '@/components/WorkspaceMemberDialog.vue'
+import AddGroupMembersDialog from '@/components/AddGroupMembersDialog.vue'
 import WorkspaceSessionHistory from '@/components/WorkspaceSessionHistory.vue'
 import WorkspaceSettingsDialog from '@/components/WorkspaceSettingsDialog.vue'
 import WorkspaceUsageDialog from '@/components/WorkspaceUsageDialog.vue'
-import { type ComposerDraft, WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
-import TeamSpaceComposer from '@/components/team-space-composer/team-space-composer.vue'
-import WorkspaceContextSkeleton from '@/components/workspace-context-skeleton/workspace-context-skeleton.vue'
-import {
-  createEmptyTeamComposerBridge,
-  teamComposerBridgeKey,
-  type TeamComposerSubmitPayload,
-} from '@/components/team-space-composer/team-composer-bridge'
+import { WorkspaceInfoPanel, describeWorkspaceActivity } from '@dsh-work/workbench-components'
 import { downloadArtifactFile, notifyActionFailure } from '@/utils/feedback'
 import { buildActivityDisplayItems } from '@/utils/workspace-activity'
+import { useProjectSpace } from '@/composables/useProjectSpace'
+import { spaceView, useSpaceRoutes } from '@/composables/space-routes'
 import { describeVersionParseStatus, formatFileVersionLabel, toVersionFileReference } from '@/utils/workspace-file-versions'
 
-type WorkspaceTab = 'conversation' | 'files' | 'artifacts'
+type WorkspaceTab = 'tasks' | 'conversation' | 'files' | 'artifacts' | 'archive'
+const WORKSPACE_TABS: WorkspaceTab[] = ['tasks', 'conversation', 'files', 'artifacts', 'archive']
+/** 只有项目空间才有的页签；个人空间深链到这些页签时退回默认页签。 */
+const TEAM_ONLY_TABS: WorkspaceTab[] = ['tasks', 'archive']
 /** 对话页签内的视图：新对话（默认）/ 历史对话（design §2.2）。 */
 type ConversationView = 'new' | 'history'
 
@@ -61,37 +61,51 @@ type ConversationView = 'new' | 'history'
  * 缺省时按 utils/member-roles 的保守口径从空间负责人推导。
  */
 const props = withDefaults(
-  defineProps<{ currentUserRole?: TeamMemberRole | null }>(),
-  { currentUserRole: undefined },
+  defineProps<{
+    currentUserRole?: TeamMemberRole | null
+    /**
+     * 布局（员工端双模式 S5d，D30）：page 为 A 的项目空间页；collab 为 B 群组页内嵌——
+     * 头部（成员、页签、群信息）与“对话”页签内容由宿主经 header / chat 插槽提供，任务、文件、
+     * 成果、档案页签、信息栏与各弹窗仍是本组件同一实现。
+     */
+    layout?: 'page' | 'collab'
+    /** collab：信息栏是否展开（宿主的“群信息”按钮控制）。 */
+    infoOpen?: boolean
+    /** collab：每次递增打开“管理成员”（宿主头部的“＋”）。 */
+    /** collab：群组头部“＋”每次加一，打开“添加成员”（与新建群组同一个成员选择器）。 */
+    addMembersRequest?: number
+  }>(),
+  { currentUserRole: undefined, layout: 'page', infoOpen: false, addMembersRequest: 0 },
 )
+const emit = defineEmits<{
+  'update:infoOpen': [value: boolean]
+  /** collab：文件页签“引用到对话”交给宿主的群聊输入区。 */
+  'use-file': [file: WorkspaceFile]
+}>()
+const collab = computed(() => props.layout === 'collab')
+const spaceRoutes = useSpaceRoutes()
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const contentStore = useContentStore()
-const taskStore = useTaskStore()
-const notificationStore = useNotificationStore()
-/** 团队空间会话活动 SSE 的 since 水位线（与 ConversationView / SessionHistory 同口径）。 */
-const workspaceSyncedAt = ref(new Date().toISOString())
-let artifactLiveRefreshTimer: ReturnType<typeof setTimeout> | undefined
-type WorkspaceComposerHandle = {
+const starterRef = ref<{
   useWorkspaceFile: (file: WorkspaceFile) => void
-  focusComposer: () => void
-  submitWorkspaceTask?: (payload: TeamComposerSubmitPayload) => void | Promise<void>
-}
-const starterRef = ref<WorkspaceComposerHandle>()
-
-function activeWorkspaceComposer() {
-  return starterRef.value
-}
-
-const teamComposerDrafts = reactive<Record<string, ComposerDraft>>({})
-const teamComposerBridge = ref(createEmptyTeamComposerBridge())
-provide(teamComposerBridgeKey, teamComposerBridge)
-
-const conversationViewButtonRefs = ref<HTMLButtonElement[]>([])
+}>()
 const tabButtonRefs = ref<HTMLButtonElement[]>([])
-const panelCollapsed = ref(false)
+const panelCollapsed = ref(props.layout === 'collab' && !props.infoOpen)
+/** 右栏只在宽屏显示（≤1180px 时改为信息抽屉）：任务信息卡片据此决定传送到右栏还是就地显示。 */
+const wideQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(min-width: 1181px)')
+  : null
+const wideLayout = ref(wideQuery?.matches ?? true)
+function onWideChange(event: MediaQueryListEvent) {
+  wideLayout.value = event.matches
+}
+wideQuery?.addEventListener?.('change', onWideChange)
+onBeforeUnmount(() => wideQuery?.removeEventListener?.('change', onWideChange))
+/** 任务详情的标题（面包屑），由任务面板读取任务后回传。 */
+const taskDetailTitle = ref('')
 const mobileInfoOpen = ref(false)
 const uploadInput = ref<HTMLInputElement>()
 const uploading = ref(false)
@@ -115,27 +129,11 @@ const versionUploadError = ref<{ logicalFileId: string; message: string } | null
 
 const memberDialogOpen = ref(false)
 const agentDialogOpen = ref(false)
+const addMembersDialogOpen = ref(false)
 const settingsDialogOpen = ref(false)
 /** HTML 成果预览：读取轨，归档空间与个人空间同样可预览（与下载同口径）。 */
 const previewOpen = ref(false)
 const previewArtifact = ref<Artifact | null>(null)
-const agentMembers = ref<WorkspaceAgentMember[]>([])
-const workspaceMembers = ref<WorkspaceMember[]>([])
-/** 服务端返回的调用者角色（负责人转交后不再等于创建者，不能靠姓名推断）。 */
-const serverUserRole = ref<TeamMemberRole | null>(null)
-/** 员工名册请求在途；与 `serverUserRole === null` 区分「加载中」与「加载失败」。 */
-const workspaceMembersLoading = ref(false)
-/** 当前操作人可发起对话的 Agent 成员：与服务端 allowedActions 一致（只读成员为空）。 */
-const startableAgentMemberIds = computed(() => agentMembers.value
-  .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-  .map(member => member.id))
-/**
- * TW-10：输入框可 @ 的 Agent 成员（id + 名称），与 startableAgentMemberIds
- * 同一过滤口径（可用 + allowedActions 含 start_conversation）。
- */
-const startableMentionOptions = computed(() => agentMembers.value
-  .filter(member => member.status === 'available' && member.allowedActions.includes('start_conversation'))
-  .map(member => ({ id: member.id, name: member.name })))
 
 /** 摘要固定取最新 3 条；抽屉分页 20 条（design §2.9 / TW-08）。 */
 const ACTIVITY_SUMMARY_LIMIT = 3
@@ -182,22 +180,6 @@ let drawerRequestSeq = 0
  * 发起时的空间 id，切换空间或连续重试时晚到的旧响应不得写进当前视图。
  */
 let usageRequestSeq = 0
-/**
- * 员工名册与 Agent 成员加载的世代号：与动态请求同一模式。切换空间后晚到的旧
- * 响应不得覆盖新空间的名册与角色（评审 M7）——角色来源被污染会错误渲染/隐藏
- * 负责人入口。
- */
-let memberRequestSeq = 0
-let agentMemberRequestSeq = 0
-
-function isCurrentMemberRequest(seq: number, workspaceId: string) {
-  return seq === memberRequestSeq && workspaceId === (workspace.value?.id ?? '')
-}
-
-function isCurrentAgentMemberRequest(seq: number, workspaceId: string) {
-  return seq === agentMemberRequestSeq && workspaceId === (workspace.value?.id ?? '')
-}
-
 type ActivityStream = 'summary' | 'notification' | 'drawer'
 
 function currentRequestSeq(stream: ActivityStream) {
@@ -215,12 +197,20 @@ function invalidateActivityRequests() {
   drawerRequestSeq += 1
 }
 
-const requestedTab = String(route.query.tab ?? 'conversation')
+/**
+ * 项目空间 S1：项目空间默认进入“任务”页签，个人空间仍默认“对话”。空间类型在
+ * 加载后才确定，因此未指定 `?tab=` 时由下方 watch 按类型落到默认页签。
+ */
+const requestedTab = fromQueryTab(route.query.tab)
 const activeTab = ref<WorkspaceTab>(
-  ['conversation', 'files', 'artifacts'].includes(requestedTab)
+  WORKSPACE_TABS.includes(requestedTab as WorkspaceTab) && !TEAM_ONLY_TABS.includes(requestedTab as WorkspaceTab)
     ? (requestedTab as WorkspaceTab)
     : 'conversation',
 )
+/** 项目任务数（页签计数），由任务面板加载后回传。 */
+const projectTaskCount = ref(0)
+/** 项目档案条目数（页签计数，项目空间 S2），由档案面板加载后回传；未打开过档案页签时不显示计数。 */
+const projectArchiveCount = ref<number | null>(null)
 /** 默认新对话；`?view=history` 深链在空间对象就绪后由 watch 恢复（仅团队）。 */
 const conversationView = ref<ConversationView>('new')
 const conversationViews: Array<{ id: ConversationView; label: string }> = [
@@ -232,23 +222,46 @@ const conversationViews: Array<{ id: ConversationView; label: string }> = [
  * 对话面板正文切换为内嵌线程（router-view），「新对话/历史对话」切换条隐藏，
  * 由线程自身的返回控件回到列表。
  */
-const isConversationThreadRoute = computed(() => route.name === 'workspace-conversation')
+const isConversationThreadRoute = computed(() => spaceView(route) === 'conversation')
+/** 项目任务详情（含其任务线程子路由）：始终停留在“任务”页签。 */
+const taskDetailId = computed(() =>
+  spaceView(route) === 'task' || spaceView(route) === 'task-thread' ? String(route.params.taskId ?? '') : null)
+/** 任务信息卡片的传送目标：任务详情且右栏可见时为右栏顶部的占位元素。 */
+const taskInfoTarget = computed(() =>
+  taskDetailId.value && !panelCollapsed.value && wideLayout.value ? '#workspace-task-info' : null)
 
 const workspaceId = computed(() => String(route.params.id ?? ''))
-const workspace = computed(() =>
-  contentStore.workspaces.find((item) => item.id === workspaceId.value),
-)
-const teamFilePage = computed(() => contentStore.workspaceFiles(workspaceId.value))
-const workspaceFiles = computed(() => (
-  isTeam.value ? teamFilePage.value.items : (workspace.value?.files ?? [])
-))
-const isPersonal = computed(() => workspace.value?.type === 'personal')
-const isTeam = computed(() => workspace.value?.type === 'team')
-/**
- * 归档只读态：仅团队空间在服务端 `status === 'archived'` 时进入（个人空间恒为
- * active，即使夹具强行带上归档状态也不渲染归档提示，AC-23）。
- */
-const isArchived = computed(() => isTeam.value && workspace.value?.status === 'archived')
+const {
+  workspace,
+  isPersonal,
+  isTeam,
+  isArchived,
+  agentMembers,
+  workspaceMembers,
+  currentUserRole,
+  isOwner,
+  startableAgentMemberIds,
+  startableMentionOptions,
+  workspaceFiles: activityFiles,
+  workspaceArtifacts,
+  canWriteTeamContent,
+  canUploadFileVersions,
+  canReferenceFileVersion,
+  canEditBrief,
+  canViewUsage,
+  loadAgentMembers,
+  loadWorkspaceMembers,
+  refreshTeamMembers,
+  resetMembers,
+} = useProjectSpace({ workspaceId, roleOverride: () => props.currentUserRole })
+// B 群组默认“对话”页签（D30）；A 的项目空间默认“任务”。
+const defaultTab = computed<WorkspaceTab>(() => (isTeam.value && !collab.value ? 'tasks' : 'conversation'))
+
+/** B 的查询参数把“对话”页签写作 chat（12.5），其余页签同名。 */
+function fromQueryTab(raw: unknown): string {
+  const value = String(raw ?? '')
+  return props.layout === 'collab' && value === 'chat' ? 'conversation' : value
+}
 /**
  * 归档执行轨（design §2.7）：归档隐藏新对话、上传等写入口，但历史、文件与成果
  * 内容保持可读。新对话入口只在活动空间渲染；归档时对话页签固定展示历史。
@@ -256,149 +269,6 @@ const isArchived = computed(() => isTeam.value && workspace.value?.status === 'a
 const showConversationStarter = computed(() => !isArchived.value)
 const showConversationViewSwitch = computed(() => isTeam.value && !isArchived.value)
 const showSessionHistory = computed(() => isTeam.value && (conversationView.value === 'history' || isArchived.value))
-/**
- * 当前操作人的团队角色。只采用服务端给出的角色——父组件显式传入的
- * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`。名册未就绪或加载失败时一律 null：展示名不唯一，
- * 「负责人姓名 == 当前用户姓名 ⇒ owner」的推断会把同名成员误判为负责人
- * （评审 M7）；角色未知时团队写入口不渲染，宁可漏开不可误开。
- */
-const currentUserRole = computed<TeamMemberRole | null>(() => {
-  if (props.currentUserRole !== undefined) return props.currentUserRole
-  return serverUserRole.value
-})
-const workspaceArtifacts = computed(() =>
-  contentStore.artifacts.filter((artifact) => artifact.workspaceId === workspaceId.value),
-)
-/** 负责人判定来自服务端角色，不在前端按创建者猜测（负责人-only 动作的唯一依据）。 */
-const isOwner = computed(() => currentUserRole.value === 'owner')
-/**
- * 上传新版本（执行轨）：归档空间隐藏入口；只读成员（viewer）不给入口；角色**未知**
- * （名册请求失败，`currentUserRole === null`）时也不给入口——宁可漏开不可误开，
- * 与 `WorkspaceInfoPanel` 对 `currentUserRole=null` 的既有口径一致。服务端 403 仍是
- * 最终兜底（评审 P2 修复后注释与实现对齐）。
- */
-const canUploadWorkspaceFiles = computed(() => {
-  if (isArchived.value) return false
-  if (isPersonal.value) return true
-  return currentUserRole.value !== null
-    && currentUserRole.value !== 'viewer'
-    && ['owner', 'admin', 'member'].includes(currentUserRole.value)
-})
-const canUploadFileVersions = computed(() => canUploadWorkspaceFiles.value && isTeam.value)
-/**
- * 「引用此版本」与「引用到对话」同口径：归档空间无法发起新对话，因此不渲染引用
- * 入口（版本列表与下载仍保留）。
- */
-const canReferenceFileVersion = computed(() => isTeam.value && !isArchived.value)
-/**
- * TW-10 共享讨论的写入口径：团队空间中非只读成员且空间未归档才可发言/触发
- * 执行；角色未知（名册请求失败）时宁可漏开不可误开，与上传入口一致。
- */
-const canWriteTeamContent = computed(() =>
-  isTeam.value
-  && !isArchived.value
-  && currentUserRole.value !== null
-  && currentUserRole.value !== 'viewer')
-/**
- * 团队角色尚未从名册解析完成。此间 `currentUserRole === null` 不能当作只读，
- * 否则会闪出「无写权限」提示（名册晚于空间列表返回）。
- */
-const teamRolePending = computed(() =>
-  isTeam.value
-  && props.currentUserRole === undefined
-  && workspaceMembersLoading.value)
-
-const showTeamComposerDock = computed(() =>
-  isTeam.value
-  && !isArchived.value
-  && canWriteTeamContent.value
-  && isConversationThreadRoute.value,
-)
-
-const dockContextKey = computed(() => {
-  if (isConversationThreadRoute.value) {
-    const sessionId = teamComposerBridge.value.sessionId
-    const target = String(route.params.conversationId ?? '')
-    return sessionId ? `session:${sessionId}` : `session:pending:${target}`
-  }
-  return 'history'
-})
-
-/**
- * 改前历史底栏是 history-layout 里的 ConversationStarter（composer-only + strip）；
- * 会话内嵌则是 ConversationView 内的 conversation-composer-dock 渐变浮层。
- * 共用 TeamSpaceComposer 时按路由切换两种呈现，避免一套 absolute 渐变硬套两种场景。
- */
-const teamComposerMainClass = computed(() => {
-  if (!showTeamComposerDock.value) return null
-  return isConversationThreadRoute.value
-    ? 'workspace-conversation-pane__main--team-dock-thread'
-    : 'workspace-conversation-pane__main--team-dock-history'
-})
-
-function onTeamDraftChange(fromKey: string, draft: ComposerDraft) {
-  teamComposerDrafts[fromKey] = {
-    prompt: draft.prompt,
-    files: [...draft.files],
-    mentions: draft.mentions.map(item => ({ ...item })),
-  }
-}
-
-function onTeamDockSubmit(payload: TeamComposerSubmitPayload & { contextKey: string }) {
-  const { contextKey, ...rest } = payload
-  if (contextKey === 'history') {
-    void starterRef.value?.submitWorkspaceTask?.(rest)
-    return
-  }
-  const bridge = teamComposerBridge.value
-  if (bridge.viewingRun && bridge.submitFollowUp) {
-    bridge.submitFollowUp(rest)
-    return
-  }
-  if (bridge.submitSession) {
-    bridge.submitSession(rest)
-    return
-  }
-  rest.release?.()
-}
-
-function onTeamDockStop() {
-  teamComposerBridge.value.stop?.()
-}
-
-watch(
-  () => teamComposerBridge.value.sessionId,
-  (sessionId) => {
-    if (!sessionId || !isConversationThreadRoute.value) return
-    const target = String(route.params.conversationId ?? '')
-    const pendingKey = `session:pending:${target}`
-    const sessionKey = `session:${sessionId}`
-    if (teamComposerDrafts[pendingKey] && !teamComposerDrafts[sessionKey]) {
-      teamComposerDrafts[sessionKey] = teamComposerDrafts[pendingKey]
-      delete teamComposerDrafts[pendingKey]
-    }
-  },
-)
-
-/**
- * 空间用量可见门禁的**角色来源**：只认服务端给出的角色——父组件显式传入的
- * `currentUserRole`（管理端嵌入时）或 `GET /workspaces/:id/members` 返回的
- * `currentUserRole`。姓名推断回退已在评审 M7 中移除——`currentUserRole`
- * computed 与这里现在是同一来源；用量是消耗/费用类数据，只有服务端确认的
- * 负责人/管理员才该看到；名册失败时宁可漏开。
- */
-const usageServerRole = computed<TeamMemberRole | null>(() =>
-  props.currentUserRole !== undefined ? props.currentUserRole : serverUserRole.value)
-/**
- * 空间用量的可见门禁：仅团队空间中**服务端确认**的负责人／管理员。角色未知
- * （名册请求失败）时不渲染也不请求——宁可漏开不可误开（AC-30）。归档空间属读取轨，
- * 负责人/管理员仍可查看（口径 §1）。
- */
-const canViewUsage = computed(() =>
-  isTeam.value && (usageServerRole.value === 'owner' || usageServerRole.value === 'admin'))
-/** 动态文件名的解析来源：已加载的空间文件列表（面板与抽屉共用）。 */
-const activityFiles = computed(() => workspaceFiles.value)
 const activitySummaryItems = computed(() => buildActivityDisplayItems(activitySummary.value, activityFiles.value))
 /** 未读计数；静音时按服务端口径视为 0（面板侧再兜一层）。 */
 const activityUnread = computed(() => (notificationState.value?.muted ? 0 : notificationState.value?.unreadCount ?? 0))
@@ -417,6 +287,12 @@ const activityDrawerRows = computed(() => activityDrawerItems.value.map((item) =
   }
 }))
 const workspaceTabs = computed(() => [
+  ...(isTeam.value ? [{
+    id: 'tasks' as const,
+    label: '任务',
+    count: projectTaskCount.value,
+    icon: List,
+  }] : []),
   {
     id: 'conversation' as const,
     label: '对话',
@@ -426,9 +302,7 @@ const workspaceTabs = computed(() => [
   {
     id: 'files' as const,
     label: isPersonal.value ? '文件' : '共享文件',
-    count: isTeam.value
-      ? (workspace.value?.fileCount ?? workspaceFiles.value.length)
-      : (workspace.value?.files.length ?? 0),
+    count: workspace.value?.files.length ?? 0,
     icon: Files,
   },
   {
@@ -437,6 +311,12 @@ const workspaceTabs = computed(() => [
     count: workspaceArtifacts.value.length,
     icon: Document,
   },
+  ...(isTeam.value ? [{
+    id: 'archive' as const,
+    label: '档案',
+    count: projectArchiveCount.value ?? '',
+    icon: Notebook,
+  }] : []),
 ])
 
 /**
@@ -446,15 +326,29 @@ const workspaceTabs = computed(() => [
  * 输入框与文件引用永远无法浮现（评审修复）。
  */
 function workspaceBaseLocation(query: LocationQuery) {
-  return isConversationThreadRoute.value
-    ? { path: `/workspaces/${workspaceId.value}`, query }
+  return isConversationThreadRoute.value || taskDetailId.value
+    ? { path: spaceRoutes.home(workspaceId.value), query }
     : { query }
 }
+
+/**
+ * 页签栏在窄屏横向滚动（项目空间 S2 起有五个页签）：激活的页签（含 `?tab=` 深链）滚入可视区域。
+ */
+watch(
+  () => [activeTab.value, workspace.value?.id] as const,
+  ([tab, workspaceId]) => {
+    if (!workspaceId) return
+    void nextTick(() => {
+      document.getElementById(`workspace-tab-${tab}`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    })
+  },
+  { immediate: true, flush: 'post' },
+)
 
 function selectTab(tab: WorkspaceTab) {
   activeTab.value = tab
   const query = { ...route.query }
-  if (tab === 'conversation') delete query.tab
+  if (tab === defaultTab.value) delete query.tab
   else query.tab = tab
   return router.replace(workspaceBaseLocation(query))
 }
@@ -468,29 +362,7 @@ function setConversationView(view: ConversationView) {
   const query = { ...route.query }
   if (view === 'history') query.view = 'history'
   else delete query.view
-  if (view === 'new') {
-    void nextTick(() => {
-      const composer = activeWorkspaceComposer()
-      if (typeof composer?.focusComposer === 'function') composer.focusComposer()
-    })
-  }
   return router.replace(workspaceBaseLocation(query))
-}
-
-function onConversationViewKeydown(event: KeyboardEvent, index: number) {
-  const keyTargets: Record<string, number> = {
-    ArrowLeft: (index - 1 + conversationViews.length) % conversationViews.length,
-    ArrowRight: (index + 1) % conversationViews.length,
-    Home: 0,
-    End: conversationViews.length - 1,
-  }
-  const targetIndex = keyTargets[event.key]
-  if (targetIndex === undefined) return
-  event.preventDefault()
-  const target = conversationViews[targetIndex]
-  if (!target) return
-  void setConversationView(target.id)
-  void nextTick(() => conversationViewButtonRefs.value[targetIndex]?.focus())
 }
 
 watch(
@@ -520,6 +392,10 @@ function onTabKeydown(event: KeyboardEvent, index: number) {
 async function useWorkspaceFile(file: WorkspaceFile) {
   // 评审低1：团队文件引用资格由服务端显式判定，缺省/否决一律不放行。
   if (isTeam.value && file.canReference !== true) return
+  if (collab.value) {
+    emit('use-file', file)
+    return
+  }
   // 处于空间内对话子路由时，selectTab/setConversationView 会触发路径归位，
   // ConversationStarter 在导航确认后才挂载——必须等导航与渲染完成再取
   // starterRef，否则引用被静默丢弃（评审修复）。
@@ -528,7 +404,7 @@ async function useWorkspaceFile(file: WorkspaceFile) {
     await selectTab('conversation')
     mobileInfoOpen.value = false
     await nextTick()
-    activeWorkspaceComposer()?.useWorkspaceFile(file)
+    starterRef.value?.useWorkspaceFile(file)
     ElMessage.success(`已将“${file.name}”带入新对话`)
   } catch (error) {
     notifyActionFailure('引用文件到对话', `文件“${file.name}”`, error, '请重试或刷新页面。')
@@ -657,7 +533,7 @@ async function onVersionUploadSelected(event: Event) {
   ElMessage.success(`已上传“${selected.name}”的 V${uploaded.versionNo} 版本`)
   try {
     // 上传已成功，刷新失败不能反过来把这次上传说成失败。
-    await contentStore.loadWorkspaceFiles(current.id)
+    await contentStore.refresh()
   } catch (error) {
     notifyActionFailure('刷新文件列表', `工作空间“${current.name}”`, error, '刷新页面查看最新版本。')
   }
@@ -667,61 +543,46 @@ function download(item: Artifact) {
   void downloadArtifactFile(item)
 }
 
+/** 项目空间成果的来源说明：所属任务、承接 Agent 及版本、发起人（项目空间方案第 6 节）。 */
+function artifactOrigin(item: Artifact): string | undefined {
+  const origin = item.origin
+  if (!origin) return undefined
+  const parts = [
+    origin.projectTask ? `任务「${origin.projectTask.title}」` : null,
+    origin.agent ? `${origin.agent.name} ${origin.agent.version}` : null,
+    origin.initiatedBy ? `${origin.initiatedBy} 发起` : null,
+  ].filter((part): part is string => Boolean(part))
+  return parts.length ? parts.join(' · ') : undefined
+}
+
 function openArtifactPreview(item: Artifact) {
   previewArtifact.value = item
   previewOpen.value = true
 }
 
 watch(
-  () => route.query.tab,
-  (tab) => {
-    const value = String(tab ?? 'conversation')
-    if (['conversation', 'files', 'artifacts'].includes(value)) {
-      activeTab.value = value as WorkspaceTab
+  () => [fromQueryTab(route.query.tab), isTeam.value, isConversationThreadRoute.value, taskDetailId.value] as const,
+  ([tab, , isThread]) => {
+    // 项目任务线程以子路由打开（openThread 只写路径，不带 ?tab=），必须切到对话页签；
+    // 线程内再次导航（如发送后续消息）也要保持，不能被默认页签覆盖。
+    if (isThread) {
+      activeTab.value = 'conversation'
+      return
     }
+    if (taskDetailId.value) {
+      activeTab.value = 'tasks'
+      return
+    }
+    const value = tab === undefined || tab === null || tab === '' ? defaultTab.value : String(tab)
+    // 个人空间没有任务与档案页签：深链 ?tab=tasks / ?tab=archive 退回默认页签。
+    if (TEAM_ONLY_TABS.includes(value as WorkspaceTab) && !isTeam.value) {
+      activeTab.value = defaultTab.value
+      return
+    }
+    if (WORKSPACE_TABS.includes(value as WorkspaceTab)) activeTab.value = value as WorkspaceTab
   },
+  { immediate: true },
 )
-
-/**
- * Agent 成员列表只按既有 T4 接口加载，且严格限定团队空间：个人空间既不发
- * 请求也不渲染（AC-23）。
- */
-async function loadAgentMembers(workspaceId = workspace.value?.id ?? '') {
-  if (!workspaceId || !isTeam.value) return
-  const seq = ++agentMemberRequestSeq
-  try {
-    const items = await workbenchApi.listWorkspaceAgentMembers(workspaceId)
-    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
-    agentMembers.value = items
-  } catch (error) {
-    if (!isCurrentAgentMemberRequest(seq, workspaceId)) return
-    agentMembers.value = []
-    notifyActionFailure('加载 Agent 成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
-  }
-}
-
-/**
- * 加载员工名册与服务端判定的调用者角色。团队成员均可读取；个人空间不请求
- * （AC-23）。名册同时用于成员弹窗与设置弹窗的转交候选项。
- */
-async function loadWorkspaceMembers(workspaceId = workspace.value?.id ?? '') {
-  if (!workspaceId || !isTeam.value) return
-  const seq = ++memberRequestSeq
-  workspaceMembersLoading.value = true
-  try {
-    const directory = await workbenchApi.listWorkspaceMembers(workspaceId)
-    if (!isCurrentMemberRequest(seq, workspaceId)) return
-    workspaceMembers.value = directory.items
-    serverUserRole.value = directory.currentUserRole
-  } catch (error) {
-    if (!isCurrentMemberRequest(seq, workspaceId)) return
-    workspaceMembers.value = []
-    serverUserRole.value = null
-    notifyActionFailure('加载员工成员', `工作空间“${workspace.value?.name ?? workspaceId}”`, error, '稍后刷新页面重试。')
-  } finally {
-    if (isCurrentMemberRequest(seq, workspaceId)) workspaceMembersLoading.value = false
-  }
-}
 
 /**
  * 最近动态摘要（服务端 limit=3）。只在团队分支调用，个人空间不产生任何动态
@@ -838,7 +699,7 @@ async function markActivityRead() {
     notificationError.value = false
   } catch (error) {
     if (!isCurrentActivityRequest(seq, current.id, 'notification')) return
-    notifyActionFailure('标记全部已读', `工作空间“${current.name}”的团队动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
+    notifyActionFailure('标记全部已读', `工作空间“${current.name}”的项目动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
   }
 }
 
@@ -857,7 +718,7 @@ async function toggleActivityMute() {
     notificationError.value = false
   } catch (error) {
     if (!isCurrentActivityRequest(seq, current.id, 'notification')) return
-    notifyActionFailure(muted ? '恢复提醒' : '关闭提醒', `工作空间“${current.name}”的团队动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
+    notifyActionFailure(muted ? '恢复提醒' : '关闭提醒', `工作空间“${current.name}”的项目动态`, error, '稍后重试；若仍失败，请联系工作空间管理员。')
   }
 }
 
@@ -927,11 +788,6 @@ async function loadMoreActivity() {
   }
 }
 
-function refreshTeamMembers() {
-  void loadAgentMembers()
-  void loadWorkspaceMembers()
-}
-
 /**
  * 恢复空间（design §2.7，负责人-only）：恢复不重新添加已移除成员、不扩大授权，
  * 仅把空间置回 active，写入口随后按当前权限重新出现。确认前置，失败沿用
@@ -973,61 +829,17 @@ function onWorkspaceStatusChanged() {
   void contentStore.refresh()
 }
 
-onMounted(() => {
+/**
+ * 任务或档案写入被拒绝：页面不实时推送空间状态，可能是空间已在别处归档或本人角色已变化。
+ * 刷新空间与成员名册，只读态与写入口随服务端状态收敛（人工验收 7.2）。
+ */
+function onProjectContentStale() {
   void contentStore.refresh()
-})
-
-async function refreshWorkspaceArtifactsLive() {
-  try {
-    await contentStore.refreshArtifacts()
-  } catch {
-    // 后台刷新失败保留已加载列表，不打断空间浏览（与 SessionHistory 一致）。
-  }
+  void loadWorkspaceMembers()
 }
 
-/**
- * TW-10：团队空间内 Run 完成会推高会话活动标记；成果 Tab 与对话页共用
- * 空间级 SSE，防抖后静默重拉成果列表，避免必须整页刷新。
- */
-watch(
-  () => taskStore.sessionActivity,
-  () => {
-    if (!isTeam.value) return
-    if (artifactLiveRefreshTimer) clearTimeout(artifactLiveRefreshTimer)
-    artifactLiveRefreshTimer = setTimeout(() => void refreshWorkspaceArtifactsLive(), 300)
-  },
-)
-
-watch(
-  () => notificationStore.unreadByWorkspace[workspaceId.value] ?? 0,
-  () => {
-    if (!isTeam.value) return
-    void loadNotificationState()
-    void loadActivitySummary()
-  },
-)
-
-watch(
-  () => (workspace.value?.type === 'team' ? workspaceId.value : ''),
-  (id, previous) => {
-    if (previous) taskStore.unsubscribeWorkspaceSessions(previous)
-    if (id) {
-      workspaceSyncedAt.value = new Date().toISOString()
-      taskStore.subscribeWorkspaceSessions(id, workspaceSyncedAt.value)
-    }
-  },
-  { immediate: true },
-)
-
-watch(activeTab, (tab, previous) => {
-  if (tab === 'artifacts' && tab !== previous) void refreshWorkspaceArtifactsLive()
-  if (tab === 'files' && isTeam.value && workspaceId.value) void contentStore.loadWorkspaceFiles(workspaceId.value)
-})
-
-onBeforeUnmount(() => {
-  if (artifactLiveRefreshTimer) clearTimeout(artifactLiveRefreshTimer)
-  const id = workspace.value?.type === 'team' ? workspaceId.value : ''
-  if (id) taskStore.unsubscribeWorkspaceSessions(id)
+onMounted(() => {
+  void contentStore.refresh()
 })
 
 /**
@@ -1049,15 +861,10 @@ watch(workspace, (value) => {
   invalidateActivityRequests()
   invalidateUsageRequests()
   // 名册/Agent 成员同样作废（评审 M7）：旧空间的迟到响应不得覆盖新空间状态。
-  memberRequestSeq += 1
-  agentMemberRequestSeq += 1
+  resetMembers()
   memberDialogOpen.value = false
   agentDialogOpen.value = false
   settingsDialogOpen.value = false
-  agentMembers.value = []
-  workspaceMembers.value = []
-  serverUserRole.value = null
-  workspaceMembersLoading.value = value?.type === 'team'
   activitySummary.value = []
   activityLoading.value = false
   activityError.value = false
@@ -1083,7 +890,6 @@ watch(workspace, (value) => {
   if (value?.type === 'team') {
     void loadAgentMembers(value.id)
     void loadWorkspaceMembers(value.id)
-    void contentStore.loadWorkspaceFiles(value.id)
     // 团队动态与通知只在团队分支加载；个人空间零请求（AC-23）。
     void loadActivitySummary(value.id)
     void loadNotificationState(value.id)
@@ -1112,10 +918,46 @@ watch(
   },
   { immediate: true },
 )
+
+// collab：信息栏由宿主的“群信息”按钮控制；宽屏为右栏，窄屏为抽屉。收起后回传给宿主。
+watch(() => props.infoOpen, (open) => {
+  if (!collab.value) return
+  if (wideLayout.value) panelCollapsed.value = !open
+  else mobileInfoOpen.value = open
+})
+watch([panelCollapsed, mobileInfoOpen], ([collapsed, mobileOpen]) => {
+  if (!collab.value) return
+  const open = wideLayout.value ? !collapsed : mobileOpen
+  if (open !== props.infoOpen) emit('update:infoOpen', open)
+})
+watch(() => props.addMembersRequest, (request, previous) => {
+  if (collab.value && request > (previous ?? 0)) addMembersDialogOpen.value = true
+})
+/** collab 头部插槽：成员、页签与计数来自本组件同一份状态。 */
+const headerScope = computed(() => ({
+  workspace: workspace.value,
+  // B 的页签顺序为“对话 / 任务 / 文件 / 成果 / 档案”（D30），对话在前。
+  tabs: [...workspaceTabs.value]
+    .sort((a, b) => Number(b.id === 'conversation') - Number(a.id === 'conversation'))
+    .map(tab => ({ id: tab.id === 'conversation' ? 'chat' : tab.id, label: tab.id === 'files' ? '文件' : tab.label, count: tab.count })),
+  activeTab: activeTab.value === 'conversation' ? 'chat' : activeTab.value,
+  canManageMembers: isTeam.value && !isArchived.value && (currentUserRole.value === 'owner' || currentUserRole.value === 'admin'),
+}))
+/** collab 对话插槽：群聊输入区的写权限与可 @ 的 Agent 与 A 的讨论同一口径。 */
+const chatScope = computed(() => ({
+  workspace: workspace.value,
+  canWrite: canWriteTeamContent.value,
+  archived: isArchived.value,
+  roleKnown: currentUserRole.value !== null,
+  mentionOptions: startableMentionOptions.value,
+  hasAgentMembers: agentMembers.value.length > 0,
+}))
 </script>
 
 <template>
-  <WorkspaceContextSkeleton v-if="contentStore.loading && !workspace" />
+  <div v-if="contentStore.loading && !workspace" class="workspace-context-state">
+    <el-skeleton :rows="8" animated />
+  </div>
 
   <el-result
     v-else-if="!workspace"
@@ -1131,10 +973,54 @@ watch(
   <div
     v-else
     class="workspace-context-page"
-    :class="{ 'workspace-context-page--collapsed': panelCollapsed }"
+    :class="{ 'workspace-context-page--collapsed': panelCollapsed, 'workspace-context-page--embedded': collab }"
   >
     <main class="workspace-context-page__main">
-      <header class="workspace-context-page__header">
+      <slot v-if="collab" name="header" v-bind="headerScope" />
+      <!-- B 群组页只在任务详情时显示面包屑（返回任务列表），群组名称与页签由宿主头部给出。 -->
+      <div v-if="!collab || taskDetailId" class="workspace-context-page__topbar">
+        <nav class="workspace-context-crumbs" aria-label="当前位置">
+          <template v-if="!collab">
+            <el-icon class="workspace-context-crumbs__icon" aria-hidden="true"><FolderOpened /></el-icon>
+            <RouterLink class="workspace-context-crumbs__link" to="/workspaces">{{ isPersonal ? '空间' : '项目' }}</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+          </template>
+          <template v-if="taskDetailId">
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-name" :to="spaceRoutes.home(workspace.id)">{{ workspace.name }}</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+            <RouterLink class="workspace-context-crumbs__link" data-testid="workspace-crumb-tasks" :to="spaceRoutes.tasks(workspace.id)">任务</RouterLink>
+            <span class="workspace-context-crumbs__sep" aria-hidden="true">/</span>
+            <strong class="workspace-context-crumbs__current" data-testid="workspace-crumb-task" aria-current="page">{{ taskDetailTitle || '任务详情' }}</strong>
+          </template>
+          <strong v-else class="workspace-context-crumbs__current" data-testid="workspace-crumb-name" aria-current="page">{{ workspace.name }}</strong>
+        </nav>
+        <div v-if="!collab" class="workspace-context-page__header-actions">
+          <button
+            v-if="panelCollapsed"
+            class="workspace-context-page__panel-open"
+            type="button"
+            aria-label="展开工作空间信息"
+            @click="panelCollapsed = false"
+          >
+            <el-icon><InfoFilled /></el-icon>
+            <span>空间信息</span>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+  
+          <button
+            class="workspace-context-page__mobile-info"
+            type="button"
+            aria-label="查看工作空间信息"
+            @click="mobileInfoOpen = true"
+          >
+            <el-icon><InfoFilled /></el-icon>
+            <span>空间信息</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 任务详情（S3）隐藏页签行，经面包屑返回任务表格。 -->
+      <header v-if="!taskDetailId && !collab" class="workspace-context-page__header">
         <nav class="workspace-context-tabs" role="tablist" aria-label="工作空间内容">
           <button
             v-for="(tab, index) in workspaceTabs"
@@ -1151,35 +1037,10 @@ watch(
             @click="selectTab(tab.id)"
             @keydown="onTabKeydown($event, index)"
           >
-            <el-icon><component :is="tab.icon" /></el-icon>
             <span>{{ tab.label }}</span>
-            <small>{{ tab.count }}</small>
           </button>
         </nav>
 
-        <div class="workspace-context-page__header-actions">
-          <button
-            v-if="panelCollapsed"
-            class="workspace-context-page__panel-open"
-            type="button"
-            aria-label="展开工作空间信息"
-            @click="panelCollapsed = false"
-          >
-            <el-icon><InfoFilled /></el-icon>
-            <span>空间信息</span>
-            <el-icon><ArrowRight /></el-icon>
-          </button>
-
-          <button
-            class="workspace-context-page__mobile-info"
-            type="button"
-            aria-label="查看工作空间信息"
-            @click="mobileInfoOpen = true"
-          >
-            <el-icon><InfoFilled /></el-icon>
-            <span>空间信息</span>
-          </button>
-        </div>
       </header>
 
       <el-alert
@@ -1206,6 +1067,30 @@ watch(
       </el-alert>
 
       <div class="workspace-context-page__content">
+        <ProjectTaskPanel
+          v-if="isTeam && activeTab === 'tasks'"
+          :workspace-id="workspace.id"
+          :workspace-name="workspace.name"
+          :can-write="canWriteTeamContent"
+          :members="workspaceMembers"
+          :agent-members="agentMembers"
+          :files="workspace.files"
+          :detail-task-id="taskDetailId"
+          :task-info-target="taskInfoTarget"
+          @count="projectTaskCount = $event"
+          @detail-title="taskDetailTitle = $event"
+          @stale="onProjectContentStale"
+        />
+
+        <ProjectArchivePanel
+          v-if="isTeam && activeTab === 'archive'"
+          :workspace-id="workspace.id"
+          :workspace-name="workspace.name"
+          :can-write="canWriteTeamContent"
+          @count="projectArchiveCount = $event"
+          @stale="onProjectContentStale"
+        />
+
         <section
           v-show="activeTab === 'conversation'"
           id="workspace-panel-conversation"
@@ -1214,62 +1099,33 @@ watch(
           aria-labelledby="workspace-tab-conversation"
         >
           <div
-            v-if="showConversationViewSwitch && !isConversationThreadRoute"
+            v-if="!collab && showConversationViewSwitch && !isConversationThreadRoute"
             class="panel workspace-conversation-pane__viewbar"
             data-testid="conversation-view-switch"
             role="tablist"
             aria-label="对话视图"
           >
             <button
-              v-for="(view, index) in conversationViews"
-              :id="`workspace-conversation-view-${view.id}`"
+              v-for="view in conversationViews"
               :key="view.id"
-              ref="conversationViewButtonRefs"
               class="workspace-conversation-pane__view"
               :class="{ 'is-active': conversationView === view.id }"
               type="button"
               role="tab"
               :aria-selected="conversationView === view.id"
-              :tabindex="conversationView === view.id ? 0 : -1"
               @click="setConversationView(view.id)"
-              @keydown="onConversationViewKeydown($event, index)"
             >
               {{ view.label }}
             </button>
           </div>
 
           <div class="workspace-conversation-pane__body">
-            <div
-              class="workspace-conversation-pane__main"
-              :class="teamComposerMainClass"
-            >
             <RouterView v-if="isConversationThreadRoute" />
+            <slot v-else-if="collab" name="chat" v-bind="chatScope" />
             <template v-else>
-              <div
-                v-if="conversationView === 'history' && isTeam && showConversationStarter"
-                class="workspace-conversation-pane__history-layout"
-                data-testid="workspace-conversation-history-layout"
-              >
-                <WorkspaceSessionHistory
-                  :workspace-id="workspace.id"
-                  :workspace-name="workspace.name"
-                  :can-start-conversation="canWriteTeamContent"
-                  :archived="false"
-                  @start-new="setConversationView('new')"
-                />
-              </div>
-
-              <WorkspaceSessionHistory
-                v-else-if="showSessionHistory"
-                :workspace-id="workspace.id"
-                :workspace-name="workspace.name"
-                :can-start-conversation="!isArchived && canWriteTeamContent"
-                :archived="isArchived"
-                @start-new="setConversationView('new')"
-              />
-
               <ConversationStarter
-                v-else-if="showConversationStarter && conversationView === 'new'"
+                v-if="showConversationStarter"
+                v-show="conversationView === 'new'"
                 ref="starterRef"
                 embedded
                 :workspace-id="workspace.id"
@@ -1279,50 +1135,18 @@ watch(
                 :startable-agent-member-ids="isTeam ? startableAgentMemberIds : []"
                 :requires-agent-member="isTeam"
                 :can-discuss="!isTeam || canWriteTeamContent"
-                :team-role-pending="teamRolePending"
                 :mention-options="isTeam ? startableMentionOptions : []"
-                :team-composer-drafts="teamComposerDrafts"
-                @team-draft-change="onTeamDraftChange"
+              />
+
+              <WorkspaceSessionHistory
+                v-if="showSessionHistory"
+                :workspace-id="workspace.id"
+                :workspace-name="workspace.name"
+                :can-start-conversation="!isArchived && canWriteTeamContent"
+                :archived="isArchived"
+                @start-new="setConversationView('new')"
               />
             </template>
-
-            <section
-              v-if="showTeamComposerDock && workspace"
-              :key="`dock-${workspace.id}`"
-              class="workspace-composer-strip"
-              :class="isConversationThreadRoute
-                ? 'workspace-composer-strip--overlay'
-                : 'workspace-composer-strip--stacked'"
-              data-testid="team-space-composer-dock"
-            >
-              <div class="workspace-composer-strip__inner">
-                <button
-                  v-if="isConversationThreadRoute && teamComposerBridge.showJumpToLatest"
-                  type="button"
-                  class="workspace-composer-strip__jump"
-                  data-testid="team-composer-jump-latest"
-                  @click="teamComposerBridge.scrollToLatest?.()"
-                >
-                  回到最新消息
-                  <el-icon><ArrowDown /></el-icon>
-                </button>
-                <TeamSpaceComposer
-                  placement="dock"
-                  :context-key="dockContextKey"
-                  :workspace-id="workspace.id"
-                  :workspace-name="workspace.name"
-                  :mention-options="startableMentionOptions"
-                  :drafts="teamComposerDrafts"
-                  :running="teamComposerBridge.running"
-                  :stopping="teamComposerBridge.stopping"
-                  :files-require-mention="true"
-                  @draft-change="onTeamDraftChange"
-                  @submit="onTeamDockSubmit"
-                  @stop="onTeamDockStop"
-                />
-              </div>
-            </section>
-            </div>
           </div>
         </section>
 
@@ -1333,14 +1157,9 @@ watch(
           role="tabpanel"
           aria-labelledby="workspace-tab-files"
         >
-          <header class="workspace-tab-pane__header">
-            <div>
-              <span class="workspace-tab-pane__eyebrow">{{ isPersonal ? '个人资料' : '团队资源' }}</span>
-              <h1>{{ isPersonal ? '文件' : '共享文件' }}</h1>
-              <p>{{ isPersonal ? '管理仅你可访问的资料，并将指定文件直接引用到新对话。' : '查看团队在当前工作空间共享的资料，并将指定文件直接引用到新对话。' }}</p>
-            </div>
+          <!-- 列表为空时由空状态提供“上传第一个文件”，页头不再重复上传入口。 -->
+          <header v-if="!isArchived && workspace.files.length" class="workspace-tab-pane__header">
             <el-button
-              v-if="canUploadWorkspaceFiles"
               data-testid="workspace-upload"
               type="primary"
               :icon="Plus"
@@ -1349,22 +1168,21 @@ watch(
             >
               上传文件
             </el-button>
-            <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md" @change="onUploadSelected" />
-            <!-- 执行轨：上传新版本入口只在「团队 + 活跃 + 非只读成员」时存在。 -->
-            <input
-              v-if="canUploadFileVersions"
-              ref="versionUploadInput"
-              data-testid="workspace-file-upload-input"
-              class="visually-hidden"
-              type="file"
-              accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,.md"
-              @change="onVersionUploadSelected"
-            />
           </header>
+          <input ref="uploadInput" class="visually-hidden" type="file" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" @change="onUploadSelected" />
+          <!-- 执行轨：上传新版本入口只在「团队 + 活跃 + 非只读成员」时存在。 -->
+          <input
+            v-if="canUploadFileVersions"
+            ref="versionUploadInput"
+            data-testid="workspace-file-upload-input"
+            class="visually-hidden"
+            type="file"
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+            @change="onVersionUploadSelected"
+          />
 
-          <p v-if="isTeam && teamFilePage.error" class="workspace-inline-error" role="alert">{{ teamFilePage.error }}</p>
-          <div v-if="workspaceFiles.length" class="workspace-file-list panel">
-            <article v-for="file in workspaceFiles" :key="file.id" class="workspace-file-row">
+          <div v-if="workspace.files.length" class="workspace-file-list panel">
+            <article v-for="file in workspace.files" :key="file.id" class="workspace-file-row">
               <span class="workspace-file-row__icon"><el-icon><Files /></el-icon></span>
               <div class="workspace-file-row__copy">
                 <strong class="workspace-file-row__name">
@@ -1428,23 +1246,15 @@ watch(
                 >引用到对话</el-button>
               </div>
             </article>
-            <div v-if="isTeam && teamFilePage.hasMore" class="workspace-file-load-more">
-              <el-button
-                :loading="teamFilePage.loading"
-                aria-label="加载更多"
-                @click="contentStore.loadWorkspaceFiles(workspaceId, teamFilePage.nextCursor ?? undefined)"
-              >
-                加载更多
-              </el-button>
-            </div>
           </div>
 
           <el-empty v-else :description="isPersonal ? '我的空间暂无文件' : '当前工作空间暂无共享文件'">
             <el-button
-              v-if="canUploadWorkspaceFiles"
+              v-if="!isArchived"
               data-testid="workspace-upload-empty"
               type="primary"
               :icon="Plus"
+              :loading="uploading"
               @click="uploadFile"
             >
               上传第一个文件
@@ -1460,11 +1270,6 @@ watch(
           aria-labelledby="workspace-tab-artifacts"
         >
           <header class="workspace-tab-pane__header">
-            <div>
-              <span class="workspace-tab-pane__eyebrow">成果文件</span>
-              <h1>成果</h1>
-              <p>集中查看当前工作空间内生成的报告、表格和分析文件，并追溯来源运行。</p>
-            </div>
             <span class="workspace-tab-pane__count">{{ workspaceArtifacts.length }} 个已加载成果</span>
           </header>
 
@@ -1473,6 +1278,7 @@ watch(
               v-for="artifact in workspaceArtifacts"
               :key="artifact.id"
               :artifact="artifact"
+              :origin="artifactOrigin(artifact)"
               @download="download(artifact)"
               @preview="openArtifactPreview(artifact)"
             />
@@ -1484,6 +1290,7 @@ watch(
 
     <aside v-if="!panelCollapsed" class="workspace-context-page__aside">
       <WorkspaceInfoPanel
+        class="workspace-context-page__info"
         :workspace="workspace"
         :data-scopes="authStore.user.dataScopes"
         :current-user-role="currentUserRole"
@@ -1498,6 +1305,8 @@ watch(
         :usage-summary="usageSummary"
         :usage-loading="usageLoading"
         :usage-error="usageError"
+        :compact="Boolean(taskDetailId)"
+        :title="taskDetailId ? '任务信息' : collab ? '群信息' : '工作空间信息'"
         collapsible
         @collapse="panelCollapsed = true"
         @manage-members="memberDialogOpen = true"
@@ -1509,7 +1318,20 @@ watch(
         @retry-activity="retryActivity"
         @view-usage-detail="openUsageDialog"
         @retry-usage="retryUsage"
-      />
+      >
+        <template v-if="isTeam" #lead>
+          <!-- 任务详情：任务信息卡片传送到这里，其下是所属空间的简报与摘要。 -->
+          <template v-if="taskDetailId">
+            <div id="workspace-task-info" class="workspace-context-page__task-info"></div>
+            <span class="workspace-context-page__space-label">所属空间 · {{ workspace.name }}</span>
+          </template>
+          <ProjectBriefCard
+            :workspace-id="workspace.id"
+            :workspace-name="workspace.name"
+            :can-edit="canEditBrief"
+          />
+        </template>
+      </WorkspaceInfoPanel>
     </aside>
 
     <el-drawer
@@ -1519,31 +1341,43 @@ watch(
       size="min(360px, 100vw)"
       :with-header="false"
     >
-      <WorkspaceInfoPanel
-        :workspace="workspace"
-        :data-scopes="authStore.user.dataScopes"
-        :current-user-role="currentUserRole"
-        :agent-members="agentMembers"
-        :activity-items="activitySummaryItems"
-        :activity-loading="activityLoading"
-        :activity-error="activityError"
-        :notification-error="notificationError"
-        :unread-count="activityUnread"
-        :muted="activityMuted"
-        :can-view-usage="canViewUsage"
-        :usage-summary="usageSummary"
-        :usage-loading="usageLoading"
-        :usage-error="usageError"
-        @manage-members="memberDialogOpen = true"
-        @manage-agents="agentDialogOpen = true"
-        @open-settings="settingsDialogOpen = true"
-        @view-all-activity="openActivityDrawer"
-        @mark-activity-read="markActivityRead"
-        @toggle-activity-mute="toggleActivityMute"
-        @retry-activity="retryActivity"
-        @view-usage-detail="openUsageDialog"
-        @retry-usage="retryUsage"
-      />
+      <!-- 仅在抽屉打开时挂载：桌面端不会打开它，避免与右栏 aside 同时挂载产生重复请求与 DOM id。 -->
+      <template v-if="mobileInfoOpen">
+        <WorkspaceInfoPanel
+          class="workspace-context-page__info"
+          :workspace="workspace"
+          :data-scopes="authStore.user.dataScopes"
+          :current-user-role="currentUserRole"
+          :agent-members="agentMembers"
+          :activity-items="activitySummaryItems"
+          :activity-loading="activityLoading"
+          :activity-error="activityError"
+          :notification-error="notificationError"
+          :unread-count="activityUnread"
+          :muted="activityMuted"
+          :can-view-usage="canViewUsage"
+          :usage-summary="usageSummary"
+          :usage-loading="usageLoading"
+          :usage-error="usageError"
+          @manage-members="memberDialogOpen = true"
+          @manage-agents="agentDialogOpen = true"
+          @open-settings="settingsDialogOpen = true"
+          @view-all-activity="openActivityDrawer"
+          @mark-activity-read="markActivityRead"
+          @toggle-activity-mute="toggleActivityMute"
+          @retry-activity="retryActivity"
+          @view-usage-detail="openUsageDialog"
+          @retry-usage="retryUsage"
+        >
+          <template v-if="isTeam" #lead>
+            <ProjectBriefCard
+              :workspace-id="workspace.id"
+              :workspace-name="workspace.name"
+              :can-edit="canEditBrief"
+            />
+          </template>
+        </WorkspaceInfoPanel>
+      </template>
     </el-drawer>
 
     <el-drawer
@@ -1558,7 +1392,7 @@ watch(
       <div class="workspace-activity-drawer__body" data-testid="activity-drawer">
         <header class="workspace-activity-drawer__header">
           <div>
-            <span>团队上下文</span>
+            <span>项目上下文</span>
             <strong>全部动态</strong>
           </div>
           <button
@@ -1602,7 +1436,7 @@ watch(
           <el-button @click="loadActivityPage()">重试</el-button>
         </div>
 
-        <el-empty v-else-if="!activityDrawerItems.length" description="暂无团队动态" />
+        <el-empty v-else-if="!activityDrawerItems.length" description="暂无项目动态" />
 
         <div v-else-if="activityDrawerItems.length" class="workspace-activity-drawer__list">
           <article
@@ -1647,6 +1481,14 @@ watch(
         :members="workspaceMembers"
         :archived="isArchived"
         @refresh="refreshTeamMembers"
+      />
+
+      <AddGroupMembersDialog
+        v-model:open="addMembersDialogOpen"
+        :workspace-id="workspace.id"
+        :workspace-name="workspace.name"
+        :can-add-agents="currentUserRole === 'owner'"
+        @added="refreshTeamMembers"
       />
 
       <!-- 管理 Agent 独立入口（TW-10）：右栏 Agent 区块触发，负责人-only 操作。 -->
@@ -1720,6 +1562,12 @@ watch(
   white-space: nowrap;
 }
 
+.workspace-context-state {
+  min-height: 100vh;
+  padding: 80px 10%;
+  background: #fff;
+}
+
 .workspace-context-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 336px;
@@ -1732,6 +1580,13 @@ watch(
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* B 群组页内嵌（S5d）：高度跟随宿主内容区，不再占满视口。 */
+.workspace-context-page--embedded,
+.workspace-context-page--embedded .workspace-context-page__main,
+.workspace-context-page--embedded .workspace-context-page__aside {
+  height: 100%;
+}
+
 .workspace-context-page__main {
   display: flex;
   min-width: 0;
@@ -1740,111 +1595,70 @@ watch(
   overflow: hidden;
 }
 
-.workspace-conversation-pane__main {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.workspace-conversation-pane__main--team-dock-history {
-  min-height: 0;
-}
-
-.workspace-conversation-pane__main--team-dock-history .workspace-conversation-pane__history-layout {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.workspace-conversation-pane__main--team-dock-history .workspace-conversation-pane__history-layout :deep(.session-history) {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-}
-
-/* 历史对话：与改前 ConversationStarter composer-only 同款底栏（非渐变浮层）。 */
-.workspace-composer-strip--stacked {
-  flex: 0 0 auto;
-  padding: 12px 20px 14px;
-  border-top: 1px solid #e8ebe8;
-  background: #fff;
-}
-
-.workspace-composer-strip--stacked .workspace-composer-strip__inner {
-  width: 100%;
-  max-width: none;
-}
-
-/* 会话详情：与改前 ConversationView conversation-composer-dock 同款渐变浮层。 */
-.workspace-conversation-pane__main--team-dock-thread {
-  position: relative;
-  min-height: 0;
-}
-
-.workspace-composer-strip--overlay {
-  position: absolute;
-  z-index: 11;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  padding: 48px 28px 13px;
-  background: linear-gradient(to bottom, rgb(255 255 255 / 0%), #fff 31%, #fff 100%);
-  pointer-events: none;
-}
-
-.workspace-composer-strip__inner {
-  margin: 0 auto;
-  pointer-events: auto;
-}
-
-.workspace-composer-strip--overlay .workspace-composer-strip__inner {
-  width: min(100%, 920px);
-}
-
-.workspace-composer-strip__jump {
-  display: flex;
-  align-items: center;
-  width: max-content;
-  min-height: 29px;
-  gap: 5px;
-  margin: 0 auto 9px;
-  padding: 0 10px;
-  border: 1px solid #dedfdd;
-  border-radius: 999px;
-  color: #626762;
-  background: #fff;
-  box-shadow: 0 5px 16px rgb(25 30 26 / 7%);
-  cursor: pointer;
-  font-size: var(--dsh-font-size-micro);
-}
-
-.workspace-composer-strip--overlay :deep(.composer__surface) {
-  border-color: #dedfdd;
-  border-radius: 15px;
-  box-shadow: 0 9px 28px rgb(28 31 28 / 7%);
-}
-
-.workspace-composer-strip--overlay :deep(.composer__input) {
-  min-height: 76px;
-  font-size: var(--dsh-font-size-body);
-}
-
-.workspace-conversation-pane__main--team-dock-thread :deep(.conversation-page--embedded .conversation-scroll) {
-  padding: 12px 20px 200px;
-}
-
 .workspace-context-page__header {
   position: relative;
   z-index: 6;
   display: flex;
   flex: 0 0 auto;
   align-items: stretch;
-  border-bottom: 1px solid #e5e7e4;
-  background: rgb(255 255 255 / 96%);
-  box-shadow: 0 4px 18px rgb(31 40 35 / 3%);
-  backdrop-filter: blur(10px);
+  padding-top: 6px;
+  background: #fff;
+}
+
+/* 顶栏：左侧“项目 / 项目名称”面包屑，右侧收起右栏后的“空间信息”入口。 */
+.workspace-context-page__topbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 24px 0 28px;
+  border-bottom: 1px solid #ececee;
+  background: #fff;
+}
+
+.workspace-context-crumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--dsh-font-size-body);
+}
+
+.workspace-context-crumbs__icon {
+  flex: 0 0 auto;
+  color: #6b6f6c;
+  font-size: var(--dsh-font-size-subheading);
+}
+
+.workspace-context-crumbs__link {
+  flex: 0 0 auto;
+  color: #6b6f6c;
+  text-decoration: none;
+}
+
+.workspace-context-crumbs__link:hover {
+  color: #1d201e;
+}
+
+.workspace-context-crumbs__link:focus-visible {
+  outline: 2px solid #7bb8a6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.workspace-context-crumbs__sep {
+  color: #b4b8b5;
+}
+
+.workspace-context-crumbs__current {
+  min-width: 0;
+  overflow: hidden;
+  color: #1d201e;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-context-page__header-actions {
@@ -1852,7 +1666,6 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 0 18px 0 8px;
 }
 
 .workspace-context-page__panel-open,
@@ -1884,11 +1697,11 @@ watch(
 .workspace-context-tabs {
   display: flex;
   min-width: 0;
-  height: 52px;
+  height: 56px;
   flex: 1;
   align-items: stretch;
-  gap: 3px;
-  padding: 0 18px;
+  gap: 8px;
+  padding: 0 20px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1897,71 +1710,52 @@ watch(
   display: none;
 }
 
+/* 参考“动态 / 计划 / 任务 / 资产”式页签：大字、无图标，选中项加粗并带短下划线。 */
 .workspace-context-tabs__item {
   position: relative;
   display: inline-flex;
-  min-width: 118px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  padding: 0 13px;
+  gap: 5px;
+  padding: 0 12px;
   border: 0;
-  color: #777c77;
+  color: #6b6f6c;
   background: transparent;
   cursor: pointer;
-  font-size: var(--dsh-font-size-caption);
-  transition: color 140ms ease, background 140ms ease;
+  font-size: var(--dsh-font-size-section);
+  transition: color 140ms ease;
 }
 
 .workspace-context-tabs__item::after {
   position: absolute;
-  right: 12px;
-  bottom: -1px;
-  left: 12px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
+  bottom: 6px;
+  left: 50%;
+  width: 26px;
+  height: 3px;
+  border-radius: 3px;
   background: transparent;
   content: '';
+  transform: translateX(-50%);
 }
 
 .workspace-context-tabs__item:hover {
-  color: #2b3b35;
-  background: #f7f9f7;
+  color: #202420;
 }
 
 .workspace-context-tabs__item:focus-visible {
   outline: 2px solid #7bb8a6;
-  outline-offset: -3px;
-  border-radius: 8px 8px 0 0;
+  outline-offset: -4px;
+  border-radius: 8px;
 }
 
 .workspace-context-tabs__item.is-active {
-  color: #205f4d;
+  color: #1d201e;
   font-weight: 650;
 }
 
 .workspace-context-tabs__item.is-active::after {
-  background: #2e8b70;
-}
-
-.workspace-context-tabs__item .el-icon {
-  font-size: var(--dsh-font-size-subheading);
-}
-
-.workspace-context-tabs__item small {
-  min-width: 20px;
-  padding: 2px 5px;
-  border-radius: 999px;
-  color: #8b908c;
-  background: #f0f2ef;
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 650;
-}
-
-.workspace-context-tabs__item.is-active small {
-  color: #296c59;
-  background: #e8f4ef;
+  background: #1d201e;
 }
 
 .workspace-context-page__content {
@@ -2044,37 +1838,35 @@ watch(
 
 .workspace-conversation-pane__body {
   position: relative;
-  display: flex;
   min-height: 0;
   flex: 1;
-  flex-direction: column;
   overflow: hidden;
-}
-
-.workspace-conversation-pane__main > :deep(.conversation-page) {
-  min-height: 0;
-  flex: 1;
-}
-
-.workspace-conversation-pane__history-layout {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.workspace-conversation-pane__history-layout :deep(.session-history) {
-  flex: 1;
-  min-height: 0;
-  height: auto;
 }
 
 .workspace-context-page__aside {
+  display: flex;
   min-width: 0;
   height: 100vh;
+  flex-direction: column;
   overflow: hidden;
-  border-left: 1px solid #e5e7e4;
-  box-shadow: -8px 0 28px rgb(32 42 36 / 3%);
+  border-left: 1px solid #ececee;
+}
+
+/* 右栏整体是一列卡片（简报经插槽排在面板标题之下），由信息面板统一滚动。 */
+.workspace-context-page__task-info:empty {
+  display: none;
+}
+
+.workspace-context-page__space-label {
+  margin-top: 6px;
+  padding: 0 4px;
+  color: #8a8e8b;
+  font-size: var(--dsh-font-size-micro);
+}
+
+.workspace-context-page__info {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .workspace-tab-pane {
@@ -2087,33 +1879,11 @@ watch(
 
 .workspace-tab-pane__header {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
   width: 100%;
   gap: 24px;
   margin-bottom: 20px;
-}
-
-.workspace-tab-pane__eyebrow {
-  color: #2d8068;
-  font-size: var(--dsh-font-size-micro);
-  font-weight: 750;
-  letter-spacing: 0.1em;
-}
-
-.workspace-tab-pane__header h1 {
-  margin: 5px 0 0;
-  color: #202420;
-  font-size: var(--dsh-font-size-page-title);
-  font-weight: 680;
-  letter-spacing: -0.025em;
-}
-
-.workspace-tab-pane__header p {
-  margin: 7px 0 0;
-  color: #737a75;
-  font-size: var(--dsh-font-size-caption);
-  line-height: 1.6;
 }
 
 .workspace-tab-pane__count {
@@ -2408,13 +2178,11 @@ watch(
     padding: 0 8px;
   }
 
-  .workspace-context-page__header-actions {
-    padding-right: 10px;
-    padding-left: 4px;
+  .workspace-context-page__topbar {
+    padding: 0 12px 0 16px;
   }
 
   .workspace-context-tabs__item {
-    min-width: 104px;
     padding: 0 8px;
   }
 
@@ -2424,12 +2192,6 @@ watch(
 
   .workspace-conversation-pane__viewbar {
     margin: 10px 14px 0;
-  }
-
-  .workspace-tab-pane__header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
   }
 
   .workspace-file-row {
@@ -2461,10 +2223,6 @@ watch(
     width: 30px;
     padding: 0;
     justify-content: center;
-  }
-
-  .workspace-context-tabs__item small {
-    display: none;
   }
 }
 </style>

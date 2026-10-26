@@ -113,12 +113,12 @@ onMounted(async () => {
     <section class="content-panel filter-panel">
       <div class="filter-bar">
         <el-input v-model="query" :prefix-icon="Search" clearable placeholder="搜索工作空间、标识或创建人" />
-        <span class="filter-bar__meta">{{ filteredWorkspaces.length }} 个团队工作空间</span>
+        <span class="filter-bar__meta">{{ filteredWorkspaces.length }} 个项目空间</span>
       </div>
     </section>
 
     <section v-loading="contentStore.loading" class="metric-grid">
-      <article class="metric-card"><div class="metric-label">团队工作空间</div><div class="metric-value">{{ contentStore.workspaces.length }}</div><div class="metric-detail">个人空间由系统自动维护</div></article>
+      <article class="metric-card"><div class="metric-label">项目空间</div><div class="metric-value">{{ contentStore.workspaces.length }}</div><div class="metric-detail">个人空间由系统自动维护</div></article>
       <article class="metric-card"><div class="metric-label">成员席位</div><div class="metric-value">{{ memberTotal }}</div><div class="metric-detail">按工作空间成员关系累计</div></article>
       <article class="metric-card"><div class="metric-label">空间内 Session</div><div class="metric-value">{{ sessionTotal }}</div><div class="metric-detail">继承工作空间上下文</div></article>
       <article class="metric-card"><div class="metric-label">空间成果</div><div class="metric-value">{{ artifactTotal }}</div><div class="metric-detail">团队可复用交付物</div></article>
@@ -172,7 +172,7 @@ onMounted(async () => {
         <div class="workspace-detail__hero"><span><el-icon><FolderOpened /></el-icon></span><div><h2>{{ selectedWorkspace.name }}</h2><p>{{ selectedWorkspace.description }}</p></div></div>
         <dl class="workspace-detail__rows">
           <div><dt>工作空间标识</dt><dd class="mono">{{ selectedWorkspace.id }}</dd></div>
-          <div><dt>空间类型</dt><dd>团队工作空间</dd></div>
+          <div><dt>空间类型</dt><dd>项目空间</dd></div>
           <div><dt>创建人</dt><dd>{{ selectedWorkspace.creator }}</dd></div>
           <div><dt>成员数量</dt><dd>{{ selectedWorkspace.memberCount }}</dd></div>
           <div><dt>创建时间</dt><dd>{{ selectedWorkspace.createdAt }}</dd></div>

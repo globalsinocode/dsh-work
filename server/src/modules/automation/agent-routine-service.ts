@@ -7,8 +7,8 @@ import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { RunOrchestrationService } from '../run/run-orchestration-service.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
 import type { AuditTrail } from '../../domain/audit-trail.ts'
+import { nextSlotUtc, normalizeSchedule, slotsBetween } from '../../domain/execution-schedule.ts'
 import type { JsonObject } from '../../domain/run-state.ts'
-import { nextSlotUtc, normalizeSchedule, slotsBetween } from './automation-calendar.ts'
 import type { AutomationBudget, AutomationSchedule } from './automation-types.ts'
 import { RequestError } from '../../domain/request-errors.ts'
 
@@ -315,6 +315,7 @@ export class AgentRoutineService {
           select event.display_message from run_events event
            where event.tenant_id = run.tenant_id and event.attempt_id = run.current_attempt_id
              and event.event_type = 'assistant.completed'
+             and event.safe_metadata->>'late' is distinct from 'true'
            order by event.sequence desc limit 1
         ) answer on true
        where execution.tenant_id = ${tenantId} and task.requested_by = ${userId}
@@ -463,7 +464,7 @@ export class AgentRoutineService {
         return { execution: mapExecution(row!), run: run ?? null, decision: decision ?? null,
           frozen: run ? { prompt: routine.inputTemplate.prompt, workspaceId: routine.workspaceId,
             agentVersionId: routine.agentVersionId, recipientUserId: routine.recipientUserId,
-            budget: routine.inputTemplate.budget } : null }
+            budget: routine.inputTemplate.budget, timezone: routine.schedule.timezone } : null }
       }
       if (routine.status !== 'enabled') return insert('routine_inactive')
       const [overlap] = await tx<{ id: string }[]>`
@@ -523,7 +524,7 @@ export class AgentRoutineService {
           prompt: result.frozen.prompt, workspaceId: result.frozen.workspaceId,
           agentVersionId: result.frozen.agentVersionId, recipientUserId: result.frozen.recipientUserId,
           attemptId: `attempt-${result.execution.id}`, authorization: result.decision,
-          budget: result.frozen.budget,
+          budget: result.frozen.budget, timezone: result.frozen.timezone,
         })
       } catch (error) {
         await this.orchestration.convergeInterruptedAutomationRun(result.run.id, 'Agent 主动任务派发中断')

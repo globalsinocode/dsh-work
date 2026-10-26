@@ -1,9 +1,9 @@
 <script setup lang="ts">
+defineOptions({ inheritAttrs: false })
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useContentStore } from '@/stores/content'
 import { workbenchApi } from '@/api/client'
-import WorkspaceContextSkeleton from '@/components/workspace-context-skeleton/workspace-context-skeleton.vue'
 import WorkspaceDetailView from './WorkspaceDetailView.vue'
 const route=useRoute(), router=useRouter(), content=useContentStore()
 const ready=ref(false), error=ref('')
@@ -29,7 +29,10 @@ watch(()=>route.params.id,()=>{void load()},{immediate:true})
 onBeforeUnmount(()=>{generation++})
 </script>
 <template>
- <WorkspaceDetailView v-if="ready" />
- <el-result v-else-if="error" icon="warning" :title="error"><template #extra><el-button @click="load">重试</el-button><el-button @click="router.push('/workspaces')">返回团队空间</el-button></template></el-result>
- <WorkspaceContextSkeleton v-else />
+ <!-- 布局、信息栏、插槽等由宿主传入（B 群组页，S5d），原样转交给空间详情。 -->
+ <WorkspaceDetailView v-if="ready" v-bind="$attrs">
+  <template v-for="(_, name) in $slots" #[name]="scope"><slot :name="name" v-bind="scope ?? {}" /></template>
+ </WorkspaceDetailView>
+ <el-result v-else-if="error" icon="warning" :title="error"><template #extra><el-button @click="load">重试</el-button><el-button @click="router.push('/workspaces')">返回项目空间</el-button></template></el-result>
+ <el-skeleton v-else :rows="6" animated />
 </template>

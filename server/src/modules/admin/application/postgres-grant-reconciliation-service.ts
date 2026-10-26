@@ -6,7 +6,7 @@ import { invalidRequest, notFound, stateConflict } from '../../../domain/request
 const tenantId = 'tenant-dsh-work'
 const maxReconcileBatch = 200
 
-export type ReconciledCapabilityType = 'agent' | 'skill' | 'tool'
+export type ReconciledCapabilityType = 'agent' | 'skill'
 
 export interface InferredOwnerAgent {
   agentId: string
@@ -87,7 +87,6 @@ export class PostgresGrantReconciliationService {
              case s.capability_type
                when 'agent' then coalesce(a.name || ' v' || av.version, s.capability_version_id)
                when 'skill' then coalesce(sk.name || ' v' || sv.version, s.capability_version_id)
-               when 'tool' then coalesce(t.name || ' v' || tv.version, s.capability_version_id)
                else s.capability_version_id
              end as "capabilityLabel"
         from workspace_grant_sources s
@@ -100,10 +99,6 @@ export class PostgresGrantReconciliationService {
           on s.capability_type = 'skill'
          and sv.tenant_id = s.tenant_id and sv.id = s.capability_version_id
         left join skills sk on sk.tenant_id = sv.tenant_id and sk.id = sv.skill_id
-        left join tool_versions tv
-          on s.capability_type = 'tool'
-         and tv.tenant_id = s.tenant_id and tv.id = s.capability_version_id
-        left join tools t on t.tenant_id = tv.tenant_id and t.id = tv.tool_id
        where s.tenant_id = ${tenantId}
          and s.source_type = 'legacy_unresolved'
          and s.status = 'active'

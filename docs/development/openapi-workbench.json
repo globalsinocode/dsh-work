@@ -40,6 +40,417 @@
         }
       }
     },
+    "/me/preferences": {
+      "get": {
+        "operationId": "getMyPreferences",
+        "summary": "读取本人的员工端偏好",
+        "description": "界面模式按账号保存（员工端双模式 S5a，D19）。从未保存过时返回缺省值：uiMode = work，updatedAt = null。只读取当前登录账号本人的记录。",
+        "responses": {
+          "200": {
+            "description": "本人偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateMyPreferences",
+        "summary": "保存本人的员工端偏好",
+        "description": "切换 A 工作模式 / B 协作模式。只改界面，不改数据、规则与权限，不中断进行中的执行。重复保存同一值幂等；未知字段与非法值返回 422，原偏好不变。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPreferencesUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存后的本人偏好",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserPreferences"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets": {
+      "get": {
+        "operationId": "listConversationTargets",
+        "summary": "协作模式对话列表（本人）",
+        "description": "员工端双模式 S5c（项目空间方案 12.6，D24）：本人的个人会话按 AI 同事聚合为一行，加上本人当前所在的活动项目空间（群组）；按最近活动排序、服务端分页。预览只取 user / assistant 消息；被移出项目空间后不再返回。只读接口，发送消息仍走 POST /sessions 与 POST /sessions/{sessionId}/runs。",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "按 AI 同事或群组名称过滤。"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对话对象分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationTargetPage"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets/agent/{agentId}/sessions": {
+      "parameters": [
+        {
+          "name": "agentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getAgentConversation",
+        "summary": "与某个 AI 同事的单聊：会话分段（本人）",
+        "description": "返回本人与该 AI 同事的个人会话（新到旧分页，D26 连续分段显示）与 continueSessionId：只有最近一段会话且其 Agent 版本等于当前版本、AI 同事当前可用时给出；为 null 时发送消息由前端经 POST /sessions 开启新会话。各段内容经既有 GET /runs/{runId} 读取。与该 AI 同事没有会话且其不可用时返回 404。",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "单聊分段",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AgentConversation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets/{type}/{id}/read": {
+      "post": {
+        "operationId": "markConversationTargetRead",
+        "summary": "标记对话对象已读",
+        "description": "员工端双模式 S5e：把本人在该对话对象（agent = 与该 AI 同事的单聊，group = 本人所在的群组）上的已读位置前进到 upTo（缺省或晚于当前时间按当前时间），只进不退。只写本人的已读位置，与按空间的通知已读和静音分开。无权群组与不存在的 AI 同事返回 404。",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "group"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "upTo": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "已读到的消息时间，通常为列表中最后一条消息的 sentAt。"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "新的已读位置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationReadState"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/me/conversation-targets/resolve": {
+      "get": {
+        "operationId": "resolveConversationTarget",
+        "summary": "把对话链接解析为对话对象",
+        "description": "站内通知、复制的链接与旧书签中的 /conversations/{id} 在协作模式中经此定位：Run ID 或 Session ID 均可；本人的个人会话解析为所属 AI 同事，本人所在项目空间的会话解析为群组；不存在或无权访问返回 404。",
+        "parameters": [
+          {
+            "name": "conversation",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对话所属对象",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ConversationLocation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/timeline": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "get": {
+        "operationId": "getWorkspaceTimeline",
+        "summary": "群聊时间线（协作模式）",
+        "description": "员工端双模式 S5d（项目空间方案 12.6，D26～D28）：按时间倒序合并本空间的讨论话题消息（不属于任何任务的团队会话，只取 user / assistant）、讨论中 @Agent 的执行记录、任务卡片（任务创建、Agent 任务每次执行结束——定时执行“无变化”标为 quiet、任务标记完成）与系统记录（群组创建，成员 / Agent 成员 / 负责人 / 归档相关动态）。任务卡片取自任务、执行与任务事件，不写入消息表；任务对话不进入时间线。读取轨：归档空间现任成员可读；非成员与被移出的成员拒绝；个人空间 422。",
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "上一页返回的 nextCursor。"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "时间线分页（新到旧）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/WorkspaceTimelinePage"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/agents": {
       "get": {
         "operationId": "listAvailableAgents",
@@ -95,7 +506,8 @@
       },
       "post": {
         "operationId": "createTeamWorkspace",
-        "summary": "创建团队工作空间；创建者成为负责人，平台默认 Agent 可用时自动加入",
+        "summary": "创建团队工作空间（项目空间 / 群组）；创建者成为负责人，所选 Agent 与同事在同一事务中加入",
+        "description": "方案 12.8 / 功能规则 3.3：新建的项目空间至少有一个 Agent 成员。agentIds 为创建时加入的 Agent（1～10 个，去重）；任一 Agent 不能加入（未发布、未开放加入、对创建者不可见、依赖失效）则整个创建失败，不留下没有 Agent 的空间。省略 agentIds 的旧调用按平台默认 Agent 加入，同样失败即不创建。memberUserIds 为一并加入的同事（角色为成员，最多 50 位，去重，不能包含创建者本人），口径与添加成员相同（在职、业务员工、有员工工作台权限），任一不可加入则整个创建失败；客户端应先调用 POST /workspaces/disclosure-impact 预览数据范围影响。",
         "requestBody": {
           "required": true,
           "content": {
@@ -110,6 +522,19 @@
                   },
                   "description": {
                     "type": "string"
+                  },
+                  "agentIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "description": "创建时加入的 Agent ID；省略时为平台默认 Agent。"
+                  },
+                  "memberUserIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "maxItems": 50,
+                    "description": "创建时一并加入的同事（用户 ID），角色为成员；省略时只有创建者。"
                   }
                 },
                 "required": [
@@ -126,10 +551,49 @@
           "403": {
             "$ref": "#/components/responses/Error"
           },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
           "422": {
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/workspaces/disclosure-impact": {
+      "post": {
+        "operationId": "previewNewSpaceDisclosureImpact",
+        "summary": "新建项目空间前预览：加入所选同事后，所选 Agent 会失去哪些可交付数据范围（只读）",
+        "description": "与 GET /workspaces/{workspaceId}/agent-members/disclosure-impact 同一口径：比较只有创建者时与加上所选同事后各 Agent 可交付的数据范围（成员共同数据范围 ∩ Agent 授权）。只对创建者能加入的 Agent 给出预览，不能加入的 Agent 按创建时的错误返回。不改变任何状态。envelope.data 为 [{ agentId, name, lostDataScopes }]，没有影响时为空数组。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "agentIds": { "type": "array", "items": { "type": "string" }, "maxItems": 10 },
+                  "memberUserIds": { "type": "array", "items": { "type": "string" }, "maxItems": 50 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/member-candidates": {
+      "get": {
+        "operationId": "listNewSpaceMemberCandidates",
+        "summary": "搜索新建项目空间（群组）时可一并加入的企业业务员工",
+        "description": "与 GET /workspaces/{workspaceId}/member-candidates 同一口径（在职、业务员工、有员工工作台权限，仅返回姓名与部门），不含调用者本人。任何员工工作台用户都可新建空间，因此只要求工作台身份。envelope.data 为 MemberCandidatePage。",
+        "parameters": [
+          { "name": "query", "in": "query", "schema": { "type": "string" }, "description": "按姓名模糊搜索；省略时按目录顺序返回。" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "上一页返回的 nextCursor 游标。" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/workspaces/{workspaceId}/files": {
@@ -494,7 +958,7 @@
       "get": {
         "operationId": "listWorkspaceAgentMembers",
         "summary": "查询团队空间的 Agent 成员列表（所有成员）",
-        "description": "仅返回未移除的 Agent 成员，包含固定版本、加入人与当前操作人允许的动作；负责人看到管理动作，成员在可用状态看到「开始对话」。Agent 成员不套用员工角色语义。个人工作空间不支持。 读取轨（3-T1）：归档空间的现任成员仍可读取 Agent 名册；Agent 候选与加入/停用/升级/移出保持执行轨，在归档空间拒绝。",
+        "description": "仅返回未移除的 Agent 成员，包含固定版本、加入人与当前操作人允许的动作；负责人看到管理动作，成员在可用状态看到「开始对话」。Agent 成员不套用员工角色语义。个人工作空间不支持。 读取轨（3-T1）：归档空间的现任成员仍可读取 Agent 名册；Agent 候选与加入/停用/升级/移出保持执行轨，在归档空间拒绝。 项目空间 S0：负责人与管理员另获得每个 Agent 的 `deliverableDataScopes`（Agent 授权 ∩ 全体现任成员共同数据范围）。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -541,6 +1005,227 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/workspaces/{workspaceId}/agent-members/disclosure-impact": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "get": {
+        "operationId": "previewMemberDisclosureImpact",
+        "summary": "预览添加成员对 Agent 可交付数据范围的影响（负责人、管理员）",
+        "description": "项目空间 S0：团队空间的 Agent 交付数据范围取全体现任成员的交集。把查询参数 userId 指定的员工视为成员计算，返回会失去部分可交付数据范围的 Agent 成员（agentMemberId、name、lostDataScopes）；只读，不改变状态。归档空间拒绝。个人工作空间不支持。",
+        "parameters": [{ "name": "userId", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/brief": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getProjectBrief",
+        "summary": "查询项目简报（全部成员）",
+        "description": "项目空间 S1：返回最新版本的项目简报（versionId、versionNo、content、dueDate、updatedBy、updatedAt），尚未填写时为 null。读取轨：归档空间的现任成员可读。个人工作空间返回 422。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "put": {
+        "operationId": "saveProjectBrief",
+        "summary": "保存项目简报（负责人、管理员）",
+        "description": "项目空间 S1：请求体 content（1～8000 字）与可选 dueDate（YYYY-MM-DD 或 null）；每次保存生成新版本并写入最近动态，不覆盖历史版本。归档空间拒绝。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "listProjectTasks",
+        "summary": "查询项目任务（全部成员，游标分页）",
+        "description": "项目空间 S1：按 created_at、id 倒序返回未移除的任务，响应为 { items, nextCursor, total }；limit 默认 50、最大 100（超出返回 422），nextCursor 非空时作为 cursor 取下一页；sessionId 只返回绑定该线程的任务（用于判断当前线程是否为任务），total 始终是空间内全部未移除任务数。S4 起两类任务的 status 都取存储状态（todo/in_progress/done，由人推进），单次执行结果见 latestRunStatus、latestRunAt；Agent 任务另返回 schedule（kind manual/daily/weekly、timezone、timeOfDay、weekdays）、scheduleState（active/paused/stopped）、scheduleReason 与 nextRunAt；allowedActions 按当前角色给出（含 resume）。读取轨：归档空间可读。",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "sessionId", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createProjectTask",
+        "summary": "创建项目任务（非只读成员）",
+        "description": "项目空间 S1/S3：请求体 title、可选 description、assignee（type 为 employee 或 agent，id 为员工用户 ID 或 Agent 成员 ID）、可选 inputFileIds（仅 Agent 任务，本空间已解析成功的共享文件版本对象，最多 5 个）与 dueDate；S4：Agent 任务可选 schedule（{ kind: manual|daily|weekly, timeOfDay: HH:mm, weekdays: 0～6 }，缺省每天 09:00，时区取平台默认）与 startNow（保存并立即执行，响应为已开始执行的任务）；员工任务带 schedule 返回 422；每个空间未完成的定时 Agent 任务超过 20 个返回 409。只读成员不能承接任务。两类任务创建时都建立任务对话（返回的 sessionId），首条消息为任务标题与说明。",
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getProjectTask",
+        "summary": "读取单个项目任务（全部现任成员）",
+        "description": "项目空间任务详情页使用。读取轨：全部现任成员（含只读成员）可读，空间归档后仍可读；allowedActions 按调用者角色与空间状态裁剪。已移除或不存在的任务返回 404，非成员与个人空间按不可枚举文案拒绝。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "patch": {
+        "operationId": "updateProjectTask",
+        "summary": "编辑项目任务（创建人、负责人、管理员）",
+        "description": "项目空间 S1/S3：可改 title、description、assignee、inputFileIds、dueDate；S4：Agent 任务可改 schedule（修改人接替为规则设置人，清除暂停并写入 schedule_changed 事件），改派给员工时删除执行规则，从员工改派给 Agent 时缺省每天 09:00。改派只在任务对话没有执行中的 Run 时允许；员工换员工沿用原任务对话并记改派事件，跨类型改派或换 Agent 从新的任务对话开始。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "removeProjectTask",
+        "summary": "移除项目任务（创建人、负责人、管理员）",
+        "description": "项目空间 S1：逻辑移除；任务线程与成果保留。执行中的任务不能移除。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/events": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "listProjectTaskEvents",
+        "summary": "读取项目任务事件（全部现任成员）",
+        "description": "项目空间 S3：员工任务的状态推进（status_changed，metadata.from/to/auto）、完成（completed，metadata.note/deliverables）与同类改派（reassigned，metadata.from/to）；S4 起还有 schedule_changed（metadata.schedule）、schedule_paused / schedule_stopped（metadata.reason）、schedule_resumed、scheduled_run（metadata.slot/runId）、execution_skipped（metadata.slot/reason）、execution_missed（metadata.from/to/count），定时类事件的 actor 是规则设置人（仅归因）。按发生时间正序；在任务对话中作为系统记录展示。读取轨，归档可读；已移除或不存在的任务返回 404。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/start": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "startProjectTask",
+        "summary": "立即执行 Agent 任务（非只读成员）",
+        "description": "项目空间 S1/S3/S4：在任务对话中发起一次执行（任何执行规则下都可用），带上任务引用的文件，并经既有 Run/Attempt 执行；Manifest 携带当前项目简报版本（project_context）。需要 idempotencyKey（请求体或 Idempotency-Key 头）；可选 prompt 为成员写下的补充要求，缺省以开始执行的指令发起。缺省时第一次以开始执行的指令、之后以定时执行的固定提示发起。执行中或任务已完成返回 409。",
+        "responses": { "202": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/status": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "setProjectTaskStatus",
+        "summary": "更新任务状态（员工任务：任务负责人、创建人、空间负责人、管理员；Agent 任务：创建人、空间负责人、管理员）",
+        "description": "项目空间 S1/S4：请求体 status（todo/in_progress/done）；完成时可附 completionNote 与 deliverableFileIds（本空间共享文件版本对象）。Agent 任务标记完成时停止定时执行，改回待办或进行中时从当前时刻恢复；执行中标记完成返回 409。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-tasks/{taskId}/schedule/resume": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "taskId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "resumeProjectTaskSchedule",
+        "summary": "恢复已暂停的定时执行（创建人、空间负责人、管理员）",
+        "description": "项目空间 S4：恢复因连续失败或规则设置人失去发起资格而暂停的定时执行；恢复人接替为规则设置人，失败计数清零，从当前时刻计算下次时间点，写入 schedule_resumed 事件。未暂停或员工任务返回 409。",
+        "responses": { "200": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/workspaces/{workspaceId}/project-archive": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getProjectArchive",
+        "summary": "查询项目档案（全部成员）",
+        "description": "项目空间 S2：返回 current（最新档案版本：versionId、versionNo、items 条目数组、sourceKind archivist/manual/rollback、sourceTasks、rollbackFromVersionNo、createdBy、createdAt；尚无档案时为 null）与 archivistRunning（档案员是否正在整理）。读取轨：归档空间的现任成员可读。个人工作空间返回 422。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveProjectArchive",
+        "summary": "保存项目档案（非只读成员）",
+        "description": "项目空间 S2：请求体 baseVersionNo（当前版本号，尚无档案为 0）与 items（最多 50 条，每条 1～500 字，不可重复）；生成来源为手动编辑的新版本，不写入最近动态。版本号已变化返回 409；只读成员与归档空间拒绝。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/project-archive/versions": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "listProjectArchiveVersions",
+        "summary": "查询项目档案版本历史（全部成员）",
+        "description": "项目空间 S2：按版本号倒序返回最近 100 个档案版本，每个版本含完整条目与来源，供客户端对比变更。读取轨：归档空间的现任成员可读。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/project-archive/rollback": {
+      "parameters": [
+        {
+          "name": "workspaceId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "rollbackProjectArchive",
+        "summary": "回退项目档案（非只读成员）",
+        "description": "项目空间 S2：请求体 versionNo（要回退到的历史版本）与 baseVersionNo（当前版本号）；以该历史版本的条目生成来源为回退的新版本，历史保留。版本号已变化返回 409；回退到当前版本或不存在的版本返回 422；只读成员与归档空间拒绝。",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/sessions/{sessionId}/project-task": {
+      "parameters": [{ "name": "workspaceId", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "markSessionAsProjectTask",
+        "summary": "把讨论线程设为任务（非只读成员）",
+        "description": "项目空间 S1：负责人为该线程最近一次执行的 Agent 成员，可选 title（默认取线程标题）。未经 @Agent 执行的线程或已是任务的线程返回 409。",
+        "responses": { "201": { "$ref": "#/components/responses/Ok" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/workspaces/{workspaceId}/agent-members/{id}": {
@@ -882,7 +1567,7 @@
       "get": {
         "operationId": "getSessionThread",
         "summary": "获取会话共享线程（消息流 + Run 列表 + 发送者/触发人归因）；团队会话对全部现任成员可读，个人会话限创建者",
-        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。",
+        "description": "messages[].runId 为 null 表示不产生 Run 的讨论消息；runs 供内联展示每条执行的最新状态；currentUserRole 供前端对只读成员禁用写入口。归档团队空间保持只读可读。runs[].stoppedByName 为已停止执行的停止人。",
         "responses": {
           "200": {
             "$ref": "#/components/responses/Ok"
@@ -1005,7 +1690,7 @@
       ],
       "get": {
         "operationId": "getRun",
-        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。",
+        "description": "团队空间历史运行读取走读取轨（3-T1）：空间归档后现任成员仍可读取历史运行；非成员与不存在的空间一律按不可枚举的“不可访问”处理。响应内嵌 task-result/v1 结果投影（result 字段）：业务核验状态 outcome 独立于执行状态 status，模型自述或执行完成不直接构成业务达成；完整字段语义见 TaskResult schema 与 /runs/{runId}/result。已停止的 Run 返回 stoppedBy（请求停止的员工姓名，系统撤权取消为 null）。",
         "summary": "获取 Run 当前状态",
         "responses": {
           "200": {
@@ -1116,7 +1801,7 @@
             "$ref": "#/components/responses/Ok"
           }
         },
-        "description": "返回当前员工可见的成果（本人会话产生的成果）。团队空间的成果与被移出/退出成员的空间读权限同一口径：失去空间读权限后该空间成果不再返回；个人空间成果不受影响（AC-09/AC-23）。"
+        "description": "返回当前员工可见的成果（本人会话产生的成果）。团队空间的成果与被移出/退出成员的空间读权限同一口径：失去空间读权限后该空间成果不再返回；个人空间成果不受影响（AC-09/AC-23）。项目空间成果另返回 origin：所属项目任务（projectTask，任务线程产生的成果；任务移除后为 null）、承接 Agent 及版本（agent）与发起人（initiatedBy）；个人空间为 null。"
       }
     },
     "/files/{fileId}/download": {
@@ -1234,7 +1919,7 @@
       "get": {
         "operationId": "listWorkspaceSessions",
         "summary": "分页查询团队空间中本人发起的历史会话",
-        "description": "按最近活动倒序返回 Session 摘要（稳定 Session 身份、标题、发起人、最近活动时间、Run 计数与最新 Run 指针），不含对话正文。范围固定为调用者本人发起的会话（服务端按 created_by 强制过滤，不接受范围参数）；keyset 游标分页 + 标题关键词过滤；不返回其他成员的标题、摘要或数量。任何当前成员可读本人范围，非成员与个人空间被拒绝。3-T1 读取轨：空间归档后现任成员仍可读取本人范围的历史会话；非成员与不存在空间按不可枚举文案拒绝。",
+        "description": "按最近活动倒序返回 Session 摘要（稳定 Session 身份、标题、发起人、最近活动时间、Run 计数、最新 Run 指针，以及任务线程所属项目任务 projectTaskId，普通讨论为 null），不含对话正文。范围固定为调用者本人发起的会话（服务端按 created_by 强制过滤，不接受范围参数）；keyset 游标分页 + 标题关键词过滤；不返回其他成员的标题、摘要或数量。任何当前成员可读本人范围，非成员与个人空间被拒绝。3-T1 读取轨：空间归档后现任成员仍可读取本人范围的历史会话；非成员与不存在空间按不可枚举文案拒绝。",
         "parameters": [
           {
             "name": "query",
@@ -3435,6 +4120,654 @@
           }
         }
       },
+      "ConversationTargetPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationTarget"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConversationReadState": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "lastReadAt"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "group"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "lastReadAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ConversationTarget": {
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "name",
+          "description",
+          "avatarNames",
+          "lastMessage",
+          "lastActiveAt",
+          "available",
+          "unreadCount",
+          "muted"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "group"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "单聊为 Agent ID，群组为项目空间 ID。"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "avatarNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "description": "头像拼图用名称：群组为最多 4 位员工，单聊为 AI 同事名称。"
+          },
+          "lastMessage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationMessagePreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastActiveAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "单聊：AI 同事当前是否可用（不可用时历史仍可读）；群组恒为 true。"
+          },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "已读位置之后他人发送的 user 消息与 assistant 回复数（本人发送的不计；群组不早于本人加入时间），最多计到 100。"
+          },
+          "muted": {
+            "type": "boolean",
+            "description": "群组已按空间静音（3.7）：未读照常计数，列表弱化显示；单聊恒为 false。"
+          }
+        }
+      },
+      "ConversationMessagePreview": {
+        "type": "object",
+        "required": [
+          "role",
+          "authorName",
+          "text",
+          "sentAt"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentConversation": {
+        "type": "object",
+        "required": [
+          "agent",
+          "items",
+          "nextCursor",
+          "continueSessionId"
+        ],
+        "properties": {
+          "agent": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "description",
+              "version",
+              "available"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "available": {
+                "type": "boolean"
+              }
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sessionId",
+                "title",
+                "createdAt",
+                "lastActiveAt",
+                "agentVersion",
+                "runCount",
+                "latestRun"
+              ],
+              "properties": {
+                "sessionId": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "lastActiveAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "agentVersion": {
+                  "type": "string",
+                  "description": "会话固定的 Agent 版本号。"
+                },
+                "runCount": {
+                  "type": "integer"
+                },
+                "latestRun": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "continueSessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "发送消息时续写的会话；null 表示由平台开启新会话（AI 同事不可用时不能发送）。"
+          }
+        }
+      },
+      "ConversationLocation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "agentId",
+              "sessionId"
+            ],
+            "properties": {
+              "type": {
+                "const": "agent"
+              },
+              "agentId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "workspaceId",
+              "sessionId"
+            ],
+            "properties": {
+              "type": {
+                "const": "group"
+              },
+              "workspaceId": {
+                "type": "string"
+              },
+              "sessionId": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "WorkspaceTimelinePage": {
+        "type": "object",
+        "required": [
+          "workspaceId",
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceTimelineItem"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkspaceTimelineItem": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "sessionId",
+              "sessionTitle",
+              "role",
+              "content"
+            ],
+            "properties": {
+              "kind": {
+                "const": "message"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionTitle": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string"
+              },
+              "senderId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "senderName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "agentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runRequesterName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "sessionId",
+              "sessionTitle",
+              "runId",
+              "status",
+              "requesterName"
+            ],
+            "properties": {
+              "kind": {
+                "const": "run"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "sessionTitle": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "requesterName": {
+                "type": "string"
+              },
+              "agentName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stoppedByName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "event",
+              "task"
+            ],
+            "properties": {
+              "kind": {
+                "const": "task"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "created",
+                  "run_finished",
+                  "completed"
+                ]
+              },
+              "actorName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "title",
+                  "status",
+                  "assigneeType",
+                  "assigneeName",
+                  "removed"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "todo",
+                      "in_progress",
+                      "done"
+                    ]
+                  },
+                  "assigneeType": {
+                    "type": "string",
+                    "enum": [
+                      "employee",
+                      "agent"
+                    ]
+                  },
+                  "assigneeName": {
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "removed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "run": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "status",
+                      "scheduled",
+                      "quiet"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "scheduled": {
+                        "type": "boolean"
+                      },
+                      "quiet": {
+                        "type": "boolean",
+                        "description": "定时执行且回复以“无变化”开头：界面折叠。"
+                      },
+                      "summary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "maxLength": 120
+                      }
+                    }
+                  }
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "at",
+              "activityKind",
+              "actorName",
+              "safeMetadata"
+            ],
+            "properties": {
+              "kind": {
+                "const": "system"
+              },
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "activityKind": {
+                "type": "string",
+                "description": "workspace_created 或空间动态类型（member_added、agent_member_added、workspace_archived 等）。"
+              },
+              "actorName": {
+                "type": "string"
+              },
+              "safeMetadata": {
+                "type": "object"
+              }
+            }
+          }
+        ]
+      },
+      "UserPreferences": {
+        "type": "object",
+        "required": [
+          "uiMode",
+          "updatedAt"
+        ],
+        "properties": {
+          "uiMode": {
+            "type": "string",
+            "enum": [
+              "work",
+              "collab"
+            ],
+            "description": "work = A 工作模式（缺省），collab = B 协作模式。"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "最近一次保存时间；从未保存过为 null。"
+          }
+        }
+      },
+      "UserPreferencesUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uiMode"
+        ],
+        "properties": {
+          "uiMode": {
+            "type": "string",
+            "enum": [
+              "work",
+              "collab"
+            ]
+          }
+        }
+      },
       "WorkspaceNotificationState": {
         "type": "object",
         "required": [
@@ -3544,10 +4877,9 @@
             "enum": [
               "answer",
               "artifact",
-              "tool",
-              "record"
+              "tool"
             ],
-            "description": "回执类别：回答提交/成果登记/平台工具动作/结构化记录版本"
+            "description": "回执类别：回答提交/成果登记/平台工具动作"
           },
           "status": {
             "type": "string",

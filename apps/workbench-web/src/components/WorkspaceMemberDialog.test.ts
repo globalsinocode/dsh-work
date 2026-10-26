@@ -37,6 +37,7 @@ function panelOf(wrapper: ReturnType<typeof mountDialog>) {
 describe('WorkspaceMemberDialog', () => {
   beforeEach(() => {
     vi.spyOn(workbenchApi, 'listMemberCandidates').mockResolvedValue({ items: [], nextCursor: null })
+    vi.spyOn(workbenchApi, 'previewMemberDisclosureImpact').mockResolvedValue([])
   })
 
   it('renders the employee segment with a close footer', async () => {
@@ -116,6 +117,35 @@ describe('WorkspaceMemberDialog', () => {
 
     expect(addMember).toHaveBeenCalledWith('ws-team', { userId: 'u-new', role: 'member' })
     expect(wrapper.emitted('refresh')).toBeTruthy()
+  })
+
+  it('warns before adding an employee who would narrow Agent data scopes (项目空间 S0)', async () => {
+    vi.mocked(workbenchApi.listMemberCandidates).mockResolvedValue({
+      items: [{ id: 'u-narrow', displayName: '许宁', department: '财务部' }],
+      nextCursor: null,
+    })
+    vi.mocked(workbenchApi.previewMemberDisclosureImpact).mockResolvedValue([
+      { agentMemberId: 'wam-1', name: '经营分析助手', lostDataScopes: ['scope:finance'] },
+    ])
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel')
+    const addMember = vi.spyOn(workbenchApi, 'addWorkspaceMember')
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    await panelOf(wrapper).find('[data-testid="member-add-employee"]').trigger('click')
+    await panelOf(wrapper).find('[data-testid="member-candidate-search"]').setValue('许')
+    await vi.waitFor(
+      () => expect(workbenchApi.listMemberCandidates).toHaveBeenCalledWith('ws-team', { query: '许', limit: 10 }),
+      { timeout: 5_000 },
+    )
+    await flushPromises()
+    await panelOf(wrapper).find('[data-testid="member-candidate-row"] button').trigger('click')
+    await flushPromises()
+
+    expect(workbenchApi.previewMemberDisclosureImpact).toHaveBeenCalledWith('ws-team', 'u-narrow')
+    expect(String(confirm.mock.calls[0]?.[0])).toContain('“经营分析助手”将不能再使用：scope:finance')
+    // 取消确认不添加成员。
+    expect(addMember).not.toHaveBeenCalled()
   })
 
   it('keeps a trailing cursor to load more employee candidates', async () => {

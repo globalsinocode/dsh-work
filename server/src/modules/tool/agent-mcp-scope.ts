@@ -15,7 +15,8 @@ export function normalizeAgentMcpScope(value: unknown): AgentMcpScope {
   const candidate = value as Record<string, unknown>
   if (Object.keys(candidate).some(key => key !== 'mode' && key !== 'connectorIds')) invalid('MCP 使用范围存在未知字段')
   const { mode, connectorIds } = candidate
-  if (!['all', 'selected', 'none'].includes(mode as string) || !Array.isArray(connectorIds)
+  if (mode === 'all') invalid('MCP 使用范围不再支持“全部”，请选择具体连接器或不使用 MCP')
+  if (!['selected', 'none'].includes(mode as string) || !Array.isArray(connectorIds)
     || connectorIds.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))) {
     invalid('MCP 模式或连接器标识无效')
   }
@@ -26,6 +27,6 @@ export function normalizeAgentMcpScope(value: unknown): AgentMcpScope {
     }
     return { mode: 'selected', connectorIds: ids }
   }
-  if (ids.length) invalid('全部或不使用模式不能保留选定连接器')
-  return { mode: mode as 'all' | 'none', connectorIds: [] }
+  if (ids.length) invalid('不使用 MCP 时不能保留选定连接器')
+  return { mode: 'none', connectorIds: [] }
 }

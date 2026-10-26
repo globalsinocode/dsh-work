@@ -17,18 +17,17 @@ export class ExecutionAuthorizationGate {
   }
 
   /** Production Runtime, tool checks and queue dispatch share this current-grant gate. */
-  async assertCurrentRunAuthorization(manifest: RuntimeManifest, toolBindingsChecked = false): Promise<void> {
-    return this.assertRunAuthorizationInState(manifest, ['running'], toolBindingsChecked)
+  async assertCurrentRunAuthorization(manifest: RuntimeManifest): Promise<void> {
+    return this.assertRunAuthorizationInState(manifest, ['running'])
   }
 
   async assertWaitingRunAuthorization(manifest: RuntimeManifest): Promise<void> {
-    return this.assertRunAuthorizationInState(manifest, ['waiting'], false)
+    return this.assertRunAuthorizationInState(manifest, ['waiting'])
   }
 
   private async assertRunAuthorizationInState(
     manifest: RuntimeManifest,
     allowedStates: Array<RunRecord['status']>,
-    toolBindingsChecked: boolean,
   ): Promise<void> {
     if (!this.deps.authorization) throw new AuthorizationCheckUnavailableError()
     try {
@@ -43,8 +42,17 @@ export class ExecutionAuthorizationGate {
           throw authorizationDenied('Task 与 Attempt 固定身份不一致')
         }
       }
-      await this.deps.delegation?.assertActiveDelegation(manifest)
       await this.deps.memory?.assertCurrentReferences(manifest)
+      // EX-02：摘要运行只读取清单内的对话文本，不带工具；只需确认目标会话仍可摘要。
+      if (manifest.purpose === 'session-summary') {
+        if (!await this.summarizable(manifest)) throw authorizationDenied('会话已移除或空间已归档，摘要未执行')
+        return
+      }
+      // 项目空间 S2：档案整理只读取清单内的空间内容，不带工具；只需确认空间与整理批次仍有效。
+      if (manifest.purpose === 'project-archive') {
+        if (!await this.archivable(manifest)) throw authorizationDenied('项目空间已归档或整理已被取代，档案未整理')
+        return
+      }
       // 管理会话沿用 requireSession 的创建者门禁（workspace_id 为空的 admin
       // 受众走独立查询）；团队会话是共享讨论（TW-10），会话不绑定创建者与
       // Agent——非创建者成员亦可 @ 触发，其成员身份与按 Run 固定的 Agent
@@ -69,11 +77,21 @@ export class ExecutionAuthorizationGate {
           throw authorizationDenied('Task 归属或固定工作空间已变化')
         }
       }
-      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolBindings, toolBindingsChecked)
+      await assertCurrentExecutionAuthorization(this.deps.authorization, this.deps.content, manifest, this.deps.toolChecks)
     } catch (error) {
       if (isAuthorizationDenial(error) || error instanceof AuthorizationCheckUnavailableError) throw error
       throw new AuthorizationCheckUnavailableError(error)
     }
+  }
+
+  private async archivable(manifest: RuntimeManifest): Promise<boolean> {
+    const target = manifest.archive_target
+    return Boolean(target && this.deps.projectArchive && await this.deps.projectArchive.archivable(target.workspace_id, target.update_id))
+  }
+
+  private async summarizable(manifest: RuntimeManifest): Promise<boolean> {
+    const target = manifest.summary_target
+    return Boolean(target && await this.deps.conversations.summarizableSessionWorkspace(target.session_id))
   }
 
   /** Decides, after a claim and before the Runtime runs, whether the Attempt may still execute. */
@@ -81,12 +99,10 @@ export class ExecutionAuthorizationGate {
     run: RunRecord,
     manifest: RuntimeManifest,
   ): Promise<{ denied: false } | { denied: true; reason: string }> {
-    // B-03/I-04：Attempt 固定的工具绑定修订对所有 purpose 生效——排队期间绑定
-    // 被撤销、取代或语义漂移时，领取后在进入 Runtime 前收敛为授权失败。
-    if (manifest.tool_bindings?.length) {
-      if (!this.deps.toolBindings) return { denied: true, reason: '工具绑定复核服务不可用' }
+    if (manifest.mcp_connections?.length) {
+      if (!this.deps.toolChecks?.assertPinnedConnections) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
       try {
-        await this.deps.toolBindings.assertActiveToolBindings(manifest.tool_bindings)
+        await this.deps.toolChecks.assertPinnedConnections(manifest.mcp_connections)
       } catch (error) {
         if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
           return { denied: true, reason: error instanceof Error ? error.message : String(error) }
@@ -94,16 +110,15 @@ export class ExecutionAuthorizationGate {
         throw error
       }
     }
-    if (manifest.mcp_connections?.length) {
-      if (!this.deps.toolBindings || !manifest.agent_version_id) return { denied: true, reason: 'MCP Connector 授权复核服务不可用' }
-      try {
-        await this.deps.toolBindings.assertActiveMcpConnections(manifest.mcp_connections, manifest.agent_version_id)
-      } catch (error) {
-        if (isAuthorizationDenial(error) || error instanceof RequestValidationError) {
-          return { denied: true, reason: error instanceof Error ? error.message : String(error) }
-        }
-        throw error
-      }
+    if (manifest.purpose === 'session-summary') {
+      return await this.summarizable(manifest)
+        ? { denied: false }
+        : { denied: true, reason: '会话已移除或空间已归档，摘要未执行' }
+    }
+    if (manifest.purpose === 'project-archive') {
+      return await this.archivable(manifest)
+        ? { denied: false }
+        : { denied: true, reason: '项目空间已归档或整理已被取代，档案未整理' }
     }
     // 管理目的（admin-*）与发布试运行（agent-release-trial）都在执行时复核平台
     // 权限：试运行 Run 无 workspace_id，若只靠入队时校验，排队期间管理员被撤权
@@ -207,8 +222,7 @@ export class ExecutionAuthorizationGate {
     // AC-23 约束的是个人空间的产品形态，不是豁免共同执行授权检查。
     if (workspaceType === null) return { denied: true, reason: '工作空间不存在或已归档' }
     try {
-      // 绑定 pin 已在本函数顶部复核：此处跳过共享闸门的重复检查。
-      await this.assertCurrentRunAuthorization(manifest, true)
+      await this.assertCurrentRunAuthorization(manifest)
       return { denied: false }
     } catch (error) {
       if (!isAuthorizationDenial(error)) throw error
@@ -217,17 +231,25 @@ export class ExecutionAuthorizationGate {
   }
 
   /**
-   * Converges a recheck-denied run to failed with a clear run_events note.
+   * Converges a run that must not start (recheck denied, workspace archived, background
+   * lane capacity exhausted) to failed with a clear run_events note.
    * Defensive against concurrent convergence (systemCancelRun may already
    * have cancelled the run): terminal states are left untouched.
    */
-  async failRunForRevokedAuthorization(run: RunRecord, manifest: RuntimeManifest, reason: string) {
+  async failRunBeforeStart(
+    run: RunRecord,
+    manifest: RuntimeManifest,
+    reason: string,
+    failure: { errorCode?: string; displayMessage?: string } = {},
+  ) {
+    const errorCode = failure.errorCode ?? 'AUTHORIZATION_REVOKED'
+    const displayMessage = failure.displayMessage ?? '授权已撤销，任务未执行'
     const attempt = await this.deps.runs.getAttempt(tenantId, manifest.attempt_id)
     const currentRun = await this.deps.runs.getRun(tenantId, run.id)
     const attemptId = attempt?.id ?? manifest.attempt_id
     let converged = false
     if (attempt && !['failed', 'cancelled', 'succeeded'].includes(attempt.status)) {
-      await this.deps.runs.transitionAttempt(tenantId, attemptId, 'failed', 'AUTHORIZATION_REVOKED')
+      await this.deps.runs.transitionAttempt(tenantId, attemptId, 'failed', errorCode)
       converged = true
     }
     if (currentRun && !['failed', 'cancelled', 'succeeded'].includes(currentRun.status)) {
@@ -241,11 +263,20 @@ export class ExecutionAuthorizationGate {
       runId: run.id,
       attemptId,
       eventType: 'run.failed',
-      displayMessage: '授权已撤销，任务未执行',
-      safeMetadata: { error_code: 'AUTHORIZATION_REVOKED', reason },
+      displayMessage,
+      safeMetadata: { error_code: errorCode, reason },
       traceId: `trace-${run.id}`,
     })
-    await this.deps.delegation?.cancelActiveDescendants(run.taskId, '父任务授权已撤销，终止所有活动子任务')
-    await this.deps.delegation?.observeChildTerminal(run.id)
+    // 无 Session 的系统运行（摘要、项目档案）没有会话可回放终态：直接交给入口收敛，
+    // 不再等事件回放或过期清理。终结器失败不影响已落库的终态。
+    if (!run.sessionId) {
+      try {
+        if (!await this.deps.projectArchivist?.onRunTerminal(run, 'failed', '')) {
+          await this.deps.sessionSummaries?.onRunTerminal(run, 'failed', '')
+        }
+      } catch (error) {
+        console.error('system run finalizer failed', run.id, error)
+      }
+    }
   }
 }

@@ -17,8 +17,8 @@ import type { RunOrchestrationService } from '../run/run-orchestration-service.t
 import type { PostgresRunRepository } from '../run/postgres-run-repository.ts'
 import type { PostgresContentService } from '../workbench/application/postgres-content-service.ts'
 import type { PostgresConversationRepository } from '../workbench/application/postgres-conversation-repository.ts'
+import { nextSlotUtc, normalizeSchedule } from '../../domain/execution-schedule.ts'
 import type { RunRecord } from '../run/run-types.ts'
-import { nextSlotUtc, normalizeSchedule } from './automation-calendar.ts'
 import type { PostgresAutomationRepository } from './postgres-automation-repository.ts'
 import {
   AutomationReasonCodes,
@@ -635,14 +635,15 @@ export class AutomationService {
       })
       await this.advanceCursorInTx(transaction, request, task)
       if (!execution) throw new Error('执行记录创建失败')
-      return { kind: 'recorded' as const, execution, run, decision }
+      return { kind: 'recorded' as const, execution, run, decision, timezone: task.schedule.timezone }
     })
 
     if (!accepted || accepted.kind !== 'recorded' || !accepted.execution) return accepted?.execution ?? null
-    const { execution, run, decision } = accepted as {
+    const { execution, run, decision, timezone } = accepted as {
       execution: AutomationExecutionRecord
       run?: RunRecord
       decision?: RuntimeAuthorizationDecision
+      timezone?: string
     }
     if (execution.admissionStatus !== 'accepted') return execution
 
@@ -657,6 +658,7 @@ export class AutomationService {
         attemptId: `attempt-${execution.id}`,
         authorization: decision,
         budget: frozen.budget,
+        timezone,
       })
     } catch (error) {
       // dispatch 失败收敛：Run 仍是「无 Attempt 的 queued」时落 failed

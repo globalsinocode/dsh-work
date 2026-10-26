@@ -64,7 +64,7 @@ pnpm test:e2e
 | 服务端单元测试（全部或按目录） | `pnpm test:unit`、`pnpm test:unit src/modules/run` |
 | 服务端集成测试（全部或按目录） | `pnpm test:integration`、`pnpm test:integration src/http` |
 | 文档、契约与架构 | `pnpm verify`、`pnpm check:architecture` |
-| 类型、UI 与代码规范 | `pnpm typecheck`、`pnpm lint` |
+| 类型、UI 与代码规范 | `pnpm typecheck`（含 `scripts/` 下的 TypeScript 脚本，见 `server/tsconfig.scripts.json`）、`pnpm lint` |
 | 前端组件、Store 和 API 体验 | `pnpm test:m5:frontend`、`pnpm test:m5:api` |
 | Runtime 与模型治理 | `pnpm test:m1`、`pnpm test:m2` |
 | 身份 | `pnpm test:sso`、`pnpm test:sso:integration`、`pnpm test:local-auth`、`pnpm test:local-auth:integration`；独立账号浏览器旅程运行 `pnpm test:e2e:local-auth`，登录能力与账号来源运行 `pnpm test:e2e:login-options` |
@@ -72,10 +72,9 @@ pnpm test:e2e
 | 故障与恢复 | `pnpm test:m5:faults`、`pnpm test:m5:faults:integration` |
 | 容量 | `pnpm test:m5:capacity:integration` |
 | 浏览器冒烟 | `pnpm exec playwright install chromium`、`pnpm test:e2e` |
-| Agent 审核发布事务（隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
-| Agent 数据平面（隔离 PostgreSQL、受控工具及管理 API） | `pnpm test:agent-data:integration`；另运行 Agent 包、发布与 Runtime 契约测试 |
+| Agent 验证与发布（冻结、后台并行验证、判定、发布、回滚、重启收敛与车道容量；隔离 PostgreSQL） | `pnpm test:agent-release:integration` |
 | Agent 独立执行身份 P1 浏览器集成 | `pnpm test:e2e:agent-principal`（专用可丢弃 PostgreSQL 与受控服务，不并入 P0 冒烟） |
-| Agent 定义、默认工具与 MCP 范围 | `pnpm test:agent-package`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
+| Agent 定义与默认工具、MCP 范围 | `pnpm test:agent-draft-policy`、`pnpm test:agent-release:integration`、`pnpm test:mcp:integration`、`pnpm test:e2e:agent-capabilities`（后者使用专用可丢弃 PostgreSQL 与合成 MCP） |
 
 `pnpm verify` 统一运行四组静态检查，也可用 `pnpm verify contracts runtime` 选择范围：
 
@@ -107,11 +106,10 @@ DSH_WORK_TEST_DATABASE_URL='postgres://<test-user>:<test-password>@127.0.0.1:543
 
 `pnpm test:integration [目录...]` 与其他 `test:*:integration` 使用同一测试变量，按修改模块选择；集成测试逐个文件串行执行。`pnpm ci:check` 不包含 PostgreSQL 集成测试和浏览器 E2E；GitHub Actions 在 `integration` 与 `browser` 两个 Job 中各自启动 PostgreSQL Service 运行它们。
 
-PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现与自动生效、全部 Agent 默认可用、已准备 Attempt 的能力摘要漂移、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
+PF-03 MCP Connector 治理使用 `pnpm test:mcp:integration`，在一次性数据库中验证平台生成标识、Bearer Token 加密存储/运行时解析/轮换、整体发现、按 Agent 选定解析、能力变更待确认与确认后摘要变化、取消租户容量上限、逐调用审计以及停用和删除门禁；该命令使用合成 Runtime，不替代真实 Streamable HTTP MCP 与目标 DSH 的 P2 验收。
 
-PF-06 受控 Agent 委派使用 `pnpm test:pf06:integration`，在一次性数据库中验证精确发布版本策略、幂等父子 Task/Run、根预算范围、权限上限、深度/并行/Runtime 容量、父任务失效、取消、启动恢复对账和 `task-result/v1` 结果真值；配合 `pnpm test:m1` 与 `pnpm test:review:unit` 验证 Manifest、平台工具桥、DSH 策略和执行期当前授权。以上均使用受控执行，不替代真实多 Agent DSH、OIDC 收权和容量故障的 PF-07 P2 验收。
 
-PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-06 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
+PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf07:p1` 执行 PF-01～PF-05 的隔离 PostgreSQL 服务回归；真实环境证据与门禁按 [PF-07 验收手册](pf07-platform-acceptance.md) 单独记录。矩阵静态检查或 P1 绿灯不表示 P2 通过。
 
 默认 `pnpm test:e2e` 始终新建上述 P0 冒烟服务，不连接开发数据库，也不复用已登录的开发实例。数据库和真实权限旅程使用各自的 `test:e2e:*` P1 配置与专用可丢弃测试库；P0 通过不表示真实 DSH/OIDC 验收通过。HTTP/SSO 测试需要临时监听本机端口；`listen EPERM` 表示执行环境限制，应在允许本地监听的环境重跑。
 
@@ -120,17 +118,18 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 [mvp-fixtures.json](fixtures/mvp-fixtures.json) 保存合成角色、空间、业务记录、知识和文件元数据，不能视为真实企业接口。服务端种子与前端原型 ID 以各自代码为准，不假定 fixture 已自动导入所有环境。
 
 - 个人空间与团队空间的会话、文件和成果访问；非成员、跨用户及跨数据范围访问拒绝。
-- Agent、Skill 测试后发布、版本锁定与回滚；平台默认 DSH 工具采用显式允许清单和精确绑定，Skill 不能间接扩大工具授权。
+- Agent、Skill 测试后发布、版本锁定与回滚；内置工具采用代码注册表的显式清单，Skill 只能引用 Agent 可装配的工具，不能间接扩大工具范围；Runtime 紧急停用即时生效。
 - 文件上传、解析、Run 关联、来源与成果版本、下载鉴权；路径穿越、伪造签名和超限文件拒绝。
 - 取消、超时、Worker 崩溃、模型/Tool/网络故障；幂等请求不重复执行，只有失败 Run 可重试并生成新 Attempt。
 - 服务重启后活动 Attempt 失败收敛、排队任务恢复；SSE 使用 `Last-Event-ID` 重放，旧 Attempt 事件不能覆盖当前重试状态。
 - 审计脱敏、凭据隔离、DSH 子进程环境白名单、权限变化即时生效。
-- MCP Connector 成功检查后按 Agent Version 的 `all`（默认）、`selected` 或 `none` 范围装配；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
+- MCP Connector 按 Agent Version 的 `selected` 或 `none`（默认）范围装配；新增或 Schema 变化的 Tool 确认前不可调用；旧摘要 Attempt、停用或删除连接在后续调用复核时拒绝，实际 Tool 调用可追溯且凭据不进入 Manifest/Patch。
 - 容量测试覆盖 1/3/5 并发与 50 Run 排队，记录受理/完成延迟、CPU、RSS、磁盘和失败率。模拟 Runtime 跑分不能推导真实模型吞吐或生产并发。
+- 运行耗时基线：`pnpm report:run-timings`（读取 `DSH_WORK_DATABASE_URL`，只读）按阶段输出样本量、缺失数、p50/p95/最大值与失败率；`--since/--until` 限定时间，`--purpose` 选择员工运行、自动任务、摘要运行或全部，`--json` 输出原始汇总。
 
 测试时间用带时区 ISO 8601，业务 ID 尽量稳定；不提交真实员工、业务正文、凭据或敏感二进制附件。真实模型探针及升级验证命令统一见 Runtime 指南。
 
-本轮安全修复的范围、兼容约定和单独回归入口见 [批次 0/1](review-batch01.md)。
+跨空间输入、执行前复核和试运行证据隔离的规则见[功能规则](feature-rules.md#1-跨功能约束)，回归入口为 `pnpm test:review:unit` 与 `pnpm test:review:integration`（后者需要 `DSH_WORK_TEST_DATABASE_URL`）。
 
 ## 发布与业务验收条件
 
@@ -149,4 +148,4 @@ PF-07 使用 `pnpm test:pf07:matrix` 校验版本化能力矩阵，`pnpm test:pf
 
 ### 个人工作闭环增量
 
-[批次 3 规则](review-batch03.md) 与 [D12 实测证据](../history/reviews/review-d12-evidence.md) 区分 PostgreSQL/受控执行、浏览器和真实环境。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。
+规则见[功能规则第 2 节](feature-rules.md#2-个人工作区与内容)。运行 `pnpm test:review:batch03:integration`；浏览器分别运行 `pnpm test:e2e` 与带专用测试库的 `pnpm test:e2e:personal`。项目空间 P1 旅程运行 `pnpm test:e2e:project-space`（专用可丢弃 PostgreSQL + 合成 Runtime）。浏览器受策略阻塞时必须记录失败，不得换成 Mock 页面后声称通过。

@@ -11,7 +11,6 @@ import { PostgresAuthorizationService } from '../../modules/authorization/postgr
 import { PostgresOperationsService } from '../../modules/admin/application/postgres-operations-service.ts'
 import { PostgresSkillService } from '../../modules/skill/postgres-skill-service.ts'
 import { AdminSkillInstallationService } from '../../modules/skill/admin-skill-installation-service.ts'
-import type { PostgresToolConnectorService } from '../../modules/tool/postgres-tool-connector-service.ts'
 import type { RunOrchestrationService } from '../../modules/run/run-orchestration-service.ts'
 import type { RuntimeManifest } from '../../modules/runtime/runtime-types.ts'
 import { UnavailableRuntime } from '../../modules/runtime/execution-capabilities.ts'
@@ -34,17 +33,17 @@ before(async () => {
     return { id: manifest.run_id }
   } } as unknown as RunOrchestrationService
   const operations = new PostgresOperationsService(db.client, new UnavailableRuntime('runtime-local-01'), auth)
-  const installation = new AdminSkillInstallationService(db.client, orchestration, auth, {} as PostgresToolConnectorService)
+  const installation = new AdminSkillInstallationService(db.client, orchestration, auth)
   service = new AdminAssistantService(db.client, orchestration, auth, installation, new PostgresSkillService(db.client), agents, operations)
 })
 after(async () => { await db?.dispose() })
 async function draft() {
   const id = `agent-c6-${randomUUID().slice(0, 8)}`
   return (await agents.createAgent({ id, name: '待确认草稿', description: '合成的草稿文案验证，不连接模型和生产系统。', owner: actor, department: 'platform',
-    visibility: '试点员工', roleIds: ['role-employee'], dataScopes: ['enterprise:authorized'],
+    visibleRoleIds: ['role-employee'], 
     welcomeMessage: '欢迎使用', examplePrompts: ['介绍自己的能力'],
     systemPrompt: '你是合成测试助手，仅用于校验管理操作事务，不执行实际模型调用。',
-    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], tools: ['tool-runtime-file-read@1.0.0'], changeSummary: '合成测试初稿', actor,
+    maxOutputBytes: 65536, maxToolCalls: 20, timeoutSeconds: 300, skills: ['skill-document@1.0.0'], changeSummary: '合成测试初稿', actor,
   })).agent
 }
 async function seedRun(purpose: NonNullable<RuntimeManifest['purpose']>, sessionId = `admin-session-${randomUUID()}`) {
@@ -141,7 +140,7 @@ test('published-only targets, no-op edits and read-only actors cannot use the sh
 
 test('C6 RED: an unconfirmed specialist cannot bypass the first confirmation even with a successful run', async () => {
   const agent = await draft(), manifest = await seedRun('admin-agent-manage')
-  const plan = await prepare(manifest, agent.id, { roleIds: ['role-employee'], systemPrompt: '这是合成测试中需要双重确认的执行指令变更。' })
+  const plan = await prepare(manifest, agent.id, { systemPrompt: '这是合成测试中需要双重确认的执行指令变更。' })
   await finish(manifest)
   await assert.rejects(service.confirmAction(actor, plan.id, plan.planSha256), /确认|授权/)
   assert.equal((await agents.getMutationSnapshot(agent.id)).agent.systemPrompt, agent.systemPrompt)

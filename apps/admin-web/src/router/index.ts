@@ -16,14 +16,16 @@ const router = createRouter({
     { path: '/admin/agents', redirect: '/agents' },
     { path: '/admin/capabilities', redirect: to => legacyCapabilityRedirect(to.query.tab) },
     { path: '/admin/skills', redirect: '/skills' },
-    { path: '/admin/tools', redirect: '/tools' },
+    { path: '/admin/tools', redirect: '/runtimes' },
+    { path: '/tools', redirect: '/runtimes' },
     { path: '/admin/connectors', redirect: '/connectors' },
     { path: '/admin/runtimes', redirect: '/runtimes' },
     { path: '/admin/sessions', redirect: '/sessions' },
     { path: '/admin/workspaces', redirect: '/workspaces' },
     { path: '/admin/model-usage', redirect: '/model-usage' },
     { path: '/admin/model-governance', redirect: '/model-governance' },
-    { path: '/admin/permissions', redirect: '/permissions' },
+    { path: '/admin/permissions', redirect: '/runtimes' },
+    { path: '/permissions', redirect: '/runtimes' },
     { path: '/admin/identity', redirect: '/identity' },
     { path: '/admin/audit', redirect: '/audit' },
     { path: '/admin/health', redirect: '/health' },
@@ -60,28 +62,31 @@ const router = createRouter({
       meta: { title: 'Agent 管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
-      path: '/agents/:agentId/release',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
+      path: '/agents/:agentId',
+      name: 'agent-detail',
+      component: () => import('@/views/AgentDetailView.vue'),
+      meta: { title: 'Agent 详情', requiresAdmin: true, requiredPermission: 'adminRead' },
+      // 编辑类分区已移到草稿编辑流程：旧的验证与发布地址进入流程最后一步，旧的定义分区落到只读概览。
+      beforeEnter: to => {
+        const section = String(to.query.section ?? '')
+        if (section === 'release') {
+          return { name: 'agent-draft', params: to.params, query: { step: 'release' } }
+        }
+        if (section === 'profile' || section === 'capabilities') {
+          return { name: 'agent-detail', params: to.params, query: { ...to.query, section: 'overview' } }
+        }
+        return true
+      },
     },
     {
-      path: '/agents/:agentId/release/definition',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
+      path: '/agents/:agentId/draft',
+      name: 'agent-draft',
+      component: () => import('@/views/AgentDraftView.vue'),
+      meta: { title: '编辑 Agent', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
-      path: '/agents/:agentId/release/checks',
-      redirect: to => ({ name: 'agent-release-trial', params: { agentId: to.params.agentId } }),
-    },
-    {
-      path: '/agents/:agentId/release/trial',
-      name: 'agent-release-trial',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 人工试运行验证', requiresAdmin: true, requiredPermission: 'adminRead' },
-    },
-    {
-      path: '/agents/:agentId/release/review',
-      name: 'agent-release-review',
-      component: () => import('@/views/AgentReleaseWorkbenchView.vue'),
-      meta: { title: 'Agent 发布工作台 · 确认发布', requiresAdmin: true, requiredPermission: 'adminRead' },
+      path: '/agents/:agentId/release/:step(definition|checks|trial|review)?',
+      redirect: to => ({ name: 'agent-draft', params: { agentId: to.params.agentId }, query: { step: 'release' } }),
     },
     {
       path: '/capabilities',
@@ -98,12 +103,6 @@ const router = createRouter({
       name: 'skill-install',
       component: () => import('@/views/CapabilityManagementView.vue'),
       meta: { title: '新增 Skill', requiresAdmin: true, requiredPermission: 'adminRead' },
-    },
-    {
-      path: '/tools',
-      name: 'tools',
-      component: () => import('@/views/CapabilityManagementView.vue'),
-      meta: { title: 'DSH 工具管理', requiresAdmin: true, requiredPermission: 'adminRead' },
     },
     {
       path: '/connectors',
@@ -153,18 +152,12 @@ const router = createRouter({
       },
     },
     {
-      path: '/permissions',
-      name: 'permissions',
-      component: () => import('@/views/PermissionManagementView.vue'),
-      meta: { title: '工具权限', requiresAdmin: true, requiredPermission: 'adminRead' },
-    },
-    {
       path: '/experience-iterations',
       name: 'experience-iterations',
       component: () => import('@/views/ExperienceIterationView.vue'),
       meta: {
         title: '经验迭代',
-        subtitle: '按稳定 Agent 归属；申请来自成功的 Run/Attempt，经管理员审核后发布不可变经验版本，不会自动修改 Soul、Skill、Tool 或权限。',
+        subtitle: '按稳定 Agent 归属；申请来自成功的 Run/Attempt，经管理员审核后发布不可变经验版本，不会自动修改 Soul、Skill 或权限。',
         requiresAdmin: true,
         requiredPermission: 'adminRead',
       },
@@ -272,7 +265,7 @@ function errorStatus(cause: unknown) {
 
 function legacyCapabilityRedirect(tab: unknown) {
   if (tab === 'install') return '/skills/install'
-  if (tab === 'tools') return '/tools'
+  if (tab === 'tools') return '/runtimes'
   if (tab === 'connectors') return '/connectors'
   return '/skills'
 }

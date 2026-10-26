@@ -1,10 +1,15 @@
 import { expect, test } from '@playwright/test'
 
+// P2-28：每个 P0 用例从同一份内存夹具开始，避免可变状态跨用例泄漏。
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/api/testing/p0/reset')
+})
+
 test('P0: personal Workspace is implicit, navigation exposes work entries', async ({ page }) => {
   await page.goto('/workbench')
   const navigation = page.getByRole('navigation', { name: '员工工作台主导航' })
   // 历史对话与我的文件保留上下文入口和直达路由，不进入员工主导航。
-  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '团队空间', '自动任务'])
+  await expect(navigation.getByRole('button')).toHaveText(['新对话', 'Skill 广场', 'AI 同事', '项目空间', '定时任务'])
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)
   await expect(page.getByLabel('当前工作空间')).toHaveCount(0)
   await page.getByRole('button', { name: '添加内容' }).click()
@@ -23,8 +28,8 @@ test('P0: personal Workspace is implicit, navigation exposes work entries', asyn
   await useAgent.click()
   await expect(page).toHaveURL(/\/workbench\?agent=/)
   await expect(page.getByLabel('已选择 AI 同事', { exact: true })).toBeVisible()
-  await navigation.getByRole('button', { name: '团队空间', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '团队空间', exact: true })).toBeVisible()
+  await navigation.getByRole('button', { name: '项目空间', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '项目空间', exact: true })).toBeVisible()
   await expect(page.getByRole('button').filter({ hasText: '我的空间' })).toHaveCount(0)
   await navigation.getByRole('button', { name: '新对话', exact: true }).click()
   await expect(page.getByLabel('选择工作空间')).toHaveCount(0)

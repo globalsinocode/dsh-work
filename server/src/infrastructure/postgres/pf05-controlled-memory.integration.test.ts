@@ -402,6 +402,81 @@ test('AE-04 revisions from a newer Agent Version advance one stable memory entry
   assert.equal(resolved[0]?.memoryVersionId, second.approvedVersionId)
 })
 
+test('AE-04 disables, re-enables and rolls back a published experience by moving its current version', async () => {
+  const source = await succeededFixture('agent-experience-current')
+  const publish = async (content: string) => {
+    const candidate = await memory.submitCandidate({
+      userId: 'U00001', attemptId: source.manifest.attempt_id, submissionKey: `submit-${randomUUID()}`,
+      kind: 'experience', title: '退款异常复核顺序', content, visibility: 'workspace', retentionDays: 30,
+    })
+    return memory.reviewCandidate({ candidateId: candidate.id, decision: 'approved', actor: 'U00001', resolutionKey: `review-${randomUUID()}` })
+  }
+  const first = await publish('复核退款异常时，先核对订单状态与支付流水，再判断是否需要人工介入。')
+  const second = await publish('复核退款异常时，先核对订单状态、支付流水和物流签收，再判断是否需要人工介入。')
+  const agentId = 'agent-dsh-work-assistant'
+  // 只看本条经验：同库其他用例的经验也可能被模糊检索命中。
+  const mine = new Set([first.approvedVersionId, second.approvedVersionId])
+  const resolve = async () => (await memory.resolveContext({
+    query: '退款异常复核顺序', userId: 'U00001', workspaceId: source.manifest.workspace_id,
+    agentVersionId: source.manifest.agent_version_id, roleIds: ['role-employee'],
+  })).filter(item => mine.has(item.memoryVersionId))
+  const references = async () => ({
+    memory_context: await resolve(), user_context: source.manifest.user_context,
+    workspace_id: source.manifest.workspace_id, agent_version_id: source.manifest.agent_version_id,
+  })
+  const listed = (await memory.listAgentExperiences(agentId)).find(item => item.entryId === first.approvedEntryId)
+  assert.ok(listed)
+  assert.equal(listed.currentVersionId, second.approvedVersionId)
+  assert.deepEqual(listed.versions.map(item => [item.version, item.usable]), [[2, true], [1, true]])
+  const inFlight = await references()
+  assert.equal(inFlight.memory_context[0]?.memoryVersionId, second.approvedVersionId)
+
+  // 回滚：新检索用旧版本；已在执行中引用新版本的 Attempt 不受影响。
+  const rolledBack = await memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: first.approvedVersionId, expectedVersionId: second.approvedVersionId,
+    actor: 'U00001', reason: '新版本步骤有误',
+  })
+  assert.equal(rolledBack.currentVersionId, first.approvedVersionId)
+  assert.equal((await resolve())[0]?.memoryVersionId, first.approvedVersionId)
+  await memory.assertCurrentReferences(inFlight)
+
+  // 过期的预期版本被拒绝，原因必填。
+  await assert.rejects(memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: null, expectedVersionId: second.approvedVersionId, actor: 'U00001', reason: '停用',
+  }), (error: unknown) => (error as { code?: string }).code === 'EXPERIENCE_VERSION_CONFLICT')
+  await assert.rejects(memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: null, expectedVersionId: first.approvedVersionId, actor: 'U00001', reason: ' ',
+  }), /原因/)
+  await assert.rejects(memory.setAgentExperienceVersion({
+    agentId: 'agent-other', entryId: listed.entryId, versionId: null, expectedVersionId: first.approvedVersionId, actor: 'U00001', reason: '停用',
+  }), /经验不存在/)
+
+  // 停用：不再检索；排队或执行中引用它的 Attempt 在执行前复核时拒绝。
+  const usingFirst = await references()
+  const disabled = await memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: null, expectedVersionId: first.approvedVersionId, actor: 'U00001', reason: '暂停使用，待核实',
+  })
+  assert.equal(disabled.currentVersionId, null)
+  assert.deepEqual(await resolve(), [])
+  await assert.rejects(memory.assertCurrentReferences(usingFirst), /受控记忆已撤回/)
+
+  // 重新启用最新版本。
+  const enabled = await memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: second.approvedVersionId, expectedVersionId: null, actor: 'U00001', reason: '核实无误',
+  })
+  assert.equal(enabled.currentVersionId, second.approvedVersionId)
+  assert.equal((await resolve())[0]?.memoryVersionId, second.approvedVersionId)
+
+  // 来源授权撤回后的版本不可设为当前版本。
+  await database`
+    update memory_consents set status = 'withdrawn'
+     where tenant_id = ${tenantId} and id = (select consent_id from memory_candidates where tenant_id = ${tenantId} and approved_version_id = ${first.approvedVersionId})
+  `
+  await assert.rejects(memory.setAgentExperienceVersion({
+    agentId, entryId: listed.entryId, versionId: first.approvedVersionId, expectedVersionId: second.approvedVersionId, actor: 'U00001', reason: '回滚',
+  }), (error: unknown) => (error as { code?: string }).code === 'EXPERIENCE_VERSION_UNUSABLE')
+})
+
 test('AE-04 approves a legacy pending candidate into the stable Agent entry after a newer version', async () => {
   const oldSource = await succeededFixture('agent-memory-pending-old')
   const oldCandidate = await memory.submitCandidate({

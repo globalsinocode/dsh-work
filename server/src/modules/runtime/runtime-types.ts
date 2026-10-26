@@ -1,5 +1,4 @@
 import type { SkillTestScenario } from '../../domain/skill-test-scenario.ts'
-import type { ManifestToolBinding } from '../../domain/tool-binding.ts'
 
 export type RuntimeRunStatus =
   | 'queued'
@@ -16,6 +15,7 @@ export type RuntimeEventType =
   | 'run.started'
   | 'assistant.delta'
   | 'assistant.completed'
+  | 'tool.started'
   | 'tool.completed'
   | 'approval.required'
   | 'approval.resolved'
@@ -48,7 +48,11 @@ export interface RuntimeManifest {
   manifest_version: '1.0'
   /** Admin-authored, immutable expectations for one trial scenario. */
   test_scenario?: SkillTestScenario
-  purpose?: AdminRunPurpose | 'automation' | 'agent-routine'
+  purpose?: AdminRunPurpose | 'automation' | 'agent-routine' | 'session-summary' | 'project-archive'
+  /** EX-02: the Session and last message a `session-summary` run summarizes. */
+  summary_target?: { session_id: string; covered_through_message_id: string }
+  /** 项目空间 S2：`project-archive` 运行所整理的项目空间与整理批次。 */
+  archive_target?: { workspace_id: string; update_id: string }
   installation_source?: string
   run_id: string
   attempt_id: string
@@ -98,27 +102,39 @@ export interface RuntimeManifest {
   }
   skills: CapabilityReference[]
   tools: CapabilityReference[]
-  /**
-   * B-03/I-04：本 Attempt 固定的平台工具绑定修订（tool = id@version 平台引用）。
-   * 执行边界复核据此验证绑定仍 active 且语义未漂移；无平台工具的清单省略该字段。
-   */
-  tool_bindings?: ManifestToolBinding[]
   /** PF-03 Attempt snapshot. Grants remain live and are rechecked before and during execution. */
   mcp_connections?: McpConnectionSnapshot[]
   data_scopes: string[]
   knowledge_context: RuntimeKnowledgeDocument[]
   /** PF-05 reviewed, ACL-filtered memory versions fixed for this Attempt. */
   memory_context?: RuntimeControlledMemory[]
-  /** PF-06 platform-owned delegation allow-list fixed with the Agent Version. */
-  delegation_policy?: RuntimeDelegationPolicy
-  /** PF-06 immutable parent/root lineage for a delegated child Attempt. */
-  delegation_context?: RuntimeDelegationContext
+  /**
+   * 项目空间 S1/S2：项目任务线程的执行固定当时的项目简报与项目档案版本，至少携带其一。参考资料，不是操作授权。
+   */
+  project_context?: {
+    brief?: {
+      version_id: string
+      version_no: number
+      content: string
+      content_sha256: string
+      due_date: string | null
+    }
+    /** 项目空间 S2：执行时的项目档案版本（条目列表）。参考资料，不是操作授权。 */
+    archive?: {
+      version_id: string
+      version_no: number
+      items: string[]
+      items_sha256: string
+    }
+  }
   model_route_id?: string | null
   /** Agent 的声明随 Attempt 固定；省略仅表示没有额外能力要求。 */
   model_requirements?: Array<'long-context' | 'structured-output'>
   input: {
     message: string
     conversation_history?: Array<{ role: 'user' | 'assistant'; content: string }>
+    /** EX-02: DSH-generated summary of the conversation between the first message and the recent history. */
+    conversation_summary?: { content: string; covered_message_count: number; sha256: string }
     file_mounts: FileMount[]
     /** 解析文本承载不了的二进制内容（工作簿内嵌图片），挂到 /workspace/input/attachments/。 */
     attachments?: FileAttachment[]
@@ -166,26 +182,12 @@ export interface RuntimeManifest {
     max_tool_calls: number
   }
   created_at: string
+  /**
+   * IANA timezone the run's "now" is expressed in (a routine's schedule zone, otherwise the
+   * platform default). The adapter renders `created_at` in this zone for the model.
+   */
+  timezone?: string
   trace_id?: string
-}
-
-export interface RuntimeDelegationPolicy {
-  allowed_agent_version_ids: string[]
-  max_depth: number
-  max_parallel: number
-  timeout_seconds: number
-}
-
-export interface RuntimeDelegationContext {
-  delegation_id: string
-  root_task_id: string
-  parent_task_id: string
-  parent_run_id: string
-  parent_attempt_id: string
-  depth: number
-  max_depth: number
-  role_ceiling: string[]
-  data_scope_ceiling: string[]
 }
 
 export interface RuntimeResumeCheckpointContext {

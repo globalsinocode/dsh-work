@@ -101,6 +101,26 @@ export interface ExperienceIterationApplication {
   createdAt: string
 }
 
+/** AE-04 一条已发布经验及其版本；当前版本为空表示已停用，不再被检索。 */
+export interface AgentExperience {
+  entryId: string
+  agentId: string
+  title: string
+  currentVersionId: string | null
+  versions: Array<{
+    id: string
+    version: number
+    title: string
+    content: string
+    contentDigest: string
+    publishedAt: string
+    publishedBy: string
+    /** 仍可作为当前版本：未过保留期、来源授权有效、来源仍可访问。 */
+    usable: boolean
+  }>
+  updatedAt: string
+}
+
 interface CandidateRow {
   id: string
   consentId: string
@@ -562,6 +582,105 @@ export class PostgresControlledMemoryService {
     return status ? applications.filter(application => application.status === status) : applications
   }
 
+  /** AE-04：按 Agent 列出已发布经验，最新版本在前。 */
+  async listAgentExperiences(agentId: string): Promise<AgentExperience[]> {
+    const rows = await this.database<Array<{
+      entryId: string; currentVersionId: string | null; updatedAt: Date; versionId: string; version: number;
+      title: string; content: string; contentDigest: string; publishedAt: Date; publishedBy: string;
+      retentionUntil: Date; consentActive: boolean; sourceUserId: string; sourceWorkspaceId: string
+    }>>`
+      select me.id as "entryId", me.current_version_id as "currentVersionId", me.updated_at as "updatedAt",
+             mv.id as "versionId", mv.version, mv.title, mv.content, mv.content_digest as "contentDigest",
+             mv.published_at as "publishedAt", coalesce(publisher.display_name, mv.published_by) as "publishedBy",
+             mv.retention_until as "retentionUntil",
+             (c.status = 'active' and c.retention_until > now()) as "consentActive",
+             c.source_user_id as "sourceUserId", c.workspace_id as "sourceWorkspaceId"
+        from memory_entries me
+        join agent_versions owner_av on owner_av.tenant_id = me.tenant_id and owner_av.id = me.agent_version_id
+        join memory_versions mv on mv.tenant_id = me.tenant_id and mv.entry_id = me.id
+        join memory_candidates mc on mc.tenant_id = mv.tenant_id and mc.id = mv.candidate_id
+        join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
+        left join users publisher on publisher.tenant_id = mv.tenant_id and publisher.id = mv.published_by
+       where me.tenant_id = ${tenantId} and me.kind = 'experience' and owner_av.agent_id = ${agentId}
+       order by me.updated_at desc, me.id, mv.version desc
+    `
+    const sourceAccess = await this.resolveSourceAccess(rows)
+    const entries = new Map<string, AgentExperience>()
+    for (const row of rows) {
+      const readable = row.consentActive && row.retentionUntil.getTime() > Date.now()
+        && Boolean(sourceAccess.get(sourceAccessKey(row)))
+      let entry = entries.get(row.entryId)
+      if (!entry) {
+        entry = {
+          entryId: row.entryId, agentId, title: row.title, currentVersionId: row.currentVersionId,
+          versions: [], updatedAt: row.updatedAt.toISOString(),
+        }
+        entries.set(row.entryId, entry)
+      }
+      entry.versions.push({
+        id: row.versionId, version: row.version, title: row.title,
+        content: readable ? row.content : unavailableContent, contentDigest: row.contentDigest,
+        publishedAt: row.publishedAt.toISOString(), publishedBy: row.publishedBy, usable: readable,
+      })
+    }
+    return [...entries.values()]
+  }
+
+  /**
+   * AE-04 停用、启用与回滚：只移动经验的当前版本指针，已发布版本不变。
+   * `versionId: null` 为停用——此后不再检索，引用它的排队或执行中 Attempt 在执行前复核时拒绝；
+   * 指向较早版本为回滚，指向任一可用版本为启用。携带读取时的当前版本，过期修改返回 409。
+   */
+  async setAgentExperienceVersion(input: {
+    agentId: string
+    entryId: string
+    versionId: string | null
+    expectedVersionId: string | null
+    actor: string
+    reason: string
+  }): Promise<AgentExperience> {
+    const reason = input.reason.trim()
+    if (reason.length < 2 || reason.length > 500) throw requestInvalid('请填写 2～500 字的原因')
+    const action = await this.database.begin(async (transaction) => {
+      const [entry] = await transaction<{ currentVersionId: string | null; agentId: string; kind: string }[]>`
+        select me.current_version_id as "currentVersionId", owner_av.agent_id as "agentId", me.kind
+          from memory_entries me
+          join agent_versions owner_av on owner_av.tenant_id = me.tenant_id and owner_av.id = me.agent_version_id
+         where me.tenant_id = ${tenantId} and me.id = ${input.entryId}
+         for update of me
+      `
+      if (!entry || entry.kind !== 'experience' || entry.agentId !== input.agentId) throw notFound('经验不存在')
+      if (entry.currentVersionId !== input.expectedVersionId) {
+        throw new RequestError(409, 'EXPERIENCE_VERSION_CONFLICT', '经验的当前版本已被修改，请刷新后再操作')
+      }
+      if (input.versionId === entry.currentVersionId) return null
+      if (input.versionId !== null) {
+        const [target] = await transaction<{ usable: boolean }[]>`
+          select (mc.status = 'approved' and c.status = 'active' and c.retention_until > now()
+                  and mv.retention_until > now()) as usable
+            from memory_versions mv
+            join memory_candidates mc on mc.tenant_id = mv.tenant_id and mc.id = mv.candidate_id
+            join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
+           where mv.tenant_id = ${tenantId} and mv.id = ${input.versionId} and mv.entry_id = ${input.entryId}
+        `
+        if (!target) throw notFound('经验版本不存在')
+        if (!target.usable) throw new RequestError(409, 'EXPERIENCE_VERSION_UNUSABLE', '该版本已过保留期或来源授权已撤回，不能设为当前版本')
+      }
+      await transaction`
+        update memory_entries set current_version_id = ${input.versionId}, updated_at = now()
+         where tenant_id = ${tenantId} and id = ${input.entryId}
+      `
+      return input.versionId === null ? 'disable' : entry.currentVersionId === null ? 'enable' : 'rollback'
+    })
+    if (action) {
+      await this.operations?.appendAudit(input.actor, `experience.iteration.entry.${action}`, input.entryId, 'success',
+        `trace-${input.entryId}`, reason)
+    }
+    const updated = (await this.listAgentExperiences(input.agentId)).find(item => item.entryId === input.entryId)
+    if (!updated) throw notFound('经验不存在')
+    return updated
+  }
+
   async reviewExperienceIterationApplication(input: {
     applicationId: string
     decision: 'approved' | 'rejected'
@@ -883,6 +1002,7 @@ export class PostgresControlledMemoryService {
         join memory_candidates mc on mc.tenant_id = mv.tenant_id and mc.id = mv.candidate_id
         join memory_consents c on c.tenant_id = mc.tenant_id and c.id = mc.consent_id
        where me.tenant_id = ${tenantId} and mv.id in ${this.database(ids)}
+         and me.current_version_id is not null
          and mc.status = 'approved' and c.status = 'active'
          and mv.retention_until > now() and c.retention_until > now()
          and (
@@ -921,14 +1041,15 @@ export class PostgresControlledMemoryService {
   private async currentAgentRoles(agentVersionId: string | null, candidateRoles: string[]): Promise<string[]> {
     if (!agentVersionId || !candidateRoles.length) return []
     const [target] = await this.database<{ declaredRoles: string[]; grantedRoles: string[] }[]>`
-      select av.visible_role_ids as "declaredRoles",
+      select a.visible_role_ids as "declaredRoles",
              coalesce(jsonb_agg(g.role_id) filter (where g.role_id is not null), '[]'::jsonb) as "grantedRoles"
         from agent_versions av
+        join agents a on a.tenant_id = av.tenant_id and a.id = av.agent_id
         join execution_principals ep on ep.tenant_id = av.tenant_id and ep.agent_id = av.agent_id
           and ep.kind = 'agent' and ep.status = 'active'
         left join agent_principal_role_grants g on g.tenant_id = ep.tenant_id and g.principal_id = ep.id
        where av.tenant_id = ${tenantId} and av.id = ${agentVersionId} and av.status <> 'disabled'
-       group by av.id
+       group by av.id, a.visible_role_ids
     `
     if (!target) return []
     const declared = new Set(target.declaredRoles)

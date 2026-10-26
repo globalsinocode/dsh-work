@@ -13,7 +13,7 @@ import type { AttemptBudget } from './attempt-budget.ts'
 import type { AttemptDispatcher } from './attempt-dispatcher.ts'
 import type { AttemptScheduler } from './attempt-scheduler.ts'
 import type { RunCancellation } from './run-cancellation.ts'
-import { withContinuationOutputs } from './continuation.ts'
+import { adminContinuationBounds, withContinuationOutputs } from './continuation.ts'
 import { adminSystemPrompt, adminTools, assertPrompt, flattenSkillDependencies, toCapabilityReference, toRuntimeManifestSkill } from './manifest-helpers.ts'
 import { tenantId, runtimeId, type OrchestrationDependencies } from './orchestration-dependencies.ts'
 
@@ -71,7 +71,7 @@ export class AdminRunEntry implements AdminRunLauncher {
     // 试运行 Run 属于发布治理证据：失败应在工作台重新发起完整试运行（封存/案例/确认
     // 全链路），不能按管理助手语义单独重试——那会用 Skill 安装工具集重放治理输入。
     if (manifest.purpose === 'agent-release-trial') {
-      throw invalidRequest('试运行不支持单独重试；请在发布工作台重新发起试运行')
+      throw invalidRequest('验证案例不支持单独重试；请在验证与发布中重跑该案例')
     }
     if (manifest.purpose === 'admin-skill-test') {
       // Reuse the full immutable graph, tool allowlist and original input. The
@@ -93,6 +93,7 @@ export class AdminRunEntry implements AdminRunLauncher {
         await this.deps.conversations.getConversationHistory(run.sessionId!, run.id),
         run.id,
         await this.deps.conversations.getRunPrompt(run.id),
+        adminContinuationBounds,
       )
       const retryPurpose: AdminRunPurpose = manifest.purpose && isAdminRunPurpose(manifest.purpose) ? manifest.purpose : 'admin-skill-install'
       await this.dispatchAdmin(run, continued.message, manifest.installation_source ?? '', retryPurpose, undefined, continued.history)

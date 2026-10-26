@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
 import { assertAgentSpecLimits } from '../../modules/agent/agent-spec.ts'
 import { normalizeAgentMcpScope } from '../../modules/tool/agent-mcp-scope.ts'
@@ -13,7 +13,6 @@ import type {
   ConnectorConfiguration,
   CreateAgentDraftInput,
   CreateSkillInput,
-  DshRuntimeToolConnectorStatus,
   EmployeeModelUsageSummary,
   ListPage,
   ManagedWorkspaceDefinition,
@@ -26,23 +25,11 @@ import type {
   SessionListQuery,
   SkillConfiguration,
   SkillDefinition,
-  ToolDefinition,
-  ToolCatalogSyncResult,
-  AddToolInput,
   UpdateAgentDraftInput,
   UpdateRuntimeConfigurationInput,
   UpdateSkillInput,
 } from '../../domain/types.ts'
-import { DSH_RUNTIME_CONNECTOR_ID } from '../../domain/tool-category.ts'
-import {
-  assertDshToolApprovalPolicy,
-  catalogEntryToToolDefinition,
-  dshBuiltInToolCatalog,
-  isVisibleDshCatalogTool,
-  normalizeToolPolicyInput,
-  prototypeToolRoleIds,
-  publicCatalogCandidate,
-} from '../../modules/tool/dsh-built-in-tool-catalog.ts'
+import { builtinTools, invalidSkillToolReferences, normalizeDisabledTools, type BuiltinToolStatus } from '../../modules/runtime/builtin-tools.ts'
 import { invalidRequest, notFound, stateConflict } from '../../domain/request-errors.ts'
 
 export interface PlatformStatus {
@@ -108,6 +95,9 @@ export class AdminQueryService {
     if (!['accepting', 'draining', 'disabled'].includes(input.schedulingStatus)) {
       throw invalidRequest('Runtime 调度状态无效')
     }
+    let disabledTools: string[] | undefined
+    try { disabledTools = input.disabledTools === undefined ? undefined : normalizeDisabledTools(input.disabledTools) }
+    catch (error) { throw invalidRequest(error instanceof Error ? error.message : '停用工具清单无效') }
 
     const runtimes = await this.repository.read('runtimes')
     const runtime = runtimes.find((item) => item.id === input.runtimeId)
@@ -120,6 +110,7 @@ export class AdminQueryService {
       maxConcurrentWorkers: input.maxConcurrentWorkers,
       attemptTimeoutMinutes: input.attemptTimeoutMinutes,
       schedulingStatus: input.schedulingStatus,
+      ...(disabledTools ? { disabledTools } : {}),
     })
   }
 
@@ -205,10 +196,6 @@ export class AdminQueryService {
     return this.repository.read('agentVersions')
   }
 
-  getAgentReleaseRecords() {
-    return this.repository.read('agentReleaseRecords')
-  }
-
   async createAgentDraft(input: CreateAgentDraftInput) {
     const creatorName = input.actor.trim()
     if (!creatorName) throw stateConflict('创建人不能为空')
@@ -223,14 +210,22 @@ export class AdminQueryService {
       welcomeMessage: normalizeWelcomeMessage(input),
       workInstructions: input.workInstructions?.trim() ?? '',
       mcpScope: normalizeAgentMcpScope(input.mcpScope),
+      webSearchEnabled: input.webSearchEnabled === true,
+      projectTasksEnabled: input.projectTasksEnabled === true,
     }
     assertDraftConfiguration(normalizedInput)
 
     const timestamp = prototypeTimestamp()
     const version = '0.1.0'
-    const { actor, changeSummary, ...configuration } = normalizedInput
+    const { actor, changeSummary, visibleRoleIds, executionRoleIds: _roles, executionDataScopes: _scopes, ...configuration } = normalizedInput
+    void _roles
+    void _scopes
     const agent: AgentDefinition = {
       ...configuration,
+      webSearchEnabled: configuration.webSearchEnabled === true,
+      projectTasksEnabled: configuration.projectTasksEnabled === true,
+      roleIds: visibleRoleIds ?? [],
+      visibility: visibleRoleIds?.length ? `指定 ${visibleRoleIds.length} 个角色` : '未设置',
       status: 'draft',
       version,
       updatedAt: timestamp,
@@ -261,10 +256,6 @@ export class AdminQueryService {
     void _revision
     const configuration = {
       ...submittedConfiguration,
-      // F-05：发布范围只由发布工作台写入，编辑器保存沿用当前值。
-      roleIds: current.roleIds,
-      dataScopes: current.dataScopes,
-      visibility: current.visibility,
       owner: current.owner,
       department: current.department,
       welcomeMessage: normalizeWelcomeMessage(submittedConfiguration),
@@ -309,20 +300,7 @@ export class AdminQueryService {
       status: input.status,
       ...(action === 'published' ? { publishedAt: timestamp, publishedBy: input.actor } : {}),
     })
-    const release = await this.repository.appendAgentRelease({
-      id: `release-${Date.now()}`,
-      agentId: input.agentId,
-      version: current.version,
-      action,
-      actor: input.actor,
-      time: timestamp,
-      note: action === 'published'
-        ? '通过管理后台发布当前草稿版本。'
-        : action === 'enabled'
-          ? '重新启用当前 Agent 版本。'
-          : '停用当前 Agent，不影响已创建的运行。',
-    })
-    return { agent, release }
+    return { agent }
   }
 
   async rollbackAgent(input: { agentId: string; version: string; actor: string }) {
@@ -343,9 +321,6 @@ export class AdminQueryService {
       // F-03：回滚不改变启停状态，停用中的 Agent 回滚后仍停用。
       status: current.status === 'disabled' ? 'disabled' : 'published',
       version: target.version,
-      visibility: target.visibility,
-      roleIds: target.roleIds,
-      dataScopes: target.dataScopes,
       welcomeMessage: target.welcomeMessage,
       examplePrompts: target.examplePrompts,
       systemPrompt: target.systemPrompt,
@@ -355,20 +330,12 @@ export class AdminQueryService {
       maxToolCalls: target.maxToolCalls,
       timeoutSeconds: target.timeoutSeconds,
       skills: target.skills,
-      tools: target.tools,
+      webSearchEnabled: target.webSearchEnabled,
+      projectTasksEnabled: target.projectTasksEnabled,
       updatedAt: timestamp,
     })
     await this.repository.updateAgentVersion(input.agentId, target.version, { status: 'published' })
-    const release = await this.repository.appendAgentRelease({
-      id: `release-${Date.now()}`,
-      agentId: input.agentId,
-      version: target.version,
-      action: 'rollback',
-      actor: input.actor,
-      time: timestamp,
-      note: `活动版本由 v${current.version} 回滚到 v${target.version}；启停状态与进行中的草稿保持不变。`,
-    })
-    return { agent, release }
+    return { agent }
   }
 
   getSkills() {
@@ -449,91 +416,17 @@ export class AdminQueryService {
   }
 
   private async assertSkillToolsAvailable(toolIds: string[]) {
-    const tools = await this.repository.read('tools')
-    for (const toolId of unique(toolIds)) {
-      const tool = tools.find((item) => item.id === toolId)
-      if (!tool) throw notFound(`Skill 引用的工具不存在：${toolId}`)
-      if (tool.status === 'disabled') throw new Error(`Skill 引用的工具已停用：${tool.name}`)
-    }
+    const invalid = invalidSkillToolReferences(unique(toolIds))
+    if (invalid.length) throw invalidRequest(`Skill 引用了平台不提供的工具：${invalid.join('、')}`)
   }
 
-  getTools() {
-    return this.repository.read('tools').then(tools => tools.filter(tool => isVisibleDshCatalogTool(tool.id)))
-  }
-
-  async getToolCatalog() {
-    const installed = new Set((await this.repository.read('tools')).map(tool => tool.id))
-    return dshBuiltInToolCatalog.map(entry => {
-      if (!entry.platformSupported) return publicCatalogCandidate(entry, 'unavailable', entry.unsupportedReason ?? '平台尚未接入该工具')
-      return installed.has(entry.id)
-        ? publicCatalogCandidate(entry, 'installed', '已添加到工具目录')
-        : publicCatalogCandidate(entry, 'ready', '原型模式可演示添加；真实环境仍会检查 DSH Runtime')
-    })
-  }
-
-  async syncToolCatalog(input: { actor: string }): Promise<ToolCatalogSyncResult> {
-    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
-    for (const entry of dshBuiltInToolCatalog) {
-      const definition = catalogEntryToToolDefinition(entry)
-      const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
-      if (existing) {
-        const { id: _id, ...definitionPatch } = definition
-        await this.repository.updateTool(entry.id, {
-          ...definitionPatch,
-          allowedRoleIds: existing.allowedRoleIds,
-          allowedRoles: existing.allowedRoles,
-          dataScopes: existing.dataScopes,
-          status: entry.platformSupported
-            ? existing.admissionStatus === 'unavailable' ? 'available' : existing.status
-            : 'disabled',
-          lastCheckedAt: '刚刚',
-        })
-      } else {
-        await this.repository.createTool(definition)
-      }
-    }
-    const tools = (await this.repository.read('tools'))
-      .filter(tool => tool.connectorId === DSH_RUNTIME_CONNECTOR_ID && isVisibleDshCatalogTool(tool.id))
+  async getBuiltinToolStatus(): Promise<BuiltinToolStatus> {
+    const [runtime] = await this.repository.read('runtimes')
     return {
-      tools,
-      discoveredCount: dshBuiltInToolCatalog.length,
-      admittedCount: dshBuiltInToolCatalog.filter(entry => entry.platformSupported).length,
-      unavailableCount: dshBuiltInToolCatalog.filter(entry => !entry.platformSupported).length,
-      synchronizedAt: new Date().toISOString(),
+      tools: builtinTools,
+      disabledTools: runtime?.disabledTools ?? [],
+      catalog: { checkedAt: new Date().toISOString(), missingTools: [] },
     }
-  }
-
-  async addTool(input: AddToolInput) {
-    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
-    const policy = normalizeToolPolicyInput(input)
-    const entry = dshBuiltInToolCatalog.find(item => item.id === input.catalogId)
-    if (!entry) throw invalidRequest(`不支持添加该 DSH 工具：${input.catalogId}`)
-    if (!entry.platformSupported) throw invalidRequest(entry.unsupportedReason ?? `平台尚未接入该工具：${input.catalogId}`)
-    assertDshToolApprovalPolicy(entry, policy.approvalPolicy)
-    const existing = (await this.repository.read('tools')).find(tool => tool.id === entry.id)
-    if (existing) throw stateConflict(`工具已存在：${entry.name}`)
-    return this.repository.createTool(catalogEntryToToolDefinition(entry, {
-      allowedRoles: policy.allowedRoles,
-      dataScopes: policy.dataScopes,
-      approvalPolicy: policy.approvalPolicy,
-    }))
-  }
-
-  async setToolStatus(input: {
-    toolId: string
-    status: Extract<ToolDefinition['status'], 'available' | 'disabled'>
-    actor: string
-  }) {
-    if (!input.actor.trim()) throw stateConflict('操作人不能为空')
-    const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
-    if (!tool) throw notFound(`工具不存在：${input.toolId}`)
-    if (input.status === 'available' && tool.admissionStatus === 'unavailable') {
-      throw stateConflict(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能启用')
-    }
-    return this.repository.updateTool(input.toolId, {
-      status: input.status,
-      lastCheckedAt: '刚刚',
-    })
   }
 
   getConnectors() {
@@ -542,40 +435,6 @@ export class AdminQueryService {
 
   async getMcpConnectors() {
     return (await this.getConnectors()).filter(connector => connector.protocol === 'mcp')
-  }
-
-  async getDshRuntimeToolConnectorStatus(): Promise<DshRuntimeToolConnectorStatus> {
-    const [connectors, runtimes, tools] = await Promise.all([
-      this.repository.read('connectors'),
-      this.repository.read('runtimes'),
-      this.repository.read('tools'),
-    ])
-    const connector = connectors.find(item => item.id === DSH_RUNTIME_CONNECTOR_ID)
-    if (!connector) throw notFound('DSH Runtime 内置工具连接器不存在')
-    const catalog = tools
-      .filter(tool => tool.connectorId === DSH_RUNTIME_CONNECTOR_ID)
-      .map(tool => ({ id: tool.id, version: tool.version, status: tool.status }))
-      .sort((left, right) => `${left.id}@${left.version}`.localeCompare(`${right.id}@${right.version}`))
-    return {
-      runtimeId: runtimes[0]?.id ?? null,
-      connectorId: connector.id,
-      name: connector.name,
-      status: connector.status,
-      endpoint: connector.endpoint,
-      toolCount: catalog.length,
-      activeBindingCount: catalog.filter(tool => tool.status !== 'disabled').length,
-      latestBindingRevision: catalog.length ? 1 : null,
-      catalogDigest: createHash('sha256').update(JSON.stringify(catalog)).digest('hex'),
-      lastCheckedAt: connector.lastCheckedAt,
-      lastHealthMessage: connector.status === 'disabled'
-        ? '内置工具连接已人工停用。'
-        : 'Prototype 模式使用确定性内置工具目录。',
-    }
-  }
-
-  async checkDshRuntimeToolConnector(input: { actor: string }) {
-    await this.checkConnector({ connectorId: DSH_RUNTIME_CONNECTOR_ID, actor: input.actor })
-    return this.getDshRuntimeToolConnectorStatus()
   }
 
   async checkMcpConnector(input: { connectorId: string; actor: string }) {
@@ -594,25 +453,6 @@ export class AdminQueryService {
       status: 'healthy',
       latency: mockConnectorLatency(input.connectorId),
       lastCheckedAt: '刚刚',
-    })
-  }
-
-  async updateToolPermissions(input: {
-    toolId: string
-    allowedRoles: ToolDefinition['allowedRoles']
-    dataScopes: ToolDefinition['dataScopes']
-    approvalPolicy: ToolDefinition['approvalPolicy']
-  }) {
-    const tool = (await this.repository.read('tools')).find(item => item.id === input.toolId)
-    if (!tool) throw notFound(`工具不存在：${input.toolId}`)
-    if (tool.admissionStatus === 'unavailable') {
-      throw stateConflict(tool.admissionMessage ?? '该 DSH 工具尚未完成平台安全准入，不能配置权限')
-    }
-    return this.repository.updateToolPermissions(input.toolId, {
-      allowedRoleIds: prototypeToolRoleIds(input.allowedRoles),
-      allowedRoles: input.allowedRoles,
-      dataScopes: input.dataScopes,
-      approvalPolicy: input.approvalPolicy,
     })
   }
 
@@ -792,7 +632,6 @@ function assertDraftConfiguration(input: AgentDraftConfiguration) {
   if (input.name.trim().length < 2) throw invalidRequest('Agent 名称至少需要 2 个字符')
   if (input.description.trim().length < 10) throw invalidRequest('Agent 说明至少需要 10 个字符')
   if (!input.owner.trim() || !input.department.trim()) throw stateConflict('负责人和归属部门不能为空')
-  if (!input.visibility.trim()) throw stateConflict('Agent 可见范围描述不能为空')
   if (input.welcomeMessage.trim().length > 120) throw stateConflict('欢迎语不能超过 120 个字符')
   if (input.examplePrompts.length === 0) throw invalidRequest('请配置至少一个示例问题')
   if (input.systemPrompt.trim().length < 20) throw invalidRequest('SOUL.md 正文至少需要 20 个字符')
@@ -810,9 +649,6 @@ function assertAgentReady(agent: AgentDefinition) {
     description: agent.description,
     owner: agent.owner,
     department: agent.department,
-    visibility: agent.visibility,
-    roleIds: agent.roleIds,
-    dataScopes: agent.dataScopes,
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: agent.examplePrompts,
     systemPrompt: agent.systemPrompt,
@@ -822,7 +658,8 @@ function assertAgentReady(agent: AgentDefinition) {
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: agent.skills,
-    tools: agent.tools,
+    webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
     changeSummary: '发布校验',
   })
   if (!agent.roleIds.length) throw invalidRequest('发布前必须配置员工可见角色')
@@ -868,9 +705,6 @@ function unique(values: string[]) {
 
 function agentVersionSnapshot(agent: AgentDefinition) {
   return {
-    visibility: agent.visibility,
-    roleIds: [...agent.roleIds],
-    dataScopes: [...agent.dataScopes],
     welcomeMessage: agent.welcomeMessage,
     examplePrompts: [...agent.examplePrompts],
     systemPrompt: agent.systemPrompt,
@@ -880,6 +714,7 @@ function agentVersionSnapshot(agent: AgentDefinition) {
     maxToolCalls: agent.maxToolCalls,
     timeoutSeconds: agent.timeoutSeconds,
     skills: [...agent.skills],
-    tools: [...agent.tools],
+    webSearchEnabled: agent.webSearchEnabled,
+    projectTasksEnabled: agent.projectTasksEnabled,
   }
 }

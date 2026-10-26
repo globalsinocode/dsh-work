@@ -1,28 +1,27 @@
 import { expect, test } from '@playwright/test'
 
-type Principal = {
-  principalId: string
+type Access = {
   agentId: string
-  status: 'active' | 'disabled'
-  authorizationVersion: number
+  revision: number
+  principalId: string
+  principalStatus: 'active' | 'disabled'
+  visibleRoleIds: string[]
   roleIds: string[]
   dataScopes: string[]
 }
 
+const accessPath = (agentId: string) => `/api/admin/v1/agents/${agentId}/access`
+
 test('AE-02 administrator governs an independent Agent executor without changing the human requester', async ({ page }) => {
   const agentId = 'agent-dsh-work-assistant'
   const versionId = 'agent-version-dsh-work-assistant-1'
-  const roles = await page.request.get('/api/admin/v1/agents/principal-role-options')
-  expect(roles.ok()).toBeTruthy()
-  expect((await roles.json()).data).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: 'role-employee', status: 'active' }),
-  ]))
   await page.goto('/agents')
   await page.getByRole('row').filter({ hasText: 'dsh-work' }).first().click()
-  const drawer = page.locator('.el-drawer').filter({ hasText: 'Agent 治理详情' })
-  const identity = drawer.locator('section').filter({ hasText: '独立执行身份' }).first()
-  await expect(identity).toContainText(`principal-agent-${agentId}`)
-  await expect(identity.getByText('普通员工')).toBeVisible()
+  await page.getByRole('tab', { name: '岗位权限' }).click()
+  await expect(page).toHaveURL(/section=access/)
+  const access = page.getByRole('tabpanel', { name: '岗位权限' }).getByRole('region', { name: '岗位权限' })
+  await expect(access.getByTestId('agent-access-overview')).toContainText('普通员工')
+  await expect(access.getByTestId('agent-access-overview')).toContainText('可以向它请求工作')
 
   const evidence = async () => {
     const response = await page.request.get(`/api/admin/v1/test/agent-principal/evidence?agent_version_id=${versionId}`)
@@ -31,21 +30,22 @@ test('AE-02 administrator governs an independent Agent executor without changing
   }
   expect(await evidence()).toMatchObject({ allowed: true, executorPrincipalId: `principal-agent-${agentId}` })
 
-  await identity.locator('.el-switch').click()
-  await identity.getByRole('button', { name: '保存身份授权' }).click()
+  await access.locator('.el-switch').click()
+  await access.getByRole('button', { name: '保存岗位权限' }).click()
   await page.getByRole('button', { name: '确认更新' }).click()
   await expect.poll(async () => (await evidence()).allowed).toBe(false)
+  await expect(access.getByTestId('agent-access-overview')).toContainText('执行身份已停用')
 
-  await identity.locator('.el-switch').click()
-  await identity.getByRole('button', { name: '保存身份授权' }).click()
+  await access.locator('.el-switch').click()
+  await access.getByRole('button', { name: '保存岗位权限' }).click()
   await page.getByRole('button', { name: '确认更新' }).click()
   await expect.poll(async () => (await evidence()).allowed).toBe(true)
 
-  const currentResponse = await page.request.get(`/api/admin/v1/agents/${agentId}/principal`)
+  const currentResponse = await page.request.get(accessPath(agentId))
   expect(currentResponse.ok()).toBeTruthy()
-  const current = (await currentResponse.json()).data as Principal
-  const revoked = await page.request.patch(`/api/admin/v1/agents/${agentId}/principal`, {
-    data: { expectedAuthorizationVersion: current.authorizationVersion, status: 'active',
+  const current = (await currentResponse.json()).data as Access
+  const revoked = await page.request.patch(accessPath(agentId), {
+    data: { expectedRevision: current.revision, visibleRoleIds: current.visibleRoleIds,
       roleIds: current.roleIds, dataScopes: [] },
   })
   expect(revoked.ok(), await revoked.text()).toBeTruthy()
@@ -54,42 +54,37 @@ test('AE-02 administrator governs an independent Agent executor without changing
   await expect.poll(evidence).toMatchObject({
     allowed: true, executorPrincipalId: `principal-agent-${agentId}`, dataScopes: [],
   })
-  const latest = (await revoked.json()).data as Principal
+  const latest = (await revoked.json()).data as Access
   expect(latest.dataScopes).toEqual([])
-  const stale = await page.request.patch(`/api/admin/v1/agents/${agentId}/principal`, {
-    data: { expectedAuthorizationVersion: current.authorizationVersion, status: 'active',
+  const stale = await page.request.patch(accessPath(agentId), {
+    data: { expectedRevision: current.revision, visibleRoleIds: current.visibleRoleIds,
       roleIds: current.roleIds, dataScopes: current.dataScopes },
   })
   expect(stale.status()).toBe(409)
-  const restored = await page.request.patch(`/api/admin/v1/agents/${agentId}/principal`, {
-    data: { expectedAuthorizationVersion: latest.authorizationVersion, status: 'active',
+  const restored = await page.request.patch(accessPath(agentId), {
+    data: { expectedRevision: latest.revision, visibleRoleIds: current.visibleRoleIds,
       roleIds: current.roleIds, dataScopes: current.dataScopes },
   })
   expect(restored.ok(), await restored.text()).toBeTruthy()
   await expect.poll(async () => (await evidence()).allowed).toBe(true)
 })
 
-test('AE-02 Principal remains manageable when the role option request fails', async ({ page }) => {
-  await page.route('**/api/admin/v1/agents/principal-role-options', route => route.fulfill({ status: 503,
-    contentType: 'application/json', body: JSON.stringify({ error: { code: 'unavailable', message: 'role directory unavailable' } }),
-  }))
-  await page.goto('/agents')
-  await page.getByRole('row').filter({ hasText: 'dsh-work' }).first().click()
-  const identity = page.locator('.el-drawer').locator('section').filter({ hasText: '独立执行身份' }).first()
-  await expect(identity).toContainText('principal-agent-agent-dsh-work-assistant')
-  await expect(identity.getByText('角色目录暂不可用')).toBeVisible()
-  await identity.locator('.el-switch').click()
-  await identity.getByRole('button', { name: '保存身份授权' }).click()
-  await page.getByRole('button', { name: '确认更新' }).click()
-  const status = async () => {
-    const response = await page.request.get('/api/admin/v1/agents/agent-dsh-work-assistant/principal')
-    return ((await response.json()).data as Principal).status
-  }
-  await expect.poll(status).toBe('disabled')
-  await identity.locator('.el-switch').click()
-  await identity.getByRole('button', { name: '保存身份授权' }).click()
-  await page.getByRole('button', { name: '确认更新' }).click()
-  await expect.poll(status).toBe('active')
+test('AE-02 access panel reports a read failure and recovers on retry', async ({ page }) => {
+  let failing = true
+  await page.route('**/api/admin/v1/agents/agent-dsh-work-assistant/access', async route => {
+    if (failing && route.request().method() === 'GET') {
+      await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'unavailable', message: '岗位权限暂不可用' } }) })
+      return
+    }
+    await route.continue()
+  })
+  await page.goto('/agents/agent-dsh-work-assistant?section=access')
+  const access = page.getByRole('tabpanel', { name: '岗位权限' }).getByRole('region', { name: '岗位权限' })
+  await expect(access).toContainText('岗位权限暂不可用')
+  failing = false
+  await access.getByRole('button', { name: '重新读取' }).click()
+  await expect(access.getByTestId('agent-access-overview')).toContainText('可以向它请求工作')
 })
 
 test('AE-02 a basic Agent gets an independent executor without inheriting creator permissions', async ({ page }) => {
@@ -99,32 +94,89 @@ test('AE-02 a basic Agent gets an independent executor without inheriting creato
   await dialog.getByLabel('Agent 名称').fill('无默认执行授权测试')
   await dialog.getByLabel('Agent 说明').fill('验证员工可见角色不会自动变成 AI 员工的执行授权。')
   await dialog.getByLabel('SOUL.md（人格与工作原则）').fill('你是测试 Agent，只处理本次明确提供的输入；需要业务系统数据时先要求授权。')
-  await dialog.getByRole('button', { name: '下一步' }).click()
-  await dialog.getByRole('button', { name: '权限与运行限制' }).click()
   await expect(dialog.getByText('可见性与定义范围')).toHaveCount(0)
   await expect(dialog.getByText('AI 员工执行授权')).toHaveCount(0)
-  await dialog.getByRole('button', { name: '下一步' }).click()
-  await dialog.getByRole('button', { name: '完成创建' }).click()
-  await expect(page.getByRole('dialog', { name: 'Agent 草稿已保存' }))
-    .toContainText('独立执行身份已自动创建，可直接进行基础试运行')
+  await dialog.getByRole('button', { name: '创建并继续配置' }).click()
+  await expect(page.getByRole('heading', { name: '无默认执行授权测试' })).toBeVisible()
+  await expect(page).toHaveURL(/\/draft\?step=profile$/)
+  const steps = page.getByRole('navigation', { name: '编辑步骤' })
+  await expect(steps.getByRole('button', { name: /职责与人格/ })).toHaveAttribute('aria-current', 'step')
   const agents = await page.request.get('/api/admin/v1/agents')
   expect(agents.ok()).toBeTruthy()
   const created = ((await agents.json()).data as Array<{ id: string; name: string }>).find(item => item.name === '无默认执行授权测试')
   expect(created).toBeTruthy()
-  const response = await page.request.get(`/api/admin/v1/agents/${created?.id}/principal`)
+  const response = await page.request.get(accessPath(created!.id))
   expect(response.ok()).toBeTruthy()
-  expect((await response.json()).data).toMatchObject({ status: 'active', roleIds: [], dataScopes: [] })
+  expect((await response.json()).data).toMatchObject({
+    principalStatus: 'active', visibleRoleIds: [], roleIds: [], dataScopes: [],
+  })
 
-  await page.getByRole('dialog', { name: 'Agent 草稿已保存' })
-    .getByRole('button', { name: '进入人工试运行验证' }).click()
-  const publication = page.getByRole('region', { name: '发布范围' })
-  await expect(publication).toContainText('发布前设置员工可见角色')
-  await publication.getByText('选择发布后可使用 Agent 的员工角色').click()
+  // 角色由管理员手动选择，不预填、不自动授予；未完成「角色与权限」不能进入验证与发布。
+  await expect(steps.getByRole('button', { name: /角色与权限/ })).toHaveAccessibleName('3. 角色与权限，待设置')
+  await steps.getByRole('button', { name: /验证与发布/ }).click()
+  await expect(page.getByText('请先在「角色与权限」中选择可见角色和岗位角色')).toBeVisible()
+  await expect(page).toHaveURL(/\/draft\?step=audience$/)
+  const untouched = await page.request.get(accessPath(created!.id))
+  expect((await untouched.json()).data).toMatchObject({ visibleRoleIds: [], roleIds: [], dataScopes: [] })
+})
+
+test('AE-02 the draft flow requires visible and job roles chosen by hand and saves them when leaving the step', async ({ page }) => {
+  await page.goto('/agents')
+  await page.getByRole('button', { name: '创建 Agent' }).click()
+  const dialog = page.getByRole('dialog', { name: '创建 Agent' })
+  await dialog.getByLabel('Agent 名称').fill('角色与权限步骤测试')
+  await dialog.getByLabel('Agent 说明').fill('验证草稿流程中角色必填、手动选择，并随下一步保存。')
+  await dialog.getByLabel('SOUL.md（人格与工作原则）').fill('你是测试 Agent，只处理本次明确提供的输入；需要业务系统数据时先要求授权。')
+  await dialog.getByRole('button', { name: '创建并继续配置' }).click()
+  await expect(page).toHaveURL(/\/draft\?step=profile$/)
+  const created = ((await (await page.request.get('/api/admin/v1/agents')).json()).data as Array<{ id: string; name: string }>)
+    .find(item => item.name === '角色与权限步骤测试')
+
+  const steps = page.getByRole('navigation', { name: '编辑步骤' })
+  await steps.getByRole('button', { name: /角色与权限/ }).click()
+  const section = page.getByRole('region', { name: '角色与权限' })
+  await expect(section.getByRole('button', { name: '保存岗位权限' })).toHaveCount(0)
+  await expect(section.getByRole('button', { name: '补齐所需授权' })).toHaveCount(0)
+  // 未选择岗位角色和数据范围之前，不预填，也不提示能力缺授权。
+  await expect(section.getByTestId('agent-access-capability-summary')).toHaveCount(0)
+  await expect(section.getByText('缺少授权')).toHaveCount(0)
+
+  // 必填未完成时停留在本步并标出字段。
+  await page.getByRole('button', { name: '下一步：验证与发布' }).click()
+  await expect(section.getByText('请选择可以使用它的员工角色')).toBeVisible()
+  await expect(section.getByText('请选择它持有的岗位角色')).toBeVisible()
+  await expect(page).toHaveURL(/\/draft\?step=audience$/)
+
+  // 多选下拉选择后点标题收起，避免两个下拉中同名选项冲突。
+  const closeDropdown = async () => {
+    await section.getByRole('heading', { name: '角色与权限' }).click()
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+  }
+  await section.getByText('选择可以使用该 Agent 的员工角色').click()
   await page.getByRole('option', { name: '普通员工' }).click()
-  await publication.getByRole('button', { name: '保存发布范围' }).click()
-  await expect(publication).toContainText('1 个可见角色 · 0 个平台数据范围')
-  const publishedScope = await page.request.get('/api/admin/v1/agents')
-  expect(publishedScope.ok()).toBeTruthy()
-  expect(((await publishedScope.json()).data as Array<{ id: string; roleIds: string[]; dataScopes: string[] }>)
-    .find(item => item.id === created?.id)).toMatchObject({ roleIds: ['role-employee'], dataScopes: [] })
+  await closeDropdown()
+  await section.getByText('选择它持有的岗位角色，决定它能使用哪些能力').click()
+  // 只做标记、不预选：能力需要的角色标出“能力需要”，含管理权限的角色标出风险。
+  await expect(page.getByRole('option', { name: /普通员工/ })).toContainText('能力需要')
+  await expect(page.getByRole('option', { name: /平台管理员/ })).toContainText('含管理权限')
+  await page.getByRole('option', { name: /普通员工/ }).click()
+  await closeDropdown()
+  // 选择岗位角色后才显示能力可用情况：平台默认能力还缺数据范围。
+  const summary = section.getByTestId('agent-access-capability-summary')
+  await expect(summary).toContainText('缺少授权')
+  await section.getByText('不需要企业数据时可留空').click()
+  await page.keyboard.type('workspace:authorized')
+  await page.keyboard.press('Enter')
+  await closeDropdown()
+  await expect(summary).toContainText('项能力均可用')
+
+  await page.getByRole('button', { name: '下一步：验证与发布' }).click()
+  await expect(page).toHaveURL(/\/draft\?step=release$/)
+  await expect(page.getByRole('region', { name: '岗位权限摘要' })).toContainText('1 个可见角色 · 1 个岗位角色 · 1 个数据范围')
+  // 服务端验证前检查同样要求岗位角色。
+  await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('岗位角色')
+  await expect(page.getByRole('region', { name: '验证前检查' })).toContainText('持有 1 个当前有效岗位角色')
+  await expect(steps.getByRole('button', { name: /角色与权限/ })).toHaveAccessibleName('3. 角色与权限，已完成')
+  const saved = (await (await page.request.get(accessPath(created!.id))).json()).data as Access
+  expect(saved).toMatchObject({ visibleRoleIds: ['role-employee'], roleIds: ['role-employee'], dataScopes: ['workspace:authorized'] })
 })

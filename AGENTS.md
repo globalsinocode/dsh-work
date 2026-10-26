@@ -2,7 +2,7 @@
 
 按任务影响选择文档：涉及服务职责或 Agent 执行链路时读[架构总览](docs/development/overview.md)，涉及模块接口时读[内部端口与契约](docs/development/internal-ports.md)，选择本地运行或验证命令时读[开发与测试](docs/development/development.md)。纯文案和局部样式修改无需预读全部文档。
 
-新增或调整 Agent 定义、能力依赖、发布与执行行为时，遵守[Agent 设计规范](docs/development/agent-design-standard.md)，按[通用 Agent 全生命周期模板](docs/development/agent-lifecycle-template.md)记录工作定义、扩展决策、发布与验收，并参考[当前实现差异清单](docs/development/agent-design-gap-analysis.md)区分现行约束、待实施要求与可选扩展；不得把目标设计当作已支持能力。MCP、持久化等待、记忆、委派和无 Session 入口仅在模板触发条件成立后启动，不作为所有 Agent 的默认组件。
+新增或调整 Agent 定义、能力依赖、发布与执行行为时，遵守[Agent 设计规范](docs/development/agent-design-standard.md)，按[通用 Agent 全生命周期模板](docs/development/agent-lifecycle-template.md)记录工作定义、扩展决策、发布与验收；现行约束、待实施要求与可选扩展以规范中的标注为准，未完成事项见[架构总览第 10 节](docs/development/overview.md#10-当前边界与独立开发)，不得把目标设计当作已支持能力。MCP、持久化等待、记忆、委派和无 Session 入口仅在模板触发条件成立后启动，不作为所有 Agent 的默认组件。
 
 在已授权范围内完成实现、相关验证与失败修复；只有缺少关键决策、需要扩大范围或触及明确审批边界时暂停。
 
@@ -56,13 +56,17 @@
 
 2026-09 批次 0/1 以 [修复基线](docs/development/review-batch01.md) 为准。团队批次的 AC-23“个人空间保持现状”只约束该批次产品范围，不允许豁免共同的身份、文件来源或执行授权检查。保留个人空间的数据模型与既有受权使用，不借安全修复增加第二套 Agent Loop。
 
+## 功能规则
+
+修改项目空间（原团队空间）、个人内容、管理助手、Skill 安装与 Python 执行、定时任务（原自动任务）时，遵守[功能规则](docs/development/feature-rules.md)，并在规则变化时同步更新该文档。跨空间输入、执行前复核和试运行证据隔离等安全约束适用于个人与团队空间，任何产品范围约定都不能豁免。
+
 ## 浏览器 E2E 工作流
 
-员工端主导航当前固定为“新对话、Skill 广场、AI 同事、团队空间、自动任务”五个入口。“历史对话”和“我的文件”保留路由、数据能力及上下文入口，但不显示在主导航；修改壳层导航时同步更新 `e2e/TEST-CATALOG.md` 与 `e2e/personal-workbench.spec.ts`。
+员工端有两种模式（[项目空间方案第 12 节](docs/design/project-space-plan.md)）：A 工作模式主导航固定为“新对话、Skill 广场、AI 同事、项目空间、定时任务”五个入口；B 协作模式主导航固定为“对话、AI 同事、群组、定时任务”四个入口，Skill 广场、我的文件、历史对话从头像菜单进入。A 中“历史对话”和“我的文件”保留路由、数据能力及上下文入口，但不显示在主导航。修改壳层导航时同步更新验收目录对应分册（`e2e/catalog/`，索引见 `e2e/TEST-CATALOG.md`）、`e2e/personal-workbench.spec.ts` 与 `e2e/collab-mode.spec.ts`。
 
 涉及关键用户旅程、跨页面交互、身份权限或高风险回归的前端功能，采用 **Spec → Code → Verify → Test → Green**；纯文案、局部样式或已有组件单测足以覆盖的修改不强制新增 E2E。
 
-1. **Spec（定义验收）**：实现前先在 `e2e/TEST-CATALOG.md` 记录关键用户旅程；文件不存在时创建。每条至少写明优先级、用户角色、运行层级、前置数据、操作步骤、可观察结果及对应 spec 文件，验收标准使用业务语言，不预设尚未成型的 DOM 选择器。
+1. **Spec（定义验收）**：实现前先在验收目录对应分册（`e2e/catalog/`，索引与写法见 `e2e/TEST-CATALOG.md`）记录关键用户旅程；没有合适分册时新建分册并登记到索引。每次实施的运行结果写入 `e2e/catalog/verification-log.md`，不写进旅程条目。每条至少写明优先级、用户角色、运行层级、前置数据、操作步骤、可观察结果及对应 spec 文件，验收标准使用业务语言，不预设尚未成型的 DOM 选择器。
 2. **Code（实现功能）**：复用现有应用壳层、组件、Design Token、API 与 DSH 执行链路；不要为了测试引入生产旁路、隐藏开关或第二套 Agent 执行逻辑。
 3. **Verify（浏览器预演）**：页面成型后，在与目标层级匹配且数据可识别的隔离环境中，用浏览器自动化完整走一遍旅程，检查真实交互、布局、可访问名称、加载/空/错误状态和响应式表现。预演用于发现 UX 与可测试性问题，不等同于 Playwright 已通过；若复用了现有服务，必须先确认其认证模式、数据源和 Runtime 与本次目标一致。
 4. **Test（固化测试）**：预演通过后再编写或更新 Playwright。优先使用 `getByRole`、`getByLabel`、稳定文本等用户可感知定位，仅在缺少稳定语义时增加 `data-testid`；使用条件断言等待，不使用任意固定延时。测试默认彼此隔离，不跨用例共享可变页面或业务状态；多角色场景使用独立 browser context / `storageState`，并显式准备和清理测试数据。
