@@ -6,19 +6,26 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  boundedUtf8Collector,
-  buildPythonSandboxArguments,
-  createPythonContainerName,
   listArtifacts,
-  PYTHON_SANDBOX_LIMITS,
   pythonMountReadable,
   PythonSkillRunner,
   resolvePythonSandboxUser,
-  type PythonSandboxArgumentOptions,
 } from './python-skill-runner.ts'
+import { ContainerExecutor, createPythonContainerName } from './container-executor.ts'
+import {
+  boundedUtf8Collector,
+  buildPythonSandboxArguments,
+  DockerExecutionBackend,
+  type PythonSandboxArgumentOptions,
+} from './docker-execution-backend.ts'
+import { PYTHON_SANDBOX_LIMITS } from './execution-backend.ts'
 import type { RuntimeManifest } from './runtime-types.ts'
 
 const image = `python@sha256:${'a'.repeat(64)}`
+
+function dockerExecutor(pythonImage = image, command?: string): ContainerExecutor {
+  return new ContainerExecutor(new DockerExecutionBackend({ command }), { pythonImage })
+}
 
 function argumentOptions(overrides: Partial<PythonSandboxArgumentOptions> = {}): PythonSandboxArgumentOptions {
   return {
@@ -31,8 +38,8 @@ function argumentOptions(overrides: Partial<PythonSandboxArgumentOptions> = {}):
 }
 
 test('Python Skill runner requires a digest-pinned image and builds a closed sandbox command', () => {
-  assert.throws(() => new PythonSkillRunner('python:3.13'), /sha256/)
-  assert.equal(new PythonSkillRunner(image).user, `${process.getuid?.()}:${process.getgid?.()}`)
+  assert.throws(() => dockerExecutor('python:3.13'), /sha256/)
+  assert.equal(new PythonSkillRunner(dockerExecutor()).user, `${process.getuid?.()}:${process.getgid?.()}`)
   assert.throws(() => resolvePythonSandboxUser('0:0'), /uid:gid/)
   assert.throws(() => resolvePythonSandboxUser('root'), /uid:gid/)
   assert.equal(resolvePythonSandboxUser('65534:65534'), '65534:65534')
@@ -160,7 +167,7 @@ test('abort stops the mock container before the call settles and a failed remova
   const previous = process.env.DSH_PY_SANDBOX_SENTINEL
   process.env.DSH_PY_SANDBOX_SENTINEL = 'sentinel'
   const user = `${process.getuid?.()}:${process.getgid?.()}`
-  const runner = new PythonSkillRunner(image, { command: script, user })
+  const runner = new PythonSkillRunner(dockerExecutor(image, script), { user })
   try {
     await runner.preflight()
     const planted = `dsh-py-${'cd'.repeat(8)}`
@@ -236,7 +243,7 @@ test('abort stops the mock container before the call settles and a failed remova
 test('a non-root service rejects a sandbox uid other than its own', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-py-user-'))
   try {
-    const runner = new PythonSkillRunner(image, { command: join(root, 'missing-docker'), user: '65534:65534' })
+    const runner = new PythonSkillRunner(dockerExecutor(image, join(root, 'missing-docker')), { user: '65534:65534' })
     const workspace = join(root, 'ws')
     const skillRoot = join(workspace, 'skills', segment('demo'))
     await mkdir(join(skillRoot, 'scripts'), { recursive: true })
@@ -273,7 +280,7 @@ test('docker abort removes the sandbox container and stops host writes', { skip:
       '    time.sleep(0.05)',
       '',
     ].join('\n'), { mode: 0o644 })
-    const runner = new PythonSkillRunner(imageRef)
+    const runner = new PythonSkillRunner(dockerExecutor(imageRef))
     await runner.preflight()
     const pending = runner.execute(
       { skill: 'demo', entry: 'scripts/ignore_term.py' },
@@ -283,7 +290,8 @@ test('docker abort removes the sandbox container and stops host writes', { skip:
     )
     const uidFile = join(workspace, 'python-output', segment('demo'), 'uid.txt')
     const leak = join(workspace, 'python-output', segment('demo'), 'leak.bin')
-    await waitForFile(uidFile)
+    // Python creates the file before writing it; wait for the content, not just the file.
+    await waitFor(async () => (await readFile(uidFile, 'utf8').catch(() => '')).trim().length > 0)
     const uidText = (await readFile(uidFile, 'utf8')).trim()
     assert.notEqual(uidText, '0')
     assert.equal(uidText, String(process.getuid?.()))

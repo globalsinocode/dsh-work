@@ -352,7 +352,7 @@ openssl x509 -in "${DWP_ROOT}/certs/server.crt" -noout -checkend 2592000
 | `DSH_RUNTIME_HOME`、`DSH_HOME` | 已安装 DSH 的 checkout 路径、其独立凭据/配置目录 |
 | `DSH_EXPECTED_VERSION`、`DSH_EXPECTED_COMMIT` | 生产主 Runtime Lock：`0.1.2-rc.1` 和 `76fda729799fe9b3848dbe2c211d4b231032b81e` |
 | `DSH_RUNTIME_COMPATIBILITY` | 必须保持未设置；这是本地开发专用开关 |
-| `DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES`、`DSH_WORK_PYTHON_USER` | 未完成目标机镜像构建、摘要固定与隔离验收前保持未设置。启用时填写本机已有的摘要锁定镜像和镜像内已安装包名，运行时不会联网安装依赖。`DSH_WORK_PYTHON_USER` 为非 root 的 `uid:gid`；服务不以 root 运行时留空（使用服务进程 uid，且该用户必须能读 Attempt 中的 Skill 与输入文件）；服务以 root 运行时可留空（默认 `65534:65534`，由服务准备只读副本）或指定专用 uid。需要 Docker 26 及以上的 `docker-init` 与内置 seccomp；若宿主机启用 AppArmor，须已加载 `docker-default`。本服务按单实例清理遗留 `dsh-py-*` 沙箱容器 |
+| `DSH_WORK_PYTHON_IMAGE`、`DSH_WORK_PYTHON_PACKAGES`、`DSH_WORK_PYTHON_USER`、`DSH_WORK_EXECUTION_MAX_CONTAINERS` | 未完成目标机镜像构建、摘要固定与隔离验收前保持未设置。启用时填写本机已有的摘要锁定镜像和镜像内已安装包名，运行时不会联网安装依赖。`DSH_WORK_PYTHON_USER` 为非 root 的 `uid:gid`；服务不以 root 运行时留空（使用服务进程 uid，且该用户必须能读 Attempt 中的 Skill 与输入文件）；服务以 root 运行时可留空（默认 `65534:65534`，由服务准备只读副本）或指定专用 uid。需要 Docker 26 及以上的 `docker-init` 与内置 seccomp；若宿主机启用 AppArmor，须已加载 `docker-default`。本服务按单实例清理遗留 `dsh-py-*` 沙箱容器。`DSH_WORK_EXECUTION_MAX_CONTAINERS` 为本实例同时持有的沙箱容器上限（1–64，默认 4），满额时调用排队；格式错误时 Python 能力不可用 |
 | `DSH_WORK_TLS_CERT_FILE`、`DSH_WORK_TLS_KEY_FILE` | `<dsh-work 根目录>/certs/server.crt`、`<dsh-work 根目录>/certs/server.key` |
 | `DSH_WORK_CA_CERT_FILE`、`NODE_EXTRA_CA_CERTS` | 两者均为 `<dsh-work 根目录>/certs/root-ca.crt` |
 | `DSH_WORK_AUTH_MODE`、`DSH_WORK_COOKIE_SECURE` | 不设置认证模式（禁止 `prototype`）、`true`；AI Hub 按接入配置自动可用 |

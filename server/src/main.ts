@@ -46,6 +46,8 @@ import { DshAcpRuntimeAdapter } from './modules/runtime/dsh-acp-runtime-adapter.
 import { CapabilityGuardedRuntime, UnavailableRuntime, ExecutionCapabilityUnavailableError, probeExecutionCapability, type CapabilityState } from './modules/runtime/execution-capabilities.ts'
 import type { AgentRuntimePort } from './modules/runtime/runtime-types.ts'
 import { PythonSkillRunner } from './modules/runtime/python-skill-runner.ts'
+import { ContainerExecutor, parseMaxContainers } from './modules/runtime/container-executor.ts'
+import { DockerExecutionBackend } from './modules/runtime/docker-execution-backend.ts'
 import {
   preflightDshRuntime,
   resolveDshRuntimeInstallation,
@@ -146,6 +148,7 @@ async function start() {
   let memoryProposalSweep: NodeJS.Timeout | null = null
   let dshCapability: CapabilityState = { status: 'not-configured' }
   let pythonCapability: CapabilityState = { status: 'not-configured' }
+  let containerExecutor: ContainerExecutor | null = null
   const projectRoot = fileURLToPath(new URL('../..', import.meta.url))
   const dataRoot = resolve(projectRoot, process.env.DSH_WORK_DATA_ROOT ?? '.runtime')
   const skillArtifacts = new SkillArtifactStore(new LocalObjectStorage(resolve(dataRoot, 'skills'), { fileMode: 0o400 }))
@@ -160,10 +163,16 @@ async function start() {
   dshInstallation = dsh.value
   dshCapability = dsh.state
   const python = await probeExecutionCapability('python', process.env.DSH_WORK_PYTHON_IMAGE ? async () => {
-    const runner = new PythonSkillRunner(process.env.DSH_WORK_PYTHON_IMAGE!, {
+    const executor = new ContainerExecutor(new DockerExecutionBackend(), {
+      pythonImage: process.env.DSH_WORK_PYTHON_IMAGE!,
+      maxContainers: parseMaxContainers(process.env.DSH_WORK_EXECUTION_MAX_CONTAINERS),
+    })
+    const runner = new PythonSkillRunner(executor, {
       user: process.env.DSH_WORK_PYTHON_USER,
     })
     await runner.preflight()
+    executor.startMaintenance()
+    containerExecutor = executor
     return runner
   } : null)
   const pythonRunner = python.value
@@ -504,6 +513,7 @@ async function start() {
         if (revocationSweep) revocationSweep.close()
         persistentWait?.close()
         if (orchestration) await orchestration.close()
+        containerExecutor?.close()
         await database.end()
         process.exit(0)
       })()
