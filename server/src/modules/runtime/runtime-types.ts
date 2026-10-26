@@ -128,6 +128,11 @@ export interface RuntimeManifest {
     /** EX-02: DSH-generated summary of the conversation between the first message and the recent history. */
     conversation_summary?: { content: string; covered_message_count: number; sha256: string }
     file_mounts: FileMount[]
+    /**
+     * 执行隔离 2b-4：装配 bash 时，输入文件的原始字节另挂在 input/original/。Manifest 只带引用与摘要，
+     * 字节由 Runtime Adapter 在 Attempt 开始时按 Run 绑定读取并校验；没有 bash 的 Manifest 不得带此项。
+     */
+    original_mounts?: OriginalFileMount[]
   }
   /** PF-04 immutable proof used to reconstruct work in a new Attempt. */
   resume?: {
@@ -256,6 +261,18 @@ export interface FileMount {
   content_sha256: string
   content: string
   /** EX-02: the mount is this artifact version; writing a file with the same name to output/ records its next version. */
+  artifact_revision?: { artifact_id: string; version: number }
+}
+
+export interface OriginalFileMount {
+  file_id: string
+  mount_path: string
+  access: 'read_only'
+  source_name: string
+  media_type: string
+  sha256: string
+  size_bytes: number
+  /** The original is this artifact version; writing the full file to output/<source_name> records its next version. */
   artifact_revision?: { artifact_id: string; version: number }
 }
 

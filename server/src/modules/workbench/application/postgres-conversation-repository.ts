@@ -179,9 +179,33 @@ export class PostgresConversationRepository {
   private readonly database: DatabaseClient
   private readonly workspaces: PostgresWorkspaceService
 
-  constructor(database: DatabaseClient, workspaces = new PostgresWorkspaceService(database)) {
+  private readonly binaryArtifactsReferenceable: boolean
+
+  constructor(
+    database: DatabaseClient,
+    workspaces = new PostgresWorkspaceService(database),
+    /** 执行容器通过启动检查时为 true：二进制成果可作为下一轮输入（原始文件挂载，执行隔离 2b-4）。 */
+    options: { binaryArtifactsReferenceable?: boolean } = {},
+  ) {
     this.database = database
     this.workspaces = workspaces
+    this.binaryArtifactsReferenceable = options.binaryArtifactsReferenceable ?? false
+  }
+
+  /**
+   * Whether an artifact version (`a`, file `f`) can be attached to a later message: clean, not removed,
+   * and either with extracted text, or a binary artifact while the execution container can mount its
+   * original (execution isolation 2b-4). Mirrors the content service's runtime file readiness.
+   */
+  private canReferenceSql() {
+    return this.database`(f.scan_status = 'clean' and f.removed_at is null and (
+      exists (
+        select 1 from file_extractions fe
+         where fe.tenant_id = f.tenant_id and fe.file_id = f.id
+           and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
+      )
+      or (${this.binaryArtifactsReferenceable}::boolean and a.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg'))
+    ))`
   }
 
   async resolveWorkspaceId(workspaceId: string | null | undefined, userId: string) {
@@ -1027,11 +1051,7 @@ export class PostgresConversationRepository {
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
              f.id as "fileId",
-             (f.scan_status = 'clean' and f.removed_at is null and exists (
-               select 1 from file_extractions fe
-                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-             )) as "canReference",
+             ${this.canReferenceSql()} as "canReference",
              av.source_run_id as "sourceRunId", av.source_attempt_id as "sourceAttemptId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
@@ -1366,11 +1386,7 @@ export class PostgresConversationRepository {
           select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
                  f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
                  f.id as "fileId",
-                 (f.scan_status = 'clean' and f.removed_at is null and exists (
-                   select 1 from file_extractions fe
-                    where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-                      and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-                 )) as "canReference"
+                 ${this.canReferenceSql()} as "canReference"
             from artifact_versions av
             join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
             join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
@@ -1445,11 +1461,7 @@ export class PostgresConversationRepository {
       select a.id, av.id as "artifactVersionId", a.name, a.artifact_type as "artifactType", av.version_no as version,
              f.size_bytes as "sizeBytes", av.created_at as "createdAt", a.workspace_id as "workspaceId",
              f.id as "fileId",
-             (f.scan_status = 'clean' and f.removed_at is null and exists (
-               select 1 from file_extractions fe
-                where fe.tenant_id = f.tenant_id and fe.file_id = f.id
-                  and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
-             )) as "canReference",
+             ${this.canReferenceSql()} as "canReference",
              av.source_run_id as "sourceRunId"
         from artifact_versions av
         join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id

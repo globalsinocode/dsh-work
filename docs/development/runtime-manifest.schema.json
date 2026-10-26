@@ -460,6 +460,14 @@
             "$ref": "#/$defs/fileMount"
           }
         },
+        "original_mounts": {
+          "type": "array",
+          "maxItems": 5,
+          "description": "执行隔离 2b-4：装配 bash 时输入文件的原始字节挂在 input/original/；Manifest 只带引用与摘要，字节由 Runtime Adapter 在 Attempt 开始时按 Run 绑定读取并校验。没有 bash 的 Manifest 不得带此项；合计不超过 50 MB。",
+          "items": {
+            "$ref": "#/$defs/originalFileMount"
+          }
+        },
         "conversation_history": {
           "type": "array",
           "maxItems": 500,
@@ -865,6 +873,66 @@
         "capability_digest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "originalFileMount": {
+      "type": "object",
+      "required": [
+        "file_id",
+        "mount_path",
+        "access",
+        "source_name",
+        "media_type",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "file_id": {
+          "type": "string"
+        },
+        "mount_path": {
+          "type": "string",
+          "pattern": "^/workspace/input/original/[A-Za-z0-9._-]+\\.(xlsx|docx|pptx|pdf|png|jpg|jpeg|csv|txt|md|html|htm)$"
+        },
+        "access": {
+          "const": "read_only"
+        },
+        "source_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20971520
+        },
+        "artifact_revision": {
+          "type": "object",
+          "required": [
+            "artifact_id",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "type": "string",
+              "pattern": "^artifact-[A-Za-z0-9-]+$"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       },
       "additionalProperties": false

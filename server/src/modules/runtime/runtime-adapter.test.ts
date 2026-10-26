@@ -332,7 +332,7 @@ describe('Runtime Manifest compiler', () => {
     const rendered = renderSystemPrompt(compileRuntimeManifest(input).manifest)
     assert.match(rendered, /# 当前 Run 输入文件/)
     assert.match(rendered, /inventory\.csv/)
-    assert.match(rendered, /读取路径：input\/01-inventory-uat\.txt/)
+    assert.match(rendered, /读取路径（解析文本）：input\/01-inventory-uat\.txt/)
     assert.match(rendered, /不得猜测文件名/)
   })
 
@@ -875,6 +875,51 @@ describe('DSH ACP Runtime Adapter', () => {
     assert.equal(completed?.safe_metadata['artifact_count'], 1)
     assert.deepEqual(completed?.safe_metadata['artifacts_skipped'], skipped)
     assert.equal(completed?.safe_metadata['artifacts_skipped_total'], 2)
+  })
+
+  it('mounts original files read-only after the authorization check, verified against the Manifest (2b-4)', async () => {
+    const bytes = Buffer.from('PK original workbook bytes')
+    const order: string[] = []
+    const remoteExecution = {
+      exec: async () => { throw new Error('unused') },
+      waitUntilIdle: async () => 'idle' as const,
+      release: async () => undefined,
+    }
+    const withOriginal = (runId: string, digest = createHash('sha256').update(bytes).digest('hex')) => {
+      const input = manifest(runId, `attempt-${runId}`)
+      input.tools = [...input.tools, { id: 'bash', version: '1.0.0' }]
+      input.input.original_mounts = [{
+        file_id: 'file-artifact-1', mount_path: '/workspace/input/original/01-data.xlsx', access: 'read_only',
+        source_name: '数据.xlsx', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        sha256: digest, size_bytes: bytes.length, artifact_revision: { artifact_id: 'artifact-abc123', version: 1 },
+      }]
+      return input
+    }
+    const collect = async () => ({ published: [], skipped: [], skippedTotal: 0 })
+    const adapter = await createAdapter(500, undefined, collect, {
+      remoteExecution,
+      authorizeExecution: async () => { order.push('authorize') },
+      loadRuntimeOriginal: async (_manifest, fileId) => { order.push(`load:${fileId}`); return bytes },
+    })
+    const ok = await (await adapter.execute(withOriginal('run-original-ok'))).done
+    assert.equal(ok.status, 'completed', ok.errorMessage ?? undefined)
+    assert.deepEqual(order.slice(0, 2), ['authorize', 'load:file-artifact-1'], 'read only after the authorization check')
+    const mounted = join(ok.attemptDirectory, 'workspace', 'input', 'original', '01-data.xlsx')
+    assert.ok((await readFile(mounted)).equals(bytes))
+    assert.equal((await stat(mounted)).mode & 0o777, 0o400)
+
+    const tampered = await (await adapter.execute(withOriginal('run-original-tampered', 'b'.repeat(64)))).done
+    assert.equal(tampered.status, 'failed')
+    assert.match(tampered.errorMessage ?? '', /校验失败|输入原始文件/)
+
+    const noLoader = await createAdapter(500, undefined, collect, { remoteExecution })
+    const refused = await (await noLoader.execute(withOriginal('run-original-no-loader'))).done
+    assert.equal(refused.status, 'failed', 'fails closed without a loader')
+
+    const prompt = renderSystemPrompt(compileRuntimeManifest(withOriginal('run-original-prompt')).manifest)
+    assert.match(prompt, /原始文件（只读，供 bash 中的程序处理[^）]*）：input\/original\/01-data\.xlsx/)
+    assert.match(prompt, /基于原始文件处理，把修改后的完整文件写入 output\/数据\.xlsx，平台会登记为第 2 版/)
+    assert.doesNotMatch(prompt, /读取路径（解析文本）/, 'no text path when the file has none')
   })
 
   it('execution container mode never reads output/ when the container could not be released', async () => {

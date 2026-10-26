@@ -797,7 +797,7 @@ test('跨会话挂载的附件可进入 Attempt 且被引用后阻止回收（�
     inputFiles: prepared.map(file => ({
       fileId: file.fileId,
       extractionId: file.extractionId,
-      mountPath: file.mount.mount_path,
+      mountPath: file.mount!.mount_path,
     })),
   })
   assert.ok(attempt.id, '已被准入层放行的跨会话附件必须能创建 Attempt')

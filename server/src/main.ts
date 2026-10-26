@@ -218,7 +218,7 @@ async function start() {
   } : null)
   const pythonRunner = python.value
   pythonCapability = python.state
-  const conversations = new PostgresConversationRepository(database)
+  const conversations = new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: attemptContainers !== null })
   const authorization = new PostgresAuthorizationService(database, {
     // AI Hub 身份的后台任务必须复核目录；配置降级为 local 时传 null，
     // 授权服务仍按用户来源拒绝 AI Hub 后台执行，独立账号不受影响。
@@ -292,6 +292,7 @@ async function start() {
     loadSkillArtifact: skill => skillArtifacts.readRuntimeArtifact(skill.artifact_ref!, skill.files ?? [], skill.instructions_sha256!),
     recordSkillActivation: (manifest, skill, digest) => installationService.recordActivation(manifest, skill, digest),
     recordPythonExecution: (manifest, skillId, entry, succeeded) => installationService.recordPythonExecution(manifest, skillId, entry, succeeded),
+    loadRuntimeOriginal: (manifest, fileId) => content.readRuntimeOriginal(manifest, fileId),
     collectArtifacts: (manifest, workspaceDirectory) => content.publishRuntimeArtifacts({ manifest, workspaceDirectory }),
     operationLifecycle: manifest => ({
       async begin(input) {

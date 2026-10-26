@@ -174,6 +174,11 @@ export interface DshAcpRuntimeAdapterConfiguration {
    * fixed reason code instead of failing the Attempt (execution isolation 2b-2); structural
    * problems (output/ replaced, workspace or authorization) still throw.
    */
+  /**
+   * 执行隔离 2b-4：读取本 Run 绑定的输入原始文件（Manifest 的 original_mounts）。在初始授权复核之后、
+   * Worker 启动之前调用；返回的字节按 Manifest 校验摘要与大小。未配置时带原始文件的 Attempt 失败。
+   */
+  loadRuntimeOriginal?: (manifest: RuntimeManifest, fileId: string) => Promise<Buffer>
   collectArtifacts?: (
     manifest: RuntimeManifest,
     workspaceDirectory: string,
@@ -516,11 +521,31 @@ export class DshAcpRuntimeAdapter implements AgentRuntimePort {
     await Promise.allSettled([...this.runTasks])
   }
 
+  /** 执行隔离 2b-4：原始文件在授权复核后读取，校验后只读写入 input/original/。 */
+  private async mountOriginalFiles(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
+    const mounts = record.manifest.input.original_mounts ?? []
+    if (!mounts.length) return
+    if (!this.configuration.loadRuntimeOriginal) throw dependencyUnavailable('输入原始文件读取服务不可用')
+    const originals = join(workspaceDirectory, 'input', 'original')
+    for (const mount of mounts) {
+      const target = resolve(workspaceDirectory, mount.mount_path.slice('/workspace/'.length))
+      if (!target.startsWith(`${originals}/`)) throw new Error(`Unsafe original mount path: ${mount.mount_path}`)
+      const bytes = await this.configuration.loadRuntimeOriginal(record.manifest, mount.file_id)
+      if (bytes.length !== mount.size_bytes || createHash('sha256').update(bytes).digest('hex') !== mount.sha256) {
+        throw new Error(`输入原始文件校验失败：${mount.source_name}`)
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(target, bytes, { flag: 'wx', mode: 0o400 })
+      await chmod(target, 0o400)
+    }
+  }
+
   private async run(record: ExecutionRecord, workspaceDirectory: string): Promise<void> {
     const runStartMono = performance.now()
     try {
       await this.verifyExecutionAuthorization(record)
       if (record.terminal) return
+      await this.mountOriginalFiles(record, workspaceDirectory)
       this.setStatus(record, 'starting')
       this.armDeadline(record, 'setup', this.configuration.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS)
       assertPlatformToolPurpose(record.manifest)
@@ -1376,15 +1401,35 @@ export function renderSystemPrompt(manifest: RuntimeManifest) {
       '继续任务时如动作、参数、资源或数据版本变化，必须重新请求审批。',
     ].join('\n'))
   }
-  if (manifest.input.file_mounts.length > 0) {
+  const inputFiles = new Map<string, {
+    sourceName: string
+    mediaType: string
+    textPath?: string
+    originalPath?: string
+    revision?: { artifact_id: string; version: number }
+  }>()
+  for (const file of manifest.input.file_mounts) {
+    inputFiles.set(file.file_id, { sourceName: file.source_name, mediaType: file.media_type, textPath: file.mount_path, revision: file.artifact_revision })
+  }
+  for (const file of manifest.input.original_mounts ?? []) {
+    const known = inputFiles.get(file.file_id)
+    inputFiles.set(file.file_id, {
+      sourceName: file.source_name, mediaType: file.media_type, ...known,
+      originalPath: file.mount_path, revision: known?.revision ?? file.artifact_revision,
+    })
+  }
+  if (inputFiles.size > 0) {
     sections.push([
       '# 当前 Run 输入文件',
-      '以下文件已经过权限校验，并以只读方式挂载到当前会话工作目录。需要读取附件时，必须直接使用给出的“读取路径”，不得猜测文件名或扫描未授权目录。',
-      ...manifest.input.file_mounts.map((file, index) => [
-        `${index + 1}. ${file.source_name}`,
-        `   - 读取路径：${file.mount_path.slice('/workspace/'.length)}`,
-        `   - 媒体类型：${file.media_type}`,
-        ...(file.artifact_revision ? [`   - 这是此前生成的成果第 ${file.artifact_revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.source_name}，平台会登记为第 ${file.artifact_revision.version + 1} 版；只是参考时不要重写`] : []),
+      '以下文件已经过权限校验，并以只读方式挂载到当前会话工作目录。需要读取附件时，必须直接使用给出的路径，不得猜测文件名或扫描未授权目录。',
+      ...[...inputFiles.values()].map((file, index) => [
+        `${index + 1}. ${file.sourceName}`,
+        ...(file.textPath ? [`   - 读取路径（解析文本）：${file.textPath.slice('/workspace/'.length)}`] : []),
+        ...(file.originalPath ? [`   - 原始文件（只读，供 bash 中的程序处理，如 pandas、openpyxl、LibreOffice）：${file.originalPath.slice('/workspace/'.length)}`] : []),
+        `   - 媒体类型：${file.mediaType}`,
+        ...(file.revision ? [file.originalPath && !file.textPath
+          ? `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，基于原始文件处理，把修改后的完整文件写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`
+          : `   - 这是此前生成的成果第 ${file.revision.version} 版；用户要求修改它时，把修改后的完整内容写入 output/${file.sourceName}，平台会登记为第 ${file.revision.version + 1} 版；只是参考时不要重写`] : []),
       ].join('\n')),
     ].join('\n'))
   }

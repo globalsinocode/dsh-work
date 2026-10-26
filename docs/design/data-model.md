@@ -149,7 +149,7 @@ flowchart LR
 | 表 | 作用 | 关键不变量 |
 | --- | --- | --- |
 | `file_objects`、`file_extractions` | 不可变文件对象与解析结果 | 存储键不用用户文件名；字节经存储端口保存 |
-| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权 |
+| `run_input_files` | Attempt 的输入文件 | 每次 Attempt 固定原文件与解析版本，只读，执行前重新鉴权；只挂原始文件的二进制成果没有解析版本（`extraction_id` 为空，执行隔离 2b-4） |
 | `workspace_files`、`workspace_file_versions` | 团队共享文件的逻辑文件与版本 | 新版本不覆盖不可变对象；逻辑移除保留历史；历史 Run 仍指向实际使用的对象 |
 | `artifacts`、`artifact_versions` | 运行成果 | 新增版本，不覆盖旧文件；关联 Session 或 Task；下载检查空间、会话共享规则或 Task 所有人 |
 

@@ -6,7 +6,7 @@ import type { Artifact, Workspace, WorkspaceFile } from '../../../domain/types.t
 import type { DatabaseClient, DatabaseTransaction } from '../../../infrastructure/postgres/database.ts'
 import type { PostgresAuthorizationService } from '../../authorization/postgres-authorization-service.ts'
 import { authorizationDenied, canReadWorkspaceObject, isAuthorizationDenial, requestInvalid } from '../../../domain/authorization-errors.ts'
-import type { FileMount } from '../../runtime/runtime-types.ts'
+import type { FileMount, OriginalFileMount, RuntimeManifest } from '../../runtime/runtime-types.ts'
 import { isAdminRunPurpose } from '../../runtime/runtime-types.ts'
 import { insertTeamWorkspaceRows } from './team-workspace-rows.ts'
 import { BaselineFileSafetyScanner, type FileSafetyScannerPort } from './file-safety-scanner.ts'
@@ -137,21 +137,34 @@ export interface PersonalFileQuery {
 interface RuntimeFileRow {
   workspaceId: string
   fileId: string
-  extractionId: string
+  /** Null for a binary artifact without extracted text (execution isolation 2b-4). */
+  extractionId: string | null
   originalName: string
   mimeType: string
-  textStorageKey: string
-  textSha256: string
+  textStorageKey: string | null
+  textSha256: string | null
+  sha256: string | null
+  sizeBytes: number
   /** Set when the file is a run artifact version: the mount tells the Agent which artifact it revises. */
   artifactId: string | null
   artifactVersion: number | null
 }
 
+/**
+ * One input file of a Run: its extracted text (when it has one) and a reference to its original
+ * bytes. Which of the two are mounted is decided by the dispatcher from the final tool list:
+ * originals only with bash (execution isolation 2b-4). No bytes travel through here.
+ */
 export interface PreparedRuntimeFile {
   fileId: string
-  extractionId: string
-  mount: FileMount
+  sourceName: string
+  extractionId: string | null
+  mount: FileMount | null
+  original: OriginalFileMount | null
 }
+
+/** Originals mounted for bash: the accepted artifact formats plus the text and table uploads. */
+const ORIGINAL_MOUNT_EXTENSIONS = new Set(['.xlsx', '.docx', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.csv', '.txt', '.md', '.html', '.htm'])
 
 /** Most skipped files reported back per run; the total is reported as well. */
 const MAX_REPORTED_SKIPS = 20
@@ -1473,12 +1486,25 @@ export class PostgresContentService {
   }
 
   /** 运行输入文件「可解析」谓词：启用预检与实际挂载必须使用同一份条件。 */
+  /**
+   * A file can be a Run input when it is clean, not removed, and either has extracted text, or is a
+   * binary platform artifact (Office, PDF, image) that is mounted as its original file when bash is
+   * assembled (execution isolation 2b-4). Uploads whose extraction failed stay unusable. Callers
+   * left-join `fe` on a succeeded `m4-basic-v1` extraction.
+   */
   private runtimeFileReadyPredicate() {
     return this.database`
       and f.scan_status = 'clean'
       and f.removed_at is null
-      and fe.status = 'succeeded'
-      and fe.extractor_version = 'm4-basic-v1'
+      and (
+        fe.id is not null
+        or exists (
+          select 1 from artifact_versions bav
+            join artifacts ba on ba.tenant_id = bav.tenant_id and ba.id = bav.artifact_id
+           where bav.tenant_id = f.tenant_id and bav.file_object_id = f.id
+             and ba.artifact_type in ('xlsx', 'docx', 'pptx', 'pdf', 'png', 'jpg')
+        )
+      )
     `
   }
 
@@ -1486,9 +1512,11 @@ export class PostgresContentService {
     const [row] = await this.database<RuntimeFileRow[]>`
       select f.workspace_id as "workspaceId", f.id as "fileId", fe.id as "extractionId", f.original_name as "originalName",
              f.mime_type as "mimeType", fe.text_storage_key as "textStorageKey",
-             fe.text_sha256 as "textSha256", art.id as "artifactId", art.version_no as "artifactVersion"
+             fe.text_sha256 as "textSha256", f.sha256, f.size_bytes::integer as "sizeBytes",
+             art.id as "artifactId", art.version_no as "artifactVersion"
         from file_objects f
-        join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+        left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
         join sessions target on target.tenant_id = f.tenant_id and target.id = ${input.sessionId}
         left join lateral (
           select a.id, av.version_no from artifact_versions av
@@ -1590,14 +1618,16 @@ export class PostgresContentService {
     let totalBytes = 0
     for (const [index, fileId] of fileIds.entries()) {
       const row = await this.resolveRuntimeFile({ sessionId: input.sessionId, fileId, userId: input.userId })
-      const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
-      totalBytes += Buffer.byteLength(content)
-      if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
       const safeName = safeMountName(row.originalName, index)
-      prepared.push({
-        fileId: row.fileId,
-        extractionId: row.extractionId,
-        mount: {
+      const revision = row.artifactId && row.artifactVersion
+        ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
+        : {}
+      let mount: FileMount | null = null
+      if (row.textStorageKey && row.textSha256) {
+        const content = (await this.storage.get(row.textStorageKey)).toString('utf8')
+        totalBytes += Buffer.byteLength(content)
+        if (totalBytes > 1024 * 1024) throw invalidRequest('本次 Run 的文件解析文本合计超过 1 MB，请减少或拆分文件')
+        mount = {
           file_id: row.fileId,
           mount_path: `/workspace/input/${safeName}.txt`,
           access: 'read_only',
@@ -1605,13 +1635,43 @@ export class PostgresContentService {
           media_type: row.mimeType,
           content_sha256: row.textSha256,
           content,
-          ...(row.artifactId && row.artifactVersion
-            ? { artifact_revision: { artifact_id: row.artifactId, version: row.artifactVersion } }
-            : {}),
-        },
-      })
+          ...revision,
+        }
+      }
+      const extension = extname(row.originalName).toLowerCase()
+      const original: OriginalFileMount | null = row.sha256 && ORIGINAL_MOUNT_EXTENSIONS.has(extension) && row.sizeBytes > 0
+        ? {
+            file_id: row.fileId,
+            mount_path: `/workspace/input/original/${safeName}${extension}`,
+            access: 'read_only',
+            source_name: row.originalName,
+            media_type: row.mimeType,
+            sha256: row.sha256,
+            size_bytes: row.sizeBytes,
+            ...revision,
+          }
+        : null
+      prepared.push({ fileId: row.fileId, sourceName: row.originalName, extractionId: row.extractionId, mount, original })
     }
     return prepared
+  }
+
+  /**
+   * 执行隔离 2b-4：Runtime Adapter 在 Attempt 开始时读取原始文件。只读已绑定到该 Run 的输入
+   * （run_input_files；恢复执行的新 Attempt 沿用同一 Run 的绑定），且文件仍干净、未移除；
+   * 摘要与大小由调用方按 Manifest 校验。
+   */
+  async readRuntimeOriginal(manifest: RuntimeManifest, fileId: string): Promise<Buffer> {
+    const [row] = await this.database<{ storageKey: string }[]>`
+      select f.storage_key as "storageKey"
+        from run_input_files rif
+        join file_objects f on f.tenant_id = rif.tenant_id and f.id = rif.file_id
+       where rif.tenant_id = ${tenantId} and rif.run_id = ${manifest.run_id} and rif.file_id = ${fileId}
+         and f.scan_status = 'clean' and f.removed_at is null
+       limit 1
+    `
+    if (!row) throw authorizationDenied('输入文件不属于本次运行或已不可用')
+    return this.storage.get(row.storageKey)
   }
 
   /**
@@ -1636,7 +1696,8 @@ export class PostgresContentService {
       const [row] = await this.database<{ id: string }[]>`
         select f.id
           from file_objects f
-          join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+          left join file_extractions fe on fe.tenant_id = f.tenant_id and fe.file_id = f.id
+            and fe.status = 'succeeded' and fe.extractor_version = 'm4-basic-v1'
           join workspaces target on target.tenant_id = f.tenant_id and target.id = ${input.workspaceId}
          where f.tenant_id = ${input.tenantId} and f.id = ${fileId}
            ${this.runtimeFileReadyPredicate()}
@@ -1718,16 +1779,22 @@ export class PostgresContentService {
     // EX-02：本 Attempt 挂载过同会话的成果、并输出同名文件时，登记为该成果的下一版本；
     // 未引用或同名指向多个成果（无法确定）时仍作为新成果，不把碰巧同名的文件串成版本。
     const revisable = new Map<string, string | null>()
+    // 引用版本的内容摘要：原样复制回 output/ 的同名文件不产生新版本（执行隔离 2b-4）。
+    const referencedSha = new Map<string, string>()
     if (manifest.session_id) {
-      const referenced = await this.database<{ name: string; artifactId: string }[]>`
-        select distinct a.name, a.id as "artifactId"
+      const referenced = await this.database<{ name: string; artifactId: string; sha256: string | null }[]>`
+        select distinct a.name, a.id as "artifactId", f.sha256
           from run_input_files rif
           join artifact_versions av on av.tenant_id = rif.tenant_id and av.file_object_id = rif.file_id
           join artifacts a on a.tenant_id = av.tenant_id and a.id = av.artifact_id
+          join file_objects f on f.tenant_id = av.tenant_id and f.id = av.file_object_id
          where rif.tenant_id = ${tenantId} and rif.attempt_id = ${manifest.attempt_id}
            and a.session_id = ${manifest.session_id}
       `
-      for (const row of referenced) revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
+      for (const row of referenced) {
+        revisable.set(row.name, revisable.has(row.name) ? null : row.artifactId)
+        if (row.sha256) referencedSha.set(`${row.artifactId}\0${row.sha256}`, row.name)
+      }
     }
 
     // 执行隔离 2b-2：不合规的文件跳过并说明原因，不让整轮回答丢失；判断只依赖文件名与内容，
@@ -1757,8 +1824,10 @@ export class PostgresContentService {
       if (contentProblem) { skip(entry.name, contentProblem); continue }
       const scan = await this.scanner.scan({ name: entry.name, mimeType: format.mimeType, bytes })
       if (!scan.clean) { skip(entry.name, 'security_scan_failed'); continue }
-      totalBytes += bytes.length
       const contentSha256 = createHash('sha256').update(bytes).digest('hex')
+      const revises = revisable.get(entry.name)
+      if (revises && referencedSha.get(`${revises}\0${contentSha256}`) === entry.name) continue
+      totalBytes += bytes.length
       const identity = createHash('sha256').update(`${manifest.attempt_id}\0${entry.name}\0${contentSha256}`).digest('hex').slice(0, 32)
       const artifactIdentity = createHash('sha256').update(`${manifest.run_id}\0${entry.name}`).digest('hex').slice(0, 32)
       const fileId = `file-artifact-${identity}`

@@ -11,6 +11,7 @@ import { DockerExecutionBackend } from './docker-execution-backend.ts'
 import { preflightDshRuntime, resolveDshRuntimeInstallation, withExecutionContainerOverlay } from './dsh-runtime-installation.ts'
 import { createPlatformToolBridge } from './platform-tool-bridge.ts'
 import { createRemoteSubprocessGateway, type ContainerCommandAudit } from './remote-subprocess-gateway.ts'
+import { minimalXlsx } from '../../testing/office-fixtures.ts'
 
 /**
  * P1-style check through real DSH and real Docker (no model vendor: a scripted
@@ -31,6 +32,9 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
   await writeFile(join(workspace, 'a.txt'), 'hello world\n')
   await writeFile(join(workspace, 'notes', 'b.txt'), 'hello again\n')
   await writeFile(join(workspace, 'c.md'), 'nothing here\n')
+  // 2b-4: an original input file as the Adapter mounts it (read-only for the service user).
+  await mkdir(join(workspace, 'input', 'original'), { recursive: true })
+  await writeFile(join(workspace, 'input', 'original', '01-data.xlsx'), minimalXlsx(), { mode: 0o400 })
   // Another Attempt's workspace and host files next to this one: never visible in the container.
   await mkdir(join(root, 'other-attempt'), { recursive: true })
   await writeFile(join(root, 'other-attempt', 'secret.txt'), 'other attempt secret\n')
@@ -53,6 +57,7 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     { name: 'grep', args: { pattern: 'hello' } },
     // The model writes and runs a script; its output lands in the shared workspace.
     probe('script', 'mkdir -p work && printf "print(sum(range(101)))" > work/s.py && python3 work/s.py > output/sum.txt && cat output/sum.txt && id -u'),
+    probe('original', 'python3 -c "import zipfile; print(sorted(zipfile.ZipFile(\'input/original/01-data.xlsx\').namelist()))"'),
     // Fixed environment: no Worker variables, no DSH_HOME, no bridge socket, no other workspaces or host files.
     probe('env', [
       'env; echo ---',
@@ -144,7 +149,7 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     await client.initialize()
     const sessionId = await client.newSession(workspace)
     await client.prompt(sessionId, 'run the checks')
-    const [globResult, grepResult, scriptResult, envResult, networkResult, leftoverResult, leftoverCheck, timeoutResult, timeoutCheck, backgroundResult] = toolResults
+    const [globResult, grepResult, scriptResult, originalResult, envResult, networkResult, leftoverResult, leftoverCheck, timeoutResult, timeoutCheck, backgroundResult] = toolResults
     assert.match(globResult ?? '', /a\.txt/)
     assert.match(globResult ?? '', /notes\/b\.txt/)
     assert.doesNotMatch(globResult ?? '', /c\.md/)
@@ -154,6 +159,7 @@ test('DSH glob/grep/bash run inside the Attempt execution container and stay con
     // bash ran in the container, as the service user, writing into the shared workspace.
     assert.match(scriptResult ?? '', new RegExp(`5050\\s+${resolveExecutionContainerUser().split(':')[0]}`))
     assert.equal((await readFile(join(workspace, 'output', 'sum.txt'), 'utf8')).trim(), '5050')
+    assert.match(originalResult ?? '', /xl\/workbook\.xml/, 'the container reads the read-only original input')
     assert.equal(permissionRequests, 0, 'approval follows the Agent mode (never here); DSH adds no prompt of its own')
 
     assert.match(envResult ?? '', /ENV_DONE/)

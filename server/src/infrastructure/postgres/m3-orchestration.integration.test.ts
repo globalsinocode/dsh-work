@@ -1515,3 +1515,84 @@ test('2b-2: compliant files are published, non-compliant ones are skipped with a
     release()
   }
 })
+
+test('2b-4: with bash, inputs also mount their originals and a binary artifact is revised to V2; without bash it is refused', async () => {
+  const bashConversations = new PostgresConversationRepository(database, undefined, { binaryArtifactsReferenceable: true })
+  const withBash = new RunOrchestrationService(
+    runs, bashConversations, new ModelGovernanceService(new PostgresModelGovernanceRepository(database)), runtime,
+    content, new PostgresOperationsService(database), undefined, undefined, new PostgresAuthorizationService(database),
+    { tasks: new PostgresTaskRepository(database), executionContainerAvailable: true },
+  )
+  const session = await withBash.createSession({ userId: 'U00001', title: '修改表格成果' })
+  const turn = async (service: RunOrchestrationService, prompt: string, fileIds: string[], output: Record<string, Buffer>) => {
+    const workspaceDirectory = await mkdtemp(join(tmpdir(), 'dsh-work-original-mounts-'))
+    await mkdir(join(workspaceDirectory, 'output'))
+    let release: () => void = () => undefined
+    runtime.completionGate = new Promise<void>(resolve => { release = resolve })
+    try {
+      const created = await service.startRun({ userId: 'U00001', sessionId: session.id, prompt, idempotencyKey: randomUUID(), fileIds })
+      assert.ok(created)
+      await waitForTask(created.id, 'running')
+      const attempt = await runs.getAttempt('tenant-dsh-work', created.currentAttemptId!)
+      const manifest = attempt!.manifest as unknown as RuntimeManifest
+      const publish = async (files: Record<string, Buffer>) => {
+        for (const [name, bytes] of Object.entries(files)) await writeFile(join(workspaceDirectory, 'output', name), bytes)
+        return content.publishRuntimeArtifacts({ manifest, workspaceDirectory })
+      }
+      return { created, manifest, publish, release, first: Object.keys(output).length ? await publish(output) : null }
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
+
+  // V1: a binary artifact from an earlier round.
+  const v1 = await turn(withBash, '生成数据表', [], { '数据.xlsx': minimalXlsx() })
+  v1.release()
+  await waitForTask(v1.created.id, 'succeeded')
+  const artifact = (await bashConversations.getTask(v1.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '数据.xlsx')!
+  assert.equal(artifact.canReference, true, 'referenceable while the execution container is available')
+  assert.equal((await conversations.getTask(v1.created.id, 'U00001'))!.result.artifacts.find(item => item.name === '数据.xlsx')!.canReference, false,
+    'not referenceable without it')
+  const upload = await content.storeSessionFile(session.id, '明细.csv', 'text/csv', Buffer.from('物料,数量\nA,3\n'), 'U00001')
+
+  // Without bash a binary artifact cannot be an input: refused before an Attempt exists.
+  await assert.rejects(
+    orchestration.startRun({ userId: 'U00001', sessionId: session.id, prompt: '改一下', idempotencyKey: randomUUID(), fileIds: [artifact.fileId!] }),
+    /需要运行命令的能力/,
+  )
+
+  const v2 = await turn(withBash, '把 A 的数量改成 5', [artifact.fileId!, upload.id], {})
+  try {
+    const { manifest } = v2
+    assert.deepEqual(manifest.input.file_mounts.map(mount => mount.source_name), ['明细.csv'], 'only the upload has extracted text')
+    // With bash both inputs also mount their originals: the binary artifact only that way.
+    assert.deepEqual(manifest.input.original_mounts?.map(mount => mount.source_name), ['数据.xlsx', '明细.csv'])
+    const [xlsxMount, csvMount] = manifest.input.original_mounts!
+    assert.match(xlsxMount!.mount_path, /^\/workspace\/input\/original\/01-[A-Za-z0-9._-]+\.xlsx$/)
+    assert.match(csvMount!.mount_path, /^\/workspace\/input\/original\/02-[A-Za-z0-9._-]+\.csv$/)
+    assert.deepEqual(xlsxMount!.artifact_revision, { artifact_id: artifact.id, version: 1 })
+    const [binding] = await database<{ extractionId: string | null }[]>`
+      select extraction_id as "extractionId" from run_input_files
+       where tenant_id = 'tenant-dsh-work' and run_id = ${v2.created.id} and file_id = ${artifact.fileId!}`
+    assert.equal(binding?.extractionId, null)
+
+    // The Adapter reads originals by Run binding only.
+    assert.ok((await content.readRuntimeOriginal(manifest, artifact.fileId!)).equals(minimalXlsx()))
+    const stranger = await content.storeSessionFile(session.id, '无关.csv', 'text/csv', Buffer.from('x\n'), 'U00001')
+    await assert.rejects(content.readRuntimeOriginal(manifest, stranger.id), /不属于本次运行/)
+
+    // An unchanged copy is not a new version; a modified file is V2 of the same artifact.
+    const unchanged = await v2.publish({ '数据.xlsx': minimalXlsx() })
+    assert.deepEqual(unchanged.published, [])
+    const revised = await v2.publish({ '数据.xlsx': minimalXlsx({ 'xl/worksheets/sheet1.xml': '<worksheet>A=5</worksheet>' }) })
+    assert.deepEqual(revised.published.map(item => item.name), ['数据.xlsx'])
+    v2.release()
+    await waitForTask(v2.created.id, 'succeeded')
+    const versions = await database<{ versionNo: number }[]>`
+      select version_no as "versionNo" from artifact_versions where tenant_id = 'tenant-dsh-work' and artifact_id = ${artifact.id} order by version_no`
+    assert.deepEqual(versions.map(row => row.versionNo), [1, 2])
+  } finally {
+    v2.release()
+  }
+})

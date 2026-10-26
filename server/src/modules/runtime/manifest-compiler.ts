@@ -222,6 +222,7 @@ export function compileRuntimeManifest(input: RuntimeManifest): CompiledRuntimeM
     mountedBytes += Buffer.byteLength(mount.content)
   }
   if (mountedBytes > 1024 * 1024) throw new RangeError('mounted extracted text must not exceed 1 MB')
+  assertOriginalMounts(input)
 
   if (input.knowledge_context.length > 3) throw new RangeError('knowledge_context must contain at most 3 documents')
   for (const document of input.knowledge_context) {
@@ -368,4 +369,43 @@ function assertOptionalBudgetLimit(value: number | null, name: string, minimum: 
   if (value !== null && (!Number.isSafeInteger(value) || value < minimum || value > maximum)) {
     throw new TypeError(`budget.cumulative_limits.${name} must be null or an integer between ${minimum} and ${maximum}`)
   }
+}
+
+/** 执行隔离 2b-4：原始文件挂载只出现在装配了 bash 的 Manifest 中，且只带引用、不带字节。 */
+const ORIGINAL_MOUNT_PATH = /^\/workspace\/input\/original\/[A-Za-z0-9._-]+\.(xlsx|docx|pptx|pdf|png|jpg|jpeg|csv|txt|md|html|htm)$/
+const ORIGINAL_MOUNT_FIELDS = new Set(['file_id', 'mount_path', 'access', 'source_name', 'media_type', 'sha256', 'size_bytes', 'artifact_revision'])
+const MAX_ORIGINAL_FILE_BYTES = 20 * 1024 * 1024
+const MAX_ORIGINAL_TOTAL_BYTES = 50 * 1024 * 1024
+
+function assertOriginalMounts(input: RuntimeManifest) {
+  const mounts = input.input.original_mounts
+  if (mounts === undefined) return
+  if (!Array.isArray(mounts) || mounts.length > 5) throw new RangeError('input.original_mounts must contain at most 5 files')
+  if (mounts.length && !input.tools.some(tool => tool.id === 'bash')) {
+    throw new TypeError('input.original_mounts require the bash tool')
+  }
+  const paths = new Set<string>()
+  const files = new Set<string>()
+  let total = 0
+  for (const mount of mounts) {
+    // Only references: a stray field (for example inline bytes) is refused, as the schema does.
+    const unknown = Object.keys(mount).filter(key => !ORIGINAL_MOUNT_FIELDS.has(key))
+    if (unknown.length) throw new TypeError(`original mount has undeclared fields: ${unknown.join(', ')}`)
+    if (!ORIGINAL_MOUNT_PATH.test(mount.mount_path)) throw new TypeError('original mount paths must be under /workspace/input/original/ with an accepted extension')
+    if (mount.access !== 'read_only') throw new TypeError('original mounts must be read_only')
+    if (paths.has(mount.mount_path) || files.has(mount.file_id)) throw new TypeError(`duplicate original mount: ${mount.file_id}`)
+    paths.add(mount.mount_path)
+    files.add(mount.file_id)
+    if (!mount.source_name.trim() || !mount.media_type.trim()) throw new TypeError('original mount source name and media type are required')
+    if (!/^[a-f0-9]{64}$/.test(mount.sha256)) throw new TypeError(`original mount sha256 is invalid: ${mount.file_id}`)
+    if (!Number.isSafeInteger(mount.size_bytes) || mount.size_bytes < 1 || mount.size_bytes > MAX_ORIGINAL_FILE_BYTES) {
+      throw new RangeError(`original mount size is invalid: ${mount.file_id}`)
+    }
+    if (mount.artifact_revision !== undefined && (
+      !/^artifact-[A-Za-z0-9-]+$/.test(mount.artifact_revision.artifact_id)
+      || !Number.isSafeInteger(mount.artifact_revision.version) || mount.artifact_revision.version < 1
+    )) throw new TypeError(`original mount artifact revision is invalid: ${mount.file_id}`)
+    total += mount.size_bytes
+  }
+  if (total > MAX_ORIGINAL_TOTAL_BYTES) throw new RangeError('original mounts must not exceed 50 MB in total')
 }

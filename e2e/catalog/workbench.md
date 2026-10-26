@@ -145,6 +145,19 @@ P1/P2 的执行结果须单独记录数据库、身份、Runtime/DSH 版本和�
 
 **验收：** 上述测试通过；同一输出重复发布结果一致。P2 另需在目标环境用真实 DSH 经 `bash` 生成 xlsx/docx 并转换为 PDF，下载核对内容，并制造一个不合规文件确认回答仍保留并列出原因。
 
+### EX-ARTIFACT-04 运行命令时挂载原始文件，二进制成果可跨轮修改（执行隔离 2b-4）
+
+**优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、Manifest 编译器、Runtime Adapter（受控 Worker）；真实 Docker + DSH 端到端为 opt-in；真实模型修改 Office 文件属 P2<br>
+**前置数据：** 执行容器模式可用；个人或团队会话中有一个已上传的 xlsx 附件，以及一次成功 Run 登记的 xlsx 成果<br>
+**spec：** `server/src/modules/runtime/runtime-manifest-schema.test.ts`、`server/src/modules/runtime/runtime-adapter.test.ts`、`server/src/infrastructure/postgres/m3-orchestration.integration.test.ts`、`server/src/modules/runtime/execution-container.e2e.test.ts`
+
+1. 本轮装配了 `bash` 时，所选附件除解析文本（`input/*.txt`）外，另以只读方式挂载原始文件（`input/original/`）；二进制成果没有解析文本，只挂原始文件。运行说明分别列出两类路径。
+2. 执行容器模式可用时，二进制成果卡片提供“继续修改”；引用后模型把修改后的完整文件写入 `output/<原名>`，平台登记为该成果的下一版本，旧版本仍可下载。原样复制、内容未变的文件不产生新版本。
+3. 未装配 `bash`（执行容器不可用或被紧急停用）时，二进制成果不能作为本轮输入，提交前提示原因，不创建 Attempt；文本类附件照常只挂解析文本。
+4. 原始文件在 Attempt 开始时按 Run 绑定读取，校验摘要与大小，不一致即失败；不属于本 Run 的文件不能被读取。
+
+**验收：** 上述测试通过。P2 另需在目标环境用真实 DSH 修改一个 xlsx 成果的指定单元格，下载 V1、V2 核对差异，并留证 Run/Attempt 与 DSH 版本。
+
 ### EX-CONTEXT-01 长对话保留首条约束并使用对话摘要
 
 **优先级：** P1 · **角色：** 员工 · **运行层级：** 一次性 PostgreSQL、受控 Runtime、Manifest 编译器<br>

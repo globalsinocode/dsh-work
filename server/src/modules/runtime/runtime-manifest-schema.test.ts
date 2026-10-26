@@ -324,6 +324,31 @@ describe('Runtime Manifest Schema / compiler boundary', () => {
     assertBothReject(withRevision({ artifact_id: '../escape', version: 1 }), /artifact revision is invalid/, 'malformed artifact id')
   })
 
+  it('original file mounts (2b-4): references only, under input/original/, and only with bash', () => {
+    const withOriginal = (overrides: Partial<NonNullable<RuntimeManifest['input']['original_mounts']>[number]> = {}, tools = ['bash']) => {
+      const manifest = baseManifest()
+      manifest.tools = tools.map(id => ({ id, version: '1.0.0' }))
+      manifest.input.original_mounts = [{
+        file_id: 'file-artifact-1', mount_path: '/workspace/input/original/01-data.xlsx', access: 'read_only',
+        source_name: '数据.xlsx', media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        sha256: 'a'.repeat(64), size_bytes: 1024, artifact_revision: { artifact_id: 'artifact-abc123', version: 1 },
+        ...overrides,
+      }]
+      return manifest
+    }
+    assertBothAccept(withOriginal(), 'xlsx original with bash')
+    assertBothReject(withOriginal({ mount_path: '/workspace/input/01-data.xlsx' }), /input\/original/, 'outside input/original')
+    assertBothReject(withOriginal({ mount_path: '/workspace/input/original/run.sh' }), /input\/original/, 'extension not accepted')
+    assertBothReject(withOriginal({ sha256: 'xyz' }), /sha256 is invalid/, 'malformed digest')
+    assertBothReject(withOriginal({ size_bytes: 20 * 1024 * 1024 + 1 }), /size is invalid/, 'over 20 MB')
+    assertBothReject(withOriginal({ content: 'bytes' } as never), /undeclared fields: content/, 'bytes never travel in the Manifest')
+    // Without bash nothing can read the original; the compiler refuses the combination.
+    assert.throws(() => compileRuntimeManifest(withOriginal({}, ['read'])), /require the bash tool/)
+    const twice = withOriginal()
+    twice.input.original_mounts!.push({ ...twice.input.original_mounts![0]!, mount_path: '/workspace/input/original/02-data.xlsx' })
+    assert.throws(() => compileRuntimeManifest(twice), /duplicate original mount/)
+  })
+
   it('rejects structural ambiguities at both boundaries', () => {
     const cases: Array<[string, (skill: SkillInstruction) => void, RegExp]> = [
       ['externalized Skill carrying inline instructions', skill => Object.assign(skill, externalizedSkill()), /内联 instructions/],
